@@ -617,6 +617,8 @@ pub async fn create(
 
     // A sala nasce já aqui (e não só no `start`) porque o chamador precisa do
     // link para o gravar no evento de calendário dele.
+    // `sessions.create` sobre o anfitrião, na org da chave (ADR-0008 §1).
+    crate::org::require_session_create(&state, host_id, Some(key.org_id)).await?;
     let room = crate::rooms::insert_room(
         &state.db,
         host_id,

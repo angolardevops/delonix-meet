@@ -97,6 +97,10 @@ MEDIDAS = {
     'respostas_ok_true': (
         lambda: contar(r'"ok"\s*:\s*true'),
         'regra 6 — 201/204 ou o recurso, nunca {"ok": true}'),
+    'verificacoes_papel_por_string_fora_de_org_rs': (
+        lambda: contar(r"""\brole\s*(==|!=)\s*"(admin|member|owner)"|\brole\s*(=|<>|!=)\s*'(admin|member|owner)'|"(admin|member|owner)"\s*(==|!=)\s*\w*role\b""",
+                       excluir=('org.rs',)),
+        'ADR-0008 §4 — a autorização decide-se por capacidade em org.rs (require_capability), não por comparar o texto do papel'),
     'rotas_v1_com_sessao': (
         v1_com_sessao,
         'regra 7 — /api/v1 autentica por chave, a sessão é da BFF'),

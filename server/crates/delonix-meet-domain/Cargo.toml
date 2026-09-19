@@ -9,6 +9,7 @@ edition.workspace = true
 [dependencies]
 delonix-meet-core = { path = "../delonix-meet-core" }
 serde.workspace = true
+serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 hex.workspace = true

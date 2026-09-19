@@ -254,6 +254,12 @@ async fn issue_tokens(
     user: crate::users::UserPublic,
 ) -> Result<TokenPair, ApiError> {
     let access = access_token(state, user.id)?;
+    // Último acesso (ADR-0008 §7): escrito aqui, num só sítio, porque todas as
+    // entradas com sucesso emitem tokens por esta função.
+    let _ = sqlx::query("UPDATE users SET last_access_at = now() WHERE id = $1")
+        .bind(user.id)
+        .execute(&state.db)
+        .await;
     let (refresh, refresh_hash) = new_refresh_token();
     let expires = Utc::now() + chrono::Duration::seconds(state.config.refresh_ttl_secs);
     sqlx::query("INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")

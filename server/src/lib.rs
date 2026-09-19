@@ -7,11 +7,13 @@
 mod actions;
 mod ai;
 mod apikeys;
+mod approvals;
 mod audit;
 mod auth;
 mod broadcast;
 pub mod config;
 mod crypto;
+mod directory;
 mod dlp;
 mod error;
 pub mod grpc;
@@ -33,6 +35,7 @@ mod rate_limit;
 mod recorder;
 mod recordings;
 mod redis_state;
+mod roles;
 mod room_chat;
 mod room_tools;
 mod rooms;
@@ -255,6 +258,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/storage/pvc-manifest", get(storage::pvc_manifest))
         // Inventário de nós de media (G10).
         .route("/nodes", get(nodes::list))
+        // Tecto de lugares por organização (ADR-0008 §7).
+        .route(
+            "/organizations/{org_id}/seats",
+            axum::routing::put(directory::operator_set_seats),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit::ip_rate_limit,
@@ -488,6 +496,117 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/members/{user_id}",
             axum::routing::patch(org::update_employee).delete(org::remove_employee),
+        )
+        // ---- Utilizadores e convites (ADR-0008) ----
+        .route("/api/orgs/{org_id}/users", get(directory::list_users))
+        .route("/api/search/schemas/users", get(directory::users_schema))
+        .route(
+            "/api/orgs/{org_id}/users/bulk-actions",
+            post(directory::bulk_actions),
+        )
+        .route("/api/orgs/{org_id}/users/imports", post(directory::import_users))
+        .route(
+            "/api/orgs/{org_id}/invitations",
+            get(directory::list_invitations).post(directory::create_invitation),
+        )
+        .route(
+            "/api/orgs/{org_id}/invitations/{invitation_id}",
+            get(directory::get_invitation).delete(directory::revoke_invitation),
+        )
+        .route(
+            "/api/orgs/{org_id}/invitations/{invitation_id}/resend",
+            post(directory::resend_invitation),
+        )
+        // O token é a credencial: rate-limit por IP como no login.
+        .route(
+            "/api/invitations/accept",
+            post(directory::accept_invitation).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
+        .route(
+            "/api/orgs/{org_id}/departments",
+            get(directory::list_departments).post(directory::create_department),
+        )
+        .route(
+            "/api/orgs/{org_id}/departments/{department_id}",
+            get(directory::get_department)
+                .patch(directory::update_department)
+                .delete(directory::delete_department),
+        )
+        .route("/api/orgs/{org_id}/seats", get(directory::seats))
+        .route("/api/orgs/{org_id}/seats/release", post(directory::release_seats))
+        .route("/api/orgs/{org_id}/provisioning", get(directory::provisioning))
+        .route(
+            "/api/orgs/{org_id}/entry-rules",
+            get(directory::get_entry_rules).put(directory::put_entry_rules),
+        )
+        // ---- Papéis e permissões (ADR-0008) ----
+        .route("/api/capabilities", get(roles::catalog))
+        .route("/api/orgs/{org_id}/roles", get(roles::list_roles).post(roles::create_role))
+        .route(
+            "/api/orgs/{org_id}/roles/{role_id}",
+            get(roles::get_role)
+                .patch(roles::update_role)
+                .delete(roles::delete_role),
+        )
+        .route(
+            "/api/orgs/{org_id}/roles/{role_id}/duplicate",
+            post(roles::duplicate_role),
+        )
+        .route(
+            "/api/orgs/{org_id}/roles/{role_id}/capabilities",
+            get(roles::get_capabilities).put(roles::put_capabilities),
+        )
+        .route("/api/orgs/{org_id}/permission-matrix", get(roles::matrix))
+        .route(
+            "/api/orgs/{org_id}/authorization/evaluations",
+            post(roles::evaluate),
+        )
+        .route(
+            "/api/orgs/{org_id}/members/me/capabilities",
+            get(roles::my_capabilities),
+        )
+        .route(
+            "/api/orgs/{org_id}/members/{user_id}/role",
+            axum::routing::put(roles::assign_role),
+        )
+        .route(
+            "/api/orgs/{org_id}/sod-rules",
+            get(roles::list_sod_rules).post(roles::create_sod_rule),
+        )
+        .route(
+            "/api/orgs/{org_id}/sod-rules/{rule_id}",
+            get(roles::get_sod_rule)
+                .patch(roles::update_sod_rule)
+                .delete(roles::delete_sod_rule),
+        )
+        .route(
+            "/api/orgs/{org_id}/sod-rules/{rule_id}/risk-acceptances",
+            post(roles::accept_risk),
+        )
+        .route("/api/orgs/{org_id}/sod-violations", get(roles::sod_violations))
+        .route("/api/orgs/{org_id}/role-conflicts", get(roles::list_role_conflicts))
+        .route(
+            "/api/orgs/{org_id}/role-conflicts/{conflict_id}/resolve",
+            post(roles::resolve_role_conflict),
+        )
+        .route(
+            "/api/orgs/{org_id}/approval-requests",
+            get(approvals::list),
+        )
+        .route(
+            "/api/orgs/{org_id}/approval-requests/{request_id}",
+            get(approvals::get_one),
+        )
+        .route(
+            "/api/orgs/{org_id}/approval-requests/{request_id}/approve",
+            post(approvals::approve),
+        )
+        .route(
+            "/api/orgs/{org_id}/approval-requests/{request_id}/reject",
+            post(approvals::reject),
         )
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route(
@@ -1016,6 +1135,21 @@ pub async fn run() {
         });
     }
 
+    // Cron: autorização (ADR-0008) a cada hora — aprovações e convites fora de
+    // prazo passam a `expired`, e convidados externos cujo acesso expirou são
+    // arquivados (`guest_expired`).
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                authorization_sweep(&state).await;
+            }
+        });
+    }
+
     // Cron: registo de entregas de webhooks (G7) a cada hora — fecha as
     // `pending` abandonadas por um processo que morreu e apaga as que passaram
     // da retenção (30 dias).
@@ -1252,4 +1386,23 @@ async fn drenar(state: Arc<AppState>) {
         segundos = limite.as_secs(),
         "drain: prazo esgotado — a fechar com participantes ainda ligados"
     );
+}
+
+/// Uma passagem do sweeper de autorização (ADR-0008 §6, §8, §11).
+pub async fn authorization_sweep(state: &AppState) {
+    match approvals::expire(state).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(expired = n, "pedidos de aprovação expirados"),
+        Err(e) => tracing::warn!(error = %e, "sweep de aprovações falhou"),
+    }
+    match directory::expire_invitations(state).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(expired = n, "convites expirados"),
+        Err(e) => tracing::warn!(error = %e, "sweep de convites falhou"),
+    }
+    match org::expire_guests(state).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(archived = n, "convidados externos expirados"),
+        Err(e) => tracing::warn!(error = %e, "sweep de convidados falhou"),
+    }
 }
