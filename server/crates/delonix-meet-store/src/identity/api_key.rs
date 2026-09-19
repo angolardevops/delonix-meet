@@ -52,11 +52,7 @@ pub async fn find_by_hash(db: &PgPool, key_hash: &str) -> Result<Option<StoredKe
 /// Regista o uso, no máximo uma vez por `throttle_secs` por chave. A guarda
 /// repete-se no `WHERE` para que dois nós com a mesma leitura antiga não
 /// escrevam os dois — a mesma razão por trás do padrão em `AppState`.
-pub async fn touch_last_used(
-    db: &PgPool,
-    id: Uuid,
-    throttle_secs: f64,
-) -> Result<(), sqlx::Error> {
+pub async fn touch_last_used(db: &PgPool, id: Uuid, throttle_secs: f64) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE org_api_keys SET last_used_at = now()
          WHERE id = $1
