@@ -215,6 +215,23 @@ pub struct Config {
     /// Coalescível: o estado de subscrição mais recente vence, por isso
     /// transbordar descarta o pedido mais novo e conta a métrica.
     pub nego_queue_cap: usize,
+    /// IP do FreeSWITCH aceite na ingress da ponte PSTN↔SFU
+    /// (`PSTN_BRIDGE_FREESWITCH_IP`, ver `pstn_bridge.rs`). **Fail-closed**:
+    /// vazio/ausente => a ponte fica DESACTIVADA (o dial-in continua a
+    /// funcionar, só sem o áudio WebRTC — cai na conferência local do
+    /// FreeSWITCH, o comportamento de sempre) — sem IP configurado, aceitar
+    /// pacotes de qualquer origem deixaria qualquer host na rede injectar
+    /// áudio na sala fingindo ser o FreeSWITCH. Um só IP porque hoje há um
+    /// único nó FreeSWITCH por deploy (`docker-compose.voice.yml`); um pool
+    /// de nós (`dispatcher.list` cresce em produção) precisa de uma lista —
+    /// fica para quando essa topologia existir de facto.
+    pub pstn_bridge_freeswitch_ip: Option<std::net::IpAddr>,
+    /// Host que o control plane devolve ao IVR como destino da ingress
+    /// (`PSTN_BRIDGE_HOST`) — o que o FreeSWITCH usa para mandar o mix da
+    /// conferência. Por omissão o mesmo `SFU_EXTERNAL_IP` (o SFU já sabe
+    /// anunciar-se por aí para o ICE); "127.0.0.1" se nenhum dos dois
+    /// estiver definido (dev local, tudo na mesma máquina).
+    pub pstn_bridge_host: String,
 }
 
 impl Config {
@@ -314,6 +331,12 @@ impl Config {
             ffmpeg_bin: env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
             ffprobe_bin: env::var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
             secrets_key: secrets_key(insecure),
+            pstn_bridge_freeswitch_ip: ip_env("PSTN_BRIDGE_FREESWITCH_IP"),
+            pstn_bridge_host: env::var("PSTN_BRIDGE_HOST")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| env::var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()))
+                .unwrap_or_else(|| "127.0.0.1".into()),
         }
     }
 }
@@ -375,6 +398,26 @@ fn uuid_list(var: &str) -> Vec<uuid::Uuid> {
             })
         })
         .collect()
+}
+
+/// Lê um único IP do ambiente (allowlist da ingress da ponte PSTN↔SFU).
+/// Ausente => `None` (fail-closed, ver `Config::pstn_bridge_freeswitch_ip`).
+/// Presente mas ilegível como IP => aviso + `None` — o mesmo tratamento que
+/// `bounded_env` dá a um valor fora do intervalo: nunca um panic por uma
+/// variável de configuração de uma funcionalidade opcional, mas também nunca
+/// um valor absurdo aceite em silêncio.
+fn ip_env(var: &str) -> Option<std::net::IpAddr> {
+    match env::var(var) {
+        Err(_) => None,
+        Ok(v) if v.trim().is_empty() => None,
+        Ok(v) => match v.trim().parse() {
+            Ok(ip) => Some(ip),
+            Err(_) => {
+                tracing::warn!("{var}='{v}' não é um IP válido — ponte PSTN↔SFU fica desactivada");
+                None
+            }
+        },
+    }
 }
 
 fn csv_env(var: &str) -> Vec<String> {

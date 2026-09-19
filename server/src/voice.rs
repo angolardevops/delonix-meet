@@ -497,11 +497,44 @@ pub struct ValidatePinReq {
     pub did_e164: String,
     pub pin: String,
 }
+
+/// Ponte de media FreeSWITCH↔SFU (Abordagem B, `docs/pstn-sfu-bridge-design.md`
+/// e `server/src/pstn_bridge.rs`) — endpoint de ingress SRTP do SFU para esta
+/// sala, com as chaves efémeras que o FreeSWITCH precisa para lhe falar. Os
+/// nomes destes campos são o contrato com
+/// `voice/freeswitch/scripts/dialin_ivr.lua` — mudar um lado sem o outro
+/// deixa a ponte silenciosamente inactiva (cai sempre no fallback local).
+#[derive(Serialize)]
+pub struct PstnBridgeResp {
+    /// Host onde o SFU está à escuta (ingress) — `PSTN_BRIDGE_HOST`.
+    pub host: String,
+    pub port: u16,
+    /// SRTP `master_key||master_salt`, base64 (convenção SDES-SRTP, RFC 4568
+    /// `a=crypto`). Direção FreeSWITCH→SFU: o FreeSWITCH CIFRA com esta chave.
+    pub ingress_key_b64: String,
+    /// Direção SFU→FreeSWITCH: o FreeSWITCH DESENCRIPTA com esta chave — é
+    /// SEMPRE diferente de `ingress_key_b64` (nunca a mesma chave nos dois
+    /// sentidos, ver `pstn_bridge::SrtpKeyPair`).
+    pub egress_key_b64: String,
+    /// Nome do perfil SRTP (hoje sempre "AES_CM_128_HMAC_SHA1_80").
+    pub profile: String,
+    /// Payload type RTP fixo do Opus nesta ponte (não há SDP a negociá-lo).
+    pub payload_type: u8,
+}
+
 #[derive(Serialize)]
 pub struct ValidatePinResp {
     pub voice_room_id: Uuid,
     pub room_code: String,
     pub media_backend: String,
+    /// `Some` só quando o backend é `freeswitch` E o SFU conseguiu activar a
+    /// ponte para a sala (existe uma `rooms.code = room_code`, e
+    /// `PSTN_BRIDGE_FREESWITCH_IP` está configurado — ver `config.rs`).
+    /// `None` mantém o comportamento de sempre: o IVR cai na conferência
+    /// local do FreeSWITCH, SEM áudio WebRTC (o gap que esta sub-fase fecha,
+    /// mas com um caminho de recurso seguro se a ponte não puder activar).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pstn_bridge: Option<PstnBridgeResp>,
 }
 
 /// Valida (DID, PIN) → devolve a sala a que o chamador PSTN deve ser ligado.
@@ -523,11 +556,15 @@ pub async fn ivr_validate_pin(
     .fetch_optional(&state.db)
     .await?;
     match row {
-        Some((id, room_code, backend)) => Ok(Json(ValidatePinResp {
-            voice_room_id: id,
-            room_code,
-            media_backend: backend,
-        })),
+        Some((id, room_code, backend)) => {
+            let pstn_bridge = activate_pstn_bridge_for(&state, &room_code, &backend).await;
+            Ok(Json(ValidatePinResp {
+                voice_room_id: id,
+                room_code,
+                media_backend: backend,
+                pstn_bridge,
+            }))
+        }
         None => {
             // Anti-toll-fraud / PIN-guessing: só as FALHAS contam para o limite;
             // chamadores legítimos com PIN certo nunca são penalizados.
@@ -536,6 +573,58 @@ pub async fn ivr_validate_pin(
                 return Err(ApiError::TooManyRequests);
             }
             Err(ApiError::NotFound)
+        }
+    }
+}
+
+/// Tenta activar a ponte PSTN↔SFU para a sala `room_code`. Falha SEMPRE em
+/// silêncio (log + `None`, nunca um erro que derrube a validação do PIN): um
+/// chamador tem de conseguir entrar mesmo que a ponte não arranque — o IVR
+/// já sabe cair na conferência local quando este campo vem ausente (ver
+/// `dialin_ivr.lua`). As razões possíveis para `None`, todas esperadas e
+/// não-erros do ponto de vista do dial-in: backend não é `freeswitch`
+/// (`provider` faz media à parte), `PSTN_BRIDGE_FREESWITCH_IP` não
+/// configurado (fail-closed, ver `config.rs`), ou `room_code` sem sala WebRTC
+/// correspondente ainda criada em `rooms`.
+async fn activate_pstn_bridge_for(
+    state: &AppState,
+    room_code: &str,
+    backend: &str,
+) -> Option<PstnBridgeResp> {
+    if MediaBackend::parse(backend) != MediaBackend::Freeswitch {
+        return None;
+    }
+    let Some(allowed_ip) = state.config.pstn_bridge_freeswitch_ip else {
+        tracing::warn!(
+            "PSTN_BRIDGE_FREESWITCH_IP não configurado — ponte PSTN↔SFU desactivada, dial-in cai na conferência local"
+        );
+        return None;
+    };
+    let room_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
+        .bind(room_code)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(room_id) = room_id else {
+        tracing::warn!(
+            room_code,
+            "ponte PSTN↔SFU: sala WebRTC ainda não existe para este room_code"
+        );
+        return None;
+    };
+    match state.sfu.activate_pstn_bridge(room_id, allowed_ip).await {
+        Ok(info) => Some(PstnBridgeResp {
+            host: state.config.pstn_bridge_host.clone(),
+            port: info.port,
+            ingress_key_b64: info.ingress_key_b64,
+            egress_key_b64: info.egress_key_b64,
+            profile: info.profile.to_string(),
+            payload_type: info.payload_type,
+        }),
+        Err(e) => {
+            tracing::error!(room_code, error = %e, "ponte PSTN↔SFU: activate_pstn_bridge falhou — dial-in cai na conferência local");
+            None
         }
     }
 }
