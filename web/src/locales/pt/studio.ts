@@ -240,6 +240,7 @@ export default {
   },
   audio: {
     titulo: 'Áudio',
+    nivelMestre: 'Mistura ao ar',
     microfone: 'Microfone',
     microfoneOmissao: 'O do sistema',
     microfoneN: 'Microfone {{n}}',

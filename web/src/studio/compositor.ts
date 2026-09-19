@@ -186,6 +186,16 @@ export class CompositorDeAula {
   private ganhoPalco: GainNode | null = null
   private ganhoMusica: GainNode | null = null
   private ganhoVideo: GainNode | null = null
+  /**
+   * Nivelador + limitador da MISTURA inteira (os três barramentos somados),
+   * não de uma fonte só — os mesmos valores do `Denoiser` (media.ts), a única
+   * cadeia de dinâmica já revista neste código, aplicados aqui para nenhum
+   * barramento sozinho conseguir saturar o que se grava ou emite.
+   */
+  private compressorMestre: DynamicsCompressorNode | null = null
+  private limiterMestre: DynamicsCompressorNode | null = null
+  /** Alimentado pela SAÍDA do limitador — o pico que `lerPicoMestre` lê. */
+  private analiserMestre: AnalyserNode | null = null
   private mistura: Mistura = { ...MISTURA_INICIAL }
   private micStream: MediaStream | null = null
   private micFonte: MediaStreamAudioSourceNode | null = null
@@ -739,7 +749,28 @@ export class CompositorDeAula {
     this.ganhoPalco.gain.value = this.mistura.palco
     this.ganhoMusica.gain.value = this.mistura.musica
     this.ganhoVideo.gain.value = this.mistura.video
-    for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.destino)
+
+    // Valores iguais aos do `Denoiser` (media.ts) — nivelador suave, depois
+    // um limitador com o cotovelo a zero mesmo antes do tecto (-3 dBFS).
+    this.compressorMestre = this.audioCtx.createDynamicsCompressor()
+    this.compressorMestre.threshold.value = -24
+    this.compressorMestre.knee.value = 12
+    this.compressorMestre.ratio.value = 3
+    this.compressorMestre.attack.value = 0.01
+    this.compressorMestre.release.value = 0.25
+    this.limiterMestre = this.audioCtx.createDynamicsCompressor()
+    this.limiterMestre.threshold.value = -3
+    this.limiterMestre.knee.value = 0
+    this.limiterMestre.ratio.value = 20
+    this.limiterMestre.attack.value = 0.003
+    this.limiterMestre.release.value = 0.1
+    this.analiserMestre = this.audioCtx.createAnalyser()
+    this.analiserMestre.fftSize = 512
+
+    for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.compressorMestre)
+    this.compressorMestre.connect(this.limiterMestre)
+    this.limiterMestre.connect(this.destino)
+    this.limiterMestre.connect(this.analiserMestre)
 
     if (micDeviceId !== undefined) this.microfoneId = micDeviceId
     await this.ligarMicrofone()
@@ -1022,6 +1053,26 @@ export class CompositorDeAula {
     this.ganhoPalco = null
     this.ganhoMusica = null
     this.ganhoVideo = null
+    this.compressorMestre?.disconnect()
+    this.compressorMestre = null
+    this.limiterMestre?.disconnect()
+    this.limiterMestre = null
+    this.analiserMestre?.disconnect()
+    this.analiserMestre = null
+  }
+
+  /**
+   * Pico da MISTURA final (pós-limitador), em dBFS: -60 é silêncio, 0 é o
+   * máximo. `-60` também é o valor de repouso quando o grafo não existe
+   * (antes de gravar/emitir) — silêncio genuíno, não um erro.
+   */
+  lerPicoMestre(): number {
+    if (!this.analiserMestre) return -60
+    const buf = new Float32Array(this.analiserMestre.fftSize)
+    this.analiserMestre.getFloatTimeDomainData(buf)
+    let pico = 0
+    for (let i = 0; i < buf.length; i++) pico = Math.max(pico, Math.abs(buf[i]))
+    return pico > 0 ? Math.max(-60, 20 * Math.log10(pico)) : -60
   }
 
   // ---------------------------------------------------------------- limpeza

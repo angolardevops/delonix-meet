@@ -236,6 +236,7 @@ export default function Studio() {
 
   const lerSegundos = useCallback(() => compRef.current?.segundos ?? 0, [])
   const lerBytes = useCallback(() => compRef.current?.bytesGravados ?? 0, [])
+  const lerPicoMestre = useCallback(() => compRef.current?.lerPicoMestre() ?? -60, [])
   const mudarAvatar = useCallback((patch: Partial<EstadoDoAvatar>) => setAvatar((a) => ({ ...a, ...patch })), [])
   const mudarImagem = useCallback((patch: Partial<EstadoDaImagem>) => setImagem((i) => ({ ...i, ...patch })), [])
   const fecharRecorte = useCallback(() => setARecortar(false), [])
@@ -670,6 +671,7 @@ export default function Studio() {
             convidados={fontesNoPalco}
             ganhosPorConvidado={ganhosPorConvidado}
             onGanhoConvidado={mudarGanhoConvidado}
+            lerPicoMestre={lerPicoMestre}
             onMistura={palco.mudarMistura}
             onMicrofone={palco.escolherMicrofone}
             onMusica={palco.carregarMusica}

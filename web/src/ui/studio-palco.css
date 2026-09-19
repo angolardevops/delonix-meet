@@ -238,6 +238,26 @@
   /* Nomes de pessoas não cabem nos 42px dos três barramentos fixos. */
   grid-template-columns: 84px minmax(0, 1fr);
 }
+.st-nivel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+.st-nivel__rotulo {
+  flex: none;
+  width: 42px;
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+.st-nivel__meter {
+  flex: 1;
+}
+.st-nivel__db {
+  min-width: 46px;
+  font-size: 9px;
+  text-align: right;
+}
 .st-ellipsis {
   min-width: 0;
   overflow: hidden;

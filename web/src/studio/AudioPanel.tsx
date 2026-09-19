@@ -7,6 +7,7 @@ import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Fonte } from '../room/compositor'
 import { Button, Select } from '../ui/kit'
+import NivelMestre from './NivelMestre'
 import type { Mistura } from './palco'
 import type { Microfone } from './usePalco'
 
@@ -20,6 +21,7 @@ export default function AudioPanel({
   musicaATocar,
   convidados,
   ganhosPorConvidado,
+  lerPicoMestre,
   onMistura,
   onMicrofone,
   onMusica,
@@ -34,6 +36,8 @@ export default function AudioPanel({
   /** Quem está no palco agora — um fader por cada um, além dos três barramentos. */
   convidados: Fonte[]
   ganhosPorConvidado: Record<string, number>
+  /** Pico da mistura final, em dBFS — `compositor.lerPicoMestre()`. */
+  lerPicoMestre: () => number
   onMistura: (patch: Partial<Mistura>) => void
   onMicrofone: (id: string) => void
   onMusica: (f: File | null) => void
@@ -47,6 +51,8 @@ export default function AudioPanel({
       <h2 id="st-audio-h" className="st-group__title">
         {t('studio.audio.titulo')}
       </h2>
+
+      <NivelMestre ler={lerPicoMestre} />
 
       <div className="st-faders">
         {FADERS.map((f) => (

@@ -174,13 +174,25 @@ describe('a sala de convidados é OPCIONAL e carrega à parte', () => {
 describe('a mistura tem faders de verdade', () => {
   const c = () => readCodigo('web/src/studio/compositor.ts')
 
-  it('três GainNode de barramento, cada um ligado ao destino, mais um GainNode por convidado', () => {
+  it('três GainNode de barramento, cada um ligado ao mestre, mais um GainNode por convidado', () => {
     // 3 fixos (palco/música/vídeo, criados uma vez em montarFluxo) + 1 padrão
     // de código por convidado (criado sob procura em ligarConvidadoAoGrafo,
     // um por convidado em tempo de execução, mas um só sítio no ficheiro) —
     // o fader por convidado É um GainNode a mais, de propósito.
     expect(c().match(/this\.audioCtx\.createGain\(\)/g)?.length).toBe(4)
-    expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.destino)')
+    // Os três barramentos já não vão direitos ao destino: passam pelo
+    // nivelador/limitador mestre primeiro (ver o teste da dinâmica, abaixo).
+    expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.compressorMestre)')
+  })
+
+  it('a dinâmica mestre fica entre os barramentos e o destino, com um medidor na saída', () => {
+    // Um barramento sozinho não pode saturar o que se grava/emite — por
+    // isso a cadeia é OBRIGATÓRIA entre a soma dos três e o `destino`, não
+    // opcional nem contornável por um caminho directo.
+    expect(c()).not.toMatch(/this\.(ganhoPalco|ganhoMusica|ganhoVideo)\.connect\(this\.destino\)/)
+    expect(c()).toContain('this.compressorMestre.connect(this.limiterMestre)')
+    expect(c()).toContain('this.limiterMestre.connect(this.destino)')
+    expect(c()).toContain('this.limiterMestre.connect(this.analiserMestre)')
   })
 
   it('as fontes ligam-se ao GANHO, nunca direitas ao destino', () => {

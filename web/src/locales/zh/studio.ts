@@ -240,6 +240,7 @@ export default {
   },
   audio: {
     titulo: '音频',
+    nivelMestre: '直播混音',
     microfone: '麦克风',
     microfoneOmissao: '系统默认',
     microfoneN: '麦克风 {{n}}',
