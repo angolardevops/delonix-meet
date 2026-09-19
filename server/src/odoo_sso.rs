@@ -59,6 +59,12 @@ pub struct OdooUser {
     /// o `Option` — desserializar isto como String falha em contas sem email.
     #[serde(default)]
     pub email: Option<serde_json::Value>,
+    /// Campos do `hr` relacionados em `res.users`. Só vêm quando o módulo `hr`
+    /// está instalado — ver `active_users`.
+    #[serde(default)]
+    pub mobile_phone: Option<serde_json::Value>,
+    #[serde(default)]
+    pub work_phone: Option<serde_json::Value>,
 }
 
 impl OdooUser {
@@ -175,13 +181,42 @@ pub async fn login(
 
 /// Lê os utilizadores INTERNOS ACTIVOS da empresa (`share = false` exclui as
 /// contas de portal/público, que não são pessoal da empresa).
+///
+/// Pede também `mobile_phone`/`work_phone` (campos do `hr` em `res.users`). Um
+/// Odoo sem o módulo `hr` recusa o pedido inteiro por campo inválido; nesse caso
+/// repete-se sem os telefones — a sincronização do directório não pode deixar
+/// de funcionar por causa de um campo opcional.
 pub async fn active_users(
     out: &crate::net_guard::Outbound,
     odoo_url: &str,
     session: &OdooSession,
 ) -> anyhow::Result<Vec<OdooUser>> {
+    match search_users(out, odoo_url, session, true).await? {
+        Ok(users) => Ok(users),
+        Err(first) => {
+            tracing::info!(error = %first, "Odoo sem campos de telefone em res.users — sincronização sem telefones");
+            search_users(out, odoo_url, session, false)
+                .await?
+                .map_err(|e| anyhow::anyhow!("Odoo call_kw falhou: {e}"))
+        }
+    }
+}
+
+/// `Ok(Err(erro_do_odoo))` quando o Odoo respondeu com erro JSON-RPC. A guarda
+/// anti-SSRF fica AQUI dentro (não só em `active_users`) para correr nas duas
+/// tentativas do fallback.
+async fn search_users(
+    out: &crate::net_guard::Outbound,
+    odoo_url: &str,
+    session: &OdooSession,
+    with_phones: bool,
+) -> anyhow::Result<Result<Vec<OdooUser>, serde_json::Value>> {
     out.check_tenant_url(odoo_url).await?;
     let client = out.tenant();
+    let mut fields = vec!["login", "name", "email"];
+    if with_phones {
+        fields.extend(["mobile_phone", "work_phone"]);
+    }
     let body = serde_json::json!({
         "jsonrpc": "2.0", "method": "call", "id": 1,
         "params": {
@@ -190,7 +225,7 @@ pub async fn active_users(
             "args": [
                 [["active", "=", true], ["share", "=", false],
                  ["company_id", "=", session.company_id]],
-                ["login", "name", "email"]
+                fields
             ],
             "kwargs": { "context": {} }
         }
@@ -214,7 +249,7 @@ pub async fn active_users(
     .await?;
 
     if let Some(err) = json.get("error") {
-        anyhow::bail!("Odoo call_kw falhou: {}", err);
+        return Ok(Err(err.clone()));
     }
     let users: Vec<OdooUser> = serde_json::from_value(
         json.get("result")
@@ -222,7 +257,7 @@ pub async fn active_users(
             .unwrap_or(serde_json::Value::Null),
     )
     .unwrap_or_default();
-    Ok(users)
+    Ok(Ok(users))
 }
 
 /// Garante a organização Delonix que projeta esta empresa Odoo.
@@ -507,7 +542,33 @@ pub fn spawn_directory_sync(
                 u.name.clone()
             };
             match upsert_member(&state, org_id, &email, &display, u.id, false).await {
-                Ok(_) => ok += 1,
+                Ok(user_id) => {
+                    ok += 1;
+                    // Tarefa de fundo: um erro aqui não pode abortar o lote —
+                    // fica registado e a próxima sincronização tenta outra vez.
+                    let phone = crate::sms::phone_from_directory(
+                        &crate::sms::DirectoryField::from_json(u.mobile_phone.as_ref()),
+                        &crate::sms::DirectoryField::from_json(u.work_phone.as_ref()),
+                    );
+                    match phone {
+                        crate::sms::DirectoryPhone::Untouched => {}
+                        crate::sms::DirectoryPhone::Set(p) => {
+                            if let Err(e) = crate::org::sync_member_phone_from_directory(
+                                &state,
+                                org_id,
+                                user_id,
+                                p.as_deref(),
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, user = %u.login, "telefone Odoo não sincronizado");
+                            }
+                        }
+                        crate::sms::DirectoryPhone::Rejected(reason) => {
+                            tracing::info!(user = %u.login, %reason, "telefone Odoo rejeitado");
+                        }
+                    }
+                }
                 Err(e) => {
                     tracing::warn!(error = %e, user = %u.login, "utilizador Odoo não sincronizado");
                     skipped += 1;
@@ -614,6 +675,8 @@ mod tests {
             login: login.into(),
             name: "X".into(),
             email: Some(email),
+            mobile_phone: None,
+            work_phone: None,
         }
     }
 

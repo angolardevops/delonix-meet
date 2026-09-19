@@ -158,6 +158,9 @@ await recusado('A roda o token Odoo da org B', `/api/orgs/${B.orgId}/integration
 await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/members/${B.userId}`, {
   token: A.token, method: 'DELETE',
 })
+await recusado('A muda o telefone de um empregado da org B', `/api/orgs/${B.orgId}/members/${B.userId}/phone`, {
+  token: A.token, method: 'PUT', body: { phone: '923000000' },
+})
 
 // As seis rotas com escopo de organização que este teste NÃO cobria (R95).
 // Encontradas a comparar o inventário do que EXISTE (`grep` às rotas do
@@ -748,6 +751,12 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
   })
   await recusado('o token revogado de B deixa de servir', '/api/integrations/sms-agent/v1/claim', { token: gwB.json.token, method: 'POST' })
 }
+
+console.log('\n--- política de SMS a contactos ---')
+await recusado('A lê a política de SMS da org B', `/api/orgs/${B.orgId}/sms/policy`, { token: A.token })
+await recusado('A muda a política de SMS da org B', `/api/orgs/${B.orgId}/sms/policy`, {
+  token: A.token, method: 'PUT', body: { send_policy: 'members' },
+})
 
 console.log('\n--- sem autenticação nenhuma ---')
 await recusado('anónimo lê stats da org B', `/api/orgs/${B.orgId}/stats`, {})

@@ -951,6 +951,18 @@
               "null"
             ]
           },
+          "sms_invite": {
+            "description": "Avisar os convidados por SMS ao agendar (sms_notify).",
+            "type": "boolean"
+          },
+          "sms_reminder_min": {
+            "description": "Lembrete por SMS N minutos antes (5–1440). Nulo = sem lembrete.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "starts_at": {
             "format": "date-time",
             "type": "string"
@@ -975,6 +987,17 @@
             "properties": {
               "conflicts": {
                 "$ref": "#/components/schemas/Conflicts"
+              },
+              "sms": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MeetingSmsReport",
+                    "description": "Só presente quando o pedido trouxe opções de SMS."
+                  }
+                ]
               }
             },
             "required": [
@@ -1171,6 +1194,25 @@
         "required": [
           "ok",
           "room_deleted"
+        ],
+        "type": "object"
+      },
+      "Delivery": {
+        "properties": {
+          "queued": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/SkippedRecipient"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "queued",
+          "skipped"
         ],
         "type": "object"
       },
@@ -1447,12 +1489,30 @@
               "null"
             ]
           },
+          "can_sms": {
+            "description": "Tem número e não desligou os SMS de contactos. Não diz se QUEM PERGUNTA\npode enviar: isso é a política da org.",
+            "type": "boolean"
+          },
           "email": {
             "type": "string"
           },
           "last_active": {
             "description": "Último evento de auditoria do membro (login, etc.). Só preenchido na listagem.",
             "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "description": "Telefone E.164 do membro NESTA org. Só o vê um admin ou o próprio; para\nos colegas vai `null` e basta-lhes `can_sms`. Só preenchido na listagem.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "description": "`odoo` | `manual` | `null` — quem escreveu o número (ver migração 0053).",
             "type": [
               "string",
               "null"
@@ -1477,7 +1537,8 @@
           "username",
           "email",
           "role",
-          "title"
+          "title",
+          "can_sms"
         ],
         "type": "object"
       },
@@ -2239,6 +2300,58 @@
         ],
         "type": "object"
       },
+      "MeetingSmsReport": {
+        "description": "O que o agendamento devolve sobre SMS.",
+        "properties": {
+          "invite": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Delivery"
+              }
+            ]
+          },
+          "reminder_min": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MemberPhone": {
+        "description": "O telefone do próprio em cada org activa (para o perfil).",
+        "properties": {
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "org_name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "org_id",
+          "org_name"
+        ],
+        "type": "object"
+      },
       "Message": {
         "properties": {
           "body": {
@@ -2247,6 +2360,13 @@
           "created_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "device_id": {
             "format": "uuid",
@@ -2268,6 +2388,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "meeting_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "operator": {
             "type": [
               "string",
@@ -2275,6 +2402,18 @@
             ]
           },
           "provider_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "description": "`direct` (admin, número escrito) | `contact` | `meeting_invite` | `meeting_reminder`.",
+            "type": "string"
+          },
+          "recipient_user_id": {
+            "description": "O contacto resolvido no servidor; `null` no modo `to`.",
+            "format": "uuid",
             "type": [
               "string",
               "null"
@@ -2309,7 +2448,8 @@
           "segments",
           "route",
           "status",
-          "created_at"
+          "created_at",
+          "purpose"
         ],
         "type": "object"
       },
@@ -2622,12 +2762,18 @@
           "is_admin": {
             "type": "boolean"
           },
+          "mobile_phone": {
+            "description": "Telemóvel do directório. `serde_json::Value` e não `String`: o Odoo\nmanda `false` num campo vazio, e um integrador antigo nem manda o\ncampo — só `Value` distingue ausente de `false`/`\"\"` (ver `sms::DirectoryField`)."
+          },
           "name": {
             "type": "string"
           },
           "odoo_uid": {
             "format": "int32",
             "type": "integer"
+          },
+          "work_phone": {
+            "description": "Telefone de serviço; usado se `mobile_phone` não der um número utilizável."
           }
         },
         "required": [
@@ -3148,6 +3294,58 @@
         ],
         "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
       },
+      "PhoneReq": {
+        "properties": {
+          "follow_directory": {
+            "description": "`true` apaga e devolve o campo à sincronização do directório.",
+            "type": "boolean"
+          },
+          "phone": {
+            "description": "Número (qualquer forma que `normalize_msisdn` aceite) ou `null` para apagar.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PhoneResp": {
+        "properties": {
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "PolicyBody": {
+        "properties": {
+          "send_policy": {
+            "description": "`admins` | `members`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "send_policy"
+        ],
+        "type": "object"
+      },
       "ProvisionOrgReq": {
         "properties": {
           "email_domain": {
@@ -3254,6 +3452,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "phones_rejected": {
+            "description": "Telefones do directório que não foram gravados (nenhum número utilizável\nentre `mobile_phone`/`work_phone`). Aditivo à v1.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedUser"
+            },
+            "type": "array"
+          },
           "skipped": {
             "description": "Entradas do directório que NÃO foram aplicadas, com a razão. Aditivo à\nv1: um integrador antigo ignora o campo, e continua a receber `created`\ne `updated` com o mesmo significado.",
             "items": {
@@ -3270,7 +3475,8 @@
           "org_id",
           "created",
           "updated",
-          "skipped"
+          "skipped",
+          "phones_rejected"
         ],
         "type": "object"
       },
@@ -4207,11 +4413,22 @@
             "type": "string"
           },
           "to": {
-            "type": "string"
+            "description": "Modo admin: número escrito à mão.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "description": "Modo contacto: o servidor resolve o número do membro. O cliente NUNCA\nmanda o número neste modo.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "to",
           "body"
         ],
         "type": "object"
@@ -4231,6 +4448,23 @@
         ],
         "type": "object"
       },
+      "SkippedRecipient": {
+        "properties": {
+          "reason": {
+            "description": "Código estável: `sms.recipient_opted_out`, `sms.recipient_no_phone`,\n`sms.recipient_not_member`, `sms.too_many_recipients`, `sms.no_route`,\n`sms.invalid_body`.",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "reason"
+        ],
+        "type": "object"
+      },
       "SkippedUser": {
         "properties": {
           "email": {
@@ -4244,6 +4478,46 @@
           "email",
           "reason"
         ],
+        "type": "object"
+      },
+      "SmsPreferences": {
+        "properties": {
+          "contact_opt_out": {
+            "type": "boolean"
+          },
+          "meeting_opt_out": {
+            "type": "boolean"
+          },
+          "phones": {
+            "description": "O telefone do próprio em cada org activa (editável por `PUT\n/api/orgs/{org_id}/members/{user_id}/phone`).",
+            "items": {
+              "$ref": "#/components/schemas/MemberPhone"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contact_opt_out",
+          "meeting_opt_out",
+          "phones"
+        ],
+        "type": "object"
+      },
+      "SmsPreferencesReq": {
+        "properties": {
+          "contact_opt_out": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "meeting_opt_out": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "SsoCheck": {
@@ -6298,7 +6572,7 @@
                 }
               }
             },
-            "description": "título, `kind` ou duração inválidos"
+            "description": "título, `kind`, duração ou `sms_reminder_min` inválidos"
           },
           "401": {
             "content": {
@@ -6310,6 +6584,16 @@
             },
             "description": ""
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "pediu SMS (`sms_invite`/`sms_reminder_min`) sem poder enviá-los"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -6319,6 +6603,16 @@
               }
             },
             "description": "quota de reuniões da organização atingida, ou sala física já reservada nesse horário"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "lembrete por SMS pedido numa reunião recorrente, ou sem organização"
           }
         },
         "security": [
@@ -9228,6 +9522,102 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/members/{user_id}/phone": {
+      "put": {
+        "operationId": "put_member_phone",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhoneResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`phone` inválido, ou `follow_directory` com `phone` ao mesmo tempo."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nem admin nem o próprio."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Quem pede não é membro activo, ou o utilizador não é membro activo desta organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/orgs/{org_id}/members/{user_id}/phone` — o próprio ou um admin. A\nvalidação é a mesma do envio (`normalize_msisdn`): não se guarda um número\nque o encaminhamento não sabe usar.",
+        "tags": [
+          "sms"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/sms/devices": {
       "get": {
         "operationId": "list_devices",
@@ -9550,7 +9940,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "Admin: toda a org. Membro: só as mensagens que ele mandou, com o número mascarado."
           },
           "400": {
             "content": {
@@ -9572,16 +9962,6 @@
             },
             "description": ""
           },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Membro sem papel de admin."
-          },
           "404": {
             "content": {
               "application/json": {
@@ -9590,7 +9970,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "Quem pede não é membro activo da organização."
           }
         },
         "security": [
@@ -9598,11 +9978,13 @@
             "session": []
           }
         ],
+        "summary": "Admin vê as mensagens da org; um membro vê só as que ELE enviou, com o\nnúmero mascarado — é assim que acompanha o estado do SMS que mandou.",
         "tags": [
           "sms"
         ]
       },
       "post": {
+        "description": "Ordem: quem pede → forma do pedido → permissão → idempotência → destinatário\n→ corpo e rota → quota. Tudo o que recusa corre antes de gastar quota.",
         "operationId": "send_message",
         "parameters": [
           {
@@ -9656,7 +10038,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "`to` e `user_id` juntos ou nenhum dos dois, ou corpo vazio."
           },
           "401": {
             "content": {
@@ -9676,7 +10058,7 @@
                 }
               }
             },
-            "description": "Membro sem papel de admin."
+            "description": "Número escrito à mão por quem não é admin, ou contacto sem a política `members`."
           },
           "404": {
             "content": {
@@ -9688,6 +10070,16 @@
             },
             "description": ""
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`Idempotency-Key` já usada por outra pessoa (só membro)."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -9696,7 +10088,7 @@
                 }
               }
             },
-            "description": "Sem rota ou dispositivo."
+            "description": "Sem rota/dispositivo, contacto sem telefone, ou consentimento desligado."
           },
           "429": {
             "content": {
@@ -9714,6 +10106,7 @@
             "session": []
           }
         ],
+        "summary": "Dois modos: `{to, body}` número escrito, **só admin**; `{user_id, body}`\ncontacto — membro ACTIVO desta org, número resolvido no servidor, sujeito à\npolítica da org (`sms_send_policy`) e ao consentimento da pessoa.",
         "tags": [
           "sms"
         ]
@@ -9751,7 +10144,138 @@
                 }
               }
             },
+            "description": "Admin: qualquer mensagem da org. Membro: só a que ele mandou, com o número mascarado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
             "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A mensagem não existe nesta org, ou pertence a outra pessoa e quem pede não é admin."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/policy": {
+      "get": {
+        "operationId": "get_policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Quem pede não é membro activo."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/orgs/{org_id}/sms/policy` — qualquer membro lê (a UI decide se\nmostra «Enviar SMS»); só o admin muda.",
+        "tags": [
+          "sms"
+        ]
+      },
+      "put": {
+        "operationId": "put_policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`send_policy` diferente de `admins`/`members`."
           },
           "401": {
             "content": {
@@ -9789,6 +10313,7 @@
             "session": []
           }
         ],
+        "summary": "`PUT /api/orgs/{org_id}/sms/policy` — singleton, só admin. Um valor\ndesconhecido é RECUSADO: é uma permissão, e ignorá-lo em silêncio deixava o\nadmin a julgar que a tinha mudado.",
         "tags": [
           "sms"
         ]
@@ -15261,6 +15786,86 @@
         "summary": "Método personalizado: dá à sala pessoal um código novo. O link antigo\ndeixa de abrir (`GET /api/rooms/{antigo}` → `404`). Um dial-in ligado ao\ncódigo antigo NÃO acompanha: fica no código antigo e deixa de aparecer.",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/api/users/me/sms-preferences": {
+      "get": {
+        "operationId": "get_preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsPreferences"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/users/me/sms-preferences`",
+        "tags": [
+          "sms"
+        ]
+      },
+      "put": {
+        "operationId": "put_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmsPreferencesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsPreferences"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/users/me/sms-preferences` — o consentimento é da PESSOA, vale em\ntodas as orgs, e só ela o muda (não há rota de admin para isto).",
+        "tags": [
+          "sms"
         ]
       }
     },

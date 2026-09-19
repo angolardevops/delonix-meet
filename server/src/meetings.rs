@@ -71,7 +71,10 @@ pub struct Meeting {
         ConflictCheckReq,
         InviteeResponse,
         RespondReq,
-        QuarantineRow
+        QuarantineRow,
+        crate::sms_notify::MeetingSmsReport,
+        crate::sms_notify::Delivery,
+        crate::sms_notify::SkippedRecipient
     ))
 )]
 pub struct ApiDoc;
@@ -140,6 +143,12 @@ pub struct CreateMeetingReq {
     pub recurrence_count: Option<i16>,
     /// Dias da semana para freq=weekly: "MON,WED,FRI"
     pub recurrence_byday: Option<String>,
+    /// Avisar os convidados por SMS ao agendar (sms_notify).
+    #[serde(default)]
+    pub sms_invite: bool,
+    /// Lembrete por SMS N minutos antes (5–1440). Nulo = sem lembrete.
+    #[serde(default)]
+    pub sms_reminder_min: Option<i32>,
 }
 
 fn default_kind() -> String {
@@ -332,6 +341,9 @@ pub struct CreateMeetingResp {
     #[serde(flatten)]
     pub meeting: Meeting,
     pub conflicts: Conflicts,
+    /// Só presente quando o pedido trouxe opções de SMS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sms: Option<crate::sms_notify::MeetingSmsReport>,
 }
 
 #[utoipa::path(
@@ -340,9 +352,11 @@ pub struct CreateMeetingResp {
     request_body = CreateMeetingReq,
     responses(
         (status = 200, body = CreateMeetingResp),
-        (status = 400, body = crate::openapi::ErrorBody, description = "título, `kind` ou duração inválidos"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "título, `kind`, duração ou `sms_reminder_min` inválidos"),
         (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "pediu SMS (`sms_invite`/`sms_reminder_min`) sem poder enviá-los"),
         (status = 409, body = crate::openapi::ErrorBody, description = "quota de reuniões da organização atingida, ou sala física já reservada nesse horário"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "lembrete por SMS pedido numa reunião recorrente, ou sem organização"),
     )
 )]
 pub async fn create(
@@ -362,6 +376,26 @@ pub async fn create(
     if !(5..=1440).contains(&req.duration_min) {
         return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
     }
+    if let Some(min) = req.sms_reminder_min {
+        if !crate::sms_notify::REMINDER_MIN_RANGE.contains(&min) {
+            return Err(ApiError::BadRequest(
+                "sms_reminder_min tem de estar entre 5 e 1440".into(),
+            ));
+        }
+        // As instâncias de uma série nascem sem lembrete; aceitar o campo aqui
+        // era prometer um SMS por ocorrência e mandar só o primeiro.
+        if req.recurrence_freq.is_some() {
+            return Err(ApiError::Unprocessable(
+                "sms.reminder_recurring_unsupported: lembrete por SMS ainda não existe em reuniões recorrentes".into(),
+            ));
+        }
+    }
+    // Permissão ANTES de criar: pedir SMS sem poder enviá-los recusa o pedido.
+    let sms_org = if req.sms_invite || req.sms_reminder_min.is_some() {
+        Some(crate::sms_notify::authorize(&state, auth.user_id).await?)
+    } else {
+        None
+    };
 
     // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
     // membro da org do criador. NULL => ilimitado.
@@ -421,8 +455,9 @@ pub async fn create(
 
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
-                               recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                               recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
+                               sms_reminder_min)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING {MEETING_COLUMNS}"
     ))
     .bind(auth.user_id)
@@ -437,6 +472,7 @@ pub async fn create(
     .bind(req.recurrence_until)
     .bind(req.recurrence_count)
     .bind(&req.recurrence_byday)
+    .bind(req.sms_reminder_min)
     .fetch_one(&state.db)
     .await?;
 
@@ -465,7 +501,41 @@ pub async fn create(
     fire_meeting_webhook(&state, &meeting, auth.user_id, "meeting.created").await;
     crate::notifications::meeting_invited(&state, &meeting, auth.user_id, &req.invitee_ids).await;
 
-    Ok(Json(CreateMeetingResp { meeting, conflicts }))
+    let sms = match sms_org {
+        None => None,
+        Some(org_id) => {
+            let invite = if req.sms_invite {
+                let meeting_ref = crate::sms_notify::MeetingRef {
+                    id: meeting.id,
+                    owner_id: meeting.owner_id,
+                    title: &meeting.title,
+                    starts_at: meeting.starts_at,
+                };
+                Some(
+                    crate::sms_notify::queue_for_meeting(
+                        &state,
+                        org_id,
+                        &meeting_ref,
+                        &req.invitee_ids,
+                        crate::sms::Purpose::MeetingInvite,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+            Some(crate::sms_notify::MeetingSmsReport {
+                invite,
+                reminder_min: req.sms_reminder_min,
+            })
+        }
+    };
+
+    Ok(Json(CreateMeetingResp {
+        meeting,
+        conflicts,
+        sms,
+    }))
 }
 
 /// Dispara um evento de reunião para os webhooks das organizações do dono.

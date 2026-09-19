@@ -43,6 +43,7 @@ mod sfu_e2e;
 mod signaling;
 mod sms;
 mod sms_codec;
+mod sms_notify;
 mod sms_smpp;
 mod storage;
 mod stream_destinations;
@@ -126,6 +127,10 @@ pub struct AppState {
     /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
+    /// Envios de SMS por utilizador dentro de uma org (`org:user`), por cima do
+    /// limite da org: um colega não gasta a quota toda dos outros a mandar SMS
+    /// de contacto.
+    pub sms_user_limiter: RateLimiter,
     /// Anti-força-bruta do código MFA na activação e na desactivação (por
     /// conta). Só conta falhas; trava também o código certo (R131).
     pub mfa_limiter: RateLimiter,
@@ -332,6 +337,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/users/me/missed-calls/acknowledge",
             post(presence::ack_missed_calls),
         )
+        .route(
+            "/api/users/me/sms-preferences",
+            get(sms::get_preferences).put(sms::put_preferences),
+        )
         // ---- Salas ----
         .route("/api/rooms", post(rooms::create_room))
         .route("/api/rooms/{room_code}", get(rooms::get_room))
@@ -489,6 +498,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/members/{user_id}",
             axum::routing::patch(org::update_employee).delete(org::remove_employee),
         )
+        .route(
+            "/api/orgs/{org_id}/members/{user_id}/phone",
+            axum::routing::put(sms::put_member_phone),
+        )
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route(
             "/api/orgs/{org_id}/meeting-rooms",
@@ -580,6 +593,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/sms/messages/{message_id}",
             get(sms::get_message),
+        )
+        .route(
+            "/api/orgs/{org_id}/sms/policy",
+            get(sms::get_policy).put(sms::put_policy),
         )
         // ---- Tempo real (WebSocket) ----
         .route("/ws", get(signaling::ws_handler))
@@ -792,6 +809,10 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        sms_user_limiter: RateLimiter::new(
+            sms::USER_SENDS_PER_WINDOW,
+            Duration::from_secs(sms::USER_SEND_WINDOW_SECS),
+        ),
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         outbound,
         config: config.clone(),

@@ -55,6 +55,7 @@
 - `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/internal/v1/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
 - `sms.rs` — gateway de SMS (ADR-0005): consola da org em `/api/orgs/{org_id}/sms/*` (só admin), superfície do agente USB em `/api/integrations/sms-agent/v1/*` (token `dlxg_`, extractor `SmsGatewayAuth`), encaminhamento pelo plano de numeração angolano (prefixos **por confirmar**) e worker dos operadores que pára no drain. Entrega no máximo uma vez
 - `sms_codec.rs` — o ÚNICO sítio que codifica SMS: GSM 03.38/UCS-2, segmentação, PDU SMS-SUBMIT para `AT+CMGS`. Puro, sem I/O
+- `sms_notify.rs` — convite e lembrete de reunião por SMS (ADR-0005 §Contactos): reutiliza `plan`/`insert` de `sms.rs`, texto em PT dobrado para GSM-7 (título encurtado até caber num segmento, hora em WAT fixo); o lembrete (`sms_reminder_min`) não tem worker próprio — é um passo do worker de `sms.rs` a cada 10 ticks, que reivindica as reuniões vencidas com `FOR UPDATE SKIP LOCKED` antes de enfileirar (no máximo uma vez entre pods)
 - `sms_smpp.rs` — cliente SMPP 3.4 de saída (`bind_transmitter`/`submit_sm`/`unbind`) para Unitel/Movicel/Africell; credenciais em `SMS_*_SMPP`. Provado contra SMSC falso, **nunca contra um operador**; sem recibos nem TLS
 - `crypto.rs` — sha256 de token e token aleatório (`random_token`). Código novo chama isto; a catraca conta as cópias fora dele
 - `apikeys.rs` — chaves de API por org (hash, escopos de um catálogo fixo em `delonix_meet_domain::identity::api_key`, expiração opcional — S6 fechada, R170) **e** os handlers `v1_*` da API pública, apesar do nome (ADR-0004 §3 separa-os)
@@ -117,7 +118,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0052) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0053) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
