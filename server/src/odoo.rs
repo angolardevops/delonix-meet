@@ -431,12 +431,10 @@ pub async fn provision(
                 crate::org::sync_member_phone_from_directory(&state, org_id, user_id, p.as_deref())
                     .await?;
             }
-            crate::sms::DirectoryPhone::Rejected(reason) => {
-                phones_rejected.push(SkippedUser {
-                    email: email.clone(),
-                    reason,
-                })
-            }
+            crate::sms::DirectoryPhone::Rejected(reason) => phones_rejected.push(SkippedUser {
+                email: email.clone(),
+                reason,
+            }),
         }
 
         if existed {
