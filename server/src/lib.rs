@@ -581,6 +581,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/sms/messages/{message_id}",
             get(sms::get_message),
         )
+        .route(
+            "/api/orgs/{org_id}/sms/policy",
+            get(sms::get_sms_policy).put(sms::put_sms_policy),
+        )
+        .route(
+            "/api/orgs/{org_id}/members/{user_id}/phone",
+            axum::routing::put(sms::set_member_phone),
+        )
+        .route(
+            "/api/users/me/sms-preferences",
+            get(sms::get_sms_preferences).put(sms::put_sms_preferences),
+        )
         // ---- Tempo real (WebSocket) ----
         .route("/ws", get(signaling::ws_handler))
         // Directo: o browser empurra a emissão já composta e codificada, e o

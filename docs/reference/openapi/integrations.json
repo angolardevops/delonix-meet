@@ -2239,6 +2239,31 @@
         ],
         "type": "object"
       },
+      "MemberPhone": {
+        "properties": {
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "description": "`manual` (só isto por agora — `odoo` fica para a sincronização do\ndirectório, que não existe ainda) ou `null` sem telefone.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "type": "object"
+      },
       "Message": {
         "properties": {
           "body": {
@@ -2660,6 +2685,34 @@
           "label",
           "prefixes",
           "configured"
+        ],
+        "type": "object"
+      },
+      "OrgPhone": {
+        "properties": {
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "org_name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "org_id",
+          "org_name"
         ],
         "type": "object"
       },
@@ -3148,6 +3201,33 @@
         ],
         "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
       },
+      "PhoneChange": {
+        "description": "`{\"phone\": \"...\"} | {\"phone\": null} | {\"follow_directory\": true}`. Sem\nsincronização do directório ainda, `follow_directory` só limpa a\nsubstituição manual — não há valor nenhum para \"seguir\".",
+        "oneOf": [
+          {
+            "properties": {
+              "follow_directory": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "follow_directory"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "phone": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
       "ProvisionOrgReq": {
         "properties": {
           "email_domain": {
@@ -3449,6 +3529,35 @@
             "format": "uuid",
             "type": [
               "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PutSmsPolicyReq": {
+        "properties": {
+          "send_policy": {
+            "$ref": "#/components/schemas/SmsSendPolicy"
+          }
+        },
+        "required": [
+          "send_policy"
+        ],
+        "type": "object"
+      },
+      "PutSmsPreferencesReq": {
+        "properties": {
+          "contact_opt_out": {
+            "description": "Omisso ⇒ mantém o valor actual.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "meeting_opt_out": {
+            "type": [
+              "boolean",
               "null"
             ]
           }
@@ -4245,6 +4354,49 @@
           "reason"
         ],
         "type": "object"
+      },
+      "SmsPolicyResp": {
+        "properties": {
+          "send_policy": {
+            "$ref": "#/components/schemas/SmsSendPolicy"
+          }
+        },
+        "required": [
+          "send_policy"
+        ],
+        "type": "object"
+      },
+      "SmsPreferences": {
+        "properties": {
+          "contact_opt_out": {
+            "description": "SMS de contacto directo (chamadas/mensagens de um colega).",
+            "type": "boolean"
+          },
+          "meeting_opt_out": {
+            "description": "SMS de reunião (convite, lembrete).",
+            "type": "boolean"
+          },
+          "phones": {
+            "description": "Uma entrada por organização ACTIVA de quem pede.",
+            "items": {
+              "$ref": "#/components/schemas/OrgPhone"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contact_opt_out",
+          "meeting_opt_out",
+          "phones"
+        ],
+        "type": "object"
+      },
+      "SmsSendPolicy": {
+        "enum": [
+          "admins",
+          "members"
+        ],
+        "type": "string"
       },
       "SsoCheck": {
         "description": "Resultado da verificação de SSO para um domínio de email.",

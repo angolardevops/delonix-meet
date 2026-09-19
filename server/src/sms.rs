@@ -183,7 +183,12 @@ pub struct GatewayInfo {
         send_message,
         agent_put_devices,
         agent_claim,
-        agent_result
+        agent_result,
+        get_sms_policy,
+        put_sms_policy,
+        set_member_phone,
+        get_sms_preferences,
+        put_sms_preferences
     ),
     components(schemas(
         OperatorInfo,
@@ -201,7 +206,15 @@ pub struct GatewayInfo {
         DevicesResp,
         ClaimedMessage,
         ClaimResp,
-        ResultReq
+        ResultReq,
+        SmsSendPolicy,
+        SmsPolicyResp,
+        PutSmsPolicyReq,
+        MemberPhone,
+        PhoneChange,
+        OrgPhone,
+        SmsPreferences,
+        PutSmsPreferencesReq
     ))
 )]
 pub struct ApiDoc;
@@ -1195,6 +1208,254 @@ async fn fail_stale(state: &AppState) -> Result<(), ApiError> {
     .execute(&state.db)
     .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+//  Política de envio da org, telefone por pertença, preferências da conta
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, utoipa::ToSchema, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum SmsSendPolicy {
+    Admins,
+    Members,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SmsPolicyResp {
+    send_policy: SmsSendPolicy,
+}
+
+/// Quem pode enviar SMS pela organização (só admin lê e muda — enviar custa
+/// dinheiro, a mesma razão de `get_route`/`put_route`).
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sms/policy", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = SmsPolicyResp),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn get_sms_policy(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<SmsPolicyResp>, ApiError> {
+    require_admin_pub(&state, org_id, auth.user_id).await?;
+    let policy: (String,) =
+        sqlx::query_as("SELECT sms_send_policy FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_one(&state.db)
+            .await?;
+    Ok(Json(SmsPolicyResp {
+        send_policy: match policy.0.as_str() {
+            "members" => SmsSendPolicy::Members,
+            _ => SmsSendPolicy::Admins,
+        },
+    }))
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct PutSmsPolicyReq {
+    send_policy: SmsSendPolicy,
+}
+
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/sms/policy", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = PutSmsPolicyReq,
+    responses(
+        (status = 200, body = SmsPolicyResp),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn put_sms_policy(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<PutSmsPolicyReq>,
+) -> Result<Json<SmsPolicyResp>, ApiError> {
+    require_admin_pub(&state, org_id, auth.user_id).await?;
+    let stored = match req.send_policy {
+        SmsSendPolicy::Admins => "admins",
+        SmsSendPolicy::Members => "members",
+    };
+    sqlx::query("UPDATE organizations SET sms_send_policy = $1 WHERE id = $2")
+        .bind(stored)
+        .bind(org_id)
+        .execute(&state.db)
+        .await?;
+    Ok(Json(SmsPolicyResp {
+        send_policy: req.send_policy,
+    }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct MemberPhone {
+    user_id: Uuid,
+    phone: Option<String>,
+    /// `manual` (só isto por agora — `odoo` fica para a sincronização do
+    /// directório, que não existe ainda) ou `null` sem telefone.
+    phone_source: Option<String>,
+}
+
+/// `{"phone": "..."} | {"phone": null} | {"follow_directory": true}`. Sem
+/// sincronização do directório ainda, `follow_directory` só limpa a
+/// substituição manual — não há valor nenhum para "seguir".
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum PhoneChange {
+    FollowDirectory { follow_directory: bool },
+    Set { phone: Option<String> },
+}
+
+/// Telefone da pertença (não da conta — a mesma pessoa pode ter números
+/// diferentes em organizações diferentes). O próprio muda o seu; um admin
+/// muda o de outro membro. `phone: null` apaga a substituição manual.
+#[utoipa::path(
+    put, path = "/api/orgs/{org_id}/members/{user_id}/phone", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), ("user_id" = Uuid, Path)),
+    request_body = PhoneChange,
+    responses(
+        (status = 200, body = MemberPhone),
+        (status = 400, description = "`follow_directory: false` — não pede nenhuma alteração.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "Número fora do formato aceite (`normalize_msisdn`: só móveis angolanos nesta fase).", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é o próprio nem admin da organização.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "O membro alvo não existe ou não é activo nesta organização.", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn set_member_phone(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((org_id, user_id)): Path<(Uuid, Uuid)>,
+    Json(change): Json<PhoneChange>,
+) -> Result<Json<MemberPhone>, ApiError> {
+    if auth.user_id != user_id {
+        require_admin_pub(&state, org_id, auth.user_id).await?;
+    }
+    crate::org::require_member_pub(&state, org_id, user_id).await?;
+
+    let (phone, source): (Option<String>, Option<&'static str>) = match change {
+        // `false` não pede nada — não há "não seguir o directório" para
+        // fazer, e silenciá-lo escondia o campo por ler (catraca do clippy).
+        PhoneChange::FollowDirectory {
+            follow_directory: false,
+        } => {
+            return Err(ApiError::BadRequest(
+                "follow_directory tem de ser true; false não pede nenhuma alteração".into(),
+            ))
+        }
+        PhoneChange::FollowDirectory {
+            follow_directory: true,
+        } => (None, None),
+        PhoneChange::Set { phone: None } => (None, None),
+        PhoneChange::Set { phone: Some(raw) } => (Some(normalize_msisdn(&raw)?), Some("manual")),
+    };
+    crate::org::set_member_phone(&state, org_id, user_id, phone.as_deref(), source).await?;
+    Ok(Json(MemberPhone {
+        user_id,
+        phone,
+        phone_source: source.map(str::to_string),
+    }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OrgPhone {
+    org_id: Uuid,
+    org_name: String,
+    phone: Option<String>,
+    phone_source: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SmsPreferences {
+    /// SMS de contacto directo (chamadas/mensagens de um colega).
+    contact_opt_out: bool,
+    /// SMS de reunião (convite, lembrete).
+    meeting_opt_out: bool,
+    /// Uma entrada por organização ACTIVA de quem pede.
+    phones: Vec<OrgPhone>,
+}
+
+async fn load_sms_preferences(state: &AppState, user_id: Uuid) -> Result<SmsPreferences, ApiError> {
+    let (contact_opt_out, meeting_opt_out): (bool, bool) =
+        sqlx::query_as("SELECT sms_contact_opt_out, sms_meeting_opt_out FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&state.db)
+            .await?;
+    let rows = crate::org::member_phones(state, user_id).await?;
+    Ok(SmsPreferences {
+        contact_opt_out,
+        meeting_opt_out,
+        phones: rows
+            .into_iter()
+            .map(|(org_id, org_name, phone, phone_source)| OrgPhone {
+                org_id,
+                org_name,
+                phone,
+                phone_source,
+            })
+            .collect(),
+    })
+}
+
+#[utoipa::path(
+    get, path = "/api/users/me/sms-preferences", tag = "sms",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = SmsPreferences),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn get_sms_preferences(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<SmsPreferences>, ApiError> {
+    Ok(Json(load_sms_preferences(&state, auth.user_id).await?))
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct PutSmsPreferencesReq {
+    /// Omisso ⇒ mantém o valor actual.
+    #[serde(default)]
+    contact_opt_out: Option<bool>,
+    #[serde(default)]
+    meeting_opt_out: Option<bool>,
+}
+
+#[utoipa::path(
+    put, path = "/api/users/me/sms-preferences", tag = "sms",
+    security(("session" = [])),
+    request_body = PutSmsPreferencesReq,
+    responses(
+        (status = 200, body = SmsPreferences),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn put_sms_preferences(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<PutSmsPreferencesReq>,
+) -> Result<Json<SmsPreferences>, ApiError> {
+    sqlx::query(
+        "UPDATE users SET sms_contact_opt_out = COALESCE($1, sms_contact_opt_out),
+             sms_meeting_opt_out = COALESCE($2, sms_meeting_opt_out)
+         WHERE id = $3",
+    )
+    .bind(req.contact_opt_out)
+    .bind(req.meeting_opt_out)
+    .bind(auth.user_id)
+    .execute(&state.db)
+    .await?;
+    Ok(Json(load_sms_preferences(&state, auth.user_id).await?))
 }
 
 #[cfg(test)]

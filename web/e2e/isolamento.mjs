@@ -693,6 +693,10 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
   await recusado('A lê a mensagem de B pelo caminho da SUA org', `/api/orgs/${A.orgId}/sms/messages/${msgB.json?.id}`, {
     token: A.token,
   })
+  await recusado('A lê a política de SMS da org B', `/api/orgs/${B.orgId}/sms/policy`, { token: A.token })
+  await recusado('A muda o telefone de B na org B', `/api/orgs/${B.orgId}/members/${B.userId}/phone`, {
+    token: A.token, method: 'PUT', body: { phone: '923000009' },
+  })
 
   // Escrita cross-tenant.
   await recusado('A envia SMS pela org B', `/api/orgs/${B.orgId}/sms/messages`, {

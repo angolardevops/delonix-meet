@@ -53,7 +53,7 @@
 - `webhooks.rs` — CRUD webhooks org, fire() best-effort (Slack/Teams/Mattermost/generic+HMAC), destino pela guarda de `net_guard`; registo de entregas (G7; migração 0043): cada envio fica em `webhook_deliveries` (`pending` antes, `succeeded`/`failed` com código, tempo e erro limpo de URLs depois; sem segredo nem assinatura), `GET …/webhooks/{hook_id}/deliveries[/{delivery_id}]` paginado e `POST …/redeliver` (método personalizado: `202` + `Location`, mesmo payload ao URL actual com a guarda reaplicada, 10/min por webhook → `429`); varredor horário fecha as `pending` abandonadas e apaga as de mais de 30 dias. Regras em `domain::integration::webhook_delivery`
 - `whiteboards.rs` — CRUD quadro branco persistente; URL assinado do PNG (G11): `POST /api/whiteboards/{id}/signed-url` → `{url, expires_at}` (≤15 min, só para quem já vê o quadro); `GET …/png?exp=&sig=` serve SEM sessão (HMAC-SHA256 sobre `(id, exp)` com subchave `core::crypto::derive_key(JWT_SECRET, …)`, tempo constante; adulterado/expirado/inexistente → `404`). Sem `sig`, o PNG com sessão é o de sempre. Regras em `domain::content::whiteboard`. Testes: `server/tests/whiteboard_signed_url.rs`
 - `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/internal/v1/voice/ivr/*`); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
-- `sms.rs` — gateway de SMS (ADR-0005): consola da org em `/api/orgs/{org_id}/sms/*` (só admin), superfície do agente USB em `/api/integrations/sms-agent/v1/*` (token `dlxg_`, extractor `SmsGatewayAuth`), encaminhamento pelo plano de numeração angolano (prefixos **por confirmar**) e worker dos operadores que pára no drain. Entrega no máximo uma vez
+- `sms.rs` — gateway de SMS (ADR-0005): consola da org em `/api/orgs/{org_id}/sms/*` (só admin), superfície do agente USB em `/api/integrations/sms-agent/v1/*` (token `dlxg_`, extractor `SmsGatewayAuth`), encaminhamento pelo plano de numeração angolano (prefixos **por confirmar**) e worker dos operadores que pára no drain. Entrega no máximo uma vez. `sms/policy` (só admin, `admins`|`members` — quem pode enviar), `orgs/{org_id}/members/{user_id}/phone` (o próprio ou admin; telefone é da PERTENÇA, não da conta — a mesma pessoa tem números diferentes por organização; `org.rs` é quem lê/escreve `org_members`, regra 1 do ADR-0004 §5) e `users/me/sms-preferences` (opt-out por conta, `contact_opt_out`/`meeting_opt_out`)
 - `sms_codec.rs` — o ÚNICO sítio que codifica SMS: GSM 03.38/UCS-2, segmentação, PDU SMS-SUBMIT para `AT+CMGS`. Puro, sem I/O
 - `sms_smpp.rs` — cliente SMPP 3.4 de saída (`bind_transmitter`/`submit_sm`/`unbind`) para Unitel/Movicel/Africell; credenciais em `SMS_*_SMPP`. Provado contra SMSC falso, **nunca contra um operador**; sem recibos nem TLS
 - `crypto.rs` — sha256 de token e token aleatório (`random_token`). Código novo chama isto; a catraca conta as cópias fora dele
@@ -117,7 +117,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0052) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0053) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 

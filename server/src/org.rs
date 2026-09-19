@@ -338,6 +338,45 @@ pub async fn require_member_pub(
     require_member(state, org_id, user_id).await
 }
 
+/// Grava o telefone da PERTENÇA (não da conta — a mesma pessoa pode ter
+/// números diferentes em organizações diferentes). Exposto para `sms.rs`
+/// (regra 1 do ADR-0004 §5: `org_members` só se lê/escreve daqui).
+pub async fn set_member_phone(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+    phone: Option<&str>,
+    phone_source: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE org_members SET phone = $1, phone_source = $2 WHERE org_id = $3 AND user_id = $4",
+    )
+    .bind(phone)
+    .bind(phone_source)
+    .bind(org_id)
+    .bind(user_id)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Telefone de quem pede em cada organização ACTIVA sua, mais o nome da
+/// organização (para `sms::SmsPreferences`). Mesma regra 1 do `set_member_phone`.
+pub async fn member_phones(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Vec<(Uuid, String, Option<String>, Option<String>)>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT o.id, o.name, m.phone, m.phone_source
+         FROM org_members m JOIN organizations o ON o.id = m.org_id
+         WHERE m.user_id = $1 AND m.archived_at IS NULL
+         ORDER BY o.name",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await?)
+}
+
 /// Slugify exposto para o registo de organizações (auth.rs).
 /// Junta uma conta a uma organização dentro de uma transação já aberta. É o
 /// único `INSERT INTO org_members` fora dos handlers deste módulo — quem

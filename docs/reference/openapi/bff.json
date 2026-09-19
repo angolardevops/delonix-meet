@@ -2239,6 +2239,31 @@
         ],
         "type": "object"
       },
+      "MemberPhone": {
+        "properties": {
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "description": "`manual` (só isto por agora — `odoo` fica para a sincronização do\ndirectório, que não existe ainda) ou `null` sem telefone.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "type": "object"
+      },
       "Message": {
         "properties": {
           "body": {
@@ -2660,6 +2685,34 @@
           "label",
           "prefixes",
           "configured"
+        ],
+        "type": "object"
+      },
+      "OrgPhone": {
+        "properties": {
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "org_name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "org_id",
+          "org_name"
         ],
         "type": "object"
       },
@@ -3148,6 +3201,33 @@
         ],
         "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
       },
+      "PhoneChange": {
+        "description": "`{\"phone\": \"...\"} | {\"phone\": null} | {\"follow_directory\": true}`. Sem\nsincronização do directório ainda, `follow_directory` só limpa a\nsubstituição manual — não há valor nenhum para \"seguir\".",
+        "oneOf": [
+          {
+            "properties": {
+              "follow_directory": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "follow_directory"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "phone": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
       "ProvisionOrgReq": {
         "properties": {
           "email_domain": {
@@ -3449,6 +3529,35 @@
             "format": "uuid",
             "type": [
               "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PutSmsPolicyReq": {
+        "properties": {
+          "send_policy": {
+            "$ref": "#/components/schemas/SmsSendPolicy"
+          }
+        },
+        "required": [
+          "send_policy"
+        ],
+        "type": "object"
+      },
+      "PutSmsPreferencesReq": {
+        "properties": {
+          "contact_opt_out": {
+            "description": "Omisso ⇒ mantém o valor actual.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "meeting_opt_out": {
+            "type": [
+              "boolean",
               "null"
             ]
           }
@@ -4245,6 +4354,49 @@
           "reason"
         ],
         "type": "object"
+      },
+      "SmsPolicyResp": {
+        "properties": {
+          "send_policy": {
+            "$ref": "#/components/schemas/SmsSendPolicy"
+          }
+        },
+        "required": [
+          "send_policy"
+        ],
+        "type": "object"
+      },
+      "SmsPreferences": {
+        "properties": {
+          "contact_opt_out": {
+            "description": "SMS de contacto directo (chamadas/mensagens de um colega).",
+            "type": "boolean"
+          },
+          "meeting_opt_out": {
+            "description": "SMS de reunião (convite, lembrete).",
+            "type": "boolean"
+          },
+          "phones": {
+            "description": "Uma entrada por organização ACTIVA de quem pede.",
+            "items": {
+              "$ref": "#/components/schemas/OrgPhone"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contact_opt_out",
+          "meeting_opt_out",
+          "phones"
+        ],
+        "type": "object"
+      },
+      "SmsSendPolicy": {
+        "enum": [
+          "admins",
+          "members"
+        ],
+        "type": "string"
       },
       "SsoCheck": {
         "description": "Resultado da verificação de SSO para um domínio de email.",
@@ -9228,6 +9380,112 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/members/{user_id}/phone": {
+      "put": {
+        "operationId": "set_member_phone",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberPhone"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`follow_directory: false` — não pede nenhuma alteração."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é o próprio nem admin da organização."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O membro alvo não existe ou não é activo nesta organização."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Número fora do formato aceite (`normalize_msisdn`: só móveis angolanos nesta fase)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Telefone da pertença (não da conta — a mesma pessoa pode ter números\ndiferentes em organizações diferentes). O próprio muda o seu; um admin\nmuda o de outro membro. `phone: null` apaga a substituição manual.",
+        "tags": [
+          "sms"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/sms/devices": {
       "get": {
         "operationId": "list_devices",
@@ -9748,6 +10006,147 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/policy": {
+      "get": {
+        "operationId": "get_sms_policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsPolicyResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Quem pode enviar SMS pela organização (só admin lê e muda — enviar custa\ndinheiro, a mesma razão de `get_route`/`put_route`).",
+        "tags": [
+          "sms"
+        ]
+      },
+      "put": {
+        "operationId": "put_sms_policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutSmsPolicyReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsPolicyResp"
                 }
               }
             },
@@ -15261,6 +15660,84 @@
         "summary": "Método personalizado: dá à sala pessoal um código novo. O link antigo\ndeixa de abrir (`GET /api/rooms/{antigo}` → `404`). Um dial-in ligado ao\ncódigo antigo NÃO acompanha: fica no código antigo e deixa de aparecer.",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/api/users/me/sms-preferences": {
+      "get": {
+        "operationId": "get_sms_preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsPreferences"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
+        ]
+      },
+      "put": {
+        "operationId": "put_sms_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutSmsPreferencesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsPreferences"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "sms"
         ]
       }
     },
