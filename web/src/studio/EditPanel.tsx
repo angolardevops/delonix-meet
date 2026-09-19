@@ -13,8 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError, apiErrorMessage, getRecording, isAbort, recordingObjectUrl } from '../api'
-import { STUDIO_EDIT_PARAM, studioEditTarget } from '../pages/recordings/studioLink'
+import { apiErrorMessage, isAbort, recordingObjectUrl, recordingsLibrary } from '../api'
 import type { RecordingItem } from '../api'
 import { getAppName } from '../branding'
 import { useShell } from '../components/shellContext'
@@ -61,16 +60,16 @@ const FERRAMENTAS: { id: Ferramenta; icone: IconName }[] = [
   { id: 'audio', icone: 'volume' },
 ]
 
-/** `#/studio?vista=edicao&gravacao=<id>` — a gravação a abrir no editor (contrato em `studioLink.ts`). */
+/** `#/studio?vista=legendas&gravacao=<id>` — a gravação da biblioteca a abrir no editor. */
 function gravacaoDoEndereco(): string | null {
-  return studioEditTarget(location.hash)
+  return new URLSearchParams(location.hash.split('?')[1] ?? '').get('gravacao')
 }
 
 function semGravacaoNoEndereco() {
   const [rota, query = ''] = location.hash.split('?')
   const q = new URLSearchParams(query)
-  if (!q.has(STUDIO_EDIT_PARAM)) return
-  q.delete(STUDIO_EDIT_PARAM)
+  if (!q.has('gravacao')) return
+  q.delete('gravacao')
   const resto = q.toString()
   history.replaceState(null, '', resto ? `${rota}?${resto}` : rota)
 }
@@ -189,13 +188,14 @@ export default function EditPanel({
     semGravacaoNoEndereco()
     if (p?.fontes.some((f) => f.gravacao === id)) return
     const ctl = new AbortController()
-    // O próprio recurso: uma gravação publicada da organização também abre.
-    getRecording(id, ctl.signal)
-      .then((r) => void abrirGravacao(r))
+    recordingsLibrary(ctl.signal)
+      .then((lista) => {
+        const r = lista.find((x) => x.id === id)
+        if (!r) setErro(t('editor.biblioteca.naoEncontrada'))
+        else void abrirGravacao(r)
+      })
       .catch((e) => {
-        if (isAbort(e)) return
-        if (e instanceof ApiError && e.status === 404) setErro(t('editor.biblioteca.naoEncontrada'))
-        else setErro(apiErrorMessage(e, t('editor.biblioteca.erro')))
+        if (!isAbort(e)) setErro(apiErrorMessage(e, t('editor.biblioteca.erro')))
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pr.aCarregar])
