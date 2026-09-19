@@ -18,6 +18,8 @@ _NVM_BIN   := $(shell ls -d "$(HOME)/.nvm/versions/node"/v*/bin 2>/dev/null | ta
 NODE_BIN   ?= $(or $(_NVM_BIN),/home/walter/.nvm/versions/node/v25.0.0/bin)
 ENV_FILE   ?= /etc/delonix/delonix.env
 API_URL    ?= http://127.0.0.1:8180
+API_PORT   := $(shell printf '%s' "$(API_URL)" | sed -nE 's#.*:([0-9]+).*#\1#p')
+API_PORT   := $(if $(API_PORT),$(API_PORT),8180)
 WEB_PORT   ?= 5173
 RUNDIR     := $(ROOT)/.dev
 # Segredo partilhado da API interna de voz (IVR). O MESMO valor tem de ser usado
@@ -45,6 +47,14 @@ C := \033[1;36m
 G := \033[1;32m
 Y := \033[1;33m
 Z := \033[0m
+
+# Mata só o processo a OUVIR nesta porta — nunca por nome de comando.
+# 'delonix-server'/'vite' são o mesmo nome em QUALQUER worktree deste repo;
+# matar por nome apanha processos de outras sessões/checkouts na mesma máquina.
+# $(1)=porta  $(2)=sinal (TERM|KILL)
+define KILL_PORT
+if command -v fuser >/dev/null 2>&1; then fuser -k -$(2) $(1)/tcp 2>/dev/null || true; elif command -v lsof >/dev/null 2>&1; then lsof -ti:$(1) 2>/dev/null | xargs -r kill -$(2) 2>/dev/null || true; fi
+endef
 
 .PHONY: help
 help: ## Mostra esta ajuda
@@ -83,7 +93,7 @@ api-bg: ## Compila e arranca o backend em dev (via systemd se existir; senão de
 	@if systemctl --user cat delonix-server >/dev/null 2>&1; then \
 	  systemctl --user restart delonix-server && printf "  (via systemd)\n"; \
 	else \
-	  pkill -f '[d]elonix-server' 2>/dev/null || true; \
+	  $(call KILL_PORT,$(API_PORT),TERM); \
 	  ( cd server && DELONIX_ALLOW_INSECURE=1 VOICE_INTERNAL_SECRET=$(VOICE_SECRET) \
 	    setsid ./target/release/delonix-server > $(RUNDIR)/api.log 2>&1 < /dev/null & echo $$! > $(RUNDIR)/api.pid ); \
 	fi
@@ -96,7 +106,7 @@ api-bg: ## Compila e arranca o backend em dev (via systemd se existir; senão de
 web-bg: ## Arranca o Vite dev (HMR) em background — HTTP em localhost (contexto seguro)
 	@printf "$(C)▶ frontend (vite dev, background)$(Z)\n"
 	@mkdir -p $(RUNDIR)
-	@pkill -f '[d]elonix-meet/web.*vite' 2>/dev/null || true; pkill -f '[n]ode.*vite' 2>/dev/null || true
+	@$(call KILL_PORT,$(WEB_PORT),TERM)
 	@cd web && [ -d node_modules ] || npm ci
 	@# HTTP em localhost = já é contexto seguro → câmara/mic funcionam sem cert.
 	@# Para câmara por IP na rede, usar o Nginx HTTPS (make prod) ou 'make web-https'.
@@ -121,11 +131,11 @@ web: ## Frontend em FOREGROUND (vite HMR, HTTP localhost) — Ctrl-C para parar
 .PHONY: stop
 stop: ## Para o backend + frontend de dev (mantém a infra)
 	@printf "$(C)▶ a parar dev$(Z)\n"
-	@# Usa o pid gravado ao arrancar; fallback para pkill com bracket trick (não se auto-mata).
+	@# Usa o pid gravado ao arrancar; fallback mata só quem ocupa a porta (nunca por nome).
 	@if [ -f $(RUNDIR)/api.pid ]; then kill $$(cat $(RUNDIR)/api.pid) 2>/dev/null || true; rm -f $(RUNDIR)/api.pid; \
-	else pkill -f '[d]elonix-server' 2>/dev/null || true; fi
+	else $(call KILL_PORT,$(API_PORT),TERM); fi
 	@if [ -f $(RUNDIR)/web.pid ]; then kill $$(cat $(RUNDIR)/web.pid) 2>/dev/null || true; rm -f $(RUNDIR)/web.pid; fi
-	@pkill -f '[n]ode.*vite' 2>/dev/null || true
+	@$(call KILL_PORT,$(WEB_PORT),TERM)
 	@printf "$(G)  ✓ parado (infra continua; 'make down' para a infra também)$(Z)\n"
 
 .PHONY: down
@@ -141,9 +151,9 @@ kill: ## Para TUDO (processos locais + docker + k8s) — estado zero até 'make 
 	@printf "$(C)▶ a parar processos locais (backend + frontend)...$(Z)\n"
 	@if [ -f $(RUNDIR)/api.pid ]; then kill $$(cat $(RUNDIR)/api.pid) 2>/dev/null || true; rm -f $(RUNDIR)/api.pid; fi
 	@if [ -f $(RUNDIR)/web.pid ]; then kill $$(cat $(RUNDIR)/web.pid) 2>/dev/null || true; rm -f $(RUNDIR)/web.pid; fi
-	@pkill -f 'target/release/delonix-server' 2>/dev/null || true
-	@sleep 1 && pkill -9 -f 'target/release/delonix-server' 2>/dev/null || true
-	@pkill -f '[n]ode.*vite\|[v]ite.*delonix' 2>/dev/null || true
+	@$(call KILL_PORT,$(API_PORT),TERM)
+	@sleep 1 && $(call KILL_PORT,$(API_PORT),KILL)
+	@$(call KILL_PORT,$(WEB_PORT),TERM)
 	@printf "$(C)▶ a parar docker compose (infra dev + voice)...$(Z)\n"
 	@docker compose down 2>/dev/null || true
 	@docker compose -f voice/docker-compose.voice.yml down 2>/dev/null || true
