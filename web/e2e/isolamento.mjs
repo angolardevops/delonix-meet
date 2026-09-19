@@ -263,9 +263,11 @@ if (destinoB.status === 201 && destinoB.json?.id) {
   const idB = destinoB.json.id
   const d = `/api/orgs/${B.orgId}/stream-destinations/${idB}`
   const semChave = (j) => !JSON.stringify(j ?? null).includes(CHAVE_DESTINO_B)
-  if (semChave(destinoB.json) && destinoB.json.key_prefix && destinoB.json.has_key === true) {
-    ok('a resposta da criação NÃO traz a chave (só key_prefix/has_key)')
-  } else nok('a resposta da criação NÃO traz a chave', JSON.stringify(destinoB.json).slice(0, 160))
+  // A chave sai UMA vez, na resposta que a cria (ADR-0003/G1); depois só há
+  // `key_prefix` e `has_key` — é o que a lista e o detalhe abaixo provam.
+  if (destinoB.json.stream_key === CHAVE_DESTINO_B && destinoB.json.key_prefix && destinoB.json.has_key === true) {
+    ok('a chave sai UMA vez, na criação (com key_prefix/has_key)')
+  } else nok('a chave sai UMA vez, na criação', JSON.stringify(destinoB.json).slice(0, 160))
   const listaB = await req(`/api/orgs/${B.orgId}/stream-destinations`, { token: B.token })
   const umB = await req(d, { token: B.token })
   if (listaB.status === 200 && umB.status === 200 && semChave(listaB.json) && semChave(umB.json)) {
@@ -311,7 +313,7 @@ if (destinoB.status === 201 && destinoB.json?.id) {
     })
     ws.on('error', () => { clearTimeout(t); resolve('(erro de ligação)') })
   })
-  const NAO_E_TEU = /não existe ou não pertence/
+  const NAO_E_TEU = /não existe, não é desta organização/
   const salaDirectoA = (await req('/api/rooms', { token: A.token, method: 'POST', body: { name: 'directo da A', topology: 'sfu' } })).json
   const joinDirectoA = await req(`/api/rooms/${salaDirectoA.code}/join`, { token: A.token, method: 'POST' })
   const vDirA = await recusaDoDirecto(joinDirectoA.json?.room_token, salaDirectoA.code, [{ id: idB }])
@@ -558,7 +560,7 @@ if (gravB) {
   await permitido('B envia uma legenda (controlo positivo)', `/api/recordings/${gravB}/captions/${lingua}`, {
     token: B.token, method: 'PUT', body: { vtt: 'WEBVTT\n\n00:00.000 --> 00:01.000\nprivado da B\n', publish: true },
   })
-  const capB = (await req(`/api/recordings/${gravB}/chapters`, { token: B.token, method: 'POST', body: { t_ms: 0, title: 'da B' } })).json
+  const capB = (await req(`/api/recordings/${gravB}/chapters`, { token: B.token, method: 'POST', body: { at_secs: 0, title: 'da B' } })).json
   const comB = (await req(`/api/recordings/${gravB}/comments`, { token: B.token, method: 'POST', body: { body: 'da B' } })).json
   const capId = capB?.id ?? inventado
   const comId = comB?.id ?? inventado
@@ -577,7 +579,7 @@ if (gravB) {
   await recusadoNaPorta('A lê um comentário da B', `/api/recordings/${gravB}/comments/${comId}`, { token: A.token })
   await recusadoNaPorta('A APAGA um comentário da B', `/api/recordings/${gravB}/comments/${comId}`, { token: A.token, method: 'DELETE' })
   await recusadoNaPorta('A lista os capítulos da B', `/api/recordings/${gravB}/chapters`, { token: A.token })
-  await recusadoNaPorta('A cria um capítulo na B', `/api/recordings/${gravB}/chapters`, { token: A.token, method: 'POST', body: { t_ms: 1, title: 'x' } })
+  await recusadoNaPorta('A cria um capítulo na B', `/api/recordings/${gravB}/chapters`, { token: A.token, method: 'POST', body: { at_secs: 1, title: 'x' } })
   await recusadoNaPorta('A gera capítulos na B', `/api/recordings/${gravB}/chapters/generate`, { token: A.token, method: 'POST' })
   await recusadoNaPorta('A lê um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token })
   await recusadoNaPorta('A EDITA um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token, method: 'PATCH', body: { title: 'forjado' } })
@@ -594,10 +596,13 @@ if (gravB) {
   else nok('a gravação da B não aparece nas publicadas da A', JSON.stringify(pub.json).slice(0, 160))
   // O estado, não só o código: nada do que A tentou ficou escrito.
   const depois = (await req(`/api/recordings/${gravB}/details`, { token: B.token })).json
-  if (depois?.description === '' && depois.comment_count === 1 && depois.chapter_count === 1 && depois.visibility === 'private') {
+  const capsB = (await req(`/api/recordings/${gravB}/chapters`, { token: B.token })).json
+  const comsB = (await req(`/api/recordings/${gravB}/comments`, { token: B.token })).json
+  const n = (p) => (Array.isArray(p) ? p.length : (p?.items?.length ?? -1))
+  if (depois?.title === null && depois.share_count === 0 && n(capsB) === 1 && n(comsB) === 1) {
     ok('e a gravação da B ficou exactamente como estava')
   } else {
-    nok('e a gravação da B ficou exactamente como estava', JSON.stringify(depois).slice(0, 200))
+    nok('e a gravação da B ficou exactamente como estava', JSON.stringify({ depois, capitulos: n(capsB), comentarios: n(comsB) }).slice(0, 700))
   }
 } else {
   nok('B carrega uma gravação para o teste do leitor', `devolveu ${upB.status}`)
