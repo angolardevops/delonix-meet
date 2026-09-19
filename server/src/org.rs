@@ -112,6 +112,7 @@ pub struct OrgSettingsReq {
         UpdateEmployeeReq,
         CreateGroupReq,
         CreateMeetingRoomReq,
+        MemberPhone,
     ))
 )]
 pub struct ApiDoc;
@@ -267,6 +268,17 @@ pub struct Employee {
     /// Último evento de auditoria do membro (login, etc.). Só preenchido na listagem.
     #[sqlx(default)]
     pub last_active: Option<DateTime<Utc>>,
+    /// Telefone E.164 do membro NESTA org. Só o vê um admin ou o próprio; para
+    /// os colegas vai `null` e basta-lhes `can_sms`. Só preenchido na listagem.
+    #[sqlx(default)]
+    pub phone: Option<String>,
+    /// `odoo` | `manual` | `null` — quem escreveu o número (ver migração 0053).
+    #[sqlx(default)]
+    pub phone_source: Option<String>,
+    /// Tem número e não desligou os SMS de contactos. Não diz se QUEM PERGUNTA
+    /// pode enviar: isso é a política da org.
+    #[sqlx(default)]
+    pub can_sms: bool,
 }
 
 /// Sem `last_active` (só a listagem o traz, via subquery à parte). Estava
@@ -819,15 +831,24 @@ pub async fn list_employees(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<Employee>>, ApiError> {
-    require_member(&state, org_id, auth.user_id).await?;
+    let is_admin = match role_in_org(&state, org_id, auth.user_id).await? {
+        Some(role) => role == "admin",
+        None => return Err(ApiError::NotFound),
+    };
+    // O número é dado pessoal: colegas sabem que existe (`can_sms`), não qual é.
     let emps: Vec<Employee> = sqlx::query_as(&format!(
         "SELECT {EMPLOYEE_COLUMNS},
-                  (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active
+                  (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active,
+                  CASE WHEN $2 OR m.user_id = $3 THEN m.phone_e164 END AS phone,
+                  CASE WHEN $2 OR m.user_id = $3 THEN m.phone_source END AS phone_source,
+                  (m.phone_e164 IS NOT NULL AND NOT u.sms_contact_opt_out) AS can_sms
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
            WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"
     ))
     .bind(org_id)
+    .bind(is_admin)
+    .bind(auth.user_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(emps))
@@ -1531,6 +1552,119 @@ pub async fn primary_domain(state: &AppState, user_id: Uuid) -> String {
     .flatten()
     .map(|r| r.0)
     .unwrap_or_default()
+}
+
+// ---------- telefone dos membros e destinatários de SMS ----------
+
+/// Destinatário de SMS resolvido no servidor. Só existe para membros ACTIVOS da
+/// org (S3): um arquivado deixa de ser contacto no mesmo instante.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SmsRecipient {
+    pub user_id: Uuid,
+    pub phone_e164: Option<String>,
+    pub sms_contact_opt_out: bool,
+    pub sms_meeting_opt_out: bool,
+}
+
+/// Os membros activos de `org_id` entre `user_ids`, com número e consentimento.
+/// Quem não estiver na resposta não é membro activo desta org.
+pub(crate) async fn sms_recipients(
+    state: &AppState,
+    org_id: Uuid,
+    user_ids: &[Uuid],
+) -> Result<Vec<SmsRecipient>, ApiError> {
+    Ok(sqlx::query_as::<_, SmsRecipient>(
+        "SELECT m.user_id, m.phone_e164, u.sms_contact_opt_out, u.sms_meeting_opt_out
+         FROM org_members m JOIN users u ON u.id = m.user_id
+         WHERE m.org_id = $1 AND m.user_id = ANY($2) AND m.archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_ids)
+    .fetch_all(&state.db)
+    .await?)
+}
+
+/// Uma escrita MANUAL do telefone (o próprio ou um admin).
+pub(crate) enum PhoneWrite {
+    /// Número já normalizado, ou `None` para apagar. Fica `manual`: a
+    /// sincronização do directório deixa de lhe tocar.
+    Manual(Option<String>),
+    /// Apaga e devolve o campo ao directório (a próxima sincronização preenche).
+    FollowDirectory,
+}
+
+/// Grava o telefone de um membro activo. `false` se não for membro activo.
+pub(crate) async fn set_member_phone(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+    write: PhoneWrite,
+) -> Result<bool, ApiError> {
+    let (phone, source) = match write {
+        PhoneWrite::Manual(p) => (p, Some("manual")),
+        PhoneWrite::FollowDirectory => (None, None),
+    };
+    let res = sqlx::query(
+        "UPDATE org_members SET phone_e164 = $3, phone_source = $4, phone_updated_at = now()
+         WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(phone)
+    .bind(source)
+    .execute(&state.db)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// Telefone vindo da sincronização do directório (Odoo). A regra escrita na
+/// migração 0053: um número `manual` NUNCA é sobrescrito; um número `odoo`
+/// acompanha o directório, incluindo ser apagado quando o directório o apaga.
+/// Devolve `true` se mudou alguma coisa.
+pub(crate) async fn sync_member_phone_from_directory(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+    phone: Option<&str>,
+) -> Result<bool, ApiError> {
+    let res = sqlx::query(
+        "UPDATE org_members
+            SET phone_e164 = $3,
+                phone_source = CASE WHEN $3::text IS NULL THEN NULL ELSE 'odoo' END,
+                phone_updated_at = now()
+          WHERE org_id = $1 AND user_id = $2
+            AND phone_source IS DISTINCT FROM 'manual'
+            AND phone_e164 IS DISTINCT FROM $3::text",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(phone)
+    .execute(&state.db)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// O telefone do próprio em cada org activa (para o perfil).
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct MemberPhone {
+    pub org_id: Uuid,
+    pub org_name: String,
+    pub phone: Option<String>,
+    pub phone_source: Option<String>,
+}
+
+pub(crate) async fn member_phones_of_user(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Vec<MemberPhone>, ApiError> {
+    Ok(sqlx::query_as::<_, MemberPhone>(
+        "SELECT m.org_id, o.name AS org_name, m.phone_e164 AS phone, m.phone_source
+         FROM org_members m JOIN organizations o ON o.id = m.org_id
+         WHERE m.user_id = $1 AND m.archived_at IS NULL ORDER BY o.name",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await?)
 }
 
 // ---------- SSO Config (admin) ----------
