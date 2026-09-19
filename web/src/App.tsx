@@ -17,6 +17,7 @@ import Home from './pages/Home'
 
 const Room = lazy(() => import('./pages/Room'))
 const Lobby = lazy(() => import('./pages/Lobby'))
+const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'))
 const PhoneCamera = lazy(() => import('./pages/PhoneCamera'))
 const Calendar = lazy(() => import('./pages/Calendar'))
 const Analytics = lazy(() => import('./pages/Analytics'))
@@ -48,6 +49,7 @@ type Route =
   | { kind: 'lobby'; code: string }
   | { kind: 'telemovel'; code: string }
   | { kind: 'share'; token: string }
+  | { kind: 'invite'; token: string }
   | { kind: 'diagram'; id: string | null }
   | { kind: 'player'; id: string }
 
@@ -63,6 +65,8 @@ function parseHash(): Route {
   if (telemovel) return { kind: 'telemovel', code: telemovel[1] }
   const share = h.match(/^#\/share\/([a-f0-9]+)$/)
   if (share) return { kind: 'share', token: share[1] }
+  const invite = h.match(/^#\/invite\/([A-Za-z0-9_-]+)$/)
+  if (invite) return { kind: 'invite', token: invite[1] }
   const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
   if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
   const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
@@ -129,6 +133,15 @@ export default function App() {
           if (location.hash.startsWith('#/login')) location.hash = '/'
         }}
       />
+    )
+  }
+
+  // Convite de organização: precisa de sessão (a entrada acima devolve-nos aqui).
+  if (route.kind === 'invite') {
+    return (
+      <RouteFallback>
+        <AcceptInvitation token={route.token} onAccepted={() => (location.hash = '/')} />
+      </RouteFallback>
     )
   }
 
