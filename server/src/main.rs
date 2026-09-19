@@ -21,6 +21,7 @@ mod odoo;
 mod odoo_sso;
 mod org;
 mod presence;
+mod pstn_bridge;
 mod pubsub;
 mod ramais;
 mod rate_limit;

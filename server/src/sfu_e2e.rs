@@ -1279,3 +1279,172 @@ async fn media_e_consentimento_sobrevivem_as_renegociacoes_do_sfu() {
     sfu.remove_peer(room, a.id).await;
     sfu.remove_peer(room, b.id).await;
 }
+
+/// Ponte PSTN↔SFU (Abordagem B, `pstn_bridge.rs`) — o lado do SFU, ponta a
+/// ponta E COM SRTP REAL, sem precisar de FreeSWITCH nenhum.
+///
+/// O que isto NÃO prova (por desenho — ver o relatório da tarefa): que o
+/// FreeSWITCH real sabe falar este protocolo. Isso fica por confirmar contra
+/// uma instância real (ver o comentário extenso no topo de
+/// `voice/freeswitch/scripts/dialin_ivr.lua`).
+///
+/// O que isto PROVA, com um `RTCPeerConnection` real a fazer de browser: o
+/// socket de ingress abre, a allowlist de IP aceita a origem certa, o
+/// desencriptar SRTP com a chave devolvida por `activate_pstn_bridge`
+/// funciona, o RTP resultante é válido, e chega ao participante WebRTC como
+/// uma track "Telefone" com RTP real lá dentro — exactamente como
+/// `pstn_bridge.rs`'s doc-comment promete. Constrói o pacote SRTP EXACTAMENTE
+/// como o FreeSWITCH teria de o fazer: cifra com a `ingress_key_b64` da
+/// resposta, manda para `127.0.0.1:<port>`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pstn_bridge_ingress_forwards_to_webrtc_participant() {
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let a = TestClient::join(&sfu, room).await;
+    a.publish(OPUS, "a-audio").await;
+    // A ponte só subscreve peers com SDP já negociado (`pstn_subscribe` em
+    // `sfu.rs` — subscrever antes disso renegociaria a apontar para o vazio).
+    // Esperar pelo remote description do CLIENTE garante, por causalidade,
+    // que o do SERVIDOR (que é posto ANTES de responder — ver
+    // `apply_client_offer`) já está lá também.
+    eventually("A negociou com o SFU", prazo(15), || {
+        let a = a.clone();
+        async move { a.pc.remote_description().await.is_some() }
+    })
+    .await;
+
+    let allowed_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let info = sfu
+        .activate_pstn_bridge(room, allowed_ip)
+        .await
+        .expect("activate_pstn_bridge deve abrir o socket de ingress");
+
+    // Idempotência: activar outra vez devolve a MESMA ponte (mesma porta e
+    // mesmas chaves), não gera uma nova a meio de uma chamada em curso.
+    let info2 = sfu
+        .activate_pstn_bridge(room, allowed_ip)
+        .await
+        .expect("segunda activação");
+    assert_eq!(info.port, info2.port, "activar duas vezes trocou de porta");
+    assert_eq!(
+        info.ingress_key_b64, info2.ingress_key_b64,
+        "activar duas vezes gerou uma chave nova a meio da chamada"
+    );
+
+    // Reconstrói o contexto SRTP de ingress a partir da chave devolvida —
+    // exactamente o que o FreeSWITCH teria de fazer do lado dele.
+    use base64::Engine as _;
+    let key_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&info.ingress_key_b64)
+        .expect("ingress_key_b64 é base64 válido");
+    assert_eq!(
+        key_bytes.len(),
+        30,
+        "master_key(16)+master_salt(14) = 30 bytes"
+    );
+    let (master_key, master_salt) = key_bytes.split_at(16);
+    let mut ctx = webrtc_srtp::context::Context::new(
+        master_key,
+        master_salt,
+        webrtc_srtp::protection_profile::ProtectionProfile::Aes128CmHmacSha1_80,
+        None,
+        None,
+    )
+    .expect("contexto SRTP a partir da chave da ponte");
+
+    // Um fluxo CONTÍNUO de pacotes sintéticos — não um único envio. A
+    // subscrição do peer à track "Telefone" (`pstn_subscribe` em `sfu.rs`)
+    // só fica pronta depois de uma renegociação SDP completa (oferta do
+    // servidor → resposta do cliente, uma volta de rede); um pacote a mais
+    // ENVIADO ANTES DISSO chega à ingress com o mapa de subscritores ainda
+    // vazio e é simplesmente perdido (por desenho — não há buffer de
+    // reenvio). Um fluxo repetido garante que ALGUM pacote chega depois da
+    // subscrição ficar pronta — exactamente como o FreeSWITCH real mandaria
+    // um stream contínuo, não um pacote avulso. O payload não precisa de
+    // ser Opus válido para ESTE teste (prova o transporte, não o codec; o
+    // round-trip Opus real já está coberto em `pstn_bridge::tests`).
+    let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("socket de teste");
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sender_task = {
+        let stop = stop.clone();
+        let dest = ("127.0.0.1".to_string(), info.port);
+        tokio::spawn(async move {
+            let mut seq: u16 = 1;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let packet = webrtc::rtp::packet::Packet {
+                    header: webrtc::rtp::header::Header {
+                        version: 2,
+                        payload_type: 111,
+                        sequence_number: seq,
+                        timestamp: 1000u32.wrapping_add(seq as u32 * 960),
+                        ssrc: 0xABCD,
+                        ..Default::default()
+                    },
+                    payload: bytes::Bytes::from_static(&[0xAA; 32]),
+                };
+                seq = seq.wrapping_add(1);
+                use webrtc::util::Marshal;
+                if let Ok(plain) = packet.marshal() {
+                    if let Ok(protected) = ctx.encrypt_rtp(&plain) {
+                        let _ = sender.send_to(&protected, &dest).await;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+    };
+
+    eventually_com_diagnostico(
+        "A recebe a track \"Telefone\" com RTP real",
+        prazo(15),
+        || {
+            let a = a.clone();
+            async move {
+                a.streams_seen()
+                    .await
+                    .iter()
+                    .any(|(stream, kind)| stream == "telefone" && kind == "audio")
+                    && a.rtp_seen
+                        .lock()
+                        .await
+                        .get("telefone")
+                        .copied()
+                        .unwrap_or(0)
+                        > 0
+            }
+        },
+        || a.retrato(),
+    )
+    .await;
+
+    // A ponte continua viva (o fluxo é contínuo, não um `recv` de uso
+    // único): mais pacotes continuam a chegar depois do primeiro.
+    let after_first = a
+        .rtp_seen
+        .lock()
+        .await
+        .get("telefone")
+        .copied()
+        .unwrap_or(0);
+    eventually("mais pacotes continuam a chegar", prazo(10), || {
+        let a = a.clone();
+        async move {
+            a.rtp_seen
+                .lock()
+                .await
+                .get("telefone")
+                .copied()
+                .unwrap_or(0)
+                > after_first
+        }
+    })
+    .await;
+
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = sender_task.await;
+
+    sfu.remove_peer(room, a.id).await;
+}

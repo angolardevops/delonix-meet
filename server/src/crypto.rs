@@ -156,9 +156,18 @@ pub(crate) fn random_token(prefix: &str) -> String {
 /// `<prefixo><64 hex>`. Mesma regra 4 do ADR-0004 §5: um só sítio a chamar
 /// `OsRng`/`fill_bytes`, para a catraca de arquitectura verificar.
 pub(crate) fn random_hex(n_bytes: usize) -> String {
+    hex::encode(random_bytes(n_bytes))
+}
+
+/// `n` bytes crus de aleatoriedade do SO — a primitiva de que `random_hex`
+/// (e `random_token`) já são um formato. Existe em separado para quem
+/// precisa dos bytes em si, não de texto: as chaves SRTP efémeras da ponte
+/// PSTN↔SFU (`pstn_bridge::SrtpKeyPair`), que nunca passam por hex. MESMA
+/// regra 4 do ADR-0004 §5 — um só sítio a chamar `OsRng`/`fill_bytes`.
+pub(crate) fn random_bytes(n_bytes: usize) -> Vec<u8> {
     let mut bytes = vec![0u8; n_bytes];
     OsRng.fill_bytes(&mut bytes);
-    hex::encode(bytes)
+    bytes
 }
 
 #[cfg(test)]
