@@ -1,0 +1,366 @@
+/*
+ * Entrar. Grelha de duas colunas do template (painel escuro | formulário de
+ * 560 px); abaixo de 900 px o painel encolhe para uma faixa com a marca e o
+ * formulário fica com a largura toda.
+ */
+.auth {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 560px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* ------------------------------------------------------ painel de valor */
+.auth-aside {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: 56px 60px;
+  background: var(--stage);
+  color: var(--text);
+}
+.auth-aside__bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 90% at 18% 12%, color-mix(in srgb, var(--accent-strong) 22%, transparent), transparent 62%),
+    radial-gradient(90% 80% at 88% 92%, color-mix(in srgb, var(--live) 16%, transparent), transparent 60%);
+}
+.auth-aside__bg--foto {
+  background-size: cover;
+  background-position: center;
+  filter: blur(2px) brightness(0.45);
+  transform: scale(1.03);
+}
+.auth-aside > :not(.auth-aside__bg) {
+  position: relative;
+}
+.auth-aside__proposta {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 680px;
+}
+.auth-aside__proposta > p {
+  max-width: 520px;
+}
+.auth-aside__titulo {
+  margin: 0;
+  font-size: 38px;
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: -1px;
+  text-wrap: pretty;
+}
+.auth-aside__texto {
+  margin: 0;
+  max-width: 440px;
+  font-size: var(--t-lg);
+  line-height: 1.6;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.auth-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.auth-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text);
+}
+.auth-chip .dx-icon {
+  color: var(--accent);
+}
+.auth-chip__marca {
+  flex: none;
+}
+.auth-chip__marca--ponto {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--record);
+}
+.auth-chip__marca--play {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--live);
+}
+.auth-aside__marca .brand-name {
+  font-size: 15px;
+  color: var(--text);
+  font-weight: 600;
+}
+.auth-aside__marca .brand-name__accent {
+  margin-left: 0.28em;
+  color: inherit;
+}
+.auth-aside__rodape {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 26px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.auth-aside__rodape a {
+  color: var(--muted);
+}
+.auth-aside__rodape a:hover {
+  color: var(--text);
+}
+
+/* ----------------------------------------------------------- formulário */
+.auth-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 20px 56px 40px;
+  background: var(--raised);
+  border-left: 1px solid var(--border);
+}
+.auth-lingua {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.auth-lingua .dx-select {
+  width: auto;
+  min-height: 28px;
+  padding-block: 3px;
+  font-size: var(--t-sm);
+}
+.auth-topo {
+  display: flex;
+  margin-bottom: -8px;
+}
+.auth-topo .auth-lingua .dx-select {
+  min-height: 22px;
+  padding: 1px 22px 1px 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  background-color: var(--surface);
+}
+.auth-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 22px;
+  width: 100%;
+  max-width: 448px;
+  margin: 0 auto;
+  padding-block: 24px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.auth-form__head h1 {
+  margin: 0 0 5px;
+  font-size: var(--t-h1);
+  font-weight: 700;
+  letter-spacing: -0.6px;
+}
+.auth-form__head p {
+  margin: 0;
+  font-size: 12.5px;
+}
+.auth-form__nota {
+  margin: 0;
+  color: var(--muted);
+}
+.auth-form__campos {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.auth-form__troca {
+  margin: 0;
+  font-size: var(--t-md);
+  color: var(--muted);
+}
+
+.auth-pass {
+  position: relative;
+}
+.auth-pass .dx-input {
+  padding-right: calc(var(--ctl-h) + 6px);
+}
+.auth-pass .dx-iconbtn {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+}
+
+.auth-sso {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.auth-sso__nota {
+  margin: 0;
+  font-size: var(--t-sm);
+}
+
+.auth-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+.auth-link:hover {
+  text-decoration: underline;
+}
+.auth-link--muted {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.auth-mfa__alternativas {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--t-md);
+}
+
+.auth-pendente {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--raised));
+}
+.auth-pendente > .dx-icon {
+  color: var(--accent);
+  margin-top: 1px;
+}
+.auth-pendente__texto {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.auth-pendente code {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.auth-join {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 15px;
+  border-radius: var(--r-2);
+  border: 1px dashed var(--border);
+  background: var(--surface);
+}
+.auth-join__cabeca {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.auth-join__cabeca .dx-muted {
+  font-size: 10.5px;
+}
+.auth-join .dx-field__label {
+  position: absolute;
+}
+.auth-join .dx-input--code {
+  font-size: 14px;
+  letter-spacing: 0.12em;
+}
+.auth-join__titulo {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+.auth-join__linha {
+  display: flex;
+  gap: 7px;
+}
+.auth-join__linha .dx-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--raised);
+}
+
+.auth-termos {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------- ecrã estreito */
+@media (max-width: 1100px) {
+  .auth {
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 480px);
+  }
+  .auth-aside {
+    padding: 40px;
+  }
+  .auth-aside__titulo {
+    font-size: 30px;
+  }
+  .auth-main {
+    padding-inline: 32px;
+  }
+}
+
+@media (max-width: 900px) {
+  .auth {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+  /* O painel vira faixa: marca e as ligações públicas; a proposta sai. */
+  .auth-aside {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    padding: 14px 16px;
+  }
+  .auth-aside__proposta {
+    display: none;
+  }
+  .auth-aside__rodape {
+    gap: 14px;
+  }
+  .auth-main {
+    border-left: 0;
+    padding: 12px 16px 28px;
+  }
+  .auth-card {
+    justify-content: flex-start;
+    padding-block: 8px;
+  }
+}

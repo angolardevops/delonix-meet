@@ -230,15 +230,24 @@ export async function cortarVarios(
  * metade do débito, que o software aguenta. Pior qualidade é melhor do que uma
  * espera que parece uma avaria.
  */
-async function escolherPerfil(largura: number, altura: number): Promise<VideoEncoderConfig> {
-  const base = { width: largura, height: altura, framerate: 30 } as const
+export async function escolherPerfil(
+  largura: number,
+  altura: number,
+  /** Para a exportação de projectos: fotogramas e débito da predefinição. */
+  opcoes: { fps?: number; bitrate?: number } = {},
+): Promise<VideoEncoderConfig> {
+  const base = { width: largura, height: altura, framerate: opcoes.fps ?? 30 } as const
   const candidatos: VideoEncoderConfig[] = [
     { ...base, codec: 'vp09.00.10.08', bitrate: 6_000_000, hardwareAcceleration: 'prefer-hardware' },
     { ...base, codec: 'vp8', bitrate: 3_000_000, hardwareAcceleration: 'prefer-hardware' },
     // Último recurso: software assumido, e com um débito que ele aguenta.
     { ...base, codec: 'vp8', bitrate: 2_000_000 },
   ]
-  for (const c of candidatos) {
+  // O débito pedido escala os três degraus na mesma proporção: o software
+  // continua a receber metade do que recebe o hardware.
+  const escala = opcoes.bitrate ? opcoes.bitrate / 6_000_000 : 1
+  for (const bruto of candidatos) {
+    const c = { ...bruto, bitrate: Math.round((bruto.bitrate ?? 2_000_000) * escala) }
     try {
       const r = await VideoEncoder.isConfigSupported(c)
       if (r.supported) {
@@ -257,7 +266,7 @@ async function escolherPerfil(largura: number, altura: number): Promise<VideoEnc
 //  Áudio: decodificar, fatiar por amostras, reencodificar em Opus
 // ---------------------------------------------------------------------------
 
-interface FatiaDeAudio {
+export interface FatiaDeAudio {
   buffer: AudioBuffer
   sampleRate: number
   canais: number
@@ -303,13 +312,13 @@ async function fatiarAudio(blob: Blob, trocos: Troco[]): Promise<FatiaDeAudio | 
 }
 
 /** Reencodifica a fatia em Opus e entrega-a ao multiplexador. */
-async function codificarAudio(fatia: FatiaDeAudio, muxer: Muxer<ArrayBufferTarget>): Promise<void> {
+export async function codificarAudio(fatia: FatiaDeAudio, muxer: Muxer<ArrayBufferTarget>, bitrate = 128_000): Promise<void> {
   const { buffer, sampleRate, canais } = fatia
   const encoder = new AudioEncoder({
     output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
     error: (e) => console.error('[editor] encoder de áudio', e),
   })
-  encoder.configure({ codec: 'opus', sampleRate, numberOfChannels: canais, bitrate: 128_000 })
+  encoder.configure({ codec: 'opus', sampleRate, numberOfChannels: canais, bitrate })
 
   // Blocos de 20 ms — o tamanho de trama nativo do Opus; blocos maiores
   // obrigavam o encoder a refatiar por dentro.

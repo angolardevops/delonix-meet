@@ -1,0 +1,293 @@
+/*
+ * Páginas públicas (estado, API, termos, partilha): claro, cartões do kit,
+ * mono para números, códigos e caminhos. Uma barra de topo de 58 px como a da
+ * consola, mas sem rail — quem as abre pode não ter conta.
+ */
+.pub {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.pub-topo {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  min-height: var(--top-h);
+  padding: 0 24px;
+  background: var(--raised);
+  border-bottom: 1px solid var(--border);
+}
+.pub-topo__marca {
+  color: var(--text);
+  flex: none;
+}
+.pub-topo__marca:hover {
+  text-decoration: none;
+}
+.pub-topo__nav {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+.pub-topo__nav a {
+  padding: 6px 10px;
+  border-radius: var(--r-2);
+  color: var(--muted);
+  font-size: var(--t-md);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pub-topo__nav a:hover {
+  color: var(--text);
+  background: var(--hover);
+  text-decoration: none;
+}
+.pub-topo__nav a[aria-current='page'] {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.pub-topo__voltar {
+  flex: none;
+}
+
+.pub-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 28px 24px 48px;
+}
+.pub-corpo--estreito {
+  max-width: 760px;
+}
+
+.pub-cabecalho h1 {
+  margin: 0 0 4px;
+  font-size: var(--t-h1);
+  font-weight: 700;
+  letter-spacing: -0.6px;
+}
+.pub-cabecalho p {
+  margin: 0;
+  max-width: 640px;
+}
+.pub-subtitulo {
+  margin: 8px 0 0;
+  font-size: var(--t-title);
+  font-weight: 600;
+}
+
+.pub-grelha {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.pub-prosa {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  line-height: 1.6;
+}
+.pub-prosa p {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- estado */
+.pub-saude {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--r-3);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  background: var(--raised);
+}
+.pub-saude p {
+  margin: 0;
+  flex: 1;
+  min-width: 180px;
+}
+.pub-saude .dx-btn {
+  margin-left: auto;
+}
+.pub-saude .dx-badge {
+  font-size: 11px;
+  padding: 5px 10px;
+}
+.pub-saude--operacional {
+  border-left-color: var(--success);
+}
+.pub-saude--degradado {
+  border-left-color: var(--warning);
+}
+.pub-saude--indisponivel {
+  border-left-color: var(--danger);
+}
+
+.pub-componentes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pub-componentes li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pub-componentes li:last-child {
+  border-bottom: 0;
+}
+.pub-esqueleto {
+  display: grid;
+  gap: 12px;
+}
+
+/* ---------------------------------------------------------------- termos */
+.pub-indice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pub-legal {
+  scroll-margin-top: calc(var(--top-h) + 12px);
+}
+.pub-legal:focus {
+  outline: none;
+}
+
+/* ------------------------------------------------------------------- API */
+.pub-endpoint__titulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pub-endpoint__titulo code {
+  font-size: var(--t-md);
+  font-weight: 500;
+}
+.pub-exemplos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.pub-codigo {
+  position: relative;
+  min-width: 0;
+}
+.pub-codigo__rotulo {
+  margin-bottom: 4px;
+}
+.pub-codigo pre {
+  margin: 0;
+  padding: 10px 40px 10px 12px;
+  overflow-x: auto;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.pub-codigo__copiar {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 6px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--muted);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.pub-codigo__copiar:hover {
+  color: var(--text);
+}
+
+/* -------------------------------------------------------------- partilha */
+.pub-espera {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 0;
+  color: var(--muted);
+}
+.pub-partilha,
+.pub-partilha-senha {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 12px 0;
+}
+.pub-partilha h1,
+.pub-partilha-senha h1 {
+  margin: 0;
+  font-size: var(--t-title);
+  font-weight: 600;
+}
+.pub-partilha-senha p {
+  margin: 0;
+}
+.pub-partilha__nome {
+  overflow-wrap: anywhere;
+}
+.pub-partilha__icone {
+  display: inline-grid;
+  place-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--accent) 10%, var(--raised));
+  color: var(--accent);
+}
+
+/* --------------------------------------------------------- ecrã estreito */
+@media (max-width: 900px) {
+  .pub-grelha {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .pub-topo {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 8px 16px;
+  }
+  .pub-topo__nav {
+    order: 3;
+    flex-basis: 100%;
+    margin-inline: -10px;
+  }
+  .pub-topo__voltar {
+    margin-left: auto;
+  }
+  .pub-corpo {
+    padding: 20px 16px 36px;
+  }
+}

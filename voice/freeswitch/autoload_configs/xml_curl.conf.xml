@@ -1,0 +1,72 @@
+<!--
+  Delonix Meet — directório e dialplan dinâmicos do FreeSWITCH (mod_xml_curl),
+  para os RAMAIS internos (server/src/ramais.rs):
+    - Fase 1: secção "directory" — registo/routing entre ramais da MESMA org.
+    - Fase 2: secção "dialplan" — ramal alcançável do PSTN via DID dedicado.
+  NÃO faz parte do dial-in por PIN (esse continua a usar o dialplan estático
+  em dialplan/public/00_delonix_dialin.xml, intocado por qualquer das duas).
+
+  O que a binding "directory" liga: quando um softphone faz REGISTER no
+  perfil "internal" (ver sip_profiles/internal.xml), o FreeSWITCH pede aqui os
+  dados do utilizador em vez de os ler de um directório XML estático — a
+  "base de dados" É o control plane Rust (voice_extensions, migração 0055).
+
+  O que a binding "dialplan" liga (Fase 2, migração 0056_ramais_did.sql):
+  quando uma chamada inbound do trunk PSTN chega ao contexto "public", o
+  FreeSWITCH pede aqui o dialplan dessa chamada ANTES de cair no estático.
+  Se o número discado for o DID dedicado de um ramal, a resposta faz o bridge
+  directo a esse ramal (sem PIN, sem IVR); para qualquer outro número, a
+  resposta é "not found" e o FreeSWITCH cai para
+  dialplan/public/00_delonix_dialin.xml, o dial-in por PIN de sempre — essa
+  segunda binding NUNCA deve, por desenho, deixar de responder "not found"
+  para números que não são DID de ramal.
+
+  ATENÇÃO — não verificado contra uma instância real (ver o aviso no topo de
+  server/src/ramais.rs): (1) os nomes exactos dos campos que a secção
+  "directory" envia no POST variam com a versão do FreeSWITCH — activar
+  `debug="true"` abaixo e confirmar contra um REGISTER real antes de
+  produção; (2) o mesmo vale para a secção "dialplan" (os candidatos aceites
+  estão em `ramais.rs::DIALPLAN_DESTINATION_KEYS`); (3) a PRECEDÊNCIA real
+  entre a resposta dinâmica desta binding "dialplan" e o dialplan estático já
+  carregado de dialplan/public/*.xml não foi exercitada — o pressuposto
+  (herdado do mesmo padrão já aceite para "directory") é que o mod_xml_curl é
+  consultado por chamada e que "not found" cai para o estático; se isso não
+  se confirmar, o sintoma é inofensivo (o DID atribuído simplesmente continua
+  a pedir PIN, nunca perde a chamada) mas precisa de correcção antes de
+  produção.
+
+  O segredo (`X-Voice-Secret`) vai por `?secret=` no URL porque a build stock
+  do mod_xml_curl não deixa configurar cabeçalhos HTTP arbitrários — ver o
+  comentário em ramais.rs::ivr_directory sobre esse custo (pode acabar em
+  logs de acesso). Se a instância de produção usar uma build com suporte a
+  cabeçalhos extra, preferir isso e remover o `?secret=` da URL.
+-->
+<configuration name="xml_curl.conf" description="Delonix — directório e dialplan dinâmicos dos ramais">
+  <bindings>
+    <binding name="delonix_ramais_directory">
+      <param name="gateway-url"
+             value="$${delonix_control_url}/api/voice/ivr/directory?secret=$${delonix_voice_secret}"
+             bindings="directory"/>
+      <param name="method" value="POST"/>
+      <!-- Timeout curto: um REGISTER não deve ficar pendurado à espera do
+           control plane — falha rápido e o softphone retenta. -->
+      <param name="timeout" value="5"/>
+      <!-- debug="true" em dev/staging para inspeccionar os campos do POST nos
+           logs do FreeSWITCH antes de confiar nisto em produção. -->
+      <param name="debug" value="false"/>
+    </binding>
+    <!-- Fase 2 — ramal alcançável do PSTN via DID dedicado (ver o aviso
+         acima sobre a precedência com dialplan/public/00_delonix_dialin.xml
+         não estar confirmada contra uma instância real). -->
+    <binding name="delonix_ramais_dialplan_did">
+      <param name="gateway-url"
+             value="$${delonix_control_url}/api/voice/ivr/dialplan-did?secret=$${delonix_voice_secret}"
+             bindings="dialplan"/>
+      <param name="method" value="POST"/>
+      <!-- Timeout curto: uma chamada inbound não deve ficar pendurada à
+           espera do control plane — falha rápido e cai no dialplan estático. -->
+      <param name="timeout" value="5"/>
+      <param name="debug" value="false"/>
+    </binding>
+  </bindings>
+</configuration>

@@ -1,7 +1,8 @@
 //! Webhooks de saída por organização (Slack / Teams / Mattermost / genérico).
 //!
 //! Eventos disparados: ver `KNOWN_EVENTS` (`meeting.created`,
-//! `meeting.started`, `meeting.mom_ready`, `recording.ready`).
+//! `meeting.started`, `meeting.mom_ready`, `recording.ready`,
+//! `stream.published`, `stream.ended`).
 //! Os alvos Slack/Mattermost recebem `{ "text": "..." }`; Teams recebe um
 //! MessageCard; o alvo `generic` recebe o JSON estruturado com a assinatura
 //! `X-Delonix-Signature: sha256=<hmac>` (chave = `secret`) para verificação.
@@ -59,6 +60,11 @@ pub const KNOWN_EVENTS: &[&str] = &[
     "meeting.started",
     "meeting.mom_ready",
     "recording.ready",
+    // Directo (`broadcast.rs`): `published` quando o PRIMEIRO destino fica no
+    // ar — não quando o pedido chega, que ainda pode falhar em todos —, e
+    // `ended` quando uma emissão que chegou a estar no ar termina.
+    "stream.published",
+    "stream.ended",
 ];
 
 /// Subscrição por omissão. `meeting.mom_ready` TEM de estar aqui: é o evento

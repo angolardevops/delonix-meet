@@ -59,7 +59,15 @@ function precachePwa(): Plugin {
           if (vistos.has(f)) continue
           vistos.add(f)
           const parte = bundle[f]
-          if (parte && parte.type === 'chunk') pilha.push(...parte.imports)
+          if (parte && parte.type === 'chunk') {
+            pilha.push(...parte.imports)
+            // A folha de estilo de um chunk (o `Studio-*.css` que a página
+            // importa) NÃO é um `import` do Rollup: vem no metadado do Vite.
+            // Sem isto, com a rede cortada, o browser recusava a rota com
+            // «Unable to preload CSS» e a raiz ficava vazia — medido com o
+            // `e2e/offline.mjs` quando a UI nova passou a ter CSS por página.
+            for (const css of parte.viteMetadata?.importedCss ?? []) vistos.add(css)
+          }
         }
         return [...vistos]
       }
@@ -70,13 +78,18 @@ function precachePwa(): Plugin {
       // precisa do servidor por definição, e os modelos de IA porque juntos
       // passam dos 30 MB — esses ficam em cache no primeiro uso.
       const estudio = nomes.filter((f) => /^assets\/Studio-[^/]+\.js$/.test(f))
+      // Sem repetidos: o `index-*.css` vem pelos `estilos` E pelo metadado do
+      // chunk de arranque, e um `cache.addAll` com o mesmo URL duas vezes
+      // rejeita a instalação inteira do service worker.
       const lista = [
-        '/',
-        '/index.html',
-        '/logo.svg',
-        '/manifest.webmanifest',
-        ...estilos.map((f) => '/' + f),
-        ...fecho([...arranque, ...estudio]).map((f) => '/' + f),
+        ...new Set([
+          '/',
+          '/index.html',
+          '/logo.svg',
+          '/manifest.webmanifest',
+          ...estilos.map((f) => '/' + f),
+          ...fecho([...arranque, ...estudio]).map((f) => '/' + f),
+        ]),
       ]
       // A versão vem do CONTEÚDO: dois builds iguais dão a mesma cache, e um
       // build diferente invalida-a sozinho. Uma data ou um contador fariam

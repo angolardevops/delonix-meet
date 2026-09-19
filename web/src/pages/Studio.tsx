@@ -1,122 +1,193 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { createRoom, uploadRecording } from '../api'
-import { BackgroundEffect } from '../media'
-import PageHeader from '../components/PageHeader'
-import { Btn } from '../components/ui'
-import PasswordInput from '../components/PasswordInput'
-import { CamIcon, CamOffIcon, FilmIcon, RecordIcon, StopIcon } from '../icons'
-import { cortar, cortarVarios, cortesSuportados } from '../studio/editor'
-import { analisarPausas, AnaliseDeAudio, resumo, trocosSemPausas } from '../studio/analise'
-import * as arquivo from '../studio/arquivo'
-import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
-import { createRoom as criarSala, joinRoom } from '../api'
-import {
-  AVATAR_INICIAL,
-  CantoDoAvatar,
-  CompositorDeAula,
-  EstadoDoAvatar,
-  FormaDoAvatar,
-  ModoDoAvatar,
-  Recorte,
-  RECORTE_INTEIRO,
-  ResultadoDaGravacao,
-} from '../studio/compositor'
-
 /**
- * Estúdio — gravar uma vídeo-aula: ecrã (inteiro, janela, separador ou uma
- * REGIÃO dele) com a câmara por cima, numa bolha que se move.
+ * Estúdio — gravar uma vídeo-aula e/ou emiti-la em directo: o ecrã (inteiro
+ * ou uma REGIÃO) com a câmara por cima, numa bolha que se move, composto num
+ * canvas 1920×1080.
  *
  * Vive fora da sala de propósito: não há SFU, não há pares, não há rede no
  * caminho da media. Uma aula grava-se sozinho, e prender isso ao caminho de
  * uma chamada seria pôr a falhar coisas que não têm de existir aqui.
+ *
+ * A página é dona do estado e fala com os objectos imperativos (compositor,
+ * directo, arquivo). Os painéis em `studio/*.tsx` só desenham.
  */
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
+import { useTranslation } from 'react-i18next'
+import { apiErrorMessage, createRoom, joinRoom, uploadRecording } from '../api'
+import type { Fonte } from '../room/compositor'
+import { BrandMark } from '../components/BrandMark'
+import { useShell } from '../components/shellContext'
+import { BackgroundEffect } from '../media'
+import { Alert, Button, cx, IconButton, Spinner, StatusBadge } from '../ui/kit'
+import * as arquivo from '../studio/arquivo'
+import AudioPanel from '../studio/AudioPanel'
+import CenasPanel from '../studio/CenasPanel'
+import { AVATAR_INICIAL, CompositorDeAula, EstadoDaImagem, EstadoDoAvatar, IMAGEM_INICIAL, Recorte, RECORTE_INTEIRO } from '../studio/compositor'
+import Cronometro from '../studio/Cronometro'
+import { useDebito } from '../studio/debito'
+import type { SondagemNoPalco } from '../studio/desenho'
+import { Destino, Directo, directoSuportado, EstadoDoDestino, EstadoDoDirecto } from '../studio/directo'
+import EditPanel, { Gravado, VistaDoEditor } from '../studio/EditPanel'
+import { cortesSuportados } from '../studio/editor'
+import LayoutsPanel from '../studio/LayoutsPanel'
+import LivePanel from '../studio/LivePanel'
+import LocalPanel from '../studio/LocalPanel'
+import { estadoDoCartao } from '../studio/destinosLocais'
+import { eh4k, plataformaDoUrl, type Qualidade, QUALIDADES, rotuloDaQualidade } from '../studio/palco'
+import QuadroLocal from '../studio/QuadroLocal'
+import RegionPicker from '../studio/RegionPicker'
+import Relogio from '../studio/Relogio'
+import SobreposicoesPanel from '../studio/SobreposicoesPanel'
+import SourcesPanel from '../studio/SourcesPanel'
+import { useLegendas } from '../studio/useLegendas'
+import { usePalco } from '../studio/usePalco'
+import '../ui/studio.css'
+import '../ui/studio-palco.css'
 
-const CANTOS: { key: CantoDoAvatar; rotulo: string }[] = [
-  { key: 'superior-esquerdo', rotulo: '↖' },
-  { key: 'superior-direito', rotulo: '↗' },
-  { key: 'inferior-esquerdo', rotulo: '↙' },
-  { key: 'inferior-direito', rotulo: '↘' },
-]
+/**
+ * A sala (convidados, chat, perguntas, sondagens) entra por `lazy`, e só
+ * quando se abre: é o único sítio do Estúdio que fala `signaling`/`webrtc`, e
+ * uma aula gravada offline não pode arrastar esse caminho — nem para o
+ * precache do PWA (ver `studio.invariantes.test.ts`).
+ */
+const SalaDoEstudio = lazy(() => import('./studio/SalaDoEstudio'))
 
-function mmss(s: number): string {
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
+/** O ecrã é de telemóvel: a emissão arruma-se para o polegar e a sala abre no chat. */
+const ecraDeTelemovel = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 720px)').matches
+
+/**
+ * O tecto por omissão do servidor (`MAX_DESTINOS_POR_DIRECTO` em
+ * `broadcast.rs`). O servidor continua a ser quem decide; isto só evita mandar
+ * um pedido que se sabe à partida que vai ser recusado.
+ */
+const MAX_DESTINOS = 4
+
+type Vista = 'emissao' | VistaDoEditor
+
+const CHIP = { 'sem-chave': 'semChave', pronto: 'pronto', 'a-ligar': 'aLigar', 'no-ar': 'noAr', erro: 'erro' } as const
+
+/** A vista vem do endereço (`#/studio?vista=legendas`), para se poder voltar a ela. */
+function vistaDoEndereco(): Vista {
+  const v = new URLSearchParams(location.hash.split('?')[1] ?? '').get('vista')
+  return v === 'edicao' || v === 'legendas' || v === 'exportacoes' ? v : 'emissao'
 }
 
 export default function Studio() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const { navOpen, setNavOpen, org } = useShell()
   const compRef = useRef<CompositorDeAula | null>(null)
-  const palcoRef = useRef<HTMLDivElement>(null)
+  const canvasHostRef = useRef<HTMLDivElement>(null)
+  const efeitoRef = useRef<BackgroundEffect | null>(null)
+  // O directo é imperativo e vive num ref: pô-lo em estado faria a página
+  // re-renderizar a cada pedaço enviado.
+  const directoRef = useRef<Directo | null>(null)
+
+  const [vista, setVistaEstado] = useState<Vista>(vistaDoEndereco)
+  const setVista = useCallback((v: Vista) => {
+    setVistaEstado(v)
+    const alvo = v === 'emissao' ? '#/studio' : `#/studio?vista=${v}`
+    if (location.hash !== alvo) history.replaceState(null, '', alvo)
+  }, [])
+  useEffect(() => {
+    const seguir = () => setVistaEstado(vistaDoEndereco())
+    window.addEventListener('hashchange', seguir)
+    return () => window.removeEventListener('hashchange', seguir)
+  }, [])
   const [pronto, setPronto] = useState(false)
   const [temEcra, setTemEcra] = useState(false)
   const [temCamara, setTemCamara] = useState(false)
   const [avatar, setAvatar] = useState<EstadoDoAvatar>({ ...AVATAR_INICIAL })
+  const [imagem, setImagem] = useState<EstadoDaImagem>({ ...IMAGEM_INICIAL })
   const [recorte, setRecorte] = useState<Recorte>({ ...RECORTE_INTEIRO })
   const [aRecortar, setARecortar] = useState(false)
-  const [estado, setEstado] = useState<'parado' | 'a-gravar' | 'pausa'>('parado')
-  const [segundos, setSegundos] = useState(0)
-  const [erro, setErro] = useState('')
-  const efeitoRef = useRef<BackgroundEffect | null>(null)
   const [aPrepararRecorte, setAPrepararRecorte] = useState(false)
-  const [resultado, setResultado] = useState<{ faixas: ResultadoDaGravacao; url: string; duracao: number } | null>(null)
-  // Corte: pontos de entrada e saída, em segundos do ficheiro gravado.
-  const [de, setDe] = useState(0)
-  const [ate, setAte] = useState(0)
-  const [analise, setAnalise] = useState<AnaliseDeAudio | null>(null)
-  const [aAnalisar, setAAnalisar] = useState(false)
-  const [online, setOnline] = useState(() => navigator.onLine)
-  const [porEnviar, setPorEnviar] = useState<arquivo.AulaGuardada[]>([])
-  // Directo (ADR-0003). O objecto é imperativo e vive num ref: pô-lo em estado
-  // faria a página re-renderizar a cada pedaço enviado.
-  const directoRef = useRef<Directo | null>(null)
-  const [directo, setDirecto] = useState<EstadoDoDirecto>({ fase: 'parado' })
-  // Multi-canal (tipo StreamYard): uma lista de destinos, não um só. O
-  // servidor faz o fan-out num único `ffmpeg` (ver `broadcast.rs`); aqui só
-  // se junta a lista antes de ligar. `MAX_DESTINOS` é o mesmo tecto por
-  // omissão do servidor (`MAX_DESTINOS_POR_DIRECTO`) — o servidor continua a
-  // ser quem decide de verdade, isto só evita mandar um pedido que se sabe
-  // à partida que vai ser recusado.
-  const MAX_DESTINOS = 4
-  const [destinos, setDestinos] = useState<Destino[]>([
-    { url: 'rtmp://a.rtmp.youtube.com/live2', chave: '', rotulo: 'YouTube' },
-  ])
-  const adicionarDestino = () =>
-    setDestinos((ds) => (ds.length >= MAX_DESTINOS ? ds : [...ds, { url: '', chave: '', rotulo: '' }]))
-  const removerDestino = (i: number) => setDestinos((ds) => ds.filter((_, j) => j !== i))
-  const mudarDestino = (i: number, patch: Partial<Destino>) =>
-    setDestinos((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d)))
-  const [aCortar, setACortar] = useState(0)   // 0 = parado; senão fracção
-  const previewRef = useRef<HTMLVideoElement>(null)
+  const [estado, setEstado] = useState<'parado' | 'a-gravar' | 'pausa'>('parado')
+  const [erro, setErro] = useState('')
+
+  const [resultado, setResultado] = useState<Gravado | null>(null)
   const [titulo, setTitulo] = useState('')
   const [aGuardar, setAGuardar] = useState(false)
   const [guardado, setGuardado] = useState('')
 
+  const [online, setOnline] = useState(() => navigator.onLine)
+  const [porEnviar, setPorEnviar] = useState<arquivo.AulaGuardada[]>([])
+  const [ocupacao, setOcupacao] = useState(0)
+
+  const [directo, setDirecto] = useState<EstadoDoDirecto>({ fase: 'parado' })
+  const [porDestino, setPorDestino] = useState<EstadoDoDestino[]>([])
+  const kbps = useDebito(directo)
+  // A sala ligada ao Estúdio: pedida pela pessoa, carregada por `lazy`.
+  const [salaAberta, setSalaAberta] = useState(false)
+  const [salaLigada, setSalaLigada] = useState<{ codigo: string; token: string } | null>(null)
+  const [haSondagem, setHaSondagem] = useState(false)
+  const [convidadosNoPalco, setConvidadosNoPalco] = useState(0)
+  const [fontesNoPalco, setFontesNoPalco] = useState<Fonte[]>([])
+  /** Fader por convidado — só existe para quem já esteve no palco nesta sessão. */
+  const [ganhosPorConvidado, setGanhosPorConvidado] = useState<Record<string, number>>({})
+  /** Quem enche o ecrã em «Um a ecrã inteiro» — o corte da mesa de corte. */
+  const [programaId, setProgramaId] = useState<string | null>(null)
+  const [destinos, setDestinos] = useState<Destino[]>([
+    { url: 'rtmp://a.rtmp.youtube.com/live2', chave: '', rotulo: 'YouTube' },
+  ])
+
   // O compositor é um objecto imperativo com um canvas: monta uma vez e o
   // React só lhe dá ordens. Pô-lo em estado faria a árvore re-renderizar a
-  // cada frame, que é exactamente o que o lote 3 tirou da sala.
+  // cada frame. O canvas vive num nó onde o React não põe filhos.
   useEffect(() => {
     const c = new CompositorDeAula()
     compRef.current = c
     c.aoPerderEcra = () => {
       setTemEcra(false)
-      setErro(t('studio.ecraTerminado', 'A partilha de ecrã terminou.'))
+      setErro(t('studio.erros.ecraTerminado'))
     }
-    palcoRef.current?.appendChild(c.canvas)
-    c.canvas.className = 'studio-canvas'
+    c.canvas.className = 'st-canvas'
+    c.canvas.setAttribute('data-studio', 'canvas')
+    canvasHostRef.current?.appendChild(c.canvas)
     c.iniciarPreVisualizacao()
     setPronto(true)
     return () => {
       efeitoRef.current?.stop()
       efeitoRef.current = null
+      const d = directoRef.current
+      directoRef.current = null
+      void d?.parar()
       c.destruir()
+      c.canvas.remove()
       compRef.current = null
     }
   }, [t])
 
-  // Estado da rede. A app inteira muda de comportamento com isto, por isso
-  // vive aqui e não numa árvore de contexto para uma coisa só.
+  const aGravarOuPausa = estado !== 'parado'
+  const palco = usePalco({
+    compRef,
+    pronto,
+    bloqueado: aGravarOuPausa || directo.fase === 'no-ar' || directo.fase === 'a-ligar',
+    titulo,
+    organizacao: org?.name ?? '',
+    avatar,
+    aplicarAvatar: setAvatar,
+  })
+  const estadoLegendas = useLegendas(
+    compRef,
+    palco.sobreposicoes.legendas,
+    aGravarOuPausa || directo.fase === 'no-ar',
+  )
+  const aoPalco = useCallback((fontes: Fonte[]) => {
+    compRef.current?.definirConvidados(fontes)
+    setConvidadosNoPalco(fontes.length)
+    setFontesNoPalco(fontes)
+  }, [])
+  const mudarGanhoConvidado = useCallback((id: string, v: number) => {
+    compRef.current?.definirGanhoConvidado(id, v)
+    setGanhosPorConvidado((g) => ({ ...g, [id]: v }))
+  }, [])
+  const aSondagem = useCallback((s: SondagemNoPalco | null) => {
+    if (compRef.current) compRef.current.sondagem = s
+    setHaSondagem(!!s)
+  }, [])
+  const obterCamara = useCallback(() => compRef.current?.trackDaCamara ?? null, [])
+
+  // Estado da rede: o aviso «sem rede» e o esvaziar da fila dependem disto.
   useEffect(() => {
     const sobe = () => setOnline(true)
     const desce = () => setOnline(false)
@@ -129,7 +200,14 @@ export default function Studio() {
   }, [])
 
   const recarregarFila = useCallback(() => {
-    arquivo.porEnviar().then(setPorEnviar).catch(() => setPorEnviar([]))
+    arquivo
+      .porEnviar()
+      .then(setPorEnviar)
+      .catch(() => setPorEnviar([]))
+    arquivo
+      .ocupacao()
+      .then(setOcupacao)
+      .catch(() => setOcupacao(0))
   }, [])
   useEffect(() => recarregarFila(), [recarregarFila])
 
@@ -142,20 +220,26 @@ export default function Studio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online, porEnviar.length])
 
-  // Relógio da gravação — vive AQUI, no nó que o mostra, e não na página.
-  useEffect(() => {
-    if (estado !== 'a-gravar') return
-    const id = setInterval(() => setSegundos(compRef.current?.segundos ?? 0), 1000)
-    return () => clearInterval(id)
-  }, [estado])
-
   // O compositor lê estes campos a cada frame — basta escrevê-los.
   useEffect(() => {
     if (compRef.current) compRef.current.avatar = avatar
   }, [avatar])
   useEffect(() => {
+    if (compRef.current) compRef.current.imagem = imagem
+  }, [imagem])
+  useEffect(() => {
     if (compRef.current) compRef.current.recorte = recorte
   }, [recorte])
+  useEffect(() => {
+    if (compRef.current) compRef.current.programaId = programaId
+  }, [programaId])
+
+  const lerSegundos = useCallback(() => compRef.current?.segundos ?? 0, [])
+  const lerBytes = useCallback(() => compRef.current?.bytesGravados ?? 0, [])
+  const lerPicoMestre = useCallback(() => compRef.current?.lerPicoMestre() ?? -60, [])
+  const mudarAvatar = useCallback((patch: Partial<EstadoDoAvatar>) => setAvatar((a) => ({ ...a, ...patch })), [])
+  const mudarImagem = useCallback((patch: Partial<EstadoDaImagem>) => setImagem((i) => ({ ...i, ...patch })), [])
+  const fecharRecorte = useCallback(() => setARecortar(false), [])
 
   const escolherEcra = useCallback(async () => {
     setErro('')
@@ -165,13 +249,11 @@ export default function Studio() {
       setRecorte({ ...RECORTE_INTEIRO })
     } catch (e) {
       // Cancelar o seletor do browser não é um erro — é uma decisão.
-      if ((e as Error)?.name !== 'NotAllowedError') {
-        setErro(t('studio.erroEcra', 'Não foi possível capturar o ecrã.'))
-      }
+      if ((e as Error)?.name !== 'NotAllowedError') setErro(t('studio.erros.ecra'))
     }
   }, [t])
 
-  const alternarCamara = useCallback(async () => {
+  async function alternarCamara() {
     setErro('')
     const c = compRef.current
     if (!c) return
@@ -185,14 +267,14 @@ export default function Studio() {
       await c.ligarCamara()
       setTemCamara(true)
     } catch {
-      setErro(t('studio.erroCamara', 'Não foi possível aceder à câmara.'))
+      setErro(t('studio.erros.camara'))
     }
-  }, [t])
+  }
 
   /** Liga a segmentação e passa o canvas com alfa ao compositor. */
   async function ligarRecorteDeFundo() {
     const c = compRef.current
-    if (!c || !c.temCamara) return
+    if (!c || !c.temCamara || efeitoRef.current) return
     setAPrepararRecorte(true)
     setErro('')
     try {
@@ -201,9 +283,9 @@ export default function Studio() {
       const ef = new BackgroundEffect()
       await ef.start(track)
       efeitoRef.current = ef
-      // O compositor lê este campo a cada frame; enquanto a segmentação não
-      // produzir o primeiro resultado, `pessoaComAlfa` é null e o desenho
-      // cai na bolha — sem buraco no ecrã à espera do modelo.
+      // Enquanto a segmentação não produzir o primeiro resultado,
+      // `pessoaComAlfa` é null e o compositor cai na bolha — sem buraco no
+      // ecrã à espera do modelo.
       const alimentar = () => {
         if (!efeitoRef.current || !compRef.current) return
         compRef.current.pessoaComAlfa = efeitoRef.current.pessoaComAlfa
@@ -212,7 +294,7 @@ export default function Studio() {
       alimentar()
       setAvatar((a) => ({ ...a, modo: 'recorte' }))
     } catch {
-      setErro(t('studio.erroRecorte', 'Não foi possível preparar o recorte de fundo.'))
+      setErro(t('studio.erros.recorte'))
     } finally {
       setAPrepararRecorte(false)
     }
@@ -225,134 +307,106 @@ export default function Studio() {
     setAvatar((a) => ({ ...a, modo: 'bolha' }))
   }
 
+  /**
+   * Arrastar a bolha para qualquer sítio do palco (os quatro cantos não
+   * chegam quando o conteúdo do slide está justamente no canto). Guarda
+   * FRACÇÕES do canvas e passa o canto a `livre`.
+   */
+  function arrastarBolha(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!temCamara || aRecortar) return
+    // No quadro, arrastar é escrever — a bolha move-se pelos cantos.
+    if (palco.conteudo === 'quadro') return
+    if ((e.target as HTMLElement).closest('button, input, a')) return
+    const alvo = e.currentTarget
+    const cv = alvo.querySelector('canvas')
+    if (!cv) return
+    alvo.setPointerCapture(e.pointerId)
+    const mover = (ev: PointerEvent) => {
+      const r = cv.getBoundingClientRect()
+      setAvatar((a) => ({
+        ...a,
+        canto: 'livre',
+        x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)),
+        y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)),
+      }))
+    }
+    mover(e.nativeEvent)
+    const largar = () => {
+      alvo.removeEventListener('pointermove', mover)
+      alvo.removeEventListener('pointerup', largar)
+      alvo.removeEventListener('pointercancel', largar)
+    }
+    alvo.addEventListener('pointermove', mover)
+    alvo.addEventListener('pointerup', largar)
+    alvo.addEventListener('pointercancel', largar)
+  }
+
   async function gravar() {
     setErro('')
-    setResultado(null)
     setGuardado('')
     try {
       await compRef.current?.iniciarGravacao()
       setEstado('a-gravar')
-      setSegundos(0)
+      // Grava-se a olhar para o palco, não para a edição da gravação anterior.
+      setVista('emissao')
     } catch {
-      setErro(t('studio.erroGravar', 'Não foi possível iniciar a gravação.'))
+      setErro(t('studio.erros.gravar'))
+    }
+  }
+
+  function pausarOuRetomar() {
+    if (estado === 'a-gravar') {
+      compRef.current?.pausar()
+      setEstado('pausa')
+    } else {
+      compRef.current?.retomar()
+      setEstado('a-gravar')
     }
   }
 
   async function parar() {
-    const blob = await compRef.current?.terminarGravacao()
+    const faixas = await compRef.current?.terminarGravacao()
     setEstado('parado')
-    setSegundos(0)
-    if (!blob) {
-      setErro(t('studio.vazia', 'A gravação saiu vazia — nada foi guardado.'))
+    if (!faixas) {
+      setErro(t('studio.vazia'))
       return
     }
-    setResultado({ faixas: blob, url: URL.createObjectURL(blob.completo), duracao: 0 })
-    setAnalise(null)
-    setDe(0)
-    setAte(0)
-  }
-
-  function nomeBase() {
-    return (titulo.trim() || t('studio.semTitulo', 'aula')).replace(/[^\w.-]+/g, '-')
-  }
-
-  function descarregar(qual: 'completo' | 'video' | 'audio' = 'completo') {
-    if (!resultado) return
-    const b = resultado.faixas[qual]
-    if (!b) return
-    const url = qual === 'completo' ? resultado.url : URL.createObjectURL(b)
-    const a = document.createElement('a')
-    a.href = url
-    const sufixo = qual === 'completo' ? '' : `-${qual}`
-    a.download = `${nomeBase()}${sufixo}.${qual === 'audio' ? 'weba' : 'webm'}`
-    a.click()
-    if (qual !== 'completo') setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    if (resultado) URL.revokeObjectURL(resultado.url)
+    // A gravação passa ao editor, que a transforma num projecto não destrutivo
+    // (as faixas são fontes; cortar é uma edição, não um ficheiro novo).
+    setResultado({ faixas, url: URL.createObjectURL(faixas.completo), duracao: 0 })
+    setVista('edicao')
   }
 
   /**
-   * Procura as pausas mortas da aula. É análise de SINAL, não um modelo: corre
-   * em milissegundos e funciona no primeiro arranque, offline.
-   */
-  async function procurarPausas() {
-    const faixa = resultado?.faixas.audio
-    if (!faixa) {
-      setErro(t('studio.semAudio', 'Esta gravação não tem faixa de áudio isolada.'))
-      return
-    }
-    setErro('')
-    setAAnalisar(true)
-    try {
-      setAnalise(await analisarPausas(faixa))
-    } catch {
-      setErro(t('studio.erroAnalise', 'Não foi possível analisar o áudio.'))
-    } finally {
-      setAAnalisar(false)
-    }
-  }
-
-  /** Remove as pausas encontradas, juntando o que fica num só ficheiro. */
-  async function apertarPausas() {
-    if (!resultado || !analise) return
-    const trocos = trocosSemPausas(analise)
-    if (!trocos.length) {
-      setErro(t('studio.tudoPausa', 'Não sobra nada depois de remover as pausas.'))
-      return
-    }
-    setErro('')
-    setACortar(0.001)
-    try {
-      const novo = await cortarVarios(
-        resultado.faixas.completo,
-        trocos,
-        (pr) => setACortar(Math.max(0.001, pr.fraccao ?? 0.001)),
-        4,
-        resultado.faixas.audio,
-      )
-      URL.revokeObjectURL(resultado.url)
-      setResultado({
-        faixas: { completo: novo, video: null, audio: resultado.faixas.audio },
-        url: URL.createObjectURL(novo),
-        duracao: trocos.reduce((a, tr) => a + (tr.fim - tr.inicio), 0),
-      })
-      setAnalise(null)
-      setDe(0)
-      setAte(0)
-    } catch (e) {
-      setErro((e as Error).message || t('studio.erroCorte', 'Não foi possível cortar.'))
-    } finally {
-      setACortar(0)
-    }
-  }
-
-  /**
-   * Vai para o ar.
-   *
-   * A emissão precisa de uma SALA, porque é a sala que o servidor autentica e
-   * é nela que o registo por sala vive. Cria-se uma para a sessão de directo —
-   * o mesmo padrão que guardar na biblioteca já usa.
+   * Vai para o ar. A emissão precisa de uma SALA, porque é a sala que o
+   * servidor autentica e é nela que o registo por sala vive. Cria-se uma para
+   * a sessão de directo — o mesmo padrão que guardar na biblioteca já usa.
    */
   async function irParaOAr() {
     const c = compRef.current
     if (!c) return
-    setErro('')
+    setDirecto({ fase: 'a-ligar' })
     try {
       const fluxo = await c.montarFluxo()
-      const sala = await criarSala(titulo.trim() || t('studio.semTitulo', 'Directo'), 'sfu', false, false, 'normal')
-      const { room_token } = await joinRoom(sala.code)
+      // Com uma sala ligada (convidados), emite-se por ELA; sem sala, cria-se
+      // uma para a sessão de directo, como sempre.
+      let codigo = salaLigada?.codigo ?? ''
+      let token = salaLigada?.token ?? ''
+      if (!codigo) {
+        const sala = await createRoom(titulo.trim() || t('studio.semTitulo'), 'sfu', false, false, 'normal')
+        codigo = sala.code
+        token = (await joinRoom(sala.code)).room_token
+      }
       const d = new Directo()
       d.aoMudar = setDirecto
+      d.aoMudarDestinos = setPorDestino
       directoRef.current = d
-      const alvos = destinos.filter((dest) => dest.chave.trim())
-      await d.comecar(fluxo, sala.code, room_token, alvos)
+      await d.comecar(fluxo, codigo, token, destinos.filter((dest) => dest.chave.trim()))
     } catch (e) {
-      // A razão vem do servidor — «esta sala tem cifra ponta-a-ponta…» chega
-      // aqui tal como foi escrita, e é essa que se mostra.
-      // O erro vive no PAINEL, ao pé do botão que o causou — não no topo da
-      // página. Uma razão longe da acção que a provocou não se lê.
-      setDirecto({
-        fase: 'erro',
-        motivo: (e as Error).message || t('studio.erroDirecto', 'Não foi possível iniciar o directo.'),
-      })
+      // A razão vem do servidor («esta sala tem cifra ponta-a-ponta…») e
+      // mostra-se tal como foi escrita, no PAINEL, ao pé do botão que a causou.
+      setDirecto({ fase: 'erro', motivo: apiErrorMessage(e, t('studio.directo.erro')) })
       directoRef.current = null
       await c.largarFluxo()
     }
@@ -366,42 +420,9 @@ export default function Studio() {
     setDirecto({ fase: 'parado' })
   }
 
-  /** Aplica o corte e SUBSTITUI o resultado — o que se guarda é o cortado. */
-  async function aplicarCorte() {
-    if (!resultado) return
-    setErro('')
-    setACortar(0.001)
-    try {
-      const novo = await cortar(
-        resultado.faixas.completo,
-        { inicio: de, fim: ate },
-        (p) => setACortar(Math.max(0.001, p.fraccao ?? 0.001)),
-        4,
-        resultado.faixas.audio,
-      )
-      URL.revokeObjectURL(resultado.url)
-      setResultado({
-        faixas: { completo: novo, video: null, audio: resultado.faixas.audio },
-        url: URL.createObjectURL(novo),
-        duracao: ate - de,
-      })
-      setDe(0)
-      setAte(0)
-    } catch (e) {
-      setErro((e as Error).message || t('studio.erroCorte', 'Não foi possível cortar.'))
-    } finally {
-      setACortar(0)
-    }
-  }
-
   /**
-   * Guardar na biblioteca. As gravações pertencem a uma sala no modelo de
-   * dados, por isso a aula ganha uma — com o título que o utilizador deu. É
-   * reutilizar o que existe em vez de abrir um segundo caminho de upload.
-   */
-  /**
-   * Envia uma aula do arquivo local para a biblioteca do servidor.
-   * As gravações pertencem a uma sala no modelo de dados, por isso a aula ganha
+   * Envia uma aula do arquivo local para a biblioteca do servidor. As
+   * gravações pertencem a uma sala no modelo de dados, por isso a aula ganha
    * uma — reutilizar o que existe em vez de abrir um segundo caminho de upload.
    */
   async function enviarUma(aula: arquivo.AulaGuardada): Promise<void> {
@@ -412,14 +433,14 @@ export default function Studio() {
   }
 
   async function enviarFila(): Promise<void> {
-    const fila = await arquivo.porEnviar()
+    const fila = await arquivo.porEnviar().catch(() => [] as arquivo.AulaGuardada[])
     for (const aula of fila) {
       try {
         await enviarUma(aula)
       } catch (e) {
         // Uma falha não pode parar a fila: a aula seguinte pode passar, e esta
         // fica com a razão escrita para a interface a mostrar.
-        await arquivo.marcarErro(aula.id, (e as Error).message ?? 'falhou')
+        await arquivo.marcarErro(aula.id, apiErrorMessage(e, t('studio.erros.guardar'))).catch(() => undefined)
       }
     }
     recarregarFila()
@@ -432,39 +453,39 @@ export default function Studio() {
    * em caso de falha perde a aula quando o upload rebenta a meio — que é
    * precisamente quando ela é mais precisa.
    */
-  async function guardarNaBiblioteca() {
-    if (!resultado) return
+  async function guardarNaBiblioteca(exportado: Blob, duracao: number, tituloDoProjecto: string) {
     setAGuardar(true)
     setErro('')
-    const nome = titulo.trim() || t('studio.semTitulo', 'Aula')
+    setGuardado('')
+    const nome = tituloDoProjecto.trim() || titulo.trim() || t('studio.semTitulo')
     try {
       const id = await arquivo.guardar({
         titulo: nome,
         criadaEm: Date.now(),
-        duracao: resultado.duracao,
-        completo: resultado.faixas.completo,
-        audio: resultado.faixas.audio,
+        duracao,
+        completo: exportado,
+        audio: null,
         enviada: false,
       })
       if (!navigator.onLine) {
-        setGuardado(t('studio.guardadoLocal', 'Guardada no dispositivo — envia sozinha quando houver rede.'))
+        setGuardado(t('studio.guardadoLocal'))
         recarregarFila()
         return
       }
       try {
         const sala = await createRoom(nome, 'sfu', false, false, 'normal')
-        await uploadRecording(sala.code, resultado.faixas.completo, `${nome}.webm`)
+        await uploadRecording(sala.code, exportado, `${nome}.webm`)
         await arquivo.marcarEnviada(id)
-        setGuardado(t('studio.guardado', 'Guardada na biblioteca de Gravações.'))
+        setGuardado(t('studio.guardado'))
       } catch (e) {
         // O servidor falhou mas a aula ESTÁ salva. Isto não é um erro para o
         // utilizador — é um adiamento, e a mensagem tem de o dizer assim.
-        await arquivo.marcarErro(id, (e as Error).message ?? 'falhou')
-        setGuardado(t('studio.guardadoLocal', 'Guardada no dispositivo — envia sozinha quando houver rede.'))
+        await arquivo.marcarErro(id, apiErrorMessage(e, t('studio.erros.guardar')))
+        setGuardado(t('studio.guardadoLocal'))
       }
       recarregarFila()
     } catch (e) {
-      setErro((e as Error).message || t('studio.erroGuardar', 'Não foi possível guardar.'))
+      setErro(apiErrorMessage(e, t('studio.erros.guardar')))
     } finally {
       setAGuardar(false)
     }
@@ -472,574 +493,370 @@ export default function Studio() {
 
   const aGravar = estado === 'a-gravar'
   const emPausa = estado === 'pausa'
+  const noAr = directo.fase === 'no-ar'
+  // Há imagem para gravar: uma fonte, o quadro, o cartão de intervalo ou um convidado.
+  const temFonte = temEcra || temCamara || palco.conteudo !== 'fontes' || convidadosNoPalco > 0
+  const arrastavel = temCamara && !aRecortar && palco.conteudo !== 'quadro'
+  const noArDesde = directo.fase === 'no-ar' ? directo.desde : 0
+  const lerNoAr = useCallback(() => (noArDesde ? (Date.now() - noArDesde) / 1000 : 0), [noArDesde])
+  const destinosComChave = destinos.filter((d) => d.chave.trim())
+  const rotuloQualidade = rotuloDaQualidade(palco.qualidade)
+
+  const quadroOuAr = noAr || aGravar || emPausa
+  const podeIrParaOAr = directo.fase !== 'a-ligar' && !noAr && destinosComChave.length > 0 && temFonte && directoSuportado()
 
   return (
-    <div className="page studio">
-      <PageHeader
-        icon={<FilmIcon />}
-        title={t('studio.titulo', 'Estúdio')}
-        subtitle={t('studio.sub', 'Grava uma vídeo-aula: o teu ecrã, com a tua câmara por cima.')}
-        actions={
-          <div className="studio-acoes">
-            {!aGravar && !emPausa ? (
-              <Btn onClick={() => void gravar()} disabled={!temEcra && !temCamara}>
-                <RecordIcon /> {t('studio.gravar', 'Gravar')}
-              </Btn>
-            ) : (
-              <>
-                <span className="studio-tempo mono" role="timer" aria-live="off">
-                  ● {mmss(segundos)}
-                </span>
-                <Btn
-                  variant="ghost"
-                  onClick={() => {
-                    if (aGravar) {
-                      compRef.current?.pausar()
-                      setEstado('pausa')
-                    } else {
-                      compRef.current?.retomar()
-                      setEstado('a-gravar')
-                    }
-                  }}
-                >
-                  {aGravar ? t('studio.pausa', 'Pausa') : t('studio.retomar', 'Retomar')}
-                </Btn>
-                <Btn variant="danger" onClick={() => void parar()}>
-                  <StopIcon /> {t('studio.parar', 'Parar')}
-                </Btn>
-              </>
-            )}
-          </div>
-        }
+    <>
+    {vista !== 'emissao' && (
+      <EditPanel
+        vista={vista}
+        onVista={setVista}
+        resultado={resultado}
+        podeCortar={cortesSuportados()}
+        titulo={titulo}
+        onTitulo={setTitulo}
+        aGuardar={aGuardar}
+        guardado={guardado}
+        onGuardar={guardarNaBiblioteca}
       />
-
-      {!online && (
-        <p className="studio-offline" role="status">
-          {t('studio.offline', 'Sem rede. O Estúdio grava, corta e guarda na mesma — as aulas ficam no dispositivo e sobem sozinhas quando a ligação voltar.')}
-        </p>
-      )}
-
-      {porEnviar.length > 0 && (
-        <div className="studio-fila" role="status">
-          <span>
-            {t('studio.fila', '{{n}} aula(s) por enviar', { n: porEnviar.length })}
-            {porEnviar[0]?.erro ? ` · ${porEnviar[0].erro}` : ''}
+    )}
+    {/* A emissão fica montada (escondida) enquanto se edita: o compositor e o
+        canvas vivem nela, e desmontá-la perdia o palco a meio de um directo. */}
+    <div className="dx-stage st" hidden={vista !== 'emissao'}>
+      <header className="st-top">
+        <IconButton
+          icon="menu"
+          bare
+          className="st-top__burger"
+          label={t('shell.abrirNavegacao')}
+          aria-expanded={navOpen}
+          aria-controls="shell-nav"
+          onClick={() => setNavOpen(!navOpen)}
+        />
+        <span className="st-top__mark">
+          <BrandMark size={22} tone="tile" />
+        </span>
+        <h1 className="st-top__title">
+          {t('studio.titulo')}
+          {titulo.trim() && <span> · {titulo.trim()}</span>}
+        </h1>
+        {quadroOuAr && (
+          <span className="st-top__clock dx-num">
+            {aGravar || emPausa ? (
+              <Cronometro activo={aGravar} ler={lerSegundos} label={t('studio.topo.cronometro')} data-studio="tempo" />
+            ) : (
+              <Cronometro activo ler={lerNoAr} label={t('studio.topo.tempoNoAr')} />
+            )}
           </span>
-          <Btn variant="ghost" disabled={!online} onClick={() => void enviarFila()}>
-            {t('studio.enviarAgora', 'Enviar agora')}
-          </Btn>
-        </div>
-      )}
+        )}
+        {(aGravar || emPausa) && (
+          <StatusBadge tone={aGravar ? 'record' : 'warning'}>
+            {aGravar ? t('studio.topo.rec') : t('studio.topo.pausa')}
+            {eh4k(palco.qualidade) && ' 4K'}
+          </StatusBadge>
+        )}
+        {noAr && (
+          <StatusBadge tone="live">
+            <span className="dx-badge__tri" aria-hidden="true" />
+            {t('studio.topo.aoVivoDestinos', { count: destinosComChave.length })}
+          </StatusBadge>
+        )}
 
-      {erro && (
-        <p className="error" role="alert">
-          {erro}
-        </p>
-      )}
-
-      <div className="studio-grid">
-        <div className="studio-palco">
-          <div
-            className={temCamara && !aRecortar ? 'studio-canvas-wrap arrastavel' : 'studio-canvas-wrap'}
-            ref={palcoRef}
-            onPointerDown={(e) => {
-              // Arrastar a bolha para qualquer sítio (achado: os quatro cantos
-              // não chegam quando o conteúdo do slide está justamente no canto).
-              if (!temCamara || aRecortar) return
-              const alvo = e.currentTarget
-              const cv = alvo.querySelector('canvas')
-              if (!cv) return
-              alvo.setPointerCapture(e.pointerId)
-              const mover = (ev: PointerEvent) => {
-                const r = cv.getBoundingClientRect()
-                setAvatar((a) => ({
-                  ...a,
-                  canto: 'livre',
-                  x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)),
-                  y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)),
-                }))
-              }
-              mover(e.nativeEvent)
-              const largar = () => {
-                alvo.removeEventListener('pointermove', mover)
-                alvo.removeEventListener('pointerup', largar)
-                alvo.removeEventListener('pointercancel', largar)
-              }
-              alvo.addEventListener('pointermove', mover)
-              alvo.addEventListener('pointerup', largar)
-              alvo.addEventListener('pointercancel', largar)
-            }}
+        <div className="dx-seg st-views" role="group" aria-label={t('studio.vistas.rotulo')}>
+          <button type="button" aria-pressed={vista === 'emissao'} data-studio-vista="emissao" onClick={() => setVista('emissao')}>
+            {t('studio.vistas.emissao')}
+          </button>
+          <button
+            type="button"
+            aria-pressed={vista === 'edicao'}
+            data-studio-vista="edicao"
+            onClick={() => setVista('edicao')}
           >
-            {!temEcra && !temCamara && pronto && (
-              <div className="studio-vazio">
-                <p>{t('studio.comecaPor', 'Começa por escolher o que gravar.')}</p>
-                <Btn onClick={() => void escolherEcra()}>{t('studio.escolherEcra', 'Escolher ecrã')}</Btn>
-              </div>
-            )}
-          </div>
-          {temEcra && (
-            <SeletorDeRegiao
-              aberto={aRecortar}
-              recorte={recorte}
-              onFechar={() => setARecortar(false)}
-              onAplicar={(r) => {
-                setRecorte(r)
-                setARecortar(false)
-              }}
-            />
-          )}
+            {t('studio.vistas.edicao')}
+          </button>
         </div>
 
-        <aside className="studio-painel">
-          <section className="studio-grupo">
-            <h3>{t('studio.oQueGravar', 'O que gravar')}</h3>
-            <Btn variant={temEcra ? 'ghost' : 'primary'} onClick={() => void escolherEcra()}>
-              {temEcra ? t('studio.trocarEcra', 'Trocar fonte') : t('studio.escolherEcra', 'Escolher ecrã')}
-            </Btn>
-            {temEcra && (
-              <>
-                <div className="studio-seg">
-                  <button
-                    className={recorte.w === 1 && recorte.h === 1 ? 'seg-btn active' : 'seg-btn'}
-                    onClick={() => setRecorte({ ...RECORTE_INTEIRO })}
-                  >
-                    {t('studio.tudo', 'Tudo')}
-                  </button>
-                  <button
-                    className={recorte.w < 1 || recorte.h < 1 ? 'seg-btn active' : 'seg-btn'}
-                    onClick={() => setARecortar(true)}
-                  >
-                    {t('studio.regiao', 'Só uma região')}
-                  </button>
-                </div>
-                {(recorte.w < 1 || recorte.h < 1) && (
-                  <small className="muted mono">
-                    {Math.round(recorte.w * 100)}% × {Math.round(recorte.h * 100)}%
-                  </small>
-                )}
-              </>
-            )}
-          </section>
+        <span className="dx-spacer" />
 
-          {directoSuportado() && (
-            <section className="studio-grupo studio-directo">
-              <h3>
-                {t('studio.directo', 'Directo')}
-                {directo.fase === 'no-ar' && <span className="studio-no-ar">● {t('studio.noAr', 'NO AR')}</span>}
-              </h3>
+        <span className="st-top__meta dx-num" data-studio="topo-meta">
+          {noAr && <span>{t('studio.topo.enc', { kbps: kbps.toLocaleString(i18n.language) })} · </span>}
+          <Relogio />
+        </span>
 
-              {directo.fase !== 'no-ar' ? (
-                <>
-                  {destinos.map((d, i) => (
-                    <div key={i} className="studio-destino-row">
-                      <label className="set-label">
-                        {t('studio.rtmpUrl', 'Servidor RTMP')}
-                        <input
-                          value={d.url}
-                          onChange={(e) => mudarDestino(i, { url: e.target.value })}
-                          placeholder="rtmp://a.rtmp.youtube.com/live2"
-                          autoComplete="off"
-                        />
-                      </label>
-                      <label className="set-label">
-                        {t('studio.rtmpChave', 'Chave de emissão')}
-                        {/* `type=password`: a chave é uma credencial, e uma partilha
-                            de ecrã a configurar o directo mostrava-a a toda a gente. */}
-                        <PasswordInput
-                          value={d.chave}
-                          onChange={(v) => mudarDestino(i, { chave: v })}
-                          placeholder={t('studio.rtmpChavePh', 'colada da plataforma')}
-                          autoComplete="off"
-                        />
-                      </label>
-                      <label className="set-label">
-                        {t('studio.rtmpRotulo', 'Rótulo (ex.: YouTube, Twitch)')}
-                        <input
-                          value={d.rotulo ?? ''}
-                          onChange={(e) => mudarDestino(i, { rotulo: e.target.value })}
-                          autoComplete="off"
-                        />
-                      </label>
-                      {destinos.length > 1 && (
-                        <Btn
-                          variant="ghost"
-                          onClick={() => removerDestino(i)}
-                          aria-label={t('studio.removerDestino', { rotulo: d.rotulo || d.url || String(i + 1) })}
-                        >
-                          {t('common.delete')}
-                        </Btn>
-                      )}
-                    </div>
-                  ))}
-                  {destinos.length < MAX_DESTINOS ? (
-                    <Btn variant="ghost" onClick={adicionarDestino}>
-                      + {t('studio.adicionarDestino', 'Adicionar plataforma')}
-                    </Btn>
-                  ) : (
-                    <small className="muted">
-                      {t('studio.destinoLimiteAtingido', { maximo: MAX_DESTINOS })}
-                    </small>
-                  )}
-                  <small className="muted">
-                    {t('studio.directoNota', 'A imagem vai como está na pré-visualização. Salas com cifra ponta-a-ponta não podem emitir.')}
-                  </small>
-                  <Btn
-                    disabled={
-                      directo.fase === 'a-ligar' ||
-                      !destinos.some((d) => d.chave.trim()) ||
-                      (!temEcra && !temCamara)
-                    }
-                    onClick={() => void irParaOAr()}
-                  >
-                    {directo.fase === 'a-ligar'
-                      ? t('studio.aLigar', 'A ligar…')
-                      : t('studio.irParaOAr', 'Ir para o ar')}
-                  </Btn>
-                  {directo.fase === 'erro' && (
-                    <small className="error" role="alert">
-                      {directo.motivo}
-                    </small>
-                  )}
-                </>
-              ) : (
-                <>
-                  <small className="muted mono">
-                    {mmss(Math.floor((Date.now() - directo.desde) / 1000))} ·{' '}
-                    {(directo.bytes / 1_048_576).toFixed(1)} MB
-                  </small>
-                  <Btn variant="danger" onClick={() => void sairDoAr()}>
-                    {t('studio.sairDoAr', 'Terminar directo')}
-                  </Btn>
-                </>
-              )}
-            </section>
+        <div className="st-top__actions" data-studio="acoes">
+          {!aGravar && !emPausa ? (
+            <Button
+              variant="outline"
+              icon="record"
+              data-studio="gravar"
+              disabled={!temFonte}
+              title={temFonte ? undefined : t('studio.acoes.semFonte')}
+              onClick={() => void gravar()}
+            >
+              {t('studio.acoes.gravar')}
+            </Button>
+          ) : (
+            <>
+              <Button variant="secondary" icon={aGravar ? 'pause' : 'play'} data-studio="pausa" onClick={pausarOuRetomar}>
+                {aGravar ? t('studio.acoes.pausar') : t('studio.acoes.retomar')}
+              </Button>
+              <Button variant="danger" icon="square" data-studio="parar" onClick={() => void parar()}>
+                {t('studio.acoes.parar')}
+              </Button>
+            </>
           )}
+          {/* «Emitir para todos»: vai para o ar em TODOS os destinos com chave
+              de uma vez (é uma só ligação — ver LivePanel). */}
+          <Button
+            variant="live"
+            className="st-top__emit"
+            busy={directo.fase === 'a-ligar'}
+            disabled={!podeIrParaOAr}
+            title={noAr ? t('studio.directo.estados.noAr') : destinosComChave.length ? undefined : t('studio.topo.semChave')}
+            onClick={() => void irParaOAr()}
+          >
+            {t('studio.topo.emitirParaTodos')}
+          </Button>
+        </div>
+      </header>
 
-          <section className="studio-grupo">
-            <h3>{t('studio.avatar', 'A tua imagem')}</h3>
-            <Btn variant={temCamara ? 'ghost' : 'primary'} onClick={() => void alternarCamara()}>
-              {temCamara ? <CamOffIcon /> : <CamIcon />}
-              {temCamara ? t('studio.semCamara', 'Desligar câmara') : t('studio.comCamara', 'Ligar câmara')}
-            </Btn>
+      <div className="st-notices">
+        <p className="st-narrow-note">{t('studio.ecraEstreito')}</p>
+        {!online && (
+          <div className="dx-alert dx-alert--warning" role="status" data-studio="offline">
+            {t('studio.offline')}
+          </div>
+        )}
+        {erro && <Alert tone="danger">{erro}</Alert>}
+      </div>
 
-            {temCamara && (
-              <>
-                <label className="set-label">
-                  {t('studio.posicao', 'Posição')}
-                  <small className="muted">{t('studio.arrastaBolha', 'Ou arrasta a bolha na pré-visualização.')}</small>
-                  <div className="studio-cantos" role="group" aria-label={t('studio.posicao', 'Posição')}>
-                    {CANTOS.map((c) => (
-                      <button
-                        key={c.key}
-                        className={avatar.canto === c.key ? 'studio-canto active' : 'studio-canto'}
-                        aria-pressed={avatar.canto === c.key}
-                        title={c.key}
-                        onClick={() => setAvatar((a) => ({ ...a, canto: c.key }))}
-                      >
-                        {c.rotulo}
-                      </button>
-                    ))}
-                  </div>
-                </label>
-
-                <label className="set-label">
-                  {t('studio.tamanho', 'Tamanho')}
-                  <input
-                    type="range"
-                    min={10}
-                    max={45}
-                    value={Math.round(avatar.tamanho * 100)}
-                    onChange={(e) => setAvatar((a) => ({ ...a, tamanho: Number(e.target.value) / 100 }))}
-                  />
-                </label>
-
-                <div className="studio-seg">
-                  {([
-                    { m: 'bolha' as ModoDoAvatar, r: t('studio.modoBolha', 'Bolha') },
-                    { m: 'recorte' as ModoDoAvatar, r: t('studio.modoRecorte', 'Sem fundo') },
-                  ]).map(({ m, r }) => (
-                    <button
-                      key={m}
-                      className={avatar.modo === m ? 'seg-btn active' : 'seg-btn'}
-                      disabled={aPrepararRecorte}
-                      onClick={() => {
-                        if (m === 'recorte') void ligarRecorteDeFundo()
-                        else pararRecorteDeFundo()
-                      }}
-                    >
-                      {aPrepararRecorte && m === 'recorte' ? t('studio.aPreparar', 'A preparar…') : r}
-                    </button>
-                  ))}
-                </div>
-                {avatar.modo === 'recorte' && (
-                  <small className="muted">
-                    {t('studio.recorteNota', 'A segmentação corre no teu computador — nada sai da máquina.')}
-                  </small>
-                )}
-
-                <div className="studio-seg">
-                  {(['circulo', 'rectangulo'] as FormaDoAvatar[]).map((f) => (
-                    <button
-                      key={f}
-                      className={avatar.forma === f ? 'seg-btn active' : 'seg-btn'}
-                      disabled={avatar.modo === 'recorte'}
-                      title={avatar.modo === 'recorte' ? t('studio.formaNA', 'Sem fundo, a forma é a da pessoa.') : undefined}
-                      onClick={() => setAvatar((a) => ({ ...a, forma: f }))}
-                    >
-                      {f === 'circulo' ? t('studio.circulo', 'Círculo') : t('studio.rect', 'Rectângulo')}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </section>
-
-          {resultado && (
-            <section className="studio-grupo studio-resultado">
-              <h3>{t('studio.pronta', 'Aula gravada')}</h3>
-              <video
-                className="studio-preview"
-                src={resultado.url}
-                controls
-                ref={previewRef}
-                onLoadedMetadata={(e) => {
-                  const d = e.currentTarget.duration
-                  // Um WebM de MediaRecorder chega muitas vezes com duração
-                  // `Infinity` até se procurar até ao fim: sem isto o cursor
-                  // de corte nascia sem escala.
-                  if (Number.isFinite(d) && d > 0) {
-                    setResultado((r) => (r ? { ...r, duracao: d } : r))
-                    setAte((a) => (a > 0 ? a : d))
-                  } else {
-                    e.currentTarget.currentTime = 1e6
-                  }
-                }}
-                onDurationChange={(e) => {
-                  const d = e.currentTarget.duration
-                  if (Number.isFinite(d) && d > 0) {
-                    setResultado((r) => (r ? { ...r, duracao: d } : r))
-                    setAte((a) => (a > 0 ? a : d))
-                  }
-                }}
-              />
-
-              {resultado.duracao > 0 && cortesSuportados() && (
-                <div className="studio-corte">
-                  <label className="set-label">
-                    {t('studio.corteDe', 'Começar em')} <span className="mono">{mmss(Math.round(de))}</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.floor(resultado.duracao)}
-                      value={Math.min(de, ate)}
-                      onChange={(e) => {
-                        const v = Number(e.target.value)
-                        setDe(v)
-                        if (v >= ate) setAte(Math.min(resultado.duracao, v + 1))
-                        if (previewRef.current) previewRef.current.currentTime = v
-                      }}
-                    />
-                  </label>
-                  <label className="set-label">
-                    {t('studio.corteAte', 'Terminar em')} <span className="mono">{mmss(Math.round(ate))}</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.floor(resultado.duracao)}
-                      value={ate}
-                      onChange={(e) => {
-                        const v = Number(e.target.value)
-                        setAte(v)
-                        if (v <= de) setDe(Math.max(0, v - 1))
-                        if (previewRef.current) previewRef.current.currentTime = v
-                      }}
-                    />
-                  </label>
-                  <Btn
-                    variant="ghost"
-                    disabled={aCortar > 0 || ate - de < 1 || (de === 0 && Math.round(ate) >= Math.floor(resultado.duracao))}
-                    onClick={() => void aplicarCorte()}
-                  >
-                    {aCortar > 0
-                      ? `${t('studio.aCortar', 'A cortar')} ${Math.round(aCortar * 100)}%`
-                      : `${t('studio.cortar', 'Cortar')} · ${mmss(Math.round(ate - de))}`}
-                  </Btn>
-                </div>
-              )}
-
-              {resultado.faixas.audio && cortesSuportados() && (
-                <div className="studio-pausas">
-                  <small className="muted">{t('studio.pausasTit', 'Pausas mortas')}</small>
-                  {!analise ? (
-                    <Btn variant="ghost" disabled={aAnalisar || aCortar > 0} onClick={() => void procurarPausas()}>
-                      {aAnalisar ? t('studio.aAnalisar', 'A analisar…') : t('studio.procurarPausas', 'Procurar pausas')}
-                    </Btn>
-                  ) : resumo(analise).pausas === 0 ? (
-                    <small className="studio-ok">{t('studio.semPausas', 'Sem pausas para apertar — a aula está corrida.')}</small>
-                  ) : (
-                    <>
-                      {/* Mapa da aula: o que fica e o que sai, de relance. */}
-                      <div
-                        className="studio-mapa"
-                        role="img"
-                        aria-label={t('studio.pausasEncontradas', '{{n}} pausas · {{s}} s a poupar', {
-                          n: resumo(analise).pausas,
-                          s: resumo(analise).poupanca,
-                        })}
-                      >
-                        {analise.pausas.map((pa, i) => (
-                          <span
-                            key={i}
-                            className="studio-mapa-pausa"
-                            style={{
-                              left: `${(pa.inicio / analise.duracao) * 100}%`,
-                              width: `${((pa.fim - pa.inicio) / analise.duracao) * 100}%`,
-                            }}
-                          />
-                        ))}
-                      </div>
-                      <small className="muted">
-                        {t('studio.pausasEncontradas', '{{n}} pausas · {{s}} s a poupar', {
-                          n: resumo(analise).pausas,
-                          s: resumo(analise).poupanca,
-                        })}{' '}
-                        ({resumo(analise).pct}%)
-                      </small>
-                      <div className="studio-seg">
-                        <Btn variant="ghost" disabled={aCortar > 0} onClick={() => void apertarPausas()}>
-                          {aCortar > 0
-                            ? `${t('studio.aCortar', 'A cortar')} ${Math.round(aCortar * 100)}%`
-                            : t('studio.apertar', 'Apertar pausas')}
-                        </Btn>
-                        <Btn variant="ghost" disabled={aCortar > 0} onClick={() => setAnalise(null)}>
-                          {t('common.cancel', 'Cancelar')}
-                        </Btn>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {resultado.faixas.audio && (
-                <div className="studio-faixas">
-                  <small className="muted">{t('studio.faixas', 'Faixas separadas')}</small>
-                  <div className="studio-seg">
-                    <button className="seg-btn" onClick={() => descarregar('video')} disabled={!resultado.faixas.video}>
-                      {t('studio.soVideo', 'Só vídeo')}
-                    </button>
-                    <button className="seg-btn" onClick={() => descarregar('audio')}>
-                      {t('studio.soAudio', 'Só áudio')}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <label className="set-label">
-                {t('studio.titulo2', 'Título')}
-                <input
-                  value={titulo}
-                  onChange={(e) => setTitulo(e.target.value)}
-                  placeholder={t('studio.tituloPh', 'Ex.: Aula 3 — funções')}
-                  maxLength={80}
-                />
-              </label>
-              <div className="studio-resultado-acoes">
-                <Btn onClick={() => void guardarNaBiblioteca()} disabled={aGuardar}>
-                  {aGuardar ? t('studio.aGuardar', 'A guardar…') : t('studio.guardar', 'Guardar na biblioteca')}
-                </Btn>
-                <Btn variant="ghost" onClick={() => descarregar('completo')}>
-                  {t('studio.descarregar', 'Descarregar')}
-                </Btn>
-              </div>
-              {guardado && <p className="studio-ok">{guardado}</p>}
-            </section>
-          )}
+      <div className="st-body" hidden={vista !== 'emissao'}>
+        <aside className="st-col st-col--left">
+          <LayoutsPanel layout={palco.layout} onLayout={palco.escolherLayout} />
+          <CenasPanel
+            cenas={palco.cenas}
+            activa={palco.cenaActiva}
+            indisponivel={palco.bancoIndisponivel}
+            onAplicar={palco.aplicarCena}
+            onNova={palco.novaCena}
+            onApagar={(id) => void palco.apagarCena(id)}
+          />
+          <SourcesPanel
+            temEcra={temEcra}
+            temCamara={temCamara}
+            recorte={recorte}
+            avatar={avatar}
+            imagem={imagem}
+            aPrepararRecorte={aPrepararRecorte}
+            cameras={palco.cameras}
+            camara={palco.camara}
+            onEscolherEcra={() => void escolherEcra()}
+            onEcraInteiro={() => {
+              setRecorte({ ...RECORTE_INTEIRO })
+              setARecortar(false)
+            }}
+            onAbrirRegiao={() => setARecortar(true)}
+            onAlternarCamara={() => void alternarCamara()}
+            onEscolherCamara={palco.escolherCamara}
+            onAvatar={mudarAvatar}
+            onImagem={mudarImagem}
+            onFundo={(semFundo) => (semFundo ? void ligarRecorteDeFundo() : pararRecorteDeFundo())}
+          />
+          <AudioPanel
+            mistura={palco.mistura}
+            microfones={palco.microfones}
+            microfone={palco.microfone}
+            musica={palco.musica}
+            musicaATocar={palco.musicaATocar}
+            convidados={fontesNoPalco}
+            ganhosPorConvidado={ganhosPorConvidado}
+            onGanhoConvidado={mudarGanhoConvidado}
+            lerPicoMestre={lerPicoMestre}
+            onMistura={palco.mudarMistura}
+            onMicrofone={palco.escolherMicrofone}
+            onMusica={palco.carregarMusica}
+            onAlternarMusica={palco.alternarMusica}
+          />
         </aside>
+
+        <section className="st-centre" aria-label={t('studio.palco.rotulo')}>
+          <div className="st-stage-fit">
+            <div
+              className={cx(
+                'st-stage',
+                arrastavel && 'st-stage--drag',
+                noAr && 'st-stage--live',
+                (aGravar || emPausa) && !noAr && 'st-stage--rec',
+              )}
+              title={arrastavel ? t('studio.palco.arrastavel') : undefined}
+              onPointerDown={arrastarBolha}
+            >
+              <div ref={canvasHostRef} className="st-stage__canvas" />
+              {/* Estado da INTERFACE sobre o programa, como no template. As
+                  sobreposições queimadas evitam este canto (o cronómetro vai
+                  ao centro), para nada do que vai para o ar ficar tapado. */}
+              <span className="st-overlay st-overlay--tr" aria-hidden="true">
+                {noAr && (
+                  <span className="st-overlay__chip dx-num">
+                    {t('studio.palco.noAr')} · <Cronometro activo ler={lerNoAr} data-studio="no-ar-tempo" />
+                  </span>
+                )}
+                <span className="st-overlay__chip dx-num" data-studio="palco-qualidade">
+                  {rotuloQualidade}
+                </span>
+              </span>
+              {palco.conteudo === 'quadro' && (
+                <QuadroLocal
+                  onRiscar={(de, ate, cor, esp) => compRef.current?.riscarNoQuadro(de, ate, cor, esp)}
+                  onLimpar={() => compRef.current?.limparQuadro()}
+                />
+              )}
+              {!temFonte && pronto && (
+                <div className="st-stage__empty">
+                  <p>{t('studio.palco.vazio')}</p>
+                  <div className="st-actions st-actions--center">
+                    <Button variant="primary" icon="screen" onClick={() => void escolherEcra()}>
+                      {t('studio.fonte.escolherEcra')}
+                    </Button>
+                    <Button variant="secondary" icon="video" onClick={() => void alternarCamara()}>
+                      {t('studio.imagem.ligar')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {temEcra && aRecortar && (
+                <RegionPicker
+                  onFechar={fecharRecorte}
+                  onAplicar={(r) => {
+                    setRecorte(r)
+                    setARecortar(false)
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Telemóvel: os destinos em fichas por baixo do palco (etiqueta e
+              fase — a audiência por plataforma não existe no servidor, por isso
+              a ficha diz a fase e não um número inventado). */}
+          <ul className="st-chips" aria-label={t('studio.directo.titulo')}>
+            {destinos.map((d, i) => {
+              const e = estadoDoCartao(directo.fase, !!d.chave.trim())
+              return (
+                <li key={i} className={cx('st-chip', `st-chip--${e}`)} data-estado={e}>
+                  <span className="dx-num">{plataformaDoUrl(d.url, location.host)}</span>
+                  <span className="st-chip__state dx-num">{t(`studio.directo.estados.${CHIP[e]}`)}</span>
+                </li>
+              )
+            })}
+          </ul>
+
+          <div className="st-under">
+            {salaAberta ? (
+              <Suspense fallback={<Spinner label={t('studio.sala.aCarregar')} />}>
+                <SalaDoEstudio
+                  titulo={titulo}
+                  micId={palco.microfone}
+                  obterCamara={obterCamara}
+                  onLigacao={setSalaLigada}
+                  onPalco={aoPalco}
+                  programaId={programaId}
+                  onPrograma={setProgramaId}
+                  onSondagem={aSondagem}
+                  separadorInicial={ecraDeTelemovel() ? 'chat' : 'convidados'}
+                />
+              </Suspense>
+            ) : (
+              <section className="st-group st-panel" data-studio="sala-fechada" aria-labelledby="st-sala-fechada-h">
+                <header className="st-group__head">
+                  <h2 id="st-sala-fechada-h" className="st-group__title">
+                    {t('studio.sala.fila')}
+                  </h2>
+                  <span className="dx-spacer" />
+                  <span className="dx-num dx-muted st-small">{t('studio.sala.semSala')}</span>
+                </header>
+                <div className="st-guests st-guests--empty" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="st-guests__actions">
+                  <Button size="sm" variant="primary" icon="userPlus" data-studio="sala-abrir" disabled={!online} onClick={() => setSalaAberta(true)}>
+                    {t('studio.sala.abrir')}
+                  </Button>
+                  <span className="st-note">{online ? t('studio.sala.explicacaoCurta') : t('studio.sala.semRede')}</span>
+                </div>
+              </section>
+            )}
+            <SobreposicoesPanel
+              valor={palco.sobreposicoes}
+              temLogotipo={palco.temLogotipo}
+              temSondagem={haSondagem}
+              legendas={
+                estadoLegendas === 'a-preparar'
+                  ? t('studio.legendas.aPreparar')
+                  : estadoLegendas === 'sem-modelo'
+                    ? t('studio.legendas.semModelo')
+                    : estadoLegendas === 'activas'
+                      ? t('studio.legendas.activas')
+                      : ''
+              }
+              onMudar={palco.mudarSobreposicoes}
+              onLogotipo={(f) => void palco.carregarLogotipo(f)}
+            />
+          </div>
+        </section>
+
+        <aside className="st-col st-col--right">
+          <LivePanel
+            suportado={directoSuportado()}
+            destinos={destinos}
+            porDestino={porDestino}
+            localAGravar={aGravar}
+            maximo={MAX_DESTINOS}
+            estado={directo}
+            podeEmitir={temFonte}
+            onMudar={(i, novo) => setDestinos((ds) => ds.map((d, j) => (j === i ? novo : d)))}
+            onAdicionar={() => {
+              const i = destinos.length
+              setDestinos((ds) => (ds.length >= MAX_DESTINOS ? ds : [...ds, { url: '', chave: '', rotulo: '' }]))
+              return i
+            }}
+            onRemover={(i) => setDestinos((ds) => ds.filter((_, j) => j !== i))}
+            onIrParaOAr={() => void irParaOAr()}
+            onParar={() => void sairDoAr()}
+          >
+            <LocalPanel
+              estado={estado}
+              lerSegundos={lerSegundos}
+              porEnviar={porEnviar}
+              ocupacaoBytes={ocupacao}
+              online={online}
+              resolucao={rotuloQualidade}
+              qualidade={palco.qualidade}
+              qualidades={(Object.keys(QUALIDADES) as Qualidade[]).map((q) => ({ valor: q, rotulo: rotuloDaQualidade(q) }))}
+              qualidadeBloqueada={aGravar || emPausa || noAr || directo.fase === 'a-ligar'}
+              onQualidade={(q) => palco.escolherQualidade(q as Qualidade)}
+              lerBytes={lerBytes}
+              onEnviar={() => void enviarFila()}
+            />
+          </LivePanel>
+        </aside>
+
+        {/* Alcance do polegar: no telemóvel, as acções da emissão ficam em baixo. */}
+        <div className="st-thumb" data-studio="barra-polegar">
+          {noAr ? (
+            <Button variant="live" size="lg" block onClick={() => void sairDoAr()}>
+              {t('studio.directo.parar')}
+            </Button>
+          ) : (
+            <Button variant="live" size="lg" block busy={directo.fase === 'a-ligar'} disabled={!podeIrParaOAr} onClick={() => void irParaOAr()}>
+              {t('studio.directo.irParaOAr')}
+            </Button>
+          )}
+        </div>
       </div>
     </div>
-  )
-}
-
-/**
- * Seletor de região: arrasta-se um rectângulo por cima da pré-visualização.
- * As coordenadas saem em FRACÇÕES, não em pixéis — o canvas de gravação e a
- * pré-visualização têm tamanhos diferentes, e guardar pixéis de um deles
- * partia o recorte assim que a janela mudasse de tamanho.
- */
-function SeletorDeRegiao({
-  aberto,
-  recorte,
-  onAplicar,
-  onFechar,
-}: {
-  aberto: boolean
-  recorte: Recorte
-  onAplicar: (r: Recorte) => void
-  onFechar: () => void
-}) {
-  const { t } = useTranslation()
-  const ref = useRef<HTMLDivElement>(null)
-  const [arrasto, setArrasto] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
-
-  if (!aberto) return null
-
-  function fraccao(e: React.PointerEvent): { x: number; y: number } {
-    const r = ref.current!.getBoundingClientRect()
-    return {
-      x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
-      y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
-    }
-  }
-
-  const sel = arrasto && {
-    left: `${Math.min(arrasto.x0, arrasto.x1) * 100}%`,
-    top: `${Math.min(arrasto.y0, arrasto.y1) * 100}%`,
-    width: `${Math.abs(arrasto.x1 - arrasto.x0) * 100}%`,
-    height: `${Math.abs(arrasto.y1 - arrasto.y0) * 100}%`,
-  }
-
-  return (
-    <div className="studio-recorte" role="dialog" aria-label={t('studio.regiao', 'Só uma região')}>
-      <div
-        className="studio-recorte-area"
-        ref={ref}
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId)
-          const p = fraccao(e)
-          setArrasto({ x0: p.x, y0: p.y, x1: p.x, y1: p.y })
-        }}
-        onPointerMove={(e) => {
-          if (!arrasto) return
-          const p = fraccao(e)
-          setArrasto((a) => (a ? { ...a, x1: p.x, y1: p.y } : a))
-        }}
-        onPointerUp={() => {
-          if (!arrasto) return
-          const w = Math.abs(arrasto.x1 - arrasto.x0)
-          const h = Math.abs(arrasto.y1 - arrasto.y0)
-          // Um arrasto minúsculo é um clique falhado, não uma região de 2px.
-          if (w < 0.03 || h < 0.03) {
-            setArrasto(null)
-            return
-          }
-          onAplicar({ x: Math.min(arrasto.x0, arrasto.x1), y: Math.min(arrasto.y0, arrasto.y1), w, h })
-          setArrasto(null)
-        }}
-      >
-        {sel && <div className="studio-recorte-sel" style={sel} />}
-      </div>
-      <div className="studio-recorte-barra">
-        <span className="muted">{t('studio.arrasta', 'Arrasta para escolher a região a gravar.')}</span>
-        <Btn variant="ghost" onClick={() => onAplicar({ ...RECORTE_INTEIRO })}>
-          {t('studio.tudo', 'Tudo')}
-        </Btn>
-        <Btn variant="ghost" onClick={onFechar}>
-          {t('common.cancel', 'Cancelar')}
-        </Btn>
-      </div>
-      <span className="sr-only">
-        {Math.round(recorte.w * 100)}% × {Math.round(recorte.h * 100)}%
-      </span>
-    </div>
+    </>
   )
 }

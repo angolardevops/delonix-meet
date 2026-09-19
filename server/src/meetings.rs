@@ -105,11 +105,61 @@ pub struct MeetingItem {
     pub minutes: String,
     pub room_ref: Option<Uuid>,
     pub room_name: Option<String>,
-    /// A minha resposta enquanto convidado: 'owner' | 'pending' | 'accepted' | 'declined'.
+    /// A minha resposta enquanto convidado: 'owner' | 'pending' | 'accepted' | 'declined' | 'tentative'.
     pub my_status: String,
     pub recurrence_freq: Option<String>,
     pub recurrence_interval: i16,
     pub recurrence_parent_id: Option<Uuid>,
+    /// `meeting` | `training` | `broadcast` | `hybrid` (migração 0059).
+    pub format: String,
+    pub waiting_room: bool,
+    pub auto_record: bool,
+    /// `2160p` | `1080p` | `720p` | `audio`.
+    pub record_quality: String,
+    /// Convidados (sem contar o anfitrião), qualquer que seja a resposta.
+    pub invitee_count: i64,
+    /// Sistema que criou a reunião, lido da referência externa
+    /// (`odoo:<bd>:calendar.event:<id>` → `odoo`). `None` = criada no Meet.
+    pub external_source: Option<String>,
+}
+
+/// Opções de sessão de uma reunião (migração 0059).
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SessionOptions {
+    #[serde(default = "default_format")]
+    pub format: String,
+    #[serde(default)]
+    pub waiting_room: bool,
+    #[serde(default)]
+    pub auto_record: bool,
+    #[serde(default = "default_record_quality")]
+    pub record_quality: String,
+}
+
+pub const MEETING_FORMATS: &[&str] = &["meeting", "training", "broadcast", "hybrid"];
+pub const RECORD_QUALITIES: &[&str] = &["2160p", "1080p", "720p", "audio"];
+
+fn default_format() -> String {
+    "meeting".into()
+}
+fn default_record_quality() -> String {
+    "1080p".into()
+}
+
+impl SessionOptions {
+    pub(crate) fn validate(&self) -> Result<(), ApiError> {
+        if !MEETING_FORMATS.contains(&self.format.as_str()) {
+            return Err(ApiError::BadRequest(
+                "format must be meeting, training, broadcast or hybrid".into(),
+            ));
+        }
+        if !RECORD_QUALITIES.contains(&self.record_quality.as_str()) {
+            return Err(ApiError::BadRequest(
+                "record_quality must be 2160p, 1080p, 720p or audio".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -140,6 +190,14 @@ pub struct CreateMeetingReq {
     pub recurrence_count: Option<i16>,
     /// Dias da semana para freq=weekly: "MON,WED,FRI"
     pub recurrence_byday: Option<String>,
+    #[serde(flatten)]
+    pub options: SessionOptions,
+    /// Avisar os convidados por SMS ao agendar (sms_notify).
+    #[serde(default)]
+    pub sms_invite: bool,
+    /// Lembrete por SMS N minutos antes (5–1440). Nulo = sem lembrete.
+    #[serde(default)]
+    pub sms_reminder_min: Option<i32>,
 }
 
 fn default_kind() -> String {
@@ -331,7 +389,12 @@ pub async fn run_quarantine_sweeper(
 pub struct CreateMeetingResp {
     #[serde(flatten)]
     pub meeting: Meeting,
+    #[serde(flatten)]
+    pub options: SessionOptions,
     pub conflicts: Conflicts,
+    /// Só presente quando o pedido trouxe opções de SMS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sms: Option<crate::sms_notify::MeetingSmsReport>,
 }
 
 #[utoipa::path(
@@ -362,6 +425,27 @@ pub async fn create(
     if !(5..=1440).contains(&req.duration_min) {
         return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
     }
+    req.options.validate()?;
+    if let Some(min) = req.sms_reminder_min {
+        if !crate::sms_notify::REMINDER_MIN_RANGE.contains(&min) {
+            return Err(ApiError::BadRequest(
+                "sms_reminder_min tem de estar entre 5 e 1440".into(),
+            ));
+        }
+        // As instâncias de uma série nascem sem lembrete; aceitar o campo aqui
+        // era prometer um SMS por ocorrência e mandar só o primeiro.
+        if req.recurrence_freq.is_some() {
+            return Err(ApiError::Unprocessable(
+                "sms.reminder_recurring_unsupported: lembrete por SMS ainda não existe em reuniões recorrentes".into(),
+            ));
+        }
+    }
+    // Permissão ANTES de criar: pedir SMS sem poder enviá-los recusa o pedido.
+    let sms_org = if req.sms_invite || req.sms_reminder_min.is_some() {
+        Some(crate::sms_notify::authorize(&state, auth.user_id).await?)
+    } else {
+        None
+    };
 
     // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
     // membro da org do criador. NULL => ilimitado.
@@ -421,8 +505,9 @@ pub async fn create(
 
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
-                               recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                               recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
+                               format, waiting_room, auto_record, record_quality, sms_reminder_min)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING {MEETING_COLUMNS}"
     ))
     .bind(auth.user_id)
@@ -437,6 +522,11 @@ pub async fn create(
     .bind(req.recurrence_until)
     .bind(req.recurrence_count)
     .bind(&req.recurrence_byday)
+    .bind(&req.options.format)
+    .bind(req.options.waiting_room)
+    .bind(req.options.auto_record)
+    .bind(&req.options.record_quality)
+    .bind(req.sms_reminder_min)
     .fetch_one(&state.db)
     .await?;
 
@@ -465,7 +555,42 @@ pub async fn create(
     fire_meeting_webhook(&state, &meeting, auth.user_id, "meeting.created").await;
     crate::notifications::meeting_invited(&state, &meeting, auth.user_id, &req.invitee_ids).await;
 
-    Ok(Json(CreateMeetingResp { meeting, conflicts }))
+    let sms = match sms_org {
+        None => None,
+        Some(org_id) => {
+            let invite = if req.sms_invite {
+                let meeting_ref = crate::sms_notify::MeetingRef {
+                    id: meeting.id,
+                    owner_id: meeting.owner_id,
+                    title: &meeting.title,
+                    starts_at: meeting.starts_at,
+                };
+                Some(
+                    crate::sms_notify::queue_for_meeting(
+                        &state,
+                        org_id,
+                        &meeting_ref,
+                        &req.invitee_ids,
+                        crate::sms::Purpose::MeetingInvite,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+            Some(crate::sms_notify::MeetingSmsReport {
+                invite,
+                reminder_min: req.sms_reminder_min,
+            })
+        }
+    };
+
+    Ok(Json(CreateMeetingResp {
+        meeting,
+        options: req.options,
+        conflicts,
+        sms,
+    }))
 }
 
 /// Dispara um evento de reunião para os webhooks das organizações do dono.
@@ -637,12 +762,16 @@ pub async fn list(
                (m.owner_id = $1) AS is_owner, m.minutes,
                m.room_ref, mr.name AS room_name,
                CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,
-               m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id
+               m.recurrence_freq, m.recurrence_interval, m.recurrence_parent_id,
+               m.format, m.waiting_room, m.auto_record, m.record_quality,
+               (SELECT COUNT(*) FROM meeting_invitees ic WHERE ic.meeting_id = m.id) AS invitee_count,
+               NULLIF(split_part(x.external_ref, ':', 1), '') AS external_source
         FROM mine
         JOIN meetings m ON m.id = mine.id
         JOIN users u ON u.id = m.owner_id
         LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $1
         LEFT JOIN meeting_rooms mr ON mr.id = m.room_ref
+        LEFT JOIN meeting_external_refs x ON x.meeting_id = m.id
         ORDER BY m.starts_at ASC
         "#,
     )
@@ -848,6 +977,12 @@ pub struct StartResp {
     pub code: String,
     /// `video` | `voice`.
     pub kind: String,
+    /// `meeting` | `training` | `broadcast` | `hybrid` (migração 0059).
+    pub format: String,
+    pub waiting_room: bool,
+    pub auto_record: bool,
+    /// `2160p` | `1080p` | `720p` | `audio`.
+    pub record_quality: String,
 }
 
 /// Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.
@@ -880,6 +1015,18 @@ pub async fn start(
         return Err(ApiError::NotFound);
     }
 
+    // As opções agendadas passam à sala: sala de espera, formato (videoaula
+    // abre salas de grupo; emissão e híbrida marcam as gravações) e o que o
+    // gravador do servidor tem de cumprir. Antes era sempre 'normal', sem
+    // sala de espera. Lidas já aqui porque também vão na resposta — reutilizar
+    // a sala (abaixo) ou criá-la de novo devolvem as mesmas opções ao cliente.
+    let opts: SessionOptions = sqlx::query_as(
+        "SELECT format, waiting_room, auto_record, record_quality FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+
     // Se já foi arrancada, reutiliza a sala.
     if let Some(code) = meeting.room_code.clone() {
         if sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
@@ -891,6 +1038,10 @@ pub async fn start(
             return Ok(Json(StartResp {
                 code,
                 kind: meeting.kind,
+                format: opts.format,
+                waiting_room: opts.waiting_room,
+                auto_record: opts.auto_record,
+                record_quality: opts.record_quality,
             }));
         }
     }
@@ -906,9 +1057,16 @@ pub async fn start(
         auth.user_id,
         &meeting.title,
         "sfu",
+        opts.waiting_room,
         false,
-        false,
-        "normal",
+        crate::rooms::room_format_for_meeting(&opts.format),
+    )
+    .await?;
+    crate::rooms::set_recording_options(
+        &state.db,
+        room.id,
+        opts.auto_record,
+        Some(&opts.record_quality),
     )
     .await?;
     sqlx::query("UPDATE meetings SET room_code = $1 WHERE id = $2")
@@ -947,6 +1105,10 @@ pub async fn start(
     Ok(Json(StartResp {
         code: room.code,
         kind: meeting.kind,
+        format: opts.format,
+        waiting_room: opts.waiting_room,
+        auto_record: opts.auto_record,
+        record_quality: opts.record_quality,
     }))
 }
 
@@ -1093,7 +1255,7 @@ pub async fn check_conflicts(
 pub struct InviteeResponse {
     pub user_id: Uuid,
     pub username: String,
-    /// `pending` | `accepted` | `declined`.
+    /// `pending` | `accepted` | `declined` | `tentative`.
     pub status: String,
     pub decline_reason: String,
     pub responded_at: Option<DateTime<Utc>>,
@@ -1144,7 +1306,7 @@ pub async fn invitees(
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct RespondReq {
-    /// `accepted` | `declined`.
+    /// `accepted` | `declined` | `tentative`.
     pub status: String,
     /// Obrigatório quando `status` é `declined`.
     #[serde(default)]
@@ -1171,7 +1333,7 @@ pub async fn respond(
     Path(id): Path<Uuid>,
     Json(req): Json<RespondReq>,
 ) -> Result<Json<InviteeResponse>, ApiError> {
-    if !matches!(req.status.as_str(), "accepted" | "declined") {
+    if !matches!(req.status.as_str(), "accepted" | "declined" | "tentative") {
         return Err(ApiError::BadRequest("status inválido".into()));
     }
     let reason = req.reason.trim();
@@ -1389,6 +1551,16 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
             }
         }
     }
+    // As ocorrências herdam as opções de sessão da reunião-mãe.
+    let _ = sqlx::query(
+        "UPDATE meetings c SET format = p.format, waiting_room = p.waiting_room,
+                auto_record = p.auto_record, record_quality = p.record_quality
+         FROM meetings p
+         WHERE p.id = $1 AND c.recurrence_parent_id = p.id",
+    )
+    .bind(parent.id)
+    .execute(db)
+    .await;
 }
 
 fn next_occurrence(

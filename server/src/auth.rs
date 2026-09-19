@@ -1,12 +1,13 @@
 use axum::{
-    extract::{FromRequestParts, State},
+    extract::{ConnectInfo, FromRequestParts, State},
     http::{header, request::Parts, HeaderMap},
     response::{IntoResponse, Response},
     Json,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -249,19 +250,70 @@ fn read_refresh_cookie(headers: &HeaderMap) -> Option<String> {
     })
 }
 
+/// Identidade de uma sessão de conta, vista em "A minha conta" ➜ sessões
+/// activas. O refresh token roda a cada renovação (linha nova, `token_hash`
+/// diferente), mas `id`/`started_at` nascem uma vez no login e viajam para
+/// cada linha seguinte — é o que deixa a sessão "o portátil de casa"
+/// reconhecível ao longo do tempo, em vez de desaparecer a cada refresh.
+struct SessionMeta {
+    id: Uuid,
+    started_at: DateTime<Utc>,
+    user_agent: Option<String>,
+    ip: Option<String>,
+}
+
+impl SessionMeta {
+    /// Sessão nova (login/registo/SSO): id e início gerados agora.
+    fn fresh(headers: &HeaderMap, ip: String) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            started_at: Utc::now(),
+            user_agent: request_user_agent(headers),
+            ip: Some(ip),
+        }
+    }
+
+    /// Continuação de uma sessão existente (refresh): mantém id/início,
+    /// actualiza o agente/IP para reflectir o pedido actual.
+    fn continued(id: Uuid, started_at: DateTime<Utc>, headers: &HeaderMap, ip: String) -> Self {
+        Self {
+            id,
+            started_at,
+            user_agent: request_user_agent(headers),
+            ip: Some(ip),
+        }
+    }
+}
+
+fn request_user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.chars().take(300).collect())
+}
+
 async fn issue_tokens(
     state: &AppState,
     user: crate::users::UserPublic,
+    session: SessionMeta,
 ) -> Result<TokenPair, ApiError> {
     let access = access_token(state, user.id)?;
     let (refresh, refresh_hash) = new_refresh_token();
     let expires = Utc::now() + chrono::Duration::seconds(state.config.refresh_ttl_secs);
-    sqlx::query("INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
-        .bind(&refresh_hash)
-        .bind(user.id)
-        .bind(expires)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO refresh_tokens
+            (token_hash, user_id, expires_at, session_id, session_started_at, user_agent, ip_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(&refresh_hash)
+    .bind(user.id)
+    .bind(expires)
+    .bind(session.id)
+    .bind(session.started_at)
+    .bind(&session.user_agent)
+    .bind(&session.ip)
+    .execute(&state.db)
+    .await?;
     Ok(TokenPair {
         access_token: access,
         refresh_token: refresh,
@@ -294,6 +346,20 @@ async fn issue_tokens(
 )]
 pub struct ApiDoc;
 
+/// Emite uma sessão NOVA (tokens + cookie de refresh) para `user`, com a
+/// MESMA resposta que `register`/`login` devolvem. Usado por quem acaba de
+/// aceitar um convite de organização (`org::accept_invite`): a conta acabada
+/// de nascer entra logada, sem ter de fazer login a seguir.
+pub(crate) async fn login_response(
+    state: &AppState,
+    user: crate::users::UserPublic,
+    headers: &HeaderMap,
+    ip: String,
+) -> Result<Response, ApiError> {
+    let session = SessionMeta::fresh(headers, ip);
+    Ok(auth_ok(state, issue_tokens(state, user, session).await?))
+}
+
 /// Registo de conta. O QUE acontece decide-o a política da instalação
 /// (`delonix_meet_domain::identity::registration`, ADR-0006 §2); aqui só se lê
 /// o retrato da instalação e se executa o plano.
@@ -316,6 +382,8 @@ pub struct ApiDoc;
 )]
 pub async fn register(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<RegisterReq>,
 ) -> Result<Response, ApiError> {
     use delonix_meet_domain::identity::registration::{
@@ -323,6 +391,7 @@ pub async fn register(
     };
     use delonix_meet_domain::identity::validation;
 
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
     let email = validation::normalize_email(&req.email);
     // Sem username explícito → deriva da parte local do email.
     let username = if req.username.trim().len() >= 2 {
@@ -400,8 +469,27 @@ pub async fn register(
                 }
                 _ => e.into(),
             })?;
-            crate::org::insert_member_tx(&mut tx, org_id, user.id, "admin", "Administrador")
+
+            // Os dois papéis de sistema nascem com a organização — ver rbac.rs.
+            let (admin_role_id,): (Uuid,) = sqlx::query_as(
+                "INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Administrador', TRUE) RETURNING id",
+            )
+            .bind(org_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            sqlx::query("INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Membro', TRUE)")
+                .bind(org_id)
+                .execute(&mut *tx)
                 .await?;
+            sqlx::query(
+                "INSERT INTO org_members (org_id, user_id, role, role_id, title) VALUES ($1, $2, 'admin', $3, $4)",
+            )
+            .bind(org_id)
+            .bind(user.id)
+            .bind(admin_role_id)
+            .bind("Administrador")
+            .execute(&mut *tx)
+            .await?;
             (org_id, "org.created", name)
         }
         RegistrationPlan::JoinOrganization { org_id, as_admin } => {
@@ -413,7 +501,8 @@ pub async fn register(
     tx.commit().await?;
 
     crate::audit::log(&state.db, Some(org_id), user.id, action, &target).await;
-    Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+    let session = SessionMeta::fresh(&headers, ip);
+    Ok(auth_ok(&state, issue_tokens(&state, user, session).await?))
 }
 
 /// O que a política de registo precisa de saber sobre a instalação.
@@ -462,8 +551,11 @@ where
 )]
 pub async fn login(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<Response, ApiError> {
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
     let email = req.email.trim().to_lowercase();
 
     // Anti-brute-force por conta (complementa o limite por IP): trava após
@@ -499,7 +591,8 @@ pub async fn login(
         // credenciais não servem, e aí o 401 mantém-se.
         if let Some(user) = crate::odoo_sso::try_first_login(&state, &email, &req.password).await {
             crate::audit::log(&state.db, None, user.id, "auth.login_odoo", &user.email).await;
-            return Ok(auth_ok(&state, issue_tokens(&state, user).await?));
+            let session = SessionMeta::fresh(&headers, ip);
+            return Ok(auth_ok(&state, issue_tokens(&state, user, session).await?));
         }
         let _ = verify_password(&req.password, DUMMY);
         return Err(ApiError::Unauthorized);
@@ -578,7 +671,8 @@ pub async fn login(
             .into_response());
         }
         crate::audit::log(&state.db, None, user.id, "auth.login", &user.email).await;
-        Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+        let session = SessionMeta::fresh(&headers, ip);
+        Ok(auth_ok(&state, issue_tokens(&state, user, session).await?))
     } else {
         Err(ApiError::Unauthorized)
     }
@@ -634,8 +728,11 @@ pub struct MfaReq {
 )]
 pub async fn mfa_login(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<MfaReq>,
 ) -> Result<Response, ApiError> {
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
     // O `verify_jwt` exige o `typ` esperado: um access token NÃO serve de
     // desafio, nem o desafio serve de access token. É a mesma chave a assinar
     // os dois, e sem esta verificação seriam intermutáveis.
@@ -655,7 +752,8 @@ pub async fn mfa_login(
     }
     let user = crate::users::fetch_public(&state.db, user_id).await?;
     crate::audit::log(&state.db, None, user.id, "auth.login_mfa", &user.email).await;
-    Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+    let session = SessionMeta::fresh(&headers, ip);
+    Ok(auth_ok(&state, issue_tokens(&state, user, session).await?))
 }
 
 /// Roda a sessão: consome o refresh token do cookie `dlx_refresh` (revoga-o)
@@ -673,19 +771,21 @@ pub async fn mfa_login(
 )]
 pub async fn refresh(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
     // O refresh token vem do cookie HttpOnly (não do corpo — imune a XSS).
     let token = read_refresh_cookie(&headers).ok_or(ApiError::Unauthorized)?;
     let hash = hash_refresh_token(&token);
-    let row: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM refresh_tokens
+    let row: Option<(Uuid, Uuid, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT user_id, session_id, session_started_at FROM refresh_tokens
          WHERE token_hash = $1 AND NOT revoked AND expires_at > now()",
     )
     .bind(&hash)
     .fetch_optional(&state.db)
     .await?;
-    let (user_id,) = row.ok_or(ApiError::Unauthorized)?;
+    let (user_id, session_id, session_started_at) = row.ok_or(ApiError::Unauthorized)?;
 
     // Rotate: revoke the used token, issue a fresh pair.
     sqlx::query("UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1")
@@ -694,7 +794,8 @@ pub async fn refresh(
         .await?;
 
     let user = crate::users::fetch_public(&state.db, user_id).await?;
-    Ok(auth_ok(&state, issue_tokens(&state, user).await?))
+    let session = SessionMeta::continued(session_id, session_started_at, &headers, ip);
+    Ok(auth_ok(&state, issue_tokens(&state, user, session).await?))
 }
 
 /// Termina a sessão: revoga o refresh token (se presente) e limpa o cookie.
@@ -951,8 +1052,11 @@ pub async fn sso_login(
 )]
 pub async fn sso_callback(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
     let code = params
         .get("code")
         .ok_or_else(|| ApiError::BadRequest("code is required".into()))?;
@@ -1146,13 +1250,20 @@ pub async fn sso_callback(
             })?;
 
             // Adicionar como membro da org (role = member; admins são promovidos manualmente).
+            let membro_role_id: Option<(Uuid,)> = sqlx::query_as(
+                "SELECT id FROM org_roles WHERE org_id = $1 AND is_system = TRUE AND name = 'Membro'",
+            )
+            .bind(entry.org_id)
+            .fetch_optional(&mut *tx)
+            .await?;
             sqlx::query(
-                "INSERT INTO org_members (org_id, user_id, role, title)
-                 VALUES ($1, $2, 'member', '')
+                "INSERT INTO org_members (org_id, user_id, role, role_id, title)
+                 VALUES ($1, $2, 'member', $3, '')
                  ON CONFLICT DO NOTHING",
             )
             .bind(entry.org_id)
             .bind(new_user.id)
+            .bind(membro_role_id.map(|(id,)| id))
             .execute(&mut *tx)
             .await?;
 
@@ -1163,7 +1274,8 @@ pub async fn sso_callback(
     };
 
     // Emitir tokens nativos do Delonix e redirecionar para o frontend.
-    let pair = issue_tokens(&state, user).await?;
+    let session = SessionMeta::fresh(&headers, ip);
+    let pair = issue_tokens(&state, user, session).await?;
     let cookie = refresh_cookie(
         &pair.refresh_token,
         state.config.cookie_secure,

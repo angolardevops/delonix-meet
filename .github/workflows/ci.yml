@@ -257,6 +257,12 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
+      # Contrato do leitor de gravações e das opções de reunião (migrações
+      # 0050–0056). O CI não tem ffmpeg nem LLM local: o teste di-lo na saída
+      # («NÃO VERIFICADO») em vez de fingir a medição e a geração.
+      - name: Gravações — metadados, transcrição, legendas, capítulos, publicação
+        run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/gravacoes-meta.mjs
+
       # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
       # só usa a API prova que a API não deixa, não que os dados estão
       # protegidos. E o adversário que interessa numa auditoria é quem TEM

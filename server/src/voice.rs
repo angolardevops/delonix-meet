@@ -125,10 +125,17 @@ pub struct VoiceDid {
     pub provider: String,
     pub active: bool,
     pub created_at: DateTime<Utc>,
+    /// Ramal a que este número está permanentemente atribuído (Fase 2, ver
+    /// `ramais.rs::assign_extension_did`) — `None` enquanto o número está
+    /// livre para dial-in por PIN ou por atribuir. Não é uma FK gerida por
+    /// `voice.rs`; só exposta aqui para a consola saber que números já não
+    /// estão disponíveis para uma sala de voz efémera.
+    pub extension_id: Option<Uuid>,
 }
 
 /// Estava copiada à mão em `create_did` e `list_dids` (ADR-0004).
-const VOICE_DID_COLUMNS: &str = "id, org_id, e164, market, model, provider, active, created_at";
+const VOICE_DID_COLUMNS: &str =
+    "id, org_id, e164, market, model, provider, active, created_at, extension_id";
 
 #[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VoiceCdr {
@@ -276,10 +283,16 @@ pub async fn create_room(
     let backend = MediaBackend::parse(&backend).as_str().to_string();
 
     // Resolver o DID: explícito (validado), dedicado da org, ou do pool partilhado.
+    // `extension_id IS NULL` nas três queries (migração 0065_ramais_did.sql):
+    // um DID já atribuído a um ramal (server/src/ramais.rs::assign_extension_did)
+    // é permanente e alcançado DIRECTAMENTE, sem PIN — não pode ser reaproveitado
+    // aqui para uma sala de voz efémera, ou o mesmo número passaria a ambiguar
+    // entre "toca o ramal" e "pede PIN".
     let did: Option<VoiceDid> = if let Some(id) = req.did_id {
         sqlx::query_as(&format!(
             "SELECT {VOICE_DID_COLUMNS}
-             FROM voice_did WHERE id = $1 AND active AND (org_id = $2 OR org_id IS NULL)"
+             FROM voice_did
+             WHERE id = $1 AND active AND extension_id IS NULL AND (org_id = $2 OR org_id IS NULL)"
         ))
         .bind(id)
         .bind(org_id)
@@ -288,7 +301,9 @@ pub async fn create_room(
     } else if did_model == "dedicated" {
         sqlx::query_as(&format!(
             "SELECT {VOICE_DID_COLUMNS}
-             FROM voice_did WHERE org_id = $1 AND active ORDER BY created_at LIMIT 1"
+             FROM voice_did
+             WHERE org_id = $1 AND active AND extension_id IS NULL
+             ORDER BY created_at LIMIT 1"
         ))
         .bind(org_id)
         .fetch_optional(&state.db)
@@ -297,7 +312,8 @@ pub async fn create_room(
         // Modelo partilhado: primeiro um dedicado da org, senão o pool partilhado.
         sqlx::query_as(&format!(
             "SELECT {VOICE_DID_COLUMNS}
-             FROM voice_did WHERE active AND (org_id = $1 OR org_id IS NULL)
+             FROM voice_did
+             WHERE active AND extension_id IS NULL AND (org_id = $1 OR org_id IS NULL)
              ORDER BY (org_id = $1) DESC, created_at LIMIT 1"
         ))
         .bind(org_id)
@@ -511,7 +527,7 @@ pub async fn create_did(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateDidReq>,
 ) -> Result<Json<VoiceDid>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let e164 = req.e164.trim();
     if !e164.starts_with('+') || e164.len() < 8 || e164.len() > 20 {
         return Err(ApiError::BadRequest(
@@ -572,7 +588,7 @@ pub async fn list_dids(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<VoiceDid>>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let dids: Vec<VoiceDid> = sqlx::query_as(&format!(
         "SELECT {VOICE_DID_COLUMNS} FROM voice_did WHERE org_id = $1 OR org_id IS NULL ORDER BY created_at DESC"
     ))
@@ -598,7 +614,7 @@ pub async fn list_cdr(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<VoiceCdr>>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let rows: Vec<VoiceCdr> = sqlx::query_as(
         "SELECT id, direction, caller_number, did_e164, duration_secs, cost_estimate, started_at, ended_at
          FROM voice_cdr WHERE org_id = $1 ORDER BY started_at DESC LIMIT 500",
@@ -647,7 +663,7 @@ pub async fn billing_summary(
     Path(org_id): Path<Uuid>,
     axum::extract::Query(q): axum::extract::Query<BillingQuery>,
 ) -> Result<Json<BillingSummary>, ApiError> {
-    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::rbac::require_permission(&state, org_id, auth.user_id, "voice.manage").await?;
     let days: i64 = match q.period.as_str() {
         "week" => 7,
         "quarter" => 90,
@@ -680,7 +696,7 @@ pub async fn billing_summary(
 //  Autenticada por segredo partilhado (X-Voice-Secret).
 // ============================================================
 
-fn check_media_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub(crate) fn check_media_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     let cfg = state.config.voice_internal_secret.as_bytes();
     if cfg.is_empty() {
         return Err(ApiError::NotFound); // feature desativada => não revela nada
@@ -703,11 +719,44 @@ pub struct ValidatePinReq {
     pub did_e164: String,
     pub pin: String,
 }
+
+/// Ponte de media FreeSWITCH↔SFU (Abordagem B, `docs/pstn-sfu-bridge-design.md`
+/// e `server/src/pstn_bridge.rs`) — endpoint de ingress SRTP do SFU para esta
+/// sala, com as chaves efémeras que o FreeSWITCH precisa para lhe falar. Os
+/// nomes destes campos são o contrato com
+/// `voice/freeswitch/scripts/dialin_ivr.lua` — mudar um lado sem o outro
+/// deixa a ponte silenciosamente inactiva (cai sempre no fallback local).
+#[derive(Serialize)]
+pub struct PstnBridgeResp {
+    /// Host onde o SFU está à escuta (ingress) — `PSTN_BRIDGE_HOST`.
+    pub host: String,
+    pub port: u16,
+    /// SRTP `master_key||master_salt`, base64 (convenção SDES-SRTP, RFC 4568
+    /// `a=crypto`). Direção FreeSWITCH→SFU: o FreeSWITCH CIFRA com esta chave.
+    pub ingress_key_b64: String,
+    /// Direção SFU→FreeSWITCH: o FreeSWITCH DESENCRIPTA com esta chave — é
+    /// SEMPRE diferente de `ingress_key_b64` (nunca a mesma chave nos dois
+    /// sentidos, ver `pstn_bridge::SrtpKeyPair`).
+    pub egress_key_b64: String,
+    /// Nome do perfil SRTP (hoje sempre "AES_CM_128_HMAC_SHA1_80").
+    pub profile: String,
+    /// Payload type RTP fixo do Opus nesta ponte (não há SDP a negociá-lo).
+    pub payload_type: u8,
+}
+
 #[derive(Serialize)]
 pub struct ValidatePinResp {
     pub voice_room_id: Uuid,
     pub room_code: String,
     pub media_backend: String,
+    /// `Some` só quando o backend é `freeswitch` E o SFU conseguiu activar a
+    /// ponte para a sala (existe uma `rooms.code = room_code`, e
+    /// `PSTN_BRIDGE_FREESWITCH_IP` está configurado — ver `config.rs`).
+    /// `None` mantém o comportamento de sempre: o IVR cai na conferência
+    /// local do FreeSWITCH, SEM áudio WebRTC (o gap que esta sub-fase fecha,
+    /// mas com um caminho de recurso seguro se a ponte não puder activar).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pstn_bridge: Option<PstnBridgeResp>,
 }
 
 /// Valida (DID, PIN) → devolve a sala a que o chamador PSTN deve ser ligado.
@@ -742,11 +791,15 @@ pub(crate) async fn validate_pin(
     .fetch_optional(&state.db)
     .await?;
     match row {
-        Some((id, room_code, backend)) => Ok(ValidatePinResp {
-            voice_room_id: id,
-            room_code,
-            media_backend: backend,
-        }),
+        Some((id, room_code, backend)) => {
+            let pstn_bridge = activate_pstn_bridge_for(&state, &room_code, &backend).await;
+            Ok(ValidatePinResp {
+                voice_room_id: id,
+                room_code,
+                media_backend: backend,
+                pstn_bridge,
+            })
+        }
         None => {
             // Anti-toll-fraud / PIN-guessing: só as FALHAS contam para o limite;
             // chamadores legítimos com PIN certo nunca são penalizados.
@@ -755,6 +808,58 @@ pub(crate) async fn validate_pin(
                 return Err(ApiError::TooManyRequests);
             }
             Err(ApiError::NotFound)
+        }
+    }
+}
+
+/// Tenta activar a ponte PSTN↔SFU para a sala `room_code`. Falha SEMPRE em
+/// silêncio (log + `None`, nunca um erro que derrube a validação do PIN): um
+/// chamador tem de conseguir entrar mesmo que a ponte não arranque — o IVR
+/// já sabe cair na conferência local quando este campo vem ausente (ver
+/// `dialin_ivr.lua`). As razões possíveis para `None`, todas esperadas e
+/// não-erros do ponto de vista do dial-in: backend não é `freeswitch`
+/// (`provider` faz media à parte), `PSTN_BRIDGE_FREESWITCH_IP` não
+/// configurado (fail-closed, ver `config.rs`), ou `room_code` sem sala WebRTC
+/// correspondente ainda criada em `rooms`.
+async fn activate_pstn_bridge_for(
+    state: &AppState,
+    room_code: &str,
+    backend: &str,
+) -> Option<PstnBridgeResp> {
+    if MediaBackend::parse(backend) != MediaBackend::Freeswitch {
+        return None;
+    }
+    let Some(allowed_ip) = state.config.pstn_bridge_freeswitch_ip else {
+        tracing::warn!(
+            "PSTN_BRIDGE_FREESWITCH_IP não configurado — ponte PSTN↔SFU desactivada, dial-in cai na conferência local"
+        );
+        return None;
+    };
+    let room_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
+        .bind(room_code)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(room_id) = room_id else {
+        tracing::warn!(
+            room_code,
+            "ponte PSTN↔SFU: sala WebRTC ainda não existe para este room_code"
+        );
+        return None;
+    };
+    match state.sfu.activate_pstn_bridge(room_id, allowed_ip).await {
+        Ok(info) => Some(PstnBridgeResp {
+            host: state.config.pstn_bridge_host.clone(),
+            port: info.port,
+            ingress_key_b64: info.ingress_key_b64,
+            egress_key_b64: info.egress_key_b64,
+            profile: info.profile.to_string(),
+            payload_type: info.payload_type,
+        }),
+        Err(e) => {
+            tracing::error!(room_code, error = %e, "ponte PSTN↔SFU: activate_pstn_bridge falhou — dial-in cai na conferência local");
+            None
         }
     }
 }

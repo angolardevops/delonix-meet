@@ -45,49 +45,59 @@ if(falhada){
 // existir só na vista que existia quando foi escrita: a base acrescentou uma
 // tabela e um visualizador de biblioteca, e a gravação falhada voltou a
 // oferecer reproduzir/descarregar/partilhar sem nenhum conflito de merge.
-// Este bloco abre as TRÊS vistas e verifica que nenhuma oferece acção.
+//
+// Na UI reconstruída há DUAS vistas (Lista = tabela, Grelha = cartões) e um
+// painel de leitor partilhado. A biblioteca antiga mostrava a causa no
+// visualizador; a nova mostra-a NA PRÓPRIA linha/cartão, e a falhada nunca
+// chega ao leitor. Este bloco abre as duas vistas e verifica, em cada uma:
+// a entrada existe, a causa registada está à vista, não há botão nenhum, e
+// não há leitor nem <video> para um ficheiro que não existe.
 // ---------------------------------------------------------------------------
 if (falhada) {
   const b2 = await chromium.launch()
   const p2 = await (await b2.newContext({ ignoreHTTPSErrors: true })).newPage()
   await p2.goto(`${APP}/#/login`, { waitUntil: 'domcontentloaded', timeout: 120000 })
-  await p2.waitForSelector('input[type=email]', { timeout: 120000 })
+  await p2.waitForSelector('[data-testid=auth-email]', { timeout: 120000 })
   await p2.evaluate(() => localStorage.setItem('dx_tour_v1', 'done'))
-  await p2.fill('input[type=email]', email)
-  await p2.fill('input[type=password]', PW)
-  await p2.waitForTimeout(2000)
-  await p2.locator('form button.primary').first().click()
-  await p2.waitForFunction(() => !document.querySelector('input[type=email]'), null, { timeout: 60000 })
+  await p2.fill('[data-testid=auth-email]', email)
+  await p2.fill('[data-testid=auth-password]', PW)
+  await p2.waitForTimeout(1500)
+  await p2.locator('[data-testid=auth-submit]').click()
+  await p2.waitForFunction(() => !document.querySelector('[data-testid=auth-email]'), null, { timeout: 60000 })
 
   await p2.goto(`${APP}/#/recordings`, { waitUntil: 'domcontentloaded' })
-  await p2.waitForSelector('.rec-item, .rec-card, .rec-table', { timeout: 60000 })
+  await p2.waitForSelector('.rec-table, .rec-grid', { timeout: 60000 })
+  const causa = (falhada.failure_reason || '').slice(0, 30)
 
-  // Vista de BIBLIOTECA (omissão): a entrada existe e é visível.
-  chk(await p2.locator('.rec-item').count() > 0, 'biblioteca: a gravação falhada está na lista')
-  await p2.locator('.rec-item').first().click()
-  await p2.waitForTimeout(1500)
-  // O visualizador mostra a CAUSA registada, não «falha ao carregar o vídeo».
-  const textoVisualizador = await p2.locator('.rec-split-viewer').innerText().catch(() => '')
-  chk(/media suficiente|falhad/i.test(textoVisualizador),
-      'biblioteca: o visualizador mostra a causa registada, não um erro genérico')
-  chk(await p2.locator('.rec-split-viewer video').count() === 0,
-      'biblioteca: não há elemento <video> para um ficheiro que não existe')
+  // Vista LISTA (omissão): a tabela.
+  const linha = p2.locator('.rec-table tr[data-status="failed"]')
+  chk(await linha.count() > 0, 'lista: a gravação falhada está na tabela')
+  const textoLinha = await linha.first().innerText().catch(() => '')
+  chk(/falhad/i.test(textoLinha) && (!causa || textoLinha.includes(causa)),
+      'lista: a linha mostra a causa registada, não um erro genérico')
+  chk(await p2.locator('.rec-table tr[data-status="failed"] button').count() === 0,
+      'lista: zero botões na linha — nem abrir, nem descarregar, nem partilhar (R59)')
+  chk(await p2.locator('.rec-table tr[data-status="failed"].dx-row-link').count() === 0,
+      'lista: a linha NÃO se apresenta como clicável')
+  await linha.first().click()
+  await p2.waitForTimeout(1000)
+  chk(await p2.locator('.rec-panel.is-open').count() === 0, 'lista: carregar na linha não abre o leitor')
+  const nomeFalhada = falhada.filename.replace(/\.(webm|mp4|mkv)$/i, '')
+  const tituloPainel = await p2.locator('.rec-panel h2').first().innerText({ timeout: 1000 }).catch(() => '')
+  chk(tituloPainel !== nomeFalhada, 'lista: o painel do leitor nunca mostra a falhada')
+  chk(await p2.locator('video').count() === 0, 'lista: não há elemento <video> para um ficheiro que não existe')
 
-  // Vista de CARTÕES.
-  await p2.locator('.seg-btn').nth(1).click()
-  await p2.waitForTimeout(800)
-  chk(await p2.locator('.rec-card .rec-thumb.failed').count() > 0, 'cartões: miniatura marcada como falhada')
-  chk(await p2.locator('.rec-card button.rec-thumb').count() === 0, 'cartões: a miniatura NÃO é clicável')
-  chk(await p2.locator('.rec-card .rec-actions button').count() === 0, 'cartões: zero acções oferecidas')
-
-  // Vista de TABELA — a que a base acrescentou e que o R59 apanhou.
-  await p2.locator('.seg-btn').nth(2).click()
-  await p2.waitForTimeout(800)
-  chk(await p2.locator('.rec-table tbody tr').count() > 0, 'tabela: a linha existe')
-  chk(await p2.locator('.rec-table .rec-row-actions button').count() === 0,
-      'tabela: zero acções oferecidas (o buraco que o merge abriu — R59)')
-  chk(await p2.locator('.rec-table button.rec-name-link').count() === 0,
-      'tabela: o nome NÃO é um botão que abre o visualizador')
+  // Vista GRELHA: os cartões.
+  await p2.locator('.rec-views button').nth(1).click()
+  await p2.waitForSelector('.rec-grid', { timeout: 10000 })
+  chk(await p2.locator('.rec-card[data-status="failed"] .rec-card__thumb.is-failed').count() > 0,
+      'grelha: miniatura marcada como falhada')
+  chk(await p2.locator('.rec-card[data-status="failed"] button').count() === 0,
+      'grelha: a miniatura NÃO é clicável e há zero acções oferecidas (R59)')
+  const textoCartao = await p2.locator('.rec-card[data-status="failed"]').first().innerText().catch(() => '')
+  chk(!causa || textoCartao.includes(causa), 'grelha: o cartão mostra a causa registada')
+  chk(await p2.locator('.rec-panel.is-open').count() === 0 && await p2.locator('video').count() === 0,
+      'grelha: nenhum leitor nem <video> para a falhada')
   await b2.close()
 }
 

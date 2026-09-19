@@ -173,6 +173,21 @@ await recusado('A lê a facturação de voz da org B', `/api/orgs/${B.orgId}/voi
   token: A.token,
 })
 
+// IA local do Estúdio. O `suggestions` leva um corpo VÁLIDO: só 401/403/404 provam
+// que a pertença foi decidida antes de o handler validar ou chamar o modelo (um
+// 400/429/503 seria o handler a correr para quem não é da org).
+console.log('\n--- IA local do Estúdio ---')
+await permitido('B lê o estado da IA da própria org', `/api/orgs/${B.orgId}/ai/status`, { token: B.token })
+await recusadoNaPorta('A lê o estado da IA da org B', `/api/orgs/${B.orgId}/ai/status`, { token: A.token })
+await recusadoNaPorta('A usa a IA do Estúdio da org B', `/api/orgs/${B.orgId}/ai/suggestions`, {
+  token: A.token,
+  method: 'POST',
+  body: {
+    task: 'fillers',
+    segments: [{ start_ms: 0, end_ms: 4000, text: 'Bom dia, tipo, vamos rever a rede de Luanda e o troço do Kilamba.' }],
+  },
+})
+
 // Os dois DELETE precisam de um recurso REAL. Com um UUID ao acaso, um `404`
 // contaria como recusa e não provaria autorização nenhuma — só que o recurso
 // não existe. B cria, A tenta apagar, e a asserção que interessa é a última: o
@@ -197,23 +212,86 @@ if (chaveB.status >= 200 && chaveB.status < 300 && chaveB.json?.id) {
 await recusado('A lê o armazenamento da org B', `/api/orgs/${B.orgId}/storage-usage`, { token: A.token })
 
 // Destinos de emissão guardados (G1): a chave RTMP é credencial de terceiros.
+// O segredo mais valioso desta família: com ele, qualquer um emite no canal
+// de YouTube da empresa. A provar: A não alcança os destinos da B (ler, rodar
+// a chave, alterar, apagar — e o de B sobrevive), a chave nunca volta em claro
+// nem à própria B (fora da criação/rotação), e A não consegue EMITIR com um
+// destino da B referindo-o por id.
+console.log('\n--- destinos de directo guardados da org B ---')
 await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/stream-destinations`, { token: A.token })
+const CHAVE_DESTINO_B = `chave-secreta-da-b-${marca}`
 const destinoB = await req(`/api/orgs/${B.orgId}/stream-destinations`, {
   token: B.token, method: 'POST',
-  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://10.0.0.9/live', stream_key: 'chave-da-b' },
+  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://10.0.0.9/live', stream_key: CHAVE_DESTINO_B },
 })
 if (destinoB.status === 201 && destinoB.json?.id) {
-  const d = `/api/orgs/${B.orgId}/stream-destinations/${destinoB.json.id}`
+  ok('B guarda um destino de directo → 201')
+  const idB = destinoB.json.id
+  const d = `/api/orgs/${B.orgId}/stream-destinations/${idB}`
+  const semChave = (j) => !JSON.stringify(j ?? null).includes(CHAVE_DESTINO_B)
+  if (semChave(destinoB.json) && destinoB.json.key_prefix && destinoB.json.has_key === true) {
+    ok('a resposta da criação NÃO traz a chave (só key_prefix/has_key)')
+  } else nok('a resposta da criação NÃO traz a chave', JSON.stringify(destinoB.json).slice(0, 160))
+  const listaB = await req(`/api/orgs/${B.orgId}/stream-destinations`, { token: B.token })
+  const umB = await req(d, { token: B.token })
+  if (listaB.status === 200 && umB.status === 200 && semChave(listaB.json) && semChave(umB.json)) {
+    ok('nem a própria B volta a ver a chave (lista e detalhe)')
+  } else {
+    nok('nem a própria B volta a ver a chave', `${listaB.status}/${umB.status}`)
+  }
+
   await recusado('A lê um destino da org B', d, { token: A.token })
-  await recusado('A roda a chave de um destino da org B', `/api/orgs/${B.orgId}/stream-destinations/${destinoB.json.id}/rotate-key`, {
+  await recusado('A roda a chave de um destino da org B', `${d}/rotate-key`, {
     token: A.token, method: 'POST', body: { stream_key: 'roubada' },
   })
+  await recusado('A cria um destino na org B', `/api/orgs/${B.orgId}/stream-destinations`, {
+    token: A.token, method: 'POST',
+    body: { kind: 'rtmp', label: 'intruso', url: 'rtmp://127.0.0.1:1/live', stream_key: 'k' },
+  })
+  await recusado('A altera um destino da org B', d, {
+    token: A.token, method: 'PATCH', body: { url: 'rtmp://atacante.exemplo/live' },
+  })
+  // Pelo caminho da PRÓPRIA org A, com o id da B: o `WHERE org_id` tem de o esconder.
+  await recusado('A lê o destino da B pelo caminho da org A', `/api/orgs/${A.orgId}/stream-destinations/${idB}`, { token: A.token })
+  await recusado('A apaga o destino da B pelo caminho da org A', `/api/orgs/${A.orgId}/stream-destinations/${idB}`, {
+    token: A.token, method: 'DELETE',
+  })
   await recusado('A apaga um destino da org B', d, { token: A.token, method: 'DELETE' })
-  const ainda = await req(d, { token: B.token })
-  if (ainda.status === 200 && ainda.json?.key_prefix === 'chav') ok('e o destino da B CONTINUA LÁ, com a chave dela')
-  else nok('e o destino da B CONTINUA LÁ, com a chave dela', `devolveu ${ainda.status}: ${JSON.stringify(ainda.json).slice(0, 120)}`)
+  const depois = await req(d, { token: B.token })
+  if (depois.status === 200 && depois.json?.url === 'rtmp://10.0.0.9/live') ok('e o destino da B CONTINUA LÁ, inalterado')
+  else nok('e o destino da B CONTINUA LÁ, inalterado', `${depois.status}: ${JSON.stringify(depois.json).slice(0, 120)}`)
+
+  // Emitir com o destino da B a partir de uma sala da A. A recusa chega numa
+  // trama de texto depois do upgrade (ver `ws_directo`).
+  const recusaDoDirecto = (roomToken, code, destinos) => new Promise((resolve) => {
+    const q = new URLSearchParams({ token: roomToken, destinos: JSON.stringify(destinos), codec: 'video/h264' })
+    const ws = new WebSocket(`${WS}/api/rooms/${code}/live?${q}`)
+    const t = setTimeout(() => { ws.close(); resolve('(sem resposta)') }, 8000)
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString())
+      if (m.erro) { clearTimeout(t); ws.close(); resolve(m.erro) }
+      else if (m.tipo === 'destinos') { clearTimeout(t); ws.close(); resolve('(aceite)') }
+    })
+    ws.on('error', () => { clearTimeout(t); resolve('(erro de ligação)') })
+  })
+  const NAO_E_TEU = /não existe ou não pertence/
+  const salaDirectoA = (await req('/api/rooms', { token: A.token, method: 'POST', body: { name: 'directo da A', topology: 'sfu' } })).json
+  const joinDirectoA = await req(`/api/rooms/${salaDirectoA.code}/join`, { token: A.token, method: 'POST' })
+  const vDirA = await recusaDoDirecto(joinDirectoA.json?.room_token, salaDirectoA.code, [{ id: idB }])
+  if (NAO_E_TEU.test(vDirA)) ok('A NÃO emite com o destino guardado da B (recusado no WebSocket)')
+  else nok('A NÃO emite com o destino guardado da B', `o servidor respondeu: ${vDirA}`)
+  // Controlo positivo: a B, com o SEU destino, não leva ESSA recusa (pode levar
+  // outra — sem ffmpeg no runner, por exemplo — e isso não é o que se mede).
+  const salaDirectoB = (await req('/api/rooms', { token: B.token, method: 'POST', body: { name: 'directo da B', topology: 'sfu' } })).json
+  const joinDirectoB = await req(`/api/rooms/${salaDirectoB.code}/join`, { token: B.token, method: 'POST' })
+  const vDirB = await recusaDoDirecto(joinDirectoB.json?.room_token, salaDirectoB.code, [{ id: idB }])
+  if (!NAO_E_TEU.test(vDirB) && !vDirB.startsWith('(erro')) ok(`B emite com o próprio destino guardado (controlo positivo: ${vDirB.slice(0, 60)})`)
+  else nok('B emite com o próprio destino guardado (controlo positivo)', vDirB)
+  if (!vDirA.includes(CHAVE_DESTINO_B) && !vDirB.includes(CHAVE_DESTINO_B)) ok('nenhuma resposta do directo leva a chave')
+  else nok('nenhuma resposta do directo leva a chave', 'a chave apareceu numa trama do WebSocket')
 } else {
-  nok('B cria um destino de emissão para o teste', `devolveu ${destinoB.status}: ${JSON.stringify(destinoB.json).slice(0, 120)}`)
+  // 503 = servidor sem DATA_ENCRYPTION_KEYS. Diz-se, em vez de passar em silêncio.
+  nok('B guarda um destino de directo', `devolveu ${destinoB.status}: ${JSON.stringify(destinoB.json).slice(0, 160)}`)
 }
 
 const hookB = await req(`/api/orgs/${B.orgId}/webhooks`, {
@@ -311,6 +389,11 @@ await recusado('A reporta QoS na sala da B', `/api/rooms/${salaB.code}/quality-s
 })
 await recusado('anónimo vê metadados da sala da B', `/api/rooms/${salaB.code}`, {})
 await recusado('anónimo vê o estado do directo da sala da B', `/api/rooms/${salaB.code}/live/status`, {})
+// A fila da sala de espera traz nomes, origem e cargo de quem espera: só o
+// dono/co-anfitrião a vê. O controlo positivo vem primeiro — sem ele, a recusa
+// não prova nada.
+await permitido('B (dona) espreita a sala de espera da sua sala', `/api/rooms/${salaB.code}/waiting?room=${salaB.code}`, { token: B.token })
+await recusadoNaPorta('A espreita a sala de espera da sala da B', `/api/rooms/${salaB.code}/waiting?room=${salaB.code}`, { token: A.token })
 
 // REUNIÕES, GRAVAÇÕES E QUADROS da org B (R96).
 //
@@ -342,6 +425,11 @@ const reuniaoB = await req('/api/meetings', {
 if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   const m = reuniaoB.json.id
   // Um 405 (método inexistente) já não conta como recusa — ver `recusado`.
+  // `/api/meetings/{meeting_id}` tem GET e DELETE, e `/minutes` só tem PUT — um GET
+  // devolve 405, que o helper contava como recusa sem provar nada. Foi o
+  // CONTROLO POSITIVO abaixo que deu por isso: «B lista as suas reuniões»
+  // devolvia 405 também. Sem ele, duas asserções verdes mediam o router, não a
+  // autorização.
   await recusado('A lê a reunião da org B', `/api/meetings/${m}`, { token: A.token })
   await recusado('A APAGA a reunião da org B', `/api/meetings/${m}`, {
     token: A.token, method: 'DELETE',
@@ -412,6 +500,71 @@ if (quadroB.status >= 200 && quadroB.status < 300 && quadroB.json?.id) {
   nok('B cria um quadro para o teste', `devolveu ${quadroB.status}: ${JSON.stringify(quadroB.json).slice(0, 140)}`)
 }
 
+
+// O LEITOR DE GRAVAÇÕES (migrações 0040–0046) contra uma gravação REAL da org B.
+//
+// Aqui a gravação FABRICA-SE: B entra na sua sala e carrega um ficheiro. Com um
+// id que existe, um 404 prova a recusa e não a ausência — e o controlo
+// positivo (B lê os seus detalhes) garante que a rota não está simplesmente
+// partida. Um recurso de outra organização é 404, nunca 403: não se confirma
+// que existe. O contrato completo (e o colega da mesma organização que só vê o
+// que foi publicado) está em `gravacoes-meta.mjs`.
+console.log('\n--- leitor de gravações da org B ---')
+await req(`/api/rooms/${salaB.code}/join`, { token: B.token, method: 'POST' })
+const upB = await fetch(`${API}/api/rooms/${salaB.code}/recordings?name=iso.webm`, {
+  method: 'POST', headers: { Authorization: `Bearer ${B.token}` }, body: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]),
+})
+const gravB = upB.ok ? (await upB.json()).id : null
+if (gravB) {
+  await permitido('B lê os detalhes da sua gravação (controlo positivo)', `/api/recordings/${gravB}/details`, { token: B.token })
+  const lingua = 'pt'
+  await permitido('B envia uma legenda (controlo positivo)', `/api/recordings/${gravB}/captions/${lingua}`, {
+    token: B.token, method: 'PUT', body: { vtt: 'WEBVTT\n\n00:00.000 --> 00:01.000\nprivado da B\n', publish: true },
+  })
+  const capB = (await req(`/api/recordings/${gravB}/chapters`, { token: B.token, method: 'POST', body: { t_ms: 0, title: 'da B' } })).json
+  const comB = (await req(`/api/recordings/${gravB}/comments`, { token: B.token, method: 'POST', body: { body: 'da B' } })).json
+  const capId = capB?.id ?? inventado
+  const comId = comB?.id ?? inventado
+
+  await recusadoNaPorta('A lê os detalhes da gravação da B', `/api/recordings/${gravB}/details`, { token: A.token })
+  await recusadoNaPorta('A EDITA a gravação da B', `/api/recordings/${gravB}`, { token: A.token, method: 'PATCH', body: { description: 'forjada' } })
+  await recusadoNaPorta('A PUBLICA a gravação da B', `/api/recordings/${gravB}/publish`, { token: A.token, method: 'POST', body: { visibility: 'org' } })
+  await recusadoNaPorta('A despublica a gravação da B', `/api/recordings/${gravB}/unpublish`, { token: A.token, method: 'POST' })
+  await recusadoNaPorta('A lê a miniatura da B', `/api/recordings/${gravB}/thumbnail`, { token: A.token })
+  await recusadoNaPorta('A regista visualizações na gravação da B', `/api/recordings/${gravB}/views`, { token: A.token, method: 'POST' })
+  await recusadoNaPorta('A lista os participantes da gravação da B', `/api/recordings/${gravB}/participants`, { token: A.token })
+  await recusadoNaPorta('A lista os participantes da sala da B', `/api/rooms/${salaB.code}/participants`, { token: A.token })
+  await recusadoNaPorta('A lê a transcrição da B', `/api/recordings/${gravB}/transcript`, { token: A.token })
+  await recusadoNaPorta('A lista os comentários da B', `/api/recordings/${gravB}/comments`, { token: A.token })
+  await recusadoNaPorta('A comenta a gravação da B', `/api/recordings/${gravB}/comments`, { token: A.token, method: 'POST', body: { body: 'intruso' } })
+  await recusadoNaPorta('A lê um comentário da B', `/api/recordings/${gravB}/comments/${comId}`, { token: A.token })
+  await recusadoNaPorta('A APAGA um comentário da B', `/api/recordings/${gravB}/comments/${comId}`, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A lista os capítulos da B', `/api/recordings/${gravB}/chapters`, { token: A.token })
+  await recusadoNaPorta('A cria um capítulo na B', `/api/recordings/${gravB}/chapters`, { token: A.token, method: 'POST', body: { t_ms: 1, title: 'x' } })
+  await recusadoNaPorta('A gera capítulos na B', `/api/recordings/${gravB}/chapters/generate`, { token: A.token, method: 'POST' })
+  await recusadoNaPorta('A lê um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token })
+  await recusadoNaPorta('A EDITA um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token, method: 'PATCH', body: { title: 'forjado' } })
+  await recusadoNaPorta('A APAGA um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A lista as legendas da B', `/api/recordings/${gravB}/captions`, { token: A.token })
+  await recusadoNaPorta('A lê uma legenda publicada da B', `/api/recordings/${gravB}/captions/${lingua}`, { token: A.token })
+  await recusadoNaPorta('A lê o VTT publicado da B', `/api/recordings/${gravB}/captions/${lingua}/vtt`, { token: A.token })
+  await recusadoNaPorta('A SUBSTITUI a legenda da B', `/api/recordings/${gravB}/captions/${lingua}`, {
+    token: A.token, method: 'PUT', body: { vtt: 'WEBVTT\n', publish: true },
+  })
+  await recusadoNaPorta('A gera legendas na B', `/api/recordings/${gravB}/captions/generate`, { token: A.token, method: 'POST', body: {} })
+  const pub = await req('/api/recordings?scope=published', { token: A.token })
+  if (Array.isArray(pub.json) && !pub.json.some((r) => r.id === gravB)) ok('a gravação da B não aparece nas publicadas da A')
+  else nok('a gravação da B não aparece nas publicadas da A', JSON.stringify(pub.json).slice(0, 160))
+  // O estado, não só o código: nada do que A tentou ficou escrito.
+  const depois = (await req(`/api/recordings/${gravB}/details`, { token: B.token })).json
+  if (depois?.description === '' && depois.comment_count === 1 && depois.chapter_count === 1 && depois.visibility === 'private') {
+    ok('e a gravação da B ficou exactamente como estava')
+  } else {
+    nok('e a gravação da B ficou exactamente como estava', JSON.stringify(depois).slice(0, 200))
+  }
+} else {
+  nok('B carrega uma gravação para o teste do leitor', `devolveu ${upB.status}`)
+}
 
 // Recursos ligados à SALA da org B, com o código real dela. O código é uma
 // capability para VER metadados e PEDIR entrada — não para escrever.
@@ -741,6 +894,216 @@ if (gwB.status !== 201 || !gwB.json?.token?.startsWith('dlxg_') || gwA.status !=
   const final = (await req(`/api/orgs/${B.orgId}/sms/messages/${msgB.json?.id}`, { token: B.token })).json
   if (res.status === 204 && final?.status === 'sent') ok('controlo: o resultado de B fica gravado (sent)')
   else nok('controlo: o resultado de B fica gravado (sent)', `${res.status} ${JSON.stringify(final)}`)
+
+  // -------------------------------------------------------------------------
+  // SMS a CONTACTOS (extensão do ADR-0005). O número vem sempre do servidor; o
+  // cliente só diz a QUEM. A pergunta de isolamento passa a ter três metades:
+  // «A alcança o contacto de B», «um membro sem permissão envia», e «o membro
+  // escolhe o número por baixo do `user_id`».
+  // A rota é o modem falso de B (USB) — o CI não tem operador configurado.
+  // -------------------------------------------------------------------------
+  console.log('\n--- SMS a contactos: telefone, política, consentimento, limites ---')
+  await req('/api/integrations/sms-agent/v1/devices', { token: gwB.json.token, method: 'PUT', body: { devices: [modemFalso('B')] } })
+  const dominioB = B.email.split('@')[1]
+  async function membroB(nome, role) {
+    const email = `${nome}-${marca}@${dominioB}`
+    const r = await req(`/api/orgs/${B.orgId}/members`, {
+      token: B.token, method: 'POST',
+      body: { email, username: `${nome}-${marca}`, password: PW, role, title: nome },
+    })
+    if (!(r.status >= 200 && r.status < 300)) throw new Error(`não criei ${email}: ${r.status} ${JSON.stringify(r.json)}`)
+    const l = await req('/api/auth/login', { method: 'POST', body: { email, password: PW } })
+    return { email, token: l.json?.access_token, userId: r.json.user_id }
+  }
+  const M = await membroB('marta', 'member') // quem envia
+  const N = await membroB('nuno', 'member') // contacto com telefone
+  const O = await membroB('olga', 'member') // contacto SEM telefone
+  const P = await membroB('paulo', 'member') // contacto que vai ser arquivado
+
+  // Telefone: o próprio e o admin escrevem; mais ninguém.
+  const telM = await permitido('M regista o próprio telefone', `/api/orgs/${B.orgId}/members/${M.userId}/phone`, {
+    token: M.token, method: 'PUT', body: { phone: '923 100 200' },
+  })
+  if (telM?.phone === '+244923100200' && telM?.phone_source === 'manual') ok('o número fica normalizado e marcado manual')
+  else nok('o número fica normalizado e marcado manual', JSON.stringify(telM))
+  await permitido('o admin de B regista o telefone de N', `/api/orgs/${B.orgId}/members/${N.userId}/phone`, {
+    token: B.token, method: 'PUT', body: { phone: '+244 923 300 400' },
+  })
+  await permitido('o admin de B regista o telefone de P', `/api/orgs/${B.orgId}/members/${P.userId}/phone`, {
+    token: B.token, method: 'PUT', body: { phone: '923500600' },
+  })
+  const telOutro = await req(`/api/orgs/${B.orgId}/members/${N.userId}/phone`, {
+    token: M.token, method: 'PUT', body: { phone: '923999999' },
+  })
+  if (telOutro.status === 403) ok('M (membro) muda o telefone de N → 403')
+  else nok('M (membro) muda o telefone de N → 403', `${telOutro.status} ${JSON.stringify(telOutro.json)}`)
+  await recusadoNaPorta('A muda o telefone de um membro da org B', `/api/orgs/${B.orgId}/members/${N.userId}/phone`, {
+    token: A.token, method: 'PUT', body: { phone: '923999999' },
+  })
+  await recusadoNaPorta('A escreve o telefone de N pelo caminho da SUA org', `/api/orgs/${A.orgId}/members/${N.userId}/phone`, {
+    token: A.token, method: 'PUT', body: { phone: '923999999' },
+  })
+  const telPt = await req(`/api/orgs/${B.orgId}/members/${M.userId}/phone`, {
+    token: M.token, method: 'PUT', body: { phone: '+351 912 345 678' },
+  })
+  if (telPt.status === 422) ok('número fora de Angola não é guardado (422) — o encaminhamento não o serve')
+  else nok('número fora de Angola não é guardado (422)', `${telPt.status} ${JSON.stringify(telPt.json)}`)
+
+  // Visibilidade: o colega sabe QUE há número, não QUAL.
+  const dirM = (await req(`/api/orgs/${B.orgId}/members`, { token: M.token })).json ?? []
+  const nVistoPorM = dirM.find((e) => e.user_id === N.userId)
+  const mVistoPorM = dirM.find((e) => e.user_id === M.userId)
+  if (nVistoPorM && nVistoPorM.phone === null && nVistoPorM.can_sms === true && mVistoPorM?.phone === '+244923100200') {
+    ok('o membro vê can_sms do colega mas não o número; vê o seu')
+  } else nok('o membro não vê o número do colega', JSON.stringify({ nVistoPorM, mVistoPorM }))
+  const dirB = (await req(`/api/orgs/${B.orgId}/members`, { token: B.token })).json ?? []
+  if (dirB.find((e) => e.user_id === N.userId)?.phone === '+244923300400') ok('controlo: o admin vê o número de N')
+  else nok('controlo: o admin vê o número de N', JSON.stringify(dirB))
+
+  // Política: por omissão só admins.
+  const pol0 = await permitido('M lê a política de SMS da sua org', `/api/orgs/${B.orgId}/sms/policy`, { token: M.token })
+  if (pol0?.send_policy === 'admins') ok('a política por omissão é admins')
+  else nok('a política por omissão é admins', JSON.stringify(pol0))
+  await recusado('A lê a política de SMS da org B', `/api/orgs/${B.orgId}/sms/policy`, { token: A.token })
+  await recusado('A abre o envio da org B a membros', `/api/orgs/${B.orgId}/sms/policy`, {
+    token: A.token, method: 'PUT', body: { send_policy: 'members' },
+  })
+  const polM = await req(`/api/orgs/${B.orgId}/sms/policy`, { token: M.token, method: 'PUT', body: { send_policy: 'members' } })
+  if (polM.status === 403) ok('M (membro) muda a política → 403')
+  else nok('M (membro) muda a política → 403', `${polM.status}`)
+  const antesDaPolitica = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: N.userId, body: 'ola' },
+  })
+  if (antesDaPolitica.status === 403) ok('M envia SMS a N com a política admins → 403')
+  else nok('M envia SMS a N com a política admins → 403', `${antesDaPolitica.status} ${JSON.stringify(antesDaPolitica.json)}`)
+  const polLixo = await req(`/api/orgs/${B.orgId}/sms/policy`, { token: B.token, method: 'PUT', body: { send_policy: 'everyone' } })
+  if (polLixo.status === 400) ok('política desconhecida é recusada (400), não ignorada')
+  else nok('política desconhecida é recusada (400)', `${polLixo.status}`)
+  await permitido('o admin de B abre o envio a membros', `/api/orgs/${B.orgId}/sms/policy`, {
+    token: B.token, method: 'PUT', body: { send_policy: 'members' },
+  })
+
+  // O modo `to` continua só de admin, com qualquer política.
+  const toMembro = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { to: '923000777', body: 'fraude' },
+  })
+  if (toMembro.status === 403) ok('M envia para um número escrito (modo to) → 403')
+  else nok('M envia para um número escrito (modo to) → 403', `${toMembro.status} ${JSON.stringify(toMembro.json)}`)
+  // O número nunca vem do cliente no modo contacto.
+  const ambos = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: N.userId, to: '923000777', body: 'desvio' },
+  })
+  if (ambos.status === 400 && /sms\.target_ambiguous/.test(ambos.json?.error ?? '')) ok('user_id + to no mesmo pedido → 400 sms.target_ambiguous')
+  else nok('user_id + to no mesmo pedido → 400', `${ambos.status} ${JSON.stringify(ambos.json)}`)
+
+  // Controlo positivo: M envia a N.
+  const paraN = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: N.userId, body: 'reuniao adiada', route: 'usb' },
+  })
+  if (paraN.status === 202 && paraN.json?.purpose === 'contact' && paraN.json?.recipient_user_id === N.userId
+      && paraN.json?.to === '+244*******00' && /^marta-\w+ \(Delonix Meet\): reuniao adiada$/.test(paraN.json?.body ?? '')) {
+    ok('M envia a N pelo user_id (202), com o nome de M no texto e o número mascarado para M')
+  } else nok('M envia a N pelo user_id (202)', `${paraN.status} ${JSON.stringify(paraN.json)}`)
+  const vistaAdmin = (await req(`/api/orgs/${B.orgId}/sms/messages/${paraN.json?.id}`, { token: B.token })).json
+  if (vistaAdmin?.to === '+244923300400') ok('o número resolvido foi o de N (visto pelo admin)')
+  else nok('o número resolvido foi o de N', JSON.stringify(vistaAdmin))
+
+  // Destinatário fora do alcance: 404, sem confirmar qual é o caso.
+  await recusadoNaPorta('M envia SMS a um membro da org A', `/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: A.userId, body: 'x' },
+  })
+  await recusadoNaPorta('A envia SMS a N pelo caminho da SUA org', `/api/orgs/${A.orgId}/sms/messages`, {
+    token: A.token, method: 'POST', body: { user_id: N.userId, body: 'x' },
+  })
+  await permitido('o admin de B arquiva P', `/api/orgs/${B.orgId}/members/${P.userId}`, { token: B.token, method: 'DELETE' })
+  await recusadoNaPorta('M envia SMS a P ARQUIVADO (tinha telefone)', `/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: P.userId, body: 'x' },
+  })
+  const semTel = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: O.userId, body: 'x' },
+  })
+  if (semTel.status === 422 && /^sms\.recipient_no_phone/.test(semTel.json?.error ?? '')) ok('contacto sem telefone → 422 sms.recipient_no_phone')
+  else nok('contacto sem telefone → 422', `${semTel.status} ${JSON.stringify(semTel.json)}`)
+
+  // Consentimento: N desliga os SMS de contactos.
+  const prefN = await permitido('N desliga os SMS de contactos', '/api/users/me/sms-preferences', {
+    token: N.token, method: 'PUT', body: { contact_opt_out: true },
+  })
+  if (prefN?.contact_opt_out === true && prefN?.meeting_opt_out === false && prefN?.phones?.[0]?.phone === '+244923300400') {
+    ok('as preferências de N ficam gravadas e trazem o telefone dele')
+  } else nok('as preferências de N', JSON.stringify(prefN))
+  const optOut = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: M.token, method: 'POST', body: { user_id: N.userId, body: 'insisto' },
+  })
+  if (optOut.status === 409 && /^sms\.recipient_opted_out/.test(optOut.json?.error ?? '')) ok('N com opt-out → 409 sms.recipient_opted_out')
+  else nok('N com opt-out → 409', `${optOut.status} ${JSON.stringify(optOut.json)}`)
+  const dirDepois = (await req(`/api/orgs/${B.orgId}/members`, { token: M.token })).json ?? []
+  if (dirDepois.find((e) => e.user_id === N.userId)?.can_sms === false) ok('o directório deixa de oferecer SMS a N (can_sms false)')
+  else nok('o directório deixa de oferecer SMS a N', JSON.stringify(dirDepois.find((e) => e.user_id === N.userId)))
+
+  // O membro vê o estado do que ENVIOU, e só isso.
+  const listaM = (await req(`/api/orgs/${B.orgId}/sms/messages`, { token: M.token })).json?.items ?? []
+  if (listaM.length === 1 && listaM[0].id === paraN.json?.id && listaM[0].to.includes('*') && ['queued', 'claimed', 'sent', 'failed'].includes(listaM[0].status)) {
+    ok(`M lista só a sua mensagem, mascarada, com estado «${listaM[0].status}»`)
+  } else nok('M lista só a sua mensagem', JSON.stringify(listaM).slice(0, 300))
+  await recusado('M lê uma mensagem do admin de B', `/api/orgs/${B.orgId}/sms/messages/${msgB.json?.id}`, { token: M.token })
+  const trilha = JSON.stringify((await req(`/api/orgs/${B.orgId}/audit-events?limit=200`, { token: B.token })).json ?? [])
+  if (trilha.includes('sms.contact_queued') && !trilha.includes('923300400') && !trilha.includes('923100200')) {
+    ok('a auditoria regista o envio a contacto sem nenhum número em claro')
+  } else nok('a auditoria sem números', trilha.slice(0, 300))
+
+  // Limite por utilizador: 5 por minuto. As recusas acima NÃO gastaram quota.
+  await req('/api/users/me/sms-preferences', { token: N.token, method: 'PUT', body: { contact_opt_out: false } })
+  const estados = []
+  for (let i = 0; i < 5; i++) {
+    const r = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+      token: M.token, method: 'POST', body: { user_id: N.userId, body: `rajada ${i}`, route: 'usb' },
+    })
+    estados.push(r.status)
+  }
+  if (estados.slice(0, 4).every((s) => s === 202) && estados[4] === 429) {
+    ok('limite por utilizador: 4 aceites depois do primeiro, o 6.º → 429 (as recusas não contaram)')
+  } else nok('limite por utilizador', JSON.stringify(estados))
+  const colega = await req(`/api/orgs/${B.orgId}/sms/messages`, {
+    token: N.token, method: 'POST', body: { user_id: M.userId, body: 'e eu?', route: 'usb' },
+  })
+  if (colega.status === 202) ok('controlo: o limite de M não trava N (202)')
+  else nok('controlo: o limite de M não trava N', `${colega.status} ${JSON.stringify(colega.json)}`)
+
+  // SMS de reunião: a permissão vê-se ANTES de criar a reunião.
+  await permitido('o admin de B fecha outra vez o envio a admins', `/api/orgs/${B.orgId}/sms/policy`, {
+    token: B.token, method: 'PUT', body: { send_policy: 'admins' },
+  })
+  const inicio = new Date(Date.now() + 3 * 3600_000).toISOString()
+  const reuniaoM = await req('/api/meetings', {
+    token: M.token, method: 'POST',
+    body: { title: 'sem permissao', starts_at: inicio, duration_min: 30, invitee_ids: [N.userId], sms_invite: true },
+  })
+  const reunioesM = (await req('/api/meetings', { token: M.token })).json ?? []
+  if (reuniaoM.status === 403 && !reunioesM.some((m) => m.title === 'sem permissao')) {
+    ok('M agenda com sms_invite sem permissão → 403, e a reunião não é criada')
+  } else nok('agendar com SMS sem permissão', `${reuniaoM.status} ${JSON.stringify(reuniaoM.json).slice(0, 200)}`)
+  const recorrente = await req('/api/meetings', {
+    token: B.token, method: 'POST',
+    body: { title: 'semanal', starts_at: inicio, duration_min: 30, invitee_ids: [N.userId], sms_reminder_min: 15, recurrence_freq: 'weekly' },
+  })
+  if (recorrente.status === 422) ok('lembrete por SMS numa série recorrente → 422 (não se promete o que não se envia)')
+  else nok('lembrete em série recorrente → 422', `${recorrente.status}`)
+  await req('/api/integrations/sms-agent/v1/devices', { token: gwB.json.token, method: 'PUT', body: { devices: [modemFalso('B')] } })
+  const reuniaoB = await req('/api/meetings', {
+    token: B.token, method: 'POST',
+    body: { title: 'com SMS', starts_at: inicio, duration_min: 30, invitee_ids: [N.userId, O.userId, A.userId], sms_invite: true, sms_reminder_min: 30 },
+  })
+  const saltos = Object.fromEntries((reuniaoB.json?.sms?.invite?.skipped ?? []).map((s) => [s.user_id, s.reason]))
+  if (reuniaoB.status === 200 && reuniaoB.json?.sms?.invite?.queued === 1 && reuniaoB.json.sms.reminder_min === 30
+      && saltos[O.userId] === 'sms.recipient_no_phone' && saltos[A.userId] === 'sms.recipient_not_member') {
+    ok('o admin agenda com convite por SMS: 1 enfileirado, O sem telefone e o de outra org saltados com código')
+  } else nok('agendar com convite por SMS', `${reuniaoB.status} ${JSON.stringify(reuniaoB.json?.sms)}`)
+  const convites = ((await req(`/api/orgs/${B.orgId}/sms/messages`, { token: B.token })).json?.items ?? [])
+    .filter((m) => m.purpose === 'meeting_invite' && m.meeting_id === reuniaoB.json?.id)
+  if (convites.length === 1 && convites[0].recipient_user_id === N.userId && convites[0].to === '+244923300400') {
+    ok('o convite foi para N, pelo número de N')
+  } else nok('o convite foi para N', JSON.stringify(convites))
 
   // Revogar corta o agente.
   await permitido('B revoga o seu gateway', `/api/orgs/${B.orgId}/sms/gateways/${gwB.json.id}`, {

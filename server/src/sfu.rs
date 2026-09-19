@@ -62,6 +62,7 @@ use webrtc::{
     util::Unmarshal,
 };
 
+use crate::pstn_bridge::PstnBridge;
 use crate::signaling::{ClientMsg, ServerMsg};
 
 type Result<T> = std::result::Result<T, webrtc::Error>;
@@ -198,6 +199,105 @@ struct Publication {
     /// `false` os microfones fora do top-N. Vídeo e ecrã nunca são suprimidos.
     forwarding: AtomicBool,
     _vivo: Vivo,
+}
+
+type Subscriber = (
+    Arc<TrackLocalStaticRTP>,
+    Arc<RTCRtpSender>,
+    Arc<LayerRewriter>,
+);
+
+/// Numeração e relógio RTP de UMA subscrição de vídeo, contínuos através das
+/// trocas de camada simulcast.
+///
+/// Cada camada (`q`/`h`/`f`) chega com a sua numeração e o seu relógio RTP.
+/// Quando o SFU passa um subscritor de uma camada para outra no MESMO sender,
+/// o browser recebia números e timestamps a saltar para trás e descartava os
+/// fotogramas como antigos: o vídeo congelava depois da troca. Aqui cada
+/// subscrição reescreve `sequence_number` e `timestamp` para uma sequência
+/// única, rebaseada no primeiro pacote da camada nova.
+#[derive(Default)]
+struct LayerRewriter(std::sync::Mutex<RewriterState>);
+
+#[derive(Default)]
+struct RewriterState {
+    /// Fonte (camada) aceite; pacotes de outra fonte são descartados — é o
+    /// que evita que um pacote atrasado da camada antiga rebaseie a nova.
+    source: usize,
+    /// Fonte do último pacote reescrito (0 = ainda nenhum).
+    last_source: usize,
+    seq_off: u16,
+    ts_off: u32,
+    out_seq: u16,
+    out_ts: u32,
+}
+
+/// Intervalo de relógio inserido numa troca: ~1 fotograma a 30 fps (90 kHz).
+const SWITCH_TS_GAP: u32 = 3000;
+
+impl LayerRewriter {
+    fn new(source: usize) -> Self {
+        let rw = Self::default();
+        rw.expect(source);
+        rw
+    }
+
+    /// A partir de agora só a camada `source` alimenta esta subscrição.
+    fn expect(&self, source: usize) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).source = source;
+    }
+
+    /// Reescreve o cabeçalho; `false` = pacote de outra camada, não se envia.
+    fn rewrite(&self, source: usize, seq: &mut u16, ts: &mut u32) -> bool {
+        let mut st = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if source != st.source {
+            return false;
+        }
+        if st.last_source != source {
+            if st.last_source != 0 {
+                st.seq_off = st.out_seq.wrapping_add(1).wrapping_sub(*seq);
+                st.ts_off = st.out_ts.wrapping_add(SWITCH_TS_GAP).wrapping_sub(*ts);
+            }
+            st.last_source = source;
+            let new_seq = seq.wrapping_add(st.seq_off);
+            st.out_seq = new_seq;
+            st.out_ts = ts.wrapping_add(st.ts_off);
+        }
+        let new_seq = seq.wrapping_add(st.seq_off);
+        let new_ts = ts.wrapping_add(st.ts_off);
+        // Só avança o «último» com pacotes mais recentes (reordenação).
+        if new_seq.wrapping_sub(st.out_seq) < 0x8000 {
+            st.out_seq = new_seq;
+            st.out_ts = new_ts;
+        }
+        *seq = new_seq;
+        *ts = new_ts;
+        true
+    }
+}
+
+/// Cópia do pacote de vídeo SEM as extensões de cabeçalho do publicador.
+///
+/// Os ids das extensões (`a=extmap`) valem só na negociação onde foram
+/// acordados. O publicador e cada subscritor negociam em separado, e os ids não
+/// coincidem: reencaminhados crus, o `rid` do publicador chegava ao subscritor
+/// no id que ESTE usa para `transport-cc`; o interceptor TWCC do receptor não o
+/// conseguia ler («buffer too small»), a primeira leitura da track falhava e o
+/// `on_track` nunca disparava — subscrição negociada, RTP a sair, e nenhum
+/// vídeo (R156). No vídeo todas as extensões que o SFU aceita (mid, rid,
+/// repaired-rid, transport-cc) são por salto: o sender do subscritor volta a
+/// pôr as suas, com os ids certos.
+fn strip_hop_extensions(packet: &webrtc::rtp::packet::Packet) -> webrtc::rtp::packet::Packet {
+    let mut out = packet.clone();
+    out.header.extension = false;
+    out.header.extension_profile = 0;
+    out.header.extensions.clear();
+    out.header.extensions_padding = 0;
+    out
+}
+
+fn source_id(publication: &Arc<Publication>) -> usize {
+    Arc::as_ptr(publication) as usize
 }
 
 type Subscriber = (
@@ -622,10 +722,12 @@ struct SfuRoom {
 #[derive(Default)]
 pub struct SfuState {
     rooms: DashMap<Uuid, Arc<SfuRoom>>,
-    /// Mapeia o UUID da sala para a porta UDP local que recebe a mixagem PSTN do FreeSWITCH
-    pub phantom_listeners: DashMap<Uuid, u16>,
-    /// Mapeia o UUID da sala para o IP:Porta do FreeSWITCH (PSTN Outbound)
-    pub pstn_outbounds: DashMap<Uuid, std::net::SocketAddr>,
+    /// Ponte de media FreeSWITCH↔SFU activa, por sala (Abordagem B, ver
+    /// `pstn_bridge.rs` e `docs/pstn-sfu-bridge-design.md`). Substitui os
+    /// antigos `phantom_listeners`/`pstn_outbounds` da Abordagem A rejeitada
+    /// (fantasma sem SRTP, sem mistura, sem chamador nenhum) — ver o commit
+    /// que introduziu este campo para a comparação completa.
+    pstn: DashMap<Uuid, Arc<PstnBridge>>,
     /// Gravações cuja sala esvaziou por FALHA de ligação (ICE failed) em vez de
     /// saída limpa. O handler de estado da PC não tem `AppState` para chamar o
     /// `recorder::finalize`, por isso deixa-a aqui e o `remove_peer` do
@@ -851,43 +953,59 @@ fn new_api(ice: &IceConfig) -> Result<webrtc::api::API> {
 }
 
 impl SfuState {
-    /// Inicia um listener UDP para pacotes RTP "PSTN" do FreeSWITCH (Fase 3 Stub)
-    pub async fn spawn_phantom_listener(self: &Arc<Self>, room_id: Uuid) -> std::io::Result<u16> {
-        if let Some(port) = self.phantom_listeners.get(&room_id) {
-            return Ok(*port);
+    /// Activa a ponte PSTN↔SFU (Abordagem B) para uma sala, chamada por
+    /// `voice.rs::ivr_validate_pin` quando o dial-in valida o PIN. Idempotente:
+    /// se já houver uma ponte activa para a sala, devolve a MESMA (não gera
+    /// chaves novas a meio de uma chamada em curso).
+    ///
+    /// Garante que a sala existe no `SfuState` mesmo que ainda não tenha
+    /// nenhum participante WebRTC (um chamador PSTN pode ser o primeiro a
+    /// "entrar") — mirror do que `add_peer` já faz com `entry(...).or_insert_with`.
+    /// Subscreve de imediato os peers WebRTC que já lá estiverem à track
+    /// "Telefone"; os que entrarem depois são apanhados por `reevaluate_peer`.
+    pub async fn activate_pstn_bridge(
+        self: &Arc<Self>,
+        room_id: Uuid,
+        allowed_ip: std::net::IpAddr,
+    ) -> std::io::Result<crate::pstn_bridge::PstnBridgeInfo> {
+        if let Some(existing) = self.pstn.get(&room_id) {
+            return Ok(existing.info());
+        }
+        let bridge = PstnBridge::activate(room_id, allowed_ip).await?;
+        self.pstn.insert(room_id, bridge.clone());
+
+        // A sala pode ainda não existir (chamador PSTN antes de qualquer
+        // browser) — cria-se vazia, como `add_peer` faz.
+        let room = self
+            .rooms
+            .entry(room_id)
+            .or_insert_with(|| Arc::new(SfuRoom::default()))
+            .clone();
+        let peers: Vec<(Uuid, Arc<SfuPeer>)> = room
+            .peers
+            .lock()
+            .await
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        for (peer_id, peer) in peers {
+            if peer.pc.remote_description().await.is_some() {
+                pstn_subscribe(self, peer_id, &peer, &bridge).await;
+            }
         }
 
-        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-        let port = socket.local_addr()?.port();
-        self.phantom_listeners.insert(room_id, port);
+        Ok(bridge.info())
+    }
 
-        // O socket TEM de sobreviver a esta função: se ficasse como local, era
-        // fechado no `return` e a porta anunciada ao FreeSWITCH estaria morta
-        // (ICMP port unreachable em cada pacote). A task mantém-no vivo e
-        // drena o que chega até a sala desaparecer.
-        // Stub: a futura lógica criará o TrackLocalStaticRTP e bombeará
-        // estes pacotes para dentro da sala.
-        let state = self.clone();
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; 1500];
-            loop {
-                match socket.recv_from(&mut buf).await {
-                    Ok(_) => {
-                        if !state.rooms.contains_key(&room_id) {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(%room_id, error = %e, "PSTN phantom listener terminou");
-                        break;
-                    }
-                }
-            }
-            state.phantom_listeners.remove(&room_id);
-        });
-        tracing::info!(%room_id, port, "PSTN Phantom RTP Listener bound");
-
-        Ok(port)
+    /// Sala vazia: desliga a ponte PSTN (se houver) — ver `remove_peer`. Não
+    /// há hoje um sinal do FreeSWITCH para "a chamada acabou"; a ponte vive
+    /// enquanto a sala SFU tiver pelo menos um participante WebRTC. Um
+    /// chamador PSTN sozinho (sem ninguém em WebRTC) fica sem ponte — caso
+    /// degenerado aceitável (falar com ninguém), documentado no design doc.
+    async fn deactivate_pstn_bridge(&self, room_id: Uuid) {
+        if let Some((_, bridge)) = self.pstn.remove(&room_id) {
+            bridge.deactivate();
+        }
     }
 
     pub async fn add_peer(
@@ -1268,10 +1386,6 @@ impl SfuState {
         let vivo = Vivo::new(&self.census.rtp_pumps);
         tokio::spawn(async move {
             let _vivo = vivo;
-            // Socket PSTN criado só quando há mesmo um destino registado —
-            // antes era um socket UDP por CADA publicação de áudio da
-            // instância, mesmo sem PSTN configurado.
-            let mut pstn_socket: Option<tokio::net::UdpSocket> = None;
             // Snapshot dos subscritores: refrescado só quando a lista muda.
             let mut targets: Vec<(Arc<TrackLocalStaticRTP>, Arc<LayerRewriter>)> = Vec::new();
             let mut targets_version = u64::MAX;
@@ -1296,17 +1410,16 @@ impl SfuState {
                             w.write_rtp(&packet);
                         }
                         if is_audio {
-                            if let Some(dest) = this.pstn_outbounds.get(&room_id).map(|d| *d) {
-                                if pstn_socket.is_none() {
-                                    pstn_socket =
-                                        tokio::net::UdpSocket::bind("0.0.0.0:0").await.ok();
-                                }
-                                if let Some(socket) = &pstn_socket {
-                                    use webrtc::util::Marshal;
-                                    if let Ok(buf) = packet.marshal() {
-                                        let _ = socket.send_to(&buf, dest).await;
-                                    }
-                                }
+                            // Alimenta o mixer de egress da ponte PSTN (se a
+                            // sala tiver uma activa) — decodifica Opus→PCM e
+                            // guarda a última amostra deste publicador; a
+                            // mistura em si acontece à parte, ao ritmo
+                            // próprio de 20 ms (`pstn_bridge::run_egress`),
+                            // para não atar o envio ao PSTN ao jitter de UM
+                            // participante. Sem ponte activa, isto é só um
+                            // `get` no DashMap — custo desprezável.
+                            if let Some(bridge) = this.pstn.get(&room_id).map(|b| b.clone()) {
+                                bridge.feed_egress(publication.publisher, &packet).await;
                             }
                         }
 
@@ -1399,6 +1512,11 @@ impl SfuState {
             // O `apply_client_offer` chama isto assim que a oferta dele chega.
             if peer.pc.remote_description().await.is_none() {
                 return;
+            }
+            // Ponte PSTN activa para esta sala? Este peer passa a receber a
+            // track "Telefone" — idempotente, ver `pstn_subscribe`.
+            if let Some(bridge) = self.pstn.get(&room_id).map(|b| b.clone()) {
+                pstn_subscribe(&self, peer_id, &peer, &bridge).await;
             }
             let room_size = room.peers.lock().await.len();
             let shift = peer.quality.shift.load(Relaxed);
@@ -1611,6 +1729,12 @@ impl SfuState {
         if peer.quality.shift.load(Relaxed) > 0 {
             crate::metrics::Metrics::dec(&self.metrics.sfu_degraded_subscribers);
         }
+        // Sai também da track "Telefone", se a sala tiver ponte PSTN activa.
+        if let Some(bridge) = self.pstn.get(&room_id).map(|b| b.clone()) {
+            if bridge.remove_subscriber(peer_id).await.is_some() {
+                crate::metrics::Metrics::dec(&self.metrics.sfu_subscriptions);
+            }
+        }
 
         close_pc(&peer, room_id, peer_id).await;
 
@@ -1640,6 +1764,10 @@ impl SfuState {
                 }
             }
             self.rooms.remove_if(&room_id, |_, _| true);
+            // Sala vazia de participantes WebRTC: a ponte PSTN (se houver)
+            // fica sem ninguém para quem encaminhar/misturar — desliga-se
+            // aqui (ver a nota de limitação em `deactivate_pstn_bridge`).
+            self.deactivate_pstn_bridge(room_id).await;
         }
         tracing::info!(%room_id, %peer_id, "sfu peer removed");
         if !empty {
@@ -2124,6 +2252,59 @@ async fn subscription_alive(
     subscribed
         .get(group)
         .is_some_and(|(_, s)| Arc::ptr_eq(s, sender))
+}
+
+/// Liga um peer WebRTC à track "Telefone" da ponte PSTN da sala — o
+/// equivalente de `subscribe_layer` para a ponte, mas sem `Publication`: a
+/// ponte não tem um `TrackRemote`/`RTCPeerConnection` publicador reais (a
+/// origem é um socket UDP, não outro peer WebRTC), por isso não podia reusar
+/// o tipo `Publication` sem o tornar opcional em dezenas de sítios deste
+/// ficheiro (recordable_codec, request_keyframe/PLI, current_source…) — um
+/// refactor bem maior e mais arriscado do que esta função a mais. O que É
+/// reaproveitado, e é o que importa para o participante: o MESMO
+/// `TrackLocalStaticRTP` + `add_track` + `trigger_renegotiate` que qualquer
+/// outra subscrição usa — do lado do browser, a track "Telefone" chega
+/// exactamente como a de outro participante.
+///
+/// Idempotente (não faz nada se este peer já estiver subscrito).
+async fn pstn_subscribe(
+    state: &Arc<SfuState>,
+    peer_id: Uuid,
+    peer: &Arc<SfuPeer>,
+    bridge: &Arc<PstnBridge>,
+) {
+    if bridge.has_subscriber(peer_id).await {
+        return;
+    }
+    let local = Arc::new(TrackLocalStaticRTP::new(
+        crate::pstn_bridge::phone_track_capability(),
+        format!("pstn-{}", NEXT_TRACK_SEQ.fetch_add(1, Relaxed)),
+        "telefone".to_string(),
+    ));
+    let sender = match peer
+        .pc
+        .add_track(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>)
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(%peer_id, error = %e, "pstn subscribe: add_track falhou");
+            return;
+        }
+    };
+    bridge.add_subscriber(peer_id, local, sender.clone()).await;
+    crate::metrics::Metrics::inc(&state.metrics.sfu_subscriptions);
+
+    // Drena o RTCP do sender (obrigatório para os interceptors — ver o
+    // comentário equivalente em `subscribe_layer`). Não há PLI/keyframe a
+    // reencaminhar (é áudio), só a leitura para não bloquear o transporte.
+    tokio::spawn(async move {
+        while let Ok((_packets, _)) = sender.read_rtcp().await {}
+        tracing::debug!(%peer_id, "pstn subscribe: leitura de rtcp terminou");
+    });
+
+    tracing::info!(%peer_id, "pstn subscribe → renegotiate (track Telefone)");
+    trigger_renegotiate(peer);
 }
 
 /// Camada que alimenta hoje o subscritor `sub_id` no grupo (publicador, tipo)

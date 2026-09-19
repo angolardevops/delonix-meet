@@ -1,108 +1,138 @@
-import { useEffect, useState } from 'react'
+/**
+ * Gravação partilhada por link público (`#/share/:token`) — sem sessão; o
+ * token é a credencial. GET /api/public/recordings/{token} responde 404 para link
+ * inexistente OU expirado (o servidor não distingue, e o ecrã também não) e
+ * 401 quando o link tem palavra-passe e ela falta ou está errada.
+ */
+import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getPublicShare, PublicShareInfo } from '../api'
-import { FilmIcon } from '../icons'
+import { Icon } from '../ui/icons'
+import { Alert, Button, Card, Empty, Field, Spinner } from '../ui/kit'
+import CampoPalavraPasse from './auth/CampoPalavraPasse'
+import { megabytes } from './auth/logica'
+import Moldura from './publico/Moldura'
+
+type Estado =
+  | { k: 'aVerificar' }
+  | { k: 'pronta'; info: PublicShareInfo }
+  | { k: 'protegida'; errada: boolean }
+  | { k: 'indisponivel'; motivo: string }
+
+const estadoDe = (e: unknown) => (e as { status?: number } | null)?.status
 
 export default function SharePage({ token }: { token: string }) {
-  const { t } = useTranslation()
-  const [info, setInfo] = useState<PublicShareInfo | null>(null)
-  const [needsPassword, setNeedsPassword] = useState(false)
+  const { t, i18n } = useTranslation()
+  const [estado, setEstado] = useState<Estado>({ k: 'aVerificar' })
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
 
-  async function load(pw?: string) {
-    setError('')
-    setLoading(true)
-    try {
-      const data = await getPublicShare(token, pw)
-      setInfo(data)
-      setNeedsPassword(false)
-    } catch (e: unknown) {
-      const status = (e as { status?: number }).status
-      if (status === 401) {
-        setNeedsPassword(true)
-      } else if (status === 404) {
-        setError(t('room.sala.linkInvalidoOuExpirado'))
-      } else {
-        setError((e as Error).message ?? t('share.erroAoCarregar'))
+  const carregar = useCallback(
+    async (pw?: string) => {
+      try {
+        const info = await getPublicShare(token, pw)
+        setEstado({ k: 'pronta', info })
+      } catch (e) {
+        const s = estadoDe(e)
+        if (s === 401) setEstado({ k: 'protegida', errada: !!pw })
+        else if (s === 404) setEstado({ k: 'indisponivel', motivo: t('publico.partilha.invalido') })
+        else setEstado({ k: 'indisponivel', motivo: t('publico.partilha.erro') })
       }
-    } finally {
-      setLoading(false)
-    }
-  }
+    },
+    [token, t],
+  )
 
   useEffect(() => {
-    void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+    setEstado({ k: 'aVerificar' })
+    setPassword('')
+    void carregar()
+  }, [carregar])
 
-  if (loading) {
-    return (
-      <div className="share-page">
-        <p className="muted">{t('share.aVerificarLink')}</p>
-      </div>
-    )
+  async function aceder(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    await carregar(password)
+    setBusy(false)
   }
-
-  if (error) {
-    return (
-      <div className="share-page">
-        <div className="share-page-card">
-          <FilmIcon />
-          <h2>{t('share.indisponivel')}</h2>
-          <p className="muted">{error}</p>
-          <a href="#/" className="btn-sm">{t('share.irParaOInicio')}</a>
-        </div>
-      </div>
-    )
-  }
-
-  if (needsPassword && !info) {
-    return (
-      <div className="share-page">
-        <div className="share-page-card">
-          <FilmIcon />
-          <h2>{t('share.protegida')}</h2>
-          <p className="muted">{t('share.requerPassword')}</p>
-          <form
-            onSubmit={(e) => { e.preventDefault(); void load(password) }}
-            className="share-password-form"
-          >
-            <input
-              type="password"
-              autoFocus
-              placeholder={t('common.password')}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            {error && <p className="error small">{error}</p>}
-            <button className="btn-sm" type="submit">Aceder</button>
-          </form>
-        </div>
-      </div>
-    )
-  }
-
-  if (!info) return null
-
-  const sizeMb = (info.size_bytes / 1_048_576).toFixed(1)
-  const date = new Date(info.created_at).toLocaleString('pt-PT')
-  const downloadUrl = `/api/public/recordings/${token}/content${password ? `?password=${encodeURIComponent(password)}` : ''}`
 
   return (
-    <div className="share-page">
-      <div className="share-page-card">
-        <FilmIcon />
-        <h2>{info.filename.replace(/\.webm$/, '')}</h2>
-        <p className="muted">{date} · {sizeMb} MB</p>
-        <a className="btn-sm" href={downloadUrl} download={info.filename}>
-          
-          {t('share.descarregar')}
-        </a>
-        <p className="muted small share-link-password-hint">{t('share.poweredBy')}<strong>Delonix Meet</strong>
-        </p>
-      </div>
-    </div>
+    <Moldura pagina="share" estreita>
+      {estado.k === 'aVerificar' && (
+        <div className="pub-espera" role="status">
+          <Spinner />
+          <span>{t('publico.partilha.aVerificar')}</span>
+        </div>
+      )}
+
+      {estado.k === 'indisponivel' && (
+        <Card className="pub-cartao">
+          <Empty
+            icon="film"
+            title={t('publico.partilha.indisponivel')}
+            action={
+              <a href="#/" className="dx-btn dx-btn--secondary">
+                {t('publico.partilha.irInicio')}
+              </a>
+            }
+          >
+            {estado.motivo}
+          </Empty>
+        </Card>
+      )}
+
+      {estado.k === 'protegida' && (
+        <Card className="pub-cartao">
+          <form className="pub-partilha-senha" onSubmit={aceder}>
+            <div className="pub-partilha__icone">
+              <Icon name="lock" size={20} />
+            </div>
+            <h1>{t('publico.partilha.protegida')}</h1>
+            <p className="dx-muted">{t('publico.partilha.pedePalavraPasse')}</p>
+            <Field label={t('publico.partilha.palavraPasse')} htmlFor="share-password">
+              <CampoPalavraPasse
+                id="share-password"
+                name="password"
+                autoFocus
+                required
+                autoComplete="off"
+                aria-invalid={estado.errada || undefined}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </Field>
+            {estado.errada && <Alert tone="danger">{t('publico.partilha.errada')}</Alert>}
+            <Button type="submit" variant="primary" size="lg" block busy={busy} disabled={!password}>
+              {t('publico.partilha.aceder')}
+            </Button>
+          </form>
+        </Card>
+      )}
+
+      {estado.k === 'pronta' && (
+        <Card className="pub-cartao">
+          <div className="pub-partilha">
+            <div className="pub-partilha__icone">
+              <Icon name="film" size={20} />
+            </div>
+            <div className="dx-eyebrow">{t('publico.partilha.gravacao')}</div>
+            <h1 className="pub-partilha__nome">{estado.info.filename.replace(/\.(webm|mp4|mkv)$/i, '')}</h1>
+            <dl className="dx-kv">
+              <dt>{t('publico.partilha.criada')}</dt>
+              <dd className="dx-num">{new Date(estado.info.created_at).toLocaleString(i18n.language)}</dd>
+              <dt>{t('publico.partilha.tamanho')}</dt>
+              <dd className="dx-num">{t('publico.partilha.tamanhoMb', { mb: megabytes(estado.info.size_bytes) })}</dd>
+            </dl>
+            <a
+              className="dx-btn dx-btn--primary dx-btn--lg dx-btn--block"
+              href={`/api/public/recordings/${token}/content${password ? `?password=${encodeURIComponent(password)}` : ''}`}
+              download={estado.info.filename}
+            >
+              <Icon name="download" />
+              {t('publico.partilha.descarregar')}
+            </a>
+          </div>
+        </Card>
+      )}
+    </Moldura>
   )
 }

@@ -185,6 +185,28 @@ limita SALAS a emitir ao mesmo tempo, este limita PLATAFORMAS na MESMA
 emissão. Não mudou nada da decisão central deste ADR — continua um browser,
 um `MediaRecorder`, um WebSocket; só o que ia num `Destino` passou a ir em N.
 
+**Revisto a 2026-09-16 — um processo por destino, e porquê a decisão acima caiu.**
+O «um único ffmpeg com N saídas» tinha dois defeitos que só se viram medindo
+(auditoria de 2026-09-16, problemas 1 e 2; R123):
+
+1. uma saída RTMP que falha termina o ffmpeg inteiro — um destino mau parava os
+   outros, e «1 parado, 3 no ar» não podia existir;
+2. o stderr ia para um cano que ninguém lia, e o `Registo::escrever` escrevia no
+   stdin com o lock do nó preso — uma emissão parada bloqueava as das outras
+   salas. Reproduzido num teste que falhava contra o código antigo.
+
+Passou a haver **um ffmpeg por destino**, cada um com um supervisor (stderr
+drenado e lido para o motivo, `-progress` para o débito, backoff limitado,
+desistência com motivo), e a escrita do browser é repartida sem esperas por
+filas com orçamento. Um destino reiniciado reentra a meio do fluxo com o
+cabeçalho Matroska guardado do início e o próximo Cluster. Não se escolheu o
+`tee` com `onfail=ignore`: isola a falha, mas não reinicia a saída que caiu nem
+dá estado por saída. O custo é o áudio (Opus → AAC) transcodificado uma vez por
+destino — fracção de percentagem de um core cada, limitado pelo
+`MAX_DESTINOS_POR_DIRECTO` — e **a linha 2 do portão (CPU) continua por medir**,
+agora com N processos. A decisão central não mudou: o browser codifica, o
+vídeo é copiado.
+
 Cada um é um ADR próprio ou uma decisão de implementação com portão medido.
 
 ## Portão de aceitação
@@ -197,7 +219,7 @@ Estado a 2026-08-26, com a primeira camada (servidor) feita:
 | 2 | Sessão de 30 min a 1080p não passa de `limits.cpu: 1000m` | **por medir** — precisa de emissão real |
 | 3 | A chave RTMP não aparece em nenhum log | **feito** — `Debug` explícito, 2 testes |
 | 4 | Sala com E2EE recusa emitir, com razão | **feito** — `Recusa::E2ee`, 2 testes |
-| 5 | Perder o destino não derruba a chamada | **parcial** — `escrever` devolve erro em vez de pendurar; falta o caminho de cima |
+| 5 | Perder o destino não derruba a chamada | **feito (2026-09-16)** — e também não derruba os OUTROS destinos: provado contra um RTMP real (`web/e2e/directo-destinos.mjs`, destino inválido a cair ao lado de um válido que nunca sai do ar, e reinício do servidor RTMP com regresso automático) e nos testes do `broadcast.rs` |
 
 Nenhuma destas linhas se dá por cumprida sem medida:
 

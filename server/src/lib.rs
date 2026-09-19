@@ -4,8 +4,10 @@
 //! testes de integração em `tests/` possam montar o router e o estado sem
 //! arrancar um processo (ADR-0004 §6, passo 1).
 
+mod account;
 mod actions;
 mod ai;
+mod ai_studio;
 mod apikeys;
 mod audit;
 mod auth;
@@ -15,12 +17,14 @@ mod crypto;
 mod dlp;
 mod error;
 pub mod grpc;
+mod media_probe;
 mod meetings;
 mod meetings_v1;
 mod metrics;
 mod mfa;
 mod mls;
 pub mod net_guard;
+mod net_probe;
 pub mod nodes;
 mod notifications;
 mod odoo;
@@ -28,9 +32,15 @@ mod odoo_sso;
 pub mod openapi;
 mod org;
 mod presence;
+mod pstn_bridge;
 mod pubsub;
+mod ramais;
 mod rate_limit;
+mod rbac;
 mod recorder;
+mod recording_captions;
+mod recording_chapters;
+mod recording_meta;
 mod recordings;
 mod redis_state;
 mod room_chat;
@@ -43,6 +53,7 @@ mod sfu_e2e;
 mod signaling;
 mod sms;
 mod sms_codec;
+mod sms_notify;
 mod sms_smpp;
 mod storage;
 mod stream_destinations;
@@ -126,6 +137,9 @@ pub struct AppState {
     /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
+    /// Envios de SMS por utilizador dentro de uma org (chave `org:user`). Com a
+    /// política `members`, um membro não esgota sozinho a quota da org.
+    pub sms_user_limiter: RateLimiter,
     /// Anti-força-bruta do código MFA na activação e na desactivação (por
     /// conta). Só conta falhas; trava também o código certo (R131).
     pub mfa_limiter: RateLimiter,
@@ -316,6 +330,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/users/me/mfa/enroll", post(mfa::inscrever))
         .route("/api/users/me/mfa/activate", post(mfa::activar))
         .route("/api/users/me/mfa/disable", post(mfa::desactivar))
+        // "A minha conta": sessões activas e exportação dos próprios dados.
+        .route("/api/users/me/sessions", get(account::list_sessions))
+        .route(
+            "/api/users/me/sessions/{session_id}",
+            axum::routing::delete(account::revoke_session),
+        )
+        .route("/api/users/me/export", get(account::export_my_data))
+        // Consentimento de SMS da pessoa (contactos / reuniões) e os seus telefones.
+        .route(
+            "/api/users/me/sms-preferences",
+            get(sms::get_preferences).put(sms::put_preferences),
+        )
         // Centro de notificações pessoal (G8).
         .route("/api/users/me/notifications", get(notifications::list))
         .route(
@@ -347,6 +373,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
         .route("/api/rooms/{room_code}/join-timings", post(rooms::post_timings))
+        // Sondagem de rede da pré-entrada (descarga e subida).
+        .route(
+            "/api/net-probe",
+            get(net_probe::download)
+                .post(net_probe::upload)
+                .layer(DefaultBodyLimit::max(net_probe::MAX_PROBE_BYTES + 1024)),
+        )
         .route(
             "/api/rooms/{room_code}/minutes",
             get(meetings::notes_by_room).put(meetings::save_minutes_by_room),
@@ -447,6 +480,57 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/public/recordings/{token}/content",
             get(recordings::public_share_download),
         )
+        // ---- Enriquecimento do leitor (frontend/ui-template-rebuild): publicação,
+        // miniatura, visualizações, participantes, transcrição. Sem sobreposição
+        // com as rotas de `recordings.rs` acima (essas cobrem metadados/chapters/
+        // comments/shares) — ver `recording_meta.rs`.
+        .route("/api/recordings/{recording_id}/publish", post(recording_meta::publish))
+        .route(
+            "/api/recordings/{recording_id}/unpublish",
+            post(recording_meta::unpublish),
+        )
+        .route(
+            "/api/recordings/{recording_id}/thumbnail",
+            get(recording_meta::thumbnail),
+        )
+        .route(
+            "/api/recordings/{recording_id}/views",
+            post(recording_meta::record_view),
+        )
+        .route(
+            "/api/recordings/{recording_id}/participants",
+            get(recording_meta::recording_participants),
+        )
+        .route(
+            "/api/rooms/{room_code}/participants",
+            get(recording_meta::room_participants),
+        )
+        .route(
+            "/api/recordings/{recording_id}/transcript",
+            get(recording_meta::transcript),
+        )
+        // ---- Legendas por língua (WebVTT) — ver `recording_captions.rs`. ----
+        .route(
+            "/api/recordings/{recording_id}/captions",
+            get(recording_captions::list),
+        )
+        .route(
+            "/api/recordings/{recording_id}/captions/generate",
+            post(recording_captions::generate),
+        )
+        .route(
+            "/api/recordings/{recording_id}/captions/{lang}",
+            get(recording_captions::get)
+                .put(recording_captions::put)
+                .patch(recording_captions::patch)
+                .delete(recording_captions::delete)
+                // Um VTT pode chegar aos 2 MB; em JSON, com escapes, um pouco mais.
+                .layer(DefaultBodyLimit::max(recording_captions::MAX_VTT_BYTES * 2)),
+        )
+        .route(
+            "/api/recordings/{recording_id}/captions/{lang}/vtt",
+            get(recording_captions::vtt),
+        )
         // ---- Quadros ----
         .route(
             "/api/whiteboards",
@@ -489,6 +573,34 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/members/{user_id}",
             axum::routing::patch(org::update_employee).delete(org::remove_employee),
         )
+        // Papéis e permissões (RBAC) — ver rbac.rs.
+        .route("/api/orgs/{org_id}/roles", get(rbac::list_roles).post(rbac::create_role))
+        .route(
+            "/api/orgs/{org_id}/roles/{role_id}",
+            axum::routing::patch(rbac::update_role).delete(rbac::delete_role),
+        )
+        .route(
+            "/api/orgs/{org_id}/roles/{role_id}/duplicate",
+            post(rbac::duplicate_role),
+        )
+        .route("/api/orgs/{org_id}/roles/export.csv", get(rbac::export_csv))
+        .route(
+            "/api/orgs/{org_id}/members/{user_id}/role",
+            axum::routing::put(rbac::assign_role),
+        )
+        .route(
+            "/api/orgs/{org_id}/permission-requests",
+            get(rbac::list_permission_requests),
+        )
+        .route(
+            "/api/orgs/{org_id}/permission-requests/{request_id}/decide",
+            post(rbac::decide_permission_request),
+        )
+        .route("/api/orgs/{org_id}/permissions/me", get(rbac::my_permissions))
+        // IA local do Estúdio (Ollama in-cluster): estado e tarefas sobre a
+        // transcrição enviada. Nada se guarda; tecto de tarefas por org.
+        .route("/api/orgs/{org_id}/ai/status", get(ai_studio::status))
+        .route("/api/orgs/{org_id}/ai/suggestions", post(ai_studio::suggestions))
         .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route(
             "/api/orgs/{org_id}/meeting-rooms",
@@ -568,6 +680,37 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/orgs/{org_id}/voice/dids", get(voice::list_dids).post(voice::create_did))
         .route("/api/orgs/{org_id}/voice/call-records", get(voice::list_cdr))
         .route("/api/orgs/{org_id}/voice/billing", get(voice::billing_summary))
+        // ---- Ramais internos (chamada ramal-a-ramal, Fase 1 — ver ramais.rs) ----
+        .route(
+            "/api/orgs/{org_id}/extensions",
+            get(ramais::list_extensions).post(ramais::create_extension),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}",
+            axum::routing::patch(ramais::update_extension).delete(ramais::delete_extension),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/regenerate-password",
+            post(ramais::regenerate_extension_password),
+        )
+        // ---- Fase 2: ramal alcançável do PSTN via DID dedicado ----
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/did",
+            axum::routing::put(ramais::assign_extension_did)
+                .delete(ramais::unassign_extension_did),
+        )
+        // API interna do FreeSWITCH para os ramais (mesmo segredo do dial-in PSTN;
+        // fica no router público porque os configs `xml_curl.conf.xml`/
+        // `ramais_dial.lua` já chamam este caminho, não `/internal/v1/*`).
+        .route("/api/voice/ivr/directory", post(ramais::ivr_directory))
+        .route(
+            "/api/voice/ivr/resolve-extension",
+            post(ramais::ivr_resolve_extension),
+        )
+        .route(
+            "/api/voice/ivr/dialplan-did",
+            post(ramais::ivr_dialplan_did),
+        )
         // Gateway de SMS (ADR-0005): consola da org (sessão, admin).
         .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))
         .route(
@@ -576,6 +719,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/orgs/{org_id}/sms/devices", get(sms::list_devices))
         .route("/api/orgs/{org_id}/sms/route", get(sms::get_route).put(sms::put_route))
+        // Contactos: telefone por membro e política de quem pode enviar (ADR-0005 §Contactos).
+        .route(
+            "/api/orgs/{org_id}/members/{user_id}/phone",
+            axum::routing::put(sms::put_member_phone),
+        )
+        .route(
+            "/api/orgs/{org_id}/sms/policy",
+            get(sms::get_policy).put(sms::put_policy),
+        )
         .route("/api/orgs/{org_id}/sms/messages", get(sms::list_messages).post(sms::send_message))
         .route(
             "/api/orgs/{org_id}/sms/messages/{message_id}",
@@ -792,6 +944,10 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        sms_user_limiter: RateLimiter::new(
+            sms::USER_SENDS_PER_WINDOW,
+            Duration::from_secs(sms::USER_SEND_WINDOW_SECS),
+        ),
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         outbound,
         config: config.clone(),

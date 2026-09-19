@@ -10,6 +10,7 @@
 // Uso:  BASE=http://127.0.0.1:5180 node e2e/directo.mjs
 import { chromium } from '@playwright/test'
 import { criarConta, entrar } from './sessao.mjs'
+import { texto } from './estudio-textos.mjs'
 
 const BASE = process.env.BASE ?? process.env.APP ?? 'http://127.0.0.1:5180'
 const API = process.env.API ?? BASE
@@ -28,35 +29,49 @@ page.on('pageerror', (e) => erros.push(e.message.slice(0, 140)))
 
 await entrar(page, BASE, conta)
 await page.locator('.nav-item', { hasText: /Estúdio|Studio/ }).first().click()
-await page.waitForSelector('.studio-canvas', { timeout: 20000 })
+await page.waitForSelector('[data-studio="canvas"]', { timeout: 20000 })
 
 console.log('\no painel')
-const painel = page.locator('.studio-directo')
-ok('o painel do directo aparece', (await painel.count()) > 0)
+const painel = page.locator('[data-studio="directo"]')
+ok('o painel do directo aparece', (await painel.count()) > 0 && texto('directo.titulo').test((await painel.textContent()) ?? ''))
 ok('o browser sabe codificar H.264',
    await page.evaluate(() => MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')))
 
-const chave = painel.locator('input[type=password]')
+// Um cartão por destino, com o estado que o browser conhece; os campos
+// editam-se num diálogo aberto a partir do cartão.
+const cartao = painel.locator('[data-studio="destino"]').first()
+ok('há um cartão por destino, sem chave', (await cartao.getAttribute('data-estado')) === 'sem-chave')
+await cartao.locator('[data-studio="destino-editar"]').click()
+const chave = page.locator('[data-studio="destino-form"] [data-studio="destino-chave"][type=password]')
 ok('a chave de emissão é um campo de password',
    (await chave.count()) > 0,
    'uma partilha de ecrã a configurar o directo não pode mostrá-la')
+await page.keyboard.press('Escape')
 
-const botao = painel.locator('button').filter({ hasText: /Ir para o ar|Go live/ }).first()
+const botao = painel.locator('[data-studio="ir-para-o-ar"]')
+ok('o botão diz «ir para o ar»', texto('directo.irParaOAr').test((await botao.textContent()) ?? ''))
 ok('o botão está travado sem chave', await botao.isDisabled())
 
 console.log('\nas regras do servidor chegam à interface')
 // Liga a câmara para haver o que emitir.
-await page.locator('.studio-grupo', { hasText: /A tua imagem|Your picture/ }).locator('button').first().click()
+await page.locator('[data-studio-grupo="imagem"] [data-studio="camara"]').click()
 await page.waitForTimeout(1200)
+await cartao.locator('[data-studio="destino-editar"]').click()
 await chave.fill('chave-de-teste-123')
-ok('e destrava com chave e imagem', !(await botao.isDisabled()))
-
 // Destino inalcançável de propósito: o que se mede é que o SERVIDOR aceitou a
 // ligação (as regras passaram) e não que o YouTube recebeu.
-await painel.locator('input').first().fill('rtmp://127.0.0.1:1/live')
+await page.locator('[data-studio="destino-form"] [data-studio="destino-url"]').fill('rtmp://127.0.0.1:1/live')
+await page.locator('[data-studio="destino-guardar"]').click()
+ok('o cartão passa a «pronto»', (await cartao.getAttribute('data-estado')) === 'pronto')
+ok('e destrava com chave e imagem', !(await botao.isDisabled()))
 await botao.click()
-const foiAoAr = await page.waitForSelector('.studio-no-ar', { timeout: 25000 }).then(() => true).catch(() => false)
-const motivo = foiAoAr ? '' : ((await painel.locator('.error').textContent().catch(() => '')) ?? '')
+// Espera por um dos DOIS desfechos: no ar, ou recusado com razão.
+const desfecho = await page
+  .waitForSelector('[data-studio="no-ar"], [data-studio="directo-erro"]', { state: 'attached', timeout: 25000 })
+  .then((h) => h.getAttribute('data-studio'))
+  .catch(() => null)
+const foiAoAr = desfecho === 'no-ar'
+const motivo = foiAoAr ? '' : ((await painel.locator('[data-studio="directo-erro"]').textContent({ timeout: 2000 }).catch(() => '')) ?? '')
 
 // DOIS AMBIENTES, e a asserção tem de ser honesta nos dois.
 //
@@ -77,10 +92,13 @@ if (foiAoAr) {
 
 if (foiAoAr) {
   await page.waitForTimeout(2500)
-  const contador = await painel.locator('.mono').textContent()
-  ok('o contador anda (bytes enviados)', /\d+\.\d MB/.test(contador ?? ''), contador ?? '')
-  await painel.locator('button').filter({ hasText: /Terminar|End/ }).first().click()
-  await page.waitForSelector('.studio-no-ar', { state: 'detached', timeout: 10000 })
+  const meta = await page.locator('[data-studio="topo-meta"]').textContent()
+  ok('o débito do codificador aparece no topo', /\d[\d\s\u00a0.,]* kbps/.test(meta ?? ''), meta ?? '')
+  ok('o cartão diz NO AR', (await cartao.getAttribute('data-estado')) === 'no-ar')
+  const terminar = painel.locator('[data-studio="sair-do-ar"]')
+  ok('o botão de terminar diz o que faz', texto('directo.parar').test((await terminar.textContent()) ?? ''))
+  await terminar.click()
+  await page.waitForSelector('[data-studio="no-ar"]', { state: 'detached', timeout: 10000 })
     .then(() => ok('terminar o directo tira o NO AR', true))
     .catch(() => ok('terminar o directo tira o NO AR', false))
 }

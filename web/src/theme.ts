@@ -1,21 +1,29 @@
 /**
- * Tema — extraído do Shell (achado 1.2 do docs/ux-perf-review.md).
+ * Tema da consola: claro (o do template para entrada e gestão) ou escuro.
+ * Não depende do React — o main.tsx aplica-o antes do primeiro pixel.
  *
- * Vivia em components/Shell.tsx, o que obrigava o main.tsx a importar a consola
- * INTEIRA (CommandPalette, NotificationCenter, OnboardingTour, SettingsModal…)
- * só para aplicar o tema guardado antes do primeiro pixel. Aqui não depende de
- * nada — nem sequer do React.
+ * A sala, a pré-entrada e o estúdio de emissão NÃO seguem isto: estão
+ * dentro de `.dx-stage`, que reafirma o escuro (ver ui/tokens.css).
  */
-export type Theme = 'default' | 'delonix-light'
+export type Theme = 'light' | 'dark'
 
-export function applyTheme(theme: Theme) {
-  if (theme === 'default') delete document.documentElement.dataset.theme
-  else document.documentElement.dataset.theme = theme
-  localStorage.setItem('dx_theme', theme)
-}
+const KEY = 'dx_theme'
 
 export function storedTheme(): Theme {
-  return localStorage.getItem('dx_theme') === 'delonix-light' ? 'delonix-light' : 'default'
+  try {
+    return localStorage.getItem(KEY) === 'dark' ? 'dark' : 'light'
+  } catch {
+    return 'light'
+  }
+}
+
+export function applyTheme(theme: Theme) {
+  document.documentElement.dataset.theme = theme
+  try {
+    localStorage.setItem(KEY, theme)
+  } catch {
+    /* armazenamento bloqueado — o tema vale só para esta sessão */
+  }
 }
 
 export function initTheme() {

@@ -96,15 +96,31 @@ pub struct Config {
     /// de a conta nascer, e é o operador que o vai buscar.
     pub platform_admin_user_ids: Vec<uuid::Uuid>,
     /// Ligações SMPP aos operadores móveis (ADR-0005):
-    /// `smpp://system_id:password@host:2775?source_addr=DELONIX`. Ausente =>
+    /// `smpp://system_id:password@host:2775?source_addr=DELONIX` (texto
+    /// simples) ou `smpps://…` (a mesma sintaxe, envolvida em TLS antes do
+    /// bind — validação contra as raízes do sistema por omissão). Ausente =>
     /// operador por contratar, e o encaminhamento não o escolhe. São da
     /// PLATAFORMA (o contrato é da Delonix), por isso vêm do ambiente e não de
     /// uma tabela — não há cifra de segredos em repouso (S5).
     pub sms_unitel_smpp: Option<String>,
     pub sms_movicel_smpp: Option<String>,
     pub sms_africell_smpp: Option<String>,
+    /// Feixe de CA (PEM, um ou mais certificados) para validar o SMSC de cada
+    /// operador quando `smpps://` e a CA não é pública — carrega-se de um
+    /// ficheiro no disco, nunca em claro no ambiente. Sem isto e com
+    /// `smpps://`, valida-se contra as raízes do sistema (`webpki-roots`).
+    /// Ignorado com `smpp://` (texto simples).
+    pub sms_unitel_smpp_ca: Option<String>,
+    pub sms_movicel_smpp_ca: Option<String>,
+    pub sms_africell_smpp_ca: Option<String>,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
+    /// Sufixo do domínio SIP dos ramais internos (`VOICE_RAMAIS_DOMAIN_SUFFIX`):
+    /// cada org fala em `<slug>.<sufixo>` (ex.: `acme.ramais.delonix.meet`).
+    /// O slug distingue as orgs — necessário porque `extension` só é única
+    /// DENTRO da org (ver migração 0064); sem isto, o ramal "101" da Acme e o
+    /// "101" da Zeta colidiriam no mesmo directório SIP.
+    pub voice_ramais_domain_suffix: String,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
     pub recordings_dir: std::path::PathBuf,
     /// URL do Redis para pub/sub cross-nó (presença multi-instância).
@@ -132,6 +148,16 @@ pub struct Config {
     pub ollama_model_translate: String,
     /// Modelo para o resumo da ata (qualidade; ex.: qwen2.5:7b em prod).
     pub ollama_model_summary: String,
+    /// Modelo das tarefas do Estúdio (`OLLAMA_MODEL_STUDIO`; por omissão, o
+    /// do resumo): resumo e capítulos, texto de publicação, bordões.
+    pub ollama_model_studio: String,
+    /// Tecto de uma tarefa do Estúdio (`OLLAMA_TIMEOUT_SECS`, 120, 5..=900).
+    /// O pedido é síncrono: o ecrã espera pela resposta ou pelo erro.
+    pub ollama_timeout_secs: u64,
+    /// Tarefas do Estúdio em simultâneo POR ORGANIZAÇÃO
+    /// (`AI_STUDIO_CONCURRENCY_PER_ORG`, 1, 1..=8). O modelo local é um só e
+    /// partilhado: sem este tecto, uma organização monopolizava-o.
+    pub ai_studio_concurrency_per_org: usize,
     /// Capacidade da fila de saída de CADA WebSocket (`WS_QUEUE_CAP`). As filas
     /// são LIMITADAS por desenho: um cliente cujo socket TCP estagna (rede
     /// degradada, aba suspensa, cliente parado no depurador) deixa de drenar a
@@ -170,6 +196,9 @@ pub struct Config {
     /// porque permite apontá-lo a um invólucro em desenvolvimento sem o
     /// instalar no host.
     pub ffmpeg_bin: String,
+    /// Binário do ffprobe (`FFPROBE_BIN`, default `ffprobe`). Mede duração,
+    /// resolução, fps e codecs de cada gravação (ver `media_probe.rs`).
+    pub ffprobe_bin: String,
     /// Threads do ffmpeg de cada emissão (`DIRECTO_THREADS`, default 1).
     ///
     /// Um por emissão, não dois: a composição de uma gravação é diferível e
@@ -225,6 +254,23 @@ pub struct Config {
     /// Coalescível: o estado de subscrição mais recente vence, por isso
     /// transbordar descarta o pedido mais novo e conta a métrica.
     pub nego_queue_cap: usize,
+    /// IP do FreeSWITCH aceite na ingress da ponte PSTN↔SFU
+    /// (`PSTN_BRIDGE_FREESWITCH_IP`, ver `pstn_bridge.rs`). **Fail-closed**:
+    /// vazio/ausente => a ponte fica DESACTIVADA (o dial-in continua a
+    /// funcionar, só sem o áudio WebRTC — cai na conferência local do
+    /// FreeSWITCH, o comportamento de sempre) — sem IP configurado, aceitar
+    /// pacotes de qualquer origem deixaria qualquer host na rede injectar
+    /// áudio na sala fingindo ser o FreeSWITCH. Um só IP porque hoje há um
+    /// único nó FreeSWITCH por deploy (`docker-compose.voice.yml`); um pool
+    /// de nós (`dispatcher.list` cresce em produção) precisa de uma lista —
+    /// fica para quando essa topologia existir de facto.
+    pub pstn_bridge_freeswitch_ip: Option<std::net::IpAddr>,
+    /// Host que o control plane devolve ao IVR como destino da ingress
+    /// (`PSTN_BRIDGE_HOST`) — o que o FreeSWITCH usa para mandar o mix da
+    /// conferência. Por omissão o mesmo `SFU_EXTERNAL_IP` (o SFU já sabe
+    /// anunciar-se por aí para o ICE); "127.0.0.1" se nenhum dos dois
+    /// estiver definido (dev local, tudo na mesma máquina).
+    pub pstn_bridge_host: String,
 }
 
 /// De onde a configuração se lê. Em produção é o ambiente do processo; nos
@@ -293,6 +339,8 @@ impl Config {
             )),
             None => None,
         };
+        let ollama_model_summary =
+            src.var("OLLAMA_MODEL_SUMMARY").unwrap_or_else(|_| "qwen2.5:1.5b".into());
         Self {
             edition,
             registration_mode,
@@ -344,11 +392,16 @@ impl Config {
             sms_unitel_smpp: opt("SMS_UNITEL_SMPP"),
             sms_movicel_smpp: opt("SMS_MOVICEL_SMPP"),
             sms_africell_smpp: opt("SMS_AFRICELL_SMPP"),
+            sms_unitel_smpp_ca: opt("SMS_UNITEL_SMPP_CA"),
+            sms_movicel_smpp_ca: opt("SMS_MOVICEL_SMPP_CA"),
+            sms_africell_smpp_ca: opt("SMS_AFRICELL_SMPP_CA"),
             voice_tariff_inbound: src
                 .var("VOICE_TARIFF_INBOUND")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
+            voice_ramais_domain_suffix: opt("VOICE_RAMAIS_DOMAIN_SUFFIX")
+                .unwrap_or_else(|| "ramais.delonix.meet".into()),
             recordings_dir: src
                 .var("RECORDINGS_DIR")
                 .map(std::path::PathBuf::from)
@@ -374,9 +427,16 @@ impl Config {
             ollama_model_translate: src
                 .var("OLLAMA_MODEL_TRANSLATE")
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
-            ollama_model_summary: src
-                .var("OLLAMA_MODEL_SUMMARY")
-                .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
+            ollama_model_summary: ollama_model_summary.clone(),
+            ollama_model_studio: opt("OLLAMA_MODEL_STUDIO").unwrap_or(ollama_model_summary),
+            ollama_timeout_secs: bounded_env(src, "OLLAMA_TIMEOUT_SECS", 120, 5, 900) as u64,
+            ai_studio_concurrency_per_org: bounded_env(
+                src,
+                "AI_STUDIO_CONCURRENCY_PER_ORG",
+                1,
+                1,
+                8,
+            ),
             ws_queue_cap: bounded_env(src, "WS_QUEUE_CAP", 512, 32, 65_536),
             nego_queue_cap: bounded_env(src, "NEGO_QUEUE_CAP", 64, 4, 4_096),
             rec_queue_cap: bounded_env(src, "REC_QUEUE_CAP", 2_048, 64, 65_536),
@@ -391,6 +451,11 @@ impl Config {
             max_destinos_por_directo: bounded_env(src, "MAX_DESTINOS_POR_DIRECTO", 4, 1, 8),
             directo_threads: bounded_env(src, "DIRECTO_THREADS", 1, 1, 16) as u32,
             ffmpeg_bin: src.var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
+            ffprobe_bin: src.var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
+            pstn_bridge_freeswitch_ip: ip_env(src, "PSTN_BRIDGE_FREESWITCH_IP"),
+            pstn_bridge_host: opt("PSTN_BRIDGE_HOST")
+                .or_else(|| opt("SFU_EXTERNAL_IP"))
+                .unwrap_or_else(|| "127.0.0.1".into()),
         }
     }
 }
@@ -427,6 +492,26 @@ fn uuid_list(src: &Source, var: &str) -> Vec<uuid::Uuid> {
             })
         })
         .collect()
+}
+
+/// Lê um único IP do ambiente (allowlist da ingress da ponte PSTN↔SFU).
+/// Ausente => `None` (fail-closed, ver `Config::pstn_bridge_freeswitch_ip`).
+/// Presente mas ilegível como IP => aviso + `None` — o mesmo tratamento que
+/// `bounded_env` dá a um valor fora do intervalo: nunca um panic por uma
+/// variável de configuração de uma funcionalidade opcional, mas também nunca
+/// um valor absurdo aceite em silêncio.
+fn ip_env(src: &Source, var: &str) -> Option<std::net::IpAddr> {
+    match src.var(var) {
+        Err(_) => None,
+        Ok(v) if v.trim().is_empty() => None,
+        Ok(v) => match v.trim().parse() {
+            Ok(ip) => Some(ip),
+            Err(_) => {
+                tracing::warn!("{var}='{v}' não é um IP válido — ponte PSTN↔SFU fica desactivada");
+                None
+            }
+        },
+    }
 }
 
 fn csv_env(src: &Source, var: &str) -> Vec<String> {

@@ -1,0 +1,720 @@
+/*
+ * Contactos e Administração da organização. Importada pelas duas páginas
+ * (fica no chunk lazy delas). Só tokens — nenhuma cor, raio ou altura à mão.
+ */
+
+/* ---------------------------------------------------------------- comuns */
+.org-orgselect {
+  width: auto;
+  max-width: 220px;
+}
+.org-select-sm {
+  width: auto;
+  font-size: var(--t-sm);
+}
+.org-break {
+  overflow-wrap: anywhere;
+}
+.org-nowrap {
+  white-space: nowrap;
+}
+.org-card-note {
+  margin: 0;
+  padding: 4px 14px 12px;
+  font-size: var(--t-sm);
+}
+.org-card-pad {
+  padding: 0 14px 12px;
+}
+.org-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.org-bulkbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.org-bulkbar__field {
+  display: inline-flex;
+}
+
+.org-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: var(--ctl-h);
+  padding: 0 9px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  flex: 1;
+  min-width: 0;
+}
+.org-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.org-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-md);
+}
+
+/* Presença: ponto verde (online) ou cinzento, com anel da superfície. */
+
+.org-invites {
+  border-top: 1px solid var(--border);
+}
+.org-invites__title {
+  margin: 10px 0 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--muted);
+}
+.org-invites .org-simple {
+  padding: 0;
+}
+
+/* Lista simples (filiais, grupos, salas). */
+.org-simple {
+  list-style: none;
+  margin: 0;
+  padding: 0 14px 8px;
+}
+.org-simple li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--t-md);
+}
+.org-simple li:last-child {
+  border-bottom: 0;
+}
+.org-simple__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.org-simple__main .dx-muted {
+  font-size: var(--t-sm);
+}
+
+/* Formulários. */
+.org-form {
+  display: grid;
+  gap: 12px;
+}
+.org-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.org-form__grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.org-form__section {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-block-start: 12px;
+}
+.org-form__hint {
+  font-size: var(--t-sm);
+}
+.org-form__foot {
+  display: flex;
+  justify-content: flex-end;
+}
+.org-form__file {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.org-csv-erro {
+  color: var(--danger);
+}
+.org-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
+}
+.org-inline--rooms {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 72px auto;
+}
+
+/* Seleccionar pessoas para um grupo. */
+.org-pick {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+}
+.org-pick__row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: var(--t-md);
+}
+.org-pick li + li .org-pick__row {
+  border-top: 1px solid var(--border);
+}
+.org-pick__row:hover {
+  background: var(--hover);
+}
+.org-pick__who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.org-pick__who .dx-muted {
+  font-size: var(--t-sm);
+}
+.org-pick__none {
+  padding: 10px;
+  font-size: var(--t-sm);
+}
+
+/* ------------------------------------------------- filiais e salas (Chamadas) */
+.org-row--active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.org-overview {
+  display: grid;
+  gap: 16px;
+}
+
+/* ------------------------------------------------------- administração */
+.org-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.org-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  min-width: 0;
+}
+.org-stat--warn {
+  border-color: var(--live);
+}
+.org-stat__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.org-stat__head span:first-of-type {
+  flex: 1;
+}
+.org-stat__head .dx-icon {
+  color: var(--success);
+}
+.org-stat--warn .org-stat__head .dx-icon {
+  color: var(--live);
+}
+.org-stat__warn {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--live-text);
+}
+.org-stat__sub {
+  font-size: 9px;
+}
+.org-stat .dx-meter {
+  height: 5px;
+}
+.org-stat__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.org-stat__value {
+  color: var(--text);
+}
+
+.org-admin__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 392px;
+  gap: 13px;
+  align-items: start;
+}
+.org-admin__main,
+.org-admin__side {
+  display: grid;
+  gap: 13px;
+  min-width: 0;
+}
+.page.org-admin {
+  gap: 13px;
+}
+@media (min-width: 901px) {
+  .page.org-admin {
+    padding-top: 16px;
+    padding-inline: 22px;
+  }
+}
+
+.org-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 10px;
+}
+.org-toolbar .org-search {
+  max-width: 320px;
+}
+/* O rótulo só para leitor de ecrã é absoluto: sem isto sai do contentor que rola. */
+.org-table-wrap {
+  position: relative;
+}
+.org-table td {
+  font-size: var(--t-md);
+}
+.org-person {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 180px;
+}
+.org-person__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.org-person__text .dx-muted {
+  font-size: var(--t-xs);
+}
+.org-audit__scroll {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+@media (max-width: 1180px) {
+  .org-admin__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .org-admin__side {
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    align-items: start;
+  }
+  .org-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Ecrã estreito. */
+@media (max-width: 760px) {
+  .org-admin__side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .org-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .org-form__grid--3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .org-inline,
+  .org-inline--rooms {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .org-toolbar .org-search {
+    max-width: none;
+    flex-basis: 100%;
+  }
+  .org-hide-narrow {
+    display: none;
+  }
+  .org-orgselect {
+    max-width: 140px;
+  }
+}
+
+/* ---------------------------------------------------- frontend/l1-consola */
+.org-audit__chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 6px;
+  font-size: 10.5px;
+}
+.org-voice__billing {
+  display: grid;
+  gap: 10px;
+  padding: 4px 14px 12px;
+}
+.org-voice__kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.org-voice__kpis dt {
+  font-size: var(--t-xs);
+}
+.org-voice__kpis dd {
+  margin: 0;
+  font-size: var(--t-title);
+  line-height: 1.2;
+}
+.org-voice__note {
+  margin: 0;
+  font-size: var(--t-xs);
+}
+.org-voice__sub {
+  margin: 0;
+  padding: 10px 14px 4px;
+  border-top: 1px solid var(--border);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+/* DelonixAdmin: cartões sem divisória no cabeçalho, contagem mono à direita,
+   tabelas em caixa com cabeçalho cinza, coluna direita de políticas. */
+.org-admin .dx-card__head {
+  border-bottom: 0;
+  padding: 12px 14px 4px;
+}
+.org-admin .dx-card__title {
+  font-size: 12.5px;
+}
+.org-admin .org-select-sm {
+  min-height: 26px;
+  padding-block: 3px;
+  font-size: 10.5px;
+}
+.org-meta {
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+.org-boxed .org-table-wrap {
+  margin: 4px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+}
+.org-boxed .dx-table th {
+  padding: 7px 12px;
+  font-size: 9px;
+}
+.org-boxed .dx-table td {
+  padding: 8px 12px;
+  font-size: 10.5px;
+}
+.org-boxed .org-person__text strong {
+  font-size: 11.5px;
+}
+.org-boxed .org-person__text .dx-muted {
+  font-size: 9px;
+}
+.org-admin .dx-table thead th {
+  background: var(--surface);
+}
+.org-pcard {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--raised);
+}
+.org-pcard h2 {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.org-pbar {
+  height: 8px;
+  border-radius: 1px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.org-pbar span {
+  display: block;
+  height: 100%;
+  background: var(--accent-strong);
+}
+.org-plegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.org-plegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.org-plegend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--accent-strong);
+}
+.org-pnote {
+  font-size: 9.5px;
+}
+.org-plist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.org-plist li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  font-size: 11px;
+}
+.org-plist strong {
+  font-size: 11px;
+}
+/* ---------------------------------------------------- frontend/l2-consola */
+/* Auditoria em linhas de três colunas (hora · quem · o quê), sem cabeçalho,
+   como no DelonixAdmin. */
+.org-audit__list {
+  margin: 0;
+  padding: 0 14px 12px;
+  list-style: none;
+}
+.org-audit__row {
+  display: grid;
+  grid-template-columns: 126px 150px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px;
+}
+.org-audit__row > .dx-num {
+  font-size: 10px;
+}
+.org-audit__row strong {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.org-audit__what .dx-num {
+  font-size: 10.5px;
+}
+.org-audit__what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.org-linkbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.org-linkbtn:disabled {
+  opacity: 0.6;
+}
+@media (max-width: 760px) {
+  .org-admin .dx-card__head {
+    flex-wrap: wrap;
+  }
+  .org-audit__row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .org-audit__what {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
+}
+
+/* Pesquisa estilo Odoo dentro dos cartões (membros, auditoria, organizações). */
+.org-search-pad {
+  padding: 10px 14px 6px;
+}
+.org-results {
+  min-width: 0;
+}
+.org-results > .dx-groups {
+  border-top: 1px solid var(--border);
+}
+
+/* Altura da janela em ecrã largo: a página não rola; rola cada coluna de
+   cartões por si. Abaixo de 1181 px as colunas empilham e a página rola. */
+@media (min-width: 1181px) {
+  .page.org-admin {
+    flex: 1;
+    min-height: 0;
+    padding-bottom: 16px;
+  }
+  .org-admin__grid {
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .org-admin__main,
+  .org-admin__side {
+    min-height: 0;
+    overflow-y: auto;
+    align-content: start;
+    padding-right: 2px;
+  }
+}
+
+/* --------------------------------------------------- papéis e permissões */
+.rbac-body {
+  min-height: 480px;
+}
+.rbac-grid {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 240px;
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 820px) {
+  .rbac-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.rbac-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.rbac-col__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rbac-role-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rbac-role-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.rbac-role-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-2);
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.rbac-role-item:hover {
+  background: var(--surface);
+}
+.rbac-role-item[aria-pressed='true'] {
+  background: var(--surface);
+  border-color: var(--border);
+  font-weight: 600;
+}
+.rbac-role-item__name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rbac-role-item__name svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  opacity: 0.6;
+}
+.rbac-matrix th,
+.rbac-matrix td {
+  white-space: nowrap;
+}
+.rbac-form,
+.rbac-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.rbac-permlist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rbac-permlist__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
+  background: var(--raised);
+}
+.rbac-cap-list {
+  margin: 0;
+  padding: 0 0 0 16px;
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}

@@ -1640,6 +1640,58 @@ portão existe para impedir, cometida ao escrevê-lo.
 
 **Ficheiros.** `server/src/org.rs` (`add_employee`), `web/e2e/captura-empregado.mjs`, `.github/workflows/ci.yml`.
 
+### R126 — Uma emissão parada parava as do nó, e um destino mau parava os outros
+
+**Sintoma.** Dois, ambos medidos (auditoria de 2026-09-16, problemas 1 e 2):
+
+- Um ffmpeg que escrevesse muito para o stderr (um destino a recusar e a
+  repetir o erro) ou que deixasse de ler o stdin (rede parada) pendurava a
+  escrita da sua emissão — e, como `Registo::escrever` escrevia **com o lock do
+  registo preso**, pendurava também a emissão de qualquer outra sala do mesmo
+  nó. Reproduzido antes da correcção: o teste
+  `uma_emissao_parada_nao_bloqueia_outra_sala` falhava contra `7f02f00` com «a
+  sala B ficou bloqueada pela emissão parada da sala A».
+- Um só ffmpeg com N saídas `-f flv`: a primeira saída que falhasse terminava o
+  processo e levava todos os destinos com ela.
+
+**Causa raiz.** `stderr(Stdio::piped())` sem leitor (o cano enche aos 64 KiB e
+o processo bloqueia a escrever nele), um `await` sobre I/O de um filho dentro de
+uma secção crítica partilhada pelo nó, e a falha de uma saída tratada como falha
+do processo inteiro.
+
+**Regra.**
+- **Nenhum `Stdio::piped()` sem quem o leia até ao fim.** O stderr do ffmpeg é
+  drenado sempre (e é daí que sai o `motivo`), com linhas cortadas e contadas.
+- **Nenhum `await` sobre I/O de um processo filho com um lock partilhado
+  preso.** O repartidor (`Emissao::escrever`) é síncrono e só faz `send` em
+  filas com orçamento em bytes; só a tarefa de escrita de cada destino espera
+  pelo stdin desse destino. Um destino que não acompanha é morto e reiniciado.
+- **Um processo por destino**, com supervisor e backoff limitado. Um processo
+  que não chega ao ar em `connect_timeout` conta como queda — sem isto um
+  ffmpeg à espera de media ficava «a ligar» para sempre.
+- **Reentrar a meio de um fluxo Matroska exige o cabeçalho e um Cluster.** O
+  cabeçalho guarda-se do início; o ponto de entrada é um id de Cluster com
+  tamanho EBML válido e o Timestamp como primeiro filho — **ou um CRC-32 e
+  depois o Timestamp**.
+
+**Armadilha que só o RTMP real apanhou.** A primeira versão do detector de
+Cluster só aceitava o Timestamp logo a seguir ao tamanho — é o que o
+MediaRecorder do Chromium escreve, e os testes unitários passavam. Contra o
+mediamtx, com media gerada pelo ffmpeg (que põe um CRC-32 primeiro), nenhum
+Cluster era reconhecido: o destino válido ficava «a ligar» para sempre depois
+de o servidor RTMP reiniciar, e o inválido nunca voltava a falhar (ficava à
+espera de input), por isso nunca contava tentativas. Duas correcções: aceitar o
+CRC-32, e a vigia de arranque, que transforma «à espera para sempre» em queda
+contada. O teste real corre agora nos dois formatos (`SEM_CRC=1`).
+
+**Portão.** Testes em `server/src/broadcast.rs` (ffmpeg falsos: entupido no
+stderr, surdo no stdin, a recusar a ligação, lento com reinício e Cluster
+partido entre pedaços, mudo); `web/e2e/directo-destinos.mjs` contra um RTMP real
+(fora do CI, razão em `scripts/e2e-fora-do-ci.txt`).
+
+**Ficheiros.** `server/src/broadcast.rs`, `docs/adr/0003-directo-para-plataformas.md`,
+`web/e2e/directo-destinos.mjs`.
+
 ### R123 — O portão de autorização não via o segundo handler de uma rota
 
 **Sintoma.** Nenhum visível, e é isso o problema. `scripts/check-route-auth.sh` dava verde com uma rota como `.route("/api/users/me", get(users::me).patch(<handler sem autenticação>))`. Medido a 2026-09-16 com o controlo negativo: trocar `update_me` por um handler público → portão antigo **verde**, portão corrigido **vermelho**.

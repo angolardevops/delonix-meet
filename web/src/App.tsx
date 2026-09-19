@@ -1,79 +1,77 @@
 import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertIcon } from './icons'
 import { completeSsoLogin, currentUser, logout, User } from './api'
 import Shell, { NavKey } from './components/Shell'
+import PaletteHost from './components/PaletteHost'
 import PresenceProvider from './components/PresenceProvider'
+import { Icon } from './ui/icons'
+import { Spinner } from './ui/kit'
 
 // ---------------------------------------------------------------------------
-//  Corte por rota (achado 1.2 do docs/ux-perf-review.md)
-//
-//  As 15 páginas eram importadas estaticamente aqui, o que punha a `Room`
-//  (185 KB de fonte, mais webrtc/media/e2ee/signaling), o `Calendar` e o
-//  `Analytics` no MESMO chunk que o dashboard. Ninguém vê a sala e a landing
-//  ao mesmo tempo.
-//
-//  EAGER ficam só os três ecrãs de entrada — Landing, Login e Home. São
-//  pequenos (~30 KB somados) e são o primeiro pixel: pô-los em `lazy` trocava
-//  bytes por um spinner à frente de toda a gente, o que não é uma troca boa.
+//  Corte por rota. EAGER ficam só os dois ecrãs de entrada — Entrar e Início
+//  — que são o primeiro pixel; tudo o resto chega por `lazy`. A sala (e com
+//  ela webrtc/media/e2ee) nunca entra no chunk da consola.
 // ---------------------------------------------------------------------------
-import Landing from './pages/Landing'
 import Login from './pages/Login'
 import Home from './pages/Home'
 
 const Room = lazy(() => import('./pages/Room'))
 const Lobby = lazy(() => import('./pages/Lobby'))
+const PhoneCamera = lazy(() => import('./pages/PhoneCamera'))
 const Calendar = lazy(() => import('./pages/Calendar'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const Recordings = lazy(() => import('./pages/Recordings'))
 const Directory = lazy(() => import('./pages/Directory'))
 const Whiteboards = lazy(() => import('./pages/Whiteboards'))
 const Studio = lazy(() => import('./pages/Studio'))
-const Roadmap = lazy(() => import('./pages/Roadmap'))
+const Integrations = lazy(() => import('./pages/Integrations'))
+const Admin = lazy(() => import('./pages/Admin'))
+const Intelligence = lazy(() => import('./pages/Intelligence'))
 const Status = lazy(() => import('./pages/Status'))
 const ApiDocs = lazy(() => import('./pages/ApiDocs'))
 const Legal = lazy(() => import('./pages/Legal'))
 const SharePage = lazy(() => import('./pages/SharePage'))
+const AcceptInvite = lazy(() => import('./pages/AcceptInvite'))
+const Diagram = lazy(() => import('./pages/Diagram'))
+const RecordingPlayer = lazy(() => import('./pages/RecordingPlayer'))
 
 /**
- * Espera de rota. Deliberadamente MUDO: o chunk de uma página chega em dezenas
- * de milissegundos na mesma origem, e um spinner que pisca nesse intervalo lê-se
- * como avaria. Só ocupa o espaço para o conteúdo não saltar quando chegar.
+ * Espera de rota. Deliberadamente MUDA: o chunk chega em dezenas de
+ * milissegundos e um spinner que pisca nesse intervalo lê-se como avaria.
  */
 function RouteFallback({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<div className="route-loading" aria-hidden="true" />}>{children}</Suspense>
+  return <Suspense fallback={<div className="dx-route-wait" aria-hidden="true" />}>{children}</Suspense>
 }
 
 type Route =
-  | { kind: 'home' }
-  | { kind: 'directory' }
-  | { kind: 'recordings' }
-  | { kind: 'whiteboards' }
-  | { kind: 'studio' }
-  | { kind: 'calendar' }
-  | { kind: 'analytics' }
-  | { kind: 'roadmap' }
+  | { kind: NavKey }
   | { kind: 'room'; code: string; voice: boolean }
   | { kind: 'lobby'; code: string }
+  | { kind: 'telemovel'; code: string }
   | { kind: 'share'; token: string }
+  | { kind: 'invite'; token: string }
+  | { kind: 'diagram'; id: string | null }
+  | { kind: 'player'; id: string }
+
+const PAGES: NavKey[] = ['calendar', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'ai']
 
 function parseHash(): Route {
   const h = location.hash
-  const roomVoice = h.match(/^#\/r\/([a-z-]+)\?voice$/)
-  if (roomVoice) return { kind: 'room', code: roomVoice[1], voice: true }
-  const room = h.match(/^#\/r\/([a-z-]+)$/)
-  if (room) return { kind: 'room', code: room[1], voice: false }
+  const room = h.match(/^#\/r\/([a-z-]+)(\?voice)?$/)
+  if (room) return { kind: 'room', code: room[1], voice: !!room[2] }
   const lobby = h.match(/^#\/lobby\/([a-z-]+)$/)
   if (lobby) return { kind: 'lobby', code: lobby[1] }
+  const telemovel = h.match(/^#\/telemovel\/([a-z-]+)$/)
+  if (telemovel) return { kind: 'telemovel', code: telemovel[1] }
   const share = h.match(/^#\/share\/([a-f0-9]+)$/)
   if (share) return { kind: 'share', token: share[1] }
-  if (h.startsWith('#/directory')) return { kind: 'directory' }
-  if (h.startsWith('#/recordings')) return { kind: 'recordings' }
-  if (h.startsWith('#/whiteboards')) return { kind: 'whiteboards' }
-  if (h.startsWith('#/studio')) return { kind: 'studio' }
-  if (h.startsWith('#/calendar')) return { kind: 'calendar' }
-  if (h.startsWith('#/analytics')) return { kind: 'analytics' }
-  if (h.startsWith('#/roadmap')) return { kind: 'roadmap' }
+  const invite = h.match(/^#\/invite\/([a-f0-9]+)$/)
+  if (invite) return { kind: 'invite', token: invite[1] }
+  const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
+  if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
+  const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
+  if (player) return { kind: 'player', id: player[1] }
+  for (const p of PAGES) if (h.startsWith(`#/${p}`)) return { kind: p }
   return { kind: 'home' }
 }
 
@@ -84,7 +82,7 @@ export default function App() {
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash())
-    // Sessão expirada (refresh falhou): limpa o estado → mostra o login.
+    // Sessão expirada (a renovação falhou): volta-se ao ecrã de entrada.
     const onExpired = () => {
       setUser(null)
       location.hash = '/login'
@@ -97,85 +95,77 @@ export default function App() {
     }
   }, [])
 
-  function enterRoom(code: string, voice = false) {
-    location.hash = `/r/${code}${voice ? '?voice' : ''}`
-  }
-  function leaveRoom() {
-    location.hash = '/'
-  }
-  function navigate(key: NavKey) {
-    location.hash = key === 'home' ? '/' : `/${key}`
-  }
-
-  // SSO callback: o servidor redireciona para #/sso-complete?token=<jwt>
-  // após o IdP. Capturamos o token e completamos o login.
+  // Regresso do IdP: `#/sso-complete?token=…`.
   useEffect(() => {
     if (location.hash.startsWith('#/sso-complete')) {
-      completeSsoLogin().then((u) => {
+      void completeSsoLogin().then((u) => {
         if (u) setUser(u)
         else location.hash = '/login'
       })
     }
   }, [])
 
+  function enterRoom(code: string, voice = false) {
+    location.hash = `/r/${code}${voice ? '?voice' : ''}`
+  }
+  function navigate(key: NavKey) {
+    location.hash = key === 'home' ? '/' : `/${key}`
+  }
+
   if (location.hash.startsWith('#/sso-complete')) {
-    // Mostrar estado de carregamento enquanto completa o SSO.
-    return <div className="auth-page"><div className="auth-card"><p>{t('common.aCompletarSso')}</p></div></div>
+    return (
+      <div className="wait-screen" role="status">
+        <Spinner />
+        <span>{t('auth.aCompletarSso')}</span>
+      </div>
+    )
   }
   if (location.hash.startsWith('#/status')) return <RouteFallback><Status /></RouteFallback>
   if (location.hash.startsWith('#/api-docs')) return <RouteFallback><ApiDocs /></RouteFallback>
   if (location.hash.startsWith('#/legal')) return <RouteFallback><Legal /></RouteFallback>
-  // Link público de gravação — sem autenticação necessária.
   if (route.kind === 'share') return <RouteFallback><SharePage token={route.token} /></RouteFallback>
-  if (!user) {
-    // Convidados com link de sala vão direto ao login; a raiz mostra a landing.
-    if (route.kind === 'room' || location.hash.startsWith('#/login')) {
-      return <Login onLogin={setUser} />
-    }
-    return <Landing onSignIn={() => { location.hash = '/login'; setRoute(parseHash()) }} />
+  if (route.kind === 'invite') {
+    return (
+      <RouteFallback>
+        <AcceptInvite
+          token={route.token}
+          onAccepted={(u) => {
+            setUser(u)
+            location.hash = '/'
+          }}
+        />
+      </RouteFallback>
+    )
   }
 
-  const nav: NavKey =
-    route.kind === 'directory'
-      ? 'directory'
-      : route.kind === 'recordings'
-        ? 'recordings'
-        : route.kind === 'whiteboards'
-          ? 'whiteboards'
-          : route.kind === 'studio'
-            ? 'studio'
-          : route.kind === 'calendar'
-            ? 'calendar'
-          : route.kind === 'analytics'
-            ? 'analytics'
-            : route.kind === 'roadmap'
-              ? 'roadmap'
-              : 'home'
+  if (!user) {
+    return (
+      <Login
+        pendingRoom={route.kind === 'room' || route.kind === 'lobby' || route.kind === 'telemovel' ? route.code : null}
+        onLogin={(u) => {
+          setUser(u)
+          if (location.hash.startsWith('#/login')) location.hash = '/'
+        }}
+      />
+    )
+  }
 
-  // A presença vive acima do router: as chamadas tocam em qualquer página,
-  // incluindo dentro de uma sala.
-  // HTTP fora de localhost NÃO é contexto seguro → o browser bloqueia câmara,
-  // microfone e WebRTC. Avisar de forma clara em vez de falhar em silêncio.
-  const insecure = typeof window !== 'undefined' && !window.isSecureContext
+  // HTTP fora de localhost não é contexto seguro: o browser bloqueia câmara,
+  // microfone e WebRTC. Diz-se claramente em vez de falhar em silêncio.
+  const insecure = !window.isSecureContext
+
   return (
     <>
-    {insecure && (
-      <div className="insecure-banner">
-        <AlertIcon /> Ligação <strong>{t('common.inseguraHttp')}</strong>  {t('common.camaraMicrofoneEChamadas')} <strong>https://{location.hostname}</strong>  {t('common.aceitaOAvisoDo')}
-      </div>
-    )}
-    <PresenceProvider onEnterRoom={enterRoom}>
-      {route.kind === 'lobby' ? (
-        <RouteFallback><Lobby code={route.code} /></RouteFallback>
-      ) : route.kind === 'room' ? (
-        <RouteFallback>
-          <Room code={route.code} voiceOnly={route.voice} onLeave={leaveRoom} onSwitch={(c) => enterRoom(c)} />
-        </RouteFallback>
-      ) : (
-        <Shell
+      {insecure && (
+        <div className="insecure-banner" role="alert">
+          <Icon name="alert" />
+          <span>{t('shell.inseguro', { host: location.hostname })}</span>
+        </div>
+      )}
+      <PresenceProvider onEnterRoom={enterRoom}>
+        <PaletteHost
           user={user}
-          active={nav}
-          onNavigate={navigate}
+          inRoom={route.kind === 'room'}
           onEnterRoom={enterRoom}
           onLogout={() => {
             logout()
@@ -183,19 +173,52 @@ export default function App() {
             location.hash = '/'
           }}
         >
+        {route.kind === 'room' ? (
           <RouteFallback>
-            {route.kind === 'home' && <Home user={user} onEnterRoom={enterRoom} onNavigate={navigate} />}
-            {route.kind === 'directory' && <Directory />}
-            {route.kind === 'recordings' && <Recordings />}
-            {route.kind === 'whiteboards' && <Whiteboards />}
-            {route.kind === 'studio' && <Studio />}
-            {route.kind === 'calendar' && <Calendar onEnterRoom={enterRoom} />}
-            {route.kind === 'analytics' && <Analytics />}
-            {route.kind === 'roadmap' && <Roadmap />}
+            <Room
+              key={route.code}
+              code={route.code}
+              voiceOnly={route.voice}
+              onLeave={() => (location.hash = '/')}
+              onSwitch={(c) => enterRoom(c)}
+            />
           </RouteFallback>
-        </Shell>
-      )}
-    </PresenceProvider>
+        ) : route.kind === 'telemovel' ? (
+          <RouteFallback>
+            <PhoneCamera key={route.code} code={route.code} onLeave={() => (location.hash = '/')} />
+          </RouteFallback>
+        ) : (
+          <Shell
+            user={user}
+            // A moderação é de UMA sala e não tem destino no rail: nenhum item fica activo.
+            active={(route.kind === 'lobby' ? null : route.kind === 'diagram' ? 'whiteboards' : route.kind === 'player' ? 'recordings' : route.kind) as NavKey}
+            onNavigate={navigate}
+            onEnterRoom={enterRoom}
+            onLogout={() => {
+              logout()
+              setUser(null)
+              location.hash = '/'
+            }}
+          >
+            <RouteFallback>
+              {route.kind === 'lobby' && <Lobby code={route.code} />}
+              {route.kind === 'home' && <Home />}
+              {route.kind === 'calendar' && <Calendar />}
+              {route.kind === 'studio' && <Studio />}
+              {route.kind === 'recordings' && <Recordings />}
+              {route.kind === 'whiteboards' && <Whiteboards />}
+              {route.kind === 'diagram' && <Diagram id={route.id} />}
+              {route.kind === 'player' && <RecordingPlayer key={route.id} id={route.id} />}
+              {route.kind === 'directory' && <Directory />}
+              {route.kind === 'integrations' && <Integrations />}
+              {route.kind === 'analytics' && <Analytics />}
+              {route.kind === 'admin' && <Admin />}
+              {route.kind === 'ai' && <Intelligence />}
+            </RouteFallback>
+          </Shell>
+        )}
+        </PaletteHost>
+      </PresenceProvider>
     </>
   )
 }

@@ -58,6 +58,10 @@ thiserror = "2"
 sha2 = "0.10"
 hmac = "0.12"
 sha1 = "0.10"
+# MD5 é obrigatório pelo SIP Digest (RFC 2617/3261: HA1 = MD5(user:realm:pass)) —
+# não é uma escolha de segurança nossa, é o que o registar do FreeSWITCH exige
+# (ver ramais.rs). Nunca usado para nada que dependa de resistência a colisão.
+md-5 = "0.10"
 base64 = "0.22"
 futures-util = "0.3"
 hex = "0.4"
@@ -71,13 +75,62 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 regex = "1.13.0"
 # Limpeza de material de chave em memória (ver signaling::Secret).
 zeroize = "1"
+# Ponte de media FreeSWITCH↔SFU (pstn_bridge.rs, ver docs/pstn-sfu-bridge-design.md
+# "Abordagem B"). O SFU nunca tinha descodificado Opus — reencaminha RTP sem
+# tocar no conteúdo (ver cabeçalho de sfu.rs) — mas misturar N chamadores
+# WebRTC para 1 stream PSTN exige decode→soma→encode real. `libopus-dev` tem
+# de estar instalado no host de build (o crate liga-se à lib do sistema via
+# pkg-config; falha a compilar sem ela).
+audiopus = "0.2.0"
+# SMPP sobre TLS (ADR-0005, smpps://). `rustls`/`tokio-rustls` e `webpki-roots`
+# já estavam na árvore (sqlx, reqwest/openidconnect via rustls-tls, e
+# hyper-rustls) — aqui só se tornam dependências directas para o handshake
+# `smpps://`. `pem` idem, já usado pelo `jsonwebtoken` e pelo `rcgen`, aqui
+# para ler a CA própria de um operador (`SMS_<OPERADOR>_SMPP_CA`).
+#
+# `default-features = false` + `"ring"` EXPLÍCITO em vez do default do rustls
+# 0.23 (`aws_lc_rs`): `dtls` (dependência do `webrtc`, o SFU desde sempre) e o
+# `tls-rustls` do `sqlx` já trazem o backend `ring` para a árvore. Com o
+# default daqui, o binário ficava com as DUAS crypto providers compiladas ao
+# mesmo tempo e o rustls recusa-se a escolher sozinho —
+# `Could not automatically determine the process-level CryptoProvider`, um
+# panic em QUALQUER ligação TLS do processo (não só a do SMPP) — medido a
+# rebentar testes do SFU sem nada a ver com SMPP (ver `pstn_bridge.rs`,
+# `sfu_e2e.rs`). Ficar só com `ring`, já usado pelas outras duas dependências,
+# resolve sem precisar de um `CryptoProvider::install_default()` espalhado
+# por `main()` e por cada teste que toque TLS.
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+    "logging",
+] }
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "ring",
+    "tls12",
+    "logging",
+] }
+webpki-roots = "1"
+pem = "3"
+# SRTP autónomo (fora de um RTCPeerConnection/DTLS) para a ingress/egress da
+# ponte PSTN↔SFU — a MESMA versão 0.17.1 que o `webrtc` já traz transitivamente
+# (o SFU usa SRTP hoje só através do handshake DTLS de cada PeerConnection;
+# esta é a primeira vez que este código constrói um `Context` SRTP à mão, com
+# chaves efémeras geridas pelo control plane em vez de negociadas por DTLS).
+webrtc-srtp = "0.17.1"
+# Construir o payload RTP cru da mistura (pstn_bridge.rs) antes de o cifrar —
+# já transitivo (o `rtp`/`webrtc-srtp` usam-no internamente), directo aqui só
+# para o tipo `Bytes` do `rtp::packet::Packet::payload`.
+bytes = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
 # Testes de integração em tests/: `#[sqlx::test]` dá a cada teste uma base
 # própria, migrada, no Postgres de DATABASE_URL.
 sqlx = { version = "0.8", features = ["macros"] }
-# Certificados de teste para o mTLS do gRPC interno (tests/grpc.rs).
+# Certificados de teste: mTLS do gRPC interno (tests/grpc.rs) e o SMSC falso
+# do teste TLS de sms_smpp.rs. Já estava na árvore como dependência normal
+# do `webrtc`/`dtls`.
 rcgen = "0.13"
 # IdP OIDC falso dos testes de segurança (`tests/security_identity.rs`): gera a
 # chave RS256 em memória, a cada corrida — nenhuma chave privada no repositório.

@@ -9,7 +9,18 @@ import { describe, expect, it } from 'vitest'
 
 const root = join(__dirname, '..', '..')
 const read = (p: string) => readFileSync(join(root, p), 'utf8')
-const css = () => read('web/src/styles.scss')
+/** Todas as folhas de estilo da app, concatenadas. A lista deriva-se da
+ *  árvore: uma folha nova nasce coberta pelos portões de CSS. */
+function listarCss(dir: string): string[] {
+  const out: string[] = []
+  for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`
+    if (e.isDirectory()) out.push(...listarCss(p))
+    else if (e.name.endsWith('.css')) out.push(p)
+  }
+  return out.sort()
+}
+const css = () => listarCss('web/src').map(read).join('\n')
 
 /** Todos os `.tsx` sob um directório, recursivamente. A lista é DERIVADA da
  *  árvore e não escrita à mão: uma lista à mão fica desactualizada no dia em
@@ -24,6 +35,16 @@ function listarTsx(dir: string): string[] {
   }
   return out
 }
+
+/** As áreas (namespaces) de um dicionário: um ficheiro por área em
+ *  `locales/<língua>/`, fora o `index.ts` que as compõe. */
+function areasDeLocale(loc: string): string[] {
+  return readdirSync(join(root, `web/src/locales/${loc}`))
+    .filter((f) => f.endsWith('.ts') && f !== 'index.ts')
+    .map((f) => f.replace(/\.ts$/, ''))
+    .sort()
+}
+const lerLocale = (loc: string) => areasDeLocale(loc).map((ns) => read(`web/src/locales/${loc}/${ns}.ts`)).join('\n')
 
 describe('3.1.1 · a navegação tem comportamento em ecrã estreito', () => {
   it('o rail sai do fluxo abaixo de 900px', () => {
@@ -44,8 +65,35 @@ describe('3.1.1 · a navegação tem comportamento em ecrã estreito', () => {
     expect(s).toContain('const [navOpen, setNavOpen] = useState(false)')
     expect(s).toContain('shell-nav-backdrop')
     expect(s).toContain("e.key === 'Escape'")
-    expect(s).toContain('aria-expanded={navOpen}')
-    expect(s).toContain('aria-controls="shell-nav"')
+    expect(s).toContain('id="shell-nav"')
+    // O botão que abre a gaveta vive na barra de cada página.
+    // Com o rail recolhível, o mesmo botão também expande o rail em ecrã
+    // largo: o `aria-expanded` passa a vir do Shell, que o deriva da GAVETA
+    // em ecrã estreito — o comportamento protegido mantém-se.
+    const bar = read('web/src/components/PageBar.tsx')
+    expect(bar).toContain('aria-expanded={navExpanded}')
+    expect(bar).toContain('aria-controls="shell-nav"')
+    expect(s).toContain('navExpanded: narrow ? navOpen : !navCollapsed')
+  })
+
+  it('acima de 900px o rail recolhe a ícones, com estado por utilizador e sem tocar na gaveta', () => {
+    const s = read('web/src/components/Shell.tsx')
+    // Hambúrguer no topo do rail, anunciado e ligado ao rail.
+    expect(s).toMatch(/className="dx-iconbtn dx-iconbtn--bare shell-nav__toggle"[\s\S]*?aria-expanded=\{railExpanded\}[\s\S]*?aria-controls="shell-nav"/)
+    // Persistido por utilizador, e um localStorage bloqueado não parte a consola.
+    expect(s).toContain('dx_nav_collapsed:${userId}')
+    expect(s).toMatch(/function readCollapsed[\s\S]*?try \{[\s\S]*?\} catch/)
+    expect(s).toMatch(/function writeCollapsed[\s\S]*?try \{[\s\S]*?\} catch/)
+    // O atalho não colide com o Ctrl+K nem rouba o Ctrl+B a quem escreve.
+    expect(s).toMatch(/e\.key\.toLowerCase\(\) === 'b' && !isEditable\(e\.target\)/)
+    // O texto sai da vista mas não do nome acessível: nada de display:none no rótulo.
+    const recolhido = css().match(/@media \(min-width: 901px\) \{[\s\S]*?\n\}/g)?.join('\n') ?? ''
+    expect(recolhido).toMatch(/\.shell\.nav-collapsed \.shell-nav \{[^}]*width:\s*var\(--nav-w-collapsed\)/)
+    expect(recolhido).toMatch(/\.shell\.nav-collapsed \.nav-item__label \{[^}]*clip:/)
+    expect(recolhido).not.toMatch(/nav-item__label[^{]*\{[^}]*display:\s*none/)
+    // A gaveta não herda o recolhido: a regra vive só no bloco de ecrã largo.
+    const estreito = css().match(/@media \(max-width: 900px\) \{[\s\S]*?\n\}/g)?.join('\n') ?? ''
+    expect(estreito).not.toContain('nav-collapsed')
   })
 
   it('escolher um destino fecha a gaveta', () => {
@@ -63,43 +111,36 @@ describe('3.1.1 · a navegação tem comportamento em ecrã estreito', () => {
 })
 
 describe('3.1.3 · alturas de viewport em dvh', () => {
-  it('todo o 100vh tem um 100dvh a seguir', () => {
-    const orfaos = css()
-      .split('\n')
-      .map((l, i) => ({ l, n: i + 1 }))
-      .filter(({ l }) => /100vh/.test(l) && !/100dvh/.test(l))
-    expect(orfaos.map((o) => `${o.n}: ${o.l.trim()}`)).toEqual([])
+  it('todo o 100vh tem um 100dvh logo a seguir', () => {
+    // Num telemóvel, 100vh inclui a barra do browser: o fundo da página fica
+    // por baixo dela. O `vh` fica como recuo para browsers antigos, e a linha
+    // seguinte (ou a mesma) repete a declaração em `dvh`.
+    const orfaos: string[] = []
+    for (const f of listarCss('web/src')) {
+      const ls = read(f).split('\n')
+      ls.forEach((l, i) => {
+        if (!/100vh/.test(l) || /100dvh/.test(l)) return
+        if (/100dvh/.test(ls[i + 1] ?? '')) return
+        orfaos.push(`${f}:${i + 1}: ${l.trim()}`)
+      })
+    }
+    expect(orfaos).toEqual([])
   })
 })
 
 describe('3.1.4 · as ações não desaparecem no telemóvel', () => {
-  it('entrar por código muda-se para a gaveta em vez de ser escondido', () => {
-    const s = css()
-    expect(s).not.toMatch(/\.app-bar-date,\s*\.app-bar-join \{ display: none; \}/)
-    expect(s).toContain('.qa-drawer { display: flex; }')
+  // No telemóvel, a acção principal do produto não pode ficar atrás de um toque
+  // no menu (R103). No desenho do template as acções rápidas vivem no CORPO da
+  // Início, em todas as larguras — e entrar por código aceita o código solto ou
+  // o link colado, pelo mesmo parser da paleta de comandos.
+  it('a Início tem as acções rápidas no corpo e entra por código', () => {
+    const home = read('web/src/pages/Home.tsx')
+    expect(home).toContain('className="quick-actions"')
+    expect(home).toContain("from '../roomCode'")
   })
 
-  // A escolha original foi entre BARRA e GAVETA — o corpo da página nunca
-  // esteve em cima da mesa. No telemóvel isso deixava a acção principal do
-  // produto atrás de um toque no menu, num ecrã com metade da altura vazia
-  // (R103). O mesmo componente passou a viver também na Home.
-  it('a Home mostra as ações onde a barra não as tem', () => {
-    const s = css()
-    // Em ecrã largo a barra já as tem: mostrá-las na Home seria a duplicação
-    // que a decisão original evitou.
-    expect(s).toContain('.qa-home { display: none; }')
-    // E abaixo dos 900px — o MESMO limiar em que a barra as passa à gaveta —
-    // aparecem no corpo. Sem esta metade, ficariam escondidas nas duas larguras.
-    const mobile = s.slice(s.indexOf('@media (max-width: 900px)'))
-    expect(mobile).toMatch(/\.qa-home \{\s*display: flex;/)
-    expect(read('web/src/pages/Home.tsx')).toContain('<QuickActions variant="home"')
-  })
-
-  it('as ações rápidas são um componente só, usado nos dois sítios', () => {
-    const s = read('web/src/components/Shell.tsx')
-    expect(s).toContain('function QuickActions(')
-    expect(s).toContain('<QuickActions variant="bar"')
-    expect(s).toContain('variant="drawer"')
+  it('a paleta de comandos também entra por código colado', () => {
+    expect(read('web/src/components/CommandPalette.tsx')).toContain('parseRoomCode(q)')
   })
 })
 
@@ -191,8 +232,8 @@ describe('3.2.5 · nada de emoji como controlo na consola', () => {
       'cadenas 🔒', 'prêt ! 🎉', 'période. 🎉',
     ]
     const soltos: string[] = []
-    for (const loc of ['pt', 'en', 'fr']) {
-      for (const l of read(`web/src/locales/${loc}.ts`).split('\n')) {
+    for (const loc of ['pt', 'en', 'fr', 'zh']) {
+      for (const l of lerLocale(loc).split('\n')) {
         if (l.trim().startsWith('//')) continue
         if (!EMOJI.test(l)) continue
         if (PROSA.some((p) => l.includes(p))) continue
@@ -218,7 +259,9 @@ describe('3.2.6 · a identidade é nossa, não emprestada', () => {
     '#6264a7': 'roxo Teams', '#2d8cff': 'azul Zoom',
   }
   it('a folha de estilos não usa cores de marca alheias', () => {
-    const css = read('web/src/styles.scss')
+    const css = listarCss('web/src')
+      .map(read)
+      .join('\n')
       .split('\n')
       .filter((l) => !l.trimStart().startsWith('/*') && !l.trimStart().startsWith('*'))
       .join('\n')
@@ -440,23 +483,58 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
    */
   function mapaDeLocale(loc: string): Record<string, string> {
     const out: Record<string, string> = {}
-    const pilha: string[] = []
-    for (const linha of read(`web/src/locales/${loc}.ts`).split('\n')) {
-      const t = linha.trim()
-      const abre = t.match(/^([A-Za-z0-9_]+):\s*\{$/)
-      if (abre) { pilha.push(abre[1]); continue }
-      if (t.startsWith('}')) { pilha.pop(); continue }
-      const par = t.match(/^([A-Za-z0-9_]+):\s*(['"])((?:\\.|(?!\2).)*)\2\s*,?$/)
-      if (par) out[[...pilha, par[1]].join('.')] = par[3]
+    for (const ns of areasDeLocale(loc)) {
+      const pilha: string[] = [ns]
+      for (const linha of read(`web/src/locales/${loc}/${ns}.ts`).split('\n')) {
+        const t = linha.trim()
+        if (t.startsWith('export default {')) continue
+        const abre = t.match(/^([A-Za-z0-9_]+):\s*\{$/)
+        if (abre) { pilha.push(abre[1]); continue }
+        if (t.startsWith('}')) { pilha.pop(); continue }
+        const par = t.match(/^([A-Za-z0-9_]+):\s*(['"])((?:\\.|(?!\2).)*)\2\s*,?$/)
+        if (par) out[[...pilha, par[1]].join('.')] = par[3]
+      }
     }
     return out
   }
 
-  it('pt, en e fr têm exactamente as mesmas chaves — em TODOS os blocos', () => {
+  it('pt, en, fr e zh têm exactamente as mesmas chaves — em TODOS os blocos', () => {
     const pt = Object.keys(mapaDeLocale('pt')).sort()
     expect(pt.length).toBeGreaterThan(900)
     expect(Object.keys(mapaDeLocale('en')).sort()).toEqual(pt)
     expect(Object.keys(mapaDeLocale('fr')).sort()).toEqual(pt)
+    expect(Object.keys(mapaDeLocale('zh')).sort()).toEqual(pt)
+  })
+
+  it('as quatro línguas têm as mesmas áreas, e nenhuma deixa um valor vazio onde o pt o preenche', () => {
+    // Uma área inteira só em `pt` (ficheiro em falta) passava ao lado da
+    // contagem de chaves se outra área tivesse chaves a mais. E um valor vazio
+    // é pior do que uma chave em falta: o i18next mostra NADA, sem fallback.
+    const pt = mapaDeLocale('pt')
+    const vazios: string[] = []
+    for (const loc of ['en', 'fr', 'zh']) {
+      expect(areasDeLocale(loc)).toEqual(areasDeLocale('pt'))
+      const o = mapaDeLocale(loc)
+      for (const [k, v] of Object.entries(pt)) {
+        if (v.trim() !== '' && (o[k] ?? '').trim() === '') vazios.push(`${loc}: ${k}`)
+      }
+    }
+    expect(vazios).toEqual([])
+  })
+
+  it('os placeholders {{…}} de cada tradução são os mesmos do português', () => {
+    // Um `{{nome}}` traduzido (ou esquecido) não falha: mostra a chave crua
+    // ou come o nome da pessoa. No chinês a ordem muda, o conjunto não.
+    const ph = (v: string) => (v.match(/\{\{[^}]+\}\}/g) ?? []).sort().join(' ')
+    const pt = mapaDeLocale('pt')
+    const maus: string[] = []
+    for (const loc of ['en', 'fr', 'zh']) {
+      const o = mapaDeLocale(loc)
+      for (const [k, v] of Object.entries(pt)) {
+        if (o[k] !== undefined && ph(o[k]) !== ph(v)) maus.push(`${loc}: ${k}`)
+      }
+    }
+    expect(maus).toEqual([])
   })
 
   it('nenhuma tradução é uma FRASE onde o português é um rótulo', () => {
@@ -471,7 +549,7 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     // 20 %) e apanha quem escreveu uma explicação onde devia estar um rótulo.
     const pt = mapaDeLocale('pt')
     const maus: string[] = []
-    for (const loc of ['en', 'fr']) {
+    for (const loc of ['en', 'fr', 'zh']) {
       const o = mapaDeLocale(loc)
       for (const [k, v] of Object.entries(pt)) {
         const w = o[k]
@@ -491,33 +569,18 @@ describe('3.2.8 · uma marca só, e que respeita quem renomeia', () => {
   // cinco ecrãs continuavam a mostrar o globo Delonix. A marca-branca estava
   // feita a meio, e quem a usasse via o logótipo de OUTRA empresa em metade do
   // produto (R100).
+  // A lista de ecrãs é DERIVADA: todo o `.tsx` fora do próprio BrandMark.
+  const ecras = () => listarTsx('web/src').filter((f) => !f.endsWith('/components/BrandMark.tsx'))
+
   it('ninguém desenha /logo.svg à mão — passa tudo pelo BrandMark', () => {
-    const fixos: string[] = []
-    for (const f of [
-      'web/src/pages/Status.tsx', 'web/src/pages/Legal.tsx', 'web/src/pages/Lobby.tsx',
-      'web/src/pages/Landing.tsx', 'web/src/pages/ApiDocs.tsx', 'web/src/components/Shell.tsx',
-    ]) {
-      if (read(f).includes('/logo.svg')) fixos.push(f)
-    }
-    expect(fixos).toEqual([])
+    expect(ecras().filter((f) => read(f).includes('/logo.svg'))).toEqual([])
   })
 
-  // O símbolo era METADE do problema. O nome continuava escrito à mão ao lado
-  // dele — `<BrandMark /> Delonix <span>Meet</span>` — em cinco páginas.
-  // Renomear a aplicação trocava o símbolo e deixava o nome antigo colado a
-  // ele, que é PIOR do que não ter mudado nada (R101).
+  // O símbolo era METADE do problema: o nome continuava escrito à mão ao lado
+  // dele — `<BrandMark /> Delonix <span>Meet</span>`. Renomear a aplicação
+  // trocava o símbolo e deixava o nome antigo colado a ele (R101).
   it('o nome da aplicação também não se escreve à mão', () => {
-    const fixos: string[] = []
-    for (const f of [
-      'web/src/pages/Status.tsx', 'web/src/pages/Legal.tsx', 'web/src/pages/Lobby.tsx',
-      'web/src/pages/Landing.tsx', 'web/src/pages/ApiDocs.tsx', 'web/src/components/Shell.tsx',
-      'web/src/pages/SharePage.tsx',
-    ]) {
-      // O que se proíbe é o LOCKUP escrito à mão. O nome dentro de uma frase
-      // traduzida é outro problema (i18n), e resolve-se por interpolação.
-      if (/Delonix\s*<span>/.test(read(f))) fixos.push(f)
-    }
-    expect(fixos).toEqual([])
+    expect(ecras().filter((f) => /Delonix\s*<span/.test(read(f)))).toEqual([])
   })
 
   it('o BrandMark decide pelo NOME, não por uma constante', () => {
