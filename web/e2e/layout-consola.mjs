@@ -34,7 +34,7 @@ const browser = await chromium.launch()
 // ---------------------------------------------------------------- 3.1.1
 console.log('\n3.1.1 · a gaveta em ecrã estreito (375×812)')
 {
-  const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 375, height: 812 } })
+  const ctx = await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, viewport: { width: 375, height: 812 } })
   const page = await ctx.newPage()
   // Entra a sério. Injectar um token falso funcionava contra um mock e falha
   // contra o servidor real: leva 401, o cliente renova, falha, faz logout, e o
@@ -84,7 +84,7 @@ console.log('\n4.3 · o anel nos controlos que ESTAVAM cegos')
 // Aponta aos sítios onde o anel é NOSSO e não do browser: o campo sem borda da
 // paleta (anel no contentor) e o botão do rail (rede :focus-visible).
 {
-  const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 } })
+  const ctx = await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 } })
   const page = await ctx.newPage()
   await entrar(page, BASE, conta)
 

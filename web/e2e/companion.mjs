@@ -39,7 +39,7 @@ const conta = await criarConta(API, 'comp')
 const browser = await chromium.launch({
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
 })
-const ctx = () => browser.newContext({ ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })
+const ctx = () => browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })
 
 // ── Dispositivo 1: o portátil ────────────────────────────────────────────────
 const portatil = await (await ctx()).newPage()

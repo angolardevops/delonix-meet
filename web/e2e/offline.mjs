@@ -11,7 +11,7 @@ let falhas = 0
 const ok = (n, c, d = '') => { console.log(`${c ? '  ok  ' : ' FALHA'}  ${n}${d ? `  — ${d}` : ''}`); if (!c) falhas++ }
 
 const browser = await chromium.launch()
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } })
+const ctx = await browser.newContext({ locale: 'pt-PT', viewport: { width: 1280, height: 860 } })
 const page = await ctx.newPage()
 
 console.log('\ncom rede')

@@ -29,7 +29,7 @@ const browser = await chromium.launch({
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
 })
 const novaPagina = async () =>
-  (await browser.newContext({ ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
+  (await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
 
 // ---- O anfitrião abre a sala ----
 const page = await novaPagina()

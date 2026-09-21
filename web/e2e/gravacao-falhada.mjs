@@ -18,7 +18,7 @@ const sala=(await j(`${API}/api/rooms`,{token:tok,method:'POST',body:JSON.string
 const jr=(await j(`${API}/api/rooms/${sala.code}/join`,{token:tok,method:'POST'})).j
 
 const b=await chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']})
-const p=await (await b.newContext({ ignoreHTTPSErrors: true })).newPage()
+const p=await (await b.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true })).newPage()
 await p.goto(`${APP}/e2e/harness.html?token=${encodeURIComponent(jr.room_token)}&code=${sala.code}&access=${encodeURIComponent(tok)}`,{waitUntil:'domcontentloaded',timeout:120000})
 for(let k=0;k<20;k++){ await sleep(1500); if(await p.evaluate(()=>window.__dlx.ready)) break }
 // Grava e pára quase de imediato: não há media que chegue para compor.
@@ -55,7 +55,7 @@ if(falhada){
 // ---------------------------------------------------------------------------
 if (falhada) {
   const b2 = await chromium.launch()
-  const p2 = await (await b2.newContext({ ignoreHTTPSErrors: true })).newPage()
+  const p2 = await (await b2.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true })).newPage()
   await p2.goto(`${APP}/#/login`, { waitUntil: 'domcontentloaded', timeout: 120000 })
   await p2.waitForSelector('[data-testid=auth-email]', { timeout: 120000 })
   await p2.evaluate(() => localStorage.setItem('dx_tour_v1', 'done'))
