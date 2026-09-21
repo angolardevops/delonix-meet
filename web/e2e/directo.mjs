@@ -22,7 +22,7 @@ const browser = await chromium.launch({
   args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
          '--auto-select-desktop-capture-source=Entire screen'],
 })
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['camera', 'microphone'] })
+const ctx = await browser.newContext({ locale: 'pt-PT', viewport: { width: 1440, height: 900 }, permissions: ['camera', 'microphone'] })
 const page = await ctx.newPage()
 const erros = []
 page.on('pageerror', (e) => erros.push(e.message.slice(0, 140)))

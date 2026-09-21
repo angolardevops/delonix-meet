@@ -33,7 +33,7 @@ const conta = await criarConta(API, 'fant')
 const browser = await chromium.launch({
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
 })
-const page = await (await browser.newContext({ ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
+const page = await (await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
 await entrar(page, APP, conta)
 
 // Cria a reunião pelo CAMINHO DO PRODUTO — o botão que um utilizador carrega.
@@ -88,7 +88,7 @@ ok(
 // (o fantasma que se foi procurar).
 const codigo = rota.replace('#/r/', '')
 const conta2 = await criarConta(API, 'fan2')
-const page2 = await (await browser.newContext({ ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
+const page2 = await (await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
 await entrar(page2, APP, conta2)
 await page2.goto(`${APP}/#/r/${codigo}`, { waitUntil: 'domcontentloaded' })
 // A sala abre num ecrã de PRÉ-ENTRADA (`.rm-prejoin`, «Verificar dispositivos»). Quem entra por

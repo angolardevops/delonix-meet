@@ -31,7 +31,7 @@ const browser = await chromium.launch({
     '--allow-http-screen-capture',
   ],
 })
-const ctx = await browser.newContext({
+const ctx = await browser.newContext({ locale: 'pt-PT',
   viewport: { width: 1440, height: 900 },
   permissions: ['camera', 'microphone'],
 })
