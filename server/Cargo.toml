@@ -127,6 +127,9 @@ bytes = "1"
 # na imagem distroless. Interoperabilidade com a libopus medida nos dois
 # sentidos (ADR-0010 §«Medições»).
 opus-rs = "=0.1.33"
+# statvfs seguro para o espaço livre do volume de gravações (ADR-0014 §2.3).
+# Já vinha no Cargo.lock (via tempfile); só se liga a feature `fs`.
+rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"
