@@ -172,7 +172,7 @@ export default function Recordings() {
 
         {selected && (
           <aside className={cx('rec-panel', panelOpen && 'is-open')} aria-label={t('recordings.leitor.rotulo')}>
-            <RecordingPanel key={selected.id} rec={selected} autoLoad={picked} onShare={setShareTarget} onClose={closePanel} />
+            <RecordingPanel key={selected.id} rec={selected} autoLoad={picked} onShare={setShareTarget} onClose={closePanel} onUpdated={rs.reload} />
           </aside>
         )}
         {selected && panelOpen && <div className="rec-panel-scrim" onClick={closePanel} aria-hidden="true" />}
