@@ -214,11 +214,6 @@ impl DialOutKind {
 //  Números — a normalização e a máscara são da telefonia
 // ============================================================
 
-/// Indicativo da instalação e comprimento do número nacional. Um só sítio até a
-/// telefonia (ADR-0009) os tornar configuração.
-pub const HOME_COUNTRY_CODE: &str = "244";
-pub const HOME_NATIONAL_LEN: usize = 9;
-
 /// Um número que se pode convidar para uma sala: normalizado pela telefonia
 /// (`telephony::number::parse_dialed`) e COM forma E.164. Códigos curtos
 /// (`112`, `84209`) não têm E.164 e não se convidam — nem por voz, nem por SMS,
@@ -231,9 +226,14 @@ pub struct Invitee {
     pub e164: String,
 }
 
-pub fn parse_invitee(input: &str, emergency_numbers: &[String]) -> Result<Invitee, DomainError> {
-    let dialed =
-        crate::telephony::number::parse_dialed(input, HOME_COUNTRY_CODE, HOME_NATIONAL_LEN)?;
+/// `country_code`/`national_len` são os da instalação (`TELEPHONY_COUNTRY_CODE`).
+pub fn parse_invitee(
+    input: &str,
+    country_code: &str,
+    national_len: usize,
+    emergency_numbers: &[String],
+) -> Result<Invitee, DomainError> {
+    let dialed = crate::telephony::number::parse_dialed(input, country_code, national_len)?;
     // Emergência primeiro: o `112` não tem E.164 e cairia no erro genérico,
     // e quem o escreveu merece a razão verdadeira.
     if emergency_numbers.iter().any(|n| *n == dialed.digits) {
@@ -255,11 +255,6 @@ pub fn parse_invitee(input: &str, emergency_numbers: &[String]) -> Result<Invite
         )
         .with_field("number", "E.164")),
     }
-}
-
-/// Máscara para quem não é anfitrião: `+244 951 ***447`. É a da telefonia.
-pub fn mask(e164: &str) -> String {
-    crate::telephony::number::mask(e164, HOME_COUNTRY_CODE)
 }
 
 // ============================================================
@@ -495,22 +490,26 @@ pub fn weak_link(currently_weak: bool, jitter_ms: f64, loss: f64) -> bool {
 mod tests {
     use super::*;
 
+    fn parse_invitee_ao(n: &str, e: &[String]) -> Result<Invitee, DomainError> {
+        parse_invitee(n, "244", 9, e)
+    }
+
     fn emergencia() -> Vec<String> {
         crate::telephony::dial_plan::parse_emergency_numbers("112,113,115")
     }
 
     #[test]
     fn convidado_tem_de_ter_e164() {
-        let i = parse_invitee("923 000 000", &emergencia()).unwrap();
+        let i = parse_invitee_ao("923 000 000", &emergencia()).unwrap();
         assert_eq!(i.e164, "+244923000000");
-        let i = parse_invitee("+27 11 555 0192", &emergencia()).unwrap();
+        let i = parse_invitee_ao("+27 11 555 0192", &emergencia()).unwrap();
         assert_eq!(i.e164, "+27115550192");
         assert_eq!(
-            parse_invitee("84209", &emergencia()).unwrap_err().code,
+            parse_invitee_ao("84209", &emergencia()).unwrap_err().code,
             "channels.number_not_invitable"
         );
         assert_eq!(
-            parse_invitee("abc", &emergencia()).unwrap_err().code,
+            parse_invitee_ao("abc", &emergencia()).unwrap_err().code,
             "telephony.invalid_number"
         );
     }
@@ -519,17 +518,11 @@ mod tests {
     fn emergencia_nao_se_convida() {
         for n in ["112", "113", " 115 "] {
             assert_eq!(
-                parse_invitee(n, &emergencia()).unwrap_err().code,
+                parse_invitee_ao(n, &emergencia()).unwrap_err().code,
                 "telephony.emergency_not_invitable",
                 "{n}"
             );
         }
-    }
-
-    #[test]
-    fn mascara_e_a_da_telefonia() {
-        assert_eq!(mask("+244951000447"), "+244 951 ***447");
-        assert!(!mask("+244923123108").contains("123108"));
     }
 
     #[test]
