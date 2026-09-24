@@ -235,6 +235,31 @@ pub enum ClientMsg {
     BreakoutsClose,
     Leave,
     // SFU mode: SDP/ICE exchanged with the server itself, not another peer.
+    // ---- Estúdio de TV (ADR-0014 §2.2) ----
+    /// Operador: fixa PROGRAMA e PRÉ. Só o anfitrião actual da sala do estúdio.
+    StudioTally {
+        #[serde(default)]
+        program: Vec<Uuid>,
+        #[serde(default)]
+        preview: Vec<Uuid>,
+    },
+    /// Operador: um comando para a app de UMA fonte.
+    StudioCommand {
+        source_id: Uuid,
+        command_id: String,
+        command: delonix_meet_domain::studio::command::SourceCommand,
+    },
+    /// Telefone (fonte): o seu estado. O `source_id` vem do token, nunca daqui.
+    StudioSourceStatus {
+        status: delonix_meet_domain::studio::command::SourceStatus,
+    },
+    /// Telefone (fonte): resultado de um comando.
+    StudioCommandResult {
+        command_id: String,
+        ok: bool,
+        #[serde(default)]
+        error: Option<String>,
+    },
     SfuOffer {
         sdp: String,
     },
@@ -576,6 +601,36 @@ pub enum ServerMsg {
     HostChanged {
         from: Uuid,
         to: Uuid,
+    },
+    // ---- Estúdio de TV (ADR-0014 §2.2) ----
+    /// Para os anfitriões: as fontes emparelhadas desta sala e o `peer_id` que
+    /// liga cada uma às tracks do SFU.
+    StudioSources {
+        sources: Vec<crate::studio_realtime::SourceView>,
+    },
+    /// Para o telefone: o SEU tally.
+    StudioTally {
+        state: delonix_meet_domain::studio::tally::Tally,
+    },
+    /// Para o telefone: um comando já validado.
+    StudioCommand {
+        command_id: String,
+        command: delonix_meet_domain::studio::command::SourceCommand,
+    },
+    /// Para os anfitriões: o estado de uma fonte.
+    StudioSourceStatus {
+        source_id: Uuid,
+        status: delonix_meet_domain::studio::command::SourceStatus,
+        /// Epoch ms.
+        at: i64,
+    },
+    /// Para os anfitriões: o resultado de um comando.
+    StudioCommandResult {
+        source_id: Uuid,
+        command_id: String,
+        ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     Kicked, // para o alvo: foste removido
     /// Definições runtime da sala (lock, só-anfitrião-partilha).
@@ -1089,6 +1144,14 @@ impl PeerTx {
             rx,
             shutdown,
         )
+    }
+
+    /// Termina a sessão deste socket de forma ordenada (o laço de leitura acorda
+    /// e corre a limpeza normal). Usado para expulsar uma fonte revogada
+    /// (ADR-0014 §2.1): um `Kicked` só pede ao cliente que saia, e o telefone
+    /// de uma fonte revogada não é de confiança para o fazer.
+    pub fn terminate(&self) {
+        self.shutdown.notify_one();
     }
 
     /// Entrega best-effort. `true` = entrou na fila.
@@ -3139,6 +3202,10 @@ impl SignalingHub {
             | ClientMsg::ScreenShare { .. }
             | ClientMsg::VideoInterest { .. }
             | ClientMsg::BreakoutsBroadcast { .. }
+            | ClientMsg::StudioTally { .. }
+            | ClientMsg::StudioCommand { .. }
+            | ClientMsg::StudioSourceStatus { .. }
+            | ClientMsg::StudioCommandResult { .. }
             | ClientMsg::BreakoutsClose => {}
         }
         true
@@ -3165,8 +3232,16 @@ pub async fn ws_handler(
     Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    // Only short-lived, room-scoped tokens open a signaling socket.
-    let claims = verify_jwt(&state.config.jwt_secret, &query.token, "room")?;
+    // Only short-lived, room-scoped tokens open a signaling socket — a room
+    // token (a person) or a SOURCE token (a studio camera, ADR-0014 §2.1).
+    let (claims, source) = match verify_jwt(&state.config.jwt_secret, &query.token, "room") {
+        Ok(c) => (c, None),
+        Err(_) => {
+            let c = verify_jwt(&state.config.jwt_secret, &query.token, "source")?;
+            let s = crate::studio::source_session_for_token(&state, &c).await?;
+            (c, Some(s))
+        }
+    };
     let room_id = claims.room.ok_or(ApiError::Unauthorized)?;
 
     // Nó a drenar: recusa ENTRADAS NOVAS, mas só as de salas que ainda não
@@ -3184,12 +3259,13 @@ pub async fn ws_handler(
     }
     let username = claims.name.clone().unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
-    let is_host = claims.owner;
+    // Uma fonte nunca é anfitriã nem admite, diga o token o que disser.
+    let is_host = claims.owner && source.is_none();
     let user_id = claims.sub;
     let is_bot = claims.is_bot;
     // Admite quem é dono ou co-anfitrião persistido (`room_admitters`, que
     // vai no token como `adm`) — e esse entra com o papel `cohost`.
-    let can_admit = is_host || claims.adm;
+    let can_admit = (is_host || claims.adm) && source.is_none();
     let extras = JoinExtras {
         role: if claims.adm && !is_host {
             Role::Cohost
@@ -3204,7 +3280,13 @@ pub async fn ws_handler(
         lobby: claims.lobby,
         waiting_room: claims.wr,
     };
-    let reconnect = query.reconnect.clone();
+    // Uma fonte não reclama lugares: um lugar reclamado traz papel e bandeiras
+    // de anfitrião, e a fonte tem de entrar sempre com as suas.
+    let reconnect = if source.is_some() {
+        None
+    } else {
+        query.reconnect.clone()
+    };
     Ok(ws.on_upgrade(move |socket| {
         handle_socket(
             state,
@@ -3220,6 +3302,7 @@ pub async fn ws_handler(
                 reconnect,
                 extras,
                 wait,
+                source,
             },
         )
     }))
@@ -3266,6 +3349,9 @@ struct SocketSession {
     reconnect: Option<String>,
     extras: JoinExtras,
     wait: WaitPolicy,
+    /// Uma câmara do estúdio (token de fonte). Entra sem sala de espera e só
+    /// manda o que `studio_realtime::source_may_send` permite.
+    source: Option<crate::studio_realtime::SourceSession>,
 }
 
 /// Cria uma sala-filha de grupo (herda topologia/E2EE da principal).
@@ -3646,10 +3732,13 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         reconnect,
         mut extras,
         wait,
+        source,
     } = session;
     // Só um participante que não é anfitrião pode ter de esperar; a sala de
-    // espera de runtime (se o anfitrião a mudou) ganha à configurada.
-    let must_wait = !is_host && wait.must_wait(state.hub.waiting_room_of(room_id));
+    // espera de runtime (se o anfitrião a mudou) ganha à configurada. Uma fonte
+    // do estúdio não espera: o código de emparelhamento foi o operador que o deu.
+    let must_wait =
+        !is_host && source.is_none() && wait.must_wait(state.hub.waiting_room_of(room_id));
     // Gauge de ligações /ws ativas (dec automático no fim do handler).
     let _ws_guard = crate::metrics::WsGuard::signaling(state.metrics.clone());
 
@@ -3722,7 +3811,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
 
     // Sala de espera: convidados aguardam a decisão do anfitrião.
     // Uma sala bloqueada em runtime força espera mesmo sem waiting_room.
-    let must_wait = must_wait || (!is_host && state.hub.is_locked(room_id));
+    let must_wait = must_wait || (!is_host && source.is_none() && state.hub.is_locked(room_id));
     if must_wait {
         let (admit_tx, admit_rx) = oneshot::channel::<bool>();
         state
@@ -3845,7 +3934,12 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             }
         }
     }
-    tracing::info!(%room_id, %peer_id, %username, sfu = sfu_mode, host = is_host, "peer joined");
+    match &source {
+        Some(s) => crate::studio_realtime::on_source_joined(&state, room_id, s, peer_id, tx.clone()),
+        None if is_host => crate::studio_realtime::on_host_joined(&state, room_id, peer_id).await,
+        None => {}
+    }
+    tracing::info!(%room_id, %peer_id, %username, sfu = sfu_mode, host = is_host, source = source.is_some(), "peer joined");
     // Entrou numa sala de grupo? Atualiza o mapa de grupos dos anfitriões.
     if let Some(parent) = breakout_parent_of(&state, room_id) {
         broadcast_breakout_state(&state, parent);
@@ -3877,6 +3971,47 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         }
         match msg {
             Message::Text(text) => match serde_json::from_str::<ClientMsg>(&text) {
+                // Uma fonte do estúdio: lista de PERMITIDAS (ADR-0014 §2.1).
+                Ok(m) if source.is_some() && !crate::studio_realtime::source_may_send(&m) => {
+                    let _ = tx.send(ServerMsg::Error {
+                        message: "source.forbidden_message".into(),
+                    });
+                }
+                Ok(ClientMsg::StudioTally { program, preview }) => {
+                    crate::studio_realtime::on_tally(&state, room_id, peer_id, program, preview).await;
+                }
+                Ok(ClientMsg::StudioCommand {
+                    source_id,
+                    command_id,
+                    command,
+                }) => {
+                    crate::studio_realtime::on_command(
+                        &state, room_id, peer_id, source_id, command_id, command,
+                    )
+                    .await;
+                }
+                Ok(ClientMsg::StudioSourceStatus { status }) => match &source {
+                    Some(s) => crate::studio_realtime::on_status(&state, room_id, s, peer_id, status),
+                    None => {
+                        let _ = tx.send(ServerMsg::Error {
+                            message: "studio.not_a_source".into(),
+                        });
+                    }
+                },
+                Ok(ClientMsg::StudioCommandResult {
+                    command_id,
+                    ok,
+                    error,
+                }) => match &source {
+                    Some(s) => crate::studio_realtime::on_command_result(
+                        &state, room_id, s, peer_id, command_id, ok, error,
+                    ),
+                    None => {
+                        let _ = tx.send(ServerMsg::Error {
+                            message: "studio.not_a_source".into(),
+                        });
+                    }
+                },
                 Ok(
                     msg @ (ClientMsg::SfuOffer { .. }
                     | ClientMsg::SfuAnswer { .. }
@@ -4093,6 +4228,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         }
     }
 
+    if let Some(s) = &source {
+        crate::studio_realtime::on_source_left(&state, room_id, s, peer_id);
+    }
     if sfu_mode {
         // Última pessoa a sair leva a gravação órfã para finalização.
         if let Some(session) = state.sfu.remove_peer(room_id, peer_id).await {

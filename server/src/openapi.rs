@@ -113,6 +113,7 @@ fn parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::webhooks::ApiDoc::openapi(),
         crate::stream_destinations::ApiDoc::openapi(),
         crate::broadcast::ApiDoc::openapi(),
+        crate::studio::ApiDoc::openapi(),
         crate::usage::ApiDoc::openapi(),
         crate::sms::ApiDoc::openapi(),
         crate::notifications::ApiDoc::openapi(),

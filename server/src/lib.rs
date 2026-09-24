@@ -59,6 +59,8 @@ mod sms_notify;
 mod sms_smpp;
 mod storage;
 mod stream_destinations;
+mod studio;
+mod studio_realtime;
 mod transcription;
 mod ui;
 mod usage;
@@ -127,6 +129,10 @@ pub struct AppState {
     pub sfu: Arc<sfu::SfuState>,
     /// Emissões em directo a decorrer neste pod (ADR-0003).
     pub directos: Arc<broadcast::Registo>,
+    /// Estúdio de TV: fontes, tally e comandos das salas deste pod (ADR-0014).
+    pub studio: studio_realtime::StudioHub,
+    /// Resgate de códigos de emparelhamento por IP (rota pública, ADR-0014 §2.1).
+    pub studio_pairing_limiter: RateLimiter,
     pub presence: presence::PresenceHub,
     pub auth_limiter: RateLimiter,
     /// Anti-brute-force por conta (email) no login.
@@ -843,6 +849,40 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // servidor remultiplexa para RTMP (ADR-0003). Autenticada pelo token de
         // sala na query, como o /ws — um WebSocket não leva cabeçalhos nossos.
         .route("/api/rooms/{room_code}/live", get(broadcast::ws_directo))
+        // ---- Estúdio de TV (ADR-0014) ----
+        .route(
+            "/api/orgs/{org_id}/studios",
+            get(studio::list_studios).post(studio::create_studio),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}",
+            get(studio::get_studio)
+                .patch(studio::update_studio)
+                .delete(studio::delete_studio),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/pairing-codes",
+            get(studio::list_pairing_codes).post(studio::create_pairing_code),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/pairing-codes/{code_id}",
+            axum::routing::delete(studio::delete_pairing_code),
+        )
+        .route("/api/studio-pairings", post(studio::redeem))
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/sources",
+            get(studio::list_sources),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/sources/{source_id}",
+            get(studio::get_source)
+                .patch(studio::update_source)
+                .delete(studio::delete_source),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/recording-target",
+            get(studio::recording_target),
+        )
         .route("/rtc", get(presence::rtc_handler))
         .merge(if state.config.internal_bind_addr.is_none() {
             internal_routes()
@@ -1029,6 +1069,8 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         hub,
         breakouts: dashmap::DashMap::new(),
         directos: Arc::new(broadcast::Registo::default()),
+        studio: studio_realtime::StudioHub::default(),
+        studio_pairing_limiter: RateLimiter::new(30, Duration::from_secs(60)),
         sfu: Arc::new(sfu::SfuState::new(
             sfu::IceConfig {
                 external_ip: config.sfu_external_ip.clone(),
