@@ -8,7 +8,7 @@ import type { ReactNode } from 'react'
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, recordingObjectUrl } from '../../api'
-import type { RecordingItem } from '../../api'
+import type { RecordingItem, RecordingLibraryItem } from '../../api'
 import { cx, Dialog, IconButton, Select, Spinner } from '../../ui/kit'
 import { recordingsFallback } from '../../pages/recordings/search'
 import { SearchBar, SearchResults } from '../../ui/search/SearchResults'
@@ -35,7 +35,7 @@ export function Biblioteca({ onFechar, onEscolher }: { onFechar: () => void; onE
   const [aImportar, setAImportar] = useState<string | null>(null)
   // Pesquisa estilo Odoo sobre a biblioteca (recurso `recordings`, ou a lista
   // inteira no browser); o estado fica no diálogo, não na URL do Estúdio.
-  const rs = useResourceSearch<RecordingItem>({ resource: 'recordings', ns: null, fallback: recordingsFallback })
+  const rs = useResourceSearch<RecordingLibraryItem>({ resource: 'recordings', ns: null, fallback: recordingsFallback })
   return (
     <Dialog title={t('editor.bin.biblioteca')} onClose={onFechar} wide>
       <div className="ed-lib-search">

@@ -363,7 +363,15 @@ export interface QuarantineRow {
 
 export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms/${code}/recordings`)
 
-export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
+/**
+ * `GET /api/recordings` — a biblioteca inteira.
+ *
+ * O tipo é a `RecordingLibraryItem`: é o que esta rota devolve desde que o
+ * contrato de metadados entrou (migrações 0057–0062). Estava declarada como
+ * `RecordingItem[]`, e a consequência não era académica — os campos vinham no
+ * corpo da resposta e o TypeScript escondia-os de quem os quisesse usar.
+ */
+export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingLibraryItem[]>('/api/recordings', { signal })
 
 export const searchUsers = (q: string) =>
   request<User[]>(`/api/users?q=${encodeURIComponent(q)}`)

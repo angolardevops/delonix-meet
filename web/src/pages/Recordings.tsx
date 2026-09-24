@@ -21,7 +21,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { RecordingItem } from '../api'
+import type { RecordingLibraryItem } from '../api'
 import PageBar from '../components/PageBar'
 import { useShell } from '../components/shellContext'
 import { cx, Segmented, Skeleton } from '../ui/kit'
@@ -58,7 +58,7 @@ export default function Recordings() {
   const { t, i18n } = useTranslation()
   const { org } = useShell()
   const retentionDays = org?.retention_days ?? 0
-  const rs = useResourceSearch<RecordingItem>({ resource: 'recordings', fallback: recordingsFallback })
+  const rs = useResourceSearch<RecordingLibraryItem>({ resource: 'recordings', fallback: recordingsFallback })
   const [view, setView] = useState<View>(storedView)
   // Seleccionada: o painel mostra-a. `picked` distingue a escolha da pessoa
   // (carrega o vídeo, e em ecrã estreito abre o painel por cima) da selecção
@@ -118,7 +118,7 @@ export default function Recordings() {
     return () => window.removeEventListener('keydown', onKey)
   }, [panelOpen, shareTarget])
 
-  const renderItems = (rows: RecordingItem[]) => {
+  const renderItems = (rows: RecordingLibraryItem[]) => {
     const views = rows.map(fromRecordingItem)
     return view === 'list' ? (
       <RecordingTable items={views} selectedId={selected?.id ?? null} retentionDays={retentionDays} onOpen={open} />

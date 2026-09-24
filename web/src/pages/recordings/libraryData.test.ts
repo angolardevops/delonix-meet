@@ -30,6 +30,31 @@ const item = (over: Partial<RecordingView> = {}): RecordingView => ({
     can_download: true,
     status: 'ready',
     failure_reason: null,
+    state: 'ready',
+    progress_pct: null,
+    kind: 'meeting',
+    duration_ms: null,
+    width: null,
+    height: null,
+    fps: null,
+    video_codec: null,
+    audio_codec: null,
+    has_thumbnail: false,
+    transcript_status: 'none',
+    transcript_language: null,
+    transcribed_at: null,
+    chapter_count: 0,
+    comment_count: 0,
+    view_count: 0,
+    participant_count: 0,
+    caption_languages: [],
+    description: '',
+    tags: [],
+    visibility: 'private',
+    published_at: null,
+    can_manage: true,
+    uploader_org_id: null,
+    uploader_org_name: null,
   }),
   ...over,
 })
@@ -79,14 +104,46 @@ describe('resolução e filtros', () => {
     expect(matchesFilter(list[3], 'meeting')).toBe(false)
     expect(visibleFilters(list)).toEqual(['all', 'training', 'broadcast', 'meeting', '4k', 'processing', 'failed'])
   })
-  it('sem dado do servidor não há chip que filtraria para zero', () => {
-    const hoje = [item(), item({ owned: false })]
+  it('não há chip que filtraria para zero', () => {
+    // Sem categoria nem resolução, só sobram os chips de pertença.
+    const hoje = [item({ category: null }), item({ category: null, owned: false })]
     expect(visibleFilters(hoje)).toEqual(['all', 'mine', 'shared'])
   })
-  it('a camada de mapeamento não inventa metadados que a RecordingItem não tem', () => {
-    const v = item()
-    expect([v.durationMs, v.width, v.category, v.viewCount, v.chapterCount, v.description]).toEqual([null, null, null, null, null, null])
-    expect(item({ ...fromRecordingItem({ ...v.source, status: 'failed', size_bytes: 0 }) }).sizeBytes).toBeNull()
+  it('a camada de mapeamento LÊ os metadados que a resposta traz', () => {
+    // O contrato (migrações 0057–0062) manda estes campos no corpo de
+    // `GET /api/recordings`. Antes ficavam todos a `null` aqui dentro: o valor
+    // chegava e a UI não o via.
+    const v = item({
+      ...fromRecordingItem({
+        ...item().source,
+        duration_ms: 521_000,
+        width: 1920,
+        height: 1080,
+        kind: 'training',
+        view_count: 7,
+        chapter_count: 3,
+        description: 'aula de Setembro',
+        tags: ['aula', 'setembro'],
+        has_thumbnail: true,
+        transcript_status: 'ready',
+        caption_languages: ['pt'],
+      }),
+    })
+    expect([v.durationMs, v.width, v.category, v.viewCount, v.chapterCount, v.description]).toEqual([
+      521_000,
+      1920,
+      'training',
+      7,
+      3,
+      'aula de Setembro',
+    ])
+    expect([v.hasThumbnail, v.transcriptReady, v.captionLanguages, v.tags]).toEqual([true, true, ['pt'], ['aula', 'setembro']])
+  })
+  it('`null` continua a querer dizer «o servidor não diz»', () => {
+    const semMedida = item({ ...fromRecordingItem({ ...item().source, duration_ms: null, width: null, height: null }) })
+    expect([semMedida.durationMs, semMedida.width, semMedida.height]).toEqual([null, null, null])
+    // Uma falhada não tem tamanho: «0 MB» leria-se como ficheiro vazio.
+    expect(item({ ...fromRecordingItem({ ...item().source, status: 'failed', size_bytes: 0 }) }).sizeBytes).toBeNull()
   })
 })
 

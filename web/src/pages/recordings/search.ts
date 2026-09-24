@@ -4,12 +4,12 @@
  * (`GET /api/recordings`, inteira) com os campos que ela traz — sem
  * transcrição, sem categoria, sem duração.
  */
-import { recordingsLibrary, RecordingItem } from '../../api'
+import { recordingsLibrary, RecordingLibraryItem } from '../../api'
 import { displayName } from './recordingView'
 import { localSchema } from '../../ui/search/localSchema'
 import type { LocalFallback } from '../../ui/search/useResourceSearch'
 
-export const recordingsFallback: LocalFallback<RecordingItem> = {
+export const recordingsFallback: LocalFallback<RecordingLibraryItem> = {
   load: (signal) => recordingsLibrary(signal),
   source: {
     schema: localSchema(
