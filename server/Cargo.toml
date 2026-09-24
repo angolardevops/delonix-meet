@@ -31,6 +31,7 @@ edition = "2021"
 delonix-meet-core = { path = "crates/delonix-meet-core" }
 delonix-meet-domain = { path = "crates/delonix-meet-domain" }
 delonix-meet-protocol = { path = "crates/delonix-meet-protocol" }
+delonix-meet-store = { path = "crates/delonix-meet-store" }
 # gRPC interno (ADR-0006 §3): mTLS com rustls/ring, health e reflection.
 tonic = { version = "0.14", features = ["tls-ring"] }
 tonic-health = "0.14"

@@ -1,0 +1,63 @@
+# Delonix Meet — Nginx standalone para `make dev`
+#
+# Só termina TLS para https://meet.delonix.local: o browser exige um contexto
+# seguro (HTTPS) para dar câmara/microfone a um host que não é `localhost`, e
+# o Vite dev server (NO_HTTPS=1 em `make dev`) fica em HTTP simples. O resto do
+# encaminhamento — /api, /ws, /rtc → backend — continua a cargo do PRÓPRIO
+# Vite (ver web/vite.config.ts); este nginx só reencaminha tudo para o Vite.
+#
+# Corre como processo PRÓPRIO (`sudo nginx -c .dev/nginx-dev.conf`, daemonizado
+# com o seu próprio pidfile), nunca como o nginx do sistema nem via
+# sites-enabled/systemd — não interfere com o ingress-nginx do kind (`make
+# stage`) nem com um nginx de produção que porventura exista na mesma máquina.
+# Só escuta em 443: a porta 80 costuma já estar tomada pelo site default do
+# nginx do sistema (`systemctl status nginx`), e o redirect http→https não é
+# preciso para o browser dar câmara/mic — basta abrir directamente em https://.
+#
+# Gerado por `make nginx-dev` a partir deste template (substitui __ROOT__ e
+# __WEB_PORT__); o ficheiro final vive em .dev/nginx-dev.conf (gitignored,
+# path absoluto da checkout local — por isso não é versionado directamente).
+worker_processes 1;
+pid __ROOT__/.dev/nginx-dev.pid;
+error_log __ROOT__/.dev/nginx-dev-error.log warn;
+
+events {
+    worker_connections 256;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    access_log    __ROOT__/.dev/nginx-dev-access.log;
+    sendfile      on;
+
+    server {
+        listen 443 ssl;
+        server_name meet.delonix.local;
+
+        # Wildcard de DEV gerado por `make certs` (mkcert, confiado pelo SO
+        # quando disponível; senão self-signed via openssl).
+        ssl_certificate     __ROOT__/deploy/certs/wildcard.delonix.local.crt;
+        ssl_certificate_key __ROOT__/deploy/certs/wildcard.delonix.local.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+
+        # Upload de gravações passa por aqui também (vai ao Vite, que faz
+        # proxy para a API) — o mesmo limite do nginx de produção.
+        client_max_body_size 512m;
+
+        location / {
+            proxy_pass http://127.0.0.1:__WEB_PORT__;
+            proxy_http_version 1.1;
+            # Upgrade genérico: cobre tanto o HMR do próprio Vite como o /ws
+            # e /rtc da app, que o Vite reencaminha internamente ao backend.
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 3600s;
+        }
+    }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "delonix-meet-store"
+description = "Repositórios sqlx do Delonix Meet, por contexto delimitado (ADR-0006 §1). Fala Postgres; não conhece axum, tonic, reqwest, redis nem webrtc."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+delonix-meet-core = { path = "../delonix-meet-core" }
+delonix-meet-domain = { path = "../delonix-meet-domain" }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono"] }
+serde.workspace = true
+uuid.workspace = true
+chrono.workspace = true

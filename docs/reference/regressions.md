@@ -2020,6 +2020,16 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Ficheiros.** `server/src/{signaling,room_tools,room_chat,rooms,auth,org,users,pubsub,metrics,lib}.rs`, `server/migrations/0050_room_chat_threads_reactions.sql`, `server/migrations/0051_room_chat_direct.sql`, `server/tests/room_chat.rs`.
 
+### R183 — Dois servidores com dois modelos de gravação: a UI nova falava com rotas e campos que a linha da main não tinha
+
+**Sintoma.** Medido no levantamento UI↔API de 2026-09-17: a UI nova lê `duration_ms`, `kind`, `state`, `transcript_status`, contagens, `description`, `tags` e `visibility` de cada gravação e chama `/details`, `/publish`, `/thumbnail`, `/views`, `/participants`, `/transcript` e `/captions/*`. A linha da main devolvia `duration_secs`, `category`, `title` e `processing_state`, e parte dessas rotas não existia: a biblioteca aparecia vazia de metadados e o leitor a falhar em silêncio.
+
+**Estado nesta linha (honesto).** Reconciliado em parte: as rotas do leitor (`recording_meta`, `recording_captions`, edição e geração de capítulos) convivem com o `recordings.rs` da main, que fica como modelo de dados (título/categoria, capítulos e comentários paginados). O que NÃO está reconciliado é o contrato de DADOS do item da biblioteca da UI nova (`state`, `kind`, `visibility`, `description`, `tags`): decidir qual dos dois modelos fica é uma decisão de produto, e o e2e `gravacoes-meta.mjs` está fora do CI por isso (ver `scripts/e2e-fora-do-ci.txt`).
+
+**Regra (o que já vale).** O worker de transcrição entrega os segmentos com tempos e a língua detectada, e é o SERVIDOR que aplica o DLP a tudo o que chega (`ai-worker/job_source.py`, `transcriber.py`) — um worker que gravasse direto contornaria o DLP.
+
+**Ficheiros.** `ai-worker/{transcriber,job_source,transcribe_worker}.py`, `server/src/{recording_meta,recording_captions,recording_chapters}.rs`, `web/e2e/isolamento.mjs`.
+
 ### R184 — Agendar uma reunião «videoaula» ou «gravar automaticamente» era ignorado: a sala nascia sempre normal, sem espera e sem gravação
 
 **Sintoma.** O formulário de agendar mostrava formato (reunião, videoaula, emissão, híbrida), sala de espera, «gravar automaticamente» e qualidade da gravação, mas `meetings::start` criava SEMPRE uma sala `normal`, sem sala de espera e sem gravação: a pessoa marcava uma emissão com gravação a 1080p e entrava numa reunião comum, sem que nada avisasse que os campos tinham sido descartados. Um campo que o cliente escreve e o sistema ignora é pior do que um campo que não existe.
@@ -2090,3 +2100,21 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 **Regra.** O tecto (`organizations.max_seats`, só o operador o fixa) verifica-se com `SELECT … FROM organizations … FOR UPDATE` dentro da transacção que activa (convite aceite, reactivação, `add_employee` novo). O uso mede-se na hora (sem contador): activos humanos que não são `external_guest`.
 
 **Portão.** `tests/directory.rs::seats` (duas reactivações em simultâneo com um lugar livre → uma entra, a outra `seats.limit_reached`).
+### R154 — O segredo da API interna de IVR estava escrito no manifesto de um repositório público
+
+**Sintoma.** Nenhum para quem usa o produto. `deploy/k8s/01-config.yaml` trazia `VOICE_INTERNAL_SECRET: "voice-internal-secret-for-pstn"` desde 98f5b28 (2026-07-10), e as rotas `POST /api/voice/ivr/validate` e `POST /api/voice/ivr/cdr` estão no router PÚBLICO, protegidas só pelo cabeçalho `X-Voice-Secret`. Em qualquer deploy que tenha aplicado esse manifesto, quem lesse o GitHub validava PINs de dial-in (limitado a 10 falhas por DID em 5 min) e injectava CDRs — minutos e custo — na org de qualquer sala de voz cujo UUID conhecesse. Medido por leitura (2026-09-16, `origin/main` 4ff5249); não foi explorado contra um cluster.
+
+**Causa raiz.** Duas metades. (1) O Secret de stage estava versionado com valores literais, e o valor de voz ficou lá como se fosse de exemplo. (2) O servidor não tinha chão para este segredo: ao contrário do `JWT_SECRET`/`TURN_SECRET` (`config::secret`, panic sem valor forte), o `VOICE_INTERNAL_SECRET` era lido com `unwrap_or_default()` e qualquer valor não vazio — curto ou publicado — autenticava.
+
+**Regra.**
+- O `VOICE_INTERNAL_SECRET` **nunca** está num ficheiro versionado. Em K8s vem do Secret `delonix-voice` por `secretKeyRef` (`optional: true`) no `02-server.yaml`; o `make stage`/`make prod` criam-no aleatório (`make voice-secret-k8s`) e o Ansible `k8s_app` a partir do `voice_secret` gerado em `deploy/ansible/.secrets/`.
+- **Fail-closed sem partir o servidor.** `config::voice_secret_refusal` decide UMA vez no arranque: vazio, `< 32` caracteres, ou valor da lista `BURNED_VOICE_SECRETS` → as rotas de IVR dão `503` com a razão, venha o cabeçalho que vier, e o arranque avisa. Não é panic como o JWT: quem não usa voz não perde o servidor. Com `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio (é o `make dev`).
+- Ordem: primeiro o segredo configurado (`503`), depois o cabeçalho (`401`). Um cabeçalho «certo» contra um valor publicado não autentica ninguém. Comparação com `apikeys::ct_eq`, não uma cópia local.
+- **Não se reescreve o histórico** (repositório público, force-push parte clones e PRs, e não tira o valor a quem já o tem). A decisão e a rotação obrigatória estão em `scripts/leaked-secrets-accepted.txt`, e o `check-repo-hygiene.sh` recusa que um valor desse livro volte a um ficheiro seguido.
+- **Armadilha do `kubectl apply`:** tirar uma chave do `stringData` não a apaga do Secret já existente. Um cluster antigo continua com o valor publicado dentro do `delonix-secrets` — é por isso que o servidor tem de o recusar por valor, e não basta mudar o manifesto. Limpeza e rotação em `docs/deployment.md` §6.
+
+**Portão.** `voice::tests` — `ivr_refuses_missing_short_or_burned_secret_with_503`, `ivr_rejects_wrong_or_absent_header_with_401`, `ivr_accepts_the_right_strong_secret`, `insecure_dev_keeps_the_dev_value_but_not_empty` (verificado a falhar com a guarda do segredo desligada); `scripts/check-repo-hygiene.sh` ponto 7 (verificado a falhar com o valor reposto no `01-config.yaml`). Não há teste contra servidor real nem contra um cluster: a camada de media (FreeSWITCH) nunca correu (ver `voice/README.md`).
+
+**Fora deste passo.** O mesmo `01-config.yaml` continua a versionar `PROVISIONING_SECRET`, `JWT_SECRET`, `TURN_SECRET` e a password do Postgres de stage — mesma classe, não tratada aqui. Na linha ADR-0004 (`delonix-meet-backend/backend-enterprise`), o `grpc.rs` e o `odoo.rs` testam só `voice_internal_secret.is_empty()`: ao juntar, têm de passar a respeitar `voice_secret_refusal`.
+
+**Ficheiros.** `server/src/{config,voice}.rs`, `deploy/k8s/{01-config,02-server}.yaml`, `deploy/ansible/roles/k8s_app/templates/app-config.yaml.j2`, `Makefile` (`voice-secret-k8s`), `scripts/{check-repo-hygiene.sh,leaked-secrets-accepted.txt}`, `docs/deployment.md`, `voice/README.md`.

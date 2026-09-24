@@ -174,6 +174,14 @@ export default function Room({
     void session.leave(transcription.saveOnLeave)
   }
 
+  // «O outro lado» de uma chamada de voz. Ao entrar, a lista chega a trazer um
+  // instante a PRÓPRIA sessão (medido no e2e: o próprio peer_id/nome antes do
+  // `joined`) — contá-la punha o cronómetro a correr e, ao sair da lista,
+  // «a chamada terminou» antes de alguém atender. Outra sessão da mesma conta
+  // (companion) também não é o outro lado.
+  const myName = currentUser()?.username
+  const otherSide = peers.filter((p) => p.peerId !== core.meuPeerIdRef.current && p.username !== myName)
+
   /** Liga a câmara nesta sessão; só muda de vista se a câmara ligou mesmo. */
   async function goVideo() {
     if (!media.hasLocalVideo || !media.camOn) await media.toggleCam()
@@ -237,7 +245,7 @@ export default function Room({
           roomState={core.roomState}
           callState={session.callState}
           status={core.status}
-          peers={peers}
+          peers={otherSide}
           speaking={core.speaking}
           media={media}
           call={directCall}

@@ -1651,6 +1651,20 @@ button.ed-badge {
   border: 1px solid var(--border);
   background: var(--raised);
 }
+/* v5 (DelonixExports): o histórico faz scroll na caixa e o cabeçalho fica fixo. */
+.ed-exp__table--hist {
+  max-height: calc(100vh - 250px);
+  max-height: calc(100dvh - 250px);
+  min-height: 160px;
+  overflow: auto;
+}
+.ed-exp__table--hist thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
 .ed-exp__fmt {
   padding: 2px 6px;
   border-radius: var(--r-2);
@@ -1754,6 +1768,9 @@ button.ed-badge {
   }
 }
 @media (max-width: 760px) {
+  .ed-exp__table--hist {
+    max-height: none;
+  }
   .ed {
     height: auto;
     overflow: visible;

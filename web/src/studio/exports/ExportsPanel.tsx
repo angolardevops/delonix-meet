@@ -285,8 +285,9 @@ export default function ExportsPanel({
   const emEspera = fila.filter((j) => j.estado === 'espera').length
   const visiveis = fila.filter((j) => j.estado === 'espera' || j.estado === 'a-exportar' || (j.estado !== 'cancelada' && j.resultado) || j.estado === 'falhou')
 
+  // v5: o histórico faz scroll dentro da própria caixa, com o cabeçalho fixo.
   const tabela = (historico: bd.RegistoDeExportacao[]) => (
-    <div className="ed-exp__table dx-table-wrap">
+    <div className="ed-exp__table ed-exp__table--hist dx-table-wrap" data-exp-hist>
       <table className="dx-table">
         <thead>
           <tr>

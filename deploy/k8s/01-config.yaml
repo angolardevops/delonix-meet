@@ -44,7 +44,11 @@ stringData:
   DATABASE_URL: "postgres://delonix:delonix_dev_pass@delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432/delonix_meet"
   JWT_SECRET: "stage-jwt-secret-min-32-chars-abcdef123456"
   TURN_SECRET: "stage-turn-secret-key"
-  VOICE_INTERNAL_SECRET: "voice-internal-secret-for-pstn"
+  # VOICE_INTERNAL_SECRET NÃO vive aqui (R154). Esteve escrito neste ficheiro
+  # e o repositório é público: o valor está queimado e o servidor recusa-o.
+  # Vem do Secret `delonix-voice`, gerado FORA do repo (`make stage`/`make prod`
+  # criam-no aleatório se não existir; ver docs/deployment.md §6) e referenciado
+  # por secretKeyRef em 02-server.yaml.
   POSTGRES_PASSWORD: "delonix_dev_pass"
   POSTGRES_USER: "delonix"
   POSTGRES_DB: "delonix_meet"
