@@ -1,7 +1,11 @@
-# Delonix Meet — camada de MEDIA do dial-in PSTN (dev).
+# Delonix Meet — camada de MEDIA do dial-in PSTN + dos RAMAIS internos (dev).
 #   docker compose -f voice/docker-compose.voice.yml up -d
 #
-# Kamailio (borda SIP/SBC) → FreeSWITCH (IVR + conferência). O control plane é o
+# Kamailio (borda SIP/SBC) → FreeSWITCH (IVR + conferência) para o dial-in
+# PSTN. Os RAMAIS internos (Fase 1, ver server/src/ramais.rs) são à parte:
+# registam-se e ligam-se DIRECTAMENTE ao FreeSWITCH (perfil "internal", porta
+# DELONIX_RAMAIS_SIP_PORT) — o Kamailio não entra nesse caminho, ver o
+# comentário no topo de kamailio.cfg sobre porquê. O control plane é o
 # backend Rust já existente (não está aqui). Segredos vêm do ambiente.
 #
 # Produção: cada componente numa microVM dedicada (isolamento de jitter de media);
@@ -26,9 +30,16 @@ services:
       # Injetados nas vars globais (vars.xml.inc). NUNCA hardcoded.
       DELONIX_CONTROL_URL: ${DELONIX_CONTROL_URL:-http://127.0.0.1:8180}
       VOICE_INTERNAL_SECRET: ${VOICE_INTERNAL_SECRET:?define VOICE_INTERNAL_SECRET}
+      # Porta do perfil SIP "internal" dos ramais — distinta da do Kamailio
+      # (5060/5061), que fica só com o trunk PSTN. Softphones apontam aqui.
+      DELONIX_RAMAIS_SIP_PORT: ${DELONIX_RAMAIS_SIP_PORT:-5070}
     volumes:
       - ./freeswitch/dialplan/public/00_delonix_dialin.xml:/etc/freeswitch/dialplan/public/00_delonix_dialin.xml:ro
+      - ./freeswitch/dialplan/default/00_delonix_extensions.xml:/etc/freeswitch/dialplan/default/00_delonix_extensions.xml:ro
       - ./freeswitch/autoload_configs/conference.conf.xml:/etc/freeswitch/autoload_configs/conference.conf.xml:ro
+      - ./freeswitch/autoload_configs/xml_curl.conf.xml:/etc/freeswitch/autoload_configs/xml_curl.conf.xml:ro
+      - ./freeswitch/sip_profiles/internal.xml:/etc/freeswitch/sip_profiles/internal.xml:ro
       - ./freeswitch/scripts/dialin_ivr.lua:/usr/share/freeswitch/scripts/dialin_ivr.lua:ro
+      - ./freeswitch/scripts/ramais_dial.lua:/usr/share/freeswitch/scripts/ramais_dial.lua:ro
       - ./freeswitch/vars.xml.inc:/etc/freeswitch/vars.xml.inc:ro
       - ${DELONIX_TLS_DIR:-/etc/ssl/delonix}:/etc/freeswitch/tls:ro

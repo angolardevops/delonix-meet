@@ -34,7 +34,7 @@ const browser = await chromium.launch()
 // ---------------------------------------------------------------- 3.1.1
 console.log('\n3.1.1 · a gaveta em ecrã estreito (375×812)')
 {
-  const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 375, height: 812 } })
+  const ctx = await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, viewport: { width: 375, height: 812 } })
   const page = await ctx.newPage()
   // Entra a sério. Injectar um token falso funcionava contra um mock e falha
   // contra o servidor real: leva 401, o cliente renova, falha, faz logout, e o
@@ -53,7 +53,8 @@ console.log('\n3.1.1 · a gaveta em ecrã estreito (375×812)')
   ok('o conteúdo ocupa a largura toda (antes perdia 224px)', Math.round(conteudo.x) === 0 && Math.round(conteudo.width) === 375,
      `x=${Math.round(conteudo.x)} largura=${Math.round(conteudo.width)}`)
 
-  await page.click('.app-bar-burger')
+  // O botão da gaveta vive na barra de cada página (PageBar).
+  await page.click('.page-bar__burger')
   await page.waitForTimeout(450)
   const caixaAberta = await nav.boundingBox()
   // A prova que faltava: a gaveta ENTRA mesmo no ecrã.
@@ -62,12 +63,11 @@ console.log('\n3.1.1 · a gaveta em ecrã estreito (375×812)')
   ok('o transform computado é `none` com a gaveta aberta',
      (await nav.evaluate((e) => getComputedStyle(e).transform)) === 'none')
   ok('o backdrop cobre o ecrã', await page.locator('.shell-nav-backdrop').isVisible())
-  ok('aria-expanded acompanha', (await page.getAttribute('.app-bar-burger', 'aria-expanded')) === 'true')
+  ok('aria-expanded acompanha', (await page.getAttribute('.page-bar__burger', 'aria-expanded')) === 'true')
 
-  const campo = page.locator('.qa-drawer .app-bar-join input')
-  ok('entrar por código está alcançável na gaveta', await campo.isVisible())
-  await campo.fill('azul-monte-rio')
-  ok('e aceita escrita', (await campo.inputValue()) === 'azul-monte-rio')
+  // Entrar por código no telemóvel: a Início tem a caixa no corpo (R103), e a
+  // pesquisa da gaveta abre a paleta, que também aceita o código colado.
+  ok('a pesquisa está alcançável na gaveta', await page.locator('.shell-nav__search').isVisible())
 
   await page.keyboard.press('Escape')
   await page.waitForTimeout(400)
@@ -81,11 +81,10 @@ console.log('\n3.1.1 · a gaveta em ecrã estreito (375×812)')
 // ---------------------------------------------------------------- 4.3
 console.log('\n4.3 · o anel nos controlos que ESTAVAM cegos')
 //
-// O teste tem de apontar aos seis sítios que tinham `outline: none` sem
-// substituto — não a um botão qualquer. Um botão que nunca perdeu o anel do
-// browser passa o teste sem provar nada.
+// Aponta aos sítios onde o anel é NOSSO e não do browser: o campo sem borda da
+// paleta (anel no contentor) e o botão do rail (rede :focus-visible).
 {
-  const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 } })
+  const ctx = await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, viewport: { width: 1280, height: 800 } })
   const page = await ctx.newPage()
   await entrar(page, BASE, conta)
 
@@ -103,23 +102,21 @@ console.log('\n4.3 · o anel nos controlos que ESTAVAM cegos')
     return { mudou: Buffer.compare(antes, depois) !== 0, bytes: [antes.length, depois.length] }
   }
 
-  // A barra de topo: o campo de código fundido no contentor.
-  const r1 = await anelVisivel(page, '.qa-bar .app-bar-join', '.qa-bar .app-bar-join input')
-  ok('o campo de código da barra mostra foco', r1.mudou)
+  // O botão de pesquisa do rail: um botão, logo coberto pela rede :focus-visible.
+  const r1 = await anelVisivel(page, '.shell-nav', '.shell-nav__search')
+  ok('o botão de pesquisa do rail mostra foco', r1.mudou)
 
-  // O Cmd-K: era o pior dos seis — teclado é a única forma de o usar.
+  // O Cmd-K: teclado é a única forma de o usar.
   await page.keyboard.press('Control+k')
-  await page.waitForSelector('.cmd-search input', { timeout: 5000 })
-  const r2 = await anelVisivel(page, '.cmd-search', '.cmd-search input')
-  ok('o campo do Cmd-K mostra foco', r2.mudou)
-  await page.keyboard.press('Escape')
+  await page.waitForSelector('.palette__search input', { timeout: 5000 })
 
-  // E o contentor recebe mesmo o anel via :focus-within.
+  // O contentor recebe o anel via :focus-within (o input não tem borda).
   const viaFocusWithin = await page.evaluate(() => {
-    const c = document.querySelector('.qa-bar .app-bar-join')
+    const c = document.querySelector('.palette__search')
     c.querySelector('input').focus()
     return { focusWithin: c.matches(':focus-within'), sombra: getComputedStyle(c).boxShadow }
   })
+  await page.keyboard.press('Escape')
   ok('o contentor casa :focus-within', viaFocusWithin.focusWithin)
   ok('e ganha o anel do sistema (box-shadow, não none)',
      viaFocusWithin.sombra !== 'none', viaFocusWithin.sombra.slice(0, 46))

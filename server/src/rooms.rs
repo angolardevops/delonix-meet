@@ -30,7 +30,8 @@ pub struct Room {
     pub topology: String,
     pub waiting_room: bool,
     pub e2ee: bool,
-    /// 'normal' (por defeito) ou 'training' — só treino permite salas de grupo.
+    /// `normal` (por defeito), `training` (só este permite salas de grupo),
+    /// `broadcast` ou `hybrid`. Passa a `recordings.kind` das gravações da sala.
     pub format: String,
     pub created_at: DateTime<Utc>,
 }
@@ -48,6 +49,7 @@ pub const ROOM_COLUMNS: &str =
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(
+        room_waiting,
         create_room,
         get_room,
         join_room,
@@ -94,9 +96,38 @@ pub struct CreateRoomReq {
     /// Encriptação ponta-a-ponta do media (a chave nunca passa pelo servidor).
     #[serde(default)]
     pub e2ee: bool,
-    /// 'normal' (por defeito) ou 'training' (ativa salas de grupo).
+    /// 'normal' (por defeito), 'training' (ativa salas de grupo), 'broadcast' ou 'hybrid'.
     #[serde(default)]
     pub format: Option<String>,
+}
+
+/// Formatos de sala aceites.
+pub const ROOM_FORMATS: &[&str] = &["normal", "training", "broadcast", "hybrid"];
+
+/// Formato de reunião agendada (`meetings.format`) → formato da sala.
+pub(crate) fn room_format_for_meeting(format: &str) -> &'static str {
+    match format {
+        "training" => "training",
+        "broadcast" => "broadcast",
+        "hybrid" => "hybrid",
+        _ => "normal",
+    }
+}
+
+/// O que o gravador do servidor tem de cumprir nesta sala (migração 0059).
+pub(crate) async fn set_recording_options(
+    db: &sqlx::PgPool,
+    room_id: Uuid,
+    auto_record: bool,
+    record_quality: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query("UPDATE rooms SET auto_record = $2, record_quality = $3 WHERE id = $1")
+        .bind(room_id)
+        .bind(auto_record)
+        .bind(record_quality)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Cria uma sala (com retry em colisão de código). Reutilizado pelo endpoint
@@ -267,9 +298,9 @@ pub async fn create_room(
         ));
     }
     let format = req.format.as_deref().unwrap_or("normal");
-    if !matches!(format, "normal" | "training") {
+    if !ROOM_FORMATS.contains(&format) {
         return Err(ApiError::BadRequest(
-            "format must be 'normal' or 'training'".into(),
+            "format must be 'normal', 'training', 'broadcast' or 'hybrid'".into(),
         ));
     }
     // `sessions.create` (ADR-0008 §1): o poder de criar, avaliado sobre o dono.
@@ -631,6 +662,9 @@ pub async fn room_chat(
         return Err(ApiError::Forbidden);
     }
 
+    // As ÚLTIMAS 200 (DESC + LIMIT) devolvidas por ordem cronológica. Antes era
+    // `ASC LIMIT 200`, que numa conversa longa devolvia as primeiras 200 e
+    // escondia exactamente as mais recentes.
     let msgs: Vec<ChatMessage> = sqlx::query_as(
         "SELECT * FROM (
              SELECT m.id, m.user_id, m.username, m.message, m.created_at, m.parent_id,
@@ -653,6 +687,51 @@ pub async fn room_chat(
     .await?;
 
     Ok(Json(msgs))
+}
+
+/// Quem está na sala de espera — para o anfitrião ou co-anfitrião decidir
+/// ANTES de entrar na reunião.
+///
+/// Quem pode: o dono da sala, um co-anfitrião persistido (`room_admitters`), ou
+/// quem está AGORA na sala com papel de admitir. Quem tem acesso à sala mas não
+/// admite leva `403`; quem nem acesso tem leva `404` (não se confirma nada).
+///
+/// A fila vive na memória do pod da sala: chama-se com `?room={code}` para o
+/// balanceador (hash por `$arg_room`) mandar o pedido a esse pod.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}/waiting", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala."), ("room" = Option<String>, Query, description = "O mesmo código: chave de afinidade do balanceador (a fila vive na memória do pod da sala).")),
+    responses(
+        (status = 200, body = Vec<crate::signaling::WaitingView>, description = "Quem espera, para o anfitrião ou co-anfitrião decidir antes de entrar."),
+        (status = 403, body = crate::openapi::ErrorBody, description = "Tem acesso à sala mas não admite."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn room_waiting(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+) -> Result<Json<Vec<crate::signaling::WaitingView>>, ApiError> {
+    let room: Room = sqlx::query_as(
+        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
+         FROM rooms WHERE code = $1",
+    )
+    .bind(code.to_lowercase())
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let access = room_access(&state, auth.user_id, &room).await?;
+    let em_sala = state.hub.user_admits(room.id, auth.user_id);
+    if !access.admitter && !em_sala {
+        return Err(if access.authorized {
+            ApiError::Forbidden
+        } else {
+            ApiError::NotFound
+        });
+    }
+    Ok(Json(state.hub.waiting_list(room.id)))
 }
 
 // ---------- Convidar membros para sala em curso ----------

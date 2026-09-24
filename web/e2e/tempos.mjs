@@ -30,7 +30,7 @@ const url=`${APP}/e2e/harness.html?token=${encodeURIComponent(jr.room_token)}&co
 // antes. Uma passagem prévia enche o cache de transformação do Vite; o que se
 // mede a seguir é o produto, não o empacotador (R65).
 {
-  const c=await b.newContext({ ignoreHTTPSErrors: true })
+  const c=await b.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true })
   const p=await c.newPage()
   await p.goto(url,{waitUntil:'domcontentloaded',timeout:120000})
   for(let k=0;k<30;k++){ await sleep(1000); if(await p.evaluate(()=>window.__dlx?.ready===true).catch(()=>false)) break }
@@ -38,7 +38,7 @@ const url=`${APP}/e2e/harness.html?token=${encodeURIComponent(jr.room_token)}&co
 }
 
 const ps=[]
-for(let i=0;i<2;i++){const c=await b.newContext();const p=await c.newPage();await p.goto(url,{waitUntil:'domcontentloaded',timeout:120000});ps.push(p)}
+for(let i=0;i<2;i++){const c=await b.newContext({ locale: 'pt-PT' });const p=await c.newPage();await p.goto(url,{waitUntil:'domcontentloaded',timeout:120000});ps.push(p)}
 // A espera tem de dizer se ESGOTOU (R90). A versão anterior saía do ciclo em
 // silêncio ao fim de 45 s e caía na asserção seguinte, que reportava
 // `join_ms medido: null` — uma frase que faz parecer que o produto mediu mal,

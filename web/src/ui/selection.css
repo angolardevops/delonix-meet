@@ -1,0 +1,138 @@
+/*
+ * Selecção múltipla (template v5). A barra «N seleccionados» e a caixa
+ * tracejada vivem SOBRE a folha — que é sempre clara, em qualquer tema — por
+ * isso as cores são as do template, fixas, e não os tokens do tema.
+ */
+.dx-selbar {
+  --selbar-bg: #0b0b0c;
+  --selbar-line: #3a3a3f;
+  --selbar-count: #ff9a9e;
+  --selbar-text: #9a9aa0;
+  --selbar-key: #74747a;
+  --selbar-icon: #c9c9ce;
+  --selbar-danger: #ff7a80;
+  --selbar-accent: #ad1017;
+  --selbar-accent-key: #ffc9cb;
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: var(--r-2);
+  background: var(--selbar-bg);
+  box-shadow: 0 3px 12px rgb(11 11 12 / 30%);
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  color-scheme: dark;
+}
+.dx-selbar__count {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--selbar-count);
+  font-variant-numeric: tabular-nums;
+}
+.dx-selbar__sep {
+  width: 1px;
+  height: 16px;
+  background: var(--selbar-line);
+  flex: none;
+}
+.dx-selbar__btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--selbar-line);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+.dx-selbar__btn span {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--selbar-text);
+}
+.dx-selbar__btn kbd {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--selbar-key);
+}
+.dx-selbar__btn.is-primary {
+  background: var(--selbar-accent);
+  border-color: var(--selbar-accent);
+}
+.dx-selbar__btn.is-primary span {
+  color: #fff;
+}
+.dx-selbar__btn.is-primary kbd {
+  color: var(--selbar-accent-key);
+}
+.dx-selbar__icons {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.dx-selbar__icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: var(--selbar-icon);
+  cursor: pointer;
+}
+.dx-selbar__icon.is-danger {
+  color: var(--selbar-danger);
+}
+.dx-selbar__icon:hover:not(:disabled),
+.dx-selbar__btn:not(.is-primary):hover:not(:disabled) {
+  background: rgb(255 255 255 / 8%);
+}
+.dx-selbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.dx-selbar button:focus-visible {
+  outline: 2px solid var(--selbar-count);
+  outline-offset: 1px;
+}
+
+/* Caixa tracejada com quatro alças (HTML, sobre a folha do quadro). */
+.dx-selbox {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed #ad1017;
+  background: rgb(173 16 23 / 5%);
+  pointer-events: none;
+  z-index: 4;
+}
+.dx-selbox > i {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1.5px solid #ad1017;
+}
+.dx-selbox > i:nth-child(1) {
+  top: -4px;
+  left: -4px;
+}
+.dx-selbox > i:nth-child(2) {
+  top: -4px;
+  right: -4px;
+}
+.dx-selbox > i:nth-child(3) {
+  bottom: -4px;
+  left: -4px;
+}
+.dx-selbox > i:nth-child(4) {
+  bottom: -4px;
+  right: -4px;
+}

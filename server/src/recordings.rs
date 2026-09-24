@@ -5,12 +5,18 @@
 //! O ficheiro fica no disco (`config.recordings_dir`, de `RECORDINGS_DIR`);
 //! a base de dados guarda os metadados. Acesso: quem participou na sala
 //! (`room_participants`), quem fez o upload, ou com quem foi partilhada
-//! (`recording_shares`). Partilha é sempre só-leitura (download).
+//! (`recording_shares`). Partilha é sempre só-leitura (download). Uma gravação
+//! PUBLICADA para a organização (`visibility = 'org'`) é vista também pelos
+//! membros activos de uma organização do autor — ver `sql_can_view`.
 //!
 //! **Uma regra de acesso.** As rotas por id lêem os factos com [`load_item`] e
 //! decidem com `delonix_meet_domain::content::recording::AccessFacts` —
 //! reproduzir, descarregar, gerir, comentar. Um membro arquivado (S3) perde
 //! todas de uma vez, porque deixaram de ser cópias.
+//!
+//! Os sub-recursos do leitor (transcrição, capítulos, legendas, comentários,
+//! visualizações, participantes) vivem em `recording_meta.rs` e decidem o
+//! acesso SEMPRE por `access` deste módulo.
 
 use axum::{
     body::Bytes,
@@ -29,9 +35,25 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{auth::AuthUser, error::ApiError, rooms::Room, users::UserPublic, AppState};
+use crate::{
+    auth::AuthUser, error::ApiError, media_probe::MediaInfo, rooms::Room, users::UserPublic,
+    AppState,
+};
 
 pub const MAX_RECORDING_BYTES: usize = 512 * 1024 * 1024;
+
+/// Tipos de sessão de uma gravação (coluna `recordings.kind`, migração 0053).
+pub const RECORDING_KINDS: &[&str] = &["meeting", "training", "broadcast", "hybrid"];
+
+/// Formato da sala → tipo de sessão da gravação. `normal` é uma reunião.
+pub(crate) fn kind_from_room_format(format: &str) -> &'static str {
+    match format {
+        "training" => "training",
+        "broadcast" => "broadcast",
+        "hybrid" => "hybrid",
+        _ => "meeting",
+    }
+}
 
 /// Ficheiro webm em bruto (só para o spec).
 #[derive(utoipa::ToSchema)]
@@ -43,6 +65,7 @@ pub struct WebmBytes(Vec<u8>);
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(
+        details,
         upload,
         list,
         library,
@@ -128,13 +151,14 @@ pub struct RecordingItem {
     pub can_download: bool,
     /// Pode alterar título, categoria e capítulos (dono ou admin activo da org do dono).
     pub can_manage: bool,
-    /// `ready` = há ficheiro. `failed` = houve tentativa e não há nada.
+    /// Estado do FICHEIRO: `processing` (a compor), `transcribing` (há
+    /// ficheiro; o ai-worker está a transcrever), `ready`, `failed`.
     ///
     /// A entrada falhada existe para ser VISTA: antes, uma gravação que não
     /// compunha desaparecia sem deixar rasto, e quem carregou em «gravar»
     /// ficava a pensar que tinha um ficheiro algures. Ver migração 0036.
     pub status: String,
-    /// Causa em linguagem de utilizador. `None` quando `status = ready`.
+    /// Causa em linguagem de utilizador. `None` quando não falhou.
     pub failure_reason: Option<String>,
     /// Estado derivado: `ready` | `failed` | `transcribing` | `transcribed` |
     /// `transcription_failed`. Não há `processing`: a linha só nasce depois de
@@ -359,12 +383,182 @@ async fn is_participant(state: &AppState, room_id: Uuid, user_id: Uuid) -> Resul
     Ok(row.is_some())
 }
 
+/// Sala por código, só para quem nela participou. Um código que não existe e
+/// uma sala onde não se esteve dão a mesma resposta.
+pub(crate) async fn participated_room(
+    state: &AppState,
+    code: &str,
+    user_id: Uuid,
+) -> Result<Room, ApiError> {
+    let room = room_by_code(state, code).await?;
+    if !is_participant(state, room.id, user_id).await? {
+        return Err(ApiError::NotFound);
+    }
+    Ok(room)
+}
+
+// ---------- a regra de acesso, escrita uma vez ----------
+
+/// Predicado SQL «`viewer` pode gerir a gravação `r`»: quem a carregou, ou um
+/// admin activo de uma organização do autor (a mesma regra do download).
+pub(crate) fn sql_can_manage(viewer: &str) -> String {
+    format!(
+        "(r.uploader_id = {viewer} OR {})",
+        crate::org::sql_active_admin_of(viewer, "r.uploader_id")
+    )
+}
+
+/// Predicado SQL «`viewer` vê a gravação `r`»: participou na sala, carregou-a,
+/// foi-lhe partilhada, pode geri-la, ou está publicada para a organização e
+/// `viewer` é membro activo de uma organização do autor.
+pub(crate) fn sql_can_view(viewer: &str) -> String {
+    format!(
+        "(r.uploader_id = {viewer}
+          OR EXISTS(SELECT 1 FROM room_participants vp WHERE vp.room_id = r.room_id AND vp.user_id = {viewer})
+          OR EXISTS(SELECT 1 FROM recording_shares vs WHERE vs.recording_id = r.id AND vs.user_id = {viewer})
+          OR {manage}
+          OR (r.visibility = 'org' AND r.published_at IS NOT NULL AND {member}))",
+        manage = sql_can_manage(viewer),
+        member = crate::org::sql_active_member_with(viewer, "r.uploader_id"),
+    )
+}
+
+/// O que um pedido pode fazer a uma gravação.
+#[derive(Debug)]
+pub(crate) struct Access {
+    pub id: Uuid,
+    pub room_id: Uuid,
+    pub status: String,
+    pub duration_ms: Option<i64>,
+    pub can_manage: bool,
+}
+
+impl Access {
+    /// Escrever exige gerir. Quem só vê recebe 403 (já sabe que existe).
+    pub fn require_manage(&self) -> Result<(), ApiError> {
+        if self.can_manage {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden)
+        }
+    }
+
+    /// Há ficheiro para ler (pronta, ou pronta e a ser transcrita).
+    pub fn has_file(&self) -> bool {
+        matches!(self.status.as_str(), "ready" | "transcribing")
+    }
+}
+
+/// Resolve o acesso de `viewer` à gravação `id`. Quem não a pode ver recebe
+/// `404`: não se confirma a outra organização que o id existe.
+pub(crate) async fn access(state: &AppState, id: Uuid, viewer: Uuid) -> Result<Access, ApiError> {
+    type Row = (Uuid, String, Option<i64>, bool, bool);
+    let row: Option<Row> = sqlx::query_as(&format!(
+        "SELECT r.room_id, r.status, r.duration_ms, {view}, {manage}
+         FROM recordings r WHERE r.id = $1",
+        view = sql_can_view("$2"),
+        manage = sql_can_manage("$2"),
+    ))
+    .bind(id)
+    .bind(viewer)
+    .fetch_optional(&state.db)
+    .await?;
+    match row {
+        Some((room_id, status, duration_ms, true, can_manage)) => Ok(Access {
+            id,
+            room_id,
+            status,
+            duration_ms,
+            can_manage,
+        }),
+        _ => Err(ApiError::NotFound),
+    }
+}
+
+// ---------- recording.ready ----------
+
+/// Uma gravação que ficou pronta, para o `recording.ready`.
+pub(crate) struct ReadyRecording<'a> {
+    pub id: Uuid,
+    pub uploader: Uuid,
+    pub filename: &'a str,
+    pub size: i64,
+    pub room_code: &'a str,
+    pub kind: &'a str,
+    pub media: &'a MediaInfo,
+    /// `server` (gravador do servidor) | `upload`.
+    pub source: &'static str,
+}
+
+/// Dispara `recording.ready` para as organizações de quem gravou/carregou.
+/// Uma só função para o gravador do servidor e para o upload.
+pub(crate) async fn fire_recording_ready(state: &Arc<AppState>, r: ReadyRecording<'_>) {
+    let ReadyRecording {
+        id: rec_id,
+        uploader,
+        filename,
+        size,
+        room_code,
+        kind,
+        media,
+        source,
+    } = r;
+    let orgs = crate::org::orgs_of_user(state, uploader).await;
+    if orgs.is_empty() {
+        return;
+    }
+    let mb = size / (1024 * 1024);
+    let text = format!("Nova gravação disponível: «{filename}» ({mb} MB)");
+    let payload = serde_json::json!({
+        "recording_id": rec_id,
+        "filename": filename,
+        "size_bytes": size,
+        "room_code": room_code,
+        "kind": kind,
+        "source": source,
+        "duration_ms": media.duration_ms,
+        "width": media.width,
+        "height": media.height,
+        "fps": media.fps,
+        "video_codec": media.video_codec,
+        "audio_codec": media.audio_codec,
+    });
+    for org_id in orgs {
+        crate::webhooks::fire(
+            state.clone(),
+            org_id,
+            crate::webhooks::Event {
+                name: "recording.ready",
+                title: "Delonix Meet".into(),
+                text: text.clone(),
+                payload: payload.clone(),
+            },
+        );
+    }
+}
+
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct UploadQuery {
     /// Nome de apresentação; omissão `<código>-<AAAAMMDD-HHMMSS>.webm`.
     #[serde(default)]
     pub name: Option<String>,
+    /// Tipo de sessão declarado por quem carrega (o estúdio envia `broadcast`).
+    /// Sem ele, herda o formato da sala.
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+/// Resposta do upload: a gravação e o que o servidor mediu no ficheiro.
+#[derive(Debug, Serialize)]
+pub struct UploadResp {
+    #[serde(flatten)]
+    pub recording: Recording,
+    pub kind: String,
+    pub status: String,
+    #[serde(flatten)]
+    pub media: MediaInfo,
+    pub has_thumbnail: bool,
 }
 
 /// Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não
@@ -391,7 +585,7 @@ pub async fn upload(
     Path(code): Path<String>,
     Query(q): Query<UploadQuery>,
     body: Bytes,
-) -> Result<Json<Recording>, ApiError> {
+) -> Result<Json<UploadResp>, ApiError> {
     if body.is_empty() {
         return Err(ApiError::BadRequest("empty recording".into()));
     }
@@ -407,6 +601,16 @@ pub async fn upload(
     }
     // Quota de armazenamento (G3): antes de escrever a linha ou o ficheiro.
     crate::usage::enforce_recording_quota(&state, auth.user_id, body.len() as i64).await?;
+    let kind = match q.kind.as_deref() {
+        None | Some("") => kind_from_room_format(&room.format),
+        Some(k) => RECORDING_KINDS
+            .iter()
+            .copied()
+            .find(|x| *x == k)
+            .ok_or_else(|| {
+                ApiError::BadRequest("kind must be meeting, training, broadcast or hybrid".into())
+            })?,
+    };
 
     let stamp = Utc::now().format("%Y%m%d-%H%M%S");
     let display = q
@@ -415,14 +619,15 @@ pub async fn upload(
         .unwrap_or_else(|| format!("{}-{stamp}.webm", room.code));
 
     let rec: Recording = sqlx::query_as(
-        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes)
-         VALUES ($1, $2, $3, $4)
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, kind)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING id, room_id, uploader_id, filename, size_bytes, created_at",
     )
     .bind(room.id)
     .bind(auth.user_id)
     .bind(&display)
     .bind(body.len() as i64)
+    .bind(kind)
     .fetch_one(&state.db)
     .await?;
 
@@ -430,12 +635,37 @@ pub async fn upload(
     tokio::fs::create_dir_all(dir)
         .await
         .map_err(ApiError::internal)?;
-    tokio::fs::write(dir.join(format!("{}.webm", rec.id)), &body)
+    let path = dir.join(format!("{}.webm", rec.id));
+    tokio::fs::write(&path, &body)
         .await
         .map_err(ApiError::internal)?;
 
+    // Mede antes de responder: quem carrega recebe já a duração e a resolução,
+    // e o `recording.ready` sai com elas. Cada passo tem tecto de tempo.
+    let media = crate::media_probe::probe_and_store(&state, rec.id, &path).await;
+    let has_thumbnail = crate::media_probe::thumbnail_path(&state, rec.id).exists();
     tracing::info!(room = %room.code, id = %rec.id, size = body.len(), "recording stored");
-    Ok(Json(rec))
+    fire_recording_ready(
+        &state,
+        ReadyRecording {
+            id: rec.id,
+            uploader: auth.user_id,
+            filename: &rec.filename,
+            size: rec.size_bytes,
+            room_code: &room.code,
+            kind,
+            media: &media,
+            source: "upload",
+        },
+    )
+    .await;
+    Ok(Json(UploadResp {
+        recording: rec,
+        kind: kind.to_string(),
+        status: "ready".into(),
+        media,
+        has_thumbnail,
+    }))
 }
 
 /// Gravações de uma sala específica (painel dentro da reunião).
@@ -472,6 +702,15 @@ pub async fn list(
     Ok(Json(recs))
 }
 
+// NOTA DE MERGE (integra-ui-template-rebuild): a `LibraryQuery` do lado
+// `frontend/ui-template-rebuild` tinha `q` + `scope` ('mine' | 'published',
+// com `scope=published` a mostrar gravações publicadas para a organização) e
+// usava `item_select_sql()`/`sql_can_view` (schema rico: state, progress_pct,
+// kind, dimensões, transcript_status, chapter_count, comment_count,
+// view_count, participant_count, caption_languages, tags, visibility,
+// uploader_org_*). Fica de fora nesta resolução: o `scope=published`
+// (biblioteca publicada da organização) NÃO está implementado — ver o
+// relatório do merge.
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct LibraryQuery {
@@ -606,6 +845,39 @@ pub async fn library(
             .collect(),
         next_page_token: p.next_page_token,
     })))
+}
+
+/// Uma gravação da biblioteca, para o leitor em página inteira.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/details", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = RecordingItem, description = "Uma gravação da biblioteca, para o leitor em página inteira."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn details(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<RecordingItem>, ApiError> {
+    item_for(&state, id, auth.user_id).await.map(Json)
+}
+
+// NOTA DE MERGE (integra-ui-template-rebuild): a versão original desta função
+// (lado `frontend/ui-template-rebuild`) fazia a sua própria consulta com
+// `item_select_sql()`/`sql_can_view`, um caminho de acesso PARALELO ao de
+// `seen_item`/`AccessFacts`. Reescrita para passar pela MESMA regra de acesso
+// que o resto do ficheiro usa (`seen_item` + `ItemRow::into_item`) em vez de
+// duplicar a verificação — ver a filosofia de resolução no relatório do merge.
+pub(crate) async fn item_for(
+    state: &AppState,
+    id: Uuid,
+    viewer: Uuid,
+) -> Result<RecordingItem, ApiError> {
+    Ok(seen_item(state, id, viewer).await?.into_item(None))
 }
 
 /// `?dl=1` pede o ficheiro para DESCARREGAR (attachment); sem isso, é para

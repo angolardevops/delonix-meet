@@ -11,6 +11,8 @@ WORKDIR /src
 # release de todos os codegen units em paralelo pode ser morto por OOM
 # (cargo devolve exit 101). 6 jobs é seguro sem penalizar muito o tempo.
 ENV CARGO_BUILD_JOBS=6
+# A ponte PSTN↔SFU (crate `audiopus`) liga-se à libopus do sistema via pkg-config.
+RUN apt-get update && apt-get install -y --no-install-recommends libopus-dev && rm -rf /var/lib/apt/lists/*
 # As migrações são embutidas em compile-time (sqlx::migrate!) — a imagem final
 # não precisa de ficheiros .sql. Copia-se o crate inteiro e compila-se em release.
 COPY server ./server
@@ -22,11 +24,14 @@ COPY server ./server
 # funciona sem BuildKit), não voltar aos cache mounts.
 RUN cd server && cargo build --release && \
     cp target/release/delonix-server /usr/local/bin/delonix-server && \
-    strip /usr/local/bin/delonix-server
+    strip /usr/local/bin/delonix-server && \
+    mkdir /opus && cp -aL /usr/lib/*-linux-gnu/libopus.so.0 /opus/
 
 # Runtime mínimo, sem root. `cc` traz a glibc/libssl necessárias ao binário.
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /usr/local/bin/delonix-server /app/delonix-server
+# O runtime distroless não traz a libopus que o binário carrega em execução.
+COPY --from=build /opus/libopus.so.0 /usr/lib/libopus.so.0
 USER nonroot:nonroot
 # 8180 — HTTP público (/api, /ws, /rtc, /health, /ready). BIND_ADDR.
 EXPOSE 8180

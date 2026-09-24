@@ -26,7 +26,10 @@ while read -r rota; do
   # O sufixo depois de `{org_id}` é o que identifica o recurso. Os parâmetros
   # de caminho saem: no teste eles são interpolados com um id a sério.
   sufixo=${rota#/api/orgs/\{org_id\}}
-  alvo=$(echo "$sufixo" | sed 's/{[a-z_]*}//g; s|/$||')
+  # Um parâmetro no FIM sai (o teste interpola o id). Um parâmetro a MEIO
+  # (`/employees/{user_id}/phone`) passa a «qualquer interpolação» — sem isto
+  # o sub-recurso nunca casava e a rota não se podia cobrir.
+  alvo=$(echo "$sufixo" | sed -E 's/\{[a-z_]+\}$//; s|/$||; s/\{[a-z_]+\}/\\$\\{[^}]+\\}/g')
   [ -z "$alvo" ] && continue
   # Um parâmetro a MEIO do caminho (`/x/{id}/rotate-key`) é interpolado no
   # teste (`/x/${id}/rotate-key`): o padrão aceita qualquer `${…}` no sítio de
@@ -54,7 +57,12 @@ while read -r rota; do
   sufixo=$(echo "$rota" | sed -E 's|^/api/[a-z-]+||; s|/\{[a-z_]+\}||g')
   # Rotas de colecção (sem parâmetro) não são recursos por id.
   echo "$rota" | grep -q '{' || continue
-  if ! grep -qE "/api/${base}/\\$\{[A-Za-z0-9_.]+\}${sufixo}" "$ISO"; then
+  # Uma rota com parâmetros A MEIO (`/captions/{lang}/vtt`) não tem sufixo
+  # literal que um pedido real possa conter; aceita-se então a rota inteira com
+  # cada parâmetro interpolado — que é uma prova mais forte, não mais fraca.
+  completa=$(echo "$rota" | sed -E 's|\{[a-z_]+\}|\\$\\{[A-Za-z0-9_.]+\\}|g')
+  if ! grep -qE "/api/${base}/\\$\{[A-Za-z0-9_.]+\}${sufixo}" "$ISO" \
+     && ! grep -qE "$completa" "$ISO"; then
     echo "✗ isolamento: $rota (recurso por id) não é exercitada por $ISO"
     falta=1
   fi

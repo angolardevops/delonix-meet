@@ -15,7 +15,7 @@
 //      isso vale tanto para quem cria como para quem entra por código. Esperar
 //      por `<video>` dá-se por satisfeito aí. O sinal de entrada é a
 //      pré-entrada DESAPARECER.
-//   3. `.tile` cobre o retrato LOCAL e os remotos. Contá-los e chamar-lhes
+//   3. `.rm-tile` cobre o retrato LOCAL e os remotos. Contá-los e chamar-lhes
 //      «remotos» é medir a própria pessoa.
 //
 import { chromium } from '@playwright/test'
@@ -33,7 +33,7 @@ const conta = await criarConta(API, 'fant')
 const browser = await chromium.launch({
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
 })
-const page = await (await browser.newContext({ ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
+const page = await (await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
 await entrar(page, APP, conta)
 
 // Cria a reunião pelo CAMINHO DO PRODUTO — o botão que um utilizador carrega.
@@ -41,7 +41,7 @@ await entrar(page, APP, conta)
 // devolve: a sala nunca era criada, a rota ficava `#/r/undefined`, e o vídeo
 // LOCAL fazia a asserção passar na mesma. Zero retratos remotos numa sala que
 // não existe não prova nada.
-await page.getByRole('button', { name: /nova reuni/i }).first().click()
+await page.getByRole('button', { name: /iniciar agora/i }).first().click()
 await page.waitForFunction(() => /^#\/r\/[a-z-]+$/.test(location.hash), null, { timeout: 60000 })
 const rota = await page.evaluate(() => location.hash)
 
@@ -49,9 +49,9 @@ const rota = await page.evaluate(() => location.hash)
 // por `<video>` dá-se por satisfeito aí — foi assim que este teste passou três
 // vezes sem nunca ter entrado em sala nenhuma. O sinal de entrada é a
 // pré-entrada DESAPARECER.
-await page.getByRole('button', { name: /entrar agora/i }).first().click({ timeout: 60000 })
+await page.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 const entrou = await page
-  .waitForFunction(() => !/Pronto para entrar/i.test(document.body.innerText || ''), null, { timeout: 90000 })
+  .waitForFunction(() => !document.querySelector('.rm-prejoin'), null, { timeout: 90000 })
   .then(() => true)
   .catch(() => false)
 ok(entrou, 'a sala ABRIU MESMO — a pré-entrada desapareceu', entrou ? `rota ${rota}` : 'ficou na pré-entrada')
@@ -63,13 +63,13 @@ if (!entrou) {
 await page.waitForTimeout(4000)
 
 const visto = await page.evaluate(() => ({
-  tiles: document.querySelectorAll('.tile').length,
-  remotos: document.querySelectorAll('.tile[data-peer="remoto"]').length,
-  nomes: [...document.querySelectorAll('.tile')].map((t) => (t.textContent || '').trim().slice(0, 24)),
+  tiles: document.querySelectorAll('.rm-tile').length,
+  remotos: document.querySelectorAll('.rm-tile[data-peer="remoto"]').length,
+  nomes: [...document.querySelectorAll('.rm-tile')].map((t) => (t.textContent || '').trim().slice(0, 24)),
   videos: document.querySelectorAll('video').length,
 }))
 console.log(`  · observado: ${JSON.stringify(visto)}`)
-// `.tile` cobre o retrato LOCAL e os remotos. Contar `.tile` e chamar-lhe
+// `.rm-tile` cobre o retrato LOCAL e os remotos. Contar `.rm-tile` e chamar-lhe
 // «remotos» foi o que fez este teste dar verde a medir a própria pessoa.
 //
 // A distinção passou a ser o atributo `data-peer` e não o texto conter «eu»
@@ -88,36 +88,36 @@ ok(
 // (o fantasma que se foi procurar).
 const codigo = rota.replace('#/r/', '')
 const conta2 = await criarConta(API, 'fan2')
-const page2 = await (await browser.newContext({ ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
+const page2 = await (await browser.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true, permissions: ['camera', 'microphone'] })).newPage()
 await entrar(page2, APP, conta2)
 await page2.goto(`${APP}/#/r/${codigo}`, { waitUntil: 'domcontentloaded' })
-// A sala abre num ecrã de PRÉ-ENTRADA («Pronto para entrar?»). Quem entra por
+// A sala abre num ecrã de PRÉ-ENTRADA (`.rm-prejoin`, «Verificar dispositivos»). Quem entra por
 // código passa por ele; quem cria a reunião não. Sem carregar aqui, a segunda
 // pessoa fica parada a ver a própria câmara e o teste conclui, erradamente,
 // que ela entrou.
-await page2.getByRole('button', { name: /entrar agora/i }).first().click({ timeout: 60000 })
+await page2.getByRole('button', { name: /entrar na sessão/i }).first().click({ timeout: 60000 })
 await page2.waitForTimeout(6000)
 console.log('  · página 2 depois de entrar:', JSON.stringify(await page2.evaluate(() => ({
   videos: document.querySelectorAll('video').length,
-  tiles: document.querySelectorAll('.tile').length,
+  tiles: document.querySelectorAll('.rm-tile').length,
   texto: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 160),
 }))))
 console.log('  · página 1:', JSON.stringify(await page.evaluate(() => ({
-  tiles: document.querySelectorAll('.tile').length,
+  tiles: document.querySelectorAll('.rm-tile').length,
   texto: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 160),
 }))))
 
 // A segunda pessoa é de OUTRA organização e cai na sala de espera — é a
 // co-admissão, e é o que faz os quatro testes `#[ignore]` do hub estarem
 // desactualizados. O anfitrião tem de a admitir, como faria um utilizador.
-const pilula = page.locator('.waiting-pill')
+// A fila de espera vive na barra de baixo (template DelonixRoomGrid: «N na sala · M em espera · Admitir»).
+const pilula = page.locator('.rm-occupancy__waiting')
 await pilula.waitFor({ timeout: 60000 }).catch(() => {})
 ok(await pilula.isVisible().catch(() => false), 'o anfitrião VÊ o aviso de convidado à espera')
-await pilula.click().catch(() => {})
 // Com UM convidado o controlo é o «Admitir» da linha; o «Admitir todos» só
 // existe a partir de dois. O cartão da sala de espera já está visível — não é
 // preciso abrir painel nenhum.
-const admitir = page.locator('.admit-accept').first()
+const admitir = page.locator('.rm-admit-accept').first()
 await admitir.waitFor({ timeout: 30000 }).catch(() => {})
 ok(await admitir.isVisible().catch(() => false), 'o cartão da sala de espera oferece Admitir')
 await admitir.click().catch(() => {})
@@ -141,7 +141,7 @@ await admitir.click().catch(() => {})
 const apanhado = await page
   .waitForFunction(
     () => {
-      const tiles = [...document.querySelectorAll('.tile')]
+      const tiles = [...document.querySelectorAll('.rm-tile')]
       const remotos = tiles.filter((t) => t.getAttribute('data-peer') === 'remoto')
       if (tiles.length !== 2 || remotos.length !== 1) return null
       return { total: tiles.length, remotos: remotos.length,
@@ -156,9 +156,9 @@ const apanhado = await page
 // Se a espera esgotou, diz-se o que ESTAVA lá — senão o relatório não distingue
 // «o convidado não entrou» de «o teste leu cedo demais».
 const finais = apanhado ?? (await page.evaluate(() => ({
-  total: document.querySelectorAll('.tile').length,
-  remotos: document.querySelectorAll('.tile[data-peer="remoto"]').length,
-  nomes: [...document.querySelectorAll('.tile')].map((t) => (t.textContent || '').trim().slice(0, 20)),
+  total: document.querySelectorAll('.rm-tile').length,
+  remotos: document.querySelectorAll('.rm-tile[data-peer="remoto"]').length,
+  nomes: [...document.querySelectorAll('.rm-tile')].map((t) => (t.textContent || '').trim().slice(0, 20)),
 })))
 ok(apanhado !== null, 'admitido, o convidado aparece como retrato REMOTO no ecrã do anfitrião', JSON.stringify(finais))
 ok(finais.total === 2, 'e a sala mostra dois retratos: eu e ele', `${finais.total}`)

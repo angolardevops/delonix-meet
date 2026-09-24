@@ -1,0 +1,191 @@
+/* Chamada de voz (DelonixCall / DelonixMobile): avatar grande ao centro, nome,
+   estado e cronómetro, e os controlos circulares com rótulo em baixo.
+   Vive dentro de `.dx-stage.rm-room` — os tokens são os escuros. */
+
+.vc {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--accent-strong) 22%, var(--stage)), var(--stage) 70%);
+}
+
+.vc-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 50px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+.vc-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+}
+
+.vc-center {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: var(--s-4) 16px;
+  overflow-y: auto;
+  text-align: center;
+}
+.vc-face {
+  position: relative;
+  display: grid;
+  place-content: center;
+  width: 126px;
+  height: 126px;
+  margin-bottom: 8px;
+  border-radius: 50%;
+  color: var(--text);
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--stage) 60%, transparent);
+}
+.vc-face.is-speaking {
+  box-shadow:
+    0 0 0 3px var(--success),
+    0 0 0 9px color-mix(in srgb, var(--success) 25%, transparent);
+}
+.vc-face.is-ringing::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 50%;
+  animation: vc-ring 1.6s ease-out infinite;
+}
+@keyframes vc-ring {
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vc-face.is-ringing::after {
+    animation: none;
+  }
+}
+.vc-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--t-h1);
+  font-weight: 400;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+.vc-state {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--t-lg);
+}
+.vc[data-phase='in-call'] .vc-state {
+  color: var(--success);
+}
+.vc[data-phase='declined'] .vc-state,
+.vc[data-phase='unavailable'] .vc-state,
+.vc[data-phase='ended'] .vc-state {
+  color: var(--record-text);
+}
+.vc-note {
+  max-width: 360px;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+.vc-note--warn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--r-3);
+  color: var(--text);
+}
+.vc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-8);
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.vc-chip strong {
+  color: var(--accent);
+}
+.vc-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.vc-controls {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px 22px;
+}
+/* Os rótulos ficam SEMPRE visíveis aqui (DelonixMobile): são quatro botões e
+   cabem, e numa chamada de voz não há palco a proteger. */
+.vc-controls .rm-ctrl {
+  width: 58px;
+  height: 58px;
+  gap: 2px;
+  align-content: center;
+}
+.vc-controls .rm-ctrl .dx-icon {
+  width: 20px;
+  height: 20px;
+}
+.vc-controls .rm-ctrl__caption {
+  display: block;
+  max-width: 54px;
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .vc-face {
+    width: 104px;
+    height: 104px;
+    font-size: 32px;
+  }
+  .vc-controls {
+    gap: 10px;
+  }
+  .vc-controls .rm-ctrl__caption {
+    display: block;
+  }
+}

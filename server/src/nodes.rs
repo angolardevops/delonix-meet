@@ -86,7 +86,7 @@ pub async fn heartbeat(state: &AppState, started_at: DateTime<Utc>) -> Result<()
     let ws = (state.metrics.ws_signaling.load(Ordering::Relaxed)
         + state.metrics.ws_presence.load(Ordering::Relaxed))
     .max(0) as i32;
-    let live = state.directos.quantas().await as i32;
+    let live = state.directos.quantas() as i32;
     sqlx::query(
         "INSERT INTO media_nodes (node_id, hostname, version, edition, started_at, last_seen_at,
                                   draining, rooms, peers, ws_connections, live_broadcasts, peer_capacity)

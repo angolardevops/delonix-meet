@@ -49,6 +49,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      # A ponte PSTN↔SFU liga-se à libopus do sistema (crate `audiopus`, via
+      # pkg-config): sem ela o binário compila mas não arranca
+      # («libopus.so.0: cannot open shared object file»).
+      - name: libopus (build e execução)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libopus-dev
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
@@ -235,6 +241,12 @@ jobs:
       - run: npm ci
         working-directory: web
 
+      # A ponte PSTN↔SFU liga-se à libopus do sistema (crate `audiopus`, via
+      # pkg-config): sem ela o binário compila mas não arranca
+      # («libopus.so.0: cannot open shared object file»).
+      - name: libopus (build e execução)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libopus-dev
+
       - name: Build do servidor
         run: cargo build --manifest-path server/Cargo.toml --release
 
@@ -257,10 +269,6 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
-      # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
-      # só usa a API prova que a API não deixa, não que os dados estão
-      # protegidos. E o adversário que interessa numa auditoria é quem TEM
-      # privilégios.
       - name: Auditoria imutável (ataque directo à base de dados)
         run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/auditoria.mjs
 

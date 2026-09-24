@@ -1,0 +1,9 @@
+node_modules
+.sessao*.json
+app/
+lado-a-lado/
+*.webm
+*.png
+.tokens-*.json
+.sessao-*.json
+*.log

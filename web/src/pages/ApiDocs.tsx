@@ -1,163 +1,228 @@
-import { useState } from 'react'
+/**
+ * Documentação pública da API v1 (`/api/v1`, autenticada por chave de API).
+ *
+ * Só aparece o que está no router de `server/src/main.rs` e com a forma que
+ * `server/src/apikeys.rs` devolve. Os exemplos são montados a partir de
+ * objectos (JSON.stringify), não escritos à mão: um exemplo que não é JSON
+ * válido é pior do que nenhum.
+ */
 import { useTranslation } from 'react-i18next'
-import { BrandLockup, BrandMark } from '../components/BrandMark'
+import { Card, Tag } from '../ui/kit'
+import BlocoCodigo from './publico/BlocoCodigo'
+import Moldura from './publico/Moldura'
 
-/** Documentação pública da API REST do Delonix Meet (#/api-docs). */
+const AUTH = 'Authorization'
+const API_KEY = 'X-API-Key'
+const CT = 'Content-Type'
+const CHAVE = 'dlx_…'
+const CODIGO = 'abc-defg-hij'
+
+const json = (v: unknown) => JSON.stringify(v, null, 2)
+
+interface Endpoint {
+  metodo: 'GET' | 'POST'
+  caminho: string
+  desc: string
+  campos?: { nome: string; tipo: string; desc: string }[]
+  corpo?: unknown
+  resposta: unknown
+  curl: (base: string) => string
+}
+
+function endpoints(base: string): Endpoint[] {
+  const sala = {
+    code: CODIGO,
+    name: 'sync',
+    e2ee: false,
+    waiting_room: false,
+    join_url: `${base}/#/r/${CODIGO}`,
+  }
+  return [
+    {
+      metodo: 'POST',
+      caminho: '/api/v1/rooms',
+      desc: 'publico.api.criaSala',
+      campos: [
+        { nome: 'name', tipo: 'string', desc: 'publico.api.campoNome' },
+        { nome: 'e2ee', tipo: 'boolean', desc: 'publico.api.campoE2ee' },
+        { nome: 'waiting_room', tipo: 'boolean', desc: 'publico.api.campoEspera' },
+      ],
+      corpo: { name: 'sync', e2ee: false, waiting_room: false },
+      resposta: sala,
+      curl: (b) =>
+        [
+          `curl -X POST ${b}/api/v1/rooms \\`,
+          `  -H "${AUTH}: Bearer ${CHAVE}" \\`,
+          `  -H "${CT}: application/json" \\`,
+          `  -d '${JSON.stringify({ name: 'sync' })}'`,
+        ].join('\n'),
+    },
+    {
+      metodo: 'GET',
+      caminho: '/api/v1/rooms/{code}',
+      desc: 'publico.api.metadadosSala',
+      resposta: sala,
+      curl: (b) => [`curl ${b}/api/v1/rooms/${CODIGO} \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
+    },
+    {
+      metodo: 'GET',
+      caminho: '/api/v1/recordings',
+      desc: 'publico.api.listaGravacoes',
+      resposta: {
+        recordings: [
+          {
+            id: '…',
+            filename: '…',
+            size_bytes: 12345678,
+            created_at: '2026-07-07T20:00:00Z',
+            room_code: CODIGO,
+            download_url: '/api/recordings/…',
+          },
+        ],
+      },
+      curl: (b) => [`curl ${b}/api/v1/recordings \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
+    },
+    {
+      metodo: 'GET',
+      caminho: '/api/v1/organization',
+      desc: 'publico.api.infoOrg',
+      resposta: { id: '…', name: 'acme', email_domain: 'acme.example', domain: 'meet.acme.example', members: 42 },
+      curl: (b) => [`curl ${b}/api/v1/organization \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
+    },
+  ]
+}
+
+const EVENTOS: { nome: string; desc: string }[] = [
+  { nome: 'meeting.created', desc: 'publico.api.evCriada' },
+  { nome: 'meeting.started', desc: 'publico.api.evIniciada' },
+  { nome: 'meeting.mom_ready', desc: 'publico.api.evAta' },
+  { nome: 'recording.ready', desc: 'publico.api.evGravacao' },
+]
+
+const CODIGOS_HTTP = ['200', '401', '404', '409', '429']
+
 export default function ApiDocs() {
   const { t } = useTranslation()
-  const base = `${location.origin}`
+  const base = location.origin
+
   return (
-    <div className="apidoc-page">
-      <div className="apidoc-wrap">
-        <header className="apidoc-head">
-          <BrandMark big />
-          <h1>
-            <BrandLockup suffix="· API REST" />
-          </h1>
-          <p className="muted">
-            
-            {t('api.integraODelonixMeet')}
-          </p>
-        </header>
+    <Moldura pagina="api-docs">
+      <header className="pub-cabecalho">
+        <h1>{t('publico.api.titulo')}</h1>
+        <p className="dx-muted">{t('publico.api.intro')}</p>
+      </header>
 
-        <Section title={t('api.autenticacao')}>
-          <p>{t('api.todasAsChamadas')}<code>/api/v1</code>  {t('api.exigemUma')} <strong>{t('api.chaveDeApi')}</strong>  {t('api.daOrganizacaoGeraA')} <em>{t('api.caminhoChaves')}</em>{t('api.comoAdministradorEnviaA')}
-          </p>
-          <Code>{`Authorization: Bearer dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-# ou
-X-API-Key: dlx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`}</Code>
-          <p className="muted small">
-            
-            {t('api.aChaveSoE')}
-          </p>
-        </Section>
-
-        <Section title={t('api.baseUrl')}>
-          <Code>{`${base}/api/v1`}</Code>
-        </Section>
-
-        <Endpoint
-          method="POST"
-          path="/api/v1/rooms"
-          desc={t('api.criaSala')}
-          body={`{
-  "name": "Sync semanal",   // opcional
-  "e2ee": false,             // opcional — encriptação ponta-a-ponta
-  "waiting_room": false      // opcional — admitir convidados manualmente
-}`}
-          resp={`{
-  "code": "abc-defg-hij",
-  "name": "Sync semanal",
-  "e2ee": false,
-  "waiting_room": false,
-  "join_url": "https://meet.acme.com/#/r/abc-defg-hij"
-}`}
-          curl={`curl -X POST ${base}/api/v1/rooms \\
-  -H "Authorization: Bearer dlx_..." \\
-  -H "Content-Type: application/json" \\
-  -d '{"name":"Sync semanal"}'`}
-        />
-
-        <Endpoint
-          method="GET"
-          path="/api/v1/rooms/{code}"
-          desc={t('api.metadadosSala')}
-          resp={`{ "code": "abc-defg-hij", "name": "...", "e2ee": false, "waiting_room": false, "join_url": "..." }`}
-          curl={`curl ${base}/api/v1/rooms/abc-defg-hij -H "Authorization: Bearer dlx_..."`}
-        />
-
-        <Endpoint
-          method="GET"
-          path="/api/v1/recordings"
-          desc={t('api.listaGravacoes')}
-          resp={`{
-  "recordings": [
-    { "id": "…", "filename": "…", "size_bytes": 12345678,
-      "created_at": "2026-07-07T20:00:00Z", "room_code": "abc-defg-hij",
-      "download_url": "/api/recordings/…" }
-  ]
-}`}
-          curl={`curl ${base}/api/v1/recordings -H "Authorization: Bearer dlx_..."`}
-        />
-
-        <Endpoint
-          method="GET"
-          path="/api/v1/organization"
-          desc={t('api.infoOrg')}
-          resp={`{ "id": "…", "name": "Acme", "email_domain": "acme.com", "domain": "meet.acme.com", "members": 42 }`}
-          curl={`curl ${base}/api/v1/organization -H "Authorization: Bearer dlx_..."`}
-        />
-
-        <Section title={t('api.webhooks')}>
-          <p>{t('api.alemDaApi')}<strong>webhooks</strong>  {t('api.emSlackTeamsMattermost')} <em>{t('api.caminhoWebhooks')}</em>{t('api.eventos')}
-          </p>
-          <ul className="apidoc-list">
-            <li><code>meeting.created</code>  {t('api.reuniaoAgendada')}</li>
-            <li><code>meeting.started</code>  {t('api.reuniaoIniciadaCom')} <code>join_url</code>)</li>
-            <li><code>recording.ready</code>  {t('api.gravacaoDisponivel')}</li>
-          </ul>
-          <p>{t('api.noDestino')}<strong>genérico</strong>{t('api.oPayloadJsonVem')} <code>X-Delonix-Signature: sha256=…</code>  {t('api.validaOParaGarantir')}
-          </p>
-          <Code>{`{
-  "event": "meeting.started",
-  "title": "Delonix Meet",
-  "text": "Reunião «Sync» começou · https://meet.acme.com/#/r/abc-defg-hij",
-  "data": { "meeting_id": "…", "room_code": "abc-defg-hij", "link": "…", "kind": "video" }
-}`}</Code>
-        </Section>
-
-        <Section title={t('api.codigosDeEstado')}>
-          <ul className="apidoc-list">
-            <li><code>200</code>  {t('api.sucesso')}</li>
-            <li><code>401</code>  {t('api.chaveDeApiEm')}</li>
-            <li><code>404</code>  {t('api.recursoNaoEncontrado')}</li>
-            <li><code>409</code>  {t('api.conflitoExDominioJa')}</li>
-          </ul>
-        </Section>
-
-        <a className="link" href="#/">{t('api.voltarAoDelonixMeet')}</a>
+      <div className="pub-grelha">
+        <Card title={t('publico.api.autenticacao')} className="pub-cartao">
+          <div className="pub-prosa">
+            <p>{t('publico.api.autenticacaoTexto')}</p>
+            <BlocoCodigo codigo={[`${AUTH}: Bearer ${CHAVE}`, `${API_KEY}: ${CHAVE}`].join('\n')} />
+            <p className="dx-muted">{t('publico.api.chaveSegredo')}</p>
+          </div>
+        </Card>
+        <Card title={t('publico.api.baseUrl')} className="pub-cartao">
+          <BlocoCodigo codigo={`${base}/api/v1`} />
+        </Card>
       </div>
-    </div>
-  )
-}
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="apidoc-section">
-      <h2>{title}</h2>
-      {children}
-    </section>
-  )
-}
+      <h2 className="pub-subtitulo">{t('publico.api.endpoints')}</h2>
+      {endpoints(base).map((ep) => (
+        <Card
+          key={ep.metodo + ep.caminho}
+          className="pub-cartao pub-endpoint"
+          title={
+            <span className="pub-endpoint__titulo">
+              <Tag tone={ep.metodo === 'POST' ? 'accent' : 'success'}>{ep.metodo}</Tag>
+              <code className="dx-num">{ep.caminho}</code>
+            </span>
+          }
+        >
+          <div className="pub-prosa">
+            <p>{t(ep.desc)}</p>
+            {ep.campos && (
+              <div className="dx-table-wrap">
+                <table className="dx-table">
+                  <thead>
+                    <tr>
+                      <th>{t('publico.api.campo')}</th>
+                      <th>{t('publico.api.descricao')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ep.campos.map((c) => (
+                      <tr key={c.nome}>
+                        <td>
+                          <code className="dx-num">{c.nome}</code>{' '}
+                          <span className="dx-muted dx-num">
+                            {c.tipo} · {t('publico.api.opcional')}
+                          </span>
+                        </td>
+                        <td>{t(c.desc)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="pub-exemplos">
+              {ep.corpo !== undefined && <BlocoCodigo rotulo={t('publico.api.corpo')} codigo={json(ep.corpo)} />}
+              <BlocoCodigo rotulo={t('publico.api.resposta')} codigo={json(ep.resposta)} />
+              <BlocoCodigo rotulo={t('publico.api.exemplo')} codigo={ep.curl(base)} />
+            </div>
+          </div>
+        </Card>
+      ))}
 
-function Code({ children }: { children: string }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <pre className="apidoc-code" onClick={() => { void navigator.clipboard.writeText(children); setCopied(true); setTimeout(() => setCopied(false), 1200) }}>
-      <code>{children}</code>
-      <span className="apidoc-copy">{copied ? '✓ copiado' : '⧉'}</span>
-    </pre>
-  )
-}
+      <div className="pub-grelha">
+        <Card title={t('publico.api.webhooks')} className="pub-cartao">
+          <div className="pub-prosa">
+            <p>{t('publico.api.webhooksTexto')}</p>
+            <BlocoCodigo codigo={'X-Delonix-Signature: sha256=…'} />
+            <p className="dx-muted">{t('publico.api.webhooksValida')}</p>
+            <div className="dx-table-wrap">
+              <table className="dx-table">
+                <thead>
+                  <tr>
+                    <th>{t('publico.api.evento')}</th>
+                    <th>{t('publico.api.descricao')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {EVENTOS.map((e) => (
+                    <tr key={e.nome}>
+                      <td>
+                        <code className="dx-num">{e.nome}</code>
+                      </td>
+                      <td>{t(e.desc)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Card>
 
-function Endpoint({
-  method, path, desc, body, resp, curl,
-}: {
-  method: string; path: string; desc: string; body?: string; resp: string; curl: string
-}) {
-  const { t } = useTranslation()
-  return (
-    <section className="apidoc-section apidoc-endpoint">
-      <div className="apidoc-ep-head">
-        <span className={`apidoc-method ${method.toLowerCase()}`}>{method}</span>
-        <code className="apidoc-path">{path}</code>
+        <Card title={t('publico.api.codigos')} className="pub-cartao">
+          <div className="dx-table-wrap">
+            <table className="dx-table">
+              <thead>
+                <tr>
+                  <th>{t('publico.api.codigo')}</th>
+                  <th>{t('publico.api.descricao')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {CODIGOS_HTTP.map((c) => (
+                  <tr key={c}>
+                    <td className="dx-num">{c}</td>
+                    <td>{t(`publico.api.c${c}`)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
-      <p>{desc}</p>
-      {body && (<><h4>{t('api.corpo')}</h4><Code>{body}</Code></>)}
-      <h4>{t('api.resposta')}</h4>
-      <Code>{resp}</Code>
-      <h4>{t('api.exemploCurl')}</h4>
-      <Code>{curl}</Code>
-    </section>
+    </Moldura>
   )
 }

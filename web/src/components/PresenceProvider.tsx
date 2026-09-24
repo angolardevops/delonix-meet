@@ -1,9 +1,18 @@
-import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react'
+/**
+ * Presença e chamadas directas. Vive ACIMA do router: uma chamada toca em
+ * qualquer ecrã, incluindo dentro de uma sala. Mostra o cartão de chamada a
+ * entrar (atender / recusar), o toque, a notificação do sistema quando a app
+ * não está visível, e os avisos de reunião recusada.
+ */
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ackMissedCalls } from '../api'
 import { MissedCall, Presence, PresenceEvent } from '../presence'
-import { CamIcon, CloseIcon, HangupIcon, MicIcon, VoiceCallIcon } from '../icons'
+import { startRingtone } from '../ringtone'
 import { RING_TIMEOUT_MS, roomCodeInHash } from '../callRing'
+import { DirectCall, loadDirectCall, saveDirectCall } from '../room/voiceCall'
+import { Icon } from '../ui/icons'
+import { Avatar, Button, IconButton } from '../ui/kit'
 
 interface Ringing {
   room_code: string
@@ -15,12 +24,17 @@ interface Ringing {
 interface PresenceCtx {
   online: Set<string>
   isOnline: (id: string) => boolean
-  startCall: (opts: { targets?: string[]; groupId?: string; kind: 'video' | 'voice'; title?: string }) => void
+  /** `peerName`: nome de quem se chama, para o ecrã de voz o mostrar antes de atender. */
+  startCall: (opts: { targets?: string[]; groupId?: string; kind: 'video' | 'voice'; title?: string; peerName?: string }) => void
+  /** O que se sabe de uma chamada directa desta sessão (quem liga, se tocou, se recusaram). */
+  directCall: (roomCode: string) => DirectCall | null
   missed: MissedCall[]
   ackMissed: () => void
+  callBack: (mc: MissedCall) => void
 }
 
 const Ctx = createContext<PresenceCtx | null>(null)
+
 export const usePresence = () => {
   const c = useContext(Ctx)
   if (!c) throw new Error('usePresence fora do PresenceProvider')
@@ -40,42 +54,37 @@ export default function PresenceProvider({
   const [incoming, setIncoming] = useState<Ringing[]>([])
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
   const [missed, setMissed] = useState<MissedCall[]>([])
-  const ringAudio = useRef<HTMLAudioElement | null>(null)
+  /** Chamadas directas desta sessão, por código de sala (espelho do sessionStorage). */
+  const [calls, setCalls] = useState<Record<string, DirectCall>>({})
+  /** O `call-start` enviado à espera do `ringing` que traz o código da sala. */
+  const pendingStart = useRef<{ kind: 'video' | 'voice'; peerName: string | null } | null>(null)
+  const notif = useRef<Notification | null>(null)
   // Chamadas que ESTA sessão fez e que ainda ninguém atendeu: se quem liga
   // sair da sala antes disso, os outros deixam de tocar (`call-cancel`).
   const outgoing = useRef(new Set<string>())
+  const enterRef = useRef(onEnterRoom)
+  enterRef.current = onEnterRoom
 
-  function pushToast(text: string) {
-    const id = Date.now() + Math.floor(performance.now())
-    setToasts((t) => [...t, { id, text }])
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 8000)
-  }
+  const rememberCall = useCallback((c: DirectCall) => {
+    saveDirectCall(c)
+    setCalls((cur) => ({ ...cur, [c.room_code]: c }))
+  }, [])
+  const updateCall = useCallback((code: string, fn: (c: DirectCall) => DirectCall) => {
+    setCalls((cur) => {
+      const prev = cur[code] ?? loadDirectCall(code)
+      if (!prev) return cur
+      const next = fn(prev)
+      saveDirectCall(next)
+      return { ...cur, [code]: next }
+    })
+  }, [])
 
-  // Notificação de sistema (desktop) quando entra uma chamada e a app NÃO está
-  // visível (outro separador/minimizada). Clicar traz a janela para a frente.
-  const callNotif = useRef<Notification | null>(null)
-  function notifyIncoming(caller: string, title: string, kind: 'video' | 'voice') {
-    if (!('Notification' in window) || Notification.permission !== 'granted') return
-    if (document.visibilityState === 'visible') return // já se vê o popup na app
-    try {
-      callNotif.current?.close()
-      const n = new Notification(`📞 ${caller} está a ligar`, {
-        body: title || (kind === 'voice' ? t('status.chamadaDeVoz') : 'Videochamada'),
-        tag: 'delonix-call',
-        requireInteraction: true,
-        icon: '/icon-192.png',
-      })
-      n.onclick = () => {
-        window.focus()
-        n.close()
-      }
-      callNotif.current = n
-    } catch {
-      /* Notifications indisponíveis — o toque + popup na app já avisam */
-    }
-  }
+  const pushToast = useCallback((text: string) => {
+    const id = Date.now() + Math.random()
+    setToasts((cur) => [...cur, { id, text }])
+    setTimeout(() => setToasts((cur) => cur.filter((x) => x.id !== id)), 8000)
+  }, [])
 
-  // Pede permissão de notificações uma vez (silencioso se recusado).
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
       void Notification.requestPermission().catch(() => {})
@@ -97,21 +106,65 @@ export default function PresenceProvider({
               ? cur
               : [...cur, { room_code: e.room_code, kind: e.kind, caller_name: e.caller_name, title: e.title }],
           )
-          notifyIncoming(e.caller_name, e.title, e.kind)
+          if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+            try {
+              notif.current?.close()
+              const n = new Notification(t('shell.chamada.aLigar', { nome: e.caller_name }), {
+                body: e.title || (e.kind === 'voice' ? t('shell.chamada.voz') : t('shell.chamada.video')),
+                tag: 'delonix-call',
+                requireInteraction: true,
+                icon: '/icon-192.png',
+              })
+              n.onclick = () => {
+                window.focus()
+                n.close()
+              }
+              notif.current = n
+            } catch {
+              /* notificações indisponíveis — o cartão e o toque avisam */
+            }
+          }
           break
-        case 'ringing':
-          // O chamador entra logo na sala e aguarda os outros.
+        case 'ringing': {
+          // Quem liga entra logo na sala e espera pelos outros. O que o
+          // servidor disse (a quem tocou, quem estava offline) fica com a sala.
           outgoing.current.add(e.room_code)
-          onEnterRoom(e.room_code, e.kind === 'voice')
+          const pend = pendingStart.current
+          pendingStart.current = null
+          rememberCall({
+            room_code: e.room_code,
+            kind: e.kind,
+            direction: 'out',
+            peer_name: pend?.peerName ?? null,
+            ringing: e.ringing,
+            offline: e.offline,
+            accepted: [],
+            declined: [],
+            answered_by_server: true,
+          })
+          enterRef.current(e.room_code, e.kind === 'voice')
           break
+        }
         case 'accepted':
           outgoing.current.delete(e.room_code)
+          updateCall(e.room_code, (c) => ({ ...c, accepted: [...new Set([...c.accepted, e.by_id])] }))
+          break
+        case 'declined':
+          updateCall(e.room_code, (c) => ({ ...c, declined: [...new Set([...c.declined, e.by_id])] }))
+          break
+        case 'error':
+          // Um `call-start` recusado (sem destinatários válidos, sala por criar)
+          // não abre sala nenhuma: sem isto, o clique em «Ligar» não fazia nada.
+          if (pendingStart.current) {
+            pendingStart.current = null
+            pushToast(e.message)
+          }
           break
         case 'cancelled':
           setIncoming((cur) => cur.filter((c) => c.room_code !== e.room_code))
           break
         case 'meeting-declined':
-          pushToast(`${e.by_name} recusou «${e.meeting_title}» — ${e.reason}`)
+          pushToast(t('shell.chamada.reuniaoRecusada', { nome: e.by_name, titulo: e.meeting_title, motivo: e.reason }))
           break
         case 'missed-calls':
           setMissed(e.calls)
@@ -124,7 +177,6 @@ export default function PresenceProvider({
       off()
       p.close()
     }
-    // onEnterRoom é estável (vem do App via location.hash) — só liga uma vez.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -155,64 +207,52 @@ export default function PresenceProvider({
     return () => timers.forEach(clearTimeout)
   }, [ringingCodes])
 
-  // Toque enquanto há chamadas a receber — tom sintético quente estilo telemóvel
-  // (não é possível embutir o som proprietário do Galaxy; recria-se um toque
-  // agradável de dois sinos com harmónico suave e ligeiro eco).
   useEffect(() => {
     if (incoming.length === 0) {
-      ringAudio.current?.pause()
-      callNotif.current?.close()
+      notif.current?.close()
       return
     }
-    const ctx = new AudioContext()
-    let stopped = false
-    // Uma nota "marimba": fundamental + 2º harmónico, ataque rápido, cauda suave.
-    const note = (f: number, at: number, dur = 0.34, vol = 0.16) => {
-      for (const [mult, g] of [[1, vol], [2, vol * 0.35]] as const) {
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.type = 'sine'
-        osc.frequency.value = f * mult
-        osc.connect(gain)
-        gain.connect(ctx.destination)
-        const s = ctx.currentTime + at
-        gain.gain.setValueAtTime(0.0001, s)
-        gain.gain.exponentialRampToValueAtTime(g, s + 0.02)
-        gain.gain.exponentialRampToValueAtTime(0.0001, s + dur)
-        osc.start(s)
-        osc.stop(s + dur + 0.02)
-      }
-    }
-    const ring = () => {
-      if (stopped) return
-      // "din-don" ascendente-descendente (E5 → C#6 → A5).
-      note(659.25, 0)
-      note(1108.73, 0.16)
-      note(880.0, 0.34, 0.5)
-    }
-    ring()
-    const iv = setInterval(ring, 1800)
-    return () => {
-      stopped = true
-      clearInterval(iv)
-      void ctx.close()
-    }
+    return startRingtone()
   }, [incoming.length])
+
+  const ackMissed = useCallback(() => {
+    setMissed([])
+    void ackMissedCalls().catch(() => {})
+  }, [])
 
   const value = useMemo<PresenceCtx>(
     () => ({
       online,
-      isOnline: (id: string) => online.has(id),
-      startCall: (opts) => presenceRef.current?.startCall(opts),
+      isOnline: (id) => online.has(id),
+      startCall: (opts) => {
+        pendingStart.current = { kind: opts.kind, peerName: opts.peerName ?? null }
+        presenceRef.current?.startCall(opts)
+      },
+      directCall: (code) => calls[code] ?? loadDirectCall(code),
       missed,
-      ackMissed: dismissMissed,
+      ackMissed,
+      callBack: (mc) => {
+        pendingStart.current = { kind: mc.kind, peerName: mc.caller_name }
+        presenceRef.current?.startCall({ targets: [mc.caller_id], kind: mc.kind, title: t('shell.chamada.com', { nome: mc.caller_name }) })
+        ackMissed()
+      },
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [online, missed],
+    [online, missed, ackMissed, t, calls],
   )
 
   function accept(c: Ringing) {
     presenceRef.current?.accept(c.room_code)
+    rememberCall({
+      room_code: c.room_code,
+      kind: c.kind,
+      direction: 'in',
+      peer_name: c.caller_name,
+      ringing: [],
+      offline: [],
+      accepted: [],
+      declined: [],
+      answered_by_server: true,
+    })
     setIncoming((cur) => cur.filter((x) => x.room_code !== c.room_code))
     onEnterRoom(c.room_code, c.kind === 'voice')
   }
@@ -221,71 +261,36 @@ export default function PresenceProvider({
     setIncoming((cur) => cur.filter((x) => x.room_code !== c.room_code))
   }
 
-  function dismissMissed() {
-    setMissed([])
-    void ackMissedCalls().catch(() => {})
-  }
-  function callBack(mc: MissedCall) {
-    presenceRef.current?.startCall({ targets: [mc.caller_id], kind: mc.kind, title: t('status.chamadaCom', { nome: mc.caller_name }) })
-    dismissMissed()
-  }
-
   return (
     <Ctx.Provider value={value}>
       {children}
-      {missed.length > 0 && (
-        <div className="missed-layer">
-          <div className="missed-card">
-            <div className="missed-head">
-              <strong>{missed.length === 1 ? t('status.chamadaPerdida') : `${missed.length} chamadas perdidas`}</strong>
-              <button className="panel-close" onClick={dismissMissed}><CloseIcon /></button>
-            </div>
-            <div className="missed-list">
-              {missed.map((mc) => (
-                <div key={mc.id} className="missed-row">
-                  <span className="missed-kind">{mc.kind === 'voice' ? <VoiceCallIcon /> : <CamIcon />}</span>
-                  <span className="missed-info">
-                    <strong>{mc.caller_name}</strong>
-                    <small>{new Date(mc.created_at).toLocaleString('pt-PT')}</small>
-                  </span>
-                  <button className="missed-back" onClick={() => callBack(mc)}>{t('notif.ligarDeVolta')}</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-      {toasts.length > 0 && (
-        <div className="toast-layer">
-          {toasts.map((t) => (
-            <div key={t.id} className="toast" onClick={() => setToasts((cur) => cur.filter((x) => x.id !== t.id))}>
-              ✕ {t.text}
+      {incoming.length > 0 && (
+        <div className="call-ring-stack" role="alertdialog" aria-live="assertive" aria-label={t('shell.chamada.aEntrar')}>
+          {incoming.map((c) => (
+            <div key={c.room_code} className="call-ring dx-stage">
+              <Avatar name={c.caller_name} size={44} />
+              <div className="call-ring__who">
+                <span className="dx-eyebrow">{c.kind === 'voice' ? t('shell.chamada.voz') : t('shell.chamada.video')}</span>
+                <strong>{c.caller_name}</strong>
+                {c.title && <span className="dx-muted">{c.title}</span>}
+              </div>
+              <Button variant="danger" icon="phoneOff" onClick={() => decline(c)}>
+                {t('shell.chamada.recusar')}
+              </Button>
+              <Button variant="primary" icon={c.kind === 'voice' ? 'phone' : 'video'} onClick={() => accept(c)} autoFocus>
+                {t('shell.chamada.atender')}
+              </Button>
             </div>
           ))}
         </div>
       )}
-      {incoming.length > 0 && (
-        <div className="ring-layer">
-          {incoming.map((c) => (
-            <div key={c.room_code} className="ring-card">
-              <div className="ring-avatar pulse">{c.caller_name.slice(0, 2).toUpperCase()}</div>
-              <div className="ring-info">
-                <strong>{c.caller_name}</strong>
-                <span className="ring-kind">
-                  {c.kind === 'voice' ? <VoiceCallIcon /> : <CamIcon />}
-                  
-                  {t('status.chamadaDe')} {c.kind === 'voice' ? 'voz' : 'vídeo'}  {t('status.aReceber')}
-                </span>
-                <small>{c.title}</small>
-              </div>
-              <div className="ring-actions">
-                <button className="ring-btn decline" title={t('room.espera.recusar')} onClick={() => decline(c)}>
-                  <HangupIcon />
-                </button>
-                <button className="ring-btn accept" title={t('notif.atender')} onClick={() => accept(c)}>
-                  {c.kind === 'voice' ? <MicIcon /> : <CamIcon />}
-                </button>
-              </div>
+      {toasts.length > 0 && (
+        <div className="dx-toasts" role="status">
+          {toasts.map((x) => (
+            <div key={x.id} className="dx-toast">
+              <Icon name="info" />
+              <span style={{ flex: 1 }}>{x.text}</span>
+              <IconButton icon="x" bare label={t('ui.fechar')} onClick={() => setToasts((cur) => cur.filter((y) => y.id !== x.id))} />
             </div>
           ))}
         </div>

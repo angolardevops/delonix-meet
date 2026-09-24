@@ -53,7 +53,7 @@ export type ServerMsg =
   // no mesmo espaço físico fazem um ciclo de eco.
   | { type: 'joined'; peer_id: string; peers: PeerInfo[]; reconnect?: string; companion?: boolean }
   // A outra sessão desta conta saiu: já não há com quem fazer eco (R114).
-  | { type: 'companion_ended' }
+  | { type: 'companion-ended' }
   | { type: 'peer-reconnecting'; peer_id: string }
   /** Este nó vai fechar. Reconectar daqui a `reconnect_in_ms` (mais jitter)
    *  migra a sala para outro pod — ver `callRecovery`/Room.tsx. */
@@ -79,6 +79,7 @@ export type ServerMsg =
   | { type: 'denied' }
   | { type: 'force-muted' }
   | { type: 'force-cam-off' }
+  | { type: 'tally'; live: boolean }
   | { type: 'muted-all'; by: string; allow_unmute: boolean }
   | { type: 'host-changed'; from: string; to: string }
   | { type: 'kicked' }
@@ -120,6 +121,7 @@ export type ClientMsg =
   | { type: 'promote-admit'; to: string; allowed: boolean }
   | { type: 'force-mute'; to: string }
   | { type: 'force-cam'; to: string }
+  | { type: 'tally'; to: string; live: boolean }
   | { type: 'mute-all'; allow_unmute: boolean }
   | { type: 'chat-toggle'; on: boolean }
   | { type: 'transfer-host'; to: string }
@@ -238,4 +240,132 @@ export class Signaling {
     this.send({ type: 'leave' })
     this.ws.close()
   }
+}
+
+// ---------- frontend/b1-sala ----------
+//
+// Tipos novos da sinalização da sala. Ficam aqui em baixo (e não dentro das
+// uniões de cima) para a integração com os outros ramos ser trivial: os
+// `interface` re-declarados FUNDEM-SE com os de cima, e as mensagens novas
+// vivem em uniões próprias com `sendB1`/`onB1` para as usar.
+
+export type Role = 'host' | 'cohost' | 'speaker' | 'broadcast' | 'attendee'
+export type Origin = 'sso' | 'password' | 'guest' | 'pstn' | 'bot'
+export type WbKind = 'stroke' | 'text' | 'note' | 'shape'
+
+export interface PeerInfo {
+  /** Papel. Só `host` e `cohost` mudam permissões no servidor. */
+  role?: Role
+  /** Origem, decidida no servidor a partir do token. */
+  origin?: Origin
+  /** Cargo na organização do dono da sala, se houver. */
+  title?: string
+}
+
+export interface WbStroke {
+  /** Pode ser gerado pelo cliente (para apagar/mover o que desenhou); ausente → o servidor gera. */
+  id?: string
+  kind?: WbKind
+  /** Texto de `text`/`note` (obrigatório nesses). */
+  text?: string
+  /** Forma de `shape`: os dois pontos são os cantos. */
+  shape?: 'rect' | 'ellipse' | 'line' | 'arrow'
+  /** Autor — carimbado pelo servidor; o que o cliente mandar é ignorado. */
+  by?: string
+  /** Página (0 = primeira). */
+  page?: number
+  /** Pressão por ponto, 0..1, mesmo comprimento de `pts`. */
+  p?: number[]
+}
+
+export interface QaView {
+  /** Só os anfitriões recebem perguntas escondidas. */
+  hidden?: boolean
+  spotlight?: boolean
+}
+
+export interface LiveDestination {
+  label: string
+  /** `connecting` | `live` | `error` | `stopped` */
+  state: string
+  kbps?: number
+}
+
+export type ServerMsgB1 =
+  /** `joined` passou a trazer o início da sessão (epoch ms; 0 = desconhecido). */
+  | { type: 'joined'; peer_id: string; peers: PeerInfo[]; reconnect?: string; companion?: boolean; started_at?: number }
+  /** `to`/`to_username`: conversa directa (só chega a quem a recebe). */
+  | { type: 'chat'; from: string; username: string; text: string; id?: string; at?: number; reply_to?: string; to?: string; to_username?: string }
+  /** Só para quem enviou com `client_id`. */
+  | { type: 'chat-sent'; client_id: string; id: string; at: number }
+  /** Estado completo das reacções de uma mensagem. */
+  | { type: 'chat-reactions'; id: string; counts: Record<string, number> }
+  | { type: 'peer-role'; peer_id: string; role: Role; can_admit: boolean }
+  | { type: 'spotlight'; peer: string | null }
+  | { type: 'live'; on: boolean; destinations: LiveDestination[]; since: number | null }
+  | {
+      type: 'room-settings'
+      locked: boolean
+      host_share_only: boolean
+      chat_on?: boolean
+      allow_unmute?: boolean
+      waiting_room?: boolean
+    }
+  | { type: 'wb-state'; strokes: WbStroke[] }
+  | { type: 'wb-erase'; id: string }
+  | { type: 'wb-transform'; id: string; dx: number; dy: number }
+  | { type: 'wb-update'; id: string; text: string }
+  | { type: 'wb-cursor'; from: string; x: number; y: number; laser: boolean; input?: 'mouse' | 'pen' | 'touch' }
+  | { type: 'wb-pages'; count: number; current: number }
+  | { type: 'wb-writers'; restricted: boolean; writers: string[] }
+  | { type: 'announcement'; from: string; text: string; at: number }
+
+export type ClientMsgB1 =
+  /** `to`: `peer_id` de quem recebe uma conversa directa (tem de estar na sala). */
+  | { type: 'chat'; text: string; reply_to?: string | null; client_id?: string | null; to?: string | null }
+  | { type: 'chat-react'; id: string; emoji: string }
+  /** Só anfitrião. `host` não se dá por aqui (é o `transfer-host`). */
+  | { type: 'set-role'; to: string; role: Exclude<Role, 'host'> }
+  /** Só anfitrião. `null` limpa. */
+  | { type: 'spotlight'; peer: string | null }
+  /** Anfitrião ou co-anfitrião. */
+  | { type: 'admit-all' }
+  /** Só anfitrião. */
+  | { type: 'waiting-room'; on: boolean }
+  /** Só anfitrião. `hidden` por omissão `true`. */
+  | { type: 'qa-hide'; id: string; hidden?: boolean }
+  /** Só anfitrião. `null` limpa. */
+  | { type: 'qa-spotlight'; id: string | null }
+  | { type: 'wb-stroke'; stroke: WbStroke }
+  /** Autor ou anfitrião. */
+  | { type: 'wb-erase'; id: string }
+  | { type: 'wb-transform'; id: string; dx: number; dy: number }
+  | { type: 'wb-update'; id: string; text: string }
+  /** Efémero; o servidor trava a ~20/s por emissor. */
+  | { type: 'wb-cursor'; x: number; y: number; laser?: boolean; input?: 'mouse' | 'pen' | 'touch' }
+  /** Quem pode escrever. */
+  | { type: 'wb-add-page' }
+  /** Anfitrião ou apresentador. */
+  | { type: 'wb-page'; page: number }
+  /** Só anfitrião. */
+  | { type: 'wb-lock'; on: boolean }
+  /** Só anfitrião. */
+  | { type: 'wb-grant'; to: string; allowed: boolean }
+  | { type: 'breakouts-create'; count: number; minutes: number | null; assign?: 'auto' | 'manual' }
+  /** Só anfitrião: vai para a sala principal e todas as salas de grupo. */
+  | { type: 'breakouts-broadcast'; text: string }
+
+/** Envia uma mensagem nova da sala pelo mesmo socket. */
+export function sendB1(sig: Signaling, msg: ClientMsgB1) {
+  sig.send(msg as unknown as ClientMsg)
+}
+
+/** Subscreve uma mensagem nova da sala. */
+export function onB1<T extends ServerMsgB1['type']>(
+  sig: Signaling,
+  type: T,
+  handler: (msg: Extract<ServerMsgB1, { type: T }>) => void,
+) {
+  const on = sig.on as unknown as (this: Signaling, t: string, h: (msg: unknown) => void) => void
+  on.call(sig, type, handler as (msg: unknown) => void)
 }

@@ -21,7 +21,7 @@ const sala=(await j(`${API}/api/rooms`,{token:tok,method:'POST',body:JSON.string
 const jr=(await j(`${API}/api/rooms/${sala.code}/join`,{token:tok,method:'POST'})).j
 
 const b=await chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']})
-const p=await (await b.newContext({ ignoreHTTPSErrors: true })).newPage()
+const p=await (await b.newContext({ locale: 'pt-PT', ignoreHTTPSErrors: true })).newPage()
 const avisos=[]
 await p.exposeFunction('__drenou', (ms)=>avisos.push(ms))
 await p.addInitScript(()=>{ window.__marcarDrain = true })

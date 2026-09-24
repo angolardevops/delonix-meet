@@ -13,4 +13,9 @@
   <X-PRE-PROCESS cmd="set" data="delonix_voice_secret=$${VOICE_INTERNAL_SECRET}"/>
   <!-- SRTP obrigatório por omissão em todos os perfis. -->
   <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
+
+  <!-- Ramais internos (Fase 1, ver server/src/ramais.rs) — porta SIP do
+       perfil "internal" (sip_profiles/internal.xml), DISTINTA da do
+       Kamailio (5060/5061), que continua só para o trunk PSTN. -->
+  <X-PRE-PROCESS cmd="set" data="delonix_ramais_sip_port=$${DELONIX_RAMAIS_SIP_PORT}"/>
 </include>

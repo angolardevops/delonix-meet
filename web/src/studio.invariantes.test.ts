@@ -5,7 +5,7 @@
  * com câmara e ecrã falsos. Estes testes guardam as decisões que um `git
  * revert` distraído desfaz sem nada ficar vermelho.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AVATAR_INICIAL, ECRA_PARA_GRAVACAO, RECORTE_INTEIRO } from './studio/compositor'
@@ -55,8 +55,10 @@ describe('o recorte é em fracções, não em pixéis', () => {
   it('o seletor guarda fracções', () => {
     // Guardar pixéis da pré-visualização partia o recorte assim que a janela
     // mudasse de tamanho — a pré-visualização e o canvas de gravação têm
-    // tamanhos diferentes.
-    const s = readCodigo('web/src/pages/Studio.tsx')
+    // tamanhos diferentes. Na UI nova o seletor vive no seu componente
+    // (`studio/RegionPicker.tsx`), e a página tem de o usar.
+    expect(readCodigo('web/src/pages/Studio.tsx')).toContain("from '../studio/RegionPicker'")
+    const s = readCodigo('web/src/studio/RegionPicker.tsx')
     expect(s).toContain('(e.clientX - r.left) / r.width')
     expect(s).toContain('(e.clientY - r.top) / r.height')
   })
@@ -99,7 +101,16 @@ describe('a gravação não sai vazia', () => {
 
 describe('o estúdio não depende do caminho de media da sala', () => {
   it('não importa webrtc, signaling nem e2ee', () => {
-    for (const f of ['web/src/pages/Studio.tsx', 'web/src/studio/compositor.ts']) {
+    // Os painéis `studio/*.tsx` da UI nova entram na mesma regra: um import
+    // da sala escondido num sub-componente puxava o mesmo caminho de media.
+    // Com o palco (layouts, cenas, mistura, legendas) a regra estende-se aos
+    // módulos `.ts` do estúdio — um hook é tão capaz de arrastar o caminho de
+    // media como um painel.
+    const paineis = readdirSync(join(root, 'web/src/studio'))
+      .filter((f) => /\.tsx?$/.test(f) && !f.endsWith('.test.ts'))
+      .map((f) => `web/src/studio/${f}`)
+    expect(paineis.length).toBeGreaterThan(0)
+    for (const f of ['web/src/pages/Studio.tsx', 'web/src/studio/compositor.ts', ...paineis]) {
       const s = readCodigo(f)
       for (const mod of ['webrtc', 'signaling', 'e2ee']) {
         expect(s).not.toMatch(new RegExp(`from '.*/${mod}'`))
@@ -111,6 +122,107 @@ describe('o estúdio não depende do caminho de media da sala', () => {
     const app = readCodigo('web/src/App.tsx')
     expect(app).toContain("const Studio = lazy(() => import('./pages/Studio'))")
     expect(app).not.toMatch(/^import Studio from/m)
+  })
+})
+
+describe('a sala de convidados é OPCIONAL e carrega à parte', () => {
+  // Receber convidados precisa de sinalização e SFU; gravar uma aula sozinho
+  // não. A sala entra por `lazy()` num chunk próprio, e é o único sítio do
+  // Estúdio onde `signaling`/`webrtc` aparecem — a regra acima continua a
+  // valer para tudo o que o Estúdio carrega à partida.
+  const pagina = () => readCodigo('web/src/pages/Studio.tsx')
+
+  it('a página só a conhece por lazy(import())', () => {
+    expect(pagina()).toContain("const SalaDoEstudio = lazy(() => import('./studio/SalaDoEstudio'))")
+    expect(pagina()).not.toMatch(/^import [^\n]*SalaDoEstudio/m)
+    expect(pagina()).not.toMatch(/^import [^\n]*useLigacaoDoEstudio/m)
+  })
+
+  it('e só a monta quando a pessoa pede', () => {
+    expect(pagina()).toMatch(/\{salaAberta \? \(\s*<Suspense/)
+  })
+
+  it('o chunk da sala não casa com o padrão do precache do Estúdio', () => {
+    // O precache escolhe `assets/Studio-*.js` e o seu FECHO ESTÁTICO. Um
+    // `import()` dinâmico não entra nos `imports` do Rollup, e o nome do
+    // chunk (`SalaDoEstudio-*`) não casa com o padrão.
+    const cfg = readCodigo('web/vite.config.ts')
+    const padrao = cfg.match(/const estudio = nomes\.filter\(\(f\) => (\/.*\/)\.test\(f\)\)/)?.[1]
+    expect(padrao).toBeTruthy()
+    const re = new RegExp(padrao!.slice(1, -1))
+    expect(re.test('assets/Studio-abc123.js')).toBe(true)
+    expect(re.test('assets/SalaDoEstudio-abc123.js')).toBe(false)
+  })
+
+  it('a queda da sala NÃO recarrega a página — levava a gravação e o directo', () => {
+    // O `useCallSession` da sala recarrega quando o socket cai. No Estúdio,
+    // isso destruía uma gravação a decorrer sem aviso.
+    const l = readCodigo('web/src/pages/studio/useLigacaoDoEstudio.ts')
+    expect(l).not.toContain('location.reload')
+    expect(l).toContain("setEstado('caiu')")
+  })
+
+  it('a chamada só arranca depois de `joined` (R1/R2)', () => {
+    const l = readCodigo('web/src/pages/studio/useLigacaoDoEstudio.ts')
+    expect(l).toContain('makeCallHolderStart(')
+    const joined = l.indexOf("sinal.on('joined'")
+    expect(joined).toBeGreaterThan(-1)
+    expect(l.slice(joined, joined + 400)).toContain('holder.start()')
+  })
+})
+
+describe('a mistura tem faders de verdade', () => {
+  const c = () => readCodigo('web/src/studio/compositor.ts')
+
+  it('três GainNode de barramento, cada um ligado ao mestre, mais um GainNode por convidado', () => {
+    // 3 fixos (palco/música/vídeo, criados uma vez em montarFluxo) + 1 padrão
+    // de código por convidado (criado sob procura em ligarConvidadoAoGrafo,
+    // um por convidado em tempo de execução, mas um só sítio no ficheiro) —
+    // o fader por convidado É um GainNode a mais, de propósito.
+    expect(c().match(/this\.audioCtx\.createGain\(\)/g)?.length).toBe(4)
+    // Os três barramentos já não vão direitos ao destino: passam pelo
+    // nivelador/limitador mestre primeiro (ver o teste da dinâmica, abaixo).
+    expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.compressorMestre)')
+  })
+
+  it('a dinâmica mestre fica entre os barramentos e o destino, com um medidor na saída', () => {
+    // Um barramento sozinho não pode saturar o que se grava/emite — por
+    // isso a cadeia é OBRIGATÓRIA entre a soma dos três e o `destino`, não
+    // opcional nem contornável por um caminho directo.
+    expect(c()).not.toMatch(/this\.(ganhoPalco|ganhoMusica|ganhoVideo)\.connect\(this\.destino\)/)
+    expect(c()).toContain('this.compressorMestre.connect(this.limiterMestre)')
+    expect(c()).toContain('this.limiterMestre.connect(this.destino)')
+    expect(c()).toContain('this.limiterMestre.connect(this.analiserMestre)')
+  })
+
+  it('as fontes ligam-se ao GANHO, nunca direitas ao destino', () => {
+    // Uma fonte ligada ao destino passava por cima do fader — que mexia sem
+    // efeito nenhum. É o «campo que o sistema ignora» em forma de áudio.
+    expect(c()).not.toMatch(/(micFonte|ecraFonte|musicaFonte|c\.audio)\.connect\(this\.destino\)/)
+    expect(c()).toContain('this.micFonte.connect(this.ganhoPalco)')
+    expect(c()).toContain('this.ecraFonte.connect(this.ganhoVideo)')
+    expect(c()).toContain('this.musicaFonte.connect(this.ganhoMusica)')
+    // O convidado tem fader PRÓPRIO agora: a fonte liga ao gain dele, e é
+    // esse gain — não a fonte directamente — que liga ao barramento «Palco».
+    expect(c()).toContain('c.audio.connect(c.gain)')
+    expect(c()).toContain('c.gain.connect(this.ganhoPalco)')
+  })
+
+  it('a qualidade não muda com a gravação ou o directo a decorrer', () => {
+    // Trocar o canvas por baixo de um fluxo capturado dava um ficheiro com
+    // duas resoluções.
+    expect(c()).toMatch(/definirQualidade\(p: PerfilDeQualidade\): boolean \{\s*if \(this\.consumidores > 0\) return false/)
+  })
+
+  it('o microfone escolhido chega à mistura', () => {
+    expect(readCodigo('web/src/studio/usePalco.ts')).toContain('compRef.current?.trocarMicrofone(id)')
+    expect(c()).toContain('deviceId: this.microfoneId ? { exact: this.microfoneId } : undefined')
+  })
+})
+
+describe('as legendas no palco são locais', () => {
+  it('o Transcriber arranca com preferLocal (sem Web Speech da Google)', () => {
+    expect(readCodigo('web/src/studio/useLegendas.ts')).toMatch(/tr\.start\([^)]*, true\)/)
   })
 })
 
@@ -159,7 +271,10 @@ describe('o corte é de pouco recurso', () => {
 
   it('degrada com aviso onde o WebCodecs não existe', () => {
     expect(readCodigo('web/src/studio/editor.ts')).toContain('export function cortesSuportados()')
-    expect(readCodigo('web/src/pages/Studio.tsx')).toContain('cortesSuportados()')
+    expect(readCodigo('web/src/pages/Studio.tsx')).toContain('podeCortar={cortesSuportados()}')
+    // «Com aviso» quer dizer um aviso NO ECRÃ, não só esconder os cursores.
+    const edicao = readCodigo('web/src/studio/EditPanel.tsx')
+    expect(edicao).toMatch(/!podeCortar \? \(\s*<Alert tone="warning">\{t\('studio\.edicao\.semWebCodecs'\)\}<\/Alert>/)
   })
 })
 
@@ -266,11 +381,15 @@ describe('o corte degrada em vez de arrastar', () => {
 })
 
 describe('as três línguas têm as chaves do estúdio', () => {
+  // Os dicionários passaram a um ficheiro por área: o bloco `studio` é
+  // `locales/<língua>/studio.ts`, composto no `index.ts`, e a entrada do rail
+  // é `shell.nav.estudio`.
   for (const loc of ['pt', 'en', 'fr']) {
     it(loc, () => {
-      const s = read(`web/src/locales/${loc}.ts`)
-      expect(s).toContain('  studio: {')
-      expect(s).toMatch(/^\s+studio: '/m) // nav.studio
+      const s = read(`web/src/locales/${loc}/studio.ts`)
+      expect(s).toMatch(/^export default \{/)
+      expect(read(`web/src/locales/${loc}/index.ts`)).toMatch(/import studio from '\.\/studio'/)
+      expect(read(`web/src/locales/${loc}/shell.ts`)).toMatch(/^\s+estudio: '/m) // nav
       for (const k of ['gravar:', 'regiao:', 'posicao:', 'guardar:']) expect(s).toContain(k)
     })
   }

@@ -4,13 +4,14 @@
 //
 // Uso:  BASE=http://127.0.0.1:4200 node e2e/offline.mjs
 import { chromium } from '@playwright/test'
+import { texto } from './estudio-textos.mjs'
 
 const BASE = process.env.BASE ?? 'http://127.0.0.1:4200'
 let falhas = 0
 const ok = (n, c, d = '') => { console.log(`${c ? '  ok  ' : ' FALHA'}  ${n}${d ? `  — ${d}` : ''}`); if (!c) falhas++ }
 
 const browser = await chromium.launch()
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } })
+const ctx = await browser.newContext({ locale: 'pt-PT', viewport: { width: 1280, height: 860 } })
 const page = await ctx.newPage()
 
 console.log('\ncom rede')
@@ -74,7 +75,7 @@ console.log('\na interface reage')
   await p3.goto(`${BASE}/#/studio`)
   await p3.reload()
   const chegou = await p3
-    .waitForSelector('.studio-canvas', { timeout: 20000 })
+    .waitForSelector('[data-studio="canvas"]', { timeout: 20000 })
     .then(() => true)
     .catch(() => false)
   if (!chegou) {
@@ -89,19 +90,22 @@ console.log('\na interface reage')
     ok('o Estúdio abre sem rede', true)
   }
 
-  const antes = await p3.locator('.studio-offline').count()
+  const antes = await p3.locator('[data-studio="offline"]').count()
   await p3.evaluate(() => window.dispatchEvent(new Event('offline')))
-  await p3.waitForSelector('.studio-offline', { timeout: 5000 })
+  await p3.waitForSelector('[data-studio="offline"]', { timeout: 5000 })
     .then(() => ok('o aviso de «sem rede» aparece ao cair a ligação', true, `antes havia ${antes}`))
     .catch(() => ok('o aviso de «sem rede» aparece ao cair a ligação', false, 'não apareceu'))
 
-  const texto = await p3.locator('.studio-offline').textContent()
+  const aviso = await p3.locator('[data-studio="offline"]').textContent()
   // A promessa tem de ser a certa: grava e guarda no dispositivo. Se um dia
-  // alguém trocar isto por «funcionalidade indisponível», o teste avisa.
-  ok('e diz que se pode gravar na mesma', /grava/i.test(texto ?? ''), (texto ?? '').slice(0, 60) + '…')
+  // alguém trocar isto por «funcionalidade indisponível», o teste avisa. O
+  // texto mostrado tem de ser o da chave `studio.offline`, e a chave tem de
+  // continuar a prometer que se grava (em português, «grava»).
+  ok('mostra o aviso do dicionário', texto('offline').test(aviso ?? ''), (aviso ?? '').slice(0, 60) + '…')
+  ok('e diz que se pode gravar na mesma', /grava|records|enregistre/i.test(aviso ?? ''), (aviso ?? '').slice(0, 60) + '…')
 
   await p3.evaluate(() => window.dispatchEvent(new Event('online')))
-  await p3.waitForSelector('.studio-offline', { state: 'detached', timeout: 5000 })
+  await p3.waitForSelector('[data-studio="offline"]', { state: 'detached', timeout: 5000 })
     .then(() => ok('e desaparece quando a ligação volta', true))
     .catch(() => ok('e desaparece quando a ligação volta', false, 'ficou visível'))
 }

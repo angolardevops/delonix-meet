@@ -441,14 +441,14 @@ pub async fn delete(
 
 /// Para o directo (ADR-0003): os destinos guardados de uma org, com a chave
 /// DECIFRADA no servidor — para o `ffmpeg` a receber sem ela ter de voltar ao
-/// browser. `(url, chave, rótulo)`.
+/// browser. `(id, url, chave, rótulo, kind)`.
 pub(crate) async fn resolve_for_broadcast(
     state: &AppState,
     org_id: Uuid,
     ids: &[Uuid],
-) -> Result<Vec<(String, String, String)>, ApiError> {
-    let rows: Vec<(Uuid, String, String, String)> = sqlx::query_as(
-        "SELECT id, url, stream_key_sealed, label FROM stream_destinations
+) -> Result<Vec<(Uuid, String, String, String, String)>, ApiError> {
+    let rows: Vec<(Uuid, String, String, String, String)> = sqlx::query_as(
+        "SELECT id, url, stream_key_sealed, label, kind FROM stream_destinations
           WHERE org_id = $1 AND id = ANY($2) AND state = 'ready'",
     )
     .bind(org_id)
@@ -460,9 +460,9 @@ pub(crate) async fn resolve_for_broadcast(
     }
     let sb = secret_box(state)?;
     rows.into_iter()
-        .map(|(id, url, sealed, label)| {
+        .map(|(id, url, sealed, label, kind)| {
             let key = sb.open(&sealed, &rules::key_aad(&id))?;
-            Ok((url, key, label))
+            Ok((id, url, key, label, kind))
         })
         .collect()
 }

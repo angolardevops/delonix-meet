@@ -455,6 +455,37 @@
         },
         "type": "object"
       },
+      "AiStatus": {
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "model_installed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reachable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured",
+          "reachable",
+          "model"
+        ],
+        "type": "object"
+      },
       "ApiCreateRoomReq": {
         "properties": {
           "e2ee": {
@@ -618,6 +649,18 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "AssignExtensionDidReq": {
+        "properties": {
+          "did_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "did_id"
         ],
         "type": "object"
       },
@@ -966,6 +1009,80 @@
         ],
         "type": "object"
       },
+      "CaptionFull": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CaptionMeta"
+          },
+          {
+            "properties": {
+              "vtt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "vtt"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CaptionMeta": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lang": {
+            "type": "string"
+          },
+          "progress_pct": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "description": "`upload` | `transcript` | `translation`.",
+            "type": "string"
+          },
+          "status": {
+            "description": "`generating` | `draft` | `published` | `failed`.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "lang",
+          "source",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "ChatMessage": {
         "properties": {
           "created_at": {
@@ -1191,6 +1308,28 @@
         ],
         "type": "object"
       },
+      "CreateExtensionReq": {
+        "properties": {
+          "extension": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "member_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "member_id",
+          "extension"
+        ],
+        "type": "object"
+      },
       "CreateGatewayReq": {
         "properties": {
           "name": {
@@ -1283,81 +1422,100 @@
         "type": "object"
       },
       "CreateMeetingReq": {
-        "properties": {
-          "description": {
-            "type": "string"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions"
           },
-          "duration_min": {
-            "default": 30,
-            "description": "5-1440 minutos.",
-            "format": "int32",
-            "type": "integer"
-          },
-          "invitee_ids": {
-            "items": {
-              "format": "uuid",
-              "type": "string"
+          {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "duration_min": {
+                "default": 30,
+                "description": "5-1440 minutos.",
+                "format": "int32",
+                "type": "integer"
+              },
+              "invitee_ids": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "default": "video",
+                "description": "`video` (omissão) | `voice`.",
+                "type": "string"
+              },
+              "recurrence_byday": {
+                "description": "Dias da semana para freq=weekly: \"MON,WED,FRI\"",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_count": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "recurrence_freq": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "recurrence_interval": {
+                "default": 1,
+                "format": "int32",
+                "type": "integer"
+              },
+              "recurrence_until": {
+                "format": "date",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "room_ref": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sms_invite": {
+                "description": "Avisar os convidados por SMS ao agendar (sms_notify).",
+                "type": "boolean"
+              },
+              "sms_reminder_min": {
+                "description": "Lembrete por SMS N minutos antes (5–1440). Nulo = sem lembrete.",
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "description": "1-140 caracteres (depois de `trim`).",
+                "type": "string"
+              }
             },
-            "type": "array"
-          },
-          "kind": {
-            "default": "video",
-            "description": "`video` (omissão) | `voice`.",
-            "type": "string"
-          },
-          "recurrence_byday": {
-            "description": "Dias da semana para freq=weekly: \"MON,WED,FRI\"",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_count": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "recurrence_freq": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrence_interval": {
-            "default": 1,
-            "format": "int32",
-            "type": "integer"
-          },
-          "recurrence_until": {
-            "format": "date",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "room_ref": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "description": "1-140 caracteres (depois de `trim`).",
-            "type": "string"
+            "required": [
+              "title",
+              "starts_at"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "title",
-          "starts_at"
-        ],
-        "type": "object"
+        ]
       },
       "CreateMeetingResp": {
         "allOf": [
@@ -1365,9 +1523,23 @@
             "$ref": "#/components/schemas/Meeting"
           },
           {
+            "$ref": "#/components/schemas/SessionOptions"
+          },
+          {
             "properties": {
               "conflicts": {
                 "$ref": "#/components/schemas/Conflicts"
+              },
+              "sms": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MeetingSmsReport",
+                    "description": "Só presente quando o pedido trouxe opções de SMS."
+                  }
+                ]
               }
             },
             "required": [
@@ -1466,7 +1638,7 @@
             "type": "boolean"
           },
           "format": {
-            "description": "'normal' (por defeito) ou 'training' (ativa salas de grupo).",
+            "description": "'normal' (por defeito), 'training' (ativa salas de grupo), 'broadcast' ou 'hybrid'.",
             "type": [
               "string",
               "null"
@@ -1536,6 +1708,31 @@
           "room_code"
         ],
         "type": "object"
+      },
+      "CreatedExtension": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/VoiceExtensionInfo"
+          },
+          {
+            "properties": {
+              "sip_domain": {
+                "description": "Domínio SIP a usar junto com `sip_username`/`sip_password` na\nconfiguração da conta do softphone.",
+                "type": "string"
+              },
+              "sip_password": {
+                "description": "A password SIP em claro — copiar agora para o softphone; não é\nmostrada outra vez (só fica o hash e o HA1 na base).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sip_password",
+              "sip_domain"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Resposta de criação/regeneração: inclui a password SIP em claro, UMA VEZ —\no mesmo padrão de revelação única que `apikeys::CreatedKey` já usa."
       },
       "CreatedGateway": {
         "properties": {
@@ -1625,6 +1822,25 @@
         "required": [
           "ok",
           "room_deleted"
+        ],
+        "type": "object"
+      },
+      "Delivery": {
+        "properties": {
+          "queued": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/SkippedRecipient"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "queued",
+          "skipped"
         ],
         "type": "object"
       },
@@ -2144,7 +2360,7 @@
         "description": "Retrato do estado vivo de uma emissão (G1) — o que `GET\n/api/rooms/{room_code}/live/status` devolve.",
         "properties": {
           "bitrate_bps": {
-            "description": "Débito binário médio desde a última consulta (ou desde o arranque, na\nprimeira). `0` numa emissão recém-arrancada ou sem tráfego novo desde\na última amostra — não é sinal de falha por si só.",
+            "description": "Débito binário agregado agora (soma do `kbps` de cada destino no ar), em bit/s.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
@@ -2159,7 +2375,7 @@
             "type": "string"
           },
           "rotulos": {
-            "description": "Rótulos dos destinos desta emissão — não o estado de cada um: ver a\nnota em `Emissao::bytes`.",
+            "description": "Rótulos dos destinos desta emissão — não o estado de cada um: ver\n`report()` para o detalhe por destino.",
             "items": {
               "type": "string"
             },
@@ -2193,12 +2409,30 @@
               "null"
             ]
           },
+          "can_sms": {
+            "description": "Tem número e não desligou os SMS de contactos. Não diz se QUEM PERGUNTA\npode enviar: isso é a política da org.",
+            "type": "boolean"
+          },
           "email": {
             "type": "string"
           },
           "last_active": {
             "description": "Último evento de auditoria do membro (login, etc.). Só preenchido na listagem.",
             "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "description": "Telefone E.164 do membro NESTA org. Só o vê um admin ou o próprio; para\nos colegas vai `null` e basta-lhes `can_sms`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "description": "`odoo` | `manual` | `null` — quem escreveu o número (ver migração 0060).",
             "type": [
               "string",
               "null"
@@ -2223,7 +2457,8 @@
           "username",
           "email",
           "role",
-          "title"
+          "title",
+          "can_sms"
         ],
         "type": "object"
       },
@@ -2462,6 +2697,22 @@
         ],
         "type": "object"
       },
+      "ExtensionDidInfo": {
+        "properties": {
+          "did_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "e164": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "did_id",
+          "e164"
+        ],
+        "type": "object"
+      },
       "FieldViolation": {
         "properties": {
           "description": {
@@ -2511,6 +2762,18 @@
           "created_at",
           "online"
         ],
+        "type": "object"
+      },
+      "GenerateCaptionReq": {
+        "properties": {
+          "lang": {
+            "description": "Língua pedida. Omitida = a da transcrição.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "Group": {
@@ -2891,7 +3154,7 @@
             ]
           },
           "status": {
-            "description": "`pending` | `accepted` | `declined`.",
+            "description": "`pending` | `accepted` | `declined` | `tentative`.",
             "type": "string"
           },
           "user_id": {
@@ -3348,6 +3611,9 @@
       "MeetingItem": {
         "description": "Reunião enriquecida para a UI do calendário.",
         "properties": {
+          "auto_record": {
+            "type": "boolean"
+          },
           "description": {
             "type": "string"
           },
@@ -3355,9 +3621,25 @@
             "format": "int32",
             "type": "integer"
           },
+          "external_source": {
+            "description": "Sistema que criou a reunião, lido da referência externa\n(`odoo:<bd>:calendar.event:<id>` → `odoo`). `None` = criada no Meet.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
+            "description": "`meeting` | `training` | `broadcast` | `hybrid` (migração 0059).",
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
+          },
+          "invitee_count": {
+            "description": "Convidados (sem contar o anfitrião), qualquer que seja a resposta.",
+            "format": "int64",
+            "type": "integer"
           },
           "is_owner": {
             "type": "boolean"
@@ -3369,7 +3651,7 @@
             "type": "string"
           },
           "my_status": {
-            "description": "A minha resposta enquanto convidado: 'owner' | 'pending' | 'accepted' | 'declined'.",
+            "description": "A minha resposta enquanto convidado: 'owner' | 'pending' | 'accepted' | 'declined' | 'tentative'.",
             "type": "string"
           },
           "owner_id": {
@@ -3377,6 +3659,10 @@
             "type": "string"
           },
           "owner_name": {
+            "type": "string"
+          },
+          "record_quality": {
+            "description": "`2160p` | `1080p` | `720p` | `audio`.",
             "type": "string"
           },
           "recurrence_freq": {
@@ -3421,6 +3707,9 @@
           },
           "title": {
             "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -3435,7 +3724,12 @@
           "is_owner",
           "minutes",
           "my_status",
-          "recurrence_interval"
+          "recurrence_interval",
+          "format",
+          "waiting_room",
+          "auto_record",
+          "record_quality",
+          "invitee_count"
         ],
         "type": "object"
       },
@@ -3538,6 +3832,58 @@
         ],
         "type": "object"
       },
+      "MeetingSmsReport": {
+        "description": "O que o agendamento devolve sobre SMS.",
+        "properties": {
+          "invite": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Delivery"
+              }
+            ]
+          },
+          "reminder_min": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MemberPhone": {
+        "description": "O telefone do próprio em cada org activa (para o perfil).",
+        "properties": {
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "org_name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "org_id",
+          "org_name"
+        ],
+        "type": "object"
+      },
       "Message": {
         "properties": {
           "body": {
@@ -3546,6 +3892,13 @@
           "created_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "device_id": {
             "format": "uuid",
@@ -3567,6 +3920,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "meeting_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "operator": {
             "type": [
               "string",
@@ -3574,6 +3934,18 @@
             ]
           },
           "provider_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "description": "`direct` (admin, número escrito) | `contact` | `meeting_invite` | `meeting_reminder`.",
+            "type": "string"
+          },
+          "recipient_user_id": {
+            "description": "O contacto resolvido no servidor; `null` no modo `to`.",
+            "format": "uuid",
             "type": [
               "string",
               "null"
@@ -3608,7 +3980,8 @@
           "segments",
           "route",
           "status",
-          "created_at"
+          "created_at",
+          "purpose"
         ],
         "type": "object"
       },
@@ -4060,13 +4433,17 @@
           "is_admin": {
             "type": "boolean"
           },
+          "mobile_phone": {
+            "description": "`hr.employee.mobile_phone` / `work_phone`. Aditivos à v1: ausentes não\nmexem no número; `false`/`\"\"` apagam o que veio do Odoo; um número\neditado à mão no Delonix nunca é sobrescrito (migração 0060)."
+          },
           "name": {
             "type": "string"
           },
           "odoo_uid": {
             "format": "int32",
             "type": "integer"
-          }
+          },
+          "work_phone": {}
         },
         "required": [
           "odoo_uid",
@@ -4446,6 +4823,10 @@
           },
           "slug": {
             "type": "string"
+          },
+          "sms_send_policy": {
+            "description": "Quem pode enviar SMS a contactos da org: `admins` | `members`.",
+            "type": "string"
           }
         },
         "required": [
@@ -4456,7 +4837,8 @@
           "member_count",
           "role_id",
           "role_name",
-          "owner_missing"
+          "owner_missing",
+          "sms_send_policy"
         ],
         "type": "object"
       },
@@ -4506,6 +4888,38 @@
         ],
         "type": "object"
       },
+      "Origin": {
+        "description": "Como é que esta pessoa chegou à sala. Derivado no SERVIDOR (token de sala),\nnunca declarado pelo cliente.",
+        "enum": [
+          "sso",
+          "password",
+          "guest",
+          "pstn",
+          "bot"
+        ],
+        "type": "string"
+      },
+      "Participant": {
+        "properties": {
+          "joined_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "joined_at"
+        ],
+        "type": "object"
+      },
       "ParticipantConflict": {
         "properties": {
           "meeting_id": {
@@ -4534,6 +4948,36 @@
           "meeting_title",
           "starts_at"
         ],
+        "type": "object"
+      },
+      "PatchCaptionReq": {
+        "properties": {
+          "status": {
+            "description": "`draft` | `published`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "PatchChapterReq": {
+        "properties": {
+          "t_ms": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "PatchMeetingReq": {
@@ -4639,6 +5083,58 @@
           }
         ],
         "description": "A sala pessoal, o link para a partilhar e o dial-in, se houver."
+      },
+      "PhoneReq": {
+        "properties": {
+          "follow_directory": {
+            "description": "`true` apaga e devolve o campo à sincronização do directório.",
+            "type": "boolean"
+          },
+          "phone": {
+            "description": "Número (qualquer forma que `normalize_msisdn` aceite) ou `null` para apagar.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PhoneResp": {
+        "properties": {
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "PolicyBody": {
+        "properties": {
+          "send_policy": {
+            "description": "`admins` | `members`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "send_policy"
+        ],
+        "type": "object"
       },
       "ProvisionOrgReq": {
         "properties": {
@@ -4750,6 +5246,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "phones_rejected": {
+            "description": "Membros sincronizados cujo telefone do Odoo NÃO foi gravado (ex.: número\nfora de Angola, que o encaminhamento de SMS não serve). Aditivo à v1.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedUser"
+            },
+            "type": "array"
+          },
           "role_changes": {
             "description": "Papéis mudados por grupo do Odoo.",
             "minimum": 0,
@@ -4782,6 +5285,7 @@
           "created",
           "updated",
           "skipped",
+          "phones_rejected",
           "role_changes",
           "role_conflicts",
           "suspended"
@@ -4972,6 +5476,15 @@
         ],
         "type": "object"
       },
+      "PublishReq": {
+        "properties": {
+          "visibility": {
+            "description": "Só `org` por agora: publicar para a organização do autor.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "PutCapabilitiesReq": {
         "properties": {
           "values": {
@@ -4981,6 +5494,21 @@
         },
         "required": [
           "values"
+        ],
+        "type": "object"
+      },
+      "PutCaptionReq": {
+        "properties": {
+          "publish": {
+            "description": "Publicar já (por omissão fica rascunho).",
+            "type": "boolean"
+          },
+          "vtt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "vtt"
         ],
         "type": "object"
       },
@@ -5372,7 +5900,7 @@
             ]
           },
           "failure_reason": {
-            "description": "Causa em linguagem de utilizador. `None` quando `status = ready`.",
+            "description": "Causa em linguagem de utilizador. `None` quando não falhou.",
             "type": [
               "string",
               "null"
@@ -5425,7 +5953,7 @@
             ]
           },
           "status": {
-            "description": "`ready` = há ficheiro. `failed` = houve tentativa e não há nada.\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
+            "description": "Estado do FICHEIRO: `processing` (a compor), `transcribing` (há\nficheiro; o ai-worker está a transcrever), `ready`, `failed`.\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
             "type": "string"
           },
           "title": {
@@ -5652,7 +6180,7 @@
             "type": "string"
           },
           "status": {
-            "description": "`accepted` | `declined`.",
+            "description": "`accepted` | `declined` | `tentative`.",
             "type": "string"
           }
         },
@@ -6149,7 +6677,7 @@
             "type": "boolean"
           },
           "format": {
-            "description": "'normal' (por defeito) ou 'training' — só treino permite salas de grupo.",
+            "description": "`normal` (por defeito), `training` (só este permite salas de grupo),\n`broadcast` ou `hybrid`. Passa a `recordings.kind` das gravações da sala.",
             "type": "string"
           },
           "id": {
@@ -6339,6 +6867,35 @@
         ],
         "type": "object"
       },
+      "Segment": {
+        "description": "Um segmento da transcrição (forma guardada pelo ai-worker, migração 0054).",
+        "properties": {
+          "confidence": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "type": "object"
+      },
       "SendReq": {
         "properties": {
           "body": {
@@ -6348,13 +6905,81 @@
             "type": "string"
           },
           "to": {
-            "type": "string"
+            "description": "Modo admin: número escrito à mão.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "description": "Modo contacto: o servidor resolve o número do membro. O cliente NUNCA\nmanda o número neste modo.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "to",
           "body"
         ],
+        "type": "object"
+      },
+      "SessionInfo": {
+        "properties": {
+          "current": {
+            "description": "A sessão do pedido que fez este pedido — a UI não deixa revogar sem\naviso o dispositivo que está a olhar para o ecrã.",
+            "type": "boolean"
+          },
+          "ip_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "session_id",
+          "started_at",
+          "last_used_at",
+          "current"
+        ],
+        "type": "object"
+      },
+      "SessionOptions": {
+        "description": "Opções de sessão de uma reunião (migração 0059).",
+        "properties": {
+          "auto_record": {
+            "type": "boolean"
+          },
+          "format": {
+            "type": "string"
+          },
+          "record_quality": {
+            "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
+          }
+        },
         "type": "object"
       },
       "SkippedInvitee": {
@@ -6372,6 +6997,23 @@
         ],
         "type": "object"
       },
+      "SkippedRecipient": {
+        "properties": {
+          "reason": {
+            "description": "Código estável: `sms.recipient_opted_out`, `sms.recipient_no_phone`,\n`sms.recipient_not_member`, `sms.too_many_recipients`, `sms.no_route`,\n`sms.invalid_body`.",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "reason"
+        ],
+        "type": "object"
+      },
       "SkippedUser": {
         "properties": {
           "email": {
@@ -6385,6 +7027,46 @@
           "email",
           "reason"
         ],
+        "type": "object"
+      },
+      "SmsPreferences": {
+        "properties": {
+          "contact_opt_out": {
+            "type": "boolean"
+          },
+          "meeting_opt_out": {
+            "type": "boolean"
+          },
+          "phones": {
+            "description": "O telefone do próprio em cada org activa (editável pela rota acima).",
+            "items": {
+              "$ref": "#/components/schemas/MemberPhone"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contact_opt_out",
+          "meeting_opt_out",
+          "phones"
+        ],
+        "type": "object"
+      },
+      "SmsPreferencesReq": {
+        "properties": {
+          "contact_opt_out": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "meeting_opt_out": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "SodRule": {
@@ -6655,18 +7337,36 @@
       "StartResp": {
         "description": "Resposta de `POST /api/meetings/{id}/start`.",
         "properties": {
+          "auto_record": {
+            "type": "boolean"
+          },
           "code": {
             "description": "Código da sala a que o cliente se liga.",
+            "type": "string"
+          },
+          "format": {
+            "description": "`meeting` | `training` | `broadcast` | `hybrid` (migração 0059).",
             "type": "string"
           },
           "kind": {
             "description": "`video` | `voice`.",
             "type": "string"
+          },
+          "record_quality": {
+            "description": "`2160p` | `1080p` | `720p` | `audio`.",
+            "type": "string"
+          },
+          "waiting_room": {
+            "type": "boolean"
           }
         },
         "required": [
           "code",
-          "kind"
+          "kind",
+          "format",
+          "waiting_room",
+          "auto_record",
+          "record_quality"
         ],
         "type": "object"
       },
@@ -6917,6 +7617,56 @@
         ],
         "description": "O destino e a chave completa — só na criação e na rotação."
       },
+      "StudioReq": {
+        "properties": {
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/StudioSegmentReq"
+            },
+            "type": "array"
+          },
+          "task": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
+      "StudioSegmentReq": {
+        "properties": {
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "type": "object"
+      },
       "TimingsReq": {
         "description": "Tempos de estabelecimento de UMA sessão, reportados quando a media aparece.\n\nTodos os campos são `Option` e vêm do cliente: um marco que não aconteceu é\n`null`, e `null` significa «não sei», que é diferente de zero. Zero seria\numa medição («foi instantâneo») e enviesava as médias para baixo.",
         "properties": {
@@ -6972,6 +7722,67 @@
         },
         "type": "object"
       },
+      "Transcript": {
+        "properties": {
+          "confidence": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress_pct": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "`none` | `transcribing` | `ready` | `failed`.",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "transcribed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "recording_id",
+          "status",
+          "text",
+          "segments"
+        ],
+        "type": "object"
+      },
       "TranslateReq": {
         "properties": {
           "target": {
@@ -7017,6 +7828,23 @@
             ]
           },
           "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateExtensionReq": {
+        "properties": {
+          "active": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "label": {
             "type": [
               "string",
               "null"
@@ -7612,6 +8440,14 @@
             "description": "Número em +E.164.",
             "type": "string"
           },
+          "extension_id": {
+            "description": "Ramal a que este número está permanentemente atribuído (Fase 2, ver\n`ramais.rs::assign_extension_did`) — `None` enquanto o número está\nlivre para dial-in por PIN ou por atribuir. Não é uma FK gerida por\n`voice.rs`; só exposta aqui para a consola saber que números já não\nestão disponíveis para uma sala de voz efémera.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -7641,6 +8477,58 @@
           "market",
           "model",
           "provider",
+          "active",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "VoiceExtensionInfo": {
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "member_email": {
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "member_username": {
+            "description": "Nome do membro dono — junção com `users`, só para exibição na consola.",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sip_username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "member_id",
+          "member_username",
+          "member_email",
+          "extension",
+          "sip_username",
+          "label",
           "active",
           "created_at"
         ],
@@ -7753,6 +8641,44 @@
           "room_code",
           "pin",
           "media_backend"
+        ],
+        "type": "object"
+      },
+      "WaitingView": {
+        "description": "Quem está na sala de espera, visto por um anfitrião antes de entrar\n(`GET /api/rooms/{code}/waiting`).",
+        "properties": {
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Origin"
+              }
+            ]
+          },
+          "peer_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "since": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer_id",
+          "username",
+          "since"
         ],
         "type": "object"
       },
@@ -10084,6 +11010,114 @@
         ]
       }
     },
+    "/api/net-probe": {
+      "get": {
+        "operationId": "download",
+        "parameters": [
+          {
+            "description": "Quantos bytes de ruído devolver (limitado).",
+            "in": "query",
+            "name": "bytes",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Ruído incompressível, para medir a descarga."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "operationId": "upload",
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "items": {
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Quantos bytes chegaram e em quanto tempo, para medir a subida."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/orgs": {
       "get": {
         "operationId": "my_orgs",
@@ -10337,6 +11371,162 @@
         "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou\nomissas ficam ilimitadas; valores de voz fora do enum são ignorados.",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/ai/status": {
+      "get": {
+        "description": "Contrato (para o `#[utoipa::path]` na integração com o #81):\n- método/caminho: `GET /api/orgs/{org_id}/ai/status`, `org_id` UUID;\n- autenticação: sessão (`AuthUser`), membro activo da organização;\n- pedido: sem corpo;\n- `200` [`AiStatus`]: `{\"configured\": bool, \"reachable\": bool, \"model\": string,\n  \"model_installed\": bool|null, \"error\": string|null}` — sempre `200` para um\n  membro: é um estado, e a causa vai em `error`;\n- `401` sem sessão · `404` não é membro (não se confirma que a org existe).",
+        "operationId": "status",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiStatus"
+                }
+              }
+            },
+            "description": "Sempre 200 para um membro: é um estado, e a causa vai em `error`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/orgs/{org_id}/ai/status` — a IA local está pronta para o Estúdio?",
+        "tags": [
+          "studio"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/ai/suggestions": {
+      "post": {
+        "description": "Contrato (para o `#[utoipa::path]` na integração com o #81):\n- método/caminho: `POST /api/orgs/{org_id}/ai/suggestions`, `org_id` UUID;\n- autenticação: sessão (`AuthUser`), membro activo da organização;\n- pedido [`StudioReq`]: `{\"task\": \"summary\"|\"publication\"|\"fillers\",\n  \"language\"?: string, \"title\"?: string, \"segments\": [{\"start_ms\": i64,\n  \"end_ms\": i64, \"text\": string}]}`;\n- `200`: `summary` → `{\"summary\": string, \"chapters\": [{\"t_ms\": i64, \"title\": string}]}`;\n  `publication` → `{\"title\": string, \"description\": string, \"tags\": [string]}`;\n  `fillers` → `{\"terms\": [string]}`;\n- `400` corpo inválido · `401` sem sessão · `404` não é membro · `429` (+\n  `Retry-After`) a organização já tem as suas tarefas a correr · `503` IA\n  indisponível ou resposta inutilizável, com a causa em `{\"error\": string}`.",
+        "operationId": "suggestions",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudioReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "`summary` → `{summary, chapters}`; `publication` → `{title, description, tags}`; `fillers` → `{terms}`. Nada se guarda."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização já tem as suas tarefas a correr (`Retry-After`)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "IA local indisponível ou resposta inutilizável."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/orgs/{org_id}/ai/suggestions` — calcula uma sugestão da IA local\nsobre a transcrição enviada. Nada se guarda: é `200` com a sugestão, não\n`201`.",
+        "tags": [
+          "studio"
         ]
       }
     },
@@ -11992,6 +13182,585 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/extensions": {
+      "get": {
+        "operationId": "list_extensions",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VoiceExtensionInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Lista os ramais da org (admin). Nunca devolve hash nem HA1.",
+        "tags": [
+          "voice"
+        ]
+      },
+      "post": {
+        "operationId": "create_extension",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExtensionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedExtension"
+                }
+              }
+            },
+            "description": "A palavra-passe SIP sai UMA vez."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O número de ramal já existe na organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Cria um ramal para um membro da org (admin). Gera credenciais SIP novas e\ndevolve a password em claro UMA VEZ.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/extensions/{id}": {
+      "delete": {
+        "operationId": "delete_extension",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Ramal apagado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Apaga um ramal (admin).",
+        "tags": [
+          "voice"
+        ]
+      },
+      "patch": {
+        "operationId": "update_extension",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateExtensionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceExtensionInfo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Atualiza rótulo/estado (admin). O número e as credenciais SIP não se\nmudam aqui — reatribuir um número é apagar e criar de novo (evita um\nramal \"meio migrado\" entre dois membros).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/extensions/{id}/did": {
+      "delete": {
+        "operationId": "unassign_extension_did",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "DID desatribuído."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/orgs/{org_id}/extensions/{id}/did` (admin) — desatribui o DID\nde um ramal; o número volta a ficar livre para outro ramal ou para uma\nsala de voz efémera. Idempotente: sem DID atribuído, não é um erro.",
+        "tags": [
+          "voice"
+        ]
+      },
+      "put": {
+        "operationId": "assign_extension_did",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignExtensionDidReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtensionDidInfo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O DID já está atribuído."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/orgs/{org_id}/extensions/{id}/did` (admin) — atribui um DID\ndedicado da própria org a um ramal. A partir de agora quem ligar para\n`e164` cai DIRECTAMENTE neste ramal (ver `ivr_dialplan_did`), sem PIN e\nsem IVR. Rejeita: DID inexistente/inactivo, DID do pool partilhado ou de\noutra org, DID já atribuído a outro ramal, DID em uso por uma voice_room\nactiva (ver o comentário sobre não-atomicidade na migração 0065).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/extensions/{id}/regenerate-password": {
+      "post": {
+        "operationId": "regenerate_extension_password",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedExtension"
+                }
+              }
+            },
+            "description": "A nova palavra-passe SIP sai UMA vez; a anterior deixa de servir."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Regenera a password SIP de um ramal (admin) — mesma revelação única que a\ncriação. O `sip_username` (AOR) não muda; só a credencial.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/groups": {
       "get": {
         "operationId": "list_groups",
@@ -13341,6 +15110,104 @@
         "summary": "Altera papel, cargo e/ou filial de um membro (só admin).",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/members/{user_id}/phone": {
+      "put": {
+        "operationId": "put_member_phone",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Membro.",
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhoneResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Número que o encaminhamento não sabe usar."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/orgs/{org_id}/members/{user_id}/phone` — o próprio ou um admin.\nA validação é a mesma do envio (`normalize_msisdn`): não se guarda um número\nque o encaminhamento não sabe usar.",
+        "tags": [
+          "sms"
         ]
       }
     },
@@ -15135,11 +17002,13 @@
             "session": []
           }
         ],
+        "summary": "Admin vê as mensagens da org; um membro vê só as que ELE enviou, com o\nnúmero mascarado — é assim que acompanha o estado do SMS que mandou.",
         "tags": [
           "sms"
         ]
       },
       "post": {
+        "description": "- `{to, body}`: número escrito, **só admin**.\n- `{user_id, body}`: contacto — membro ACTIVO desta org, número resolvido no\n  servidor, sujeito à política da org (`sms_send_policy`) e ao consentimento\n  da pessoa.\n\nOrdem: quem pede → forma do pedido → permissão → idempotência → destinatário\n→ corpo e rota → quota. Tudo o que recusa corre antes de gastar quota.",
         "operationId": "send_message",
         "parameters": [
           {
@@ -15251,6 +17120,7 @@
             "session": []
           }
         ],
+        "summary": "`POST /api/orgs/{org_id}/sms/messages` — dois modos:",
         "tags": [
           "sms"
         ]
@@ -15326,6 +17196,150 @@
             "session": []
           }
         ],
+        "tags": [
+          "sms"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/sms/policy": {
+      "get": {
+        "operationId": "get_policy",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyBody"
+                }
+              }
+            },
+            "description": "Qualquer membro lê; a UI decide se mostra «Enviar SMS»."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/orgs/{org_id}/sms/policy` — qualquer membro lê (a UI decide se\nmostra «Enviar SMS»); só o admin muda.",
+        "tags": [
+          "sms"
+        ]
+      },
+      "put": {
+        "operationId": "put_policy",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`send_policy` desconhecido: é recusado, não ignorado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/orgs/{org_id}/sms/policy` `{send_policy}` — singleton, só admin.\nUm valor desconhecido é RECUSADO: é uma permissão, e ignorá-lo em silêncio\ndeixava o admin a julgar que a tinha mudado.",
         "tags": [
           "sms"
         ]
@@ -18858,6 +20872,588 @@
         ]
       }
     },
+    "/api/recordings/{recording_id}/captions": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CaptionMeta"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/captions`.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/captions/generate": {
+      "post": {
+        "description": "- Na língua da transcrição: constrói o VTT dos segmentos já — `201` + rascunho.\n- Noutra língua: tradução segmento a segmento pelo LLM local, em segundo\n  plano — `202` + a legenda em `generating`; o progresso lê-se em\n  `GET …/captions/{lang}`.",
+        "operationId": "generate",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateCaptionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptionMeta"
+                }
+              }
+            },
+            "description": "Na língua da transcrição: rascunho construído dos segmentos."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptionMeta"
+                }
+              }
+            },
+            "description": "Noutra língua: tradução em segundo plano; o progresso lê-se na legenda."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem transcrição com tempos, ou uma geração já a decorrer."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/recordings/{id}/captions/generate`.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/captions/{lang}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Língua BCP-47 (ex.: pt, en).",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Legenda apagada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/recordings/{id}/captions/{lang}`.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "get": {
+        "operationId": "get",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Língua BCP-47 (ex.: pt, en).",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptionFull"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/captions/{lang}` — metadados e o VTT.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "patch": {
+        "operationId": "patch",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Língua BCP-47 (ex.: pt, en).",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchCaptionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptionMeta"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PATCH /api/recordings/{id}/captions/{lang}` — publicar ou despublicar.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "put": {
+        "operationId": "put",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Língua BCP-47 (ex.: pt, en).",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutCaptionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptionMeta"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VTT inválido ou grande demais."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/recordings/{id}/captions/{lang}` — envia (ou substitui) um VTT.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/captions/{lang}/vtt": {
+      "get": {
+        "operationId": "vtt",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Língua BCP-47 (ex.: pt, en).",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/vtt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A legenda em WebVTT."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/captions/{lang}/vtt` — `text/vtt` para o `<track>`.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
     "/api/recordings/{recording_id}/chapters": {
       "get": {
         "operationId": "list_chapters",
@@ -19046,6 +21642,96 @@
         ]
       }
     },
+    "/api/recordings/{recording_id}/chapters/generate": {
+      "post": {
+        "description": "Síncrono com tecto de 300 s: é o LLM local, e o resultado é o que o ecrã\nmostra a seguir. Sem transcrição → `409`; sem LLM → `503`.",
+        "operationId": "generate",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {},
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Os capítulos depois de gerar; os manuais nunca se apagam."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem transcrição."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "IA local indisponível."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/recordings/{id}/chapters/generate` — gera (ou volta a gerar) os\ncapítulos automáticos e devolve a lista completa.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
     "/api/recordings/{recording_id}/chapters/{chapter_id}": {
       "delete": {
         "operationId": "delete_chapter",
@@ -19174,6 +21860,110 @@
           }
         ],
         "summary": "Um capítulo. Quem vê a gravação.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "patch": {
+        "operationId": "patch",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Capítulo.",
+            "in": "path",
+            "name": "chapter_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchChapterReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "O capítulo: `{id, recording_id, t_ms, title, source, ...}`. Corrigir um capítulo torna-o manual."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Já existe um capítulo nesse instante."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PATCH /api/recordings/{id}/chapters/{chapter_id}` — corrigir um capítulo\ntorna-o manual (a próxima geração automática já não lhe toca).",
         "tags": [
           "recordings"
         ]
@@ -19664,6 +22454,150 @@
         ]
       }
     },
+    "/api/recordings/{recording_id}/details": {
+      "get": {
+        "operationId": "details",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingItem"
+                }
+              }
+            },
+            "description": "Uma gravação da biblioteca, para o leitor em página inteira."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Uma gravação da biblioteca, para o leitor em página inteira.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/participants": {
+      "get": {
+        "operationId": "recording_participants",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Itens por página.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Cursor da página seguinte.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Página `{items: [Participant], next_page_token}`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/participants` — quem esteve na sala da gravação.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
     "/api/recordings/{recording_id}/public-link": {
       "delete": {
         "operationId": "revoke_link",
@@ -19866,6 +22800,84 @@
           }
         ],
         "summary": "Cria (ou substitui) um link público de partilha. Substituir roda o token:\no link anterior deixa de funcionar.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/publish": {
+      "post": {
+        "operationId": "publish",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingItem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/recordings/{id}/publish` — publica para a organização do autor.",
         "tags": [
           "recordings"
         ]
@@ -20100,6 +23112,276 @@
           }
         ],
         "summary": "Remove a partilha com um utilizador (só o dono).",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/thumbnail": {
+      "get": {
+        "operationId": "thumbnail",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Miniatura JPEG gerada pelo servidor."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/thumbnail` — JPEG gerado pelo servidor.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/transcript": {
+      "get": {
+        "operationId": "transcript",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transcript"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/transcript` — texto e segmentos com tempos.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/unpublish": {
+      "post": {
+        "operationId": "unpublish",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingItem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/recordings/{id}/unpublish` — volta a privada.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/views": {
+      "post": {
+        "operationId": "record_view",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Visualização registada (no máximo uma por pessoa e período)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/recordings/{id}/views` — regista uma visualização (uma por\npessoa por dia; repetir no mesmo dia não conta duas vezes).",
         "tags": [
           "recordings"
         ]
@@ -20677,6 +23959,91 @@
         ]
       }
     },
+    "/api/rooms/{room_code}/participants": {
+      "get": {
+        "operationId": "room_participants",
+        "parameters": [
+          {
+            "description": "Código da sala.",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Itens por página.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Cursor da página seguinte.",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Página `{items: [Participant], next_page_token}`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/rooms/{code}/participants` — só para quem esteve na sala.",
+        "tags": [
+          "rooms"
+        ]
+      }
+    },
     "/api/rooms/{room_code}/quality-samples": {
       "post": {
         "operationId": "post_qos",
@@ -20836,6 +24203,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Tipo de sessão declarado por quem carrega (o estúdio envia `broadcast`).\nSem ele, herda o formato da sala.",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -20924,6 +24300,86 @@
         "summary": "Carrega uma gravação da sala. O corpo é o ficheiro **em bruto** (não\nmultipart); o `Content-Type` não é verificado. Máximo 512 MiB. Só quem\nparticipou na sala pode carregar — senão **401**, não 403.",
         "tags": [
           "recordings"
+        ]
+      }
+    },
+    "/api/rooms/{room_code}/waiting": {
+      "get": {
+        "description": "Quem pode: o dono da sala, um co-anfitrião persistido (`room_admitters`), ou\nquem está AGORA na sala com papel de admitir. Quem tem acesso à sala mas não\nadmite leva `403`; quem nem acesso tem leva `404` (não se confirma nada).\n\nA fila vive na memória do pod da sala: chama-se com `?room={code}` para o\nbalanceador (hash por `$arg_room`) mandar o pedido a esse pod.",
+        "operationId": "room_waiting",
+        "parameters": [
+          {
+            "description": "Código da sala.",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "O mesmo código: chave de afinidade do balanceador (a fila vive na memória do pod da sala).",
+            "in": "query",
+            "name": "room",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WaitingView"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Quem espera, para o anfitrião ou co-anfitrião decidir antes de entrar."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Tem acesso à sala mas não admite."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Quem está na sala de espera — para o anfitrião ou co-anfitrião decidir\nANTES de entrar na reunião.",
+        "tags": [
+          "rooms"
         ]
       }
     },
@@ -21112,6 +24568,40 @@
           }
         ],
         "summary": "Atualiza os próprios dados: username e/ou password (cada campo é opcional).",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/me/export": {
+      "get": {
+        "operationId": "export_my_data",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Os dados pessoais, como anexo JSON."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Exportação dos próprios dados: perfil, organizações, salas criadas e\ngravações próprias — tudo lido das tabelas reais, para descarregar como\nficheiro. Não é um relatório de compliance formal, é o que a conta\nrealmente guarda sobre a pessoa.",
         "tags": [
           "users"
         ]
@@ -21786,6 +25276,176 @@
         "summary": "Método personalizado: dá à sala pessoal um código novo. O link antigo\ndeixa de abrir (`GET /api/rooms/{antigo}` → `404`). Um dial-in ligado ao\ncódigo antigo NÃO acompanha: fica no código antigo e deixa de aparecer.",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/api/users/me/sessions": {
+      "get": {
+        "operationId": "list_sessions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SessionInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Lista as sessões activas (uma por `session_id` não revogado e não\nexpirado) — cada refresh roda o `token_hash`, mas mantém o `session_id`,\npor isso há exactamente uma linha viva por dispositivo ligado.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/me/sessions/{session_id}": {
+      "delete": {
+        "operationId": "revoke_session",
+        "parameters": [
+          {
+            "description": "Sessão a revogar.",
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Sessão revogada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Termina uma sessão à distância (ex.: \"não reconheço este telemóvel\").\nRevoga a linha viva do `session_id`: o próximo refresh desse dispositivo\nfalha e ele tem de voltar a autenticar-se.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/me/sms-preferences": {
+      "get": {
+        "operationId": "get_preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsPreferences"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/users/me/sms-preferences`",
+        "tags": [
+          "sms"
+        ]
+      },
+      "put": {
+        "operationId": "put_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmsPreferencesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsPreferences"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/users/me/sms-preferences` — o consentimento é da PESSOA, vale em\ntodas as orgs, e só ela o muda (não há rota de admin para isto).",
+        "tags": [
+          "sms"
         ]
       }
     },

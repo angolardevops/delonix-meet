@@ -321,3 +321,170 @@ describe('Directo · o ciclo de vida', () => {
     expect(d.estado).toEqual({ fase: 'parado' })
   })
 })
+
+// ── Estado por destino (frontend/b1-emissao) ────────────────────────────────
+//
+// O servidor passou a ter um processo por destino e a mandar o estado de cada
+// um. O contrato de nomes está do lado de lá em `DestinationReport`
+// (`server/src/broadcast.rs`); aqui guarda-se a leitura, que tem de ser
+// tolerante: um servidor mais novo não pode partir um cliente mais velho, nem
+// um destino malformado esconder os outros.
+import { lerMensagemDoDirecto, resumirDestinos } from './directo'
+
+const destinoDoServidor = {
+  dest: 0,
+  rotulo: 'YouTube',
+  platform: 'youtube',
+  estado: 'no-ar',
+  kbps: 4500,
+  perdas: 0.2,
+  motivo: null,
+  tentativas: 0,
+  frames_descartados: 3,
+  bytes_enviados: 1024,
+}
+
+describe('lerMensagemDoDirecto', () => {
+  it('lê o estado dos destinos e passa os nomes do servidor para os do cliente', () => {
+    const m = lerMensagemDoDirecto(
+      JSON.stringify({ tipo: 'destinos', destinos: [{ ...destinoDoServidor, id: 'abc' }] }),
+    )
+    expect(m).toEqual({
+      tipo: 'destinos',
+      destinos: [
+        {
+          dest: 0,
+          id: 'abc',
+          rotulo: 'YouTube',
+          platform: 'youtube',
+          estado: 'no-ar',
+          kbps: 4500,
+          perdas: 0.2,
+          motivo: null,
+          tentativas: 0,
+          framesDescartados: 3,
+          bytesEnviados: 1024,
+        },
+      ],
+    })
+  })
+
+  it('lê a recusa/fim do servidor', () => {
+    expect(lerMensagemDoDirecto('{"erro":"nenhum destino ficou no ar"}')).toEqual({
+      tipo: 'erro',
+      motivo: 'nenhum destino ficou no ar',
+    })
+  })
+
+  it('ignora o que não conhece em vez de atirar', () => {
+    expect(lerMensagemDoDirecto('não é json')).toBeNull()
+    expect(lerMensagemDoDirecto('null')).toBeNull()
+    expect(lerMensagemDoDirecto('{"tipo":"espectadores","n":12}')).toBeNull()
+    expect(lerMensagemDoDirecto('{"tipo":"destinos","destinos":"x"}')).toBeNull()
+  })
+
+  it('um destino malformado sai sozinho; os outros ficam', () => {
+    const m = lerMensagemDoDirecto(
+      JSON.stringify({
+        tipo: 'destinos',
+        destinos: [
+          destinoDoServidor,
+          { ...destinoDoServidor, dest: 1, estado: 'desconhecido' },
+          { ...destinoDoServidor, dest: -1 },
+          'lixo',
+          { ...destinoDoServidor, dest: 2, estado: 'erro', motivo: 'recusou', kbps: -5, perdas: 'x' },
+        ],
+      }),
+    )
+    expect(m?.tipo).toBe('destinos')
+    const d = (m as { destinos: { dest: number; kbps: number; perdas: number; motivo: string | null }[] }).destinos
+    expect(d.map((x) => x.dest)).toEqual([0, 2])
+    expect(d[1]).toMatchObject({ kbps: 0, perdas: 0, motivo: 'recusou' })
+  })
+
+  it('um motivo vazio é «sem motivo»', () => {
+    const m = lerMensagemDoDirecto(
+      JSON.stringify({ tipo: 'destinos', destinos: [{ ...destinoDoServidor, motivo: '' }] }),
+    )
+    expect(m).toMatchObject({ destinos: [{ motivo: null }] })
+  })
+})
+
+describe('resumirDestinos', () => {
+  it('conta por estado e soma o débito só de quem está no ar', () => {
+    const base = lerMensagemDoDirecto(JSON.stringify({ tipo: 'destinos', destinos: [destinoDoServidor] }))
+    const um = (base as { destinos: Parameters<typeof resumirDestinos>[0] }).destinos[0]
+    const r = resumirDestinos([
+      um,
+      { ...um, dest: 1, kbps: 3000 },
+      { ...um, dest: 2, estado: 'parado', kbps: 999 },
+      { ...um, dest: 3, estado: 'erro' },
+    ])
+    expect(r).toEqual({ 'a-ligar': 0, 'no-ar': 2, parado: 1, erro: 1, total: 4, kbps: 7500 })
+  })
+})
+
+describe('urlDoDirecto · destinos guardados', () => {
+  it('um destino guardado vai SÓ pelo id: nem URL nem chave saem do browser', () => {
+    const q = new URL(
+      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [
+        { id: 'd-1', url: 'rtmp://nao-vai', chave: 'nao-vai', rotulo: 'Canal' },
+        { url: 'rtmp://x/live', chave: 'k' },
+      ]),
+    ).searchParams
+    expect(JSON.parse(q.get('destinos')!)).toEqual([{ id: 'd-1', rotulo: 'Canal' }, { url: 'rtmp://x/live', chave: 'k' }])
+    expect(q.get('destinos')).not.toContain('nao-vai')
+  })
+})
+
+describe('Directo · estado por destino', () => {
+  const estadoTexto = (destinos: unknown[]) => ({ data: JSON.stringify({ tipo: 'destinos', destinos }) })
+
+  it('guarda e anuncia o estado dos destinos que o servidor manda', async () => {
+    const { criados } = montarAmbiente()
+    const d = new Directo()
+    const vistos: number[] = []
+    d.aoMudarDestinos = (x) => vistos.push(x.length)
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
+    criados[0].onmessage?.(estadoTexto([destinoDoServidor, { ...destinoDoServidor, dest: 1, estado: 'erro' }]))
+    expect(vistos).toEqual([2])
+    expect(d.destinos.map((x) => x.estado)).toEqual(['no-ar', 'erro'])
+    // Uma trama binária ou desconhecida não mexe no que se sabe.
+    criados[0].onmessage?.({ data: new ArrayBuffer(1) })
+    criados[0].onmessage?.({ data: '{"tipo":"outra-coisa"}' })
+    expect(d.destinos).toHaveLength(2)
+  })
+
+  it('o estado a chegar durante o aceite também conta', async () => {
+    const { criados } = montarAmbiente()
+    const d = new Directo()
+    const p = d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
+    await Promise.resolve()
+    criados[0].onmessage?.(estadoTexto([destinoDoServidor]))
+    await p
+    expect(d.noAr).toBe(true)
+    expect(d.destinos).toHaveLength(1)
+  })
+
+  it('um fim pedido pelo servidor mostra a razão dele, não «caiu»', async () => {
+    const { criados } = montarAmbiente()
+    const d = new Directo()
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
+    criados[0].onmessage?.({ data: '{"erro":"nenhum destino ficou no ar — YouTube: chave errada"}' })
+    criados[0].onclose?.()
+    expect(d.estado).toEqual({ fase: 'erro', motivo: 'nenhum destino ficou no ar — YouTube: chave errada' })
+  })
+
+  it('começar de novo limpa o estado da emissão anterior', async () => {
+    const { criados } = montarAmbiente()
+    const d = new Directo()
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
+    criados[0].onmessage?.(estadoTexto([destinoDoServidor]))
+    criados[0].onmessage?.({ data: '{"erro":"x"}' })
+    await d.parar()
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
+    expect(d.destinos).toEqual([])
+    criados[1].onclose?.()
+    expect(d.estado).toEqual({ fase: 'erro', motivo: 'a ligação ao servidor caiu' })
+  })
+})

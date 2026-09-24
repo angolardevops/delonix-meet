@@ -49,6 +49,8 @@ pub struct OrgSummary {
     pub role_key: Option<String>,
     /// A org tem membros humanos activos e nenhum Proprietário activo.
     pub owner_missing: bool,
+    /// Quem pode enviar SMS a contactos da org: `admins` | `members`.
+    pub sms_send_policy: String,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -293,6 +295,17 @@ pub struct Employee {
     /// Último evento de auditoria do membro (login, etc.). Só preenchido na listagem.
     #[sqlx(default)]
     pub last_active: Option<DateTime<Utc>>,
+    /// Telefone E.164 do membro NESTA org. Só o vê um admin ou o próprio; para
+    /// os colegas vai `null` e basta-lhes `can_sms`.
+    #[sqlx(default)]
+    pub phone: Option<String>,
+    /// `odoo` | `manual` | `null` — quem escreveu o número (ver migração 0060).
+    #[sqlx(default)]
+    pub phone_source: Option<String>,
+    /// Tem número e não desligou os SMS de contactos. Não diz se QUEM PERGUNTA
+    /// pode enviar: isso é a política da org.
+    #[sqlx(default)]
+    pub can_sms: bool,
 }
 
 /// Sem `last_active` (só a listagem o traz, via subquery à parte). Estava
@@ -321,7 +334,8 @@ pub async fn role_in_org(
     user_id: Uuid,
 ) -> Result<Option<String>, ApiError> {
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+        "SELECT role FROM org_members
+         WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
     )
     .bind(org_id)
     .bind(user_id)
@@ -388,6 +402,26 @@ pub(crate) async fn insert_member_tx(
         .execute(&mut **tx)
         .await?;
     Ok(())
+}
+
+/// As organizações de que `user_id` é membro activo, com o seu papel e cargo
+/// (exportação dos próprios dados, `account.rs`).
+pub(crate) async fn memberships_for_export<T>(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Vec<T>, sqlx::Error>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+{
+    sqlx::query_as(
+        "SELECT o.id AS org_id, o.name AS org_name, m.role, m.title
+         FROM org_members m JOIN organizations o ON o.id = m.org_id
+         WHERE m.user_id = $1 AND m.archived_at IS NULL
+         ORDER BY o.name",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
 }
 
 pub(crate) fn slugify(name: &str) -> String {
@@ -486,12 +520,27 @@ pub async fn create_org(
     }
     let org = org.ok_or_else(|| ApiError::internal("could not allocate org slug"))?;
 
-    // O criador entra como admin.
-    sqlx::query("INSERT INTO org_members (org_id, user_id, role, title) VALUES ($1, $2, 'admin', 'Administrador')")
+    // Os dois papéis de sistema nascem com a organização — ver rbac.rs.
+    let (admin_role_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Administrador', TRUE) RETURNING id",
+    )
+    .bind(org.id)
+    .fetch_one(&state.db)
+    .await?;
+    sqlx::query("INSERT INTO org_roles (org_id, name, is_system) VALUES ($1, 'Membro', TRUE)")
         .bind(org.id)
-        .bind(auth.user_id)
         .execute(&state.db)
         .await?;
+
+    // O criador entra como admin.
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, role_id, title) VALUES ($1, $2, 'admin', $3, 'Administrador')",
+    )
+    .bind(org.id)
+    .bind(auth.user_id)
+    .bind(admin_role_id)
+    .execute(&state.db)
+    .await?;
 
     Ok(Json(org))
 }
@@ -504,7 +553,7 @@ const MY_ORGS_SQL: &str = r#"
            (SELECT COUNT(*) FROM org_members mm
              WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
            o.domain, o.retention_days, o.chat_retention_days,
-           o.max_groups, o.max_rooms, o.max_meetings,
+           o.max_groups, o.max_rooms, o.max_meetings, o.sms_send_policy,
            m.role_id, r.name AS role_name, r.system_key AS role_key,
            (EXISTS (SELECT 1 FROM org_members hm JOIN users hu ON hu.id = hm.user_id
                      WHERE hm.org_id = o.id AND hm.archived_at IS NULL
@@ -675,6 +724,28 @@ pub struct AddEmployeeReq {
     pub branch_id: Option<Uuid>,
 }
 
+/// Org-first: o email de quem entra (colaborador OU convidado) tem de ser do
+/// domínio da organização. Orgs legadas sem domínio definido (`email_domain`
+/// vazio) não são restringidas. Partilhado por `add_employee` e as duas
+/// entradas de convite (`create_invite`, `bulk_create_invites`) — a mesma
+/// regra em três sítios já ficou esquecida uma vez (ver comentário sobre a
+/// R25/`ForeignOrg` abaixo); não duplicar de novo.
+async fn require_org_domain(state: &AppState, org_id: Uuid, email: &str) -> Result<(), ApiError> {
+    let org_domain: Option<(String,)> =
+        sqlx::query_as("SELECT email_domain FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?;
+    if let Some((dom,)) = org_domain {
+        if !dom.is_empty() && email.split('@').nth(1) != Some(dom.as_str()) {
+            return Err(ApiError::BadRequest(format!(
+                "o email tem de ser do domínio da organização (@{dom})"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Adiciona um colaborador por email (só admin). Se a conta não existir, é
 /// criada (password por omissão quando omitida); se já for membro, actualiza
 /// papel, cargo e filial.
@@ -712,19 +783,7 @@ pub async fn add_employee(
     // impunha — mesma política de email, agora num só sítio (ADR-0004, Fase 2).
     delonix_meet_domain::identity::validation::validate_email(&email)
         .map_err(ApiError::BadRequest)?;
-    // Org-first: o email do colaborador tem de ser do domínio da organização.
-    let org_domain: Option<(String,)> =
-        sqlx::query_as("SELECT email_domain FROM organizations WHERE id = $1")
-            .bind(org_id)
-            .fetch_optional(&state.db)
-            .await?;
-    if let Some((dom,)) = org_domain {
-        if !dom.is_empty() && email.split('@').nth(1) != Some(dom.as_str()) {
-            return Err(ApiError::BadRequest(format!(
-                "o email tem de ser do domínio da organização (@{dom})"
-            )));
-        }
-    }
+    require_org_domain(&state, org_id, &email).await?;
     let role = req.role.as_deref().unwrap_or("member");
     if !matches!(role, "admin" | "member") {
         return Err(ApiError::BadRequest("role inválido".into()));
@@ -890,15 +949,24 @@ pub async fn list_employees(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<Vec<Employee>>, ApiError> {
-    require_member(&state, org_id, auth.user_id).await?;
-    let emps: Vec<Employee> = sqlx::query_as(&format!(
-        "SELECT {EMPLOYEE_COLUMNS},
-                  (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active
+    let is_admin = match role_in_org(&state, org_id, auth.user_id).await? {
+        Some(role) => role == "admin",
+        None => return Err(ApiError::NotFound),
+    };
+    // O número é dado pessoal: colegas sabem que existe (`can_sms`), não qual é.
+    let emps: Vec<Employee> = sqlx::query_as(
+        r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name,
+                  (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active,
+                  CASE WHEN $2 OR m.user_id = $3 THEN m.phone_e164 END AS phone,
+                  CASE WHEN $2 OR m.user_id = $3 THEN m.phone_source END AS phone_source,
+                  (m.phone_e164 IS NOT NULL AND NOT u.sms_contact_opt_out) AS can_sms
            FROM org_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN branches b ON b.id = m.branch_id
-           WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"
-    ))
+           WHERE m.org_id = $1 AND m.archived_at IS NULL ORDER BY u.username"#,
+    )
     .bind(org_id)
+    .bind(is_admin)
+    .bind(auth.user_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(emps))
@@ -1544,6 +1612,36 @@ pub(crate) fn quarantine_subject_in_org_sql(org: &str, subject: &str) -> String 
     )
 }
 
+// ---------- a regra de pertença como fragmento SQL ----------
+//
+// Há consultas que precisam da regra DENTRO de um JOIN (a biblioteca de
+// gravações filtra centenas de linhas numa ida à base). Em vez de a copiar
+// para esse módulo — que é como `archived_at` ficou esquecido da outra vez
+// (auditoria S3) —, a regra escreve-se aqui e os outros módulos pedem-na.
+//
+// Os argumentos são EXPRESSÕES SQL do próprio chamador (`$1`, `r.uploader_id`),
+// nunca texto do cliente.
+
+/// `viewer` é membro ACTIVO de uma organização a que `subject` pertence.
+///
+/// O sujeito não se filtra por `archived_at`: o dado de quem saiu continua a
+/// ser da organização (mesma regra do download, ver `recordings::can_download`).
+pub(crate) fn sql_active_member_with(viewer: &str, subject: &str) -> String {
+    format!(
+        "EXISTS(SELECT 1 FROM org_members me JOIN org_members o ON o.org_id = me.org_id \
+         WHERE me.user_id = {viewer} AND me.archived_at IS NULL AND o.user_id = {subject})"
+    )
+}
+
+/// `viewer` é admin ACTIVO de uma organização a que `subject` pertence.
+pub(crate) fn sql_active_admin_of(viewer: &str, subject: &str) -> String {
+    format!(
+        "EXISTS(SELECT 1 FROM org_members me JOIN org_members o ON o.org_id = me.org_id \
+         WHERE me.user_id = {viewer} AND me.role = 'admin' AND me.archived_at IS NULL \
+           AND o.user_id = {subject})"
+    )
+}
+
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
 /// Organizações a que um utilizador pertence (para disparar webhooks dos
 /// eventos das suas reuniões/gravações).
@@ -1615,6 +1713,119 @@ pub async fn primary_domain(state: &AppState, user_id: Uuid) -> String {
     .flatten()
     .map(|r| r.0)
     .unwrap_or_default()
+}
+
+// ---------- telefone dos membros e destinatários de SMS ----------
+
+/// Destinatário de SMS resolvido no servidor. Só existe para membros ACTIVOS da
+/// org (S3): um arquivado deixa de ser contacto no mesmo instante.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SmsRecipient {
+    pub user_id: Uuid,
+    pub phone_e164: Option<String>,
+    pub sms_contact_opt_out: bool,
+    pub sms_meeting_opt_out: bool,
+}
+
+/// Os membros activos de `org_id` entre `user_ids`, com número e consentimento.
+/// Quem não estiver na resposta não é membro activo desta org.
+pub(crate) async fn sms_recipients(
+    state: &AppState,
+    org_id: Uuid,
+    user_ids: &[Uuid],
+) -> Result<Vec<SmsRecipient>, ApiError> {
+    Ok(sqlx::query_as::<_, SmsRecipient>(
+        "SELECT m.user_id, m.phone_e164, u.sms_contact_opt_out, u.sms_meeting_opt_out
+         FROM org_members m JOIN users u ON u.id = m.user_id
+         WHERE m.org_id = $1 AND m.user_id = ANY($2) AND m.archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_ids)
+    .fetch_all(&state.db)
+    .await?)
+}
+
+/// Uma escrita MANUAL do telefone (o próprio ou um admin).
+pub(crate) enum PhoneWrite {
+    /// Número já normalizado, ou `None` para apagar. Fica `manual`: a
+    /// sincronização do directório deixa de lhe tocar.
+    Manual(Option<String>),
+    /// Apaga e devolve o campo ao directório (a próxima sincronização preenche).
+    FollowDirectory,
+}
+
+/// Grava o telefone de um membro activo. `false` se não for membro activo.
+pub(crate) async fn set_member_phone(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+    write: PhoneWrite,
+) -> Result<bool, ApiError> {
+    let (phone, source) = match write {
+        PhoneWrite::Manual(p) => (p, Some("manual")),
+        PhoneWrite::FollowDirectory => (None, None),
+    };
+    let res = sqlx::query(
+        "UPDATE org_members SET phone_e164 = $3, phone_source = $4, phone_updated_at = now()
+         WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(phone)
+    .bind(source)
+    .execute(&state.db)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// Telefone vindo da sincronização do directório (Odoo). A regra escrita na
+/// migração 0060: um número `manual` NUNCA é sobrescrito; um número `odoo`
+/// acompanha o directório, incluindo ser apagado quando o directório o apaga.
+/// Devolve `true` se mudou alguma coisa.
+pub(crate) async fn sync_member_phone_from_directory(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+    phone: Option<&str>,
+) -> Result<bool, ApiError> {
+    let res = sqlx::query(
+        "UPDATE org_members
+            SET phone_e164 = $3,
+                phone_source = CASE WHEN $3::text IS NULL THEN NULL ELSE 'odoo' END,
+                phone_updated_at = now()
+          WHERE org_id = $1 AND user_id = $2
+            AND phone_source IS DISTINCT FROM 'manual'
+            AND phone_e164 IS DISTINCT FROM $3::text",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(phone)
+    .execute(&state.db)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// O telefone do próprio em cada org activa (para o perfil).
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct MemberPhone {
+    pub org_id: Uuid,
+    pub org_name: String,
+    pub phone: Option<String>,
+    pub phone_source: Option<String>,
+}
+
+pub(crate) async fn member_phones_of_user(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Vec<MemberPhone>, ApiError> {
+    Ok(sqlx::query_as::<_, MemberPhone>(
+        "SELECT m.org_id, o.name AS org_name, m.phone_e164 AS phone, m.phone_source
+         FROM org_members m JOIN organizations o ON o.id = m.org_id
+         WHERE m.user_id = $1 AND m.archived_at IS NULL ORDER BY o.name",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await?)
 }
 
 // ---------- SSO Config (admin) ----------
@@ -3130,7 +3341,7 @@ pub(crate) async fn suspend_odoo_leavers(
 
 #[cfg(test)]
 mod tests {
-    use super::{slugify, OrgSettingsUpdated};
+    use super::*;
 
     /// O tipo que substituiu o `json!` (OpenAPI) serializa igual.
     #[test]

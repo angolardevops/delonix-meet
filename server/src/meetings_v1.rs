@@ -751,7 +751,10 @@ pub async fn patch(
             title = COALESCE($2, title),
             description = COALESCE($3, description),
             starts_at = COALESCE($4, starts_at),
-            duration_min = COALESCE($5, duration_min)
+            duration_min = COALESCE($5, duration_min),
+            -- Remarcada: o lembrete por SMS volta a estar por enviar.
+            sms_reminder_done_at = CASE WHEN $4 IS NOT NULL AND $4 <> starts_at
+                                        THEN NULL ELSE sms_reminder_done_at END
          WHERE id = $1
          RETURNING {MEETING_COLS}"
     ))
