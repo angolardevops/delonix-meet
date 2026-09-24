@@ -1,6 +1,7 @@
 -- Canais na sala (ADR-0010): quem se acrescenta a uma reunião por número —
 -- chamada de voz, SMS com PIN, convite WhatsApp — e o PIN de uso único.
--- Número de trabalho 0075 (faixa da frente D); renumerar na integração.
+-- Número de trabalho 0095, escolhido acima das migrações da main (0067 é a mais
+-- alta em b6b769d) e da faixa 0090–0094 da telefonia (frente C).
 
 CREATE TABLE room_dial_outs (
     id                 UUID PRIMARY KEY,

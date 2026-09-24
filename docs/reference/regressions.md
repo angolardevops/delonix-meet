@@ -2058,7 +2058,7 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Prova.** `dial_plan::tests::emergency_*`, `tests/telephony.rs::dial_plan_first_match_emergency_invariants_and_test` (inclui o `UPDATE` directo recusado pela base), e contra o FreeSWITCH real (`web/e2e/telefonia-freeswitch.mjs`): com o tronco a 1/1 canais a chamada normal é recusada e a de emergência passa.
 
-**Ficheiros.** `server/crates/delonix-meet-domain/src/telephony/dial_plan.rs`, `server/src/telephony_fs_xml.rs`, `server/src/telephony_cdr.rs`, `server/migrations/0066_telephony_dial_plan.sql`, `0068_telephony_call_records.sql`.
+**Ficheiros.** `server/crates/delonix-meet-domain/src/telephony/dial_plan.rs`, `server/src/telephony_fs_xml.rs`, `server/src/telephony_cdr.rs`, `server/migrations/0091_telephony_dial_plan.sql`, `0093_telephony_call_records.sql`.
 
 ### R211 — Um CDR reenviado cobrava a chamada duas vezes
 
@@ -2068,7 +2068,7 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Prova.** `tests/telephony.rs::cdr_ingestion_idempotent_priced_at_time_of_call_listed_and_summed`; contra o FreeSWITCH real, o mesmo ficheiro do `log-dir` reenviado dá `200 duplicate` e a lista não cresce.
 
-**Ficheiros.** `server/src/telephony_cdr.rs`, `server/migrations/0068_telephony_call_records.sql`.
+**Ficheiros.** `server/src/telephony_cdr.rs`, `server/migrations/0093_telephony_call_records.sql`.
 
 ### R212 — O custo de uma chamada mudava quando se mudava o preço
 
@@ -2088,7 +2088,7 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Prova.** `tests/telephony.rs::trunks_crud_order_prices_secrets_and_isolation` (host `10.0.0.5` recusado); `web/e2e/telefonia-freeswitch.mjs` (domínio próprio por org, a chamada do PBX sai pelos troncos certos).
 
-**Ficheiros.** `server/src/telephony_trunks.rs`, `server/src/telephony_sip.rs`, `server/migrations/0067_telephony_sip_settings.sql`.
+**Ficheiros.** `server/src/telephony_trunks.rs`, `server/src/telephony_sip.rs`, `server/migrations/0092_telephony_sip_settings.sql`.
 
 ### R214 — Credenciais SIP e de operadora legíveis sem reautenticação
 
