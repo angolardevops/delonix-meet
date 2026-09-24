@@ -81,3 +81,6 @@ ai-worker/gen/
 
 # Estado de trabalho local dos testes (ai-worker/tests/it_grpc.sh)
 .cache/
+
+# FreeSWITCH da prova da frente D (gerado por scripts/fs-canais.sh — conf + senha ESL)
+.fs-canais/
