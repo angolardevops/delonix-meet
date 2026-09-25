@@ -145,5 +145,17 @@ rsa = "0.9"
 # perdia o consentimento ICE ~5 s depois de ligar — R157. Nem a 0.17.2 trata o
 # conflito. Retirar este patch só quando o upstream o fizer (o teste
 # `conflito_de_papel_ice_recebe_487_autenticado` diz se fez).
+#
+# webrtc 0.17.2 com UMA alteração: um SSRC declarado no SDP remoto deixa de
+# passar pela sonda de media não declarada (simulcast), em
+# `vendor/webrtc/src/peer_connection/peer_connection_internal.rs`. Sem ela, um
+# pacote que chegue entre a sessão SRTP nascer e o `start_rtp` abrir os
+# receivers faz a sonda fechar o MESMO stream que o receiver usa: `read_rtp`
+# devolve `buffer: closed` e a publicação morre com o publicador a enviar —
+# R172. A 0.17.2 publicada não traz a correcção (não existe lá
+# `ssrc_declared_in_remote_description`). Retirar este patch só quando o
+# upstream o fizer (o teste `entradas_concorrentes_todos_recebem_todos` diz se
+# fez).
 [patch.crates-io]
 webrtc-ice = { path = "vendor/webrtc-ice" }
+webrtc = { path = "vendor/webrtc" }
