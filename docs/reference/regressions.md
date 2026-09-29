@@ -2133,6 +2133,18 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Ficheiros.** `server/src/ai.rs`, `server/src/meetings.rs`, `server/tests/dlp_antes_do_llm.rs`.
 
+### R240 — O `/asr` do whisper aceitava qualquer ligação, sem autenticação nenhuma
+
+**Sintoma.** O `whisper-server` publica `WebSocket /asr?lang=…` e está no MESMO ingress público do resto. A ligação era aceite sem verificar nada: quem alcançasse o endereço tinha transcrição por GPU à borla, e podia esgotar o modelo partilhado com ligações de propósito. A mesma ligação devolvia ao cliente a mensagem crua de qualquer excepção Python (`str(e)[:200]`) — caminhos e nomes internos incluídos, que é reconhecimento grátis para quem provoca o erro de propósito.
+
+**Regra.** O `/asr` valida o MESMO access token do `/rtc` (HS256, claim `typ = access`, `auth.rs`) e fecha com `1008` ANTES do `accept()` — uma ligação nunca aceite não gasta um slot de transcrição. Sem `JWT_SECRET` definido não há degradação para «sem autenticação»: recusa na mesma. O detalhe de uma excepção vai para o log do servidor; ao cliente vai «erro interno». O browser passa o token na query (`media.ts`), como já fazia no `/rtc`.
+
+**Prova.** `whisper-server/app.py` compila; `tsc -b` limpo com a mudança do cliente. **Não corrido contra um whisper-server real nem contra o ingress** — a verificação é de código e de tipos.
+
+**Ficheiros.** `whisper-server/app.py`, `whisper-server/requirements.txt` (PyJWT), `deploy/k8s/09-whisper.yaml` (o `JWT_SECRET` vem do configmap partilhado), `web/src/media.ts`.
+
+**Origem.** Estava no PR #68 (2026-09-16), que nunca foi integrado; o espelho do DLP em Python que vinha no mesmo PR NÃO entra, porque na `main` o worker entrega por gRPC e o servidor censura à chegada (R182, R231).
+
 ### R172 — A publicação morria poucos milissegundos depois de nascer, com entradas concorrentes
 
 **Sintoma.** Medido a 2026-09-17 com clientes WebRTC reais (`server/examples/loadgen.rs`, hoje na `main` pelo #122): 8 salas × 4 participantes, entradas a 40 ms, **75–87 de 96** fluxos de vídeo chegavam, 0 % de perda nos que chegavam, e `delonix_sfu_subscriptions` ficava em 165 em vez de 192. Salas inteiras deixavam de ver o mesmo publicador. A causa não era a subscrição: a publicação morria 30–65 ms depois de nascer — `read_rtp` devolvia `buffer: closed` e o servidor fazia `unpublish` para a sala toda com o publicador ainda a enviar.
