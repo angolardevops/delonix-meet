@@ -1233,6 +1233,70 @@ console.log('\n--- papéis, permissões, utilizadores e convites (ADR-0008) ---'
   await permitido('controlo: B lê o seu directório', `/api/orgs/${B.orgId}/users`, { token: B.token })
 }
 
+// ---------------------------------------------------------------------------
+//  Estúdio de TV (ADR-0014): estúdios, códigos de emparelhamento, fontes e os
+//  seis tipos de documento. O que se procura aqui não é só o `403`: um código
+//  de emparelhamento de outra organização é uma CÂMARA na régie de outra
+//  empresa, e um documento é a cena de som e o alinhamento do noticiário dela.
+// ---------------------------------------------------------------------------
+console.log('\n--- estúdio de TV ---')
+{
+  const estudioB = await req(`/api/orgs/${B.orgId}/studios`, {
+    token: B.token, method: 'POST', body: { name: 'Régie da B' },
+  })
+  const eB = estudioB.json?.id ?? X
+  if (estudioB.status !== 201) nok('B cria um estúdio para o teste', `devolveu ${estudioB.status}`)
+  const codigoB = await req(`/api/orgs/${B.orgId}/studios/${eB}/pairing-codes`, {
+    token: B.token, method: 'POST', body: { label: 'telefone da B' },
+  })
+  const cB = codigoB.json?.id ?? X
+  // O tipo fica numa variável, como o `{kind}` da rota: o portão de cobertura
+  // compara o caminho do router com o do teste, e um tipo escrito à mão não é
+  // o mesmo caminho que `…/{kind}/{document_id}`.
+  const tipoB = 'macros'
+  const docB = await req(`/api/orgs/${B.orgId}/studios/${eB}/${tipoB}`, {
+    token: B.token,
+    method: 'POST',
+    body: { name: 'Macro da B', body: { key: 'F1', steps: [{ action: 'end-broadcast' }] } },
+  })
+  const docBId = docB.json?.id ?? X
+  const a = { token: A.token }
+
+  await recusado('A lista os estúdios da org B', `/api/orgs/${B.orgId}/studios`, a)
+  await recusado('A cria um estúdio na org B', `/api/orgs/${B.orgId}/studios`, { ...a, method: 'POST', body: { name: 'intruso' } })
+  await recusado('A lê um estúdio da org B', `/api/orgs/${B.orgId}/studios/${eB}`, a)
+  await recusado('A renomeia um estúdio da org B', `/api/orgs/${B.orgId}/studios/${eB}`, { ...a, method: 'PATCH', body: { name: 'y' } })
+  await recusado('A apaga um estúdio da org B', `/api/orgs/${B.orgId}/studios/${eB}`, { ...a, method: 'DELETE' })
+
+  // Um código de emparelhamento é uma câmara: lê-lo dá entrada na régie.
+  await recusado('A lista os códigos de emparelhamento da org B', `/api/orgs/${B.orgId}/studios/${eB}/pairing-codes`, a)
+  await recusado('A gera um código de emparelhamento na org B', `/api/orgs/${B.orgId}/studios/${eB}/pairing-codes`, { ...a, method: 'POST', body: { label: 'intruso' } })
+  await recusado('A revoga um código de emparelhamento da org B', `/api/orgs/${B.orgId}/studios/${eB}/pairing-codes/${cB}`, { ...a, method: 'DELETE' })
+
+  await recusado('A lista as fontes da org B', `/api/orgs/${B.orgId}/studios/${eB}/sources`, a)
+  await recusado('A lê uma fonte da org B', `/api/orgs/${B.orgId}/studios/${eB}/sources/${X}`, a)
+  await recusado('A renomeia uma fonte da org B', `/api/orgs/${B.orgId}/studios/${eB}/sources/${X}`, { ...a, method: 'PATCH', body: { label: 'y' } })
+  await recusado('A revoga uma fonte da org B', `/api/orgs/${B.orgId}/studios/${eB}/sources/${X}`, { ...a, method: 'DELETE' })
+  await recusado('A lê o destino de gravação da org B', `/api/orgs/${B.orgId}/studios/${eB}/recording-target`, a)
+
+  // Os seis tipos de documento, cada um pelo seu caminho.
+  for (const tipo of ['mixer-scenes', 'macros', 'overlays', 'light-scenes', 'camera-profiles', 'rundowns']) {
+    await recusado(`A lista ${tipo} da org B`, `/api/orgs/${B.orgId}/studios/${eB}/${tipo}`, a)
+    await recusado(`A cria ${tipo} na org B`, `/api/orgs/${B.orgId}/studios/${eB}/${tipo}`, { ...a, method: 'POST', body: { name: 'intruso', body: {} } })
+  }
+  await recusado('A lê um documento da org B', `/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}`, a)
+  await recusado('A grava um documento da org B', `/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}`, { ...a, method: 'PATCH', body: { version: 1, name: 'roubado' } })
+  await recusado('A apaga um documento da org B', `/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}`, { ...a, method: 'DELETE' })
+  await recusado('A lê o histórico de um documento da org B', `/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}/versions`, a)
+
+  // E nada disto mexeu no que é da B.
+  const docAinda = await req(`/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}`, { token: B.token })
+  if (docAinda.json?.name === 'Macro da B' && docAinda.json?.version === 1) ok('e o documento da B CONTINUA igual')
+  else nok('e o documento da B CONTINUA igual', JSON.stringify(docAinda.json))
+  // Controlo positivo: a B alcança o seu próprio estúdio.
+  await permitido('controlo: B lê o seu estúdio', `/api/orgs/${B.orgId}/studios/${eB}`, { token: B.token })
+}
+
 console.log('\n--- sem autenticação nenhuma ---')
 await recusado('anónimo lê stats da org B', `/api/orgs/${B.orgId}/stats`, {})
 await recusado('anónimo lista as suas orgs', '/api/orgs', {})

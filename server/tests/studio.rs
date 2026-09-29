@@ -10,7 +10,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::Message;
 
-type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn ws_connect(app: &TestApp, path: &str) -> Ws {
     let url = format!("{}{path}", app.base.replacen("http://", "ws://", 1));
@@ -40,7 +41,7 @@ async fn recv_until(ws: &mut Ws, ty: &str, pred: impl Fn(&Value) -> bool) -> Val
 }
 
 async fn send(ws: &mut Ws, v: Value) {
-    ws.send(Message::Text(v.to_string().into())).await.unwrap();
+    ws.send(Message::Text(v.to_string())).await.unwrap();
 }
 
 async fn create_studio(app: &TestApp, a: &common::Account) -> Value {
@@ -89,17 +90,26 @@ async fn studio_crud_and_who_can(db: sqlx::PgPool) {
         .await;
     assert_eq!((st, e["code"].as_str()), (403, Some("studio.not_manager")));
     let (st, e) = app
-        .patch(&format!("{base}/{id}"), Some(&colega.token), json!({"name": "x"}))
+        .patch(
+            &format!("{base}/{id}"),
+            Some(&colega.token),
+            json!({"name": "x"}),
+        )
         .await;
     assert_eq!((st, e["code"].as_str()), (403, Some("studio.not_operator")));
-    let (st, _) = app.delete(&format!("{base}/{id}"), Some(&colega.token)).await;
+    let (st, _) = app
+        .delete(&format!("{base}/{id}"), Some(&colega.token))
+        .await;
     assert_eq!(st, 403);
 
     // Outra organização: 404 em tudo, nem pelo caminho da sua própria org.
     let (st, _) = app.get(&format!("{base}/{id}"), Some(&b.token)).await;
     assert_eq!(st, 404);
     let (st, _) = app
-        .get(&format!("/api/orgs/{}/studios/{id}", b.org()), Some(&b.token))
+        .get(
+            &format!("/api/orgs/{}/studios/{id}", b.org()),
+            Some(&b.token),
+        )
         .await;
     assert_eq!(st, 404);
 
@@ -123,7 +133,10 @@ async fn studio_crud_and_who_can(db: sqlx::PgPool) {
 
     // Destino das gravações: espaço livre real e MinIO honesto.
     let (st, t) = app
-        .get(&format!("{base}/{id}/recording-target"), Some(&colega.token))
+        .get(
+            &format!("{base}/{id}/recording-target"),
+            Some(&colega.token),
+        )
         .await;
     assert_eq!(st, 200, "{t}");
     assert_eq!(t["kind"], "local");
@@ -142,7 +155,13 @@ async fn pairing_code_burns_after_five_wrong_attempts(db: sqlx::PgPool) {
     let a = app.new_org("alfa.ao").await;
     let s = create_studio(&app, &a).await;
     let sid = s["id"].as_str().unwrap();
-    let c = new_code(&app, &a, sid, json!({"label": "telefone da Ana", "number": 2})).await;
+    let c = new_code(
+        &app,
+        &a,
+        sid,
+        json!({"label": "telefone da Ana", "number": 2}),
+    )
+    .await;
     let code = c["code"].as_str().unwrap().to_string();
     assert_eq!(code.len(), 9);
     assert_eq!(c["max_attempts"], 5);
@@ -154,13 +173,20 @@ async fn pairing_code_burns_after_five_wrong_attempts(db: sqlx::PgPool) {
         let (st, e) = app
             .post("/api/studio-pairings", None, json!({"code": wrong}))
             .await;
-        assert_eq!((st, e["code"].as_str()), (404, Some("studio.pairing_invalid")), "{e}");
+        assert_eq!(
+            (st, e["code"].as_str()),
+            (404, Some("studio.pairing_invalid")),
+            "{e}"
+        );
     }
     // Agora nem o código certo entra — e a resposta é a mesma.
     let (st, e) = app
         .post("/api/studio-pairings", None, json!({"code": code}))
         .await;
-    assert_eq!((st, e["code"].as_str()), (404, Some("studio.pairing_invalid")));
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (404, Some("studio.pairing_invalid"))
+    );
     let (_, list) = app
         .get(
             &format!("/api/orgs/{}/studios/{sid}/pairing-codes", a.org()),
@@ -169,13 +195,19 @@ async fn pairing_code_burns_after_five_wrong_attempts(db: sqlx::PgPool) {
         .await;
     assert_eq!(list["items"][0]["state"], "burned");
     assert_eq!(list["items"][0]["attempts"], 5);
-    assert!(!list.to_string().contains(&code), "o código em claro não volta a sair");
+    assert!(
+        !list.to_string().contains(&code),
+        "o código em claro não volta a sair"
+    );
 
     // Forma errada é 400, não conta como tentativa.
     let (st, e) = app
         .post("/api/studio-pairings", None, json!({"code": "abc"}))
         .await;
-    assert_eq!((st, e["code"].as_str()), (400, Some("studio.pairing_malformed")));
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (400, Some("studio.pairing_malformed"))
+    );
 
     // Um código revogado também deixa de servir.
     let c2 = new_code(&app, &a, sid, json!({})).await;
@@ -252,7 +284,10 @@ async fn source_token_is_minimal_and_single_use(db: sqlx::PgPool) {
             json!({"number": 1}),
         )
         .await;
-    assert_eq!((st, e["code"].as_str()), (409, Some("studio.source_number_taken")));
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (409, Some("studio.source_number_taken"))
+    );
 
     // Fontes: listagem, patch, e revogação fecha o /ws.
     let base = format!("/api/orgs/{}/studios/{sid}/sources", a.org());
@@ -264,9 +299,16 @@ async fn source_token_is_minimal_and_single_use(db: sqlx::PgPool) {
     let src_id = src["id"].as_str().unwrap().to_string();
 
     let (st, e) = app
-        .patch(&format!("{base}/{src_id}"), Some(&a.token), json!({"number": 17}))
+        .patch(
+            &format!("{base}/{src_id}"),
+            Some(&a.token),
+            json!({"number": 17}),
+        )
         .await;
-    assert_eq!((st, e["code"].as_str()), (400, Some("studio.invalid_source_number")));
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (400, Some("studio.invalid_source_number"))
+    );
 
     let (st, _) = app
         .delete(&format!("{base}/{src_id}"), Some(&a.token))
@@ -280,7 +322,9 @@ async fn source_token_is_minimal_and_single_use(db: sqlx::PgPool) {
     ))
     .await;
     assert!(r.is_err(), "fonte revogada não entra");
-    let (st, _) = app.get(&format!("{base}/{INVENTED_ID}"), Some(&a.token)).await;
+    let (st, _) = app
+        .get(&format!("{base}/{INVENTED_ID}"), Some(&a.token))
+        .await;
     assert_eq!(st, 404);
 }
 
@@ -295,7 +339,11 @@ async fn tally_commands_and_status_over_the_room_socket(db: sqlx::PgPool) {
 
     // O operador (dono da sala) entra.
     let (st, j) = app
-        .post(&format!("/api/rooms/{room}/join"), Some(&a.token), json!({}))
+        .post(
+            &format!("/api/rooms/{room}/join"),
+            Some(&a.token),
+            json!({}),
+        )
         .await;
     assert_eq!(st, 200, "{j}");
     let mut host = ws_connect(&app, j["ws_path"].as_str().unwrap()).await;
@@ -304,7 +352,13 @@ async fn tally_commands_and_status_over_the_room_socket(db: sqlx::PgPool) {
     assert_eq!(first["sources"], json!([]));
 
     // O telefone emparelha e entra SEM sala de espera.
-    let c = new_code(&app, &a, sid, json!({"label": "telefone da Ana", "number": 2})).await;
+    let c = new_code(
+        &app,
+        &a,
+        sid,
+        json!({"label": "telefone da Ana", "number": 2}),
+    )
+    .await;
     let (_, p) = app
         .post("/api/studio-pairings", None, json!({"code": c["code"]}))
         .await;
@@ -324,10 +378,18 @@ async fn tally_commands_and_status_over_the_room_socket(db: sqlx::PgPool) {
     assert_eq!(list["sources"][0]["connected"], true);
 
     // Tally: PRÉ e depois PROGRAMA.
-    send(&mut host, json!({"type": "studio-tally", "program": [], "preview": [source_id]})).await;
+    send(
+        &mut host,
+        json!({"type": "studio-tally", "program": [], "preview": [source_id]}),
+    )
+    .await;
     let t = recv_until(&mut phone, "studio-tally", |_| true).await;
     assert_eq!(t["state"], "preview");
-    send(&mut host, json!({"type": "studio-tally", "program": [source_id], "preview": [source_id]})).await;
+    send(
+        &mut host,
+        json!({"type": "studio-tally", "program": [source_id], "preview": [source_id]}),
+    )
+    .await;
     let t = recv_until(&mut phone, "studio-tally", |_| true).await;
     assert_eq!(t["state"], "program", "PROGRAMA ganha a PRÉ");
 
@@ -339,7 +401,13 @@ async fn tally_commands_and_status_over_the_room_socket(db: sqlx::PgPool) {
     )
     .await;
     let e = recv_until(&mut host, "error", |_| true).await;
-    assert!(e["message"].as_str().unwrap().starts_with("studio.invalid_command"), "{e}");
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("studio.invalid_command"),
+        "{e}"
+    );
     send(
         &mut host,
         json!({"type": "studio-command", "source_id": source_id, "command_id": "c-2",
@@ -348,10 +416,17 @@ async fn tally_commands_and_status_over_the_room_socket(db: sqlx::PgPool) {
     .await;
     let cmd = recv_until(&mut phone, "studio-command", |_| true).await;
     assert_eq!(cmd["command_id"], "c-2");
-    assert_eq!(cmd["command"], json!({"kind": "lock-exposure-focus", "locked": true}));
+    assert_eq!(
+        cmd["command"],
+        json!({"kind": "lock-exposure-focus", "locked": true})
+    );
 
     // O telefone responde e manda estado; o operador recebe os dois.
-    send(&mut phone, json!({"type": "studio-command-result", "command_id": "c-2", "ok": true})).await;
+    send(
+        &mut phone,
+        json!({"type": "studio-command-result", "command_id": "c-2", "ok": true}),
+    )
+    .await;
     let r = recv_until(&mut host, "studio-command-result", |_| true).await;
     assert_eq!(r["source_id"], source_id.as_str());
     assert_eq!(r["ok"], true);
@@ -373,19 +448,35 @@ async fn tally_commands_and_status_over_the_room_socket(db: sqlx::PgPool) {
     let e = recv_until(&mut phone, "error", |_| true).await;
     assert_eq!(e["message"], "source.forbidden_message");
     // Nem se faz passar por operador.
-    send(&mut phone, json!({"type": "studio-tally", "program": [], "preview": []})).await;
+    send(
+        &mut phone,
+        json!({"type": "studio-tally", "program": [], "preview": []}),
+    )
+    .await;
     let e = recv_until(&mut phone, "error", |_| true).await;
     assert_eq!(e["message"], "source.forbidden_message");
 
     // Um participante que não é anfitrião não comanda.
     let (_, jc) = app
-        .post(&format!("/api/rooms/{room}/join"), Some(&colega.token), json!({}))
+        .post(
+            &format!("/api/rooms/{room}/join"),
+            Some(&colega.token),
+            json!({}),
+        )
         .await;
     let mut guest = ws_connect(&app, jc["ws_path"].as_str().unwrap()).await;
     let w = recv_until(&mut host, "waiting-join", |_| true).await;
-    send(&mut host, json!({"type": "admit", "to": w["peer"]["peer_id"]})).await;
+    send(
+        &mut host,
+        json!({"type": "admit", "to": w["peer"]["peer_id"]}),
+    )
+    .await;
     recv_until(&mut guest, "joined", |_| true).await;
-    send(&mut guest, json!({"type": "studio-tally", "program": [], "preview": []})).await;
+    send(
+        &mut guest,
+        json!({"type": "studio-tally", "program": [], "preview": []}),
+    )
+    .await;
     let e = recv_until(&mut guest, "error", |_| true).await;
     assert_eq!(e["message"], "studio.not_operator");
     send(
@@ -397,7 +488,11 @@ async fn tally_commands_and_status_over_the_room_socket(db: sqlx::PgPool) {
     let e = recv_until(&mut guest, "error", |_| true).await;
     assert_eq!(e["message"], "studio.not_operator");
     // E também não finge ser uma fonte.
-    send(&mut guest, json!({"type": "studio-source-status", "status": {}})).await;
+    send(
+        &mut guest,
+        json!({"type": "studio-source-status", "status": {}}),
+    )
+    .await;
     let e = recv_until(&mut guest, "error", |_| true).await;
     assert_eq!(e["message"], "studio.not_a_source");
 
@@ -439,7 +534,9 @@ async fn tally_commands_and_status_over_the_room_socket(db: sqlx::PgPool) {
     )
     .await;
     let e = recv_until(&mut host, "error", |v| {
-        v["message"].as_str().is_some_and(|m| m.starts_with("studio.unknown_source"))
+        v["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("studio.unknown_source"))
     })
     .await;
     assert_eq!(e["message"], "studio.unknown_source");

@@ -236,6 +236,13 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **fail-closed**. Não desdobrar para «dedup só por `odoo_db`»: uma BD Odoo hospeda VÁRIAS empresas e isso fundiria tenants distintos — pior que duplicar. Recusar com a acção concreta (actualizar o módulo).
 - **Ficheiros:** `server/src/apikeys.rs` (`provision`).
 
+### R240 — O `{kind}` dos documentos do estúdio engoliria `sources`, `pairing-codes` e `recording-target`
+- **Sintoma:** (apanhado antes de sair do worktree, ADR-0014 §5.) `GET /api/orgs/{org}/studios/{id}/sources` deixa de devolver as fontes da régie e passa a `404` — ou, pior, uma lista de documentos VAZIA, que o operador lê como «não há câmaras emparelhadas» no meio de uma emissão.
+- **Causa raiz:** os seis tipos de documento entram no router por UMA rota com o tipo no caminho (`…/studios/{studio_id}/{kind}`), porque o contrato dos seis é idêntico e seis cópias das mesmas seis queries é a duplicação que a catraca da arquitectura recusa. Essa rota fica IRMÃ dos segmentos concretos que já lá estavam (`sources`, `pairing-codes`, `recording-target`). Funciona porque o matcher do axum dá precedência ao segmento estático sobre o parâmetro — uma propriedade do router, não do nosso código, e invisível em qualquer teste que olhe só para um dos dois lados.
+- **Regra:** os segmentos concretos continuam a ganhar ao `{kind}`. Não «arrumar» isto trocando a ordem de registo das rotas, nem passando as vizinhas concretas a `{kind}` com um `match` no handler (era o mesmo bug com mais passos). Um tipo que não seja um dos seis segmentos conhecidos é `404` em `kind_from_segment` — nunca um tipo novo criado por um caminho inventado, e nunca o valor da coluna (`mixer_scene` não abre `…/mixer_scene`). Se algum dia uma vizinha concreta nova entrar debaixo de `…/studios/{studio_id}/`, acrescenta-se ao teste.
+- **Portão:** `server/tests/studio_docs.rs::r240_segmentos_concretos_ganham_ao_tipo_de_documento` — exercita as três vizinhas concretas E os seis tipos no MESMO estúdio, e exige `404` para quatro segmentos que não são nem uma coisa nem outra. O teste unitário `studio_docs::tests::so_os_seis_segmentos_conhecidos_sao_tipos` fixa a outra metade (o que conta como tipo).
+- **Ficheiros:** `server/src/lib.rs` (registo das rotas do estúdio), `server/src/studio_docs.rs` (`kind_from_segment`).
+
 ## Higiene / pipeline
 
 ### R34 — Chave privada e artefactos compilados seguidos no git

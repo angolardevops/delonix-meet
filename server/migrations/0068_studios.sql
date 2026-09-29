@@ -1,4 +1,6 @@
 -- Estúdio de TV num PC (ADR-0014). Número de TRABALHO: renumera-se na integração.
+-- (0068 e não 0080: o portão de higiene recusa buracos na sequência, e a main
+-- está em 0067. Se outra frente chegar primeiro a 0068, renumera-se aqui.)
 --
 -- Um estúdio é da organização e tem uma sala SFU própria. Apagar o estúdio NÃO
 -- apaga a sala: as gravações penduram-se na sala (`recordings.room_id`), e

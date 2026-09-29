@@ -3935,7 +3935,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         }
     }
     match &source {
-        Some(s) => crate::studio_realtime::on_source_joined(&state, room_id, s, peer_id, tx.clone()),
+        Some(s) => {
+            crate::studio_realtime::on_source_joined(&state, room_id, s, peer_id, tx.clone())
+        }
         None if is_host => crate::studio_realtime::on_host_joined(&state, room_id, peer_id).await,
         None => {}
     }
@@ -3978,7 +3980,8 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                     });
                 }
                 Ok(ClientMsg::StudioTally { program, preview }) => {
-                    crate::studio_realtime::on_tally(&state, room_id, peer_id, program, preview).await;
+                    crate::studio_realtime::on_tally(&state, room_id, peer_id, program, preview)
+                        .await;
                 }
                 Ok(ClientMsg::StudioCommand {
                     source_id,
@@ -3991,7 +3994,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                     .await;
                 }
                 Ok(ClientMsg::StudioSourceStatus { status }) => match &source {
-                    Some(s) => crate::studio_realtime::on_status(&state, room_id, s, peer_id, status),
+                    Some(s) => {
+                        crate::studio_realtime::on_status(&state, room_id, s, peer_id, status)
+                    }
                     None => {
                         let _ = tx.send(ServerMsg::Error {
                             message: "studio.not_a_source".into(),
