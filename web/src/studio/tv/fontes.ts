@@ -47,6 +47,8 @@ interface Viva extends FonteDaMesa {
 
 export const MAX_BARRAMENTO = 6
 
+const PRIORIDADE: Record<TipoDeFonte, number> = { camara: 0, participante: 1, ecra: 2, quadro: 3 }
+
 const CHAVE_CORRECCOES = 'dx_studio_tv_correccoes'
 
 function lerCorreccoes(): Record<string, CorreccaoDeImagem> {
@@ -235,7 +237,14 @@ export class RegistoDeFontes implements FontesParaDesenho {
     }
     viva.correccao = this.correccoesGuardadas[this.chave(viva)] ?? { ...CORRECCAO_NEUTRA }
     this.fontes.set(f.id, viva)
-    if (!this.ordem.includes(f.id)) this.ordem.push(f.id)
+    if (!this.ordem.includes(f.id)) {
+      // Entra antes da primeira fonte de um tipo que vem depois: câmaras
+      // primeiro, depois participantes, o ecrã e o quadro — a ordem do
+      // barramento do template, e a que põe as pessoas nas teclas 1, 2, 3.
+      const i = this.ordem.findIndex((id) => PRIORIDADE[this.fontes.get(id)!.tipo] > PRIORIDADE[f.tipo])
+      if (i < 0) this.ordem.push(f.id)
+      else this.ordem.splice(i, 0, f.id)
+    }
     return viva
   }
 
