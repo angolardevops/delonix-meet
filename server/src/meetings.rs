@@ -855,15 +855,16 @@ pub async fn save_minutes(
     if !allowed {
         return Err(ApiError::NotFound);
     }
+    // DLP À ENTRADA (R231). O que o cliente acumula na sala e envia no fim
+    // nunca passava pelo filtro que a sinalização já aplica ao que é
+    // DIFUNDIDO: um cartão de crédito dito em voz alta ficava gravado, ia no
+    // prompt do resumo para o LLM, e saía no webhook `meeting.mom_ready`.
+    // Censurar aqui protege de uma vez todos os leitores a jusante.
+    let minutes = crate::dlp::censor(req.minutes.trim());
+    let transcript = crate::dlp::censor(req.transcript.trim());
     sqlx::query("UPDATE meetings SET minutes = $1, transcript = $2 WHERE id = $3")
-        .bind(req.minutes.trim().chars().take(200_000).collect::<String>())
-        .bind(
-            req.transcript
-                .trim()
-                .chars()
-                .take(200_000)
-                .collect::<String>(),
-        )
+        .bind(minutes.chars().take(200_000).collect::<String>())
+        .bind(transcript.chars().take(200_000).collect::<String>())
         .bind(id)
         .execute(&state.db)
         .await?;

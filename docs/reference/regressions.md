@@ -2118,3 +2118,17 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 **Fora deste passo.** O mesmo `01-config.yaml` continua a versionar `PROVISIONING_SECRET`, `JWT_SECRET`, `TURN_SECRET` e a password do Postgres de stage — mesma classe, não tratada aqui. Na linha ADR-0004 (`delonix-meet-backend/backend-enterprise`), o `grpc.rs` e o `odoo.rs` testam só `voice_internal_secret.is_empty()`: ao juntar, têm de passar a respeitar `voice_secret_refusal`.
 
 **Ficheiros.** `server/src/{config,voice}.rs`, `deploy/k8s/{01-config,02-server}.yaml`, `deploy/ansible/roles/k8s_app/templates/app-config.yaml.j2`, `Makefile` (`voice-secret-k8s`), `scripts/{check-repo-hygiene.sh,leaked-secrets-accepted.txt}`, `docs/deployment.md`, `voice/README.md`.
+
+### R231 — A acta e a transcrição chegavam ao LLM e ao webhook sem passar pelo DLP
+
+**Sintoma.** O DLP (`dlp::censor`) corria no que é DIFUNDIDO — chat e legendas ao vivo (`signaling.rs`) — e no que o worker de transcrição entrega (`transcription.rs`). Não corria no que o CLIENTE acumula na sala e envia no fim: `PUT /api/meetings/{meeting_id}/minutes` gravava `minutes` e `transcript` tal como vinham. Um cartão de crédito ou um NIF ditos em voz alta ficavam na base, entravam no prompt de `ai::summarize_minutes` (Ollama local) e saíam da casa no webhook `meeting.mom_ready` para o Odoo. O `ai.rs` não tinha UMA chamada ao DLP: `POST /api/ai/translations` também mandava texto do cliente directo para o modelo.
+
+Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código mudou de sítio entretanto (rotas novas, worker por gRPC) e o buraco ficou.
+
+**Regra.** O DLP corre À ENTRADA, onde o texto é gravado (`meetings::save_minutes`, que serve também o `PUT /api/rooms/{room_code}/minutes`), e OUTRA VEZ no prompt, antes de o texto sair do processo para o LLM — as duas funções de prompt (`ai::caption_prompt`, `ai::minutes_prompt`) censuram e são puras, por isso provam-se sem Ollama. Censurar duas vezes é barato; censurar zero vezes foi isto.
+
+**Portão.** `ai::tests::{o_prompt_da_legenda_vai_censurado, o_prompt_do_resumo_vai_censurado, a_janela_do_resumo_guarda_o_fim}` e `server/tests/dlp_antes_do_llm.rs` contra Postgres real (a acta e a transcrição ficam censuradas na BASE, com controlo positivo de que o resto do texto sobrevive). Mutação verificada: sem a censura em `save_minutes`, o teste falha com o cartão gravado.
+
+**Não fechado aqui.** Injecção de prompt (OWASP LLM01) e a sanitização do Markdown que o LLM devolve, no visualizador.
+
+**Ficheiros.** `server/src/ai.rs`, `server/src/meetings.rs`, `server/tests/dlp_antes_do_llm.rs`.
