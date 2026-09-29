@@ -15,9 +15,11 @@ int8; em GPU `large-v3` float16.
 """
 import asyncio
 import json
+import logging
 import os
 import time
 
+import jwt
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from faster_whisper import WhisperModel
@@ -26,6 +28,31 @@ MODEL_NAME = os.environ.get("WHISPER_MODEL", "small")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE = os.environ.get("WHISPER_COMPUTE", "int8")
 SR = 16000  # taxa de amostragem esperada do cliente
+
+# O MESMO segredo do servidor Rust (server/src/auth.rs, HS256). O /asr fica
+# no mesmo ingress público que o resto da app (deploy/k8s/04-ingress.yaml) —
+# sem afinidade nem gateway de auth à frente — e até aqui aceitava QUALQUER
+# ligação WS sem token nenhum: GPU de transcrição grátis para quem
+# alcançasse o caminho. Sem JWT_SECRET, nada é aceite (fail-closed) — nunca
+# degradar para "sem autenticação" por falta de configuração.
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+logger = logging.getLogger("delonix-whisper")
+
+
+def _claims_or_none(token: str):
+    """Valida o access token (mesmo formato do auth.rs: HS256, claim `typ`).
+    None em qualquer falha — assinatura errada, expirado, tipo errado, ou
+    JWT_SECRET por definir."""
+    if not JWT_SECRET or not token:
+        return None
+    try:
+        claims = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        return None
+    if claims.get("typ") != "access":
+        return None
+    return claims
+
 
 # Um único modelo partilhado por todas as ligações (thread-safe em inferência).
 model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE)
@@ -53,6 +80,11 @@ def _transcribe(pcm: np.ndarray, lang: str) -> str:
 
 @app.websocket("/asr")
 async def asr(ws: WebSocket):
+    # Verificar ANTES de aceitar: uma ligação nunca aceite não gasta um
+    # slot de transcrição nem entra no `while True` de baixo.
+    if _claims_or_none(ws.query_params.get("token", "")) is None:
+        await ws.close(code=1008)  # Policy Violation
+        return
     await ws.accept()
     lang = ws.query_params.get("lang", "pt")[:5]
     # Aceita 'pt-PT' → 'pt' (faster-whisper usa códigos ISO curtos).
@@ -113,8 +145,12 @@ async def asr(ws: WebSocket):
                 await emit("interim", text)
     except WebSocketDisconnect:
         pass
-    except Exception as e:  # noqa: BLE001 — não derrubar o worker por uma ligação
+    except Exception:  # noqa: BLE001 — não derrubar o worker por uma ligação
+        # O detalhe fica no LOG do servidor, nunca no cliente: a mensagem
+        # crua de uma exceção Python (caminhos, nomes internos) ajudava
+        # reconhecimento a quem a provocasse de propósito.
+        logger.exception("erro na ligação /asr")
         try:
-            await ws.send_text(json.dumps({"type": "error", "message": str(e)[:200]}))
+            await ws.send_text(json.dumps({"type": "error", "message": "erro interno"}))
         except Exception:
             pass
