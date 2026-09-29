@@ -78,13 +78,6 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 regex = "1.13.0"
 # Limpeza de material de chave em memória (ver signaling::Secret).
 zeroize = "1"
-# Ponte de media FreeSWITCH↔SFU (pstn_bridge.rs, ver docs/pstn-sfu-bridge-design.md
-# "Abordagem B"). O SFU nunca tinha descodificado Opus — reencaminha RTP sem
-# tocar no conteúdo (ver cabeçalho de sfu.rs) — mas misturar N chamadores
-# WebRTC para 1 stream PSTN exige decode→soma→encode real. `libopus-dev` tem
-# de estar instalado no host de build (o crate liga-se à lib do sistema via
-# pkg-config; falha a compilar sem ela).
-audiopus = "0.2.0"
 # SMPP sobre TLS (ADR-0005, smpps://). `rustls`/`tokio-rustls` e `webpki-roots`
 # já estavam na árvore (sqlx, reqwest/openidconnect via rustls-tls, e
 # hyper-rustls) — aqui só se tornam dependências directas para o handshake
@@ -115,22 +108,20 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
 ] }
 webpki-roots = "1"
 pem = "3"
-# SRTP autónomo (fora de um RTCPeerConnection/DTLS) para a ingress/egress da
-# ponte PSTN↔SFU — a MESMA versão 0.17.1 que o `webrtc` já traz transitivamente
+# SRTP autónomo (fora de um RTCPeerConnection/DTLS) para as pernas da ponte
+# telefone↔sala — a MESMA versão 0.17.1 que o `webrtc` já traz transitivamente
 # (o SFU usa SRTP hoje só através do handshake DTLS de cada PeerConnection;
 # esta é a primeira vez que este código constrói um `Context` SRTP à mão, com
 # chaves efémeras geridas pelo control plane em vez de negociadas por DTLS).
 webrtc-srtp = "0.17.1"
-# Construir o payload RTP cru da mistura (pstn_bridge.rs) antes de o cifrar —
-# já transitivo (o `rtp`/`webrtc-srtp` usam-no internamente), directo aqui só
-# para o tipo `Bytes` do `rtp::packet::Packet::payload`.
+# Payload RTP partilhado sem cópia entre a bomba do SFU e a ponte, e o payload
+# cru antes de cifrar — já transitivo (`webrtc`/`rtp`/`webrtc-srtp` usam-no),
+# directo aqui pelo tipo `Bytes` do `rtp::packet::Packet::payload`.
 bytes = "1"
 # Ponte telefone↔sala (ADR-0010): Opus em Rust puro, sem libopus no sistema nem
 # na imagem distroless. Interoperabilidade com a libopus medida nos dois
 # sentidos (ADR-0010 §«Medições»).
 opus-rs = "=0.1.33"
-# Payload RTP partilhado sem cópia entre a bomba do SFU e a ponte (já no lock pelo webrtc).
-bytes = "1"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

@@ -62,7 +62,6 @@ use webrtc::{
     util::Unmarshal,
 };
 
-use crate::pstn_bridge::PstnBridge;
 use crate::signaling::{ClientMsg, ServerMsg};
 
 type Result<T> = std::result::Result<T, webrtc::Error>;
@@ -703,12 +702,6 @@ struct SfuRoom {
 #[derive(Default)]
 pub struct SfuState {
     rooms: DashMap<Uuid, Arc<SfuRoom>>,
-    /// Ponte de media FreeSWITCH↔SFU activa, por sala (Abordagem B, ver
-    /// `pstn_bridge.rs` e `docs/pstn-sfu-bridge-design.md`). Substitui os
-    /// antigos `phantom_listeners`/`pstn_outbounds` da Abordagem A rejeitada
-    /// (fantasma sem SRTP, sem mistura, sem chamador nenhum) — ver o commit
-    /// que introduziu este campo para a comparação completa.
-    pstn: DashMap<Uuid, Arc<PstnBridge>>,
     /// Chamadas de fora da app por sala: (perna, fila para a mistura). A bomba
     /// de cada microfone entrega aqui uma cópia de cada pacote (ADR-0010).
     bridge_taps: DashMap<Uuid, Vec<(Uuid, mpsc::Sender<TapPacket>)>>,
@@ -937,61 +930,6 @@ fn new_api(ice: &IceConfig) -> Result<webrtc::api::API> {
 }
 
 impl SfuState {
-    /// Activa a ponte PSTN↔SFU (Abordagem B) para uma sala, chamada por
-    /// `voice.rs::ivr_validate_pin` quando o dial-in valida o PIN. Idempotente:
-    /// se já houver uma ponte activa para a sala, devolve a MESMA (não gera
-    /// chaves novas a meio de uma chamada em curso).
-    ///
-    /// Garante que a sala existe no `SfuState` mesmo que ainda não tenha
-    /// nenhum participante WebRTC (um chamador PSTN pode ser o primeiro a
-    /// "entrar") — mirror do que `add_peer` já faz com `entry(...).or_insert_with`.
-    /// Subscreve de imediato os peers WebRTC que já lá estiverem à track
-    /// "Telefone"; os que entrarem depois são apanhados por `reevaluate_peer`.
-    pub async fn activate_pstn_bridge(
-        self: &Arc<Self>,
-        room_id: Uuid,
-        allowed_ip: std::net::IpAddr,
-    ) -> std::io::Result<crate::pstn_bridge::PstnBridgeInfo> {
-        if let Some(existing) = self.pstn.get(&room_id) {
-            return Ok(existing.info());
-        }
-        let bridge = PstnBridge::activate(room_id, allowed_ip).await?;
-        self.pstn.insert(room_id, bridge.clone());
-
-        // A sala pode ainda não existir (chamador PSTN antes de qualquer
-        // browser) — cria-se vazia, como `add_peer` faz.
-        let room = self
-            .rooms
-            .entry(room_id)
-            .or_insert_with(|| Arc::new(SfuRoom::default()))
-            .clone();
-        let peers: Vec<(Uuid, Arc<SfuPeer>)> = room
-            .peers
-            .lock()
-            .await
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        for (peer_id, peer) in peers {
-            if peer.pc.remote_description().await.is_some() {
-                pstn_subscribe(self, peer_id, &peer, &bridge).await;
-            }
-        }
-
-        Ok(bridge.info())
-    }
-
-    /// Sala vazia: desliga a ponte PSTN (se houver) — ver `remove_peer`. Não
-    /// há hoje um sinal do FreeSWITCH para "a chamada acabou"; a ponte vive
-    /// enquanto a sala SFU tiver pelo menos um participante WebRTC. Um
-    /// chamador PSTN sozinho (sem ninguém em WebRTC) fica sem ponte — caso
-    /// degenerado aceitável (falar com ninguém), documentado no design doc.
-    async fn deactivate_pstn_bridge(&self, room_id: Uuid) {
-        if let Some((_, bridge)) = self.pstn.remove(&room_id) {
-            bridge.deactivate();
-        }
-    }
-
     // ---------- Ponte telefone↔sala (ADR-0010) ----------
 
     /// Publica na sala o áudio de uma chamada de fora da app. Devolve a fila
@@ -999,8 +937,12 @@ impl SfuState {
     /// chamada) retira a publicação de toda a sala.
     ///
     /// Substitui o `spawn_phantom_listener` (um stub que abria uma porta UDP e
-    /// deitava os pacotes fora, sem nenhum chamador) e o `pstn_outbounds` (uma
-    /// cópia do Opus cru, sem mistura, para um destino que nada registava).
+    /// deitava os pacotes fora, sem nenhum chamador), o `pstn_outbounds` (uma
+    /// cópia do Opus cru, sem mistura, para um destino que nada registava) e a
+    /// `activate_pstn_bridge` da Abordagem B (que abria um socket para o
+    /// FreeSWITCH lhe mandar SRTP, mecanismo que nunca se verificou — ver
+    /// `docs/pstn-sfu-bridge-design.md` §Superseded). A chamada entra na sala
+    /// pelo UA SIP (`phone_bridge::sip`) e é um publicador como outro.
     pub(crate) async fn publish_bridge_audio(
         self: &Arc<Self>,
         room_id: Uuid,
@@ -1533,17 +1475,6 @@ impl SfuState {
                             w.write_rtp(&packet);
                         }
                         if is_audio {
-                            // Alimenta o mixer de egress da ponte PSTN (se a
-                            // sala tiver uma activa) — decodifica Opus→PCM e
-                            // guarda a última amostra deste publicador; a
-                            // mistura em si acontece à parte, ao ritmo
-                            // próprio de 20 ms (`pstn_bridge::run_egress`),
-                            // para não atar o envio ao PSTN ao jitter de UM
-                            // participante. Sem ponte activa, isto é só um
-                            // `get` no DashMap — custo desprezável.
-                            if let Some(bridge) = this.pstn.get(&room_id).map(|b| b.clone()) {
-                                bridge.feed_egress(publication.publisher, &packet).await;
-                            }
                             this.feed_bridges(room_id, publisher, &packet);
                         }
 
@@ -1636,11 +1567,6 @@ impl SfuState {
             // O `apply_client_offer` chama isto assim que a oferta dele chega.
             if peer.pc.remote_description().await.is_none() {
                 return;
-            }
-            // Ponte PSTN activa para esta sala? Este peer passa a receber a
-            // track "Telefone" — idempotente, ver `pstn_subscribe`.
-            if let Some(bridge) = self.pstn.get(&room_id).map(|b| b.clone()) {
-                pstn_subscribe(&self, peer_id, &peer, &bridge).await;
             }
             let room_size = room.peers.lock().await.len();
             let shift = peer.quality.shift.load(Relaxed);
@@ -1853,12 +1779,6 @@ impl SfuState {
         if peer.quality.shift.load(Relaxed) > 0 {
             crate::metrics::Metrics::dec(&self.metrics.sfu_degraded_subscribers);
         }
-        // Sai também da track "Telefone", se a sala tiver ponte PSTN activa.
-        if let Some(bridge) = self.pstn.get(&room_id).map(|b| b.clone()) {
-            if bridge.remove_subscriber(peer_id).await.is_some() {
-                crate::metrics::Metrics::dec(&self.metrics.sfu_subscriptions);
-            }
-        }
 
         close_pc(&peer, room_id, peer_id).await;
 
@@ -1890,8 +1810,6 @@ impl SfuState {
             self.rooms.remove_if(&room_id, |_, _| true);
             // Sala vazia de participantes WebRTC: a ponte PSTN (se houver)
             // fica sem ninguém para quem encaminhar/misturar — desliga-se
-            // aqui (ver a nota de limitação em `deactivate_pstn_bridge`).
-            self.deactivate_pstn_bridge(room_id).await;
         }
         tracing::info!(%room_id, %peer_id, "sfu peer removed");
         if !empty {
@@ -2378,59 +2296,6 @@ async fn subscription_alive(
     subscribed
         .get(group)
         .is_some_and(|(_, s)| Arc::ptr_eq(s, sender))
-}
-
-/// Liga um peer WebRTC à track "Telefone" da ponte PSTN da sala — o
-/// equivalente de `subscribe_layer` para a ponte, mas sem `Publication`: a
-/// ponte não tem um `TrackRemote`/`RTCPeerConnection` publicador reais (a
-/// origem é um socket UDP, não outro peer WebRTC), por isso não podia reusar
-/// o tipo `Publication` sem o tornar opcional em dezenas de sítios deste
-/// ficheiro (recordable_codec, request_keyframe/PLI, current_source…) — um
-/// refactor bem maior e mais arriscado do que esta função a mais. O que É
-/// reaproveitado, e é o que importa para o participante: o MESMO
-/// `TrackLocalStaticRTP` + `add_track` + `trigger_renegotiate` que qualquer
-/// outra subscrição usa — do lado do browser, a track "Telefone" chega
-/// exactamente como a de outro participante.
-///
-/// Idempotente (não faz nada se este peer já estiver subscrito).
-async fn pstn_subscribe(
-    state: &Arc<SfuState>,
-    peer_id: Uuid,
-    peer: &Arc<SfuPeer>,
-    bridge: &Arc<PstnBridge>,
-) {
-    if bridge.has_subscriber(peer_id).await {
-        return;
-    }
-    let local = Arc::new(TrackLocalStaticRTP::new(
-        crate::pstn_bridge::phone_track_capability(),
-        format!("pstn-{}", NEXT_TRACK_SEQ.fetch_add(1, Relaxed)),
-        "telefone".to_string(),
-    ));
-    let sender = match peer
-        .pc
-        .add_track(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>)
-        .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(%peer_id, error = %e, "pstn subscribe: add_track falhou");
-            return;
-        }
-    };
-    bridge.add_subscriber(peer_id, local, sender.clone()).await;
-    crate::metrics::Metrics::inc(&state.metrics.sfu_subscriptions);
-
-    // Drena o RTCP do sender (obrigatório para os interceptors — ver o
-    // comentário equivalente em `subscribe_layer`). Não há PLI/keyframe a
-    // reencaminhar (é áudio), só a leitura para não bloquear o transporte.
-    tokio::spawn(async move {
-        while let Ok((_packets, _)) = sender.read_rtcp().await {}
-        tracing::debug!(%peer_id, "pstn subscribe: leitura de rtcp terminou");
-    });
-
-    tracing::info!(%peer_id, "pstn subscribe → renegotiate (track Telefone)");
-    trigger_renegotiate(peer);
 }
 
 /// Camada que alimenta hoje o subscritor `sub_id` no grupo (publicador, tipo)

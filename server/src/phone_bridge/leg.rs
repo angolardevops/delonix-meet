@@ -7,8 +7,14 @@
 //!
 //! Uma só tarefa por perna e um só socket (RTP simétrico: o endereço de onde
 //! o FreeSWITCH envia é para onde a mistura volta). Não há SIP aqui — a
-//! sinalização da chamada é do FreeSWITCH e da telefonia (ADR-0009); a ponte
-//! só recebe e devolve media.
+//! sinalização da chamada é do `sip.rs`; a perna só recebe e devolve media.
+//!
+//! **SRTP.** O que entra é desencriptado e o que sai é cifrado com o par de
+//! contextos que o diálogo SIP negociou por SDES (`srtp.rs`). Uma chamada real
+//! nunca chega aqui sem eles: o `sip.rs` recusa com `488` uma oferta sem
+//! `a=crypto`. `None` existe para os testes do caminho de RTP (R221), que
+//! provam a media e não a cifra — a cifra é provada em `srtp.rs::tests` e
+//! contra o FreeSWITCH real (ADR-0010 §10).
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
@@ -24,6 +30,7 @@ use webrtc::util::{Marshal, Unmarshal};
 use super::audio::{encode_mix, Ingress, Mixer, FRAME_8K};
 use super::g711::Law;
 use super::quality::RtpQuality;
+use super::srtp::{ip_allowed, SrtpSession};
 use crate::sfu::{BridgePacket, SfuState};
 use delonix_meet_domain::conferencing::channels::weak_link;
 
@@ -36,8 +43,16 @@ const OPUS_PT: u8 = 111;
 pub struct LegStats {
     /// Pacotes RTP G.711 aceites do telefone.
     pub packets_in: AtomicU64,
-    /// Pacotes recusados: origem não autorizada, RTP inválido, codec não G.711.
+    /// Pacotes recusados: origem não autorizada, SRTP que não autentica, RTP
+    /// inválido, codec não G.711.
     pub packets_rejected: AtomicU64,
+    /// Pacotes recusados SÓ pelo SRTP (chave errada, repetição, truncados).
+    /// Separado de `packets_rejected` porque diz outra coisa: não é um vizinho
+    /// a varrer portas, é alguém a falar a cifra errada.
+    pub packets_srtp_failed: AtomicU64,
+    /// Tempo de CPU só da cifra e da decifra (ns) — para saber quanto do custo
+    /// da ponte é SRTP e quanto são codecs.
+    pub srtp_nanos: AtomicU64,
     /// Pacotes Opus entregues à sala.
     pub frames_published: AtomicU64,
     /// Pacotes G.711 misturados devolvidos ao telefone.
@@ -57,7 +72,7 @@ pub struct LegStats {
 pub struct LegConfig {
     pub room_id: Uuid,
     pub leg_id: Uuid,
-    /// Onde escutar. Em produção, o IP da rede interna do FreeSWITCH.
+    /// Onde o socket ficou (informativo: quem abre o socket é quem chama).
     pub bind: SocketAddr,
     /// IPs de onde se aceita RTP (os FreeSWITCH). Vazio = recusa tudo: uma
     /// porta UDP aberta que publica numa sala o que lhe chegar seria uma porta
@@ -111,13 +126,18 @@ impl LegHandle {
     }
 }
 
-/// Arranca uma perna: abre o socket, publica na sala e começa a misturar.
+/// Arranca uma perna num socket JÁ ABERTO, publica na sala e começa a
+/// misturar. O socket vem de fora porque quem escolhe a porta (o `sip.rs`,
+/// que percorre o intervalo de RTP) tem de saber que ela abriu ANTES de gastar
+/// a sessão SRTP da chamada — um `bind` falhado a meio não pode deixar a
+/// chamada sem cifra.
 pub async fn start(
     sfu: Arc<SfuState>,
     cfg: LegConfig,
+    socket: UdpSocket,
+    srtp: Option<SrtpSession>,
     events: mpsc::Sender<LegEvent>,
 ) -> std::io::Result<LegHandle> {
-    let socket = UdpSocket::bind(cfg.bind).await?;
     let local_addr = socket.local_addr()?;
     let stats = Arc::new(LegStats::default());
     let muted = Arc::new(AtomicBool::new(false));
@@ -130,6 +150,7 @@ pub async fn start(
         sfu,
         cfg,
         socket,
+        srtp,
         publish,
         taps,
         ingress,
@@ -151,6 +172,7 @@ struct Run {
     sfu: Arc<SfuState>,
     cfg: LegConfig,
     socket: UdpSocket,
+    srtp: Option<SrtpSession>,
     publish: mpsc::Sender<BridgePacket>,
     taps: mpsc::Receiver<crate::sfu::TapPacket>,
     ingress: Ingress,
@@ -187,11 +209,32 @@ async fn run(mut r: Run) {
             recv = r.socket.recv_from(&mut buf) => {
                 let Ok((n, from)) = recv else { break };
                 let arrived = Instant::now();
-                if !r.cfg.allowed_sources.contains(&from.ip()) {
+                if !ip_allowed(&r.cfg.allowed_sources, from.ip()) {
                     r.stats.packets_rejected.fetch_add(1, Relaxed);
                     continue;
                 }
-                let mut raw = &buf[..n];
+                // SRTP primeiro: um pacote que não autentica não chega ao
+                // parser de RTP, e muito menos à sala.
+                let claro: Option<bytes::Bytes> = match r.srtp.as_mut() {
+                    Some(s) => {
+                        let t = Instant::now();
+                        let out = s.inbound.decrypt_rtp(&buf[..n]);
+                        r.stats.srtp_nanos.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
+                        match out {
+                            Ok(b) => Some(b),
+                            Err(_) => {
+                                r.stats.packets_srtp_failed.fetch_add(1, Relaxed);
+                                r.stats.packets_rejected.fetch_add(1, Relaxed);
+                                continue;
+                            }
+                        }
+                    }
+                    None => None,
+                };
+                let mut raw: &[u8] = match &claro {
+                    Some(b) => &b[..],
+                    None => &buf[..n],
+                };
                 let Ok(pkt) = Packet::unmarshal(&mut raw) else {
                     r.stats.packets_rejected.fetch_add(1, Relaxed);
                     continue;
@@ -262,10 +305,25 @@ async fn run(mut r: Run) {
                 };
                 mix_seq = mix_seq.wrapping_add(1);
                 mix_ts = mix_ts.wrapping_add(FRAME_8K as u32);
-                if let Ok(bytes) = packet.marshal() {
-                    if r.socket.send_to(&bytes, dest).await.is_ok() {
-                        r.stats.packets_out.fetch_add(1, Relaxed);
+                let Ok(claro) = packet.marshal() else { continue };
+                let saida = match r.srtp.as_mut() {
+                    Some(s) => {
+                        let t = Instant::now();
+                        let out = s.outbound.encrypt_rtp(&claro);
+                        r.stats.srtp_nanos.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
+                        match out {
+                            Ok(b) => b,
+                            Err(e) => {
+                                // Não se manda em claro o que devia ir cifrado.
+                                tracing::warn!(leg = %r.cfg.leg_id, error = %e, "ponte: SRTP de saída falhou — pacote descartado");
+                                continue;
+                            }
+                        }
                     }
+                    None => claro,
+                };
+                if r.socket.send_to(&saida, dest).await.is_ok() {
+                    r.stats.packets_out.fetch_add(1, Relaxed);
                 }
             }
             _ = quality_tick.tick() => {
@@ -291,6 +349,7 @@ async fn run(mut r: Run) {
         packets_in = r.stats.packets_in.load(Relaxed),
         packets_out = r.stats.packets_out.load(Relaxed),
         rejected = r.stats.packets_rejected.load(Relaxed),
+        srtp_failed = r.stats.packets_srtp_failed.load(Relaxed),
         decode_errors = mixer.decode_errors,
         "ponte: perna fechada"
     );

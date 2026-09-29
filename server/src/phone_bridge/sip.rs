@@ -9,9 +9,17 @@
 //! **Só o que a perna precisa**, e nada mais: UDP, um diálogo por chamada,
 //! `INVITE` → `100`/`200` com SDP (G.711 lei A ou μ), retransmissão do `200`
 //! até ao `ACK` (RFC 3261 §13.3.1.4), `BYE`, `CANCEL`, `OPTIONS`, e re-INVITE
-//! respondido com o mesmo SDP. Sem registo, sem autenticação SIP, sem TCP/TLS,
-//! sem SRTP: a ponte só fala com os FreeSWITCH da plataforma, na rede interna,
-//! e ignora (sem resposta) qualquer outro IP antes de ler o pedido.
+//! respondido com o mesmo SDP. Sem registo, sem autenticação SIP, sem TCP/TLS:
+//! a ponte só fala com os FreeSWITCH da plataforma, na rede interna, e ignora
+//! (sem resposta) qualquer outro IP antes de ler o pedido.
+//!
+//! **A media é SEMPRE SRTP.** A oferta tem de trazer `a=crypto` com a suite
+//! `AES_CM_128_HMAC_SHA1_80` (SDES, RFC 4568) e o perfil `RTP/SAVP`; sem isso a
+//! resposta é `488` e a chamada não entra na sala. Do lado do FreeSWITCH é
+//! `rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80` no dialplan. As chaves
+//! são por CHAMADA e por SENTIDO, geradas aqui (`srtp::SrtpKeyPair::generate`)
+//! e anunciadas na resposta — nunca configuração, nunca reutilizadas. Ver
+//! `srtp.rs` para porque é que isto sucede às chaves por sala da Abordagem B.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -25,6 +33,7 @@ use uuid::Uuid;
 
 use super::g711::Law;
 use super::leg::{self, LegConfig, LegEvent, LegHandle};
+use super::srtp::{SdesCrypto, SrtpKeyPair, SrtpSession};
 use crate::sfu::SfuState;
 
 /// Cabeçalho com o id da chamada da telefonia (`delonix_call_id`), posto pelo
@@ -186,11 +195,15 @@ fn response(
 //  SDP
 // ============================================================
 
-/// O que interessa de uma oferta SDP: onde mandar o RTP e que G.711 usar.
-#[derive(Debug, Clone, PartialEq)]
+/// O que interessa de uma oferta SDP: onde mandar o RTP, que G.711 usar e com
+/// que chave SRTP o FreeSWITCH vai cifrar o que nos manda.
+#[derive(Debug, Clone)]
 pub struct AudioOffer {
     pub remote: Option<SocketAddr>,
     pub law: Law,
+    /// `None` = a oferta não traz SDES utilizável. Quem chama responde `488`:
+    /// media em claro não entra numa sala.
+    pub crypto: Option<SdesCrypto>,
 }
 
 /// Lê a oferta. `None` se não houver G.711 (PCMA/PCMU) na linha de áudio —
@@ -240,20 +253,37 @@ pub fn parse_sdp_offer(sdp: &str) -> Option<AudioOffer> {
         (Some(ip), Some(p)) if p != 0 => Some(SocketAddr::new(ip, p)),
         _ => None,
     };
-    Some(AudioOffer { remote, law })
+    Some(AudioOffer {
+        remote,
+        law,
+        crypto: SdesCrypto::from_sdp(sdp),
+    })
 }
 
-pub fn sdp_answer(local: SocketAddr, law: Law, session: u64) -> String {
+/// A resposta SDP. `answer_crypto` é a NOSSA chave (a que a outra ponta usa
+/// para desencriptar o que lhe mandamos); presente => `RTP/SAVP` e
+/// `a=crypto`, ausente => `RTP/AVP` em claro, que só os testes do caminho de
+/// RTP usam (o `invite` nunca chega aqui sem cifra).
+pub fn sdp_answer(
+    local: SocketAddr,
+    law: Law,
+    session: u64,
+    answer_crypto: Option<&SdesCrypto>,
+) -> String {
     let (name, pt) = match law {
         Law::A => ("PCMA", 8),
         Law::Mu => ("PCMU", 0),
     };
     let family = if local.is_ipv4() { "IP4" } else { "IP6" };
     let ip = local.ip();
+    let (proto, crypto) = match answer_crypto {
+        Some(c) => ("RTP/SAVP", c.answer_line()),
+        None => ("RTP/AVP", String::new()),
+    };
     format!(
         "v=0\r\no=delonix {session} {session} IN {family} {ip}\r\ns=delonix-bridge\r\n\
-         c=IN {family} {ip}\r\nt=0 0\r\nm=audio {port} RTP/AVP {pt}\r\n\
-         a=rtpmap:{pt} {name}/8000\r\na=ptime:20\r\na=sendrecv\r\n",
+         c=IN {family} {ip}\r\nt=0 0\r\nm=audio {port} {proto} {pt}\r\n\
+         a=rtpmap:{pt} {name}/8000\r\n{crypto}a=ptime:20\r\na=sendrecv\r\n",
         port = local.port()
     )
 }
@@ -503,6 +533,14 @@ impl SipBridge {
             self.send(from, &reject("488 Not Acceptable Here")).await;
             return;
         };
+        // SRTP obrigatório: uma oferta sem SDES que saibamos fazer é recusada
+        // aqui, antes de haver perna, sala ou porta aberta. Nunca se responde
+        // `RTP/AVP` a quem ofereceu SAVP nem se aceita media em claro.
+        let Some(oferta_crypto) = offer.crypto.clone() else {
+            tracing::warn!(%from, sala = %room_code, "ponte: INVITE sem a=crypto utilizável — 488");
+            self.send(from, &reject("488 Not Acceptable Here")).await;
+            return;
+        };
         let delonix_call = msg
             .header(CALL_ID_HEADER)
             .and_then(|v| Uuid::parse_str(v.trim()).ok());
@@ -510,9 +548,25 @@ impl SipBridge {
             self.send(from, &reject("404 Not Found")).await;
             return;
         };
+        // A nossa chave: nova por chamada, e só existe aqui e no SDP da
+        // resposta. A tag é a da oferta (RFC 4568 §7.1.2 — resposta a uma
+        // oferta unária).
+        let nossa_chave = SrtpKeyPair::generate();
+        let resposta_crypto = SdesCrypto {
+            tag: oferta_crypto.tag,
+            keys: nossa_chave.clone(),
+        };
+        let srtp = match SrtpSession::new(&nossa_chave, &oferta_crypto.keys) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, "ponte: contexto SRTP não construiu — 488");
+                self.send(from, &reject("488 Not Acceptable Here")).await;
+                return;
+            }
+        };
         let (leg_tx, mut leg_rx) = mpsc::channel(16);
         let leg = match self
-            .open_leg(sfu, adm, offer.clone(), from.ip(), leg_tx)
+            .open_leg(sfu, adm, offer.clone(), from.ip(), Some(srtp), leg_tx)
             .await
         {
             Ok(l) => l,
@@ -523,7 +577,12 @@ impl SipBridge {
             }
         };
         let to_tag = format!("{:x}", rand::random::<u64>());
-        let sdp = sdp_answer(leg.local_addr, offer.law, rand::random::<u32>() as u64);
+        let sdp = sdp_answer(
+            leg.local_addr,
+            offer.law,
+            rand::random::<u32>() as u64,
+            Some(&resposta_crypto),
+        );
         let ok = response(
             &msg,
             "200 OK",
@@ -594,6 +653,7 @@ impl SipBridge {
         adm: Admitted,
         offer: AudioOffer,
         source: IpAddr,
+        srtp: Option<SrtpSession>,
         events: mpsc::Sender<LegEvent>,
     ) -> std::io::Result<LegHandle> {
         let ports: Vec<u16> = match self.cfg.rtp_ports {
@@ -601,11 +661,32 @@ impl SipBridge {
             None => vec![0],
         };
         let mut last = std::io::Error::other("sem portas RTP configuradas");
-        for port in ports {
+        // Abrir a porta ANTES de entregar a sessão SRTP: a sessão não é
+        // clonável (cada contexto tem o seu estado de repetição) e uma
+        // tentativa falhada não a pode consumir — se consumisse, a porta
+        // seguinte abria a chamada em CLARO.
+        let socket = {
+            let mut aberto = None;
+            for port in ports {
+                match UdpSocket::bind(SocketAddr::new(self.cfg.rtp_ip, port)).await {
+                    Ok(s) => {
+                        aberto = Some(s);
+                        break;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => last = e,
+                    Err(e) => return Err(e),
+                }
+            }
+            match aberto {
+                Some(s) => s,
+                None => return Err(last),
+            }
+        };
+        {
             let cfg = LegConfig {
                 room_id: adm.room_id,
                 leg_id: adm.leg_id,
-                bind: SocketAddr::new(self.cfg.rtp_ip, port),
+                bind: socket.local_addr()?,
                 // O RTP vem do FreeSWITCH que mandou o INVITE (e do IP do SDP,
                 // se for outro da mesma lista).
                 allowed_sources: {
@@ -620,19 +701,19 @@ impl SipBridge {
                 default_law: offer.law,
                 initial_remote: offer.remote,
             };
-            match leg::start(sfu.clone(), cfg, events.clone()).await {
-                Ok(l) => return Ok(l),
-                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => last = e,
-                Err(e) => return Err(e),
-            }
+            leg::start(sfu.clone(), cfg, socket, srtp, events).await
         }
-        Err(last)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Chave SDES fixa da oferta dos testes (30 bytes: 16 de chave + 14 de sal),
+    /// base64. É de TESTE e nunca sai daqui — a das chamadas reais é gerada por
+    /// `SrtpKeyPair::generate` a cada chamada.
+    const OFERTA_KEY_B64: &str = "AAECAwQFBgcICQoLDA0OD/DxAgMEBQYHCAkKCwwN";
 
     const INVITE_FS: &str = "INVITE sip:room-voz-arq-2026@127.0.0.1:5290 SIP/2.0\r\n\
 Via: SIP/2.0/UDP 127.0.0.1:5280;rport;branch=z9hG4bKabc\r\n\
@@ -643,17 +724,18 @@ Call-ID: 1a2b3c\r\n\
 CSeq: 12345 INVITE\r\n\
 X-Delonix-Call-Id: 7a0ad0a0-5c55-4b2e-9d3e-1d7c9c2b5e11\r\n\
 Content-Type: application/sdp\r\n\
-Content-Length: 223\r\n\
+Content-Length: 293\r\n\
 \r\n\
 v=0\r\n\
 o=FreeSWITCH 1 2 IN IP4 127.0.0.1\r\n\
 s=FreeSWITCH\r\n\
 c=IN IP4 127.0.0.1\r\n\
 t=0 0\r\n\
-m=audio 32810 RTP/AVP 8 101\r\n\
+m=audio 32810 RTP/SAVP 8 101\r\n\
 a=rtpmap:8 PCMA/8000\r\n\
 a=rtpmap:101 telephone-event/8000\r\n\
 a=fmtp:101 0-16\r\n\
+a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:AAECAwQFBgcICQoLDA0OD/DxAgMEBQYHCAkKCwwN\r\n\
 a=ptime:20\r\n\
 a=sendrecv\r\n";
 
@@ -673,6 +755,68 @@ a=sendrecv\r\n";
         let offer = parse_sdp_offer(&m.body).unwrap();
         assert_eq!(offer.law, Law::A);
         assert_eq!(offer.remote, Some("127.0.0.1:32810".parse().unwrap()));
+        let c = offer.crypto.expect("o INVITE do FreeSWITCH traz SDES");
+        assert_eq!(c.tag, 1);
+        assert_eq!(c.keys.to_b64(), OFERTA_KEY_B64);
+    }
+
+    /// Uma oferta em claro (`RTP/AVP` sem `a=crypto`) lê-se — mas sem cifra, e
+    /// é isso que faz o `invite` responder `488`. O que este teste fixa é que
+    /// `crypto: None` nunca passa por «está tudo bem».
+    #[test]
+    fn oferta_em_claro_nao_traz_cifra() {
+        let claro = INVITE_FS
+            .replace("RTP/SAVP", "RTP/AVP")
+            .replace(
+                "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:AAECAwQFBgcICQoLDA0OD/DxAgMEBQYHCAkKCwwN\r\n",
+                "",
+            );
+        let m = SipMessage::parse(&claro).unwrap();
+        let offer = parse_sdp_offer(&m.body).unwrap();
+        assert_eq!(offer.law, Law::A, "o G.711 continua legível");
+        assert!(
+            offer.crypto.is_none(),
+            "uma oferta sem a=crypto não pode trazer cifra"
+        );
+    }
+
+    /// A resposta com cifra: `RTP/SAVP`, `a=crypto` com a tag da oferta e uma
+    /// chave que NÃO é a da oferta (nunca a mesma chave nos dois sentidos).
+    #[test]
+    fn a_resposta_com_cifra_e_savp_e_leva_outra_chave() {
+        let nossa = SrtpKeyPair::generate();
+        let resposta = SdesCrypto {
+            tag: 1,
+            keys: nossa.clone(),
+        };
+        let sdp = sdp_answer(
+            "127.0.0.1:32900".parse().unwrap(),
+            Law::A,
+            7,
+            Some(&resposta),
+        );
+        assert!(sdp.contains("RTP/SAVP 8"), "{sdp}");
+        assert!(sdp.contains(&format!(
+            "a=crypto:1 {} inline:{}",
+            super::super::srtp::SRTP_PROFILE_NAME,
+            nossa.to_b64()
+        )));
+        assert!(
+            !sdp.contains(OFERTA_KEY_B64),
+            "a resposta repetiu a chave da oferta"
+        );
+        // E a nossa resposta é legível como oferta pelo outro lado.
+        let lida = SdesCrypto::from_sdp(&sdp).unwrap();
+        assert_eq!(lida.keys.to_b64(), nossa.to_b64());
+    }
+
+    /// Sem cifra, a resposta é `RTP/AVP` e não inventa um `a=crypto` — o
+    /// caminho que só os testes de media usam.
+    #[test]
+    fn resposta_sem_cifra_e_avp_e_nao_inventa_crypto() {
+        let sdp = sdp_answer("127.0.0.1:32900".parse().unwrap(), Law::A, 7, None);
+        assert!(sdp.contains("RTP/AVP 8"));
+        assert!(!sdp.contains("a=crypto"));
     }
 
     #[test]
@@ -712,7 +856,7 @@ a=sendrecv\r\n";
     #[test]
     fn resposta_200_mantem_o_dialogo_e_leva_o_sdp() {
         let m = SipMessage::parse(INVITE_FS).unwrap();
-        let sdp = sdp_answer("127.0.0.1:32900".parse().unwrap(), Law::A, 7);
+        let sdp = sdp_answer("127.0.0.1:32900".parse().unwrap(), Law::A, 7, None);
         let r = response(
             &m,
             "200 OK",

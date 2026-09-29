@@ -35,7 +35,6 @@ pub mod openapi;
 mod org;
 mod phone_bridge;
 mod presence;
-mod pstn_bridge;
 mod pubsub;
 mod ramais;
 mod rate_limit;
