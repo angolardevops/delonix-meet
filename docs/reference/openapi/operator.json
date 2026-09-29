@@ -1507,6 +1507,22 @@
         ],
         "type": "object"
       },
+      "CreateDocumentReq": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "body"
+        ],
+        "type": "object"
+      },
       "CreateExtensionReq": {
         "properties": {
           "extension": {
@@ -1778,6 +1794,26 @@
         ],
         "type": "object"
       },
+      "CreatePairingCodeReq": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "number": {
+            "description": "CAM n (1–16). Omisso: o menor livre no momento do emparelhamento.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CreatePriceReq": {
         "properties": {
           "price_per_min": {
@@ -1928,6 +1964,24 @@
           "kind",
           "label",
           "url"
+        ],
+        "type": "object"
+      },
+      "CreateStudioReq": {
+        "additionalProperties": false,
+        "properties": {
+          "iso_recording": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },
@@ -2231,6 +2285,25 @@
         ],
         "type": "object"
       },
+      "Device": {
+        "properties": {
+          "app_version": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "platform",
+          "app_version"
+        ],
+        "type": "object"
+      },
       "DeviceInfo": {
         "properties": {
           "capable": {
@@ -2423,6 +2496,21 @@
           "transport",
           "capable"
         ],
+        "type": "object"
+      },
+      "DeviceReq": {
+        "additionalProperties": false,
+        "properties": {
+          "app_version": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "DevicesReq": {
@@ -2758,6 +2846,150 @@
           "total",
           "total_kind",
           "counts"
+        ],
+        "type": "object"
+      },
+      "Document": {
+        "properties": {
+          "body": {
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "description": "`mixer_scene`, `macro`, `overlay`, `light_scene`, `camera_profile`, `rundown`.",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "studio_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Calculado no servidor; hoje só o alinhamento o traz.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "studio_id",
+          "kind",
+          "name",
+          "version",
+          "body",
+          "created_by",
+          "updated_by",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "DocumentPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "DocumentVersion": {
+        "properties": {
+          "body": {
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "name",
+          "body",
+          "updated_by",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "DocumentVersionPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentVersion"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -4636,6 +4868,49 @@
         ],
         "type": "object"
       },
+      "NewPairingCode": {
+        "description": "O código acabado de gerar — o `code` só aparece nesta resposta.",
+        "properties": {
+          "code": {
+            "description": "`XXXX-XXXX`.",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "max_attempts": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "number": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "room_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "expires_at",
+          "label",
+          "max_attempts",
+          "room_code"
+        ],
+        "type": "object"
+      },
       "Notification": {
         "properties": {
           "body": {
@@ -4706,6 +4981,23 @@
         "required": [
           "items",
           "unread_count"
+        ],
+        "type": "object"
+      },
+      "ObjectStorage": {
+        "properties": {
+          "kind": {
+            "description": "`minio`.",
+            "type": "string"
+          },
+          "state": {
+            "description": "`not_configured`: o servidor não tem armazenamento de objectos.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "state"
         ],
         "type": "object"
       },
@@ -5518,6 +5810,126 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/OutboundCall"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "Pairing": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "label": {
+            "description": "`CAM 2 · telefone da Ana`.",
+            "type": "string"
+          },
+          "number": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source_token": {
+            "description": "JWT `typ: \"source\"`: só abre o `/ws` desta sala, só publica media.",
+            "type": "string"
+          },
+          "studio_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "ws_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "studio_id",
+          "number",
+          "label",
+          "room_code",
+          "source_token",
+          "expires_at",
+          "ws_path"
+        ],
+        "type": "object"
+      },
+      "PairingCode": {
+        "properties": {
+          "attempts": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "consumed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "max_attempts": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "number": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "description": "`active` | `consumed` | `expired` | `burned`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "expires_at",
+          "attempts",
+          "max_attempts",
+          "state",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "PairingCodePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PairingCode"
             },
             "type": "array"
           },
@@ -7012,6 +7424,43 @@
         ],
         "type": "object"
       },
+      "RecordingTarget": {
+        "properties": {
+          "free_bytes": {
+            "description": "`statvfs` real; `null` se o volume não se deixou medir.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "iso_recording": {
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "`local`: o volume de `RECORDINGS_DIR`.",
+            "type": "string"
+          },
+          "object_storage": {
+            "$ref": "#/components/schemas/ObjectStorage"
+          },
+          "total_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "iso_recording",
+          "object_storage"
+        ],
+        "type": "object"
+      },
       "RecordingUpdateReq": {
         "additionalProperties": false,
         "description": "`deny_unknown_fields`: um cliente que ainda mande `title` ou `category` (o\ncontrato antigo) recebe `400` em vez de um `200` que não alterou nada. Um\ncampo que o cliente escreve e o sistema ignora é pior do que um campo que\nnão existe (R184).",
@@ -7048,6 +7497,21 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "RedeemReq": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "device": {
+            "$ref": "#/components/schemas/DeviceReq"
+          }
+        },
+        "required": [
+          "code"
+        ],
         "type": "object"
       },
       "RegisterReq": {
@@ -8609,6 +9073,96 @@
         ],
         "type": "object"
       },
+      "Source": {
+        "properties": {
+          "connected": {
+            "description": "Neste pod: a sala viva. Noutro pod: o último estado persistido.",
+            "type": "boolean"
+          },
+          "device": {
+            "$ref": "#/components/schemas/Device"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`phone_app`.",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "number": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "paired_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "studio_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tally": {
+            "description": "`program` | `preview` | `free`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "studio_id",
+          "number",
+          "label",
+          "kind",
+          "device",
+          "paired_at",
+          "connected",
+          "tally"
+        ],
+        "type": "object"
+      },
+      "SourcePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Source"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "SsoCheck": {
         "description": "Resultado da verificação de SSO para um domínio de email.",
         "properties": {
@@ -8960,6 +9514,72 @@
           }
         ],
         "description": "O destino e a chave completa — só na criação e na rotação."
+      },
+      "Studio": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "iso_recording": {
+            "description": "Grava cada fonte em ficheiro próprio (ADR-0014 §2.3).",
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "room_code": {
+            "description": "A sala SFU do estúdio (onde entram operador e fontes).",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "room_code",
+          "iso_recording",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "StudioPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Studio"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
       },
       "StudioReq": {
         "properties": {
@@ -9558,6 +10178,32 @@
         ],
         "type": "object"
       },
+      "UpdateDocumentReq": {
+        "additionalProperties": false,
+        "description": "`version` é obrigatória: é ela que impede a gravação cega por cima do\ntrabalho de outro operador. `name`/`body` omissos ficam como estavam.",
+        "properties": {
+          "body": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
       "UpdateEmployeeReq": {
         "properties": {
           "branch_id": {
@@ -9742,6 +10388,25 @@
         },
         "type": "object"
       },
+      "UpdateSourceReq": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "number": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UpdateStreamDestinationReq": {
         "properties": {
           "label": {
@@ -9757,6 +10422,24 @@
             ]
           },
           "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateStudioReq": {
+        "additionalProperties": false,
+        "properties": {
+          "iso_recording": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
             "type": [
               "string",
               "null"

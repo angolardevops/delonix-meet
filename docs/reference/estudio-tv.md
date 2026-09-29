@@ -4,7 +4,14 @@
 **Autoridade:** [ADR-0014 «Estúdio de TV num PC»](../adr/0014-estudio-de-tv-num-pc.md).
 **Ecrãs servidos:** DelonixSources, DelonixSwitcher, DelonixAudioMixer, DelonixLighting,
 DelonixStudioLive, DelonixPhoneCam.
-**Cópia de trabalho:** `notas-ui-template/contrato-estudio-tv.md` (igual a este ficheiro).
+**Estado medido:** 2026-09-24, sobre `origin/main` `b6b769d` (PR #120 fundido).
+As secções 2, 3, 4 e 6 estão `FEITO` — commitadas, com testes de integração contra
+Postgres e servidor reais e casos de isolamento em `web/e2e/isolamento.mjs`. A 5 está
+`PARCIAL` e as 7 e 8 continuam `CONTRATO`.
+
+**Nota sobre a cópia de trabalho:** o `notas-ui-template/` referido na primeira versão
+deste texto **não existe em nenhum ramo** — nem na `main`, nem na `feat/console-ui-template`.
+Este ficheiro é o único texto do contrato; não há segunda cópia a divergir.
 
 > **Estado.** Cada secção diz se está `CONTRATO` (acordado, por implementar), `FEITO` (commitado e com teste) ou
 > `EXTERNAL` (depende de hardware que não existe nesta máquina). A UI só consome o que
@@ -36,7 +43,7 @@ DelonixStudioLive, DelonixPhoneCam.
 | `studio.manage` | administrador da org | `403` (`forbidden`) |
 | (WebSocket) comandar fontes | anfitrião **actual** da sala do estúdio (`hub.is_host`, sobrevive a `transfer-host`) | mensagem descartada + `error` |
 
-## 2. Estúdios — `CONTRATO`
+## 2. Estúdios — `FEITO`
 
 Um estúdio é da organização e tem **uma sala SFU própria** (criada com ele, `topology=sfu`,
 `e2ee=false` — o directo recusa E2EE, ADR-0003).
@@ -52,7 +59,7 @@ Um estúdio é da organização e tem **uma sala SFU própria** (criada com ele,
 `Studio = {id, org_id, name, room_code, iso_recording, created_by, created_at, updated_at}`.
 Erros: `400 studio.invalid_name` (1–80 caracteres).
 
-## 3. Emparelhar a app Delonix Câmara (PhoneCam) — `CONTRATO`
+## 3. Emparelhar a app Delonix Câmara (PhoneCam) — `FEITO`
 
 ### 3.1 O operador gera um código
 
@@ -129,7 +136,7 @@ Source = {"id","studio_id","number","label","kind":"phone_app",
 `connected`/`tally` vêm da sala viva quando o pedido cai no pod da sala; noutro pod vêm do
 último estado persistido (`last_seen_at` diz de quando é).
 
-## 4. WebSocket da sala — mensagens novas — `CONTRATO`
+## 4. WebSocket da sala — mensagens novas — `FEITO`
 
 Todas em JSON com `type` em kebab-case, no mesmo `/ws` da sala (afinidade `&room=` do
 ADR-0001).
@@ -179,7 +186,12 @@ Recusas ao operador: `{"type":"error","message":"studio.not_operator"|"studio.un
 | `studio-source-status` | `source_id` + os campos de 4.3 + `at` |
 | `studio-command-result` | `source_id`, `command_id`, `ok`, `error?` |
 
-## 5. Gravação por câmara (ISO) e faixas de áudio separadas — `CONTRATO`
+## 5. Gravação por câmara (ISO) e faixas de áudio separadas — `PARCIAL`
+
+> `FEITO`: `GET …/recording-target` (espaço livre real por `statvfs`).
+> `CONTRATO`, por implementar: `recording_tracks`, `GET /api/recordings/{recording_id}/tracks`
+> e `…/tracks/{track_id}/content`, e a gravação ISO em ficheiro por fonte. A UI **não**
+> pode mostrar «REC · ISO n» com um número de faixas — ainda não há de onde o ler.
 
 **Decisão (ADR-0014 §3):** o SFU grava cada publicação (já o fazia, em IVF/OGG) e, no
 fim, cada fonte fica num ficheiro próprio por **cópia** (`-c copy`, sem recodificar).
@@ -211,7 +223,7 @@ RecordingTarget = {"kind":"local","free_bytes","total_bytes","iso_recording",
 - Só VP8 e Opus são gravados (mesma fronteira do `recordable_codec`); uma track H.264
   fica fora da gravação com erro escrito.
 
-## 6. Persistência do estúdio (documentos com versões) — `CONTRATO`
+## 6. Persistência do estúdio (documentos com versões) — `FEITO`
 
 Seis tipos, todos debaixo do estúdio, com o mesmo contrato:
 

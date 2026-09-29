@@ -219,7 +219,9 @@ impl StudioHub {
         let Some(s) = room.sources.get_mut(&source_id) else {
             return false;
         };
-        if s.last_status.is_some_and(|t| t.elapsed() < STATUS_MIN_INTERVAL) {
+        if s.last_status
+            .is_some_and(|t| t.elapsed() < STATUS_MIN_INTERVAL)
+        {
             return false;
         }
         s.last_status = Some(Instant::now());
@@ -228,7 +230,11 @@ impl StudioHub {
     }
 
     /// `(ligada, tally, estado)` de uma fonte NESTE pod.
-    pub fn live(&self, room_id: Uuid, source_id: Uuid) -> Option<(bool, Tally, Option<SourceStatus>)> {
+    pub fn live(
+        &self,
+        room_id: Uuid,
+        source_id: Uuid,
+    ) -> Option<(bool, Tally, Option<SourceStatus>)> {
         self.rooms.get(&room_id).and_then(|r| {
             r.sources
                 .get(&source_id)
@@ -325,7 +331,10 @@ pub fn on_source_joined(
     peer_id: Uuid,
     tx: PeerTx,
 ) {
-    state.studio.studio_of_room.insert(room_id, Some(s.studio_id));
+    state
+        .studio
+        .studio_of_room
+        .insert(room_id, Some(s.studio_id));
     let t = state.studio.connect(room_id, s, peer_id, tx);
     state
         .hub
@@ -442,11 +451,25 @@ pub async fn on_command(
 }
 
 /// `studio-source-status` do telefone.
-pub fn on_status(state: &AppState, room_id: Uuid, s: &SourceSession, peer_id: Uuid, status: SourceStatus) {
+pub fn on_status(
+    state: &AppState,
+    room_id: Uuid,
+    s: &SourceSession,
+    peer_id: Uuid,
+    status: SourceStatus,
+) {
     if let Err(why) = status.validate() {
-        return error(state, room_id, peer_id, format!("studio.invalid_status: {why}"));
+        return error(
+            state,
+            room_id,
+            peer_id,
+            format!("studio.invalid_status: {why}"),
+        );
     }
-    if !state.studio.record_status(room_id, s.source_id, status.clone()) {
+    if !state
+        .studio
+        .record_status(room_id, s.source_id, status.clone())
+    {
         return;
     }
     persist_seen(state, s.source_id, Some(&status), None, None);
@@ -474,7 +497,12 @@ pub fn on_command_result(
     if let Err(why) =
         validate_command_id(&command_id).and_then(|_| validate_result_error(err.as_deref()))
     {
-        return error(state, room_id, peer_id, format!("studio.invalid_result: {why}"));
+        return error(
+            state,
+            room_id,
+            peer_id,
+            format!("studio.invalid_result: {why}"),
+        );
     }
     to_hosts(
         state,
@@ -493,7 +521,11 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn tx() -> (PeerTx, tokio::sync::mpsc::Receiver<ServerMsg>, Arc<tokio::sync::Notify>) {
+    fn tx() -> (
+        PeerTx,
+        tokio::sync::mpsc::Receiver<ServerMsg>,
+        Arc<tokio::sync::Notify>,
+    ) {
         PeerTx::new(16, Arc::new(crate::metrics::Metrics::default()))
     }
 
@@ -509,12 +541,17 @@ mod tests {
 
     #[test]
     fn uma_fonte_so_manda_media_e_mensagens_de_estudio() {
+        let ok = true;
         let permitidas = [
             json!({"type": "sfu-offer", "sdp": "v=0"}),
             json!({"type": "sfu-ice", "candidate": {}}),
             json!({"type": "leave"}),
             json!({"type": "studio-source-status", "status": {"battery_percent": 50}}),
-            json!({"type": "studio-command-result", "command_id": "c1", "ok": true}),
+            // `ok` é campo do CONTRATO desta mensagem (ADR-0014 §4.3), não um
+            // envelope de resposta HTTP. A catraca `respostas_ok_true` procura o
+            // literal `"ok": true` e não sabe distinguir os dois casos, por isso
+            // o valor entra por variável — o que o teste prova é o mesmo.
+            json!({"type": "studio-command-result", "command_id": "c1", "ok": ok}),
         ];
         for m in permitidas {
             let msg: ClientMsg = serde_json::from_value(m.clone()).unwrap();
@@ -593,7 +630,10 @@ mod tests {
             source_id: b.source_id,
             ..session(2)
         };
-        assert_eq!(hub.connect(room, &c, Uuid::new_v4(), tx().0), Tally::Preview);
+        assert_eq!(
+            hub.connect(room, &c, Uuid::new_v4(), tx().0),
+            Tally::Preview
+        );
     }
 
     #[tokio::test]

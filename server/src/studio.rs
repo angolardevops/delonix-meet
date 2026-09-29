@@ -3,10 +3,24 @@
 //! As regras estão em `delonix_meet_domain::studio`; o tempo real em
 //! `studio_realtime.rs`. Contrato: `docs/reference/estudio-tv.md`.
 //!
-//! Quem pode (capacidades PROPOSTAS, verificação de hoje com `org::role_in_org`):
-//! - `studio.view`    — membro activo;                     senão `404`;
-//! - `studio.operate` — admin da org ou quem criou o estúdio; senão `403 studio.not_operator`;
-//! - `studio.manage`  — admin da org;                       senão `403`.
+//! Quem pode:
+//! - ver     — membro activo da org;                          senão `404`;
+//! - operar  — `org.administer` **ou** quem criou o estúdio;   senão `403 studio.not_operator`;
+//! - gerir   — `org.administer`;                              senão `403 studio.not_manager`.
+//!
+//! A decisão vem do motor de capacidades do ADR-0008 (`org::decide`), não de
+//! comparar o TEXTO do papel: `role == "admin"` espalhado pelos módulos foi
+//! exactamente o que o ADR-0008 veio arrumar, e a catraca da arquitectura
+//! (`verificacoes_papel_por_string_fora_de_org_rs`) recusa-o.
+//!
+//! Porque `org.administer` e não `studio.manage`: o contrato
+//! (`docs/reference/estudio-tv.md` §1) PROPÔS `studio.view/operate/manage` para
+//! o catálogo, e essas três não existem no `Capability` do domínio. Inventá-las
+//! aqui obrigaria a mexer no enum, no `CapabilityInfo`, na semeadura das
+//! matrizes de papel e na consola que as mostra — o catálogo é de outra frente.
+//! A `org.administer` é, pela sua própria descrição, «todas as rotas de
+//! administração sem capacidade fina», que é hoje o caso destas. Quando as três
+//! entrarem no catálogo, muda-se ESTE bloco e mais nada.
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -21,7 +35,10 @@ use delonix_meet_core::{
     page::{Page, PageRequest},
     DomainError,
 };
-use delonix_meet_domain::studio::{self as rules, pairing, tally::Tally};
+use delonix_meet_domain::{
+    identity::authorization::{Capability, Decision, ResourceScope},
+    studio::{self as rules, pairing, tally::Tally},
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -37,33 +54,53 @@ use crate::{
 /// O que quem pede é na organização do caminho.
 pub(crate) struct Access {
     pub user_id: Uuid,
-    pub admin: bool,
+    /// Tem `org.administer` nesta organização.
+    can_administer: bool,
 }
 
-pub(crate) async fn member(state: &AppState, org_id: Uuid, user_id: Uuid) -> Result<Access, ApiError> {
-    match crate::org::role_in_org(state, org_id, user_id).await? {
-        Some(role) => Ok(Access {
-            user_id,
-            admin: role == "admin",
-        }),
-        None => Err(ApiError::NotFound),
-    }
+/// Pertença **e** capacidade numa só ida à base: o `org::decide` devolve
+/// `None` a quem não é membro activo (ou quando a org não existe), que é o
+/// `404` de quem não chega ao recurso — o mesmo que outra organização recebe.
+pub(crate) async fn member(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<Access, ApiError> {
+    let (_, decision) = crate::org::decide(
+        state,
+        org_id,
+        user_id,
+        Capability::OrgAdminister,
+        ResourceScope::Organization,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    Ok(Access {
+        user_id,
+        // `RequiresApproval` NÃO é permissão. Aqui não se abre um pedido de
+        // aprovação: estas rotas são de configuração do estúdio, e um `403`
+        // com código é a resposta honesta — ao contrário de `require_capability`,
+        // que abriria um pedido para uma acção que ninguém vai aprovar a tempo
+        // de uma emissão.
+        can_administer: matches!(decision, Decision::Allow),
+    })
 }
 
 impl Access {
-    /// `studio.manage`.
+    /// Cria e apaga estúdios e agentes de luz.
     pub(crate) fn manage(&self) -> Result<(), ApiError> {
-        if self.admin {
+        if self.can_administer {
             Ok(())
         } else {
             Err(DomainError::forbidden("studio.not_manager")
                 .with_message("só um administrador da organização cria ou apaga estúdios e agentes")
+                .with_field("capability", Capability::OrgAdminister.as_str())
                 .into())
         }
     }
-    /// `studio.operate`.
+    /// Opera um estúdio concreto: quem administra a org, ou quem o criou.
     pub(crate) fn operate(&self, studio: &Studio) -> Result<(), ApiError> {
-        if self.admin || studio.created_by == self.user_id {
+        if self.can_administer || studio.created_by == self.user_id {
             Ok(())
         } else {
             Err(DomainError::forbidden("studio.not_operator")
@@ -326,27 +363,58 @@ pub struct RecordingTarget {
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(
-        list_studios, create_studio, get_studio, update_studio, delete_studio,
-        create_pairing_code, list_pairing_codes, delete_pairing_code, redeem,
-        list_sources, get_source, update_source, delete_source, recording_target
+        list_studios,
+        create_studio,
+        get_studio,
+        update_studio,
+        delete_studio,
+        create_pairing_code,
+        list_pairing_codes,
+        delete_pairing_code,
+        redeem,
+        list_sources,
+        get_source,
+        update_source,
+        delete_source,
+        recording_target
     ),
     components(schemas(
-        Studio, StudioPage, CreateStudioReq, UpdateStudioReq, CreatePairingCodeReq,
-        NewPairingCode, PairingCode, PairingCodePage, DeviceReq, RedeemReq, Pairing, Device,
-        Source, SourcePage, UpdateSourceReq, RecordingTarget, ObjectStorage
+        Studio,
+        StudioPage,
+        CreateStudioReq,
+        UpdateStudioReq,
+        CreatePairingCodeReq,
+        NewPairingCode,
+        PairingCode,
+        PairingCodePage,
+        DeviceReq,
+        RedeemReq,
+        Pairing,
+        Device,
+        Source,
+        SourcePage,
+        UpdateSourceReq,
+        RecordingTarget,
+        ObjectStorage
     ))
 )]
 pub struct ApiDoc;
 
 // --------------------------------------------------------------- estúdios ---
 
-pub(crate) async fn load_studio(state: &AppState, org_id: Uuid, studio_id: Uuid) -> Result<Studio, ApiError> {
-    sqlx::query_as(&format!("{STUDIO_SELECT} WHERE s.id = $1 AND s.org_id = $2"))
-        .bind(studio_id)
-        .bind(org_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or(ApiError::NotFound)
+pub(crate) async fn load_studio(
+    state: &AppState,
+    org_id: Uuid,
+    studio_id: Uuid,
+) -> Result<Studio, ApiError> {
+    sqlx::query_as(&format!(
+        "{STUDIO_SELECT} WHERE s.id = $1 AND s.org_id = $2"
+    ))
+    .bind(studio_id)
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)
 }
 
 /// Estúdios da organização.
@@ -449,7 +517,14 @@ pub async fn create_studio(
         return Err(e.into());
     }
     let studio = load_studio(&state, org_id, id).await?;
-    crate::audit::log(&state.db, Some(org_id), auth.user_id, "studio.created", &name).await;
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "studio.created",
+        &name,
+    )
+    .await;
     Ok((
         StatusCode::CREATED,
         [(LOCATION, format!("/api/orgs/{org_id}/studios/{id}"))],
@@ -671,7 +746,9 @@ pub async fn create_pairing_code(
             Err(e) => return Err(e.into()),
         }
     }
-    Err(ApiError::internal("não foi possível alocar um código de emparelhamento"))
+    Err(ApiError::internal(
+        "não foi possível alocar um código de emparelhamento",
+    ))
 }
 
 /// Códigos do estúdio (sem o código em claro).
@@ -807,7 +884,8 @@ pub async fn redeem(
     let (locator, secret) = pairing::parse(&req.code)?;
     let model = pairing::validate_device_field("device.model", &req.device.model)?;
     let platform = pairing::validate_device_field("device.platform", &req.device.platform)?;
-    let app_version = pairing::validate_device_field("device.app_version", &req.device.app_version)?;
+    let app_version =
+        pairing::validate_device_field("device.app_version", &req.device.app_version)?;
 
     let mut tx = state.db.begin().await?;
     let row: Option<RedeemRow> = sqlx::query_as(
@@ -973,7 +1051,8 @@ fn source_view(state: &AppState, room_id: Uuid, r: SourceRow) -> Source {
         Some((c, t, st)) if r.revoked_at.is_none() => (
             c,
             t.as_str().to_string(),
-            st.and_then(|s| serde_json::to_value(s).ok()).or(r.last_status),
+            st.and_then(|s| serde_json::to_value(s).ok())
+                .or(r.last_status),
         ),
         _ => (
             r.connected && r.revoked_at.is_none(),
@@ -1121,7 +1200,11 @@ pub async fn update_source(
     let access = member(&state, org_id, auth.user_id).await?;
     let studio = load_studio(&state, org_id, studio_id).await?;
     access.operate(&studio)?;
-    let label = req.label.as_deref().map(rules::validate_label).transpose()?;
+    let label = req
+        .label
+        .as_deref()
+        .map(rules::validate_label)
+        .transpose()?;
     let number = req.number.map(rules::validate_number).transpose()?;
     let r = sqlx::query(
         "UPDATE studio_sources SET label = COALESCE($4, label), number = COALESCE($5, number)
@@ -1214,8 +1297,15 @@ pub(crate) fn disk_space(dir: &std::path::Path) -> Option<(u64, u64)> {
     };
     let existing = dir.ancestors().find(|p| p.exists())?;
     let st = rustix::fs::statvfs(existing).ok()?;
-    let frsize = if st.f_frsize > 0 { st.f_frsize } else { st.f_bsize };
-    Some((st.f_bavail.saturating_mul(frsize), st.f_blocks.saturating_mul(frsize)))
+    let frsize = if st.f_frsize > 0 {
+        st.f_frsize
+    } else {
+        st.f_bsize
+    };
+    Some((
+        st.f_bavail.saturating_mul(frsize),
+        st.f_blocks.saturating_mul(frsize),
+    ))
 }
 
 /// Para onde vão as gravações do estúdio, com o espaço livre real.

@@ -60,6 +60,7 @@ mod sms_smpp;
 mod storage;
 mod stream_destinations;
 mod studio;
+mod studio_docs;
 mod studio_realtime;
 mod telephony_calls;
 mod telephony_cdr;
@@ -968,6 +969,26 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/studios/{studio_id}/recording-target",
             get(studio::recording_target),
+        )
+        // Documentos do estúdio (ADR-0014 §5): os SEIS tipos no mesmo contrato,
+        // com o tipo no caminho. O `{kind}` é irmão dos segmentos concretos
+        // acima (`sources`, `pairing-codes`, `recording-target`) e o matcher do
+        // axum dá precedência ao segmento ESTÁTICO — por isso `…/sources` chega
+        // às fontes e não ao handler de documentos com `kind = "sources"`.
+        // Essa precedência é o que a regressão R250 fixa.
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/{kind}",
+            get(studio_docs::list_documents).post(studio_docs::create_document),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/{kind}/{document_id}",
+            get(studio_docs::get_document)
+                .patch(studio_docs::update_document)
+                .delete(studio_docs::delete_document),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/{kind}/{document_id}/versions",
+            get(studio_docs::list_versions),
         )
         .route("/rtc", get(presence::rtc_handler))
         .merge(if state.config.internal_bind_addr.is_none() {
