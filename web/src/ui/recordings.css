@@ -36,11 +36,13 @@
   background: var(--surface);
   font-size: 11.5px;
 }
+.rec-scope .dx-seg,
 .rec-views .dx-seg {
   gap: 3px;
   padding: 3px;
   background: var(--surface);
 }
+.rec-scope .dx-seg button,
 .rec-views .dx-seg button {
   min-height: 22px;
   padding: 0 9px;

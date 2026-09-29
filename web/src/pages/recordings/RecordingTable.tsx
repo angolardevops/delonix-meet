@@ -1,8 +1,8 @@
 /**
  * Vista LISTA: a tabela do template — SESSÃO · DURAÇÃO · RESOLUÇÃO · TAMANHO ·
- * ESTADO · ARMAZENAMENTO. As colunas cujo dado a biblioteca ainda não devolve
- * (duração, resolução, armazenamento) mostram «—», nunca um valor inventado;
- * quando `RecordingView` os tiver, aparecem sem mudar este ficheiro.
+ * ESTADO · ARMAZENAMENTO. Duração e resolução são as medidas pelo servidor; o
+ * que ele não mediu, e o armazenamento por gravação (que não existe), mostram
+ * «—», nunca um valor inventado.
  *
  * R59: uma gravação FALHADA não é clicável nem oferece acção nenhuma. A linha
  * mostra a causa registada no sítio do estado; não há botão, não há leitor.
@@ -10,9 +10,10 @@
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../../ui/icons'
 import { cx, Tag } from '../../ui/kit'
-import { formatBytes, formatDate, thumbBackground } from './format'
+import { formatBytes, formatDate } from './format'
 import { formatClock, resolutionLabel, visibleState } from './libraryData'
 import RecordingState from './RecordingState'
+import { thumbStyle, useThumbnail } from './RecordingThumb'
 import type { RecordingView } from './recordingView'
 
 export function NoValue() {
@@ -21,6 +22,15 @@ export function NoValue() {
     <span className="rec-none" title={t('recordings.semDado')}>
       <span aria-hidden="true">—</span>
       <span className="dx-sr-only">{t('recordings.semDado')}</span>
+    </span>
+  )
+}
+
+function RowThumb({ r }: { r: RecordingView }) {
+  const thumb = useThumbnail(r)
+  return (
+    <span className={cx('rec-row__thumb', r.failed && 'is-failed')} style={r.failed ? undefined : thumbStyle(thumb, r.name)} aria-hidden="true">
+      {r.failed && <Icon name="alert" size={13} />}
     </span>
   )
 }
@@ -86,13 +96,7 @@ export default function RecordingTable({
               >
                 <td>
                   <div className="rec-row__session">
-                    <span
-                      className={cx('rec-row__thumb', failed && 'is-failed')}
-                      style={failed ? undefined : { background: thumbBackground(r.name) }}
-                      aria-hidden="true"
-                    >
-                      {failed && <Icon name="alert" size={13} />}
-                    </span>
+                    <RowThumb r={r} />
                     <span className="rec-row__id">
                       {failed ? (
                         <span className="rec-row__name">{r.name}</span>

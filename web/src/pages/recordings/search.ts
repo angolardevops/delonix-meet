@@ -1,16 +1,16 @@
 /**
- * Pesquisa das gravações. Com o servidor: o recurso `recordings` do contrato
- * (título, transcrição, categoria, duração…). Sem ele: a biblioteca de sempre
- * (`GET /api/recordings`, inteira) com os campos que ela traz — sem
- * transcrição, sem categoria, sem duração.
+ * Pesquisa das gravações. Com o servidor: o recurso `recordings` da pesquisa
+ * (por fundir). Sem ele: a biblioteca inteira (`GET /api/recordings`), filtrada
+ * no browser pelo nome, sala, autor, descrição e etiquetas.
  */
-import { recordingsLibrary, RecordingItem } from '../../api'
+import { recordingsLibraryMeta, type RecordingLibraryItem } from '../../api'
 import { displayName } from './recordingView'
 import { localSchema } from '../../ui/search/localSchema'
 import type { LocalFallback } from '../../ui/search/useResourceSearch'
 
-export const recordingsFallback: LocalFallback<RecordingItem> = {
-  load: (signal) => recordingsLibrary(signal),
+/** `scope: 'published'` lista as publicadas que a pessoa vê, também as de salas onde não esteve. */
+export const recordingsFallbackFor = (scope: 'mine' | 'published'): LocalFallback<RecordingLibraryItem> => ({
+  load: (signal) => recordingsLibraryMeta({ scope }, signal),
   source: {
     schema: localSchema(
       'recordings',
@@ -18,7 +18,8 @@ export const recordingsFallback: LocalFallback<RecordingItem> = {
         { name: 'title', type: 'text' },
         { name: 'room_code', type: 'text', groupable: true },
         { name: 'uploader', type: 'user' },
-        { name: 'status', type: 'enum', options: ['ready', 'failed'] },
+        { name: 'status', type: 'enum', options: ['transcribing', 'ready', 'failed'] },
+        { name: 'kind', type: 'enum', options: ['meeting', 'training', 'broadcast', 'hybrid'] },
         { name: 'shared_with_me', type: 'bool', groupable: false },
         { name: 'size_bytes', type: 'number', aggregates: ['sum'] },
         { name: 'created_at', type: 'datetime' },
@@ -40,7 +41,7 @@ export const recordingsFallback: LocalFallback<RecordingItem> = {
         case 'uploader':
           return r.uploader_name
         case 'status':
-          return r.status === 'failed' ? 'failed' : 'ready'
+          return r.status
         case 'shared_with_me':
           return !r.owned
         case 'size_bytes':
@@ -49,6 +50,8 @@ export const recordingsFallback: LocalFallback<RecordingItem> = {
           return (r as unknown as Record<string, unknown>)[f]
       }
     },
-    text: (r) => `${r.filename} ${r.room_code} ${r.uploader_name}`,
+    text: (r) => `${r.filename} ${r.room_code} ${r.uploader_name} ${r.description} ${r.tags.join(' ')}`,
   },
-}
+})
+
+export const recordingsFallback = recordingsFallbackFor('mine')
