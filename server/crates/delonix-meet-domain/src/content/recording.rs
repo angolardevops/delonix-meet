@@ -87,6 +87,139 @@ pub struct ProcessingFacts<'a> {
     pub lease_active: bool,
 }
 
+impl ProcessingFacts<'_> {
+    /// Há ficheiro para ler. `transcribing` também tem: o ai-worker só começa
+    /// depois de o ffmpeg acabar de compor.
+    pub fn has_file(&self) -> bool {
+        matches!(self.status, "ready" | "transcribing")
+    }
+}
+
+/// Estado do FICHEIRO que a UI mostra (`RecordingFileStatus`).
+///
+/// A UI conhece também `processing`, e esta linha nunca o emite: o `recorder`
+/// só insere a linha DEPOIS de o ffmpeg acabar. Um estado que nunca pode ser
+/// observado não se inventa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileStatus {
+    Transcribing,
+    Ready,
+    Failed,
+}
+
+impl FileStatus {
+    pub const ALL: [&'static str; 3] = ["transcribing", "ready", "failed"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Transcribing => "transcribing",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// Precedência: sem ficheiro nada mais importa; uma reserva que ficou por
+/// limpar não faz a gravação voltar a «a transcrever» depois de um resultado.
+pub fn file_status(f: ProcessingFacts<'_>) -> FileStatus {
+    if !f.has_file() {
+        return FileStatus::Failed;
+    }
+    if f.lease_active && !f.transcribed && !f.transcription_failed {
+        return FileStatus::Transcribing;
+    }
+    FileStatus::Ready
+}
+
+/// O `state` da UI: o `status`, com `published` quando está pronta E publicada.
+/// Publicar uma gravação falhada não a promove — não há o que ver.
+pub fn display_state(file: FileStatus, published: bool) -> &'static str {
+    match file {
+        FileStatus::Ready if published => "published",
+        other => other.as_str(),
+    }
+}
+
+/// Estado da transcrição (`TranscriptStatus`), independente do do ficheiro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptStatus {
+    None,
+    Transcribing,
+    Ready,
+    Failed,
+}
+
+impl TranscriptStatus {
+    pub const ALL: [&'static str; 4] = ["none", "transcribing", "ready", "failed"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Transcribing => "transcribing",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+pub fn transcript_status(f: ProcessingFacts<'_>) -> TranscriptStatus {
+    if !f.has_file() {
+        return TranscriptStatus::None;
+    }
+    if f.transcribed {
+        return TranscriptStatus::Ready;
+    }
+    if f.transcription_failed {
+        return TranscriptStatus::Failed;
+    }
+    if f.lease_active {
+        return TranscriptStatus::Transcribing;
+    }
+    TranscriptStatus::None
+}
+
+/// Tipo de sessão gravada (`kind`, migração 0057). Distinto da [`Category`]
+/// herdada: espelha o formato da SALA, não uma etiqueta à escolha.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Meeting,
+    Training,
+    Broadcast,
+    Hybrid,
+}
+
+impl Kind {
+    pub const ALL: [&'static str; 4] = ["meeting", "training", "broadcast", "hybrid"];
+
+    pub fn parse(s: &str) -> Result<Self, DomainError> {
+        Ok(match s {
+            "meeting" => Self::Meeting,
+            "training" => Self::Training,
+            "broadcast" => Self::Broadcast,
+            "hybrid" => Self::Hybrid,
+            other => {
+                return Err(DomainError::invalid(
+                    "recording.invalid_kind",
+                    format!(
+                        "tipo de sessão inválido «{other}» — válidos: {}",
+                        Self::ALL.join(", ")
+                    ),
+                )
+                .with_field("kind", Self::ALL.join(" | ")))
+            }
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Meeting => "meeting",
+            Self::Training => "training",
+            Self::Broadcast => "broadcast",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
 /// Precedência: sem ficheiro nada mais importa; um resultado final
 /// (transcrita, ou desistiu-se) ganha a uma reserva que ficou por limpar.
 pub fn processing_state(f: ProcessingFacts<'_>) -> ProcessingState {

@@ -1601,6 +1601,25 @@ pub(crate) fn recording_uploader_in_org_sql(org: &str, uploader: &str) -> String
     )
 }
 
+/// A organização do autor a mostrar a quem pede: de entre as organizações de
+/// `subject`, a que `viewer` também partilha como membro ACTIVO — e, se não
+/// partilhar nenhuma, a mais antiga. Sub-consulta de uma linha (`id`, `name`),
+/// para um `LEFT JOIN LATERAL`.
+///
+/// Uma pessoa pode estar em várias organizações; mostrar a primeira ao acaso
+/// dizia «Acme» a um colega da «Beta» sobre a mesma gravação.
+pub(crate) fn uploader_org_for_viewer_sql(subject: &str, viewer: &str) -> String {
+    format!(
+        "SELECT org.id, org.name FROM org_members om \
+         JOIN organizations org ON org.id = om.org_id \
+         WHERE om.user_id = {subject} \
+         ORDER BY EXISTS(SELECT 1 FROM org_members v WHERE v.org_id = om.org_id \
+                         AND v.user_id = {viewer} AND v.archived_at IS NULL) DESC, \
+                  om.created_at, org.id \
+         LIMIT 1"
+    )
+}
+
 /// A quarentena de `subject` conta para a organização `org`: é, ou FOI,
 /// membro dela. Mesma razão que `recording_uploader_in_org_sql` — é
 /// atribuição, não acesso: quem saiu continua no histórico da empresa. A
