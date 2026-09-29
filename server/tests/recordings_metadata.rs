@@ -90,7 +90,10 @@ async fn state_and_transcript_status_are_derived_for_each_state(db: sqlx::PgPool
     let (st, m) = app.get(&meta, Some(&a.token)).await;
     assert_eq!(st, 200, "{m}");
     assert_eq!(m["status"], "ready");
-    assert_eq!(m["state"], "ready", "não publicada: o estado é o do ficheiro");
+    assert_eq!(
+        m["state"], "ready",
+        "não publicada: o estado é o do ficheiro"
+    );
     assert_eq!(m["transcript_status"], "none");
     assert_eq!(m["kind"], "meeting");
     assert_eq!(m["visibility"], "private");
@@ -215,7 +218,11 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
     assert_eq!(st, 400);
     assert_eq!(v["code"], "recording.invalid_kind");
     let (st, v) = app
-        .patch(&path, Some(&f.a.token), json!({"filename": "x".repeat(201)}))
+        .patch(
+            &path,
+            Some(&f.a.token),
+            json!({"filename": "x".repeat(201)}),
+        )
         .await;
     assert_eq!(st, 400);
     assert_eq!(v["code"], "recording.invalid_filename");
@@ -231,7 +238,10 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 422, "{v}");
     assert!(
-        v["error"].as_str().unwrap().contains("unknown field `title`"),
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown field `title`"),
         "a recusa diz QUAL o campo e quais os válidos: {v}"
     );
     let (_, m) = app.get(&path, Some(&f.a.token)).await;
@@ -402,7 +412,11 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         let (st, _) = app.get(&location, Some(&who.token)).await;
         assert_eq!(st, 404);
         let (st, _) = app
-            .post(&base, Some(&who.token), json!({"t_ms": 5_000, "title": "x"}))
+            .post(
+                &base,
+                Some(&who.token),
+                json!({"t_ms": 5_000, "title": "x"}),
+            )
             .await;
         assert_eq!(st, 404);
         let (st, _) = app.delete(&location, Some(&who.token)).await;
@@ -1041,7 +1055,11 @@ async fn published_library_reaches_the_org_and_nobody_else(db: sqlx::PgPool) {
         .get("/api/recordings?scope=published", Some(&f.b.token))
         .await;
     assert_eq!(st, 200);
-    assert_eq!(items(&p).len(), 0, "publicar é para a org, não para o mundo");
+    assert_eq!(
+        items(&p).len(),
+        0,
+        "publicar é para a org, não para o mundo"
+    );
     let (st, _) = app
         .get(&format!("/api/recordings/{}", f.rec), Some(&f.b.token))
         .await;
@@ -1143,9 +1161,22 @@ async fn uploaded_recording_shows_measured_duration_and_resolution(db: sqlx::PgP
     let src = dir.join("amostra.webm");
     let out = std::process::Command::new("ffmpeg")
         .args([
-            "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=2",
-            "-c:v", "libvpx-vp9", "-b:v", "50k", "-deadline", "realtime", "-cpu-used", "8",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=10:duration=2",
+            "-c:v",
+            "libvpx-vp9",
+            "-b:v",
+            "50k",
+            "-deadline",
+            "realtime",
+            "-cpu-used",
+            "8",
         ])
         .arg(&src)
         .output()
@@ -1188,18 +1219,29 @@ async fn uploaded_recording_shows_measured_duration_and_resolution(db: sqlx::PgP
         .iter()
         .find(|r| r["id"] == id.as_str())
         .unwrap_or_else(|| panic!("a gravação carregada não está na biblioteca: {lib}"));
-    assert_eq!(row["duration_ms"], 2000, "a biblioteca serve a duração: {row}");
+    assert_eq!(
+        row["duration_ms"], 2000,
+        "a biblioteca serve a duração: {row}"
+    );
     assert_eq!(row["width"], 320);
     assert_eq!(row["height"], 240);
 
     // A marca temporal de um capítulo passa a caber na duração MEDIDA.
     let base = format!("/api/recordings/{id}/chapters");
     let (st, v) = app
-        .post(&base, Some(&f.a.token), json!({"t_ms": 2000, "title": "Fim"}))
+        .post(
+            &base,
+            Some(&f.a.token),
+            json!({"t_ms": 2000, "title": "Fim"}),
+        )
         .await;
     assert_eq!(st, 201, "a duração medida é inclusiva: {v}");
     let (st, v) = app
-        .post(&base, Some(&f.a.token), json!({"t_ms": 2001, "title": "Além"}))
+        .post(
+            &base,
+            Some(&f.a.token),
+            json!({"t_ms": 2001, "title": "Além"}),
+        )
         .await;
     assert_eq!(st, 400, "{v}");
     assert_eq!(v["code"], "recording.invalid_timestamp");
@@ -1410,10 +1452,7 @@ async fn library_scopes_agree_with_access_facts(db: sqlx::PgPool) {
     for who in [&f.a, &f.carla, &f.duarte, &f.eva, &f.b] {
         for scope in ["mine", "published"] {
             let (st, listed) = app
-                .get(
-                    &format!("/api/recordings?scope={scope}"),
-                    Some(&who.token),
-                )
+                .get(&format!("/api/recordings?scope={scope}"), Some(&who.token))
                 .await;
             assert_eq!(st, 200, "{listed}");
             let listed_ids: Vec<&str> = items(&listed)

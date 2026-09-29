@@ -2132,3 +2132,59 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Não fechado aqui.** Injecção de prompt (OWASP LLM01) e a sanitização do Markdown que o LLM devolve, no visualizador.
 
 **Ficheiros.** `server/src/ai.rs`, `server/src/meetings.rs`, `server/tests/dlp_antes_do_llm.rs`.
+
+### R234 — Duas migrações de gravações não fizeram nada, em silêncio, e o servidor lia colunas que não existiam
+
+**Sintoma.** `POST /api/recordings/{id}/chapters/generate` e `PATCH …/chapters/{id}` respondiam `500`. O `recording_chapters.rs` lê `t_ms` e `source` de `recording_chapters`; a tabela tinha `at_secs` e nenhum `source`. Medido a 2026-09-29 contra Postgres 17 real, aplicando as migrações da `main` por ordem a uma base limpa: `\d recording_chapters` dava `at_secs integer NOT NULL` e `recording_comments` dava `author_id`, quando as migrações 0060 e 0061 diziam declarar `t_ms`, `source` e `user_id`.
+
+**Causa raiz.** As 0060 e 0061 escreveram a forma nova como `CREATE TABLE IF NOT EXISTS`. A 0045 já tinha criado as duas tabelas, com o modelo antigo (G5). `IF NOT EXISTS` não é um upsert de esquema: a tabela existia, as instruções não fizeram nada, e não houve erro. As migrações passaram verdes em todas as bases, incluindo as dos testes — nenhum teste tocava nas duas rotas que liam as colunas novas. (Da 0061 só `recording_views` chegou a nascer, por ser tabela nova.)
+
+**Regra.** Uma migração que ALTERA uma tabela existente usa `ALTER`, e converte os dados. `CREATE TABLE IF NOT EXISTS` só para uma tabela nova — num ficheiro que também mexe numa antiga, é um no-op à espera de acontecer. A 0068 converte a sério: `at_secs` → `t_ms` (afastando 1 ms os capítulos que partilhavam o mesmo segundo, em vez de os apagar), `author_id` → `user_id`, `source`, títulos até 200 caracteres, autor opcional, e unicidade por `(recording_id, t_ms)`.
+
+**Portão.** `server/tests/recordings_metadata.rs::{chapters_crud_bounds_and_access, comments_crud_author_only_soft_delete_and_dlp}` passam a escrever e a ler em `t_ms`/`source`/`user_id` contra Postgres real — o que falhava antes da 0068 com «column does not exist».
+
+**Não fechado.** Não se procurou a mesma classe de defeito nas outras 67 migrações; só as duas das gravações foram verificadas coluna a coluna contra o esquema real.
+
+**Ficheiros.** `server/migrations/0068_recording_chapters_comments_ms.sql`, `server/src/{recordings,recording_chapters}.rs`, `server/tests/recordings_metadata.rs`.
+
+### R235 — Publicar uma gravação para a organização não a mostrava a ninguém
+
+**Sintoma.** A dona de uma gravação carregava em «publicar», a consola confirmava, `visibility` passava a `org` e `published_at` ficava preenchido — e nenhum colega a via em lado nenhum. `GET /api/recordings?scope=published` não estava implementado: o parâmetro era ignorado e a biblioteca devolvia sempre a pessoal. O próprio comentário no `recordings.rs` da `main` admitia-o por escrito («o `scope=published` … NÃO está implementado»). Medido a 2026-09-29 contra Postgres real.
+
+**Causa raiz.** A publicação entrou pela migração 0062 e pelas rotas `publish`/`unpublish` (`recording_meta.rs`), mas a LEITURA ficou por fazer quando dois modelos de gravação foram reconciliados (R183). Duas colunas que só se escreviam.
+
+**Regra.** `AccessFacts` ganha `published_to_my_org` (publicada para a organização **e** quem pede é membro ACTIVO de uma organização do autor) e `can_view` passa a contá-lo. `?scope=` escolhe a biblioteca: `mine` (omissão) é a de sempre — carregou, participou, ou foi-lhe partilhada — e `published` são as publicadas que quem pede vê, incluindo as de salas onde nunca esteve. Publicar **não** enche a biblioteca pessoal dos colegas (`listed_in`), **não** dá o ficheiro (`can_download`) nem o poder de gerir, e **não** abre a transcrição nem a lista de presentes (`has_direct_relation`) — publicar é para ser VISTO. Um `scope` desconhecido é `400 recording.invalid_scope`, não «tudo» em silêncio.
+
+**Portão.** `server/tests/recordings_metadata.rs::{published_library_reaches_the_org_and_nobody_else, publishing_does_not_open_transcript_nor_participants, library_scopes_agree_with_access_facts}` e os testes de unidade do domínio. O último percorre cada pessoa contra cada gravação e exige que o SQL que filtra antes de paginar diga o mesmo que `listed_in` — a regra está escrita duas vezes de propósito, e é assim que uma fica para trás.
+
+**Não fechado.** A biblioteca publicada não tem filtro por etiqueta nem por autor, e não há notificação a quem quer que seja quando uma gravação é publicada.
+
+**Ficheiros.** `server/src/recordings.rs`, `server/src/recording_meta.rs`, `server/crates/delonix-meet-domain/src/content/recording.rs`, `server/tests/recordings_metadata.rs`.
+
+### R236 — A duração de uma gravação carregada nunca aparecia
+
+**Sintoma.** Uma gravação carregada pelo browser aparecia sempre sem duração e sem resolução na biblioteca e no leitor — mesmo depois de o servidor as ter medido com `ffprobe` e guardado. Medido a 2026-09-29: o upload escrevia `duration_ms` (migração 0057, via `media_probe::probe_and_store`) e a listagem servia `duration_secs` (migração 0045), uma coluna que só o gravador do servidor preenchia.
+
+**Causa raiz.** Duas colunas para a mesma grandeza, de duas gerações do modelo (G4 e o contrato novo), e cada caminho escolheu uma. A consola já lia `duration_ms` (`web/src/api.ts`), por isso o campo que o servidor mandava nem sequer era lido: a UI mostrava «—» com a duração na base a um campo de distância.
+
+**Regra.** O item da biblioteca é o `RecordingLibraryItem` que a consola lê, e a unidade é o MILISSEGUNDO em todo o contrato — item, capítulos (`t_ms`) e comentários (`t_ms`). `null` continua a ser «não foi possível medir», nunca zero.
+
+**Portão.** `server/tests/recordings_metadata.rs::uploaded_recording_shows_measured_duration_and_resolution`: um webm de 2 s e 320x240 feito pelo `ffmpeg` é carregado, e a duração e a resolução medidas aparecem na resposta do upload, no recurso e na listagem; e o capítulo em `t_ms = 2000` passa enquanto o de `2001` é recusado, o que prova que a duração medida chega às validações.
+
+**Não fechado.** `duration_secs` e `category` continuam na tabela, já sem ninguém que as leia — a limpeza fica para uma migração própria. As gravações ANTIGAS, carregadas antes da 0057, continuam sem `duration_ms`: não foram medidas retroactivamente, e mostram-se sem duração.
+
+**Ficheiros.** `server/src/recordings.rs`, `server/tests/recordings_metadata.rs`.
+
+### R237 — Procurar um instante no leitor puxava a gravação inteira
+
+**Sintoma.** `GET /api/recordings/{id}/content` respondia `200` com o ficheiro todo a um pedido `Range: bytes=0-1023`, e sem `Accept-Ranges`. O `<video>` pede um intervalo, recebe tudo, conclui que o servidor não sabe servir intervalos e desiste de procurar: cada salto na barra volta a descarregar a gravação inteira. Numa gravação de uma hora são centenas de MB por clique. Medido a 2026-09-29.
+
+**Causa raiz.** O handler lia o ficheiro com `tokio::fs::read` e devolvia os bytes. Nunca olhou para o cabeçalho `Range`.
+
+**Regra.** O ficheiro honra `Range` (RFC 9110 §14): `206` com `Content-Range: bytes <início>-<fim>/<total>` para uma faixa única — do princípio, aberta à direita (`bytes=1024-`) ou por sufixo (`bytes=-500`) —, com um fim para lá do ficheiro CORTADO em vez de recusado; `416` com `Content-Range: bytes */<total>` para um intervalo bem escrito mas fora do ficheiro; e o ficheiro inteiro (`200`) sem cabeçalho, com várias faixas (não se serve `multipart/byteranges`) ou com um cabeçalho que não se percebe. `Accept-Ranges: bytes` vai em TODAS as respostas, também nas de `200` — é assim que o leitor sabe que pode pedir um intervalo da próxima vez. O `Range` corre DEPOIS do controlo de acesso: não é um caminho paralelo ao RBAC.
+
+**Portão.** `server/tests/recordings_metadata.rs::content_honours_range_requests`, com as cinco formas de intervalo, o `416`, os três casos que caem no ficheiro inteiro, e a prova de que o `Range` não contorna o RBAC (`403` no download sem permissão, `404` para outra organização).
+
+**Não fechado.** A fatia é lida para memória antes de sair (`read_exact`), como já era o ficheiro inteiro: não há streaming. Para os intervalos que um leitor pede (KB a MB) é menos memória do que antes, mas um pedido de uma faixa enorme continua a alocar essa faixa. Não há `ETag`, `Last-Modified` nem `If-Range`, por isso um cliente não revalida uma fatia em cache.
+
+**Ficheiros.** `server/src/recordings.rs`, `server/tests/recordings_metadata.rs`.

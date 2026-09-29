@@ -125,6 +125,34 @@
 | `GET /api/share/{token}` | `GET /api/public/recordings/{token}` |
 | `GET /api/share/{token}/download` | `GET /api/public/recordings/{token}/content` |
 
+#### Contrato de dados das gravações (2026-09-29, R234–R237)
+
+O item da biblioteca é o `RecordingLibraryItem` que a consola lê
+(`web/src/api.ts`). Fechou a metade por reconciliar do R183.
+
+| Antes | Agora | Porquê |
+|---|---|---|
+| `duration_secs` (só a do gravador) | `duration_ms` | O upload media e escrevia `duration_ms`; a listagem servia a outra coluna, e a duração nunca aparecia (R236) |
+| `category` (`meeting`/`lecture`/`broadcast`/`other`) | `kind` (`meeting`/`training`/`broadcast`/`hybrid`) | É o formato da SALA, não uma etiqueta à escolha |
+| `title` | `filename` + `description` + `tags` | O nome é o que se mostra e com que se descarrega; a descrição e as etiquetas são campos próprios |
+| `processing_state` (5 valores num eixo) | `status` + `state` + `transcript_status` | O ficheiro e a transcrição são dois eixos; `state` acrescenta `published` |
+| — | `visibility`, `published_at` | Publicação para a organização |
+| — | `width`/`height`/`fps`/`video_codec`/`audio_codec`/`has_thumbnail` | Medidos com `ffprobe` |
+| — | `chapter_count`, `comment_count`, `view_count`, `participant_count`, `caption_languages` | Contagens que a biblioteca mostra |
+| — | `uploader_org_id`, `uploader_org_name`, `can_manage` | Organização do autor e o que quem pede pode fazer |
+| capítulos em `at_secs`, sem origem | `t_ms` + `source` (`auto`/`manual`) | Milissegundos em todo o contrato; voltar a gerar não apaga os manuais |
+| comentários em `at_secs`, `author_id`/`author_name` | `t_ms`, `user_id`/`username` | Idem |
+
+Rotas afectadas:
+
+| Rota | Mudança |
+|---|---|
+| `GET /api/recordings` | `?scope=mine\|published` (**novo**). `published` lista as publicadas para a organização, incluindo as de salas onde quem pede nunca esteve (R235). `?q=` sozinho devolve a LISTA; a página pede-se com `page_size`/`page_token` |
+| `PATCH /api/recordings/{recording_id}` | Aceita `filename`, `description`, `tags`, `kind`; **recusa** campos desconhecidos (`422`) — `title`/`category` deixam de ser aceites em silêncio |
+| `GET /api/recordings/{recording_id}/content` | Honra `Range`: `206` + `Content-Range`, `416` fora do ficheiro, `Accept-Ranges: bytes` sempre (R237) |
+| `GET /api/recordings/{recording_id}/transcript` | `403 recording.transcript_forbidden` a quem só lá chega por publicação |
+| `GET /api/recordings/{recording_id}/participants` | `403 recording.participants_forbidden`, mesma razão |
+
 ### Quadros
 | Antes | Depois |
 |---|---|

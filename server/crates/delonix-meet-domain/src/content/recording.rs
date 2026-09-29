@@ -338,7 +338,10 @@ pub fn validate_chapter_title(raw: &str) -> Result<String, DomainError> {
             "recording.invalid_chapter_title",
             "o título do capítulo é uma só linha",
         )
-        .with_field("title", format!("1-{MAX_CHAPTER_TITLE} caracteres, uma linha")));
+        .with_field(
+            "title",
+            format!("1-{MAX_CHAPTER_TITLE} caracteres, uma linha"),
+        ));
     }
     Ok(t)
 }
@@ -360,7 +363,10 @@ pub fn validate_filename(raw: &str) -> Result<String, DomainError> {
             "recording.invalid_filename",
             "o nome é uma só linha, sem barras",
         )
-        .with_field("filename", format!("1-{MAX_FILENAME} caracteres, uma linha")));
+        .with_field(
+            "filename",
+            format!("1-{MAX_FILENAME} caracteres, uma linha"),
+        ));
     }
     Ok(t)
 }
@@ -928,7 +934,10 @@ mod tests {
     fn scope_parse_recusa_o_desconhecido() {
         assert_eq!(LibraryScope::parse(None).unwrap(), LibraryScope::Mine);
         assert_eq!(LibraryScope::parse(Some("")).unwrap(), LibraryScope::Mine);
-        assert_eq!(LibraryScope::parse(Some("mine")).unwrap(), LibraryScope::Mine);
+        assert_eq!(
+            LibraryScope::parse(Some("mine")).unwrap(),
+            LibraryScope::Mine
+        );
         assert_eq!(
             LibraryScope::parse(Some("published")).unwrap(),
             LibraryScope::Published
@@ -1021,7 +1030,10 @@ mod tests {
     fn nome_da_gravacao_e_uma_linha_sem_barras() {
         assert_eq!(validate_filename(" Reunião ").unwrap(), "Reunião");
         assert!(validate_filename("").is_err());
-        assert!(validate_filename("a/b").is_err(), "sem separador de caminho");
+        assert!(
+            validate_filename("a/b").is_err(),
+            "sem separador de caminho"
+        );
         assert!(validate_filename("a\nb").is_err());
         assert!(validate_filename(&"x".repeat(MAX_FILENAME + 1)).is_err());
     }

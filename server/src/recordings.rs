@@ -1165,11 +1165,7 @@ async fn serve_file_range(
     let mut file = tokio::fs::File::open(path)
         .await
         .map_err(|_| ApiError::NotFound)?;
-    let total = file
-        .metadata()
-        .await
-        .map_err(ApiError::internal)?
-        .len();
+    let total = file.metadata().await.map_err(ApiError::internal)?.len();
 
     let base = [
         (header::CONTENT_TYPE, "video/webm".to_string()),
@@ -1194,7 +1190,9 @@ async fn serve_file_range(
             }
         }
         let mut data = Vec::with_capacity(total as usize);
-        file.read_to_end(&mut data).await.map_err(ApiError::internal)?;
+        file.read_to_end(&mut data)
+            .await
+            .map_err(ApiError::internal)?;
         return Ok((base, data).into_response());
     };
 
@@ -1204,7 +1202,9 @@ async fn serve_file_range(
         .await
         .map_err(ApiError::internal)?;
     let mut data = vec![0u8; len as usize];
-    file.read_exact(&mut data).await.map_err(ApiError::internal)?;
+    file.read_exact(&mut data)
+        .await
+        .map_err(ApiError::internal)?;
     Ok((
         StatusCode::PARTIAL_CONTENT,
         base,
@@ -1761,11 +1761,7 @@ pub async fn update(
         .as_deref()
         .map(rules::validate_description)
         .transpose()?;
-    let tags = req
-        .tags
-        .as_deref()
-        .map(rules::normalize_tags)
-        .transpose()?;
+    let tags = req.tags.as_deref().map(rules::normalize_tags).transpose()?;
     let kind = req.kind.as_deref().map(rules::Kind::parse).transpose()?;
     sqlx::query(
         "UPDATE recordings
