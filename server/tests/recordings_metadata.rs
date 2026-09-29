@@ -976,3 +976,392 @@ async fn upload_writes_to_configured_recordings_dir(db: sqlx::PgPool) {
     assert_eq!(res.bytes().await.unwrap().to_vec(), bytes);
     let _ = std::fs::remove_dir_all(&app.state.config.recordings_dir);
 }
+
+// ---------------------------------------------------------------------------
+//  R235 — publicar para a organização não mostrava a gravação a ninguém
+// ---------------------------------------------------------------------------
+
+/// `GET /api/recordings?scope=published` mostra a gravação publicada aos
+/// membros ACTIVOS da organização de quem a carregou — incluindo a quem nunca
+/// esteve na sala — e a mais ninguém.
+///
+/// Antes, `scope` não existia: publicar escrevia `visibility` e `published_at`
+/// e nenhuma leitura os usava. A dona carregava em «publicar», a consola dizia
+/// que estava publicada, e nenhum colega a via em lado nenhum.
+#[sqlx::test(migrations = "./migrations")]
+async fn published_library_reaches_the_org_and_nobody_else(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    let publish = format!("/api/recordings/{}/publish", f.rec);
+
+    // CONTROLO: antes de publicar, a biblioteca publicada está vazia para
+    // toda a gente, incluindo a dona.
+    for who in [&f.a, &f.duarte, &f.carla, &f.b] {
+        let (st, p) = app
+            .get("/api/recordings?scope=published", Some(&who.token))
+            .await;
+        assert_eq!(st, 200, "{p}");
+        assert_eq!(items(&p).len(), 0, "{}: {p}", who.email);
+    }
+    // E o Duarte (membro da org que não participou) não a vê de todo.
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 404, "antes de publicar nem sabe que existe");
+
+    let (st, m) = app
+        .post(&publish, Some(&f.a.token), json!({"visibility": "org"}))
+        .await;
+    assert_eq!(st, 200, "{m}");
+
+    // O colega da MESMA org que nunca esteve na sala passa a vê-la.
+    let (st, p) = app
+        .get("/api/recordings?scope=published", Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 200, "{p}");
+    assert_eq!(items(&p).len(), 1, "publicar tem de mostrar a alguém: {p}");
+    assert_eq!(items(&p)[0]["id"], f.rec.as_str());
+    assert_eq!(items(&p)[0]["visibility"], "org");
+    assert!(items(&p)[0]["published_at"].is_string());
+    // Reproduz, mas não descarrega nem gere: publicar dá o vídeo, não o poder.
+    assert_eq!(items(&p)[0]["can_download"], false);
+    assert_eq!(items(&p)[0]["can_manage"], false);
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 200, "agora chega ao recurso");
+
+    // A biblioteca PESSOAL do Duarte continua vazia: publicar não entope a
+    // biblioteca de quem não teve nada a ver com a reunião.
+    let (_, mine) = app.get("/api/recordings", Some(&f.duarte.token)).await;
+    assert_eq!(items(&mine).len(), 0, "{mine}");
+
+    // OUTRA organização não a vê, nem na publicada nem no recurso.
+    let (st, p) = app
+        .get("/api/recordings?scope=published", Some(&f.b.token))
+        .await;
+    assert_eq!(st, 200);
+    assert_eq!(items(&p).len(), 0, "publicar é para a org, não para o mundo");
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.b.token))
+        .await;
+    assert_eq!(st, 404);
+
+    // Um membro ARQUIVADO (S3) perde-a, mesmo publicada.
+    sqlx::query("UPDATE org_members SET archived_at = now() WHERE user_id = $1::uuid")
+        .bind(&f.duarte.user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (_, p) = app
+        .get("/api/recordings?scope=published", Some(&f.duarte.token))
+        .await;
+    assert_eq!(items(&p).len(), 0, "quem saiu da empresa deixa de ver: {p}");
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 404);
+
+    // Despublicar devolve tudo ao estado anterior.
+    let (st, _) = app
+        .post(
+            &format!("/api/recordings/{}/unpublish", f.rec),
+            Some(&f.a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    let (_, p) = app
+        .get("/api/recordings?scope=published", Some(&f.carla.token))
+        .await;
+    assert_eq!(items(&p).len(), 0, "despublicada sai da biblioteca: {p}");
+}
+
+/// Publicar abre a REPRODUÇÃO, não a transcrição nem a lista de presentes: um
+/// colega que nunca esteve na reunião recebe `403` (não `404` — já a viu na
+/// biblioteca publicada).
+#[sqlx::test(migrations = "./migrations")]
+async fn publishing_does_not_open_transcript_nor_participants(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    sqlx::query("UPDATE recordings SET transcript = 'texto da reunião' WHERE id = $1::uuid")
+        .bind(&f.rec)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (st, _) = app
+        .post(
+            &format!("/api/recordings/{}/publish", f.rec),
+            Some(&f.a.token),
+            json!({"visibility": "org"}),
+        )
+        .await;
+    assert_eq!(st, 200);
+
+    for (path, code) in [
+        ("transcript", "recording.transcript_forbidden"),
+        ("participants", "recording.participants_forbidden"),
+    ] {
+        let url = format!("/api/recordings/{}/{path}", f.rec);
+        let (st, v) = app.get(&url, Some(&f.duarte.token)).await;
+        assert_eq!(st, 403, "{path}: {v}");
+        assert_eq!(v["code"], code);
+        assert!(
+            !v.to_string().contains("texto da reunião"),
+            "a recusa não devolve o conteúdo: {v}"
+        );
+        // CONTROLO: quem participou continua a ler.
+        let (st, v) = app.get(&url, Some(&f.carla.token)).await;
+        assert_eq!(st, 200, "{path} para quem participou: {v}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  R236 — a duração de uma gravação carregada nunca aparecia
+// ---------------------------------------------------------------------------
+
+/// O upload mede o ficheiro com `ffprobe` e a LISTAGEM serve o que ele mediu.
+///
+/// Antes, o upload escrevia `duration_ms` e a listagem servia `duration_secs`
+/// — uma coluna que só o gravador do servidor preenchia. Uma gravação
+/// carregada pelo browser aparecia sempre sem duração e sem resolução, por
+/// muito que o servidor as tivesse medido e guardado.
+#[sqlx::test(migrations = "./migrations")]
+async fn uploaded_recording_shows_measured_duration_and_resolution(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1::uuid")
+        .bind(&f.room_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+
+    // Um webm a sério, de 2 segundos e 320x240, feito pelo ffmpeg: medir um
+    // ficheiro inventado não provava nada sobre o caminho real.
+    let dir = std::env::temp_dir().join(format!("dlx-dur-{}", uuid_like()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("amostra.webm");
+    let out = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=2",
+            "-c:v", "libvpx-vp9", "-b:v", "50k", "-deadline", "realtime", "-cpu-used", "8",
+        ])
+        .arg(&src)
+        .output()
+        .expect("ffmpeg tem de estar disponível (é o que o servidor usa)");
+    assert!(
+        out.status.success(),
+        "ffmpeg falhou: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&src).unwrap();
+
+    let res = app
+        .http
+        .post(app.url(&format!("/api/rooms/{code}/recordings?name=medida.webm")))
+        .bearer_auth(&f.a.token)
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let up: Value = res.json().await.unwrap();
+    let id = up["id"].as_str().unwrap().to_string();
+    // A resposta do upload já traz o que foi medido.
+    assert_eq!(up["duration_ms"], 2000, "duração medida no upload: {up}");
+    assert_eq!(up["width"], 320);
+    assert_eq!(up["height"], 240);
+
+    // E — o que falhava — a LISTAGEM e o recurso servem o mesmo.
+    let (st, m) = app
+        .get(&format!("/api/recordings/{id}"), Some(&f.a.token))
+        .await;
+    assert_eq!(st, 200, "{m}");
+    assert_eq!(m["duration_ms"], 2000, "o recurso serve a duração: {m}");
+    assert_eq!(m["width"], 320);
+    assert_eq!(m["height"], 240);
+    assert!(m["video_codec"].is_string(), "{m}");
+
+    let (_, lib) = app.get("/api/recordings", Some(&f.a.token)).await;
+    let row = items(&lib)
+        .iter()
+        .find(|r| r["id"] == id.as_str())
+        .unwrap_or_else(|| panic!("a gravação carregada não está na biblioteca: {lib}"));
+    assert_eq!(row["duration_ms"], 2000, "a biblioteca serve a duração: {row}");
+    assert_eq!(row["width"], 320);
+    assert_eq!(row["height"], 240);
+
+    // A marca temporal de um capítulo passa a caber na duração MEDIDA.
+    let base = format!("/api/recordings/{id}/chapters");
+    let (st, v) = app
+        .post(&base, Some(&f.a.token), json!({"t_ms": 2000, "title": "Fim"}))
+        .await;
+    assert_eq!(st, 201, "a duração medida é inclusiva: {v}");
+    let (st, v) = app
+        .post(&base, Some(&f.a.token), json!({"t_ms": 2001, "title": "Além"}))
+        .await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(v["code"], "recording.invalid_timestamp");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&app.state.config.recordings_dir);
+}
+
+/// Nome único para a pasta temporária do teste, sem dependência nova.
+fn uuid_like() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    format!(
+        "{}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        std::process::id()
+    )
+}
+
+// ---------------------------------------------------------------------------
+//  R237 — o ficheiro não honrava o `Range`
+// ---------------------------------------------------------------------------
+
+/// `GET …/content` responde `206` a um `Range`, com `Content-Range`, e anuncia
+/// `Accept-Ranges: bytes` mesmo quando devolve o ficheiro inteiro.
+///
+/// Antes devolvia sempre `200` com o ficheiro todo e sem `Accept-Ranges`: o
+/// `<video>` pede um intervalo, recebe tudo, e desiste de procurar — cada
+/// salto na barra puxava a gravação inteira outra vez.
+#[sqlx::test(migrations = "./migrations")]
+async fn content_honours_range_requests(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1::uuid")
+        .bind(&f.room_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    // 4096 bytes com conteúdo distinguível, para se ver QUE fatia voltou.
+    let bytes: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let res = app
+        .http
+        .post(app.url(&format!("/api/rooms/{code}/recordings?name=r.webm")))
+        .bearer_auth(&f.a.token)
+        .body(bytes.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let id = res.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let url = app.url(&format!("/api/recordings/{id}/content"));
+    let total = bytes.len();
+
+    // CONTROLO: sem `Range`, o ficheiro inteiro — mas já a anunciar que
+    // aceita intervalos, que é o que faz o leitor voltar a pedi-los.
+    let res = app
+        .http
+        .get(&url)
+        .bearer_auth(&f.a.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()["accept-ranges"], "bytes");
+    assert!(res.headers().get("content-range").is_none());
+    assert_eq!(res.bytes().await.unwrap().to_vec(), bytes);
+
+    // Um intervalo do princípio.
+    for (header, want_start, want_end) in [
+        ("bytes=0-1023", 0usize, 1023usize),
+        ("bytes=1024-2047", 1024, 2047),
+        // Aberto à direita: até ao fim.
+        ("bytes=4000-", 4000, total - 1),
+        // Sufixo: os últimos N.
+        ("bytes=-100", total - 100, total - 1),
+        // Um fim para lá do ficheiro corta-se, não invalida o pedido.
+        ("bytes=4090-999999", 4090, total - 1),
+    ] {
+        let res = app
+            .http
+            .get(&url)
+            .bearer_auth(&f.a.token)
+            .header("Range", header)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 206, "{header}");
+        assert_eq!(res.headers()["accept-ranges"], "bytes", "{header}");
+        assert_eq!(
+            res.headers()["content-range"],
+            format!("bytes {want_start}-{want_end}/{total}"),
+            "{header}"
+        );
+        let got = res.bytes().await.unwrap().to_vec();
+        assert_eq!(got.len(), want_end - want_start + 1, "{header}");
+        assert_eq!(got, bytes[want_start..=want_end], "{header}");
+    }
+
+    // Fora do ficheiro: `416`, com o tamanho real para o cliente se corrigir.
+    let res = app
+        .http
+        .get(&url)
+        .bearer_auth(&f.a.token)
+        .header("Range", "bytes=99999-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 416);
+    assert_eq!(res.headers()["content-range"], format!("bytes */{total}"));
+
+    // Várias faixas: não se serve `multipart/byteranges` — responde-se tudo.
+    let res = app
+        .http
+        .get(&url)
+        .bearer_auth(&f.a.token)
+        .header("Range", "bytes=0-10,20-30")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.bytes().await.unwrap().to_vec().len(), total);
+
+    // Um cabeçalho que não se percebe não parte nada: o ficheiro inteiro.
+    for bad in ["lixo", "bytes=abc-def", "bytes="] {
+        let res = app
+            .http
+            .get(&url)
+            .bearer_auth(&f.a.token)
+            .header("Range", bad)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200, "{bad}");
+        assert_eq!(res.bytes().await.unwrap().to_vec().len(), total, "{bad}");
+    }
+
+    // O `Range` não contorna o RBAC: quem não descarrega continua sem o
+    // ficheiro por `?dl=1`, com ou sem intervalo.
+    let res = app
+        .http
+        .get(app.url(&format!("/api/recordings/{id}/content?dl=1")))
+        .bearer_auth(&f.carla.token)
+        .header("Range", "bytes=0-10")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+    // E quem não chega à gravação continua a receber 404, não um 206.
+    let res = app
+        .http
+        .get(&url)
+        .bearer_auth(&f.b.token)
+        .header("Range", "bytes=0-10")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+
+    let _ = std::fs::remove_dir_all(&app.state.config.recordings_dir);
+}
