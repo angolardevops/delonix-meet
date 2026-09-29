@@ -4,6 +4,7 @@ import { currentUser, saveWhiteboard } from '../api'
 import type { WbStroke } from '../signaling'
 import { comObjecto, comTexto, movido, semObjecto } from './wbState'
 import type { RoomCore } from './useRoomCore'
+import type { WbGroup } from './wbSelection'
 
 /**
  * Cores dos traços. São DADOS da reunião (viajam no `wb-stroke` e têm de ser
@@ -47,6 +48,12 @@ export function useWhiteboard(core: RoomCore) {
   const [actividade, setActividade] = useState<Record<string, number>>({})
   /** Último dispositivo de entrada de cada pessoa (para «CANETA/RATO»). */
   const [entradas, setEntradas] = useState<Record<string, 'mouse' | 'pen' | 'touch'>>({})
+  /**
+   * Grupos de selecção (⌘G, v5) — LOCAIS a este browser: o protocolo do quadro
+   * não tem mensagem de grupo. Vivem aqui (e não na vista) para sobreviverem a
+   * fechar e reabrir o quadro durante a reunião. Ver `wbSelection.ts`.
+   */
+  const [groups, setGroups] = useState<WbGroup[]>([])
   /** A vista regista aqui como tirar o PNG (o canvas é dela). */
   const snapshotRef = useRef<(() => string | null) | null>(null)
   const registerSnapshot = useCallback((fn: (() => string | null) | null) => {
@@ -211,6 +218,10 @@ export function useWhiteboard(core: RoomCore) {
     actividade,
     entradas,
     registerSnapshot,
+    groups,
+    setGroups,
+    /** O nome com que o servidor carimba os meus objectos (`by`). */
+    myName: meuNome,
     toggle,
     close,
     addObject,

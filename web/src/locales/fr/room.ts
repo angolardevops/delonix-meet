@@ -633,6 +633,7 @@ export default {
     aSerEmitidoTexto: 'Les spectateurs voient les traits en temps réel.',
     pressaoActiva: 'pression active',
     ponteiro: 'Pointeur',
+    laco: 'Lasso',
     mover: 'Déplacer',
     texto: 'Texte',
     nota: 'Note',

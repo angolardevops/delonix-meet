@@ -633,6 +633,7 @@ export default {
     aSerEmitidoTexto: 'Os espectadores vêem os traços em tempo real.',
     pressaoActiva: 'pressão activa',
     ponteiro: 'Ponteiro',
+    laco: 'Laço',
     mover: 'Mover',
     texto: 'Texto',
     nota: 'Nota',
