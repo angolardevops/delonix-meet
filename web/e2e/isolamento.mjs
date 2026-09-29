@@ -599,7 +599,10 @@ if (gravB) {
   const capsB = (await req(`/api/recordings/${gravB}/chapters`, { token: B.token })).json
   const comsB = (await req(`/api/recordings/${gravB}/comments`, { token: B.token })).json
   const n = (p) => (Array.isArray(p) ? p.length : (p?.items?.length ?? -1))
-  if (depois?.title === null && depois.share_count === 0 && n(capsB) === 1 && n(comsB) === 1) {
+  // Afirma o que a A TENTOU mudar: a descrição que ela quis escrever, a
+  // publicação que quis fazer, a partilha, e os capítulos e comentários que
+  // quis criar ou apagar. (O `title` saiu do contrato — R234.)
+  if (depois?.description === '' && depois?.visibility === 'private' && depois.share_count === 0 && n(capsB) === 1 && n(comsB) === 1) {
     ok('e a gravação da B ficou exactamente como estava')
   } else {
     nok('e a gravação da B ficou exactamente como estava', JSON.stringify({ depois, capitulos: n(capsB), comentarios: n(comsB) }).slice(0, 700))
