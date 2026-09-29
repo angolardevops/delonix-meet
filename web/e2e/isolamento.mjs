@@ -173,6 +173,21 @@ await recusado('A lê a facturação de voz da org B', `/api/orgs/${B.orgId}/voi
   token: A.token,
 })
 
+// IA local do Estúdio. As sugestões levam um corpo VÁLIDO: só 401/403/404
+// provam que a pertença foi decidida antes de o handler validar ou chamar o
+// modelo (um 400/429/503 seria o handler a correr para quem não é da org).
+console.log('\n--- IA local do Estúdio ---')
+await permitido('B lê o estado da IA da própria org', `/api/orgs/${B.orgId}/ai/status`, { token: B.token })
+await recusadoNaPorta('A lê o estado da IA da org B', `/api/orgs/${B.orgId}/ai/status`, { token: A.token })
+await recusadoNaPorta('A pede sugestões à IA da org B', `/api/orgs/${B.orgId}/ai/suggestions`, {
+  token: A.token,
+  method: 'POST',
+  body: {
+    task: 'fillers',
+    segments: [{ start_ms: 0, end_ms: 4000, text: 'Bom dia, tipo, vamos rever a rede de Luanda e o troço do Kilamba.' }],
+  },
+})
+
 // Os dois DELETE precisam de um recurso REAL. Com um UUID ao acaso, um `404`
 // contaria como recusa e não provaria autorização nenhuma — só que o recurso
 // não existe. B cria, A tenta apagar, e a asserção que interessa é a última: o
@@ -604,6 +619,23 @@ if (gravacaoA) {
   })
   await recusado('B apaga a legenda da A', `/api/recordings/${gravacaoA}/captions/${lang}`, {
     token: B.token, method: 'DELETE',
+  })
+  // Geração pelo LLM local: a B nem chega ao «não há transcrição» (que seria o
+  // handler a correr); a A chega (controlo positivo: 409 com código).
+  await permitido('A lê o estado da geração de capítulos da sua gravação', `/api/recordings/${gravacaoA}/chapters/generation`, {
+    token: A.token,
+  })
+  for (const [nome, caminho, body] of [
+    ['gera capítulos', `/api/recordings/${gravacaoA}/chapters/generate`, {}],
+    ['gera legendas', `/api/recordings/${gravacaoA}/captions/generate`, { lang: 'en' }],
+  ]) {
+    const deA = await req(caminho, { token: A.token, method: 'POST', body })
+    if (deA.status === 409 && deA.json?.code === 'recording.no_transcript') ok(`A ${nome} na sua gravação sem transcrição → 409`)
+    else nok(`A ${nome} na sua gravação sem transcrição → 409`, `devolveu ${deA.status}: ${JSON.stringify(deA.json).slice(0, 160)}`)
+    await recusadoNaPorta(`B ${nome} na gravação da A`, caminho, { token: B.token, method: 'POST', body })
+  }
+  await recusadoNaPorta('B lê o estado da geração de capítulos da A', `/api/recordings/${gravacaoA}/chapters/generation`, {
+    token: B.token,
   })
   // Sub-recursos do leitor.
   await permitido('A lê a transcrição da sua gravação', `/api/recordings/${gravacaoA}/transcript`, { token: A.token })

@@ -20,6 +20,14 @@ data:
   OLLAMA_URL: "http://delonix-ollama.delonix-meet.svc.cluster.local:11434"
   OLLAMA_MODEL_TRANSLATE: "qwen2.5:1.5b"
   OLLAMA_MODEL_SUMMARY: qwen2.5:7b
+  # Estúdio (POST /api/orgs/{org_id}/ai/suggestions) e capítulos automáticos.
+  # Por omissão: o modelo do resumo, tecto de 120 s por chamada (5..900) e 1
+  # trabalho do modelo em simultâneo por organização (1..8, por réplica).
+  # O modelo tem de estar instalado no Ollama; sem ele a API diz
+  # `model_missing` (503), nunca inventa.
+  # OLLAMA_MODEL_STUDIO: qwen2.5:7b
+  # OLLAMA_TIMEOUT_SECS: "120"
+  # AI_STUDIO_CONCURRENCY_PER_ORG: "1"
   # URL interno para a app interagir com Redis Sentinel (HA)
   REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
 ---

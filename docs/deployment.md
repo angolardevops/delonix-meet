@@ -151,6 +151,9 @@ openssl rand -hex 24   # → password do Postgres
 | `OUTBOUND_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF para URLs escritos por clientes (webhooks, `odoo_url` da organização, emissor OIDC), por nome exacto — nunca redes. Necessário para um Odoo ou IdP on-prem em rede privada. O host de `PLATFORM_ODOO_URL` entra sozinho. Os destinos do operador (WebDAV, `OLLAMA_URL`) não precisam: alcançam a rede privada, só os metadados da cloud (link-local) ficam recusados |
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |
 | `OLLAMA_MODEL_SUMMARY` / `OLLAMA_MODEL_TRANSLATE` | modelos (ex. `qwen2.5:7b` / `qwen2.5:1.5b`) |
+| `OLLAMA_MODEL_STUDIO` | modelo das sugestões do Estúdio (`POST /api/orgs/{org_id}/ai/suggestions`) e dos capítulos automáticos. Omissão: o de `OLLAMA_MODEL_SUMMARY`. As legendas traduzidas usam `OLLAMA_MODEL_TRANSLATE`. **Tem de estar instalado no Ollama** (`ollama pull`): sem ele, `GET …/ai/status` diz `reason: model_missing` e as rotas dão `503 ai.model_missing` — nunca um resultado inventado |
+| `OLLAMA_TIMEOUT_SECS` | tecto de UMA chamada ao modelo (sugestão, capítulos, cada linha traduzida). `120`, entre 5 e 900. Um trabalho assíncrono sem sinal há mais do que isto + 60 s lê-se como interrompido (`ai.interrupted`) |
+| `AI_STUDIO_CONCURRENCY_PER_ORG` | trabalhos do modelo em simultâneo por organização (sugestões, capítulos e legendas traduzidas contam juntos); o seguinte recebe `429 ai.busy` com `Retry-After: 10`. `1`, entre 1 e 8. **Por processo**: com K réplicas o tecto efectivo é N×K |
 | `VOICE_INTERNAL_SECRET` | API interna de IVR (PSTN). Vazio = desligada |
 
 ---
