@@ -2188,3 +2188,15 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Não fechado.** A fatia é lida para memória antes de sair (`read_exact`), como já era o ficheiro inteiro: não há streaming. Para os intervalos que um leitor pede (KB a MB) é menos memória do que antes, mas um pedido de uma faixa enorme continua a alocar essa faixa. Não há `ETag`, `Last-Modified` nem `If-Range`, por isso um cliente não revalida uma fatia em cache.
 
 **Ficheiros.** `server/src/recordings.rs`, `server/tests/recordings_metadata.rs`.
+
+### R240 — O `/asr` do whisper aceitava qualquer ligação, sem autenticação nenhuma
+
+**Sintoma.** O `whisper-server` publica `WebSocket /asr?lang=…` e está no MESMO ingress público do resto. A ligação era aceite sem verificar nada: quem alcançasse o endereço tinha transcrição por GPU à borla, e podia esgotar o modelo partilhado com ligações de propósito. A mesma ligação devolvia ao cliente a mensagem crua de qualquer excepção Python (`str(e)[:200]`) — caminhos e nomes internos incluídos, que é reconhecimento grátis para quem provoca o erro de propósito.
+
+**Regra.** O `/asr` valida o MESMO access token do `/rtc` (HS256, claim `typ = access`, `auth.rs`) e fecha com `1008` ANTES do `accept()` — uma ligação nunca aceite não gasta um slot de transcrição. Sem `JWT_SECRET` definido não há degradação para «sem autenticação»: recusa na mesma. O detalhe de uma excepção vai para o log do servidor; ao cliente vai «erro interno». O browser passa o token na query (`media.ts`), como já fazia no `/rtc`.
+
+**Prova.** `whisper-server/app.py` compila; `tsc -b` limpo com a mudança do cliente. **Não corrido contra um whisper-server real nem contra o ingress** — a verificação é de código e de tipos.
+
+**Ficheiros.** `whisper-server/app.py`, `whisper-server/requirements.txt` (PyJWT), `deploy/k8s/09-whisper.yaml` (o `JWT_SECRET` vem do configmap partilhado), `web/src/media.ts`.
+
+**Origem.** Estava no PR #68 (2026-09-16), que nunca foi integrado; o espelho do DLP em Python que vinha no mesmo PR NÃO entra, porque na `main` o worker entrega por gRPC e o servidor censura à chegada (R182, R231).
