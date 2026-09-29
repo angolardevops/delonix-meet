@@ -2,6 +2,7 @@
  * Utilitários de media: dispositivos, qualidade, desfoque de fundo (IA),
  * medidores de nível de voz e gravação composta da reunião.
  */
+import { accessTokenValue } from './api'
 
 export interface DeviceSets {
   mics: MediaDeviceInfo[]
@@ -702,7 +703,13 @@ export class ServerWhisperEngine {
   async start(lang: string, stream?: MediaStream | null): Promise<boolean> {
     const short = lang.split('-')[0]
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    this.ws = new WebSocket(`${proto}://${location.host}/asr?lang=${encodeURIComponent(short)}`)
+    // Token de acesso (o mesmo do /rtc, ver presence.ts) — sem isto o /asr
+    // aceitava qualquer ligação sem autenticação nenhuma: GPU de transcrição
+    // grátis para quem alcançasse o endpoint (está no ingress público).
+    const token = accessTokenValue()
+    this.ws = new WebSocket(
+      `${proto}://${location.host}/asr?lang=${encodeURIComponent(short)}&token=${encodeURIComponent(token ?? '')}`,
+    )
     this.ws.binaryType = 'arraybuffer'
     this.onInterim?.('(a ligar à transcrição do servidor…)')
     this.ws.onopen = () => this.onInterim?.('')
