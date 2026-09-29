@@ -63,7 +63,14 @@ async fn sql(app: &TestApp, q: &str, rec: &str) {
     sqlx::query(q).bind(rec).execute(&app.db).await.unwrap();
 }
 
+/// As linhas de uma resposta de listagem, seja ela a LISTA (o que a biblioteca
+/// devolve sem `page_size`/`page_token`, também com `q` e `scope`) ou a PÁGINA
+/// (`{items, next_page_token}`). A forma exacta de cada uma é afirmada onde
+/// importa, em `library_keeps_bare_array_and_paginates_on_request`.
 fn items(v: &Value) -> &Vec<Value> {
+    if let Some(a) = v.as_array() {
+        return a;
+    }
     v["items"]
         .as_array()
         .unwrap_or_else(|| panic!("sem items: {v}"))
@@ -74,7 +81,7 @@ fn items(v: &Value) -> &Vec<Value> {
 // ---------------------------------------------------------------------------
 
 #[sqlx::test(migrations = "./migrations")]
-async fn processing_state_is_derived_for_each_state(db: sqlx::PgPool) {
+async fn state_and_transcript_status_are_derived_for_each_state(db: sqlx::PgPool) {
     let f = fixture(db).await;
     let (app, a) = (&f.app, &f.a);
     // Os metadados são o próprio recurso (o ficheiro está em `/content`).
@@ -82,43 +89,98 @@ async fn processing_state_is_derived_for_each_state(db: sqlx::PgPool) {
 
     let (st, m) = app.get(&meta, Some(&a.token)).await;
     assert_eq!(st, 200, "{m}");
-    assert_eq!(m["processing_state"], "ready");
-    assert_eq!(m["status"], "ready", "o campo herdado continua lá");
-    assert_eq!(m["category"], "meeting");
-    assert!(m["duration_secs"].is_null() && m["width"].is_null() && m["title"].is_null());
+    assert_eq!(m["status"], "ready");
+    assert_eq!(
+        m["state"], "ready",
+        "não publicada: o estado é o do ficheiro"
+    );
+    assert_eq!(m["transcript_status"], "none");
+    assert_eq!(m["kind"], "meeting");
+    assert_eq!(m["visibility"], "private");
+    assert!(m["published_at"].is_null());
+    assert_eq!(m["description"], "");
+    assert_eq!(m["tags"], json!([]));
+    // `null` é «não foi possível medir» — nunca um valor inventado.
+    assert!(m["duration_ms"].is_null() && m["width"].is_null());
     assert_eq!(m["can_manage"], true);
     assert!(m.get("snippet").is_none());
+    // Contagens: a gravação acabou de nascer.
+    for c in ["chapter_count", "comment_count", "view_count"] {
+        assert_eq!(m[c], 0, "{c}");
+    }
+    assert_eq!(m["caption_languages"], json!([]));
 
+    // O estado do FICHEIRO e o da TRANSCRIÇÃO são dois eixos, não um só.
     let cases = [
         (
             "UPDATE recordings SET transcription_lease_token = 't', transcription_lease_expires_at = now() + interval '1 hour' WHERE id = $1::uuid",
             "transcribing",
+            "transcribing",
         ),
         (
+            // Uma reserva expirada é trabalho devolvido à fila, não «a transcrever».
             "UPDATE recordings SET transcription_lease_expires_at = now() - interval '1 minute' WHERE id = $1::uuid",
             "ready",
+            "none",
         ),
         (
             "UPDATE recordings SET transcription_failed_at = now() WHERE id = $1::uuid",
-            "transcription_failed",
+            "ready",
+            "failed",
         ),
         (
             "UPDATE recordings SET transcribed_at = now() WHERE id = $1::uuid",
-            "transcribed",
+            "ready",
+            "ready",
         ),
         (
             "UPDATE recordings SET status = 'failed', failure_reason = 'sem espaço' WHERE id = $1::uuid",
             "failed",
+            "none",
         ),
     ];
-    for (update, expected) in cases {
+    for (update, file_state, transcript) in cases {
         sql(app, update, &f.rec).await;
         let (_, m) = app.get(&meta, Some(&a.token)).await;
-        assert_eq!(m["processing_state"], expected, "{update}: {m}");
+        assert_eq!(m["status"], file_state, "{update}: {m}");
+        assert_eq!(m["transcript_status"], transcript, "{update}: {m}");
         // A biblioteca diz o mesmo.
         let (_, lib) = app.get("/api/recordings", Some(&a.token)).await;
-        assert_eq!(lib[0]["processing_state"], expected);
+        assert_eq!(lib[0]["status"], file_state);
+        assert_eq!(lib[0]["transcript_status"], transcript);
     }
+}
+
+/// O `state` da UI é o do ficheiro, com `published` quando está pronta E
+/// publicada. Publicar uma gravação FALHADA não a promove: não há o que ver.
+#[sqlx::test(migrations = "./migrations")]
+async fn state_says_published_only_when_ready_and_published(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let (app, a) = (&f.app, &f.a);
+    let meta = format!("/api/recordings/{}", f.rec);
+
+    let (st, _) = app
+        .post(
+            &format!("/api/recordings/{}/publish", f.rec),
+            Some(&a.token),
+            json!({"visibility": "org"}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    let (_, m) = app.get(&meta, Some(&a.token)).await;
+    assert_eq!(m["state"], "published");
+    assert_eq!(m["status"], "ready", "o ficheiro continua pronto");
+    assert_eq!(m["visibility"], "org");
+    assert!(m["published_at"].is_string());
+
+    sql(
+        app,
+        "UPDATE recordings SET status = 'failed' WHERE id = $1::uuid",
+        &f.rec,
+    )
+    .await;
+    let (_, m) = app.get(&meta, Some(&a.token)).await;
+    assert_eq!(m["state"], "failed", "publicada mas sem ficheiro: falhada");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -131,35 +193,63 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .patch(
             &path,
             Some(&f.a.token),
-            json!({"title": "  Aula de Química ", "category": "lecture"}),
+            json!({
+                "filename": "  Aula de Química ",
+                "description": " Revisão do trimestre ",
+                "tags": ["#Química", "quimica", " ", "Revisão"],
+                "kind": "training",
+            }),
         )
         .await;
     assert_eq!(st, 200, "{m}");
-    assert_eq!(m["title"], "Aula de Química");
-    assert_eq!(m["category"], "lecture");
-    assert_eq!(m["filename"], "teste.webm", "o nome do ficheiro não muda");
+    assert_eq!(m["filename"], "Aula de Química");
+    assert_eq!(m["description"], "Revisão do trimestre");
+    assert_eq!(
+        m["tags"],
+        json!(["química", "quimica", "revisão"]),
+        "apara, tira o cardinal, baixa a caixa, e não repete"
+    );
+    assert_eq!(m["kind"], "training");
 
     // Valida tudo antes de escrever.
+    let (st, v) = app
+        .patch(&path, Some(&f.a.token), json!({"kind": "podcast"}))
+        .await;
+    assert_eq!(st, 400);
+    assert_eq!(v["code"], "recording.invalid_kind");
     let (st, v) = app
         .patch(
             &path,
             Some(&f.a.token),
-            json!({"title": "outro", "category": "podcast"}),
+            json!({"filename": "x".repeat(201)}),
         )
         .await;
     assert_eq!(st, 400);
-    assert_eq!(v["code"], "recording.invalid_category");
+    assert_eq!(v["code"], "recording.invalid_filename");
     let (st, v) = app
-        .patch(&path, Some(&f.a.token), json!({"title": "x".repeat(121)}))
+        .patch(&path, Some(&f.a.token), json!({"tags": ["a,b"]}))
         .await;
     assert_eq!(st, 400);
-    assert_eq!(v["code"], "recording.invalid_title");
+    assert_eq!(v["code"], "recording.invalid_tags");
+    // O contrato antigo (`title`/`category`) é recusado em voz alta, não
+    // aceite e ignorado em silêncio.
+    let (st, v) = app
+        .patch(&path, Some(&f.a.token), json!({"title": "Aula"}))
+        .await;
+    assert_eq!(st, 422, "{v}");
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown field `title`"),
+        "a recusa diz QUAL o campo e quais os válidos: {v}"
+    );
     let (_, m) = app.get(&path, Some(&f.a.token)).await;
-    assert_eq!(m["title"], "Aula de Química", "sem escrita parcial");
+    assert_eq!(m["filename"], "Aula de Química", "sem escrita parcial");
 
     // Participante que não é dono: vê, não gere.
     let (st, v) = app
-        .patch(&path, Some(&f.carla.token), json!({"category": "other"}))
+        .patch(&path, Some(&f.carla.token), json!({"kind": "meeting"}))
         .await;
     assert_eq!(st, 403, "{v}");
     assert_eq!(v["code"], "recording.not_manager");
@@ -167,14 +257,14 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
     assert_eq!(m["can_manage"], false);
     // Membro da mesma org sem acesso nenhum: nem sabe que existe.
     let (st, _) = app
-        .patch(&path, Some(&f.duarte.token), json!({"category": "other"}))
+        .patch(&path, Some(&f.duarte.token), json!({"kind": "meeting"}))
         .await;
     assert_eq!(st, 404);
     let (st, _) = app.get(&path, Some(&f.duarte.token)).await;
     assert_eq!(st, 404);
     // Outra org: 404, igual a um id inventado.
     let (st, v) = app
-        .patch(&path, Some(&f.b.token), json!({"category": "other"}))
+        .patch(&path, Some(&f.b.token), json!({"kind": "meeting"}))
         .await;
     assert_eq!(st, 404);
     assert!(!v.to_string().contains("Química"));
@@ -185,11 +275,11 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .patch(
             &format!("/api/recordings/{INVENTED_ID}"),
             Some(&f.a.token),
-            json!({"category": "other"}),
+            json!({"kind": "meeting"}),
         )
         .await;
     assert_eq!(st, 404);
-    let (st, _) = app.patch(&path, None, json!({"category": "other"})).await;
+    let (st, _) = app.patch(&path, None, json!({"kind": "meeting"})).await;
     assert_eq!(st, 401);
 
     // Admin activo da org do dono, sem ter participado: gere (é quem descarrega).
@@ -197,18 +287,18 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .patch(
             &path,
             Some(&f.eva.token),
-            json!({"category": "broadcast", "title": ""}),
+            json!({"kind": "broadcast", "description": ""}),
         )
         .await;
     assert_eq!(st, 200, "{m}");
-    assert_eq!(m["category"], "broadcast");
-    assert!(m["title"].is_null(), "\"\" apaga o título");
-    let cat: String = sqlx::query_scalar("SELECT category FROM recordings WHERE id = $1::uuid")
+    assert_eq!(m["kind"], "broadcast");
+    assert_eq!(m["description"], "", "\"\" apaga a descrição");
+    let kind: String = sqlx::query_scalar("SELECT kind FROM recordings WHERE id = $1::uuid")
         .bind(&f.rec)
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(cat, "broadcast");
+    assert_eq!(kind, "broadcast");
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +311,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
     let app = &f.app;
     sql(
         app,
-        "UPDATE recordings SET duration_secs = 600 WHERE id = $1::uuid",
+        "UPDATE recordings SET duration_ms = 600000 WHERE id = $1::uuid",
         &f.rec,
     )
     .await;
@@ -231,7 +321,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .http
         .post(app.url(&base))
         .bearer_auth(&f.a.token)
-        .json(&json!({"at_secs": 300, "title": "Orçamento"}))
+        .json(&json!({"t_ms": 300_000, "title": "Orçamento"}))
         .send()
         .await
         .unwrap();
@@ -246,7 +336,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.a.token),
-            json!({"at_secs": 0, "title": "Abertura"}),
+            json!({"t_ms": 0, "title": "Abertura"}),
         )
         .await;
     assert_eq!(st, 201, "{first}");
@@ -257,19 +347,19 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
     // Limites.
     for (body, code) in [
         (
-            json!({"at_secs": 601, "title": "x"}),
+            json!({"t_ms": 600_001, "title": "x"}),
             "recording.invalid_timestamp",
         ),
         (
-            json!({"at_secs": -1, "title": "x"}),
+            json!({"t_ms": -1, "title": "x"}),
             "recording.invalid_timestamp",
         ),
         (
-            json!({"at_secs": 600, "title": " "}),
+            json!({"t_ms": 600_000, "title": " "}),
             "recording.invalid_chapter_title",
         ),
         (
-            json!({"at_secs": 1, "title": "x".repeat(121)}),
+            json!({"t_ms": 1, "title": "x".repeat(201)}),
             "recording.invalid_chapter_title",
         ),
     ] {
@@ -281,7 +371,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.a.token),
-            json!({"at_secs": 600, "title": "Fim"}),
+            json!({"t_ms": 600_000, "title": "Fim"}),
         )
         .await;
     assert_eq!(st, 201, "a duração é inclusiva");
@@ -309,7 +399,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.carla.token),
-            json!({"at_secs": 5, "title": "x"}),
+            json!({"t_ms": 5_000, "title": "x"}),
         )
         .await;
     assert_eq!(st, 403, "{v}");
@@ -322,7 +412,11 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         let (st, _) = app.get(&location, Some(&who.token)).await;
         assert_eq!(st, 404);
         let (st, _) = app
-            .post(&base, Some(&who.token), json!({"at_secs": 5, "title": "x"}))
+            .post(
+                &base,
+                Some(&who.token),
+                json!({"t_ms": 5_000, "title": "x"}),
+            )
             .await;
         assert_eq!(st, 404);
         let (st, _) = app.delete(&location, Some(&who.token)).await;
@@ -348,8 +442,8 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
 
     // Tecto de capítulos.
     sqlx::query(
-        "INSERT INTO recording_chapters (recording_id, at_secs, title, created_by)
-         SELECT $1::uuid, g, 'c' || g, $2::uuid FROM generate_series(1, 98) g",
+        "INSERT INTO recording_chapters (recording_id, t_ms, title, source, created_by)
+         SELECT $1::uuid, g * 1000, 'c' || g, 'manual', $2::uuid FROM generate_series(1, 98) g",
     )
     .bind(&f.rec)
     .bind(&f.a.user_id)
@@ -360,7 +454,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.a.token),
-            json!({"at_secs": 5, "title": "a mais"}),
+            json!({"t_ms": 5_000, "title": "a mais"}),
         )
         .await;
     assert_eq!(st, 422, "{v}");
@@ -384,7 +478,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
     let app = &f.app;
     sql(
         app,
-        "UPDATE recordings SET duration_secs = 120 WHERE id = $1::uuid",
+        "UPDATE recordings SET duration_ms = 120000 WHERE id = $1::uuid",
         &f.rec,
     )
     .await;
@@ -396,7 +490,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
         .http
         .post(app.url(&base))
         .bearer_auth(&f.carla.token)
-        .json(&json!({"body": format!("usa esta: {key}"), "at_secs": 90}))
+        .json(&json!({"body": format!("usa esta: {key}"), "t_ms": 90_000}))
         .send()
         .await
         .unwrap();
@@ -405,7 +499,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
     let c1: Value = res.json().await.unwrap();
     assert!(!c1["body"].as_str().unwrap().contains(&key), "{c1}");
     assert!(c1["body"].as_str().unwrap().contains("CENSURADA"), "{c1}");
-    assert_eq!(c1["author_name"], "carla-alfa.test");
+    assert_eq!(c1["username"], "carla-alfa.test");
     let stored: String =
         sqlx::query_scalar("SELECT body FROM recording_comments WHERE id = $1::uuid")
             .bind(c1["id"].as_str().unwrap())
@@ -419,12 +513,12 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
         .post(&base, Some(&f.a.token), json!({"body": "geral"}))
         .await;
     assert_eq!(st, 201, "{general}");
-    assert!(general["at_secs"].is_null());
+    assert!(general["t_ms"].is_null());
     let (st, _) = app
         .post(
             &base,
             Some(&f.a.token),
-            json!({"body": "no início", "at_secs": 5}),
+            json!({"body": "no início", "t_ms": 5_000}),
         )
         .await;
     assert_eq!(st, 201);
@@ -432,7 +526,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.eva.token),
-            json!({"body": "do admin", "at_secs": 5}),
+            json!({"body": "do admin", "t_ms": 5_000}),
         )
         .await;
     assert_eq!(st, 201, "quem descarrega também comenta: {v}");
@@ -445,7 +539,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
             "recording.invalid_comment",
         ),
         (
-            json!({"body": "x", "at_secs": 121}),
+            json!({"body": "x", "t_ms": 120_001}),
             "recording.invalid_timestamp",
         ),
     ] {
@@ -506,15 +600,15 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
         .patch(
             &location,
             Some(&f.carla.token),
-            json!({"body": "corrigido", "at_secs": 100}),
+            json!({"body": "corrigido", "t_ms": 100_000}),
         )
         .await;
     assert_eq!(st, 200, "{v}");
     assert_eq!(v["body"], "corrigido");
-    assert_eq!(v["at_secs"], 100);
+    assert_eq!(v["t_ms"], 100_000);
     assert!(!v["edited_at"].is_null());
     let (st, _) = app
-        .patch(&location, Some(&f.carla.token), json!({"at_secs": 999}))
+        .patch(&location, Some(&f.carla.token), json!({"t_ms": 999_000}))
         .await;
     assert_eq!(st, 400);
 
@@ -746,7 +840,7 @@ async fn search_finds_transcript_words_only_in_visible_recordings(db: sqlx::PgPo
         .patch(
             &format!("/api/recordings/{}", f.rec),
             Some(&f.a.token),
-            json!({"title": "Comité de Química"}),
+            json!({"filename": "Comité de Química"}),
         )
         .await;
     assert_eq!(st, 200);
@@ -829,9 +923,27 @@ async fn library_keeps_bare_array_and_paginates_on_request(db: sqlx::PgPool) {
         .get("/api/recordings?page_token=%%%lixo", Some(&f.a.token))
         .await;
     assert_eq!(st, 400, "{v}");
+    // `q` SOZINHO não pagina: devolve a lista, que é o que o web lê
+    // (`recordingsLibraryMeta({q})` espera um array). Só `page_size` e
+    // `page_token` pedem uma página.
     let (st, p) = app.get("/api/recordings?q=", Some(&f.a.token)).await;
     assert_eq!(st, 200);
-    assert_eq!(items(&p).len(), 5, "q vazio não filtra");
+    assert_eq!(p.as_array().unwrap().len(), 5, "q vazio não filtra");
+    let (st, p) = app
+        .get("/api/recordings?q=planeamento", Some(&f.a.token))
+        .await;
+    assert_eq!(st, 200);
+    assert_eq!(p.as_array().unwrap().len(), 4, "lista, não página: {p}");
+    // Um `q` só com pontuação é erro do cliente, não «tudo» nem «nada».
+    let (st, v) = app.get("/api/recordings?q=%%%", Some(&f.a.token)).await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(v["code"], "recording.invalid_query");
+    // E um `scope` desconhecido também.
+    let (st, v) = app
+        .get("/api/recordings?scope=todas", Some(&f.a.token))
+        .await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(v["code"], "recording.invalid_scope");
 }
 
 // ---------------------------------------------------------------------------
@@ -877,4 +989,532 @@ async fn upload_writes_to_configured_recordings_dir(db: sqlx::PgPool) {
     assert_eq!(res.status(), 200);
     assert_eq!(res.bytes().await.unwrap().to_vec(), bytes);
     let _ = std::fs::remove_dir_all(&app.state.config.recordings_dir);
+}
+
+// ---------------------------------------------------------------------------
+//  R235 — publicar para a organização não mostrava a gravação a ninguém
+// ---------------------------------------------------------------------------
+
+/// `GET /api/recordings?scope=published` mostra a gravação publicada aos
+/// membros ACTIVOS da organização de quem a carregou — incluindo a quem nunca
+/// esteve na sala — e a mais ninguém.
+///
+/// Antes, `scope` não existia: publicar escrevia `visibility` e `published_at`
+/// e nenhuma leitura os usava. A dona carregava em «publicar», a consola dizia
+/// que estava publicada, e nenhum colega a via em lado nenhum.
+#[sqlx::test(migrations = "./migrations")]
+async fn published_library_reaches_the_org_and_nobody_else(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    let publish = format!("/api/recordings/{}/publish", f.rec);
+
+    // CONTROLO: antes de publicar, a biblioteca publicada está vazia para
+    // toda a gente, incluindo a dona.
+    for who in [&f.a, &f.duarte, &f.carla, &f.b] {
+        let (st, p) = app
+            .get("/api/recordings?scope=published", Some(&who.token))
+            .await;
+        assert_eq!(st, 200, "{p}");
+        assert_eq!(items(&p).len(), 0, "{}: {p}", who.email);
+    }
+    // E o Duarte (membro da org que não participou) não a vê de todo.
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 404, "antes de publicar nem sabe que existe");
+
+    let (st, m) = app
+        .post(&publish, Some(&f.a.token), json!({"visibility": "org"}))
+        .await;
+    assert_eq!(st, 200, "{m}");
+
+    // O colega da MESMA org que nunca esteve na sala passa a vê-la.
+    let (st, p) = app
+        .get("/api/recordings?scope=published", Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 200, "{p}");
+    assert_eq!(items(&p).len(), 1, "publicar tem de mostrar a alguém: {p}");
+    assert_eq!(items(&p)[0]["id"], f.rec.as_str());
+    assert_eq!(items(&p)[0]["visibility"], "org");
+    assert!(items(&p)[0]["published_at"].is_string());
+    // Reproduz, mas não descarrega nem gere: publicar dá o vídeo, não o poder.
+    assert_eq!(items(&p)[0]["can_download"], false);
+    assert_eq!(items(&p)[0]["can_manage"], false);
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 200, "agora chega ao recurso");
+
+    // A biblioteca PESSOAL do Duarte continua vazia: publicar não entope a
+    // biblioteca de quem não teve nada a ver com a reunião.
+    let (_, mine) = app.get("/api/recordings", Some(&f.duarte.token)).await;
+    assert_eq!(items(&mine).len(), 0, "{mine}");
+
+    // OUTRA organização não a vê, nem na publicada nem no recurso.
+    let (st, p) = app
+        .get("/api/recordings?scope=published", Some(&f.b.token))
+        .await;
+    assert_eq!(st, 200);
+    assert_eq!(
+        items(&p).len(),
+        0,
+        "publicar é para a org, não para o mundo"
+    );
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.b.token))
+        .await;
+    assert_eq!(st, 404);
+
+    // Um membro ARQUIVADO (S3) perde-a, mesmo publicada.
+    sqlx::query("UPDATE org_members SET archived_at = now() WHERE user_id = $1::uuid")
+        .bind(&f.duarte.user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (_, p) = app
+        .get("/api/recordings?scope=published", Some(&f.duarte.token))
+        .await;
+    assert_eq!(items(&p).len(), 0, "quem saiu da empresa deixa de ver: {p}");
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.duarte.token))
+        .await;
+    assert_eq!(st, 404);
+
+    // Despublicar devolve tudo ao estado anterior.
+    let (st, _) = app
+        .post(
+            &format!("/api/recordings/{}/unpublish", f.rec),
+            Some(&f.a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    let (_, p) = app
+        .get("/api/recordings?scope=published", Some(&f.carla.token))
+        .await;
+    assert_eq!(items(&p).len(), 0, "despublicada sai da biblioteca: {p}");
+}
+
+/// Publicar abre a REPRODUÇÃO, não a transcrição nem a lista de presentes: um
+/// colega que nunca esteve na reunião recebe `403` (não `404` — já a viu na
+/// biblioteca publicada).
+#[sqlx::test(migrations = "./migrations")]
+async fn publishing_does_not_open_transcript_nor_participants(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    sqlx::query("UPDATE recordings SET transcript = 'texto da reunião' WHERE id = $1::uuid")
+        .bind(&f.rec)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (st, _) = app
+        .post(
+            &format!("/api/recordings/{}/publish", f.rec),
+            Some(&f.a.token),
+            json!({"visibility": "org"}),
+        )
+        .await;
+    assert_eq!(st, 200);
+
+    for (path, code) in [
+        ("transcript", "recording.transcript_forbidden"),
+        ("participants", "recording.participants_forbidden"),
+    ] {
+        let url = format!("/api/recordings/{}/{path}", f.rec);
+        let (st, v) = app.get(&url, Some(&f.duarte.token)).await;
+        assert_eq!(st, 403, "{path}: {v}");
+        assert_eq!(v["code"], code);
+        assert!(
+            !v.to_string().contains("texto da reunião"),
+            "a recusa não devolve o conteúdo: {v}"
+        );
+        // CONTROLO: quem participou continua a ler.
+        let (st, v) = app.get(&url, Some(&f.carla.token)).await;
+        assert_eq!(st, 200, "{path} para quem participou: {v}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  R236 — a duração de uma gravação carregada nunca aparecia
+// ---------------------------------------------------------------------------
+
+/// O upload mede o ficheiro com `ffprobe` e a LISTAGEM serve o que ele mediu.
+///
+/// Antes, o upload escrevia `duration_ms` e a listagem servia `duration_secs`
+/// — uma coluna que só o gravador do servidor preenchia. Uma gravação
+/// carregada pelo browser aparecia sempre sem duração e sem resolução, por
+/// muito que o servidor as tivesse medido e guardado.
+#[sqlx::test(migrations = "./migrations")]
+async fn uploaded_recording_shows_measured_duration_and_resolution(db: sqlx::PgPool) {
+    // Sem ffmpeg não há ficheiro real para medir, e medir é o que este teste
+    // prova. Salta com a razão à vista em vez de falhar — o CI não tem ffmpeg,
+    // e um vermelho ali diria «a duração está partida» quando diz «a máquina
+    // não tem a ferramenta». O mesmo aviso que o `media_probe` já usa.
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_err()
+    {
+        eprintln!("ffmpeg indisponível — medição real NÃO verificada");
+        return;
+    }
+    let f = fixture(db).await;
+    let app = &f.app;
+    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1::uuid")
+        .bind(&f.room_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+
+    // Um webm a sério, de 2 segundos e 320x240, feito pelo ffmpeg: medir um
+    // ficheiro inventado não provava nada sobre o caminho real.
+    let dir = std::env::temp_dir().join(format!("dlx-dur-{}", uuid_like()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("amostra.webm");
+    let out = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=10:duration=2",
+            "-c:v",
+            "libvpx-vp9",
+            "-b:v",
+            "50k",
+            "-deadline",
+            "realtime",
+            "-cpu-used",
+            "8",
+        ])
+        .arg(&src)
+        .output()
+        .expect("ffmpeg tem de estar disponível (é o que o servidor usa)");
+    assert!(
+        out.status.success(),
+        "ffmpeg falhou: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&src).unwrap();
+
+    let res = app
+        .http
+        .post(app.url(&format!("/api/rooms/{code}/recordings?name=medida.webm")))
+        .bearer_auth(&f.a.token)
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let up: Value = res.json().await.unwrap();
+    let id = up["id"].as_str().unwrap().to_string();
+    // A resposta do upload já traz o que foi medido.
+    assert_eq!(up["duration_ms"], 2000, "duração medida no upload: {up}");
+    assert_eq!(up["width"], 320);
+    assert_eq!(up["height"], 240);
+
+    // E — o que falhava — a LISTAGEM e o recurso servem o mesmo.
+    let (st, m) = app
+        .get(&format!("/api/recordings/{id}"), Some(&f.a.token))
+        .await;
+    assert_eq!(st, 200, "{m}");
+    assert_eq!(m["duration_ms"], 2000, "o recurso serve a duração: {m}");
+    assert_eq!(m["width"], 320);
+    assert_eq!(m["height"], 240);
+    assert!(m["video_codec"].is_string(), "{m}");
+
+    let (_, lib) = app.get("/api/recordings", Some(&f.a.token)).await;
+    let row = items(&lib)
+        .iter()
+        .find(|r| r["id"] == id.as_str())
+        .unwrap_or_else(|| panic!("a gravação carregada não está na biblioteca: {lib}"));
+    assert_eq!(
+        row["duration_ms"], 2000,
+        "a biblioteca serve a duração: {row}"
+    );
+    assert_eq!(row["width"], 320);
+    assert_eq!(row["height"], 240);
+
+    // A marca temporal de um capítulo passa a caber na duração MEDIDA.
+    let base = format!("/api/recordings/{id}/chapters");
+    let (st, v) = app
+        .post(
+            &base,
+            Some(&f.a.token),
+            json!({"t_ms": 2000, "title": "Fim"}),
+        )
+        .await;
+    assert_eq!(st, 201, "a duração medida é inclusiva: {v}");
+    let (st, v) = app
+        .post(
+            &base,
+            Some(&f.a.token),
+            json!({"t_ms": 2001, "title": "Além"}),
+        )
+        .await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(v["code"], "recording.invalid_timestamp");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&app.state.config.recordings_dir);
+}
+
+/// Nome único para a pasta temporária do teste, sem dependência nova.
+fn uuid_like() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    format!(
+        "{}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        std::process::id()
+    )
+}
+
+// ---------------------------------------------------------------------------
+//  R237 — o ficheiro não honrava o `Range`
+// ---------------------------------------------------------------------------
+
+/// `GET …/content` responde `206` a um `Range`, com `Content-Range`, e anuncia
+/// `Accept-Ranges: bytes` mesmo quando devolve o ficheiro inteiro.
+///
+/// Antes devolvia sempre `200` com o ficheiro todo e sem `Accept-Ranges`: o
+/// `<video>` pede um intervalo, recebe tudo, e desiste de procurar — cada
+/// salto na barra puxava a gravação inteira outra vez.
+#[sqlx::test(migrations = "./migrations")]
+async fn content_honours_range_requests(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1::uuid")
+        .bind(&f.room_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    // 4096 bytes com conteúdo distinguível, para se ver QUE fatia voltou.
+    let bytes: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let res = app
+        .http
+        .post(app.url(&format!("/api/rooms/{code}/recordings?name=r.webm")))
+        .bearer_auth(&f.a.token)
+        .body(bytes.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let id = res.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let url = app.url(&format!("/api/recordings/{id}/content"));
+    let total = bytes.len();
+
+    // CONTROLO: sem `Range`, o ficheiro inteiro — mas já a anunciar que
+    // aceita intervalos, que é o que faz o leitor voltar a pedi-los.
+    let res = app
+        .http
+        .get(&url)
+        .bearer_auth(&f.a.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()["accept-ranges"], "bytes");
+    assert!(res.headers().get("content-range").is_none());
+    assert_eq!(res.bytes().await.unwrap().to_vec(), bytes);
+
+    // Um intervalo do princípio.
+    for (header, want_start, want_end) in [
+        ("bytes=0-1023", 0usize, 1023usize),
+        ("bytes=1024-2047", 1024, 2047),
+        // Aberto à direita: até ao fim.
+        ("bytes=4000-", 4000, total - 1),
+        // Sufixo: os últimos N.
+        ("bytes=-100", total - 100, total - 1),
+        // Um fim para lá do ficheiro corta-se, não invalida o pedido.
+        ("bytes=4090-999999", 4090, total - 1),
+    ] {
+        let res = app
+            .http
+            .get(&url)
+            .bearer_auth(&f.a.token)
+            .header("Range", header)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 206, "{header}");
+        assert_eq!(res.headers()["accept-ranges"], "bytes", "{header}");
+        assert_eq!(
+            res.headers()["content-range"],
+            format!("bytes {want_start}-{want_end}/{total}"),
+            "{header}"
+        );
+        let got = res.bytes().await.unwrap().to_vec();
+        assert_eq!(got.len(), want_end - want_start + 1, "{header}");
+        assert_eq!(got, bytes[want_start..=want_end], "{header}");
+    }
+
+    // Fora do ficheiro: `416`, com o tamanho real para o cliente se corrigir.
+    let res = app
+        .http
+        .get(&url)
+        .bearer_auth(&f.a.token)
+        .header("Range", "bytes=99999-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 416);
+    assert_eq!(res.headers()["content-range"], format!("bytes */{total}"));
+
+    // Várias faixas: não se serve `multipart/byteranges` — responde-se tudo.
+    let res = app
+        .http
+        .get(&url)
+        .bearer_auth(&f.a.token)
+        .header("Range", "bytes=0-10,20-30")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.bytes().await.unwrap().to_vec().len(), total);
+
+    // Um cabeçalho que não se percebe não parte nada: o ficheiro inteiro.
+    for bad in ["lixo", "bytes=abc-def", "bytes="] {
+        let res = app
+            .http
+            .get(&url)
+            .bearer_auth(&f.a.token)
+            .header("Range", bad)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200, "{bad}");
+        assert_eq!(res.bytes().await.unwrap().to_vec().len(), total, "{bad}");
+    }
+
+    // O `Range` não contorna o RBAC: quem não descarrega continua sem o
+    // ficheiro por `?dl=1`, com ou sem intervalo.
+    let res = app
+        .http
+        .get(app.url(&format!("/api/recordings/{id}/content?dl=1")))
+        .bearer_auth(&f.carla.token)
+        .header("Range", "bytes=0-10")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+    // E quem não chega à gravação continua a receber 404, não um 206.
+    let res = app
+        .http
+        .get(&url)
+        .bearer_auth(&f.b.token)
+        .header("Range", "bytes=0-10")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+
+    let _ = std::fs::remove_dir_all(&app.state.config.recordings_dir);
+}
+
+/// Os dois predicados SQL da biblioteca (`LIBRARY_VISIBLE_MINE` e
+/// `…_PUBLISHED`) dizem o MESMO que `AccessFacts::listed_in`.
+///
+/// A regra está escrita duas vezes de propósito — em SQL porque filtra antes
+/// de paginar, e em Rust porque é o domínio — e é assim que uma delas fica
+/// para trás. Este teste percorre as combinações de relação que a fixture
+/// sabe construir e exige que as duas concordem, linha a linha.
+#[sqlx::test(migrations = "./migrations")]
+async fn library_scopes_agree_with_access_facts(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+
+    // Uma gravação por relação, todas da mesma dona (a Alfa).
+    // `f.rec` já existe: a Carla participou na sala, o Duarte não.
+    let partilhada = app.insert_recording(&f.room_id, &f.a.user_id).await;
+    sqlx::query(
+        "INSERT INTO recording_shares (recording_id, user_id, shared_by)
+         VALUES ($1::uuid, $2::uuid, $3::uuid)",
+    )
+    .bind(&partilhada)
+    .bind(&f.duarte.user_id)
+    .bind(&f.a.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    for (rec, publicada) in [(&f.rec, true), (&partilhada, false)] {
+        if publicada {
+            let (st, _) = app
+                .post(
+                    &format!("/api/recordings/{rec}/publish"),
+                    Some(&f.a.token),
+                    json!({"visibility": "org"}),
+                )
+                .await;
+            assert_eq!(st, 200);
+        }
+    }
+
+    // Para cada pessoa e cada scope, o que o SQL devolve tem de ser o que o
+    // domínio diria com os factos que a base tem para essa mesma linha.
+    for who in [&f.a, &f.carla, &f.duarte, &f.eva, &f.b] {
+        for scope in ["mine", "published"] {
+            let (st, listed) = app
+                .get(&format!("/api/recordings?scope={scope}"), Some(&who.token))
+                .await;
+            assert_eq!(st, 200, "{listed}");
+            let listed_ids: Vec<&str> = items(&listed)
+                .iter()
+                .map(|r| r["id"].as_str().unwrap())
+                .collect();
+
+            for rec in [&f.rec, &partilhada] {
+                // Os factos, lidos da base do mesmo modo que o `ITEM_SELECT`.
+                let row: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+                    "SELECT (r.uploader_id = $2::uuid),
+                            EXISTS(SELECT 1 FROM room_participants p
+                                    WHERE p.room_id = r.room_id AND p.user_id = $2::uuid),
+                            EXISTS(SELECT 1 FROM recording_shares s
+                                    WHERE s.recording_id = r.id AND s.user_id = $2::uuid),
+                            COALESCE((SELECT bool_or(me.archived_at IS NULL)
+                                        FROM org_members me JOIN org_members o ON o.org_id = me.org_id
+                                       WHERE me.user_id = $2::uuid AND o.user_id = r.uploader_id), false),
+                            COALESCE((SELECT bool_or(me.archived_at IS NOT NULL)
+                                        FROM org_members me JOIN org_members o ON o.org_id = me.org_id
+                                       WHERE me.user_id = $2::uuid AND o.user_id = r.uploader_id), false),
+                            (r.published_at IS NOT NULL)
+                       FROM recordings r WHERE r.id = $1::uuid",
+                )
+                .bind(rec)
+                .bind(&who.user_id)
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+                let (is_uploader, participant, shared, active_member, archived_member, published) =
+                    row;
+                let departed = archived_member && !active_member;
+                let published_to_my_org = published && active_member;
+                let expected = match scope {
+                    "mine" => !departed && (is_uploader || participant || shared),
+                    _ => {
+                        published
+                            && !departed
+                            && (is_uploader || participant || shared || published_to_my_org)
+                    }
+                };
+                assert_eq!(
+                    listed_ids.contains(&rec.as_str()),
+                    expected,
+                    "{} / scope={scope} / gravação {rec}: factos \
+                     (dona={is_uploader}, participou={participant}, partilhada={shared}, \
+                      activa={active_member}, arquivada={archived_member}, publicada={published})",
+                    who.email
+                );
+            }
+        }
+    }
 }

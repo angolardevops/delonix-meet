@@ -11,12 +11,25 @@ use delonix_meet_core::DomainError;
 
 pub const MAX_TITLE: usize = 120;
 pub const MAX_COMMENT: usize = 2000;
+/// Nome de apresentação da gravação (é também o nome com que se descarrega).
+pub const MAX_FILENAME: usize = 200;
+/// Descrição da gravação. Pode ficar VAZIA — apagá-la é uma operação legítima,
+/// ao contrário do título de um capítulo.
+pub const MAX_DESCRIPTION: usize = 8000;
+pub const MAX_TAGS: usize = 20;
+pub const MAX_TAG_CHARS: usize = 40;
+/// Título de um capítulo. Maior do que o da gravação ([`MAX_TITLE`]): um
+/// capítulo descreve um trecho, não nomeia a sessão.
+pub const MAX_CHAPTER_TITLE: usize = 200;
 /// Capítulos por gravação. O tecto é o tamanho máximo de página: uma página
 /// devolve sempre o índice inteiro.
 pub const MAX_CHAPTERS: i64 = 100;
 /// Marca temporal máxima quando a duração não é conhecida (48 h). Uma gravação
 /// do servidor é limitada muito antes disso pelo `FFMPEG_TIMEOUT_SECS`.
 pub const MAX_AT_SECS_UNKNOWN_DURATION: i32 = 48 * 3600;
+/// O mesmo tecto de [`MAX_AT_SECS_UNKNOWN_DURATION`], em milissegundos — a
+/// unidade do contrato (R183/R234).
+pub const MAX_T_MS_UNKNOWN_DURATION: i64 = 48 * 3600 * 1000;
 /// Termos numa pesquisa. Mais do que isto é colar um parágrafo, não pesquisar.
 pub const MAX_SEARCH_TERMS: usize = 8;
 const MAX_TERM_CHARS: usize = 64;
@@ -72,6 +85,139 @@ pub struct ProcessingFacts<'a> {
     /// Há reserva e o prazo ainda não passou. Uma reserva expirada é trabalho
     /// devolvido à fila, não «a transcrever».
     pub lease_active: bool,
+}
+
+impl ProcessingFacts<'_> {
+    /// Há ficheiro para ler. `transcribing` também tem: o ai-worker só começa
+    /// depois de o ffmpeg acabar de compor.
+    pub fn has_file(&self) -> bool {
+        matches!(self.status, "ready" | "transcribing")
+    }
+}
+
+/// Estado do FICHEIRO que a UI mostra (`RecordingFileStatus`).
+///
+/// A UI conhece também `processing`, e esta linha nunca o emite: o `recorder`
+/// só insere a linha DEPOIS de o ffmpeg acabar. Um estado que nunca pode ser
+/// observado não se inventa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileStatus {
+    Transcribing,
+    Ready,
+    Failed,
+}
+
+impl FileStatus {
+    pub const ALL: [&'static str; 3] = ["transcribing", "ready", "failed"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Transcribing => "transcribing",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// Precedência: sem ficheiro nada mais importa; uma reserva que ficou por
+/// limpar não faz a gravação voltar a «a transcrever» depois de um resultado.
+pub fn file_status(f: ProcessingFacts<'_>) -> FileStatus {
+    if !f.has_file() {
+        return FileStatus::Failed;
+    }
+    if f.lease_active && !f.transcribed && !f.transcription_failed {
+        return FileStatus::Transcribing;
+    }
+    FileStatus::Ready
+}
+
+/// O `state` da UI: o `status`, com `published` quando está pronta E publicada.
+/// Publicar uma gravação falhada não a promove — não há o que ver.
+pub fn display_state(file: FileStatus, published: bool) -> &'static str {
+    match file {
+        FileStatus::Ready if published => "published",
+        other => other.as_str(),
+    }
+}
+
+/// Estado da transcrição (`TranscriptStatus`), independente do do ficheiro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptStatus {
+    None,
+    Transcribing,
+    Ready,
+    Failed,
+}
+
+impl TranscriptStatus {
+    pub const ALL: [&'static str; 4] = ["none", "transcribing", "ready", "failed"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Transcribing => "transcribing",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+pub fn transcript_status(f: ProcessingFacts<'_>) -> TranscriptStatus {
+    if !f.has_file() {
+        return TranscriptStatus::None;
+    }
+    if f.transcribed {
+        return TranscriptStatus::Ready;
+    }
+    if f.transcription_failed {
+        return TranscriptStatus::Failed;
+    }
+    if f.lease_active {
+        return TranscriptStatus::Transcribing;
+    }
+    TranscriptStatus::None
+}
+
+/// Tipo de sessão gravada (`kind`, migração 0057). Distinto da [`Category`]
+/// herdada: espelha o formato da SALA, não uma etiqueta à escolha.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Meeting,
+    Training,
+    Broadcast,
+    Hybrid,
+}
+
+impl Kind {
+    pub const ALL: [&'static str; 4] = ["meeting", "training", "broadcast", "hybrid"];
+
+    pub fn parse(s: &str) -> Result<Self, DomainError> {
+        Ok(match s {
+            "meeting" => Self::Meeting,
+            "training" => Self::Training,
+            "broadcast" => Self::Broadcast,
+            "hybrid" => Self::Hybrid,
+            other => {
+                return Err(DomainError::invalid(
+                    "recording.invalid_kind",
+                    format!(
+                        "tipo de sessão inválido «{other}» — válidos: {}",
+                        Self::ALL.join(", ")
+                    ),
+                )
+                .with_field("kind", Self::ALL.join(" | ")))
+            }
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Meeting => "meeting",
+            Self::Training => "training",
+            Self::Broadcast => "broadcast",
+            Self::Hybrid => "hybrid",
+        }
+    }
 }
 
 /// Precedência: sem ficheiro nada mais importa; um resultado final
@@ -182,7 +328,7 @@ pub fn validate_title(raw: &str) -> Result<Option<String>, DomainError> {
 pub fn validate_chapter_title(raw: &str) -> Result<String, DomainError> {
     let t = bounded_text(
         raw,
-        MAX_TITLE,
+        MAX_CHAPTER_TITLE,
         "recording.invalid_chapter_title",
         "title",
         "o título do capítulo",
@@ -192,9 +338,90 @@ pub fn validate_chapter_title(raw: &str) -> Result<String, DomainError> {
             "recording.invalid_chapter_title",
             "o título do capítulo é uma só linha",
         )
-        .with_field("title", format!("1-{MAX_TITLE} caracteres, uma linha")));
+        .with_field(
+            "title",
+            format!("1-{MAX_CHAPTER_TITLE} caracteres, uma linha"),
+        ));
     }
     Ok(t)
+}
+
+/// Nome de apresentação da gravação (`filename`). Uma só linha, nunca vazio —
+/// é o que a UI mostra e o nome com que o ficheiro se descarrega.
+pub fn validate_filename(raw: &str) -> Result<String, DomainError> {
+    let t = bounded_text(
+        raw,
+        MAX_FILENAME,
+        "recording.invalid_filename",
+        "filename",
+        "o nome",
+    )?;
+    // Uma só linha, e sem separadores de caminho: o nome vai para o
+    // `Content-Disposition` do download.
+    if t.contains('\n') || t.contains('\r') || t.contains('/') || t.contains('\\') {
+        return Err(DomainError::invalid(
+            "recording.invalid_filename",
+            "o nome é uma só linha, sem barras",
+        )
+        .with_field(
+            "filename",
+            format!("1-{MAX_FILENAME} caracteres, uma linha"),
+        ));
+    }
+    Ok(t)
+}
+
+/// Descrição: pode ficar VAZIA (apaga), até [`MAX_DESCRIPTION`] caracteres,
+/// com quebras de linha e tabulações.
+pub fn validate_description(raw: &str) -> Result<String, DomainError> {
+    let t = raw.trim();
+    let bad_control = t
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t');
+    if t.chars().count() > MAX_DESCRIPTION || bad_control {
+        return Err(DomainError::invalid(
+            "recording.invalid_description",
+            format!(
+                "a descrição tem no máximo {MAX_DESCRIPTION} caracteres, sem caracteres de controlo"
+            ),
+        )
+        .with_field("description", format!("0-{MAX_DESCRIPTION} caracteres")));
+    }
+    Ok(t.to_string())
+}
+
+/// Etiquetas: sem `#`, minúsculas, aparadas, sem repetidas nem vazias. Recusa
+/// uma etiqueta grande ou com vírgula em vez de a cortar em silêncio — só as
+/// vazias se ignoram, porque um campo de texto deixa sempre separadores a mais.
+pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>, DomainError> {
+    let invalid = |msg: String| {
+        DomainError::invalid("recording.invalid_tags", msg).with_field(
+            "tags",
+            format!("até {MAX_TAGS} etiquetas de 1-{MAX_TAG_CHARS} caracteres, sem vírgulas"),
+        )
+    };
+    let mut out: Vec<String> = Vec::new();
+    for t in raw {
+        let t = t.trim().trim_start_matches('#').trim().to_lowercase();
+        if t.is_empty() {
+            continue;
+        }
+        if t.chars().count() > MAX_TAG_CHARS {
+            return Err(invalid(format!(
+                "cada etiqueta tem no máximo {MAX_TAG_CHARS} caracteres"
+            )));
+        }
+        if t.chars().any(|c| c.is_control() || c == ',') {
+            return Err(invalid("etiqueta com caracteres inválidos".into()));
+        }
+        if !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    if out.len() > MAX_TAGS {
+        return Err(invalid(format!("no máximo {MAX_TAGS} etiquetas")));
+    }
+    Ok(out)
 }
 
 pub fn validate_comment_body(raw: &str) -> Result<String, DomainError> {
@@ -223,6 +450,92 @@ pub fn validate_at_secs(at_secs: i32, duration_secs: Option<i32>) -> Result<i32,
     Ok(at_secs)
 }
 
+/// Uma marca temporal cabe na gravação: `0..=duração` quando a duração é
+/// conhecida, senão `0..=48 h`. Em MILISSEGUNDOS — a unidade do contrato de
+/// capítulos e comentários (R234).
+pub fn validate_t_ms(t_ms: i64, duration_ms: Option<i64>) -> Result<i64, DomainError> {
+    let max = duration_ms
+        .filter(|d| *d >= 0)
+        .unwrap_or(MAX_T_MS_UNKNOWN_DURATION);
+    if t_ms < 0 || t_ms > max {
+        return Err(DomainError::invalid(
+            "recording.invalid_timestamp",
+            format!("a marca temporal tem de estar entre 0 e {max} ms"),
+        )
+        .with_field("t_ms", format!("0..={max}")));
+    }
+    Ok(t_ms)
+}
+
+// ---------------------------------------------------------------------------
+//  Visibilidade e biblioteca
+// ---------------------------------------------------------------------------
+
+/// Quem vê a gravação além de quem tem ligação directa com ela.
+///
+/// Nunca há visibilidade PÚBLICA por aqui: o link público continua a ser
+/// `recording_share_links`, com token e prazo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    /// Quem participou na sala, quem carregou, e com quem foi partilhada.
+    Private,
+    /// Além desses, os membros ACTIVOS de uma organização do autor.
+    Org,
+}
+
+impl Visibility {
+    pub const ALL: [&'static str; 2] = ["private", "org"];
+
+    pub fn parse(s: &str) -> Result<Self, DomainError> {
+        Ok(match s {
+            "private" => Self::Private,
+            "org" => Self::Org,
+            other => {
+                return Err(DomainError::invalid(
+                    "recording.invalid_visibility",
+                    format!(
+                        "visibilidade inválida «{other}» — válidas: {}",
+                        Self::ALL.join(", ")
+                    ),
+                )
+                .with_field("visibility", Self::ALL.join(" | ")))
+            }
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Org => "org",
+        }
+    }
+}
+
+/// Qual biblioteca se lista (`GET /api/recordings?scope=`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LibraryScope {
+    /// As de sempre: carregou, participou, ou foram-lhe partilhadas.
+    #[default]
+    Mine,
+    /// As publicadas que quem pede vê — incluindo as da organização em que
+    /// NÃO participou. É esta a biblioteca que dá sentido a publicar.
+    Published,
+}
+
+impl LibraryScope {
+    pub fn parse(s: Option<&str>) -> Result<Self, DomainError> {
+        match s {
+            None | Some("") | Some("mine") => Ok(Self::Mine),
+            Some("published") => Ok(Self::Published),
+            Some(other) => Err(DomainError::invalid(
+                "recording.invalid_scope",
+                format!("scope inválido «{other}» — válidos: mine, published"),
+            )
+            .with_field("scope", "mine | published")),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 //  Acesso
 // ---------------------------------------------------------------------------
@@ -242,6 +555,11 @@ pub struct AccessFacts {
     pub active_member: bool,
     /// Quem pede tem pertença ARQUIVADA numa organização do dono.
     pub archived_member: bool,
+    /// A gravação está PUBLICADA para a organização (`visibility = 'org'` e
+    /// `published_at` preenchido) E quem pede é membro ACTIVO de uma
+    /// organização do dono. Sem isto, publicar não mostrava a gravação a
+    /// ninguém: era uma coluna que se escrevia e mais nada a lia (R235).
+    pub published_to_my_org: bool,
 }
 
 impl AccessFacts {
@@ -254,7 +572,30 @@ impl AccessFacts {
 
     /// Reproduzir, ver na biblioteca, ler capítulos e comentários.
     pub fn can_view(&self) -> bool {
-        !self.departed() && (self.is_uploader || self.participant || self.shared)
+        !self.departed()
+            && (self.is_uploader || self.participant || self.shared || self.published_to_my_org)
+    }
+
+    /// Ligação DIRECTA com a gravação — dono, admin activo da organização,
+    /// participante da sala, ou partilha explícita. **Não** inclui
+    /// `published_to_my_org`: publicar dá reprodução (`can_view`), não uma
+    /// relação com quem esteve na reunião.
+    fn has_direct_relation(&self) -> bool {
+        !self.departed() && (self.is_uploader || self.org_admin || self.participant || self.shared)
+    }
+
+    /// Ler a transcrição (texto e segmentos). Mais estrito do que `can_view`:
+    /// a transcrição pode conter nomes e decisões que a dona não revisou antes
+    /// de publicar a gravação para ser VISTA.
+    pub fn can_see_transcript(&self) -> bool {
+        self.has_direct_relation()
+    }
+
+    /// Ler quem esteve na sala (`room_participants`). Mesma regra e mesma
+    /// razão que [`Self::can_see_transcript`]: publicar a gravação não é
+    /// convite para um colega nunca-presente saber quem esteve na reunião.
+    pub fn can_see_participants(&self) -> bool {
+        self.has_direct_relation()
     }
 
     /// Descarregar o ficheiro (`?dl=1`): o dono ou um admin activo da org do dono.
@@ -279,6 +620,32 @@ impl AccessFacts {
     /// outra pessoa é mostrada; e quem saiu da empresa já não a partilha (S3).
     pub fn can_share(&self) -> bool {
         !self.departed() && self.is_uploader
+    }
+
+    /// Ler uma legenda: publicada, para quem vê; em qualquer estado, para quem
+    /// gere. Um rascunho de legenda ainda não é para ser lido.
+    pub fn can_read_caption(&self, caption_status: &str) -> bool {
+        self.can_manage() || (self.can_see() && caption_status == "published")
+    }
+
+    /// Apagar um comentário: o autor (enquanto chega à gravação) ou quem a
+    /// gere (moderação). Alterar o TEXTO continua a ser só do autor.
+    pub fn can_delete_comment(&self, is_author: bool) -> bool {
+        (is_author && self.can_see()) || self.can_manage()
+    }
+
+    /// A gravação aparece na biblioteca `scope`. É o que o SQL
+    /// `LIBRARY_VISIBLE_*` de `server/src/recordings.rs` escreve; o teste
+    /// `library_scopes_agree_with_access_facts` prova que concordam.
+    pub fn listed_in(&self, scope: LibraryScope, published: bool) -> bool {
+        match scope {
+            // A biblioteca de sempre não muda por a gravação estar publicada:
+            // publicar não enche a biblioteca pessoal dos colegas.
+            LibraryScope::Mine => {
+                !self.departed() && (self.is_uploader || self.participant || self.shared)
+            }
+            LibraryScope::Published => published && self.can_view(),
+        }
     }
 }
 
@@ -519,5 +886,164 @@ mod tests {
         );
         let long = "x".repeat(500);
         assert!(search_query(&long).unwrap().len() <= MAX_TERM_CHARS + 2);
+    }
+
+    // ---- o contrato em milissegundos e a publicação (R234/R235) ----
+
+    #[test]
+    fn t_ms_cabe_na_gravacao() {
+        assert_eq!(validate_t_ms(0, Some(10_000)).unwrap(), 0);
+        assert_eq!(validate_t_ms(10_000, Some(10_000)).unwrap(), 10_000);
+        assert!(validate_t_ms(10_001, Some(10_000)).is_err());
+        assert!(validate_t_ms(-1, Some(10_000)).is_err());
+        // Sem duração conhecida, o tecto é 48 h — não «qualquer coisa».
+        assert!(validate_t_ms(MAX_T_MS_UNKNOWN_DURATION, None).is_ok());
+        assert!(validate_t_ms(MAX_T_MS_UNKNOWN_DURATION + 1, None).is_err());
+        // Uma duração negativa na base não abre o tecto.
+        assert!(validate_t_ms(MAX_T_MS_UNKNOWN_DURATION + 1, Some(-5)).is_err());
+    }
+
+    #[test]
+    fn publicar_da_reproducao_mas_nao_download_nem_transcricao() {
+        // Um colega de organização que NUNCA participou, e a quem a gravação
+        // nunca foi partilhada: vê-a porque está publicada.
+        let colega = AccessFacts {
+            active_member: true,
+            published_to_my_org: true,
+            ..Default::default()
+        };
+        assert!(colega.can_view(), "publicar tem de dar reprodução");
+        assert!(colega.can_see());
+        assert!(!colega.can_download(), "publicar não dá o ficheiro");
+        assert!(!colega.can_manage());
+        assert!(!colega.can_share());
+        // Publicar para VER não abre a transcrição nem a lista de presentes.
+        assert!(!colega.can_see_transcript());
+        assert!(!colega.can_see_participants());
+
+        // Quem saiu da organização (S3) não vê a publicada.
+        let saiu = AccessFacts {
+            archived_member: true,
+            published_to_my_org: true,
+            ..Default::default()
+        };
+        assert!(!saiu.can_view());
+    }
+
+    #[test]
+    fn scope_parse_recusa_o_desconhecido() {
+        assert_eq!(LibraryScope::parse(None).unwrap(), LibraryScope::Mine);
+        assert_eq!(LibraryScope::parse(Some("")).unwrap(), LibraryScope::Mine);
+        assert_eq!(
+            LibraryScope::parse(Some("mine")).unwrap(),
+            LibraryScope::Mine
+        );
+        assert_eq!(
+            LibraryScope::parse(Some("published")).unwrap(),
+            LibraryScope::Published
+        );
+        let err = LibraryScope::parse(Some("todas")).unwrap_err();
+        assert_eq!(err.code, "recording.invalid_scope");
+    }
+
+    #[test]
+    fn listed_in_separa_as_duas_bibliotecas() {
+        let participante = AccessFacts {
+            participant: true,
+            active_member: true,
+            ..Default::default()
+        };
+        // Na biblioteca pessoal está, publicada ou não.
+        assert!(participante.listed_in(LibraryScope::Mine, false));
+        assert!(participante.listed_in(LibraryScope::Mine, true));
+        // Na publicada só quando de facto está publicada.
+        assert!(!participante.listed_in(LibraryScope::Published, false));
+        assert!(participante.listed_in(LibraryScope::Published, true));
+
+        // O colega que só a vê por publicação NÃO entope a biblioteca pessoal.
+        let colega = AccessFacts {
+            active_member: true,
+            published_to_my_org: true,
+            ..Default::default()
+        };
+        assert!(!colega.listed_in(LibraryScope::Mine, true));
+        assert!(colega.listed_in(LibraryScope::Published, true));
+    }
+
+    #[test]
+    fn legenda_rascunho_so_para_quem_gere() {
+        let dono = AccessFacts {
+            is_uploader: true,
+            active_member: true,
+            ..Default::default()
+        };
+        let colega = AccessFacts {
+            active_member: true,
+            published_to_my_org: true,
+            ..Default::default()
+        };
+        assert!(dono.can_read_caption("draft"));
+        assert!(dono.can_read_caption("published"));
+        assert!(!colega.can_read_caption("draft"));
+        assert!(colega.can_read_caption("published"));
+    }
+
+    #[test]
+    fn apagar_comentario_e_do_autor_ou_de_quem_modera() {
+        let autor = AccessFacts {
+            participant: true,
+            active_member: true,
+            ..Default::default()
+        };
+        let admin = AccessFacts {
+            org_admin: true,
+            active_member: true,
+            ..Default::default()
+        };
+        assert!(autor.can_delete_comment(true));
+        assert!(!autor.can_delete_comment(false), "não modera os dos outros");
+        assert!(admin.can_delete_comment(false), "quem gere modera");
+    }
+
+    #[test]
+    fn etiquetas_normalizam_e_recusam() {
+        assert_eq!(
+            normalize_tags(&["#Orçamento".into(), " ".into(), "orçamento".into()]).unwrap(),
+            vec!["orçamento".to_string()],
+            "apara, tira o cardinal, baixa a caixa e não repete"
+        );
+        assert!(normalize_tags(&["a,b".into()]).is_err(), "vírgula recusada");
+        assert!(normalize_tags(&["x".repeat(MAX_TAG_CHARS + 1)]).is_err());
+        let muitas: Vec<String> = (0..=MAX_TAGS).map(|i| format!("t{i}")).collect();
+        assert!(normalize_tags(&muitas).is_err());
+    }
+
+    #[test]
+    fn descricao_pode_ficar_vazia_mas_nao_enorme() {
+        assert_eq!(validate_description("  ").unwrap(), String::new());
+        assert_eq!(validate_description(" olá\nmundo ").unwrap(), "olá\nmundo");
+        assert!(validate_description(&"x".repeat(MAX_DESCRIPTION + 1)).is_err());
+        assert!(validate_description("mau\u{0}").is_err());
+    }
+
+    #[test]
+    fn nome_da_gravacao_e_uma_linha_sem_barras() {
+        assert_eq!(validate_filename(" Reunião ").unwrap(), "Reunião");
+        assert!(validate_filename("").is_err());
+        assert!(
+            validate_filename("a/b").is_err(),
+            "sem separador de caminho"
+        );
+        assert!(validate_filename("a\nb").is_err());
+        assert!(validate_filename(&"x".repeat(MAX_FILENAME + 1)).is_err());
+    }
+
+    #[test]
+    fn visibilidade_so_tem_dois_valores() {
+        assert_eq!(Visibility::parse("private").unwrap(), Visibility::Private);
+        assert_eq!(Visibility::parse("org").unwrap(), Visibility::Org);
+        // «public» não existe: o link público é outro mecanismo, com token.
+        let err = Visibility::parse("public").unwrap_err();
+        assert_eq!(err.code, "recording.invalid_visibility");
     }
 }
