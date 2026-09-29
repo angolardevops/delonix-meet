@@ -63,7 +63,14 @@ async fn sql(app: &TestApp, q: &str, rec: &str) {
     sqlx::query(q).bind(rec).execute(&app.db).await.unwrap();
 }
 
+/// As linhas de uma resposta de listagem, seja ela a LISTA (o que a biblioteca
+/// devolve sem `page_size`/`page_token`, também com `q` e `scope`) ou a PÁGINA
+/// (`{items, next_page_token}`). A forma exacta de cada uma é afirmada onde
+/// importa, em `library_keeps_bare_array_and_paginates_on_request`.
 fn items(v: &Value) -> &Vec<Value> {
+    if let Some(a) = v.as_array() {
+        return a;
+    }
     v["items"]
         .as_array()
         .unwrap_or_else(|| panic!("sem items: {v}"))
@@ -74,7 +81,7 @@ fn items(v: &Value) -> &Vec<Value> {
 // ---------------------------------------------------------------------------
 
 #[sqlx::test(migrations = "./migrations")]
-async fn processing_state_is_derived_for_each_state(db: sqlx::PgPool) {
+async fn state_and_transcript_status_are_derived_for_each_state(db: sqlx::PgPool) {
     let f = fixture(db).await;
     let (app, a) = (&f.app, &f.a);
     // Os metadados são o próprio recurso (o ficheiro está em `/content`).
@@ -82,43 +89,95 @@ async fn processing_state_is_derived_for_each_state(db: sqlx::PgPool) {
 
     let (st, m) = app.get(&meta, Some(&a.token)).await;
     assert_eq!(st, 200, "{m}");
-    assert_eq!(m["processing_state"], "ready");
-    assert_eq!(m["status"], "ready", "o campo herdado continua lá");
-    assert_eq!(m["category"], "meeting");
-    assert!(m["duration_secs"].is_null() && m["width"].is_null() && m["title"].is_null());
+    assert_eq!(m["status"], "ready");
+    assert_eq!(m["state"], "ready", "não publicada: o estado é o do ficheiro");
+    assert_eq!(m["transcript_status"], "none");
+    assert_eq!(m["kind"], "meeting");
+    assert_eq!(m["visibility"], "private");
+    assert!(m["published_at"].is_null());
+    assert_eq!(m["description"], "");
+    assert_eq!(m["tags"], json!([]));
+    // `null` é «não foi possível medir» — nunca um valor inventado.
+    assert!(m["duration_ms"].is_null() && m["width"].is_null());
     assert_eq!(m["can_manage"], true);
     assert!(m.get("snippet").is_none());
+    // Contagens: a gravação acabou de nascer.
+    for c in ["chapter_count", "comment_count", "view_count"] {
+        assert_eq!(m[c], 0, "{c}");
+    }
+    assert_eq!(m["caption_languages"], json!([]));
 
+    // O estado do FICHEIRO e o da TRANSCRIÇÃO são dois eixos, não um só.
     let cases = [
         (
             "UPDATE recordings SET transcription_lease_token = 't', transcription_lease_expires_at = now() + interval '1 hour' WHERE id = $1::uuid",
             "transcribing",
+            "transcribing",
         ),
         (
+            // Uma reserva expirada é trabalho devolvido à fila, não «a transcrever».
             "UPDATE recordings SET transcription_lease_expires_at = now() - interval '1 minute' WHERE id = $1::uuid",
             "ready",
+            "none",
         ),
         (
             "UPDATE recordings SET transcription_failed_at = now() WHERE id = $1::uuid",
-            "transcription_failed",
+            "ready",
+            "failed",
         ),
         (
             "UPDATE recordings SET transcribed_at = now() WHERE id = $1::uuid",
-            "transcribed",
+            "ready",
+            "ready",
         ),
         (
             "UPDATE recordings SET status = 'failed', failure_reason = 'sem espaço' WHERE id = $1::uuid",
             "failed",
+            "none",
         ),
     ];
-    for (update, expected) in cases {
+    for (update, file_state, transcript) in cases {
         sql(app, update, &f.rec).await;
         let (_, m) = app.get(&meta, Some(&a.token)).await;
-        assert_eq!(m["processing_state"], expected, "{update}: {m}");
+        assert_eq!(m["status"], file_state, "{update}: {m}");
+        assert_eq!(m["transcript_status"], transcript, "{update}: {m}");
         // A biblioteca diz o mesmo.
         let (_, lib) = app.get("/api/recordings", Some(&a.token)).await;
-        assert_eq!(lib[0]["processing_state"], expected);
+        assert_eq!(lib[0]["status"], file_state);
+        assert_eq!(lib[0]["transcript_status"], transcript);
     }
+}
+
+/// O `state` da UI é o do ficheiro, com `published` quando está pronta E
+/// publicada. Publicar uma gravação FALHADA não a promove: não há o que ver.
+#[sqlx::test(migrations = "./migrations")]
+async fn state_says_published_only_when_ready_and_published(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let (app, a) = (&f.app, &f.a);
+    let meta = format!("/api/recordings/{}", f.rec);
+
+    let (st, _) = app
+        .post(
+            &format!("/api/recordings/{}/publish", f.rec),
+            Some(&a.token),
+            json!({"visibility": "org"}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    let (_, m) = app.get(&meta, Some(&a.token)).await;
+    assert_eq!(m["state"], "published");
+    assert_eq!(m["status"], "ready", "o ficheiro continua pronto");
+    assert_eq!(m["visibility"], "org");
+    assert!(m["published_at"].is_string());
+
+    sql(
+        app,
+        "UPDATE recordings SET status = 'failed' WHERE id = $1::uuid",
+        &f.rec,
+    )
+    .await;
+    let (_, m) = app.get(&meta, Some(&a.token)).await;
+    assert_eq!(m["state"], "failed", "publicada mas sem ficheiro: falhada");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -131,35 +190,56 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .patch(
             &path,
             Some(&f.a.token),
-            json!({"title": "  Aula de Química ", "category": "lecture"}),
+            json!({
+                "filename": "  Aula de Química ",
+                "description": " Revisão do trimestre ",
+                "tags": ["#Química", "quimica", " ", "Revisão"],
+                "kind": "training",
+            }),
         )
         .await;
     assert_eq!(st, 200, "{m}");
-    assert_eq!(m["title"], "Aula de Química");
-    assert_eq!(m["category"], "lecture");
-    assert_eq!(m["filename"], "teste.webm", "o nome do ficheiro não muda");
+    assert_eq!(m["filename"], "Aula de Química");
+    assert_eq!(m["description"], "Revisão do trimestre");
+    assert_eq!(
+        m["tags"],
+        json!(["química", "quimica", "revisão"]),
+        "apara, tira o cardinal, baixa a caixa, e não repete"
+    );
+    assert_eq!(m["kind"], "training");
 
     // Valida tudo antes de escrever.
     let (st, v) = app
-        .patch(
-            &path,
-            Some(&f.a.token),
-            json!({"title": "outro", "category": "podcast"}),
-        )
+        .patch(&path, Some(&f.a.token), json!({"kind": "podcast"}))
         .await;
     assert_eq!(st, 400);
-    assert_eq!(v["code"], "recording.invalid_category");
+    assert_eq!(v["code"], "recording.invalid_kind");
     let (st, v) = app
-        .patch(&path, Some(&f.a.token), json!({"title": "x".repeat(121)}))
+        .patch(&path, Some(&f.a.token), json!({"filename": "x".repeat(201)}))
         .await;
     assert_eq!(st, 400);
-    assert_eq!(v["code"], "recording.invalid_title");
+    assert_eq!(v["code"], "recording.invalid_filename");
+    let (st, v) = app
+        .patch(&path, Some(&f.a.token), json!({"tags": ["a,b"]}))
+        .await;
+    assert_eq!(st, 400);
+    assert_eq!(v["code"], "recording.invalid_tags");
+    // O contrato antigo (`title`/`category`) é recusado em voz alta, não
+    // aceite e ignorado em silêncio.
+    let (st, v) = app
+        .patch(&path, Some(&f.a.token), json!({"title": "Aula"}))
+        .await;
+    assert_eq!(st, 422, "{v}");
+    assert!(
+        v["error"].as_str().unwrap().contains("unknown field `title`"),
+        "a recusa diz QUAL o campo e quais os válidos: {v}"
+    );
     let (_, m) = app.get(&path, Some(&f.a.token)).await;
-    assert_eq!(m["title"], "Aula de Química", "sem escrita parcial");
+    assert_eq!(m["filename"], "Aula de Química", "sem escrita parcial");
 
     // Participante que não é dono: vê, não gere.
     let (st, v) = app
-        .patch(&path, Some(&f.carla.token), json!({"category": "other"}))
+        .patch(&path, Some(&f.carla.token), json!({"kind": "meeting"}))
         .await;
     assert_eq!(st, 403, "{v}");
     assert_eq!(v["code"], "recording.not_manager");
@@ -167,14 +247,14 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
     assert_eq!(m["can_manage"], false);
     // Membro da mesma org sem acesso nenhum: nem sabe que existe.
     let (st, _) = app
-        .patch(&path, Some(&f.duarte.token), json!({"category": "other"}))
+        .patch(&path, Some(&f.duarte.token), json!({"kind": "meeting"}))
         .await;
     assert_eq!(st, 404);
     let (st, _) = app.get(&path, Some(&f.duarte.token)).await;
     assert_eq!(st, 404);
     // Outra org: 404, igual a um id inventado.
     let (st, v) = app
-        .patch(&path, Some(&f.b.token), json!({"category": "other"}))
+        .patch(&path, Some(&f.b.token), json!({"kind": "meeting"}))
         .await;
     assert_eq!(st, 404);
     assert!(!v.to_string().contains("Química"));
@@ -185,11 +265,11 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .patch(
             &format!("/api/recordings/{INVENTED_ID}"),
             Some(&f.a.token),
-            json!({"category": "other"}),
+            json!({"kind": "meeting"}),
         )
         .await;
     assert_eq!(st, 404);
-    let (st, _) = app.patch(&path, None, json!({"category": "other"})).await;
+    let (st, _) = app.patch(&path, None, json!({"kind": "meeting"})).await;
     assert_eq!(st, 401);
 
     // Admin activo da org do dono, sem ter participado: gere (é quem descarrega).
@@ -197,18 +277,18 @@ async fn patch_metadata_owner_admin_member_and_other_org(db: sqlx::PgPool) {
         .patch(
             &path,
             Some(&f.eva.token),
-            json!({"category": "broadcast", "title": ""}),
+            json!({"kind": "broadcast", "description": ""}),
         )
         .await;
     assert_eq!(st, 200, "{m}");
-    assert_eq!(m["category"], "broadcast");
-    assert!(m["title"].is_null(), "\"\" apaga o título");
-    let cat: String = sqlx::query_scalar("SELECT category FROM recordings WHERE id = $1::uuid")
+    assert_eq!(m["kind"], "broadcast");
+    assert_eq!(m["description"], "", "\"\" apaga a descrição");
+    let kind: String = sqlx::query_scalar("SELECT kind FROM recordings WHERE id = $1::uuid")
         .bind(&f.rec)
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(cat, "broadcast");
+    assert_eq!(kind, "broadcast");
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +301,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
     let app = &f.app;
     sql(
         app,
-        "UPDATE recordings SET duration_secs = 600 WHERE id = $1::uuid",
+        "UPDATE recordings SET duration_ms = 600000 WHERE id = $1::uuid",
         &f.rec,
     )
     .await;
@@ -231,7 +311,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .http
         .post(app.url(&base))
         .bearer_auth(&f.a.token)
-        .json(&json!({"at_secs": 300, "title": "Orçamento"}))
+        .json(&json!({"t_ms": 300_000, "title": "Orçamento"}))
         .send()
         .await
         .unwrap();
@@ -246,7 +326,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.a.token),
-            json!({"at_secs": 0, "title": "Abertura"}),
+            json!({"t_ms": 0, "title": "Abertura"}),
         )
         .await;
     assert_eq!(st, 201, "{first}");
@@ -257,19 +337,19 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
     // Limites.
     for (body, code) in [
         (
-            json!({"at_secs": 601, "title": "x"}),
+            json!({"t_ms": 600_001, "title": "x"}),
             "recording.invalid_timestamp",
         ),
         (
-            json!({"at_secs": -1, "title": "x"}),
+            json!({"t_ms": -1, "title": "x"}),
             "recording.invalid_timestamp",
         ),
         (
-            json!({"at_secs": 600, "title": " "}),
+            json!({"t_ms": 600_000, "title": " "}),
             "recording.invalid_chapter_title",
         ),
         (
-            json!({"at_secs": 1, "title": "x".repeat(121)}),
+            json!({"t_ms": 1, "title": "x".repeat(201)}),
             "recording.invalid_chapter_title",
         ),
     ] {
@@ -281,7 +361,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.a.token),
-            json!({"at_secs": 600, "title": "Fim"}),
+            json!({"t_ms": 600_000, "title": "Fim"}),
         )
         .await;
     assert_eq!(st, 201, "a duração é inclusiva");
@@ -309,7 +389,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.carla.token),
-            json!({"at_secs": 5, "title": "x"}),
+            json!({"t_ms": 5_000, "title": "x"}),
         )
         .await;
     assert_eq!(st, 403, "{v}");
@@ -322,7 +402,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         let (st, _) = app.get(&location, Some(&who.token)).await;
         assert_eq!(st, 404);
         let (st, _) = app
-            .post(&base, Some(&who.token), json!({"at_secs": 5, "title": "x"}))
+            .post(&base, Some(&who.token), json!({"t_ms": 5_000, "title": "x"}))
             .await;
         assert_eq!(st, 404);
         let (st, _) = app.delete(&location, Some(&who.token)).await;
@@ -348,8 +428,8 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
 
     // Tecto de capítulos.
     sqlx::query(
-        "INSERT INTO recording_chapters (recording_id, at_secs, title, created_by)
-         SELECT $1::uuid, g, 'c' || g, $2::uuid FROM generate_series(1, 98) g",
+        "INSERT INTO recording_chapters (recording_id, t_ms, title, source, created_by)
+         SELECT $1::uuid, g * 1000, 'c' || g, 'manual', $2::uuid FROM generate_series(1, 98) g",
     )
     .bind(&f.rec)
     .bind(&f.a.user_id)
@@ -360,7 +440,7 @@ async fn chapters_crud_bounds_and_access(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.a.token),
-            json!({"at_secs": 5, "title": "a mais"}),
+            json!({"t_ms": 5_000, "title": "a mais"}),
         )
         .await;
     assert_eq!(st, 422, "{v}");
@@ -384,7 +464,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
     let app = &f.app;
     sql(
         app,
-        "UPDATE recordings SET duration_secs = 120 WHERE id = $1::uuid",
+        "UPDATE recordings SET duration_ms = 120000 WHERE id = $1::uuid",
         &f.rec,
     )
     .await;
@@ -396,7 +476,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
         .http
         .post(app.url(&base))
         .bearer_auth(&f.carla.token)
-        .json(&json!({"body": format!("usa esta: {key}"), "at_secs": 90}))
+        .json(&json!({"body": format!("usa esta: {key}"), "t_ms": 90_000}))
         .send()
         .await
         .unwrap();
@@ -405,7 +485,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
     let c1: Value = res.json().await.unwrap();
     assert!(!c1["body"].as_str().unwrap().contains(&key), "{c1}");
     assert!(c1["body"].as_str().unwrap().contains("CENSURADA"), "{c1}");
-    assert_eq!(c1["author_name"], "carla-alfa.test");
+    assert_eq!(c1["username"], "carla-alfa.test");
     let stored: String =
         sqlx::query_scalar("SELECT body FROM recording_comments WHERE id = $1::uuid")
             .bind(c1["id"].as_str().unwrap())
@@ -419,12 +499,12 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
         .post(&base, Some(&f.a.token), json!({"body": "geral"}))
         .await;
     assert_eq!(st, 201, "{general}");
-    assert!(general["at_secs"].is_null());
+    assert!(general["t_ms"].is_null());
     let (st, _) = app
         .post(
             &base,
             Some(&f.a.token),
-            json!({"body": "no início", "at_secs": 5}),
+            json!({"body": "no início", "t_ms": 5_000}),
         )
         .await;
     assert_eq!(st, 201);
@@ -432,7 +512,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
         .post(
             &base,
             Some(&f.eva.token),
-            json!({"body": "do admin", "at_secs": 5}),
+            json!({"body": "do admin", "t_ms": 5_000}),
         )
         .await;
     assert_eq!(st, 201, "quem descarrega também comenta: {v}");
@@ -445,7 +525,7 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
             "recording.invalid_comment",
         ),
         (
-            json!({"body": "x", "at_secs": 121}),
+            json!({"body": "x", "t_ms": 120_001}),
             "recording.invalid_timestamp",
         ),
     ] {
@@ -506,15 +586,15 @@ async fn comments_crud_author_only_soft_delete_and_dlp(db: sqlx::PgPool) {
         .patch(
             &location,
             Some(&f.carla.token),
-            json!({"body": "corrigido", "at_secs": 100}),
+            json!({"body": "corrigido", "t_ms": 100_000}),
         )
         .await;
     assert_eq!(st, 200, "{v}");
     assert_eq!(v["body"], "corrigido");
-    assert_eq!(v["at_secs"], 100);
+    assert_eq!(v["t_ms"], 100_000);
     assert!(!v["edited_at"].is_null());
     let (st, _) = app
-        .patch(&location, Some(&f.carla.token), json!({"at_secs": 999}))
+        .patch(&location, Some(&f.carla.token), json!({"t_ms": 999_000}))
         .await;
     assert_eq!(st, 400);
 
@@ -746,7 +826,7 @@ async fn search_finds_transcript_words_only_in_visible_recordings(db: sqlx::PgPo
         .patch(
             &format!("/api/recordings/{}", f.rec),
             Some(&f.a.token),
-            json!({"title": "Comité de Química"}),
+            json!({"filename": "Comité de Química"}),
         )
         .await;
     assert_eq!(st, 200);
@@ -829,9 +909,27 @@ async fn library_keeps_bare_array_and_paginates_on_request(db: sqlx::PgPool) {
         .get("/api/recordings?page_token=%%%lixo", Some(&f.a.token))
         .await;
     assert_eq!(st, 400, "{v}");
+    // `q` SOZINHO não pagina: devolve a lista, que é o que o web lê
+    // (`recordingsLibraryMeta({q})` espera um array). Só `page_size` e
+    // `page_token` pedem uma página.
     let (st, p) = app.get("/api/recordings?q=", Some(&f.a.token)).await;
     assert_eq!(st, 200);
-    assert_eq!(items(&p).len(), 5, "q vazio não filtra");
+    assert_eq!(p.as_array().unwrap().len(), 5, "q vazio não filtra");
+    let (st, p) = app
+        .get("/api/recordings?q=planeamento", Some(&f.a.token))
+        .await;
+    assert_eq!(st, 200);
+    assert_eq!(p.as_array().unwrap().len(), 4, "lista, não página: {p}");
+    // Um `q` só com pontuação é erro do cliente, não «tudo» nem «nada».
+    let (st, v) = app.get("/api/recordings?q=%%%", Some(&f.a.token)).await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(v["code"], "recording.invalid_query");
+    // E um `scope` desconhecido também.
+    let (st, v) = app
+        .get("/api/recordings?scope=todas", Some(&f.a.token))
+        .await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(v["code"], "recording.invalid_scope");
 }
 
 // ---------------------------------------------------------------------------

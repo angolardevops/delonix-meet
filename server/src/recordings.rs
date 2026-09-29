@@ -923,21 +923,26 @@ pub async fn library(
         })?),
     };
 
-    // Duas instruções distintas (com e sem texto) em vez de `$2 IS NULL OR …`:
-    // um plano genérico com o OR deixava de usar o índice GIN.
-    let search = if tsquery.is_some() {
-        "r.search_vector @@ to_tsquery('simple', $5)"
-    } else {
-        "$5::text IS NULL"
+    // Duas instruções distintas (com e sem texto) em vez de `$n IS NULL OR …`:
+    // um plano genérico com o OR deixava de usar o índice GIN. O índice do
+    // parâmetro difere entre as duas formas (a paginada gasta $2..$4 no
+    // cursor), por isso escreve-se aqui em função dele.
+    let search = |n: u8| {
+        if tsquery.is_some() {
+            format!("r.search_vector @@ to_tsquery('simple', ${n})")
+        } else {
+            format!("${n}::text IS NULL")
+        }
     };
 
     // Sem paginação pedida: a lista inteira (a forma que o web lê hoje).
     if q.page_size.is_none() && q.page_token.is_none() {
         let rows: Vec<ItemRow> = sqlx::query_as(&format!(
-            "SELECT * FROM ({} WHERE {search}) i
+            "SELECT * FROM ({} WHERE {s}) i
               WHERE {visible}
               ORDER BY i.created_at DESC, i.id DESC",
-            *ITEM_SELECT
+            *ITEM_SELECT,
+            s = search(2),
         ))
         .bind(auth.user_id)
         .bind(tsquery.as_deref())
@@ -962,13 +967,14 @@ pub async fn library(
     let cursor: Option<LibraryCursor> = page.cursor()?;
     let rows: Vec<ItemRow> = sqlx::query_as(&format!(
         "SELECT * FROM ({}
-            WHERE {search}
-              AND ($2::timestamptz IS NULL OR (r.created_at, r.id) < ($2, $3))
+            WHERE {s}
+              AND ($2::timestamptz IS NULL OR (r.created_at, r.id) < ($2, $3::uuid))
          ) i
          WHERE {visible}
          ORDER BY i.created_at DESC, i.id DESC
          LIMIT $4",
-        *ITEM_SELECT
+        *ITEM_SELECT,
+        s = search(5),
     ))
     .bind(auth.user_id)
     .bind(cursor.as_ref().map(|c| c.at))
@@ -1703,7 +1709,12 @@ pub async fn get_metadata(
     ))
 }
 
+/// `deny_unknown_fields`: um cliente que ainda mande `title` ou `category` (o
+/// contrato antigo) recebe `400` em vez de um `200` que não alterou nada. Um
+/// campo que o cliente escreve e o sistema ignora é pior do que um campo que
+/// não existe (R184).
 #[derive(Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
 #[schema(as = RecordingUpdateReq)]
 pub struct UpdateRecordingReq {
     /// Nome de apresentação, 1-200 caracteres, uma linha. É também o nome com
