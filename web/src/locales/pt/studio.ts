@@ -10,6 +10,7 @@ export default {
     rotulo: 'Vista do estúdio',
     emissao: 'Emissão',
     edicao: 'Edição',
+    tv: 'Estúdio de TV',
   },
   topo: {
     rec: 'REC',
@@ -341,5 +342,9 @@ export default {
     },
     semSala: 'sem sala',
     explicacaoCurta: 'Convidados, chat e perguntas.',
+  },
+  tv: {
+    aCarregar: 'A carregar o estúdio de TV…',
+    dica: 'Mesa de corte, mesa de som, iluminação, fontes e cena completa.',
   },
 }

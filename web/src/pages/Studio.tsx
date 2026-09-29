@@ -641,7 +641,7 @@ export default function Studio() {
             type="button"
             aria-pressed={vista === 'tv'}
             data-studio-vista="tv"
-            title={t('studio.vistas.tvDica')}
+            title={t('studio.tv.dica')}
             onClick={() => irPara('tv', ecraTv)}
           >
             {t('studio.vistas.tv')}
