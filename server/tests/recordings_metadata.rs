@@ -1365,3 +1365,105 @@ async fn content_honours_range_requests(db: sqlx::PgPool) {
 
     let _ = std::fs::remove_dir_all(&app.state.config.recordings_dir);
 }
+
+/// Os dois predicados SQL da biblioteca (`LIBRARY_VISIBLE_MINE` e
+/// `…_PUBLISHED`) dizem o MESMO que `AccessFacts::listed_in`.
+///
+/// A regra está escrita duas vezes de propósito — em SQL porque filtra antes
+/// de paginar, e em Rust porque é o domínio — e é assim que uma delas fica
+/// para trás. Este teste percorre as combinações de relação que a fixture
+/// sabe construir e exige que as duas concordem, linha a linha.
+#[sqlx::test(migrations = "./migrations")]
+async fn library_scopes_agree_with_access_facts(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+
+    // Uma gravação por relação, todas da mesma dona (a Alfa).
+    // `f.rec` já existe: a Carla participou na sala, o Duarte não.
+    let partilhada = app.insert_recording(&f.room_id, &f.a.user_id).await;
+    sqlx::query(
+        "INSERT INTO recording_shares (recording_id, user_id, shared_by)
+         VALUES ($1::uuid, $2::uuid, $3::uuid)",
+    )
+    .bind(&partilhada)
+    .bind(&f.duarte.user_id)
+    .bind(&f.a.user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    for (rec, publicada) in [(&f.rec, true), (&partilhada, false)] {
+        if publicada {
+            let (st, _) = app
+                .post(
+                    &format!("/api/recordings/{rec}/publish"),
+                    Some(&f.a.token),
+                    json!({"visibility": "org"}),
+                )
+                .await;
+            assert_eq!(st, 200);
+        }
+    }
+
+    // Para cada pessoa e cada scope, o que o SQL devolve tem de ser o que o
+    // domínio diria com os factos que a base tem para essa mesma linha.
+    for who in [&f.a, &f.carla, &f.duarte, &f.eva, &f.b] {
+        for scope in ["mine", "published"] {
+            let (st, listed) = app
+                .get(
+                    &format!("/api/recordings?scope={scope}"),
+                    Some(&who.token),
+                )
+                .await;
+            assert_eq!(st, 200, "{listed}");
+            let listed_ids: Vec<&str> = items(&listed)
+                .iter()
+                .map(|r| r["id"].as_str().unwrap())
+                .collect();
+
+            for rec in [&f.rec, &partilhada] {
+                // Os factos, lidos da base do mesmo modo que o `ITEM_SELECT`.
+                let row: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+                    "SELECT (r.uploader_id = $2::uuid),
+                            EXISTS(SELECT 1 FROM room_participants p
+                                    WHERE p.room_id = r.room_id AND p.user_id = $2::uuid),
+                            EXISTS(SELECT 1 FROM recording_shares s
+                                    WHERE s.recording_id = r.id AND s.user_id = $2::uuid),
+                            COALESCE((SELECT bool_or(me.archived_at IS NULL)
+                                        FROM org_members me JOIN org_members o ON o.org_id = me.org_id
+                                       WHERE me.user_id = $2::uuid AND o.user_id = r.uploader_id), false),
+                            COALESCE((SELECT bool_or(me.archived_at IS NOT NULL)
+                                        FROM org_members me JOIN org_members o ON o.org_id = me.org_id
+                                       WHERE me.user_id = $2::uuid AND o.user_id = r.uploader_id), false),
+                            (r.published_at IS NOT NULL)
+                       FROM recordings r WHERE r.id = $1::uuid",
+                )
+                .bind(rec)
+                .bind(&who.user_id)
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+                let (is_uploader, participant, shared, active_member, archived_member, published) =
+                    row;
+                let departed = archived_member && !active_member;
+                let published_to_my_org = published && active_member;
+                let expected = match scope {
+                    "mine" => !departed && (is_uploader || participant || shared),
+                    _ => {
+                        published
+                            && !departed
+                            && (is_uploader || participant || shared || published_to_my_org)
+                    }
+                };
+                assert_eq!(
+                    listed_ids.contains(&rec.as_str()),
+                    expected,
+                    "{} / scope={scope} / gravação {rec}: factos \
+                     (dona={is_uploader}, participou={participant}, partilhada={shared}, \
+                      activa={active_member}, arquivada={archived_member}, publicada={published})",
+                    who.email
+                );
+            }
+        }
+    }
+}
