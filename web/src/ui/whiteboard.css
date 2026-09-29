@@ -68,6 +68,31 @@
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
 }
+/* v5 — agrupar/desagrupar na barra de ferramentas (⌘G · ⇧⌘G). */
+.rm-wb__divider {
+  flex: none;
+  width: 30px;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--border);
+}
+.rm-wb.is-shared .rm-wb__divider {
+  width: 34px;
+  margin: 2px 0;
+}
+.rm-wb__tool.rm-wb__grp {
+  height: 34px;
+  gap: 1px;
+  font-size: 7px;
+}
+.rm-wb.is-shared .rm-wb__tool.rm-wb__grp {
+  height: 36px;
+}
+.rm-wb__tool.rm-wb__grp.is-ready {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
 .rm-wb__sub {
   display: flex;
   flex-direction: column;
@@ -268,7 +293,39 @@
   cursor: crosshair;
 }
 .rm-wb__sheet.is-ponteiro .rm-wb__live {
+  cursor: default;
+}
+.rm-wb__sheet.is-mover .rm-wb__live {
   cursor: grab;
+}
+
+/* v5 — selecção múltipla: caixa a ser desenhada, laço e a barra por cima da folha. */
+.rm-wbmarquee {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+  border: 1px dashed #ad1017;
+  background: rgb(173 16 23 / 5%);
+  pointer-events: none;
+}
+.rm-wblasso {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.rm-wblasso polygon {
+  fill: rgb(173 16 23 / 5%);
+  stroke: #ad1017;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.rm-wbselbar {
+  z-index: 6;
 }
 .rm-wb__sheet.is-texto .rm-wb__live,
 .rm-wb__sheet.is-nota .rm-wb__live {
