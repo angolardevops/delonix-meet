@@ -1700,16 +1700,25 @@ async fn pstn_bridge_ingress_forwards_to_webrtc_participant() {
 /// track negociada que não recebe nada é a avaria medida.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn entradas_concorrentes_todos_recebem_todos() {
-    const SALAS: usize = 4;
-    const POR_SALA: usize = 4;
+    // O defeito é POR SALA: nasce de várias entradas ao mesmo tempo na MESMA
+    // sala, e quatro chegam para o provocar (medido: sem o patch falha logo à
+    // primeira). O número de salas só multiplica carga — e num runner de 2
+    // vCPU 16 `RTCPeerConnection`s reais deixam de medir o SFU e passam a
+    // medir a máquina: a 2026-09-29 um subscritor ficou sem receber nada com
+    // as 96 subscrições todas feitas, e o CI da main ficou vermelho por isso.
+    // Escala-se pelo que a máquina tem, em vez de subir o prazo (mais prazo
+    // não liga um ICE que já desistiu).
+    let nucleos = std::thread::available_parallelism().map_or(2, |n| n.get());
+    let n_salas: usize = if nucleos >= 8 { 4 } else { 2 };
+    let por_sala: usize = 4;
     let (sfu, metrics) = new_sfu();
-    let salas: Vec<Uuid> = (0..SALAS).map(|_| Uuid::new_v4()).collect();
+    let salas: Vec<Uuid> = (0..n_salas).map(|_| Uuid::new_v4()).collect();
 
     // Entradas intercaladas entre salas, sem esperar que a anterior acabe.
     let mut entradas = Vec::new();
-    for i in 0..SALAS * POR_SALA {
+    for i in 0..n_salas * por_sala {
         let sfu = sfu.clone();
-        let sala = salas[i % SALAS];
+        let sala = salas[i % n_salas];
         entradas.push(tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10 * i as u64)).await;
             let c = TestClient::join(&sfu, sala).await;
@@ -1793,7 +1802,7 @@ async fn entradas_concorrentes_todos_recebem_todos() {
         metrics
             .sfu_subscriptions
             .load(std::sync::atomic::Ordering::Relaxed),
-        (SALAS * POR_SALA * (POR_SALA - 1) * 2) as i64,
+        (n_salas * por_sala * (por_sala - 1) * 2) as i64,
         "delonix_sfu_subscriptions tem de ser 2·N·(N−1) por sala"
     );
 

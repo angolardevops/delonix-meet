@@ -2211,6 +2211,8 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Portão.** `sfu_e2e::entradas_concorrentes_todos_recebem_todos`: 16 clientes em 4 salas, verifica por par (subscritor, publicador, tipo) que o RTP chega, repete a verificação e confere o gauge. O cliente de teste negoceia as extensões RTP de um browser — **sem `sdes:mid` a sonda desiste antes de fechar e o defeito fica invisível ao teste**.
 
+**Escala do teste.** O cenário dimensiona-se pelos núcleos disponíveis: 4 salas × 4 numa máquina de desenvolvimento, 2 salas × 4 num runner de 2 vCPU. O defeito é POR SALA — quatro entradas ao mesmo tempo na mesma sala chegam para o provocar —, e 16 `RTCPeerConnection`s reais num runner pequeno deixavam de medir o SFU para medir a máquina (a 2026-09-29 o CI da `main` ficou vermelho assim, com um subscritor sem receber nada e as 96 subscrições feitas). Subir o prazo não servia: o próprio aviso do teste diz que mais tempo não liga um ICE que já desistiu. **Verificado que a escala menor NÃO enfraquece o portão**: com `taskset -c 0,1` e sem o patch, o teste falha na mesma com `media deixou de chegar`.
+
 **Prova refeita nesta árvore (2026-09-29).** Com o patch: passa. Sem o patch (retirado só o bloco do early-return): falha com `media deixou de chegar: ["…←…:audio"]`. **NÃO foi repetida a corrida do gerador de carga** — os 75/96 → 96/96 são a medição de 17 de setembro, noutra árvore.
 
 **Ficheiros.** `server/vendor/webrtc/` (crate 0.17.2 vendorizado + o patch), `server/Cargo.toml` (`[patch.crates-io]`), `server/src/sfu.rs`, `server/src/sfu_e2e.rs`, `HARNESS.md`.
