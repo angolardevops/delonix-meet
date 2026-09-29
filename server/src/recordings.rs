@@ -1177,8 +1177,9 @@ async fn serve_file_range(
 
     let Some(spec) = range.and_then(|r| parse_byte_range(r, total)) else {
         // Sem `Range`, ou um que não se sabe servir: o ficheiro inteiro.
-        // Um `Range` sintacticamente válido mas fora do ficheiro é a excepção,
-        // tratada em `parse_byte_range` (devolve `Unsatisfiable`).
+        // A excepção é o `Range` bem escrito mas fora do ficheiro, que é `416`
+        // e não «serve tudo» — `parse_byte_range` devolve `None` aos dois
+        // casos, por isso `is_unsatisfiable` distingue-os aqui.
         if let Some(r) = range {
             if is_unsatisfiable(r, total) {
                 return Ok((
