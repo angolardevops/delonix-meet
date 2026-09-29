@@ -1447,6 +1447,11 @@ export interface RecordingLibraryItem extends RecordingItem {
   can_manage: boolean
   uploader_org_id: string | null
   uploader_org_name: string | null
+  /**
+   * Excerto com os termos marcados entre `«` e `»`. Só numa pesquisa (`q`): nas
+   * outras listagens o servidor omite o campo (`skip_serializing_if`).
+   */
+  snippet?: string | null
 }
 
 /**

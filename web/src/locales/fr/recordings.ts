@@ -13,6 +13,11 @@ export default {
     rotulo: 'Rechercher des enregistrements',
     placeholder: 'Rechercher par nom, salle ou auteur…',
   },
+  ambito: {
+    rotulo: 'Portée',
+    minhas: 'Les miennes',
+    publicadas: 'Publiés',
+  },
   vistas: {
     rotulo: 'Vue',
     lista: 'Liste',
@@ -23,7 +28,6 @@ export default {
     emissoes: 'Diffusions',
     reunioes: 'Réunions',
     quatroK: '4K',
-    aProcessar: 'En traitement',
     contagem_one: '{{count}} enregistrement',
     contagem_other: '{{count}} enregistrements',
     rotulo: 'Filtrer les enregistrements',
@@ -43,8 +47,6 @@ export default {
     estado: 'État',
   },
   estado: {
-    aProcessar: 'En traitement',
-    aProcessarPct: 'En traitement {{pct}} %',
     aTranscrever: 'Transcription',
     aTranscreverPct: 'Transcription {{pct}} %',
     publicada: 'Publié',

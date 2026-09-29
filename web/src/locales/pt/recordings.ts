@@ -13,6 +13,11 @@ export default {
     rotulo: 'Procurar gravações',
     placeholder: 'Procurar por nome, sala ou autor…',
   },
+  ambito: {
+    rotulo: 'Âmbito',
+    minhas: 'Minhas',
+    publicadas: 'Publicadas',
+  },
   vistas: {
     rotulo: 'Vista',
     lista: 'Lista',
@@ -23,7 +28,6 @@ export default {
     emissoes: 'Emissões',
     reunioes: 'Reuniões',
     quatroK: '4K',
-    aProcessar: 'A processar',
     contagem_one: '{{count}} gravação',
     contagem_other: '{{count}} gravações',
     rotulo: 'Filtrar gravações',
@@ -43,8 +47,6 @@ export default {
     estado: 'Estado',
   },
   estado: {
-    aProcessar: 'A processar',
-    aProcessarPct: 'A processar {{pct}}%',
     aTranscrever: 'A transcrever',
     aTranscreverPct: 'A transcrever {{pct}}%',
     publicada: 'Publicada',
