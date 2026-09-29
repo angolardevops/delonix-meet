@@ -533,6 +533,20 @@ pub(crate) fn sql_can_view(viewer: &str) -> String {
     )
 }
 
+/// Predicado SQL «`viewer` tem ligação DIRECTA com a gravação `r`»: carregou-a,
+/// participou na sala, foi-lhe partilhada, ou pode geri-la. É o
+/// `AccessFacts::has_direct_relation` em SQL — tudo o que `sql_can_view` tem
+/// MENOS a publicação.
+pub(crate) fn sql_direct_relation(viewer: &str) -> String {
+    format!(
+        "(r.uploader_id = {viewer}
+          OR EXISTS(SELECT 1 FROM room_participants vp WHERE vp.room_id = r.room_id AND vp.user_id = {viewer})
+          OR EXISTS(SELECT 1 FROM recording_shares vs WHERE vs.recording_id = r.id AND vs.user_id = {viewer})
+          OR {manage})",
+        manage = sql_can_manage(viewer),
+    )
+}
+
 /// O que um pedido pode fazer a uma gravação.
 #[derive(Debug)]
 pub(crate) struct Access {
@@ -541,6 +555,8 @@ pub(crate) struct Access {
     pub status: String,
     pub duration_ms: Option<i64>,
     pub can_manage: bool,
+    /// Ligação directa com a gravação (não só «está publicada»).
+    pub direct_relation: bool,
 }
 
 impl Access {
@@ -553,6 +569,25 @@ impl Access {
         }
     }
 
+    /// Ler a transcrição e a lista de presentes exige ligação DIRECTA.
+    ///
+    /// Publicar a gravação abre a REPRODUÇÃO a toda a organização; não é
+    /// convite para um colega que nunca esteve na reunião ler a transcrição
+    /// (que pode ter nomes e decisões que ninguém reviu) nem saber quem
+    /// esteve lá. Quem chega por publicação recebe `403`, não `404`: já sabe
+    /// que a gravação existe, viu-a na biblioteca publicada.
+    pub fn require_direct_relation(&self, code: &'static str) -> Result<(), ApiError> {
+        if self.direct_relation {
+            return Ok(());
+        }
+        Err(DomainError::forbidden(code)
+            .with_message(
+                "a gravação está publicada para reprodução; \
+                 a transcrição e os presentes são de quem participou",
+            )
+            .into())
+    }
+
     /// Há ficheiro para ler (pronta, ou pronta e a ser transcrita).
     pub fn has_file(&self) -> bool {
         matches!(self.status.as_str(), "ready" | "transcribing")
@@ -562,24 +597,26 @@ impl Access {
 /// Resolve o acesso de `viewer` à gravação `id`. Quem não a pode ver recebe
 /// `404`: não se confirma a outra organização que o id existe.
 pub(crate) async fn access(state: &AppState, id: Uuid, viewer: Uuid) -> Result<Access, ApiError> {
-    type Row = (Uuid, String, Option<i64>, bool, bool);
+    type Row = (Uuid, String, Option<i64>, bool, bool, bool);
     let row: Option<Row> = sqlx::query_as(&format!(
-        "SELECT r.room_id, r.status, r.duration_ms, {view}, {manage}
+        "SELECT r.room_id, r.status, r.duration_ms, {view}, {manage}, {direct}
          FROM recordings r WHERE r.id = $1",
         view = sql_can_view("$2"),
         manage = sql_can_manage("$2"),
+        direct = sql_direct_relation("$2"),
     ))
     .bind(id)
     .bind(viewer)
     .fetch_optional(&state.db)
     .await?;
     match row {
-        Some((room_id, status, duration_ms, true, can_manage)) => Ok(Access {
+        Some((room_id, status, duration_ms, true, can_manage, direct_relation)) => Ok(Access {
             id,
             room_id,
             status,
             duration_ms,
             can_manage,
+            direct_relation,
         }),
         _ => Err(ApiError::NotFound),
     }

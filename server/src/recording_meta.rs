@@ -345,7 +345,7 @@ async fn participants_of_room(
     responses(
         (status = 200, body = serde_json::Value, description = "Página `{items: [Participant], next_page_token}`."),
         (status = 401, body = crate::openapi::ErrorBody),
-        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.participants_forbidden`: chega à gravação por estar PUBLICADA, mas não participou — publicar dá reprodução, não a lista de presentes."),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -356,6 +356,7 @@ pub async fn recording_participants(
     Query(q): Query<PageQuery>,
 ) -> Result<Json<Page<Participant>>, ApiError> {
     let a = access(&state, id, auth.user_id).await?;
+    a.require_direct_relation("recording.participants_forbidden")?;
     participants_of_room(&state, a.room_id, &q).await.map(Json)
 }
 
@@ -486,7 +487,7 @@ pub(crate) async fn load_transcript(
     responses(
         (status = 200, body = Transcript),
         (status = 401, body = crate::openapi::ErrorBody),
-        (status = 403, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`recording.transcript_forbidden`: chega à gravação por estar PUBLICADA, mas não participou — publicar dá reprodução, não a transcrição."),
         (status = 404, body = crate::openapi::ErrorBody),
     )
 )]
@@ -495,7 +496,8 @@ pub async fn transcript(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Transcript>, ApiError> {
-    access(&state, id, auth.user_id).await?;
+    let a = access(&state, id, auth.user_id).await?;
+    a.require_direct_relation("recording.transcript_forbidden")?;
     let t = load_transcript(&state, id).await?;
     Ok(Json(Transcript {
         recording_id: id,
