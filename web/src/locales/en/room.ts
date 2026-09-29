@@ -633,6 +633,7 @@ export default {
     aSerEmitidoTexto: 'Viewers see the strokes in real time.',
     pressaoActiva: 'pressure active',
     ponteiro: 'Pointer',
+    laco: 'Lasso',
     mover: 'Move',
     texto: 'Text',
     nota: 'Note',

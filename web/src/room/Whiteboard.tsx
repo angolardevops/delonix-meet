@@ -10,8 +10,28 @@ import type { RemotePeer } from './useRoomCore'
 import { useStripCapacity } from './useStripCapacity'
 import { WB_COLORS, type WhiteboardState } from './useWhiteboard'
 import { daPagina, desenharObjecto, objectoEm, tamanhoDoTexto, type WbObject } from './wbState'
+import { groupShortcut, isApplePlatform, type AlignMode, type Axis } from '../ui/arrange'
+import { isTypingTarget } from '../ui/hotkeys'
+import { SelectionBar } from '../ui/SelectionBar'
+import {
+  alignMoves,
+  boxOfIds,
+  canEdit,
+  distributeMoves,
+  expandToGroups,
+  groupSelection,
+  idsInLasso,
+  idsInRect,
+  inverseMoves,
+  isOneGroup,
+  pruneGroups,
+  toggleInSelection,
+  ungroupSelection,
+  type WbUndo,
+} from './wbSelection'
 
-type Ferramenta = 'ponteiro' | 'caneta' | 'marcador' | 'forma' | 'texto' | 'nota' | 'laser' | 'regua' | 'apagar'
+/** v5: `laco` (Laço) e `mover` (só no quadro partilhado); o Ponteiro passa a seleccionar. */
+type Ferramenta = 'ponteiro' | 'laco' | 'caneta' | 'marcador' | 'forma' | 'texto' | 'nota' | 'laser' | 'regua' | 'apagar' | 'mover'
 type Forma = NonNullable<WbStroke['shape']>
 
 /** Três espessuras de base (B6). O marcador usa o triplo. */
@@ -126,7 +146,8 @@ export function Whiteboard({
   const textosRef = useRef<Record<string, HTMLElement | null>>({})
   const drawing = useRef<{ pts: Pt[]; pressoes: number[]; amostras: AmostraCaneta[]; caneta: boolean; inicio: Pt } | null>(null)
   const penSeenAt = useRef(0)
-  const [ferramenta, setFerramenta] = useState<Ferramenta>('caneta')
+  // v5: o Ponteiro é a ferramenta por omissão (antes era a Caneta).
+  const [ferramenta, setFerramenta] = useState<Ferramenta>('ponteiro')
   const [forma, setForma] = useState<Forma>('rect')
   const [color, setColor] = useState(WB_COLORS[1])
   const [base, setBase] = useState<number>(ESPESSURAS[1])
@@ -136,8 +157,17 @@ export function Whiteboard({
   const [aEscrever, setAEscrever] = useState(false)
   /** Texto/nota a ser escrito (novo, ou a editar um existente). */
   const [editor, setEditor] = useState<{ id: string | null; kind: 'text' | 'note'; x: number; y: number; valor: string } | null>(null)
-  /** Objecto a ser arrastado (deslocamento normalizado ainda não enviado). */
-  const [arrasto, setArrasto] = useState<{ id: string; inicio: Pt; dx: number; dy: number } | null>(null)
+  /** Objectos a ser arrastados (deslocamento normalizado ainda não enviado). */
+  const [arrasto, setArrasto] = useState<{ ids: string[]; inicio: Pt; dx: number; dy: number } | null>(null)
+  /** Selecção múltipla (ids desta página, só objectos que posso editar). */
+  const [seleccao, setSeleccao] = useState<string[]>([])
+  /** Caixa de selecção a ser desenhada (Ponteiro no fundo), e o laço. */
+  const [caixaSel, setCaixaSel] = useState<{ a: Pt; b: Pt; junta: string[] } | null>(null)
+  const [laco, setLaco] = useState<{ pts: Pt[]; junta: string[] } | null>(null)
+  const { groups: grupos, setGroups: setGrupos } = wb
+  const meuNome = wb.myName ?? me
+  const desfazer = useRef<WbUndo[]>([])
+  const refazer = useRef<WbUndo[]>([])
   const [laser, setLaser] = useState<Pt | null>(null)
   const setAjustes = (patch: Partial<AjustesCaneta>) =>
     setAjustesState((a) => {
@@ -175,7 +205,7 @@ export function Whiteboard({
     ctx.clearRect(0, 0, c.width, c.height)
     for (const o of objectos) {
       if (o.kind === 'text' || o.kind === 'note') continue
-      if (arrasto && o.id === arrasto.id) {
+      if (arrasto && o.id && arrasto.ids.includes(o.id)) {
         ctx.save()
         ctx.translate(arrasto.dx * c.width, arrasto.dy * c.height)
         desenharObjecto(ctx, o, c.width, c.height, zoom)
@@ -346,9 +376,8 @@ export function Whiteboard({
     } catch {
       /* ponteiro sintético */
     }
-    if (ferramenta === 'ponteiro') {
-      const o = alvo(p)
-      if (o?.id) setArrasto({ id: o.id, inicio: p, dx: 0, dy: 0 })
+    if (ferramenta === 'ponteiro' || ferramenta === 'laco' || ferramenta === 'mover') {
+      seleccionarEm(p, e.shiftKey)
       return
     }
     drawing.current = { pts: [p], pressoes: [e.pressure || 0.5], amostras: [], caneta: e.pointerType === 'pen', inicio: p }
@@ -366,6 +395,15 @@ export function Whiteboard({
     }
     if (arrasto) {
       setArrasto((a) => (a ? { ...a, dx: ultimo[0] - a.inicio[0], dy: ultimo[1] - a.inicio[1] } : a))
+      return
+    }
+    if (caixaSel) {
+      setCaixaSel((c) => (c ? { ...c, b: ultimo } : c))
+      return
+    }
+    if (laco) {
+      const ult = laco.pts[laco.pts.length - 1]
+      if (Math.abs(ultimo[0] - ult[0]) + Math.abs(ultimo[1] - ult[1]) > 0.004) setLaco((l) => (l ? { ...l, pts: [...l.pts, ultimo] } : l))
       return
     }
     const d = drawing.current
@@ -395,8 +433,26 @@ export function Whiteboard({
   function onUp() {
     setLaser(null)
     if (arrasto) {
-      wb.move(arrasto.id, arrasto.dx, arrasto.dy)
+      const moves = arrasto.ids.map((id) => ({ id, dx: arrasto.dx, dy: arrasto.dy }))
+      if (Math.abs(arrasto.dx) + Math.abs(arrasto.dy) > 1e-4) {
+        enviarMoves(moves)
+        guardarPasso({ t: 'moves', moves })
+      }
       setArrasto(null)
+      return
+    }
+    if (caixaSel) {
+      const { a, b, junta } = caixaSel
+      setCaixaSel(null)
+      // Um clique sem arrastar só limpa (já limpou ao carregar).
+      if (Math.abs(b[0] - a[0]) < 0.004 && Math.abs(b[1] - a[1]) < 0.004) return
+      setSeleccao([...new Set([...junta, ...expandToGroups(idsInRect(editaveis, a, b, caixasDeTexto()), grupos)])])
+      return
+    }
+    if (laco) {
+      const { pts, junta } = laco
+      setLaco(null)
+      setSeleccao([...new Set([...junta, ...expandToGroups(idsInLasso(editaveis, pts, caixasDeTexto()), grupos)])])
       return
     }
     const d = drawing.current
@@ -434,6 +490,164 @@ export function Whiteboard({
     }
   }
 
+  // ── Selecção múltipla, grupos e desfazer (v5) ───────────────────────────────
+  /** O que eu posso mover/apagar nesta página (a regra do servidor: autor ou anfitrião). */
+  const editaveis = useMemo(() => objectos.filter((o) => o.id && canEdit(o, meuNome, isHost)), [objectos, meuNome, isHost])
+
+  function seleccionarEm(p: Pt, shift: boolean) {
+    const o = alvo(p)
+    const id = o?.id && canEdit(o, meuNome, isHost) ? o.id : null
+    const arrastar = (ids: string[]) => setArrasto({ ids, inicio: p, dx: 0, dy: 0 })
+    if (ferramenta === 'mover') {
+      if (seleccao.length && (!id || seleccao.includes(id))) arrastar(seleccao)
+      else if (id) {
+        const ids = expandToGroups([id], grupos)
+        setSeleccao(ids)
+        arrastar(ids)
+      }
+      return
+    }
+    if (id && !shift && seleccao.includes(id)) {
+      arrastar(seleccao)
+      return
+    }
+    if (ferramenta === 'laco') {
+      if (!shift) setSeleccao([])
+      setLaco({ pts: [p], junta: shift ? seleccao : [] })
+      return
+    }
+    if (id) {
+      if (shift) {
+        setSeleccao((s) => toggleInSelection(s, id, grupos))
+        return
+      }
+      const ids = expandToGroups([id], grupos)
+      setSeleccao(ids)
+      arrastar(ids)
+      return
+    }
+    if (!shift) setSeleccao([])
+    setCaixaSel({ a: p, b: p, junta: shift ? seleccao : [] })
+  }
+
+  function enviarMoves(moves: { id: string; dx: number; dy: number }[]) {
+    // Um `wb-transform` por objecto — é a mensagem que o servidor tem, com a
+    // autoria verificada objecto a objecto; quem está na sala vê-os mexer juntos.
+    for (const m of moves) wb.move(m.id, m.dx, m.dy)
+  }
+  function guardarPasso(u: WbUndo) {
+    desfazer.current = [...desfazer.current, u].slice(-50)
+    refazer.current = []
+  }
+  function aplicar(u: WbUndo, inverso: boolean) {
+    if (u.t === 'moves') enviarMoves(inverso ? inverseMoves(u.moves) : u.moves)
+    else if (u.t === 'groups') setGrupos(inverso ? u.before : u.after)
+    else if (inverso) {
+      // Volta a pôr o que se apagou, com o MESMO id (o servidor aceita: o id já
+      // não existe). O autor passa a ser quem desfez — é o servidor que carimba.
+      for (const o of u.objs) wb.addObject({ ...o })
+      setGrupos(u.groupsBefore)
+      setSeleccao(u.objs.map((o) => o.id!).filter(Boolean))
+    } else {
+      for (const o of u.objs) if (o.id) wb.erase(o.id)
+      setSeleccao([])
+    }
+  }
+  function desfazerUm() {
+    const u = desfazer.current[desfazer.current.length - 1]
+    if (!u) return
+    desfazer.current = desfazer.current.slice(0, -1)
+    refazer.current = [...refazer.current, u]
+    aplicar(u, true)
+  }
+  function refazerUm() {
+    const u = refazer.current[refazer.current.length - 1]
+    if (!u) return
+    refazer.current = refazer.current.slice(0, -1)
+    desfazer.current = [...desfazer.current, u]
+    aplicar(u, false)
+  }
+  const podeAgrupar = seleccao.length >= 2 && !isOneGroup(seleccao, grupos)
+  const podeDesagrupar = grupos.some((g) => g.ids.some((i) => seleccao.includes(i)))
+  function agrupar() {
+    const n = groupSelection(grupos, seleccao, crypto.randomUUID())
+    if (!n) return
+    guardarPasso({ t: 'groups', before: grupos, after: n })
+    setGrupos(n)
+  }
+  function desagrupar() {
+    const n = ungroupSelection(grupos, seleccao)
+    if (!n) return
+    guardarPasso({ t: 'groups', before: grupos, after: n })
+    setGrupos(n)
+  }
+  function alinhar(mode: AlignMode) {
+    const moves = alignMoves(objectos, seleccao, grupos, mode, caixasDeTexto())
+    if (!moves.length) return
+    enviarMoves(moves)
+    guardarPasso({ t: 'moves', moves })
+  }
+  function distribuir(axis: Axis) {
+    const moves = distributeMoves(objectos, seleccao, grupos, axis, caixasDeTexto())
+    if (!moves.length) return
+    enviarMoves(moves)
+    guardarPasso({ t: 'moves', moves })
+  }
+  function apagarSeleccao() {
+    const objs = objectos.filter((o) => o.id && seleccao.includes(o.id))
+    if (!objs.length) return
+    guardarPasso({ t: 'erase', objs, groupsBefore: grupos })
+    for (const o of objs) wb.erase(o.id!)
+    setSeleccao([])
+  }
+
+  // Quem apaga, muda de página ou limpa o quadro tira objectos da selecção e dos grupos.
+  useEffect(() => {
+    const aqui = new Set(objectos.map((o) => o.id).filter(Boolean) as string[])
+    setSeleccao((s) => (s.every((i) => aqui.has(i)) ? s : s.filter((i) => aqui.has(i))))
+    const todos = new Set(strokes.map((o) => o.id).filter(Boolean) as string[])
+    setGrupos((g) => pruneGroups(g, todos))
+  }, [objectos, strokes, setGrupos])
+
+  // Teclado: ⌘G/Ctrl+G, ⇧⌘G, ⌘Z/Ctrl+Z (⇧ refaz), Delete e Esc — nunca a escrever num campo.
+  // Em captura, para o Esc limpar a selecção antes de o painel da sala fechar.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || editor || isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return
+      const g = groupShortcut(e)
+      if (g) {
+        e.preventDefault()
+        if (g === 'group') agrupar()
+        else desagrupar()
+        return
+      }
+      const mod = e.ctrlKey || e.metaKey
+      const k = e.key.toLowerCase()
+      if (mod && !e.altKey && (k === 'z' || k === 'y')) {
+        const refaz = k === 'y' || e.shiftKey
+        if (refaz ? refazer.current.length === 0 : desfazer.current.length === 0) return
+        e.preventDefault()
+        if (refaz) refazerUm()
+        else desfazerUm()
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && seleccao.length) {
+        e.preventDefault()
+        apagarSeleccao()
+      } else if (e.key === 'Escape' && seleccao.length) {
+        e.preventDefault()
+        e.stopPropagation()
+        setSeleccao([])
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  })
+
+  const caixaDaSeleccao = seleccao.length ? boxOfIds(objectos, seleccao, caixasDeTexto()) : null
+  const teclaAgrupar = t(isApplePlatform() ? 'ui.seleccao.teclaAgruparMac' : 'ui.seleccao.teclaAgrupar')
+  const teclaDesagrupar = t(isApplePlatform() ? 'ui.seleccao.teclaDesagruparMac' : 'ui.seleccao.teclaDesagruparCurta')
+
   function fecharEditor(guardar: boolean) {
     const ed = editor
     setEditor(null)
@@ -446,10 +660,13 @@ export function Whiteboard({
   }
 
   // ── Vista ──────────────────────────────────────────────────────────────────
-  const ferramentasNormais: Ferramenta[] = ['ponteiro', 'caneta', 'forma', 'texto', 'nota', 'laser', 'regua', 'apagar']
-  const ferramentasPartilhado: Ferramenta[] = ['caneta', 'marcador', 'forma', 'texto', 'nota', 'laser', 'apagar', 'ponteiro']
+  // A ordem dos templates v5 (DelonixWhiteboard e DelonixBoardShared).
+  const ferramentasNormais: Ferramenta[] = ['ponteiro', 'laco', 'caneta', 'forma', 'texto', 'nota', 'laser', 'regua', 'apagar']
+  const ferramentasPartilhado: Ferramenta[] = ['ponteiro', 'laco', 'caneta', 'marcador', 'forma', 'texto', 'nota', 'laser', 'apagar', 'mover']
   const icones: Record<Ferramenta, IconName> = {
-    ponteiro: partilhado ? 'move' : 'cursor',
+    ponteiro: 'wbPointer',
+    laco: 'wbLasso',
+    mover: 'move',
     caneta: 'pen',
     marcador: 'highlighter',
     forma: 'shapes',
@@ -460,7 +677,9 @@ export function Whiteboard({
     apagar: 'eraser',
   }
   const rotulos: Record<Ferramenta, string> = {
-    ponteiro: partilhado ? t('room.quadro.mover') : t('room.quadro.ponteiro'),
+    ponteiro: t('room.quadro.ponteiro'),
+    laco: t('room.quadro.laco'),
+    mover: t('room.quadro.mover'),
     caneta: t('room.quadro.caneta'),
     marcador: t('room.quadro.marcador'),
     forma: t('room.quadro.formas'),
@@ -527,7 +746,7 @@ export function Whiteboard({
         {objectos
           .filter((o) => (o.kind === 'text' || o.kind === 'note') && o.id !== editor?.id)
           .map((o) => {
-            const desloc = arrasto && arrasto.id === o.id ? arrasto : null
+            const desloc = arrasto && o.id && arrasto.ids.includes(o.id) ? arrasto : null
             const estilo: CSSProperties = {
               left: `${(o.pts[0][0] + (desloc?.dx ?? 0)) * 100}%`,
               top: `${(o.pts[0][1] + (desloc?.dy ?? 0)) * 100}%`,
@@ -581,6 +800,59 @@ export function Whiteboard({
             }}
             onBlur={() => fecharEditor(true)}
           />
+        )}
+        {caixaDaSeleccao && (
+          <div
+            className="dx-selbox"
+            data-wb-selbox
+            style={{
+              left: `calc(${(caixaDaSeleccao.x + (arrasto?.dx ?? 0)) * 100}% - 6px)`,
+              top: `calc(${(caixaDaSeleccao.y + (arrasto?.dy ?? 0)) * 100}% - 6px)`,
+              width: `calc(${caixaDaSeleccao.w * 100}% + 12px)`,
+              height: `calc(${caixaDaSeleccao.h * 100}% + 12px)`,
+            }}
+          >
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+        )}
+        {caixaDaSeleccao && !arrasto && podeEscrever && (
+          <SelectionBar
+            count={seleccao.length}
+            canGroup={podeAgrupar}
+            canUngroup={podeDesagrupar}
+            onGroup={agrupar}
+            onUngroup={desagrupar}
+            onAlign={alinhar}
+            onDistribute={distribuir}
+            onDelete={apagarSeleccao}
+            className="rm-wbselbar"
+            style={{
+              ...(caixaDaSeleccao.y + caixaDaSeleccao.h < 0.8
+                ? { top: `calc(${(caixaDaSeleccao.y + caixaDaSeleccao.h) * 100}% + 10px)` }
+                : { bottom: `calc(${(1 - caixaDaSeleccao.y) * 100}% + 10px)` }),
+              ...(caixaDaSeleccao.x < 0.6 ? { left: `calc(${caixaDaSeleccao.x * 100}% - 6px)` } : { right: `calc(${(1 - caixaDaSeleccao.x - caixaDaSeleccao.w) * 100}% - 6px)` }),
+            }}
+          />
+        )}
+        {caixaSel && (
+          <div
+            className="rm-wbmarquee"
+            style={{
+              left: `${Math.min(caixaSel.a[0], caixaSel.b[0]) * 100}%`,
+              top: `${Math.min(caixaSel.a[1], caixaSel.b[1]) * 100}%`,
+              width: `${Math.abs(caixaSel.b[0] - caixaSel.a[0]) * 100}%`,
+              height: `${Math.abs(caixaSel.b[1] - caixaSel.a[1]) * 100}%`,
+            }}
+            aria-hidden="true"
+          />
+        )}
+        {laco && (
+          <svg className="rm-wblasso" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
+            <polygon points={laco.pts.map((q) => q.join(',')).join(' ')} />
+          </svg>
         )}
         {cursores.map(({ peerId, c, nome }) => (
           <div
@@ -646,10 +918,40 @@ export function Whiteboard({
             disabled={!podeEscrever && !soVer(f)}
             onClick={() => setFerramenta(f)}
           >
-            <Icon name={icones[f]} size={partilhado ? 17 : 15} />
+            <Icon
+              name={icones[f]}
+              size={partilhado ? 17 : 15}
+              strokeWidth={f === 'ponteiro' || f === 'laco' ? 1.95 : undefined}
+              strokeDasharray={f === 'laco' ? '3.9 3' : undefined}
+            />
             <span>{rotulos[f]}</span>
           </button>
         ))}
+        <span className="rm-wb__divider" aria-hidden="true" />
+        <button
+          type="button"
+          className={cx('rm-wb__tool rm-wb__grp', podeAgrupar && 'is-ready')}
+          disabled={!podeAgrupar}
+          aria-label={t('ui.seleccao.agrupar')}
+          title={`${t('ui.seleccao.agrupar')} · ${teclaAgrupar}`}
+          data-wb-group
+          onClick={agrupar}
+        >
+          <Icon name="selGroup" size={partilhado ? 15 : 14} strokeWidth={1.95} />
+          <span>{teclaAgrupar}</span>
+        </button>
+        <button
+          type="button"
+          className="rm-wb__tool rm-wb__grp"
+          disabled={!podeDesagrupar}
+          aria-label={t('ui.seleccao.desagrupar')}
+          title={`${t('ui.seleccao.desagrupar')} · ${teclaDesagrupar}`}
+          data-wb-ungroup
+          onClick={desagrupar}
+        >
+          <Icon name="selUngroup" size={partilhado ? 15 : 14} strokeWidth={1.95} strokeDasharray="3.6 2.7" />
+          <span>{teclaDesagrupar}</span>
+        </button>
         {ferramenta === 'forma' && (
           <div className="rm-wb__sub" role="radiogroup" aria-label={t('room.quadro.formas')}>
             {FORMAS.map((f) => (

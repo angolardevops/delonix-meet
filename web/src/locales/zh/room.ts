@@ -633,6 +633,7 @@ export default {
     aSerEmitidoTexto: '观众可实时看到笔迹。',
     pressaoActiva: '压感已启用',
     ponteiro: '选择',
+    laco: '套索',
     mover: '移动',
     texto: '文本',
     nota: '便签',
