@@ -135,7 +135,11 @@ export default function Recordings() {
         title={t('recordings.titulo')}
         meta={page ? t('search.grupos.registos', { count: page.total }) + (page.total_kind === 'at_least' ? '+' : '') : undefined}
       >
-        <div className="rec-views">
+        {/* Âmbito e vista em contentores SEPARADOS: o `.rec-views` é o selector
+            de vista e mais nada. Juntos, um `.rec-views button` deixava de
+            querer dizer «lista/grelha» — foi o que partiu o e2e da gravação
+            falhada, que clica no segundo botão para ir à grelha. */}
+        <div className="rec-scope">
           <Segmented<'mine' | 'published'>
             label={t('recordings.ambito.rotulo')}
             value={scope}
@@ -145,6 +149,8 @@ export default function Recordings() {
               { value: 'published', label: t('recordings.ambito.publicadas') },
             ]}
           />
+        </div>
+        <div className="rec-views">
           <Segmented<View>
             label={t('recordings.vistas.rotulo')}
             value={view}
