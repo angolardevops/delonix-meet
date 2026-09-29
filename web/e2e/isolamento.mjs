@@ -560,7 +560,7 @@ if (gravB) {
   await permitido('B envia uma legenda (controlo positivo)', `/api/recordings/${gravB}/captions/${lingua}`, {
     token: B.token, method: 'PUT', body: { vtt: 'WEBVTT\n\n00:00.000 --> 00:01.000\nprivado da B\n', publish: true },
   })
-  const capB = (await req(`/api/recordings/${gravB}/chapters`, { token: B.token, method: 'POST', body: { at_secs: 0, title: 'da B' } })).json
+  const capB = (await req(`/api/recordings/${gravB}/chapters`, { token: B.token, method: 'POST', body: { t_ms: 0, title: 'da B' } })).json
   const comB = (await req(`/api/recordings/${gravB}/comments`, { token: B.token, method: 'POST', body: { body: 'da B' } })).json
   const capId = capB?.id ?? inventado
   const comId = comB?.id ?? inventado
@@ -579,7 +579,7 @@ if (gravB) {
   await recusadoNaPorta('A lê um comentário da B', `/api/recordings/${gravB}/comments/${comId}`, { token: A.token })
   await recusadoNaPorta('A APAGA um comentário da B', `/api/recordings/${gravB}/comments/${comId}`, { token: A.token, method: 'DELETE' })
   await recusadoNaPorta('A lista os capítulos da B', `/api/recordings/${gravB}/chapters`, { token: A.token })
-  await recusadoNaPorta('A cria um capítulo na B', `/api/recordings/${gravB}/chapters`, { token: A.token, method: 'POST', body: { at_secs: 1, title: 'x' } })
+  await recusadoNaPorta('A cria um capítulo na B', `/api/recordings/${gravB}/chapters`, { token: A.token, method: 'POST', body: { t_ms: 1000, title: 'x' } })
   await recusadoNaPorta('A gera capítulos na B', `/api/recordings/${gravB}/chapters/generate`, { token: A.token, method: 'POST' })
   await recusadoNaPorta('A lê um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token })
   await recusadoNaPorta('A EDITA um capítulo da B', `/api/recordings/${gravB}/chapters/${capId}`, { token: A.token, method: 'PATCH', body: { title: 'forjado' } })
@@ -746,7 +746,7 @@ console.log('\n--- G4–G6: metadados, capítulos e comentários de uma gravaç�
 // `404` para a B quer mesmo dizer «não é tua» — o controlo positivo é a A.
 if (gravacaoA) {
   const capA = await permitido('A cria um capítulo na sua gravação', `/api/recordings/${gravacaoA}/chapters`, {
-    token: A.token, method: 'POST', body: { at_secs: 0, title: 'abertura' },
+    token: A.token, method: 'POST', body: { t_ms: 0, title: 'abertura' },
   })
   const comA = await permitido('A comenta a sua gravação', `/api/recordings/${gravacaoA}/comments`, {
     token: A.token, method: 'POST', body: { body: 'comentário privado da A' },
@@ -758,7 +758,7 @@ if (gravacaoA) {
   })
   await recusado('B lê os capítulos da gravação da A', `/api/recordings/${gravacaoA}/chapters`, { token: B.token })
   await recusado('B cria um capítulo na gravação da A', `/api/recordings/${gravacaoA}/chapters`, {
-    token: B.token, method: 'POST', body: { at_secs: 1, title: 'forjado' },
+    token: B.token, method: 'POST', body: { t_ms: 1000, title: 'forjado' },
   })
   await recusado('B lê os comentários da gravação da A', `/api/recordings/${gravacaoA}/comments`, { token: B.token })
   await recusado('B comenta a gravação da A', `/api/recordings/${gravacaoA}/comments`, {

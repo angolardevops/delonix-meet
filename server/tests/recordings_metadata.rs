@@ -1146,6 +1146,18 @@ async fn publishing_does_not_open_transcript_nor_participants(db: sqlx::PgPool) 
 /// muito que o servidor as tivesse medido e guardado.
 #[sqlx::test(migrations = "./migrations")]
 async fn uploaded_recording_shows_measured_duration_and_resolution(db: sqlx::PgPool) {
+    // Sem ffmpeg não há ficheiro real para medir, e medir é o que este teste
+    // prova. Salta com a razão à vista em vez de falhar — o CI não tem ffmpeg,
+    // e um vermelho ali diria «a duração está partida» quando diz «a máquina
+    // não tem a ferramenta». O mesmo aviso que o `media_probe` já usa.
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_err()
+    {
+        eprintln!("ffmpeg indisponível — medição real NÃO verificada");
+        return;
+    }
     let f = fixture(db).await;
     let app = &f.app;
     let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1::uuid")
