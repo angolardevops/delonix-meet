@@ -2144,3 +2144,17 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Ficheiros.** `whisper-server/app.py`, `whisper-server/requirements.txt` (PyJWT), `deploy/k8s/09-whisper.yaml` (o `JWT_SECRET` vem do configmap partilhado), `web/src/media.ts`.
 
 **Origem.** Estava no PR #68 (2026-09-16), que nunca foi integrado; o espelho do DLP em Python que vinha no mesmo PR NÃO entra, porque na `main` o worker entrega por gRPC e o servidor censura à chegada (R182, R231).
+
+### R172 — A publicação morria poucos milissegundos depois de nascer, com entradas concorrentes
+
+**Sintoma.** Medido a 2026-09-17 com clientes WebRTC reais (`server/examples/loadgen.rs`, hoje na `main` pelo #122): 8 salas × 4 participantes, entradas a 40 ms, **75–87 de 96** fluxos de vídeo chegavam, 0 % de perda nos que chegavam, e `delonix_sfu_subscriptions` ficava em 165 em vez de 192. Salas inteiras deixavam de ver o mesmo publicador. A causa não era a subscrição: a publicação morria 30–65 ms depois de nascer — `read_rtp` devolvia `buffer: closed` e o servidor fazia `unpublish` para a sala toda com o publicador ainda a enviar.
+
+**Causa.** No webrtc-rs (0.17.1 e também 0.17.2, verificado no código do crate), um pacote de um SSRC **declarado** no SDP remoto que chegue entre a sessão SRTP nascer e o `start_rtp` abrir os receivers faz a sessão criar o stream sozinha e anunciá-lo como media «não declarada». A sonda de simulcast sonda-o, não encontra `rid`, e o fecho no fim da sonda fecha o MESMO `Arc<Stream>` que o `start_rtp` entretanto abriu para o receiver. A assinatura nos logs é `Incoming unhandled RTP ssrc(…) … failed Simulcast probing`, escondida pelo filtro `delonix_server=info`.
+
+**Regra.** Um SSRC declarado no SDP remoto não passa pela sonda: o `server/vendor/webrtc` (0.17.2 vendorizado, patch de ~30 linhas em `peer_connection_internal.rs`) devolve cedo, deixando o stream para o receiver sem o ler nem o fechar. O critério é o mesmo com que o `start_rtp` decide que receivers abrir (`track_details_from_sdp`, SSRC ou repair SSRC). O `sfu.rs` passa a registar a razão por que a bomba de RTP terminou — sem ela, «track unpublished» não distingue o publicador que saiu de um stream fechado por baixo.
+
+**Portão.** `sfu_e2e::entradas_concorrentes_todos_recebem_todos`: 16 clientes em 4 salas, verifica por par (subscritor, publicador, tipo) que o RTP chega, repete a verificação e confere o gauge. O cliente de teste negoceia as extensões RTP de um browser — **sem `sdes:mid` a sonda desiste antes de fechar e o defeito fica invisível ao teste**.
+
+**Prova refeita nesta árvore (2026-09-29).** Com o patch: passa. Sem o patch (retirado só o bloco do early-return): falha com `media deixou de chegar: ["…←…:audio"]`. **NÃO foi repetida a corrida do gerador de carga** — os 75/96 → 96/96 são a medição de 17 de setembro, noutra árvore.
+
+**Ficheiros.** `server/vendor/webrtc/` (crate 0.17.2 vendorizado + o patch), `server/Cargo.toml` (`[patch.crates-io]`), `server/src/sfu.rs`, `server/src/sfu_e2e.rs`, `HARNESS.md`.
