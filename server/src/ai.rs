@@ -231,13 +231,21 @@ pub fn supports_target(target: &str) -> bool {
     target_name(target).is_some()
 }
 
+/// O prompt da tradução de uma legenda, com o texto JÁ censurado pelo DLP
+/// (R231). Existe separado da `translate` para ser testável sem LLM: o que se
+/// prova é que um cartão ou um NIF ditos em voz alta não chegam ao prompt.
+pub(crate) fn caption_prompt(text: &str, lang: &str) -> String {
+    let safe = crate::dlp::censor(text);
+    format!(
+        "Translate the following spoken caption to {lang}. \
+         Output ONLY the translation, no quotes, no explanations.\n\nCaption: {safe}"
+    )
+}
+
 /// Traduz uma linha de legenda para o idioma alvo (código curto: pt/en/fr/es…).
 pub async fn translate(state: &AppState, text: &str, target: &str) -> Option<String> {
     let lang = target_name(target)?;
-    let prompt = format!(
-        "Translate the following spoken caption to {lang}. \
-         Output ONLY the translation, no quotes, no explanations.\n\nCaption: {text}"
-    );
+    let prompt = caption_prompt(text, lang);
     generate(
         state,
         &state.config.ollama_model_translate,
@@ -249,9 +257,15 @@ pub async fn translate(state: &AppState, text: &str, target: &str) -> Option<Str
 
 /// Resumo organizado da ata a partir da transcrição bruta (a "ata bruta" é a
 /// própria transcrição, que fica SEMPRE preservada na coluna `transcript`).
-pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) -> Option<String> {
+pub(crate) fn minutes_prompt(title: &str, transcript: &str) -> String {
     // Janela de contexto: mantém o FIM da transcrição (decisões/ações tendem
     // a acontecer no fecho da reunião).
+    // Defesa em profundidade (R231): a transcrição já entra censurada em
+    // `meetings::save_minutes` e em `transcription::complete`, mas o prompt é a
+    // última porta antes de o texto sair do processo para o LLM. Censurar duas
+    // vezes é barato; censurar zero vezes foi o que deixou um cartão de crédito
+    // chegar ao Ollama.
+    let transcript = crate::dlp::censor(transcript);
     let window: String = if transcript.chars().count() > 24_000 {
         transcript
             .chars()
@@ -260,7 +274,7 @@ pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) 
     } else {
         transcript.to_string()
     };
-    let prompt = format!(
+    format!(
         "És um assistente de atas de reunião. A transcrição abaixo vem de \
          reconhecimento de voz automático e PODE conter erros (palavras trocadas \
          por outras de som parecido, pontuação/maiúsculas em falta, frases \
@@ -274,7 +288,13 @@ pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) 
          'Nenhuma registada.' se não houver)\n## Decisões e ações\n(uma linha `- [ ] \
          tarefa — responsável` por ação; 'Nenhuma registada.' se não houver)\n\n\
          Transcrição:\n{window}"
-    );
+    )
+}
+
+/// Resumo organizado da ata a partir da transcrição bruta (a "ata bruta" é a
+/// própria transcrição, que fica SEMPRE preservada na coluna `transcript`).
+pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) -> Option<String> {
+    let prompt = minutes_prompt(title, transcript);
     generate(
         state,
         &state.config.ollama_model_summary,
@@ -497,6 +517,42 @@ mod tests {
     }
 
     const T: Duration = Duration::from_secs(5);
+
+    // ------------------------------------------------------------- DLP (R231)
+
+    const CARTAO: &str = "4111 1111 1111 1111";
+    const NIF: &str = "123456789";
+    const CHAVE: &str = "sk-abcdef1234567890abcdef1234567890";
+
+    /// O prompt é a última porta antes de o texto sair do processo para o
+    /// Ollama. Uma legenda com um cartão ditado em voz alta não pode chegar lá.
+    #[test]
+    fn o_prompt_da_legenda_vai_censurado() {
+        let p = caption_prompt(&format!("o cartão é {CARTAO}, obrigado"), "English");
+        assert!(!p.contains("4111"), "cartão no prompt: {p}");
+        assert!(p.contains("BLOQUEADO PELO DLP"), "{p}");
+        // Controlo: o resto da legenda chega intacto, senão isto não traduzia.
+        assert!(p.contains("obrigado") && p.contains("English"), "{p}");
+    }
+
+    /// A transcrição já entra censurada na base; o prompt do resumo censura
+    /// outra vez, de propósito — é o que apanha texto que entre por outra via.
+    #[test]
+    fn o_prompt_do_resumo_vai_censurado() {
+        let p = minutes_prompt("Reunião", &format!("o NIF é {NIF} e a chave {CHAVE}"));
+        assert!(!p.contains(NIF), "NIF no prompt: {p}");
+        assert!(!p.contains("sk-abcdef"), "chave no prompt: {p}");
+        assert!(p.contains("Reunião"), "o título perdeu-se: {p}");
+    }
+
+    /// A janela de 24 000 caracteres continua a guardar o FIM da transcrição
+    /// (é onde ficam as decisões) depois de a censura mudar o comprimento.
+    #[test]
+    fn a_janela_do_resumo_guarda_o_fim() {
+        let longa = format!("{}FIM-DA-REUNIAO", "a".repeat(30_000));
+        let p = minutes_prompt("T", &longa);
+        assert!(p.contains("FIM-DA-REUNIAO"), "a janela cortou o fim");
+    }
 
     #[tokio::test]
     async fn resposta_do_modelo_chega_inteira() {
