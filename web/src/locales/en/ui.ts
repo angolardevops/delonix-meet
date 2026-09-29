@@ -29,6 +29,7 @@ export default {
     teclaAgruparMac: '⌘G',
     teclaDesagrupar: 'Ctrl+Shift+G',
     teclaDesagruparMac: '⇧⌘G',
+    teclaDesagruparCurta: '⇧Ctrl+G',
     alinharEsquerda: 'Align left',
     alinharCentro: 'Centre horizontally',
     alinharTopo: 'Align top',

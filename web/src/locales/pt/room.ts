@@ -620,6 +620,7 @@ export default {
     pressaoActiva: 'pressão activa',
     ponteiro: 'Ponteiro',
     mover: 'Mover',
+    laco: 'Laço',
     texto: 'Texto',
     nota: 'Nota',
     laser: 'Laser',

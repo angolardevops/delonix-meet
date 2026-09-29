@@ -620,6 +620,7 @@ export default {
     pressaoActiva: '压感已启用',
     ponteiro: '选择',
     mover: '移动',
+    laco: '套索',
     texto: '文本',
     nota: '便签',
     laser: '激光笔',
