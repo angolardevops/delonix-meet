@@ -10,6 +10,7 @@ export default {
     rotulo: 'Vue du studio',
     emissao: 'Diffusion',
     edicao: 'Montage',
+    tv: 'Studio TV',
   },
   topo: {
     rec: 'REC',
@@ -341,5 +342,9 @@ export default {
     },
     semSala: 'sans salle',
     explicacaoCurta: 'Invités, chat et questions.',
+  },
+  tv: {
+    aCarregar: 'Chargement du studio TV…',
+    dica: 'Régie, mélangeur audio, lumière, sources et scène complète.',
   },
 }

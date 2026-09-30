@@ -23,5 +23,6 @@ import search from './search'
 import rbac from './rbac'
 import telemovel from './telemovel'
 import tour from './tour'
+import tv from './tv'
 
-export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search, rbac, telemovel, tour }
+export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search, rbac, telemovel, tour, tv }

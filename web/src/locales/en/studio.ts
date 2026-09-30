@@ -10,6 +10,7 @@ export default {
     rotulo: 'Studio view',
     emissao: 'Broadcast',
     edicao: 'Editing',
+    tv: 'TV studio',
   },
   topo: {
     rec: 'REC',
@@ -341,5 +342,9 @@ export default {
     },
     semSala: 'no room',
     explicacaoCurta: 'Guests, chat and questions.',
+  },
+  tv: {
+    aCarregar: 'Loading the TV studio…',
+    dica: 'Switcher, audio mixer, lighting, sources and full scene.',
   },
 }

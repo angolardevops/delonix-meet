@@ -10,6 +10,7 @@ export default {
     rotulo: '演播室视图',
     emissao: '直播',
     edicao: '剪辑',
+    tv: '电视演播室',
   },
   topo: {
     rec: 'REC',
@@ -341,5 +342,9 @@ export default {
     },
     semSala: '无会议室',
     explicacaoCurta: '嘉宾、聊天和提问。',
+  },
+  tv: {
+    aCarregar: '正在载入电视演播室…',
+    dica: '切换台、调音台、灯光、信号源与总览场景。',
   },
 }

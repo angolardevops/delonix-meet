@@ -34,6 +34,7 @@ import LivePanel from '../studio/LivePanel'
 import LocalPanel from '../studio/LocalPanel'
 import { estadoDoCartao } from '../studio/destinosLocais'
 import { eh4k, plataformaDoUrl, type Qualidade, QUALIDADES, rotuloDaQualidade } from '../studio/palco'
+import { ECRA_TV_INICIAL, type EcraTv, ecraTvDoValor } from '../studio/tv/ecras'
 import QuadroLocal from '../studio/QuadroLocal'
 import RegionPicker from '../studio/RegionPicker'
 import Relogio from '../studio/Relogio'
@@ -52,6 +53,13 @@ import '../ui/studio-palco.css'
  */
 const SalaDoEstudio = lazy(() => import('./studio/SalaDoEstudio'))
 
+/**
+ * O estúdio de TV (mesa de corte, mesa de som, iluminação, fontes, cena
+ * completa) entra por `lazy()` como a sala: são cinco ecrãs e uma mesa de som
+ * em Web Audio, que quem só grava uma aula não tem de descarregar.
+ */
+const EstudioTv = lazy(() => import('./studio/EstudioTv'))
+
 /** O ecrã é de telemóvel: a emissão arruma-se para o polegar e a sala abre no chat. */
 const ecraDeTelemovel = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 720px)').matches
 
@@ -62,15 +70,24 @@ const ecraDeTelemovel = () => typeof window !== 'undefined' && window.matchMedia
  */
 const MAX_DESTINOS = 4
 
-type Vista = 'emissao' | VistaDoEditor
+type Vista = 'emissao' | 'tv' | VistaDoEditor
 
 const CHIP = { 'sem-chave': 'semChave', pronto: 'pronto', 'a-ligar': 'aLigar', 'no-ar': 'noAr', erro: 'erro' } as const
 
+const parametros = () => new URLSearchParams(location.hash.split('?')[1] ?? '')
+
 /** A vista vem do endereço (`#/studio?vista=legendas`), para se poder voltar a ela. */
 function vistaDoEndereco(): Vista {
-  const v = new URLSearchParams(location.hash.split('?')[1] ?? '').get('vista')
-  return v === 'edicao' || v === 'legendas' || v === 'exportacoes' ? v : 'emissao'
+  const v = parametros().get('vista')
+  return v === 'edicao' || v === 'legendas' || v === 'exportacoes' || v === 'tv' ? v : 'emissao'
 }
+
+/**
+ * O ecrã do estúdio de TV, dentro da vista `tv`
+ * (`#/studio?vista=tv&ecra=mesa-de-som`). Um valor que não é um ecrã cai no
+ * inicial em vez de deixar a vista em branco.
+ */
+const ecraTvDoEndereco = (): EcraTv => ecraTvDoValor(parametros().get('ecra')) ?? ECRA_TV_INICIAL
 
 export default function Studio() {
   const { t, i18n } = useTranslation()
@@ -83,13 +100,33 @@ export default function Studio() {
   const directoRef = useRef<Directo | null>(null)
 
   const [vista, setVistaEstado] = useState<Vista>(vistaDoEndereco)
-  const setVista = useCallback((v: Vista) => {
+  const [ecraTv, setEcraTvEstado] = useState<EcraTv>(ecraTvDoEndereco)
+  /**
+   * Uma vez visitado, o estúdio de TV FICA MONTADO (com `ecra = null` não
+   * desenha nada): a sessão de TV — câmaras ligadas, mesa de som, programa no
+   * ar — não pode morrer por se voltar ao palco a meio de uma emissão.
+   */
+  const [tvVisitada, setTvVisitada] = useState(() => vistaDoEndereco() === 'tv')
+  const irPara = useCallback((v: Vista, ecra: EcraTv = ECRA_TV_INICIAL) => {
     setVistaEstado(v)
-    const alvo = v === 'emissao' ? '#/studio' : `#/studio?vista=${v}`
+    if (v === 'tv') {
+      setEcraTvEstado(ecra)
+      setTvVisitada(true)
+    }
+    const alvo = v === 'emissao' ? '#/studio' : v === 'tv' ? `#/studio?vista=tv&ecra=${ecra}` : `#/studio?vista=${v}`
     if (location.hash !== alvo) history.replaceState(null, '', alvo)
   }, [])
+  const setVista = useCallback((v: Vista) => irPara(v), [irPara])
+  /** `null` volta ao palco do Estúdio — é o que os ecrãs de TV chamam. */
+  const navegarTv = useCallback((ecra: EcraTv | null) => (ecra ? irPara('tv', ecra) : irPara('emissao')), [irPara])
   useEffect(() => {
-    const seguir = () => setVistaEstado(vistaDoEndereco())
+    const seguir = () => {
+      const v = vistaDoEndereco()
+      setVistaEstado(v)
+      if (v !== 'tv') return
+      setEcraTvEstado(ecraTvDoEndereco())
+      setTvVisitada(true)
+    }
     window.addEventListener('hashchange', seguir)
     return () => window.removeEventListener('hashchange', seguir)
   }, [])
@@ -507,7 +544,7 @@ export default function Studio() {
 
   return (
     <>
-    {vista !== 'emissao' && (
+    {vista !== 'emissao' && vista !== 'tv' && (
       <EditPanel
         vista={vista}
         onVista={setVista}
@@ -519,6 +556,30 @@ export default function Studio() {
         guardado={guardado}
         onGuardar={guardarNaBiblioteca}
       />
+    )}
+    {/* O estúdio de TV vive ao lado da emissão, sobre o MESMO compositor: os
+        seus ecrãs pedem o canvas do programa emprestado e devolvem-no ao palco
+        ao sair. Fica montado depois da primeira visita (ver `tvVisitada`). */}
+    {tvVisitada && (
+      <Suspense fallback={<Spinner label={t('studio.tv.aCarregar')} />}>
+        <EstudioTv
+          ecra={vista === 'tv' ? ecraTv : null}
+          compRef={compRef}
+          canvasHostRef={canvasHostRef}
+          palco={palco}
+          titulo={titulo}
+          temEcra={temEcra}
+          participantes={fontesNoPalco}
+          haSondagem={haSondagem}
+          gravacao={{ estado, lerSegundos, e4k: eh4k(palco.qualidade) }}
+          directo={directo}
+          destinos={destinos}
+          kbps={kbps}
+          onPararGravacao={() => void parar()}
+          onTerminarEmissao={() => void sairDoAr()}
+          onNavegar={navegarTv}
+        />
+      </Suspense>
     )}
     {/* A emissão fica montada (escondida) enquanto se edita: o compositor e o
         canvas vivem nela, e desmontá-la perdia o palco a meio de um directo. */}
@@ -573,6 +634,17 @@ export default function Studio() {
             onClick={() => setVista('edicao')}
           >
             {t('studio.vistas.edicao')}
+          </button>
+          {/* A mesa de corte, a mesa de som e os outros três ecrãs do estúdio
+              de TV — a vista abre na mesa de corte e navega-se lá dentro. */}
+          <button
+            type="button"
+            aria-pressed={vista === 'tv'}
+            data-studio-vista="tv"
+            title={t('studio.tv.dica')}
+            onClick={() => irPara('tv', ecraTv)}
+          >
+            {t('studio.vistas.tv')}
           </button>
         </div>
 
