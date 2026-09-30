@@ -120,7 +120,7 @@ async fn events_follow_failover_answer_and_end() {
     let ev = sink.wait_end(20).await;
     let down = trunk_id_from_gateway(&e.down);
     let up = trunk_id_from_gateway(&e.up);
-    let pos = |f: &dyn Fn(&CallEvent) -> bool| ev.iter().position(|x| f(x));
+    let pos = |f: &dyn Fn(&CallEvent) -> bool| ev.iter().position(f);
     let failed =
         pos(&|x| matches!(x, CallEvent::AttemptFailed { trunk_id, .. } if *trunk_id == down))
             .expect("tentativa falhada no tronco em baixo");

@@ -653,11 +653,16 @@ async fn fetch_one(
     hours: i64,
 ) -> Result<Trunk, ApiError> {
     let r = fetch_record(state, org_id, id).await?;
-    Ok(assemble(state, org_id, vec![r], hours)
+    assemble(state, org_id, vec![r], hours)
         .await?
         .pop()
-        .ok_or(ApiError::NotFound)?)
+        .ok_or(ApiError::NotFound)
 }
+
+/// Uma linha do histórico de preços de um tronco, como o SQL a devolve.
+type LinhaPreco = (Uuid, DateTime<Utc>, i64, String, DateTime<Utc>);
+/// Uma linha do histórico de câmbios, como o SQL a devolve.
+type LinhaCambio = (Uuid, String, i64, DateTime<Utc>, DateTime<Utc>);
 
 /// Uma operadora, com estado medido.
 #[utoipa::path(
@@ -1078,7 +1083,7 @@ pub async fn list_prices(
     };
     let size = page.size();
     let cursor: Option<HistCursor> = page.cursor()?;
-    let rows: Vec<(Uuid, DateTime<Utc>, i64, String, DateTime<Utc>)> = sqlx::query_as(
+    let rows: Vec<LinhaPreco> = sqlx::query_as(
         "SELECT id, valid_from, price_per_min_e4, currency, created_at FROM telephony_trunk_prices
           WHERE trunk_id = $1 AND org_id = $2
             AND ($3::timestamptz IS NULL OR (valid_from, id) < ($3, $4))
@@ -1238,7 +1243,7 @@ pub async fn list_rates(
     };
     let size = page.size();
     let cursor: Option<HistCursor> = page.cursor()?;
-    let rows: Vec<(Uuid, String, i64, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
+    let rows: Vec<LinhaCambio> = sqlx::query_as(
         "SELECT id, currency, aoa_per_unit_e6, valid_from, created_at FROM telephony_exchange_rates
           WHERE org_id = $1 AND ($2::timestamptz IS NULL OR (valid_from, id) < ($2, $3))
           ORDER BY valid_from DESC, id DESC LIMIT $4",

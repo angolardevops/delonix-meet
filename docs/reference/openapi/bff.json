@@ -759,6 +759,23 @@
         ],
         "type": "object"
       },
+      "BalanceReport": {
+        "properties": {
+          "amount": {
+            "description": "Decimal (`\"2140.00\"`).",
+            "type": "string"
+          },
+          "currency": {
+            "description": "`AOA` | `USD`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "currency"
+        ],
+        "type": "object"
+      },
       "BillingSummary": {
         "properties": {
           "calls": {
@@ -934,6 +951,141 @@
         ],
         "type": "object"
       },
+      "CallRecord": {
+        "properties": {
+          "answered_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "billsec": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "cost": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MoneyDto"
+              }
+            ]
+          },
+          "cost_reason": {
+            "description": "Porque o custo é `null`: `inbound_not_billed` | `no_trunk` | `no_price_in_force`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "destination_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "description": "`inbound` | `outbound`.",
+            "type": "string"
+          },
+          "duration_secs": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "emergency": {
+            "type": "boolean"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "from_number": {
+            "description": "Mascarado (`+244 923 ***108`).",
+            "type": "string"
+          },
+          "hangup_cause": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "`answered` | `no_answer` | `busy` | `failed` | `wrong_pin` | `waiting_room` | `forwarded`.",
+            "type": "string"
+          },
+          "recorded": {
+            "type": "boolean"
+          },
+          "room_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "to_number": {
+            "description": "Mascarado.",
+            "type": "string"
+          },
+          "trunk_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trunk_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "direction",
+          "from_number",
+          "to_number",
+          "outcome",
+          "started_at",
+          "ended_at",
+          "duration_secs",
+          "billsec",
+          "recorded",
+          "emergency"
+        ],
+        "type": "object"
+      },
+      "CallRecordPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CallRecord"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "CapabilityCatalog": {
         "properties": {
           "catalog_version": {
@@ -1083,6 +1235,28 @@
         ],
         "type": "object"
       },
+      "Channels": {
+        "properties": {
+          "in_use": {
+            "description": "Soma dos canais em uso MEDIDOS; `null` se nenhum tronco foi medido.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max": {
+            "description": "Soma dos máximos declarados dos troncos activos.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max"
+        ],
+        "type": "object"
+      },
       "ChatMessage": {
         "properties": {
           "created_at": {
@@ -1208,6 +1382,31 @@
         },
         "required": [
           "backup_codes"
+        ],
+        "type": "object"
+      },
+      "ComponentStatus": {
+        "properties": {
+          "software": {
+            "type": "string"
+          },
+          "uptime_secs": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "software"
         ],
         "type": "object"
       },
@@ -1579,6 +1778,49 @@
         ],
         "type": "object"
       },
+      "CreatePriceReq": {
+        "properties": {
+          "price_per_min": {
+            "$ref": "#/components/schemas/PriceInput"
+          },
+          "valid_from": {
+            "description": "Omissão: agora. Nunca no passado (um preço não reescreve chamadas já\ntaxadas); tolerância de 60 s para relógios.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "price_per_min"
+        ],
+        "type": "object"
+      },
+      "CreateRateReq": {
+        "properties": {
+          "aoa_per_unit": {
+            "description": "Kz por unidade (`\"912.50\"`).",
+            "type": "string"
+          },
+          "currency": {
+            "description": "`USD`.",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "currency",
+          "aoa_per_unit"
+        ],
+        "type": "object"
+      },
       "CreateRoleReq": {
         "properties": {
           "capabilities": {
@@ -1686,6 +1928,79 @@
           "kind",
           "label",
           "url"
+        ],
+        "type": "object"
+      },
+      "CreateTrunkReq": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "max_channels": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "description": "Write-only: cifrada em repouso e nunca devolvida.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "prefixes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "price_per_min": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PriceInput",
+                "description": "Preço inicial, em vigor a partir de agora."
+              }
+            ]
+          },
+          "register": {
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "`national` (omissão) | `international`.",
+            "type": "string"
+          },
+          "short_code": {
+            "type": "string"
+          },
+          "srtp": {
+            "description": "`mandatory` (omissão) | `optional` | `off`. Diferente de `off` exige `tls`.",
+            "type": "string"
+          },
+          "transport": {
+            "description": "`tls` (omissão) | `tcp` | `udp`.",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "short_code",
+          "host",
+          "max_channels"
         ],
         "type": "object"
       },
@@ -2019,6 +2334,25 @@
       },
       "DeviceReport": {
         "properties": {
+          "balance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BalanceReport",
+                "description": "Saldo do SIM, se o agente o consulta (USSD). Ausente mantém o último."
+              }
+            ]
+          },
+          "battery_percent": {
+            "description": "Bateria de um telefone-gateway (0-100), se o agente a lê.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "capable": {
             "type": "boolean"
           },
@@ -2133,6 +2467,88 @@
         "required": [
           "number",
           "pin"
+        ],
+        "type": "object"
+      },
+      "DialPlan": {
+        "properties": {
+          "emergency_numbers": {
+            "description": "Números de emergência desta instalação (sempre resolvidos primeiro).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "description": "Por ordem: a primeira que casar vale.",
+            "items": {
+              "$ref": "#/components/schemas/DialRuleDto"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "description": "Incrementa a cada gravação; `0` = nunca gravado.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rules",
+          "emergency_numbers",
+          "version"
+        ],
+        "type": "object"
+      },
+      "DialRuleDto": {
+        "properties": {
+          "action": {
+            "description": "`external` | `room_pin` | `extension` | `block`.",
+            "type": "string"
+          },
+          "description": {
+            "description": "`Móvel nacional`, `Sala por PIN — entra na sessão`.",
+            "type": "string"
+          },
+          "emergency": {
+            "description": "Regra de emergência: nunca gravada, nunca bloqueada.",
+            "type": "boolean"
+          },
+          "fallback_trunk_id": {
+            "description": "Reserva (só `external`, diferente da operadora).",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pattern": {
+            "description": "`9XXXXXXXX`, `00X.`, `1XX`, `112,113,115`. X=0-9, Z=1-9, N=2-9,\n`[1-5]`, `.` (1+ dígitos, no fim), `!` (0+ dígitos, no fim).",
+            "type": "string"
+          },
+          "record": {
+            "description": "Gravar. Sempre `false` numa regra de emergência (recusado se `true`).",
+            "type": "boolean"
+          },
+          "trunk_id": {
+            "description": "Operadora (só `external`).",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "pattern",
+          "description",
+          "action"
         ],
         "type": "object"
       },
@@ -2693,6 +3109,58 @@
           "user_id",
           "role",
           "resource_scope",
+          "items"
+        ],
+        "type": "object"
+      },
+      "ExchangeRate": {
+        "properties": {
+          "aoa_per_unit": {
+            "description": "Kz por unidade, decimal com 6 casas.",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currency": {
+            "description": "`USD`.",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "currency",
+          "aoa_per_unit",
+          "valid_from",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ExchangeRatePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExchangeRate"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
           "items"
         ],
         "type": "object"
@@ -3325,6 +3793,27 @@
         },
         "required": [
           "updated"
+        ],
+        "type": "object"
+      },
+      "MatchedRule": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "position": {
+            "description": "0-based.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "position",
+          "pattern",
+          "description"
         ],
         "type": "object"
       },
@@ -4069,6 +4558,24 @@
         },
         "required": [
           "updated"
+        ],
+        "type": "object"
+      },
+      "MoneyDto": {
+        "description": "Dinheiro na API: texto decimal + moeda (nunca um número JSON).",
+        "properties": {
+          "amount": {
+            "description": "Decimal com 4 casas, p.ex. `\"9.4000\"`.",
+            "type": "string"
+          },
+          "currency": {
+            "description": "`AOA` | `USD`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "currency"
         ],
         "type": "object"
       },
@@ -4899,6 +5406,133 @@
         ],
         "type": "string"
       },
+      "OutboundCall": {
+        "properties": {
+          "answer_latency_ms": {
+            "description": "Do pedido ao atendimento, medido no ESL. `null` se não atendeu.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "answered_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "billsec": {
+            "description": "Segundos falados, quando a chamada acabou atendida.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "emergency": {
+            "type": "boolean"
+          },
+          "error": {
+            "description": "Porque falhou antes de chegar à operadora (media server em baixo…).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "description": "Fim da chamada (ou da tentativa). `null` enquanto decorre.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hangup_cause": {
+            "description": "Causa Q.850 do FreeSWITCH.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "purpose": {
+            "description": "`quick_test` | `room_invite`.",
+            "type": "string"
+          },
+          "record": {
+            "type": "boolean"
+          },
+          "room_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rule_position": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`dialing` → `ringing` → `answered` (fica, com `finished_at` no fim) |\n`no_answer` | `busy` | `failed`.",
+            "type": "string"
+          },
+          "to_masked": {
+            "description": "Mascarado (`+244 923 ***108`).",
+            "type": "string"
+          },
+          "trunk_ids": {
+            "description": "Troncos tentados, por ordem.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "purpose",
+          "to_masked",
+          "status",
+          "trunk_ids",
+          "record",
+          "emergency",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "OutboundCallPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OutboundCall"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "Participant": {
         "properties": {
           "joined_at": {
@@ -5133,6 +5767,79 @@
         },
         "required": [
           "send_policy"
+        ],
+        "type": "object"
+      },
+      "Price": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "in_force": {
+            "description": "Se é o preço em vigor agora.",
+            "type": "boolean"
+          },
+          "price_per_min": {
+            "$ref": "#/components/schemas/MoneyDto"
+          },
+          "trunk_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trunk_id",
+          "price_per_min",
+          "valid_from",
+          "in_force",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "PriceInput": {
+        "properties": {
+          "amount": {
+            "description": "Decimal, até 4 casas (`\"9.40\"`).",
+            "type": "string"
+          },
+          "currency": {
+            "description": "`AOA` | `USD`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "currency"
+        ],
+        "type": "object"
+      },
+      "PricePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Price"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -5512,6 +6219,20 @@
         ],
         "type": "object"
       },
+      "PutDialPlanReq": {
+        "properties": {
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/DialRuleDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rules"
+        ],
+        "type": "object"
+      },
       "PutRouteReq": {
         "properties": {
           "device_id": {
@@ -5522,6 +6243,48 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "PutSipSettingsReq": {
+        "properties": {
+          "codecs": {
+            "description": "Ordem de preferência, dos conhecidos: OPUS, G722, PCMA, PCMU, G729, GSM, iLBC, SPEEX.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "domain": {
+            "description": "`sip.delonix.co.ao`.",
+            "type": "string"
+          },
+          "password": {
+            "description": "Write-only. Ausente mantém; `\"\"` apaga.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sbc_host": {
+            "type": "string"
+          },
+          "srtp": {
+            "description": "`mandatory` | `optional` | `off` (diferente de `off` exige `tls`).",
+            "type": "string"
+          },
+          "transport": {
+            "description": "`tls` | `tcp` | `udp`.",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain",
+          "transport",
+          "srtp"
+        ],
         "type": "object"
       },
       "QosSample": {
@@ -5628,6 +6391,52 @@
         "required": [
           "loss_pct",
           "up_kbps"
+        ],
+        "type": "object"
+      },
+      "Quality": {
+        "properties": {
+          "calls": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "jitter_ms": {
+            "description": "Média, das chamadas com medida na janela; `null` sem chamadas (`reason`).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "loss_pct": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "mos": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "reason": {
+            "description": "`no_calls_in_window`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_hours": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "calls",
+          "window_hours"
         ],
         "type": "object"
       },
@@ -6345,6 +7154,19 @@
         ],
         "type": "object"
       },
+      "RestartResp": {
+        "properties": {
+          "gateways": {
+            "description": "Gateways a que se pediu novo registo.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "gateways"
+        ],
+        "type": "object"
+      },
       "ResultReq": {
         "properties": {
           "error": {
@@ -6365,6 +7187,44 @@
         },
         "required": [
           "ok"
+        ],
+        "type": "object"
+      },
+      "RevealReq": {
+        "properties": {
+          "mfa_code": {
+            "description": "Ou um código MFA (TOTP ou de recuperação), para contas sem password\nlocal (SSO).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "description": "Password da conta de quem pede.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RevealedCredentials": {
+        "properties": {
+          "domain": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain",
+          "username",
+          "password"
         ],
         "type": "object"
       },
@@ -7138,6 +7998,185 @@
         },
         "type": "object"
       },
+      "SipRegistration": {
+        "properties": {
+          "channels": {
+            "$ref": "#/components/schemas/Channels"
+          },
+          "codecs_configured": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "codecs_offered": {
+            "description": "Codecs de saída que o FreeSWITCH diz oferecer.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "domain": {
+            "description": "Configurado pela org (não medido).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "measured_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "media": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ComponentStatus",
+                "description": "Medido no media server (FreeSWITCH); `null` sem medida (`media_error`)."
+              }
+            ]
+          },
+          "media_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quality": {
+            "$ref": "#/components/schemas/Quality"
+          },
+          "reasons": {
+            "description": "`sip_not_configured`, `media_server_unreachable`, `sbc_unreachable`,\n`sbc_not_configured`, `trunk_down`, `trunk_degraded`, `settings_missing`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sbc": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ComponentStatus",
+                "description": "Medido no SBC (Kamailio); `null` sem medida (`sbc_error`)."
+              }
+            ]
+          },
+          "sbc_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sbc_host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessions_active": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "srtp": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "description": "`healthy` | `degraded` | `down` | `not_configured`.",
+            "type": "string"
+          },
+          "transport": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trunks": {
+            "$ref": "#/components/schemas/TrunkCounts"
+          }
+        },
+        "required": [
+          "state",
+          "reasons",
+          "codecs_configured",
+          "codecs_offered",
+          "channels",
+          "trunks",
+          "quality",
+          "measured_at"
+        ],
+        "type": "object"
+      },
+      "SipSettings": {
+        "properties": {
+          "codecs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "configured": {
+            "description": "`null` antes de configurado.",
+            "type": "boolean"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password_configured": {
+            "type": "boolean"
+          },
+          "sbc_host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "srtp": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transport": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "configured",
+          "codecs",
+          "password_configured"
+        ],
+        "type": "object"
+      },
       "SkippedInvitee": {
         "properties": {
           "email": {
@@ -7185,6 +8224,133 @@
         ],
         "type": "object"
       },
+      "SmsChannel": {
+        "properties": {
+          "balance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MoneyDto",
+                "description": "Saldo como o agente o reportou pela última vez; `null` sem relatório."
+              }
+            ]
+          },
+          "balance_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "balance_reason": {
+            "description": "`not_reported_by_gateway` | `not_reported_by_operator`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "battery_percent": {
+            "description": "`null` quando o agente não a reporta (`battery_reason`).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "battery_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "description": "Dispositivo (`usb_modem`/`phone_gateway`); `null` para `operator_api`.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failed_today": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "gateway_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "description": "`usb_modem` | `phone_gateway` | `operator_api`.",
+            "type": "string"
+          },
+          "name": {
+            "description": "`Huawei E3372`, nome do gateway, ou o operador.",
+            "type": "string"
+          },
+          "operator_name": {
+            "description": "Operador do SIM, como o modem o reporta; ou o operador da ligação SMPP.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "selected": {
+            "description": "É o ponto de envio seleccionado da org.",
+            "type": "boolean"
+          },
+          "sent_today": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "description": "`active` | `offline` | `not_capable` | `not_configured`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "state",
+          "selected",
+          "sent_today",
+          "failed_today"
+        ],
+        "type": "object"
+      },
+      "SmsOverview": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/SmsChannel"
+            },
+            "type": "array"
+          },
+          "day_start": {
+            "description": "Início do dia usado nas contagens (fuso `Africa/Luanda`).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/SmsTotals"
+          }
+        },
+        "required": [
+          "day_start",
+          "channels",
+          "totals"
+        ],
+        "type": "object"
+      },
       "SmsPreferences": {
         "properties": {
           "contact_opt_out": {
@@ -7223,6 +8389,28 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "SmsTotals": {
+        "properties": {
+          "failed_today": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "queued": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "sent_today": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sent_today",
+          "failed_today",
+          "queued"
+        ],
         "type": "object"
       },
       "SodRule": {
@@ -7823,6 +9011,122 @@
         ],
         "type": "object"
       },
+      "TestCallReq": {
+        "properties": {
+          "number": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "TestNumberReq": {
+        "properties": {
+          "number": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "TestNumberResp": {
+        "properties": {
+          "action": {
+            "description": "`external` | `room_pin` | `extension` | `block`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dialed": {
+            "description": "Os dígitos contra os quais o plano casou.",
+            "type": "string"
+          },
+          "e164": {
+            "description": "`+244…` quando é um número público; `null` para curtos/internos.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emergency": {
+            "type": "boolean"
+          },
+          "estimated_price_per_min": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MoneyDto",
+                "description": "Preço por minuto em vigor AGORA na operadora principal. `null` sem preço."
+              }
+            ]
+          },
+          "fallbacks": {
+            "description": "Reservas, pela ordem de tentativa.",
+            "items": {
+              "$ref": "#/components/schemas/TrunkSummary"
+            },
+            "type": "array"
+          },
+          "matched_rule": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MatchedRule"
+              }
+            ]
+          },
+          "outcome": {
+            "description": "`route` | `internal` | `blocked` | `no_match` | `no_available_trunk`.",
+            "type": "string"
+          },
+          "overridden_rule_position": {
+            "description": "Numa emergência: a regra que teria casado primeiro e foi ultrapassada.",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "price_reason": {
+            "description": "Porque o preço é `null`: `not_external` | `no_price_in_force`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recorded": {
+            "type": "boolean"
+          },
+          "trunk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TrunkSummary",
+                "description": "Operadora principal (a primeira activa)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "dialed",
+          "outcome",
+          "fallbacks",
+          "recorded",
+          "emergency"
+        ],
+        "type": "object"
+      },
       "TimingsReq": {
         "description": "Tempos de estabelecimento de UMA sessão, reportados quando a media aparece.\n\nTodos os campos são `Option` e vêm do cliente: um marco que não aconteceu é\n`null`, e `null` significa «não sei», que é diferente de zero. Zero seria\numa medição («foi instantâneo») e enviesava as médias para baixo.",
         "properties": {
@@ -7965,6 +9269,292 @@
         },
         "required": [
           "text"
+        ],
+        "type": "object"
+      },
+      "Trunk": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "current_price_per_min": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MoneyDto",
+                "description": "Preço por minuto em vigor agora; `null` sem preço."
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "gateway_name": {
+            "description": "Nome do gateway no FreeSWITCH.",
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "max_channels": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "password_configured": {
+            "description": "A password nunca sai; só se diz se existe.",
+            "type": "boolean"
+          },
+          "port": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "position": {
+            "description": "Posição de encaminhamento (0 = primeira).",
+            "format": "int32",
+            "type": "integer"
+          },
+          "prefixes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "register": {
+            "type": "boolean"
+          },
+          "reserve_rank": {
+            "description": "Para `reserve`: 1, 2, …",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "role": {
+            "description": "`primary` | `reserve` | `international` — derivado da ordem.",
+            "type": "string"
+          },
+          "scope": {
+            "description": "`national` | `international`.",
+            "type": "string"
+          },
+          "short_code": {
+            "type": "string"
+          },
+          "srtp": {
+            "description": "`mandatory` | `optional` | `off`.",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TrunkStatus"
+          },
+          "transport": {
+            "description": "`udp` | `tcp` | `tls`.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "short_code",
+          "scope",
+          "host",
+          "port",
+          "transport",
+          "srtp",
+          "register",
+          "username",
+          "password_configured",
+          "prefixes",
+          "max_channels",
+          "position",
+          "role",
+          "enabled",
+          "gateway_name",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "TrunkCounts": {
+        "properties": {
+          "degraded": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "down": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknown": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "up": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "up",
+          "degraded",
+          "down",
+          "unknown"
+        ],
+        "type": "object"
+      },
+      "TrunkOrderReq": {
+        "properties": {
+          "trunk_ids": {
+            "description": "TODOS os troncos da org, pela ordem nova.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "trunk_ids"
+        ],
+        "type": "object"
+      },
+      "TrunkPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Trunk"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "TrunkStatus": {
+        "description": "Estado de um tronco, MEDIDO — nada aqui é declarado pelo cliente.",
+        "properties": {
+          "asr": {
+            "description": "Answer-seizure ratio em `[0,1]` nas últimas `asr_window_hours`, das\nchamadas de saída ingeridas. `null` sem tentativas (`asr_reason`).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "asr_answered": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "asr_attempts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "asr_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "asr_window_hours": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "channels_in_use": {
+            "description": "Canais em uso agora (contador do FreeSWITCH); `null` sem medida.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "channels_max": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "measured_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reasons": {
+            "description": "Porquê, legível por máquina: `sip_not_configured`, `registration_failed`,\n`options_ping_failed`, `low_asr`, `registering`, `no_measurement`,\n`not_loaded_on_media_server`, `sip_status_unavailable`, `disabled`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "registration": {
+            "description": "Registo no media server: `registered` | `trying` | `failed` |\n`not_required` | `unknown`; `null` sem medida.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "description": "`up` | `degraded` | `down` | `unknown`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "reasons",
+          "channels_max",
+          "asr_attempts",
+          "asr_answered",
+          "asr_window_hours",
+          "measured_at"
+        ],
+        "type": "object"
+      },
+      "TrunkSummary": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "short_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "short_code"
         ],
         "type": "object"
       },
@@ -8175,6 +9765,161 @@
         },
         "type": "object"
       },
+      "UpdateTrunkReq": {
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_channels": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "description": "`\"\"` apaga a password; ausente não mexe.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "prefixes": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "register": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "short_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "srtp": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transport": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "Usage": {
+        "properties": {
+          "by_trunk": {
+            "items": {
+              "$ref": "#/components/schemas/UsageByTrunk"
+            },
+            "type": "array"
+          },
+          "calls": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "minutes": {
+            "description": "Minutos taxados (por começo de minuto) das chamadas atendidas de saída.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "month": {
+            "description": "`AAAA-MM`.",
+            "type": "string"
+          },
+          "timezone": {
+            "description": "Fuso usado para os limites do mês.",
+            "type": "string"
+          },
+          "total_aoa": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MoneyDto",
+                "description": "Total em Kz; `null` quando falta uma taxa de câmbio (`total_aoa_reason`)."
+              }
+            ]
+          },
+          "total_aoa_reason": {
+            "description": "`missing_exchange_rate`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "totals": {
+            "items": {
+              "$ref": "#/components/schemas/MoneyDto"
+            },
+            "type": "array"
+          },
+          "unpriced_calls": {
+            "description": "Chamadas de saída atendidas sem custo (sem preço em vigor), que NÃO\nentram nos totais.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "month",
+          "timezone",
+          "calls",
+          "minutes",
+          "totals",
+          "unpriced_calls",
+          "by_trunk"
+        ],
+        "type": "object"
+      },
       "UsageBucket": {
         "properties": {
           "bytes": {
@@ -8189,6 +9934,64 @@
         "required": [
           "count",
           "bytes"
+        ],
+        "type": "object"
+      },
+      "UsageByTrunk": {
+        "properties": {
+          "calls": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "cost": {
+            "description": "Na moeda do tronco, por moeda.",
+            "items": {
+              "$ref": "#/components/schemas/MoneyDto"
+            },
+            "type": "array"
+          },
+          "cost_aoa": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MoneyDto",
+                "description": "Convertido para Kz com a taxa em vigor em cada chamada; `null` se falta\numa taxa."
+              }
+            ]
+          },
+          "minutes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "share_pct": {
+            "description": "Percentagem do total em Kz (0-100); `null` sem total em Kz.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "trunk_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trunk_name": {
+            "description": "`null` para chamadas sem tronco (ex.: sem preço/tronco).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "calls",
+          "minutes",
+          "cost"
         ],
         "type": "object"
       },
@@ -17338,6 +19141,73 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/sms/overview": {
+      "get": {
+        "operationId": "overview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsOverview"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Estado dos canais de envio de SMS e contagens do dia. Nada estimado: a\nbateria e o saldo só aparecem quando o agente os reporta.",
+        "tags": [
+          "sms"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/sms/policy": {
       "get": {
         "operationId": "get_policy",
@@ -19112,6 +20982,2175 @@
         "summary": "Método personalizado: substitui a chave (cifrada) e devolve-a esta única vez.",
         "tags": [
           "stream-destinations"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/call-records": {
+      "get": {
+        "operationId": "list_call_records",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "`inbound` | `outbound`.",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "trunk_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Um resultado (ver `CallRecord.outcome`).",
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Início (inclusive), RFC 3339.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Fim (exclusivo), RFC 3339.",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Sala.",
+            "in": "query",
+            "name": "room_code",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallRecordPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`page.invalid_token`, `search.page_token_mismatch`, `telephony.invalid_filter`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Chamadas externas da org, da mais recente para a mais antiga. Filtros\nexactos (`direction`, `trunk_id`, `outcome`, `since`/`until`,\n`room_code`); a pesquisa livre do motor da ADR-0007 entra quando ele estiver\nnesta linha (ver ADR-0009 §6).",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/dial-plan": {
+      "get": {
+        "operationId": "get_plan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DialPlan"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O plano de marcação.",
+        "tags": [
+          "telephony"
+        ]
+      },
+      "put": {
+        "operationId": "put_plan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDialPlanReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DialPlan"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.invalid_pattern`, `telephony.emergency_never_recorded`, `telephony.emergency_cannot_be_blocked`, `telephony.unknown_trunk`, `telephony.rule_requires_trunk`, … (o campo `details[].field` diz a regra)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Substitui o plano inteiro (a ordem é o significado). Valida tudo antes de\nescrever; a gravação é atómica.",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/dial-plan/test": {
+      "post": {
+        "operationId": "test_number",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestNumberReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestNumberResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.invalid_number`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: que regra casa este número, por que operadora sai,\nse é gravado e quanto custa o minuto. Não liga.",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/exchange-rates": {
+      "get": {
+        "operationId": "list_rates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangeRatePage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Taxas de câmbio para o consumo em Kz.",
+        "tags": [
+          "telephony"
+        ]
+      },
+      "post": {
+        "operationId": "create_rate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRateReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangeRate"
+                }
+              }
+            },
+            "description": "",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.invalid_rate`, `telephony.invalid_currency`, `telephony.price_backdated`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Taxa nova (nunca retroactiva).",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/sip-registration": {
+      "get": {
+        "operationId": "registration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SipRegistration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Estado do registo SIP, medido agora no SBC e no media server, com o resumo\ndos troncos e a qualidade das últimas 24 h de CDRs.",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/sip-registration/restart": {
+      "post": {
+        "operationId": "restart_registration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestartResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.not_configured`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.media_server_unavailable`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "«Reiniciar registo»: pede ao FreeSWITCH novo REGISTER de todos os troncos\nda org. Não espera pelo resultado (lê-se em `sip-registration`).",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/sip-settings": {
+      "get": {
+        "operationId": "get_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SipSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Configuração SIP da org (sem a password).",
+        "tags": [
+          "telephony"
+        ]
+      },
+      "put": {
+        "operationId": "put_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutSipSettingsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SipSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.invalid_domain`, `telephony.invalid_codec`, `telephony.srtp_requires_tls`, …"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.sip_domain_taken`: o domínio decide a org das chamadas que entram, e é único."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`secrets.encryption_unconfigured`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Substitui a configuração SIP (singleton).",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/sip-settings/reveal-credentials": {
+      "post": {
+        "operationId": "reveal_credentials",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevealReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevealedCredentials"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sessão inválida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.reauth_failed` ou `telephony.reauth_unavailable` (conta sem password e sem MFA)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.credentials_not_configured`"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.reauth_rate_limited`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "«Ver credenciais»: devolve a password SIP depois de reautenticar quem pede\n(password da conta, ou código MFA para contas SSO). Cada sucesso e cada\nfalha ficam na auditoria; falhas repetidas bloqueiam 5 minutos.",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/test-calls": {
+      "get": {
+        "operationId": "list_test_calls",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundCallPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Últimos testes rápidos, do mais recente para o mais antigo.",
+        "tags": [
+          "telephony"
+        ]
+      },
+      "post": {
+        "operationId": "create_test_call",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCallReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundCall"
+                }
+              }
+            },
+            "description": "A tocar; acompanhar pelo id."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.invalid_number`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.not_configured`, `telephony.test_call_emergency_refused`, `telephony.number_blocked`, `telephony.no_matching_rule`, `telephony.destination_not_external`, `telephony.no_available_trunk`, `telephony.channels_exhausted`"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.call_rate_limited`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "«Ligar agora»: liga pelo plano de marcação e mede o atendimento. Devolve\nlogo a tentativa (`dialing`); o resultado — atendida e em quantos ms, ou a\ncausa — lê-se em `GET …/test-calls/{id}`. Nunca liga a números de\nemergência. Limitado por organização.",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/test-calls/{test_call_id}": {
+      "get": {
+        "operationId": "get_test_call",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "test_call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundCall"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Um teste rápido.",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/trunk-order": {
+      "put": {
+        "operationId": "put_order",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrunkOrderReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrunkPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.invalid_trunk_order`: falta, sobra ou repete um tronco."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A ordem de encaminhamento INTEIRA («arraste para mudar»). Devolve os\ntroncos pela ordem nova.",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/trunks": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "1-100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Janela do ASR em horas (1-720, omissão 24).",
+            "in": "query",
+            "name": "asr_window_hours",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrunkPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "page_token ou janela inválidos"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Operadoras da org pela ordem de encaminhamento, com estado medido.",
+        "tags": [
+          "telephony"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTrunkReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trunk"
+                }
+              }
+            },
+            "description": "",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forma inválida (`telephony.invalid_*`, `telephony.srtp_requires_tls`, `telephony.trunk_host_refused`)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.trunk_name_taken`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`secrets.encryption_unconfigured`: sem chaves não se guarda a password."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Cria uma operadora no FIM da ordem.",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/trunks/{trunk_id}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Apagada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.trunk_in_use`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Apaga uma operadora. `409 telephony.trunk_in_use` se o plano de marcação a usa.",
+        "tags": [
+          "telephony"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Janela do ASR em horas (1-720, omissão 24).",
+            "in": "query",
+            "name": "asr_window_hours",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trunk"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Uma operadora, com estado medido.",
+        "tags": [
+          "telephony"
+        ]
+      },
+      "patch": {
+        "operationId": "update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTrunkReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trunk"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Alteração parcial. A password é write-only (`\"\"` apaga-a).",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/trunks/{trunk_id}/prices": {
+      "get": {
+        "operationId": "list_prices",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PricePage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Histórico de preços de uma operadora, do mais recente para o mais antigo.",
+        "tags": [
+          "telephony"
+        ]
+      },
+      "post": {
+        "operationId": "create_price",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePriceReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Price"
+                }
+              }
+            },
+            "description": "",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.invalid_amount`, `telephony.invalid_currency`, `telephony.price_backdated`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.price_exists`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Preço novo (histórico: não substitui o anterior, sucede-lhe).",
+        "tags": [
+          "telephony"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/telephony/usage": {
+      "get": {
+        "operationId": "usage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`AAAA-MM`; omissão: o mês corrente no fuso.",
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`telephony.invalid_month`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Consumo de um mês a partir dos CDRs de saída, ao preço em vigor em cada\nchamada (congelado na ingestão).",
+        "tags": [
+          "telephony"
         ]
       }
     },
