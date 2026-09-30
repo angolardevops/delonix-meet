@@ -1569,10 +1569,7 @@ impl TelefoneFalso {
         ponte: std::net::SocketAddr,
         law: crate::phone_bridge::g711::Law,
         freq: f32,
-        srtp: Option<(
-            webrtc_srtp::context::Context,
-            webrtc_srtp::context::Context,
-        )>,
+        srtp: Option<(webrtc_srtp::context::Context, webrtc_srtp::context::Context)>,
     ) -> Self {
         let (mut ctx_out, mut ctx_in) = match srtp {
             Some((o, i)) => (Some(o), Some(i)),

@@ -362,8 +362,8 @@ mod tests {
         let de_volta = eles.inbound.decrypt_rtp(&cifrado).unwrap();
         assert_eq!(de_volta, claro);
 
-        let mut intruso = SrtpSession::new(&SrtpKeyPair::generate(), &SrtpKeyPair::generate())
-            .unwrap();
+        let mut intruso =
+            SrtpSession::new(&SrtpKeyPair::generate(), &SrtpKeyPair::generate()).unwrap();
         let falso = intruso.outbound.encrypt_rtp(&claro).unwrap();
         assert!(
             eles.inbound.decrypt_rtp(&falso).is_err(),
