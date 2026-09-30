@@ -1,163 +1,111 @@
 # Design System — Delonix Meet
 
-> Fonte de verdade para UI. Regra de ouro: **um controlo novo nunca inventa
-> tamanho, raio ou cor** — usa o kit (`web/src/components/ui.tsx`) e os tokens.
-> Qualquer exceção é uma alteração AO SISTEMA (aqui + tokens + kit), não à página.
+> **Fonte de verdade para UI.** Regra de ouro: **um controlo novo nunca inventa tamanho,
+> raio ou cor** — usa o kit (`web/src/ui/kit.tsx`) e os tokens (`web/src/ui/tokens.css`).
+> Qualquer excepção é uma alteração AO SISTEMA (aqui + tokens + kit), não à página.
 
-## 1. Tokens
+> **Reescrito a 2026-09-30.** A versão anterior descrevia a UI que a reescrita da consola
+> (#119/#120) apagou: mandava ir buscar controlos a `web/src/components/ui.tsx` e tokens a
+> `styles/tokens.scss` e `styles.scss` — **os três ficheiros já não existem**. Pior, a
+> regra central estava invertida: dizia «acção = índigo, marca = vermelho», e hoje o
+> `--accent` É vermelho (`#ad1017`), da mesma família da marca. Tudo o que está abaixo foi
+> medido na árvore, não recordado.
 
-Duas fontes, sempre coerentes entre si:
+## 1. Tokens — `web/src/ui/tokens.css`
 
-| Onde | O quê |
+Uma só fonte, 70 tokens, em três blocos:
+
+| Selector | Para quê |
 |---|---|
-| `web/src/styles/tokens.scss` (`$base` + temas) | cores por tema, fontes, `radius` base — emitidos como CSS vars |
-| `styles.scss` bloco ":root — Design system" | escala aditiva: `--space-*`, `--radius-sm/md/lg`, `--shadow-*`, `--ctl-h` |
+| `:root, [data-theme='light']` | tema claro (omissão) |
+| `[data-theme='dark'], .dx-stage` | tema escuro **e** as superfícies que são sempre escuras |
+| `:root:lang(zh)` | ajustes tipográficos do chinês |
 
-Valores atuais (27/07/2026):
+**`.dx-stage` reafirma o escuro qualquer que seja o tema** — sala, pré-entrada e estúdio
+de emissão. Não se «clareia» um palco.
 
 ```
---radius-sm: 4px   controlos (botões, inputs, selects, chips)
---radius-md: 6px   superfícies (cartões, painéis, modais, toasts)
---radius-lg: 8px   destaques (auth-card, hero)
---ctl-h:    30px   altura única dos controlos pequenos
-html font-size: 15px   ← botão ÚNICO de densidade (tudo dimensiona em rem)
+--r-2: 2px · --r-3: 4px · --r-8: 8px      raios
+--ctl-h: 32px · --ctl-h-lg: 42px          altura única dos controlos
+--accent / --accent-strong / --accent-pressed    acção (vermelho, #ad1017 no claro)
+--brand / --brand-ink                     marca
+--warning · --danger · --stage            estados e palco
 ```
 
-### 1.1 Cor: AÇÃO ≠ MARCA
+Os contrastes estão medidos e escritos no topo do ficheiro (texto 15,4:1, esbatido 5,2:1,
+acento 7,7:1 no claro; 15,9 / 6,7 / 5,8 no escuro). **Um valor novo mede-se antes de
+entrar.**
 
-| Papel | Tokens | Onde |
-|---|---|---|
-| **Ação** (índigo) | `--accent`, `--accent-hi`, `--accent-text`, `--accent-soft` | botões primários, foco, links, nav ativo, chips de estado |
-| **Marca** (vermelho + dourado) | `--brand`, `--brand-hi`, `--grad-brand`, `--wordmark`, `--accent-2` | logo, quadrado da sidebar, «Meet» do wordmark, landing |
+## 2. Kit — `web/src/ui/kit.tsx`
 
-Nunca trocar os papéis: vermelho em navegação lê-se como destrutivo, e índigo
-no logo apaga a identidade. Feedback tem tokens próprios (`--ok`, `--warn`,
-`--danger`) — não reaproveitar a marca para estados.
+Tudo o que ele exporta, medido a 2026-09-30:
 
-### 1.2 Barra lateral: escura nos dois temas
+`Button` · `IconButton` · `Card` · `SectionHead` · `Tag` · `StatusBadge` · `Field` ·
+`TextInput` · `TextArea` · `Select` · `Checkbox` · `Toggle` · `Segmented` · `Tabs` ·
+`Avatar` · `AvatarStack` (+ `avatarTone`, `initials`) · `Meter` · `Empty` · `Alert` ·
+`Spinner` · `Skeleton` · `Dialog` · `cx`.
 
-Os tokens `--sb-bg` / `--sb-text` / `--sb-line` / `--sb-hover` são
-deliberadamente escuros também no tema claro (navy `#1e2a45`). **Não** os fazer
-seguir o tema: o rail é âncora de identidade e, escuro, deixa de competir com o
-conteúdo. Tudo o que viva dentro de `.shell-nav` herda destes tokens — um
-componente novo no rail usa `--sb-*`, nunca `--surface`/`--text`.
+Ícones em `web/src/ui/icons.tsx`: `<Icon name=… />` e `<DelonixSymbol />`. Um ícone novo
+entra **imediatamente antes do `}` que fecha o mapa `P`**, debaixo de uma linha `// <área>`
+— os conflitos resolvem-se na integração.
 
-### 1.3 Separação por linha, não por sombra
+Classes utilitárias em `ui/base.css`: `dx-num` (mono tabular), `dx-eyebrow`, `dx-kv`,
+`dx-chips`/`dx-chip`, `dx-toasts`/`dx-toast`, `dx-table`/`dx-table-wrap`.
 
-`--shadow` é 1px. A hierarquia entre superfícies vem da **luminância**
-(`--bg` → `--surface` → `--surface-3`) e de uma borda de 1px. Dentro de um
-cartão, os separadores usam `--border-soft` (mais leve que `--border`) — é o
-que impede que uma lista densa pareça uma grelha.
+## 3. Fundação — usa, não dupliques
 
-## 2. Os 3 tiers (camada "SISTEMA DE CONTROLO ÚNICO", fim de `styles.scss`)
+| Ficheiro | O que dá |
+|---|---|
+| `components/AsyncSection.tsx` | `useAsync(load(signal), deps)` → `{state, reload, mutate}` e `<AsyncSection state onRetry>`. **Todo o carregamento passa por aqui** — abortável, três estados |
+| `components/PageBar.tsx` | barra de topo de cada página da consola (`title`, `meta`, acções), inclui o botão da gaveta |
+| `components/shellContext.ts` | `useShell()`: `user`, `org`, `orgs`, `isAdmin`, `navigate`, `enterRoom`, `openPalette`, `openSettings` |
+| `components/BrandMark.tsx` | `BrandMark`, `BrandLockup` — **nunca** escrevas o nome ou `/logo.svg` à mão |
+| `components/PresenceProvider.tsx` | `usePresence()`: `online`, `isOnline`, `startCall`, `missed`, `ackMissed`, `callBack` |
+| `roomCode.ts` | `parseRoomCode(raw)` |
 
-A camada vive de propósito no FIM do ficheiro — à mesma especificidade vence os
-valores hardcoded históricos. **Não adicionar novos `border-radius`/alturas
-hardcoded**: se um elemento novo não cair num tier, é o tier que se estende.
+Corpo de página: `<div className="page">…</div>`.
 
-1. **Ação** — `.btn-sm` (+ `ghost|danger|success`), `.chip-btn`, `.seg-btn`,
-   `.admit-accept/.admit-deny`, `.integ-tab`, `.auth-tab`… altura `--ctl-h`,
-   padding 0 12px, fonte 0.82rem, raio `--radius-sm`.
-2. **Botão-ícone** — `.icon-btn`, `.lobby-deny`, `.poll-correct-pick`:
-   quadrado `--ctl-h`×`--ctl-h`.
-3. **Superfícies** — `.dash-card`, `.kpi-card`, `.rec-*`, `.poll-card`,
-   `.admit-card`, `.modal`, `.side-panel`, `.toast`… raio `--radius-md`.
+## 4. Regras de código
 
-## 2.1 Camada CONSOLA (27/07/2026) — a ÚLTIMA do ficheiro
+1. **Ficheiros teus:** a página em `pages/`, sub-componentes em `pages/<área>/`, `room/`
+   ou `studio/`, a folha `ui/<área>.css` **importada pela própria página** (fica no chunk
+   lazy dela), e `locales/{pt,en,fr,zh}/<área>.ts`.
+2. **Não edites** `ui/kit.tsx`, `ui/base.css`, `ui/tokens.css`, `ui/shell.css`,
+   `components/*`, `App.tsx`, `main.tsx`, `i18n.ts`. Se o kit não chega, faz um componente
+   local e di-lo no relatório.
+3. **Sem cor, raio ou altura de controlo escritos à mão** fora dos tokens. Nenhuma cor de
+   marca alheia.
+4. **i18n:** zero texto visível fora do `t()` — JSX, `title`, `placeholder`, `aria-*`,
+   template literals, `setStatus('…')`. Chaves `área.subgrupo.chave`, **cada valor numa só
+   linha**. **As quatro línguas com exactamente as mesmas chaves** (`pt` é a origem, mais
+   `en`, `fr`, `zh`); plurais com `_one`/`_other`. **Nenhum emoji** em JSX, atributos
+   visíveis ou locales — usa `<Icon>`; emoji escolhidos pelo utilizador em runtime são
+   permitidos.
+5. **Pedidos:** `.catch` com `isAbort`; erros por `apiErrorMessage(e, t('…'))`.
+6. **O frontend não decide política.** Um botão de anfitrião ou de admin escondido no
+   cliente **não é autorização**: mostra o que o servidor devolve e trata o `403`.
+7. **Acessibilidade e ecrã estreito:** tudo operável por teclado, `aria-label` em botões só
+   de ícone, foco visível, layout funcional a **375 px** (grelhas colapsam para uma coluna,
+   tabelas dentro de `dx-table-wrap`). `100vh` sempre seguido de `100dvh`.
+8. **Não desenhes ecrãs para endpoints que não existem.** Mede em `api.ts` /
+   `signaling.ts` / `server/src`: se não existe, **não aparece** — nem como botão inerte
+   nem como número inventado. Números no ecrã vêm do servidor, nunca de um template. Lista
+   o que ficou de fora no relatório.
+9. **Identificadores novos em inglês**; comentários e textos em português europeu.
 
-Vem **depois** do bloco de controlo único; à mesma especificidade, ganha. É
-onde vive o alinhamento com o template de consola. Se um valor desta camada
-entrar em conflito com um mais acima, a correção é aqui — não duplicar a regra
-no meio do ficheiro.
+## 5. Portões
 
-O que a camada define:
-
-- **Densidade** — `html { font-size: 15px }`. A app dimensiona quase toda em
-  `rem`; a raiz é o botão único. Não apertar tamanhos página a página.
-- **Rail** — 224px, tokens `--sb-*`, item ativo com `box-shadow: inset 2px 0 0`
-  (sem pseudo-elemento nem glow) e **sem** `translateX` no hover: num rail
-  denso o deslize lê-se como instabilidade.
-- **`.app-bar`** — barra de aplicação no topo do conteúdo, montada em
-  `Shell.tsx`: data, tema, «Nova reunião» e campo de código. Estas ações
-  **saíram da Home**; não voltar a duplicá-las lá.
-- **Estrutura do Shell** — `.shell-main` (flex column, `overflow: hidden`) →
-  `.app-bar` + `.shell-body` (o elemento que faz scroll). Uma página de altura
-  total dentro do Shell usa `height: 100%`, **nunca `100vh`**: a barra já ocupa
-  ~46px e a página ficaria com scroll parasita.
-- **Cartões** — cabeçalho `10px 14px` com borda inferior, linhas `9px 14px`
-  separadas por `--border-soft`, `padding: 0` no cartão (o cabeçalho e as linhas
-  trazem o seu).
-- **Sala** — ver §4.1.
-
-## 3. Kit de componentes (`web/src/components/ui.tsx`)
-
-Wrappers finos sobre o CSS (zero estilo próprio → zero divergência):
-
-```tsx
-import { Btn, IconBtn, Card, Field, TextInput, SelectCtl, Switch } from '../components/ui'
-
-<Btn onClick={…}>Guardar</Btn>                 // primário (accent)
-<Btn variant="ghost">Cancelar</Btn>             // secundário
-<Btn variant="danger">Apagar</Btn>              // destrutivo
-<Btn variant="success">Admitir</Btn>            // positivo (verde)
-<IconBtn title="Fechar"><CloseIcon /></IconBtn> // quadrado 30×30
-<Card title="Membros" actions={<Btn…/>}>…</Card>
-<Field label="Microfone" hint="opcional"><SelectCtl>…</SelectCtl></Field>
-<Switch checked={on} onChange={setOn} ariaLabel="Bloquear reunião" />
+```bash
+cd web && npx tsc --noEmit && npx vitest run
 ```
 
-**Migração**: código novo usa SEMPRE o kit. Código existente migra
-oportunisticamente — quando tocares num bloco, converte os botões dele
-(referência: painel Ferramentas em `Room.tsx`). Variante nova = classe no CSS
-(+tier) e entrada no `BTN_CLASS` do kit — nunca um `className` ad-hoc na página.
+Nenhum teste da tua área pode ficar vermelho, e não podes pôr vermelho nenhum que estava
+verde. **Os testes de invariantes reescrevem-se para o código novo mantendo o comportamento
+protegido** — nunca se apagam nem se afrouxam; se um deixar de fazer sentido no desenho
+novo, substitui-se por um equivalente e diz-se porquê no commit. Os e2e em `web/e2e/*.mjs`
+que usam selectores da tua área actualizam-se para os novos.
 
-## 4. Temas
-
-Temas são **mapas de tokens**, nunca overrides espalhados:
-
-1. `styles/tokens.scss`: cria o mapa (`$meu-tema`) a partir dos primitivos
-   (`_primitives.scss`) — cores semânticas (`bg`, `surface*`, `text`, `accent*`,
-   `ok`, `danger`…). Copia a estrutura de `$dark`/NgolaCloud.
-2. Emite-o sob `[data-theme='meu-tema']` como os existentes.
-3. Regista no `ThemePicker` (Shell/Room Definições) + persiste em `dx_theme`.
-4. **A sala ignora temas claros**: `.room-page`/`.waiting-page` reafirmam os
-   tokens dark com `!important` no fim de `styles.scss` — NÃO contornar (regra
-   de marca: a sala é sempre escura). Ver §4.1 para o chrome atual.
-5. Testar SEMPRE: Landing, Login, Home, sala (deve ficar escura), Analytics,
-   modais — nos temas claro E escuro (o tema claro a "vazar" dark já foi uma
-   regressão inteira, tarefa #67).
-
-### 4.1 Chrome da sala (27/07/2026)
-
-A sala mantém-se sempre escura, mas deixou o cinza-Meet (`#202124`, controlos
-em círculos de 50px) e passou ao cinza frio da consola:
-
-```text
-fundo         #0d0f14      barras (topo/controlos)  #12141a   linha  #20242e
-palco         linear-gradient(160deg, #1b2030, #12141c)
-tiles         linear-gradient(150deg, #242a3d, #161a26)
-painel        #14161d · 320px · encostado (sem margem flutuante)
-```
-
-- **Controlos**: quadrados de 38px, raio `--radius-sm`, agrupados em
-  `.ctrl-group` — um grupo DISPOSITIVOS (mic/câmara) e um grupo SESSÃO (CC,
-  reações, partilha, mão, gravar, mais); o botão de terminar fica solto, a
-  52×38. O agrupamento é só markup em `Room.tsx` — **nenhuma lógica de media
-  depende dele**.
-- **Chevron de dispositivo**: caret de 15px no canto inferior direito do botão
-  (era metade de uma pill). Continua a abrir a lista de microfones/câmaras.
-- **Avatares** (`.avatar-circle`, `.tile-avatar`): gradientes frios. O
-  vermelho/dourado é da marca — num tile de vídeo só criava ruído quente.
-- **Terminar**: vermelho chapado, sem gradiente nem halo — a cor já é o sinal e
-  o glow competia com o estado «a falar» do microfone.
-
-## 5. Checklist de revisão UI (para humanos e agentes)
-
-- [ ] Botão/input/cartão novo usa o kit ou classes de tier — sem CSS de tamanho/raio na página
-- [ ] Zero `border-radius`/`height` hardcoded novos em `styles.scss` fora da camada de sistema
-- [ ] Cores só via tokens (`var(--…)`) — nunca hex na página
-- [ ] Índigo = ação, vermelho/dourado = marca (§1.1) — sem trocas
-- [ ] Componente no rail usa `--sb-*`, não `--surface`/`--text` (§1.2)
-- [ ] Página de altura total dentro do Shell usa `height: 100%`, não `100vh`
-- [ ] Ecrãs verificados nos 4 temas + a sala continua escura
-- [ ] i18n PT/EN/FR para strings novas
+**Layout e comportamento só se provam com browser real.** Arranca o Vite
+(`NO_HTTPS=1 npx vite --port <porta> --strictPort --host 127.0.0.1`) e abre com o Playwright
+do projecto a 1440×900 e a 375×812. Sem backend os pedidos falham — isso prova layout e
+estados de erro/vazio, **não dados**, e diz-se isso no relatório.
