@@ -1241,7 +1241,9 @@ pub(crate) async fn enqueue(
     }
     let to = normalize_msisdn(to_e164)?;
     let planned = plan(state, org_id, &to, body, route).await?;
-    if !state.sms_user_limiter.check(&format!("{org_id}:{actor_id}"))
+    if !state
+        .sms_user_limiter
+        .check(&format!("{org_id}:{actor_id}"))
         || !state.sms_send_limiter.check(&org_id.to_string())
     {
         return Err(ApiError::TooManyRequests);
