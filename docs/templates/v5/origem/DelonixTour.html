@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ad1017;text-decoration:none}a:hover{color:#8a0c12}@keyframes dm-ring{0%{box-shadow:0 0 0 0 rgba(173,16,23,.35)}70%{box-shadow:0 0 0 14px rgba(173,16,23,0)}100%{box-shadow:0 0 0 0 rgba(173,16,23,0)}}</style></helmet>
+<div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--danger:#ad1017;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;position:relative;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex">
+
+  <dc-import name="DelonixNav" active="home" hint-size="228px,900px"></dc-import>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:58px;flex:none;box-sizing:border-box;padding:0 22px;display:flex;align-items:center;gap:12px;background:var(--raised);border-bottom:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:600">Bom dia, Ana</div>
+      <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">qui, 17 Set 2026 · 09:41 WAT</div>
+      <div style="flex:1"></div>
+      <div style="width:250px;padding:7px 11px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-size:11.5px;color:var(--muted)">Procurar sessões, gravações, pessoas…</div>
+      <div style="display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:11.5px;font-weight:600;color:var(--accent-strong)">
+        <span style="font-size:12px">◉</span>Guia activo
+      </div>
+    </div>
+
+    <div style="flex:1;min-height:0;padding:20px 22px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+        <sc-for list="{{ actions }}" as="a" hint-placeholder-count="4">
+          <div style="padding:14px;border-radius:3px;background:{{ a.bg }};border:1px solid {{ a.ring }};display:flex;flex-direction:column;gap:14px;position:relative;z-index:{{ a.z }};box-shadow:{{ a.shadow }};animation:{{ a.anim }}">
+            <div style="font-size:16px;color:{{ a.iconFg }}">{{ a.icon }}</div>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:{{ a.fg }}">{{ a.label }}</div>
+              <div style="font-size:10.5px;color:{{ a.subFg }};margin-top:2px">{{ a.sub }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;overflow:hidden">
+        <div style="display:flex;flex-direction:column;gap:9px;min-width:0">
+          <div style="display:flex;align-items:baseline;gap:9px">
+            <div style="font-size:13px;font-weight:600">Próximas sessões</div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">calendário Odoo</div>
+          </div>
+          <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;overflow:hidden">
+            <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border);background:{{ s.bg }}">
+                <div style="width:52px;flex:none;text-align:center">
+                  <div style="font-family:'DM Mono',monospace;font-size:14px;font-weight:500">{{ s.time }}</div>
+                  <div style="font-size:9.5px;color:var(--muted)">{{ s.dur }}</div>
+                </div>
+                <div style="width:1px;height:32px;background:var(--border);flex:none"></div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.title }}</div>
+                  <div style="font-size:10.5px;color:var(--muted);margin-top:2px">{{ s.meta }}</div>
+                </div>
+                <div style="padding:7px 14px;border-radius:2px;background:{{ s.ctaBg }};border:1px solid {{ s.ctaRing }};color:{{ s.ctaFg }};font-size:12px;font-weight:600;flex:none">{{ s.cta }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+          <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:10px">
+            <div style="font-size:12.5px;font-weight:600">Canais de emissão</div>
+            <sc-for list="{{ channels }}" as="c" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;gap:9px">
+                <div style="width:22px;height:22px;flex:none;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:7.5px;font-weight:500;color:var(--muted)">{{ c.tag }}</div>
+                <div style="flex:1;min-width:0;font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.name }}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:{{ c.fg }}">{{ c.state }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:12.5px;font-weight:600">Armazenamento</div>
+            <div style="height:7px;border-radius:2px;background:var(--surface);overflow:hidden;display:flex"><div style="width:62%;background:var(--accent)"></div><div style="width:11%;background:var(--live)"></div></div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">1,84 TB de 2,5 TB · Luanda</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="position:absolute;inset:0;z-index:40;pointer-events:none;background:rgba(11,11,12,.58)"></div>
+
+  <div style="position:absolute;left:{{ card.left }};top:{{ card.top }};width:352px;z-index:60;background:var(--raised);border:1px solid var(--border);border-radius:3px;box-shadow:0 18px 44px rgba(11,11,12,.28);overflow:hidden">
+    <div style="height:3px;background:var(--surface);display:flex">
+      <div style="width:{{ card.progress }};background:var(--accent)"></div>
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-family:'DM Mono',monospace;font-size:9px;font-weight:500;padding:2px 7px;border-radius:2px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent-strong)">GUIA · PASSO {{ card.step }} DE {{ card.total }}</span>
+        <div style="flex:1"></div>
+        <span style="font-size:11px;font-weight:600;color:var(--muted)">Saltar</span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <div style="font-size:16px;font-weight:600;letter-spacing:-.2px">{{ card.title }}</div>
+        <div style="font-size:12.5px;line-height:1.65;color:var(--muted)">{{ card.body }}</div>
+      </div>
+
+      <sc-if value="{{ card.tip }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:10px 11px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;gap:9px;align-items:flex-start">
+          <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--accent)">⌘</span>
+          <span style="font-size:11px;line-height:1.55;color:var(--muted)">{{ card.tip }}</span>
+        </div>
+      </sc-if>
+
+      <div style="display:flex;align-items:center;gap:9px;padding-top:2px">
+        <div style="display:flex;gap:5px">
+          <sc-for list="{{ dots }}" as="d" hint-placeholder-count="6">
+            <span style="width:{{ d.w }};height:6px;border-radius:3px;background:{{ d.bg }}"></span>
+          </sc-for>
+        </div>
+        <div style="flex:1"></div>
+        <div style="padding:8px 12px;border-radius:2px;border:1px solid var(--border);font-size:11.5px;font-weight:600;color:var(--muted)">Anterior</div>
+        <div style="padding:8px 15px;border-radius:2px;background:var(--accent);color:#fff;font-size:11.5px;font-weight:600">{{ card.next }}</div>
+      </div>
+    </div>
+
+    <div style="padding:11px 16px;background:var(--surface);border-top:1px solid var(--border);display:flex;align-items:center;gap:10px">
+      <div style="width:30px;height:17px;flex:none;border-radius:9px;background:var(--accent);position:relative">
+        <div style="position:absolute;top:2px;right:2px;width:13px;height:13px;border-radius:50%;background:#fff"></div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:11px;font-weight:600">Guia activo</div>
+        <div style="font-size:9.5px;color:var(--muted)">Pode desligar aqui ou em Preferências, quando quiser.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="position:absolute;right:22px;bottom:20px;z-index:60;display:flex;align-items:center;gap:10px;padding:10px 13px;border-radius:24px;background:var(--raised);border:1px solid var(--border);box-shadow:0 10px 26px rgba(11,11,12,.22)">
+    <div style="width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">?</div>
+    <div style="min-width:0">
+      <div style="font-size:11.5px;font-weight:600">Ajuda e guia</div>
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">3 de 6 passos concluídos</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900},"step":{"editor":"int","default":3,"min":1,"max":3,"tsType":"number","section":"Guia"},"enabled":{"editor":"boolean","default":true,"tsType":"boolean","section":"Guia"}}">
+/* Guia de primeira utilização. Vem ligado por omissão — a decisão está no
+ *  prop `enabled` — e cada passo aponta a um elemento real do ecrã: o passo
+ *  destaca o cartão correspondente subindo-o acima do véu. */
+const STEPS = [
+  { anchor: 0, title: 'Comece por aqui', total: 6,
+    body: 'Este botão abre a sua sala pessoal num instante, sem agendar nada. É o que vai usar mais vezes.',
+    tip: 'Atalho: prima N em qualquer ecrã para abrir a sala.',
+    left: '286px', top: '206px', next: 'Seguinte' },
+  { anchor: 1, title: 'Agendar puxa do Odoo', total: 6,
+    body: 'Escolhe as pessoas pelos contactos do ERP e a sessão aparece no calendário da empresa. Não escreve nada duas vezes.',
+    tip: null, left: '470px', top: '206px', next: 'Seguinte' },
+  { anchor: 3, title: 'Uma sala, três modos', total: 6,
+    body: 'Reunião, aula em 4K e emissão pública vivem na mesma sala. Aqui abre o estúdio e escolhe os destinos antes de entrar no ar.',
+    tip: 'Quem entra por telefone ou WhatsApp aparece com o crachá do canal.',
+    left: '838px', top: '206px', next: 'Seguinte' }
+];
+
+const ACTIONS = [
+  ['⏵', 'Iniciar agora', 'Sala pessoal'],
+  ['⊞', 'Agendar', 'Calendário Odoo'],
+  ['⌘', 'Entrar com código', '842-091-334'],
+  ['📡', 'Novo estúdio', 'Emissão multicanal']
+];
+
+const SESSIONS = [
+  ['10:00', '45 min', 'Formação — Arquitectura de Voz Delonix', 'Ana Mbala · 8 participantes · REC 4K', 'Entrar', true],
+  ['13:30', '30 min', 'Revisão de licenças — TI', 'Bento Quissanga · 4 participantes', 'Detalhes', false],
+  ['16:00', '90 min', 'Aula aberta — Redes SIP para operadores', 'Teresa Kiala · 3 destinos públicos', 'Detalhes', false]
+];
+
+const CHANNELS = [
+  ['YT', 'YouTube · Delonix', '✓ pronto', 'var(--success)'],
+  ['FB', 'Facebook · Página', '✓ pronto', 'var(--success)'],
+  ['LI', 'LinkedIn · Empresa', '✓ pronto', 'var(--success)'],
+  ['RTMP', 'RTMP personalizado', '✕ chave expirada', 'var(--danger)']
+];
+
+class Component extends DCLogic {
+  renderVals() {
+    const total = STEPS.length + 3;                 // seis passos no guia completo
+    const index = Math.min(Math.max((this.props.step ?? 1) - 1, 0), STEPS.length - 1);
+    const step = STEPS[index];
+    const stepNumber = index + 1;
+
+    return {
+      card: {
+        step: String(stepNumber),
+        total: String(total),
+        title: step.title,
+        body: step.body,
+        tip: step.tip,
+        left: step.left,
+        top: step.top,
+        next: step.next,
+        progress: Math.round((stepNumber / total) * 100) + '%'
+      },
+
+      dots: Array.from({ length: total }, (_, i) => ({
+        w: i === index ? '22px' : '6px',
+        bg: i === index ? 'var(--accent)' : i < index ? 'color-mix(in srgb, var(--accent) 34%, transparent)' : 'var(--border)'
+      })),
+
+      actions: ACTIONS.map(([icon, label, sub], i) => {
+        const lit = i === step.anchor;
+        const primary = i === 0;
+        return {
+          icon, label, sub,
+          // o cartão em foco sobe acima do véu; os outros ficam por baixo
+          z: lit ? '50' : '1',
+          shadow: lit ? '0 14px 34px rgba(11,11,12,.3)' : 'none',
+          anim: lit ? 'dm-ring 2.4s ease-out infinite' : 'none',
+          bg: primary ? 'var(--accent)' : 'var(--raised)',
+          ring: lit ? 'var(--accent)' : 'var(--border)',
+          fg: primary ? '#fff' : 'var(--text)',
+          subFg: primary ? 'rgba(255,255,255,.82)' : 'var(--muted)',
+          iconFg: primary ? '#fff' : 'var(--accent)'
+        };
+      }),
+
+      sessions: SESSIONS.map(([time, dur, title, meta, cta, first]) => ({
+        time, dur, title, meta, cta,
+        bg: first ? 'color-mix(in srgb, var(--accent) 5%, transparent)' : 'transparent',
+        ctaBg: first ? 'var(--accent)' : 'transparent',
+        ctaRing: first ? 'var(--accent)' : 'var(--border)',
+        ctaFg: first ? '#fff' : 'var(--text)'
+      })),
+
+      channels: CHANNELS.map(([tag, name, state, fg]) => ({ tag, name, state, fg }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

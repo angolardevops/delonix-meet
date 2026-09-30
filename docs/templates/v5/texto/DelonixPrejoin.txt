@@ -1,0 +1,47 @@
+Formação — Arquitectura de Voz Delonix
+10:00 WAT · sala voz-arq-2026
+Esta sessão será gravada em 4K
+Verificar dispositivos
+duas fontes de vídeo activas
+AM
+FONTE 1 · CÂMARA
+1080p · 30 fps
+Ana Mbala · Anfitriã
+Fundo desfocado
+Fundo virtual
+Captura HDMI · Placa de slides
+FONTE 2 · HDMI
+2160p · 25 fps
+Qualidade prevista
+↓ 48 Mbps · ↑ 22 Mbps
+✓ 4K estável
+Câmaras
+✓
+Logitech C925e (integrada)
+fonte 1 · 1080p30
+✓
+Elgato CamLink · HDMI
+fonte 2 · 2160p25
+Câmara de sala · IP
+10.20.4.11 · disponível
+Microfones
+✓
+Rode NT-USB Mini
+−18 dB
+✓
+Microfone de mesa · sala 2
+−34 dB
+✓
+Supressão de ruído e cancelamento de eco
+Saída de áudio
+Altifalantes da sala (HDMI)
+Testar
+Vol
+72
+3 pessoas já na sala de espera
+JF
+TK
+DN
+Serão admitidos ao entrar
+Entrar na sessão
+Entrar apenas com áudio · Ligar por telefone

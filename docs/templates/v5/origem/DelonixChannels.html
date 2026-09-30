@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ff5a60;text-decoration:none}a:hover{color:#fff}</style></helmet>
+<div style="--surface:#0d0d0f;--raised:#17171a;--stage:#000000;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--live:#f0a32e;--record:#d41f27;--success:#2f9e6a;--danger:#d41f27;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;background:var(--stage);color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex;flex-direction:column">
+
+  <div style="height:54px;flex:none;box-sizing:border-box;padding:0 20px;display:flex;align-items:center;gap:11px;background:var(--surface);border-bottom:1px solid var(--border)">
+    <div style="width:22px;height:22px;color:var(--accent);flex:none;display:flex">
+      <svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path></svg>
+    </div>
+    <div style="font-size:13px;font-weight:600">Reunião de obra — Empreitada Talatona</div>
+    <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);padding:3px 8px;border-radius:2px;background:var(--raised);border:1px solid var(--border)">00:18:42</div>
+    <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:2px;border:1px solid var(--record);font-family:'DM Mono',monospace;font-size:9.5px;font-weight:500;color:#ff8e8e"><span style="width:6px;height:6px;border-radius:50%;background:var(--record)"></span>REC 1080p</span>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:7px;padding:4px 9px;border-radius:2px;border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">{{ presence }}</div>
+    <div style="padding:7px 13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:12px;font-weight:600">Adicionar por número</div>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 336px;overflow:hidden">
+
+    <div style="padding:14px 16px;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;min-width:0">
+      <div style="flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 11px;border-radius:2px;background:var(--surface);border:1px solid var(--border)">
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.5px;color:var(--muted)">COMO CADA PESSOA ESTÁ LIGADA</span>
+        <sc-for list="{{ legend }}" as="l" hint-placeholder-count="5">
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:2px;border:1px solid {{ l.ring }};background:{{ l.bg }};font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:{{ l.fg }}">
+            <span style="width:14px;height:14px;border-radius:2px;background:{{ l.chipBg }};color:{{ l.chipFg }};display:flex;align-items:center;justify-content:center;font-size:7.5px;font-weight:700">{{ l.code }}</span>
+            {{ l.label }} · {{ l.count }}
+          </span>
+        </sc-for>
+      </div>
+
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));gap:9px">
+        <sc-for list="{{ tiles }}" as="t" hint-placeholder-count="12">
+          <div style="position:relative;border-radius:3px;overflow:hidden;background:{{ t.bg }};border:1px solid {{ t.ring }};display:flex;align-items:center;justify-content:center">
+            <sc-if value="{{ t.audioOnly }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">
+                <div style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border);background:rgba(255,255,255,.04);display:flex;align-items:center;justify-content:center;font-size:19px">{{ t.glyph }}</div>
+                <div style="display:flex;align-items:center;gap:4px;height:12px">
+                  <sc-for list="{{ t.bars }}" as="b" hint-placeholder-count="5">
+                    <span style="width:3px;height:{{ b.h }};border-radius:1px;background:{{ b.fg }}"></span>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ t.video }}" hint-placeholder-val="{{ true }}">
+              <div style="width:58px;height:58px;border-radius:50%;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff">{{ t.initials }}</div>
+            </sc-if>
+
+            <div style="position:absolute;top:7px;left:7px;display:flex;align-items:center;gap:5px;padding:2px 6px;border-radius:2px;background:rgba(0,0,0,.76)">
+              <span style="width:15px;height:15px;border-radius:2px;background:{{ t.chipBg }};color:{{ t.chipFg }};display:flex;align-items:center;justify-content:center;font-size:7.5px;font-weight:700">{{ t.code }}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8.5px;color:#d6d6da">{{ t.channel }}</span>
+            </div>
+
+            <sc-if value="{{ t.flag }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;top:7px;right:7px;padding:2px 6px;border-radius:2px;background:rgba(0,0,0,.76);border:1px solid {{ t.flagRing }};font-family:'DM Mono',monospace;font-size:8.5px;font-weight:500;color:{{ t.flagFg }}">{{ t.flag }}</div>
+            </sc-if>
+
+            <div style="position:absolute;bottom:7px;left:7px;right:7px;display:flex;align-items:center;gap:5px;padding:2px 7px;border-radius:2px;background:rgba(0,0,0,.76)">
+              <sc-if value="{{ t.muted }}" hint-placeholder-val="{{ true }}"><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">⊘</span></sc-if>
+              <sc-if value="{{ t.speaking }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:var(--success)">◉</span></sc-if>
+              <span style="font-size:10.5px;font-weight:600;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.name }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="flex:none;display:flex;align-items:center;justify-content:center;gap:7px;padding:9px;border-radius:24px;background:var(--surface);border:1px solid var(--border);align-self:center">
+        <span style="padding:7px 13px;border-radius:18px;background:var(--record);color:#fff;font-size:11px;font-weight:600">Silenciado</span>
+        <span style="padding:7px 13px;border-radius:18px;background:#2a2a2e;font-size:11px;font-weight:600">Câmara</span>
+        <span style="padding:7px 13px;border-radius:18px;background:#2a2a2e;font-size:11px;font-weight:600">Partilhar</span>
+        <span style="padding:7px 13px;border-radius:18px;background:#2a2a2e;font-size:11px;font-weight:600">Convidar</span>
+        <span style="padding:7px 13px;border-radius:18px;background:var(--danger);color:#fff;font-size:11px;font-weight:600">Sair</span>
+      </div>
+    </div>
+
+    <div style="border-left:1px solid var(--border);background:var(--surface);padding:14px;box-sizing:border-box;display:flex;flex-direction:column;gap:13px;overflow:auto">
+      <div style="display:flex;flex-direction:column;gap:9px">
+        <div style="font-size:12.5px;font-weight:600">Adicionar à reunião</div>
+        <div style="padding:11px;border-radius:2px;border:1px solid var(--accent-strong);background:rgba(173,16,23,.1);display:flex;flex-direction:column;gap:9px">
+          <div style="padding:9px 11px;border-radius:2px;border:1px solid var(--border);background:var(--stage);font-family:'DM Mono',monospace;font-size:12.5px;letter-spacing:1px">+244 923 ***</div>
+          <div style="display:flex;gap:6px">
+            <sc-for list="{{ addVia }}" as="a" hint-placeholder-count="3">
+              <div style="flex:1;padding:8px 6px;border-radius:2px;border:1px solid {{ a.ring }};background:{{ a.bg }};display:flex;flex-direction:column;align-items:center;gap:4px">
+                <span style="width:18px;height:18px;border-radius:2px;background:{{ a.chipBg }};color:{{ a.chipFg }};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700">{{ a.code }}</span>
+                <span style="font-size:9.5px;font-weight:600;color:{{ a.fg }}">{{ a.label }}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--muted)">{{ a.cost }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;line-height:1.5;color:var(--muted)">O convidado recebe o aviso de gravação antes de entrar, no canal por onde for chamado.</div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:9px">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <div style="font-size:12.5px;font-weight:600">Por telefone e WhatsApp</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);margin-left:auto">{{ railCount }}</div>
+        </div>
+        <sc-for list="{{ external }}" as="e" hint-placeholder-count="4">
+          <div style="padding:10px;border-radius:2px;border:1px solid var(--border);background:var(--raised);display:flex;flex-direction:column;gap:7px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:20px;height:20px;flex:none;border-radius:2px;background:{{ e.chipBg }};color:{{ e.chipFg }};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700">{{ e.code }}</span>
+              <span style="flex:1;min-width:0"><span style="display:block;font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ e.name }}</span><span style="display:block;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ e.number }}</span></span>
+              <span style="font-family:'DM Mono',monospace;font-size:9px;color:{{ e.fg }}">{{ e.state }}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="flex:1;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ e.meta }}</span>
+              <span style="font-size:10px;font-weight:600;color:var(--accent)">{{ e.action }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:11px;border-radius:2px;border:1px solid var(--live);background:rgba(240,163,46,.08);display:flex;flex-direction:column;gap:6px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:var(--live)">▲ O QUE MUDA FORA DA APP</div>
+        <div style="font-size:10.5px;line-height:1.6;color:#d6d6da">Quem entra por telefone ou WhatsApp não vê o ecrã partilhado nem o quadro, e não recebe legendas. Ouve a mistura de áudio e é ouvido — nada mais. A sala mostra-o sempre com o crachá do canal, para ninguém assumir que está a ver o mesmo.</div>
+      </div>
+
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:7px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.5px;color:var(--muted)">CUSTO DESTA SESSÃO</div>
+        <div style="display:flex;align-items:baseline;gap:7px">
+          <span style="font-family:'Archivo Black',sans-serif;font-size:19px;letter-spacing:-.4px">612</span>
+          <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">Kz · {{ costLine }}</span>
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;line-height:1.5;color:var(--muted)">O WhatsApp não tem custo por minuto; a chamada de voz internacional é a mais cara da sala.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+/* Crachá por canal. As cores não repetem o vermelho da marca, para o canal não
+   competir com o estado da sessão (gravação, ao vivo). */
+const CHANNEL = {
+  app:  ['APP', 'Delonix', '#2a2a2e', '#d6d6da'],
+  wa:   ['WA',  'WhatsApp', '#1f7a4d', '#ffffff'],
+  uni:  ['UNI', 'Unitel', '#2f4a7a', '#ffffff'],
+  afr:  ['AFR', 'Africell', '#6e3a70', '#ffffff'],
+  intl: ['INT', 'Internacional', '#7a5a1e', '#ffffff'],
+  sip:  ['SIP', 'Sala SIP', '#1e5a66', '#ffffff']
+};
+
+const TILES = [
+  ['Ana Mbala', 'AM', '#ad1017', 'app', { speaking: true, video: true }],
+  ['Joaquim Ferreira', 'JF', '#2f4a7a', 'app', { muted: true, video: true }],
+  ['Sala de obra · Talatona', 'SO', '#1e5a66', 'sip', { muted: true, video: true, flag: 'CÂMARA IP' }],
+  ['Teresa Kiala', 'TK', '#7a4a68', 'app', { muted: true, video: true }],
+  ['Eng. Mateus Bonga', '', '', 'wa', { audioOnly: true, glyph: '🟢', level: 3, flag: 'VÍDEO INDISPONÍVEL' }],
+  ['Sra. Domingas Neto', '', '', 'uni', { audioOnly: true, glyph: '☏', level: 4, muted: false }],
+  ['Luísa Cardoso', 'LC', '#4a2f6e', 'app', { muted: true, video: true }],
+  ['+244 951 ***447', '', '', 'afr', { audioOnly: true, glyph: '☏', level: 2, muted: true, flag: 'SEM NOME' }],
+  ['Paulo Sebastião', 'PS', '#1e5a66', 'app', { muted: true, video: true }],
+  ['Arq. Silva (Joanesburgo)', '', '', 'intl', { audioOnly: true, glyph: '☏', level: 1, flag: 'LIGAÇÃO FRACA' }],
+  ['Cátia Mendes', 'CM', '#7a4a2a', 'app', { muted: true, video: true }],
+  ['Élio Kassoma', 'EK', '#3a5a8a', 'app', { muted: true, video: true }]
+];
+
+/* Ordem de apresentação da legenda. As contagens NÃO se escrevem aqui:
+   saem de TILES, senão divergem na primeira pessoa que se acrescenta. */
+const LEGEND_ORDER = ['app', 'sip', 'wa', 'uni', 'afr', 'intl'];
+
+const EXTERNAL = [
+  ['wa', 'Eng. Mateus Bonga', '+244 924 ***612', 'EM CHAMADA', 'var(--success)', 'WhatsApp · voz · 12 min', 'Passar a palco'],
+  ['uni', 'Sra. Domingas Neto', '+244 923 ***108', 'EM CHAMADA', 'var(--success)', 'Unitel · 18 min · 169 Kz', 'Silenciar'],
+  ['afr', '+244 951 ***447', 'sem nome no ERP', 'EM CHAMADA', 'var(--success)', 'Africell · 9 min · atribuir nome', 'Identificar'],
+  ['intl', 'Arq. Silva', '+27 11 ***0192', 'FRACA', 'var(--live)', 'Internacional · 0,04 USD/min', 'Voltar a ligar']
+];
+
+const ADD_VIA = [
+  ['wa', 'WhatsApp', 'sem custo', true],
+  ['uni', 'Chamada', '9,40 Kz/min', false],
+  ['app', 'SMS com PIN', '12 Kz', false]
+];
+
+const barsFor = (level) => [0, 1, 2, 3, 4].map((i) => ({
+  h: (5 + i * 2) + 'px',
+  fg: i < level ? (level <= 1 ? 'var(--live)' : 'var(--success)') : '#2a2a2e'
+}));
+
+class Component extends DCLogic {
+  renderVals() {
+    // uma só fonte de verdade: conta-se TILES por canal
+    const tally = {};
+    for (const [, , , key] of TILES) tally[key] = (tally[key] || 0) + 1;
+    /* «Fora da app» = pessoas ao telefone ou no WhatsApp. O SIP é um codec de
+       sala: aparece na legenda como canal próprio, mas não conta aqui, senão
+       este número deixa de bater com o painel da direita. */
+    const OUTSIDE = ['wa', 'uni', 'afr', 'intl'];
+    const external = OUTSIDE.reduce((sum, k) => sum + (tally[k] || 0), 0);
+
+    const calls = EXTERNAL.filter(([k]) => k !== 'wa').length;
+    const whats = EXTERNAL.filter(([k]) => k === 'wa').length;
+
+    return {
+      presence: TILES.length + ' na sala · ' + external + ' fora da app',
+      railCount: EXTERNAL.length + ' pessoas',
+      costLine: calls + ' chamadas + ' + whats + ' WhatsApp',
+
+      legend: LEGEND_ORDER.filter((key) => tally[key]).map((key) => {
+        const [code, label, chipBg, chipFg] = CHANNEL[key];
+        const isExternal = key !== 'app';
+        return {
+          code, label, count: tally[key], chipBg, chipFg,
+          ring: isExternal ? 'var(--border)' : 'transparent',
+          bg: isExternal ? 'var(--raised)' : 'transparent',
+          fg: isExternal ? '#d6d6da' : 'var(--muted)'
+        };
+      }),
+
+      tiles: TILES.map(([name, initials, color, key, f]) => {
+        const [code, channel, chipBg, chipFg] = CHANNEL[key];
+        return {
+          name, initials, code, channel, chipBg, chipFg,
+          video: !!f.video,
+          audioOnly: !!f.audioOnly,
+          glyph: f.glyph || '☏',
+          bars: barsFor(f.level || 0),
+          muted: f.muted !== false && !f.speaking,
+          speaking: !!f.speaking,
+          flag: f.flag || null,
+          flagFg: f.flag === 'LIGAÇÃO FRACA' ? 'var(--live)' : '#d6d6da',
+          flagRing: f.flag === 'LIGAÇÃO FRACA' ? 'var(--live)' : 'var(--border)',
+          bg: f.audioOnly
+            ? 'var(--raised)'
+            : 'linear-gradient(150deg, ' + color + ', #000 78%)',
+          ring: f.speaking ? 'var(--success)' : 'var(--border)'
+        };
+      }),
+
+      external: EXTERNAL.map(([key, name, number, state, fg, meta, action]) => {
+        const [code, , chipBg, chipFg] = CHANNEL[key];
+        return { code, chipBg, chipFg, name, number, state, fg, meta, action };
+      }),
+
+      addVia: ADD_VIA.map(([key, label, cost, on]) => {
+        const [code, , chipBg, chipFg] = CHANNEL[key];
+        return {
+          code, chipBg, chipFg, label, cost,
+          ring: on ? 'var(--accent)' : 'var(--border)',
+          bg: on ? 'rgba(255,90,96,.12)' : 'var(--stage)',
+          fg: on ? 'var(--accent)' : '#d6d6da'
+        };
+      })
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

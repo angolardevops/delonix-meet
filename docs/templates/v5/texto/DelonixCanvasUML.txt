@@ -1,0 +1,107 @@
+Quadro · Modelo de domínio Delonix Meet
+UML 2
+BPMN 2.0
+Arquitectura
+Fluxograma
+Livre
+AM
+JF
+BQ
+Validar modelo
+Exportar XMI
+Guardar no storage
+Procurar elemento…
+{{ g.title }}
+{{ it.icon }}
+{{ it.label }}
+Gerar do modelo
+A IA propõe atributos e relações a partir dos nomes das classes.
+DIAGRAMA DE CLASSES · SESSÃO E GRAVAÇÃO
+3 seleccionados
+Agrupar
+⌘G
+Desagrupar
+⇧⌘G
+<<entity>>
+Session
+− id: UUID
+− roomCode: String
+− type: SessionType
+− startsAt: DateTime
+− recordAt4K: Boolean
++ start(): void
++ publishStream(): Stream
+Recording
+− resolution: Enum
+− sizeBytes: Long
+− storage: StorageRef
++ openInStudio()
+Transcript
+− language: Locale
+− confidence: Float
++ toCaptions(): VTT
+Participant
+− role: Role
+− identity: OdooUser
+− channel: Pstn|WebRTC
+<<interface>>
+StreamTarget
++ connect(): Health
++ bitrate(): Int
+RtmpTarget
+InternalSrv
+<<note>>
+A dobragem gera um Transcript por idioma; a gravação mantém uma faixa de áudio por locale.
+1
+0..*
+grava
+transcreve
+participa 1..*
+DIAGRAMA DE SEQUÊNCIA · ENTRAR E EMITIR
+{{ l.name }}
+1: join(roomCode, sso)
+2: allocateMedia()
+3: publish(4 destinos)
+4: health(bitrate, perda)
+CASOS DE USO
+Anfitrião
+Emitir para vários canais
+Editar gravação no Studio
+Traduzir em directo
+UML 2.5 · classes + sequência + casos de uso
+✓ modelo válido · 0 avisos
+V · M · H · ⇧clique · ⌘G
+Joaquim Ferreira
+76% · ajustar à página
+Elemento
+Estilo
+Camadas
+Classe · Transcript
+ESTEREÓTIPO
+<<entity>>
+PACOTE
+meet.media
+ATRIBUTOS
+−
+language: Locale
+−
+confidence: Float
++ atributo
+Selecção · 3 classes
+laço
+Agrupar ⌘G
+Desagrupar
+▣
+Grupo · Núcleo de media
+3
+Session · Recording · Transcript
+Relações
+{{ r.k }}
+{{ r.t }}
+Saídas do quadro
+✓
+XMI 2.5 · PlantUML · SVG
+✓
+Anexar à gravação da sessão
+✓
+Guardar em MinIO / Nextcloud

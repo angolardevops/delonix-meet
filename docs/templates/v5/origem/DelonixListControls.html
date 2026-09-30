@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"><!--CS-->
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap">
+<style>
+/* Tokens por omissão: como este componente vive dentro de outros ecrãs,
+   declaram-se no :root para que o anfitrião possa sobrepor-se com os seus
+   tokens inline — e o ficheiro isolado continua a ter cor. */
+:root{
+  --surface:#f4f4f5; --raised:#ffffff; --stage:#000000; --border:#dedee1;
+  --text:#0b0b0c; --muted:#5c5c63; --accent:#ad1017; --accent-strong:#8a0c12;
+  --live:#a85b00; --success:#1e7a4a;
+}
+/* Sem regras de `body` aqui: o helmet de um filho entra no documento do
+   anfitrião e deslocava todos os ecrãs que importam esta barra. */
+</style>
+</helmet>
+<div style="display:flex;flex-direction:column;gap:7px;font-family:'Archivo',system-ui,sans-serif">
+
+  <div style="position:relative">
+  <div style="display:flex;align-items:stretch;gap:8px">
+    <div style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:2px;border:1px solid var(--accent);background:var(--raised);flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--muted);flex:none">⌕</span>
+      <sc-for list="{{ facets }}" as="f" hint-placeholder-count="3">
+        <span style="display:inline-flex;align-items:stretch;border-radius:2px;overflow:hidden;border:1px solid {{ f.ring }}">
+          <span style="padding:3px 6px;font-family:'DM Mono',monospace;font-size:8.5px;letter-spacing:.3px;background:{{ f.kindBg }};color:{{ f.kindFg }};display:flex;align-items:center">{{ f.kind }}</span>
+          <span style="padding:3px 7px;display:flex;align-items:center;gap:7px;background:{{ f.bg }};font-size:10.5px;font-weight:600;color:{{ f.fg }}">{{ f.value }}<span style="font-size:10px;color:var(--muted)">✕</span></span>
+        </span>
+      </sc-for>
+      <span style="flex:1;min-width:90px;padding:3px 2px;font-size:11.5px;color:var(--muted)">{{ placeholder }}</span>
+      <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);flex:none">↵ para procurar</span>
+    </div>
+
+    <sc-for list="{{ triggers }}" as="t" hint-placeholder-count="3">
+      <div onClick="{{ t.onClick }}" style="display:flex;align-items:center;gap:7px;padding:0 11px;border-radius:2px;border:1px solid {{ t.ring }};background:{{ t.bg }};color:{{ t.fg }};font-size:11.5px;font-weight:600;cursor:pointer;flex:none">
+        <span style="font-size:11px">{{ t.icon }}</span>{{ t.label }}
+        <sc-if value="{{ t.count }}" hint-placeholder-val="{{ false }}"><span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 5px;border-radius:2px;background:var(--accent);color:#fff">{{ t.count }}</span></sc-if>
+        <span style="font-size:8px;color:var(--muted)">▾</span>
+      </div>
+    </sc-for>
+  </div>
+
+  <sc-if value="{{ panelOpen }}" hint-placeholder-val="{{ true }}">
+  <div style="position:absolute;top:calc(100% + 6px);left:{{ panel.left }};width:{{ panel.width }};z-index:30;background:var(--raised);border:1px solid var(--border);border-radius:2px;box-shadow:0 16px 38px rgba(11,11,12,.26);overflow:hidden">
+    <div style="padding:9px 12px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.5px;color:var(--muted)">{{ panel.title }}</span>
+      <span style="flex:1"></span>
+      <span style="font-size:10px;font-weight:600;color:var(--accent)">{{ panel.action }}</span>
+    </div>
+
+    <div style="max-height:306px;overflow:auto">
+      <sc-for list="{{ panel.rows }}" as="r" hint-placeholder-count="11">
+        <div style="display:flex;align-items:center;gap:9px;padding:{{ r.pad }};border-bottom:1px solid {{ r.divider }};background:{{ r.bg }}">
+          <sc-if value="{{ r.heading }}" hint-placeholder-val="{{ false }}">
+            <span style="font-family:'DM Mono',monospace;font-size:8.5px;letter-spacing:.5px;color:var(--muted)">{{ r.label }}</span>
+          </sc-if>
+          <sc-if value="{{ r.option }}" hint-placeholder-val="{{ true }}">
+            <span style="width:14px;height:14px;flex:none;border-radius:{{ r.radius }};border:1px solid {{ r.boxRing }};background:{{ r.boxBg }};color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center">{{ r.mark }}</span>
+            <span style="flex:1;min-width:0">
+              <span style="display:block;font-size:11.5px;font-weight:{{ r.weight }};color:{{ r.fg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.label }}</span>
+              <sc-if value="{{ r.hint }}" hint-placeholder-val="{{ false }}"><span style="display:block;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ r.hint }}</span></sc-if>
+            </span>
+            <sc-if value="{{ r.right }}" hint-placeholder-val="{{ false }}"><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);flex:none">{{ r.right }}</span></sc-if>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="padding:11px 12px;border-top:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;gap:9px">
+      <sc-if value="{{ panel.saving }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="padding:8px 10px;border-radius:2px;border:1px solid var(--accent);background:var(--raised);font-size:11.5px">{{ panel.saveName }}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="width:13px;height:13px;border-radius:2px;border:1px solid var(--accent-strong);background:var(--accent-strong);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center">✓</span>
+            <span style="font-size:10.5px;color:var(--muted)">Partilhar com a equipa</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="width:13px;height:13px;border-radius:2px;border:1px solid var(--border);background:var(--raised)"></span>
+            <span style="font-size:10.5px;color:var(--muted)">Abrir por omissão neste ecrã</span>
+          </div>
+        </div>
+      </sc-if>
+      <div style="display:flex;gap:7px">
+        <div style="flex:1;text-align:center;padding:8px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-size:11px;font-weight:600;color:var(--muted)">{{ panel.secondary }}</div>
+        <div style="flex:1;text-align:center;padding:8px;border-radius:2px;background:var(--accent);color:#fff;font-size:11px;font-weight:600">{{ panel.primary }}</div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:9px">
+    <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">{{ summary }}</span>
+    <span style="flex:1"></span>
+    <span style="font-size:10.5px;font-weight:600;color:var(--accent)">Guardar como favorito</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":980,"height":520},"context":{"editor":"enum","options":["users","recordings","exports","moderation","audit"],"default":"users","tsType":"string"},"open":{"editor":"enum","options":["fechado","filtros","agrupar","favoritos"],"default":"filtros","tsType":"string"},"facets":{"editor":"text","default":"busca:emissão|filtro:Sem entrar há 60 dias|grupo:Departamento","tsType":"string"},"summary":{"editor":"text","default":"13 de 142 · filtrado por actividade, agrupado por departamento","tsType":"string"}}">
+/** Barra de lista reutilizável — procura com facetas, filtros, agrupamento e
+ *  favoritos guardados. Um componente para todos os ecrãs de lista: se cada
+ *  ecrã desenhasse a sua, divergiam à terceira edição.
+ *
+ *  O ecrã anfitrião passa `context` (que conjuntos mostrar), `facets`
+ *  (estado activo, em texto "tipo:valor|…") e `summary` (a sua contagem). */
+
+const CONTEXTS = {
+  users: {
+    placeholder: 'Nome, correio, papel ou departamento…',
+    filters: [
+      ['ESTADO', ['Activos|117', 'Convidados|3', 'Suspensos|2']],
+      ['PAPEL', ['Papel elevado|5', 'Gestor de emissão|14', 'Formador|38', 'Membro|74']],
+      ['ORIGEM', ['Odoo SSO|138', 'Convite|3', 'Código de sala|1']],
+      ['RISCO', ['Sem 2FA|11', 'Conflito de funções|3', 'Sem entrar há 60 dias|13']]
+    ],
+    groups: ['Departamento', 'Papel', 'Origem', 'Estado', 'Último acesso'],
+    favourites: [['Papéis elevados sem 2FA', 'partilhada'], ['Lugares a libertar', 'só eu'], ['Convites a expirar', 'partilhada']]
+  },
+  recordings: {
+    placeholder: 'Título, anfitrião ou palavra na transcrição…',
+    filters: [
+      ['TIPO', ['Videoaulas|61', 'Emissões|34', 'Reuniões|47']],
+      ['RESOLUÇÃO', ['4K · 2160p|38', '1080p|72', '720p|18', 'Só áudio|14']],
+      ['ESTADO', ['Prontas|128', 'A processar|2', 'A transcrever|1', 'Publicadas|41']],
+      ['ARMAZENAMENTO', ['MinIO Luanda|119', 'Nextcloud|17', 'Google Drive|6']]
+    ],
+    groups: ['Tipo de sessão', 'Anfitrião', 'Resolução', 'Mês', 'Armazenamento'],
+    favourites: [['4K por processar', 'partilhada'], ['Sem transcrição há 7 dias', 'partilhada'], ['Publicadas este mês', 'só eu']]
+  },
+  exports: {
+    placeholder: 'Sessão, formato ou destino…',
+    filters: [
+      ['ESTADO', ['Em curso|1', 'Em fila|2', 'Concluídas|84', 'Falhadas|3']],
+      ['FORMATO', ['MP4|76', 'MP3|9', 'SRT · legendas|5']],
+      ['PREDEFINIÇÃO', ['Aula 4K|31', 'Web 1080p|38', 'Podcast|9', 'Vertical 9:16|6']],
+      ['DESTINO', ['MinIO Luanda|71', 'Nextcloud|8', 'YouTube|4', 'Evento Odoo|2']]
+    ],
+    groups: ['Estado', 'Predefinição', 'Destino', 'Dia'],
+    favourites: [['Falhas para reenviar', 'partilhada'], ['Exportações de hoje', 'só eu']]
+  },
+  moderation: {
+    placeholder: 'Nome, papel ou sala paralela…',
+    filters: [
+      ['ESTADO NA SALA', ['Mãos no ar|2', 'Sem som|11', 'Com vídeo|8', 'Em espera|2']],
+      ['PAPEL', ['Anfitriã|1', 'Co-anfitrião|2', 'Oradora|2', 'Assistente|7']],
+      ['CANAL', ['Delonix|8', 'WhatsApp|1', 'Operadora|2', 'Sala SIP|1']],
+      ['SALA', ['Principal|4', 'Sala 1|5', 'Sala 2|4']]
+    ],
+    groups: ['Sala paralela', 'Papel', 'Canal', 'Estado do som'],
+    favourites: [['Mãos no ar por atender', 'só eu'], ['Convidados externos', 'partilhada']]
+  },
+  audit: {
+    placeholder: 'Pessoa, acção ou objecto…',
+    filters: [
+      ['ACÇÃO', ['Permissões alteradas|38', 'Exportação de dados|17', 'Retenção alterada|6']],
+      ['AUTOR', ['Administradores|61', 'Sistema|284', 'Proprietária|12']],
+      ['PERÍODO', ['Hoje|24', 'Últimos 7 dias|142', 'Este mês|618']],
+      ['SEVERIDADE', ['Aviso|26', 'Crítico|4']]
+    ],
+    groups: ['Acção', 'Autor', 'Dia', 'Severidade'],
+    favourites: [['Alterações de permissões', 'partilhada · auditoria'], ['Exportações de dados', 'partilhada']]
+  }
+};
+
+/* Cada tipo de faceta tem a sua cor, para se ler de relance se o que está
+   aplicado é uma busca, um filtro ou um agrupamento. */
+const TONE = {
+  busca: ['var(--surface)', 'var(--muted)', 'var(--border)', 'var(--raised)', 'var(--text)'],
+  filtro: ['color-mix(in srgb, var(--accent) 16%, transparent)', 'var(--accent-strong)', 'var(--accent)', 'color-mix(in srgb, var(--accent) 7%, transparent)', 'var(--accent-strong)'],
+  grupo: ['color-mix(in srgb, var(--live) 20%, transparent)', '#6b3d00', 'var(--live)', 'color-mix(in srgb, var(--live) 9%, transparent)', '#6b3d00']
+};
+
+const PANELS = {
+  filtros: { title: 'FILTROS', action: 'Limpar tudo', left: '0px', width: '332px', secondary: 'Limpar', primary: 'Aplicar', saving: false },
+  agrupar: { title: 'AGRUPAR POR', action: 'Sem agrupamento', left: '0px', width: '268px', secondary: 'Remover', primary: 'Aplicar', saving: false },
+  favoritos: { title: 'FAVORITOS', action: 'Gerir', left: '0px', width: '316px', secondary: 'Cancelar', primary: 'Guardar', saving: true }
+};
+
+class Component extends DCLogic {
+  state = { open: null };
+
+  componentDidMount() {
+    // «fechado» é o estado normal dentro de um ecrã de lista; o ficheiro
+    // isolado abre nos filtros para se ver o painel.
+    this.setState({ open: this.props.open || 'filtros' });
+  }
+
+  toggle(key) { this.setState((s) => ({ open: s.open === key ? null : key })); }
+
+  renderVals() {
+    const ctx = CONTEXTS[this.props.context || 'users'] || CONTEXTS.users;
+    const open = this.state.open || 'filtros';
+    const panelOpen = open !== 'fechado';
+    const active = (this.props.facets || 'busca:emissão|filtro:Sem entrar há 60 dias|grupo:Departamento')
+      .split('|').filter(Boolean);
+
+    const applied = new Set(active.map((c) => c.split(':')[1]));
+
+    const rows = [];
+    const heading = (label) => rows.push({
+      heading: true, option: false, label, pad: '8px 12px 4px',
+      divider: 'transparent', bg: 'var(--surface)'
+    });
+    const option = (label, right, on, round, hint) => rows.push({
+      heading: false, option: true, label, right, hint: hint || null,
+      pad: '8px 12px', divider: 'var(--border)',
+      bg: on ? 'color-mix(in srgb, var(--accent) 6%, transparent)' : 'transparent',
+      mark: on ? '✓' : '', radius: round ? '50%' : '2px',
+      boxBg: on ? 'var(--accent-strong)' : 'var(--raised)',
+      boxRing: on ? 'var(--accent-strong)' : 'var(--border)',
+      weight: on ? '600' : '500',
+      fg: on ? 'var(--accent-strong)' : 'var(--text)'
+    });
+
+    if (open === 'filtros') {
+      for (const [group, items] of ctx.filters) {
+        heading(group);
+        for (const item of items) {
+          const [label, count] = item.split('|');
+          option(label, count, applied.has(label), false);
+        }
+      }
+    } else if (open === 'agrupar') {
+      heading('UM NÍVEL OU DOIS — A ORDEM CONTA');
+      ctx.groups.forEach((g) => option(g, null, applied.has(g), true));
+    } else {
+      heading('AS MINHAS PESQUISAS');
+      ctx.favourites.forEach(([label, scope], i) => option(label, null, i === 0, true, scope));
+      heading('GUARDAR A PESQUISA ACTUAL');
+    }
+
+    const counts = {
+      filtros: active.filter((c) => c.startsWith('filtro:')).length,
+      agrupar: active.filter((c) => c.startsWith('grupo:')).length,
+      favoritos: 0
+    };
+
+    return {
+      panelOpen,
+      placeholder: ctx.placeholder,
+      summary: this.props.summary || '13 de 142 · filtrado por actividade, agrupado por departamento',
+
+      facets: active.map((chunk) => {
+        const [kind, value] = chunk.split(':');
+        const t = TONE[kind] || TONE.busca;
+        return { kind: kind.toUpperCase(), value, kindBg: t[0], kindFg: t[1], ring: t[2], bg: t[3], fg: t[4] };
+      }),
+
+      triggers: [['filtros', '▤', 'Filtros'], ['agrupar', '⊞', 'Agrupar por'], ['favoritos', '★', 'Favoritos']]
+        .map(([key, icon, label]) => {
+          const on = open === key;
+          return {
+            key, icon, label,
+            count: counts[key] ? String(counts[key]) : null,
+            onClick: () => this.toggle(key),
+            ring: on || counts[key] ? 'var(--accent)' : 'var(--border)',
+            bg: on ? 'color-mix(in srgb, var(--accent) 10%, var(--raised))' : 'var(--raised)',
+            fg: on || counts[key] ? 'var(--accent-strong)' : 'var(--text)'
+          };
+        }),
+
+      panel: Object.assign({}, PANELS[open], {
+        rows,
+        saveName: open === 'favoritos' ? 'Sem entrar há 60 dias · por departamento' : ''
+      })
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

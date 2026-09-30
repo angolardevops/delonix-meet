@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#e8232b;text-decoration:none}a:hover{color:#ff5a5f}</style></helmet>
+<div style="--surface:#0d0d0f;--raised:#17171a;--stage:#000000;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--live:#f0a32e;--record:#d41f27;--success:#2f9e6a;--warning:#f0a32e;--danger:#d41f27;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;background:var(--stage);color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex;flex-direction:column">
+
+  <div style="height:50px;flex:none;box-sizing:border-box;padding:0 18px;display:flex;align-items:center;gap:10px;background:var(--surface);border-bottom:1px solid var(--border)">
+    <div style="width:22px;height:22px;color:var(--accent);flex:none"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path></svg></div>
+    <div style="font-size:12.5px;font-weight:600">Quadro partilhado no palco · Arquitectura de Voz Delonix</div>
+    <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;padding:3px 8px;border-radius:2px;background:var(--raised);border:1px solid var(--border)">00:41:09</div>
+    <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;background:color-mix(in srgb,var(--record) 18%,transparent);border:1px solid var(--record);font-family:'DM Mono',monospace;font-size:10px;font-weight:500;color:#ef9a9a"><div style="width:7px;height:7px;border-radius:50%;background:var(--record)"></div>REC 4K</div>
+    <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;background:color-mix(in srgb,var(--live) 18%,transparent);border:1px solid var(--live);font-family:'DM Mono',monospace;font-size:10px;font-weight:500;color:#e8bb86"><div style="width:0;height:0;border-left:6px solid var(--live);border-top:4px solid transparent;border-bottom:4px solid transparent"></div>AO VIVO · 1 284</div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:7px;padding:4px 9px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);font-size:10.5px;font-weight:600;color:var(--accent)">✎ Caneta · Delonix Pen 2</div>
+    <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">bateria 82% · pressão activa</div>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:62px 1fr 232px;overflow:hidden">
+
+    <div style="background:var(--surface);border-right:1px solid var(--border);padding:12px 0;display:flex;flex-direction:column;align-items:center;gap:7px">
+      <sc-for list="{{ tools }}" as="t" hint-placeholder-count="8">
+        <div style="width:44px;height:44px;border-radius:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:{{ t.bg }};border:1px solid {{ t.ring }};color:{{ t.fg }}">
+          <div style="display:flex">{{ t.icon }}</div>
+          <div style="font-size:7.5px;font-weight:600">{{ t.label }}</div>
+        </div>
+      </sc-for>
+      <div style="width:34px;height:1px;background:var(--border);margin:2px 0"></div>
+      <div style="width:44px;height:36px;border-radius:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 2h5v5H2zM9 9h5v5H9zM7 7h2v2H7z"></path></svg>
+        <div style="font-size:7px;font-weight:600">⌘G</div>
+      </div>
+      <div style="width:44px;height:36px;border-radius:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--muted)">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2.4 1.8"><path d="M2 2h5v5H2zM9 9h5v5H9z"></path></svg>
+        <div style="font-size:7px;font-weight:600">⇧⌘G</div>
+      </div>
+      <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;align-items:center">
+        <div style="width:24px;height:24px;border-radius:50%;background:#e8232b;border:2px solid #fff"></div>
+        <div style="width:24px;height:24px;border-radius:50%;background:#0b0b0c;border:1px solid var(--border)"></div>
+        <div style="width:24px;height:24px;border-radius:50%;background:#3c5a7a"></div>
+        <div style="width:24px;height:24px;border-radius:50%;background:#f0a32e"></div>
+        <div style="width:24px;height:24px;border-radius:50%;background:#2f9e6a"></div>
+      </div>
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:5px;align-items:center">
+        <div style="width:8px;height:8px;border-radius:50%;background:#f2f2f3"></div>
+        <div style="width:13px;height:13px;border-radius:50%;background:#f2f2f3"></div>
+        <div style="width:19px;height:19px;border-radius:50%;background:#f2f2f3"></div>
+      </div>
+    </div>
+
+    <div style="padding:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;min-width:0">
+      <div style="flex:1;min-height:0;position:relative;border-radius:3px;background:#f7f7f8;border:1px solid var(--live);overflow:hidden">
+        <div style="position:absolute;inset:0;background-image:radial-gradient(#d4d4d8 1px,transparent 1px);background-size:26px 26px;opacity:.8"></div>
+
+        <div style="position:absolute;top:22px;left:30px;font-family:'Archivo Black',sans-serif;font-size:26px;color:#0b0b0c;letter-spacing:-0.6px">FAILOVER EM DIRECTO</div>
+
+        <svg style="position:absolute;top:64px;left:28px" width="880" height="300" viewBox="0 0 880 300" fill="none">
+          <path d="M8 116c46-58 108-16 150-52 34-29 72 6 112-14" stroke="#ad1017" stroke-width="6.5" stroke-linecap="round"></path>
+          <path d="M292 44c58 4 96 62 158 46 44-11 62-52 118-38" stroke="#ad1017" stroke-width="4.5" stroke-linecap="round"></path>
+          <path d="M580 56c40 30 22 84 74 96 40 9 74-22 118-8" stroke="#ad1017" stroke-width="3" stroke-linecap="round"></path>
+          <path d="M40 208c92-12 140 40 232 22 70-14 96-58 178-40" stroke="#0b0b0c" stroke-width="3.4" stroke-linecap="round"></path>
+          <path d="M464 196c54 22 92-14 148 2" stroke="#0b0b0c" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="10 9"></path>
+          <circle cx="640" cy="204" r="9" fill="#3c5a7a"></circle>
+          <path d="M666 204h96" stroke="#3c5a7a" stroke-width="3" stroke-linecap="round"></path>
+        </svg>
+
+        <div style="position:absolute;top:122px;left:242px;padding:9px 12px;border-radius:3px;background:#fffbe8;border:1px solid #e3d9a8;transform:rotate(-1.4deg);max-width:250px">
+          <div style="font-size:11.5px;color:#4a4326;line-height:1.5;font-weight:500">A caneta escreve à pressão: o traço fino é comentário, o grosso é decisão.</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:#6b6134;margin-top:5px">AM · 40:52</div>
+        </div>
+
+        <div style="position:absolute;bottom:88px;left:22px;width:404px;height:78px;border:1px dashed #ad1017;background:rgba(173,16,23,.05);box-sizing:border-box">
+          <div style="position:absolute;top:-4px;left:-4px;width:7px;height:7px;background:#fff;border:1.5px solid #ad1017"></div>
+          <div style="position:absolute;top:-4px;right:-4px;width:7px;height:7px;background:#fff;border:1.5px solid #ad1017"></div>
+          <div style="position:absolute;bottom:-4px;left:-4px;width:7px;height:7px;background:#fff;border:1.5px solid #ad1017"></div>
+          <div style="position:absolute;bottom:-4px;right:-4px;width:7px;height:7px;background:#fff;border:1.5px solid #ad1017"></div>
+        </div>
+        <div style="position:absolute;bottom:172px;left:22px;display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:2px;background:#0b0b0c;box-shadow:0 3px 12px rgba(11,11,12,.3);z-index:6">
+          <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:#ff9a9e">3 seleccionados</div>
+          <div style="width:1px;height:16px;background:#3a3a3f"></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:2px;background:#ad1017"><span style="font-size:10.5px;font-weight:600;color:#fff">Agrupar</span><span style="font-family:'DM Mono',monospace;font-size:9px;color:#ffc9cb">⌘G</span></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:2px;border:1px solid #3a3a3f"><span style="font-size:10.5px;font-weight:600;color:#9a9aa0">Desagrupar</span><span style="font-family:'DM Mono',monospace;font-size:9px;color:#74747a">⇧⌘G</span></div>
+          <div style="width:1px;height:16px;background:#3a3a3f"></div>
+          <div style="display:flex;align-items:center;gap:3px;color:#c9c9ce">
+            <div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 3.4h14M6.4 6.4v8M13.6 6.4v5"></path></svg></div>
+            <div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 3v14M4.6 6.6h10.8M6.6 13.4h6.8"></path></svg></div>
+          </div>
+          <div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center;color:#ff7a80"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4.4 5.6h11.2M8.4 5.6V3.6h3.2v2M6.2 5.6l.8 10.8h6l.8-10.8"></path></svg></div>
+        </div>
+        <div style="position:absolute;bottom:96px;left:30px;display:flex;gap:10px">
+          <div style="padding:11px 13px;border-radius:3px;background:#fff;border:1.5px solid #0b0b0c"><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:#5c5c63">SBC-01</div><div style="font-size:12px;font-weight:700;color:#0b0b0c;margin-top:2px">activo</div></div>
+          <div style="padding:11px 13px;border-radius:3px;background:#fff;border:1.5px dashed #ad1017"><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:#ad1017">SBC-02</div><div style="font-size:12px;font-weight:700;color:#0b0b0c;margin-top:2px">em espera</div></div>
+          <div style="padding:11px 13px;border-radius:3px;background:#fff;border:1.5px solid #0b0b0c"><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:#5c5c63">FREESWITCH</div><div style="font-size:12px;font-weight:700;color:#0b0b0c;margin-top:2px">mistura 4K</div></div>
+        </div>
+
+        <div style="position:absolute;bottom:22px;left:30px;font-size:14px;color:#0b0b0c;font-family:'DM Mono',monospace">< 3 s para comutar · PIN mantém-se</div>
+
+        <div style="position:absolute;top:202px;left:594px;display:flex;align-items:flex-start">
+          <svg width="16" height="20" viewBox="0 0 14 18" fill="#3c5a7a"><path d="M0 0l14 7-6 1.6L5.4 15z"></path></svg>
+          <div style="padding:2px 8px;border-radius:2px;background:#3c5a7a;color:#fff;font-size:10px;font-weight:600;margin-top:9px">Joaquim Ferreira</div>
+        </div>
+        <div style="position:absolute;top:96px;left:392px;display:flex;align-items:flex-start">
+          <svg width="16" height="20" viewBox="0 0 14 18" fill="#ad1017"><path d="M0 0l14 7-6 1.6L5.4 15z"></path></svg>
+          <div style="padding:2px 8px;border-radius:2px;background:#ad1017;color:#fff;font-size:10px;font-weight:600;margin-top:9px">Ana Mbala · caneta</div>
+        </div>
+
+        <div style="position:absolute;top:12px;right:12px;display:flex;gap:6px">
+          <div style="padding:4px 9px;border-radius:2px;background:#fff;border:1px solid #dedee1;font-family:'DM Mono',monospace;font-size:9.5px;color:#5c5c63">página 03 / 05</div>
+          <div style="padding:4px 9px;border-radius:2px;background:#f6eceb;border:1px solid #ad1017;font-family:'DM Mono',monospace;font-size:9.5px;color:#ad1017">no palco · 4 destinos</div>
+        </div>
+        <div style="position:absolute;bottom:12px;right:12px;display:flex;gap:6px">
+          <div style="padding:5px 10px;border-radius:2px;background:#fff;border:1px solid #dedee1;font-size:10.5px;font-weight:600;color:#0b0b0c">Guardar no storage</div>
+          <div style="padding:5px 10px;border-radius:2px;background:#ad1017;color:#fff;font-size:10.5px;font-weight:600">Anexar à gravação</div>
+        </div>
+      </div>
+
+      <div style="flex:none;height:96px;display:flex;gap:9px">
+        <div style="flex:1;position:relative;border-radius:2px;overflow:hidden;background:linear-gradient(150deg,#7d1a1f,#000 78%);display:flex;align-items:center;justify-content:center;border:1px solid var(--success)"><div style="font-size:17px;font-weight:700">AM</div><div style="position:absolute;bottom:5px;left:5px;right:5px;padding:2px 5px;border-radius:2px;background:rgba(0,0,0,.74);font-size:9.5px;font-weight:600;text-align:center">◉ Ana Mbala · a escrever</div></div>
+        <div style="flex:1;position:relative;border-radius:2px;overflow:hidden;background:linear-gradient(150deg,#3c5a7a,#000 78%);display:flex;align-items:center;justify-content:center"><div style="font-size:17px;font-weight:700">JF</div><div style="position:absolute;bottom:5px;left:5px;right:5px;padding:2px 5px;border-radius:2px;background:rgba(0,0,0,.74);font-size:9.5px;font-weight:600;text-align:center">Joaquim F.</div></div>
+        <div style="flex:1;position:relative;border-radius:2px;overflow:hidden;background:linear-gradient(150deg,#7a4a68,#000 78%);display:flex;align-items:center;justify-content:center"><div style="font-size:17px;font-weight:700">TK</div><div style="position:absolute;bottom:5px;left:5px;right:5px;padding:2px 5px;border-radius:2px;background:rgba(0,0,0,.74);font-size:9.5px;font-weight:600;text-align:center">Teresa K. ⊘</div></div>
+        <div style="flex:1;position:relative;border-radius:2px;overflow:hidden;background:linear-gradient(150deg,#3a6b73,#000 78%);display:flex;align-items:center;justify-content:center"><div style="font-size:17px;font-weight:700">PS</div><div style="position:absolute;bottom:5px;left:5px;right:5px;padding:2px 5px;border-radius:2px;background:rgba(0,0,0,.74);font-size:9.5px;font-weight:600;text-align:center">Paulo S. ⊘</div></div>
+        <div style="flex:1;border-radius:2px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)">+9</div>
+        <div style="flex:none;display:flex;align-items:center">
+          <dc-import name="DelonixControls" set="board" hint-size="100%,66px"></dc-import>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:var(--surface);border-left:1px solid var(--border);padding:12px 11px;box-sizing:border-box;display:flex;flex-direction:column;gap:11px;overflow:hidden">
+      <div style="padding:10px;border-radius:2px;background:var(--raised);border:1px solid var(--accent);display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:7px"><div style="font-size:11.5px;font-weight:600">Caneta</div><div style="font-family:'DM Mono',monospace;font-size:8.5px;padding:1.5px 5px;border-radius:2px;background:var(--accent-strong);color:#fff;margin-left:auto">LIGADA</div></div>
+        <div style="display:flex;align-items:center;gap:7px"><span style="font-size:9.5px;color:var(--muted);width:52px;flex:none">Pressão</span><div style="flex:1;height:4px;border-radius:2px;background:var(--border)"><div style="width:72%;height:100%;border-radius:2px;background:var(--accent)"></div></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">72%</span></div>
+        <div style="display:flex;align-items:center;gap:7px"><span style="font-size:9.5px;color:var(--muted);width:52px;flex:none">Suavizar</span><div style="flex:1;height:4px;border-radius:2px;background:var(--border)"><div style="width:48%;height:100%;border-radius:2px;background:var(--accent)"></div></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">48%</span></div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:28px;height:16px;border-radius:2px;background:var(--accent);position:relative;flex:none"><div style="position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff"></div></div><div style="font-size:10px">Rejeição de palma</div></div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:28px;height:16px;border-radius:2px;background:var(--accent);position:relative;flex:none"><div style="position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff"></div></div><div style="font-size:10px">Inclinação = espessura</div></div>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--raised);border:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+        <div style="display:flex;align-items:center;gap:7px"><div style="font-size:11.5px;font-weight:600">Tinta inteligente</div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted);margin-left:auto">IA local</div></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent);font-size:10px;font-weight:600;color:var(--accent)">✓ Endireitar formas</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent);font-size:10px;font-weight:600;color:var(--accent)">✓ Converter escrita em texto</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:2px;border:1px solid var(--border);font-size:10px;color:var(--muted)">Reconhecer UML / BPMN</div>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--raised);border:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+        <div style="font-size:11.5px;font-weight:600">Quem pode escrever</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:2px;background:var(--surface)"><div style="width:22px;height:22px;border-radius:50%;background:#9e2026;color:#fff;font-size:8.5px;font-weight:600;display:flex;align-items:center;justify-content:center">AM</div><div style="flex:1;font-size:10px;font-weight:600">Ana Mbala</div><span style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--accent)">CANETA</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:2px;background:var(--surface)"><div style="width:22px;height:22px;border-radius:50%;background:#3c5a7a;color:#fff;font-size:8.5px;font-weight:600;display:flex;align-items:center;justify-content:center">JF</div><div style="flex:1;font-size:10px;font-weight:600">Joaquim Ferreira</div><span style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--success)">RATO</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:2px;background:var(--surface)"><div style="width:22px;height:22px;border-radius:50%;background:#7a4a68;color:#fff;font-size:8.5px;font-weight:600;display:flex;align-items:center;justify-content:center">TK</div><div style="flex:1;font-size:10px;color:var(--muted)">Teresa Kiala</div><span style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">VER</span></div>
+        <div style="padding:6px;border-radius:2px;border:1px solid var(--border);text-align:center;font-size:10px;font-weight:600;color:var(--muted)">Convidar a escrever</div>
+      </div>
+
+      <div style="margin-top:auto;padding:10px;border-radius:2px;border:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:10.5px;font-weight:600">O quadro está a ser emitido</div>
+        <div style="font-size:9.5px;color:var(--muted);line-height:1.45">Os espectadores vêem os traços em tempo real; a gravação guarda o quadro como faixa separada.</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:#e8bb86">atraso de 8 s nos destinos públicos</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const sv = (d, dash) => React.createElement('svg',{width:17,height:17,viewBox:'0 0 16 16',fill:'none',stroke:'currentColor',strokeWidth:1.3,strokeLinecap:'round',strokeLinejoin:'round',strokeDasharray:dash||undefined},React.createElement('path',{d}));
+const TOOLS = [
+  ['Ponteiro','M3 2l9 5.6-4 .9-1.4 4.1z',true],
+  ['Laço','M2.5 2.5h11v11h-11z',false],
+  ['Caneta','M3 13l1.2-3.3 6-6 2.1 2.1-6 6z',false],
+  ['Marcador','M2.5 13.5h11M4 11l6.5-7 2.5 2.5-6.5 7z',false],
+  ['Formas','M2.5 2.5h5v5h-5zM9 8.5a3 3 0 1 0 4.5 2.6',false],
+  ['Texto','M4 3.5h8M8 3.5v9',false],
+  ['Nota','M3 3h10v7l-3 3H3z',false],
+  ['Laser','M8 2v3M8 11v3M2 8h3M11 8h3M8 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3',false],
+  ['Apagar','M3 11l5-5 4 4-3 3H5z',false],
+  ['Mover','M8 2v12M2 8h12M8 2 5.5 4.5M8 2l2.5 2.5',false]
+];
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      tools: TOOLS.map(([label, d, on]) => ({
+        label, icon: sv(d, label === 'Laço' ? '2.6 2' : null),
+        bg: on ? 'color-mix(in srgb, var(--accent) 16%, transparent)' : 'transparent',
+        ring: on ? 'var(--accent)' : 'transparent',
+        fg: on ? 'var(--accent)' : 'var(--muted)'
+      }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

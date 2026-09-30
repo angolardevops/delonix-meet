@@ -1,0 +1,66 @@
+Exportações
+Fila · 3
+Histórico · 68
+nó trans-01.lad · 91% CPU
+Pausar fila
+Nova exportação
+A processar
+1 activa · 2 em espera
+{{ q.title }}
+{{ q.spec }}
+{{ q.state }}
+{{ q.eta }}
+{{ q.pct }}
+{{ s.icon }} {{ s.label }}
+Prioridade
+Cancelar
+Histórico
+Descarregar todos
+EXPORTAÇÃO
+PREDEFINIÇÃO
+FORMATO
+TAMANHO
+ESTADO
+DESTINO
+{{ h.title }}
+{{ h.when }}
+{{ h.preset }}
+{{ h.fmt }}
+{{ h.size }}
+{{ h.icon }}
+{{ h.state }}
+{{ h.dest }}
+Nova exportação
+Origem
+edit_8841 · sessão 3
+▾
+Predefinição
+Aula 4K
+2160p · 24 Mbps
+Web 1080p
+1080p · 8 Mbps
+Podcast
+MP3 · 192 kbps
+Vertical 9:16
+1080×1920
+Incluir
+✓
+Legendas gravadas (pt-AO)
+✓
+Faixa de dobragem EN e FR
+Quadro branco como capítulo
+Marca de água da organização
+Destino
+MinIO · delonix-rec
+▾
+ESTIMATIVA
+18,2 GB · 11 min
+Colocar na fila
+Publicação automática
+YT
+YouTube · Delonix
+✓ ligado
+ODOO
+Anexar ao evento
+✓ ligado
+Ao concluir dispara recording.ready para erp.delonix.co.ao

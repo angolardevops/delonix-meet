@@ -1,0 +1,90 @@
+Quadro · Processo de aula aberta com emissão
+UML 2
+BPMN 2.0
+Arquitectura
+Fluxograma
+Livre
+AM
+RD
+Validar BPMN
+Exportar .bpmn
+Guardar no storage
+Procurar elemento…
+{{ g.title }}
+{{ it.icon }}
+{{ it.label }}
+PISCINA · DELONIX ANGOLA, LDA
+3 seleccionados
+Agrupar
+⌘G
+Desagrupar
+⇧⌘G
+Delonix Meet
+Formadora
+✉
+Aula agendada
+Verificar dispositivos
+user task
+☺
+✕
+Tipo de sessão?
+Iniciar reunião
+service task
+Abrir estúdio
+seleccionado
+Emitir para 4 destinos
+multi-instance ⫴
+⏱
+Fim do tempo
+Encerrar e gravar
+service task
+reunião
+emissão
+Técnico
+Vigiar saúde dos canais
+▲
+Bitrate baixo
+Reduzir resolução
+Plataforma
+Transcodificar 4K
+⚙ automática
+Gerar transcrição
+⇄
+recording.ready
+BPMN 2.0 · 1 piscina · 3 pistas · 11 elementos
+▲ 1 aviso: gateway sem saída por omissão
+V · M · H · ⇧clique · ⌘G
+68% · ajustar à página
+Rita Domingas
+Elemento
+Pistas
+Validação
+Tarefa · Abrir estúdio
+TIPO
+Service task
+▾
+EXECUTOR
+meet.studio.open
+PISTA
+Formadora
+Fluxos de saída
+→
+Emitir para 4 destinos
++ fluxo condicional
+Selecção · 3 elementos
+laço
+Agrupar ⌘G
+Desagrupar
+▣
+Grupo · Arranque da emissão
+3
+Iniciar reunião · service task
+Abrir estúdio · service task
+Emitir para 4 destinos · multi-instance
+Validação do modelo
+▲
+O gateway «Tipo de sessão?» não tem saída por omissão — o processo pode bloquear em sessões híbridas.
+Corrigir automaticamente
+Partilhar na sessão
+O quadro pode ir para o palco da emissão sem sair desta vista.
+Pôr no palco

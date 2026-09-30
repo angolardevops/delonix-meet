@@ -1,0 +1,60 @@
+Inteligência e idiomas
+✓ processamento local por omissão
+Registo de utilização
+Guardar políticas
+Onde corre a inteligência
+3 motores
+No browser do utilizador · WebGPU
+transcrição, legendas, endireitar formas, resumo
+PREFERIDO
+whisper-pt-ao · 412 MB
+mt-small · 184 MB
+tts-ao · 96 MB
+692 MB em cache
+Nó de inferência on-premise
+ai-01.lad · GPU dedicada · fila 2
+reserva
+Fornecedor externo
+desactivado por política de residência
+✕ bloqueado
+▲
+Se o dispositivo não suportar WebGPU, a sessão recorre ao nó de Luanda. Nenhum áudio sai do território — Lei 22/11.
+Idiomas e tradução em directo
+8 activos
+IDIOMA
+LEGENDAS
+DOBRAGEM
+CHAT
+QUALIDADE
+{{ l.code }}
+{{ l.name }}
+{{ l.cap }}
+{{ l.dub }}
+{{ l.chat }}
+{{ l.q }}
+IDIOMA DE ORIGEM
+Detecção automática · pt-AO por omissão
+Funcionalidades por perfil
+{{ f.name }}
+{{ f.scope }}
+Privacidade e consentimento
+✓
+Aviso de gravação e de transcrição no lobby e no cabeçalho da sala.
+✓
+Consentimento explícito para dobragem da própria voz, por participante.
+✓
+Modelos de voz apagados 24 h após a sessão.
+▲
+Resumos automáticos guardam texto derivado da reunião durante 180 dias.
+Registo de decisões de IA
+Cada corte, legenda ou dobragem aplicada fica no registo de auditoria com autor e modelo.
+Consumo esta semana
+seg — dom
+pico qui · 41 h de áudio
+Transcrição
+128 h
+Dobragem
+42 h
+No browser
+86%
+Sem custo por minuto: a inferência local não consome licença.

@@ -1,0 +1,42 @@
+Aula aberta — Redes SIP para operadores
+01:12:06
+GRAVAÇÃO LOCAL CONTINUA
+▲ EMISSÃO INTERROMPIDA · 00:48
+a repor sozinho · tentativa 3 de 8
+▲
+A ligação caiu. Continue a falar — nada se perdeu.
+A gravação em 4K está a ser escrita no disco local e não parou. Quando a rede voltar, os 48 segundos que os espectadores perderam são enviados em diferido e a emissão retoma no ponto certo, sem corte na gravação final.
+Repor agora
+Baixar para 1080p
+Terminar emissão e ficar só a gravar
+{{ h.label }}
+{{ h.state }}
+{{ h.value }}
+{{ h.unit }}
+{{ h.note }}
+O que aconteceu, minuto a minuto
+este registo fica anexo à gravação
+{{ t.at }}
+{{ t.glyph }}
+{{ t.label }}
+{{ t.detail }}
+{{ t.tag }}
+Destinos
+{{ destinationSummary }}
+{{ d.tag }}
+{{ d.name }}
+{{ d.state }}
+{{ d.detail }}
+O QUE ESTÁ SEGURO
+✓
+{{ s.label }}
+{{ s.value }}
+▲
+Espaço em disco dá para 3 h 40 min a 2160p. Se a rede não voltar, continua a gravar.
+Quem perdeu o quê
+{{ a.code }}
+{{ a.label }}
+{{ a.detail }}
+{{ a.count }}
+COMO FUNCIONA
+A gravação nunca depende da rede: escreve primeiro em disco, e só depois sobe. É por isso que uma queda de linha custa espectadores, mas nunca custa a aula.

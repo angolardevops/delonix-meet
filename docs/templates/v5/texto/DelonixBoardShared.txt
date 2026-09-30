@@ -1,0 +1,67 @@
+Quadro partilhado no palco · Arquitectura de Voz Delonix
+00:41:09
+REC 4K
+AO VIVO · 1 284
+✎ Caneta · Delonix Pen 2
+bateria 82% · pressão activa
+{{ t.icon }}
+{{ t.label }}
+⌘G
+⇧⌘G
+FAILOVER EM DIRECTO
+A caneta escreve à pressão: o traço fino é comentário, o grosso é decisão.
+AM · 40:52
+3 seleccionados
+Agrupar
+⌘G
+Desagrupar
+⇧⌘G
+SBC-01
+activo
+SBC-02
+em espera
+FREESWITCH
+mistura 4K
+< 3 s para comutar · PIN mantém-se
+Joaquim Ferreira
+Ana Mbala · caneta
+página 03 / 05
+no palco · 4 destinos
+Guardar no storage
+Anexar à gravação
+AM
+◉ Ana Mbala · a escrever
+JF
+Joaquim F.
+TK
+Teresa K. ⊘
+PS
+Paulo S. ⊘
++9
+Caneta
+LIGADA
+Pressão
+72%
+Suavizar
+48%
+Rejeição de palma
+Inclinação = espessura
+Tinta inteligente
+IA local
+✓ Endireitar formas
+✓ Converter escrita em texto
+Reconhecer UML / BPMN
+Quem pode escrever
+AM
+Ana Mbala
+CANETA
+JF
+Joaquim Ferreira
+RATO
+TK
+Teresa Kiala
+VER
+Convidar a escrever
+O quadro está a ser emitido
+Os espectadores vêem os traços em tempo real; a gravação guarda o quadro como faixa separada.
+atraso de 8 s nos destinos públicos

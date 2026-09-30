@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#8a0c12;text-decoration:none}a:hover{color:#ad1017}</style></helmet>
+<div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--warning:#a85b00;--danger:#ad1017;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;display:flex;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif">
+  <dc-import name="DelonixNav" active="integ" hint-size="228px,900px"></dc-import>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:58px;flex:none;box-sizing:border-box;padding:0 22px;display:flex;align-items:center;gap:11px;background:var(--raised);border-bottom:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:600">Integrações</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">instância on-premise · delonix.co.ao</div>
+      <div style="flex:1"></div>
+      <div style="padding:7px 13px;border-radius:2px;border:1px solid var(--border);font-size:12px;font-weight:600">Registo de eventos</div>
+      <div style="padding:7px 13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:12px;font-weight:600">Nova integração</div>
+    </div>
+
+    <div style="flex:1;min-height:0;padding:18px 22px;box-sizing:border-box;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr;gap:14px;overflow:hidden">
+
+      <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:16px;display:flex;flex-direction:column;gap:12px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:34px;height:34px;border-radius:2px;flex:none;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent-strong)">O</div>
+          <div style="flex:1"><div style="font-size:13.5px;font-weight:600">Odoo</div><div style="font-size:10.5px;color:var(--muted)">odoo.delonix.co.ao · versão 17 · base delonix_prod</div></div>
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;border:1px solid var(--success);background:color-mix(in srgb,var(--accent) 8%,transparent);font-family:'DM Mono',monospace;font-size:9.5px;font-weight:600;color:var(--accent-strong)">✓ LIGADO</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
+          <div style="padding:9px 11px;border-radius:2px;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:9px"><div style="width:28px;height:16px;border-radius:2px;background:var(--accent-strong);position:relative;flex:none"><div style="position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff"></div></div><div><div style="font-size:11px;font-weight:600">SSO (OAuth 2.0)</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">142 utilizadores</div></div></div>
+          <div style="padding:9px 11px;border-radius:2px;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:9px"><div style="width:28px;height:16px;border-radius:2px;background:var(--accent-strong);position:relative;flex:none"><div style="position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff"></div></div><div><div style="font-size:11px;font-weight:600">Calendário</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">bidireccional · 2 min</div></div></div>
+          <div style="padding:9px 11px;border-radius:2px;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:9px"><div style="width:28px;height:16px;border-radius:2px;background:var(--accent-strong);position:relative;flex:none"><div style="position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff"></div></div><div><div style="font-size:11px;font-weight:600">Contactos</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">res.partner · 1 284</div></div></div>
+          <div style="padding:9px 11px;border-radius:2px;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:9px"><div style="width:28px;height:16px;border-radius:2px;background:var(--border);position:relative;flex:none"><div style="position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff"></div></div><div><div style="font-size:11px;font-weight:600">Registo de presenças</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">hr.attendance · inactivo</div></div></div>
+        </div>
+        <div style="padding:10px 12px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:5px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.5px">ÚLTIMA SINCRONIZAÇÃO</div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:10.5px"><span style="font-family:'DM Mono',monospace;color:var(--muted);font-variant-numeric:tabular-nums">14 Set · 09:38</span><span style="color:var(--success)">✓ 12 eventos · 3 contactos actualizados</span></div>
+        </div>
+      </div>
+
+      <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:16px;display:flex;flex-direction:column;gap:11px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:34px;height:34px;border-radius:2px;flex:none;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;font-weight:700;color:var(--muted)">S3</div>
+          <div style="flex:1"><div style="font-size:13.5px;font-weight:600">Armazenamento</div><div style="font-size:10.5px;color:var(--muted)">destino das gravações, quadros e anexos</div></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent)"><div style="width:13px;height:13px;border-radius:50%;border:4px solid var(--accent-strong);flex:none"></div><div style="flex:1"><div style="font-size:11.5px;font-weight:600">MinIO · S3 compatível</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">principal · Luanda</div></div><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--success)">✓ 1,84 TB</span></div>
+          <div style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:2px;border:1px solid var(--border)"><div style="width:13px;height:13px;border-radius:50%;border:1px solid var(--border);flex:none"></div><div style="flex:1"><div style="font-size:11.5px;font-weight:600">Nextcloud</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">réplica nocturna</div></div><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--success)">✓</span></div>
+          <div style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:2px;border:1px solid var(--border)"><div style="width:13px;height:13px;border-radius:50%;border:1px solid var(--border);flex:none"></div><div style="flex:1"><div style="font-size:11.5px;font-weight:600">Google Drive</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">partilha externa</div></div><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">ligado</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:10.5px;font-weight:600;color:var(--muted)">Endpoint</div><div style="padding:8px 10px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-family:'DM Mono',monospace;font-size:11px">https://s3.delonix.local:9000</div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
+            <div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:10.5px;font-weight:600;color:var(--muted)">Bucket</div><div style="padding:8px 10px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-family:'DM Mono',monospace;font-size:11px">delonix-rec</div></div>
+            <div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:10.5px;font-weight:600;color:var(--muted)">API key</div><div style="padding:8px 10px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-family:'DM Mono',monospace;font-size:11px;display:flex;justify-content:space-between">AKIA••••••4F2Q<span style="color:var(--accent);font-weight:600">ver</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="grid-column:span 2;background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:16px;display:grid;grid-template-columns:352px 1fr;gap:16px;overflow:hidden;min-height:0">
+        <div style="display:flex;flex-direction:column;gap:11px;min-height:0">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:34px;height:34px;border-radius:2px;flex:none;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--accent-strong)">⇄</div>
+            <div style="flex:1"><div style="font-size:13.5px;font-weight:600">Webhooks</div><div style="font-size:10.5px;color:var(--muted)">4 eventos activos</div></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:10.5px;font-weight:600;color:var(--muted)">URL de destino</div>
+            <div style="padding:8px 10px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-family:'DM Mono',monospace;font-size:11px">https://erp.delonix.co.ao/hooks/meet</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:10.5px;font-weight:600;color:var(--muted)">Segredo de assinatura</div>
+            <div style="padding:8px 10px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-family:'DM Mono',monospace;font-size:11px;display:flex;justify-content:space-between">whsec_••••••••9dK1<span style="color:var(--accent);font-weight:600">rodar</span></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div style="font-size:10.5px;font-weight:600;color:var(--muted)">Eventos</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px solid var(--border);background:var(--surface)"><div style="width:13px;height:13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center">✓</div><span style="font-family:'DM Mono',monospace;font-size:10.5px">meeting.started</span></div>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px solid var(--border);background:var(--surface)"><div style="width:13px;height:13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center">✓</div><span style="font-family:'DM Mono',monospace;font-size:10.5px">recording.ready</span></div>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px solid var(--border);background:var(--surface)"><div style="width:13px;height:13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center">✓</div><span style="font-family:'DM Mono',monospace;font-size:10.5px">stream.published</span></div>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px solid var(--border);background:var(--surface)"><div style="width:13px;height:13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center">✓</div><span style="font-family:'DM Mono',monospace;font-size:10.5px">participant.joined</span></div>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px dashed var(--border)"><div style="width:13px;height:13px;border-radius:2px;border:1px solid var(--border)"></div><span style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted)">whiteboard.saved</span></div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:9px;min-height:0;min-width:0">
+          <div style="display:flex;align-items:baseline;gap:9px"><div style="font-size:12px;font-weight:600">Últimas entregas</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">24 h · 1 falha</div><div style="flex:1"></div><div style="padding:5px 10px;border-radius:2px;border:1px solid var(--border);font-size:10.5px;font-weight:600">Reenviar falhas</div></div>
+          <div style="flex:1;min-height:0;border:1px solid var(--border);border-radius:2px;overflow:hidden">
+            <div style="display:grid;grid-template-columns:140px 1fr 62px 78px 110px;gap:10px;padding:7px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.5px;color:var(--muted)"><div>HORA (WAT)</div><div>EVENTO</div><div>ESTADO</div><div>LATÊNCIA</div><div>TENTATIVAS</div></div>
+            <sc-for list="{{ logs }}" as="l" hint-placeholder-count="8">
+              <div style="display:grid;grid-template-columns:140px 1fr 62px 78px 110px;gap:10px;padding:7px 12px;border-bottom:1px solid var(--border);align-items:center">
+                <div style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums">{{ l.time }}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ l.event }}</div>
+                <div><span style="font-family:'DM Mono',monospace;font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:2px;color:{{ l.fg }};border:1px solid {{ l.fg }}">{{ l.code }}</span></div>
+                <div style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums">{{ l.ms }}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted)">{{ l.tries }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const L = [
+  ['14 Set 09:38:12','meeting.started · voz-arq-2026','200','#1e7a4a','182 ms','1 de 1'],
+  ['14 Set 09:38:14','participant.joined · AM','200','#1e7a4a','96 ms','1 de 1'],
+  ['14 Set 09:38:41','participant.joined · JF','200','#1e7a4a','104 ms','1 de 1'],
+  ['13 Set 18:02:55','recording.ready · rec_8841','200','#1e7a4a','311 ms','1 de 1'],
+  ['13 Set 17:44:10','stream.published · yt_ch1','200','#1e7a4a','248 ms','1 de 1'],
+  ['13 Set 17:44:10','stream.published · rtmp_ext','503','#1e7a4a','—','3 de 5'],
+  ['13 Set 16:00:02','meeting.started · sip-aula-2','200','#1e7a4a','167 ms','1 de 1'],
+  ['12 Set 11:21:33','recording.ready · rec_8836','200','#1e7a4a','274 ms','1 de 1']
+];
+class Component extends DCLogic {
+  renderVals() {
+    return { logs: L.map(([time, event, code, fg, ms, tries]) => ({ time, event, code, fg, ms, tries })) };
+  }
+}
+<!--CS-->
+</body>
+</html>

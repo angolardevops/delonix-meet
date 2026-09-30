@@ -1,0 +1,102 @@
+Agendar sessão
+sincroniza com Odoo Calendário
+Cancelar
+Guardar e convidar
+Título
+Formação — Arquitectura de Voz Delonix
+Tipo de sessão
+Reunião
+privada
+Videoaula
+gravada
+Emissão
+pública
+✓ Híbrida
+as três
+Data e hora · WAT (UTC+1)
+14 Set 2026 · 10:00 — 10:45
+Recorrência
+Todas as segundas · 6 ocorrências
+▾
+Participantes
+autocompletar · Contactos Odoo
+JF
+Joaquim Ferreira
+TK
+Teresa Kiala
+DN
+Domingos Nzuzi
+LC
+Luísa Cardoso
+PS
+Paulo Sebastião
+esper|
+ET
+Esperança Tchivinda
+Formadora · Delonix Angola
+odoo
+NB
+Nuno Baptista (esperança@…)
+Assistente · Namíbia
+odoo
+Sala
+voz-arq-2026
+▾
+Gravação automática
+4K
+1080p
+720p
+áudio
+Destinos de emissão
+✓
+YT
+YouTube
+✓
+LI
+LinkedIn
+FB
+Facebook
+✓
+SRV
+Servidor interno
+RTMP
+RTMP personalizado
+✕ chave expirada
+Sala de espera
+anfitrião aprova cada entrada
+Dial-in PSTN
++244 222 640 100 · PIN 84 209
+Semana de 14 Set
+WAT
+SEG 14
+TER 15
+QUA 16
+QUI 17
+SEX 18
+08
+09
+10
+11
+12
+13
+14
+15
+16
+17
+Arquitectura de Voz
+10:00 · híbrida
+Licenças TI
+Aula aberta — Redes SIP
+16:00 · emissão
+Comité de produto
+Ocorrência 2
+Onboarding RH
+14:30 · videoaula
+Esta sessão
+Emissão pública
+Odoo Calendário
+Conflitos e capacidade
+▲
+Teresa Kiala tem outra sessão às 10:15. O convite será marcado como tentativo.
+✓
+Nó de transcodificação com capacidade para 4K às 10:00.

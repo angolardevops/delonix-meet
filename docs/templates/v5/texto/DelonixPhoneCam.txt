@@ -1,0 +1,18 @@
+14:32
+USB
+Delonix Câmara
+sessão voz-arq-2026 · CAM 2
+NO AR
+TALLY · PROGRAMA
+1080p30 · 24 ms
+rosto · AF
+exposição 0,0 EV
+5 200 K · ISO 640
+{{ l.label }}
+{{ c.label }}
+{{ c.value }}
+Bloquear AE/AF
+Espelhar
+{{ s.k }}
+{{ s.v }}
+A gravar também no telefone — se o cabo falhar, o ângulo não se perde.

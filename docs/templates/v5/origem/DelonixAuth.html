@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#8a0c12;text-decoration:none}a:hover{color:#ad1017}</style></helmet>
+<div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--danger:#ad1017;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;display:grid;grid-template-columns:1fr 560px;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif">
+
+  <div style="background:var(--stage);position:relative;overflow:hidden;padding:56px 60px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between">
+    <div style="position:absolute;inset:0;background:radial-gradient(120% 90% at 18% 12%, rgba(232,35,43,.16), transparent 62%),radial-gradient(90% 80% at 88% 92%, rgba(232,163,61,.16), transparent 60%)"></div>
+    <div style="position:relative;display:flex;align-items:center;gap:11px">
+      <div style="width:32px;height:32px;border-radius:2px;background:#e8232b;display:flex;align-items:center;justify-content:center;color:#1a0002;font-weight:700;font-size:15px"><svg viewBox="0 0 24 24" width="74%" height="74%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path><g fill="currentColor" stroke="none"><circle cx="16.2" cy="3" r="1.4"></circle><circle cx="21" cy="7.8" r="1.4"></circle><circle cx="21" cy="16.2" r="1.4"></circle><circle cx="16.2" cy="21" r="1.4"></circle><circle cx="3" cy="16.2" r="1.4"></circle><circle cx="3" cy="7.8" r="1.4"></circle></g></svg></div>
+      <div style="color:#f2f2f3;font-size:15px;font-weight:600;letter-spacing:-0.2px">Delonix Meet</div>
+    </div>
+    <div style="position:relative;display:flex;flex-direction:column;gap:20px;max-width:520px">
+      <div style="font-size:38px;line-height:1.12;font-weight:700;color:#f2f2f3;letter-spacing:-1px;text-wrap:pretty">Uma sala. Reunião, videoaula em 4K e emissão pública ao mesmo tempo.</div>
+      <div style="font-size:14px;line-height:1.6;color:#b4b4ba;max-width:440px;text-wrap:pretty">Identidade, calendário e contactos vêm do Odoo. Os dados ficam em Luanda, ao abrigo da Lei 22/11.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:2px;border:1px solid rgba(242,242,243,.22);font-family:'DM Mono',monospace;font-size:10.5px;color:#d6d6da"><div style="width:6px;height:6px;border-radius:50%;background:#e8232b"></div>Gravação até 4K</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:2px;border:1px solid rgba(242,242,243,.22);font-family:'DM Mono',monospace;font-size:10.5px;color:#d6d6da"><div style="width:0;height:0;border-left:6px solid #f0a32e;border-top:4px solid transparent;border-bottom:4px solid transparent"></div>Multistream 5 destinos</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:2px;border:1px solid rgba(242,242,243,.22);font-family:'DM Mono',monospace;font-size:10.5px;color:#d6d6da"><span style="color:#e8232b">✓</span>Dial-in +244</div>
+      </div>
+    </div>
+    <div style="position:relative;display:flex;gap:26px;font-family:'DM Mono',monospace;font-size:10.5px;color:#8a8a90">
+      <span>SIP · Kamailio</span><span>Media · FreeSWITCH</span><span>Residência · AO-LAD</span>
+    </div>
+  </div>
+
+  <div style="background:var(--raised);padding:52px 56px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:22px;border-left:1px solid var(--border)">
+    <div style="display:flex;align-items:center;gap:7px;align-self:flex-start;padding:4px 9px;border-radius:2px;background:var(--surface);border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted)">
+      <div style="width:6px;height:6px;border-radius:50%;background:var(--success)"></div>On-Premise · Luanda
+    </div>
+    <div style="display:flex;flex-direction:column;gap:5px">
+      <div style="font-size:26px;font-weight:700;letter-spacing:-0.6px">Entrar</div>
+      <div style="font-size:12.5px;color:var(--muted)">Instância delonix.co.ao · Delonix Angola, Lda</div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:center;gap:9px;padding:13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:13.5px;font-weight:600">
+      <div style="width:18px;height:18px;border-radius:2px;background:rgba(255,255,255,.9);color:#8a0c12;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">O</div>
+      Entrar com Odoo (SSO)
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:10.5px;font-family:'DM Mono',monospace">
+      <div style="height:1px;flex:1;background:var(--border)"></div>ou<div style="height:1px;flex:1;background:var(--border)"></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <div style="font-size:11px;font-weight:600;color:var(--muted)">Endereço de correio electrónico</div>
+        <div style="padding:11px 12px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-size:12.5px">ana.mbala@delonix.co.ao</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><div style="font-size:11px;font-weight:600;color:var(--muted)">Palavra-passe</div><div style="font-size:11px;color:var(--accent);font-weight:600">Recuperar acesso</div></div>
+        <div style="padding:11px 12px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;letter-spacing:2px;color:var(--muted)">••••••••••</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:15px;height:15px;border-radius:2px;border:1px solid var(--accent-strong);background:var(--accent-strong);color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">✓</div>
+        <div style="font-size:11.5px;color:var(--muted)">Manter sessão neste dispositivo durante 30 dias</div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;padding:12px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-size:13px;font-weight:600">Continuar</div>
+    </div>
+
+    <div style="margin-top:2px;padding:15px;border-radius:2px;border:1px dashed var(--border);background:var(--surface);display:flex;flex-direction:column;gap:9px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div style="font-size:12.5px;font-weight:600">Entrar como convidado</div>
+        <div style="font-size:10.5px;color:var(--muted)">Sem conta Odoo</div>
+      </div>
+      <div style="display:flex;gap:7px">
+        <div style="flex:1;padding:9px 11px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-family:'DM Mono',monospace;font-size:13px;letter-spacing:2.5px;font-variant-numeric:tabular-nums">842-091-334</div>
+        <div style="padding:9px 14px;border-radius:2px;border:1px solid var(--accent-strong);color:var(--accent-strong);font-size:12px;font-weight:600;display:flex;align-items:center">Entrar</div>
+      </div>
+      <div style="font-size:10.5px;color:var(--muted)">Código de sala ou dial-in <span style="font-family:'DM Mono',monospace">+244 222 640 100</span> · PIN 84 209</div>
+    </div>
+
+    <div style="font-size:10.5px;color:var(--muted);line-height:1.5">Ao entrar aceita a política de retenção de gravações da organização (90 dias).</div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}"><!--CS-->
+</body>
+</html>

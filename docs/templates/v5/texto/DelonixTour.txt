@@ -1,0 +1,34 @@
+Bom dia, Ana
+qui, 17 Set 2026 · 09:41 WAT
+Procurar sessões, gravações, pessoas…
+◉
+Guia activo
+{{ a.icon }}
+{{ a.label }}
+{{ a.sub }}
+Próximas sessões
+calendário Odoo
+{{ s.time }}
+{{ s.dur }}
+{{ s.title }}
+{{ s.meta }}
+{{ s.cta }}
+Canais de emissão
+{{ c.tag }}
+{{ c.name }}
+{{ c.state }}
+Armazenamento
+1,84 TB de 2,5 TB · Luanda
+GUIA · PASSO {{ card.step }} DE {{ card.total }}
+Saltar
+{{ card.title }}
+{{ card.body }}
+⌘
+{{ card.tip }}
+Anterior
+{{ card.next }}
+Guia activo
+Pode desligar aqui ou em Preferências, quando quiser.
+?
+Ajuda e guia
+3 de 6 passos concluídos

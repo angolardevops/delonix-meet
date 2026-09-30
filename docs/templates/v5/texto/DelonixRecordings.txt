@@ -1,0 +1,52 @@
+Gravações e videoaulas
+142 itens · 1,84 TB
+Lista
+Grelha
+Enviar para storage
+SESSÃO
+DURAÇÃO
+RESOLUÇÃO
+TAMANHO
+ESTADO
+ARMAZENAMENTO
+{{ r.title }}
+{{ r.meta }}
+{{ r.dur }}
+{{ r.res }}
+{{ r.size }}
+{{ r.stateIcon }}
+{{ r.state }}
+{{ r.store }}
+⏵
+4K
+HÍBRIDA
+18:22
+48:12
+Formação — Arquitectura de Voz Delonix · sessão 3
+11 Set 2026 · 10:00 WAT · Ana Mbala · 13 participantes
+Publicar
+Partilhar
+Exportar
+Guardar em…
+Capítulos automáticos
+6 detectados
+00:00
+Abertura e objectivos
+08:41
+Camada SIP e Kamailio
+18:22
+Failover entre SBC
+25:04
+Gravação e transcodificação
+34:18
+Perguntas dos participantes
+Transcrição
+✓ gerada · pt-AO
+18:22
+Ana Mbala: O failover foi corrigido na versão 2.4 do encaminhador.
+18:39
+Joaquim Ferreira: Fica registado no relatório de auditoria?
+S3
+MinIO · bucket delonix-rec
+réplica em Nextcloud às 02:00
+✓

@@ -1,0 +1,45 @@
+Estúdio · Fontes e dispositivos
+6 fontes · 4 ao ar
+ISO REC · 4 faixas
+Procurar dispositivos
+Abrir mesa de corte
+LIGAÇÕES
+{{ l.icon }}
+{{ l.title }}
+{{ l.count }}
+{{ l.note }}
+Telefone sem cabo
+Ler o código na app Delonix Câmara para entrar pela rede local.
+Mostrar código
+{{ s.num }}
+{{ s.tally }}
+{{ s.format }}
+{{ s.latency }}
+{{ s.name }}
+{{ s.bus }}
+{{ s.device }}
+{{ tg }}
+Gravação por câmara (ISO)
+cada ângulo em ficheiro próprio · o corte não se perde
+ligado
+{{ t.name }}
+{{ t.codec }}
+{{ t.size }}
+destino · MinIO estudio/2026-09-17
+✓ 412 GB livres
+▲ o telefone 2 está a 41 °C
+CAM 2 · telefone da Ana
+USB · UVC
+CONTROLO PELA APP
+{{ c.label }}
+{{ c.value }}
+Focar no rosto
+Bloquear AE
+Estado do telefone
+{{ p.k }}
+{{ p.v }}
+Sincronismo
+As fontes são alinhadas pelo relógio da sessão; o atraso de cada uma é compensado antes do corte.
+±12 ms
+Sem estação de emissão
+Três telefones, uma capturadora e o PC bastam: corte, som e luz vivem nesta janela.

@@ -1,0 +1,50 @@
+Estúdio · Mesa de corte
+01:12:44
+REC 4K · ISO 4
+AO VIVO · 5 destinos
+atraso 8 s · bitrate 9,4 Mbit/s
+Mesa de som
+Iluminação
+PRÉ-VISUALIZAÇÃO
+CAM 2 · apresentadora
+próximo
+2
+Ana Mbala
+directora de tecnologia
+PROGRAMA · NO AR
+CAM 1 · plano geral
+00:41
+1
+DELONIX · AO VIVO
+1 284 a assistir
+Arquitectura de voz soberana — sessão aberta
+{{ b.num }}
+{{ b.tally }}
+{{ b.name }}
+{{ b.key }}
+Transição
+espaço = cortar · enter = misturar
+{{ t.label }}
+{{ t.key }}
+Duração
+0,6 s
+Sobreposições
+chaves a jusante
+{{ k.name }}
+{{ k.key }}
+T-BAR
+PRÉ
+PGM
+38%
+CORTAR
+AUTO
+Macros
+F1 — F6
+{{ m.name }}
+{{ m.key }}
+{{ m.note }}
+Corte automático por voz
+desligado · o corte é seu
+ATALHOS
+{{ s.k }}
+{{ s.t }}

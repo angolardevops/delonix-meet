@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ad1017;text-decoration:none}a:hover{color:#8a0c12}</style></helmet>
+<div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--danger:#ad1017;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;display:flex;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif">
+  <dc-import name="DelonixNav" active="admin" hint-size="228px,900px"></dc-import>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:58px;flex:none;box-sizing:border-box;padding:0 22px;display:flex;align-items:center;gap:11px;background:var(--raised);border-bottom:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:600">Utilizadores e convites</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">142 activos · 3 convidados · 2 suspensos</div>
+      <div style="flex:1"></div>
+      <div style="padding:7px 13px;border-radius:2px;border:1px solid var(--border);font-size:12px;font-weight:600">Importar CSV</div>
+      <div style="padding:7px 15px;border-radius:2px;background:var(--accent);color:#fff;font-size:12px;font-weight:600">Convidar pessoas</div>
+    </div>
+
+    <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 300px;overflow:hidden">
+
+      <div style="padding:16px 20px;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;min-width:0;overflow:hidden">
+        <dc-import name="DelonixListControls" context="users" open="fechado" facets="busca:emissão|filtro:Sem entrar há 60 dias|grupo:Departamento" summary="13 de 142 · filtrado por actividade, agrupado por departamento" hint-size="100%,84px"></dc-import>
+
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent)">
+          <div style="width:15px;height:15px;border-radius:2px;background:var(--accent);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center">✓</div>
+          <div style="font-size:11.5px;font-weight:600">3 selecionados</div>
+          <div style="flex:1"></div>
+          <div style="padding:5px 10px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-size:10.5px;font-weight:600">Mudar papel</div>
+          <div style="padding:5px 10px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-size:10.5px;font-weight:600">Mudar departamento</div>
+          <div style="padding:5px 10px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-size:10.5px;font-weight:600">Reenviar convite</div>
+          <div style="padding:5px 10px;border-radius:2px;border:1px solid var(--danger);background:var(--raised);font-size:10.5px;font-weight:600;color:var(--danger)">Suspender</div>
+        </div>
+
+        <div style="flex:1;min-height:0;background:var(--raised);border:1px solid var(--border);border-radius:3px;overflow:auto">
+          <div style="min-width:780px;display:grid;grid-template-columns:26px minmax(180px,1.5fr) 140px 122px 98px 96px 84px;gap:8px;padding:9px 12px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1;font-family:'DM Mono',monospace;font-size:8.5px;letter-spacing:.4px;color:var(--muted)">
+            <span></span><span>PESSOA</span><span>PAPEL</span><span>DEPARTAMENTO</span><span>ORIGEM</span><span>ESTADO</span><span>ÚLT. ACESSO</span>
+          </div>
+          <sc-for list="{{ users }}" as="u" hint-placeholder-count="12">
+            <div style="min-width:780px;display:grid;grid-template-columns:26px minmax(180px,1.5fr) 140px 122px 98px 96px 84px;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);align-items:center;background:{{ u.rowBg }}">
+              <span style="width:15px;height:15px;border-radius:2px;border:1px solid {{ u.boxRing }};background:{{ u.boxBg }};color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center">{{ u.check }}</span>
+              <span style="display:flex;align-items:center;gap:9px;min-width:0">
+                <span style="width:27px;height:27px;flex:none;border-radius:50%;background:{{ u.color }};color:#fff;font-size:9.5px;font-weight:600;display:flex;align-items:center;justify-content:center">{{ u.initials }}</span>
+                <span style="min-width:0">
+                  <span style="display:block;font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ u.name }}</span>
+                  <span style="display:block;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ u.email }}</span>
+                </span>
+              </span>
+              <span><span style="font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:2px;background:{{ u.roleBg }};color:{{ u.roleFg }}">{{ u.role }}</span></span>
+              <span style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ u.dept }}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">{{ u.source }}</span>
+              <span style="display:flex;align-items:center;gap:5px;font-size:10.5px;color:{{ u.stateFg }}"><span style="font-family:'DM Mono',monospace">{{ u.stateGlyph }}</span>{{ u.state }}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">{{ u.seen }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="border-left:1px solid var(--border);background:var(--raised);padding:16px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px;overflow:auto">
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <div style="font-size:12.5px;font-weight:600">Lugares</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);margin-left:auto">142 de 150</div>
+          </div>
+          <div style="height:8px;border-radius:2px;background:var(--surface);overflow:hidden;display:flex">
+            <div style="width:78%;background:var(--accent)"></div>
+            <div style="width:9%;background:var(--live)"></div>
+          </div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--muted)">
+            <span style="display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:1px;background:var(--accent)"></span>117 com sessão este mês</span>
+            <span style="display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:1px;background:var(--live)"></span>13 sem entrar há 60 dias</span>
+          </div>
+          <div style="padding:9px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);font-size:10.5px;line-height:1.5;color:var(--muted)">Pode libertar 13 lugares suspendendo quem não entra há dois meses.<span style="color:var(--accent);font-weight:600"> Ver lista →</span></div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <div style="font-size:12.5px;font-weight:600">Convites pendentes</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);margin-left:auto">3</div>
+          </div>
+          <sc-for list="{{ invites }}" as="i" hint-placeholder-count="3">
+            <div style="padding:10px;border-radius:2px;border:1px solid {{ i.ring }};background:{{ i.bg }};display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="flex:1;min-width:0;font-family:'DM Mono',monospace;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ i.email }}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:{{ i.fg }}">{{ i.state }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:7px">
+                <span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:2px;background:var(--surface);border:1px solid var(--border);color:var(--muted)">{{ i.role }}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ i.meta }}</span>
+                <span style="margin-left:auto;font-size:10px;font-weight:600;color:var(--accent)">Reenviar</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="font-size:12.5px;font-weight:600">Aprovisionamento</div>
+          <div style="padding:11px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent);display:flex;flex-direction:column;gap:7px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:24px;height:24px;flex:none;border-radius:2px;background:var(--raised);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent-strong)">O</span>
+              <span style="flex:1"><span style="display:block;font-size:11.5px;font-weight:600">Odoo · grupos e contactos</span><span style="display:block;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">sincroniza a cada 2 min</span></span>
+              <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--success)">✓</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">
+              <span>último: 14 Set 09:38 · 3 contactos actualizados</span>
+              <span>1 conflito de papel a aguardar decisão</span>
+            </div>
+          </div>
+          <sc-for list="{{ provisioning }}" as="p" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:2px;border:1px solid var(--border);background:var(--surface)">
+              <span style="flex:1;min-width:0"><span style="display:block;font-size:11px;font-weight:600">{{ p.label }}</span><span style="display:block;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ p.hint }}</span></span>
+              <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:{{ p.fg }}">{{ p.state }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="margin-top:auto;display:flex;flex-direction:column;gap:7px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.5px;color:var(--muted)">REGRAS DE ENTRADA</div>
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:2px;border:1px solid var(--border)">
+            <span style="flex:1;font-size:11px">Domínios aprovados</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">2 domínios</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:2px;border:1px solid var(--border)">
+            <span style="flex:1;font-size:11px">Convidados externos</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">expiram em 24 h</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900},"filter":{"editor":"enum","options":["Todos","Activos","Convidados","Suspensos","Sem entrar há 60 dias","Papel elevado"],"default":"Todos","tsType":"string"}}">
+const FILTERS = ['Todos', 'Activos', 'Convidados', 'Suspensos', 'Sem entrar há 60 dias', 'Papel elevado'];
+
+const ROLE_TONE = {
+  'Proprietária': ['color-mix(in srgb, var(--accent) 12%, transparent)', 'var(--accent-strong)'],
+  'Administrador': ['color-mix(in srgb, var(--accent) 12%, transparent)', 'var(--accent-strong)'],
+  'Gestor de emissão': ['color-mix(in srgb, var(--live) 14%, transparent)', '#6b3d00'],
+  'Formador': ['var(--surface)', 'var(--muted)'],
+  'Moderador': ['var(--surface)', 'var(--muted)'],
+  'Membro': ['var(--surface)', 'var(--muted)'],
+  'Convidado': ['var(--surface)', 'var(--muted)']
+};
+
+const STATE = {
+  active: ['✓', 'Activo', 'var(--success)'],
+  invited: ['◐', 'Convidado', 'var(--live)'],
+  suspended: ['⊘', 'Suspenso', 'var(--danger)']
+};
+
+const USERS = [
+  ['Ana Mbala', 'ana.mbala@delonix.co.ao', 'AM', '#ad1017', 'Proprietária', 'Formação e Operações', 'Odoo SSO', 'active', 'agora', false],
+  ['Joaquim Ferreira', 'joaquim.ferreira@delonix.co.ao', 'JF', '#2f4a7a', 'Administrador', 'Engenharia de Redes', 'Odoo SSO', 'active', 'há 12 min', true],
+  ['Teresa Kiala', 'teresa.kiala@delonix.co.ao', 'TK', '#7a4a68', 'Gestor de emissão', 'Comunicação', 'Odoo SSO', 'active', 'há 1 h', true],
+  ['Paulo Sebastião', 'paulo.sebastiao@delonix.co.ao', 'PS', '#1e5a66', 'Gestor de emissão', 'Comunicação', 'Odoo SSO', 'active', 'há 3 h', true],
+  ['Esperança Tchivinda', 'esperanca.t@delonix.co.ao', 'ET', '#8a3b34', 'Formador', 'Formação e Operações', 'Odoo SSO', 'active', 'ontem', false],
+  ['Luísa Cardoso', 'luisa.cardoso@delonix.co.ao', 'LC', '#4a2f6e', 'Formador', 'Recursos Humanos', 'Odoo SSO', 'active', 'ontem', false],
+  ['Rita Domingas', 'rita.domingas@delonix.co.ao', 'RD', '#6e3a70', 'Moderador', 'Jurídica', 'Odoo SSO', 'active', 'há 2 dias', false],
+  ['Bento Quissanga', 'bento.q@delonix.co.ao', 'BQ', '#1e5a66', 'Administrador', 'Tecnologias de Informação', 'Odoo SSO', 'active', 'há 2 dias', false],
+  ['Élio Kassoma', 'elio.kassoma@delonix.co.ao', 'EK', '#3a5a8a', 'Membro', 'Tecnologias de Informação', 'convite', 'invited', '—', false],
+  ['Cátia Mendes', 'catia.mendes@delonix.co.ao', 'CM', '#7a4a2a', 'Membro', 'Marketing', 'Odoo SSO', 'active', 'há 9 dias', false],
+  ['Domingos Nzuzi', 'domingos.nzuzi@delonix.co.ao', 'DN', '#7a5a1e', 'Membro', 'Financeira', 'Odoo SSO', 'suspended', 'há 74 dias', false],
+  ['Nuno Baptista', 'nuno.baptista@parceiro.na', 'NB', '#3f5a2f', 'Convidado', 'Externo · Namíbia', 'código', 'invited', '—', false]
+];
+
+const INVITES = [
+  ['elio.kassoma@delonix.co.ao', 'ENVIADO', 'var(--live)', 'Membro', 'há 2 dias · expira em 5', false],
+  ['nuno.baptista@parceiro.na', 'A EXPIRAR', 'var(--danger)', 'Convidado', 'expira em 6 h', true],
+  ['maria.gimbi@delonix.co.ao', 'ENVIADO', 'var(--live)', 'Formador', 'hoje · expira em 7 dias', false]
+];
+
+const PROVISIONING = [
+  ['Criar conta na primeira entrada', 'só para domínios aprovados', 'activo', 'var(--success)'],
+  ['Suspender ao sair do Odoo', 'liberta o lugar automaticamente', 'activo', 'var(--success)'],
+  ['Registo de presenças no Odoo', 'hr.attendance', 'inactivo', 'var(--muted)']
+];
+
+class Component extends DCLogic {
+  renderVals() {
+    const filter = this.props.filter || 'Todos';
+    return {
+      filters: FILTERS.map((label) => {
+        const on = label === filter;
+        return {
+          label,
+          ring: on ? 'transparent' : 'var(--border)',
+          bg: on ? 'var(--accent)' : 'var(--raised)',
+          fg: on ? '#fff' : 'var(--muted)'
+        };
+      }),
+
+      users: USERS.map(([name, email, initials, color, role, dept, source, state, seen, selected]) => {
+        const [glyph, label, fg] = STATE[state];
+        const [roleBg, roleFg] = ROLE_TONE[role] || ROLE_TONE['Membro'];
+        return {
+          name, email, initials, color, role, dept, source, seen,
+          state: label, stateGlyph: glyph, stateFg: fg,
+          roleBg, roleFg,
+          check: selected ? '✓' : '',
+          boxBg: selected ? 'var(--accent)' : 'var(--raised)',
+          boxRing: selected ? 'var(--accent)' : 'var(--border)',
+          rowBg: selected ? 'color-mix(in srgb, var(--accent) 5%, transparent)' : 'transparent'
+        };
+      }),
+
+      invites: INVITES.map(([email, state, fg, role, meta, urgent]) => ({
+        email, state, fg, role, meta,
+        ring: urgent ? 'var(--danger)' : 'var(--border)',
+        bg: urgent ? 'color-mix(in srgb, var(--danger) 5%, transparent)' : 'var(--surface)'
+      })),
+
+      provisioning: PROVISIONING.map(([label, hint, state, fg]) => ({ label, hint, state, fg }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

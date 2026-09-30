@@ -1,0 +1,53 @@
+Utilizadores e convites
+142 activos · 3 convidados · 2 suspensos
+Importar CSV
+Convidar pessoas
+✓
+3 selecionados
+Mudar papel
+Mudar departamento
+Reenviar convite
+Suspender
+PESSOA
+PAPEL
+DEPARTAMENTO
+ORIGEM
+ESTADO
+ÚLT. ACESSO
+{{ u.check }}
+{{ u.initials }}
+{{ u.name }}
+{{ u.email }}
+{{ u.role }}
+{{ u.dept }}
+{{ u.source }}
+{{ u.stateGlyph }}
+{{ u.state }}
+{{ u.seen }}
+Lugares
+142 de 150
+117 com sessão este mês
+13 sem entrar há 60 dias
+Pode libertar 13 lugares suspendendo quem não entra há dois meses. Ver lista →
+Convites pendentes
+3
+{{ i.email }}
+{{ i.state }}
+{{ i.role }}
+{{ i.meta }}
+Reenviar
+Aprovisionamento
+O
+Odoo · grupos e contactos
+sincroniza a cada 2 min
+✓
+último: 14 Set 09:38 · 3 contactos actualizados
+1 conflito de papel a aguardar decisão
+{{ p.label }}
+{{ p.hint }}
+{{ p.state }}
+REGRAS DE ENTRADA
+Domínios aprovados
+2 domínios
+Convidados externos
+expiram em 24 h

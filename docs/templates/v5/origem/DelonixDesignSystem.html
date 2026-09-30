@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#8a0c12;text-decoration:none}a:hover{color:#ad1017}</style></helmet>
+<div style="width:1440px;height:900px;box-sizing:border-box;overflow:hidden;display:grid;grid-template-columns:1fr 1fr;font-family:'Archivo',system-ui,sans-serif">
+
+  <div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--warning:#a85b00;--danger:#ad1017;background:var(--surface);color:var(--text);padding:26px 24px;box-sizing:border-box;display:flex;flex-direction:column;gap:18px;overflow:hidden">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <div style="font-size:17px;font-weight:700;letter-spacing:-0.3px">Sistema de Design</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10.5px;padding:2px 7px;border-radius:2px;background:var(--raised);border:1px solid var(--border);color:var(--muted)">theme: light</div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--muted)">Tokens de cor</div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#f4f4f5;border:1px solid var(--border)"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">surface</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#F4F4F5</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#ffffff;border:1px solid var(--border)"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">surface-raised</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#FFFFFF</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#000000"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">stage</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#000000 · fixo</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#dedee1"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">border</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#DEDEE1</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#0b0b0c"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">text-primary</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#0B0B0C · 15.4:1</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#5c5c63"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">text-muted</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#5C5C63 · 5.2:1</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#ad1017"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">accent</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#AD1017 · 7.7:1</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#8a0c12"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">accent-strong</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#8A0C12 · 11.2:1</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#a85b00"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">live</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#A85B00 · âmbar</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#ad1017"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">record · danger</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#AD1017 · REC/erro</div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#1e7a4a"></div><div style="min-width:0"><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">success</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#1E7A4A · 5.4:1</div></div></div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--muted)">Escala tipográfica · Archivo / Archivo Black</div>
+      <div style="background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:12px 14px;display:flex;flex-direction:column;gap:7px">
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);width:96px;flex:none">display / Archivo Black</span><span style="font-family:'Archivo Black',sans-serif;font-size:28px;letter-spacing:-0.8px">REUNIÕES SEM FRICÇÃO</span></div>
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);width:96px;flex:none">title / 17·600</span><span style="font-size:17px;font-weight:600;letter-spacing:-0.2px">Arquitectura de Voz</span></div>
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);width:96px;flex:none">body / 12.5·400</span><span style="font-size:12.5px">Emissão simultânea para cinco destinos.</span></div>
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);width:96px;flex:none">mono / 11·500</span><span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:500;font-variant-numeric:tabular-nums">01:24:07 · 6 800 kbps · 1 284</span></div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--muted)">Botões · estados</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <div style="padding:8px 14px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:12px;font-weight:600">Iniciar agora</div>
+        <div style="padding:8px 14px;border-radius:2px;background:#6e070c;color:#fff;font-size:12px;font-weight:600">Pressionado</div>
+        <div style="padding:8px 14px;border-radius:2px;background:var(--raised);border:1px solid var(--border);color:var(--text);font-size:12px;font-weight:600">Agendar</div>
+        <div style="padding:8px 14px;border-radius:2px;color:var(--accent);font-size:12px;font-weight:600">Entrar com código</div>
+        <div style="padding:8px 14px;border-radius:2px;background:var(--danger);color:#fff;font-size:12px;font-weight:600">Terminar</div>
+        <div style="padding:8px 14px;border-radius:2px;background:var(--raised);border:1px solid var(--border);color:var(--muted);opacity:0.55;font-size:12px;font-weight:600">Inactivo</div>
+        <div style="padding:8px 14px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:12px;font-weight:600;outline:2px solid var(--accent);outline-offset:2px">Focado</div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--muted)">Raios (2 · 4 · 8) · elevações · espaçamento</div>
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <div style="display:flex;gap:6px">
+          <div style="width:46px;height:46px;border-radius:2px;background:var(--raised);border:1px solid var(--border);display:flex;align-items:flex-end;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);padding-bottom:3px">r-2</div>
+          <div style="width:46px;height:46px;border-radius:2px;background:var(--raised);border:1px solid var(--border);display:flex;align-items:flex-end;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);padding-bottom:3px">r-4</div>
+          <div style="width:46px;height:46px;border-radius:3px;background:var(--raised);border:1px solid var(--border);display:flex;align-items:flex-end;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);padding-bottom:3px">r-8</div>
+          <div style="width:46px;height:46px;border-radius:50%;background:var(--raised);border:1px solid var(--border);display:flex;align-items:flex-end;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);padding-bottom:3px">full</div>
+        </div>
+        <div style="display:flex;gap:6px;margin-left:6px">
+          <div style="width:56px;height:46px;border-radius:2px;background:#fff;box-shadow:0 1px 2px rgba(11,11,12,.08);display:flex;align-items:flex-end;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);padding-bottom:3px">e-1</div>
+          <div style="width:56px;height:46px;border-radius:2px;background:#fff;box-shadow:0 4px 12px rgba(11,11,12,.12);display:flex;align-items:flex-end;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);padding-bottom:3px">e-2</div>
+          <div style="width:56px;height:46px;border-radius:2px;background:#fff;box-shadow:0 4px 16px rgba(11,11,12,.16);display:flex;align-items:flex-end;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);padding-bottom:3px">e-3</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;margin-left:8px;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">
+          <div style="display:flex;align-items:center;gap:5px"><div style="width:4px;height:9px;background:var(--accent)"></div>4</div>
+          <div style="display:flex;align-items:center;gap:5px"><div style="width:8px;height:9px;background:var(--accent)"></div>8</div>
+          <div style="display:flex;align-items:center;gap:5px"><div style="width:14px;height:9px;background:var(--accent)"></div>14</div>
+          <div style="display:flex;align-items:center;gap:5px"><div style="width:24px;height:9px;background:var(--accent)"></div>24</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="--surface:#0d0d0f;--raised:#17171a;--stage:#000000;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--live:#f0a32e;--record:#d41f27;--success:#2f9e6a;--warning:#f0a32e;--danger:#d41f27;background:var(--surface);color:var(--text);padding:26px 24px;box-sizing:border-box;display:flex;flex-direction:column;gap:18px;overflow:hidden">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <div style="font-size:17px;font-weight:700;letter-spacing:-0.3px">Tema escuro · palco</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10.5px;padding:2px 7px;border-radius:2px;background:var(--raised);border:1px solid var(--border);color:var(--muted)">theme: dark</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#0d0d0f;border:1px solid var(--border)"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">surface</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#0D0D0F</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#17171a;border:1px solid var(--border)"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">surface-raised</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#17171A</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#2a2a2e"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">border</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#2A2A2E</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#f2f2f3"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">text-primary</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#F2F2F3 · 15.9:1</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#9a9aa0"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">text-muted</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#9A9AA0 · 6.7:1</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#ff5a60"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">accent</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#FF5A60 · 5.8:1</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#f0a32e"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">live</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#F0A32E</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#d41f27"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">record · danger</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#D41F27</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:6px 8px"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:#2f9e6a"></div><div><div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600">success</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">#2F9E6A · 5.2:1</div></div></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--muted)">Badges de estado · cor + ícone/texto</div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px">
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;background:color-mix(in srgb, var(--record) 20%, transparent);border:1px solid var(--record);font-family:'DM Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.5px;color:#ef9a9a"><div style="width:7px;height:7px;border-radius:50%;background:var(--record)"></div>REC 4K</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;background:color-mix(in srgb, var(--live) 20%, transparent);border:1px solid var(--live);font-family:'DM Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.5px;color:#e8bb86"><div style="width:0;height:0;border-left:6px solid var(--live);border-top:4px solid transparent;border-bottom:4px solid transparent"></div>AO VIVO · 1 284</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;background:color-mix(in srgb, var(--warning) 18%, transparent);border:1px solid var(--warning);font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:#e8bb86"><span>▲</span>LIGAÇÃO FRACA</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;background:var(--raised);border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--muted)"><span>⊘</span>SILENCIADO</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;background:color-mix(in srgb, var(--success) 18%, transparent);border:1px solid var(--success);font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:#2f9e6a"><span>✓</span>LIGADO</div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--muted)">Componentes-base</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="background:var(--stage);border:1px solid var(--border);border-radius:2px;padding:9px;display:flex;flex-direction:column;gap:7px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">participant-tile</div>
+          <div style="height:76px;border-radius:2px;background:linear-gradient(150deg,#7a4a68,#4a2a52);position:relative;display:flex;align-items:flex-end;padding:6px">
+            <div style="display:flex;align-items:center;gap:5px;padding:2px 6px;border-radius:2px;background:rgba(0,0,0,.68);font-size:10px;font-weight:600;color:#fff">Teresa Kiala</div>
+            <div style="position:absolute;top:6px;right:6px;display:flex;gap:4px"><div style="width:16px;height:16px;border-radius:2px;background:rgba(0,0,0,.68);color:#e8bb86;font-size:9px;display:flex;align-items:center;justify-content:center">✋</div></div>
+          </div>
+        </div>
+        <div style="background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:9px;display:flex;flex-direction:column;gap:7px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">stream-destination-card</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px;border-radius:2px;border:1px solid var(--border)">
+            <div style="width:24px;height:24px;border-radius:2px;flex:none;background:#2a2a2e;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--muted)">YT</div>
+            <div style="min-width:0;flex:1"><div style="font-size:11px;font-weight:600">YouTube · Delonix</div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:#2f9e6a">✓ 6 800 kbps</div></div>
+          </div>
+        </div>
+        <div style="background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:9px;display:flex;flex-direction:column;gap:6px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">form-field</div>
+          <div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:10.5px;font-weight:600;color:var(--muted)">Título da sessão</div><div style="padding:7px 9px;border-radius:2px;border:1px solid var(--accent);background:var(--surface);font-size:11.5px">Formação — Arquitectura de Voz</div></div>
+        </div>
+        <div style="background:var(--raised);border:1px solid var(--border);border-radius:2px;padding:9px;display:flex;flex-direction:column;gap:6px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">control-bar</div>
+          <div style="display:flex;gap:5px;align-items:center;padding:6px;border-radius:8px;background:var(--stage);border:1px solid var(--border)">
+            <div style="width:26px;height:26px;border-radius:50%;background:#2a2a2e;display:flex;align-items:center;justify-content:center;font-size:11px">🎙</div>
+            <div style="width:26px;height:26px;border-radius:50%;background:#2a2a2e;display:flex;align-items:center;justify-content:center;font-size:11px">🎥</div>
+            <div style="width:26px;height:26px;border-radius:50%;background:var(--accent-strong);display:flex;align-items:center;justify-content:center;font-size:11px">⬆</div>
+            <div style="width:26px;height:26px;border-radius:50%;background:var(--danger);display:flex;align-items:center;justify-content:center;font-size:11px">✕</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:7px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--muted)">Marca · Delonix (NgolaCloud)</div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="display:flex;align-items:center;gap:9px;padding:10px 14px;border-radius:2px;background:#000;flex:none">
+          <div style="width:30px;height:30px;color:#e8232b;display:flex;align-items:center;justify-content:center"><svg sc-camel-view-box="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path><g fill="currentColor" stroke="none"><circle cx="16.2" cy="3" r="1.4"></circle><circle cx="21" cy="7.8" r="1.4"></circle><circle cx="21" cy="16.2" r="1.4"></circle><circle cx="16.2" cy="21" r="1.4"></circle><circle cx="3" cy="16.2" r="1.4"></circle><circle cx="3" cy="7.8" r="1.4"></circle></g></svg></div>
+          <div style="font-family:'Archivo Black',sans-serif;font-size:17px;color:#fff;letter-spacing:-0.4px">Delonix<span style="color:#e8232b">Meet</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);line-height:1.5">
+          <div>Símbolo: flor de Delonix como antenas de rede, anéis de sinal e o mundo ao centro.</div>
+          <div>Vermelho <span style="font-family:'DM Mono',monospace">#AD1017</span> sobre preto <span style="font-family:'DM Mono',monospace">#000000</span> · família NgolaCloud / PluralSIS <span style="font-family:'DM Mono',monospace">#BE1622</span>.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}"><!--CS-->
+</body>
+</html>

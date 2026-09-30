@@ -1,0 +1,66 @@
+Estúdio · Aula aberta — Redes SIP para operadores
+01:07:44
+REC 4K
+AO VIVO · 4 destinos · 1 284
+enc. 6 800 kbps · perda 0,2% · WAT 16:07
+Emitir para todos
+LAYOUTS
+BANCO DE CENAS
+Oradora + slide
+Painel 3 convidados
+Intervalo · marca
+Quadro branco
++
+Nova cena
+ÁUDIO
+Palco
+Música
+Vídeo
+TK
+DIAPOSITIVO 08 / 24
+Portabilidade de numeração em +244
+· Janela de portabilidade de 5 dias úteis
+· Encaminhamento temporário via SBC
+· Auditoria obrigatória por operador
+Delonix Angola
+NO AR · 01:07:44
+2160p · 50 fps
+COMENTÁRIO EM DESTAQUE · YOUTUBE
+«Kiluanje M.: a gravação 4K fica pública?»
+Teresa Kiala
+Gestora de Produto · Delonix
+delonix.co.ao/aulas
+FILA DE CONVIDADOS
+3 em espera
+JF
+Joaquim F.
+PS
+Paulo S.
+ET
+Esperança T.
+Pôr no palco
+Pré-escuta
+SOBREPOSIÇÕES
+✓
+Rodapé animado
+✓
+Logótipo
+✓
+Comentário
+Cronómetro
+Sondagem
+Legendas AO
+Destinos simultâneos
+4 no ar · 1 parado
+{{ d.tag }}
+{{ d.name }}
+{{ d.channel }}
+{{ d.state }}
+{{ d.bitrate }}
+{{ d.viewers }}
+{{ d.health }}
+Gravação local
+⏺
+2160p · 42,8 GB · MinIO Luanda
+Adicionar destino
+Parar emissão

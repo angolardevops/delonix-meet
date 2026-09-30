@@ -1,0 +1,54 @@
+DELONIXMEET
+Biblioteca de gravações
+Procurar na transcrição de 142 gravações…
+AM
+AM
+O failover foi corrigido na versão 2.4 do encaminhador.
+2160p
+CC pt-AO
+⏵
+⏭
+🕪
+18:22 / 48:12
+1,0×
+CC
+⚙
+⛶
+Formação — Arquitectura de Voz Delonix · sessão 3
+AM
+Ana Mbala
+Delonix Angola · 11 Set 2026 · 142 visualizações
+✂ Editar no Studio
+Partilhar
+Descarregar
+Guardar em…
+Descrição
+Transcrição
+Participantes · 13
+Anexos · 4
+Terceira sessão da formação interna sobre a camada de voz: encaminhamento SIP, failover entre SBC e gravação em 4K. O quadro branco desenhado em directo está anexado à gravação, assim como o plano de numeração +244 partilhado no chat.
+#formação
+#voz
+#sip
+#auditoria
+Comentários · 6
+JF
+Joaquim Ferreira 18:22
+Este trecho devia entrar no material de onboarding.
+TK
+Teresa Kiala 25:04
+Corrijo o número de porta no diapositivo 19.
+Capítulos
+automáticos
+{{ c.title }}
+{{ c.t }}
+A seguir
+Da mesma série
+Publicadas
+{{ n.dur }}
+{{ n.res }}
+{{ n.title }}
+{{ n.meta }}
+{{ n.state }}
+Esta gravação é editável
+Abre no Studio com faixas separadas de câmara, HDMI, quadro e áudio — sem exportar para outra ferramenta.

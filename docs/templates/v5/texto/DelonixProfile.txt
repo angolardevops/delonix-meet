@@ -1,0 +1,62 @@
+A minha conta
+ana.mbala@delonix.co.ao
+alterações guardadas há 2 min
+Descartar
+Guardar alterações
+{{ t.label }}
+AM
+Ana Mbala
+PROPRIETÁRIA
+✓ VERIFICADA
+Formação e Operações · entrou em 4 Mar 2024 · 142 sessões conduzidas
+Mudar fotografia
+Remover
+🔒 GERIDO PELO ODOO
+Nome legal, correio e departamento vêm do ERP. Edite-os lá e chegam aqui em 2 minutos.
+Abrir no Odoo →
+Dados da conta
+{{ f.label }}
+🔒 Odoo
+{{ f.value }}
+▾
+{{ f.hint }}
+Como entro nas sessões
+aplica-se a todas as salas
+{{ p.label }}
+{{ p.hint }}
+Notificações
+EVENTO
+CORREIO
+NA APP
+TELEFONE
+{{ n.event }}
+{{ n.mail }}
+{{ n.app }}
+{{ n.sms }}
+Segurança
+✓ 2FA ACTIVA
+Palavra-passe
+gerida pelo Odoo · alterada há 41 dias
+Alterar
+Aplicação autenticadora
+TOTP · 8 códigos de recuperação
+Gerir
+Chave de acesso
+nenhuma registada
+Adicionar
+Sessões activas
+4 dispositivos
+{{ d.icon }}
+{{ d.name }}
+{{ d.meta }}
+{{ d.action }}
+Terminar todas as outras sessões
+A minha sala pessoal
+meet.delonix.co.ao/ana
+Dial-in +244 222 640 100 · PIN 84 209
+Copiar ligação
+Novo PIN
+Os meus dados
+Pode exportar as suas gravações, transcrições e registo de actividade num ficheiro único.
+Exportar
+Encerrar conta

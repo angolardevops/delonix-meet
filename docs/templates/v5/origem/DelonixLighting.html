@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ff5a60;text-decoration:none}a:hover{color:#fff}</style></helmet>
+<div style="--surface:#0d0d0f;--raised:#17171a;--stage:#000000;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--live:#f0a32e;--record:#d41f27;--success:#2f9e6a;--warning:#f0a32e;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex;flex-direction:column">
+
+  <div style="height:50px;flex:none;box-sizing:border-box;padding:0 18px;display:flex;align-items:center;gap:10px;background:var(--raised);border-bottom:1px solid var(--border)">
+    <div style="width:22px;height:22px;color:var(--accent);flex:none"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path></svg></div>
+    <div style="font-size:12.5px;font-weight:600">Estúdio · Iluminação e imagem</div>
+    <div style="font-family:'DM Mono',monospace;font-size:10px;padding:3px 8px;border-radius:2px;background:var(--surface);border:1px solid var(--border);color:var(--muted)">7 aparelhos · universo DMX 1</div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;border:1px solid var(--success);font-family:'DM Mono',monospace;font-size:10px;color:#8fe0b6"><div style="width:7px;height:7px;border-radius:50%;background:var(--success)"></div>Art-Net 2.4 ms · Hue ligada</div>
+    <div style="padding:6px 12px;border-radius:2px;border:1px solid var(--border);font-size:11.5px;font-weight:600;color:var(--muted)">Guardar cena</div>
+    <div style="padding:6px 12px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:11.5px;font-weight:600">Mesa de corte</div>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:232px 1fr 300px;overflow:hidden">
+
+    <div style="background:var(--raised);border-right:1px solid var(--border);padding:12px 11px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.6px">CENAS</div>
+      <sc-for list="{{ scenes }}" as="s" hint-placeholder-count="5">
+        <div style="padding:9px 10px;border-radius:2px;background:var(--surface);border:1px solid {{ s.ring }};display:flex;flex-direction:column;gap:5px">
+          <div style="display:flex;align-items:center;gap:7px">
+            <div style="width:22px;height:22px;border-radius:2px;background:{{ s.swatch }};flex:none"></div>
+            <div style="font-size:11px;font-weight:600;color:{{ s.fg }}">{{ s.name }}</div>
+            <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">{{ s.key }}</div>
+          </div>
+          <div style="font-size:9px;color:var(--muted);line-height:1.45">{{ s.note }}</div>
+        </div>
+      </sc-for>
+      <div style="padding:8px 9px;border-radius:2px;border:1px dashed var(--border);text-align:center;font-size:10px;color:var(--muted)">+ cena a partir do estado actual</div>
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:6px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">TRANSIÇÃO ENTRE CENAS</div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:4px;border-radius:2px;background:var(--border)"><div style="width:42%;height:100%;border-radius:2px;background:var(--accent)"></div></div><span style="font-family:'DM Mono',monospace;font-size:9px">1,8 s</span></div>
+      </div>
+    </div>
+
+    <div style="padding:14px;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;min-width:0;overflow:hidden">
+      <div style="flex:none;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="border-radius:3px;border:1px solid var(--border);overflow:hidden;background:#000">
+          <div style="height:24px;padding:0 9px;display:flex;align-items:center;background:var(--raised)"><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">ANTES · sem correcção</div></div>
+          <div style="position:relative;aspect-ratio:16/9;background:linear-gradient(150deg,#2a3038,#0b0b0c 86%);display:flex;align-items:center;justify-content:center">
+            <div style="width:88px;height:88px;border-radius:50%;background:radial-gradient(circle at 42% 34%,#4a4139,#241f1b 70%)"></div>
+            <div style="position:absolute;bottom:8px;left:9px;font-family:'DM Mono',monospace;font-size:8.5px;color:#8f8f96">3 100 K · rosto a −2,4 EV</div>
+          </div>
+        </div>
+        <div style="border-radius:3px;border:1px solid var(--accent);overflow:hidden;background:#000">
+          <div style="height:24px;padding:0 9px;display:flex;align-items:center;background:color-mix(in srgb,var(--accent) 16%,var(--raised))"><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--accent)">DEPOIS · luz + software</div></div>
+          <div style="position:relative;aspect-ratio:16/9;background:linear-gradient(150deg,#4c5a68,#101216 86%);display:flex;align-items:center;justify-content:center">
+            <div style="width:88px;height:88px;border-radius:50%;background:radial-gradient(circle at 40% 32%,#c9a184,#6b5342 72%)"></div>
+            <div style="position:absolute;top:10px;right:10px;padding:2px 7px;border-radius:2px;background:rgba(0,0,0,.6);font-family:'DM Mono',monospace;font-size:8.5px;color:#8fe0b6">rosto a 0,0 EV</div>
+            <div style="position:absolute;bottom:8px;left:9px;font-family:'DM Mono',monospace;font-size:8.5px;color:#cfd6dd">5 200 K · contraste 3:1</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex:1;min-height:0;border-radius:3px;border:1px solid var(--border);background:var(--raised);padding:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:9px">
+          <div style="font-size:12px;font-weight:600">Aparelhos</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">clique no nome para isolar · arraste a intensidade</div>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <div style="padding:4px 9px;border-radius:2px;border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">apagar tudo</div>
+            <div style="padding:4px 9px;border-radius:2px;border:1px solid var(--accent);font-family:'DM Mono',monospace;font-size:9px;color:var(--accent)">100% em 2 s</div>
+          </div>
+        </div>
+        <sc-for list="{{ fixtures }}" as="f" hint-placeholder-count="7">
+          <div style="display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:2px;background:var(--surface);border:1px solid {{ f.ring }}">
+            <div style="width:9px;height:9px;border-radius:50%;background:{{ f.dot }};flex:none"></div>
+            <div style="width:158px;flex:none;display:flex;flex-direction:column;gap:2px">
+              <div style="font-size:10.5px;font-weight:600">{{ f.name }}</div>
+              <div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">{{ f.proto }}</div>
+            </div>
+            <div style="flex:1;min-width:0;height:8px;border-radius:2px;background:var(--border);position:relative;overflow:hidden"><div style="width:{{ f.level }};height:100%;background:linear-gradient(90deg,#5c4a2e,{{ f.dot }})"></div></div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;width:44px;text-align:right;flex:none">{{ f.level }}</div>
+            <div style="width:96px;flex:none;height:10px;border-radius:2px;background:linear-gradient(90deg,#ffb26b,#fff3e0,#cfe3ff);position:relative"><div style="position:absolute;top:-3px;left:{{ f.cctPos }};width:5px;height:16px;border-radius:1px;background:#fff;border:1px solid #0b0b0c"></div></div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;width:54px;text-align:right;flex:none">{{ f.cct }}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:8.5px;width:50px;text-align:right;flex:none;color:{{ f.stFg }}">{{ f.state }}</div>
+          </div>
+        </sc-for>
+        <div style="margin-top:auto;display:flex;align-items:center;gap:10px;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">
+          <span>DMX 1 · canais 1—24 atribuídos</span>
+          <span style="color:var(--success)">✓ Hue Bridge 2 lâmpadas</span>
+          <span style="margin-left:auto;color:var(--warning)">▲ o painel de fundo está a 92% há 40 min</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:var(--raised);border-left:1px solid var(--border);padding:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:11px;overflow:hidden">
+      <div style="font-size:11.5px;font-weight:600">Correcção por software</div>
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:9px">
+        <div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">CAM 2 · APRESENTADORA</div>
+        <sc-for list="{{ corr }}" as="c" hint-placeholder-count="6">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:9.5px;color:var(--muted);width:82px;flex:none">{{ c.label }}</div>
+            <div style="flex:1;height:4px;border-radius:2px;background:var(--border);position:relative"><div style="width:{{ c.pct }};height:100%;border-radius:2px;background:var(--accent)"></div><div style="position:absolute;top:-4px;left:{{ c.pct }};width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)"></div></div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;width:50px;text-align:right;flex:none">{{ c.value }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+        <div style="font-size:11px;font-weight:600">Tratamento da imagem</div>
+        <sc-for list="{{ toggles }}" as="t" hint-placeholder-count="4">
+          <div style="display:flex;align-items:center;gap:9px">
+            <div style="width:28px;height:16px;border-radius:2px;background:{{ t.track }};position:relative;flex:none"><div style="position:absolute;{{ t.side }}:2px;top:2px;width:12px;height:12px;border-radius:50%;background:{{ t.knob }}"></div></div>
+            <div style="font-size:10px;color:{{ t.fg }}">{{ t.name }}</div>
+            <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">{{ t.meta }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+        <div style="display:flex;align-items:center;gap:7px"><div style="font-size:11px;font-weight:600">Ligar por cena</div><div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">macro F2</div></div>
+        <div style="font-size:9.5px;color:var(--muted);line-height:1.45">A cena «entrevista» acende a chave e o contraluz, põe as duas câmaras a 5 200 K e baixa a música para −18 dB.</div>
+        <div style="display:flex;gap:5px">
+          <div style="flex:1;padding:5px;border-radius:2px;background:var(--accent-strong);color:#fff;text-align:center;font-size:10px;font-weight:600">Aplicar agora</div>
+          <div style="flex:1;padding:5px;border-radius:2px;border:1px solid var(--border);color:var(--muted);text-align:center;font-size:10px;font-weight:600">Pré-visualizar</div>
+        </div>
+      </div>
+
+      <div style="margin-top:auto;padding:10px;border-radius:2px;border:1px solid var(--border);display:flex;flex-direction:column;gap:5px">
+        <div style="font-size:10.5px;font-weight:600">A luz vale mais que a câmara</div>
+        <div style="font-size:9.5px;color:var(--muted);line-height:1.45">Com três telefones bem iluminados a 5 200 K, a emissão fica melhor do que com câmaras caras à luz do tecto.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const FIX = [
+  ['Chave · painel LED 1','DMX 1 · canais 1—4','86%','5 200 K','#ffd9a8',true,'no ar'],
+  ['Preenchimento · painel 2','DMX 1 · canais 5—8','54%','5 200 K','#ffe4c2',false,'no ar'],
+  ['Contraluz · barra','DMX 1 · canais 9—12','72%','4 400 K','#ffcf9a',false,'no ar'],
+  ['Fundo · barra RGB','DMX 1 · canais 13—18','92%','—','#ad1017',false,'atenção'],
+  ['Cenário · Hue Go','Hue · zona palco','48%','3 000 K','#ff9d5c',false,'no ar'],
+  ['Mesa · Hue lâmpada','Hue · zona mesa','36%','2 700 K','#ffb47a',false,'no ar'],
+  ['Convidado · painel 3','DMX 1 · canais 19—24','0%','5 600 K','#4a4a50',false,'apagado']
+];
+const CCT = { '5 200 K': '58%', '4 400 K': '44%', '5 600 K': '66%', '3 000 K': '18%', '2 700 K': '10%', '—': '50%' };
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      scenes: [
+        ['Entrevista','F2','#c9a184','Chave e contraluz suaves, fundo em vermelho Delonix a 40%.',true],
+        ['Aula','F3','#e8d9b8','Luz plana e alta para o quadro branco e os diapositivos.',false],
+        ['Notícias','F4','#cfe3ff','Contraste 3:1, fundo frio, sem sombra na parede.',false],
+        ['Painel a três','F5','#d8c2a0','Três chaves independentes, cada convidado com a sua luz.',false],
+        ['Intervalo','F6','#3a3a40','Tudo a 20%, cartão de espera no ar.',false]
+      ].map(([name, key, swatch, note, on]) => ({
+        name, key, swatch, note,
+        ring: on ? 'var(--accent)' : 'var(--border)',
+        fg: on ? 'var(--accent)' : 'var(--text)'
+      })),
+      fixtures: FIX.map(([name, proto, level, cct, dot, sel, state]) => ({
+        name, proto, level, cct, dot, state,
+        cctPos: CCT[cct] || '50%',
+        ring: sel ? 'var(--accent)' : 'var(--border)',
+        stFg: state === 'atenção' ? 'var(--warning)' : (state === 'apagado' ? 'var(--muted)' : 'var(--success)')
+      })),
+      corr: [['Ganho','48%','+0,4 EV'],['Temperatura','58%','5 200 K'],['Matiz','50%','0'],['Contraste','44%','3:1'],['Realce de rosto','66%','médio'],['Redução de ruído','38%','baixa']].map(([label, pct, value]) => ({ label, pct, value })),
+      toggles: [
+        ['Realce de rosto por IA','local · 2 ms',true],
+        ['Equilíbrio de brancos entre câmaras','3 fontes',true],
+        ['Suavizar pele','desligado',false],
+        ['Fundo desfocado','só CAM 3',true]
+      ].map(([name, meta, on]) => ({
+        name, meta,
+        track: on ? 'var(--accent)' : 'var(--border)',
+        knob: on ? '#fff' : '#9a9aa0',
+        side: on ? 'right' : 'left',
+        fg: on ? 'var(--text)' : 'var(--muted)'
+      }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>
