@@ -7,7 +7,8 @@
 #  pode ver rede nenhuma), e exige:
 #   1. as três fontes fixadas (/REF-*) iguais aos ARG do Containerfile;
 #   2. os módulos de que os dialplans do Meet dependem a CARREGAR, não só
-#      presentes em disco — mod_lua e mod_curl eram os que faltavam;
+#      presentes em disco — mod_lua e mod_curl eram os que faltavam — e um
+#      perfil SIP de loopback a ficar RUNNING (os da vanilla precisam de rede);
 #   3. o mod_lua a executar um script que chama a API do FreeSWITCH e vê o
 #      mod_curl carregado — a mesma cadeia que o dialin_ivr.lua usa;
 #   4. o luac5.2 da imagem a compilar os scripts do Meet.
@@ -42,7 +43,28 @@ local api = freeswitch.API()
 stream:write("lua-ok curl=" .. api:execute("module_exists", "mod_curl"))
 LUA
 chmod 644 "$tmp/smoke.lua"
+# Os perfis SIP da vanilla descobrem o IP externo por STUN; sem rede isso dá
+# «Invalid ext-sip-ip» e o mod_sofia descarrega-se inteiro. Em vez deles, um
+# perfil só em loopback — e exige-se que fique RUNNING, o que prova mais do
+# que o módulo carregar.
+mkdir -p "$tmp/sip_profiles"
+cat > "$tmp/sip_profiles/smoke.xml" <<'XML'
+<profile name="smoke">
+  <settings>
+    <param name="context" value="public"/>
+    <param name="dialplan" value="XML"/>
+    <param name="sip-ip" value="127.0.0.1"/>
+    <param name="rtp-ip" value="127.0.0.1"/>
+    <param name="ext-sip-ip" value="127.0.0.1"/>
+    <param name="ext-rtp-ip" value="127.0.0.1"/>
+    <param name="sip-port" value="5099"/>
+    <param name="auth-calls" value="true"/>
+  </settings>
+</profile>
+XML
+chmod -R a+rX "$tmp"
 docker run -d --name "$NAME" --network none -v "$tmp/smoke.lua:/smoke.lua:ro" \
+  -v "$tmp/sip_profiles:/usr/local/freeswitch/etc/freeswitch/sip_profiles:ro" \
   "$IMAGE" freeswitch -nonat -nf -nc >/dev/null || { echo "✗ a imagem não arrancou"; exit 1; }
 cli() { docker exec "$NAME" fs_cli -x "$1" 2>/dev/null; }
 up=0
@@ -59,6 +81,12 @@ cli "load mod_curl" >/dev/null
 for m in mod_sofia mod_event_socket mod_conference mod_dptools mod_commands mod_opus mod_lua mod_curl; do
   [ "$(cli "module_exists $m" | tr -d '[:space:]')" = "true" ] || bad "módulo não carrega: $m"
 done
+running=0
+for _ in $(seq 1 20); do
+  if cli "sofia status" | grep -Eq "^ *smoke[[:space:]]+profile.*RUNNING"; then running=1; break; fi
+  sleep 1
+done
+[ "$running" -eq 1 ] || bad "o perfil SIP de loopback não ficou RUNNING (sofia status)"
 
 # 3) o mod_lua executa e vê a API
 out=$(cli "lua /smoke.lua")
