@@ -733,6 +733,19 @@ pub enum ServerMsg {
         text: String,
         at: i64,
     },
+    /// Mudou o estado de um participante já na sala sem ele sair: rede fraca,
+    /// passado a palco, identificado (nome novo). A sala inteira recebe.
+    PeerUpdated {
+        peer: PeerInfo,
+    },
+    /// «N na sala · M fora da app» e a contagem por origem (ADR-0010). Vai a
+    /// toda a sala sempre que alguém de fora da app entra ou sai, e a quem
+    /// entra se a sala tiver alguém de fora.
+    ChannelSummary {
+        in_room: u32,
+        outside_app: u32,
+        by_origin: Vec<OriginCount>,
+    },
 }
 
 /// Tipo de objecto do quadro.
@@ -933,7 +946,73 @@ pub struct PeerInfo {
     /// Cargo na organização do dono da sala (`org_members.title`), se houver.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Como esta pessoa está ligada (canal, rede, crachás — ADR-0010).
+    /// Achatado: um cliente antigo continua a ler o mesmo objecto.
+    #[serde(flatten)]
+    pub seat: Seat,
 }
+
+/// Como um participante está ligado à sala (ADR-0010). Vai em cada `PeerInfo`,
+/// que TODA a sala recebe: por isso o número vem sempre mascarado — o número
+/// inteiro só chega aos anfitriões, pelo `dial-out-updated` e pela REST.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Seat {
+    /// `app`, `sip_room`, `ip_camera`, `whatsapp` ou `phone`.
+    #[serde(default)]
+    pub channel: delonix_meet_domain::conferencing::channels::Channel,
+    /// Rede de uma chamada telefónica: `unitel`, `africell`, `movicel`,
+    /// `national`, `international`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier: Option<delonix_meet_domain::conferencing::channels::Carrier>,
+    /// `+244 951 ***447`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_masked: Option<String>,
+    /// Crachá «Sem nome»: número sem contacto associado na organização.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub anonymous: bool,
+    /// Crachá «Vídeo indisponível»: o canal não transporta vídeo.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub video_unavailable: bool,
+    /// Crachá «Ligação fraca»: jitter/perda MEDIDOS no RTP da ponte.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub weak_link: bool,
+    /// Passado a palco: o áudio desta pessoa nunca é suprimido pelo seletor
+    /// de oradores.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_stage: bool,
+    /// A chamada da ponte (o `dial-out`/perna) — é por este id que o anfitrião
+    /// age sobre a pessoa pela REST.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<Uuid>,
+}
+
+impl Seat {
+    pub fn outside_app(&self) -> bool {
+        self.channel.outside_app()
+    }
+
+    /// Chave de agregação do cabeçalho «Como cada pessoa está ligada»: o canal,
+    /// ou a rede para as chamadas telefónicas.
+    pub fn origin(&self) -> &'static str {
+        use delonix_meet_domain::conferencing::channels::Channel;
+        match (self.channel, self.carrier) {
+            (Channel::Phone, Some(c)) => c.as_str(),
+            (c, _) => c.as_str(),
+        }
+    }
+}
+
+/// Contagem de uma origem no cabeçalho da sala.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OriginCount {
+    /// `app`, `sip_room`, `ip_camera`, `whatsapp`, `unitel`, `africell`,
+    /// `movicel`, `national`, `international`.
+    pub origin: String,
+    pub count: u32,
+}
+
+
+
 
 /// O que se sabe de quem entra além do nome e do papel base. Vem do token de
 /// sala (assinado pelo servidor) — nunca do cliente.
@@ -1133,6 +1212,8 @@ pub(crate) struct Peer {
     role: Role,
     origin: Option<Origin>,
     title: Option<String>,
+    /// Como está ligado (ADR-0010). `Seat::default()` = app.
+    seat: Seat,
     tx: PeerTx,
     /// Travão das legendas parciais deste peer (ver `allow_interim`).
     interim: crate::rate_limit::TokenBucket,
@@ -1350,6 +1431,7 @@ impl Peer {
             can_admit: self.admits(),
             origin: self.origin,
             title: self.title.clone(),
+            seat: self.seat.clone(),
         }
     }
 }
@@ -1380,6 +1462,7 @@ impl Room {
             can_admit: false,
             origin: w.extras.origin,
             title: w.extras.title.clone(),
+            seat: Seat::default(),
         }
     }
 
@@ -1408,9 +1491,27 @@ impl Room {
     }
 }
 
+/// Impor no SERVIDOR o que um cliente honraria sozinho.
+///
+/// O `ForceMute` do anfitrião é uma MENSAGEM ao alvo (`ServerMsg::ForceMuted`),
+/// e um browser silencia-se a si próprio ao recebê-la. **Um telefone não tem
+/// cliente**: a mensagem não chega a lado nenhum e o áudio continuava a entrar
+/// na sala (R224). Para quem vem de fora da app, o silêncio faz-se na perna.
+///
+/// Fica atrás de uma porta para o `signaling` não depender do `phone_bridge` —
+/// a dependência corre no sentido contrário, e é a ponte que se regista aqui
+/// ao arrancar (`voice::start_phone_bridge`).
+pub trait PhoneControl: Send + Sync {
+    /// Não bloqueia: a implementação despacha e devolve.
+    fn set_muted(&self, leg_id: Uuid, muted: bool);
+}
+
 #[derive(Default)]
 pub struct SignalingHub {
     pub(crate) rooms: DashMap<Uuid, Room>,
+    /// A ponte telefone↔sala, quando está a correr. `OnceLock` porque o `Hub`
+    /// já está partilhado quando a ponte arranca.
+    pub phone: std::sync::OnceLock<Arc<dyn PhoneControl>>,
     pub bus: Option<Arc<crate::pubsub::PubSubBus>>,
     /// Escrita do chat na base de dados, FORA do caminho quente (fila
     /// limitada consumida por uma tarefa própria). `None` em testes.
@@ -1566,6 +1667,7 @@ impl SignalingHub {
                 role,
                 origin,
                 title: extras.title,
+                seat: Seat::default(),
                 tx: tx.clone(),
                 interim: crate::rate_limit::TokenBucket::new(INTERIM_BURST, INTERIM_PER_SEC),
                 cursor: crate::rate_limit::TokenBucket::new(CURSOR_BURST, CURSOR_PER_SEC),
@@ -1821,6 +1923,7 @@ impl SignalingHub {
         // para uma sala já sem o peer e não saberia de quem ele era.
         let mut orfaos: Vec<Uuid> = Vec::new();
         let mut spotlight_cleared = false;
+        let mut era_de_fora = false;
         let removed = self
             .rooms
             .get_mut(&room_id)
@@ -1836,6 +1939,7 @@ impl SignalingHub {
                 }
                 let saiu = r.peers.remove(&peer_id);
                 if let Some(p) = &saiu {
+                    era_de_fora = p.seat.outside_app();
                     let conta = p.user_id;
                     let restantes: Vec<Uuid> = r
                         .peers
@@ -1862,6 +1966,9 @@ impl SignalingHub {
             .unwrap_or(false);
         if removed {
             self.broadcast_all(room_id, ServerMsg::PeerLeft { peer_id });
+            if era_de_fora && !empty {
+                self.broadcast_all(room_id, self.channel_summary(room_id));
+            }
         }
         if spotlight_cleared {
             self.broadcast_all(room_id, ServerMsg::Spotlight { peer: None });
@@ -1870,6 +1977,131 @@ impl SignalingHub {
             self.rooms.remove_if(&room_id, |_, room| {
                 room.peers.is_empty() && room.waiting.is_empty()
             });
+        }
+    }
+
+    // ---------- Canais: participantes de fora da app (ADR-0010) ----------
+
+    /// Põe na sala alguém que não entrou pela app: uma chamada telefónica, de
+    /// WhatsApp ou uma sala SIP, ligada pela ponte de media. Não passa pela
+    /// sala de espera: quem o pôs cá (o anfitrião que ligou, ou o PIN de uso
+    /// único que o anfitrião enviou) JÁ é a admissão.
+    ///
+    /// O `tx` é uma fila cujo receptor a ponte esvazia: um telefone não lê
+    /// mensagens de sinalização, mas a sala trata-o como qualquer peer.
+    pub fn join_external(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+        username: String,
+        seat: Seat,
+        tx: PeerTx,
+    ) {
+        let announce = {
+            let mut room = self.rooms.entry(room_id).or_default();
+            if room.started_at == 0 {
+                room.started_at = now_ms();
+            }
+            let novo = Peer {
+                username,
+                // Uma chamada não é uma conta: o id da perna faz de conta
+                // para o `companion` (R114) nunca a confundir com ninguém.
+                user_id: peer_id,
+                is_host: false,
+                can_admit: false,
+                hand: false,
+                cam_on: false,
+                mic_on: true,
+                is_bot: false,
+                is_pstn: seat.outside_app(),
+                role: Role::Attendee,
+                origin: seat.outside_app().then_some(Origin::Pstn),
+                title: None,
+                seat,
+                tx,
+                interim: crate::rate_limit::TokenBucket::new(INTERIM_BURST, INTERIM_PER_SEC),
+                cursor: crate::rate_limit::TokenBucket::new(CURSOR_BURST, CURSOR_PER_SEC),
+                reconnect_secret: Secret::new(novo_segredo_de_reclamacao()),
+                disconnected_at: None,
+            };
+            let info = novo.info(peer_id);
+            room.peers.insert(peer_id, novo);
+            ServerMsg::PeerJoined { peer: info }
+        };
+        self.broadcast_all(room_id, announce);
+        self.broadcast_all(room_id, self.channel_summary(room_id));
+    }
+
+    /// Altera o estado de um participante de fora da app (nome, crachás,
+    /// palco, microfone) e avisa a sala. Devolve o `PeerInfo` novo, ou `None`
+    /// se não está cá.
+    pub fn update_external(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+        change: impl FnOnce(&mut Seat, &mut String, &mut bool),
+    ) -> Option<PeerInfo> {
+        let (info, mic_changed) = {
+            let mut room = self.rooms.get_mut(&room_id)?;
+            let p = room.peers.get_mut(&peer_id)?;
+            let mic_before = p.mic_on;
+            change(&mut p.seat, &mut p.username, &mut p.mic_on);
+            (
+                p.info(peer_id),
+                (mic_before != p.mic_on).then_some(p.mic_on),
+            )
+        };
+        if let Some(mic) = mic_changed {
+            self.broadcast_all(
+                room_id,
+                ServerMsg::Media {
+                    from: peer_id,
+                    cam: false,
+                    mic,
+                },
+            );
+        }
+        self.broadcast_all(room_id, ServerMsg::PeerUpdated { peer: info.clone() });
+        Some(info)
+    }
+
+    /// O `Seat` de um participante na sala.
+    pub fn seat_of(&self, room_id: Uuid, peer_id: Uuid) -> Option<Seat> {
+        self.rooms
+            .get(&room_id)
+            .and_then(|r| r.peers.get(&peer_id).map(|p| p.seat.clone()))
+    }
+
+    /// «N na sala · M fora da app» e a contagem por origem. Ordem estável
+    /// (app primeiro, depois por ordem alfabética), para a UI não reordenar
+    /// os crachás a cada entrada.
+    pub fn channel_summary(&self, room_id: Uuid) -> ServerMsg {
+        let mut counts: std::collections::BTreeMap<&'static str, u32> = Default::default();
+        let (mut in_room, mut outside) = (0u32, 0u32);
+        if let Some(room) = self.rooms.get(&room_id) {
+            for p in room.peers.values() {
+                if p.is_bot {
+                    continue;
+                }
+                in_room += 1;
+                if p.seat.outside_app() {
+                    outside += 1;
+                }
+                *counts.entry(p.seat.origin()).or_insert(0) += 1;
+            }
+        }
+        let mut by_origin: Vec<OriginCount> = counts
+            .into_iter()
+            .map(|(origin, count)| OriginCount {
+                origin: origin.to_string(),
+                count,
+            })
+            .collect();
+        by_origin.sort_by_key(|c| (c.origin != "app", c.origin.clone()));
+        ServerMsg::ChannelSummary {
+            in_room,
+            outside_app: outside,
+            by_origin,
         }
     }
 
@@ -2402,6 +2634,13 @@ impl SignalingHub {
                 restricted: true,
                 writers: r.wb_writers.iter().copied().collect(),
             });
+        }
+        let de_fora = r.peers.values().any(|p| p.seat.outside_app());
+        drop(r);
+        // Canais (ADR-0010): com alguém de fora da app, quem entra recebe logo
+        // o «N na sala · M fora da app» em vez de o calcular dos crachás.
+        if de_fora {
+            v.push(self.channel_summary(room_id));
         }
         v
     }
@@ -2995,6 +3234,15 @@ impl SignalingHub {
             ClientMsg::ForceMute { to } => {
                 if self.is_host(room_id, peer_id) {
                     self.send_to(room_id, to, ServerMsg::ForceMuted);
+                    // Quem vem de fora da app não tem cliente para honrar a
+                    // mensagem acima: impõe-se na perna (R224). O crachá do
+                    // microfone acompanha, senão a sala vê-o a falar calado.
+                    if self.seat_of(room_id, to).is_some_and(|s| s.outside_app()) {
+                        if let Some(p) = self.phone.get() {
+                            p.set_muted(to, true);
+                        }
+                        self.update_external(room_id, to, |_, _, mic| *mic = false);
+                    }
                 }
             }
             ClientMsg::ForceCam { to } => {
@@ -5584,6 +5832,238 @@ mod tests {
             "só o anfitrião fecha uma sondagem"
         );
     }
+    // ---------------------------------------------------------------
+    //  Canais na sala (ADR-0010, R224)
+    // ---------------------------------------------------------------
+
+    fn telefone_seat() -> Seat {
+        use delonix_meet_domain::conferencing::channels::{Carrier, Channel};
+        Seat {
+            channel: Channel::Phone,
+            carrier: Some(Carrier::Africell),
+            number_masked: Some("+244 951 ***447".into()),
+            anonymous: true,
+            video_unavailable: true,
+            weak_link: false,
+            on_stage: false,
+            call_id: Some(Uuid::nil()),
+        }
+    }
+
+    #[test]
+    fn peer_info_da_app_fica_como_era_mais_o_canal() {
+        let info = PeerInfo {
+            peer_id: Uuid::nil(),
+            username: "Ana".into(),
+            host: true,
+            can_admit: true,
+            hand: false,
+            cam: true,
+            mic: true,
+            is_bot: false,
+            is_pstn: false,
+            role: Role::Host,
+            origin: None,
+            title: None,
+            seat: Seat::default(),
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["channel"], "app");
+        for ausente in [
+            "carrier",
+            "number_masked",
+            "anonymous",
+            "video_unavailable",
+            "weak_link",
+            "on_stage",
+            "call_id",
+            "seat",
+        ] {
+            assert!(
+                v.get(ausente).is_none(),
+                "{ausente} não devia ir no fio: {v}"
+            );
+        }
+        // Um PeerInfo antigo (sem nenhum campo de canal) continua a ler-se.
+        let antigo = r#"{"peer_id":"00000000-0000-0000-0000-000000000000","username":"x","host":false,"cam":true,"mic":true}"#;
+        let lido: PeerInfo = serde_json::from_str(antigo).unwrap();
+        assert_eq!(lido.seat, Seat::default());
+    }
+
+    #[test]
+    fn peer_info_de_telefone_leva_cracha_e_numero_mascarado() {
+        let info = PeerInfo {
+            peer_id: Uuid::nil(),
+            username: "+244 951 ***447".into(),
+            host: false,
+            can_admit: false,
+            hand: false,
+            cam: false,
+            mic: true,
+            is_bot: false,
+            is_pstn: true,
+            role: Role::Attendee,
+            origin: Some(Origin::Pstn),
+            title: None,
+            seat: telefone_seat(),
+        };
+        let msg = ServerMsg::PeerJoined { peer: info };
+        let v = serde_json::to_value(&msg).unwrap();
+        assert_eq!(v["type"], "peer-joined");
+        assert_eq!(v["peer"]["channel"], "phone");
+        assert_eq!(v["peer"]["carrier"], "africell");
+        assert_eq!(v["peer"]["number_masked"], "+244 951 ***447");
+        assert_eq!(v["peer"]["anonymous"], true);
+        assert_eq!(v["peer"]["video_unavailable"], true);
+        assert_eq!(v["peer"]["is_pstn"], true);
+        let volta: ServerMsg = serde_json::from_value(v).unwrap();
+        match volta {
+            ServerMsg::PeerJoined { peer } => assert_eq!(peer.seat, telefone_seat()),
+            outro => panic!("{outro:?}"),
+        }
+    }
+
+    #[test]
+    fn mensagens_novas_de_canais_no_fio() {
+        let resumo = ServerMsg::ChannelSummary {
+            in_room: 12,
+            outside_app: 4,
+            by_origin: vec![OriginCount {
+                origin: "app".into(),
+                count: 8,
+            }],
+        };
+        let v = serde_json::to_value(&resumo).unwrap();
+        assert_eq!(v["type"], "channel-summary");
+        assert_eq!(v["in_room"], 12);
+        assert_eq!(v["outside_app"], 4);
+        assert_eq!(v["by_origin"][0]["origin"], "app");
+
+
+        let u = serde_json::to_value(ServerMsg::PeerUpdated {
+            peer: PeerInfo {
+                peer_id: Uuid::nil(),
+                username: "Arq. Silva".into(),
+                host: false,
+                can_admit: false,
+                hand: false,
+                cam: false,
+                mic: true,
+                is_bot: false,
+                is_pstn: true,
+                role: Role::Attendee,
+                origin: Some(Origin::Pstn),
+                title: None,
+                seat: Seat {
+                    weak_link: true,
+                    ..telefone_seat()
+                },
+            },
+        })
+        .unwrap();
+        assert_eq!(u["type"], "peer-updated");
+        assert_eq!(u["peer"]["weak_link"], true);
+    }
+
+    #[test]
+    fn quem_liga_de_fora_entra_conta_e_sai_com_resumo() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, mut rx_h) = peer();
+        let (membro, tx_m, mut rx_m) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        hub.join(
+            room,
+            membro,
+            membro,
+            "membro".into(),
+            false,
+            false,
+            false,
+            tx_m,
+        );
+        drain(&mut rx_h);
+        drain(&mut rx_m);
+
+        let call = Uuid::new_v4();
+        let (tx_p, _rx_p, _) = PeerTx::new(TEST_CAP, Arc::new(crate::metrics::Metrics::default()));
+        hub.join_external(room, call, "+244 951 ***447".into(), telefone_seat(), tx_p);
+
+        let msgs = recolher(&mut rx_m);
+        let entrou = msgs.iter().find_map(|m| match m {
+            ServerMsg::PeerJoined { peer } => Some(peer.clone()),
+            _ => None,
+        });
+        let entrou = entrou.expect("a sala vê a pessoa de fora a entrar");
+        assert_eq!(entrou.seat.channel.as_str(), "phone");
+        // Privacidade: o que TODA a sala recebe nunca leva o número inteiro.
+        let fio = serde_json::to_string(&msgs).unwrap();
+        assert!(
+            !fio.contains("951000447"),
+            "número inteiro no fio da sala: {fio}"
+        );
+        match msgs
+            .iter()
+            .find(|m| matches!(m, ServerMsg::ChannelSummary { .. }))
+        {
+            Some(ServerMsg::ChannelSummary {
+                in_room,
+                outside_app,
+                by_origin,
+            }) => {
+                assert_eq!((*in_room, *outside_app), (3, 1));
+                assert_eq!(by_origin[0].origin, "app");
+                assert_eq!(by_origin[0].count, 2);
+                assert!(by_origin
+                    .iter()
+                    .any(|o| o.origin == "africell" && o.count == 1));
+            }
+            _ => panic!("sem channel-summary: {msgs:?}"),
+        }
+
+        // Quem entra depois recebe o roster com o crachá.
+        let (tarde, tx_t, _rx_t) = peer();
+        let entrada = hub.join(
+            room,
+            tarde,
+            tarde,
+            "tarde".into(),
+            false,
+            false,
+            false,
+            tx_t,
+        );
+        let visto = entrada.roster.iter().find(|p| p.peer_id == call).unwrap();
+        assert!(visto.seat.video_unavailable && visto.is_pstn);
+
+        // Ligação fraca medida: a sala vê o crachá mudar sem a pessoa sair.
+        drain(&mut rx_m);
+        hub.update_external(room, call, |seat, _, _| seat.weak_link = true)
+            .unwrap();
+        assert!(recolher(&mut rx_m).iter().any(|m| matches!(m,
+            ServerMsg::PeerUpdated { peer } if peer.peer_id == call && peer.seat.weak_link)));
+
+        // Silenciar na ponte = mic falso para a sala.
+        hub.update_external(room, call, |_, _, mic| *mic = false)
+            .unwrap();
+        assert!(recolher(&mut rx_m).iter().any(|m| matches!(m,
+            ServerMsg::Media { from, mic: false, .. } if *from == call)));
+
+        hub.leave(room, call);
+        let msgs = recolher(&mut rx_h);
+        assert!(msgs
+            .iter()
+            .any(|m| matches!(m, ServerMsg::PeerLeft { peer_id } if *peer_id == call)));
+        assert!(msgs.iter().any(|m| matches!(
+            m,
+            ServerMsg::ChannelSummary {
+                outside_app: 0,
+                in_room: 3,
+                ..
+            }
+        )));
+    }
+
 }
 
 // ---------- frontend/b1-sala ----------

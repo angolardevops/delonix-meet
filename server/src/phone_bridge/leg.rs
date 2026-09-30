@@ -17,7 +17,7 @@
 //! contra o FreeSWITCH real (ADR-0010 §10).
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -100,6 +100,7 @@ pub enum LegEvent {
 /// Pega numa perna a correr.
 pub struct LegHandle {
     pub local_addr: SocketAddr,
+    muted: Arc<AtomicBool>,
     /// Contadores da perna. Fora dos testes ninguém os lê ainda — o laço
     /// regista-os no log quando a perna fecha, e quem os vai expor é a consola
     /// dos canais, que vem com a frente da telefonia.
@@ -110,6 +111,20 @@ pub struct LegHandle {
 }
 
 impl LegHandle {
+    /// Silenciar NA PONTE: o áudio do telefone deixa de entrar na sala; o
+    /// telefone continua a ouvir a reunião. É o que o `ForceMute` de um
+    /// anfitrião faz a quem não tem cliente para o honrar (R224).
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Relaxed);
+    }
+
+    /// O interruptor em si, para quem precise de o accionar sem `await`
+    /// (`SipBridge` guarda-o num registo que o `signaling` lê de forma
+    /// síncrona — ver `PhoneControl`).
+    pub fn mute_flag(&self) -> Arc<AtomicBool> {
+        self.muted.clone()
+    }
+
     /// Termina a perna e espera que a sala a largue.
     pub async fn stop(self) {
         let _ = self.stop.send(());
@@ -131,6 +146,7 @@ pub async fn start(
 ) -> std::io::Result<LegHandle> {
     let local_addr = socket.local_addr()?;
     let stats = Arc::new(LegStats::default());
+    let muted = Arc::new(AtomicBool::new(false));
     let (stop, stop_rx) = oneshot::channel();
     let publish = sfu.publish_bridge_audio(cfg.room_id, cfg.leg_id).await;
     let taps = sfu.tap_room_audio(cfg.room_id, cfg.leg_id);
@@ -145,11 +161,13 @@ pub async fn start(
         taps,
         ingress,
         stats: stats.clone(),
+        muted: muted.clone(),
         stop: stop_rx,
         events,
     }));
     Ok(LegHandle {
         local_addr,
+        muted,
         stats,
         stop,
         task,
@@ -165,6 +183,7 @@ struct Run {
     taps: mpsc::Receiver<crate::sfu::TapPacket>,
     ingress: Ingress,
     stats: Arc<LegStats>,
+    muted: Arc<AtomicBool>,
     stop: oneshot::Receiver<()>,
     events: mpsc::Sender<LegEvent>,
 }
@@ -240,6 +259,12 @@ async fn run(mut r: Run) {
                 if !first_media {
                     first_media = true;
                     let _ = r.events.try_send(LegEvent::FirstMedia);
+                }
+                // Silenciado: o pacote CONTA (chegou, mede-se a qualidade e o
+                // RTP simétrico segue-o) mas não entra na sala. Descartar antes
+                // da estatística faria a perna parecer morta a quem a observa.
+                if r.muted.load(Relaxed) {
+                    continue;
                 }
                 let t = Instant::now();
                 let frames = r.ingress.push(pkt_law, &pkt.payload, pkt.header.timestamp);

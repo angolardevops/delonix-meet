@@ -1778,6 +1778,129 @@ impl TestClient {
     }
 }
 
+/// **R224 — o `ForceMute` de um anfitrião não calava quem vem de fora da app.**
+///
+/// O `ForceMute` é uma MENSAGEM ao alvo (`ServerMsg::ForceMuted`): um browser
+/// recebe-a e silencia-se a si próprio. **Um telefone não tem cliente para a
+/// honrar** — a mensagem cai no vazio e o áudio continua a entrar na sala. Aqui
+/// o silêncio é imposto NA PERNA, pela porta `signaling::PhoneControl`.
+///
+/// Mede-se o que a sala ouve, não o que o servidor diz que fez: o telefone
+/// manda 1 kHz sem parar, e o que muda é o tom que chega ao participante.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn force_mute_cala_o_telefone_na_perna() {
+    use crate::phone_bridge::{g711::Law, leg};
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+    let leg_id = Uuid::new_v4();
+
+    let ana = TestClient::join(&sfu, room).await;
+    eventually_com_diagnostico(
+        "a Ana está ligada ao SFU",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.pc.connection_state()
+                    == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+                    && ana.pc.signaling_state()
+                        == webrtc::peer_connection::signaling_state::RTCSignalingState::Stable
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+
+    let (ev_tx, _ev_rx) = mpsc::channel(16);
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let perna = leg::start(
+        sfu.clone(),
+        leg::LegConfig {
+            room_id: room,
+            leg_id,
+            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            default_law: Law::A,
+            initial_remote: None,
+        },
+        socket,
+        None,
+        ev_tx,
+    )
+    .await
+    .expect("perna da ponte");
+    let _telefone = TelefoneFalso::ligar("127.0.0.1:0", perna.local_addr, Law::Mu, 1000.0).await;
+
+    // (1) Sem silêncio, a sala ouve o telefone.
+    eventually("a Ana ouve o 1 kHz do telefone", prazo(30), || {
+        let ana = ana.clone();
+        async move {
+            ana.tom_recebido(&leg_id.to_string(), 1000.0)
+                .iter()
+                .rev()
+                .take(15)
+                .filter(|(_, m)| *m > 0.05)
+                .count()
+                >= 10
+        }
+    })
+    .await;
+
+    // (2) O anfitrião silencia. É o MESMO interruptor que a porta acciona —
+    // `PhoneControl::set_muted` chega aqui pelo registo da ponte.
+    perna.set_muted(true);
+    let calado_em = std::time::Instant::now();
+
+    // (3) A sala deixa de o ouvir. Mede-se DEPOIS da fila de jitter esvaziar:
+    // o que já ia a caminho quando o interruptor virou ainda chega.
+    eventually_com_diagnostico(
+        "o 1 kHz do telefone desaparece da sala",
+        prazo(20),
+        || {
+            let ana = ana.clone();
+            async move {
+                let recentes: Vec<f32> = ana
+                    .tom_recebido(&leg_id.to_string(), 1000.0)
+                    .into_iter()
+                    .filter(|(at, _)| *at > calado_em + Duration::from_millis(600))
+                    .map(|(_, m)| m)
+                    .collect();
+                recentes.len() >= 10 && recentes.iter().all(|m| *m < 0.02)
+            }
+        },
+        || {
+            let ultimos: Vec<String> = ana
+                .tom_recebido(&leg_id.to_string(), 1000.0)
+                .iter()
+                .rev()
+                .take(5)
+                .map(|(_, m)| format!("{m:.4}"))
+                .collect();
+            format!("últimas magnitudes de 1 kHz: {ultimos:?}")
+        },
+    )
+    .await;
+
+    // (4) E volta quando o anfitrião desfaz — senão isto seria uma perna morta,
+    // que passaria no passo (3) por outra razão.
+    perna.set_muted(false);
+    eventually("a Ana volta a ouvir o telefone", prazo(20), || {
+        let ana = ana.clone();
+        async move {
+            ana.tom_recebido(&leg_id.to_string(), 1000.0)
+                .iter()
+                .rev()
+                .take(15)
+                .filter(|(_, m)| *m > 0.05)
+                .count()
+                >= 10
+        }
+    })
+    .await;
+
+    sfu.remove_peer(room, ana.id).await;
+    ana.pc.close().await.unwrap();
+}
+
 /// **R221 — a ponte telefone↔sala, com media a sério nos dois sentidos.**
 ///
 /// Um «telefone» (socket UDP a mandar RTP G.711 lei μ com um tom de 1 kHz,

@@ -24,10 +24,11 @@ use serde::{Deserialize, Serialize};
 // ============================================================
 
 /// Por onde a pessoa está ligada à sala.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Channel {
     /// Browser ou app Delonix (WebRTC completo).
+    #[default]
     App,
     /// Sistema de sala por SIP (sala de reuniões, codec de hardware).
     SipRoom,
