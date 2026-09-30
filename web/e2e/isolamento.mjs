@@ -1234,6 +1234,8 @@ console.log('\n--- papéis, permissões, utilizadores e convites (ADR-0008) ---'
   else nok('e o papel da B CONTINUA igual', JSON.stringify(papelAinda.json))
   // Controlo positivo: B lê o seu directório.
   await permitido('controlo: B lê o seu directório', `/api/orgs/${B.orgId}/users`, { token: B.token })
+}
+
 // Telefonia (ADR-0009, R210–R214). B cria um tronco REAL: um `404` com um id
 // inventado não provava nada. No fim o tronco de B tem de continuar lá.
 console.log('\n--- telefonia: org A contra a de B ---')
