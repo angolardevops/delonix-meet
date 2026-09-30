@@ -2289,7 +2289,7 @@ pub async fn overview(
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<SmsOverview>, ApiError> {
-    require_admin_pub(&state, org_id, auth.user_id).await?;
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let day_start: DateTime<Utc> = sqlx::query_scalar(
         "SELECT date_trunc('day', now() AT TIME ZONE 'Africa/Luanda') AT TIME ZONE 'Africa/Luanda'",
     )
