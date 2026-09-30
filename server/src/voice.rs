@@ -744,28 +744,32 @@ pub struct ValidatePinReq {
     pub pin: String,
 }
 
-/// Ponte de media FreeSWITCH↔SFU (Abordagem B, `docs/pstn-sfu-bridge-design.md`
-/// e `server/src/pstn_bridge.rs`) — endpoint de ingress SRTP do SFU para esta
-/// sala, com as chaves efémeras que o FreeSWITCH precisa para lhe falar. Os
-/// nomes destes campos são o contrato com
-/// `voice/freeswitch/scripts/dialin_ivr.lua` — mudar um lado sem o outro
-/// deixa a ponte silenciosamente inactiva (cai sempre no fallback local).
+/// Ponte de media telefone↔sala (ADR-0010) — para onde o FreeSWITCH faz
+/// `bridge` para que o chamador PSTN entre na sala WebRTC.
+///
+/// **Sucede à `PstnBridgeResp` da Abordagem B**, que devolvia um `host:porta`
+/// de ingress SRTP e as chaves por fora. Esse mecanismo — o FreeSWITCH a
+/// mandar SRTP cru para um endereço arbitrário — nunca se conseguiu verificar,
+/// e a imagem oficial 1.11.3 não tem `mod_rtp` (medido: ver
+/// `docs/pstn-sfu-bridge-design.md` §Superseded). O que o FreeSWITCH de stock
+/// SABE fazer é uma segunda perna SIP, e é isso que estes campos descrevem.
+///
+/// Os nomes são o contrato com `voice/freeswitch/scripts/dialin_ivr.lua` —
+/// mudar um lado sem o outro deixa a ponte silenciosamente inactiva (o IVR cai
+/// na conferência local).
 #[derive(Serialize)]
-pub struct PstnBridgeResp {
-    /// Host onde o SFU está à escuta (ingress) — `PSTN_BRIDGE_HOST`.
-    pub host: String,
-    pub port: u16,
-    /// SRTP `master_key||master_salt`, base64 (convenção SDES-SRTP, RFC 4568
-    /// `a=crypto`). Direção FreeSWITCH→SFU: o FreeSWITCH CIFRA com esta chave.
-    pub ingress_key_b64: String,
-    /// Direção SFU→FreeSWITCH: o FreeSWITCH DESENCRIPTA com esta chave — é
-    /// SEMPRE diferente de `ingress_key_b64` (nunca a mesma chave nos dois
-    /// sentidos, ver `pstn_bridge::SrtpKeyPair`).
-    pub egress_key_b64: String,
-    /// Nome do perfil SRTP (hoje sempre "AES_CM_128_HMAC_SHA1_80").
-    pub profile: String,
-    /// Payload type RTP fixo do Opus nesta ponte (não há SDP a negociá-lo).
-    pub payload_type: u8,
+pub struct RoomBridgeResp {
+    /// URI completo para `bridge`: `sofia/<perfil>/sip:room-<code>@<host:porta>`
+    /// monta-se no Lua a partir daqui.
+    pub sip_uri: String,
+    /// Variáveis de canal a pôr ANTES do `bridge`. Traz
+    /// `rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80`: a ponte recusa
+    /// (`488`) uma oferta sem `a=crypto`, por isso o FreeSWITCH tem de oferecer
+    /// SRTP. As chaves são negociadas NO SDP dessa perna, por chamada — não
+    /// viajam neste JSON nem nas variáveis de canal (ver `phone_bridge::srtp`).
+    pub channel_vars: std::collections::BTreeMap<String, String>,
+    /// Nome do perfil SRTP exigido (hoje sempre "AES_CM_128_HMAC_SHA1_80").
+    pub srtp_profile: String,
 }
 
 #[derive(Serialize)]
@@ -773,14 +777,12 @@ pub struct ValidatePinResp {
     pub voice_room_id: Uuid,
     pub room_code: String,
     pub media_backend: String,
-    /// `Some` só quando o backend é `freeswitch` E o SFU conseguiu activar a
-    /// ponte para a sala (existe uma `rooms.code = room_code`, e
-    /// `PSTN_BRIDGE_FREESWITCH_IP` está configurado — ver `config.rs`).
-    /// `None` mantém o comportamento de sempre: o IVR cai na conferência
-    /// local do FreeSWITCH, SEM áudio WebRTC (o gap que esta sub-fase fecha,
-    /// mas com um caminho de recurso seguro se a ponte não puder activar).
+    /// `Some` só quando o backend é `freeswitch` E a ponte está configurada
+    /// (`PHONE_BRIDGE_SIP_BIND` e a allowlist — ver `config.rs`) E existe uma
+    /// `rooms.code = room_code`. `None` mantém o comportamento de sempre: o
+    /// IVR cai na conferência local do FreeSWITCH, SEM áudio WebRTC.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pstn_bridge: Option<PstnBridgeResp>,
+    pub room_bridge: Option<RoomBridgeResp>,
 }
 
 /// Valida (DID, PIN) → devolve a sala a que o chamador PSTN deve ser ligado.
@@ -816,12 +818,12 @@ pub(crate) async fn validate_pin(
     .await?;
     match row {
         Some((id, room_code, backend)) => {
-            let pstn_bridge = activate_pstn_bridge_for(state, &room_code, &backend).await;
+            let room_bridge = room_bridge_for(state, &room_code, &backend).await;
             Ok(ValidatePinResp {
                 voice_room_id: id,
                 room_code,
                 media_backend: backend,
-                pstn_bridge,
+                room_bridge,
             })
         }
         None => {
@@ -836,55 +838,159 @@ pub(crate) async fn validate_pin(
     }
 }
 
-/// Tenta activar a ponte PSTN↔SFU para a sala `room_code`. Falha SEMPRE em
-/// silêncio (log + `None`, nunca um erro que derrube a validação do PIN): um
-/// chamador tem de conseguir entrar mesmo que a ponte não arranque — o IVR
-/// já sabe cair na conferência local quando este campo vem ausente (ver
-/// `dialin_ivr.lua`). As razões possíveis para `None`, todas esperadas e
-/// não-erros do ponto de vista do dial-in: backend não é `freeswitch`
-/// (`provider` faz media à parte), `PSTN_BRIDGE_FREESWITCH_IP` não
-/// configurado (fail-closed, ver `config.rs`), ou `room_code` sem sala WebRTC
-/// correspondente ainda criada em `rooms`.
-async fn activate_pstn_bridge_for(
+/// Para onde o IVR deve fazer `bridge` para meter esta chamada na sala. Falha
+/// SEMPRE em silêncio (log + `None`, nunca um erro que derrube a validação do
+/// PIN): um chamador tem de conseguir entrar mesmo que a ponte não esteja
+/// pronta — o IVR já sabe cair na conferência local quando este campo vem
+/// ausente (ver `dialin_ivr.lua`). As razões para `None`, todas esperadas e
+/// não-erros do ponto de vista do dial-in: backend não é `freeswitch` (o
+/// `provider` faz media à parte), `PHONE_BRIDGE_SIP_BIND` não configurado,
+/// allowlist vazia (fail-closed), ou `room_code` sem sala WebRTC em `rooms`.
+async fn room_bridge_for(
     state: &AppState,
     room_code: &str,
     backend: &str,
-) -> Option<PstnBridgeResp> {
+) -> Option<RoomBridgeResp> {
     if MediaBackend::parse(backend) != MediaBackend::Freeswitch {
         return None;
     }
-    let Some(allowed_ip) = state.config.pstn_bridge_freeswitch_ip else {
+    let Some(bind) = state.config.phone_bridge_sip_bind else {
         tracing::warn!(
-            "PSTN_BRIDGE_FREESWITCH_IP não configurado — ponte PSTN↔SFU desactivada, dial-in cai na conferência local"
+            "PHONE_BRIDGE_SIP_BIND não configurado — ponte telefone↔sala desligada, dial-in cai na conferência local"
         );
         return None;
     };
-    let room_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
+    if state.config.phone_bridge_freeswitch_ips.is_empty() {
+        tracing::warn!(
+            "PHONE_BRIDGE_FREESWITCH_IPS vazio — a ponte recusaria o INVITE (fail-closed); dial-in cai na conferência local"
+        );
+        return None;
+    }
+    let existe: Option<Uuid> = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
         .bind(room_code)
         .fetch_optional(&state.db)
         .await
         .ok()
         .flatten();
-    let Some(room_id) = room_id else {
+    if existe.is_none() {
         tracing::warn!(
             room_code,
-            "ponte PSTN↔SFU: sala WebRTC ainda não existe para este room_code"
+            "ponte telefone↔sala: sala WebRTC ainda não existe para este room_code"
         );
         return None;
+    }
+    Some(RoomBridgeResp {
+        sip_uri: format!("sip:room-{room_code}@{}", bridge_advertise(state, bind)),
+        channel_vars: [(
+            "rtp_secure_media".to_string(),
+            format!(
+                "mandatory:{}",
+                crate::phone_bridge::srtp::SRTP_PROFILE_NAME
+            ),
+        )]
+        .into_iter()
+        .collect(),
+        srtp_profile: crate::phone_bridge::srtp::SRTP_PROFILE_NAME.to_string(),
+    })
+}
+
+/// `host:porta` que o FreeSWITCH usa para alcançar o UA SIP. O
+/// `PHONE_BRIDGE_SIP_ADVERTISE` ganha (em K8s o Service e o bind não
+/// coincidem); sem ele, o host do `PSTN_BRIDGE_HOST` com a porta do bind.
+pub(crate) fn bridge_advertise(state: &AppState, bind: std::net::SocketAddr) -> String {
+    match &state.config.phone_bridge_sip_advertise {
+        Some(a) if !a.trim().is_empty() => a.trim().to_string(),
+        _ => format!("{}:{}", state.config.pstn_bridge_host, bind.port()),
+    }
+}
+
+/// Quem entra na ponte: `room-<code>` → a sala do SFU com esse `rooms.code`.
+///
+/// É a MESMA resolução que o `room_bridge_for` faz ao devolver o URI ao IVR —
+/// aqui repete-se porque o `INVITE` chega bem depois, e a sala pode ter
+/// desaparecido entretanto. Sem sala, `None`: o UA responde `404` e o
+/// FreeSWITCH cai na conferência local (o IVR já sabe fazê-lo).
+struct DialInAdmission {
+    db: sqlx::PgPool,
+}
+
+#[async_trait::async_trait]
+impl crate::phone_bridge::sip::BridgeAdmission for DialInAdmission {
+    async fn admit(
+        &self,
+        room_code: &str,
+        _call_id: Option<Uuid>,
+    ) -> Option<crate::phone_bridge::sip::Admitted> {
+        let room_id: Uuid = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
+            .bind(room_code)
+            .fetch_optional(&self.db)
+            .await
+            .ok()
+            .flatten()?;
+        Some(crate::phone_bridge::sip::Admitted {
+            room_id,
+            leg_id: Uuid::new_v4(),
+        })
+    }
+}
+
+/// Arranca o UA SIP da ponte telefone↔sala (ADR-0010), se estiver configurado.
+///
+/// **Fail-closed em duas frentes:** sem `PHONE_BRIDGE_SIP_BIND` não se abre
+/// socket nenhum, e com a allowlist vazia não se abre também — um UA que
+/// aceitasse `INVITE` de qualquer origem é uma porta para dentro das salas.
+/// Em qualquer dos casos o dial-in continua a funcionar: o `room_bridge_for`
+/// devolve `None` pelas mesmas razões e o IVR cai na conferência local.
+///
+/// Um erro a abrir o socket NÃO derruba o servidor — a videoconferência não
+/// depende desta ponte.
+pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
+    let Some(sip_bind) = state.config.phone_bridge_sip_bind else {
+        return;
     };
-    match state.sfu.activate_pstn_bridge(room_id, allowed_ip).await {
-        Ok(info) => Some(PstnBridgeResp {
-            host: state.config.pstn_bridge_host.clone(),
-            port: info.port,
-            ingress_key_b64: info.ingress_key_b64,
-            egress_key_b64: info.egress_key_b64,
-            profile: info.profile.to_string(),
-            payload_type: info.payload_type,
+    if state.config.phone_bridge_freeswitch_ips.is_empty() {
+        tracing::warn!(
+            "PHONE_BRIDGE_SIP_BIND definido mas PHONE_BRIDGE_FREESWITCH_IPS vazio — ponte telefone↔sala NÃO arranca (fail-closed)"
+        );
+        return;
+    }
+    let cfg = crate::phone_bridge::sip::SipBridgeConfig {
+        sip_bind,
+        rtp_ip: state.config.phone_bridge_rtp_ip.unwrap_or(sip_bind.ip()),
+        rtp_ports: state.config.phone_bridge_rtp_ports,
+        allowed_sources: state.config.phone_bridge_freeswitch_ips.clone(),
+    };
+    // A fila dos eventos é limitada: um pico de chamadas não pode crescer
+    // memória sem tecto. O UA larga eventos quando ela enche — são
+    // observabilidade, não o caminho da media.
+    let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+    match crate::phone_bridge::sip::SipBridge::start(
+        cfg,
+        state.sfu.clone(),
+        Arc::new(DialInAdmission {
+            db: state.db.clone(),
         }),
-        Err(e) => {
-            tracing::error!(room_code, error = %e, "ponte PSTN↔SFU: activate_pstn_bridge falhou — dial-in cai na conferência local");
-            None
+        tx,
+    )
+    .await
+    {
+        Ok(b) => {
+            tracing::info!(
+                sip = %b.local_sip,
+                anuncia = %bridge_advertise(state, sip_bind),
+                origens = state.config.phone_bridge_freeswitch_ips.len(),
+                "ponte telefone↔sala à escuta"
+            );
+            tokio::spawn(async move {
+                while let Some(ev) = rx.recv().await {
+                    tracing::info!(?ev, "ponte telefone↔sala");
+                }
+            });
         }
+        Err(e) => tracing::error!(
+            %sip_bind, error = %e,
+            "ponte telefone↔sala não arrancou — o dial-in cai na conferência local"
+        ),
     }
 }
 

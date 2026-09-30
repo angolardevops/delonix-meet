@@ -1,0 +1,19 @@
+<profile name="carrier">
+  <!-- «Operadora» FALSA: o telefone da pessoa. Atende, toca um tom e grava o que ouve. -->
+  <gateways/>
+  <domains></domains>
+  <settings>
+    <param name="context" value="carrier-canais"/>
+    <param name="dialplan" value="XML"/>
+    <param name="sip-ip" value="127.0.0.1"/>
+    <param name="rtp-ip" value="127.0.0.1"/>
+    <param name="sip-port" value="5260"/>
+    <param name="auth-calls" value="false"/>
+    <param name="apply-inbound-acl" value="loopback.auto"/>
+    <param name="inbound-codec-prefs" value="PCMA,PCMU"/>
+    <param name="outbound-codec-prefs" value="PCMA,PCMU"/>
+    <param name="rtp-timer-name" value="soft"/>
+    <param name="manage-presence" value="false"/>
+    <param name="rtp-timeout-sec" value="60"/>
+  </settings>
+</profile>

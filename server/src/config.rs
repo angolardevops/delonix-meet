@@ -261,21 +261,35 @@ pub struct Config {
     /// Coalescível: o estado de subscrição mais recente vence, por isso
     /// transbordar descarta o pedido mais novo e conta a métrica.
     pub nego_queue_cap: usize,
-    /// IP do FreeSWITCH aceite na ingress da ponte PSTN↔SFU
-    /// (`PSTN_BRIDGE_FREESWITCH_IP`, ver `pstn_bridge.rs`). **Fail-closed**:
-    /// vazio/ausente => a ponte fica DESACTIVADA (o dial-in continua a
-    /// funcionar, só sem o áudio WebRTC — cai na conferência local do
-    /// FreeSWITCH, o comportamento de sempre) — sem IP configurado, aceitar
-    /// pacotes de qualquer origem deixaria qualquer host na rede injectar
-    /// áudio na sala fingindo ser o FreeSWITCH. Um só IP porque hoje há um
-    /// único nó FreeSWITCH por deploy (`docker-compose.voice.yml`); um pool
-    /// de nós (`dispatcher.list` cresce em produção) precisa de uma lista —
-    /// fica para quando essa topologia existir de facto.
-    pub pstn_bridge_freeswitch_ip: Option<std::net::IpAddr>,
-    /// Host que o control plane devolve ao IVR como destino da ingress
-    /// (`PSTN_BRIDGE_HOST`) — o que o FreeSWITCH usa para mandar o mix da
-    /// conferência. Por omissão o mesmo `SFU_EXTERNAL_IP` (o SFU já sabe
-    /// anunciar-se por aí para o ICE); "127.0.0.1" se nenhum dos dois
+    /// IPs dos FreeSWITCH aceites pela ponte telefone↔sala, tanto no SIP como
+    /// no RTP (`PHONE_BRIDGE_FREESWITCH_IPS`, lista separada por vírgulas;
+    /// aceita-se também o antigo `PSTN_BRIDGE_FREESWITCH_IP` singular, que os
+    /// deploys da Abordagem B já usam). **Fail-closed**: vazio/ausente => a
+    /// ponte não aceita NADA — nem um `INVITE`, nem um pacote RTP. Sem esta
+    /// lista, aceitar de qualquer origem deixaria qualquer host da rede
+    /// injectar áudio numa reunião fingindo ser o FreeSWITCH.
+    ///
+    /// Passou de um IP a uma lista porque o `dispatcher.list` do Kamailio
+    /// cresce em produção e o SBC pode reenviar de mais que um nó (ADR-0009).
+    pub phone_bridge_freeswitch_ips: Vec<std::net::IpAddr>,
+    /// Onde o UA SIP da ponte escuta (`PHONE_BRIDGE_SIP_BIND`, p.ex.
+    /// `0.0.0.0:5090`). Ausente => a ponte NÃO arranca e as rotas de canais
+    /// respondem `channels.bridge_not_configured` — nunca um estado inventado.
+    pub phone_bridge_sip_bind: Option<std::net::SocketAddr>,
+    /// Host:porta que o control plane dá ao FreeSWITCH como destino do
+    /// `bridge` SIP (`PHONE_BRIDGE_SIP_ADVERTISE`). Por omissão o
+    /// `PSTN_BRIDGE_HOST`/`SFU_EXTERNAL_IP` com a porta do bind — em K8s o
+    /// Service e o bind não têm de coincidir.
+    pub phone_bridge_sip_advertise: Option<String>,
+    /// IP onde as pernas abrem RTP e que vai no SDP (`PHONE_BRIDGE_RTP_IP`).
+    /// Por omissão o mesmo IP do bind SIP.
+    pub phone_bridge_rtp_ip: Option<std::net::IpAddr>,
+    /// Intervalo de portas RTP das pernas, inclusive
+    /// (`PHONE_BRIDGE_RTP_MIN`/`MAX`). Ausente => porta efémera do SO, que não
+    /// se pode expor no K8s.
+    pub phone_bridge_rtp_ports: Option<(u16, u16)>,
+    /// Host que o control plane devolve ao IVR (`PSTN_BRIDGE_HOST`). Por
+    /// omissão o mesmo `SFU_EXTERNAL_IP`; "127.0.0.1" se nenhum dos dois
     /// estiver definido (dev local, tudo na mesma máquina).
     pub pstn_bridge_host: String,
 }
@@ -468,7 +482,34 @@ impl Config {
             directo_threads: bounded_env(src, "DIRECTO_THREADS", 1, 1, 16) as u32,
             ffmpeg_bin: src.var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
             ffprobe_bin: src.var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
-            pstn_bridge_freeswitch_ip: ip_env(src, "PSTN_BRIDGE_FREESWITCH_IP"),
+            phone_bridge_freeswitch_ips: {
+                let mut v = ips_env(src, "PHONE_BRIDGE_FREESWITCH_IPS");
+                if let Some(um) = ip_env(src, "PSTN_BRIDGE_FREESWITCH_IP") {
+                    if !v.contains(&um) {
+                        v.push(um);
+                    }
+                }
+                v
+            },
+            phone_bridge_sip_bind: match src.var("PHONE_BRIDGE_SIP_BIND") {
+                Ok(v) if !v.trim().is_empty() => match v.trim().parse() {
+                    Ok(a) => Some(a),
+                    Err(_) => {
+                        tracing::warn!(
+                            "PHONE_BRIDGE_SIP_BIND: «{v}» não é host:porta — ponte telefone↔sala desligada"
+                        );
+                        None
+                    }
+                },
+                _ => None,
+            },
+            phone_bridge_sip_advertise: opt("PHONE_BRIDGE_SIP_ADVERTISE"),
+            phone_bridge_rtp_ip: ip_env(src, "PHONE_BRIDGE_RTP_IP"),
+            phone_bridge_rtp_ports: {
+                let min = bounded_env(src, "PHONE_BRIDGE_RTP_MIN", 0, 0, 65_535) as u16;
+                let max = bounded_env(src, "PHONE_BRIDGE_RTP_MAX", 0, 0, 65_535) as u16;
+                (min > 0 && max >= min).then_some((min, max))
+            },
             pstn_bridge_host: opt("PSTN_BRIDGE_HOST")
                 .or_else(|| opt("SFU_EXTERNAL_IP"))
                 .unwrap_or_else(|| "127.0.0.1".into()),
@@ -510,12 +551,33 @@ fn uuid_list(src: &Source, var: &str) -> Vec<uuid::Uuid> {
         .collect()
 }
 
-/// Lê um único IP do ambiente (allowlist da ingress da ponte PSTN↔SFU).
-/// Ausente => `None` (fail-closed, ver `Config::pstn_bridge_freeswitch_ip`).
+/// Lê um único IP do ambiente. Ausente => `None` (fail-closed, ver
+/// `Config::phone_bridge_freeswitch_ips`).
 /// Presente mas ilegível como IP => aviso + `None` — o mesmo tratamento que
 /// `bounded_env` dá a um valor fora do intervalo: nunca um panic por uma
 /// variável de configuração de uma funcionalidade opcional, mas também nunca
 /// um valor absurdo aceite em silêncio.
+/// Lista de IPs separados por vírgulas (allowlist da ponte telefone↔sala).
+/// Vazia => a ponte recusa tudo. Entradas ilegíveis avisam e saem — nunca um
+/// panic por configuração de uma funcionalidade opcional, nunca um valor
+/// absurdo aceite em silêncio.
+fn ips_env(src: &Source, var: &str) -> Vec<std::net::IpAddr> {
+    let Ok(raw) = src.var(var) else {
+        return Vec::new();
+    };
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| match s.parse() {
+            Ok(ip) => Some(ip),
+            Err(_) => {
+                tracing::warn!("{var}: «{s}» não é um IP — ignorado");
+                None
+            }
+        })
+        .collect()
+}
+
 fn ip_env(src: &Source, var: &str) -> Option<std::net::IpAddr> {
     match src.var(var) {
         Err(_) => None,

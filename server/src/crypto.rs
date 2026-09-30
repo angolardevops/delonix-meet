@@ -29,7 +29,7 @@ pub(crate) fn random_hex(n_bytes: usize) -> String {
 /// `n` bytes crus de aleatoriedade do SO — a primitiva de que `random_hex`
 /// (e `random_token`) já são um formato. Existe em separado para quem
 /// precisa dos bytes em si, não de texto: as chaves SRTP efémeras da ponte
-/// PSTN↔SFU (`pstn_bridge::SrtpKeyPair`), que nunca passam por hex. Um
+/// da ponte telefone↔sala (`phone_bridge::srtp::SrtpKeyPair`), que nunca passam por hex. Um
 /// comprimento em runtime (não `const N`) — `delonix_meet_core::crypto`
 /// só tem a versão de tamanho fixo, que não serve aqui. MESMA regra 4 do
 /// ADR-0004 §5 — um só sítio a chamar `OsRng`/`fill_bytes`.

@@ -51,7 +51,7 @@ use webrtc::{
     },
     rtp::extension::audio_level_extension::AudioLevelExtension,
     rtp_transceiver::{
-        rtp_codec::{RTCRtpHeaderExtensionCapability, RTPCodecType},
+        rtp_codec::{RTCRtpCodecCapability, RTCRtpHeaderExtensionCapability, RTPCodecType},
         rtp_receiver::RTCRtpReceiver,
         rtp_sender::RTCRtpSender,
     },
@@ -62,7 +62,6 @@ use webrtc::{
     util::Unmarshal,
 };
 
-use crate::pstn_bridge::PstnBridge;
 use crate::signaling::{ClientMsg, ServerMsg};
 
 type Result<T> = std::result::Result<T, webrtc::Error>;
@@ -183,8 +182,8 @@ struct Publication {
     /// retido através do `write_rtp().await` e UM subscritor lento bloqueava a
     /// entrega a todos os outros (head-of-line blocking da sala inteira).
     subs_version: AtomicU64,
-    remote: Arc<TrackRemote>,
-    publisher_pc: Arc<RTCPeerConnection>,
+    /// De onde vem o RTP: uma track de um browser, ou a ponte telefone↔sala.
+    source: PubSource,
     /// Writer da gravação server-side (ativo só durante uma gravação).
     rec: Mutex<Option<crate::recorder::RecWriter>>,
     /// Último PLI reencaminhado ao publicador (rate-limit de keyframes: em
@@ -199,6 +198,97 @@ struct Publication {
     /// `false` os microfones fora do top-N. Vídeo e ecrã nunca são suprimidos.
     forwarding: AtomicBool,
     _vivo: Vivo,
+    /// O nível de voz é MEDIDO por quem publica (a ponte calcula-o do PCM),
+    /// sem extensão RFC 6464 no RTP. Conta para o seletor como se a tivesse.
+    level_measured: bool,
+    /// Passado a palco pelo anfitrião: o seletor nunca suprime este microfone
+    /// nem o conta para o top-N (ADR-0010, «Passar a palco»).
+    pinned: AtomicBool,
+}
+
+/// Origem do RTP de uma publicação.
+enum PubSource {
+    /// Track recebida de um participante WebRTC.
+    Remote {
+        track: Arc<TrackRemote>,
+        pc: Arc<RTCPeerConnection>,
+    },
+    /// Áudio de uma chamada de fora da app, já em Opus, produzido pela ponte
+    /// (`phone_bridge`). Não há PeerConnection do publicador: não há PLI nem
+    /// RTCP de volta — o telefone não os entenderia.
+    Bridge {
+        codec: RTCRtpCodecCapability,
+        rx: Mutex<mpsc::Receiver<BridgePacket>>,
+    },
+}
+
+/// Um pacote Opus da ponte, com o nível de voz medido do PCM que o gerou.
+pub(crate) struct BridgePacket {
+    pub packet: webrtc::rtp::packet::Packet,
+    /// RFC 6464 (0 = mais alto, 127 = silêncio).
+    pub level: u8,
+}
+
+/// Um pacote de microfone da sala, entregue à ponte para a mistura que o
+/// telefone ouve.
+pub(crate) struct TapPacket {
+    pub publisher: Uuid,
+    /// Numeração ORIGINAL do publicador (antes da renumeração do SFU): é ela
+    /// que diz ao misturador se um pacote vem repetido ou atrasado.
+    pub seq: u16,
+    pub payload: bytes::Bytes,
+}
+
+/// Capacidade da fila de áudio da sala para UMA chamada: 1 s de 50 pessoas a
+/// falar ao mesmo tempo. Cheia, descarta-se (a ponte está atrasada; esperar
+/// por ela atrasaria a sala inteira).
+const TAP_CAP: usize = 2_048;
+
+/// Codec das publicações da ponte: o mesmo Opus que o `register_default_codecs`
+/// regista, para o `bind` do subscritor casar sem renegociar outro codec.
+pub(crate) fn bridge_opus_codec() -> RTCRtpCodecCapability {
+    RTCRtpCodecCapability {
+        mime_type: webrtc::api::media_engine::MIME_TYPE_OPUS.to_owned(),
+        clock_rate: 48_000,
+        channels: 2,
+        sdp_fmtp_line: "minptime=10;useinbandfec=1".to_owned(),
+        rtcp_feedback: vec![],
+    }
+}
+
+impl Publication {
+    fn codec(&self) -> RTCRtpCodecCapability {
+        match &self.source {
+            PubSource::Remote { track, .. } => track.codec().capability.clone(),
+            PubSource::Bridge { codec, .. } => codec.clone(),
+        }
+    }
+
+    /// O próximo pacote, ou o motivo por que a origem terminou.
+    ///
+    /// O motivo VIAJA com o fim da fonte: sem ele, «track
+    /// unpublished» não distingue o publicador que saiu de um stream SRTP
+    /// fechado por baixo pelo webrtc-rs (R172) com o publicador ainda a
+    /// enviar — nem qualquer dos dois de uma perna da ponte que desligou.
+    async fn next_packet(&self) -> std::result::Result<webrtc::rtp::packet::Packet, String> {
+        match &self.source {
+            PubSource::Remote { track, .. } => track
+                .read_rtp()
+                .await
+                .map(|(p, _)| p)
+                .map_err(|e| e.to_string()),
+            PubSource::Bridge { rx, .. } => {
+                let item = rx
+                    .lock()
+                    .await
+                    .recv()
+                    .await
+                    .ok_or_else(|| "perna da ponte fechou a fila".to_string())?;
+                self.audio.observe_level(item.level);
+                Ok(item.packet)
+            }
+        }
+    }
 }
 
 type Subscriber = (
@@ -618,17 +708,17 @@ struct SfuRoom {
     publications: Mutex<Vec<Arc<Publication>>>,
     /// Sessão de gravação server-side em curso (metadados; writers nas publicações).
     recording: Mutex<Option<crate::recorder::RecordingSession>>,
+    /// Chamadas de fora da app a publicar nesta sala. Uma sala com uma
+    /// chamada e sem browsers NÃO se apaga: quem ligou continua lá.
+    bridges: std::sync::atomic::AtomicUsize,
 }
 
 #[derive(Default)]
 pub struct SfuState {
     rooms: DashMap<Uuid, Arc<SfuRoom>>,
-    /// Ponte de media FreeSWITCH↔SFU activa, por sala (Abordagem B, ver
-    /// `pstn_bridge.rs` e `docs/pstn-sfu-bridge-design.md`). Substitui os
-    /// antigos `phantom_listeners`/`pstn_outbounds` da Abordagem A rejeitada
-    /// (fantasma sem SRTP, sem mistura, sem chamador nenhum) — ver o commit
-    /// que introduziu este campo para a comparação completa.
-    pstn: DashMap<Uuid, Arc<PstnBridge>>,
+    /// Chamadas de fora da app por sala: (perna, fila para a mistura). A bomba
+    /// de cada microfone entrega aqui uma cópia de cada pacote (ADR-0010).
+    bridge_taps: DashMap<Uuid, Vec<(Uuid, mpsc::Sender<TapPacket>)>>,
     /// Gravações cuja sala esvaziou por FALHA de ligação (ICE failed) em vez de
     /// saída limpa. O handler de estado da PC não tem `AppState` para chamar o
     /// `recorder::finalize`, por isso deixa-a aqui e o `remove_peer` do
@@ -854,58 +944,128 @@ fn new_api(ice: &IceConfig) -> Result<webrtc::api::API> {
 }
 
 impl SfuState {
-    /// Activa a ponte PSTN↔SFU (Abordagem B) para uma sala, chamada por
-    /// `voice.rs::ivr_validate_pin` quando o dial-in valida o PIN. Idempotente:
-    /// se já houver uma ponte activa para a sala, devolve a MESMA (não gera
-    /// chaves novas a meio de uma chamada em curso).
+    // ---------- Ponte telefone↔sala (ADR-0010) ----------
+
+    /// Publica na sala o áudio de uma chamada de fora da app. Devolve a fila
+    /// por onde a ponte entrega os pacotes Opus; largá-la (ou fechar a
+    /// chamada) retira a publicação de toda a sala.
     ///
-    /// Garante que a sala existe no `SfuState` mesmo que ainda não tenha
-    /// nenhum participante WebRTC (um chamador PSTN pode ser o primeiro a
-    /// "entrar") — mirror do que `add_peer` já faz com `entry(...).or_insert_with`.
-    /// Subscreve de imediato os peers WebRTC que já lá estiverem à track
-    /// "Telefone"; os que entrarem depois são apanhados por `reevaluate_peer`.
-    pub async fn activate_pstn_bridge(
+    /// Substitui o `spawn_phantom_listener` (um stub que abria uma porta UDP e
+    /// deitava os pacotes fora, sem nenhum chamador), o `pstn_outbounds` (uma
+    /// cópia do Opus cru, sem mistura, para um destino que nada registava) e a
+    /// `activate_pstn_bridge` da Abordagem B (que abria um socket para o
+    /// FreeSWITCH lhe mandar SRTP, mecanismo que nunca se verificou — ver
+    /// `docs/pstn-sfu-bridge-design.md` §Superseded). A chamada entra na sala
+    /// pelo UA SIP (`phone_bridge::sip`) e é um publicador como outro.
+    pub(crate) async fn publish_bridge_audio(
         self: &Arc<Self>,
         room_id: Uuid,
-        allowed_ip: std::net::IpAddr,
-    ) -> std::io::Result<crate::pstn_bridge::PstnBridgeInfo> {
-        if let Some(existing) = self.pstn.get(&room_id) {
-            return Ok(existing.info());
-        }
-        let bridge = PstnBridge::activate(room_id, allowed_ip).await?;
-        self.pstn.insert(room_id, bridge.clone());
-
-        // A sala pode ainda não existir (chamador PSTN antes de qualquer
-        // browser) — cria-se vazia, como `add_peer` faz.
+        leg_id: Uuid,
+    ) -> mpsc::Sender<BridgePacket> {
         let room = self
             .rooms
             .entry(room_id)
             .or_insert_with(|| Arc::new(SfuRoom::default()))
             .clone();
-        let peers: Vec<(Uuid, Arc<SfuPeer>)> = room
-            .peers
-            .lock()
-            .await
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        for (peer_id, peer) in peers {
-            if peer.pc.remote_description().await.is_some() {
-                pstn_subscribe(self, peer_id, &peer, &bridge).await;
-            }
+        room.bridges.fetch_add(1, Relaxed);
+        if !room.selector_started.swap(true, Relaxed) {
+            tokio::spawn(speaker_selector(self.clone(), room_id));
         }
-
-        Ok(bridge.info())
+        let (tx, rx) = mpsc::channel(64);
+        let publication = Arc::new(Publication {
+            publisher: leg_id,
+            kind: "audio".to_string(),
+            rid: "f".to_string(),
+            subscribers: Mutex::new(HashMap::new()),
+            subs_version: AtomicU64::new(0),
+            source: PubSource::Bridge {
+                codec: bridge_opus_codec(),
+                rx: Mutex::new(rx),
+            },
+            rec: Mutex::new(None),
+            last_pli: std::sync::Mutex::new(None),
+            audio_level_id: 0,
+            audio: AudioMeter::default(),
+            forwarding: AtomicBool::new(true),
+            _vivo: Vivo::new(&self.census.publications),
+            level_measured: true,
+            pinned: AtomicBool::new(false),
+        });
+        tracing::info!(%room_id, leg = %leg_id, "ponte: publicação de áudio de fora da app");
+        crate::metrics::Metrics::bump(&self.metrics.sfu_publications_total);
+        self.clone()
+            .activate_publication(room_id, room, publication)
+            .await;
+        tx
     }
 
-    /// Sala vazia: desliga a ponte PSTN (se houver) — ver `remove_peer`. Não
-    /// há hoje um sinal do FreeSWITCH para "a chamada acabou"; a ponte vive
-    /// enquanto a sala SFU tiver pelo menos um participante WebRTC. Um
-    /// chamador PSTN sozinho (sem ninguém em WebRTC) fica sem ponte — caso
-    /// degenerado aceitável (falar com ninguém), documentado no design doc.
-    async fn deactivate_pstn_bridge(&self, room_id: Uuid) {
-        if let Some((_, bridge)) = self.pstn.remove(&room_id) {
-            bridge.deactivate();
+    /// A chamada terminou: a sala deixa de a contar para existir. A publicação
+    /// sai sozinha quando a fila devolvida por `publish_bridge_audio` fecha.
+    pub(crate) async fn end_bridge(self: &Arc<Self>, room_id: Uuid, leg_id: Uuid) {
+        self.untap_room_audio(room_id, leg_id);
+        let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
+            return;
+        };
+        let _ = room
+            .bridges
+            .fetch_update(Relaxed, Relaxed, |n| n.checked_sub(1));
+        if room.bridges.load(Relaxed) == 0 && room.peers.lock().await.is_empty() {
+            self.rooms.remove_if(&room_id, |_, r| {
+                r.bridges.load(Relaxed) == 0 && r.peers.try_lock().is_ok_and(|p| p.is_empty())
+            });
+        }
+    }
+
+    /// Passa uma chamada a palco (ou tira-a): o seletor de oradores deixa de a
+    /// poder suprimir. `false` se a chamada não está a publicar nesta sala.
+    pub(crate) async fn set_bridge_pinned(&self, room_id: Uuid, leg_id: Uuid, on: bool) -> bool {
+        let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
+            return false;
+        };
+        let pubs = room.publications.lock().await;
+        let mut found = false;
+        for p in pubs
+            .iter()
+            .filter(|p| p.publisher == leg_id && p.kind == "audio")
+        {
+            p.pinned.store(on, Relaxed);
+            p.forwarding.store(true, Relaxed);
+            found = true;
+        }
+        found
+    }
+
+    /// Assina o áudio da sala para a mistura de uma chamada.
+    pub(crate) fn tap_room_audio(&self, room_id: Uuid, leg_id: Uuid) -> mpsc::Receiver<TapPacket> {
+        let (tx, rx) = mpsc::channel(TAP_CAP);
+        let mut taps = self.bridge_taps.entry(room_id).or_default();
+        taps.retain(|(leg, _)| *leg != leg_id);
+        taps.push((leg_id, tx));
+        rx
+    }
+
+    pub(crate) fn untap_room_audio(&self, room_id: Uuid, leg_id: Uuid) {
+        if let Some(mut taps) = self.bridge_taps.get_mut(&room_id) {
+            taps.retain(|(leg, _)| *leg != leg_id);
+        }
+        self.bridge_taps.remove_if(&room_id, |_, t| t.is_empty());
+    }
+
+    /// Entrega um pacote de microfone às chamadas da sala (menos a própria).
+    /// Nunca espera: uma ponte atrasada perde áudio, a sala não.
+    fn feed_bridges(&self, room_id: Uuid, publisher: Uuid, packet: &webrtc::rtp::packet::Packet) {
+        let Some(taps) = self.bridge_taps.get(&room_id) else {
+            return;
+        };
+        for (leg, tx) in taps.iter() {
+            if *leg == publisher {
+                continue;
+            }
+            let _ = tx.try_send(TapPacket {
+                publisher,
+                seq: packet.header.sequence_number,
+                payload: packet.payload.clone(),
+            });
         }
     }
 
@@ -1202,8 +1362,10 @@ impl SfuState {
             rid,
             subscribers: Mutex::new(HashMap::new()),
             subs_version: AtomicU64::new(0),
-            remote: remote.clone(),
-            publisher_pc: pub_peer.pc.clone(),
+            source: PubSource::Remote {
+                track: remote.clone(),
+                pc: pub_peer.pc.clone(),
+            },
             rec: Mutex::new(None),
             last_pli: std::sync::Mutex::new(None),
             audio_level_id,
@@ -1212,7 +1374,23 @@ impl SfuState {
             // medições — nunca se corta áudio "por defeito".
             forwarding: AtomicBool::new(true),
             _vivo: Vivo::new(&self.census.publications),
+            level_measured: false,
+            pinned: AtomicBool::new(false),
         });
+        self.activate_publication(room_id, room, publication).await;
+    }
+
+    /// Põe uma publicação a circular: gravação, subscrições de toda a sala e a
+    /// bomba de RTP. É o MESMO caminho para uma track de browser e para o áudio
+    /// da ponte telefone↔sala — a sala não distingue os dois.
+    async fn activate_publication(
+        self: Arc<Self>,
+        room_id: Uuid,
+        room: Arc<SfuRoom>,
+        publication: Arc<Publication>,
+    ) {
+        let publisher = publication.publisher;
+        let kind = publication.kind.clone();
         room.publications.lock().await.push(publication.clone());
 
         // Gravação a decorrer? Anexa um writer a esta track nova.
@@ -1223,7 +1401,7 @@ impl SfuState {
             if rec_guard.is_some() && !recordable_codec(&publication) {
                 tracing::error!(
                     %room_id, %publisher, kind = %publication.kind,
-                    codec = %publication.remote.codec().capability.mime_type,
+                    codec = %publication.codec().mime_type,
                     "codec não gravável — track EXCLUÍDA da gravação (ver recordable_codec)"
                 );
             } else if rec_guard.is_some() {
@@ -1291,8 +1469,8 @@ impl SfuState {
             let mut targets_version = u64::MAX;
             let audio_level_id = publication.audio_level_id;
             loop {
-                match publication.remote.read_rtp().await {
-                    Ok((mut packet, _)) => {
+                match publication.next_packet().await {
+                    Ok(mut packet) => {
                         // Nível de voz deste pacote → energia para o seletor de
                         // oradores (`speaker_selector`).
                         if is_audio && audio_level_id != 0 {
@@ -1303,24 +1481,15 @@ impl SfuState {
                             }
                         }
 
-                        // A GRAVAÇÃO e o PSTN recebem SEMPRE tudo: a seleção de
-                        // oradores é uma decisão de entrega ao vivo, não pode
-                        // apagar ninguém da ata nem da chamada telefónica.
+                        // A GRAVAÇÃO e as chamadas de fora da app recebem SEMPRE
+                        // tudo: a seleção de oradores é uma decisão de entrega
+                        // ao vivo, não pode apagar ninguém da ata nem da mistura
+                        // que o telefone ouve.
                         if let Some(w) = publication.rec.lock().await.as_mut() {
                             w.write_rtp(&packet);
                         }
                         if is_audio {
-                            // Alimenta o mixer de egress da ponte PSTN (se a
-                            // sala tiver uma activa) — decodifica Opus→PCM e
-                            // guarda a última amostra deste publicador; a
-                            // mistura em si acontece à parte, ao ritmo
-                            // próprio de 20 ms (`pstn_bridge::run_egress`),
-                            // para não atar o envio ao PSTN ao jitter de UM
-                            // participante. Sem ponte activa, isto é só um
-                            // `get` no DashMap — custo desprezável.
-                            if let Some(bridge) = this.pstn.get(&room_id).map(|b| b.clone()) {
-                                bridge.feed_egress(publication.publisher, &packet).await;
-                            }
+                            this.feed_bridges(room_id, publisher, &packet);
                         }
 
                         // Microfone fora do top-N: não se reencaminha.
@@ -1419,11 +1588,6 @@ impl SfuState {
             // O `apply_client_offer` chama isto assim que a oferta dele chega.
             if peer.pc.remote_description().await.is_none() {
                 return;
-            }
-            // Ponte PSTN activa para esta sala? Este peer passa a receber a
-            // track "Telefone" — idempotente, ver `pstn_subscribe`.
-            if let Some(bridge) = self.pstn.get(&room_id).map(|b| b.clone()) {
-                pstn_subscribe(&self, peer_id, &peer, &bridge).await;
             }
             let room_size = room.peers.lock().await.len();
             let shift = peer.quality.shift.load(Relaxed);
@@ -1636,16 +1800,10 @@ impl SfuState {
         if peer.quality.shift.load(Relaxed) > 0 {
             crate::metrics::Metrics::dec(&self.metrics.sfu_degraded_subscribers);
         }
-        // Sai também da track "Telefone", se a sala tiver ponte PSTN activa.
-        if let Some(bridge) = self.pstn.get(&room_id).map(|b| b.clone()) {
-            if bridge.remove_subscriber(peer_id).await.is_some() {
-                crate::metrics::Metrics::dec(&self.metrics.sfu_subscriptions);
-            }
-        }
 
         close_pc(&peer, room_id, peer_id).await;
 
-        let empty = room.peers.lock().await.is_empty();
+        let empty = room.peers.lock().await.is_empty() && room.bridges.load(Relaxed) == 0;
         let mut orphan_recording = None;
         if empty {
             orphan_recording = room.recording.lock().await.take();
@@ -1673,8 +1831,6 @@ impl SfuState {
             self.rooms.remove_if(&room_id, |_, _| true);
             // Sala vazia de participantes WebRTC: a ponte PSTN (se houver)
             // fica sem ninguém para quem encaminhar/misturar — desliga-se
-            // aqui (ver a nota de limitação em `deactivate_pstn_bridge`).
-            self.deactivate_pstn_bridge(room_id).await;
         }
         tracing::info!(%room_id, %peer_id, "sfu peer removed");
         if !empty {
@@ -1728,7 +1884,7 @@ impl SfuState {
             if !recordable_codec(p) {
                 tracing::error!(
                     %room_id, publisher = %p.publisher, kind = %p.kind,
-                    codec = %p.remote.codec().capability.mime_type,
+                    codec = %p.codec().mime_type,
                     "codec não gravável — track EXCLUÍDA da gravação"
                 );
                 continue;
@@ -1842,12 +1998,7 @@ impl SfuState {
 /// ffmpeg compõe na mesma e a gravação entra na biblioteca. Melhor não gravar
 /// a track e dizê-lo alto no log.
 fn recordable_codec(publication: &Arc<Publication>) -> bool {
-    let mime = publication
-        .remote
-        .codec()
-        .capability
-        .mime_type
-        .to_ascii_lowercase();
+    let mime = publication.codec().mime_type.to_ascii_lowercase();
     if publication.kind.ends_with("audio") {
         mime == "audio/opus"
     } else {
@@ -1883,10 +2034,15 @@ async fn speaker_selector(state: Arc<SfuState>, room_id: Uuid) {
         // silenciaria pessoas ao acaso num browser que não envie a extensão.
         let mut mics: Vec<&Arc<Publication>> = Vec::new();
         for p in &publications {
-            if p.kind == "audio" && p.audio_level_id != 0 {
+            if p.kind == "audio"
+                && (p.audio_level_id != 0 || p.level_measured)
+                && !p.pinned.load(Relaxed)
+            {
                 p.audio.decay();
                 mics.push(p);
             } else {
+                // Inclui quem foi passado a palco: passa sempre e não ocupa
+                // um dos lugares do top-N.
                 p.forwarding.store(true, Relaxed);
             }
         }
@@ -1955,12 +2111,14 @@ async fn request_keyframe(publication: &Arc<Publication>, metrics: &Arc<crate::m
     if !publication.pli_allowed() {
         return;
     }
+    let PubSource::Remote { track, pc } = &publication.source else {
+        return; // a ponte só publica áudio
+    };
     crate::metrics::Metrics::bump(&metrics.sfu_keyframes_requested_total);
-    let _ = publication
-        .publisher_pc
+    let _ = pc
         .write_rtcp(&[Box::new(PictureLossIndication {
             sender_ssrc: 0,
-            media_ssrc: publication.remote.ssrc(),
+            media_ssrc: track.ssrc(),
         })])
         .await;
 }
@@ -2027,7 +2185,7 @@ async fn subscribe_layer(
     // previous»): voltar a uma camada já usada (f → h → f) deixava o
     // subscritor sem vídeo desse participante até sair da sala.
     let local = Arc::new(TrackLocalStaticRTP::new(
-        publication.remote.codec().capability.clone(),
+        publication.codec(),
         format!(
             "{}-{}-{}-{}",
             publication.publisher,
@@ -2161,59 +2319,6 @@ async fn subscription_alive(
         .is_some_and(|(_, s)| Arc::ptr_eq(s, sender))
 }
 
-/// Liga um peer WebRTC à track "Telefone" da ponte PSTN da sala — o
-/// equivalente de `subscribe_layer` para a ponte, mas sem `Publication`: a
-/// ponte não tem um `TrackRemote`/`RTCPeerConnection` publicador reais (a
-/// origem é um socket UDP, não outro peer WebRTC), por isso não podia reusar
-/// o tipo `Publication` sem o tornar opcional em dezenas de sítios deste
-/// ficheiro (recordable_codec, request_keyframe/PLI, current_source…) — um
-/// refactor bem maior e mais arriscado do que esta função a mais. O que É
-/// reaproveitado, e é o que importa para o participante: o MESMO
-/// `TrackLocalStaticRTP` + `add_track` + `trigger_renegotiate` que qualquer
-/// outra subscrição usa — do lado do browser, a track "Telefone" chega
-/// exactamente como a de outro participante.
-///
-/// Idempotente (não faz nada se este peer já estiver subscrito).
-async fn pstn_subscribe(
-    state: &Arc<SfuState>,
-    peer_id: Uuid,
-    peer: &Arc<SfuPeer>,
-    bridge: &Arc<PstnBridge>,
-) {
-    if bridge.has_subscriber(peer_id).await {
-        return;
-    }
-    let local = Arc::new(TrackLocalStaticRTP::new(
-        crate::pstn_bridge::phone_track_capability(),
-        format!("pstn-{}", NEXT_TRACK_SEQ.fetch_add(1, Relaxed)),
-        "telefone".to_string(),
-    ));
-    let sender = match peer
-        .pc
-        .add_track(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>)
-        .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(%peer_id, error = %e, "pstn subscribe: add_track falhou");
-            return;
-        }
-    };
-    bridge.add_subscriber(peer_id, local, sender.clone()).await;
-    crate::metrics::Metrics::inc(&state.metrics.sfu_subscriptions);
-
-    // Drena o RTCP do sender (obrigatório para os interceptors — ver o
-    // comentário equivalente em `subscribe_layer`). Não há PLI/keyframe a
-    // reencaminhar (é áudio), só a leitura para não bloquear o transporte.
-    tokio::spawn(async move {
-        while let Ok((_packets, _)) = sender.read_rtcp().await {}
-        tracing::debug!(%peer_id, "pstn subscribe: leitura de rtcp terminou");
-    });
-
-    tracing::info!(%peer_id, "pstn subscribe → renegotiate (track Telefone)");
-    trigger_renegotiate(peer);
-}
-
 /// Camada que alimenta hoje o subscritor `sub_id` no grupo (publicador, tipo)
 /// `group` — muda a cada `switch_layer`.
 async fn current_source(
@@ -2268,7 +2373,7 @@ async fn switch_layer(
     }
     if let Some((old_local, rw)) = old {
         let local = Arc::new(TrackLocalStaticRTP::new(
-            chosen.remote.codec().capability.clone(),
+            chosen.codec(),
             old_local.id().to_owned(),
             old_local.stream_id().to_owned(),
         ));

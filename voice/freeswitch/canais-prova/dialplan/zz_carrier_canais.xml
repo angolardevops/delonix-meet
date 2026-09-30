@@ -1,0 +1,19 @@
+<include>
+  <!-- O «telefone» da prova da frente D (ADR-0010):
+       atende, grava a chamada inteira (o que a sala lhe manda fica no wav),
+       espera 1,5 s de silêncio e toca 1 kHz até desligarem. -->
+  <context name="carrier-canais">
+    <extension name="telefone-da-prova">
+      <condition field="destination_number" expression="^(\d+)$">
+        <action application="set" data="RECORD_STEREO=true"/>
+        <action application="ring_ready"/>
+        <action application="sleep" data="300"/>
+        <action application="answer"/>
+        <action application="record_session" data="/usr/local/freeswitch/recordings/canais-${uuid}.wav"/>
+        <action application="playback" data="silence_stream://1500"/>
+        <action application="playback" data="tone_stream://%(20000,0,1000);loops=-1"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+  </context>
+</include>
