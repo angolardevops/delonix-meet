@@ -120,6 +120,25 @@ pub struct Config {
     pub sms_unitel_smpp_ca: Option<String>,
     pub sms_movicel_smpp_ca: Option<String>,
     pub sms_africell_smpp_ca: Option<String>,
+    /// Telefonia (ADR-0009). Event Socket do FreeSWITCH (`host:porta`,
+    /// normalmente `127.0.0.1:8021` ou o serviço interno). Ausente => nenhuma
+    /// operação que precise do media server corre, e a API responde
+    /// `not_configured` — nunca um estado inventado.
+    pub telephony_esl_addr: Option<String>,
+    /// Password do Event Socket (`TELEPHONY_ESL_PASSWORD`). Obrigatória com o endereço.
+    pub telephony_esl_password: String,
+    /// Perfil sofia onde vivem os gateways dos troncos (`external`).
+    pub telephony_sofia_profile: String,
+    /// JSON-RPC do Kamailio (`jsonrpcs`, ex.: `http://sbc-01:5071/RPC`). Ausente =>
+    /// o SBC aparece como `not_configured`.
+    pub telephony_kamailio_rpc_url: Option<String>,
+    /// Números de emergência, que nunca se gravam nem bloqueiam
+    /// (`TELEPHONY_EMERGENCY_NUMBERS`, omissão `112,113,115`).
+    pub telephony_emergency_numbers: Vec<String>,
+    /// Indicativo do país da instalação, sem `+` (`244`), e comprimento de um
+    /// número nacional completo (`9`) — para normalizar o que se marca.
+    pub telephony_country_code: String,
+    pub telephony_national_len: usize,
     /// Tarifa estimada por minuto (inbound) para o cálculo de custo no CDR.
     pub voice_tariff_inbound: f64,
     /// Sufixo do domínio SIP dos ramais internos (`VOICE_RAMAIS_DOMAIN_SUFFIX`):
@@ -425,6 +444,30 @@ impl Config {
             sms_unitel_smpp_ca: opt("SMS_UNITEL_SMPP_CA"),
             sms_movicel_smpp_ca: opt("SMS_MOVICEL_SMPP_CA"),
             sms_africell_smpp_ca: opt("SMS_AFRICELL_SMPP_CA"),
+            telephony_esl_addr: opt("TELEPHONY_ESL_ADDR"),
+            telephony_esl_password: {
+                let pw = src.var("TELEPHONY_ESL_PASSWORD").unwrap_or_default();
+                if opt("TELEPHONY_ESL_ADDR").is_some() && pw.trim().is_empty() {
+                    panic!("TELEPHONY_ESL_ADDR exige TELEPHONY_ESL_PASSWORD");
+                }
+                pw
+            },
+            telephony_sofia_profile: opt("TELEPHONY_SOFIA_PROFILE")
+                .unwrap_or_else(|| "external".into()),
+            telephony_kamailio_rpc_url: opt("TELEPHONY_KAMAILIO_RPC_URL"),
+            telephony_emergency_numbers: {
+                let spec =
+                    opt("TELEPHONY_EMERGENCY_NUMBERS").unwrap_or_else(|| "112,113,115".into());
+                delonix_meet_domain::telephony::dial_plan::parse_emergency_numbers(&spec)
+            },
+            telephony_country_code: opt("TELEPHONY_COUNTRY_CODE")
+                .map(|c| c.trim_start_matches('+').to_string())
+                .filter(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit()))
+                .unwrap_or_else(|| "244".into()),
+            telephony_national_len: opt("TELEPHONY_NATIONAL_LEN")
+                .and_then(|v| v.parse().ok())
+                .filter(|n| (4..=15).contains(n))
+                .unwrap_or(9),
             voice_tariff_inbound: src
                 .var("VOICE_TARIFF_INBOUND")
                 .ok()

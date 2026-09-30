@@ -727,14 +727,33 @@ fn authorize_media_secret(
             "API interna de IVR desligada: VOICE_INTERNAL_SECRET não está definido".into(),
         ));
     }
-    let got = headers
+    // Duas formas do MESMO segredo: o cabeçalho `X-Voice-Secret` (Lua do IVR)
+    // e HTTP Basic com o segredo como password. O utilizador do Basic não conta.
+    let header = headers
         .get("x-voice-secret")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if delonix_meet_core::crypto::ct_eq(got.as_bytes(), configured.as_bytes()) {
-        Ok(())
-    } else {
-        Err(ApiError::Unauthorized)
+        .map(|v| v.as_bytes().to_vec());
+    // O Basic é o que o `mod_json_cdr` (`cred`) e o `mod_xml_curl`
+    // (`gateway-credentials`) do FreeSWITCH sabem enviar (ADR-0009). Chega aqui
+    // DEPOIS das recusas de configuração acima (R154): um segredo ausente ou
+    // publicado recusa por `503` venha o Basic que vier.
+    let basic = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Basic "))
+        .and_then(|b64| {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(b64.trim())
+                .ok()
+        })
+        .and_then(|raw| {
+            let pos = raw.iter().position(|b| *b == b':')?;
+            Some(raw[pos + 1..].to_vec())
+        });
+    match header.or(basic) {
+        Some(got) if delonix_meet_core::crypto::ct_eq(&got, configured.as_bytes()) => Ok(()),
+        _ => Err(ApiError::Unauthorized),
     }
 }
 

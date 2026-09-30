@@ -1234,6 +1234,72 @@ console.log('\n--- papéis, permissões, utilizadores e convites (ADR-0008) ---'
   else nok('e o papel da B CONTINUA igual', JSON.stringify(papelAinda.json))
   // Controlo positivo: B lê o seu directório.
   await permitido('controlo: B lê o seu directório', `/api/orgs/${B.orgId}/users`, { token: B.token })
+// Telefonia (ADR-0009, R210–R214). B cria um tronco REAL: um `404` com um id
+// inventado não provava nada. No fim o tronco de B tem de continuar lá.
+console.log('\n--- telefonia: org A contra a de B ---')
+{
+  const trB = await req(`/api/orgs/${B.orgId}/telephony/trunks`, {
+    token: B.token, method: 'POST',
+    body: { name: 'Unitel B', short_code: 'UNI', host: 'sip.unitel.ao', port: 5061, transport: 'tls', srtp: 'mandatory',
+            password: 'segredo-de-b', max_channels: 10, price_per_min: { amount: '9.40', currency: 'AOA' } },
+  })
+  if (trB.status !== 201) nok('B cria um tronco', `devolveu ${trB.status}: ${JSON.stringify(trB.json)}`)
+  const tB = trB.json?.id ?? '00000000-0000-4000-8000-000000000000'
+  await permitido('B lê o seu tronco', `/api/orgs/${B.orgId}/telephony/trunks/${tB}`, { token: B.token })
+  const T = `/api/orgs/${B.orgId}/telephony`
+  await recusado('A lista os troncos da org B', `/api/orgs/${B.orgId}/telephony/trunks`, { token: A.token })
+  await recusado('A cria um tronco na org B', `/api/orgs/${B.orgId}/telephony/trunks`, {
+    token: A.token, method: 'POST', body: { name: 'x', short_code: 'XX', host: 'sip.x.ao', max_channels: 1 },
+  })
+  await recusado('A lê um tronco da org B', `/api/orgs/${B.orgId}/telephony/trunks/${tB}`, { token: A.token })
+  await recusado('A lê o tronco de B pelo caminho da SUA org', `/api/orgs/${A.orgId}/telephony/trunks/${tB}`, { token: A.token })
+  await recusado('A altera um tronco da org B', `/api/orgs/${B.orgId}/telephony/trunks/${tB}`, {
+    token: A.token, method: 'PATCH', body: { enabled: false },
+  })
+  await recusado('A apaga um tronco da org B', `/api/orgs/${B.orgId}/telephony/trunks/${tB}`, { token: A.token, method: 'DELETE' })
+  await recusado('A lê os preços de um tronco da org B', `/api/orgs/${B.orgId}/telephony/trunks/${tB}/prices`, { token: A.token })
+  await recusado('A muda o preço de um tronco da org B', `/api/orgs/${B.orgId}/telephony/trunks/${tB}/prices`, {
+    token: A.token, method: 'POST', body: { price_per_min: { amount: '0.01', currency: 'AOA' } },
+  })
+  await recusado('A reordena os troncos da org B', `/api/orgs/${B.orgId}/telephony/trunk-order`, {
+    token: A.token, method: 'PUT', body: { trunk_ids: [tB] },
+  })
+  await recusado('A lê as taxas de câmbio da org B', `/api/orgs/${B.orgId}/telephony/exchange-rates`, { token: A.token })
+  await recusado('A cria uma taxa de câmbio na org B', `/api/orgs/${B.orgId}/telephony/exchange-rates`, {
+    token: A.token, method: 'POST', body: { currency: 'USD', aoa_per_unit: '1' },
+  })
+  await recusado('A lê o plano de marcação da org B', `/api/orgs/${B.orgId}/telephony/dial-plan`, { token: A.token })
+  await recusado('A substitui o plano de marcação da org B', `/api/orgs/${B.orgId}/telephony/dial-plan`, {
+    token: A.token, method: 'PUT', body: { rules: [] },
+  })
+  await recusado('A testa um número no plano da org B', `/api/orgs/${B.orgId}/telephony/dial-plan/test`, {
+    token: A.token, method: 'POST', body: { number: '923447108' },
+  })
+  await recusado('A lê as definições SIP da org B', `/api/orgs/${B.orgId}/telephony/sip-settings`, { token: A.token })
+  await recusado('A altera as definições SIP da org B', `/api/orgs/${B.orgId}/telephony/sip-settings`, {
+    token: A.token, method: 'PUT', body: { domain: 'sip.b.ao', transport: 'tls', srtp: 'mandatory' },
+  })
+  await recusadoNaPorta('A pede as credenciais SIP da org B com a SUA password', `/api/orgs/${B.orgId}/telephony/sip-settings/reveal-credentials`, {
+    token: A.token, method: 'POST', body: { password: PW },
+  })
+  await recusado('A lê o registo SIP da org B', `/api/orgs/${B.orgId}/telephony/sip-registration`, { token: A.token })
+  await recusadoNaPorta('A reinicia o registo SIP da org B', `/api/orgs/${B.orgId}/telephony/sip-registration/restart`, {
+    token: A.token, method: 'POST',
+  })
+  await recusado('A lista os testes de chamada da org B', `/api/orgs/${B.orgId}/telephony/test-calls`, { token: A.token })
+  await recusadoNaPorta('A liga pela org B', `/api/orgs/${B.orgId}/telephony/test-calls`, {
+    token: A.token, method: 'POST', body: { number: '923447108' },
+  })
+  await recusado('A lê um teste de chamada da org B', `/api/orgs/${B.orgId}/telephony/test-calls/${inventado}`, { token: A.token })
+  await recusado('A lista as chamadas externas da org B', `/api/orgs/${B.orgId}/telephony/call-records`, { token: A.token })
+  await recusado('A lê o consumo da org B', `/api/orgs/${B.orgId}/telephony/usage`, { token: A.token })
+  await recusado('A lê o resumo de SMS da org B', `/api/orgs/${B.orgId}/sms/overview`, { token: A.token })
+  const still = await req(`${T}/trunks/${tB}`, { token: B.token })
+  if (still.status === 200 && still.json?.enabled === true && still.json?.max_channels === 10 && !JSON.stringify(still.json).includes('segredo-de-b')) {
+    ok('o tronco de B continua intacto (e sem a password)')
+  } else {
+    nok('o tronco de B continua intacto (e sem a password)', `${still.status}: ${JSON.stringify(still.json).slice(0, 200)}`)
+  }
 }
 
 console.log('\n--- sem autenticação nenhuma ---')
