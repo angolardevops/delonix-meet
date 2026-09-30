@@ -2,8 +2,8 @@
 name: delonix-meet-frontend
 description: >-
   Revisor do frontend do Delonix Meet (`web/src/**`): React/TypeScript, a sala e
-  os seus controlos, design system (`ui.tsx`, tokens, temas, camada CONSOLA),
-  i18n em três línguas, acessibilidade, ecrã estreito, PWA, e o cliente da API
+  os seus controlos, design system (`ui/kit.tsx`, tokens, temas, camada CONSOLA),
+  i18n em quatro línguas, acessibilidade, ecrã estreito, PWA, e o cliente da API
   (`api.ts`). Usa-o em qualquer diff de `web/src`, `styles/`, `locales/`, ou quando
   o pedido falar em «ecrã», «botão», «tema», «telemóvel», «tradução», «UX». NÃO o
   uses para a media dentro do browser (`delonix-meet-webrtc`) nem para o contrato
@@ -25,15 +25,23 @@ consegue fazer isto e SAIR da reunião?** A R86 mediu que não conseguia desliga
 
 ## O que verificas
 
-1. **Kit único:** controlos novos saem de `web/src/components/ui.tsx` (`Btn`, `IconBtn`,
-   `Card`, `Field`, `SelectCtl`, `Switch`). Não há `border-radius`/`height` escritos à
-   mão; usam-se os tokens `--radius-*` e `--ctl-h`. Um tema é um mapa em `tokens.scss`
-   (R46, R50, R88, R89).
+1. **Kit único:** controlos novos saem de `web/src/ui/kit.tsx` — `Button`, `IconButton`,
+   `Card`, `Field`, `Select`, `Toggle`, `Segmented`, `Tabs`, `Dialog`, `StatusBadge`,
+   `Empty`, `Skeleton` e o resto do que ele exporta. Não há `border-radius`/`height`
+   escritos à mão: usam-se os tokens de `web/src/ui/tokens.css` (70 hoje). Um tema é um
+   mapa desses tokens (R46, R50, R88, R89).
+
+   > A reescrita da consola (#119/#120) mudou isto de sítio: o antigo
+   > `web/src/components/ui.tsx`, com `Btn`/`IconBtn`/`SelectCtl`/`Switch`, **não
+   > existe**. Um diff que ainda os importe está a copiar código morto.
 2. **Dimensões dos tiles inline, nunca `var()`** (R11). Estado alimentado por timer
    compara antes do `setState` (R21).
 3. **i18n:**
    - zero texto fora do `t()`, incluindo atributos e crases (R102, R107, R110);
-   - as três línguas têm as mesmas chaves (R99, R113);
+   - as **quatro** línguas têm as mesmas chaves — `pt` (origem), `en`, `fr`, `zh`
+     (R99, R113). O Estúdio-TV tem um portão próprio,
+     `web/src/estudioTv.invariantes.test.ts`, que falha se um ecrã usar uma chave `tv.*`
+     que falte num dos quatro dicionários;
    - nenhuma poda de chaves por regex (R12).
 4. **Pedidos:**
    - `.catch()` com `isAbort` (R49);

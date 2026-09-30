@@ -31,10 +31,22 @@ vivo antes de fechadas (R121):
 | S2 | `odoo::provision` capturava contas de outra org por email | passa por `odoo_sso::upsert_member` (R25) | ter um «liga por email» próprio |
 | S3 | Um membro arquivado mantinha acesso | `archived_at IS NULL` em quem PEDE | verificar pertença à mão fora de `org.rs` |
 
-**Ainda abertos** — quem tocar nestes caminhos fecha-os ou nomeia-os:
-- ~~`org::add_employee`~~ fechado no #78 (R122): recusa uma conta já membro de outra org;
-- `odoo::list_users` devolve membros arquivados ao Odoo;
-- S4 (SSRF no `odoo_url`, WebDAV, OIDC), S5 (segredos em claro), S6 (chaves sem escopos).
+**Todas fechadas a 2026-09-30, com a regressão que as guarda** — não as voltes a abrir
+nem percas tempo a revê-las como se estivessem em aberto:
+- `org::add_employee` no #78 (R122): recusa uma conta já membro de outra org;
+- `odoo::list_users` filtra `archived_at IS NULL` (`odoo.rs`);
+- **S4** SSRF (`odoo_url`, WebDAV, OIDC) na **R180**; **S5** segredos em claro na
+  **R160**; **S6** chaves `dlx_` sem escopos nem expiração nas **R170/R171**.
+
+**O que fica em aberto é um só, e é decisão de produto:** o registo não verifica o email.
+Não o trates como defeito técnico.
+
+**Superfície nova a vigiar** (entrou no #130, ADR-0010): o UA SIP da ponte
+telefone↔sala abre um socket UDP que atende `INVITE` de fora. As três barras são
+fail-closed e têm de continuar a ser — sem `PHONE_BRIDGE_SIP_BIND` não arranca, com
+`PHONE_BRIDGE_FREESWITCH_IPS` vazio também não, e uma oferta sem `a=crypto` leva `488`.
+As chaves SRTP são por chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de
+canal ou em log. O domínio é da `delonix-meet-telefonia`.
 
 ## O que verificas, por ordem
 

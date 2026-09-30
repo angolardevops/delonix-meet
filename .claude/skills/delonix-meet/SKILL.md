@@ -38,6 +38,7 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
 | Autenticação, isolamento entre orgs, SSRF, segredos, E2EE, DLP, auditoria | `delonix-meet-backend` §Segurança | `delonix-meet-security` |
 | Rust em profundidade: async, locks, hot path, `unwrap`, tarefas de fundo | `delonix-meet-backend` | `delonix-meet-rust` |
 | SFU, ICE, simulcast, gravação, media num só sentido | `docs/reference/regressions.md` | `delonix-meet-webrtc` |
+| Telefone, PSTN, dial-in, SIP, FreeSWITCH, SRTP, troncos, CDR | `delonix-meet-telefonia` | `delonix-meet-webrtc` (media) + `delonix-meet-security` (socket e chaves) |
 | `web/src/**`, sala, design system, i18n | `HARNESS.md` §5 | `delonix-meet-frontend` |
 | `deploy/`, K8s, afinidade por sala, coturn, imagens | `HARNESS.md` §7 e §11 | `delonix-meet-devops` |
 | Prioridade de roadmap, paridade com Zoom/Teams/Meet | `docs/competitive-positioning.md` | `delonix-meet-product` |
@@ -46,37 +47,50 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
 
 | Área | Portão |
 |---|---|
-| Qualquer mudança | `make fitness` (inclui a catraca da arquitectura e a do clippy) |
-| Backend | `cd server && cargo fmt --check && cargo test --release` + `bash scripts/check-clippy-ratchet.sh` |
-| Rota nova ou alterada | `bash scripts/check-route-auth.sh` + `bash scripts/check-isolamento-cobertura.sh` + `node web/e2e/isolamento.mjs` contra servidor real |
+| Qualquer mudança | `make fitness` — corre onze dos quinze `scripts/check-*.sh` |
+| Backend | **o que o CI corre, por esta ordem:** `cargo fmt --manifest-path server/Cargo.toml --check` · `bash scripts/check-clippy-ratchet.sh` · `cargo test --release --workspace -- --test-threads=4` · `bash scripts/check-openapi.sh`. O `fmt` é o primeiro e é o que mais vezes trava um push apressado |
+| Rota nova ou alterada | `check-route-auth.sh` + `check-isolamento-cobertura.sh` + `node web/e2e/isolamento.mjs` contra servidor real |
 | Frontend | `cd web && npx tsc --noEmit && npx vitest run` + o e2e do ecrã |
 | Media | `cargo test --release sfu_e2e` + `node web/e2e/reuniao.mjs` |
+| Telefone e PSTN | `delonix-meet-telefonia` §Portões — inclui a prova contra um FreeSWITCH real, que **não corre no CI** |
 
-## O estado real (2026-09-16, ramo `integra/backend-enterprise`) — não o redescubras
+Os quinze portões: `arquitectura-catraca`, `browser-antes-do-e2e`, `capability-claims`,
+`clippy-ratchet`, `crate-deps`, `dep-audit`, `docs-drift`, `isolamento-cobertura`,
+`k8s-render`, `openapi`, `proto`, `repo-hygiene`, `room-affinity`, `route-auth`,
+`tenant-rls`.
+
+## O estado real (2026-09-30, `main` `1fd4750`) — não o redescubras
+
+Números medidos, não lembrados: **165 regressões** no catálogo, **30 binários** em
+`server/tests/`, **15 portões** `scripts/check-*.sh`, catraca do clippy em **13**,
+`rotas_sem_openapi=0`. Zero PRs abertas.
 
 - **Workspace em transição** (ADR-0006 §1). O monólito `delonix-server` continua a ser a
-  raiz, com `src/lib.rs` (o `main.rs` só chama `run()`), mais três crates sem IO:
-  `delonix-meet-core` (cripto, `DomainError` com código, paginação, edições, `SecretBox`),
-  `delonix-meet-domain` (contextos `identity`, `content`, `integration`, `notification`) e
-  `delonix-meet-protocol` (`.proto` gerados). `scripts/check-crate-deps.sh` impõe a regra
-  da dependência. Os módulos do monólito **ainda não** estão em `store`/`api`/`media`/
-  `realtime` — isso é o ADR-0006 §«Ordem» D e G.
-- **OpenAPI 3.1 gerado**, 158/158 operações (`/api/openapi.json`, `/api/v1/openapi.json`,
-  `docs/reference/openapi/`), com catraca a zero (`scripts/check-openapi.sh`).
-- **gRPC interno** com mTLS (`GRPC_BIND_ADDR`): `IvrService` e `TranscriptionService`; o
-  `ai-worker` já fala gRPC. **Nunca** gRPC para o browser.
-- **Edições** `saas` (omissão = histórico), `enterprise`, `personal`; `INTERNAL_BIND_ADDR`,
-  `UI_DIR`, `delonix-server migrate`, `LOG_FORMAT=json`, `DATA_ENCRYPTION_KEYS`.
-- **Testes de integração HTTP/gRPC contra Postgres real** em `server/tests/` (22 binários);
-  `cargo test --release --workspace -- --test-threads=4` precisa de `DATABASE_URL`.
-- **Segurança fechada neste ramo:** R125 (IDOR 5W2H), R130 (tomada de conta por SSO), R131
-  (força bruta MFA), R132, R140–R143 (dial-in de outra org, pool de DIDs, token Odoo,
-  arquivados no directório Odoo), R150 (`changeme123`), R151 (ocupação de contas pela v1),
-  R152, R153 (401→403/404), R160 (S5: segredos de webhooks, SSO e WebDAV cifrados em
-  repouso, `secrets_at_rest`), R170–R171 (S6: escopos, expiração e limite por chave `dlx_`;
-  revogar 204/404). **Continuam abertos** S4 (SSRF no `odoo_url`/WebDAV/OIDC) e o registo
-  sem verificação de email.
+  raiz, com `src/lib.rs` (o `main.rs` só chama `run()`), mais os crates sem IO
+  `delonix-meet-core`, `delonix-meet-domain` e `delonix-meet-protocol`;
+  `scripts/check-crate-deps.sh` impõe a regra da dependência. Os módulos do monólito
+  **ainda não** estão em `store`/`api`/`media`/`realtime` — ADR-0006 §«Ordem» D e G.
+- **OpenAPI 3.1 gerado** e commitado (`docs/reference/openapi/{bff,v1}.json`), com catraca
+  a zero. **gRPC interno** com mTLS; **nunca** gRPC para o browser.
+- **Testes de integração contra Postgres real** — `cargo test --release --workspace --
+  --test-threads=4` precisa de `DATABASE_URL`. Sem ela, os testes que usam `#[sqlx::test]`
+  falham com «DATABASE_URL must be set», que parece um defeito e não é.
+- **Telefone ligado à sala** desde o #130 (ADR-0010, R221/R222): quem entra por telefone é
+  um participante da sala. A telefonia completa — troncos, plano de marcação, CDR — e os
+  canais da sala **ainda não estão portados**: ver `delonix-meet-telefonia`.
+- **Segurança:** S1–S4 fechadas — a S4 (SSRF para fora: `odoo_url`, WebDAV, OIDC) fechou
+  na **R180**, e o harness dava-a por aberta até 30-09. **Continua aberto** o registo sem
+  verificação de email, que é decisão de produto e não defeito.
 - **Os revisores estão em `.claude/agents/delonix-meet-*.md`.**
+
+### Dois hábitos desta máquina que custaram tempo
+
+- **O host é partilhado.** Já se mediu carga de 40 a 68 com outras sessões a compilar. Um
+  teste com prazo de relógio falha aí e passa em série — antes de lhe chamar defeito,
+  repete-o sozinho e regista a carga. O Docker chega a não conseguir arrancar contentores.
+- **Postgres e Redis aparecem pausados** (`docker unpause wt-merge-postgres-1
+  wt-merge-redis-1`). Os testes falham dentro do `sqlx testing/mod.rs`, não numa asserção
+  — não é o teu código.
 
 ## Três regras que valem em tudo
 
@@ -93,13 +107,17 @@ description: Ponto de entrada do Delonix Meet (videoconferência self-hosted —
 ## Ao fechar uma tarefa
 
 Propõe um a três pedidos seguintes, por raio de dano. Cada um nomeia o alvo, a skill, a
-prova a medir e o que fica de fora. Os três que a auditoria deixou em aberto, por
-ordem (S1–S3 já fechadas no #76):
+prova a medir e o que fica de fora. Hoje, por ordem de valor:
 
-1. «Tira os membros arquivados do `odoo::list_users` (`delonix-meet-backend`, revisor
-   `delonix-meet-security`). Prova: caso em `web/e2e/isolamento.mjs` ou de ataque directo,
-   com controlo positivo. Fora: verificação de email no registo (decisão de produto).»
-2. «ADR-0004 §6 passos 1–2: `src/lib.rs`, `sfu_e2e` para `tests/`, `#[sqlx::test]` em
-   org/meetings/recordings, e um job com Postgres no CI. Fora: mover SQL.»
-3. «ADR-0004 §6 passo 5, só a separação da v1 em inquilino/operador/Odoo, com OpenAPI
-   `utoipa` e um portão spec-gerado = spec-commitado (`delonix-meet-api`). Fora: gRPC.»
+1. «Porta a frente dos canais da sala (1 197 linhas em
+   `origin/delonix-meet-backend/v3-canais`) — ela traz o consumidor do silenciar e do pôr
+   a palco uma perna de telefone, que saíram do #130 por não terem quem os chamasse
+   (`delonix-meet-telefonia`, revisor `delonix-meet-webrtc`). Prova: um caso em `sfu_e2e`
+   que silencia uma perna e mede que o tom deixa de chegar. Fora: a telefonia (frente C).»
+2. «Porta a frente C da telefonia (9 772 linhas, ADR-0009, 17 rotas)
+   (`delonix-meet-telefonia`, revisores `delonix-meet-api` e `delonix-meet-security`).
+   Prova: `tests/telephony.rs` contra Postgres real. Fora: o WhatsApp Business.»
+3. «Põe um verificador de sintaxe de Lua no `make fitness` e no CI, e mete o
+   `voice/freeswitch/scripts/dialin_ivr.lua` debaixo dele — está no caminho do cliente e
+   hoje não tem portão nenhum. Prova: controlo negativo, partir o ficheiro e ver falhar.
+   Fora: testar o comportamento do IVR.»
