@@ -63,13 +63,16 @@ originar uma segunda perna SIP** — e é por isso que o shim vive do nosso lado
 | Qualquer coisa em `phone_bridge/` | `cargo test --lib phone_bridge::` (38 unitários: G.711, SRTP, SDP, mistura, jitter) |
 | O caminho da media | `cargo test --lib ponte_telefone_sala -- --nocapture` (R221 — imprime atraso por sentido, mix-minus e CPU por chamada) |
 | A cadeia toda | a prova real, abaixo (R222) — **fora do CI** |
+| Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe) |
+| A imagem (`voice/freeswitch/image/`) | `make freeswitch-image` — build + prova de fumo; depois a R222 com `FS_IMAGE` |
 | O contrato com o IVR | não há portão automático: ver o aviso do Lua, abaixo |
 | Qualquer mudança | `make fitness` |
 
 ### A prova real, e como a correr
 
 ```bash
-bash scripts/fs-canais.sh up        # imagem local delonix-dev/freeswitch:1.11.3
+make freeswitch-image              # a imagem de voice/freeswitch/image/ (R223)
+bash scripts/fs-canais.sh up        # FS_IMAGE=<outra> para correr contra a publicada
 FS_ESL_ADDR=127.0.0.1:8221 FS_ESL_PASSWORD=$(cat .fs-canais/esl-password.txt) \
   FS_CANAIS_GW=dlx-0c0a1500-0000-4000-8000-00000000d0d0 \
   FS_CANAIS_RECORDINGS=$PWD/.fs-canais/recordings \
@@ -93,10 +96,16 @@ chegou.
 
 ## O aviso que este domínio tem de carregar
 
-**O `dialin_ivr.lua` está no caminho do cliente e ninguém lhe verifica a sintaxe.** Não há
-interpretador de Lua na máquina de desenvolvimento nem na imagem do FreeSWITCH, e o CI não
-o lê. Um erro de sintaxe ali não aparece em portão nenhum — aparece a quem liga. Se
-mexeres nesse ficheiro, di-lo no relatório em vez de o dar por verificado.
+**O `dialin_ivr.lua` está no caminho do cliente, e o portão só lhe vê a sintaxe.**
+`scripts/check-lua-sintaxe.sh` (R223) compila-o com o `luac5.2` no `make fitness` e no CI;
+o **comportamento** do IVR — PIN, `room_bridge`, recuo para a conferência local — continua
+sem portão automático. Se mexeres no fluxo, di-lo no relatório em vez de o dar por
+verificado.
+
+**A imagem** vive em `voice/freeswitch/image/` (três fontes fixadas por commit, `mod_lua` e
+`mod_curl`) e publica-se a partir da `main`. A configuração segura que o `fs-canais.sh`
+monta por cima **ainda não está no repo** (`.worktrees/freeswitch-build/conf/`), e a
+vanilla **não carrega o `mod_curl`**.
 
 ## O que NÃO está portado, e onde está
 
@@ -124,6 +133,7 @@ fora. Por ordem de valor, hoje:
 2. «Porta a frente C da telefonia (9 772 linhas) com o ADR-0009 e as 17 rotas. Prova:
    `tests/telephony.rs` contra Postgres real e o `telefonia-freeswitch.mjs` contra a
    imagem local. Fora: o WhatsApp Business.»
-3. «Põe um verificador de sintaxe de Lua no `make fitness` e no CI, e mete o
-   `dialin_ivr.lua` debaixo dele. Prova: um controlo negativo — partir o ficheiro de
-   propósito e ver o portão falhar. Fora: testar o comportamento do IVR.»
+3. «Traz a configuração segura do FreeSWITCH (`.worktrees/freeswitch-build/conf/`) para o
+   repo, com o `mod_curl` carregado, e troca o `safarov/freeswitch:latest` do
+   `voice/docker-compose.voice.yml` pela imagem de `voice/freeswitch/image/`. Prova: a R222
+   a correr só a partir do repo, sem nada fora dele. Fora: o PBX de cliente.»

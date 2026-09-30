@@ -144,6 +144,12 @@ jobs:
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
 
+      # O Lua 5.2 é o que o mod_lua da imagem liga (liblua5.2).
+      - name: Sintaxe dos scripts Lua do FreeSWITCH (R223 — o IVR está no caminho de quem liga)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q lua5.2
+          bash scripts/check-lua-sintaxe.sh
+
       - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
         run: bash scripts/check-k8s-render.sh
 

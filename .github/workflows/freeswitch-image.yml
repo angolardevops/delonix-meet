@@ -1,0 +1,103 @@
+# ============================================================
+#  Imagem FreeSWITCH do Meet (voice/freeswitch/image/, R223).
+#
+#  Só corre quando a imagem ou a sua prova mudam: compilar o FreeSWITCH
+#  leva um quarto de hora, e não há razão para o pagar em cada PR.
+#
+#  PR   → build + prova de fumo; nada é publicado.
+#  main → o mesmo, e depois publica em
+#         ghcr.io/<owner>/delonix-meet-freeswitch:1.11.3-<sha8>, com SBOM e
+#         proveniência. A tag é imutável: nunca :latest nem :1.11.3 sozinho —
+#         quem a usa fixa-a, e promove-se por digest.
+#
+#  A R222 (a ponte com um FreeSWITCH real) continua FORA daqui: precisa
+#  também do SFU e do cliente webrtc-rs — ver scripts/e2e-fora-do-ci.txt.
+# ============================================================
+name: Imagem FreeSWITCH
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - voice/freeswitch/image/**
+      - scripts/freeswitch-image-smoke.sh
+      - scripts/check-lua-sintaxe.sh
+      - voice/freeswitch/scripts/**
+      - .github/workflows/freeswitch-image.yml
+  pull_request:
+    paths:
+      - voice/freeswitch/image/**
+      - scripts/freeswitch-image-smoke.sh
+      - scripts/check-lua-sintaxe.sh
+      - voice/freeswitch/scripts/**
+      - .github/workflows/freeswitch-image.yml
+  workflow_dispatch:
+
+concurrency:
+  group: freeswitch-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  imagem:
+    name: Build, prova de fumo e publicação
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      LOCAL: delonix-meet/freeswitch:1.11.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (carregada no docker local para a prova)
+        uses: docker/build-push-action@v6
+        with:
+          context: voice/freeswitch/image
+          file: voice/freeswitch/image/Containerfile
+          tags: ${{ env.LOCAL }}
+          load: true
+          cache-from: type=gha,scope=freeswitch
+          cache-to: type=gha,scope=freeswitch,mode=max
+
+      - name: Prova de fumo (fontes fixadas, módulos carregam, mod_lua executa)
+        run: bash scripts/freeswitch-image-smoke.sh "$LOCAL"
+
+      - name: Nome publicado
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: nome
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
+          echo "ref=ghcr.io/${owner}/delonix-meet-freeswitch:1.11.3-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        if: steps.nome.outputs.ref != ''
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Mesma cache: não recompila, só junta SBOM e proveniência e empurra.
+      - name: Publicar (só na main)
+        if: steps.nome.outputs.ref != ''
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: voice/freeswitch/image
+          file: voice/freeswitch/image/Containerfile
+          tags: ${{ steps.nome.outputs.ref }}
+          push: true
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=freeswitch
+
+      - name: Digest publicado
+        if: steps.nome.outputs.ref != ''
+        run: |
+          echo "### Imagem FreeSWITCH publicada" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${{ steps.nome.outputs.ref }}@${{ steps.push.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"

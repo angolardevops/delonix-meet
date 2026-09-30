@@ -168,7 +168,7 @@ mecanismo que o FreeSWITCH 1.11.3 não tem. O historial está em
 `docs/adr/0010-ponte-telefone-sala.md`. R221 e R222 no catálogo de regressões.
 
 **Medido contra um FreeSWITCH real** (`scripts/fs-canais.sh up`, imagem
-`delonix-dev/freeswitch:1.11.3`), não contra um duplo:
+`delonix-meet/freeswitch:1.11.3`, de `voice/freeswitch/image/`), não contra um duplo:
 `sfu_e2e::ponte_com_freeswitch_real_tom_nos_dois_sentidos`. **Por medir:** a
 cadeia com uma operadora a sério e um softphone através do Kamailio, e um
 browser em vez do cliente webrtc-rs.
