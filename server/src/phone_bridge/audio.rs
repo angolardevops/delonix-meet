@@ -24,8 +24,6 @@ use super::g711::Law;
 
 /// 20 ms a 8 kHz.
 pub const FRAME_8K: usize = 160;
-/// Incremento de timestamp RTP de 20 ms de Opus (relógio de 48 kHz, RFC 7587).
-pub const OPUS_TS_PER_FRAME: u32 = 960;
 /// Maior pacote que se aceita do lado Opus: 120 ms a 8 kHz.
 const MAX_DECODED_8K: usize = 960;
 
@@ -219,11 +217,6 @@ impl Mixer {
         }
     }
 
-    /// Número de fontes vivas (para métricas e testes).
-    pub fn sources(&self) -> usize {
-        self.sources.len()
-    }
-
     /// Um pacote Opus de um participante da sala.
     pub fn push(&mut self, publisher: Uuid, seq: u16, payload: &[u8]) {
         if publisher == self.own || payload.is_empty() {
@@ -334,6 +327,11 @@ fn soft_limit(s: i32) -> i16 {
 pub(crate) mod tests {
     use super::*;
 
+    /// Incremento de timestamp RTP de 20 ms de Opus (relógio de 48 kHz,
+    /// RFC 7587). Só os testes precisam de o saber: o código calcula-o a
+    /// partir do relógio de 8 kHz da perna.
+    const OPUS_TS_PER_FRAME: u32 = 960;
+
     pub(crate) fn tone_8k(freq: f32, n: usize, amp: f32, phase0: usize) -> Vec<i16> {
         (0..n)
             .map(|i| {
@@ -415,7 +413,7 @@ pub(crate) mod tests {
         {
             mix.push(own, i as u16, &f.payload);
         }
-        assert_eq!(mix.sources(), 0);
+        assert_eq!(mix.sources.len(), 0);
         assert!(mix.tick().iter().all(|&v| v == 0));
     }
 
@@ -453,7 +451,10 @@ pub(crate) mod tests {
         Law::Mu.decode(&out, &mut back);
         assert!(back[0] > 28_000 && back[1] < -28_000, "{back:?}");
         assert_eq!(soft_limit(24_000), 24_000);
-        assert!(soft_limit(1_000_000) <= 32_767);
+        // Acima do joelho comprime-se: aproxima-se do tecto sem lá chegar (e,
+        // sobretudo, sem dar a volta ao i16 — que era o defeito a evitar).
+        let extremo = soft_limit(1_000_000);
+        assert!(extremo > 24_000 && extremo < i16::MAX, "{extremo}");
     }
 
     #[test]

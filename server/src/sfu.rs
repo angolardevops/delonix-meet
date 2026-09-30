@@ -1016,25 +1016,6 @@ impl SfuState {
         }
     }
 
-    /// Passa uma chamada a palco (ou tira-a): o seletor de oradores deixa de a
-    /// poder suprimir. `false` se a chamada não está a publicar nesta sala.
-    pub(crate) async fn set_bridge_pinned(&self, room_id: Uuid, leg_id: Uuid, on: bool) -> bool {
-        let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
-            return false;
-        };
-        let pubs = room.publications.lock().await;
-        let mut found = false;
-        for p in pubs
-            .iter()
-            .filter(|p| p.publisher == leg_id && p.kind == "audio")
-        {
-            p.pinned.store(on, Relaxed);
-            p.forwarding.store(true, Relaxed);
-            found = true;
-        }
-        found
-    }
-
     /// Assina o áudio da sala para a mistura de uma chamada.
     pub(crate) fn tap_room_audio(&self, room_id: Uuid, leg_id: Uuid) -> mpsc::Receiver<TapPacket> {
         let (tx, rx) = mpsc::channel(TAP_CAP);

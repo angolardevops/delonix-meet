@@ -421,13 +421,13 @@ impl DialOutStatus {
         if self.is_final() {
             return false;
         }
-        match (self, to) {
-            (Queued, Dialing | Sent | Failed | Cancelled) => true,
-            (Dialing, Ringing | InCall | Declined | NoAnswer | Failed | Cancelled) => true,
-            (Ringing, InCall | Declined | NoAnswer | Failed | Cancelled) => true,
-            (InCall, Ended | Failed) => true,
-            _ => false,
-        }
+        matches!(
+            (self, to),
+            (Queued, Dialing | Sent | Failed | Cancelled)
+                | (Dialing, Ringing | InCall | Declined | NoAnswer | Failed | Cancelled)
+                | (Ringing, InCall | Declined | NoAnswer | Failed | Cancelled)
+                | (InCall, Ended | Failed)
+        )
     }
 }
 
@@ -628,9 +628,8 @@ mod tests {
         assert_eq!(mask_number(&n), "+27 11 ***0192");
         let n = normalize_e164("+14155550100").unwrap();
         assert_eq!(mask_number(&n), "+1 41 ***0100");
-        for m in [mask_number(&normalize_e164("+244923123108").unwrap())] {
-            assert!(!m.contains("923123108"));
-        }
+        let m = mask_number(&normalize_e164("+244923123108").unwrap());
+        assert!(!m.contains("923123108"), "{m}");
     }
 
     #[test]

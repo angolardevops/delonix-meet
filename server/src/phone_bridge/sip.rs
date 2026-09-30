@@ -397,21 +397,9 @@ impl SipBridge {
         Ok(bridge)
     }
 
-    /// Silencia (na ponte) o áudio de uma perna. `false` se não existe.
-    pub async fn set_muted(&self, leg_id: Uuid, muted: bool) -> bool {
-        let dialogs = self.dialogs.lock().await;
-        for d in dialogs.values() {
-            if d.leg_id == leg_id {
-                if let Some(l) = &d.leg {
-                    l.set_muted(muted);
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Pernas activas (para métricas e testes).
+    /// Pernas activas. Só a prova contra o FreeSWITCH real a usa hoje —
+    /// daí o âmbito de teste, em vez de a deixar a contar avisos.
+    #[cfg(test)]
     pub async fn active_legs(&self) -> usize {
         self.dialogs
             .lock()
@@ -686,7 +674,6 @@ impl SipBridge {
             let cfg = LegConfig {
                 room_id: adm.room_id,
                 leg_id: adm.leg_id,
-                bind: socket.local_addr()?,
                 // O RTP vem do FreeSWITCH que mandou o INVITE (e do IP do SDP,
                 // se for outro da mesma lista).
                 allowed_sources: {

@@ -1541,12 +1541,18 @@ fn tom(x: &[f32], fs: f32, f: f32) -> f32 {
     crate::phone_bridge::audio::tests::goertzel(x, fs, f)
 }
 
+/// O par de contextos SRTP de uma perna: (o que cifra o que sai, o que
+/// decifra o que entra).
+type ParSrtp = (webrtc_srtp::context::Context, webrtc_srtp::context::Context);
+
+/// O que o «telefone» ouviu: (chegada, PCM descodificado) por pacote.
+type Recebido = Arc<std::sync::Mutex<Vec<(std::time::Instant, Vec<i16>)>>>;
+
 /// «Telefone» falso: o papel do FreeSWITCH do lado da ponte. Manda RTP G.711
 /// (silêncio e depois um tom) e guarda o que a ponte lhe devolve.
 struct TelefoneFalso {
-    socket: Arc<tokio::net::UdpSocket>,
     /// (chegada, PCM descodificado) de cada pacote da mistura.
-    recebido: Arc<std::sync::Mutex<Vec<(std::time::Instant, Vec<i16>)>>>,
+    recebido: Recebido,
     /// Instante em que o tom começou a sair (None = ainda silêncio).
     tom_desde: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
     tocar: Arc<std::sync::atomic::AtomicBool>,
@@ -1569,7 +1575,7 @@ impl TelefoneFalso {
         ponte: std::net::SocketAddr,
         law: crate::phone_bridge::g711::Law,
         freq: f32,
-        srtp: Option<(webrtc_srtp::context::Context, webrtc_srtp::context::Context)>,
+        srtp: Option<ParSrtp>,
     ) -> Self {
         let (mut ctx_out, mut ctx_in) = match srtp {
             Some((o, i)) => (Some(o), Some(i)),
@@ -1577,8 +1583,7 @@ impl TelefoneFalso {
         };
         use webrtc::util::{Marshal, Unmarshal};
         let socket = Arc::new(tokio::net::UdpSocket::bind(bind).await.unwrap());
-        let recebido: Arc<std::sync::Mutex<Vec<(std::time::Instant, Vec<i16>)>>> =
-            Default::default();
+        let recebido: Recebido = Default::default();
         let tom_desde: Arc<std::sync::Mutex<Option<std::time::Instant>>> = Default::default();
         let tocar = Arc::new(std::sync::atomic::AtomicBool::new(false));
         {
@@ -1664,7 +1669,6 @@ impl TelefoneFalso {
             });
         }
         Self {
-            socket,
             recebido,
             tom_desde,
             tocar,
@@ -1829,7 +1833,6 @@ async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
         leg::LegConfig {
             room_id: room,
             leg_id,
-            bind: socket.local_addr().unwrap(),
             allowed_sources: vec!["127.0.0.1".parse().unwrap()],
             default_law: Law::A,
             initial_remote: None,
@@ -2283,8 +2286,8 @@ fn ler_wav(bytes: &[u8]) -> (u32, Vec<Vec<f32>>) {
             );
         } else if id == b"data" {
             let mut out = vec![Vec::new(); ch];
-            for (i, s) in body.chunks_exact(2).enumerate() {
-                out[i % ch].push(i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0);
+            for (i, s) in body.as_chunks::<2>().0.iter().enumerate() {
+                out[i % ch].push(i16::from_le_bytes(*s) as f32 / 32768.0);
             }
             return (rate, out);
         }

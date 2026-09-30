@@ -42,11 +42,6 @@ impl RtpQuality {
         }
     }
 
-    /// Regista um pacote recebido agora.
-    pub fn observe(&mut self, seq: u16, rtp_ts: u32) {
-        self.observe_at(seq, rtp_ts, Instant::now());
-    }
-
     pub fn observe_at(&mut self, seq: u16, rtp_ts: u32, arrival: Instant) {
         self.received_total += 1;
         let arrival_units = arrival.duration_since(self.epoch).as_secs_f64() * self.clock_rate;
