@@ -2186,6 +2186,21 @@ impl crate::phone_bridge::sip::BridgeAdmission for AdmissaoFixa {
     }
 }
 
+/// O chunk `data` do WAV já declara o seu tamanho? O FreeSWITCH só o escreve
+/// ao fechar a gravação; até lá o campo é 0 e qualquer leitor vê 0 amostras.
+fn data_chunk_fechado(b: &[u8]) -> bool {
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let id = &b[i..i + 4];
+        let sz = u32::from_le_bytes([b[i + 4], b[i + 5], b[i + 6], b[i + 7]]) as usize;
+        if id == b"data" {
+            return sz > 16_000 && i + 8 + sz <= b.len();
+        }
+        i += 8 + sz + (sz & 1);
+    }
+    false
+}
+
 /// Cliente ESL com o mínimo de que a prova precisa: um `api` bloqueante.
 ///
 /// A porta `CallOriginator` completa — failover entre troncos, eventos de
@@ -2488,7 +2503,13 @@ async fn ponte_com_freeswitch_real_tom_nos_dois_sentidos() {
             files.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
             if let Some(f) = files.last() {
                 let b = std::fs::read(f.path()).unwrap();
-                if b.len() > 44 + 16_000 {
+                // O TAMANHO DO FICHEIRO NÃO CHEGA: o FreeSWITCH escreve as
+                // amostras à medida que grava, mas só fecha o campo de
+                // tamanho do chunk `data` quando a chamada termina. Ler antes
+                // disso dá um WAV de 0,0 s com 160 KiB de áudio lá dentro, e o
+                // teste falhava a dizer que a sala não chegou ao telefone
+                // quando tinha chegado. Espera-se pelo cabeçalho fechado.
+                if b.len() > 44 + 16_000 && data_chunk_fechado(&b) {
                     found = Some((f.path(), b));
                     break;
                 }
