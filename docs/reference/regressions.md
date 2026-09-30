@@ -2216,3 +2216,29 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Prova refeita nesta árvore (2026-09-29).** Com o patch: passa. Sem o patch (retirado só o bloco do early-return): falha com `media deixou de chegar: ["…←…:audio"]`. **NÃO foi repetida a corrida do gerador de carga** — os 75/96 → 96/96 são a medição de 17 de setembro, noutra árvore.
 
 **Ficheiros.** `server/vendor/webrtc/` (crate 0.17.2 vendorizado + o patch), `server/Cargo.toml` (`[patch.crates-io]`), `server/src/sfu.rs`, `server/src/sfu_e2e.rs`, `HARNESS.md`.
+
+### R221 — Quem entrava por telefone nunca ouvia a sala, e a sala nunca o ouvia
+
+**Sintoma.** O dial-in PSTN estava ligado desde a Fase 1: o chamador marcava o DID, digitava o PIN, e entrava — numa conferência **local do FreeSWITCH**. Ouvia os outros chamadores PSTN e mais ninguém. Os participantes WebRTC da MESMA reunião não o ouviam nem eram ouvidos. Não era uma falha intermitente: era o comportamento permanente, com a ponte do lado do SFU escrita, testada e desligada (ver R222 para a razão por que estava desligada).
+
+**Regra.** Uma perna de telefone é um **publicador como outro** no SFU: `server/src/phone_bridge/` descodifica G.711 (PCMA/PCMU) do telefone, codifica Opus para a sala, e devolve ao telefone a mistura da sala **menos a própria voz** (mix-minus — sem isso o chamador ouve-se com o atraso da volta, que é o eco clássico). O jitter é absorvido por uma fila com relógio próprio de 20 ms (`phone_bridge::audio`), porque o RTP do telefone não chega alinhado com o do SFU. Um pacote de um IP que não está na allowlist **não entra na sala**, mesmo com o resto do pacote correcto.
+
+**Portão.** `sfu_e2e::ponte_telefone_sala_tom_nos_dois_sentidos`: um «telefone» (socket UDP com RTP G.711 lei μ a 1 kHz) e um participante `RTCPeerConnection` real (webrtc-rs, Opus a 440 Hz) na mesma sala. Exige, com descodificação real dos dois lados: (1) o participante recebe Opus descodificável com o 1 kHz; (2) o telefone recebe G.711 com os 440 Hz; (3) o telefone **não** recebe o próprio 1 kHz; (4) um pacote de outro IP não entra. Imprime o atraso de cada sentido e o CPU de codecs por chamada.
+
+**Âmbito do portão.** O transporte até à ponte é um socket local: sem FreeSWITCH, sem operadora e sem SRTP. A cadeia real é a R222.
+
+**Ficheiros.** `server/src/phone_bridge/{mod,audio,g711,leg,quality}.rs`, `server/src/sfu.rs` (`PubSource::Bridge` — uma publicação deixa de ser sempre uma track remota), `server/src/sfu_e2e.rs`, `server/Cargo.toml` (sai `audiopus`, que se ligava à `libopus` do sistema; entra `opus-rs`, Rust puro — a imagem distroless deixa de precisar da lib).
+
+### R222 — A ponte assentava num mecanismo que o FreeSWITCH não tem, e por isso nunca foi ligada
+
+**Sintoma.** A Abordagem B (`docs/pstn-sfu-bridge-design.md`, `pstn_bridge.rs`, 2026-09-19) fazia o SFU escutar RTP/SRTP **cru** num par UDP, com as chaves entregues por fora no JSON do IVR. O lado do SFU foi escrito e testado. O lado do FreeSWITCH nunca chegou a existir: o `dialin_ivr.lua` ficou com a pergunta escrita no topo — qual é o verbo do FreeSWITCH que manda RTP cifrado com uma chave dada por fora para um endereço arbitrário, sem segundo diálogo SIP — e, sem resposta, a fazer apenas um `consoleLog` antes de cair na conferência local. Isto é o caso em que o código existe, os testes passam, e **o cliente não tem a funcionalidade**.
+
+**Causa.** Não há esse mecanismo num FreeSWITCH 1.11.3 de stock — lido na imagem pelo trabalho que construiu a ponte, e não reverificado ao trazê-la para a `main`. O `mod_audio_fork` manda áudio por WebSocket para STT, não RTP bidireccional; `uuid_deflect`, `snoop` e `unicast` fazem outra coisa. O que o FreeSWITCH faz bem é originar uma **segunda perna SIP** — que é o que a Abordagem B evitava de propósito, para não pôr sinalização nova no SFU.
+
+**Regra.** O SFU ganha o shim que a própria pergunta antecipava: um UA SIP mínimo (`phone_bridge::sip`) que só **atende** — não regista, não origina, não fala SIP para fora. As chaves SRTP passam a ser negociadas **no SDP, por chamada** (SDES), em vez de distribuídas por JSON: uma oferta sem `a=crypto` leva `488`, e uma sem G.711 também. A allowlist de origens é **fail-closed**: vazia, o UA nem arranca (`voice::start_phone_bridge`). O IVR deixa de receber `pstn_bridge` (host, porta, chaves) e passa a receber `room_bridge` (para onde fazer `bridge` e que variáveis pôr antes) — e **executa-o**, com recuo para a conferência local se falhar.
+
+**Portão.** `sfu_e2e::ponte_com_freeswitch_real_tom_nos_dois_sentidos`, contra um **FreeSWITCH 1.11.3 real** (`scripts/fs-canais.sh up`): `originate` por ESL → gateway → «telefone» que atende, grava a chamada e toca 1 kHz → `bridge` SIP → UA da ponte → SFU → participante webrtc-rs a publicar 440 Hz. Exige o `X-Delonix-Call-Id` no `INVITE`, o 1 kHz audível na sala, os **440 Hz da sala dentro da gravação que o FreeSWITCH fez do lado do telefone**, e o `BYE` a tirar a perna da sala. **Fora do CI** (`scripts/e2e-fora-do-ci.txt`): precisa da imagem `delonix-dev/freeswitch:1.11.3`, que o CI não alcança.
+
+**Prova corrida a 2026-09-30.** `originate`→atendida 328 ms; `200 OK` do UA 330 ms; 1 kHz do telefone na sala, mediana 0,1548 por pacote; gravação do telefone de 5,0 s a 8 kHz, dois canais — recebido com 440 Hz a **0,2495** e 1 kHz a **0,0001** (a sala chega-lhe, a própria voz não), enviado com 1 kHz a 0,1554. **Por medir:** uma operadora a sério através do Kamailio, e um browser em vez do cliente webrtc-rs.
+
+**Ficheiros.** `server/src/phone_bridge/{sip,srtp}.rs`, `server/src/voice.rs` (`RoomBridgeResp`, `DialInAdmission`, `start_phone_bridge`), `server/src/lib.rs` (arranque), `voice/freeswitch/scripts/dialin_ivr.lua` (o `bridge` a sério), `voice/freeswitch/canais-prova/`, `scripts/fs-canais.sh`, `docs/adr/0010-ponte-telefone-sala.md`. Sai `server/src/pstn_bridge.rs`.

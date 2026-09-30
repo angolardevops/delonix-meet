@@ -1,0 +1,26 @@
+<profile name="external">
+  <!-- Perfil de onde saem os gateways e a perna para a ponte (AfterAnswer::RoomBridge). -->
+  <gateways>
+    <!-- Tronco FALSO: aponta para a «operadora» local do perfil carrier (5260). -->
+    <gateway name="dlx-0c0a1500-0000-4000-8000-00000000d0d0">
+      <param name="proxy" value="127.0.0.1:5260"/>
+      <param name="register" value="false"/>
+      <param name="caller-id-in-from" value="true"/>
+    </gateway>
+  </gateways>
+  <domains></domains>
+  <settings>
+    <param name="context" value="public"/>
+    <param name="dialplan" value="XML"/>
+    <param name="sip-ip" value="127.0.0.1"/>
+    <param name="rtp-ip" value="127.0.0.1"/>
+    <param name="sip-port" value="5280"/>
+    <param name="auth-calls" value="false"/>
+    <param name="apply-inbound-acl" value="loopback.auto"/>
+    <param name="inbound-codec-prefs" value="PCMA,PCMU"/>
+    <param name="outbound-codec-prefs" value="PCMA,PCMU"/>
+    <param name="rtp-timer-name" value="soft"/>
+    <param name="manage-presence" value="false"/>
+    <param name="rtp-timeout-sec" value="60"/>
+  </settings>
+</profile>

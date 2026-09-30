@@ -1,17 +1,27 @@
-> **Estado em 2026-09-19: lado SFU implementado e testado
-> (`server/src/pstn_bridge.rs`, `server/src/voice.rs::activate_pstn_bridge_for`);
-> lado FreeSWITCH por confirmar.** A recomendação abaixo (Abordagem B) foi
-> seguida à letra: ingress/egress SRTP com chaves efémeras por sala, mistura
-> Opus real (decode→soma escalada→encode, sem clipping por desenho — ver os
-> testes de `pstn_bridge.rs`) dos participantes WebRTC para 1 stream PSTN. O
-> que ficou por confirmar é exactamente o "Plano de teste" abaixo pede — não
-> foi possível validar contra FreeSWITCH real nesta sandbox — E, mais
-> especificamente, qual é o mecanismo FreeSWITCH correcto para o dialplan/Lua
-> mandar/receber esse RTP/SRTP sem abrir um segundo diálogo SIP (ver o
-> comentário extenso no topo de `voice/freeswitch/scripts/dialin_ivr.lua`).
-> Até essa confirmação, o dial-in continua, em produção, a cair na
-> conferência local do FreeSWITCH (sem regressão) — a ponte SFU fica pronta
-> mas não ligada.
+> # ⚠ SUPERSEDED (2026-09-30) — ver [ADR-0010](adr/0010-ponte-telefone-sala.md)
+>
+> **A Abordagem B descrita abaixo foi implementada, testada do lado do SFU, e
+> nunca ligada.** O `pstn_bridge.rs` (777 linhas, mistura Opus real) saiu da
+> árvore; o que a substitui é um UA SIP no lado do SFU
+> (`server/src/phone_bridge/`).
+>
+> **Porquê.** A Abordagem B assentava numa premissa por confirmar: que o
+> FreeSWITCH soubesse mandar e receber RTP cifrado com uma chave dada por
+> fora, para um par UDP arbitrário, sem abrir um segundo diálogo SIP. Medido
+> contra um FreeSWITCH 1.11.3 real: **não sabe**. O `mod_audio_fork` manda
+> áudio por WebSocket para STT, não RTP bidireccional; `uuid_deflect`, `snoop`
+> e `unicast` não fazem o que este desenho precisava. A pergunta estava escrita
+> no topo do `voice/freeswitch/scripts/dialin_ivr.lua` desde 2026-09-19, e a
+> resposta que lá se antecipava — «se for mesmo preciso SIP, então a Abordagem
+> B precisa de um pequeno respondedor SIP/SDES-SRTP do lado do SFU» — é
+> exactamente o que se construiu.
+>
+> **O que sobrevive deste documento:** o diagnóstico do problema, a rejeição da
+> Abordagem A (um cliente WebRTC completo no FreeSWITCH), a exigência de SRTP
+> sem excepções, e a lista branca de origens fail-closed. **O que cai:** as
+> chaves efémeras entregues por fora no JSON do IVR (agora negoceiam-se no SDP,
+> por chamada) e o mixer que descodificava Opus para 1 stream PSTN (a ponte
+> fala G.711 para o telefone e Opus para a sala, com mix-minus).
 
 # Delonix Meet — Ponte FreeSWITCH ↔ SFU (sub-fase 2b) · Design
 

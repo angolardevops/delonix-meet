@@ -33,8 +33,8 @@ mod odoo;
 mod odoo_sso;
 pub mod openapi;
 mod org;
+mod phone_bridge;
 mod presence;
-mod pstn_bridge;
 mod pubsub;
 mod ramais;
 mod rate_limit;
@@ -1207,6 +1207,10 @@ pub async fn run() {
             }
         });
     }
+
+    // Ponte telefone↔sala (ADR-0010): o UA SIP que atende a segunda perna que
+    // o FreeSWITCH origina. Sem configuração não abre socket nenhum.
+    voice::start_phone_bridge(&state).await;
 
     // Cron: sweep de quarentena a cada 5 min (marca não-respondentes de
     // reuniões já começadas). Idempotente. Nenhum handler varre a base inteira:

@@ -144,32 +144,34 @@ porque a via antiga (`00_delonix_dialin.xml`) não foi tocada. Confirmar com
 a API REST de atribuição e a UI foram corridos e verificados contra um
 Postgres real neste repositório.
 
-## ⚠️ Ponte FreeSWITCH ↔ SFU (sub-fase 2b) — lado SFU pronto, lado FreeSWITCH por confirmar
-Nesta sub-fase, os chamadores PSTN continuam a entrar numa **conferência do
-FreeSWITCH** (`mod_conference`) por omissão. A decisão entre as duas
-abordagens do estado anterior deste documento foi tomada — **Abordagem B**
-(ver `docs/pstn-sfu-bridge-design.md`; a Abordagem A ficou registada, e
-rejeitada, em `docs/pstn-bridge-architecture.md`) — e o lado Rust está
-**implementado e testado** (`server/src/pstn_bridge.rs`): ingress/egress SRTP
-com chaves efémeras por sala, mistura Opus real (decode→soma escalada→encode)
-dos participantes WebRTC para um único stream PSTN, IP allowlist na ingress.
-`server/src/voice.rs::ivr_validate_pin` já devolve o endpoint e as chaves da
-ponte na resposta ao IVR (`pstn_bridge`).
+## Ponte telefone↔sala (ADR-0010) — ligada
 
-**O que falta, e é uma lacuna HONESTA, não um detalhe:** o mecanismo exacto do
-FreeSWITCH para mandar/receber RTP puro, cifrado com uma chave SRTP fornecida
-externamente, para um host:porta arbitrário — SEM abrir um segundo diálogo
-SIP (o que reintroduziria o acoplamento que a Abordagem B evita). Não foi
-possível confirmar este mecanismo com confiança sem uma instância FreeSWITCH
-real (ver o comentário extenso no topo de
-`freeswitch/scripts/dialin_ivr.lua`, que já lê os campos da resposta mas
-NÃO chama nenhuma API não verificada). Até essa confirmação, o IVR regista a
-informação da ponte e continua a cair na conferência local — o comportamento
-de sempre, sem regressão. Plano de teste (host próprio, fora deste ambiente,
-uma vez confirmado o mecanismo e ligado em `dialin_ivr.lua`): softphone →
-Kamailio → FreeSWITCH → IVR → ponte SFU, mais um participante WebRTC na
-MESMA sala (browser), confirmar áudio bidireccional PSTN↔WebRTC e SRTP nas
-duas pontas (sem media em claro).
+Quem entra por telefone é um **participante da sala**: fala e ouve os
+participantes WebRTC. O caminho é o que o FreeSWITCH de stock sabe percorrer:
+o IVR valida o PIN, o control plane devolve `room_bridge` (para onde fazer
+`bridge` e que variáveis de canal pôr antes), e o `dialin_ivr.lua` executa esse
+`bridge`. Do outro lado atende o UA SIP da ponte (`server/src/phone_bridge/`),
+que negoceia SDES-SRTP no SDP, transcodifica G.711↔Opus e publica o chamador
+no SFU, devolvendo-lhe a mistura menos a própria voz.
+
+**Fail-closed em três sítios:** sem `PHONE_BRIDGE_SIP_BIND` o UA não arranca;
+com `PHONE_BRIDGE_FREESWITCH_IPS` vazio também não; e uma oferta sem
+`a=crypto` leva `488` — media da reunião nunca vai em claro. Em qualquer
+falha, incluindo o `bridge` não completar, o IVR **cai na conferência local**
+do FreeSWITCH, que é o comportamento de sempre: um chamador nunca fica de fora
+por causa da ponte.
+
+A **Abordagem B** anterior (`pstn_bridge.rs`: RTP cru num par UDP com chaves
+entregues por fora, no JSON do IVR) foi **abandonada** — assentava num
+mecanismo que o FreeSWITCH 1.11.3 não tem. O historial está em
+`docs/pstn-sfu-bridge-design.md` (marcado superseded) e a decisão em
+`docs/adr/0010-ponte-telefone-sala.md`. R221 e R222 no catálogo de regressões.
+
+**Medido contra um FreeSWITCH real** (`scripts/fs-canais.sh up`, imagem
+`delonix-dev/freeswitch:1.11.3`), não contra um duplo:
+`sfu_e2e::ponte_com_freeswitch_real_tom_nos_dois_sentidos`. **Por medir:** a
+cadeia com uma operadora a sério e um softphone através do Kamailio, e um
+browser em vez do cliente webrtc-rs.
 
 ## Produção (microVM + Cilium)
 - Kamailio e cada FreeSWITCH em **microVM dedicada** (isolamento de jitter — não
