@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ad1017;text-decoration:none}a:hover{color:#8a0c12}</style></helmet>
+<div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--danger:#ad1017;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;display:flex;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif">
+  <dc-import name="DelonixNav" active="admin" hint-size="228px,900px"></dc-import>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:58px;flex:none;box-sizing:border-box;padding:0 22px;display:flex;align-items:center;gap:11px;background:var(--raised);border-bottom:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:600">Papéis e permissões</div>
+      <span style="font-family:'DM Mono',monospace;font-size:9px;font-weight:500;padding:2px 6px;border-radius:2px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent-strong)">EMPRESARIAL</span>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">7 papéis · 142 utilizadores · alterações registadas na auditoria</div>
+      <div style="flex:1"></div>
+      <div style="padding:7px 13px;border-radius:2px;border:1px solid var(--border);font-size:12px;font-weight:600">Simular utilizador</div>
+      <div style="padding:7px 15px;border-radius:2px;background:var(--accent);color:#fff;font-size:12px;font-weight:600">Novo papel</div>
+    </div>
+
+    <div style="flex:1;min-height:0;display:grid;grid-template-columns:196px minmax(0,1fr) 268px;overflow:hidden">
+
+      <div style="border-right:1px solid var(--border);background:var(--raised);padding:14px 12px;box-sizing:border-box;display:flex;flex-direction:column;gap:9px;overflow:auto">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.6px;color:var(--muted)">PAPÉIS</div>
+        <sc-for list="{{ roles }}" as="r" hint-placeholder-count="7">
+          <div style="padding:10px 11px;border-radius:2px;border:1px solid {{ r.ring }};background:{{ r.bg }};display:flex;flex-direction:column;gap:5px;cursor:pointer">
+            <div style="display:flex;align-items:center;gap:7px">
+              <div style="width:6px;height:6px;flex:none;border-radius:50%;background:{{ r.dot }}"></div>
+              <div style="font-size:12px;font-weight:600;color:{{ r.fg }}">{{ r.name }}</div>
+              <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">{{ r.count }}</div>
+            </div>
+            <div style="font-size:10px;line-height:1.45;color:var(--muted)">{{ r.scope }}</div>
+            <sc-if value="{{ r.system }}" hint-placeholder-val="{{ false }}"><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">🔒 papel do sistema</div></sc-if>
+          </div>
+        </sc-for>
+        <div style="padding:10px 11px;border-radius:2px;border:1px dashed var(--border);display:flex;align-items:center;gap:7px;color:var(--muted)">
+          <div style="font-size:13px">+</div><div style="font-size:11.5px;font-weight:600">Duplicar um papel</div>
+        </div>
+      </div>
+
+      <div style="padding:16px 18px;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;min-width:0;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:600">Matriz de permissões</div>
+          <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">✓ permitido · ⊘ negado · ⇡ herdado · ⚑ requer aprovação</span>
+          <div style="flex:1"></div>
+          <div style="padding:5px 10px;border-radius:2px;border:1px solid var(--border);font-size:10.5px;font-weight:600;color:var(--muted)">Exportar CSV</div>
+        </div>
+
+        <div style="flex:1;min-height:0;background:var(--raised);border:1px solid var(--border);border-radius:3px;overflow:auto">
+          <div style="min-width:616px;display:grid;grid-template-columns:minmax(190px,1fr) repeat(6,minmax(64px,1fr));gap:6px;padding:9px 12px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1;font-family:'DM Mono',monospace;font-size:8.5px;letter-spacing:.4px;color:var(--muted)">
+            <span>CAPACIDADE</span>
+            <sc-for list="{{ columns }}" as="c" hint-placeholder-count="6">
+              <span style="color:{{ c.fg }};text-align:center">{{ c.label }}</span>
+            </sc-for>
+          </div>
+
+          <sc-for list="{{ matrix }}" as="row" hint-placeholder-count="14">
+            <div style="min-width:616px;display:grid;grid-template-columns:minmax(190px,1fr) repeat(6,minmax(64px,1fr));gap:6px;padding:{{ row.pad }};border-bottom:1px solid var(--border);align-items:center;background:{{ row.bg }}">
+              <span style="min-width:0">
+                <span style="display:block;font-size:{{ row.size }};font-weight:{{ row.weight }};letter-spacing:{{ row.tracking }};color:{{ row.fg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ row.label }}</span>
+                <sc-if value="{{ row.note }}" hint-placeholder-val="{{ false }}"><span style="display:block;font-size:9.5px;color:var(--muted)">{{ row.note }}</span></sc-if>
+              </span>
+              <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="6">
+                <span style="text-align:center;font-family:'DM Mono',monospace;font-size:11px;font-weight:500;color:{{ cell.fg }}">{{ cell.glyph }}</span>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="border-left:1px solid var(--border);background:var(--raised);padding:14px;box-sizing:border-box;display:flex;flex-direction:column;gap:13px;overflow:auto">
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:13px;font-weight:600">Gestor de emissão</div>
+            <span style="margin-left:auto;font-family:'DM Mono',monospace;font-size:9px;padding:2px 6px;border-radius:2px;border:1px solid var(--border);color:var(--muted)">14 pessoas</span>
+          </div>
+          <div style="font-size:11.5px;line-height:1.6;color:var(--muted)">Conduz emissões públicas e gere destinos, mas não pode apagar gravações nem mexer em utilizadores.</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.5px;color:var(--muted)">ÂMBITO</div>
+          <div style="padding:9px 11px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-size:11.5px;display:flex;justify-content:space-between">Departamento · Comunicação<span style="color:var(--muted)">▾</span></div>
+          <div style="font-size:10px;line-height:1.5;color:var(--muted)">O papel só se aplica às salas deste departamento. Fora dele, a pessoa é Membro.</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.5px;color:var(--muted)">ATRIBUIÇÃO AUTOMÁTICA</div>
+          <div style="padding:10px 11px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent);display:flex;flex-direction:column;gap:5px">
+            <div style="font-size:11.5px;font-weight:600">Grupo do Odoo → papel</div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">delonix_comunicacao_emissao</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--success)">✓ 14 de 14 sincronizados</div>
+          </div>
+          <div style="font-size:10px;line-height:1.5;color:var(--muted)">Quem entra no grupo recebe o papel; quem sai perde-o na sincronização seguinte.</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.5px;color:var(--muted)">LIMITES DO PAPEL</div>
+          <sc-for list="{{ limits }}" as="l" hint-placeholder-count="4">
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border)">
+              <span style="flex:1;font-size:11px">{{ l.label }}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:10.5px;font-weight:500">{{ l.value }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="padding:11px;border-radius:2px;border:1px solid var(--live);background:color-mix(in srgb,var(--live) 8%,transparent);display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;align-items:center;gap:7px;font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:#6b3d00">▲ SEGREGAÇÃO DE FUNÇÕES</div>
+          <div style="font-size:10.5px;line-height:1.55;color:var(--muted)">Três pessoas acumulam este papel e <strong style="color:var(--text);font-weight:600">Administração</strong>, o que permite emitir e apagar o próprio registo. Reveja ou aceite com justificação.</div>
+          <div style="display:flex;gap:6px">
+            <div style="flex:1;text-align:center;padding:7px;border-radius:2px;background:var(--accent);color:#fff;font-size:10.5px;font-weight:600">Ver as três</div>
+            <div style="flex:1;text-align:center;padding:7px;border-radius:2px;border:1px solid var(--border);font-size:10.5px;font-weight:600;color:var(--muted)">Aceitar risco</div>
+          </div>
+        </div>
+
+        <div style="margin-top:auto;display:flex;flex-direction:column;gap:7px">
+          <div style="padding:9px;border-radius:2px;border:1px solid var(--border);text-align:center;font-size:11.5px;font-weight:600">Duplicar papel</div>
+          <div style="padding:9px;border-radius:2px;border:1px solid var(--danger);text-align:center;font-size:11.5px;font-weight:600;color:var(--danger)">Eliminar papel</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;line-height:1.5;color:var(--muted)">Última alteração: Bento Quissanga · 12 Set 08:55</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900},"role":{"editor":"enum","options":["Proprietário","Administrador","Gestor de emissão","Formador","Moderador","Membro","Convidado externo"],"default":"Gestor de emissão","tsType":"string"}}">
+const ROLES = [
+  ['Proprietário', '1', 'Toda a organização · não pode ser removido', true, 'var(--accent)', false],
+  ['Administrador', '4', 'Toda a organização · sem faturação', true, 'var(--accent)', false],
+  ['Gestor de emissão', '14', 'Departamento · Comunicação', false, 'var(--live)', true],
+  ['Formador', '38', 'Salas próprias e turmas atribuídas', false, 'var(--success)', false],
+  ['Moderador', '9', 'Sessões onde é designado', false, 'var(--success)', false],
+  ['Membro', '74', 'Entra, participa e grava as suas sessões', true, 'var(--muted)', false],
+  ['Convidado externo', '2', 'Uma sessão · expira em 24 h', true, 'var(--muted)', false]
+];
+
+const COLUMNS = ['PROP.', 'ADMIN', 'EMISS.', 'FORM.', 'MODER.', 'MEMBRO'];
+
+/* ✓ permitido · ⊘ negado · ⇡ herdado do âmbito · ⚑ requer aprovação */
+const GROUPS = [
+  ['SESSÕES', [
+    ['Criar e agendar sessões', null, 'yes,yes,yes,yes,no,yes'],
+    ['Admitir da sala de espera', 'inclui convidados por telefone', 'yes,yes,yes,yes,yes,no'],
+    ['Silenciar e remover pessoas', null, 'yes,yes,yes,yes,yes,no'],
+    ['Abrir salas paralelas', null, 'yes,yes,yes,yes,inherit,no']
+  ]],
+  ['GRAVAÇÃO E BIBLIOTECA', [
+    ['Gravar em 4K', null, 'yes,yes,yes,yes,no,yes'],
+    ['Ver gravações de outros', 'só dentro do âmbito', 'yes,yes,inherit,no,no,no'],
+    ['Publicar gravação', null, 'yes,yes,yes,approval,no,no'],
+    ['Apagar gravação', 'acção irreversível', 'yes,yes,no,no,no,no']
+  ]],
+  ['EMISSÃO', [
+    ['Emitir para destinos públicos', null, 'yes,yes,yes,approval,no,no'],
+    ['Gerir chaves RTMP', 'credenciais de terceiros', 'yes,yes,yes,no,no,no'],
+    ['Destacar perguntas no palco', null, 'yes,yes,yes,yes,yes,no']
+  ]],
+  ['STUDIO E QUADRO', [
+    ['Editar na linha de tempo', null, 'yes,yes,yes,yes,no,no'],
+    ['Gerar legendas e dobragem', 'consome nó de inferência', 'yes,yes,yes,yes,no,no'],
+    ['Exportar em 4K', null, 'yes,yes,yes,approval,no,no']
+  ]],
+  ['ADMINISTRAÇÃO', [
+    ['Convidar e suspender contas', null, 'yes,yes,no,no,no,no'],
+    ['Editar papéis e permissões', null, 'yes,yes,no,no,no,no'],
+    ['Ver registo de auditoria', null, 'yes,yes,inherit,no,no,no'],
+    ['Mudar retenção e residência', 'afecta toda a organização', 'yes,approval,no,no,no,no']
+  ]]
+];
+
+const CELL = {
+  yes: ['✓', 'var(--success)'],
+  no: ['⊘', 'var(--muted)'],
+  inherit: ['⇡', 'var(--muted)'],
+  approval: ['⚑', 'var(--live)']
+};
+
+class Component extends DCLogic {
+  renderVals() {
+    const selected = this.props.role || 'Gestor de emissão';
+
+    const rows = [];
+    for (const [group, caps] of GROUPS) {
+      rows.push({
+        label: group, note: null, pad: '8px 12px 5px', bg: 'var(--surface)',
+        size: '8.5px', weight: '500', tracking: '.5px', fg: 'var(--muted)',
+        cells: []
+      });
+      for (const [label, note, spec] of caps) {
+        rows.push({
+          label, note, pad: '9px 12px', bg: 'transparent',
+          size: '11.5px', weight: '600', tracking: '0', fg: 'var(--text)',
+          cells: spec.split(',').map((k) => ({ glyph: CELL[k][0], fg: CELL[k][1] }))
+        });
+      }
+    }
+
+    return {
+      roles: ROLES.map(([name, count, scope, system, dot]) => {
+        const on = name === selected;
+        return {
+          name, count, scope, system, dot,
+          ring: on ? 'var(--accent)' : 'var(--border)',
+          bg: on ? 'color-mix(in srgb, var(--accent) 8%, transparent)' : 'var(--raised)',
+          fg: on ? 'var(--accent-strong)' : 'var(--text)'
+        };
+      }),
+      columns: COLUMNS.map((label, i) => ({
+        label,
+        fg: i === 2 ? 'var(--accent)' : 'var(--muted)'
+      })),
+      matrix: rows,
+      limits: [
+        { label: 'Duração máxima da sessão', value: '4 h' },
+        { label: 'Resolução máxima', value: '2160p' },
+        { label: 'Destinos em simultâneo', value: '5' },
+        { label: 'Convidados externos por mês', value: '25' }
+      ]
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

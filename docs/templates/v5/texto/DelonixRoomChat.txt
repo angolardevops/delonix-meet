@@ -1,0 +1,66 @@
+Formação — Arquitectura de Voz Delonix
+00:31:52
+REC 4K
+AO VIVO · 1 284
+A partilhar · Ana Mbala
+arquitectura-voz-delonix.pdf · 14 / 32
+Encaminhamento SIP e failover
+SBC
+Terminação de operador · +244 222
+KAMAILIO
+Registo e balanceamento de chamadas
+FREESWITCH
+Mistura de média e gravação 4K
+Delonix Angola, Lda · residência de dados AO-LAD · Lei 22/11
+AM
+Ana Mbala ◉
+13 PARTICIPANTES
+{{ p.initials }}
+⊘
+{{ p.short }}
++7 pessoas
+Chat
+Perguntas 6
+Participantes 13
+Interno · 13
+Emissão · 1 284
+JF
+Joaquim Ferreira
+10:14
+CO-ANFITRIÃO
+O failover entre os dois SBC está testado com o operador? Tenho registo de uma queda na semana passada.
+👍 3
+🎯 1
+2 respostas
+AM
+Ana Mbala
+10:15
+Sim — corrigido na versão 2.4. Mostro o relatório no diapositivo 21.
+TK
+Teresa Kiala
+10:19
+Deixo o plano de numeração actualizado.
+PDF
+numeracao-244-2026.pdf
+1,8 MB · guardado no MinIO
+SONDAGEM · ABERTA
+11 de 13
+Onde preferem a gravação desta formação?
+Storage interno (MinIO)
+64%
+Nextcloud da instituição
+27%
+Apenas emissão, sem gravação
+9%
+PERGUNTA DA EMISSÃO · POR MODERAR
+«A gravação em 4K fica disponível para quem assiste pelo YouTube?»
+espectador · Kiluanje M. · ▲ 42
+Destacar no palco
+Ocultar
+Mensagem para participantes…
+🙂
+📎
+↑
+Nova sondagem
+Anexar do storage
+Guardar chat

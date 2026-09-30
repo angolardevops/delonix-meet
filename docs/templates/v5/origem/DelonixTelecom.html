@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ad1017;text-decoration:none}a:hover{color:#8a0c12}</style></helmet>
+<div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--danger:#ad1017;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;display:flex;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif">
+  <dc-import name="DelonixNav" active="calls" hint-size="228px,900px"></dc-import>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:58px;flex:none;box-sizing:border-box;padding:0 22px;display:flex;align-items:center;gap:11px;background:var(--raised);border-bottom:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:600">Telefonia, SIP e SMS</div>
+      <span style="display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:9px;font-weight:500;padding:2px 7px;border-radius:2px;border:1px solid var(--success);color:var(--success)"><span style="width:6px;height:6px;border-radius:50%;background:var(--success)"></span>SBC SAUDÁVEL</span>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">36 de 120 canais · 4 operadoras · jitter 6 ms</div>
+      <div style="flex:1"></div>
+      <div style="padding:7px 13px;border-radius:2px;border:1px solid var(--border);font-size:12px;font-weight:600">Plano de marcação</div>
+      <div style="padding:7px 15px;border-radius:2px;background:var(--accent);color:#fff;font-size:12px;font-weight:600">Novo tronco SIP</div>
+    </div>
+
+    <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 316px;overflow:hidden">
+
+      <div style="padding:16px 20px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px;min-width:0;overflow:auto">
+
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:baseline;gap:9px">
+            <div style="font-size:13px;font-weight:600">Operadoras ligadas</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">a ordem define o encaminhamento; arraste para mudar</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+            <sc-for list="{{ carriers }}" as="c" hint-placeholder-count="4">
+              <div style="padding:13px;border-radius:3px;border:1px solid {{ c.ring }};background:{{ c.bg }};display:flex;flex-direction:column;gap:9px">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <div style="width:30px;height:30px;flex:none;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:8.5px;font-weight:500;color:var(--muted)">{{ c.tag }}</div>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:7px">
+                      <div style="font-size:12.5px;font-weight:600">{{ c.name }}</div>
+                      <span style="font-family:'DM Mono',monospace;font-size:8.5px;padding:1.5px 5px;border-radius:2px;border:1px solid var(--border);color:var(--muted)">{{ c.order }}</span>
+                    </div>
+                    <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.host }}</div>
+                  </div>
+                  <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:{{ c.fg }}">{{ c.state }}</div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:5px">
+                  <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)"><span>canais</span><span>{{ c.channels }}</span></div>
+                  <div style="height:5px;border-radius:2px;background:var(--surface);overflow:hidden"><div style="width:{{ c.bar }};height:100%;background:{{ c.fg }}"></div></div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px">
+                  <div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">PREFIXOS</div><div style="font-family:'DM Mono',monospace;font-size:10.5px;font-weight:500">{{ c.prefixes }}</div></div>
+                  <div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">CUSTO/MIN</div><div style="font-family:'DM Mono',monospace;font-size:10.5px;font-weight:500">{{ c.cost }}</div></div>
+                  <div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">ASR</div><div style="font-family:'DM Mono',monospace;font-size:10.5px;font-weight:500;color:{{ c.asrFg }}">{{ c.asr }}</div></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:11px">
+          <div style="display:flex;align-items:baseline;gap:9px">
+            <div style="font-size:12.5px;font-weight:600">Plano de marcação</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">a primeira regra que casar é a que vale</div>
+            <div style="flex:1"></div>
+            <div style="padding:5px 10px;border-radius:2px;border:1px solid var(--border);font-size:10.5px;font-weight:600;color:var(--muted)">Testar número</div>
+          </div>
+          <div style="border:1px solid var(--border);border-radius:2px;overflow:hidden">
+            <div style="display:grid;grid-template-columns:36px minmax(120px,1fr) minmax(130px,1fr) 108px 96px 92px;gap:9px;padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;font-size:8.5px;letter-spacing:.4px;color:var(--muted)">
+              <span>#</span><span>PADRÃO</span><span>DESTINO</span><span>OPERADORA</span><span>RESERVA</span><span>GRAVA</span>
+            </div>
+            <sc-for list="{{ dialplan }}" as="d" hint-placeholder-count="6">
+              <div style="display:grid;grid-template-columns:36px minmax(120px,1fr) minmax(130px,1fr) 108px 96px 92px;gap:9px;padding:9px 12px;border-bottom:1px solid var(--border);align-items:center">
+                <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">{{ d.n }}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:500">{{ d.pattern }}</span>
+                <span style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ d.target }}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">{{ d.carrier }}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">{{ d.fallback }}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:10.5px;color:{{ d.recFg }}">{{ d.rec }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:11px">
+          <div style="display:flex;align-items:baseline;gap:9px">
+            <div style="font-size:12.5px;font-weight:600">Envio de SMS</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">convites, PIN da sala e alertas de emissão</div>
+            <div style="flex:1"></div>
+            <div style="padding:5px 10px;border-radius:2px;border:1px solid var(--border);font-size:10.5px;font-weight:600;color:var(--muted)">Emparelhar aparelho</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+            <sc-for list="{{ smsGateways }}" as="g" hint-placeholder-count="3">
+              <div style="padding:12px;border-radius:3px;border:1px solid {{ g.ring }};background:{{ g.bg }};display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:26px;height:26px;flex:none;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px">{{ g.icon }}</div>
+                  <div style="flex:1;min-width:0"><div style="font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ g.name }}</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ g.via }}</div></div>
+                  <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:{{ g.fg }}">{{ g.state }}</div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">
+                  <div style="display:flex;justify-content:space-between"><span>hoje</span><span>{{ g.today }}</span></div>
+                  <div style="display:flex;justify-content:space-between"><span>{{ g.metaLabel }}</span><span>{{ g.meta }}</span></div>
+                </div>
+                <div style="font-size:10px;line-height:1.5;color:var(--muted)">{{ g.note }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="border-left:1px solid var(--border);background:var(--raised);padding:16px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px;overflow:auto">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:12.5px;font-weight:600">Registo SIP</div>
+          <div style="padding:11px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+            <sc-for list="{{ sip }}" as="s" hint-placeholder-count="6">
+              <div style="display:flex;align-items:baseline;gap:8px">
+                <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);width:66px;flex:none">{{ s.k }}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:10.5px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.v }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:6px">
+            <div style="flex:1;text-align:center;padding:8px;border-radius:2px;border:1px solid var(--border);font-size:11px;font-weight:600">Ver credenciais</div>
+            <div style="flex:1;text-align:center;padding:8px;border-radius:2px;border:1px solid var(--border);font-size:11px;font-weight:600;color:var(--muted)">Reiniciar registo</div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:12.5px;font-weight:600">Teste rápido</div>
+          <div style="padding:11px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);display:flex;flex-direction:column;gap:8px">
+            <div style="padding:9px 10px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-family:'DM Mono',monospace;font-size:12px;letter-spacing:1px">+244 923 447 108</div>
+            <div style="display:flex;gap:6px">
+              <div style="flex:1;text-align:center;padding:9px;border-radius:2px;background:var(--accent);color:#fff;font-size:11.5px;font-weight:600">Ligar agora</div>
+              <div style="flex:1;text-align:center;padding:9px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-size:11.5px;font-weight:600">Enviar SMS</div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;line-height:1.5;color:var(--muted)">O último teste ligou por Unitel em 780 ms e o SMS chegou em 4 s pelo aparelho da recepção.</div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <div style="font-size:12.5px;font-weight:600">Chamadas externas</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);margin-left:auto">últimas 24 h</div>
+          </div>
+          <sc-for list="{{ recent }}" as="r" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+              <span style="width:12px;flex:none;font-size:11px;color:{{ r.fg }}">{{ r.dir }}</span>
+              <span style="flex:1;min-width:0"><span style="display:block;font-family:'DM Mono',monospace;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.number }}</span><span style="display:block;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ r.meta }}</span></span>
+              <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">{{ r.dur }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="margin-top:auto;padding:12px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+          <div style="font-size:12px;font-weight:600">Consumo do mês</div>
+          <div style="display:flex;align-items:baseline;gap:7px">
+            <span style="font-family:'Archivo Black',sans-serif;font-size:20px;letter-spacing:-.5px">184 620</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">Kz · 4 812 min</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">
+            <div style="display:flex;justify-content:space-between"><span>Unitel</span><span>62%</span></div>
+            <div style="display:flex;justify-content:space-between"><span>Africell</span><span>21%</span></div>
+            <div style="display:flex;justify-content:space-between"><span>Movicel</span><span>11%</span></div>
+            <div style="display:flex;justify-content:space-between"><span>Internacional</span><span>6%</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const CARRIERS = [
+  ['UNI', 'Unitel', 'sip.unitel.ao:5061 · TLS', 'PRIMÁRIA', 'LIGADA', 'var(--success)', '24 / 60', '40%', '+244 9xx', '9,40 Kz', '98,2%', 'var(--success)', true],
+  ['AFR', 'Africell', 'sip.africell.ao:5060 · TLS', 'RESERVA 1', 'LIGADA', 'var(--success)', '8 / 30', '27%', '+244 95x', '8,90 Kz', '97,4%', 'var(--success)', false],
+  ['MOV', 'Movicel', 'sbc.movicel.ao:5060', 'RESERVA 2', 'LIGADA', 'var(--success)', '4 / 20', '20%', '+244 99x', '9,10 Kz', '94,8%', 'var(--live)', false],
+  ['INT', 'Operadora internacional', 'sip.carrier-intl.net:5061 · TLS', 'INTERNACIONAL', 'DEGRADADA', 'var(--live)', '0 / 10', '0%', '00 / +', '0,04 USD', '89,1%', 'var(--live)', false]
+];
+
+const DIALPLAN = [
+  ['1', '9XXXXXXXX', 'Móvel nacional', 'Unitel', 'Africell', true],
+  ['2', '2XXXXXXXX', 'Fixo nacional', 'Unitel', 'Movicel', true],
+  ['3', '84209', 'Sala por PIN — entra na sessão', 'interno', '—', true],
+  ['4', '1XX', 'Ramal interno', 'interno', '—', false],
+  ['5', '00XXXXXXXXXX', 'Internacional', 'Internacional', '—', true],
+  ['6', '112 · 113 · 115', 'Emergência — nunca gravado', 'Unitel', 'Africell', false]
+];
+
+const SMS = [
+  ['📶', 'Modem USB · recepção', 'Huawei E3372 · SIM Unitel', 'ACTIVO', 'var(--success)', '184 enviados', 'SALDO', '2 140 Kz',
+   'Corre no servidor de Luanda. Bom para volume baixo e sem contrato com a operadora.'],
+  ['📱', 'Telefone como gateway', 'Android emparelhado · SIM Africell', 'ACTIVO', 'var(--success)', '62 enviados', 'BATERIA', '84%',
+   'A app no telefone envia por si. Precisa de ficar ligado à corrente e na rede da empresa.'],
+  ['☁', 'API da operadora', 'conta empresarial Unitel', 'POR LIGAR', 'var(--muted)', '—', 'ENTREGA', '—',
+   'Para volume alto e remetente com nome da instituição. Exige contrato e chave da operadora.']
+];
+
+const SIP = [
+  ['DOMÍNIO', 'sip.delonix.co.ao'],
+  ['SBC', 'sbc-01.lad · Kamailio 5.7'],
+  ['MÉDIA', 'FreeSWITCH · rtpengine'],
+  ['TRANSPORTE', 'TLS 1.3 · SRTP obrigatório'],
+  ['CODECS', 'OPUS · G.722 · G.711a'],
+  ['QUALIDADE', 'jitter 6 ms · perda 0,1%']
+];
+
+const RECENT = [
+  ['↙', 'var(--success)', '+244 923 ***108', 'Unitel · entrou na sala voz-arq-2026', '8:12'],
+  ['↗', 'var(--muted)', '+244 222 640 100', 'saída · convite por voz', '1:04'],
+  ['↙', 'var(--success)', '+244 951 ***447', 'Africell · sala de espera', '0:46'],
+  ['↗', 'var(--live)', '+27 11 ***0192', 'internacional · reencaminhada', '3:21'],
+  ['↙', 'var(--danger)', '+244 992 ***773', 'Movicel · PIN errado 3 vezes', '0:18']
+];
+
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      carriers: CARRIERS.map(([tag, name, host, order, state, fg, channels, bar, prefixes, cost, asr, asrFg, primary]) => ({
+        tag, name, host, order, state, fg, channels, bar, prefixes, cost, asr, asrFg,
+        ring: primary ? 'var(--accent)' : 'var(--border)',
+        bg: primary ? 'color-mix(in srgb, var(--accent) 6%, var(--raised))' : 'var(--raised)'
+      })),
+      dialplan: DIALPLAN.map(([n, pattern, target, carrier, fallback, rec]) => ({
+        n, pattern, target, carrier, fallback,
+        rec: rec ? '✓' : '⊘',
+        recFg: rec ? 'var(--success)' : 'var(--muted)'
+      })),
+      smsGateways: SMS.map(([icon, name, via, state, fg, today, metaLabel, meta, note]) => ({
+        icon, name, via, state, fg, today, metaLabel, meta, note,
+        ring: state === 'POR LIGAR' ? 'var(--border)' : 'var(--success)',
+        bg: state === 'POR LIGAR' ? 'var(--surface)' : 'var(--raised)'
+      })),
+      sip: SIP.map(([k, v]) => ({ k, v })),
+      recent: RECENT.map(([dir, fg, number, meta, dur]) => ({ dir, fg, number, meta, dur }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

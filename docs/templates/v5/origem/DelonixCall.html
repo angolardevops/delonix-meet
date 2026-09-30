@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#e8232b;text-decoration:none}a:hover{color:#2f9e6a}</style></helmet>
+<div style="--surface:#0d0d0f;--raised:#17171a;--stage:#000000;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--live:#f0a32e;--record:#d41f27;--success:#2f9e6a;--warning:#f0a32e;--danger:#d41f27;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex">
+
+  <div style="width:296px;flex:none;border-right:1px solid var(--border);background:var(--raised);display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:14px 14px 10px;display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:9px">
+        <div style="width:24px;height:24px;border-radius:2px;background:var(--accent);color:#1a0002;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px"><svg viewBox="0 0 24 24" width="74%" height="74%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path><g fill="currentColor" stroke="none"><circle cx="16.2" cy="3" r="1.4"></circle><circle cx="21" cy="7.8" r="1.4"></circle><circle cx="21" cy="16.2" r="1.4"></circle><circle cx="16.2" cy="21" r="1.4"></circle><circle cx="3" cy="16.2" r="1.4"></circle><circle cx="3" cy="7.8" r="1.4"></circle></g></svg></div>
+        <div style="font-size:13px;font-weight:600">Chamadas</div>
+        <div style="flex:1"></div>
+        <div style="width:26px;height:26px;border-radius:2px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)">☏</div>
+      </div>
+      <div style="padding:7px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);font-size:11.5px;color:var(--muted)">Procurar contactos Odoo…</div>
+      <div style="display:flex;gap:3px;padding:3px;border-radius:2px;background:var(--surface);border:1px solid var(--border)">
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:10.5px;font-weight:600">Contactos</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10.5px;color:var(--muted)">Histórico</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10.5px;color:var(--muted)">Teclado</div>
+      </div>
+    </div>
+
+    <div style="flex:1;min-height:0;padding:0 8px;display:flex;flex-direction:column;gap:2px;overflow:hidden">
+      <sc-for list="{{ contacts }}" as="c" hint-placeholder-count="8">
+        <div style="display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:2px;background:{{ c.bg }}">
+          <div style="width:30px;height:30px;flex:none;border-radius:50%;background:{{ c.color }};color:#fff;font-size:10.5px;font-weight:600;display:flex;align-items:center;justify-content:center;position:relative">{{ c.initials }}<div style="position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border-radius:50%;background:{{ c.dot }};border:2px solid var(--raised)"></div></div>
+          <div style="flex:1;min-width:0"><div style="font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.name }}</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.meta }}</div></div>
+          <div style="font-size:11px;color:var(--muted)">☏</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="flex:none;padding:10px 12px 12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.5px">MARCAÇÃO PSTN</div>
+      <div style="padding:8px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:13px;letter-spacing:1px;font-variant-numeric:tabular-nums">+244 923 447 108</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">
+        <sc-for list="{{ keys }}" as="k" hint-placeholder-count="12">
+          <div style="padding:7px 0;text-align:center;border-radius:2px;background:var(--surface);border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:13px;font-weight:500">{{ k }}</div>
+        </sc-for>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:7px;padding:9px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:12px;font-weight:600">Ligar por PSTN</div>
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:50px;flex:none;box-sizing:border-box;padding:0 18px;display:flex;align-items:center;gap:11px;border-bottom:1px solid var(--border);background:var(--raised)">
+      <div style="font-size:12.5px;font-weight:600">Chamada com Joaquim Ferreira</div>
+      <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;padding:3px 8px;border-radius:2px;background:var(--surface);border:1px solid var(--border)">00:07:21</div>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:2px;background:color-mix(in srgb,var(--record) 18%,transparent);border:1px solid var(--record);font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:#ef9a9a"><div style="width:7px;height:7px;border-radius:50%;background:var(--record)"></div>A GRAVAR 1080p</div>
+      <div style="flex:1"></div>
+      <div style="padding:6px 12px;border-radius:2px;border:1px solid var(--accent);color:var(--accent);font-size:11.5px;font-weight:600">Escalar para reunião completa</div>
+    </div>
+
+    <div style="flex:1;min-height:0;padding:14px 18px;box-sizing:border-box;display:grid;grid-template-columns:1fr 280px;gap:14px;overflow:hidden">
+      <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+        <div style="flex:1;min-height:0;position:relative;border-radius:3px;overflow:hidden;background:linear-gradient(150deg,#3c5a7a,#000000 76%);border:1px solid var(--success)">
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center"><div style="width:126px;height:126px;border-radius:50%;background:rgba(0,0,0,.26);display:flex;align-items:center;justify-content:center;font-size:38px;font-weight:700">JF</div></div>
+          <div style="position:absolute;top:12px;left:12px;display:flex;gap:6px"><div style="padding:4px 9px;border-radius:2px;background:rgba(0,0,0,.72);font-size:10.5px;font-weight:600">Joaquim Ferreira ◉</div><div style="padding:4px 9px;border-radius:2px;background:rgba(0,0,0,.72);font-family:'DM Mono',monospace;font-size:9.5px;color:#d6d6da">Eng. de Redes · Odoo SSO</div></div>
+          <div style="position:absolute;bottom:12px;right:12px;width:170px;height:100px;border-radius:3px;overflow:hidden;border:1px solid var(--border);background:linear-gradient(150deg,#e8232b,#000000 78%);display:flex;align-items:center;justify-content:center"><div style="width:46px;height:46px;border-radius:50%;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700">AM</div><div style="position:absolute;bottom:5px;left:6px;padding:2px 6px;border-radius:2px;background:rgba(0,0,0,.74);font-size:9.5px;font-weight:600">Ana Mbala</div></div>
+          <div style="position:absolute;bottom:12px;left:12px;display:flex;gap:6px"><div style="padding:4px 9px;border-radius:2px;background:rgba(0,0,0,.72);font-family:'DM Mono',monospace;font-size:9.5px;color:#d6d6da">1080p · 48 kHz</div><div style="padding:4px 9px;border-radius:2px;background:rgba(0,0,0,.72);font-family:'DM Mono',monospace;font-size:9.5px;color:#2f9e6a">✓ latência 42 ms</div></div>
+        </div>
+        <div style="flex:none;display:flex;justify-content:center">
+          <dc-import name="DelonixControls" set="call" hint-size="100%,66px"></dc-import>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:11px;overflow:hidden">
+        <div style="padding:12px;border-radius:3px;background:var(--raised);border:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+          <div style="font-size:11.5px;font-weight:600">Acções de chamada</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <div style="padding:8px;border-radius:2px;border:1px solid var(--border);text-align:center;font-size:10.5px;font-weight:600;color:var(--muted)">Retenção</div>
+            <div style="padding:8px;border-radius:2px;border:1px solid var(--border);text-align:center;font-size:10.5px;font-weight:600;color:var(--muted)">Transferir</div>
+            <div style="padding:8px;border-radius:2px;border:1px solid var(--border);text-align:center;font-size:10.5px;font-weight:600;color:var(--muted)">Adicionar 3.º</div>
+            <div style="padding:8px;border-radius:2px;border:1px solid var(--border);text-align:center;font-size:10.5px;font-weight:600;color:var(--muted)">Teclado DTMF</div>
+          </div>
+          <div style="padding:8px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;gap:8px"><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">Transferir para</span><div style="flex:1;font-size:10.5px;font-weight:600">Bento Quissanga · TI</div></div>
+        </div>
+
+        <div style="padding:12px;border-radius:3px;background:var(--raised);border:1px solid var(--border);display:flex;flex-direction:column;gap:8px;min-height:0">
+          <div style="display:flex;align-items:baseline;gap:8px"><div style="font-size:11.5px;font-weight:600">Histórico</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-left:auto">7 dias</div></div>
+          <sc-for list="{{ history }}" as="h" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+              <span style="font-size:11px;color:{{ h.fg }};width:12px;flex:none">{{ h.icon }}</span>
+              <div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.name }}</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ h.meta }}</div></div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="margin-top:auto;padding:11px;border-radius:3px;background:var(--raised);border:1px solid var(--border);display:flex;flex-direction:column;gap:5px">
+          <div style="font-size:11px;font-weight:600">Ligação SIP</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);line-height:1.5">sbc-01.delonix.local<br>codec OPUS · jitter 6 ms</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const C = [
+  ['Joaquim Ferreira','JF','#3c5a7a','Eng. de Redes · em chamada','#2f9e6a',true],
+  ['Teresa Kiala','TK','#7a4a68','Gestora de Produto · disponível','#2f9e6a',false],
+  ['Domingos Nzuzi','DN','#8a6a30','Financeiro · ausente','#f0a32e',false],
+  ['Luísa Cardoso','LC','#5a5480','RH · disponível','#2f9e6a',false],
+  ['Paulo Sebastião','PS','#3a6b73','Emissão · em reunião','#e8232b',false],
+  ['Esperança Tchivinda','ET','#9a4a44','Formadora · disponível','#2f9e6a',false],
+  ['Bento Quissanga','BQ','#3d6a5e','TI · disponível','#2f9e6a',false],
+  ['Cátia Mendes','CM','#7d5540','Marketing · offline','#5c5c63',false],
+  ['Rita Domingas','RD','#6b4a74','Jurídica · ausente','#f0a32e',false]
+];
+const H = [
+  ['↙','#2f9e6a','Teresa Kiala','recebida · 12:04 · 8 min'],
+  ['↗','#9a9aa0','+244 222 640 100','efectuada · ontem · 3 min'],
+  ['↙','#ff5a60','Élio Kassoma','perdida · ontem 16:41'],
+  ['↗','#9a9aa0','Bento Quissanga','efectuada · 12 Set · 21 min'],
+  ['↙','#2f9e6a','Cátia Mendes','recebida · 11 Set · 6 min']
+];
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      contacts: C.map(([name, initials, color, meta, dot, active]) => ({
+        name, initials, color, meta, dot,
+        bg: active ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent'
+      })),
+      keys: ['1','2','3','4','5','6','7','8','9','*','0','#'],
+      history: H.map(([icon, fg, name, meta]) => ({ icon, fg, name, meta }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

@@ -1,0 +1,61 @@
+Moderação · Arquitectura de Voz Delonix
+00:38:40
+REC 4K
+Silenciar todos
+Voltar à sessão
+Participantes
+13 na sala · 2 em espera
+PESSOA
+PAPEL
+SALA
+ACÇÕES
+{{ p.initials }}
+{{ p.name }}
+{{ p.origin }}
+✋ MÃO
+{{ p.role }}
+{{ p.room }}
+{{ p.a1 }}
+{{ p.a2 }}
+Remover
+Sala de espera
+2 a aguardar aprovação
+EK
+Élio Kassoma
+Odoo SSO · estagiário
+Admitir
+Negar
+☏
++244 923 **8 210
+convidado PSTN · PIN correcto
+Admitir
+Negar
+Admitir todos
+Fechar sala de espera
+Salas paralelas
+3 salas · 12 min restantes
+Atribuição automática
+Manual
+Sala 1 · Camada SIP
+5 pessoas
+JF
+DN
+NB
+RD
+BQ
+Entrar
+Sala 2 · Gravação e storage
+4 pessoas
+TK
+LC
+CM
+PS
+Entrar
+Sala 3 · Perguntas abertas
+vazia
+TEMPORIZADOR
+12:00
+Mensagem a todas as salas…
+Difundir
+Nova sala
+Encerrar salas

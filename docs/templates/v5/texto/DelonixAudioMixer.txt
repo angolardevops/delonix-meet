@@ -1,0 +1,45 @@
+Estúdio · Mesa de som
+16 canais · 3 barramentos
+LUFS
+−15,8
+alvo −16 · pico −2,1 dBTP
+Guardar cena
+Mesa de corte
+{{ l.name }}
+48 kHz · 24 bit · latência 11 ms
+{{ s.num }}
+{{ s.icon }}
+{{ s.name }}
+{{ s.gain }}
+{{ s.db }}
+M
+S
+PGM
+Mistura
+ao ar
+−3,0 dB
+AO AR
+Barramentos
+{{ b.tag }}
+{{ b.name }}
+{{ b.db }}
+retorno do estúdio
+auscultadores −8 dB
+CH 2 · Apresentadora
+XLR 2
+EQUALIZADOR · 4 BANDAS
+ligado
++12 dB
+−12 dB
+{{ e.band }}
+{{ e.gain }}
+{{ e.freq }}
+DINÂMICA
+a reduzir 3,4 dB
+{{ d.label }}
+{{ d.value }}
+Limpeza automática
+{{ a.name }}
+{{ a.state }}
+Faixas separadas na gravação
+Cada canal fica gravado à parte, antes do processamento — a mistura pode ser refeita no Studio.

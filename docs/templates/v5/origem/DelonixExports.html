@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ad1017;text-decoration:none}a:hover{color:#8a0c12}</style></helmet>
+<div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--warning:#a85b00;--danger:#ad1017;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;display:flex;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif">
+  <dc-import name="DelonixNav" active="rec" hint-size="228px,900px"></dc-import>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:58px;flex:none;box-sizing:border-box;padding:0 22px;display:flex;align-items:center;gap:11px;background:var(--raised);border-bottom:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:600">Exportações</div>
+      <div style="display:flex;gap:4px;margin-left:6px">
+        <div style="padding:5px 10px;border-radius:2px;background:color-mix(in srgb,var(--accent) 10%,transparent);border:1px solid var(--accent);font-size:11px;font-weight:600;color:var(--accent)">Fila · 3</div>
+        <div style="padding:5px 10px;border-radius:2px;font-size:11px;font-weight:600;color:var(--muted)">Histórico · 68</div>
+      </div>
+      <div style="flex:1"></div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">nó trans-01.lad · 91% CPU</div>
+      <div style="padding:7px 13px;border-radius:2px;border:1px solid var(--border);font-size:12px;font-weight:600">Pausar fila</div>
+      <div style="padding:7px 13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:12px;font-weight:600">Nova exportação</div>
+    </div>
+
+    <div style="flex:1;min-height:0;padding:18px 22px;box-sizing:border-box;display:grid;grid-template-columns:1fr 384px;gap:16px;overflow:hidden">
+
+      <div style="display:flex;flex-direction:column;gap:14px;min-width:0;overflow:hidden">
+        <dc-import name="DelonixListControls" context="exports" open="fechado" facets="filtro:Falhadas|grupo:Predefinição" summary="3 de 90 · filtrado por estado, agrupado por predefinição" hint-size="100%,84px"></dc-import>
+
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:baseline;gap:9px"><div style="font-size:13px;font-weight:600">A processar</div><div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">1 activa · 2 em espera</div></div>
+          <sc-for list="{{ queue }}" as="q" hint-placeholder-count="3">
+            <div style="padding:13px;border-radius:3px;background:var(--raised);border:1px solid {{ q.ring }};display:flex;flex-direction:column;gap:9px">
+              <div style="display:flex;align-items:center;gap:11px">
+                <div style="width:56px;height:34px;flex:none;border-radius:2px;background:{{ q.grad }}"></div>
+                <div style="min-width:0;flex:1">
+                  <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ q.title }}</div>
+                  <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">{{ q.spec }}</div>
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+                  <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:500;color:{{ q.fg }}">{{ q.state }}</div>
+                  <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);font-variant-numeric:tabular-nums">{{ q.eta }}</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:9px">
+                <div style="flex:1;height:6px;border-radius:2px;background:var(--surface);overflow:hidden"><div style="width:{{ q.pct }};height:100%;background:{{ q.fg }}"></div></div>
+                <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);width:34px;text-align:right">{{ q.pct }}</span>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <sc-for list="{{ q.steps }}" as="s" hint-placeholder-count="5">
+                  <div style="display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:3px;border:1px solid {{ s.ring }};font-family:'DM Mono',monospace;font-size:9px;color:{{ s.fg }}">{{ s.icon }} {{ s.label }}</div>
+                </sc-for>
+                <div style="flex:1"></div>
+                <div style="padding:3px 9px;border-radius:2px;border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--muted)">Prioridade</div>
+                <div style="padding:3px 9px;border-radius:2px;border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--danger)">Cancelar</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:9px;overflow:hidden">
+          <div style="display:flex;align-items:baseline;gap:9px"><div style="font-size:13px;font-weight:600">Histórico</div><div style="flex:1"></div><div style="font-size:11px;color:var(--accent);font-weight:600">Descarregar todos</div></div>
+          <div style="flex:1;min-height:0;background:var(--raised);border:1px solid var(--border);border-radius:3px;overflow:auto">
+            <div style="position:sticky;top:0;z-index:1;display:grid;grid-template-columns:1fr 124px 92px 82px 96px 112px;gap:10px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.5px;color:var(--muted)"><div>EXPORTAÇÃO</div><div>PREDEFINIÇÃO</div><div>FORMATO</div><div>TAMANHO</div><div>ESTADO</div><div>DESTINO</div></div>
+            <sc-for list="{{ hist }}" as="h" hint-placeholder-count="8">
+              <div style="display:grid;grid-template-columns:1fr 124px 92px 82px 96px 112px;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);align-items:center">
+                <div style="min-width:0"><div style="font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.title }}</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ h.when }}</div></div>
+                <div style="font-size:10.5px;color:var(--muted)">{{ h.preset }}</div>
+                <div><span style="font-family:'DM Mono',monospace;font-size:9.5px;font-weight:500;padding:2px 6px;border-radius:2px;border:1px solid var(--border);background:var(--surface)">{{ h.fmt }}</span></div>
+                <div style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums">{{ h.size }}</div>
+                <div style="display:flex;align-items:center;gap:5px;font-size:10.5px;color:{{ h.fg }}"><span style="font-family:'DM Mono',monospace;font-size:10px">{{ h.icon }}</span>{{ h.state }}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.dest }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;overflow:hidden">
+        <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:11px">
+          <div style="font-size:12.5px;font-weight:600">Nova exportação</div>
+          <div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:10.5px;font-weight:600;color:var(--muted)">Origem</div><div style="padding:8px 10px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-size:11.5px;display:flex;justify-content:space-between">edit_8841 · sessão 3<span style="color:var(--muted)">▾</span></div></div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div style="font-size:10.5px;font-weight:600;color:var(--muted)">Predefinição</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <div style="padding:8px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)"><div style="font-size:11px;font-weight:600">Aula 4K</div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">2160p · 24 Mbps</div></div>
+              <div style="padding:8px;border-radius:2px;border:1px solid var(--border)"><div style="font-size:11px;font-weight:600;color:var(--muted)">Web 1080p</div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">1080p · 8 Mbps</div></div>
+              <div style="padding:8px;border-radius:2px;border:1px solid var(--border)"><div style="font-size:11px;font-weight:600;color:var(--muted)">Podcast</div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">MP3 · 192 kbps</div></div>
+              <div style="padding:8px;border-radius:2px;border:1px solid var(--border)"><div style="font-size:11px;font-weight:600;color:var(--muted)">Vertical 9:16</div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">1080×1920</div></div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div style="font-size:10.5px;font-weight:600;color:var(--muted)">Incluir</div>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px solid var(--border);background:var(--surface)"><div style="width:13px;height:13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center">✓</div><span style="font-size:10.5px">Legendas gravadas (pt-AO)</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px solid var(--border);background:var(--surface)"><div style="width:13px;height:13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center">✓</div><span style="font-size:10.5px">Faixa de dobragem EN e FR</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px solid var(--border)"><div style="width:13px;height:13px;border-radius:2px;border:1px solid var(--border)"></div><span style="font-size:10.5px;color:var(--muted)">Quadro branco como capítulo</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:2px;border:1px solid var(--border)"><div style="width:13px;height:13px;border-radius:2px;border:1px solid var(--border)"></div><span style="font-size:10.5px;color:var(--muted)">Marca de água da organização</span></div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:10.5px;font-weight:600;color:var(--muted)">Destino</div><div style="padding:8px 10px;border-radius:2px;border:1px solid var(--border);background:var(--surface);font-family:'DM Mono',monospace;font-size:10.5px;display:flex;justify-content:space-between">MinIO · delonix-rec<span style="color:var(--muted)">▾</span></div></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:2px;background:var(--surface);border:1px solid var(--border)"><span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">ESTIMATIVA</span><span style="font-size:11px;font-weight:600;margin-left:auto">18,2 GB · 11 min</span></div>
+          <div style="padding:11px;border-radius:2px;background:var(--accent-strong);color:#fff;text-align:center;font-size:12.5px;font-weight:600">Colocar na fila</div>
+        </div>
+
+        <div style="margin-top:auto;background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:9px">
+          <div style="font-size:12.5px;font-weight:600">Publicação automática</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:2px;background:var(--surface);border:1px solid var(--border)"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:var(--raised);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:7.5px;font-weight:500;color:var(--muted)">YT</div><div style="flex:1;font-size:10.5px;font-weight:600">YouTube · Delonix</div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--success)">✓ ligado</span></div>
+            <div style="display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:2px;background:var(--surface);border:1px solid var(--border)"><div style="width:22px;height:22px;border-radius:2px;flex:none;background:var(--raised);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:7px;font-weight:500;color:var(--muted)">ODOO</div><div style="flex:1;font-size:10.5px;font-weight:600">Anexar ao evento</div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--success)">✓ ligado</span></div>
+          </div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);line-height:1.5">Ao concluir dispara recording.ready para erp.delonix.co.ao</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const step = (label, s) => ({
+  label,
+  icon: s === 'ok' ? '✓' : s === 'run' ? '◐' : '·',
+  fg: s === 'ok' ? 'var(--success)' : s === 'run' ? 'var(--accent)' : 'var(--muted)',
+  ring: s === 'ok' ? 'var(--success)' : s === 'run' ? 'var(--accent)' : 'var(--border)'
+});
+const Q = [
+  ['Arquitectura de Voz — sessão 3','2160p · 24 Mbps · H.265 + legendas pt-AO/EN','A TRANSCODIFICAR','var(--accent)','68%','resta 4 min','#52080c',true,[['Cortes','ok'],['Mistura de áudio','ok'],['Dobragem EN','ok'],['Vídeo 2160p','run'],['Legendas gravadas','wait'],['Envio MinIO','wait']]],
+  ['Aula aberta — Numeração +244','1080p · 8 Mbps · H.264','EM ESPERA','var(--muted)','0%','posição 2','#3c3524',false,[['Cortes','ok'],['Vídeo 1080p','wait'],['Envio MinIO','wait']]],
+  ['Onboarding RH — versão podcast','MP3 · 192 kbps · faixa de voz isolada','EM ESPERA','var(--muted)','0%','posição 3','#2c2836',false,[['Separar áudio','ok'],['Normalizar','wait'],['Envio Nextcloud','wait']]]
+];
+const H = [
+  ['Arquitectura de Voz — sessão 2','hoje 08:12','Aula 4K','MP4','31,2 GB','Concluída','✓','var(--success)','MinIO Luanda'],
+  ['Redes SIP — aula 2 (vertical)','ontem 19:44','Vertical 9:16','MP4','1,8 GB','Concluída','✓','var(--success)','Google Drive'],
+  ['Comité de produto — Q3','ontem 17:02','Web 1080p','MP4','5,6 GB','Concluída','✓','var(--success)','Nextcloud'],
+  ['Onboarding RH — Setembro','12 Set 11:20','Podcast','MP3','62 MB','Concluída','✓','var(--success)','MinIO Luanda'],
+  ['Apresentação a parceiros — NA','11 Set 15:38','Aula 4K','MP4','14,1 GB','Falhou · disco','✕','var(--danger)','MinIO Luanda'],
+  ['Portabilidade — legendas','10 Set 09:14','Legendas','SRT','48 KB','Concluída','✓','var(--success)','Odoo evento'],
+  ['Formação SBC — dobragem EN','09 Set 22:01','Web 1080p','MP4','4,4 GB','Concluída','✓','var(--success)','YouTube'],
+  ['Quadro — failover em directo','08 Set 16:52','Quadro','SVG','1,2 MB','Concluída','✓','var(--success)','MinIO Luanda']
+];
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      queue: Q.map(([title,spec,state,fg,pct,eta,c,active,steps]) => ({
+        title, spec, state, fg, pct, eta,
+        grad: 'linear-gradient(140deg,' + c + ',#000)',
+        ring: active ? 'var(--accent)' : 'var(--border)',
+        steps: steps.map(([l,s]) => step(l,s))
+      })),
+      hist: H.map(([title,when,preset,fmt,size,state,icon,fg,dest]) => ({ title, when, preset, fmt, size, state, icon, fg, dest }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

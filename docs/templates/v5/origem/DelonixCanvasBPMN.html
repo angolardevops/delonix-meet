@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#e8232b;text-decoration:none}a:hover{color:#ff5a5f}</style></helmet>
+<div style="--surface:#0d0d0f;--raised:#17171a;--stage:#000000;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--live:#f0a32e;--record:#d41f27;--success:#2f9e6a;--warning:#f0a32e;--danger:#d41f27;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex;flex-direction:column">
+
+  <div style="height:48px;flex:none;box-sizing:border-box;padding:0 16px;display:flex;align-items:center;gap:10px;background:var(--raised);border-bottom:1px solid var(--border)">
+    <div style="width:24px;height:24px;color:var(--accent);flex:none"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path></svg></div>
+    <div style="font-size:12.5px;font-weight:600">Quadro · Processo de aula aberta com emissão</div>
+    <div style="display:flex;gap:4px;margin-left:6px">
+      <div style="padding:5px 10px;border-radius:2px;font-size:11px;font-weight:600;color:var(--muted)">UML 2</div>
+      <div style="padding:5px 10px;border-radius:2px;background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid var(--accent);font-size:11px;font-weight:600;color:var(--accent)">BPMN 2.0</div>
+      <div style="padding:5px 10px;border-radius:2px;font-size:11px;font-weight:600;color:var(--muted)">Arquitectura</div>
+      <div style="padding:5px 10px;border-radius:2px;font-size:11px;font-weight:600;color:var(--muted)">Fluxograma</div>
+      <div style="padding:5px 10px;border-radius:2px;font-size:11px;font-weight:600;color:var(--muted)">Livre</div>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center"><div style="width:22px;height:22px;border-radius:50%;background:#9e2026;color:#fff;font-size:8.5px;font-weight:600;display:flex;align-items:center;justify-content:center;border:2px solid var(--raised)">AM</div><div style="width:22px;height:22px;border-radius:50%;background:#6b4a74;color:#fff;font-size:8.5px;font-weight:600;display:flex;align-items:center;justify-content:center;border:2px solid var(--raised);margin-left:-6px">RD</div></div>
+    <div style="padding:6px 12px;border-radius:2px;border:1px solid var(--border);font-size:11.5px;font-weight:600;color:var(--muted)">Validar BPMN</div>
+    <div style="padding:6px 12px;border-radius:2px;border:1px solid var(--border);font-size:11.5px;font-weight:600;color:var(--muted)">Exportar .bpmn</div>
+    <div style="padding:6px 12px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:11.5px;font-weight:600">Guardar no storage</div>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:198px 1fr 250px;overflow:hidden">
+
+    <div style="background:var(--raised);border-right:1px solid var(--border);padding:11px 10px;box-sizing:border-box;display:flex;flex-direction:column;gap:11px;overflow:hidden">
+      <div style="padding:7px 9px;border-radius:2px;background:var(--surface);border:1px solid var(--border);font-size:10.5px;color:var(--muted)">Procurar elemento…</div>
+      <sc-for list="{{ groups }}" as="g" hint-placeholder-count="4">
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.6px">{{ g.title }}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px">
+            <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="4">
+              <div style="display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 3px;border-radius:2px;border:1px solid {{ it.ring }};background:{{ it.bg }}">
+                <div style="color:{{ it.fg }};display:flex">{{ it.icon }}</div>
+                <div style="font-size:8px;font-weight:500;color:{{ it.fg }};text-align:center;line-height:1.2">{{ it.label }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="position:relative;overflow:hidden;background:#f7f7f8">
+      <div style="position:absolute;inset:0;background-image:linear-gradient(#dedee1 1px,transparent 1px),linear-gradient(90deg,#dedee1 1px,transparent 1px);background-size:24px 24px;opacity:.75"></div>
+
+      <div style="position:absolute;top:14px;left:18px;font-family:'Archivo Black',sans-serif;font-size:15px;color:#0b0b0c;letter-spacing:-0.3px">PISCINA · DELONIX ANGOLA, LDA</div>
+
+      <div style="position:absolute;top:10px;right:12px;display:flex;align-items:center;gap:2px;padding:3px;border-radius:2px;background:#fff;border:1px solid #dedee1;box-shadow:0 1px 4px rgba(11,11,12,.12);z-index:5">
+        <div style="width:26px;height:26px;border-radius:2px;background:#ad1017;color:#fff;display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 20 20" fill="currentColor"><path d="M4.5 2.2 15.2 9.1l-4.7 1.1-2.2 4.9z"></path></svg></div>
+        <div style="width:26px;height:26px;border-radius:2px;color:#5c5c63;display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 2.4"><path d="M3.5 3.5h13v13h-13z"></path></svg></div>
+        <div style="width:26px;height:26px;border-radius:2px;color:#5c5c63;display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.2 9.4V4.8a1.3 1.3 0 0 1 2.6 0v4.2m0-1.7a1.3 1.3 0 0 1 2.6 0v1.4m0-1.1a1.3 1.3 0 0 1 2.6 0v4.3a4.5 4.5 0 0 1-4.5 4.5h-.6a4.5 4.5 0 0 1-4.5-4.5v-1.4a1.2 1.2 0 0 1 2.4 0"></path></svg></div>
+        <div style="width:1px;height:18px;background:#dedee1;margin:0 2px"></div>
+        <div style="width:26px;height:26px;border-radius:2px;color:#5c5c63;display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.4h4.2v4.2H3zM12.8 11.4H17v4.2h-4.2zM7.2 6.5h3.4a2 2 0 0 1 2 2v4.9"></path></svg></div>
+        <div style="width:26px;height:26px;border-radius:2px;color:#5c5c63;display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4 4.6h12M10 4.6v11M7.6 15.6h4.8"></path></svg></div>
+      </div>
+
+      <div style="position:absolute;top:170px;left:344px;display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:2px;background:#0b0b0c;box-shadow:0 3px 12px rgba(11,11,12,.3);z-index:6">
+        <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:#ff9a9e">3 seleccionados</div>
+        <div style="width:1px;height:16px;background:#3a3a3f"></div>
+        <div style="display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:2px;background:#ad1017"><span style="font-size:10.5px;font-weight:600;color:#fff">Agrupar</span><span style="font-family:'DM Mono',monospace;font-size:9px;color:#ffc9cb">⌘G</span></div>
+        <div style="display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:2px;border:1px solid #3a3a3f"><span style="font-size:10.5px;font-weight:600;color:#9a9aa0">Desagrupar</span><span style="font-family:'DM Mono',monospace;font-size:9px;color:#74747a">⇧⌘G</span></div>
+        <div style="width:1px;height:16px;background:#3a3a3f"></div>
+        <div style="display:flex;align-items:center;gap:3px;color:#c9c9ce">
+          <div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3.4 3v14M6.4 6.4h8M6.4 13.6h5"></path></svg></div>
+          <div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 3v14M4.6 6.6h10.8M6.6 13.4h6.8"></path></svg></div>
+          <div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 3.4h14M6.4 6.4v8M13.6 6.4v5"></path></svg></div>
+        </div>
+        <div style="width:1px;height:16px;background:#3a3a3f"></div>
+        <div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center;color:#c9c9ce"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M5.4 9h9.2v7.2H5.4zM7.4 9V6.6a2.6 2.6 0 0 1 5.2 0V9"></path></svg></div>
+        <div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center;color:#ff7a80"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4.4 5.6h11.2M8.4 5.6V3.6h3.2v2M6.2 5.6l.8 10.8h6l.8-10.8"></path></svg></div>
+      </div>
+
+      <div style="position:absolute;top:44px;left:18px;right:18px;bottom:52px;border:1.5px solid #0b0b0c;background:#fff;display:flex">
+        <div style="width:26px;flex:none;border-right:1.5px solid #0b0b0c;background:#f2f2f3;display:flex;align-items:center;justify-content:center">
+          <div style="font-size:10px;font-weight:700;color:#0b0b0c;writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:0.5px">Delonix Meet</div>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column">
+
+          <div style="flex:1;border-bottom:1.5px solid #0b0b0c;display:flex;position:relative">
+            <div style="width:24px;flex:none;border-right:1.5px solid #0b0b0c;background:#f7f7f8;display:flex;align-items:center;justify-content:center"><div style="font-size:9px;font-weight:600;color:#0b0b0c;writing-mode:vertical-rl;transform:rotate(180deg)">Formadora</div></div>
+            <div style="flex:1;position:relative">
+              <div style="position:absolute;top:34px;left:14px;width:34px;height:34px;border-radius:50%;border:1.8px solid #1e7a4a;background:#fff;display:flex;align-items:center;justify-content:center;color:#1e7a4a;font-size:13px">✉</div>
+              <div style="position:absolute;top:74px;left:6px;width:52px;text-align:center;font-size:8.5px;color:#5c5c63;line-height:1.3">Aula agendada</div>
+
+              <div style="position:absolute;top:26px;left:74px;width:118px;height:52px;border-radius:2px;border:1.5px solid #0b0b0c;background:#fff;padding:6px 8px;box-sizing:border-box">
+                <div style="font-size:10px;font-weight:600;color:#0b0b0c;line-height:1.3">Verificar dispositivos</div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:#5c5c63;margin-top:3px">user task</div>
+              </div>
+              <div style="position:absolute;top:26px;left:74px;width:14px;height:14px;border-radius:0 0 0 6px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#5c5c63">☺</div>
+
+              <div style="position:absolute;top:38px;left:212px;width:26px;height:26px;transform:rotate(45deg);border:1.5px solid #a85b00;background:#fff"></div>
+              <div style="position:absolute;top:44px;left:218px;width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#a85b00;font-weight:700">✕</div>
+              <div style="position:absolute;top:70px;left:194px;width:62px;text-align:center;font-size:8.5px;color:#5c5c63">Tipo de sessão?</div>
+
+              <div style="position:absolute;top:-4px;left:270px;width:314px;height:118px;border:1px dashed #ad1017;background:rgba(173,16,23,.05);box-sizing:border-box">
+                <div style="position:absolute;top:-4px;left:-4px;width:7px;height:7px;background:#fff;border:1.5px solid #ad1017"></div>
+                <div style="position:absolute;top:-4px;right:-4px;width:7px;height:7px;background:#fff;border:1.5px solid #ad1017"></div>
+                <div style="position:absolute;bottom:-4px;left:-4px;width:7px;height:7px;background:#fff;border:1.5px solid #ad1017"></div>
+                <div style="position:absolute;bottom:-4px;right:-4px;width:7px;height:7px;background:#fff;border:1.5px solid #ad1017"></div>
+              </div>
+              <div style="position:absolute;top:6px;left:280px;width:126px;height:44px;border-radius:2px;border:1.5px solid #ad1017;background:#fff;padding:6px 8px;box-sizing:border-box;box-shadow:0 0 0 2px rgba(173,16,23,.18)"><div style="font-size:10px;font-weight:600;color:#0b0b0c">Iniciar reunião</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:#5c5c63">service task</div></div>
+              <div style="position:absolute;top:62px;left:280px;width:126px;height:44px;border-radius:2px;border:1.5px solid #ad1017;background:#f6eceb;padding:6px 8px;box-sizing:border-box;box-shadow:0 0 0 3px rgba(173,16,23,.14)"><div style="font-size:10px;font-weight:700;color:#ad1017">Abrir estúdio</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:#8a0c12">seleccionado</div></div>
+
+              <div style="position:absolute;top:34px;left:436px;width:134px;height:52px;border-radius:2px;border:1.5px solid #ad1017;background:#fff;padding:6px 8px;box-sizing:border-box;box-shadow:0 0 0 2px rgba(173,16,23,.18)"><div style="font-size:10px;font-weight:600;color:#0b0b0c;line-height:1.3">Emitir para 4 destinos</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:#5c5c63;margin-top:3px">multi-instance ⫴</div></div>
+
+              <div style="position:absolute;top:46px;left:594px;width:28px;height:28px;border-radius:50%;border:1.5px solid #a85b00;background:#fff;display:flex;align-items:center;justify-content:center;color:#a85b00;font-size:12px">⏱</div>
+              <div style="position:absolute;top:78px;left:566px;width:84px;text-align:center;font-size:8.5px;color:#5c5c63">Fim do tempo</div>
+
+              <div style="position:absolute;top:34px;left:660px;width:120px;height:52px;border-radius:2px;border:1.5px solid #0b0b0c;background:#fff;padding:6px 8px;box-sizing:border-box"><div style="font-size:10px;font-weight:600;color:#0b0b0c;line-height:1.3">Encerrar e gravar</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:#5c5c63;margin-top:3px">service task</div></div>
+
+              <div style="position:absolute;top:44px;left:804px;width:32px;height:32px;border-radius:50%;border:3px solid #0b0b0c;background:#fff"></div>
+
+              <div style="position:absolute;top:50px;left:48px;width:26px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:50px;left:192px;width:20px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:32px;left:254px;width:26px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:32px;left:254px;width:2px;height:20px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:84px;left:254px;width:26px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:52px;left:254px;width:2px;height:32px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:84px;left:406px;width:30px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:28px;left:406px;width:30px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:28px;left:434px;width:2px;height:32px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:60px;left:570px;width:24px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:60px;left:622px;width:38px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:60px;left:780px;width:24px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:26px;left:200px;font-size:8.5px;color:#5c5c63">reunião</div>
+              <div style="position:absolute;top:90px;left:258px;font-size:8.5px;color:#ad1017;font-weight:600">emissão</div>
+            </div>
+          </div>
+
+          <div style="flex:1;border-bottom:1.5px solid #0b0b0c;display:flex;position:relative">
+            <div style="width:24px;flex:none;border-right:1.5px solid #0b0b0c;background:#f7f7f8;display:flex;align-items:center;justify-content:center"><div style="font-size:9px;font-weight:600;color:#0b0b0c;writing-mode:vertical-rl;transform:rotate(180deg)">Técnico</div></div>
+            <div style="flex:1;position:relative">
+              <div style="position:absolute;top:20px;left:436px;width:134px;height:46px;border-radius:2px;border:1.5px solid #0b0b0c;background:#fff;padding:6px 8px;box-sizing:border-box"><div style="font-size:10px;font-weight:600;color:#0b0b0c">Vigiar saúde dos canais</div></div>
+              <div style="position:absolute;top:26px;left:594px;width:28px;height:28px;border-radius:50%;border:1.5px double #a85b00;background:#fff;display:flex;align-items:center;justify-content:center;color:#a85b00;font-size:11px">▲</div>
+              <div style="position:absolute;top:58px;left:566px;width:84px;text-align:center;font-size:8.5px;color:#5c5c63">Bitrate baixo</div>
+              <div style="position:absolute;top:20px;left:660px;width:120px;height:46px;border-radius:2px;border:1.5px solid #0b0b0c;background:#fff;padding:6px 8px;box-sizing:border-box"><div style="font-size:10px;font-weight:600;color:#0b0b0c">Reduzir resolução</div></div>
+              <div style="position:absolute;top:40px;left:570px;width:24px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:40px;left:622px;width:38px;height:2px;background:#0b0b0c"></div>
+            </div>
+          </div>
+
+          <div style="flex:1;display:flex;position:relative">
+            <div style="width:24px;flex:none;border-right:1.5px solid #0b0b0c;background:#f7f7f8;display:flex;align-items:center;justify-content:center"><div style="font-size:9px;font-weight:600;color:#0b0b0c;writing-mode:vertical-rl;transform:rotate(180deg)">Plataforma</div></div>
+            <div style="flex:1;position:relative">
+              <div style="position:absolute;top:20px;left:660px;width:120px;height:46px;border-radius:2px;border:1.5px solid #0b0b0c;background:#fff;padding:6px 8px;box-sizing:border-box"><div style="font-size:10px;font-weight:600;color:#0b0b0c">Transcodificar 4K</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:#5c5c63">⚙ automática</div></div>
+              <div style="position:absolute;top:20px;left:804px;width:120px;height:46px;border-radius:2px;border:1.5px solid #0b0b0c;background:#fff;padding:6px 8px;box-sizing:border-box"><div style="font-size:10px;font-weight:600;color:#0b0b0c">Gerar transcrição</div></div>
+              <div style="position:absolute;top:42px;left:780px;width:24px;height:2px;background:#0b0b0c"></div>
+              <div style="position:absolute;top:20px;left:948px;width:34px;height:34px;border-radius:50%;border:1.8px solid #1e7a4a;background:#fff;display:flex;align-items:center;justify-content:center;color:#1e7a4a;font-size:12px">⇄</div>
+              <div style="position:absolute;top:56px;left:928px;width:74px;text-align:center;font-size:8.5px;color:#5c5c63;line-height:1.3">recording.ready</div>
+              <div style="position:absolute;top:42px;left:924px;width:24px;height:2px;background:#0b0b0c"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="position:absolute;bottom:12px;left:18px;display:flex;gap:7px;align-items:center">
+        <div style="padding:4px 9px;border-radius:2px;background:#fff;border:1px solid #dedee1;font-family:'DM Mono',monospace;font-size:9.5px;color:#5c5c63">BPMN 2.0 · 1 piscina · 3 pistas · 11 elementos</div>
+        <div style="padding:4px 9px;border-radius:2px;background:#fff;border:1px solid #a85b00;font-family:'DM Mono',monospace;font-size:9.5px;color:#6b3d00">▲ 1 aviso: gateway sem saída por omissão</div>
+        <div style="padding:4px 9px;border-radius:2px;background:#fff;border:1px solid #dedee1;font-family:'DM Mono',monospace;font-size:9.5px;color:#5c5c63">V · M · H · ⇧clique · ⌘G</div>
+      </div>
+      <div style="position:absolute;bottom:12px;right:12px;padding:5px 9px;border-radius:2px;background:#fff;border:1px solid #dedee1;font-family:'DM Mono',monospace;font-size:9.5px;color:#5c5c63">68% · ajustar à página</div>
+      <div style="position:absolute;top:196px;left:398px;display:flex;align-items:flex-start">
+        <svg width="14" height="18" viewBox="0 0 14 18" fill="#6b4a74"><path d="M0 0l14 7-6 1.6L5.4 15z"></path></svg>
+        <div style="padding:2px 7px;border-radius:2px;background:#6b4a74;color:#fff;font-size:9.5px;font-weight:600;margin-top:8px">Rita Domingas</div>
+      </div>
+    </div>
+
+    <div style="background:var(--raised);border-left:1px solid var(--border);padding:11px;box-sizing:border-box;display:flex;flex-direction:column;gap:11px;overflow:hidden">
+      <div style="display:flex;gap:3px;padding:3px;border-radius:2px;background:var(--surface);border:1px solid var(--border)">
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:10px;font-weight:600">Elemento</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10px;color:var(--muted)">Pistas</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10px;color:var(--muted)">Validação</div>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:7px"><div style="width:8px;height:8px;border-radius:2px;background:var(--accent)"></div><div style="font-size:11px;font-weight:600">Tarefa · Abrir estúdio</div></div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <div style="display:flex;flex-direction:column;gap:3px"><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">TIPO</div><div style="padding:6px 8px;border-radius:2px;border:1px solid var(--border);font-size:10.5px;display:flex;justify-content:space-between">Service task<span style="color:var(--muted)">▾</span></div></div>
+          <div style="display:flex;flex-direction:column;gap:3px"><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">EXECUTOR</div><div style="padding:6px 8px;border-radius:2px;border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:10px">meet.studio.open</div></div>
+          <div style="display:flex;flex-direction:column;gap:3px"><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">PISTA</div><div style="padding:6px 8px;border-radius:2px;border:1px solid var(--border);font-size:10.5px">Formadora</div></div>
+        </div>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+        <div style="font-size:11px;font-weight:600">Fluxos de saída</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:2px;background:var(--raised);border:1px solid var(--border);font-size:9.5px"><span style="font-family:'DM Mono',monospace;color:var(--accent)">→</span>Emitir para 4 destinos</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:2px;border:1px dashed var(--border);font-size:9.5px;color:var(--muted)">+ fluxo condicional</div>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--accent);display:flex;flex-direction:column;gap:7px">
+        <div style="display:flex;align-items:center;gap:7px"><div style="font-size:11px;font-weight:600">Selecção · 3 elementos</div><div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">laço</div></div>
+        <div style="display:flex;gap:5px">
+          <div style="flex:1;padding:5px;border-radius:2px;background:var(--accent-strong);color:#fff;text-align:center;font-size:10px;font-weight:600">Agrupar ⌘G</div>
+          <div style="flex:1;padding:5px;border-radius:2px;border:1px solid var(--border);color:var(--muted);text-align:center;font-size:10px;font-weight:600">Desagrupar</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:2px;background:var(--raised);border:1px solid var(--border);font-size:9.5px"><span style="font-family:'DM Mono',monospace;color:var(--accent)">▣</span>Grupo · Arranque da emissão<span style="margin-left:auto;font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">3</span></div>
+          <div style="display:flex;flex-direction:column;gap:2px;padding-left:12px">
+            <div style="font-size:9px;color:var(--muted)">Iniciar reunião · service task</div>
+            <div style="font-size:9px;color:var(--muted)">Abrir estúdio · service task</div>
+            <div style="font-size:9px;color:var(--muted)">Emitir para 4 destinos · multi-instance</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--warning);display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:11px;font-weight:600">Validação do modelo</div>
+        <div style="display:flex;gap:7px;font-size:9.5px;color:var(--muted);line-height:1.45"><span style="color:var(--warning)">▲</span><span>O gateway «Tipo de sessão?» não tem saída por omissão — o processo pode bloquear em sessões híbridas.</span></div>
+        <div style="padding:6px;border-radius:2px;background:var(--accent-strong);color:#fff;text-align:center;font-size:10px;font-weight:600">Corrigir automaticamente</div>
+      </div>
+
+      <div style="margin-top:auto;padding:10px;border-radius:2px;border:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:10.5px;font-weight:600">Partilhar na sessão</div>
+        <div style="font-size:9.5px;color:var(--muted);line-height:1.45">O quadro pode ir para o palco da emissão sem sair desta vista.</div>
+        <div style="padding:6px;border-radius:2px;border:1px solid var(--accent);color:var(--accent);text-align:center;font-size:10px;font-weight:600">Pôr no palco</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const sv = (d) => React.createElement('svg',{width:17,height:15,viewBox:'0 0 22 18',fill:'none',stroke:'currentColor',strokeWidth:1.3,strokeLinecap:'round',strokeLinejoin:'round'},React.createElement('path',{d}));
+const G = [
+  ['EVENTOS', [
+    ['Início','M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z',false],
+    ['Mensagem','M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM7.6 7h6.8v4H7.6zM7.6 7 11 9.6 14.4 7',false],
+    ['Temporizador','M11 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM11 6v3.2l2.2 1.4',false],
+    ['Fim','M11 1.4a7.6 7.6 0 1 0 0 15.2 7.6 7.6 0 0 0 0-15.2ZM11 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z',false]
+  ]],
+  ['TAREFAS', [
+    ['Tarefa','M2 3h18v12H2z',true],
+    ['Utilizador','M2 3h18v12H2zM6 7.4a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8',false],
+    ['Serviço','M2 3h18v12H2zM6 9a1.6 1.6 0 1 0 0-3.2A1.6 1.6 0 0 0 6 9',false],
+    ['Subprocesso','M2 3h18v12H2zM8 12h6M11 9v6',false]
+  ]],
+  ['GATEWAYS', [
+    ['Exclusivo','M11 2 20 9l-9 7-9-7zM8 6.4l6 5.2M14 6.4l-6 5.2',false],
+    ['Paralelo','M11 2 20 9l-9 7-9-7zM11 5.4v7.2M7.4 9h7.2',false],
+    ['Inclusivo','M11 2 20 9l-9 7-9-7zM11 5.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8',false],
+    ['Evento','M11 2 20 9l-9 7-9-7zM11 5.4 13 9l-2 3.6L9 9z',false]
+  ]],
+  ['ESTRUTURA', [
+    ['Piscina','M2 3h18v12H2zM5 3v12',false],
+    ['Pista','M2 3h18v6H2zM2 9h18v6H2z',false],
+    ['Dados','M4 2h9l5 4v10H4z',false],
+    ['Anotação','M6 2v14M6 2h12M6 16h12',false]
+  ]]
+];
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      groups: G.map(([title, items]) => ({
+        title,
+        items: items.map(([label, d, on]) => ({
+          label, icon: sv(d),
+          ring: on ? 'var(--accent)' : 'var(--border)',
+          bg: on ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : 'transparent',
+          fg: on ? 'var(--accent)' : 'var(--muted)'
+        }))
+      }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

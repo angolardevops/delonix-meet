@@ -1,0 +1,69 @@
+Integrações
+instância on-premise · delonix.co.ao
+Registo de eventos
+Nova integração
+O
+Odoo
+odoo.delonix.co.ao · versão 17 · base delonix_prod
+✓ LIGADO
+SSO (OAuth 2.0)
+142 utilizadores
+Calendário
+bidireccional · 2 min
+Contactos
+res.partner · 1 284
+Registo de presenças
+hr.attendance · inactivo
+ÚLTIMA SINCRONIZAÇÃO
+14 Set · 09:38
+✓ 12 eventos · 3 contactos actualizados
+S3
+Armazenamento
+destino das gravações, quadros e anexos
+MinIO · S3 compatível
+principal · Luanda
+✓ 1,84 TB
+Nextcloud
+réplica nocturna
+✓
+Google Drive
+partilha externa
+ligado
+Endpoint
+https://s3.delonix.local:9000
+Bucket
+delonix-rec
+API key
+AKIA••••••4F2Q
+ver
+⇄
+Webhooks
+4 eventos activos
+URL de destino
+https://erp.delonix.co.ao/hooks/meet
+Segredo de assinatura
+whsec_••••••••9dK1
+rodar
+Eventos
+✓
+meeting.started
+✓
+recording.ready
+✓
+stream.published
+✓
+participant.joined
+whiteboard.saved
+Últimas entregas
+24 h · 1 falha
+Reenviar falhas
+HORA (WAT)
+EVENTO
+ESTADO
+LATÊNCIA
+TENTATIVAS
+{{ l.time }}
+{{ l.event }}
+{{ l.code }}
+{{ l.ms }}
+{{ l.tries }}

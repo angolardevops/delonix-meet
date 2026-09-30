@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ff5a60;text-decoration:none}a:hover{color:#fff}@keyframes dm-pulse{0%,100%{opacity:1}50%{opacity:.4}}</style></helmet>
+<div style="--surface:#0d0d0f;--raised:#17171a;--stage:#000000;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--live:#f0a32e;--record:#d41f27;--success:#2f9e6a;--danger:#d41f27;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;background:var(--stage);color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex;flex-direction:column">
+
+  <div style="height:54px;flex:none;box-sizing:border-box;padding:0 20px;display:flex;align-items:center;gap:11px;background:var(--surface);border-bottom:1px solid var(--live)">
+    <div style="width:22px;height:22px;color:var(--accent);flex:none;display:flex">
+      <svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path></svg>
+    </div>
+    <div style="font-size:13px;font-weight:600">Aula aberta — Redes SIP para operadores</div>
+    <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);padding:3px 8px;border-radius:2px;background:var(--raised);border:1px solid var(--border)">01:12:06</div>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:2px;border:1px solid var(--record);background:rgba(212,31,39,.14);font-family:'DM Mono',monospace;font-size:9.5px;font-weight:500;color:#ff8e8e"><span style="width:6px;height:6px;border-radius:50%;background:var(--record)"></span>GRAVAÇÃO LOCAL CONTINUA</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:2px;border:1px solid var(--live);background:rgba(240,163,46,.14);font-family:'DM Mono',monospace;font-size:9.5px;font-weight:500;color:#ffc978;animation:dm-pulse 1.8s ease-in-out infinite">▲ EMISSÃO INTERROMPIDA · 00:48</span>
+    <div style="flex:1"></div>
+    <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">a repor sozinho · tentativa 3 de 8</div>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 380px;overflow:hidden">
+
+    <div style="padding:16px 18px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px;min-width:0;overflow:hidden">
+
+      <div style="flex:none;padding:15px 17px;border-radius:3px;border:1px solid var(--live);background:rgba(240,163,46,.08);display:flex;align-items:flex-start;gap:14px">
+        <div style="width:34px;height:34px;flex:none;border-radius:50%;border:1px solid var(--live);display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--live)">▲</div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:7px">
+          <div style="font-size:16px;font-weight:600;letter-spacing:-.2px">A ligação caiu. Continue a falar — nada se perdeu.</div>
+          <div style="font-size:12.5px;line-height:1.65;color:#d6d6da;max-width:640px;text-wrap:pretty">A gravação em 4K está a ser escrita no disco local e não parou. Quando a rede voltar, os <strong style="font-weight:600;color:var(--text)">48 segundos</strong> que os espectadores perderam são enviados em diferido e a emissão retoma no ponto certo, sem corte na gravação final.</div>
+          <div style="display:flex;gap:8px;padding-top:3px">
+            <div style="padding:8px 14px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-size:11.5px;font-weight:600">Repor agora</div>
+            <div style="padding:8px 14px;border-radius:2px;border:1px solid var(--border);background:var(--raised);font-size:11.5px;font-weight:600;color:var(--muted)">Baixar para 1080p</div>
+            <div style="padding:8px 14px;border-radius:2px;border:1px solid var(--danger);background:var(--raised);font-size:11.5px;font-weight:600;color:#ff8e8e">Terminar emissão e ficar só a gravar</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+        <sc-for list="{{ health }}" as="h" hint-placeholder-count="3">
+          <div style="padding:13px;border-radius:3px;border:1px solid {{ h.ring }};background:{{ h.bg }};display:flex;flex-direction:column;gap:9px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:7px;height:7px;flex:none;border-radius:50%;background:{{ h.fg }}"></span>
+              <span style="font-size:11.5px;font-weight:600">{{ h.label }}</span>
+              <span style="margin-left:auto;font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:{{ h.fg }}">{{ h.state }}</span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:6px">
+              <span style="font-family:'Archivo Black',sans-serif;font-size:19px;letter-spacing:-.4px;color:{{ h.fg }}">{{ h.value }}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">{{ h.unit }}</span>
+            </div>
+            <div style="font-size:10.5px;line-height:1.5;color:var(--muted)">{{ h.note }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="flex:1;min-height:0;background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:11px;overflow:hidden">
+        <div style="display:flex;align-items:baseline;gap:9px">
+          <div style="font-size:12.5px;font-weight:600">O que aconteceu, minuto a minuto</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">este registo fica anexo à gravação</div>
+        </div>
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto">
+          <sc-for list="{{ timeline }}" as="t" hint-placeholder-count="7">
+            <div style="display:grid;grid-template-columns:62px 18px minmax(0,1fr) 108px;gap:11px;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--border)">
+              <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">{{ t.at }}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;color:{{ t.fg }}">{{ t.glyph }}</span>
+              <span style="min-width:0">
+                <span style="display:block;font-size:11.5px;font-weight:{{ t.weight }};color:{{ t.labelFg }}">{{ t.label }}</span>
+                <sc-if value="{{ t.detail }}" hint-placeholder-val="{{ false }}"><span style="display:block;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);margin-top:2px">{{ t.detail }}</span></sc-if>
+              </span>
+              <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:{{ t.fg }};text-align:right">{{ t.tag }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <div style="border-left:1px solid var(--border);background:var(--surface);padding:16px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px;overflow:auto">
+
+      <div style="display:flex;flex-direction:column;gap:9px">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <div style="font-size:12.5px;font-weight:600">Destinos</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);margin-left:auto">{{ destinationSummary }}</div>
+        </div>
+        <sc-for list="{{ destinations }}" as="d" hint-placeholder-count="5">
+          <div style="padding:10px;border-radius:3px;border:1px solid {{ d.ring }};background:{{ d.bg }};display:flex;flex-direction:column;gap:7px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:24px;height:24px;flex:none;border-radius:2px;background:var(--stage);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:7.5px;font-weight:500;color:var(--muted)">{{ d.tag }}</span>
+              <span style="flex:1;min-width:0;font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ d.name }}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:{{ d.fg }}">{{ d.state }}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden"><span style="display:block;height:100%;width:{{ d.bar }};background:{{ d.fg }}"></span></span>
+              <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ d.detail }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:12px;border-radius:3px;border:1px solid var(--record);background:rgba(212,31,39,.08);display:flex;flex-direction:column;gap:9px">
+        <div style="display:flex;align-items:center gap:7px;display:flex;gap:7px;align-items:center">
+          <span style="width:7px;height:7px;border-radius:50%;background:var(--record);flex:none"></span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;font-weight:500;color:#ff8e8e">O QUE ESTÁ SEGURO</span>
+        </div>
+        <sc-for list="{{ safe }}" as="s" hint-placeholder-count="4">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--success);flex:none">✓</span>
+            <span style="flex:1;min-width:0;font-size:11px;line-height:1.5">{{ s.label }}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted);flex:none">{{ s.value }}</span>
+          </div>
+        </sc-for>
+        <div style="height:1px;background:var(--border)"></div>
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--live);flex:none">▲</span>
+          <span style="flex:1;font-size:11px;line-height:1.5;color:var(--muted)">Espaço em disco dá para <strong style="color:var(--text);font-weight:600">3 h 40 min</strong> a 2160p. Se a rede não voltar, continua a gravar.</span>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:9px">
+        <div style="font-size:12.5px;font-weight:600">Quem perdeu o quê</div>
+        <sc-for list="{{ audience }}" as="a" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:3px;border:1px solid var(--border);background:var(--raised)">
+            <span style="width:22px;height:22px;flex:none;border-radius:2px;background:{{ a.chipBg }};color:{{ a.chipFg }};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700">{{ a.code }}</span>
+            <span style="flex:1;min-width:0">
+              <span style="display:block;font-size:11px;font-weight:600">{{ a.label }}</span>
+              <span style="display:block;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ a.detail }}</span>
+            </span>
+            <span style="font-family:'DM Mono',monospace;font-size:9.5px;color:{{ a.fg }}">{{ a.count }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="margin-top:auto;padding:12px;border-radius:3px;background:var(--raised);border:1px solid var(--border);display:flex;flex-direction:column;gap:7px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.5px;color:var(--muted)">COMO FUNCIONA</div>
+        <div style="font-size:10.5px;line-height:1.6;color:var(--muted)">A gravação nunca depende da rede: escreve primeiro em disco, e só depois sobe. É por isso que uma queda de linha custa espectadores, mas nunca custa a aula.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+/* Modo de recuperação: a decisão de desenho é que a gravação e a emissão são
+   independentes. A gravação escreve em disco primeiro (nunca depende da rede);
+   a emissão é um consumidor dessa gravação. Daí o ecrã poder dizer, com
+   verdade, «continue a falar». */
+
+const HEALTH = [
+  ['Gravação local', 'A ESCREVER', 'var(--record)', '2160p', '· 51,4 GB', 'Disco local do nó de Luanda. Não usa rede.', true],
+  ['Ligação à Internet', 'INSTÁVEL', 'var(--live)', '0,4', 'Mbps ↑', 'Caiu de 24 Mbps. A reagendar envio a cada 15 s.', false],
+  ['Sala e participantes', 'ESTÁVEL', 'var(--success)', '11', 'na sala', 'A rede local não foi afectada. Ninguém saiu.', false]
+];
+
+const TIMELINE = [
+  ['01:11:18', '●', 'var(--success)', 'Emissão estável em quatro destinos', '6 800 kbps · 1 284 espectadores', 'NORMAL', false],
+  ['01:11:22', '▲', 'var(--live)', 'Perda de pacotes acima de 4%', 'a reduzir bitrate automaticamente', 'AVISO', false],
+  ['01:11:26', '✕', 'var(--danger)', 'Ligação de saída perdida', 'o SBC manteve-se; só a saída pública caiu', 'FALHA', true],
+  ['01:11:26', '●', 'var(--record)', 'Gravação local continuou sem interrupção', 'nenhum fotograma perdido', 'SEGURO', true],
+  ['01:11:41', '↻', 'var(--live)', 'Primeira tentativa de reposição', 'falhou · 15 s até à seguinte', 'A REPOR', false],
+  ['01:12:02', '↻', 'var(--live)', 'Segunda tentativa de reposição', 'falhou · a aguardar', 'A REPOR', false],
+  ['01:12:06', '↻', 'var(--live)', 'Terceira tentativa em curso', 'vai enviar 48 s em diferido quando ligar', 'AGORA', true]
+];
+
+const DESTINATIONS = [
+  ['YT', 'YouTube · Delonix', 'EM ESPERA', 'var(--live)', '18%', '842 em espera'],
+  ['FB', 'Facebook · Página', 'EM ESPERA', 'var(--live)', '18%', '311 em espera'],
+  ['LI', 'LinkedIn · Empresa', 'PERDIDO', 'var(--danger)', '0%', 'reconectar à mão'],
+  ['SRV', 'Servidor interno · RTMP', 'NO AR', 'var(--success)', '92%', '35 sessões · rede local'],
+  ['REC', 'Disco local · MinIO', 'A GRAVAR', 'var(--record)', '100%', '2160p · sem rede']
+];
+
+const SAFE = [
+  ['Vídeo e áudio da sessão inteira', '01:12:06'],
+  ['Faixas separadas por fonte e por voz', '6 faixas'],
+  ['Chat, sondagens e perguntas', '84 mensagens'],
+  ['Quadro branco e slides partilhados', '4 páginas']
+];
+
+const AUDIENCE = [
+  ['SRV', '#1e5a66', '#fff', 'Na sala e na rede local', 'não notaram nada', '11', 'var(--success)'],
+  ['PUB', '#7a5a1e', '#fff', 'Espectadores públicos', 'ecrã de espera há 48 s', '1 153', 'var(--live)'],
+  ['TEL', '#2f4a7a', '#fff', 'Por telefone e WhatsApp', 'áudio não foi afectado', '4', 'var(--success)']
+];
+
+class Component extends DCLogic {
+  renderVals() {
+    const live = DESTINATIONS.filter(([, , s]) => s === 'NO AR' || s === 'A GRAVAR').length;
+    const waiting = DESTINATIONS.filter(([, , s]) => s === 'EM ESPERA').length;
+    const lost = DESTINATIONS.filter(([, , s]) => s === 'PERDIDO').length;
+
+    return {
+      destinationSummary: live + ' a salvo · ' + waiting + ' em espera · ' + lost + ' perdido',
+
+      health: HEALTH.map(([label, state, fg, value, unit, note, critical]) => ({
+        label, state, fg, value, unit, note,
+        ring: critical ? 'var(--record)' : fg === 'var(--live)' ? 'var(--live)' : 'var(--border)',
+        bg: critical ? 'rgba(212,31,39,.08)' : fg === 'var(--live)' ? 'rgba(240,163,46,.07)' : 'var(--surface)'
+      })),
+
+      timeline: TIMELINE.map(([at, glyph, fg, label, detail, tag, strong]) => ({
+        at, glyph, fg, label, detail, tag,
+        weight: strong ? '600' : '500',
+        labelFg: strong ? 'var(--text)' : '#d6d6da'
+      })),
+
+      destinations: DESTINATIONS.map(([tag, name, state, fg, bar, detail]) => ({
+        tag, name, state, fg, bar, detail,
+        ring: state === 'PERDIDO' ? 'var(--danger)' : state === 'A GRAVAR' ? 'var(--record)' : 'var(--border)',
+        bg: state === 'A GRAVAR' ? 'rgba(212,31,39,.07)' : 'var(--raised)'
+      })),
+
+      safe: SAFE.map(([label, value]) => ({ label, value })),
+
+      audience: AUDIENCE.map(([code, chipBg, chipFg, label, detail, count, fg]) => ({
+        code, chipBg, chipFg, label, detail, count, fg
+      }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

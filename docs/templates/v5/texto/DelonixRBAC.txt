@@ -1,0 +1,42 @@
+Papéis e permissões
+EMPRESARIAL
+7 papéis · 142 utilizadores · alterações registadas na auditoria
+Simular utilizador
+Novo papel
+PAPÉIS
+{{ r.name }}
+{{ r.count }}
+{{ r.scope }}
+🔒 papel do sistema
++
+Duplicar um papel
+Matriz de permissões
+✓ permitido · ⊘ negado · ⇡ herdado · ⚑ requer aprovação
+Exportar CSV
+CAPACIDADE
+{{ c.label }}
+{{ row.label }}
+{{ row.note }}
+{{ cell.glyph }}
+Gestor de emissão
+14 pessoas
+Conduz emissões públicas e gere destinos, mas não pode apagar gravações nem mexer em utilizadores.
+ÂMBITO
+Departamento · Comunicação
+▾
+O papel só se aplica às salas deste departamento. Fora dele, a pessoa é Membro.
+ATRIBUIÇÃO AUTOMÁTICA
+Grupo do Odoo → papel
+delonix_comunicacao_emissao
+✓ 14 de 14 sincronizados
+Quem entra no grupo recebe o papel; quem sai perde-o na sincronização seguinte.
+LIMITES DO PAPEL
+{{ l.label }}
+{{ l.value }}
+▲ SEGREGAÇÃO DE FUNÇÕES
+Três pessoas acumulam este papel e Administração, o que permite emitir e apagar o próprio registo. Reveja ou aceite com justificação.
+Ver as três
+Aceitar risco
+Duplicar papel
+Eliminar papel
+Última alteração: Bento Quissanga · 12 Set 08:55

@@ -1,0 +1,41 @@
+Reunião de obra — Empreitada Talatona
+00:18:42
+REC 1080p
+{{ presence }}
+Adicionar por número
+COMO CADA PESSOA ESTÁ LIGADA
+{{ l.code }}
+{{ l.label }} · {{ l.count }}
+{{ t.glyph }}
+{{ t.initials }}
+{{ t.code }}
+{{ t.channel }}
+{{ t.flag }}
+⊘
+◉
+{{ t.name }}
+Silenciado
+Câmara
+Partilhar
+Convidar
+Sair
+Adicionar à reunião
++244 923 ***
+{{ a.code }}
+{{ a.label }}
+{{ a.cost }}
+O convidado recebe o aviso de gravação antes de entrar, no canal por onde for chamado.
+Por telefone e WhatsApp
+{{ railCount }}
+{{ e.code }}
+{{ e.name }}
+{{ e.number }}
+{{ e.state }}
+{{ e.meta }}
+{{ e.action }}
+▲ O QUE MUDA FORA DA APP
+Quem entra por telefone ou WhatsApp não vê o ecrã partilhado nem o quadro, e não recebe legendas. Ouve a mistura de áudio e é ouvido — nada mais. A sala mostra-o sempre com o crachá do canal, para ninguém assumir que está a ver o mesmo.
+CUSTO DESTA SESSÃO
+612
+Kz · {{ costLine }}
+O WhatsApp não tem custo por minuto; a chamada de voz internacional é a mais cara da sala.

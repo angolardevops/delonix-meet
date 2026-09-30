@@ -1,0 +1,52 @@
+Estúdio de TV · cena completa
+01:12:44
+REC · 4 ISO + PGM
+AO VIVO · 1 284
+cena «entrevista» · CPU 38% · GPU 44%
+Cenas
+Terminar emissão
+FONTES
+{{ s.num }}
+{{ s.tally }}
+{{ s.name }}
+{{ s.num }}
+3 telefones · 1 câmara
+Tudo ligado por USB ao mesmo PC.
+PROGRAMA
+CAM 2 · apresentadora
+00:41
+Ana Mbala
+directora de tecnologia
+DELONIX · AO VIVO
+PRÉ
+CAM 3 · convidado
+3
+Transição
+CORTAR
+AUTO 0,6 s
+T-bar 38%
+{{ k.name }}
+Som
+−15,8 LUFS
+16 canais
+{{ f.name }}
+Luz
+cena «entrevista»
+Art-Net ok
+{{ s.name }}
+{{ l.name }}
+{{ l.proto }}
+{{ l.level }}
+{{ l.cct }}
+realce de rosto ligado
+brancos alinhados · 3 câmaras
+Alinhamento
+{{ r.num }}
+{{ r.name }}
+{{ r.dur }}
+{{ r.note }}
+Destinos
+YouTube · Facebook · RTMP próprio
+Delonix Web · sala interna
+Tudo num PC
+Corte, som, luz e gravação por câmara na mesma janela — sem mesa de vídeo nem estação dedicada.

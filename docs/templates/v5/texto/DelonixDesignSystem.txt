@@ -1,0 +1,103 @@
+Sistema de Design
+theme: light
+TOKENS DE COR
+surface
+#F4F4F5
+surface-raised
+#FFFFFF
+stage
+#000000 · fixo
+border
+#DEDEE1
+text-primary
+#0B0B0C · 15.4:1
+text-muted
+#5C5C63 · 5.2:1
+accent
+#AD1017 · 7.7:1
+accent-strong
+#8A0C12 · 11.2:1
+live
+#A85B00 · âmbar
+record · danger
+#AD1017 · REC/erro
+success
+#1E7A4A · 5.4:1
+ESCALA TIPOGRÁFICA · ARCHIVO / ARCHIVO BLACK
+display / Archivo Black
+REUNIÕES SEM FRICÇÃO
+title / 17·600
+Arquitectura de Voz
+body / 12.5·400
+Emissão simultânea para cinco destinos.
+mono / 11·500
+01:24:07 · 6 800 kbps · 1 284
+BOTÕES · ESTADOS
+Iniciar agora
+Pressionado
+Agendar
+Entrar com código
+Terminar
+Inactivo
+Focado
+RAIOS (2 · 4 · 8) · ELEVAÇÕES · ESPAÇAMENTO
+r-2
+r-4
+r-8
+full
+e-1
+e-2
+e-3
+4
+8
+14
+24
+Tema escuro · palco
+theme: dark
+surface
+#0D0D0F
+surface-raised
+#17171A
+border
+#2A2A2E
+text-primary
+#F2F2F3 · 15.9:1
+text-muted
+#9A9AA0 · 6.7:1
+accent
+#FF5A60 · 5.8:1
+live
+#F0A32E
+record · danger
+#D41F27
+success
+#2F9E6A · 5.2:1
+BADGES DE ESTADO · COR + ÍCONE/TEXTO
+REC 4K
+AO VIVO · 1 284
+▲
+LIGAÇÃO FRACA
+⊘
+SILENCIADO
+✓
+LIGADO
+COMPONENTES-BASE
+participant-tile
+Teresa Kiala
+✋
+stream-destination-card
+YT
+YouTube · Delonix
+✓ 6 800 kbps
+form-field
+Título da sessão
+Formação — Arquitectura de Voz
+control-bar
+🎙
+🎥
+⬆
+✕
+MARCA · DELONIX (NGOLACLOUD)
+DelonixMeet
+Símbolo: flor de Delonix como antenas de rede, anéis de sinal e o mundo ao centro.
+Vermelho #AD1017 sobre preto #000000 · família NgolaCloud / PluralSIS #BE1622.

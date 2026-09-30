@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#8a0c12;text-decoration:none}a:hover{color:#ad1017}</style></helmet>
+<div style="--surface:#f4f4f5;--raised:#ffffff;--stage:#000000;--border:#dedee1;--text:#0b0b0c;--muted:#5c5c63;--accent:#ad1017;--accent-strong:#8a0c12;--live:#a85b00;--record:#ad1017;--success:#1e7a4a;--warning:#a85b00;--danger:#ad1017;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;display:flex;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif">
+  <dc-import name="DelonixNav" active="admin" hint-size="228px,900px"></dc-import>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:58px;flex:none;box-sizing:border-box;padding:0 22px;display:flex;align-items:center;gap:11px;background:var(--raised);border-bottom:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:600">Consola de administração</div>
+      <div style="display:flex;gap:3px;padding:3px;border-radius:2px;background:var(--surface);border:1px solid var(--border)">
+        <div style="padding:4px 11px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:10.5px;font-weight:600">On-Premise</div>
+        <div style="padding:4px 11px;border-radius:2px;font-size:10.5px;color:var(--muted)">SaaS</div>
+      </div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">cluster lad-01 · 3 nós · v2.4.1</div>
+      <div style="flex:1"></div>
+      <div style="padding:7px 13px;border-radius:2px;border:1px solid var(--border);font-size:12px;font-weight:600">Exportar auditoria</div>
+      <div style="padding:7px 13px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:12px;font-weight:600">Nova organização</div>
+    </div>
+
+    <div style="flex:1;min-height:0;padding:16px 22px;box-sizing:border-box;display:flex;flex-direction:column;gap:13px;overflow:hidden">
+
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:11px">
+        <sc-for list="{{ nodes }}" as="n" hint-placeholder-count="4">
+          <div style="background:var(--raised);border:1px solid {{ n.ring }};border-radius:3px;padding:12px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;gap:7px">
+              <div style="width:7px;height:7px;border-radius:50%;background:{{ n.fg }};flex:none"></div>
+              <div style="font-size:11.5px;font-weight:600">{{ n.name }}</div>
+              <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:{{ n.fg }}">{{ n.state }}</div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ n.host }}</div>
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)"><span>CPU</span><span>{{ n.cpu }}</span></div>
+              <div style="height:5px;border-radius:2px;background:var(--surface)"><div style="width:{{ n.cpu }};height:100%;border-radius:2px;background:{{ n.fg }}"></div></div>
+              <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)"><span>{{ n.metricLabel }}</span><span>{{ n.metric }}</span></div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:1fr 392px;gap:13px;overflow:hidden">
+        <div style="display:flex;flex-direction:column;gap:13px;min-width:0;overflow:hidden">
+          <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:11px">
+            <div style="display:flex;align-items:baseline;gap:9px"><div style="font-size:12.5px;font-weight:600">Organizações e licenças</div><div style="flex:1"></div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">4 organizações · 300 lugares</div></div>
+            <div style="border:1px solid var(--border);border-radius:2px;overflow:hidden">
+              <div style="display:grid;grid-template-columns:1fr 92px 100px 118px 96px;gap:10px;padding:7px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.5px;color:var(--muted)"><div>ORGANIZAÇÃO</div><div>LUGARES</div><div>PLANO</div><div>RENOVAÇÃO</div><div>ESTADO</div></div>
+              <sc-for list="{{ orgs }}" as="o" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:1fr 92px 100px 118px 96px;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);align-items:center">
+                  <div style="min-width:0"><div style="font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ o.name }}</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">{{ o.region }}</div></div>
+                  <div style="font-family:'DM Mono',monospace;font-size:10.5px;font-variant-numeric:tabular-nums">{{ o.seats }}</div>
+                  <div style="font-size:10.5px">{{ o.plan }}</div>
+                  <div style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--muted)">{{ o.renew }}</div>
+                  <div><span style="font-family:'DM Mono',monospace;font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:2px;border:1px solid {{ o.fg }};color:{{ o.fg }}">{{ o.state }}</span></div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="flex:1;min-height:0;background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+            <dc-import name="DelonixListControls" context="audit" open="fechado" facets="filtro:Últimos 7 dias|grupo:Acção" summary="142 de 618 · filtrado por período, agrupado por acção" hint-size="100%,84px"></dc-import>
+            <div style="display:flex;align-items:baseline;gap:9px"><div style="font-size:12.5px;font-weight:600">Registo de auditoria</div><div style="flex:1"></div><div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">retido 5 anos · imutável</div></div>
+            <div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:1px;overflow:hidden">
+              <sc-for list="{{ audit }}" as="a" hint-placeholder-count="8">
+                <div style="display:grid;grid-template-columns:126px 150px 1fr;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);align-items:baseline">
+                  <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums">{{ a.time }}</div>
+                  <div style="font-size:10.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.who }}</div>
+                  <div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.what }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:13px;overflow:hidden">
+          <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:10px">
+            <div style="font-size:12.5px;font-weight:600">Armazenamento</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="height:9px;border-radius:2px;background:var(--surface);overflow:hidden;display:flex"><div style="width:52%;background:var(--accent)"></div><div style="width:18%;background:var(--accent-strong)"></div><div style="width:9%;background:var(--live)"></div></div>
+              <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:10px;color:var(--muted)">
+                <div style="display:flex;align-items:center;gap:5px"><div style="width:8px;height:8px;border-radius:2px;background:var(--accent)"></div>Gravações 1,30 TB</div>
+                <div style="display:flex;align-items:center;gap:5px"><div style="width:8px;height:8px;border-radius:2px;background:var(--accent-strong)"></div>Transcrições 0,45 TB</div>
+                <div style="display:flex;align-items:center;gap:5px"><div style="width:8px;height:8px;border-radius:2px;background:var(--live)"></div>Em processamento 0,22 TB</div>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)">1,97 TB de 2,50 TB · MinIO lad-stor-01</div>
+            </div>
+          </div>
+
+          <div style="background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:9px">
+            <div style="font-size:12.5px;font-weight:600">Políticas de retenção</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border)"><div style="flex:1;font-size:11px">Gravações de reuniões</div><span style="font-family:'DM Mono',monospace;font-size:10.5px;font-weight:600">90 dias</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border)"><div style="flex:1;font-size:11px">Videoaulas publicadas</div><span style="font-family:'DM Mono',monospace;font-size:10.5px;font-weight:600">sem limite</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border)"><div style="flex:1;font-size:11px">Chat e sondagens</div><span style="font-family:'DM Mono',monospace;font-size:10.5px;font-weight:600">180 dias</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:2px;background:var(--surface);border:1px solid var(--border)"><div style="flex:1;font-size:11px">Registo de auditoria</div><span style="font-family:'DM Mono',monospace;font-size:10.5px;font-weight:600">5 anos</span></div>
+            </div>
+          </div>
+
+          <div style="background:var(--raised);border:1px solid var(--accent);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:9px">
+            <div style="display:flex;align-items:center;gap:8px"><div style="font-size:12.5px;font-weight:600">Residência de dados</div><span style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;padding:2px 6px;border-radius:2px;border:1px solid var(--success);color:var(--accent-strong);margin-left:auto">✓ CONFORME</span></div>
+            <div style="display:flex;flex-direction:column;gap:5px;font-size:10.5px;color:var(--muted);line-height:1.5">
+              <div style="display:flex;gap:7px"><span style="color:var(--success)">✓</span><span>Média, gravações e transcrições em Luanda (AO-LAD).</span></div>
+              <div style="display:flex;gap:7px"><span style="color:var(--success)">✓</span><span>Sem transferência para fora do território — Lei 22/11.</span></div>
+              <div style="display:flex;gap:7px"><span style="color:var(--warning)">▲</span><span>Google Drive activo para partilha externa: saída consentida por utilizador.</span></div>
+            </div>
+          </div>
+
+          <div style="margin-top:auto;background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:12.5px;font-weight:600">Capacidade de sessões</div>
+            <div style="display:flex;align-items:flex-end;gap:3px;height:44px">
+              <div style="flex:1;height:32%;background:var(--accent);border-radius:2px"></div>
+              <div style="flex:1;height:48%;background:var(--accent);border-radius:2px"></div>
+              <div style="flex:1;height:74%;background:var(--accent);border-radius:2px"></div>
+              <div style="flex:1;height:96%;background:var(--accent-strong);border-radius:2px"></div>
+              <div style="flex:1;height:82%;background:var(--accent);border-radius:2px"></div>
+              <div style="flex:1;height:58%;background:var(--accent);border-radius:2px"></div>
+              <div style="flex:1;height:40%;background:var(--accent);border-radius:2px"></div>
+              <div style="flex:1;height:26%;background:var(--accent);border-radius:2px"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)"><span>08h — 18h WAT</span><span>pico 41 sessões</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const N = [
+  ['Nó de média','media-01.lad','SAUDÁVEL','#1e7a4a','#dedee1','62%','Sessões','41 / 80'],
+  ['Nó SIP','sip-01.lad','SAUDÁVEL','#1e7a4a','#dedee1','38%','Chamadas','12 / 60'],
+  ['Nó de gravação','rec-01.lad','SAUDÁVEL','#1e7a4a','#dedee1','71%','Escritas','6 em 4K'],
+  ['Transcodificação','trans-01.lad','SOB CARGA','#a85b00','#a85b00','91%','Fila','3 tarefas']
+];
+const O = [
+  ['Delonix Angola, Lda','Luanda · AO','142 / 150','Empresarial','12 Jan 2027','ACTIVA','#1e7a4a'],
+  ['Instituto Médio de Telecom.','Luanda · AO','86 / 100','Educação','30 Set 2026','ACTIVA','#1e7a4a'],
+  ['Delonix Namíbia (Pty)','Windhoek · NA','38 / 40','Empresarial','04 Mar 2027','ACTIVA','#1e7a4a'],
+  ['Parceiro Moçambique','Maputo · MZ','8 / 10','Avaliação','28 Set 2026','A EXPIRAR','#a85b00']
+];
+const A = [
+  ['14 Set 09:38:04','Ana Mbala','iniciou sessão voz-arq-2026 com gravação 4K'],
+  ['14 Set 09:12:51','Bento Quissanga','alterou política de retenção de chat para 180 dias'],
+  ['13 Set 18:40:12','sistema','rodou segredo de webhook whsec_…9dK1'],
+  ['13 Set 17:44:11','sistema','falha de entrega stream.published para rtmp://parceiro.ao'],
+  ['13 Set 15:02:37','Rita Domingas','exportou registo de auditoria (CSV, 1 284 linhas)'],
+  ['12 Set 11:20:08','Ana Mbala','concedeu papel de co-anfitrião a Paulo Sebastião'],
+  ['12 Set 08:55:44','Bento Quissanga','ligou destino de emissão LinkedIn · Empresa'],
+  ['11 Set 19:31:02','sistema','réplica nocturna para Nextcloud concluída (412 GB)']
+];
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      nodes: N.map(([name, host, state, fg, ring, cpu, metricLabel, metric]) => ({ name, host, state, fg, ring, cpu, metricLabel, metric })),
+      orgs: O.map(([name, region, seats, plan, renew, state, fg]) => ({ name, region, seats, plan, renew, state, fg })),
+      audit: A.map(([time, who, what]) => ({ time, who, what }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

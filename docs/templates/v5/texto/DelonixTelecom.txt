@@ -1,0 +1,74 @@
+Telefonia, SIP e SMS
+SBC SAUDÁVEL
+36 de 120 canais · 4 operadoras · jitter 6 ms
+Plano de marcação
+Novo tronco SIP
+Operadoras ligadas
+a ordem define o encaminhamento; arraste para mudar
+{{ c.tag }}
+{{ c.name }}
+{{ c.order }}
+{{ c.host }}
+{{ c.state }}
+canais
+{{ c.channels }}
+PREFIXOS
+{{ c.prefixes }}
+CUSTO/MIN
+{{ c.cost }}
+ASR
+{{ c.asr }}
+Plano de marcação
+a primeira regra que casar é a que vale
+Testar número
+#
+PADRÃO
+DESTINO
+OPERADORA
+RESERVA
+GRAVA
+{{ d.n }}
+{{ d.pattern }}
+{{ d.target }}
+{{ d.carrier }}
+{{ d.fallback }}
+{{ d.rec }}
+Envio de SMS
+convites, PIN da sala e alertas de emissão
+Emparelhar aparelho
+{{ g.icon }}
+{{ g.name }}
+{{ g.via }}
+{{ g.state }}
+hoje
+{{ g.today }}
+{{ g.metaLabel }}
+{{ g.meta }}
+{{ g.note }}
+Registo SIP
+{{ s.k }}
+{{ s.v }}
+Ver credenciais
+Reiniciar registo
+Teste rápido
++244 923 447 108
+Ligar agora
+Enviar SMS
+O último teste ligou por Unitel em 780 ms e o SMS chegou em 4 s pelo aparelho da recepção.
+Chamadas externas
+últimas 24 h
+{{ r.dir }}
+{{ r.number }}
+{{ r.meta }}
+{{ r.dur }}
+Consumo do mês
+184 620
+Kz · 4 812 min
+Unitel
+62%
+Africell
+21%
+Movicel
+11%
+Internacional
+6%

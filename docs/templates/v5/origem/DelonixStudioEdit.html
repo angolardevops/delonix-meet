@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#e8232b;text-decoration:none}a:hover{color:#ff5a5f}</style></helmet>
+<div style="--surface:#0d0d0f;--raised:#17171a;--stage:#000000;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--live:#f0a32e;--record:#d41f27;--success:#2f9e6a;--warning:#f0a32e;--danger:#d41f27;width:1440px;height:900px;box-sizing:border-box;overflow:hidden;background:var(--surface);color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex;flex-direction:column">
+
+  <div style="height:48px;flex:none;box-sizing:border-box;padding:0 16px;display:flex;align-items:center;gap:10px;background:var(--raised);border-bottom:1px solid var(--border)">
+    <div style="width:24px;height:24px;color:var(--accent);flex:none"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path></svg></div>
+    <div style="font-family:'Archivo Black',sans-serif;font-size:12px;letter-spacing:-0.2px">STUDIO</div>
+    <div style="width:1px;height:20px;background:var(--border)"></div>
+    <div style="font-size:12.5px;font-weight:600">Arquitectura de Voz Delonix — sessão 3</div>
+    <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">4K · 48:12 · projecto edit_8841</div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:10px;color:var(--success)">✓ guardado há 12 s</div>
+    <div style="padding:6px 12px;border-radius:2px;border:1px solid var(--border);font-size:11.5px;font-weight:600;color:var(--muted)">Desfazer</div>
+    <div style="padding:6px 12px;border-radius:2px;border:1px solid var(--border);font-size:11.5px;font-weight:600;color:var(--muted)">Pré-visualizar</div>
+    <div style="padding:6px 14px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:11.5px;font-weight:600">Exportar</div>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:208px 1fr 304px;overflow:hidden">
+
+    <div style="background:var(--raised);border-right:1px solid var(--border);padding:11px 10px;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;overflow:hidden">
+      <div style="display:flex;gap:3px;padding:3px;border-radius:2px;background:var(--surface);border:1px solid var(--border)">
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:10px;font-weight:600">Fontes</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10px;color:var(--muted)">Marca</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10px;color:var(--muted)">Som</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:7px;min-height:0">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.6px">GRAVAÇÃO DA SESSÃO</div>
+        <sc-for list="{{ bin }}" as="b" hint-placeholder-count="6">
+          <div style="display:flex;align-items:center;gap:8px;padding:5px;border-radius:2px;border:1px solid {{ b.ring }};background:{{ b.bg }}">
+            <div style="width:44px;height:26px;flex:none;border-radius:2px;background:{{ b.grad }};display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:8px;color:#fff">{{ b.tag }}</div>
+            <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ b.name }}</div><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">{{ b.meta }}</div></div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:6px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.6px">IA NO BROWSER</div>
+        <div style="padding:9px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:10.5px;font-weight:600">Remover silêncios</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">34 cortes · poupa 04:12</div>
+          <div style="padding:5px;border-radius:2px;background:var(--accent-strong);color:#fff;text-align:center;font-size:10px;font-weight:600">Aplicar cortes</div>
+        </div>
+        <div style="padding:9px;border-radius:2px;border:1px solid var(--border);display:flex;flex-direction:column;gap:5px">
+          <div style="font-size:10.5px;font-weight:600;color:var(--muted)">Palavras de preenchimento</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">18 «pá», 9 «tipo»</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="padding:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:9px;min-width:0;overflow:hidden">
+      <div style="flex:1;min-height:0;border-radius:3px;overflow:hidden;background:var(--stage);border:1px solid var(--border);position:relative">
+        <div style="position:absolute;inset:0;display:grid;grid-template-columns:1.5fr 1fr">
+          <div style="background:linear-gradient(150deg,#7d1a1f,#12080a 78%);display:flex;align-items:center;justify-content:center"><div style="width:84px;height:84px;border-radius:50%;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700">AM</div></div>
+          <div style="background:#0e0e10;border-left:1px solid rgba(242,242,243,.12);padding:18px;display:flex;flex-direction:column;gap:10px">
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;color:var(--accent)">DIAPOSITIVO 14 / 32</div>
+            <div style="font-family:'Archivo Black',sans-serif;font-size:17px;line-height:1.15;letter-spacing:-0.3px">FAILOVER ENTRE SBC</div>
+            <div style="font-size:11px;color:#d6d6da;line-height:1.5">Rota alternativa mantém o PIN da sala</div>
+          </div>
+        </div>
+        <div style="position:absolute;bottom:34px;left:0;right:0;display:flex;justify-content:center"><div style="padding:5px 12px;border-radius:2px;background:rgba(0,0,0,.78);font-size:13px;font-weight:500;max-width:74%;text-align:center">O failover foi corrigido na versão 2.4 do encaminhador.</div></div>
+        <div style="position:absolute;top:10px;left:10px;display:flex;gap:6px"><div style="padding:3px 8px;border-radius:2px;background:rgba(0,0,0,.72);font-family:'DM Mono',monospace;font-size:9px;color:#d6d6da">PRÉ-VISUALIZAÇÃO · 2160p</div><div style="padding:3px 8px;border-radius:2px;background:rgba(0,0,0,.72);font-family:'DM Mono',monospace;font-size:9px;color:#2f9e6a">✓ legendas pt-AO</div></div>
+        <div style="position:absolute;bottom:8px;left:10px;font-family:'DM Mono',monospace;font-size:10px;color:#d6d6da;font-variant-numeric:tabular-nums">00:18:22 / 00:48:12</div>
+        <div style="position:absolute;bottom:8px;right:10px;display:flex;gap:6px;align-items:center"><div style="padding:3px 8px;border-radius:2px;background:rgba(0,0,0,.72);font-family:'DM Mono',monospace;font-size:9px;color:#d6d6da">⟲ 5 s</div><div style="padding:3px 8px;border-radius:2px;background:rgba(0,0,0,.72);font-family:'DM Mono',monospace;font-size:9px;color:#d6d6da">1,0×</div></div>
+      </div>
+
+      <div style="flex:none;display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:2px;background:var(--raised);border:1px solid var(--border)">
+        <sc-for list="{{ tools }}" as="t" hint-placeholder-count="8">
+          <div style="display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:2px;background:{{ t.bg }};border:1px solid {{ t.ring }};color:{{ t.fg }};font-size:10.5px;font-weight:600">
+            <div style="display:flex">{{ t.icon }}</div>{{ t.label }}
+          </div>
+        </sc-for>
+        <div style="flex:1"></div>
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:2px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);font-size:10.5px;font-weight:600;color:var(--accent)">
+          <div style="width:26px;height:14px;border-radius:2px;background:var(--accent);position:relative"><div style="position:absolute;right:2px;top:2px;width:10px;height:10px;border-radius:50%;background:#fff"></div></div>Ripple
+        </div>
+      </div>
+    </div>
+
+    <div style="background:var(--raised);border-left:1px solid var(--border);padding:11px;box-sizing:border-box;display:flex;flex-direction:column;gap:11px;overflow:hidden">
+      <div style="display:flex;gap:3px;padding:3px;border-radius:2px;background:var(--surface);border:1px solid var(--border)">
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;background:var(--accent-strong);color:#fff;font-size:10px;font-weight:600">Corte</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10px;color:var(--muted)">Cor</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10px;color:var(--muted)">Áudio</div>
+        <div style="flex:1;text-align:center;padding:4px;border-radius:2px;font-size:10px;color:var(--muted)">Texto</div>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:7px"><div style="width:8px;height:8px;border-radius:2px;background:var(--accent)"></div><div style="font-size:11px;font-weight:600">V1 · clipe 3 — câmara</div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div style="display:flex;flex-direction:column;gap:3px"><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">ENTRADA</div><div style="padding:6px 8px;border-radius:2px;border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:11px;font-variant-numeric:tabular-nums">00:16:04</div></div>
+          <div style="display:flex;flex-direction:column;gap:3px"><div style="font-family:'DM Mono',monospace;font-size:8.5px;color:var(--muted)">SAÍDA</div><div style="padding:6px 8px;border-radius:2px;border:1px solid var(--accent);font-family:'DM Mono',monospace;font-size:11px;font-variant-numeric:tabular-nums">00:22:41</div></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)"><span>VELOCIDADE</span><span>1,00×</span></div>
+          <div style="height:5px;border-radius:2px;background:var(--border)"><div style="width:40%;height:100%;border-radius:2px;background:var(--accent)"></div></div>
+        </div>
+        <div style="display:flex;gap:6px"><div style="flex:1;text-align:center;padding:6px;border-radius:2px;border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--muted)">Separar áudio</div><div style="flex:1;text-align:center;padding:6px;border-radius:2px;border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--muted)">Congelar frame</div></div>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:600">Correcção de cor</div>
+        <sc-for list="{{ color }}" as="c" hint-placeholder-count="4">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="font-size:9.5px;color:var(--muted);width:58px;flex:none">{{ c.label }}</span>
+            <div style="flex:1;height:4px;border-radius:2px;background:var(--border);position:relative"><div style="position:absolute;left:0;top:0;bottom:0;width:{{ c.v }};border-radius:2px;background:var(--accent)"></div><div style="position:absolute;left:{{ c.v }};top:-4px;width:12px;height:12px;border-radius:50%;background:#fff;margin-left:-6px"></div></div>
+            <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);width:26px;text-align:right;flex:none">{{ c.n }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:10px;border-radius:2px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:7px"><div style="font-size:11px;font-weight:600">Mistura de áudio</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-left:auto">−14 LUFS alvo</div></div>
+        <div style="display:flex;flex-direction:column;gap:7px">
+          <div style="display:flex;align-items:center;gap:7px"><span style="font-size:9.5px;width:44px;flex:none;color:var(--muted)">A1 voz</span><div style="flex:1;height:6px;border-radius:2px;background:var(--border);overflow:hidden"><div style="width:82%;height:100%;background:var(--success)"></div></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">−8</span></div>
+          <div style="display:flex;align-items:center;gap:7px"><span style="font-size:9.5px;width:44px;flex:none;color:var(--muted)">A2 sala</span><div style="flex:1;height:6px;border-radius:2px;background:var(--border);overflow:hidden"><div style="width:34%;height:100%;background:var(--success)"></div></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">−24</span></div>
+          <div style="display:flex;align-items:center;gap:7px"><span style="font-size:9.5px;width:44px;flex:none;color:var(--muted)">A3 dobr.</span><div style="flex:1;height:6px;border-radius:2px;background:var(--border);overflow:hidden"><div style="width:64%;height:100%;background:var(--live)"></div></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">−12</span></div>
+        </div>
+        <div style="display:flex;gap:6px"><div style="flex:1;text-align:center;padding:6px;border-radius:2px;border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--muted)">Reduzir ruído</div><div style="flex:1;text-align:center;padding:6px;border-radius:2px;border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--muted)">Normalizar</div></div>
+      </div>
+
+      <div style="margin-top:auto;padding:10px;border-radius:2px;border:1px solid var(--border);display:flex;flex-direction:column;gap:5px">
+        <div style="font-size:10.5px;font-weight:600">Destino do projecto</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);line-height:1.5">MinIO · delonix-rec/edit_8841<br>webhook recording.ready ao concluir</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height:274px;flex:none;box-sizing:border-box;background:var(--raised);border-top:1px solid var(--border);display:flex;flex-direction:column">
+    <div style="height:34px;flex:none;padding:0 12px;display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--border)">
+      <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:500;font-variant-numeric:tabular-nums">00:18:22:14</div>
+      <div style="display:flex;gap:4px">
+        <div style="width:26px;height:22px;border-radius:2px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted)">⏮</div>
+        <div style="width:26px;height:22px;border-radius:2px;background:var(--accent-strong);color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">⏵</div>
+        <div style="width:26px;height:22px;border-radius:2px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted)">⏭</div>
+      </div>
+      <div style="width:1px;height:18px;background:var(--border)"></div>
+      <div style="display:flex;gap:5px;font-size:10px;color:var(--muted)"><span style="padding:3px 7px;border-radius:2px;border:1px solid var(--border)">Marcador</span><span style="padding:3px 7px;border-radius:2px;border:1px solid var(--border)">Dividir em</span><span style="padding:3px 7px;border-radius:2px;border:1px solid var(--border)">Capítulo</span></div>
+      <div style="flex:1"></div>
+      <div style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:9.5px;color:var(--muted)"><span>ZOOM</span><div style="width:90px;height:4px;border-radius:2px;background:var(--border)"><div style="width:56%;height:100%;border-radius:2px;background:var(--muted)"></div></div><span>4 s/div</span></div>
+    </div>
+
+    <div style="flex:1;min-height:0;display:grid;grid-template-columns:96px 1fr;overflow:hidden">
+      <div style="border-right:1px solid var(--border);display:flex;flex-direction:column">
+        <div style="height:18px;flex:none;border-bottom:1px solid var(--border)"></div>
+        <sc-for list="{{ tracks }}" as="t" hint-placeholder-count="6">
+          <div style="height:{{ t.h }};flex:none;border-bottom:1px solid var(--border);padding:0 9px;display:flex;align-items:center;gap:6px">
+            <div style="font-family:'DM Mono',monospace;font-size:9.5px;font-weight:500;color:{{ t.fg }}">{{ t.id }}</div>
+            <div style="font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.label }}</div>
+            <div style="margin-left:auto;display:flex;gap:3px;font-size:8px;color:var(--muted)">{{ t.flags }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="position:relative;overflow:hidden;background:var(--surface)">
+        <div style="height:18px;border-bottom:1px solid var(--border);display:flex;align-items:center;background:var(--raised)">
+          <sc-for list="{{ ruler }}" as="r" hint-placeholder-count="12">
+            <div style="width:110px;flex:none;border-left:1px solid var(--border);padding-left:4px;font-family:'DM Mono',monospace;font-size:8px;color:var(--muted);font-variant-numeric:tabular-nums">{{ r }}</div>
+          </sc-for>
+        </div>
+
+        <div style="height:52px;border-bottom:1px solid var(--border);position:relative;padding:4px 0;box-sizing:border-box">
+          <div style="position:absolute;left:6px;top:4px;bottom:4px;width:238px;border-radius:2px;background:linear-gradient(90deg,#8a0c12,#3a0508);border:1px solid #e8232b;padding:4px 7px;box-sizing:border-box;overflow:hidden"><div style="font-size:9.5px;font-weight:600">câmara · abertura</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:#e8bb86">00:00 — 08:41</div></div>
+          <div style="position:absolute;left:248px;top:4px;bottom:4px;width:176px;border-radius:2px;background:linear-gradient(90deg,#8a0c12,#3a0508);border:1px solid #2a2a2e;padding:4px 7px;box-sizing:border-box;overflow:hidden"><div style="font-size:9.5px;font-weight:600">clipe 2</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--muted)">08:41 — 16:04</div></div>
+          <div style="position:absolute;left:428px;top:4px;bottom:4px;width:154px;border-radius:2px;background:linear-gradient(90deg,#c31a22,#5a070c);border:2px solid #fff;padding:4px 7px;box-sizing:border-box;overflow:hidden;box-shadow:0 0 0 2px rgba(232,35,43,.22)"><div style="font-size:9.5px;font-weight:700">clipe 3 · seleccionado</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:#ffd9d9">16:04 — 22:41</div></div>
+          <div style="position:absolute;left:586px;top:4px;bottom:4px;width:300px;border-radius:2px;background:linear-gradient(90deg,#8a0c12,#3a0508);border:1px solid #2a2a2e;padding:4px 7px;box-sizing:border-box;overflow:hidden"><div style="font-size:9.5px;font-weight:600">clipe 4 · perguntas</div><div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--muted)">22:41 — 34:18</div></div>
+          <div style="position:absolute;left:890px;top:4px;bottom:4px;width:326px;border-radius:2px;background:linear-gradient(90deg,#8a0c12,#3a0508);border:1px solid #2a2a2e;padding:4px 7px;box-sizing:border-box;overflow:hidden"><div style="font-size:9.5px;font-weight:600">clipe 5 · encerramento</div></div>
+        </div>
+
+        <div style="height:44px;border-bottom:1px solid var(--border);position:relative;padding:4px 0;box-sizing:border-box">
+          <div style="position:absolute;left:248px;top:4px;bottom:4px;width:334px;border-radius:2px;background:linear-gradient(90deg,#1e2733,#0a0f1a);border:1px solid #2a2a2e;padding:4px 7px;box-sizing:border-box;overflow:hidden"><div style="font-size:9.5px;font-weight:600">HDMI · slides 06—14</div></div>
+          <div style="position:absolute;left:586px;top:4px;bottom:4px;width:198px;border-radius:2px;background:linear-gradient(90deg,#1e2733,#0a0f1a);border:1px solid #2a2a2e;padding:4px 7px;box-sizing:border-box;overflow:hidden"><div style="font-size:9.5px;font-weight:600">quadro branco</div></div>
+        </div>
+
+        <div style="height:40px;border-bottom:1px solid var(--border);position:relative;padding:4px 0;box-sizing:border-box">
+          <div style="position:absolute;left:6px;top:4px;bottom:4px;right:6px;border-radius:2px;background:#12181a;border:1px solid #2a2a2e;overflow:hidden;display:flex;align-items:center;gap:1px;padding:0 4px">
+            <sc-for list="{{ wave }}" as="w" hint-placeholder-count="60">
+              <div style="flex:1;height:{{ w }};background:#2f9e6a;border-radius:1px;opacity:.85"></div>
+            </sc-for>
+          </div>
+          <div style="position:absolute;left:520px;top:4px;bottom:4px;width:22px;background:repeating-linear-gradient(45deg,rgba(232,35,43,.5) 0 4px,transparent 4px 8px);border-left:1px solid #e8232b;border-right:1px solid #e8232b"></div>
+          <div style="position:absolute;left:702px;top:4px;bottom:4px;width:16px;background:repeating-linear-gradient(45deg,rgba(232,35,43,.5) 0 4px,transparent 4px 8px);border-left:1px solid #e8232b;border-right:1px solid #e8232b"></div>
+        </div>
+
+        <div style="height:32px;border-bottom:1px solid var(--border);position:relative;padding:4px 0;box-sizing:border-box">
+          <div style="position:absolute;left:6px;top:4px;bottom:4px;width:540px;border-radius:2px;background:#1a1a20;border:1px solid #2a2a2e;display:flex;align-items:center;padding:0 7px"><span style="font-size:9px;color:var(--muted)">música de abertura · −24 dB</span></div>
+        </div>
+
+        <div style="height:32px;position:relative;padding:4px 0;box-sizing:border-box">
+          <sc-for list="{{ caps }}" as="c" hint-placeholder-count="7">
+            <div style="position:absolute;left:{{ c.x }};top:4px;bottom:4px;width:{{ c.w }};border-radius:2px;background:color-mix(in srgb,var(--live) 22%,transparent);border:1px solid var(--live);padding:0 5px;box-sizing:border-box;display:flex;align-items:center;overflow:hidden"><span style="font-size:8.5px;color:#e8bb86;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.t }}</span></div>
+          </sc-for>
+        </div>
+
+        <div style="position:absolute;top:0;bottom:0;left:508px;width:2px;background:#fff;box-shadow:0 0 4px rgba(255,255,255,.45)"><div style="position:absolute;top:0;left:-5px;width:12px;height:12px;border-radius:2px;background:#fff"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":1440,"height":900}}">
+const sv = (d) => React.createElement('svg',{width:13,height:13,viewBox:'0 0 16 16',fill:'none',stroke:'currentColor',strokeWidth:1.4,strokeLinecap:'round',strokeLinejoin:'round'},React.createElement('path',{d}));
+const T = [
+  ['Seleccionar','M3 2l9 5.6-4 .9-1.4 4.1z',false],
+  ['Lâmina','M3 2.5v8l5 3M8 13.5l5-3v-8M3 2.5 13 10.5',true],
+  ['Aparar','M4 2.5v11M12 2.5v11',false],
+  ['Deslizar','M2 8h12M5 5l-3 3 3 3M11 5l3 3-3 3',false],
+  ['Transição','M2 3h5v10H2zM9 3h5v10H9zM7 8h2',false],
+  ['Texto','M4 3.5h8M8 3.5v9',false],
+  ['Máscara','M2.5 2.5h11v11h-11zM6 6h4v4H6z',false],
+  ['Áudio','M2 8h2l2-4 2 8 2-6 2 4h2',false]
+];
+const BIN = [
+  ['V','câmara.mp4','2160p · 48:12','#8a0c12',true],
+  ['V','hdmi-slides.mp4','2160p · 41:06','#1e2733',false],
+  ['V','quadro-branco.mp4','1440p · 09:22','#2c2836',false],
+  ['A','voz-ana.wav','48 kHz · 48:12','#1d2e28',false],
+  ['A','sala.wav','48 kHz · 48:12','#1d2e28',false],
+  ['A','dobragem-en.wav','48 kHz · 48:12','#3c3524',false]
+];
+const TRACKS = [
+  ['V1','câmara','52px','#ff5a60','◉ 🔒'],
+  ['V2','HDMI / quadro','44px','#5a8ad4','◉'],
+  ['A1','voz','40px','#2f9e6a','◉'],
+  ['A2','música','32px','#2f9e6a','◉'],
+  ['CC','legendas pt-AO','32px','#f0a32e','◉']
+];
+const WAVE = [14,26,38,22,48,64,52,70,44,30,58,72,66,40,28,52,68,74,60,36,24,46,62,70,54,32,20,44,58,66,50,34,26,48,60,68,56,38,22,42,64,72,58,30,24,50,66,70,52,36,28,46,62,74,60,40,26,44,58,62];
+const CAPS = [
+  ['8px','120px','«O failover foi corrigido…»'],
+  ['134px','96px','«…na versão 2.4»'],
+  ['238px','150px','«Confirmam com o operador?»'],
+  ['398px','128px','«Sim, ficou em auditoria»'],
+  ['536px','176px','«Passamos à gravação 4K»'],
+  ['722px','142px','«Perguntas da emissão»'],
+  ['876px','210px','«Encerramos por aqui, obrigada»']
+];
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      tools: T.map(([label,d,on]) => ({ label, icon: sv(d), bg: on ? 'color-mix(in srgb, var(--accent) 16%, transparent)' : 'transparent', ring: on ? 'var(--accent)' : 'var(--border)', fg: on ? 'var(--accent)' : 'var(--muted)' })),
+      bin: BIN.map(([tag,name,meta,c,on]) => ({ tag, name, meta, grad: 'linear-gradient(140deg,' + c + ',#000)', ring: on ? 'var(--accent)' : 'var(--border)', bg: on ? 'color-mix(in srgb, var(--accent) 8%, transparent)' : 'transparent' })),
+      tracks: TRACKS.map(([id,label,h,fg,flags]) => ({ id, label, h, fg, flags })),
+      ruler: ['00:00','04:00','08:00','12:00','16:00','20:00','24:00','28:00','32:00','36:00','40:00','44:00'],
+      wave: WAVE.map(v => v + '%'),
+      caps: CAPS.map(([x,w,t]) => ({ x, w, t })),
+      color: [['Exposição','52%','+0.2'],['Contraste','64%','+12'],['Saturação','46%','−4'],['Temperatura','58%','+180']].map(([label,v,n]) => ({ label, v, n }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

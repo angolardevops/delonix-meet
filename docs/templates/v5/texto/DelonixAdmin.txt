@@ -1,0 +1,56 @@
+Consola de administração
+On-Premise
+SaaS
+cluster lad-01 · 3 nós · v2.4.1
+Exportar auditoria
+Nova organização
+{{ n.name }}
+{{ n.state }}
+{{ n.host }}
+CPU
+{{ n.cpu }}
+{{ n.metricLabel }}
+{{ n.metric }}
+Organizações e licenças
+4 organizações · 300 lugares
+ORGANIZAÇÃO
+LUGARES
+PLANO
+RENOVAÇÃO
+ESTADO
+{{ o.name }}
+{{ o.region }}
+{{ o.seats }}
+{{ o.plan }}
+{{ o.renew }}
+{{ o.state }}
+Registo de auditoria
+retido 5 anos · imutável
+{{ a.time }}
+{{ a.who }}
+{{ a.what }}
+Armazenamento
+Gravações 1,30 TB
+Transcrições 0,45 TB
+Em processamento 0,22 TB
+1,97 TB de 2,50 TB · MinIO lad-stor-01
+Políticas de retenção
+Gravações de reuniões
+90 dias
+Videoaulas publicadas
+sem limite
+Chat e sondagens
+180 dias
+Registo de auditoria
+5 anos
+Residência de dados
+✓ CONFORME
+✓
+Média, gravações e transcrições em Luanda (AO-LAD).
+✓
+Sem transferência para fora do território — Lei 22/11.
+▲
+Google Drive activo para partilha externa: saída consentida por utilizador.
+Capacidade de sessões
+08h — 18h WAT
+pico 41 sessões

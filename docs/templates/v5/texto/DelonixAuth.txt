@@ -1,0 +1,30 @@
+Delonix Meet
+Uma sala. Reunião, videoaula em 4K e emissão pública ao mesmo tempo.
+Identidade, calendário e contactos vêm do Odoo. Os dados ficam em Luanda, ao abrigo da Lei 22/11.
+Gravação até 4K
+Multistream 5 destinos
+✓
+Dial-in +244
+SIP · Kamailio
+Media · FreeSWITCH
+Residência · AO-LAD
+On-Premise · Luanda
+Entrar
+Instância delonix.co.ao · Delonix Angola, Lda
+O
+Entrar com Odoo (SSO)
+ou
+Endereço de correio electrónico
+ana.mbala@delonix.co.ao
+Palavra-passe
+Recuperar acesso
+••••••••••
+✓
+Manter sessão neste dispositivo durante 30 dias
+Continuar
+Entrar como convidado
+Sem conta Odoo
+842-091-334
+Entrar
+Código de sala ou dial-in +244 222 640 100 · PIN 84 209
+Ao entrar aceita a política de retenção de gravações da organização (90 dias).

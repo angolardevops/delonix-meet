@@ -1,0 +1,88 @@
+STUDIO
+Arquitectura de Voz Delonix — sessão 3
+4K · 48:12 · projecto edit_8841
+✓ guardado há 12 s
+Desfazer
+Pré-visualizar
+Exportar
+Fontes
+Marca
+Som
+GRAVAÇÃO DA SESSÃO
+{{ b.tag }}
+{{ b.name }}
+{{ b.meta }}
+IA NO BROWSER
+Remover silêncios
+34 cortes · poupa 04:12
+Aplicar cortes
+Palavras de preenchimento
+18 «pá», 9 «tipo»
+AM
+DIAPOSITIVO 14 / 32
+FAILOVER ENTRE SBC
+Rota alternativa mantém o PIN da sala
+O failover foi corrigido na versão 2.4 do encaminhador.
+PRÉ-VISUALIZAÇÃO · 2160p
+✓ legendas pt-AO
+00:18:22 / 00:48:12
+⟲ 5 s
+1,0×
+{{ t.icon }}
+{{ t.label }}
+Ripple
+Corte
+Cor
+Áudio
+Texto
+V1 · clipe 3 — câmara
+ENTRADA
+00:16:04
+SAÍDA
+00:22:41
+VELOCIDADE
+1,00×
+Separar áudio
+Congelar frame
+Correcção de cor
+{{ c.label }}
+{{ c.n }}
+Mistura de áudio
+−14 LUFS alvo
+A1 voz
+−8
+A2 sala
+−24
+A3 dobr.
+−12
+Reduzir ruído
+Normalizar
+Destino do projecto
+MinIO · delonix-rec/edit_8841
+webhook recording.ready ao concluir
+00:18:22:14
+⏮
+⏵
+⏭
+Marcador
+Dividir em
+Capítulo
+ZOOM
+4 s/div
+{{ t.id }}
+{{ t.label }}
+{{ t.flags }}
+{{ r }}
+câmara · abertura
+00:00 — 08:41
+clipe 2
+08:41 — 16:04
+clipe 3 · seleccionado
+16:04 — 22:41
+clipe 4 · perguntas
+22:41 — 34:18
+clipe 5 · encerramento
+HDMI · slides 06—14
+quadro branco
+música de abertura · −24 dB
+{{ c.t }}

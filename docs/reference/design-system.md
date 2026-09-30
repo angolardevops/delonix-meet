@@ -11,6 +11,14 @@
 > `--accent` É vermelho (`#ad1017`), da mesma família da marca. Tudo o que está abaixo foi
 > medido na árvore, não recordado.
 
+## 0. O desenho de origem
+
+O template navegável v5 está em [`../templates/v5/`](../templates/v5/README.md): os HTML de
+autoria, as capturas de cada ecrã e os extractos de texto. É a referência de **fidelidade**
+— um ecrã construído compara-se com ele. Os estilos em linha desses ficheiros usam os
+mesmos valores que os tokens abaixo (`--accent:#ad1017`), o que é a prova de que os dois
+não andaram à parte.
+
 ## 1. Tokens — `web/src/ui/tokens.css`
 
 Uma só fonte, 70 tokens, em três blocos:

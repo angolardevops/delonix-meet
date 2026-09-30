@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--__SUPPORT__-->
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=DM+Mono:wght@400;500&display=swap"><style>body{margin:0}a{color:#ff5a60;text-decoration:none}a:hover{color:#fff}</style></helmet>
+<div style="--surface:#0d0d0f;--raised:#17171a;--border:#2a2a2e;--text:#f2f2f3;--muted:#9a9aa0;--accent:#ff5a60;--accent-strong:#ad1017;--record:#d41f27;--success:#2f9e6a;--warning:#f0a32e;width:390px;height:844px;box-sizing:border-box;overflow:hidden;background:#000;color:var(--text);font-family:'Archivo',system-ui,sans-serif;display:flex;flex-direction:column;position:relative">
+
+  <div style="height:44px;flex:none;padding:0 20px;display:flex;align-items:center;gap:8px;background:#000">
+    <div style="font-family:'DM Mono',monospace;font-size:11px;font-weight:500">14:32</div>
+    <div style="flex:1"></div>
+    <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">USB</div>
+    <div style="display:flex;gap:2px;align-items:flex-end"><div style="width:3px;height:6px;background:#f2f2f3"></div><div style="width:3px;height:8px;background:#f2f2f3"></div><div style="width:3px;height:10px;background:#f2f2f3"></div><div style="width:3px;height:12px;background:#5c5c63"></div></div>
+    <div style="width:22px;height:11px;border:1px solid #f2f2f3;border-radius:2px;position:relative"><div style="position:absolute;left:1px;top:1px;bottom:1px;width:76%;background:#2f9e6a"></div></div>
+  </div>
+
+  <div style="flex:none;padding:0 16px 10px;display:flex;align-items:center;gap:9px">
+    <div style="width:22px;height:22px;color:var(--accent);flex:none"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="8.7"></circle><path d="M12 12 15.4 3.9M12 12 20.1 8.6M12 12 20.1 15.4M12 12 15.4 20.1M12 12 3.9 15.4M12 12 3.9 8.6"></path></svg></div>
+    <div style="display:flex;flex-direction:column;gap:1px">
+      <div style="font-size:13px;font-weight:700;letter-spacing:-0.2px">Delonix Câmara</div>
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">sessão voz-arq-2026 · CAM 2</div>
+    </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:2px;background:color-mix(in srgb,var(--record) 20%,transparent);border:1px solid var(--record)">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--record)"></div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:#ef9a9a">NO AR</div>
+    </div>
+  </div>
+
+  <div style="flex:1;min-height:0;position:relative;margin:0 12px;border-radius:4px;overflow:hidden;border:2px solid var(--record);background:linear-gradient(160deg,#4c5a68,#0b0b0c 86%)">
+    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+      <div style="width:178px;height:178px;border-radius:50%;background:radial-gradient(circle at 40% 32%,#c9a184,#6b5342 74%)"></div>
+    </div>
+
+    <div style="position:absolute;top:10px;left:10px;right:10px;display:flex;align-items:flex-start;gap:7px">
+      <div style="padding:3px 8px;border-radius:2px;background:rgba(212,31,39,.92);font-family:'DM Mono',monospace;font-size:9px;font-weight:600">TALLY · PROGRAMA</div>
+      <div style="margin-left:auto;padding:3px 8px;border-radius:2px;background:rgba(0,0,0,.66);font-family:'DM Mono',monospace;font-size:9px;color:#f2f2f3">1080p30 · 24 ms</div>
+    </div>
+
+    <div style="position:absolute;top:44%;left:50%;width:74px;height:74px;border:1.5px solid rgba(255,255,255,.82);border-radius:3px;transform:translate(-50%,-50%);display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px">
+      <div style="font-family:'DM Mono',monospace;font-size:8px;color:rgba(255,255,255,.82)">rosto · AF</div>
+    </div>
+
+    <div style="position:absolute;left:10px;bottom:10px;display:flex;flex-direction:column;gap:5px">
+      <div style="padding:3px 8px;border-radius:2px;background:rgba(0,0,0,.66);font-family:'DM Mono',monospace;font-size:9px;color:#8fe0b6">exposição 0,0 EV</div>
+      <div style="padding:3px 8px;border-radius:2px;background:rgba(0,0,0,.66);font-family:'DM Mono',monospace;font-size:9px;color:#f2f2f3">5 200 K · ISO 640</div>
+    </div>
+    <div style="position:absolute;right:10px;bottom:10px;display:flex;gap:2px;align-items:flex-end">
+      <sc-for list="{{ meter }}" as="m" hint-placeholder-count="9">
+        <div style="width:3px;height:{{ m.h }};background:{{ m.c }}"></div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="flex:none;padding:12px;display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;gap:7px">
+      <sc-for list="{{ lenses }}" as="l" hint-placeholder-count="3">
+        <div style="flex:1;padding:8px 0;border-radius:2px;border:1px solid {{ l.ring }};background:{{ l.bg }};text-align:center;font-family:'DM Mono',monospace;font-size:11px;font-weight:600;color:{{ l.fg }}">{{ l.label }}</div>
+      </sc-for>
+    </div>
+
+    <div style="padding:11px;border-radius:3px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:11px">
+      <sc-for list="{{ ctrls }}" as="c" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:11px;color:var(--muted);width:62px;flex:none">{{ c.label }}</div>
+          <div style="flex:1;height:5px;border-radius:3px;background:var(--border);position:relative"><div style="width:{{ c.pct }};height:100%;border-radius:3px;background:var(--accent)"></div><div style="position:absolute;top:-7px;left:{{ c.pct }};width:19px;height:19px;border-radius:50%;background:#fff;transform:translateX(-50%);box-shadow:0 1px 4px rgba(0,0,0,.6)"></div></div>
+          <div style="font-family:'DM Mono',monospace;font-size:10.5px;width:58px;text-align:right;flex:none">{{ c.value }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display:flex;gap:7px">
+      <div style="flex:1;padding:12px 0;border-radius:3px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);text-align:center;font-size:12px;font-weight:600;color:var(--accent)">Bloquear AE/AF</div>
+      <div style="flex:1;padding:12px 0;border-radius:3px;border:1px solid var(--border);text-align:center;font-size:12px;font-weight:600;color:var(--muted)">Espelhar</div>
+    </div>
+
+    <div style="padding:11px;border-radius:3px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+      <sc-for list="{{ status }}" as="s" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:9px;font-size:11px"><span style="color:var(--muted);flex:1">{{ s.k }}</span><span style="font-family:'DM Mono',monospace;font-size:10.5px;color:{{ s.fg }}">{{ s.v }}</span></div>
+      </sc-for>
+    </div>
+
+    <div style="padding:10px 11px;border-radius:3px;border:1px solid var(--success);background:color-mix(in srgb,var(--success) 10%,transparent);display:flex;align-items:center;gap:9px">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--success);flex:none"></div>
+      <div style="font-size:10.5px;color:#cfeadc;line-height:1.45">A gravar também no telefone — se o cabo falhar, o ângulo não se perde.</div>
+    </div>
+  </div>
+
+  <div style="flex:none;height:22px;display:flex;align-items:center;justify-content:center"><div style="width:128px;height:4px;border-radius:2px;background:#3a3a40"></div></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{"$preview":{"width":390,"height":844}}">
+const METER = [8,14,20,26,18,23,29,15,10];
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      meter: METER.map((v) => ({ h: v + 'px', c: v > 25 ? '#f0a32e' : '#2f9e6a' })),
+      lenses: [['0,5×', false],['1×', true],['3×', false]].map(([label, on]) => ({
+        label,
+        ring: on ? 'var(--accent)' : 'var(--border)',
+        bg: on ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent',
+        fg: on ? 'var(--accent)' : 'var(--muted)'
+      })),
+      ctrls: [['ISO','44%','640'],['Foco','62%','2,4 m'],['Branco','58%','5 200 K'],['Exposição','50%','0,0 EV']].map(([label, pct, value]) => ({ label, pct, value })),
+      status: [
+        ['Ligação','USB 3.0 · UVC','var(--text)'],
+        ['Atraso até ao PC','24 ms','var(--success)'],
+        ['Temperatura','41 °C','var(--warning)'],
+        ['Bateria','76% · a carregar','var(--success)']
+      ].map(([k, v, fg]) => ({ k, v, fg }))
+    };
+  }
+}
+<!--CS-->
+</body>
+</html>

@@ -1,0 +1,59 @@
+STUDIO
+Linha de tempo
+Legendas e tradução
+Exportações
+✓ modelo local · sem saída de dados
+Publicar legendas
+Idiomas
+8 activos
+{{ l.code }}
+{{ l.name }}
+{{ l.state }}
+{{ l.pct }}
+{{ l.modes }}
++ Acrescentar idioma
+AM
+Ana Mbala · pt-AO
+▶ dobragem EN activa
+O failover foi corrigido na versão 2.4 do encaminhador.
+Failover was fixed in router version 2.4.
+00:18:22
+48:12
+Transcrição editável
+apagar texto corta o vídeo
+Mostrar silêncios
+pt-AO ▾
+{{ l.t }}
+{{ l.who }} {{ l.text }} {{ l.cut }} {{ l.tail }}
+SELECÇÃO
+«pá, pronto,» · 3 ocorrências
+Apagar e fechar corte
+Assistente de sessão
+IA LOCAL
+Detectei 3 trechos em que a oradora fala fora do microfone entre 22:10 e 23:04. Quer normalizar o ganho e regenerar as legendas desse intervalo?
+Aplicar
+Ignorar
+Motor de reconhecimento
+No browser · WebGPU
+whisper-pt-ao · 412 MB em cache
+Nó de transcodificação
+trans-01.lad · fila 3
+CONFIANÇA MÉDIA
+94,2%
+Dobragem de voz
+Preservar timbre da oradora
+Ajustar ritmo ao original
+Manter áudio original em fundo
+LATÊNCIA AO VIVO
+2,4 s
+Estilo das legendas
+Caixa preta
+Contorno
+Faixa inferior
+Karaoke
+Tamanho
+32 px
+Exportar SRT
+Exportar VTT
+Residência de dados
+Transcrição e dobragem processadas no dispositivo ou em Luanda. Nenhum áudio sai do território.

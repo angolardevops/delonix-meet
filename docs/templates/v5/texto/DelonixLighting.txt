@@ -1,0 +1,43 @@
+Estúdio · Iluminação e imagem
+7 aparelhos · universo DMX 1
+Art-Net 2.4 ms · Hue ligada
+Guardar cena
+Mesa de corte
+CENAS
+{{ s.name }}
+{{ s.key }}
+{{ s.note }}
++ cena a partir do estado actual
+TRANSIÇÃO ENTRE CENAS
+1,8 s
+ANTES · sem correcção
+3 100 K · rosto a −2,4 EV
+DEPOIS · luz + software
+rosto a 0,0 EV
+5 200 K · contraste 3:1
+Aparelhos
+clique no nome para isolar · arraste a intensidade
+apagar tudo
+100% em 2 s
+{{ f.name }}
+{{ f.proto }}
+{{ f.level }}
+{{ f.cct }}
+{{ f.state }}
+DMX 1 · canais 1—24 atribuídos
+✓ Hue Bridge 2 lâmpadas
+▲ o painel de fundo está a 92% há 40 min
+Correcção por software
+CAM 2 · APRESENTADORA
+{{ c.label }}
+{{ c.value }}
+Tratamento da imagem
+{{ t.name }}
+{{ t.meta }}
+Ligar por cena
+macro F2
+A cena «entrevista» acende a chave e o contraluz, põe as duas câmaras a 5 200 K e baixa a música para −18 dB.
+Aplicar agora
+Pré-visualizar
+A luz vale mais que a câmara
+Com três telefones bem iluminados a 5 200 K, a emissão fica melhor do que com câmaras caras à luz do tecto.

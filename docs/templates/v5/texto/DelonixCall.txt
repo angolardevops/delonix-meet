@@ -1,0 +1,40 @@
+Chamadas
+☏
+Procurar contactos Odoo…
+Contactos
+Histórico
+Teclado
+{{ c.initials }}
+{{ c.name }}
+{{ c.meta }}
+☏
+MARCAÇÃO PSTN
++244 923 447 108
+{{ k }}
+Ligar por PSTN
+Chamada com Joaquim Ferreira
+00:07:21
+A GRAVAR 1080p
+Escalar para reunião completa
+JF
+Joaquim Ferreira ◉
+Eng. de Redes · Odoo SSO
+AM
+Ana Mbala
+1080p · 48 kHz
+✓ latência 42 ms
+Acções de chamada
+Retenção
+Transferir
+Adicionar 3.º
+Teclado DTMF
+Transferir para
+Bento Quissanga · TI
+Histórico
+7 dias
+{{ h.icon }}
+{{ h.name }}
+{{ h.meta }}
+Ligação SIP
+sbc-01.delonix.local
+codec OPUS · jitter 6 ms

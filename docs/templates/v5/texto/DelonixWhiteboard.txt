@@ -1,0 +1,54 @@
+Quadro branco · Arquitectura de Voz Delonix
+00:52:06
+REC 4K
+AO VIVO · 1 284
+A editar:
+AM
+JF
+TK
+Guardar no storage
+Anexar à gravação
+{{ t.icon }}
+{{ t.label }}
+⌘G
+⇧⌘G
+PÁGINAS
+01
+02
+03
+04
++
+importado de
+arquitectura.pdf
+Fluxo de chamada — entrada PSTN
+2 seleccionados
+Agrupar
+⌘G
+Desagrupar
+1 · SBC
+Terminação operador
++244 222 640 100
+2 · KAMAILIO
+Registo e rotas
+balanceamento
+3 · FREESWITCH
+Mistura + gravação
+2160p · MinIO
+Se o SBC primário cair, a rota alternativa tem de manter o PIN da sala. Confirmar com o operador na 3.ª feira.
+JF · 10:47
+TEMPOS-ALVO
+Estabelecimento de chamada
+< 900 ms
+Failover SBC
+< 3 s
+Latência de emissão
+8 — 14 s
+Teresa Kiala
+Joaquim Ferreira
+Página 03 · 82%
+NA SESSÃO · 13
+{{ p.initials }}
+{{ p.short }}
++8
+Quadro no palco
+a emitir em 4 destinos
