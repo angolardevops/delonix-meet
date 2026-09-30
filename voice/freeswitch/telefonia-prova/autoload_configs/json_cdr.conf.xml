@@ -1,0 +1,14 @@
+<configuration name="json_cdr.conf" description="JSON CDR">
+  <settings>
+    <param name="url" value="http://127.0.0.1:8430/internal/v1/telephony/call-records"/>
+    <param name="cred" value="freeswitch:SUBSTITUIR_VOICE_INTERNAL_SECRET"/>
+    <param name="auth-scheme" value="basic"/>
+    <param name="encode" value="false"/>
+    <param name="log-b-leg" value="true"/>
+    <param name="log-dir" value="/usr/local/freeswitch/log/json_cdr"/>
+    <param name="log-http-and-disk" value="true"/>
+    <param name="err-log-dir" value="/usr/local/freeswitch/log/json_cdr_err"/>
+    <param name="retries" value="2"/>
+    <param name="delay" value="1"/>
+  </settings>
+</configuration>

@@ -32,6 +32,10 @@ delonix-meet-core = { path = "crates/delonix-meet-core" }
 delonix-meet-domain = { path = "crates/delonix-meet-domain" }
 delonix-meet-protocol = { path = "crates/delonix-meet-protocol" }
 delonix-meet-store = { path = "crates/delonix-meet-store" }
+# Traits com métodos `async` usados como `dyn`: as portas da telefonia
+# (`domain::telephony::ports`, ADR-0009) e a política de admissão do UA SIP da
+# ponte (`phone_bridge::sip::BridgeAdmission`, ADR-0010).
+async-trait = "0.1"
 # gRPC interno (ADR-0006 §3): mTLS com rustls/ring, health e reflection.
 tonic = { version = "0.14", features = ["tls-ring"] }
 tonic-health = "0.14"
@@ -76,9 +80,9 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 regex = "1.13.0"
 # Limpeza de material de chave em memória (ver signaling::Secret).
 zeroize = "1"
-# Traits com métodos `async` usados como `dyn` — o UA SIP da ponte recebe a
-# política de admissão por trait object (`phone_bridge::sip::BridgeAdmission`).
-async-trait = "0.1"
+# Traits com métodos `async` usados como `dyn`: a política de admissão do UA SIP
+# da ponte (`phone_bridge::sip::BridgeAdmission`) e as portas da telefonia
+# (`domain::telephony::ports`, ADR-0009).
 # SMPP sobre TLS (ADR-0005, smpps://). `rustls`/`tokio-rustls` e `webpki-roots`
 # já estavam na árvore (sqlx, reqwest/openidconnect via rustls-tls, e
 # hyper-rustls) — aqui só se tornam dependências directas para o handshake

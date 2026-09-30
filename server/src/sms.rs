@@ -249,6 +249,7 @@ pub struct GatewayInfo {
         list_messages,
         get_message,
         send_message,
+        overview,
         agent_put_devices,
         agent_claim,
         agent_result,
@@ -270,6 +271,10 @@ pub struct GatewayInfo {
         MessagePage,
         SendReq,
         DeviceReport,
+        BalanceReport,
+        SmsOverview,
+        SmsChannel,
+        SmsTotals,
         DevicesReq,
         DevicesResp,
         ClaimedMessage,
@@ -1206,6 +1211,77 @@ pub async fn send_message(
     Ok((StatusCode::ACCEPTED, Json(view(message))))
 }
 
+/// A mesma fila, com a forma da porta `SmsGateways` da telefonia (ADR-0009) e
+/// usada pelo SMS com PIN da frente D (ADR-0010). Constrói-se sobre `plan` e
+/// `insert` — as MESMAS regras de codificação, encaminhamento e idempotência
+/// que a consola usa em `send_message`; não há aqui um segundo caminho para a
+/// fila. Quem chama já decidiu a autorização e já normalizou o número em E.164.
+pub(crate) async fn enqueue(
+    state: &AppState,
+    org_id: Uuid,
+    actor_id: Uuid,
+    to_e164: &str,
+    body: &str,
+    route: &str,
+    idempotency_key: Option<&str>,
+) -> Result<delonix_meet_domain::telephony::ports::SmsQueued, ApiError> {
+    if idempotency_key.is_some_and(|k| k.len() > 128) {
+        return Err(ApiError::BadRequest(
+            "Idempotency-Key com mais de 128 caracteres".into(),
+        ));
+    }
+    if body.trim().is_empty() {
+        return Err(ApiError::Unprocessable("a mensagem está vazia".into()));
+    }
+    // Repetir com a mesma chave devolve a mesma mensagem e não gasta quota.
+    if let Some(key) = idempotency_key {
+        if let Some(m) = find_by_idempotency_key(state, org_id, key).await? {
+            return Ok(queued(&m));
+        }
+    }
+    let to = normalize_msisdn(to_e164)?;
+    let planned = plan(state, org_id, &to, body, route).await?;
+    if !state
+        .sms_user_limiter
+        .check(&format!("{org_id}:{actor_id}"))
+        || !state.sms_send_limiter.check(&org_id.to_string())
+    {
+        return Err(ApiError::TooManyRequests);
+    }
+    let origin = Origin {
+        org_id,
+        created_by: Some(actor_id),
+        purpose: Purpose::Direct,
+        recipient_user_id: None,
+        meeting_id: None,
+        idempotency_key: idempotency_key.map(str::to_string),
+    };
+    let message = match insert(state, &origin, &planned).await? {
+        Some(m) => m,
+        // Corrida entre dois pedidos com a mesma chave: ganhou o outro.
+        None => find_by_idempotency_key(state, org_id, idempotency_key.unwrap_or_default())
+            .await?
+            .ok_or_else(|| ApiError::internal("mensagem idempotente desaparecida"))?,
+    };
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        actor_id,
+        "sms.queued",
+        &message.id.to_string(),
+    )
+    .await;
+    Ok(queued(&message))
+}
+
+fn queued(m: &Message) -> delonix_meet_domain::telephony::ports::SmsQueued {
+    delonix_meet_domain::telephony::ports::SmsQueued {
+        message_id: m.id,
+        status: m.status.clone(),
+        route: m.route.clone(),
+    }
+}
+
 pub(crate) async fn find_by_idempotency_key(
     state: &AppState,
     org_id: Uuid,
@@ -1509,6 +1585,20 @@ pub struct DeviceReport {
     reason: Option<String>,
     operator_name: Option<String>,
     signal_percent: Option<i32>,
+    /// Bateria de um telefone-gateway (0-100), se o agente a lê.
+    #[serde(default)]
+    battery_percent: Option<i32>,
+    /// Saldo do SIM, se o agente o consulta (USSD). Ausente mantém o último.
+    #[serde(default)]
+    balance: Option<BalanceReport>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct BalanceReport {
+    /// Decimal (`"2140.00"`).
+    amount: String,
+    /// `AOA` | `USD`.
+    currency: String,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1569,18 +1659,31 @@ pub async fn agent_put_devices(
         }
         // Um dispositivo sem transporte não é capaz, diga o agente o que disser.
         let capable = d.capable && d.transport != "none";
+        // Saldo: só se vier bem formado; um valor ilegível não apaga o último.
+        let balance = d.balance.as_ref().and_then(|b| {
+            use delonix_meet_domain::telephony::money::{parse_amount_e4, Currency};
+            Some((
+                parse_amount_e4(&b.amount).ok()?,
+                Currency::parse(&b.currency).ok()?,
+            ))
+        });
         sqlx::query(
             "INSERT INTO sms_device
                  (gateway_id, org_id, device_key, vendor_id, product_id, manufacturer, product,
-                  serial, kind, transport, port, capable, reason, operator_name, signal_percent, last_seen_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
+                  serial, kind, transport, port, capable, reason, operator_name, signal_percent, last_seen_at,
+                  battery_percent, balance_e4, balance_currency, balance_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(),
+                     $16, $17, $18, CASE WHEN $17::bigint IS NULL THEN NULL ELSE now() END)
              ON CONFLICT (gateway_id, device_key) DO UPDATE SET
                  vendor_id = EXCLUDED.vendor_id, product_id = EXCLUDED.product_id,
                  manufacturer = EXCLUDED.manufacturer, product = EXCLUDED.product,
                  serial = EXCLUDED.serial, kind = EXCLUDED.kind, transport = EXCLUDED.transport,
                  port = EXCLUDED.port, capable = EXCLUDED.capable, reason = EXCLUDED.reason,
                  operator_name = EXCLUDED.operator_name, signal_percent = EXCLUDED.signal_percent,
-                 last_seen_at = now()",
+                 last_seen_at = now(), battery_percent = EXCLUDED.battery_percent,
+                 balance_e4 = COALESCE(EXCLUDED.balance_e4, sms_device.balance_e4),
+                 balance_currency = COALESCE(EXCLUDED.balance_currency, sms_device.balance_currency),
+                 balance_at = COALESCE(EXCLUDED.balance_at, sms_device.balance_at)",
         )
         .bind(gw.gateway_id)
         .bind(gw.org_id)
@@ -1597,6 +1700,9 @@ pub async fn agent_put_devices(
         .bind(clip(d.reason))
         .bind(clip(d.operator_name))
         .bind(d.signal_percent.map(|s| s.clamp(0, 100)))
+        .bind(d.battery_percent.map(|b| b.clamp(0, 100)))
+        .bind(balance.map(|b| b.0))
+        .bind(balance.map(|b| b.1.as_str()))
         .execute(&mut *tx)
         .await?;
     }
@@ -2118,4 +2224,219 @@ mod tests {
         assert!(err.contains("Africell") && err.contains("USB"), "{err}");
         assert!(decide("carrier-pigeon", None, false, None).is_err());
     }
+}
+
+// ============================================================
+//  Consola — resumo para o ecrã de telefonia (ADR-0009 §8)
+// ============================================================
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SmsChannel {
+    /// `usb_modem` | `phone_gateway` | `operator_api`.
+    kind: &'static str,
+    /// Dispositivo (`usb_modem`/`phone_gateway`); `null` para `operator_api`.
+    device_id: Option<Uuid>,
+    /// `Huawei E3372`, nome do gateway, ou o operador.
+    name: String,
+    gateway_name: Option<String>,
+    /// Operador do SIM, como o modem o reporta; ou o operador da ligação SMPP.
+    operator_name: Option<String>,
+    /// `active` | `offline` | `not_capable` | `not_configured`.
+    state: &'static str,
+    reason: Option<String>,
+    /// É o ponto de envio seleccionado da org.
+    selected: bool,
+    sent_today: i64,
+    failed_today: i64,
+    /// `null` quando o agente não a reporta (`battery_reason`).
+    battery_percent: Option<i32>,
+    battery_reason: Option<&'static str>,
+    /// Saldo como o agente o reportou pela última vez; `null` sem relatório.
+    balance: Option<crate::telephony_service::MoneyDto>,
+    balance_at: Option<DateTime<Utc>>,
+    /// `not_reported_by_gateway` | `not_reported_by_operator`.
+    balance_reason: Option<&'static str>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SmsTotals {
+    sent_today: i64,
+    failed_today: i64,
+    queued: i64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SmsOverview {
+    /// Início do dia usado nas contagens (fuso `Africa/Luanda`).
+    day_start: DateTime<Utc>,
+    channels: Vec<SmsChannel>,
+    totals: SmsTotals,
+}
+
+/// Estado dos canais de envio de SMS e contagens do dia. Nada estimado: a
+/// bateria e o saldo só aparecem quando o agente os reporta.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/sms/overview", tag = "sms",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses(
+        (status = 200, body = SmsOverview),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn overview(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<SmsOverview>, ApiError> {
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    let day_start: DateTime<Utc> = sqlx::query_scalar(
+        "SELECT date_trunc('day', now() AT TIME ZONE 'Africa/Luanda') AT TIME ZONE 'Africa/Luanda'",
+    )
+    .fetch_one(&state.db)
+    .await?;
+    #[derive(sqlx::FromRow)]
+    struct Dev {
+        id: Uuid,
+        gateway_name: String,
+        manufacturer: Option<String>,
+        product: Option<String>,
+        kind: String,
+        capable: bool,
+        reason: Option<String>,
+        operator_name: Option<String>,
+        online: bool,
+        selected: bool,
+        battery_percent: Option<i32>,
+        balance_e4: Option<i64>,
+        balance_currency: Option<String>,
+        balance_at: Option<DateTime<Utc>>,
+        sent_today: i64,
+        failed_today: i64,
+    }
+    let devices: Vec<Dev> = sqlx::query_as(
+        "SELECT d.id, g.name AS gateway_name, d.manufacturer, d.product, d.kind, d.capable, d.reason,
+                d.operator_name,
+                d.last_seen_at > now() - make_interval(secs => $2) AS online,
+                COALESCE(r.device_id = d.id, false) AS selected,
+                d.battery_percent, d.balance_e4, d.balance_currency, d.balance_at,
+                (SELECT COUNT(*) FROM sms_message m WHERE m.device_id = d.id AND m.status = 'sent' AND m.created_at >= $3) AS sent_today,
+                (SELECT COUNT(*) FROM sms_message m WHERE m.device_id = d.id AND m.status = 'failed' AND m.created_at >= $3) AS failed_today
+           FROM sms_device d
+           JOIN sms_gateway g ON g.id = d.gateway_id AND g.revoked_at IS NULL
+           LEFT JOIN sms_org_route r ON r.org_id = d.org_id
+          WHERE d.org_id = $1
+          ORDER BY selected DESC, d.last_seen_at DESC
+          LIMIT 50",
+    )
+    .bind(org_id)
+    .bind(ONLINE_WINDOW_SECS as f64)
+    .bind(day_start)
+    .fetch_all(&state.db)
+    .await?;
+    let mut channels: Vec<SmsChannel> = devices
+        .into_iter()
+        .map(|d| {
+            let phone = d.kind.starts_with("android");
+            let name = match (d.manufacturer, d.product) {
+                (Some(m), Some(p)) => format!("{m} {p}"),
+                (None, Some(p)) | (Some(p), None) => p,
+                (None, None) => d.gateway_name.clone(),
+            };
+            let balance = match (d.balance_e4, d.balance_currency.as_deref()) {
+                (Some(e4), Some(c)) => delonix_meet_domain::telephony::money::Currency::parse(c)
+                    .ok()
+                    .map(|cur| delonix_meet_domain::telephony::money::Money::new(e4, cur).into()),
+                _ => None,
+            };
+            SmsChannel {
+                kind: if phone { "phone_gateway" } else { "usb_modem" },
+                device_id: Some(d.id),
+                name,
+                gateway_name: Some(d.gateway_name),
+                operator_name: d.operator_name,
+                state: if !d.capable {
+                    "not_capable"
+                } else if d.online {
+                    "active"
+                } else {
+                    "offline"
+                },
+                reason: d.reason,
+                selected: d.selected,
+                sent_today: d.sent_today,
+                failed_today: d.failed_today,
+                battery_reason: d
+                    .battery_percent
+                    .is_none()
+                    .then_some("not_reported_by_gateway"),
+                battery_percent: d.battery_percent,
+                balance_reason: balance.is_none().then_some("not_reported_by_gateway"),
+                balance,
+                balance_at: d.balance_at,
+            }
+        })
+        .collect();
+    let op_counts: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT operator,
+                COUNT(*) FILTER (WHERE status = 'sent'),
+                COUNT(*) FILTER (WHERE status = 'failed')
+           FROM sms_message
+          WHERE org_id = $1 AND route = 'operator' AND created_at >= $2 AND operator IS NOT NULL
+          GROUP BY operator",
+    )
+    .bind(org_id)
+    .bind(day_start)
+    .fetch_all(&state.db)
+    .await?;
+    for info in operators_info(&state) {
+        let (sent, failed) = op_counts
+            .iter()
+            .find(|(o, _, _)| o == info.operator)
+            .map(|(_, s, f)| (*s, *f))
+            .unwrap_or((0, 0));
+        channels.push(SmsChannel {
+            kind: "operator_api",
+            device_id: None,
+            name: info.label.to_string(),
+            gateway_name: None,
+            operator_name: Some(info.label.to_string()),
+            state: if info.configured {
+                "active"
+            } else {
+                "not_configured"
+            },
+            reason: (!info.configured)
+                .then(|| "sem contrato SMPP configurado na plataforma".into()),
+            selected: false,
+            sent_today: sent,
+            failed_today: failed,
+            battery_percent: None,
+            battery_reason: None,
+            balance: None,
+            balance_at: None,
+            balance_reason: Some("not_reported_by_operator"),
+        });
+    }
+    let totals: (i64, i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE status = 'sent' AND created_at >= $2),
+                COUNT(*) FILTER (WHERE status = 'failed' AND created_at >= $2),
+                COUNT(*) FILTER (WHERE status IN ('queued','claimed'))
+           FROM sms_message WHERE org_id = $1",
+    )
+    .bind(org_id)
+    .bind(day_start)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(SmsOverview {
+        day_start,
+        channels,
+        totals: SmsTotals {
+            sent_today: totals.0,
+            failed_today: totals.1,
+            queued: totals.2,
+        },
+    }))
 }
