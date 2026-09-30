@@ -881,13 +881,17 @@ async fn room_bridge_for(
     }
     Some(RoomBridgeResp {
         sip_uri: format!("sip:room-{room_code}@{}", bridge_advertise(state, bind)),
-        channel_vars: [(
-            "rtp_secure_media".to_string(),
-            format!(
-                "mandatory:{}",
-                crate::phone_bridge::srtp::SRTP_PROFILE_NAME
+        channel_vars: [
+            (
+                "rtp_secure_media".to_string(),
+                format!("mandatory:{}", crate::phone_bridge::srtp::SRTP_PROFILE_NAME),
             ),
-        )]
+            // A ponte só transcodifica G.711: uma oferta sem PCMA/PCMU leva
+            // `488`. É também o que a perna levava na prova contra o
+            // FreeSWITCH real — o caminho do cliente não é uma variante por
+            // medir do que foi medido.
+            ("absolute_codec_string".to_string(), "PCMA".to_string()),
+        ]
         .into_iter()
         .collect(),
         srtp_profile: crate::phone_bridge::srtp::SRTP_PROFILE_NAME.to_string(),

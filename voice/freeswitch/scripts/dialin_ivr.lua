@@ -144,10 +144,19 @@ session:streamFile("conference/conf-welcome.wav")
 
 local ponte_ok = false
 if room_bridge then
-  -- As variáveis vêm do backend (hoje: rtp_secure_media=mandatory:<perfil>,
-  -- que obriga esta perna a oferecer SRTP — sem a=crypto a ponte responde 488).
-  for k, v in pairs(room_bridge.channel_vars) do session:setVariable(k, v) end
-  local dial = string.format("sofia/%s/%s", bridge_profile, room_bridge.sip_uri)
+  -- As variáveis do backend vão no PREFIXO `[...]` da dial string, não por
+  -- `session:setVariable`: essas ficariam na perna A (o chamador), e o que
+  -- precisa delas é a perna B. É o `rtp_secure_media=mandatory:<perfil>` que
+  -- obriga ESTA perna a oferecer SRTP — sem `a=crypto` a ponte responde 488.
+  -- (Um valor com vírgula partiria a lista; hoje nenhum tem, e o backend é
+  -- quem os escolhe — ver voice.rs::room_bridge_for.)
+  local vars = {}
+  for k, v in pairs(room_bridge.channel_vars) do
+    vars[#vars + 1] = string.format("%s=%s", k, v)
+  end
+  local prefixo = ""
+  if #vars > 0 then prefixo = "[" .. table.concat(vars, ",") .. "]" end
+  local dial = string.format("%ssofia/%s/%s", prefixo, bridge_profile, room_bridge.sip_uri)
   freeswitch.consoleLog("info", string.format(
     "[delonix ponte] sala=%s -> %s (srtp=%s)\n",
     room_code, dial, tostring(room_bridge.srtp_profile)))
