@@ -370,7 +370,9 @@ impl crate::signaling::PhoneControl for SipBridge {
                 None => tracing::warn!(%leg_id, "ForceMute numa perna que já não existe"),
             },
             // Um lock envenenado não pode calar a sala inteira.
-            Err(e) => tracing::error!(%leg_id, error = %e, "registo de silêncio da ponte envenenado"),
+            Err(e) => {
+                tracing::error!(%leg_id, error = %e, "registo de silêncio da ponte envenenado")
+            }
         }
     }
 }

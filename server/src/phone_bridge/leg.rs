@@ -111,16 +111,14 @@ pub struct LegHandle {
 }
 
 impl LegHandle {
-    /// Silenciar NA PONTE: o áudio do telefone deixa de entrar na sala; o
-    /// telefone continua a ouvir a reunião. É o que o `ForceMute` de um
-    /// anfitrião faz a quem não tem cliente para o honrar (R224).
-    pub fn set_muted(&self, muted: bool) {
-        self.muted.store(muted, Relaxed);
-    }
-
-    /// O interruptor em si, para quem precise de o accionar sem `await`
-    /// (`SipBridge` guarda-o num registo que o `signaling` lê de forma
-    /// síncrona — ver `PhoneControl`).
+    /// O interruptor do silêncio desta perna.
+    ///
+    /// Silenciar NA PONTE: o áudio do telefone deixa de entrar na sala e o
+    /// telefone continua a ouvir a reunião — é o que o `ForceMute` de um
+    /// anfitrião faz a quem não tem cliente para o honrar (R224). Devolve-se o
+    /// `Arc` em vez de um `set_muted(&self)` porque quem o acciona está a
+    /// tratar uma mensagem do WebSocket e não pode esperar por `await` nenhum:
+    /// a `SipBridge` guarda-o num registo síncrono (ver `PhoneControl`).
     pub fn mute_flag(&self) -> Arc<AtomicBool> {
         self.muted.clone()
     }

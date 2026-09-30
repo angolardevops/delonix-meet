@@ -1795,6 +1795,11 @@ async fn force_mute_cala_o_telefone_na_perna() {
     let leg_id = Uuid::new_v4();
 
     let ana = TestClient::join(&sfu, room).await;
+    // É a publicação que dispara a negociação: sem uma track, o
+    // `RTCPeerConnection` fica em `New` e nunca liga. A Ana é uma participante
+    // como outra qualquer — o tom dela a 440 Hz não colide com o 1 kHz que
+    // este teste mede no telefone.
+    let (ana_fala, _) = ana.publish_opus_tone("ana-mic", 440.0).await;
     eventually_com_diagnostico(
         "a Ana está ligada ao SFU",
         prazo(30),
@@ -1810,6 +1815,7 @@ async fn force_mute_cala_o_telefone_na_perna() {
         || format!("Ana[{}]", ana.retrato()),
     )
     .await;
+    ana_fala.store(true, std::sync::atomic::Ordering::SeqCst);
 
     let (ev_tx, _ev_rx) = mpsc::channel(16);
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -1828,7 +1834,30 @@ async fn force_mute_cala_o_telefone_na_perna() {
     )
     .await
     .expect("perna da ponte");
-    let _telefone = TelefoneFalso::ligar("127.0.0.1:0", perna.local_addr, Law::Mu, 1000.0).await;
+    let telefone = TelefoneFalso::ligar("127.0.0.1:0", perna.local_addr, Law::Mu, 1000.0).await;
+    // Até aqui o telefone manda silêncio: espera-se que o RTP circule antes de
+    // ligar o tom, senão mede-se a ligação a nascer e não o silenciar.
+    eventually_com_diagnostico(
+        "a Ana recebe o áudio da chamada",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.rtp_seen
+                    .lock()
+                    .await
+                    .get(&leg_id.to_string())
+                    .copied()
+                    .unwrap_or(0)
+                    > 10
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+    telefone
+        .tocar
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 
     // (1) Sem silêncio, a sala ouve o telefone.
     eventually("a Ana ouve o 1 kHz do telefone", prazo(30), || {
@@ -1847,55 +1876,45 @@ async fn force_mute_cala_o_telefone_na_perna() {
 
     // (2) O anfitrião silencia. É o MESMO interruptor que a porta acciona —
     // `PhoneControl::set_muted` chega aqui pelo registo da ponte.
-    perna.set_muted(true);
-    let calado_em = std::time::Instant::now();
+    let contar = || {
+        let ana = ana.clone();
+        let chave = leg_id.to_string();
+        async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) }
+    };
+    perna
+        .mute_flag()
+        .store(true, std::sync::atomic::Ordering::Relaxed);
 
-    // (3) A sala deixa de o ouvir. Mede-se DEPOIS da fila de jitter esvaziar:
-    // o que já ia a caminho quando o interruptor virou ainda chega.
+    // (3) O que a sala recebe do telefone PÁRA. Não se mede «pacotes
+    // silenciosos» — um silêncio a sério não manda pacote nenhum. Espera-se
+    // primeiro que o que já ia a caminho chegue.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let calado = contar().await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let depois = contar().await;
+    assert_eq!(
+        depois,
+        calado,
+        "silenciado, ainda chegaram {} pacotes do telefone à sala em 2 s",
+        depois - calado
+    );
+
+    // (4) E volta quando o anfitrião desfaz — senão isto passaria por a perna
+    // ter morrido, que é outra coisa.
+    perna
+        .mute_flag()
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     eventually_com_diagnostico(
-        "o 1 kHz do telefone desaparece da sala",
+        "a sala volta a receber o telefone",
         prazo(20),
-        || {
-            let ana = ana.clone();
-            async move {
-                let recentes: Vec<f32> = ana
-                    .tom_recebido(&leg_id.to_string(), 1000.0)
-                    .into_iter()
-                    .filter(|(at, _)| *at > calado_em + Duration::from_millis(600))
-                    .map(|(_, m)| m)
-                    .collect();
-                recentes.len() >= 10 && recentes.iter().all(|m| *m < 0.02)
-            }
-        },
-        || {
-            let ultimos: Vec<String> = ana
-                .tom_recebido(&leg_id.to_string(), 1000.0)
-                .iter()
-                .rev()
-                .take(5)
-                .map(|(_, m)| format!("{m:.4}"))
-                .collect();
-            format!("últimas magnitudes de 1 kHz: {ultimos:?}")
-        },
+        || async move { contar().await > depois + 10 },
+        || format!("pacotes: antes do mute … {calado}, com mute {depois}"),
     )
     .await;
-
-    // (4) E volta quando o anfitrião desfaz — senão isto seria uma perna morta,
-    // que passaria no passo (3) por outra razão.
-    perna.set_muted(false);
-    eventually("a Ana volta a ouvir o telefone", prazo(20), || {
-        let ana = ana.clone();
-        async move {
-            ana.tom_recebido(&leg_id.to_string(), 1000.0)
-                .iter()
-                .rev()
-                .take(15)
-                .filter(|(_, m)| *m > 0.05)
-                .count()
-                >= 10
-        }
-    })
-    .await;
+    eprintln!(
+        "R224 ForceMute: {calado} pacotes até calar · {depois} depois de 2 s calado (diferença {}) · volta a subir ao desfazer",
+        depois - calado
+    );
 
     sfu.remove_peer(room, ana.id).await;
     ana.pc.close().await.unwrap();

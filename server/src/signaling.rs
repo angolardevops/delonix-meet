@@ -1011,9 +1011,6 @@ pub struct OriginCount {
     pub count: u32,
 }
 
-
-
-
 /// O que se sabe de quem entra além do nome e do papel base. Vem do token de
 /// sala (assinado pelo servidor) — nunca do cliente.
 #[derive(Debug, Clone, Default)]
@@ -5939,7 +5936,6 @@ mod tests {
         assert_eq!(v["outside_app"], 4);
         assert_eq!(v["by_origin"][0]["origin"], "app");
 
-
         let u = serde_json::to_value(ServerMsg::PeerUpdated {
             peer: PeerInfo {
                 peer_id: Uuid::nil(),
@@ -6063,7 +6059,6 @@ mod tests {
             }
         )));
     }
-
 }
 
 // ---------- frontend/b1-sala ----------
