@@ -79,8 +79,13 @@ Rust puro.
 - `sfu_e2e::ponte_com_freeswitch_real_tom_nos_dois_sentidos` — cadeia completa
   contra um **FreeSWITCH 1.11.3 real**: `originate` → «telefone» que atende,
   grava e toca 1 kHz → `bridge` SIP → UA da ponte → SFU → participante
-  webrtc-rs a publicar 440 Hz. Mede-se o 1 kHz na sala E os 440 Hz da sala na
-  gravação do telefone (R222). Fora do CI: precisa da imagem
+  webrtc-rs a publicar 440 Hz (R222). Fora do CI: precisa da imagem
   `delonix-dev/freeswitch:1.11.3`, que o CI não alcança
   (`scripts/e2e-fora-do-ci.txt`).
+
+  **Corrida de 2026-09-30, nesta árvore:** `originate`→atendida 328 ms,
+  `200 OK` do UA 330 ms, 1 kHz do telefone ouvido na sala com mediana 0,1548
+  por pacote, 440 Hz da sala na gravação do telefone com mediana **0,2495** e
+  o próprio 1 kHz do telefone nesse mesmo canal recebido a **0,0001** — a
+  mistura chega-lhe sem a própria voz, através de SDES-SRTP negociado no SDP.
 - 38 testes unitários em `phone_bridge/` (G.711, SRTP, SDP, mistura, jitter).
