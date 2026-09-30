@@ -65,14 +65,19 @@ Zoom, Teams e Meet são 100% SaaS. Não existe opção de self-host credível. O
 ### 2. Soberania de dados e conformidade local
 Os três grandes processam dados em servidores americanos (sujeitos ao CLOUD Act, FISA 702). Para bancos em Angola (BNA), empresas sob LGPD no Brasil, ou qualquer entidade europeia sob GDPR rigoroso, isto é um bloqueio legal real.
 
-**Delonix:** dados onde o cliente quiser. Conformidade BNA out-of-the-box. Air-gap deployable.
+**Delonix:** dados onde o cliente quiser. Air-gap deployable.
+
+> **Não «conformidade BNA out-of-the-box».** O servidor não tem definição nenhuma de
+> residência de dados — a conformidade vem de ONDE se instala, e é do instalador, não do
+> produto. Dizer o contrário numa proposta é uma afirmação que o código não sustenta.
 
 ### 3. E2EE real em grupo com gravação
 - Teams: E2EE apenas em chamadas 1:1
 - Zoom: E2EE opcional (pago, quebra funcionalidades)
 - Meet: E2EE em trânsito (TLS), não E2EE de ponta-a-ponta real
 
-**Delonix:** E2EE via Insertable Streams AES-256-GCM sempre ativo; gravação com key delegation (anfitrião cede chave explicitamente, servidor decifra só para gravar, chave nunca persiste).
+**Delonix:** E2EE via Insertable Streams AES-256-GCM, **opcional por sala**
+(`rooms.e2ee: bool`, `server/src/rooms.rs:32`) — não «sempre activo»; gravação com key delegation (anfitrião cede chave explicitamente, servidor decifra só para gravar, chave nunca persiste).
 
 ### 4. Backend em Rust — sem GC, sem pausas
 Os backends de Zoom/Teams/Meet incluem Java, Go e código C++ legado com GC. Pausas de GC causam jitter de áudio/vídeo em picos de carga.
@@ -89,7 +94,9 @@ Zoom tem accounts/sub-accounts. Teams tem tenants/equipes. Meet tem Google Works
 - Copilot Teams: $30/user/mês, dados vão para a cloud Microsoft/OpenAI
 - Duet Google: $30/user/mês, dados vão para a cloud Google
 
-**Delonix:** MoM gerado por `claude-fable-5` (Claude API) ou **Ollama local** — configurável por env var. Para organizações com dados classificados: LLM completamente local, sem dados a sair do servidor.
+**Delonix:** MoM gerado **só pelo Ollama do cluster** (`server/src/ai.rs`). Não há
+nenhuma chamada à Claude API nem a qualquer cloud externa em `server/src` — verificado a
+2026-09-30. Sem `OLLAMA_URL` a IA fica desligada, não degrada para uma cloud. Para organizações com dados classificados: LLM completamente local, sem dados a sair do servidor.
 
 ### 7. Webhooks + API keys no core (não add-on)
 Zoom e Teams têm marketplace de apps com webhooks, mas são complexos de configurar e têm rate limits agressivos nos planos base.
@@ -107,9 +114,11 @@ Exportar dados do Zoom/Teams/Meet para outro sistema é difícil por design.
 
 | Funcionalidade | Zoom | Teams | Meet | Status Delonix |
 |---|---|---|---|---|
-| PSTN dial-in | ✅ | ✅ | ✅ | Roadmap (FreeSWITCH docs prontos) |
+| Entrada de convidado SEM conta | ✅ | ✅ | ✅ | **Não existe — é o bloqueio nº 1 à adopção.** `join_room` exige `AuthUser` (`server/src/rooms.rs:480`); o papel `guest` é convidado da agenda e também precisa de conta. Ver [adopção vs concorrência](adopcao-vs-concorrencia.md), alavanca 1 |
+| PSTN dial-in | ✅ | ✅ | ✅ | **Existe** desde o #130: um telefone entra na reunião e ouve e é ouvido ([ADR-0010](adr/0010-ponte-telefone-sala.md), R221/R222), medido contra um FreeSWITCH real. Falta a cadeia com operadora e Kamailio, e os troncos/CDR por portar |
 | App mobile nativa | ✅ | ✅ | ✅ | Flutter em progresso |
-| SSO/SAML/OIDC | ✅ | ✅ | ✅ | Stub → próxima sessão |
+| SSO OIDC | ✅ | ✅ | ✅ | **Implementado** (`auth.rs`, rotas `/sso/check\|login\|callback`, tabela `org_sso_configs`) — não é stub |
+| SAML | ✅ | ✅ | ✅ | Não existe |
 | SCIM provisioning | ✅ | ✅ | ✅ | Roadmap |
 | Marketplace/plugins | ✅ | ✅ | ⚠️ | Roadmap |
 | Webinar mode | ✅ | ✅ | ⚠️ | Não planeado (Fase 7+) |

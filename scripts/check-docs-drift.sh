@@ -118,7 +118,10 @@ for p in docs:
     if not os.path.exists(p):
         continue
     texto = open(p, encoding='utf-8').read()
-    for nome in sorted(set(re.findall(r'\bdelonix-meet-[a-z]+\b', texto))):
+    # `(?<![\w-])` e não `\b`: o `\b` casava DENTRO de um nome com hífenes —
+    # `nk-delonix-meet-integration.md` é um ficheiro que existe no repo, e citá-lo
+    # fazia o portão pedir um revisor `delonix-meet-integration` que nunca existiu.
+    for nome in sorted(set(re.findall(r'(?<![\w-])delonix-meet-[a-z]+\b', texto))):
         if nome not in agentes and nome not in skills and nome not in crates:
             print(f"✗ drift: {p} cita '{nome}', que não existe em .claude/agents/ nem em .claude/skills/")
             falha = True
