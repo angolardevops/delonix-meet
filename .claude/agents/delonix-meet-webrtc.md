@@ -7,8 +7,10 @@ description: >-
   `sfu.rs`, `recorder.rs`, `broadcast.rs`, `web/src/webrtc.ts`, `e2ee.ts`,
   `pages/Room.tsx` (parte de media), ou quando o sintoma for «vídeo preto»,
   «media num só sentido», «partilha de ecrã não aparece», «não se ouve»,
-  «gravação corrompida». NÃO o uses para K8s/ingress (`delonix-meet-devops`) nem
-  para Rust genérico (`delonix-meet-rust`).
+  «gravação corrompida». NÃO o uses para K8s/ingress (`delonix-meet-devops`), para
+  Rust genérico (`delonix-meet-rust`), nem para o que se passa ANTES de uma chamada
+  de telefone entrar no SFU — SIP, SDES-SRTP, G.711 — que é da
+  `delonix-meet-telefonia`.
 tools: Read, Grep, Glob, Bash
 model: opus
 ---
@@ -36,6 +38,7 @@ nada.
 | Transporte | R3, R4, R36, R57 | A afinidade é por sala. Em K8s é relay-only. O par de candidatos lê-se como deve ser. O intervalo UDP não colide com o efémero do SO. |
 | Gravação e directo | R5, R17, R18, R58, R76, R79 | O PTS é em ms do RTP. Grava-se só VP8/Opus. Uma falha de composição é visível. O directo declara o formato. Parar a gravação não emudece o directo. |
 | E2EE | R42, R115 | Sem chave não sai frame em claro. O módulo de cifra tem testes. |
+| Perna de telefone | R221, R222 | Uma chamada PSTN é um publicador como outro (`sfu::PubSource::Bridge`), sem PeerConnection por baixo: não há PLI nem simulcast. A mistura que lhe volta é **menos a própria voz**. O domínio é da `delonix-meet-telefonia`; aqui revê-se o que acontece depois de a perna entrar no SFU. |
 
 ## O que verificas
 

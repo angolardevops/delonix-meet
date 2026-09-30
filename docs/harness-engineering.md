@@ -12,7 +12,7 @@ Este documento explica como o harness de desenvolvimento AI está estruturado e 
 | `.github/copilot-instructions.md` | GitHub Copilot (VS Code) | Instruções inline carregadas automaticamente pelo Copilot |
 | `.cursorrules` | Cursor | Padrões de código + contexto para autocompleção |
 | `.claude/agents/delonix-meet-*.md` | agentes de IA (subagentes) | Oito revisores versionados: architecture, api, security, rust, webrtc, frontend, devops, product |
-| `.claude/skills/delonix-meet*/SKILL.md` | agentes de IA (skills) | `delonix-meet` (entrada), `delonix-meet-backend`, `delonix-meet-api` |
+| `.claude/skills/delonix-meet*/SKILL.md` | agentes de IA (skills) | Quatro: `delonix-meet` (entrada e encaminhamento), `delonix-meet-backend`, `delonix-meet-api`, `delonix-meet-telefonia` |
 | `docs/adr/0004-organizacao-alvo-do-backend.md` | Todos | Organização-alvo do backend e regras para código novo |
 | `scripts/check-arquitectura-catraca.sh` | CI + `make fitness` | Catraca: nenhuma cópia nova de regra (ADR-0004 §5) |
 | `docs/reference/architecture.md` | Todos | **Referência estável** do sistema — base de conhecimento para o crescimento |
@@ -20,6 +20,16 @@ Este documento explica como o harness de desenvolvimento AI está estruturado e 
 | `docs/ai-reviewers.md` | Todos | Painel de revisores especializados com personas de expertise |
 
 > **Coerência:** `HARNESS.md`, `AGENTS.md` e `GEMINI.md` cobrem o mesmo núcleo (identidade, stack, invariantes, workflow, revisores). Ao mudar um invariante ou uma decisão de arquitetura, atualizar os três + `docs/reference/architecture.md`.
+
+> **O que o `check-docs-drift.sh` impõe, e o que não impõe.** Ele garante que nenhum
+> ficheiro do harness cita um `delonix-meet-*` que não exista, que o `name:` de cada
+> skill e agente bate com o caminho, e que todas as ligações resolvem. **Não** garante
+> que o que lá está escrito ainda é verdade: a 2026-09-30, com 491 commits desde a
+> última revisão, o agente de frontend mandava ir buscar controlos a um
+> `components/ui.tsx` que a reescrita da consola apagou, e o de segurança dava por
+> abertas quatro falhas já fechadas (S4 na R180, S5 na R160, S6 nas R170/R171). Um
+> revisor que segue instruções falsas é pior do que revisor nenhum — **ao fechar uma
+> entrega grande, relê a skill e o agente da área que tocaste.**
 
 ## Como os modelos carregam o contexto
 
@@ -125,4 +135,9 @@ Os ficheiros de harness no repositório devem ser atualizados manualmente ou por
 - [ ] Testes automáticos que validam que HARNESS.md não está desatualizado (lint das features marcadas ✅)
 - [ ] Integration com GitHub Actions: comentário automático de revisão usando personas do painel
 - [ ] Prompt templates como skills em `.claude/skills/` para operações comuns (ex.: `/review-security`, `/add-feature`)
+- [ ] **Portão de sintaxe de Lua.** O `voice/freeswitch/scripts/dialin_ivr.lua` está no
+      caminho do cliente — valida o PIN e faz o `bridge` para a sala — e **nenhum portão
+      o lê**. Não há interpretador de Lua na máquina de desenvolvimento nem na imagem
+      `delonix-dev/freeswitch:1.11.3`, e o CI também não o verifica. Um erro de sintaxe
+      ali só aparece a quem liga.
 - [x] Revisores e skills versionados em `.claude/` e verificados pelo `check-docs-drift.sh` (2026-09-16)
