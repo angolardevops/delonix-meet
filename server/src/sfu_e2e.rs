@@ -1778,6 +1778,148 @@ impl TestClient {
     }
 }
 
+/// **R224 — o `ForceMute` de um anfitrião não calava quem vem de fora da app.**
+///
+/// O `ForceMute` é uma MENSAGEM ao alvo (`ServerMsg::ForceMuted`): um browser
+/// recebe-a e silencia-se a si próprio. **Um telefone não tem cliente para a
+/// honrar** — a mensagem cai no vazio e o áudio continua a entrar na sala. Aqui
+/// o silêncio é imposto NA PERNA, pela porta `signaling::PhoneControl`.
+///
+/// Mede-se o que a sala ouve, não o que o servidor diz que fez: o telefone
+/// manda 1 kHz sem parar, e o que muda é o tom que chega ao participante.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn force_mute_cala_o_telefone_na_perna() {
+    use crate::phone_bridge::{g711::Law, leg};
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+    let leg_id = Uuid::new_v4();
+
+    let ana = TestClient::join(&sfu, room).await;
+    // É a publicação que dispara a negociação: sem uma track, o
+    // `RTCPeerConnection` fica em `New` e nunca liga. A Ana é uma participante
+    // como outra qualquer — o tom dela a 440 Hz não colide com o 1 kHz que
+    // este teste mede no telefone.
+    let (ana_fala, _) = ana.publish_opus_tone("ana-mic", 440.0).await;
+    eventually_com_diagnostico(
+        "a Ana está ligada ao SFU",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.pc.connection_state()
+                    == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+                    && ana.pc.signaling_state()
+                        == webrtc::peer_connection::signaling_state::RTCSignalingState::Stable
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+    ana_fala.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let (ev_tx, _ev_rx) = mpsc::channel(16);
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let perna = leg::start(
+        sfu.clone(),
+        leg::LegConfig {
+            room_id: room,
+            leg_id,
+            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            default_law: Law::A,
+            initial_remote: None,
+        },
+        socket,
+        None,
+        ev_tx,
+    )
+    .await
+    .expect("perna da ponte");
+    let telefone = TelefoneFalso::ligar("127.0.0.1:0", perna.local_addr, Law::Mu, 1000.0).await;
+    // Até aqui o telefone manda silêncio: espera-se que o RTP circule antes de
+    // ligar o tom, senão mede-se a ligação a nascer e não o silenciar.
+    eventually_com_diagnostico(
+        "a Ana recebe o áudio da chamada",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.rtp_seen
+                    .lock()
+                    .await
+                    .get(&leg_id.to_string())
+                    .copied()
+                    .unwrap_or(0)
+                    > 10
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+    telefone
+        .tocar
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // (1) Sem silêncio, a sala ouve o telefone.
+    eventually("a Ana ouve o 1 kHz do telefone", prazo(30), || {
+        let ana = ana.clone();
+        async move {
+            ana.tom_recebido(&leg_id.to_string(), 1000.0)
+                .iter()
+                .rev()
+                .take(15)
+                .filter(|(_, m)| *m > 0.05)
+                .count()
+                >= 10
+        }
+    })
+    .await;
+
+    // (2) O anfitrião silencia. É o MESMO interruptor que a porta acciona —
+    // `PhoneControl::set_muted` chega aqui pelo registo da ponte.
+    let contar = || {
+        let ana = ana.clone();
+        let chave = leg_id.to_string();
+        async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) }
+    };
+    perna
+        .mute_flag()
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+
+    // (3) O que a sala recebe do telefone PÁRA. Não se mede «pacotes
+    // silenciosos» — um silêncio a sério não manda pacote nenhum. Espera-se
+    // primeiro que o que já ia a caminho chegue.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let calado = contar().await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let depois = contar().await;
+    assert_eq!(
+        depois,
+        calado,
+        "silenciado, ainda chegaram {} pacotes do telefone à sala em 2 s",
+        depois - calado
+    );
+
+    // (4) E volta quando o anfitrião desfaz — senão isto passaria por a perna
+    // ter morrido, que é outra coisa.
+    perna
+        .mute_flag()
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    eventually_com_diagnostico(
+        "a sala volta a receber o telefone",
+        prazo(20),
+        || async move { contar().await > depois + 10 },
+        || format!("pacotes: antes do mute … {calado}, com mute {depois}"),
+    )
+    .await;
+    eprintln!(
+        "R224 ForceMute: {calado} pacotes até calar · {depois} depois de 2 s calado (diferença {}) · volta a subir ao desfazer",
+        depois - calado
+    );
+
+    sfu.remove_peer(room, ana.id).await;
+    ana.pc.close().await.unwrap();
+}
+
 /// **R221 — a ponte telefone↔sala, com media a sério nos dois sentidos.**
 ///
 /// Um «telefone» (socket UDP a mandar RTP G.711 lei μ com um tom de 1 kHz,

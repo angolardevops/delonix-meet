@@ -985,8 +985,58 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                 origens = state.config.phone_bridge_freeswitch_ips.len(),
                 "ponte telefone↔sala à escuta"
             );
+            // A ponte é quem impõe o `ForceMute` a quem não tem cliente (R224).
+            let _ = state
+                .hub
+                .phone
+                .set(b.clone() as Arc<dyn crate::signaling::PhoneControl>);
+            let st = state.clone();
+            let metrics = state.metrics.clone();
             tokio::spawn(async move {
                 while let Some(ev) = rx.recv().await {
+                    use crate::phone_bridge::sip::BridgeEvent;
+                    match &ev {
+                        // A chamada passa a ser gente na sala: aparece no censo,
+                        // com o crachá do telefone e o número mascarado. Sem
+                        // isto, um anfitrião não a vê — logo não a modera.
+                        BridgeEvent::Started {
+                            leg_id, room_id, ..
+                        } => {
+                            // O telefone não tem WebSocket: o lado receptor é
+                            // drenado e deitado fora. A fila existe só porque o
+                            // censo a exige para toda a gente.
+                            let (tx, mut rx_peer, _sd) =
+                                crate::signaling::PeerTx::new(16, metrics.clone());
+                            tokio::spawn(async move { while rx_peer.recv().await.is_some() {} });
+                            st.hub.join_external(
+                                *room_id,
+                                *leg_id,
+                                "Telefone".to_string(),
+                                crate::signaling::Seat {
+                                    channel:
+                                        delonix_meet_domain::conferencing::channels::Channel::Phone,
+                                    anonymous: true,
+                                    video_unavailable: true,
+                                    ..Default::default()
+                                },
+                                tx,
+                            );
+                        }
+                        // A «ligação fraca» é MEDIDA no RTP da perna, não
+                        // adivinhada: o crachá acende e apaga com ela.
+                        BridgeEvent::Leg {
+                            leg_id,
+                            room_id,
+                            event: crate::phone_bridge::leg::LegEvent::Quality { weak, .. },
+                        } => {
+                            let weak = *weak;
+                            st.hub.update_external(*room_id, *leg_id, |seat, _, _| {
+                                seat.weak_link = weak;
+                            });
+                        }
+                        BridgeEvent::Ended { leg_id, room_id } => st.hub.leave(*room_id, *leg_id),
+                        BridgeEvent::Leg { .. } => {}
+                    }
                     tracing::info!(?ev, "ponte telefone↔sala");
                 }
             });

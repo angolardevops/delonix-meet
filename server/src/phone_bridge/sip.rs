@@ -353,6 +353,28 @@ pub struct SipBridge {
     pub local_sip: SocketAddr,
     dialogs: Mutex<HashMap<String, Dialog>>,
     socket: Arc<UdpSocket>,
+    /// Interruptor de silêncio por perna, num `Mutex` SÍNCRONO de propósito:
+    /// quem o acciona está a tratar uma mensagem do WebSocket e não pode
+    /// esperar pelo `Mutex` assíncrono dos diálogos (ver `PhoneControl`).
+    mutes: std::sync::Mutex<HashMap<Uuid, Arc<std::sync::atomic::AtomicBool>>>,
+}
+
+/// O lado do `signaling`: impor o silêncio numa perna sem que ele conheça a
+/// ponte. Não bloqueia — despacha e devolve, porque quem chama está a tratar
+/// uma mensagem do WebSocket.
+impl crate::signaling::PhoneControl for SipBridge {
+    fn set_muted(&self, leg_id: Uuid, muted: bool) {
+        match self.mutes.lock() {
+            Ok(m) => match m.get(&leg_id) {
+                Some(f) => f.store(muted, std::sync::atomic::Ordering::Relaxed),
+                None => tracing::warn!(%leg_id, "ForceMute numa perna que já não existe"),
+            },
+            // Um lock envenenado não pode calar a sala inteira.
+            Err(e) => {
+                tracing::error!(%leg_id, error = %e, "registo de silêncio da ponte envenenado")
+            }
+        }
+    }
 }
 
 impl SipBridge {
@@ -370,6 +392,7 @@ impl SipBridge {
             local_sip,
             dialogs: Mutex::new(HashMap::new()),
             socket: socket.clone(),
+            mutes: std::sync::Mutex::new(HashMap::new()),
         });
         tracing::info!(%local_sip, "ponte: UA SIP à escuta");
         let b = bridge.clone();
@@ -446,6 +469,9 @@ impl SipBridge {
                             .await;
                         if let Some(l) = d.leg.take() {
                             l.stop().await;
+                        }
+                        if let Ok(mut m) = self.mutes.lock() {
+                            m.remove(&d.leg_id);
                         }
                         let _ = events
                             .send(BridgeEvent::Ended {
@@ -579,6 +605,11 @@ impl SipBridge {
             Some(&sdp),
         );
         let acked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // O interruptor entra no registo ANTES do diálogo: um `ForceMute` que
+        // chegue entretanto encontra-o.
+        if let Ok(mut m) = self.mutes.lock() {
+            m.insert(adm.leg_id, leg.mute_flag());
+        }
         self.dialogs.lock().await.insert(
             call_id,
             Dialog {
