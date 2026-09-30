@@ -81,3 +81,9 @@ ai-worker/gen/
 
 # Estado de trabalho local dos testes (ai-worker/tests/it_grpc.sh)
 .cache/
+
+# FreeSWITCH local: a prova da R222 (scripts/fs-canais.sh — traz a password do ESL),
+# a prova de fumo da imagem (R223) e o log do build.
+.fs-canais/
+.fs-smoke.*/
+.fs-build/

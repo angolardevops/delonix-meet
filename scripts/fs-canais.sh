@@ -7,6 +7,8 @@ cd "$(dirname "$0")/.."
 NAME=fs-canais
 DIR=.fs-canais
 BASE=${FS_BASE_CONF:-../../freeswitch-build/conf}
+# A imagem do repo (make freeswitch-image); FS_IMAGE aponta para a publicada.
+IMAGE=${FS_IMAGE:-delonix-meet/freeswitch:1.11.3}
 case "${1:-}" in
   up)
     docker rm -f "$NAME" >/dev/null 2>&1 || true
@@ -26,7 +28,7 @@ case "${1:-}" in
     docker run -d --name "$NAME" --network host \
       -v "$PWD/$DIR/conf:/usr/local/freeswitch/etc/freeswitch" \
       -v "$PWD/$DIR/recordings:/usr/local/freeswitch/recordings" \
-      delonix-dev/freeswitch:1.11.3 freeswitch -nonat -nf -nc >/dev/null
+      "$IMAGE" freeswitch -nonat -nf -nc >/dev/null
     for _ in $(seq 1 60); do
       if docker exec "$NAME" fs_cli -P 8221 -p "$PW" -x "sofia status" 2>/dev/null | grep -q "carrier"; then
         echo "fs-canais pronto (ESL 127.0.0.1:8221)"; exit 0

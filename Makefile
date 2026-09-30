@@ -237,6 +237,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-route-auth.sh
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
+	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-k8s-render.sh
 	@bash scripts/check-arquitectura-catraca.sh
 	@bash scripts/check-crate-deps.sh
@@ -340,6 +341,18 @@ pin: ## Fixa a tag $(IMAGE_TAG) nos Deployments e espera o rollout
 
 .PHONY: image-push
 image-push: image push ## Build versionado + load no cluster + pin (pipeline completo p/ stage k8s)
+
+# O FreeSWITCH do Meet (voice/freeswitch/image/). Constrói-se com docker e não
+# com $(IMG_BUILD): quem o corre a seguir — scripts/fs-canais.sh (R222) e a
+# prova de fumo (R223) — arranca-o com docker, e uma imagem no store do
+# delonix não estaria lá. Compilar o FreeSWITCH demora ~15 min sem cache.
+FS_IMAGE ?= delonix-meet/freeswitch:1.11.3
+
+.PHONY: freeswitch-image
+freeswitch-image: ## Constrói a imagem FreeSWITCH do Meet ($(FS_IMAGE)) e corre a prova de fumo
+	@printf "$(C)▶ build $(FS_IMAGE) (FreeSWITCH compilado — ~15 min sem cache)$(Z)\n"
+	@docker build -t $(FS_IMAGE) -f voice/freeswitch/image/Containerfile voice/freeswitch/image
+	@bash scripts/freeswitch-image-smoke.sh $(FS_IMAGE)
 
 # Pré-puxa imagens da infra (Bitnami Postgres/Redis) do Docker Hub e
 # injeta-as no kind. Resolve o ImagePullBackOff quando o cluster não

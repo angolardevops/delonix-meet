@@ -1,7 +1,8 @@
 # FreeSWITCH da prova da ponte telefone↔sala (ADR-0010, R222)
 
 Ficheiros juntos à configuração segura de `.worktrees/freeswitch-build/conf/`
-(imagem `delonix-dev/freeswitch:1.11.3`). **Só desenvolvimento**, tudo em 127.0.0.1.
+(imagem `delonix-meet/freeswitch:1.11.3`, de `voice/freeswitch/image/` — `make freeswitch-image`;
+`FS_IMAGE` aponta para outra, por exemplo a publicada). **Só desenvolvimento**, tudo em 127.0.0.1.
 
 | Ficheiro | Para quê |
 |---|---|

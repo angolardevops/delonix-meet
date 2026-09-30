@@ -135,9 +135,9 @@ Os ficheiros de harness no repositório devem ser atualizados manualmente ou por
 - [ ] Testes automáticos que validam que HARNESS.md não está desatualizado (lint das features marcadas ✅)
 - [ ] Integration com GitHub Actions: comentário automático de revisão usando personas do painel
 - [ ] Prompt templates como skills em `.claude/skills/` para operações comuns (ex.: `/review-security`, `/add-feature`)
-- [ ] **Portão de sintaxe de Lua.** O `voice/freeswitch/scripts/dialin_ivr.lua` está no
-      caminho do cliente — valida o PIN e faz o `bridge` para a sala — e **nenhum portão
-      o lê**. Não há interpretador de Lua na máquina de desenvolvimento nem na imagem
-      `delonix-dev/freeswitch:1.11.3`, e o CI também não o verifica. Um erro de sintaxe
-      ali só aparece a quem liga.
+- [x] **Portão de sintaxe de Lua** (R223, 2026-09-30). O `dialin_ivr.lua` e o
+      `ramais_dial.lua` estão no caminho do cliente e nenhum portão os lia.
+      `scripts/check-lua-sintaxe.sh` compila-os com o `luac5.2` (o Lua do `mod_lua`) no
+      `make fitness` e no CI, e falha — não salta — se não houver `luac`. Verifica a
+      **sintaxe**, não o comportamento do IVR.
 - [x] Revisores e skills versionados em `.claude/` e verificados pelo `check-docs-drift.sh` (2026-09-16)

@@ -1,0 +1,61 @@
+# FreeSWITCH do Delonix Meet — o gateway de voz partilhado (dial-in, ramais,
+# ponte telefone↔sala do ADR-0010).
+#
+# Compilado do código oficial, com as TRÊS fontes fixadas por commit: as
+# mesmas que a imagem local da R222 usou (`/REF-*` dentro dela), para a prova
+# continuar comparável. Mudar um destes ARG é mudar a imagem — volta a correr
+# a R222 (`voice/freeswitch/image/README.md`).
+#
+# Face à imagem local de 2026-09-17: entram `mod_lua` e `mod_curl`, de que o
+# `dialin_ivr.lua` e o `ramais_dial.lua` precisam e que ela não tinha; sai o
+# `mod_rtp`, que não existe na v1.11.3 (o build só o saltava com um aviso).
+# Sem mod_signalwire nem mod_verto (sem token nem conta SignalWire). O
+# pacote `lua5.2` traz o `luac5.2`, com que o `scripts/check-lua-sintaxe.sh`
+# compila os scripts com o MESMO Lua que o mod_lua liga.
+ARG DEBIAN=debian:bookworm@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26
+
+FROM ${DEBIAN} AS build
+ARG FREESWITCH_REF=ef32e205295e29f034f1453ad245ba5efb07b94a
+ARG SOFIA_SIP_REF=ad36ac8f755308e8b87f98a505e83d4e408e5cc3
+ARG SPANDSP_REF=8f1e1646bdec99eac5fd2cd92c35563f736b9b89
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential autoconf automake libtool libtool-bin pkg-config cmake git ca-certificates \
+    libssl-dev zlib1g-dev libjpeg-dev libsqlite3-dev libcurl4-openssl-dev libpcre2-dev libspeex-dev \
+    libspeexdsp-dev libedit-dev libtiff-dev yasm libopus-dev libsndfile1-dev uuid-dev libldns-dev \
+    liblua5.2-dev libpq-dev libavformat-dev libswscale-dev
+WORKDIR /usr/src
+# Busca por commit, não por ramo: um `git clone` do HEAD dava uma imagem
+# diferente a cada build.
+RUN set -eu; fetch() { mkdir "$1" && cd "$1" && git init -q && git remote add origin "$2" \
+      && git fetch -q --depth 1 origin "$3" && git checkout -q FETCH_HEAD \
+      && test "$(git rev-parse HEAD)" = "$3" && echo "$3" > "/REF-$1" && cd ..; }; \
+    fetch sofia-sip https://github.com/freeswitch/sofia-sip.git "$SOFIA_SIP_REF"; \
+    fetch spandsp https://github.com/freeswitch/spandsp.git "$SPANDSP_REF"; \
+    fetch freeswitch https://github.com/signalwire/freeswitch.git "$FREESWITCH_REF"
+RUN cd sofia-sip && ./bootstrap.sh && ./configure --prefix=/usr && make -j"$(nproc)" && make install
+RUN cd spandsp && ./bootstrap.sh && ./configure --prefix=/usr && make -j"$(nproc)" && make install
+COPY modules.conf /usr/src/freeswitch/modules.conf
+RUN cd freeswitch && ./bootstrap.sh -j && ./configure --prefix=/usr/local/freeswitch --disable-dependency-tracking \
+ && make -j"$(nproc)" && make install
+# Um módulo pedido e não compilado é um aviso no meio de 8 000 linhas de
+# log — foi assim que o mod_rtp «estava» na imagem anterior. Aqui parte o build.
+RUN set -eu; for m in $(sed -n 's#^[a-z_]*/##p' /usr/src/freeswitch/modules.conf); do \
+      test -f "/usr/local/freeswitch/lib/freeswitch/mod/$m.so" || { echo "módulo em falta: $m"; exit 1; }; \
+    done
+
+FROM ${DEBIAN}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 zlib1g libjpeg62-turbo libsqlite3-0 libcurl4 libpcre2-8-0 libspeex1 libspeexdsp1 libedit2 libtiff6 \
+    libopus0 libsndfile1 libuuid1 libldns3 liblua5.2-0 libpq5 ca-certificates procps \
+    lua5.2 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/lib/libsofia-sip-ua.so* /usr/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libspandsp.so* /usr/lib/x86_64-linux-gnu/
+COPY --from=build /usr/local/freeswitch /usr/local/freeswitch
+COPY --from=build /REF-freeswitch /REF-sofia-sip /REF-spandsp /
+RUN ldconfig && ln -s /usr/local/freeswitch/bin/freeswitch /usr/local/bin/ \
+ && ln -s /usr/local/freeswitch/bin/fs_cli /usr/local/bin/
+EXPOSE 5060/udp 5060/tcp 8021/tcp
+CMD ["freeswitch", "-nonat", "-nf", "-c"]
