@@ -2517,3 +2517,19 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **O que NÃO está provado.** O telefone dentro da sala WebRTC: no compose a ponte para o SFU não está ligada, e com o PIN certo a chamada entra na conferência local do FreeSWITCH. O `ramais_dial.lua` levou a mesma correcção mas não foi exercitado por nenhuma chamada.
 
 **Ficheiros.** `voice/freeswitch/image/Containerfile`, `voice/freeswitch/scripts/{dialin_ivr,ramais_dial}.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `voice/pbx-cliente/extensions.conf`.
+
+### R275 — As credenciais de um ramal não diziam onde o softphone se liga, e o diálogo sobrepunha os valores
+
+**Sintoma.** Visto numa captura de ecrã da consola (2026-10-03). O diálogo «Credenciais SIP» punha utilizador, password e domínio lado a lado numa grelha de três colunas (`.org-voice__kpis`, feita para três números curtos): os valores longos sobrepunham-se, o domínio era cortado e o diálogo ganhava scroll horizontal. E o «domínio SIP» mostrado, `<slug>.ramais.delonix.meet`, é o realm do digest — um nome lógico, que não resolve em DNS: a API não devolvia o endereço a que o softphone se liga, e ninguém conseguia configurar um a partir do que a consola mostrava. Dois avisos do mesmo ecrã diziam o contrário do código: que a ponte telefone↔sala «ainda não existe» (existe desde o ADR-0010) e que «nenhum ramal entra numa sala» (entra pelo número de acesso, R273).
+
+**Regra.**
+- O endereço público do servidor SIP dos ramais é configuração da instalação: `VOICE_RAMAIS_PUBLIC_HOST`, `VOICE_RAMAIS_PUBLIC_PORT` (omissão 5070) e `VOICE_RAMAIS_PUBLIC_TRANSPORT` (`udp`|`tcp`|`tls`, omissão `udp`). As leituras de um ramal (lista, criação, `PATCH`, regeneração) trazem `sip_server: { host, port, transport, uri } | null`. **Sem host configurado — ou com um host mal formado — vai `null`**: o servidor não deriva o endereço do domínio SIP, do `Host` do pedido nem de outra variável. A forma (`is_sip_host`, `SipTransport`, `proxy_uri`) vive no domínio, sem IO.
+- O `VOICE_RAMAIS_DOMAIN_SUFFIX` não mudou: entra no HA1, e mudá-lo invalida as passwords de todos os ramais existentes.
+- Dados para copiar mostram-se um campo por linha, com quebra (`overflow-wrap: anywhere`) e um botão de copiar por campo — nunca numa grelha de colunas. Sem `sip_server`, a linha do servidor fica e diz que falta.
+- Um aviso diz o que existe e a condição, não um estado que o ecrã não mede: a ponte só liga quando a instalação a configura, e a entrada de um ramal numa sala não foi verificada com uma chamada real.
+
+**Portão.** `server/tests/ramal_entra_na_sala.rs`, contra Postgres real: `null` sem configuração; preenchido nas quatro leituras com ela; omissões de porta e transporte; host mal formado → `null`. Unidade: `telephony::extension::tests`. Web: `web/src/pages/admin/ExtensionsCard.test.ts` (ordem dos campos, servidor presente e ausente, número de acesso, nome acessível de cada botão, nenhuma chave crua nas quatro línguas). `scripts/check-openapi.sh`.
+
+**O que NÃO está provado.** O layout: os testes de render não medem sobreposição nem scroll — o diálogo novo não foi visto num browser, a 375 px ou a outra largura. Que o endereço dos laboratórios é alcançável: no compose a porta 5070 só é publicada com `make compose-up LAN_IP=…`, e no cluster o serviço do FreeSWITCH é interno. Nenhum softphone foi configurado com os dados do diálogo.
+
+**Ficheiros.** `server/crates/delonix-meet-domain/src/telephony/extension.rs`, `server/src/config.rs`, `server/src/ramais.rs`, `server/tests/ramal_entra_na_sala.rs`, `web/src/pages/admin/{ExtensionsCard,VoiceCard}.tsx`, `web/src/ui/org.css`, `web/src/locales/*/consola.ts`, `compose.yaml`, `scripts/{cluster,compose-lan}.sh`, `voice/README.md`.

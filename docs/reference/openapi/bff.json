@@ -2117,7 +2117,7 @@
           {
             "properties": {
               "sip_domain": {
-                "description": "Domínio SIP a usar junto com `sip_username`/`sip_password` na\nconfiguração da conta do softphone.",
+                "description": "Domínio SIP a usar junto com `sip_username`/`sip_password` na\nconfiguração da conta do softphone. É o realm do digest — um nome\nlógico, que pode não resolver em DNS; o endereço a que o softphone se\nliga é `sip_server`.",
                 "type": "string"
               },
               "sip_password": {
@@ -9856,6 +9856,39 @@
         ],
         "type": "object"
       },
+      "SipServerInfo": {
+        "description": "Servidor/proxy SIP público dos ramais. É o mesmo para todos os ramais da\ninstalação (configuração do servidor).",
+        "properties": {
+          "host": {
+            "description": "Nome DNS ou IP público.",
+            "example": "meet.exemplo.ao",
+            "type": "string"
+          },
+          "port": {
+            "example": 5070,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "transport": {
+            "description": "`udp`, `tcp` ou `tls`.",
+            "example": "udp",
+            "type": "string"
+          },
+          "uri": {
+            "description": "O proxy pronto a colar no softphone: `sip:host:porta;transport=x`.",
+            "example": "sip:meet.exemplo.ao:5070;transport=udp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "port",
+          "transport",
+          "uri"
+        ],
+        "type": "object"
+      },
       "SipSettings": {
         "properties": {
           "codecs": {
@@ -12662,6 +12695,17 @@
           "org_id": {
             "format": "uuid",
             "type": "string"
+          },
+          "sip_server": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SipServerInfo",
+                "description": "Endereço PÚBLICO do servidor SIP onde o softphone deste ramal se liga\n(`VOICE_RAMAIS_PUBLIC_HOST`/`_PORT`/`_TRANSPORT`). `null` quando a\ninstalação não o configurou — o servidor não adivinha um valor. Não é o\n`sip_domain`: esse é o realm do digest, um nome lógico."
+              }
+            ]
           },
           "sip_username": {
             "type": "string"

@@ -1990,9 +1990,19 @@ export const listVoiceCdr = (orgId: string, signal?: AbortSignal) =>
 export const voiceBilling = (orgId: string, period: VoicePeriod = 'month', signal?: AbortSignal) =>
   request<VoiceBilling>(`/api/orgs/${orgId}/voice/billing?period=${period}`, { signal })
 
-// ---------- Ramais internos (extensão SIP — chamada ramal-a-ramal, Fase 1) ----------
-// Só interno: SEM PSTN e SEM ponte para salas de reunião (fases seguintes do
-// mesmo plano). Ver server/src/ramais.rs para a fronteira exata.
+// ---------- Ramais internos (extensão SIP) ----------
+// Chamada ramal-a-ramal; com um DID atribuído, alcançável do PSTN; e entrada
+// numa reunião pelo número de acesso (R273). Ver server/src/ramais.rs para a
+// fronteira exacta e para o que NÃO está provado com uma chamada real.
+
+/** Endereço público do servidor SIP dos ramais (configuração da instalação). */
+export interface SipServer {
+  host: string
+  port: number
+  transport: 'udp' | 'tcp' | 'tls'
+  /** O proxy pronto a colar no softphone: `sip:host:porta;transport=x`. */
+  uri: string
+}
 
 export interface Extension {
   id: string
@@ -2005,6 +2015,10 @@ export interface Extension {
   label: string
   active: boolean
   created_at: string
+  /** Número curto que um ramal marca para entrar numa reunião (o mesmo para todos). */
+  meeting_access_number: string
+  /** `null` quando a instalação não configurou o endereço público — nunca se inventa. */
+  sip_server: SipServer | null
 }
 /** Resposta de criação/regeneração: só existe UMA VEZ — copiar para o softphone. */
 export interface ExtensionCreated extends Extension {

@@ -1,23 +1,27 @@
 /**
  * Ramais internos (`server/src/ramais.rs`): chamada ramal-a-ramal pela rede
  * interna, ligada ao FreeSWITCH que já serve o dial-in PSTN (`voice/`).
- * Fase 1: SÓ interno. Fase 2 (esta): um ramal pode receber um DID dedicado
- * e passar a tocar directamente para quem lhe ligar do exterior — sem PIN,
- * sem IVR.
+ * Fase 1: SÓ interno. Fase 2: um ramal pode receber um DID dedicado e passar a
+ * tocar directamente para quem lhe ligar do exterior — sem PIN, sem IVR.
+ * Fase 3 (R273): um ramal entra numa reunião marcando o número de acesso às
+ * reuniões (`meeting_access_number`) e indicando o PIN da sala.
  *
- * O aviso no topo não é decoração — segue a mesma disciplina que `VoiceCard`
- * já aplica à ponte FreeSWITCH↔SFU em falta: mesmo com um DID atribuído, um
- * ramal continua sem ponte para uma sala de reunião em vídeo — quem lhe liga
- * fala com a pessoa do ramal, não entra na reunião. Isso é fase seguinte do
- * mesmo plano, e nenhum texto aqui deve sugerir o contrário.
+ * O aviso no topo não é decoração: diz o que existe E a condição. A entrada
+ * numa sala de vídeo depende de a instalação ter a ponte telefone↔sala
+ * configurada (ADR-0010), e nenhuma chamada real por ramal foi provada — o
+ * texto não pode afirmar que funciona de ponta a ponta.
  *
  * A password SIP só existe em claro na resposta de criação/regeneração — o
  * mesmo padrão de revelação única que `SmsGatewayCard` já usa para o token de
- * emparelhamento de um gateway.
+ * emparelhamento de um gateway. O diálogo mostra também o SERVIDOR: o endereço
+ * público onde o softphone se liga (`sip_server`), que não é o domínio SIP —
+ * esse é um nome lógico. Sem endereço configurado, di-lo; não inventa um.
  */
 import { FormEvent, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
+  ApiError,
   assignExtensionDid,
   createExtension,
   deleteExtension,
@@ -32,7 +36,7 @@ import {
   VoiceDid,
 } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
-import { Alert, Button, Card, Dialog, Select, StatusBadge, TextInput } from '../../ui/kit'
+import { Alert, Button, Card, Dialog, IconButton, Select, StatusBadge, TextInput } from '../../ui/kit'
 import { orgErrorMessage, refusalAware } from './orgShared'
 
 export default function ExtensionsCard({ orgId, people }: { orgId: string; people: Employee[] }) {
@@ -193,6 +197,11 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
           )
         }
       </AsyncSection>
+      {extensions.state.s === 'ready' && extensions.state.d[0]?.meeting_access_number && (
+        <p className="dx-muted org-card-note" data-testid="ramais-acesso">
+          {t('consola.ramais.acessoNota', { numero: extensions.state.d[0].meeting_access_number })}
+        </p>
+      )}
       {err && (
         <div className="org-card-pad">
           <Alert tone="danger">{err}</Alert>
@@ -320,7 +329,13 @@ function NewExtensionDialog({
       })
       onCreated(created)
     } catch (x) {
-      setErr(orgErrorMessage(x, t, 'consola.ramais.erroCriar'))
+      // O número de acesso às reuniões não pode ser de um ramal (R273): a
+      // recusa tem código estável, e a mensagem diz o que fazer a seguir.
+      setErr(
+        errorCode(x) === 'ramais.extension_reserved'
+          ? t('consola.ramais.erroReservado', { numero: extension.trim() })
+          : orgErrorMessage(x, t, 'consola.ramais.erroCriar'),
+      )
     } finally {
       setBusy(false)
     }
@@ -370,46 +385,133 @@ function NewExtensionDialog({
   )
 }
 
+/** O código estável do envelope de erro (`error.rs`), se a resposta o trouxer. */
+function errorCode(e: unknown): string | undefined {
+  if (!(e instanceof ApiError)) return undefined
+  const b = e.body as { code?: unknown } | null
+  return b && typeof b === 'object' && typeof b.code === 'string' ? b.code : undefined
+}
+
+export interface CredentialField {
+  key: 'servidor' | 'utilizador' | 'password' | 'dominio' | 'numeroAcesso'
+  label: string
+  /** `null`: o servidor não tem este dado — a linha diz porquê em `missing`. */
+  value: string | null
+  missing?: string
+  hint?: string
+}
+
+/**
+ * Os campos que um softphone pede, pela ordem em que os pede. O servidor
+ * aparece SEMPRE: sem endereço público configurado a linha diz isso mesmo, em
+ * vez de desaparecer ou de mostrar o domínio lógico no lugar dele.
+ */
+export function credentialFields(created: ExtensionCreated, t: TFunction): CredentialField[] {
+  const fields: CredentialField[] = [
+    {
+      key: 'servidor',
+      label: t('consola.ramais.servidor'),
+      value: created.sip_server?.uri ?? null,
+      missing: t('consola.ramais.servidorEmFalta'),
+    },
+    { key: 'utilizador', label: t('consola.ramais.utilizador'), value: created.sip_username },
+    { key: 'password', label: t('consola.ramais.password'), value: created.sip_password },
+    { key: 'dominio', label: t('consola.ramais.dominio'), value: created.sip_domain, hint: t('consola.ramais.dominioDica') },
+  ]
+  if (created.meeting_access_number) {
+    fields.push({ key: 'numeroAcesso', label: t('consola.ramais.numeroAcesso'), value: created.meeting_access_number })
+  }
+  return fields
+}
+
+/** O texto do «copiar tudo»: um campo por linha, só os que têm valor. */
+export function credentialsText(fields: CredentialField[]): string {
+  return fields
+    .filter((f) => f.value !== null)
+    .map((f) => `${f.label}: ${f.value}`)
+    .join('\n')
+}
+
+/**
+ * A lista de credenciais: um campo por linha, valor com quebra e um botão de
+ * copiar por campo. `onCopied` avisa o diálogo de que já se copiou alguma
+ * coisa (é o que destranca o «Concluído»).
+ */
+export function ExtensionCredentials({ created, onCopied }: { created: ExtensionCreated; onCopied?: () => void }) {
+  const { t } = useTranslation()
+  const [copiedKey, setCopiedKey] = useState<CredentialField['key'] | null>(null)
+
+  async function copy(f: CredentialField) {
+    if (f.value === null) return
+    try {
+      await navigator.clipboard.writeText(f.value)
+      setCopiedKey(f.key)
+    } catch {
+      // Sem clipboard (contexto não seguro, permissão negada): o valor está à
+      // vista e selecciona-se inteiro com um toque — copia-se à mão.
+    }
+    onCopied?.()
+  }
+
+  return (
+    <>
+      <span className="dx-sr-only" role="status">
+        {copiedKey ? t('ui.copiado') : ''}
+      </span>
+      <dl className="org-creds" data-testid="ramal-credenciais">
+        {credentialFields(created, t).map((f) => (
+        <div key={f.key} className="org-creds__row" data-campo={f.key}>
+          <dt className="dx-muted">{f.label}</dt>
+          <dd>
+            {f.value === null ? (
+              <span className="org-creds__value dx-muted">{f.missing}</span>
+            ) : (
+              <>
+                <span className="org-creds__value dx-num">{f.value}</span>
+                <IconButton
+                  icon={copiedKey === f.key ? 'check' : 'copy'}
+                  label={t('consola.ramais.copiarCampo', { campo: f.label })}
+                  onClick={() => void copy(f)}
+                />
+              </>
+            )}
+          </dd>
+          {f.hint && <dd className="org-creds__hint dx-muted">{f.hint}</dd>}
+        </div>
+      ))}
+      </dl>
+    </>
+  )
+}
+
 function RevealDialog({ created, onClose }: { created: ExtensionCreated; onClose: () => void }) {
   const { t } = useTranslation()
-  const [copied, setCopied] = useState(false)
+  const [copiedAll, setCopiedAll] = useState(false)
+  // «Concluído» só destranca depois de se ter copiado alguma coisa: a password
+  // não volta a aparecer.
+  const [touched, setTouched] = useState(false)
 
   async function copyAll() {
-    const text = `${t('consola.ramais.utilizador')}: ${created.sip_username}\n${t('consola.ramais.password')}: ${created.sip_password}\n${t('consola.ramais.dominio')}: ${created.sip_domain}`
     try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
+      await navigator.clipboard.writeText(credentialsText(credentialFields(created, t)))
+      setCopiedAll(true)
     } catch {
       // Sem clipboard (contexto não seguro, permissão negada): a pessoa copia
-      // à mão a partir dos campos abaixo — não é um erro que bloqueie o fluxo.
+      // à mão a partir dos campos acima — não é um erro que bloqueie o fluxo.
     }
+    setTouched(true)
   }
 
   return (
     <Dialog title={t('consola.ramais.credenciaisTitulo')} onClose={onClose}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <Alert tone="warning">{t('consola.ramais.credenciaisAviso')}</Alert>
-        <dl className="org-voice__kpis">
-          <div>
-            <dt className="dx-muted">{t('consola.ramais.utilizador')}</dt>
-            <dd className="dx-num">{created.sip_username}</dd>
-          </div>
-          <div>
-            <dt className="dx-muted">{t('consola.ramais.password')}</dt>
-            <dd className="dx-num">{created.sip_password}</dd>
-          </div>
-          <div>
-            <dt className="dx-muted">{t('consola.ramais.dominio')}</dt>
-            <dd className="dx-num">{created.sip_domain}</dd>
-          </div>
-        </dl>
-        <Button variant="secondary" icon="copy" onClick={() => void copyAll()}>
-          {copied ? t('ui.copiado') : t('ui.copiar')}
-        </Button>
-        <Button variant="primary" disabled={!copied} onClick={onClose}>
-          {t('consola.ramais.concluido')}
-        </Button>
-      </div>
+      <Alert tone="warning">{t('consola.ramais.credenciaisAviso')}</Alert>
+      <ExtensionCredentials created={created} onCopied={() => setTouched(true)} />
+      <Button variant="secondary" icon="copy" onClick={() => void copyAll()}>
+        {copiedAll ? t('ui.copiado') : t('consola.ramais.copiarTudo')}
+      </Button>
+      <Button variant="primary" disabled={!touched} onClick={onClose}>
+        {t('consola.ramais.concluido')}
+      </Button>
     </Dialog>
   )
 }

@@ -84,6 +84,33 @@ registrar/auth_db/DB), e dar-lhe isso era maior risco do que esta fase pede.
 | `freeswitch/dialplan/default/00_delonix_extensions.xml` | Contexto `delonix_ramais`: números de 3–5 dígitos → `ramais_dial.lua` |
 | `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge; o número de acesso às reuniões segue para o IVR (Fase 3) |
 
+**Domínio SIP e endereço público são duas coisas.** O softphone precisa de
+quatro dados, e a consola mostra-os no diálogo «Credenciais SIP» de um ramal:
+
+| Dado | De onde vem | O que é |
+|---|---|---|
+| Servidor / proxy | `sip_server` — `VOICE_RAMAIS_PUBLIC_HOST`, `VOICE_RAMAIS_PUBLIC_PORT` (omissão `5070`), `VOICE_RAMAIS_PUBLIC_TRANSPORT` (`udp`\|`tcp`\|`tls`, omissão `udp`) | O endereço PÚBLICO a que o softphone se liga, pronto a colar: `sip:host:porta;transport=x` |
+| Utilizador | `sip_username` | A conta SIP (`ramal_…`) |
+| Password | `sip_password` | Só aparece na criação e na regeneração |
+| Domínio | `sip_domain` — `<slug>.<VOICE_RAMAIS_DOMAIN_SUFFIX>` | O realm do digest: um nome LÓGICO, que não tem de resolver em DNS |
+
+- **Sem `VOICE_RAMAIS_PUBLIC_HOST` a API devolve `sip_server: null`** e a
+  consola diz que a instalação não tem o endereço configurado. O servidor não
+  adivinha por onde é alcançável — um host mal formado (com `sip:` ou com a
+  porta lá dentro) conta como ausente, com aviso no arranque.
+- **Em produção, `VOICE_RAMAIS_DOMAIN_SUFFIX` deve ser um sufixo do domínio
+  público da instalação** (p.ex. `ramais.meet.exemplo.ao`), e não a omissão
+  `ramais.delonix.meet`: um softphone que derive o servidor do domínio, ou um
+  SRV/NAPTR futuro, só funciona se o nome for da instalação.
+- **Não se muda o sufixo com ramais criados.** O domínio entra no HA1 (abaixo):
+  mudá-lo invalida as passwords de TODOS os ramais existentes, que têm de ser
+  regeneradas uma a uma. Escolhe-se antes do primeiro ramal.
+- Os dois laboratórios definem o endereço: `compose.yaml` (`meet.ngolacloud.local`,
+  trocado pelo IP da máquina com `make compose-up LAN_IP=…`) e
+  `scripts/cluster.sh` (`${MEET_HOST}`). **Não validado:** que a porta 5070 é
+  alcançável de fora nesses endereços — no compose só com `LAN_IP`, e no
+  cluster o serviço do FreeSWITCH é interno (`clusterIP: None`).
+
 **HA1, não Argon2, para o digest SIP.** `voice_extensions.sip_password_hash`
 (Argon2) é só a segurança em repouso da nossa própria base — o protocolo SIP
 Digest (RFC 2617) exige `HA1 = MD5(sip_username:domínio:password)`, guardado

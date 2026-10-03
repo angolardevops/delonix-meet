@@ -213,6 +213,7 @@ p.tel-small {
   margin: 0;
   min-width: 0;
   text-align: right;
+  overflow-wrap: anywhere;
 }
 .tel-sip__warn {
   margin: 0 0 var(--s-2);

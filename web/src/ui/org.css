@@ -392,6 +392,52 @@
   margin: 0;
   font-size: var(--t-title);
   line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+/* Dados para copiar (credenciais de um ramal): um campo por linha, o valor
+   quebra onde for preciso e o botão de copiar fica ao lado sem encolher. Nunca
+   uma grelha de colunas — um utilizador SIP ou um domínio não cabem num terço
+   do diálogo. */
+.org-creds {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  min-width: 0;
+}
+.org-creds__row {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border);
+}
+.org-creds__row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.org-creds dt {
+  font-size: var(--t-sm);
+}
+.org-creds dd {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  min-width: 0;
+}
+.org-creds__value {
+  flex: 1;
+  min-width: 0;
+  padding-top: 6px;
+  font-size: var(--t-md);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.org-creds dd.org-creds__hint {
+  display: block;
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
 }
 .org-voice__note {
   margin: 0;

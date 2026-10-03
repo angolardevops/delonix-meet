@@ -153,6 +153,13 @@ pub struct Config {
     /// `resolve-extension`, por isso este é o único sítio onde se configura.
     /// Nenhum ramal pode ter este número (`ramais.extension_reserved`).
     pub voice_meeting_access_number: String,
+    /// Endereço PÚBLICO do servidor SIP dos ramais — o que um softphone põe em
+    /// «servidor/proxy»: `VOICE_RAMAIS_PUBLIC_HOST` (nome DNS ou IP, sem
+    /// esquema nem porta), `VOICE_RAMAIS_PUBLIC_PORT` (omissão 5070) e
+    /// `VOICE_RAMAIS_PUBLIC_TRANSPORT` (`udp`|`tcp`|`tls`, omissão `udp`).
+    /// Sem host (ou com um host mal formado) fica `None` e a API devolve
+    /// `sip_server: null` — o servidor não adivinha por onde é alcançável.
+    pub voice_ramais_public: Option<delonix_meet_domain::telephony::extension::SipServer>,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
     pub recordings_dir: std::path::PathBuf,
     /// Ficheiros ZIP de «os meus dados» (`DATA_EXPORTS_DIR`). Por omissão
@@ -512,6 +519,32 @@ impl Config {
                 )
                 .to_string()
             },
+            voice_ramais_public: opt("VOICE_RAMAIS_PUBLIC_HOST").and_then(|host| {
+                use delonix_meet_domain::telephony::extension as ext;
+                let port = bounded_env(
+                    src,
+                    "VOICE_RAMAIS_PUBLIC_PORT",
+                    ext::DEFAULT_SIP_PUBLIC_PORT,
+                    1,
+                    65_535,
+                ) as u16;
+                let transport = match opt("VOICE_RAMAIS_PUBLIC_TRANSPORT") {
+                    None => ext::SipTransport::Udp,
+                    Some(v) => ext::SipTransport::parse(&v).unwrap_or_else(|| {
+                        tracing::warn!(
+                            "VOICE_RAMAIS_PUBLIC_TRANSPORT='{v}' inválido (esperado udp, tcp ou tls) — a usar udp"
+                        );
+                        ext::SipTransport::Udp
+                    }),
+                };
+                let server = ext::SipServer::new(&host, port, transport);
+                if server.is_none() {
+                    tracing::warn!(
+                        "VOICE_RAMAIS_PUBLIC_HOST='{host}' não é um nome DNS nem um IP — os ramais saem sem endereço público (sip_server: null)"
+                    );
+                }
+                server
+            }),
             recordings_dir: src
                 .var("RECORDINGS_DIR")
                 .map(std::path::PathBuf::from)

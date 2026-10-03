@@ -43,7 +43,7 @@ export default {
   voz: {
     titulo: 'Voix · accès RTC',
     eyebrow: 'plan de contrôle',
-    ponteEmFalta: "Numéros, codes PIN et journal d'appels fonctionnent. Le pont entre le central téléphonique et la salle vidéo n'existe pas encore : les appelants parlent dans une conférence audio seule et n'entendent pas la réunion.",
+    ponte: "Numéros, codes PIN et journal d'appels fonctionnent. Le pont entre le central téléphonique et la salle vidéo existe sur le serveur, mais il ne se connecte que si cette installation le configure ; sans lui, les appelants restent dans une conférence audio seule et n'entendent pas la réunion. Cet écran n'indique pas si le pont est connecté.",
     periodo: 'Période de facturation',
     semana: '7 jours',
     mes: '30 jours',
@@ -78,7 +78,9 @@ export default {
   ramais: {
     titulo: 'Postes internes',
     eyebrow: 'appels poste à poste',
-    aviso: "Appels entre postes de cette organisation, sur le réseau interne. Un poste avec un numéro attribué (voir la colonne « Numéro ») reçoit aussi des appels de l'extérieur directement — sans code PIN, sans menu. Aucun poste n'entre dans une salle de réunion vidéo — c'est une phase suivante de ce plan.",
+    aviso: "Appels entre postes de cette organisation, sur le réseau interne. Un poste avec un numéro attribué (voir la colonne « Numéro ») reçoit aussi des appels de l'extérieur directement — sans code PIN, sans menu. Pour rejoindre une réunion, le poste compose le numéro d'accès aux réunions et saisit le code PIN de la salle ; il n'atteint la salle vidéo que si cette installation a configuré le pont téléphone↔salle. Ce chemin n'a pas encore été vérifié avec un appel réel.",
+    acessoNota: "Numéro d'accès aux réunions : {{numero}}. Un poste le compose et saisit le code PIN de la salle.",
+    erroReservado: 'Le numéro {{numero}} est réservé pour rejoindre les réunions. Choisis un autre numéro pour le poste.',
     semRamais: "Cette organisation n'a encore aucun poste.",
     colMembro: 'Personne',
     colExtensao: 'Poste',
@@ -108,6 +110,12 @@ export default {
     utilizador: "Nom d'utilisateur SIP",
     password: 'Mot de passe SIP',
     dominio: 'Domaine SIP',
+    dominioDica: "Nom logique de l'organisation (realm). Ce n'est pas l'adresse à laquelle le softphone se connecte.",
+    servidor: 'Serveur SIP (proxy)',
+    servidorEmFalta: "Cette installation n'a pas d'adresse publique du serveur SIP configurée. Demande-la à la personne qui l'administre.",
+    numeroAcesso: "Numéro d'accès aux réunions",
+    copiarCampo: 'Copier : {{campo}}',
+    copiarTudo: 'Tout copier',
     concluido: 'Terminé',
     did: {
       col: 'Numéro (RTC)',

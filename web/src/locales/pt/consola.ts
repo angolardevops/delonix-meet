@@ -43,7 +43,7 @@ export default {
   voz: {
     titulo: 'Voz · dial-in PSTN',
     eyebrow: 'plano de controlo',
-    ponteEmFalta: 'Números, PINs e registo de chamadas funcionam. A ponte entre a central telefónica e a sala de vídeo ainda não existe: quem liga fala numa conferência só de voz e não ouve a reunião.',
+    ponte: 'Números, PINs e registo de chamadas funcionam. A ponte entre a central telefónica e a sala de vídeo existe no servidor, mas só liga quando esta instalação a configura; sem ela, quem liga fica numa conferência só de voz e não ouve a reunião. Este ecrã não mostra se a ponte está ligada.',
     periodo: 'Período da facturação',
     semana: '7 dias',
     mes: '30 dias',
@@ -78,7 +78,9 @@ export default {
   ramais: {
     titulo: 'Ramais internos',
     eyebrow: 'chamada ramal-a-ramal',
-    aviso: 'Chamadas entre ramais desta organização, pela rede interna. Um ramal com um número atribuído (ver coluna "Número") também recebe chamadas de fora directamente — sem PIN, sem menu. Nenhum ramal entra numa sala de reunião em vídeo — é fase seguinte deste plano.',
+    aviso: 'Chamadas entre ramais desta organização, pela rede interna. Um ramal com um número atribuído (ver coluna "Número") também recebe chamadas de fora directamente — sem PIN, sem menu. Para entrar numa reunião, o ramal marca o número de acesso às reuniões e indica o PIN da sala; só chega à sala de vídeo se esta instalação tiver a ponte telefone↔sala configurada. Este caminho ainda não foi verificado com uma chamada real.',
+    acessoNota: 'Número de acesso às reuniões: {{numero}}. Um ramal marca-o e indica o PIN da sala.',
+    erroReservado: 'O número {{numero}} está reservado para entrar em reuniões. Escolhe outro número para o ramal.',
     semRamais: 'Ainda não há ramais nesta organização.',
     colMembro: 'Pessoa',
     colExtensao: 'Ramal',
@@ -108,6 +110,12 @@ export default {
     utilizador: 'Utilizador SIP',
     password: 'Password SIP',
     dominio: 'Domínio SIP',
+    dominioDica: 'Nome lógico da organização (realm). Não é o endereço a que o softphone se liga.',
+    servidor: 'Servidor SIP (proxy)',
+    servidorEmFalta: 'Esta instalação não tem o endereço público do servidor SIP configurado. Pede-o a quem a administra.',
+    numeroAcesso: 'Número de acesso às reuniões',
+    copiarCampo: 'Copiar: {{campo}}',
+    copiarTudo: 'Copiar tudo',
     concluido: 'Concluído',
     did: {
       col: 'Número (PSTN)',

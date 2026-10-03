@@ -86,6 +86,13 @@ services:
       TURN_HOST: meet.ngolacloud.local:23478
       CORS_ORIGINS: https://meet.ngolacloud.local:8443
       RECORDINGS_DIR: /var/lib/delonix/recordings
+      # Endereço público do servidor SIP dos ramais, que a consola mostra nas
+      # credenciais de um ramal (perfil «internal» do FreeSWITCH). A porta só
+      # fica alcançável de fora com `make compose-up LAN_IP=…`, que também
+      # troca este host pelo IP da máquina (scripts/compose-lan.sh).
+      VOICE_RAMAIS_PUBLIC_HOST: meet.ngolacloud.local
+      VOICE_RAMAIS_PUBLIC_PORT: "5070"
+      VOICE_RAMAIS_PUBLIC_TRANSPORT: udp
     volumes:
       - recordings:/var/lib/delonix/recordings
     networks: [meet]

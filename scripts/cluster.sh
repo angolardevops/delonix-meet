@@ -142,6 +142,9 @@ up)
     --from-literal=SFU_EXTERNAL_IP= \
     --from-literal=RECORDINGS_DIR=/var/lib/delonix/recordings \
     --from-literal=CORS_ORIGINS="https://${MEET_HOST}" \
+    --from-literal=VOICE_RAMAIS_PUBLIC_HOST="${MEET_HOST}" \
+    --from-literal=VOICE_RAMAIS_PUBLIC_PORT=5070 \
+    --from-literal=VOICE_RAMAIS_PUBLIC_TRANSPORT=udp \
     --from-literal=REDIS_URL="redis://delonix-redis-master.${NS}.svc.cluster.local:6379" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl -n "$NS" create secret generic delonix-secrets \
