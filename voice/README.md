@@ -27,13 +27,17 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
 | `kamailio/dispatcher.list` | Pool de nós FreeSWITCH (acrescentar linhas para escalar) |
 | `freeswitch/scripts/dialin_ivr.lua` | IVR: PIN → valida no control plane → junta à conferência → CDR |
 | `freeswitch/dialplan/public/00_delonix_dialin.xml` | Encaminha inbound para o IVR |
-| `freeswitch/autoload_configs/conference.conf.xml` | Perfil de conferência `delonix` (**SRTP obrigatório**) |
-| `freeswitch/vars.xml.inc` | Vars globais (URL do control plane + segredo) — **do ambiente** |
+| `freeswitch/autoload_configs/conference.conf.xml` | Perfil de conferência `delonix` (não impõe SRTP: isso é de cada perna SIP) |
+| `freeswitch/vars.xml.inc` | Vars globais (URL do control plane, segredo, SRTP obrigatório) — **nenhum ficheiro do repo o inclui** no `vars.xml` (R226) |
 | `docker-compose.voice.yml` | Serviços de dev (Kamailio + FreeSWITCH) |
 
 ## Segurança (não-negociável)
-- **SRTP obrigatório**, sem fallback: `rtp_secure_media=mandatory` no IVR, no dialplan e
-  no perfil de conferência.
+- **SRTP obrigatório**, sem fallback: quem recusa com `488` uma chamada em claro é a
+  variável **global** `rtp_secure_media=mandatory`, posta por `sip_profiles/internal.xml`
+  (e por `vars.xml.inc`, onde for incluído). Não há parâmetro de perfil nem de
+  conferência que o faça, e o `set` do dialplan só a recusa num perfil que negoceie tarde
+  (`inbound-late-negotiation=true`), o que não é o caso do perfil dos ramais (R226).
+  Portão: `bash scripts/softphone-prova.sh srtp-real`.
 - **SIP-TLS** (5061) no Kamailio; certificado montado por volume (`/etc/ssl/delonix`),
   nunca comitado. Em dev usar self-signed; nunca desativar a camada.
 - **Anti-toll-fraud**: só se aceita inbound dos **IPs do trunk** (`ao_trunk.txt`,

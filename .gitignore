@@ -92,3 +92,5 @@ ai-worker/gen/
 .tools/
 # Gerados por `make bootstrap`: segredo do relay, acessos de administração, TLS do bordo.
 deploy/compose/generated/
+# Prova de softphone (scripts/softphone-prova.sh): gravações da última chamada.
+.softphone-prova/
