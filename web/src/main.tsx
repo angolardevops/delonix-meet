@@ -9,6 +9,8 @@ import { initTheme } from './theme'
 // Fontes do template, self-hosted — nada sai da rede local.
 // Archivo (interface), Archivo Black (display) e DM Mono (horas, códigos,
 // débitos): os números alinham em coluna por `tabular-nums`.
+import sans400 from '@fontsource/archivo/files/archivo-latin-400-normal.woff2?url'
+import sans600 from '@fontsource/archivo/files/archivo-latin-600-normal.woff2?url'
 import '@fontsource/archivo/400.css'
 import '@fontsource/archivo/500.css'
 import '@fontsource/archivo/600.css'
@@ -18,6 +20,16 @@ import '@fontsource/dm-mono/400.css'
 import '@fontsource/dm-mono/500.css'
 import { initLanguage } from './i18n'
 import { currentUser } from './api'
+
+for (const href of [sans400, sans600]) {
+  const link = document.createElement('link')
+  link.rel = 'preload'
+  link.as = 'font'
+  link.type = 'font/woff2'
+  link.crossOrigin = 'anonymous'
+  link.href = href
+  document.head.appendChild(link)
+}
 
 initTheme()
 
