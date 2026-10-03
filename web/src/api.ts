@@ -2601,3 +2601,372 @@ export const setRoomAllowGuests = (code: string, allowGuests: boolean) =>
     method: 'PATCH',
     body: JSON.stringify({ allow_guests: allowGuests }),
   })
+
+// ============================================================================
+//  Telefonia (ADR-0009) — troncos, plano de marcação, SIP, chamadas e consumo.
+//  As 23 operações de `/api/orgs/{org_id}/telephony/*`, tal como estão no
+//  contrato (docs/reference/openapi/bff.json). Só administradores da org.
+//
+//  Valores enumerados: os que o servidor fixa estão como união; onde o contrato
+//  diz só `string`, a união fica ABERTA (`| (string & {})`) — um valor novo do
+//  servidor não pode partir a consola nem ser «corrigido» para um conhecido.
+// ============================================================================
+
+type Aberto<T extends string> = T | (string & {})
+
+/** Dinheiro como o servidor o manda: decimal em texto, nunca `number`. */
+export interface Money {
+  amount: string
+  currency: string
+}
+
+export type TrunkScope = 'national' | 'international'
+export type SipTransport = 'udp' | 'tcp' | 'tls'
+export type SrtpMode = 'mandatory' | 'optional' | 'off'
+export type TrunkState = 'up' | 'degraded' | 'down' | 'unknown'
+
+export interface TrunkStatus {
+  state: Aberto<TrunkState>
+  /** Porque é que o estado é este — texto do servidor, para mostrar tal qual. */
+  reasons: string[]
+  registration?: string | null
+  channels_in_use?: number | null
+  channels_max: number
+  /** Taxa de chamadas atendidas na janela; `null` sem tentativas (ver `asr_reason`). */
+  asr?: number | null
+  asr_answered: number
+  asr_attempts: number
+  asr_reason?: string | null
+  asr_window_hours: number
+  measured_at: string
+}
+
+export interface Trunk {
+  id: string
+  name: string
+  short_code: string
+  gateway_name: string
+  host: string
+  port: number
+  transport: Aberto<SipTransport>
+  srtp: Aberto<SrtpMode>
+  scope: Aberto<TrunkScope>
+  role: Aberto<'primary' | 'reserve' | 'international'>
+  reserve_rank?: number | null
+  position: number
+  prefixes: string[]
+  max_channels: number
+  enabled: boolean
+  register: boolean
+  username: string
+  /** A password NUNCA vem num GET (R214): só se sabe se existe. */
+  password_configured: boolean
+  current_price_per_min?: Money | null
+  status: TrunkStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateTrunkReq {
+  name: string
+  short_code: string
+  host: string
+  max_channels: number
+  port?: number
+  transport?: SipTransport
+  srtp?: SrtpMode
+  scope?: TrunkScope
+  prefixes?: string[]
+  enabled?: boolean
+  register?: boolean
+  username?: string
+  password?: string | null
+  price_per_min?: Money | null
+}
+
+/** PATCH: só vai o que muda. `password: null` não apaga — omite-se para manter. */
+export type UpdateTrunkReq = Partial<Omit<CreateTrunkReq, 'price_per_min'>>
+
+export interface TrunkPrice {
+  id: string
+  trunk_id: string
+  price_per_min: Money
+  valid_from: string
+  /** É este o preço que vale agora? Os anteriores ficam para o custo histórico (R212). */
+  in_force: boolean
+  created_at: string
+}
+
+export interface ExchangeRate {
+  id: string
+  currency: string
+  aoa_per_unit: string
+  valid_from: string
+  created_at: string
+}
+
+export type DialRuleAction = 'external' | 'extension' | 'room_pin' | 'block'
+
+export interface DialRule {
+  pattern: string
+  description: string
+  action: Aberto<DialRuleAction>
+  trunk_id?: string | null
+  fallback_trunk_id?: string | null
+  record?: boolean
+  emergency?: boolean
+}
+
+export interface DialPlan {
+  rules: DialRule[]
+  /** Números de emergência: nunca bloqueados, gravados nem travados por limite (R210). */
+  emergency_numbers: string[]
+  version: number
+  updated_at?: string | null
+}
+
+export interface TrunkSummary {
+  id: string
+  name: string
+  short_code: string
+}
+
+export interface TestNumberResult {
+  dialed: string
+  e164?: string | null
+  outcome: string
+  action?: string | null
+  emergency: boolean
+  recorded: boolean
+  matched_rule?: { position: number; pattern: string; description: string } | null
+  overridden_rule_position?: number | null
+  trunk?: TrunkSummary | null
+  fallbacks: TrunkSummary[]
+  estimated_price_per_min?: Money | null
+  price_reason?: string | null
+}
+
+export interface SipSettings {
+  configured: boolean
+  domain?: string | null
+  sbc_host?: string | null
+  transport?: string | null
+  srtp?: string | null
+  username?: string | null
+  password_configured: boolean
+  codecs: string[]
+  updated_at?: string | null
+}
+
+export interface PutSipSettingsReq {
+  domain: string
+  transport: SipTransport
+  srtp: SrtpMode
+  sbc_host?: string
+  username?: string
+  password?: string | null
+  codecs?: string[]
+}
+
+export interface RevealedSipCredentials {
+  domain: string
+  username: string
+  password: string
+}
+
+export interface TelephonyComponent {
+  software: string
+  version?: string | null
+  uptime_secs?: number | null
+}
+
+export interface SipRegistration {
+  state: Aberto<'healthy' | 'degraded' | 'down' | 'not_configured'>
+  reasons: string[]
+  domain?: string | null
+  sbc_host?: string | null
+  transport?: string | null
+  srtp?: string | null
+  sbc?: TelephonyComponent | null
+  sbc_error?: string | null
+  media?: TelephonyComponent | null
+  media_error?: string | null
+  channels: { in_use?: number | null; max: number }
+  sessions_active?: number | null
+  trunks: { total: number; up: number; degraded: number; down: number; unknown: number }
+  /** Medições podem faltar: sem chamadas na janela não há jitter (ver `reason`). */
+  quality: {
+    calls: number
+    window_hours: number
+    jitter_ms?: number | null
+    loss_pct?: number | null
+    mos?: number | null
+    reason?: string | null
+  }
+  codecs_configured: string[]
+  codecs_offered: string[]
+  measured_at: string
+}
+
+export interface OutboundCall {
+  id: string
+  purpose: string
+  status: Aberto<'dialing' | 'ringing' | 'answered' | 'failed'>
+  to_masked: string
+  trunk_ids: string[]
+  rule_position?: number | null
+  emergency: boolean
+  record: boolean
+  room_code?: string | null
+  answer_latency_ms?: number | null
+  answered_at?: string | null
+  billsec?: number | null
+  hangup_cause?: string | null
+  error?: string | null
+  created_at: string
+  finished_at?: string | null
+}
+
+export type CallOutcome = 'answered' | 'busy' | 'no_answer' | 'failed' | 'forwarded' | 'waiting_room' | 'wrong_pin'
+
+export interface CallRecord {
+  id: string
+  direction: Aberto<'inbound' | 'outbound'>
+  from_number: string
+  to_number: string
+  destination_label?: string | null
+  outcome: Aberto<CallOutcome>
+  hangup_cause?: string | null
+  started_at: string
+  answered_at?: string | null
+  ended_at: string
+  duration_secs: number
+  billsec: number
+  emergency: boolean
+  recorded: boolean
+  room_code?: string | null
+  trunk_id?: string | null
+  trunk_name?: string | null
+  /** `null` quando não foi possível custear — o porquê vem em `cost_reason`. */
+  cost?: Money | null
+  cost_reason?: string | null
+}
+
+export interface CallRecordFilter extends PageParams {
+  direction?: 'inbound' | 'outbound'
+  trunk_id?: string
+  outcome?: CallOutcome
+}
+
+export interface TelephonyUsage {
+  /** `YYYY-MM`, no fuso que o servidor diz em `timezone`. */
+  month: string
+  timezone: string
+  calls: number
+  minutes: number
+  unpriced_calls: number
+  totals: Money[]
+  total_aoa?: Money | null
+  total_aoa_reason?: string | null
+  by_trunk: {
+    trunk_id?: string | null
+    trunk_name?: string | null
+    calls: number
+    minutes: number
+    cost: Money[]
+    cost_aoa?: Money | null
+    share_pct?: number | null
+  }[]
+}
+
+const tel = (orgId: string, resto = '') => `/api/orgs/${orgId}/telephony${resto}`
+
+function query(params: Record<string, string | number | null | undefined>): string {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+/**
+ * O código de erro `telephony.*` de uma falha da API, ou `null`. É por ele
+ * que a interface escolhe a mensagem — nunca pelo texto, que é do servidor.
+ */
+export function telephonyErrorCode(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null
+  const code = (err.body as { code?: unknown } | null)?.code
+  return typeof code === 'string' && code.startsWith('telephony.') ? code : null
+}
+
+// ---- troncos ----
+export const listTrunks = (orgId: string, p?: PageParams & { asr_window_hours?: number }, signal?: AbortSignal) =>
+  request<Page<Trunk>>(tel(orgId, `/trunks${query({ ...p })}`), { signal })
+export const getTrunk = (orgId: string, trunkId: string, signal?: AbortSignal) =>
+  request<Trunk>(tel(orgId, `/trunks/${trunkId}`), { signal })
+export const createTrunk = (orgId: string, body: CreateTrunkReq) =>
+  request<Trunk>(tel(orgId, '/trunks'), { method: 'POST', body: JSON.stringify(body) })
+export const updateTrunk = (orgId: string, trunkId: string, body: UpdateTrunkReq) =>
+  request<Trunk>(tel(orgId, `/trunks/${trunkId}`), { method: 'PATCH', body: JSON.stringify(body) })
+/** 204 sem corpo. Um tronco usado por uma regra do plano recusa-se (`telephony.trunk_in_use`). */
+export const deleteTrunk = (orgId: string, trunkId: string) =>
+  requestEmpty(tel(orgId, `/trunks/${trunkId}`), { method: 'DELETE' })
+/** A ordem É o encaminhamento: manda-se a lista inteira, na ordem pretendida. */
+export const setTrunkOrder = (orgId: string, trunkIds: string[]) =>
+  request<Page<Trunk>>(tel(orgId, '/trunk-order'), { method: 'PUT', body: JSON.stringify({ trunk_ids: trunkIds }) })
+
+// ---- preços e câmbio ----
+export const listTrunkPrices = (orgId: string, trunkId: string, p?: PageParams, signal?: AbortSignal) =>
+  request<Page<TrunkPrice>>(tel(orgId, `/trunks/${trunkId}/prices${pageQuery(p)}`), { signal })
+export const createTrunkPrice = (orgId: string, trunkId: string, body: { price_per_min: Money; valid_from?: string }) =>
+  request<TrunkPrice>(tel(orgId, `/trunks/${trunkId}/prices`), { method: 'POST', body: JSON.stringify(body) })
+export const listExchangeRates = (orgId: string, p?: PageParams, signal?: AbortSignal) =>
+  request<Page<ExchangeRate>>(tel(orgId, `/exchange-rates${pageQuery(p)}`), { signal })
+export const createExchangeRate = (
+  orgId: string,
+  body: { currency: string; aoa_per_unit: string; valid_from?: string },
+) => request<ExchangeRate>(tel(orgId, '/exchange-rates'), { method: 'POST', body: JSON.stringify(body) })
+
+// ---- plano de marcação ----
+export const getDialPlan = (orgId: string, signal?: AbortSignal) =>
+  request<DialPlan>(tel(orgId, '/dial-plan'), { signal })
+/** Substitui o plano inteiro: a ordem das regras é a ordem em que casam. */
+export const putDialPlan = (orgId: string, rules: DialRule[]) =>
+  request<DialPlan>(tel(orgId, '/dial-plan'), { method: 'PUT', body: JSON.stringify({ rules }) })
+/** Não liga a ninguém: diz que regra casaria, por que tronco sairia e a que preço. */
+export const testDialNumber = (orgId: string, number: string) =>
+  request<TestNumberResult>(tel(orgId, '/dial-plan/test'), { method: 'POST', body: JSON.stringify({ number }) })
+
+// ---- SIP ----
+export const getSipSettings = (orgId: string, signal?: AbortSignal) =>
+  request<SipSettings>(tel(orgId, '/sip-settings'), { signal })
+export const putSipSettings = (orgId: string, body: PutSipSettingsReq) =>
+  request<SipSettings>(tel(orgId, '/sip-settings'), { method: 'PUT', body: JSON.stringify(body) })
+/**
+ * A ÚNICA saída da password SIP (R214): exige reautenticação (password ou código
+ * MFA), bloqueia às cinco falhas (`telephony.reauth_rate_limited`) e fica na
+ * auditoria. Quem chama não guarda o resultado — mostra-o e larga-o.
+ */
+export const revealSipCredentials = (orgId: string, reauth: { password?: string; mfa_code?: string }) =>
+  request<RevealedSipCredentials>(tel(orgId, '/sip-settings/reveal-credentials'), {
+    method: 'POST',
+    body: JSON.stringify(reauth),
+  })
+export const getSipRegistration = (orgId: string, signal?: AbortSignal) =>
+  request<SipRegistration>(tel(orgId, '/sip-registration'), { signal })
+/** 202: o registo reinicia em fundo; `gateways` é quantos foram reiniciados. */
+export const restartSipRegistration = (orgId: string) =>
+  request<{ gateways: number }>(tel(orgId, '/sip-registration/restart'), { method: 'POST' })
+
+// ---- chamadas ----
+/** 202: a chamada de teste arranca em fundo — acompanha-se com `getTestCall`. */
+export const startTestCall = (orgId: string, number: string) =>
+  request<OutboundCall>(tel(orgId, '/test-calls'), { method: 'POST', body: JSON.stringify({ number }) })
+export const getTestCall = (orgId: string, testCallId: string, signal?: AbortSignal) =>
+  request<OutboundCall>(tel(orgId, `/test-calls/${testCallId}`), { signal })
+export const listTestCalls = (orgId: string, p?: PageParams, signal?: AbortSignal) =>
+  request<Page<OutboundCall>>(tel(orgId, `/test-calls${pageQuery(p)}`), { signal })
+export const listCallRecords = (orgId: string, f?: CallRecordFilter, signal?: AbortSignal) =>
+  request<Page<CallRecord>>(tel(orgId, `/call-records${query({ ...f })}`), { signal })
+/** `month` em `YYYY-MM`; sem ele, o mês corrente no fuso do servidor. */
+export const getTelephonyUsage = (orgId: string, month?: string, signal?: AbortSignal) =>
+  request<TelephonyUsage>(tel(orgId, `/usage${query({ month })}`), { signal })
