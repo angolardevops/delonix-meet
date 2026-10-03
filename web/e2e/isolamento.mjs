@@ -256,7 +256,7 @@ await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/st
 const CHAVE_DESTINO_B = `chave-secreta-da-b-${marca}`
 const destinoB = await req(`/api/orgs/${B.orgId}/stream-destinations`, {
   token: B.token, method: 'POST',
-  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://10.0.0.9/live', stream_key: CHAVE_DESTINO_B },
+  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://destino-b.exemplo.invalid/live', stream_key: CHAVE_DESTINO_B },
 })
 if (destinoB.status === 201 && destinoB.json?.id) {
   ok('B guarda um destino de directo → 201')

@@ -639,6 +639,8 @@ fn causa_legivel(e: &anyhow::Error) -> &'static str {
         "Não chegou media suficiente para gravar. A gravação pode ter sido parada demasiado cedo, ou ninguém tinha câmara nem microfone ligados."
     } else if t.contains("excedeu") {
         "A composição do vídeo excedeu o tempo máximo e foi interrompida."
+    } else if t.contains("ffprobe") {
+        "O vídeo final não passou na validação e não foi publicado. A equipa de operação tem o detalhe no registo."
     } else if t.contains("ffmpeg") {
         "O servidor não conseguiu compor o vídeo final. A equipa de operação tem o detalhe no registo."
     } else if t.contains("No space") || t.contains("space left") {
@@ -981,6 +983,17 @@ async fn finalize_inner(
         }
         Err(e) => return Err(e.into()),
     }
+    // Só é `ready` depois de o ficheiro final ser VALIDADO (RFC-0001, B5): o
+    // `ffprobe` tem de o reconhecer e achar pelo menos uma pista. Antes, o
+    // `ready` precedia a medição e um ficheiro ilegível ficava «disponível».
+    // `probe_and_store` grava os metadados com a linha ainda em `processing`.
+    let media = crate::media_probe::probe_and_store(state, rec_id, &final_path).await;
+    if media.video_codec.is_none() && media.audio_codec.is_none() {
+        let _ = tokio::fs::remove_file(&final_path).await;
+        anyhow::bail!(
+            "o ficheiro final não foi reconhecido pelo ffprobe (sem pista de vídeo nem de áudio)"
+        );
+    }
     // Só é `ready` depois de o ficheiro estar no sítio final: um `ready` sem
     // ficheiro era um download partido.
     //
@@ -1012,7 +1025,6 @@ async fn finalize_inner(
         .unwrap_or_default();
     crate::notifications::recording_ready(state, session.by_user, rec_id, &filename, &code).await;
 
-    let media = crate::media_probe::probe_and_store(state, rec_id, &final_path).await;
     crate::recordings::fire_recording_ready(
         state,
         crate::recordings::ReadyRecording {

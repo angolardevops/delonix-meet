@@ -120,6 +120,7 @@ impl Outbound {
     pub async fn check_tenant_url(&self, raw: &str) -> Result<Url, ApiError> {
         check_url(
             raw,
+            HTTP,
             EgressPolicy::Tenant,
             &self.allow_hosts,
             Resolution::Required,
@@ -134,6 +135,35 @@ impl Outbound {
     pub async fn check_tenant_config_url(&self, raw: &str) -> Result<Url, ApiError> {
         check_url(
             raw,
+            HTTP,
+            EgressPolicy::Tenant,
+            &self.allow_hosts,
+            Resolution::Optional,
+        )
+        .await
+    }
+
+    /// Antes de o `ffmpeg` LIGAR a um destino de directo (`rtmp`/`rtmps`)
+    /// escrito por um cliente: só endereços públicos. O `ffmpeg` resolve o
+    /// nome outra vez por conta própria, por isso resta uma janela de DNS
+    /// rebinding que esta validação não fecha (ver a RFC-0001 §11): a defesa
+    /// completa é a rede do worker de emissão não alcançar a rede interna.
+    pub async fn check_tenant_stream_url(&self, raw: &str) -> Result<Url, ApiError> {
+        check_url(
+            raw,
+            RTMP,
+            EgressPolicy::Tenant,
+            &self.allow_hosts,
+            Resolution::Required,
+        )
+        .await
+    }
+
+    /// Ao GRAVAR um destino de directo. Ver [`Self::check_tenant_config_url`].
+    pub async fn check_tenant_stream_config_url(&self, raw: &str) -> Result<Url, ApiError> {
+        check_url(
+            raw,
+            RTMP,
             EgressPolicy::Tenant,
             &self.allow_hosts,
             Resolution::Optional,
@@ -145,6 +175,7 @@ impl Outbound {
     pub async fn check_operator_url(&self, raw: &str) -> Result<Url, ApiError> {
         check_url(
             raw,
+            HTTP,
             EgressPolicy::Operator,
             &self.allow_hosts,
             Resolution::Required,
@@ -156,6 +187,7 @@ impl Outbound {
     pub async fn check_operator_config_url(&self, raw: &str) -> Result<Url, ApiError> {
         check_url(
             raw,
+            HTTP,
             EgressPolicy::Operator,
             &self.allow_hosts,
             Resolution::Optional,
@@ -163,6 +195,9 @@ impl Outbound {
         .await
     }
 }
+
+const HTTP: &[&str] = &["http", "https"];
+const RTMP: &[&str] = &["rtmp", "rtmps"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Resolution {
@@ -175,12 +210,13 @@ enum Resolution {
 /// HOST do URL, não pelo IP resolvido.
 async fn check_url(
     raw: &str,
+    schemes: &[&str],
     policy: EgressPolicy,
     allow_hosts: &[String],
     resolution: Resolution,
 ) -> Result<Url, ApiError> {
     let url = Url::parse(raw.trim()).map_err(|_| ApiError::BadRequest("URL inválido".into()))?;
-    if !matches!(url.scheme(), "http" | "https") {
+    if !schemes.contains(&url.scheme()) {
         return Err(ApiError::BadRequest("esquema de URL inválido".into()));
     }
     if !url.username().is_empty() || url.password().is_some() {
@@ -303,6 +339,36 @@ mod tests {
             .check_tenant_config_url("https://[fd00:ec2::254]/")
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn destinos_de_directo_so_alcancam_a_rede_publica() {
+        let out = Outbound::new(vec![]);
+        for u in [
+            "rtmp://127.0.0.1/live/k",
+            "rtmps://10.0.0.5:443/app/k",
+            "rtmp://169.254.169.254/live",
+            "rtmp://[::1]/live",
+            "rtmp://[::ffff:127.0.0.1]/live",
+        ] {
+            assert!(out.check_tenant_stream_url(u).await.is_err(), "{u}");
+            assert!(out.check_tenant_stream_config_url(u).await.is_err(), "{u}");
+        }
+        // Um esquema HTTP não é um destino de directo, e o inverso também não.
+        assert!(out
+            .check_tenant_stream_url("http://8.8.8.8/")
+            .await
+            .is_err());
+        assert!(out.check_tenant_url("rtmp://8.8.8.8/live").await.is_err());
+        // Um IP público passa; ao gravar, um nome ainda sem DNS também.
+        assert!(out
+            .check_tenant_stream_url("rtmp://8.8.8.8/live")
+            .await
+            .is_ok());
+        assert!(out
+            .check_tenant_stream_config_url("rtmps://ingest.ainda-sem-dns.test/app")
+            .await
+            .is_ok());
     }
 
     #[tokio::test]

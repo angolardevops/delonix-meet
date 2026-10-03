@@ -1446,6 +1446,15 @@ pub async fn ws_directo(
     // O JSON dos destinos segue a MESMA regra: um parse malformado tem de
     // chegar como razão legível, não como um 400 antes do upgrade.
     let recusa = |ws: WebSocketUpgrade, m: String| Ok(ws.on_upgrade(move |s| recusar(s, m)));
+    // Pôr uma sala no ar é decisão do anfitrião (ou de quem ele deixou admitir):
+    // um room token qualquer não chega. Sem isto, um convidado com a ligação do
+    // estúdio aberta podia emitir para os seus próprios destinos (RFC-0001, B1).
+    if !(claims.owner || claims.adm) {
+        return recusa(
+            ws,
+            "só o anfitrião da sala (ou quem ele autorizou) pode pôr a sala no ar".into(),
+        );
+    }
     let brutos = match serde_json::from_str::<Vec<DestinoBruto>>(&q.destinos) {
         Ok(b) => b,
         Err(e) => return recusa(ws, format!("os destinos vieram malformados: {e}")),
@@ -1561,6 +1570,26 @@ pub async fn ws_directo(
                     id: None,
                 });
             }
+        }
+    }
+
+    // Os destinos ad hoc e os guardados (um guardado pode ter sido gravado antes
+    // desta guarda existir) são URLs de cliente: só se liga a endereços públicos.
+    for d in &destinos {
+        if state
+            .outbound
+            .check_tenant_stream_url(&d.url)
+            .await
+            .is_err()
+        {
+            tracing::warn!(sala = %codigo, destino = %d.rotulo, "directo recusado: destino não público");
+            return recusa(
+                ws,
+                format!(
+                    "o destino «{}» não é alcançável: aponta para um endereço interno ou não resolve",
+                    d.rotulo
+                ),
+            );
         }
     }
 
@@ -1691,6 +1720,21 @@ async fn bombear(
                     if no_ar > 0 && p.is_none() {
                         let agora = chrono::Utc::now();
                         *p = Some(agora);
+                        // Trilha imutável (RFC-0001, B6): quem pôs a sala no ar. O
+                        // alvo é a sala e o nº de destinos — nunca um URL nem uma chave.
+                        let state_a = state.clone();
+                        let alvo = format!("sala {codigo}, {} destino(s)", reports.len());
+                        tokio::spawn(async move {
+                            crate::audit::log_com_metricas(
+                                &state_a.db,
+                                Some(&*state_a.metrics),
+                                None,
+                                user_id,
+                                "broadcast.started",
+                                &alvo,
+                            )
+                            .await;
+                        });
                         fire_stream_event(
                             &state,
                             user_id,
@@ -1789,6 +1833,18 @@ async fn bombear(
     if let Some(started_at) = started_at {
         announce_live(&state, sala, None);
         let agora = chrono::Utc::now();
+        crate::audit::log_com_metricas(
+            &state.db,
+            Some(&*state.metrics),
+            None,
+            user_id,
+            "broadcast.ended",
+            &format!(
+                "sala {codigo}, {} s",
+                (agora - started_at).num_seconds().max(0)
+            ),
+        )
+        .await;
         fire_stream_event(
             &state,
             user_id,
