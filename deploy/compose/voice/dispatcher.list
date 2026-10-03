@@ -1,0 +1,2 @@
+# Pool de nós FreeSWITCH no compose (grupo 1): o contentor, pelo nome.
+1 sip:delonix-freeswitch:5080 0 0 weight=100

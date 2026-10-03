@@ -87,3 +87,8 @@ ai-worker/gen/
 .fs-canais/
 .fs-smoke.*/
 .fs-build/
+
+# Ferramentas instaladas por `make bootstrap` (helm) — por máquina, nunca versionadas.
+.tools/
+# Gerados por `make bootstrap`: segredo do relay, acessos de administração, TLS do bordo.
+deploy/compose/generated/

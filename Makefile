@@ -1,9 +1,13 @@
 # ============================================================
 #  Delonix Meet — orquestração de ambientes (dev / prod)
 #
-#  Um comando por ambiente, pronto a usar:
-#     make dev     → sobe infra + backend + frontend + nginx (dev), imprime URLs
-#     make prod    → deploy de produção (segredos + build + publish + smoke)
+#  O ciclo de desenvolvimento, por ordem:
+#     make bootstrap   → prepara a máquina (ferramentas, dependências, .env, certificado)
+#     make dev         → sobe infra + backend + frontend + nginx (dev), imprime URLs
+#     make build       → imagens do backend e do frontend (as mesmas do cluster)
+#     make compose-up  → simulação de produção numa máquina só (compose.yaml)
+#     make cluster     → o stack completo num cluster local, em https://meet.ngolacloud.local
+#     make prod        → deploy de produção (segredos + build + publish + smoke)
 #
 #  `make` (sem alvo) ou `make help` lista tudo.
 # ============================================================
@@ -45,6 +49,27 @@ IMAGE_WEB_REPO    ?= delonix-web
 IMAGE_SERVER      := $(IMAGE_SERVER_REPO):$(IMAGE_TAG)
 IMAGE_WEB         := $(IMAGE_WEB_REPO):$(IMAGE_TAG)
 METALLB_VERSION   ?= v0.14.9
+
+# ---- Ciclo local: compose.yaml e `make cluster` ----
+CLUSTER_NAME ?= meet
+MEET_HOST    ?= meet.ngolacloud.local
+# Ferramentas que o `make bootstrap` instala ficam no projecto, não no sistema.
+TOOLS_BIN    := $(ROOT)/.tools/bin
+HELM_VERSION ?= v3.16.4
+export PATH := $(TOOLS_BIN):$(PATH)
+# O motor de compose: delonix (daemonless) se existir, senão docker.
+# O nome do projecto vai ANTES do subcomando no docker e DEPOIS no delonix.
+ifneq ($(shell command -v delonix 2>/dev/null),)
+  COMPOSE   ?= delonix compose
+  # Caminho ABSOLUTO do ficheiro: com ele os binds relativos (./deploy/…)
+  # resolvem-se contra a pasta do compose.yaml; sem ele, o delonix não os acha.
+  COMPOSE_P := -f $(ROOT)/compose.yaml -p delonix-meet
+  COMPOSE_EXEC := delonix container exec -it
+else
+  COMPOSE   ?= docker compose -f $(ROOT)/compose.yaml -p delonix-meet
+  COMPOSE_P :=
+  COMPOSE_EXEC := docker exec -it
+endif
 
 # Cores
 C := \033[1;36m
@@ -204,12 +229,18 @@ logs-nginx: ; @mkdir -p $(RUNDIR) && touch $(RUNDIR)/nginx-dev-error.log $(RUNDI
 # ============================================================
 #  BUILD / TEST / MIGRATE
 # ============================================================
-.PHONY: build
-build: ## Compila backend (release) + frontend (produção)
-	@printf "$(C)▶ build backend + frontend$(Z)\n"
+.PHONY: compile
+compile: ## Compila backend (release) + frontend (produção), sem imagens
+	@printf "$(C)▶ compilar backend + frontend$(Z)\n"
 	@cd server && cargo build --release
 	@cd web && npm ci && npm run build
-	@printf "$(G)  ✓ build concluído$(Z)\n"
+	@printf "$(G)  ✓ compilação concluída$(Z)\n"
+
+# `build` produz o ARTEFACTO que se implanta — as imagens —, e não binários
+# soltos: é o que o `compose.yaml` e o `make cluster` correm. Quem só quer os
+# binários (deploy bare-metal legado) usa `make compile`.
+.PHONY: build
+build: image ## Constrói as imagens do backend e do frontend (delonix-server, delonix-web)
 
 .PHONY: test
 test: fitness web-deps ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
@@ -266,6 +297,10 @@ migrate: ## Corre as migrações pendentes (sqlx migrate run)
 BUILDER ?= $(shell command -v delonix >/dev/null 2>&1 && echo delonix || echo docker)
 ifeq ($(BUILDER),delonix)
   IMG_BUILD := delonix build
+  # O `delonix build` 4.4.0 não faz COPY para uma imagem final sem shell
+  # (distroless): ver o cabeçalho de Dockerfile.server.slim. A imagem de
+  # produção sai de `make build BUILDER=docker` ou do CI.
+  SERVER_DOCKERFILE ?= Dockerfile.server.slim
   IMG_TAG_CMD := delonix image tag
   IMG_LS    := delonix image ls
   IMG_PULL  := delonix image pull
@@ -290,6 +325,7 @@ ifeq ($(BUILDER),delonix)
   endif
 else
   IMG_BUILD := docker build
+  SERVER_DOCKERFILE ?= Dockerfile.server
   IMG_TAG_CMD := docker tag
   IMG_LS    := docker images
   IMG_PULL  := docker pull
@@ -314,7 +350,7 @@ image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_T
 	@# (um dist stale foi a causa de "estilos perdidos" em stage — nunca reusar).
 	@export PATH="$(NODE_BIN):$$PATH"; \
 	  cd web && { [ -d node_modules ] || npm ci; } && npm run build
-	@$(IMG_BUILD) -f Dockerfile.server -t $(IMAGE_SERVER) .
+	@$(IMG_BUILD) -f $(SERVER_DOCKERFILE) -t $(IMAGE_SERVER) .
 	@printf "$(C)▶ build $(IMAGE_WEB) (dist local → nginx, rápido)$(Z)\n"
 	@$(IMG_BUILD) -f Dockerfile.web.stage -t $(IMAGE_WEB) .
 	@# :latest acompanha a última build (bootstrap dos manifests em cluster novo).
@@ -662,6 +698,81 @@ voice-up: ## Sobe Kamailio + FreeSWITCH (dial-in PSTN). Usa o mesmo VOICE_SECRET
 	@printf "$(G)  ✓ voz a subir (media real exige o trunk contratado — IPs em ao_trunk.txt)$(Z)\n"
 voice-down: ## Para a camada de media de voz
 	@docker compose -f voice/docker-compose.voice.yml down
+
+# ============================================================
+#  CICLO LOCAL — bootstrap, simulação de produção e cluster
+# ============================================================
+.PHONY: bootstrap
+bootstrap: ## Prepara a máquina: ferramentas, dependências, .env com segredos e certificado
+	@MEET_HOST=$(MEET_HOST) HELM_VERSION=$(HELM_VERSION) bash scripts/bootstrap.sh
+
+# O compose.yaml corre as imagens de `make build` atrás de uma borda com TLS.
+# Não constrói nada: sem imagens, falha a dizer isso — não as vai buscar a lado nenhum.
+.PHONY: compose-up compose-down compose-ps compose-logs compose-voice-check seed
+seed: ## Cria a organização «ngolacloud» e o administrador de validação (BASE=https://…)
+	@bash scripts/seed.sh $(or $(BASE),https://$(MEET_HOST):8443)
+compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do PBX e chamada de prova ao IVR
+	@bash scripts/compose-voice-check.sh
+compose-up: ## Simulação de produção (compose.yaml): Meet, Kamailio e PBX, com os URLs e os acessos
+	@[ -f .env ] && [ -f deploy/compose/generated/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou deploy/compose/generated/ — corre «make bootstrap»$(Z)\n"; exit 1; }
+	@$(IMG_LS) 2>/dev/null | grep -q "delonix-server" || { printf "$(Y)  ✗ faltam as imagens — corre «make build»$(Z)\n"; exit 1; }
+	@$(IMG_LS) 2>/dev/null | grep -q "pbx-cliente" || { printf "$(Y)  ✗ faltam as imagens de voz — corre «make voice-images»$(Z)\n"; exit 1; }
+	@printf "$(C)▶ $(COMPOSE) up (simulação de produção)$(Z)\n"
+	@$(COMPOSE) up $(COMPOSE_P) -d
+	@printf "$(C)▶ organização e conta de validação$(Z)\n"
+	@bash scripts/seed.sh https://$(MEET_HOST):8443 || true
+	@$(MAKE) --no-print-directory compose-info
+
+# Os acessos vêm do .env desta máquina (gerados por `make bootstrap`): são de
+# laboratório, e mostram-se aqui para não se andar à procura deles.
+.PHONY: compose-info
+compose-info: ## URLs e acessos de administração da simulação de produção
+	@v() { sed -n "s/^$$1=//p" .env | head -1; }; \
+	printf "\n$(G)  Delonix Meet$(Z)      $(Y)https://$(MEET_HOST):8443$(Z)\n"; \
+	printf "     organização  ngolacloud\n"; \
+	printf "     utilizador   admin@ngolacloud.local\n"; \
+	printf "     password     %s\n" "$$(v MEET_ADMIN_PASSWORD)"; \
+	printf "$(G)  Kamailio$(Z)          $(Y)https://$(MEET_HOST):8444/rpc/$(Z)   (bordo SIP — interface de gestão xhttp_rpc)\n"; \
+	printf "     utilizador   admin\n"; \
+	printf "     password     %s\n" "$$(v VOICE_ADMIN_PASSWORD)"; \
+	printf "$(G)  PBX de cliente$(Z)    $(Y)https://$(MEET_HOST):8445/ari/api-docs/resources.json$(Z)   (Asterisk — API de administração ARI)\n"; \
+	printf "     utilizador   admin\n"; \
+	printf "     password     %s\n" "$$(v VOICE_ADMIN_PASSWORD)"; \
+	printf "     consola      $(COMPOSE_EXEC) delonix-pbx asterisk -rvvv\n"; \
+	printf "\n  Estado: make compose-ps   ·   Prova da voz: make compose-voice-check\n"
+compose-down: ## Para a simulação de produção (mantém os volumes)
+	@$(COMPOSE) down $(COMPOSE_P)
+compose-ps: ## Contentores da simulação de produção
+	@$(COMPOSE) ps $(COMPOSE_P)
+compose-logs: ## Logs da simulação de produção (SVC=server para um só)
+	@$(COMPOSE) logs $(COMPOSE_P) $(SVC)
+
+# As imagens da voz para o cluster local. O FreeSWITCH constrói-se com docker
+# (make freeswitch-image, ~15 min) e é IMPORTADO para o store do delonix, que é
+# de onde o `cluster load` o lê; o PBX de cliente é um Asterisk de stock.
+PBX_IMAGE ?= delonix-meet/pbx-cliente:lab
+.PHONY: voice-images
+voice-images: ## Imagens de voz para o cluster local: FreeSWITCH (importado) + PBX de cliente
+	@printf "$(C)▶ $(PBX_IMAGE) (Asterisk de stock)$(Z)\n"
+	@$(IMG_BUILD) -f voice/pbx-cliente/Containerfile -t $(PBX_IMAGE) voice/pbx-cliente
+	@printf "$(C)▶ $(FS_IMAGE) → store do delonix$(Z)\n"
+	@if delonix image ls 2>/dev/null | grep -q "^$(FS_IMAGE)[[:space:]]"; then \
+	  printf "   já lá está\n"; \
+	elif docker image inspect $(FS_IMAGE) >/dev/null 2>&1; then \
+	  t=$$(mktemp --suffix=.tar); docker save $(FS_IMAGE) -o $$t && delonix image load -i $$t >/dev/null; rm -f $$t; \
+	  printf "   importada do docker\n"; \
+	else \
+	  printf "$(Y)  ✗ falta a $(FS_IMAGE) — corre «make freeswitch-image» (~15 min) e repete$(Z)\n"; exit 1; \
+	fi
+	@printf "$(G)  ✓ imagens de voz prontas$(Z)\n"
+
+.PHONY: cluster cluster-status cluster-down
+cluster: ## Stack completo num cluster local (delonix cluster) — https://$(MEET_HOST)
+	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) IMAGE_TAG=$(IMAGE_TAG) bash scripts/cluster.sh up
+cluster-status: ## Estado do cluster local: nós, pods, ingress e a prova de fumo
+	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh status
+cluster-down: ## Destrói o cluster local (nós, rede e kubeconfig)
+	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh down
 
 # ============================================================
 #  MANUTENÇÃO

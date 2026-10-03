@@ -1,0 +1,9 @@
+# Allowlist de origens do bordo no COMPOSE (módulo `permissions`,
+# `address_file`): grupo, IP, máscara, porta, etiqueta.
+#
+# As redes privadas, porque a sub-rede do compose muda de motor para motor
+# (10.x no delonix, 172.x no docker) — é de lá que fala o PBX de laboratório.
+# Em produção este ficheiro leva os IPs do tronco contratado e NUNCA vai para o git.
+1 10.0.0.0 8 0 lab-rede-privada
+1 172.16.0.0 12 0 lab-rede-privada
+1 192.168.0.0 16 0 lab-rede-privada

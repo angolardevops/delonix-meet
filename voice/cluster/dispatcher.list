@@ -1,0 +1,4 @@
+# Pool de nós FreeSWITCH no cluster local (grupo 1).
+# `freeswitch` é um Service headless: resolve para o IP do pod, que é para
+# onde o SIP tem de ir (um ClusterIP à frente de SIP/UDP parte o diálogo).
+1 sip:freeswitch:5080 0 0 weight=100

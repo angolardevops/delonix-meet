@@ -1,0 +1,25 @@
+# PBX de CLIENTE para o cluster local — um Asterisk de stock.
+#
+# Faz o papel do PBX que um cliente já tem (Issabel, FreePBX…): regista ramais
+# e fala com o Meet por tronco SIP, como par NÃO confiado. Não é o Issabel: o
+# Issabel é uma distribuição inteira (Rocky 8 + Asterisk 18, sem correcções de
+# segurança desde Outubro de 2025) e não tem imagem de contentor. O que o
+# tronco vê é o mesmo — um Asterisk com PJSIP —, e é isso que aqui se simula.
+# Ver .claude/skills/delonix-meet-voip/SKILL.md.
+FROM ubuntu:24.04
+
+# Um build rootless não consegue ler o que só o utilizador `asterisk` lê
+# (0640/0750), e a camada saía sem a configuração. É uma imagem de laboratório:
+# abre-se a leitura da configuração e a escrita do estado.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       asterisk asterisk-core-sounds-en-gsm ca-certificates \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial \
+    && chmod -R a+rX /etc/asterisk \
+    && mkdir -p /var/run/asterisk \
+    && chmod -R a+rwX /var/lib/asterisk /var/spool/asterisk /var/log/asterisk /var/run/asterisk
+
+# A configuração entra por volume (deploy/k8s/cluster/voice.yaml); a de stock
+# fica só como base do que não se monta.
+USER asterisk
+ENTRYPOINT ["/usr/sbin/asterisk", "-f", "-vvv"]
