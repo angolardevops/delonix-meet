@@ -50,13 +50,15 @@ do que o softphone ouviu fica em `.softphone-prova/ultima-chamada-ouvido.wav`.
 
 ## O que esta prova mediu (R226 no catálogo de regressões)
 
-- **Só a variável GLOBAL `rtp_secure_media=mandatory` recusa uma chamada em claro à
-  entrada.** Medido com o `selftest` sem a global: sem nada, a chamada em claro é aceite;
+- **Em qualquer perfil, o que recusa uma chamada em claro à entrada é a variável GLOBAL
+  `rtp_secure_media=mandatory`.** Medido com o `selftest` sem a global: sem nada, a chamada em claro é aceite;
   só com `rtp-secure-media` no perfil (que não existe no sofia: zero ocorrências em
   `sofia.c` na v1.11.3), aceite; só com `require-secure-rtp=true` (que o sofia lê para
   uma flag que mais nada consulta), aceite; com a global posta por uma directiva no
   próprio ficheiro do perfil, `488`. Um `set rtp_secure_media=mandatory` no dialplan
-  antes do `answer` também não a recusa.
+  antes do `answer` não a recusa num perfil que negoceia o SDP à chegada (o dos ramais);
+  num perfil com `inbound-late-negotiation=true` (o `external` da vanilla) recusa — medido
+  nos dois sentidos, com e sem o `set`.
 - **No Meet, a global é posta por `voice/freeswitch/sip_profiles/internal.xml`** (no topo
   do ficheiro) e por `voice/freeswitch/vars.xml.inc`. As linhas `rtp-secure-media` do
   perfil e de `conference.conf.xml` saíram.
