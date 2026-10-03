@@ -40,10 +40,12 @@ existe. Sem nenhum deles, a colecção herdada mantém a forma antiga (o mesmo m
 `GET /api/recordings` desde a 0045); com qualquer um, responde o envelope novo.
 
 **Adenda do porte para o `develop` (2026-10-03).** Entre 2026-09-17 e o porte, a biblioteca
-de gravações ganhou forma própria para `q`, `scope`, `page_size` e `page_token`, e é ela que
-o web lê. Essa forma fica: em `GET /api/recordings` o envelope novo só responde com `filter`,
-`filters`, `group_by` ou `order_by`, e só sobre `scope=mine`. Nas outras colecções vale a
-regra acima. A autorização dos tipos reservados segue as capacidades do ADR-0008, e as
+de gravações ganhou o `scope` (`mine`/`published`, R235) e o web passou a lê-la inteira com
+`q` e `scope`. Essa leitura fica: em `GET /api/recordings`, `q` e/ou `scope` sozinhos devolvem
+a lista de sempre; o envelope novo responde com `page_size`, `page_token`, `filter`,
+`filters`, `group_by` ou `order_by` — é um superconjunto da página que lá estava — e cobre as
+duas bibliotecas com a mesma lista branca e a visibilidade de cada uma. Nas outras colecções
+vale a regra acima. A autorização dos tipos reservados segue as capacidades do ADR-0008, e as
 migrações são a 0115–0117. O directório de utilizadores (`directory.rs`) já tinha pesquisa
 própria antes do porte e não foi trazido para este motor — são hoje dois mecanismos, e
 juntá-los é trabalho por fazer.

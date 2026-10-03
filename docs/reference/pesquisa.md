@@ -13,11 +13,12 @@
 >
 > **Porte para o `develop` (2026-10-03).** O ramo da pesquisa é de 2026-09-17; o `develop`
 > mudou entretanto, e onde os dois se cruzam ganha a forma do `develop`:
-> - **`GET /api/recordings` não mudou de forma.** `q`, `scope`, `page_size` e `page_token`
->   continuam a ser a biblioteca de sempre (lista inteira, ou página com `next_page_token`,
->   com `scope=mine|published`). A pesquisa de lista desta página só responde quando o pedido
->   traz `filter`, `filters`, `group_by` ou `order_by`, e só cobre `scope=mine`
->   (`scope=published` com esses parâmetros → `400 recording.invalid_scope`).
+> - **`GET /api/recordings`:** só com `q` e/ou `scope` continua a devolver a lista inteira
+>   (array, com `snippet`) — é o que o web lê fora do painel. Com `page_size`, `page_token`,
+>   `filter`, `filters`, `group_by` ou `order_by` responde o envelope da §2.3, que tem os
+>   `items` e o `next_page_token` da página de antes e acrescenta `total` e grupos. As duas
+>   formas respeitam `scope=mine|published` (um parâmetro da colecção, não da pesquisa: o
+>   painel manda-o em todos os pedidos).
 > - **Campos das gravações:** `kind` em vez de `category`, `duration_ms` em vez de
 >   `duration_secs` — o item da biblioteca já não tem os antigos.
 > - **Tipos reservados do Ctrl+K e auditoria:** pede-se a capacidade do endpoint normal
@@ -35,7 +36,7 @@
 |---|---|
 | Ctrl+K | `GET /api/search?q=orc&types=meetings,recordings&limit=5` |
 | Montar o painel de uma lista | `GET /api/search/schemas/recordings` (uma vez por ecrã; cacheável) |
-| A lista com pesquisa/filtros/agrupamento | `GET /api/recordings?q=…&filter=…&filters=mine,this_week&group_by=created_at:month&order_by=-created_at&page_size=50` (nas gravações, pelo menos um de `filter`/`filters`/`group_by`/`order_by`) |
+| A lista com pesquisa/filtros/agrupamento | `GET /api/recordings?q=…&filter=…&filters=mine,this_week&group_by=created_at:month&order_by=-created_at&page_size=50` (o painel manda SEMPRE `page_size`; nas gravações junta `scope`) |
 | Abrir um grupo | a mesma lista com o `filter` que o grupo trouxe e o `group_by` restante |
 | Favoritos | `GET/POST /api/users/me/saved-searches`, `GET/PATCH/DELETE /api/users/me/saved-searches/{saved_search_id}` |
 
@@ -145,9 +146,9 @@ aparece em `skipped` com a razão (`search.forbidden`) — sem dizer nada sobre 
 
 Os mesmos parâmetros em todas as colecções da secção 4. **Sem nenhum deles, a colecção
 herdada responde como antes** (array); com qualquer um, responde o envelope da §2.3.
-Excepção: `GET /api/recordings` já tinha `q`, `page_size` e `page_token` com forma própria,
-que se mantém — aí o envelope da §2.3 só responde com `filter`, `filters`, `group_by` ou
-`order_by` (§4.1).
+Excepção: em `GET /api/recordings`, `q` sozinho (com ou sem `scope`) já tinha forma própria —
+a lista inteira com `snippet` — e mantém-na; o envelope da §2.3 responde com qualquer dos
+outros parâmetros (§4.1).
 
 ### 2.1 Parâmetros
 
@@ -315,11 +316,13 @@ Legenda: **F** filtra · **O** ordena · **A** agrupa · Σ agregado.
 
 ### 4.1 `recordings` — `GET /api/recordings` · implementado
 
-Visibilidade: a da biblioteca `scope=mine` (`AccessFacts::listed_in(Mine)`: carregou,
-participou ou foi-lhe partilhada, e não saiu da organização). `q`: título/ficheiro (A) +
-transcrição (B). O envelope da §2.3 responde quando o pedido traz `filter`, `filters`,
-`group_by` ou `order_by`; só com `q`/`scope`/`page_size`/`page_token` responde a biblioteca
-de sempre. As publicadas na organização (`scope=published`) não entram nesta pesquisa.
+Visibilidade: a da biblioteca pedida em `scope` (`AccessFacts::listed_in`). `mine`
+(omissão): carregou, participou ou foi-lhe partilhada. `published`: está publicada e ou é
+uma das anteriores ou foi publicada para a organização e quem pede é membro activo de uma
+organização do autor. Nas duas, quem saiu da organização deixa de ver. `q`: título/ficheiro
+(A) + transcrição (B). O envelope da §2.3 responde com `page_size`, `page_token`, `filter`,
+`filters`, `group_by` ou `order_by`; só com `q`/`scope` responde a lista inteira de sempre.
+O Ctrl+K (§1) procura na biblioteca `mine`.
 
 | Campo | Tipo | F | O | A | Σ |
 |---|---|---|---|---|---|
