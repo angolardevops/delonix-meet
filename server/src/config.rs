@@ -147,6 +147,12 @@ pub struct Config {
     /// DENTRO da org (ver migração 0064); sem isto, o ramal "101" da Acme e o
     /// "101" da Zeta colidiriam no mesmo directório SIP.
     pub voice_ramais_domain_suffix: String,
+    /// Número curto RESERVADO que um ramal marca para entrar numa reunião
+    /// (`VOICE_MEETING_ACCESS_NUMBER`, 3–5 dígitos sem zero à esquerda; por
+    /// omissão `8000`). O FreeSWITCH não o conhece: pergunta-o ao servidor em
+    /// `resolve-extension`, por isso este é o único sítio onde se configura.
+    /// Nenhum ramal pode ter este número (`ramais.extension_reserved`).
+    pub voice_meeting_access_number: String,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
     pub recordings_dir: std::path::PathBuf,
     /// Ficheiros ZIP de «os meus dados» (`DATA_EXPORTS_DIR`). Por omissão
@@ -495,6 +501,17 @@ impl Config {
                 .unwrap_or(0.0),
             voice_ramais_domain_suffix: opt("VOICE_RAMAIS_DOMAIN_SUFFIX")
                 .unwrap_or_else(|| "ramais.delonix.meet".into()),
+            voice_meeting_access_number: {
+                use delonix_meet_domain::telephony::extension as ext;
+                bounded_env(
+                    src,
+                    "VOICE_MEETING_ACCESS_NUMBER",
+                    ext::DEFAULT_MEETING_ACCESS_NUMBER,
+                    ext::MEETING_ACCESS_NUMBER_MIN,
+                    ext::MEETING_ACCESS_NUMBER_MAX,
+                )
+                .to_string()
+            },
             recordings_dir: src
                 .var("RECORDINGS_DIR")
                 .map(std::path::PathBuf::from)

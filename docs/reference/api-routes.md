@@ -223,6 +223,7 @@ Rotas afectadas:
 |---|---|
 | `POST /api/voice/ivr/validate` | `POST /internal/v1/voice/ivr/validate` |
 | `POST /api/voice/ivr/cdr` | `POST /internal/v1/voice/ivr/cdr` |
+| — (nova, R273) | `POST /internal/v1/voice/ivr/validate-extension` |
 
 ## Consumidores externos
 - **Módulo Odoo `nk_delonix_meet`** (repositório `kaeso-18`): passa a chamar:

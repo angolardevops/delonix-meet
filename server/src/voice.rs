@@ -905,6 +905,116 @@ pub(crate) async fn validate_pin(
     }
 }
 
+#[derive(Deserialize)]
+pub struct ValidateExtensionPinReq {
+    /// O utilizador com que o ramal se AUTENTICOU no FreeSWITCH (digest):
+    /// `sip_auth_username`. Globalmente único — é ele que decide a org.
+    pub sip_username: String,
+    /// O realm dessa autenticação (`sip_auth_realm`): tem de ser o domínio SIP
+    /// da org do ramal. Não escolhe a org; só confirma.
+    pub domain: String,
+    pub pin: String,
+}
+
+/// `POST /internal/v1/voice/ivr/validate-extension` — o IVR da sala quando quem
+/// liga é um RAMAL que marcou o número de acesso às reuniões (R273).
+///
+/// Rota própria, e não um campo novo no `validate`: aquele identifica a sala
+/// por `(DID, PIN)` e partilha a regra com o gRPC (`IvrService.ValidatePin`);
+/// um pedido com DID opcional deixava a fronteira de isolamento a depender de
+/// qual dos campos veio preenchido. Aqui não há DID nenhum: a fronteira é a
+/// ORGANIZAÇÃO do ramal.
+pub async fn ivr_validate_extension_pin(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ValidateExtensionPinReq>,
+) -> Result<Json<ValidatePinResp>, ApiError> {
+    check_media_secret(&state, &headers)?;
+    validate_pin_for_extension(&state, &req.sip_username, &req.domain, &req.pin)
+        .await
+        .map(Json)
+}
+
+/// A regra do IVR para um ramal: `(ramal autenticado, PIN)` → a sala de voz
+/// ACTIVA **da organização desse ramal** com esse PIN.
+///
+/// Fronteira de isolamento: um ramal da org A não entra numa sala da org B,
+/// mesmo sabendo o PIN — a org sai do ramal (`voice_extensions.org_id`), nunca
+/// do pedido. Todas as recusas dão o mesmo `404`: ramal inexistente ou
+/// inactivo, domínio que não é o da org dele, dono arquivado, PIN errado, PIN
+/// de outra org, PIN ambíguo.
+pub(crate) async fn validate_pin_for_extension(
+    state: &AppState,
+    sip_username: &str,
+    domain: &str,
+    pin: &str,
+) -> Result<ValidatePinResp, ApiError> {
+    let sip_username = sip_username.trim();
+    let limiter_key = format!("ramal:{sip_username}");
+    let refuse = || {
+        // O mesmo travão do dial-in, por ramal: só as FALHAS contam.
+        if !state.voice_pin_limiter.check(&limiter_key) {
+            tracing::warn!(ramal = %sip_username, "possível brute-force de PIN por um ramal — a bloquear");
+            return ApiError::TooManyRequests;
+        }
+        ApiError::NotFound
+    };
+
+    let ext: Option<(Uuid, Uuid, String)> = sqlx::query_as(
+        "SELECT e.org_id, e.member_id, o.slug
+           FROM voice_extensions e JOIN organizations o ON o.id = e.org_id
+          WHERE e.sip_username = $1 AND e.active",
+    )
+    .bind(sip_username)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((org_id, member_id, slug)) = ext else {
+        return Err(refuse());
+    };
+    // O realm com que o FreeSWITCH autenticou tem de ser o domínio da org do
+    // ramal — o HA1 só bate com esse. Um par (utilizador, domínio) que não
+    // existe não veio de um INVITE autenticado.
+    let expected = format!("{slug}.{}", state.config.voice_ramais_domain_suffix);
+    if !domain.trim().eq_ignore_ascii_case(&expected) {
+        return Err(refuse());
+    }
+    // O ramal é 1:1 com um membro: arquivado, o softphone não abre reuniões.
+    if role_in_org(state, org_id, member_id).await?.is_none() {
+        return Err(refuse());
+    }
+
+    // O PIN é único por (DID, sala activa), não por org: com dois DIDs, duas
+    // salas da mesma org podem ter o mesmo PIN. Sem DID não há como desempatar
+    // — recusa-se em vez de escolher uma.
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT vr.id, vr.room_code, vr.media_backend
+           FROM voice_room vr
+          WHERE vr.pin = $1 AND vr.org_id = $2 AND vr.status = 'active'
+          LIMIT 2",
+    )
+    .bind(pin.trim())
+    .bind(org_id)
+    .fetch_all(&state.db)
+    .await?;
+    match <[_; 1]>::try_from(rows) {
+        Ok([(id, room_code, backend)]) => {
+            let room_bridge = room_bridge_for(state, &room_code, &backend).await;
+            Ok(ValidatePinResp {
+                voice_room_id: id,
+                room_code,
+                media_backend: backend,
+                room_bridge,
+            })
+        }
+        Err(rows) => {
+            if rows.len() > 1 {
+                tracing::warn!(%org_id, "PIN em duas salas de voz activas da mesma org — recusado ao ramal");
+            }
+            Err(refuse())
+        }
+    }
+}
+
 /// Para onde o IVR deve fazer `bridge` para meter esta chamada na sala. Falha
 /// SEMPRE em silêncio (log + `None`, nunca um erro que derrube a validação do
 /// PIN): um chamador tem de conseguir entrar mesmo que a ponte não esteja

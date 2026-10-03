@@ -8,11 +8,26 @@
 //!
 //! Fase 2 (mesmo ficheiro, secção "Fase 2" mais abaixo): um ramal pode agora
 //! ser alcançado a partir do PSTN quando tem um DID dedicado atribuído
-//! (migração `0065_ramais_did.sql`, estende `voice_did`). Continua fora de
-//! âmbito: um ramal ligado a uma sala de reunião em vídeo — a ponte
-//! ramal↔SFU é fase seguinte do mesmo plano, e nenhuma UI ou mensagem deste
-//! módulo pode sugerir que já existe (mesma disciplina que `VoiceCard.tsx`
-//! já aplica à ponte FreeSWITCH↔SFU em falta).
+//! (migração `0065_ramais_did.sql`, estende `voice_did`).
+//!
+//! Fase 3 (R273): um ramal entra numa reunião marcando o NÚMERO DE ACESSO ÀS
+//! REUNIÕES — um número curto reservado (`VOICE_MEETING_ACCESS_NUMBER`, por
+//! omissão `8000`), o mesmo para todas as organizações. Não há ponte nova: o
+//! `resolve-extension` diz ao `ramais_dial.lua` que o número marcado é o de
+//! acesso, o Lua entrega a chamada ao IVR do dial-in em modo `ramal`
+//! (`dialin_ivr.lua`), e esse valida o PIN em
+//! `/internal/v1/voice/ivr/validate-extension` (`voice::validate_pin_for_extension`),
+//! que só encontra salas da ORGANIZAÇÃO do ramal autenticado. Daí em diante é a
+//! ponte telefone↔sala do ADR-0010, com o mesmo recuo. O que este módulo
+//! garante: o número reservado nunca é de um ramal (`ramais.extension_reserved`)
+//! e as leituras dos ramais dizem qual é (`meeting_access_number`).
+//!
+//! **Não provado:** nenhuma chamada real percorreu este caminho. A regra do
+//! servidor está medida contra Postgres (`tests/ramal_entra_na_sala.rs`); o
+//! Lua só tem a sintaxe verificada. O que continua a não existir: um DID de
+//! ramal (Fase 2) a entrar numa sala — quem liga para esse número fala com a
+//! pessoa do ramal — e o nome de quem entra por ramal no censo (aparece como
+//! «Telefone», anónimo, como qualquer outro telefone).
 //!
 //! ## A fronteira Kamailio/FreeSWITCH (o que está e o que NÃO está verificado)
 //!
@@ -65,6 +80,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{auth::AuthUser, error::ApiError, voice::check_media_secret, AppState};
+use delonix_meet_core::DomainError;
+use delonix_meet_domain::telephony::extension as ext_rules;
 
 // ---------- Helpers ----------
 
@@ -72,7 +89,7 @@ use crate::{auth::AuthUser, error::ApiError, voice::check_media_secret, AppState
 /// discar de cor, longo o suficiente para uma org de algumas centenas de
 /// pessoas não esgotar o espaço.
 fn validate_extension_format(s: &str) -> Result<(), ApiError> {
-    if s.len() < 3 || s.len() > 5 || !s.chars().all(|c| c.is_ascii_digit()) {
+    if !ext_rules::is_short_number(s) {
         return Err(ApiError::BadRequest(
             "extensão deve ter entre 3 e 5 dígitos".into(),
         ));
@@ -146,6 +163,20 @@ pub struct VoiceExtensionInfo {
     pub label: String,
     pub active: bool,
     pub created_at: DateTime<Utc>,
+    /// Número curto que este ramal marca para entrar numa reunião: o
+    /// FreeSWITCH atende e pede o PIN da sala. É o mesmo para todos os ramais
+    /// (configuração do servidor) e nunca é o número de um ramal.
+    #[sqlx(default)]
+    pub meeting_access_number: String,
+}
+
+impl VoiceExtensionInfo {
+    /// O número de acesso não é uma coluna: vem da configuração, e todas as
+    /// leituras de um ramal passam por aqui antes de saírem.
+    fn with_access_number(mut self, state: &AppState) -> Self {
+        self.meeting_access_number = state.config.voice_meeting_access_number.clone();
+        self
+    }
 }
 
 const SELECT_EXTENSION_INFO: &str =
@@ -189,7 +220,7 @@ pub struct CreateExtensionReq {
     responses(
         (status = 200, body = CreatedExtension, description = "A palavra-passe SIP sai UMA vez."),
         (status = 400, body = crate::openapi::ErrorBody),
-        (status = 409, body = crate::openapi::ErrorBody, description = "O número de ramal já existe na organização."),
+        (status = 409, body = crate::openapi::ErrorBody, description = "O número de ramal já existe na organização, ou é o número de acesso às reuniões (`ramais.extension_reserved`)."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -205,6 +236,16 @@ pub async fn create_extension(
 
     let extension = req.extension.trim();
     validate_extension_format(extension)?;
+    // O número de acesso às reuniões é do IVR da sala (R273): com um ramal
+    // nele, quem o marcasse nunca chegava a essa pessoa.
+    let reserved = &state.config.voice_meeting_access_number;
+    if ext_rules::is_meeting_access_number(extension, reserved) {
+        return Err(DomainError::conflict(
+            "ramais.extension_reserved",
+            format!("o número {reserved} está reservado para entrar em reuniões"),
+        )
+        .into());
+    }
 
     // Erro claro em vez de deixar a FK composta rebentar com algo opaco. A
     // pertença decide-se SEMPRE em org.rs (regra 1, ADR-0004 §5) — não se
@@ -293,6 +334,7 @@ pub async fn create_extension(
             .bind(id)
             .fetch_one(&state.db)
             .await?;
+    let info = info.with_access_number(&state);
 
     crate::audit::log(
         &state.db,
@@ -334,7 +376,11 @@ pub async fn list_extensions(
     .bind(org_id)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(rows))
+    Ok(Json(
+        rows.into_iter()
+            .map(|r| r.with_access_number(&state))
+            .collect(),
+    ))
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -389,6 +435,7 @@ pub async fn update_extension(
     .bind(org_id)
     .fetch_one(&state.db)
     .await?;
+    let info = info.with_access_number(&state);
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -450,6 +497,7 @@ pub async fn regenerate_extension_password(
     .bind(org_id)
     .fetch_one(&state.db)
     .await?;
+    let info = info.with_access_number(&state);
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -666,9 +714,17 @@ pub struct ResolveExtensionReq {
     pub extension: String,
 }
 
+/// Um dos dois: `sip_username` (o número é de um ramal desta org) ou
+/// `meeting_access` (o número é o de acesso às reuniões). O contrato é com
+/// `voice/freeswitch/scripts/ramais_dial.lua`.
 #[derive(Serialize)]
 pub struct ResolveExtensionResp {
-    pub sip_username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sip_username: Option<String>,
+    /// `true` => o Lua entrega a chamada ao IVR da sala em vez de tocar num
+    /// ramal. Ausente em todos os outros casos.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub meeting_access: bool,
 }
 
 /// `POST /api/voice/ivr/resolve-extension` — chamado pelo dialplan interno
@@ -682,6 +738,19 @@ pub async fn ivr_resolve_extension(
     Json(req): Json<ResolveExtensionReq>,
 ) -> Result<Json<ResolveExtensionResp>, ApiError> {
     check_media_secret(&state, &headers)?;
+    // O número de acesso às reuniões ganha a qualquer ramal (R273), e é igual
+    // em todas as orgs: responde-se antes de olhar para o domínio. Isto NÃO
+    // autoriza nada — só diz ao dialplan para onde ir; quem decide se o ramal
+    // entra numa sala é `voice::validate_pin_for_extension`.
+    if ext_rules::is_meeting_access_number(
+        req.extension.trim(),
+        &state.config.voice_meeting_access_number,
+    ) {
+        return Ok(Json(ResolveExtensionResp {
+            sip_username: None,
+            meeting_access: true,
+        }));
+    }
     let Some(org_id) = org_id_by_sip_domain(&state, req.domain.trim()).await else {
         return Err(ApiError::NotFound);
     };
@@ -694,8 +763,34 @@ pub async fn ivr_resolve_extension(
     .fetch_optional(&state.db)
     .await?;
     match sip_username {
-        Some(sip_username) => Ok(Json(ResolveExtensionResp { sip_username })),
+        Some(sip_username) => Ok(Json(ResolveExtensionResp {
+            sip_username: Some(sip_username),
+            meeting_access: false,
+        })),
         None => Err(ApiError::NotFound),
+    }
+}
+
+/// Avisa no arranque se já existem ramais com o número de acesso às reuniões
+/// (criados antes da R273, ou antes de se mudar `VOICE_MEETING_ACCESS_NUMBER`):
+/// deixam de ser alcançáveis por esse número, porque o `resolve-extension` o
+/// entrega ao IVR da sala. Não se apagam nem se renumeram sozinhos.
+pub(crate) async fn warn_if_access_number_is_taken(state: &AppState) {
+    let number = &state.config.voice_meeting_access_number;
+    match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM voice_extensions WHERE extension = $1")
+        .bind(number)
+        .fetch_one(&state.db)
+        .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::warn!(
+            ramais = n,
+            numero = %number,
+            "há ramais com o número de acesso às reuniões — quem os marcar cai no IVR da sala; renumere-os ou mude VOICE_MEETING_ACCESS_NUMBER"
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "não foi possível verificar o número de acesso às reuniões")
+        }
     }
 }
 
@@ -715,10 +810,9 @@ pub async fn ivr_resolve_extension(
 // (`org_id IS NULL`) fica disponível para todas as orgs por definição, e
 // prendê-lo a UM ramal de UMA org quebraria essa promessa para as outras.
 //
-// Ainda fora de âmbito (fase seguinte do mesmo plano, não aqui): ponte para
-// uma sala de reunião em vídeo — um ramal com DID atribuído recebe VOZ
-// directa, não entra numa sala do SFU. Nenhuma UI ou mensagem adicionada
-// aqui pode sugerir o contrário — a mesma disciplina do cabeçalho acima.
+// Fora de âmbito aqui: um ramal com DID atribuído recebe VOZ directa — quem
+// liga para esse número fala com a pessoa do ramal, não entra numa sala do
+// SFU. (O ramal ENTRA numa sala marcando o número de acesso: Fase 3, cabeçalho.)
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct AssignExtensionDidReq {
