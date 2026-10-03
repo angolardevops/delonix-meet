@@ -71,7 +71,7 @@ export default {
     off: '关闭',
   },
   razao: {
-    sip_not_configured: 'SIP 设置尚未配置',
+    sip_not_configured: '此安装未连接语音服务器',
     settings_missing: '缺少 SIP 设置',
     not_configured: '尚未配置',
     media_server_unreachable: '媒体服务器无法连接',

@@ -71,7 +71,7 @@ export default {
     off: 'Desligado',
   },
   razao: {
-    sip_not_configured: 'definições SIP por configurar',
+    sip_not_configured: 'esta instalação não está ligada ao servidor de voz',
     settings_missing: 'faltam as definições SIP',
     not_configured: 'por configurar',
     media_server_unreachable: 'servidor de media inacessível',

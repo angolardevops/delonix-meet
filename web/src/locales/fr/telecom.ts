@@ -71,7 +71,7 @@ export default {
     off: 'Désactivé',
   },
   razao: {
-    sip_not_configured: 'paramètres SIP à configurer',
+    sip_not_configured: 'cette installation n’est pas reliée au serveur vocal',
     settings_missing: 'paramètres SIP manquants',
     not_configured: 'à configurer',
     media_server_unreachable: 'serveur média injoignable',

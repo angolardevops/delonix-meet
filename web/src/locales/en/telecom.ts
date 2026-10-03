@@ -71,7 +71,7 @@ export default {
     off: 'Off',
   },
   razao: {
-    sip_not_configured: 'SIP settings not configured',
+    sip_not_configured: 'this installation is not connected to the voice server',
     settings_missing: 'SIP settings are missing',
     not_configured: 'not set up',
     media_server_unreachable: 'media server unreachable',
