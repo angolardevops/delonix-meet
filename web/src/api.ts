@@ -481,6 +481,7 @@ export interface ShareLink {
 export const getRecordingLink = (id: string) =>
   request<ShareLink | null>(`/api/recordings/${id}/public-link`)
 
+/** Singleton: `PUT` cria OU substitui o link público (era `POST …/link`). */
 export const createRecordingLink = (id: string, opts: { password?: string; expires_at?: string | null }) =>
   request<ShareLink>(`/api/recordings/${id}/public-link`, {
     method: 'PUT',
@@ -544,6 +545,7 @@ export const deleteMeeting = (id: string) => request(`/api/meetings/${id}`, { me
 export const startMeeting = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' }>(`/api/meetings/${id}/start`, { method: 'POST' })
 
+/** A minha resposta ao convite é singleton: `PUT …/invitees/me` (era `POST …/respond`). */
 export const respondMeeting = (id: string, status: 'accepted' | 'declined', reason = '') =>
   request(`/api/meetings/${id}/invitees/me`, { method: 'PUT', body: JSON.stringify({ status, reason }) })
 
@@ -559,6 +561,7 @@ export const createMeetingRoom = (orgId: string, name: string, location: string,
     body: JSON.stringify({ name, location, capacity }),
   })
 
+/** Acta da sala é singleton: `PUT` (era `POST`). Leitura: `roomNotes`, no MESMO caminho. */
 export const saveMinutesByRoom = (code: string, minutes: string, transcript: string) =>
   request(`/api/rooms/${code}/minutes`, { method: 'PUT', body: JSON.stringify({ minutes, transcript }) })
 
@@ -599,6 +602,7 @@ export const saveWhiteboard = (title: string, roomCode: string, pngBase64: strin
     body: JSON.stringify({ title, room_code: roomCode, png_base64: pngBase64 }),
   })
 export const deleteWhiteboard = (id: string) => request(`/api/whiteboards/${id}`, { method: 'DELETE' })
+/** Link público do quadro é singleton: `PUT …/public-link` (era `POST …/share`). */
 export const shareWhiteboard = (id: string, isPublic: boolean) =>
   request<WhiteboardMeta>(`/api/whiteboards/${id}/public-link`, {
     method: 'PUT',
@@ -1251,6 +1255,10 @@ export async function addActionItem(
   })
 }
 
+/**
+ * O item do plano passou a viver debaixo da reunião — e o servidor VERIFICA que
+ * o item é dessa reunião (id de outra reunião = 404). Daí o `meetingId` novo.
+ */
 export async function patchActionItem(
   meetingId: string,
   itemId: string,
