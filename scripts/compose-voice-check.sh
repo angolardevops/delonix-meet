@@ -3,8 +3,9 @@
 #  make compose-voice-check — a voz do compose.yaml, medida.
 #
 #  As mesmas quatro medições do cluster (scripts/cluster-voice.sh), contra os
-#  contentores do compose. Não prova PIN aceite nem áudio: a imagem do
-#  FreeSWITCH não traz os sons do IVR.
+#  contentores do compose. Não prova o telefone dentro da sala WebRTC: com o
+#  PIN certo a chamada entra na conferência local do FreeSWITCH, porque a ponte
+#  para o SFU (ADR-0010) não está ligada no compose.
 # ============================================================
 set -uo pipefail
 if command -v delonix >/dev/null 2>&1; then EXEC="delonix container exec"; else EXEC="docker exec"; fi
@@ -43,4 +44,4 @@ fs "curl http://delonix-server:8181/internal/v1/voice/ivr/validate post {}" | gr
 fs "curl http://delonix-server:8180/api/voice/ivr/dialplan-did post {}" | grep -q '"code":"auth' &&
   ok "FreeSWITCH → servidor (listener público): responde e exige o segredo" ||
   avisa "FreeSWITCH → servidor (listener público): NÃO responde"
-avisa "por provar: PIN aceite e áudio — a imagem do FreeSWITCH não traz os sons do IVR"
+avisa "por provar aqui: o telefone a entrar na sala WebRTC — com PIN certo entra na conferência local do FreeSWITCH, porque a ponte para o SFU não está ligada neste ambiente"

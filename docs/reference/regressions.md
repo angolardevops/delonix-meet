@@ -2483,3 +2483,15 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Como se soube.** Só o e2e de isolamento do CI o apanhou, na primeira vez que o `develop` passou por ele. O mesmo e2e tinha dois casos do convidado que não mediam nada: liam `/notes`, que não existe (passava por `404`), e escreviam a acta com `POST` numa rota que só tem `GET` e `PUT` (falhava por `405`). Passaram a usar `/minutes` com os métodos certos.
 
 **Ficheiros.** `server/src/rooms.rs` (`room_waiting`), `server/src/application/recording_service.rs`, `server/tests/room_waiting.rs`, `web/e2e/isolamento.mjs`.
+
+### R274 — Todo o PIN marcado ao telefone era «errado», e o IVR nem chegava a pedi-lo
+
+**Sintoma.** Duas falhas em cadeia, vistas na primeira chamada que chegou ao IVR (2026-10-03, no laboratório do `compose.yaml`). **Primeira:** a imagem do FreeSWITCH não trazia os sons; o `dialin_ivr.lua` falhava a abrir o pedido do PIN, esgotava as três tentativas em milissegundos e desligava — o chamador ouvia silêncio e caía. **Segunda:** com os sons, o PIN certo era recusado. O `mod_curl` registava `content-type: (null)`: os dois scripts montavam o pedido como `post content-type=application/json '<corpo>' '<cabeçalho>'`, e o módulo quer as opções **antes** do método, cada uma com o valor separado por espaço. O pedido saía sem `Content-Type` e sem o segredo, o servidor respondia `415`, e o IVR tratava isso como PIN errado.
+
+**Regra.** A imagem do FreeSWITCH traz os sons que os scripts tocam, fixados por versão e SHA-256, e o build parte se faltar um. Um pedido do IVR ao servidor escreve-se `content-type application/json append_headers 'X-Voice-Secret: …' post '<corpo>'`.
+
+**Portão.** No build da imagem: os cinco ficheiros que os scripts tocam têm de existir nas duas vozes. Em chamada, **só à mão**, no laboratório: `asterisk -rx "channel originate PJSIP/<DID>@meet extension <PIN>@prova-pin"` — o `mod_curl` regista `content-type: application/json`, o servidor valida, e o IVR toca `conf-welcome` e entra na conferência. Não há portão automático do comportamento do IVR.
+
+**O que NÃO está provado.** O telefone dentro da sala WebRTC: no compose a ponte para o SFU não está ligada, e com o PIN certo a chamada entra na conferência local do FreeSWITCH. O `ramais_dial.lua` levou a mesma correcção mas não foi exercitado por nenhuma chamada.
+
+**Ficheiros.** `voice/freeswitch/image/Containerfile`, `voice/freeswitch/scripts/{dialin_ivr,ramais_dial}.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `voice/pbx-cliente/extensions.conf`.

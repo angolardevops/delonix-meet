@@ -9,8 +9,8 @@
 #    2. o PBX de cliente alcança o bordo (OPTIONS de vida);
 #    3. uma chamada do PBX atravessa o bordo e chega ao IVR do Meet;
 #    4. o FreeSWITCH alcança os dois listeners do servidor.
-#  Não prova uma chamada com áudio nem um PIN aceite — isso é a R222
-#  (delonix-meet-telefonia), e a imagem do FreeSWITCH não traz os sons do IVR.
+#  Não prova o telefone dentro da sala WebRTC — isso é a R222
+#  (delonix-meet-telefonia): aqui a ponte para o SFU não está ligada.
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -128,4 +128,4 @@ if sonda "http://delonix-server.${NS}.svc.cluster.local:8180/api/voice/ivr/dialp
 else
   avisa "FreeSWITCH → servidor (listener público): NÃO responde"
 fi
-avisa "por provar: PIN aceite e áudio — a imagem do FreeSWITCH não traz os sons do IVR"
+avisa "por provar aqui: o telefone a entrar na sala WebRTC — com PIN certo entra na conferência local do FreeSWITCH, porque a ponte para o SFU não está ligada neste ambiente"
