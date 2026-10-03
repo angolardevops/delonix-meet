@@ -27,6 +27,14 @@ fumo confere-os contra os `/REF-*` da imagem construída.
 - **Entra o `luac5.2`**, com que o `scripts/check-lua-sintaxe.sh` compila os scripts com
   o mesmo Lua que o `mod_lua` liga.
 
+## Sons do IVR
+
+A imagem traz os sons oficiais do FreeSWITCH a 8 kHz, em português (`pt/BR/karina`, a
+única voz portuguesa que o projecto publica) e em inglês (`en/us/callie`), fixados por
+versão e conferidos pelo SHA-256 publicado. Só as pastas `ivr`, `conference`, `voicemail` e
+`digits`. Sem eles o `dialin_ivr.lua` não chega a pedir o PIN: desliga em silêncio.
+A voz escolhe-se no arranque (`DELONIX_IVR_VOICE`, por omissão `pt/BR/karina`).
+
 ## Configuração
 
 A imagem traz a configuração **vanilla** do FreeSWITCH, que escuta SIP com passwords por

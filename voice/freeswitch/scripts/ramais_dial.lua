@@ -26,10 +26,15 @@ local secret      = (api:executeString("global_getvar delonix_voice_secret") or 
 
 -- POST JSON ao control plane via mod_curl; devolve o corpo (string) ou nil.
 local function http_post(path, body)
+  -- Sintaxe do mod_curl: as opções vêm ANTES do método, cada uma com o seu
+  -- valor separado por espaço (`content-type <tipo>`, `append_headers
+  -- <nome:valor>`), e o corpo é o argumento a seguir a `post`. Na forma
+  -- antiga (`post content-type=… '<corpo>' '<cabeçalho>'`) o módulo tomava
+  -- «content-type=application/json» pelo corpo e mandava o pedido sem
+  -- Content-Type nem segredo: o servidor respondia 415 e todo o PIN era «errado».
   local args = string.format(
-    "%s%s post content-type=application/json '%s' " ..
-    "'X-Voice-Secret: %s'",
-    control_url, path, body, secret)
+    "%s%s content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
+    control_url, path, secret, body)
   session:execute("curl", args)
   return session:getVariable("curl_response_data")
 end

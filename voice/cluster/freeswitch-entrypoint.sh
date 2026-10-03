@@ -22,6 +22,11 @@ rm -f "$CONF"/sip_profiles/*-ipv6.xml "$CONF"/sip_profiles/internal.xml
 PW=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
 sed -i -E "s#default_password=[^\"]*#default_password=${PW}#" "$CONF/vars.xml"
 sed -i -E 's#cmd="stun-set" data="(external_rtp_ip|external_sip_ip)=stun:[^"]*"#cmd="set" data="\1=$${local_ip_v4}"#' "$CONF/vars.xml"
+#    A voz do IVR: português por omissão (DELONIX_IVR_VOICE=en/us/callie para inglês).
+VOZ=${DELONIX_IVR_VOICE:-pt/BR/karina}
+test -d "/usr/local/freeswitch/share/freeswitch/sounds/$VOZ" ||
+  { echo "voz do IVR sem sons na imagem: $VOZ" >&2; exit 1; }
+sed -i -E "s#(data=\"sound_prefix=)[^\"]*#\1\$\${sounds_dir}/${VOZ}#" "$CONF/vars.xml"
 # 4. ESL só em loopback, com password aleatória.
 ESL=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
 sed -i -E "s#(name=\"listen-ip\" value=)\"[^\"]*\"#\1\"127.0.0.1\"#; s#(name=\"password\" value=)\"[^\"]*\"#\1\"${ESL}\"#" \
