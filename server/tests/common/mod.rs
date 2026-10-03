@@ -11,6 +11,8 @@
 //! não passa a verde por engano.
 #![allow(dead_code)]
 
+pub mod fake_ollama;
+
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use delonix_server::{build_router, build_state, config::Config, AppState};

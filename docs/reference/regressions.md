@@ -2035,7 +2035,9 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Regra (o que já vale).** O worker de transcrição entrega os segmentos com tempos e a língua detectada, e é o SERVIDOR que aplica o DLP a tudo o que chega (`ai-worker/job_source.py`, `transcriber.py`) — um worker que gravasse direto contornaria o DLP.
 
-**Ficheiros.** `ai-worker/{transcriber,job_source,transcribe_worker}.py`, `server/src/{recording_meta,recording_captions,recording_chapters}.rs`, `web/e2e/isolamento.mjs`.
+**Portão (segmentos).** `server/tests/grpc.rs` (`transcription_queue_lease_complete_and_dlp`: o DLP corre em cada segmento, os incoerentes saem, a confiança guardada é a média) e as tabelas de `domain::content::transcription`. Os campos novos do `CompleteJobRequest` (`segments`, `language`) são compatíveis no fio, mas partem quem constrói a mensagem em Rust com um literal: `tests/{grpc,notifications}.rs` usam `..Default::default()`.
+
+**Ficheiros.** `ai-worker/{transcriber,job_source,transcribe_worker}.py`, `server/proto/delonix/meet/transcription/v1/transcription.proto`, `server/src/{grpc,transcription,recording_meta,recording_captions,recording_chapters}.rs`, `server/crates/delonix-meet-domain/src/content/transcription.rs`, `server/tests/{grpc,notifications}.rs`, `web/e2e/isolamento.mjs`.
 
 ### R184 — Agendar uma reunião «videoaula» ou «gravar automaticamente» era ignorado: a sala nascia sempre normal, sem espera e sem gravação
 
@@ -2045,9 +2047,11 @@ Estava corrigido na linha da UI (R122 dessa branch, número já usado aqui; comm
 
 **Não faz** (e o ecrã não o mostra): destinos de emissão e dial-in PSTN por reunião — são recursos da organização, sem `meeting_id`, e um campo para eles seria outro campo ignorado.
 
-**Portão.** Testes de `meetings`/`rooms` contra Postgres real (a sala arrancada de uma reunião com opções herda-as) e a validação por tabela em `SessionOptions::validate`.
+**Alterar depois de agendar, e a v1.** `PATCH /api/meetings/{meeting_id}` altera só as opções (só o anfitrião; `403 meeting.not_host` ao convidado, `404` a quem não chega; campos desconhecidos recusados, não ignorados) e a v1 aceita-as no create, no `PATCH` e devolve-as no `GET` e na lista. As duas superfícies chamam `meetings::patch_session_options`, que também as passa à sala já criada. `auto_record` numa sala E2EE é `422 meeting.auto_record_e2ee` — o gravador do servidor não tem a chave; recusa-se em vez de aceitar e não gravar. O `PATCH` da v1 valida o tecto de 200 convidados ANTES de escrever: antes gravava título, datas e opções e só depois respondia `400`. O `external_source` da lista é só o prefixo com forma de identificador (`odoo:…` → `odoo`); uma referência que não declara sistema lê-se `api` em vez de sair inteira pela BFF.
 
-**Ficheiros.** `server/src/{meetings,rooms,recorder}.rs`, `server/migrations/0063_meeting_session_options.sql`, `web/src/pages/calendar/ScheduleForm.tsx`.
+**Portão.** `server/tests/meeting_session_options.rs` (Postgres real: criar pela BFF e pela v1 com as mesmas regras, lista, `tentative`, a sala arrancada herda as opções, os dois `PATCH`, a gravação automática à entrada do anfitrião por `/ws`, e o `PATCH` v1 que valida antes de escrever) e a validação em `SessionOptions::validate`.
+
+**Ficheiros.** `server/src/{meetings,meetings_v1,apikeys,rooms,recorder}.rs`, `server/migrations/0063_meeting_session_options.sql`, `server/tests/meeting_session_options.rs`, `web/src/pages/calendar/ScheduleForm.tsx`.
 
 ### R189 — Um merge com dois blocos de conflito foi empurrado com o segundo por resolver
 
@@ -2245,6 +2249,20 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Não fechado.** A fatia é lida para memória antes de sair (`read_exact`), como já era o ficheiro inteiro: não há streaming. Para os intervalos que um leitor pede (KB a MB) é menos memória do que antes, mas um pedido de uma faixa enorme continua a alocar essa faixa. Não há `ETag`, `Last-Modified` nem `If-Range`, por isso um cliente não revalida uma fatia em cache.
 
 **Ficheiros.** `server/src/recordings.rs`, `server/tests/recordings_metadata.rs`.
+
+### R232 — Uma chave de API da v1 listava as gravações privadas de qualquer membro da organização
+
+**Sintoma.** `GET /api/v1/recordings` devolvia todas as gravações cujo autor é membro da organização da chave, incluindo as que o autor nunca publicou. Na BFF, um colega só vê as gravações de outra pessoa quando ela as publica para a organização (R235); pela v1, a mesma organização via tudo.
+
+**Causa raiz.** A consulta juntava `recordings` a `org_members` pelo autor e parava aí. Uma chave representa a ORGANIZAÇÃO inteira, não um utilizador com relação directa à gravação — e a regra de «o que a organização vê» (`AccessFacts::listed_in(Published, …)`) não estava na consulta.
+
+**Regra.** A v1 lista só as gravações publicadas para a organização (`visibility = 'org'` e `published_at` preenchido): exactamente o que um colega qualquer vê na biblioteca «publicadas», nunca uma gravação privada de outro membro só porque partilham organização. É uma mudança de comportamento para integrações que contavam com a lista inteira: passam a ver uma gravação quando o autor a publica.
+
+**Portão.** `server/tests/api_v1.rs::v1_recordings_list_scoped_to_org`: a privada fica fora, a publicada aparece, a outra organização continua sem nenhuma.
+
+**Dois achados menores da mesma revisão.** (1) Os segmentos da transcrição eram cortados a 2000 caracteres ANTES de o DLP correr: uma chave ou um cartão a atravessar essa fronteira ficava partido ao meio e a expressão regular deixava de o reconhecer. Censura-se o texto bruto primeiro e corta-se depois (`transcription::complete`; portão `tests/grpc.rs::dlp_runs_before_truncating_a_segment_that_straddles_the_limit`). (2) `PATCH …/chapters/{chapter_id}` marcava sempre `source = 'manual'`, mesmo com um corpo vazio (resave, retry): um capítulo automático perdia a elegibilidade para a geração seguinte sem nenhuma correcção ter acontecido. Só passa a manual quando `t_ms` ou `title` vêm no pedido (portão em `tests/recording_chapter_generation.rs`).
+
+**Ficheiros.** `server/src/{apikeys,transcription,recording_chapters}.rs`, `server/tests/{api_v1,grpc,recording_chapter_generation}.rs`.
 
 ### R240 — O `/asr` do whisper aceitava qualquer ligação, sem autenticação nenhuma
 

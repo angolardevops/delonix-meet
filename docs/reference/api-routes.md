@@ -96,6 +96,7 @@
 |---|---|
 | `GET/POST /api/meetings` | igual |
 | — | `GET /api/meetings/{meeting_id}` (**novo**: recurso completo) |
+| — | `PATCH /api/meetings/{meeting_id}` (**novo**, R184: só as opções de sessão, só o anfitrião) |
 | `DELETE /api/meetings/{id}` | `DELETE /api/meetings/{meeting_id}` (`204`) |
 | `POST /api/meetings/conflicts` | `POST /api/meetings/check-conflicts` |
 | `POST /api/meetings/{id}/start` | `POST /api/meetings/{meeting_id}/start` |
@@ -139,6 +140,7 @@
 | `DELETE /api/recordings/{id}/share/{user_id}` | `DELETE /api/recordings/{recording_id}/shares/{user_id}` |
 | `GET/POST/DELETE /api/recordings/{id}/link` | `GET/PUT/DELETE /api/recordings/{recording_id}/public-link` |
 | `…/chapters`, `…/comments` | iguais (com `{recording_id}`) |
+| — | `GET /api/recordings/{recording_id}/chapters/generation` (**novo**) — estado da última geração de capítulos: `idle`, `running`, `succeeded`, `failed` com `error_code` |
 | `GET /api/share/{token}` | `GET /api/public/recordings/{token}` |
 | `GET /api/share/{token}/download` | `GET /api/public/recordings/{token}/content` |
 
