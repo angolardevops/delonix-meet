@@ -33,6 +33,9 @@ marcado **superseded** — lê-o para não repetir o erro, não para o seguir.
   está o que elas fazem.
 - **`delonix-meet-backend`** — camadas, catraca e o estado geral da segurança. As
   regressões de segurança da telefonia (R213, R214) são descritas aqui e listadas lá.
+- **`delonix-meet-voip`** — como o outro lado se liga a nós ANTES de a
+  chamada entrar: o PBX de um cliente (Issabel, FreePBX), a operadora (tronco, GSM, eSIM),
+  e as boas práticas de SIP/VoIP de um tronco. Aqui está o que acontece depois.
 - **`delonix-meet`** — encaminhamento e portões das outras áreas.
 - **Revisor `delonix-meet-webrtc`** — a media do lado do browser: negociação, ICE,
   simulcast, gravação. A perna do telefone entra no SFU como publicador normal — a

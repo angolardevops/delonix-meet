@@ -16,6 +16,7 @@ model: opus
 skills:
   - delonix-meet-backend
   - delonix-meet-telefonia
+  - delonix-meet-voip
 ---
 
 # Revisor de segurança e conformidade

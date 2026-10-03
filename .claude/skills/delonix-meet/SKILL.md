@@ -30,8 +30,11 @@ when_to_use: >-
   do OpenAPI escrevem-se lá.
 - **`delonix-meet-telefonia`** — telefone, PSTN, FreeSWITCH, troncos, CDR. O que está
   ligado e o que falta portar escreve-se lá.
+- **`delonix-meet-voip`** — como um PBX de cliente (Issabel, FreePBX) ou uma
+  operadora (tronco SIP, GSM, eSIM) se liga a nós, e as boas práticas de SIP/VoIP de um
+  tronco. O que é medido e o que é só regra de casa escreve-se lá.
 - **Esta skill** só encaminha, lista os portões e guarda os números transversais do repo.
-  Não repete o conteúdo das três de cima: aponta.
+  Não repete o conteúdo das quatro de cima: aponta.
 - **Fora deste repo:** o Meet é um produto separado da cloud. A 2026-10-03 não há
   `.claude/settings.json` no repo, por isso **nenhum plugin do harness do workspace
   carrega aqui** — as skills `ngolacloud-*` e as `delonix-*` do motor não existem numa
@@ -66,12 +69,13 @@ when_to_use: >-
 | Autenticação, isolamento entre orgs, SSRF, segredos, E2EE, DLP, auditoria | `delonix-meet-backend` §Segurança | `delonix-meet-security` |
 | Rust em profundidade: async, locks, hot path, `unwrap`, tarefas de fundo | `delonix-meet-backend` | `delonix-meet-rust` |
 | SFU, ICE, simulcast, gravação, media num só sentido | — (`docs/reference/regressions.md`) | `delonix-meet-webrtc` |
+| Interligar um PBX de cliente (Issabel, FreePBX, Asterisk) ou uma operadora (tronco, GSM, eSIM); NAT, DTMF, codecs, fraude de tarifação | `delonix-meet-voip` | `delonix-meet-security` (allowlist, credenciais) + `delonix-meet-devops` (portas, NAT, imagem) |
 | Telefone, PSTN, dial-in, SIP, FreeSWITCH, SRTP, troncos, plano de marcação, CDR | `delonix-meet-telefonia` | `delonix-meet-webrtc` (media) + `delonix-meet-security` (socket, chaves, credenciais SIP) + `delonix-meet-api` (rotas `/telephony`) |
 | `web/src/**`, sala, design system, i18n | — (`HARNESS.md` §5 e §8) | `delonix-meet-frontend` |
 | `deploy/`, K8s, afinidade por sala, coturn, imagens, CI | — (`HARNESS.md` §7 e §11) | `delonix-meet-devops` |
 | Prioridade de roadmap, paridade com Zoom/Teams/Meet | — (`docs/competitive-positioning.md`) | `delonix-meet-product` |
 
-Oito revisores para quatro skills, de propósito: `architecture` e `rust` partilham a
+Oito revisores para cinco skills, de propósito: `architecture` e `rust` partilham a
 skill do backend com perguntas diferentes (onde vive o código / o que faz a uma sala
 sob carga); `security` usa a secção de segurança dela; a telefonia não tem revisor
 próprio e reparte-se por três.

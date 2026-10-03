@@ -12,7 +12,7 @@ Este documento explica como o harness de desenvolvimento AI está estruturado e 
 | `.github/copilot-instructions.md` | GitHub Copilot (VS Code) | Instruções inline carregadas automaticamente pelo Copilot |
 | `.cursorrules` | Cursor | Padrões de código + contexto para autocompleção |
 | `.claude/agents/delonix-meet-*.md` | agentes de IA (subagentes) | Oito revisores versionados: architecture, api, security, rust, webrtc, frontend, devops, product |
-| `.claude/skills/delonix-meet*/SKILL.md` | agentes de IA (skills) | Quatro: `delonix-meet` (entrada e encaminhamento), `delonix-meet-backend`, `delonix-meet-api`, `delonix-meet-telefonia` |
+| `.claude/skills/delonix-meet*/SKILL.md` | agentes de IA (skills) | Cinco: `delonix-meet` (entrada e encaminhamento), `delonix-meet-backend`, `delonix-meet-api`, `delonix-meet-telefonia`, `delonix-meet-voip` |
 | `docs/adr/0004-organizacao-alvo-do-backend.md` | Todos | Organização-alvo do backend e regras para código novo |
 | `scripts/check-arquitectura-catraca.sh` | CI + `make fitness` | Catraca: nenhuma cópia nova de regra (ADR-0004 §5) |
 | `docs/reference/architecture.md` | Todos | **Referência estável** do sistema — base de conhecimento para o crescimento |
