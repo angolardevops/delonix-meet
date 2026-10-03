@@ -15,7 +15,7 @@
 #
 #  Idempotente. Não pede sudo: a linha de /etc/hosts é dita no fim.
 #
-#  uso: scripts/cluster.sh up | status | down
+#  uso: scripts/cluster.sh up | status | reset-db | down
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -171,13 +171,24 @@ up)
   ok "delonix-postgres e delonix-redis prontos"
 
   passo "imagens → nós do cluster (sem registo)"
-  delonix cluster load "delonix-server:${IMAGE_TAG}" "delonix-web:${IMAGE_TAG}" --name "$CLUSTER_NAME" >/dev/null
+  # A tag versionada E a `latest`: os manifestos referem `latest`, e se ela
+  # ficasse a apontar para uma imagem antiga no nó, o `apply` abaixo arrancava
+  # por instantes o servidor ANTIGO — que aplica as migrações dele e deixa a
+  # base inutilizável para o novo (visto a 2026-10-03: «VersionMissing»).
+  imagens=("delonix-server:${IMAGE_TAG}" "delonix-web:${IMAGE_TAG}")
+  [ "$IMAGE_TAG" = latest ] || imagens+=("delonix-server:latest" "delonix-web:latest")
+  delonix cluster load "${imagens[@]}" --name "$CLUSTER_NAME" >/dev/null
   ok "delonix-server:${IMAGE_TAG} e delonix-web:${IMAGE_TAG}"
 
   passo "servidor, web, coturn e ingress"
   kubectl apply -f deploy/k8s/02-server.yaml -f deploy/k8s/03-web.yaml >/dev/null
   kubectl -n "$NS" set image deployment/delonix-server "server=delonix-server:${IMAGE_TAG}" >/dev/null
   kubectl -n "$NS" set image deployment/delonix-web "web=delonix-web:${IMAGE_TAG}" >/dev/null
+  # Com a mesma tag de antes (`latest`), o `set image` não muda nada: só um
+  # reinício põe os pods a correr a imagem acabada de carregar.
+  if [ "$IMAGE_TAG" = latest ]; then
+    kubectl -n "$NS" rollout restart deployment/delonix-server deployment/delonix-web >/dev/null
+  fi
   # Um nó só: uma réplica de cada chega, e o volume das gravações é ReadWriteOnce.
   kubectl -n "$NS" scale deployment/delonix-server deployment/delonix-web --replicas=1 >/dev/null
   # O browser fala com o TURN em ${MEET_HOST}:3478 (publicado no host); o
@@ -216,6 +227,24 @@ status)
   fumo "$HOST_IP"
   hosts "$HOST_IP"
   ;;
+reset-db)
+  # Recria a base do cluster. Preciso quando as migrações mudam de forma
+  # incompatível (por exemplo, uma renumeração): o servidor recusa arrancar
+  # sobre uma base cujo histórico de migrações não bate com o do binário.
+  for t in kubectl helm; do
+    command -v "$t" >/dev/null 2>&1 || morre "falta «$t» — corre «make bootstrap»"
+  done
+  existe || morre "o cluster «${CLUSTER_NAME}» não existe — corre «make cluster»"
+  kubeconfig || morre "não consegui obter o kubeconfig do cluster «${CLUSTER_NAME}»"
+  kubectl -n "$NS" scale deployment/delonix-server --replicas=0 >/dev/null 2>&1 || true
+  # Primeiro sai o Postgres; só depois o volume — com o pod de pé, apagar o
+  # PVC fica à espera para sempre.
+  if helm status delonix-postgres -n "$NS" >/dev/null 2>&1; then
+    helm uninstall delonix-postgres -n "$NS" --wait --timeout 3m >/dev/null
+  fi
+  kubectl -n "$NS" delete pvc data-delonix-postgres-postgresql-0 --ignore-not-found --timeout=120s >/dev/null
+  ok "base de dados do cluster apagada — corre «make cluster» para a recriar"
+  ;;
 down)
   if existe; then
     delonix cluster destroy "$CLUSTER_NAME" 2>/dev/null || delonix cluster destroy --name "$CLUSTER_NAME"
@@ -226,7 +255,7 @@ down)
   fi
   ;;
 *)
-  echo "uso: $0 up|status|down" >&2
+  echo "uso: $0 up|status|reset-db|down" >&2
   exit 2
   ;;
 esac

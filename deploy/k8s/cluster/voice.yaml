@@ -66,6 +66,10 @@ kind: Service
 metadata: { name: freeswitch, namespace: delonix-meet }
 spec:
   clusterIP: None
+  # O nome tem de resolver mesmo antes de o pod estar pronto: o Kamailio
+  # resolve o dispatcher AO ARRANCAR, e um destino que não resolve é saltado
+  # para sempre — o bordo ficava sem pool até ser reiniciado.
+  publishNotReadyAddresses: true
   selector: { app: freeswitch }
   ports:
     - { name: sip-dialin, port: 5080, protocol: UDP }

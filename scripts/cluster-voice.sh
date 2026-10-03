@@ -65,6 +65,14 @@ fi
 ok "configuração de voz aplicada a partir de voice/"
 
 kubectl apply -f deploy/k8s/cluster/voice.yaml >/dev/null
+# As imagens de voz têm tag fixa e a configuração entra por ConfigMap: sem
+# reiniciar, os pods continuavam com a imagem e os ficheiros antigos.
+# Por ordem: o Kamailio resolve o FreeSWITCH ao arrancar e o PBX resolve o
+# Kamailio; quem arranca antes do destino fica sem ele.
+for d in freeswitch kamailio pbx-cliente; do
+  kubectl -n "$NS" rollout restart "deployment/$d" >/dev/null
+  kubectl -n "$NS" rollout status "deployment/$d" --timeout=240s >/dev/null 2>&1 || true
+done
 # O servidor relê a configuração (listener interno).
 kubectl -n "$NS" rollout restart deployment/delonix-server >/dev/null
 kubectl -n "$NS" rollout status deployment/delonix-server --timeout=300s >/dev/null
