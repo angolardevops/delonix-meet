@@ -2471,3 +2471,15 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Regra.** Exportação assíncrona (`202`), uma de cada vez (`409 data_export.already_running`), 3 por 24 h (`429 data_export.rate_limited`). O ZIP leva perfil, preferências, gravações CARREGADAS pela pessoa como links, as transcrições dessas, a actividade em que é actora (alvos de acções sobre terceiros → `target_redacted`) e o uso G3. Link por HMAC, 15 min; assinatura errada, outro id ou vencido → `404`; o ficheiro apaga-se às 48 h. Limite escrito: uma transcrição de reunião contém a fala de outros participantes.
 
 **Portão.** `server/tests/account_data_export.rs`; `isolamento.mjs` (A não lê nem pede link da exportação de B; sem assinatura 404).
+
+### R272 — A dona de uma sala levava `500` ao espreitar a sua sala de espera
+
+**Sintoma.** `GET /api/rooms/{code}/waiting` devolvia `500` («no column found for name: allow_guests») a quem tinha todo o direito de ver a sala de espera — a dona. O porte do convidado sem conta (R155) acrescentou `allow_guests` à sala e à constante `rooms::ROOM_COLUMNS`, mas este handler lia a sala com a lista de colunas **escrita à mão**, sem a coluna nova. É a mesma classe de defeito que já tinha obrigado a uma varredura das listas de colunas.
+
+**Regra.** Uma `Room` lê-se sempre com `rooms::ROOM_COLUMNS`. Acrescentar uma coluna à sala é mexer na constante e em mais nada.
+
+**Portão.** `server/tests/room_waiting.rs`: a dona recebe `200`, outra organização `403`/`404`, e sem sessão `401`; e `nenhuma_query_escreve_as_colunas_da_sala_a_mao` percorre `server/src` e falha se algum `SELECT` enumerar as colunas da sala. Controlo negativo feito: sem a correcção, os dois falham (`rooms.rs:833`).
+
+**Como se soube.** Só o e2e de isolamento do CI o apanhou, na primeira vez que o `develop` passou por ele. O mesmo e2e tinha dois casos do convidado que não mediam nada: liam `/notes`, que não existe (passava por `404`), e escreviam a acta com `POST` numa rota que só tem `GET` e `PUT` (falhava por `405`). Passaram a usar `/minutes` com os métodos certos.
+
+**Ficheiros.** `server/src/rooms.rs` (`room_waiting`), `server/src/application/recording_service.rs`, `server/tests/room_waiting.rs`, `web/e2e/isolamento.mjs`.

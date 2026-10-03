@@ -1478,9 +1478,12 @@ if (gTok) {
   const G = { token: gTok }
   await recusadoNaPorta('convidado lê o CHAT guardado da sala', `/api/rooms/${salaG.code}/messages`, G)
   await recusadoNaPorta('convidado lista as GRAVAÇÕES da sala', `/api/rooms/${salaG.code}/recordings`, G)
-  await recusadoNaPorta('convidado lê as NOTAS da sala', `/api/rooms/${salaG.code}/notes`, G)
+  // As notas e a acta da sala são a MESMA rota (`/minutes`): GET lê, PUT escreve.
+  // Com `/notes` (que não existe) e POST (método que a rota não tem), o teste
+  // passava por 404 e falhava por 405 sem nunca chegar à autorização.
+  await recusadoNaPorta('convidado lê as NOTAS da sala', `/api/rooms/${salaG.code}/minutes`, G)
   await recusadoNaPorta('convidado escreve a ACTA da sala', `/api/rooms/${salaG.code}/minutes`, {
-    ...G, method: 'POST', body: { minutes: 'forjada', transcript: '' },
+    ...G, method: 'PUT', body: { minutes: 'forjada', transcript: '' },
   })
   await recusadoNaPorta('convidado lê a biblioteca de gravações', '/api/recordings', G)
   await recusadoNaPorta('convidado lista QUADROS guardados', '/api/whiteboards', G)
