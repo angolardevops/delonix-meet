@@ -30,11 +30,29 @@ static RECORDINGS_FROM: LazyLock<String> = LazyLock::new(|| {
     .concat()
 });
 
-pub static RECORDINGS: ResourceSql = ResourceSql {
-    schema: &content::search::RECORDINGS,
-    from: || RECORDINGS_FROM.clone(),
-    id: "r.id",
-    fields: &[
+/// A biblioteca `scope=published` (R235) em SQL: `AccessFacts::listed_in(
+/// Published, _)`, a regra de `recordings::LIBRARY_VISIBLE_PUBLISHED` — está
+/// publicada E (é das de quem pede OU foi publicada para a organização e quem
+/// pede é membro ACTIVO de uma organização do autor) E quem pede não saiu.
+/// O teste `recordings_visibility_matches_the_library` compara as duas
+/// bibliotecas com a pesquisa, pessoa a pessoa.
+static RECORDINGS_PUBLISHED_FROM: LazyLock<String> = LazyLock::new(|| {
+    [
+        " CROSS JOIN recordings r JOIN rooms rm ON rm.id = r.room_id \
+         WHERE r.published_at IS NOT NULL AND (r.id IN (\
+           SELECT r1.id FROM recordings r1 WHERE r1.uploader_id = viewer.id \
+           UNION SELECT r2.id FROM recordings r2 JOIN room_participants p ON p.room_id = r2.room_id \
+                  WHERE p.user_id = viewer.id \
+           UNION SELECT s.recording_id FROM recording_shares s WHERE s.user_id = viewer.id) \
+           OR (r.visibility = 'org' AND ",
+        &org::sql_active_member_with("viewer.id", "r.uploader_id"),
+        ")) AND NOT ",
+        &org::sql_viewer_departed_from("r.uploader_id"),
+    ]
+    .concat()
+});
+
+const RECORDING_FIELDS: &[(&str, &str)] = &[
         ("title", "COALESCE(r.title, r.filename)"),
         ("filename", "r.filename"),
         ("uploader", "r.uploader_id"),
@@ -50,13 +68,33 @@ pub static RECORDINGS: ResourceSql = ResourceSql {
         ("size_bytes", "r.size_bytes"),
         ("width", "r.width"),
         ("created_at", "r.created_at"),
-    ],
-    group_labels: &[(
-        "uploader",
-        "(SELECT lu.username FROM users lu WHERE lu.id = g.k::uuid)",
-    )],
+];
+
+const RECORDING_GROUP_LABELS: &[(&str, &str)] = &[(
+    "uploader",
+    "(SELECT lu.username FROM users lu WHERE lu.id = g.k::uuid)",
+)];
+const RECORDING_TRIGRAM: &[&str] = &["dlx_fold(coalesce(r.title, '') || ' ' || r.filename)"];
+
+pub static RECORDINGS: ResourceSql = ResourceSql {
+    schema: &content::search::RECORDINGS,
+    from: || RECORDINGS_FROM.clone(),
+    id: "r.id",
+    fields: RECORDING_FIELDS,
+    group_labels: RECORDING_GROUP_LABELS,
     fts: Some("r.search_vector"),
-    trigram: &["dlx_fold(coalesce(r.title, '') || ' ' || r.filename)"],
+    trigram: RECORDING_TRIGRAM,
+};
+
+/// A mesma lista branca sobre a biblioteca das publicadas.
+pub static RECORDINGS_PUBLISHED: ResourceSql = ResourceSql {
+    schema: &content::search::RECORDINGS,
+    from: || RECORDINGS_PUBLISHED_FROM.clone(),
+    id: "r.id",
+    fields: RECORDING_FIELDS,
+    group_labels: RECORDING_GROUP_LABELS,
+    fts: Some("r.search_vector"),
+    trigram: RECORDING_TRIGRAM,
 };
 
 pub static MEETINGS: ResourceSql = ResourceSql {

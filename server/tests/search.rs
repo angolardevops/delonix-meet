@@ -110,26 +110,37 @@ async fn recordings_filters_groups_and_accent_typo_tolerance(db: sqlx::PgPool) {
     let r1 = app.insert_recording(&w.room_id, &w.a.user_id).await;
     let r2 = app.insert_recording(&w.room_id, &w.a.user_id).await;
     let r3 = app.insert_recording(&w.room_id, &w.carla.user_id).await;
-    exec(app, "UPDATE recordings SET title = 'Revisão do Orçamento 2027', category = 'lecture', duration_secs = 4000, transcript = 'falámos de química e do orçamento', transcribed_at = now() WHERE id = $1::uuid", &[&r1]).await;
+    exec(app, "UPDATE recordings SET title = 'Revisão do Orçamento 2027', kind = 'training', duration_ms = 4000000, transcript = 'falámos de química e do orçamento', transcribed_at = now() WHERE id = $1::uuid", &[&r1]).await;
     exec(
         app,
-        "UPDATE recordings SET title = 'Planeamento', duration_secs = 100 WHERE id = $1::uuid",
+        "UPDATE recordings SET title = 'Planeamento', duration_ms = 100000 WHERE id = $1::uuid",
         &[&r2],
     )
     .await;
-    exec(app, "UPDATE recordings SET title = 'Aula de física', category = 'lecture', duration_secs = 2000 WHERE id = $1::uuid", &[&r3]).await;
+    exec(app, "UPDATE recordings SET title = 'Aula de física', kind = 'training', duration_ms = 2000000 WHERE id = $1::uuid", &[&r3]).await;
 
     // Sem acentos, com prefixo e com erro de escrita.
+    // Em `/api/recordings` a pesquisa de lista entra com um parâmetro que a
+    // biblioteca de sempre não conhece (aqui `order_by`); `q` sozinho é a
+    // biblioteca do develop, provada mais abaixo.
     for q in ["orcamento", "ORÇAM", "orcamneto", "quimica"] {
         let (st, p) = app
-            .get(&format!("/api/recordings?q={}", enc(q)), Some(&w.a.token))
+            .get(
+                &format!("/api/recordings?q={}&order_by=-created_at", enc(q)),
+                Some(&w.a.token),
+            )
             .await;
         assert_eq!(st, 200, "{q}: {p}");
         assert_eq!(ids(&p, "id"), vec![r1.clone()], "{q}: {p}");
         assert!(items(&p)[0]["search"]["highlight"].is_array(), "{p}");
     }
     // O `snippet` da 0045 continua.
-    let (_, p) = app.get("/api/recordings?q=quimica", Some(&w.a.token)).await;
+    let (_, p) = app
+        .get(
+            "/api/recordings?q=quimica&order_by=-created_at",
+            Some(&w.a.token),
+        )
+        .await;
     assert!(
         items(&p)[0]["snippet"]
             .as_str()
@@ -137,13 +148,44 @@ async fn recordings_filters_groups_and_accent_typo_tolerance(db: sqlx::PgPool) {
             .contains("«química»"),
         "{p}"
     );
+    // A biblioteca de sempre (`q` sozinho: lista inteira, sem envelope) lê a
+    // mesma coluna, agora em `dlx_search`: sem acento encontra, com acento
+    // também, e o excerto marca a palavra acentuada.
+    for q in ["quimica", "química", "orçam"] {
+        let (st, lib) = app
+            .get(&format!("/api/recordings?q={}", enc(q)), Some(&w.a.token))
+            .await;
+        assert_eq!(st, 200, "{q}: {lib}");
+        let lib = lib
+            .as_array()
+            .unwrap_or_else(|| panic!("a biblioteca com `q` continua a ser uma lista: {lib}"));
+        assert_eq!(lib.len(), 1, "{q}: {lib:?}");
+        assert_eq!(lib[0]["id"], r1.as_str(), "{q}");
+        assert!(lib[0]["snippet"].as_str().unwrap().contains('«'), "{q}");
+    }
+    // Com `page_size` (o que o painel do web manda SEMPRE) a resposta é o
+    // envelope: `items` e `next_page_token` como a página de antes, mais o total.
+    let (st, pg) = app
+        .get("/api/recordings?page_size=1", Some(&w.a.token))
+        .await;
+    assert_eq!(st, 200, "{pg}");
+    assert_eq!(items(&pg).len(), 1, "{pg}");
+    assert_eq!(pg["total"], 3, "as três da sala onde a A esteve: {pg}");
+    assert!(pg["next_page_token"].is_string(), "{pg}");
+    // E com `q`, a pesquisa profunda: erro de escrita incluído.
+    let (st, pg) = app
+        .get("/api/recordings?q=orcamneto&page_size=50", Some(&w.a.token))
+        .await;
+    assert_eq!(st, 200, "{pg}");
+    assert_eq!(ids(&pg, "id"), vec![r1.clone()], "{pg}");
+    assert_eq!(pg["text_match"], "fuzzy", "{pg}");
 
     // Filtro pré-definido + domínio + agrupamento com agregados.
     let (st, p) = app
         .get(
             &format!(
-                "/api/recordings?filters=mine&filter={}&group_by=category",
-                enc(r#"[["duration_secs","gte",50]]"#)
+                "/api/recordings?filters=mine&filter={}&group_by=kind",
+                enc(r#"[["duration_ms","gte",50000]]"#)
             ),
             Some(&w.a.token),
         )
@@ -152,18 +194,18 @@ async fn recordings_filters_groups_and_accent_typo_tolerance(db: sqlx::PgPool) {
     assert_eq!(p["total"], 2, "{p}");
     assert_eq!(p["total_kind"], "exact");
     let groups = p["groups"].as_array().unwrap();
-    let lecture = groups.iter().find(|g| g["key"] == "lecture").unwrap();
+    let lecture = groups.iter().find(|g| g["key"] == "training").unwrap();
     assert_eq!(lecture["count"], 1);
-    assert_eq!(lecture["label"], "Aula");
-    assert_eq!(lecture["aggregates"]["duration_secs"]["sum"], 4000.0);
-    assert_eq!(lecture["filter"], json!(["category", "eq", "lecture"]));
+    assert_eq!(lecture["label"], "Formação");
+    assert_eq!(lecture["aggregates"]["duration_ms"]["sum"], 4000000.0);
+    assert_eq!(lecture["filter"], json!(["kind", "eq", "training"]));
 
     // Abrir o grupo = juntar o filtro dele.
     let (_, p) = app
         .get(
             &format!(
                 "/api/recordings?filters=mine&filter={}",
-                enc(&json!({"and": [["duration_secs","gte",50], lecture["filter"]]}).to_string())
+                enc(&json!({"and": [["duration_ms","gte",50000], lecture["filter"]]}).to_string())
             ),
             Some(&w.a.token),
         )
@@ -201,15 +243,11 @@ async fn recordings_keyset_is_stable_with_ties_and_never_repeats(db: sqlx::PgPoo
     // Todos com o MESMO created_at e a mesma duração: só o id desempata.
     exec(
         app,
-        "UPDATE recordings SET created_at = '2026-09-01T10:00:00Z', duration_secs = 60",
+        "UPDATE recordings SET created_at = '2026-09-01T10:00:00Z', duration_ms = 60000",
         &[],
     )
     .await;
-    for order in [
-        "",
-        "&order_by=-duration_secs",
-        "&order_by=title,-created_at",
-    ] {
+    for order in ["", "&order_by=-duration_ms", "&order_by=title,-created_at"] {
         let seen = all_pages(
             app,
             &format!("/api/recordings?filters=mine{order}"),
@@ -263,36 +301,84 @@ async fn recordings_visibility_matches_the_library(db: sqlx::PgPool) {
     app.insert_recording(b_room["id"].as_str().unwrap(), &w.b.user_id)
         .await;
 
+    // Publicadas (R235): a da A para a organização — a carla e o duarte vêem-na
+    // em `scope=published`, o duarte sem nunca ter estado na sala; a do duarte
+    // fica privada e publicada, só para quem já a via. A B não vê nenhuma.
+    exec(
+        app,
+        "UPDATE recordings SET visibility = 'org', published_at = now() WHERE id = $1::uuid",
+        &[&mine],
+    )
+    .await;
+    exec(
+        app,
+        "UPDATE recordings SET published_at = now() WHERE id = $1::uuid",
+        &[&d_rec],
+    )
+    .await;
+
+    let mut published_seen = 0;
     for who in [&w.a, &w.carla, &w.duarte, &w.b] {
-        let (_, lib) = app.get("/api/recordings", Some(&who.token)).await;
-        let mut legacy: Vec<String> = lib
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|r| r["id"].as_str().unwrap().to_string())
-            .collect();
-        let mut searched = all_pages(
-            app,
-            "/api/recordings?order_by=-created_at",
-            &who.token,
-            "id",
-        )
-        .await;
-        legacy.sort();
-        searched.sort();
-        assert_eq!(searched, legacy, "{}", who.email);
-        let (_, p) = app
-            .get("/api/recordings?page_size=1", Some(&who.token))
+        for scope in ["mine", "published"] {
+            let (_, lib) = app
+                .get(&format!("/api/recordings?scope={scope}"), Some(&who.token))
+                .await;
+            let mut legacy: Vec<String> = lib
+                .as_array()
+                .unwrap_or_else(|| panic!("{scope}: {lib}"))
+                .iter()
+                .map(|r| r["id"].as_str().unwrap().to_string())
+                .collect();
+            let mut searched = all_pages(
+                app,
+                &format!("/api/recordings?scope={scope}&order_by=-created_at"),
+                &who.token,
+                "id",
+            )
             .await;
-        assert_eq!(p["total"], legacy.len(), "o total também: {}", who.email);
+            legacy.sort();
+            searched.sort();
+            assert_eq!(searched, legacy, "{scope}: {}", who.email);
+            let (_, p) = app
+                .get(
+                    &format!("/api/recordings?scope={scope}&page_size=1"),
+                    Some(&who.token),
+                )
+                .await;
+            assert_eq!(
+                p["total"],
+                legacy.len(),
+                "o total também ({scope}): {}",
+                who.email
+            );
+            if scope == "published" {
+                published_seen += legacy.len();
+                if who.email == w.b.email {
+                    assert!(legacy.is_empty(), "a B não vê publicadas da A: {legacy:?}");
+                }
+                if who.email == w.duarte.email {
+                    assert!(
+                        legacy.contains(&mine),
+                        "o duarte vê a publicada da A sem ter estado na sala"
+                    );
+                }
+            }
+        }
     }
-    // Arquivada, a carla deixa de ver tudo — itens, total e grupos.
+    // Controlo: a comparação não foi entre listas vazias.
+    assert!(published_seen >= 4, "publicadas vistas: {published_seen}");
+    // Arquivada, a carla deixa de ver tudo — itens, total e grupos, nas duas.
     app.archive_member(w.a.org(), &w.carla.user_id).await;
-    let (_, p) = app
-        .get("/api/recordings?group_by=uploader", Some(&w.carla.token))
-        .await;
-    assert_eq!(p["total"], 0, "{p}");
-    assert_eq!(p["groups"], json!([]), "{p}");
+    for scope in ["mine", "published"] {
+        let (_, p) = app
+            .get(
+                &format!("/api/recordings?scope={scope}&group_by=uploader"),
+                Some(&w.carla.token),
+            )
+            .await;
+        assert_eq!(p["total"], 0, "{scope}: {p}");
+        assert_eq!(p["groups"], json!([]), "{scope}: {p}");
+    }
     // Filtrar pelo autor de outra org não sonda nada.
     let (st, p) = app
         .get(
@@ -305,7 +391,6 @@ async fn recordings_visibility_matches_the_library(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200);
     assert_eq!(p["total"], 0, "{p}");
-    let _ = mine;
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -326,17 +411,14 @@ async fn whitelist_errors_have_stable_codes_and_injection_is_inert(db: sqlx::PgP
             "search.invalid_operator",
         ),
         (
-            format!("filter={}", enc(r#"[["category","eq","secret"]]"#)),
+            format!("filter={}", enc(r#"[["kind","eq","secret"]]"#)),
             "search.invalid_value",
         ),
         ("filter=%7Bnope".to_string(), "search.invalid_filter"),
         ("filters=ghost".to_string(), "search.unknown_filter"),
         ("group_by=title".to_string(), "search.field_not_groupable"),
-        (
-            "group_by=category:month".to_string(),
-            "search.invalid_group_by",
-        ),
-        ("order_by=category".to_string(), "search.field_not_sortable"),
+        ("group_by=kind:month".to_string(), "search.invalid_group_by"),
+        ("order_by=kind".to_string(), "search.field_not_sortable"),
         ("order_by=-_score".to_string(), "search.invalid_order_by"),
         ("q=%21%21%21".to_string(), "recording.invalid_query"),
         ("page_token=%25%25%25".to_string(), "page.invalid_token"),
@@ -567,9 +649,43 @@ async fn global_search_finds_deep_content_and_never_crosses_orgs(db: sqlx::PgPoo
     let app = &w.app;
     let rec = app.insert_recording(&w.room_id, &w.a.user_id).await;
     exec(app, "UPDATE recordings SET title = 'Comité', transcript = 'o zebróide apareceu na reunião' WHERE id = $1::uuid", &[&rec]).await;
-    exec(app, "INSERT INTO recording_chapters (recording_id, at_secs, title, created_by) VALUES ($1::uuid, 754, 'Capítulo do hipopótamo', $2::uuid)", &[&rec, &w.a.user_id]).await;
+    exec(app, "INSERT INTO recording_chapters (recording_id, t_ms, title, created_by) VALUES ($1::uuid, 754000, 'Capítulo do hipopótamo', $2::uuid)", &[&rec, &w.a.user_id]).await;
     exec(app, "INSERT INTO room_chat_messages (room_id, user_id, username, message) VALUES ($1::uuid, $2::uuid, 'carla', 'combinamos o girassol amanhã')", &[&w.room_id, &w.carla.user_id]).await;
     app.new_meeting(&w.a, "Girassol trimestral", &[]).await;
+    // Conversa directa (migração 0051) da carla para a A, na mesma sala.
+    exec(app, "INSERT INTO room_chat_messages (room_id, user_id, username, message, to_user_id, to_username) VALUES ($1::uuid, $2::uuid, 'carla', 'em privado: o ornitorrinco fica entre nós', $3::uuid, 'a')", &[&w.room_id, &w.carla.user_id, &w.a.user_id]).await;
+    participate(app, &w.room_id, &w.duarte.user_id).await;
+    for (who, sees) in [
+        (&w.a, true),
+        (&w.carla, true),
+        (&w.duarte, false),
+        (&w.b, false),
+    ] {
+        let (st, r) = app
+            .get(
+                "/api/search?q=ornitorrinco&types=messages",
+                Some(&who.token),
+            )
+            .await;
+        assert_eq!(st, 200, "{r}");
+        let found = r["groups"].to_string().contains("ornitorrinco");
+        assert_eq!(found, sees, "conversa directa vista por {}: {r}", who.email);
+    }
+    // O duarte participa na sala: a mensagem PÚBLICA encontra-a.
+    let (_, r) = app
+        .get(
+            "/api/search?q=girassol&types=messages",
+            Some(&w.duarte.token),
+        )
+        .await;
+    assert!(r["groups"].to_string().contains("girassol"), "{r}");
+    // Desfaz a participação: mais abaixo o duarte é «o colega que nunca esteve na sala».
+    exec(
+        app,
+        "DELETE FROM room_participants WHERE room_id = $1::uuid AND user_id = $2::uuid",
+        &[&w.room_id, &w.duarte.user_id],
+    )
+    .await;
     exec(app, "INSERT INTO org_webhooks (org_id, kind, url, created_by) VALUES ($1::uuid, 'slack', 'https://hooks.slack.com/services/SEGREDOXYZ', $2::uuid)", &[w.a.org(), &w.a.user_id]).await;
 
     let (st, r) = app.get("/api/search?q=zebroide", Some(&w.a.token)).await;
@@ -742,7 +858,7 @@ async fn saved_searches_crud_sharing_and_isolation(db: sqlx::PgPool) {
     let app = &w.app;
     let base = "/api/users/me/saved-searches";
     let body = json!({"resource": "recordings", "name": "Aulas longas",
-        "query": {"filter": [["category","eq","lecture"]], "filters": ["long"], "group_by": ["uploader"]},
+        "query": {"filter": [["kind","eq","training"]], "filters": ["long"], "group_by": ["uploader"]},
         "shared": true, "is_default": true});
     let res = app
         .http

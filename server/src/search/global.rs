@@ -20,6 +20,7 @@ use delonix_meet_core::{
     },
     DomainError,
 };
+use delonix_meet_domain::content::recording::LibraryScope;
 use delonix_meet_domain::identity::authorization::Capability;
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -370,25 +371,26 @@ async fn recordings(
     )
     .await?;
     let sc = scores(&out);
-    let mut items: Vec<GlobalHit> = crate::recordings::library_items_by_ids(state, scope.me, &ids)
-        .await?
-        .into_iter()
-        .map(|r| {
-            let id = r.id.to_string();
-            GlobalHit {
-                kind: "recordings",
-                title: r.filename.clone(),
-                subtitle: format!("{} · {}", r.uploader_name, r.created_at.format("%Y-%m-%d")),
-                highlight: hl.remove(&id).unwrap_or_default(),
-                matched_in: matched.get(&r.id).copied().unwrap_or("title"),
-                score: sc.get(&id).copied().unwrap_or(0.0),
-                target: json!({"recording_id": r.id, "at_secs": null}),
-                href: Some(format!("/api/recordings/{}", r.id)),
-                occurred_at: Some(r.created_at),
-                id,
-            }
-        })
-        .collect();
+    let mut items: Vec<GlobalHit> =
+        crate::recordings::library_items_by_ids(state, scope.me, LibraryScope::Mine, &ids)
+            .await?
+            .into_iter()
+            .map(|r| {
+                let id = r.id.to_string();
+                GlobalHit {
+                    kind: "recordings",
+                    title: r.filename.clone(),
+                    subtitle: format!("{} · {}", r.uploader_name, r.created_at.format("%Y-%m-%d")),
+                    highlight: hl.remove(&id).unwrap_or_default(),
+                    matched_in: matched.get(&r.id).copied().unwrap_or("title"),
+                    score: sc.get(&id).copied().unwrap_or(0.0),
+                    target: json!({"recording_id": r.id, "at_secs": null}),
+                    href: Some(format!("/api/recordings/{}", r.id)),
+                    occurred_at: Some(r.created_at),
+                    id,
+                }
+            })
+            .collect();
 
     // Capítulos e comentários com marca temporal, das gravações VISÍVEIS.
     for (table, col, where_extra, matched_in) in [
@@ -431,7 +433,7 @@ async fn recordings(
         }
         let rec_ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
         let recs: HashMap<Uuid, crate::recordings::RecordingItem> =
-            crate::recordings::library_items_by_ids(state, scope.me, &rec_ids)
+            crate::recordings::library_items_by_ids(state, scope.me, LibraryScope::Mine, &rec_ids)
                 .await?
                 .into_iter()
                 .map(|r| (r.id, r))

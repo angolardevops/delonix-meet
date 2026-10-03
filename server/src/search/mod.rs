@@ -102,15 +102,17 @@ impl SearchParams {
         ListParams::from(self).is_search()
     }
 
-    /// Há um parâmetro que SÓ a pesquisa do ADR-0007 entende? Para colecções
-    /// que já tinham `q`/`page_size`/`page_token` com forma própria
-    /// (`/api/recordings`): essas continuam a responder como sempre e a
-    /// pesquisa de lista só entra com filtro, grupo ou ordenação.
-    pub fn is_structured(&self) -> bool {
+    /// Há algum parâmetro além do texto? Para `/api/recordings`, onde `q`
+    /// sozinho já tinha forma própria (a lista inteira, com `snippet`) que o
+    /// web lê: essa fica, e a página do ADR-0007 responde com `page_size`,
+    /// `page_token`, filtro, grupo ou ordenação.
+    pub fn beyond_text(&self) -> bool {
         self.filter.is_some()
             || self.filters.is_some()
             || self.group_by.is_some()
             || self.order_by.is_some()
+            || self.page_size.is_some()
+            || self.page_token.is_some()
             || self.groups_page_token.is_some()
     }
 }
@@ -367,18 +369,26 @@ async fn highlights_for(
 
 pub type RecordingSearchPage = SearchPage<SearchItem<crate::recordings::RecordingItem>>;
 
+/// As duas bibliotecas (`scope`) têm o MESMO schema e visibilidades
+/// diferentes — as de `recordings::LIBRARY_VISIBLE_*`.
 pub async fn list_recordings(
     state: &AppState,
     me: Uuid,
+    scope: delonix_meet_domain::content::recording::LibraryScope,
     params: &SearchParams,
 ) -> Result<RecordingSearchPage, ApiError> {
-    let r = &resources::RECORDINGS;
+    use delonix_meet_domain::content::recording::LibraryScope;
+    let library = scope;
+    let r = match library {
+        LibraryScope::Mine => &resources::RECORDINGS,
+        LibraryScope::Published => &resources::RECORDINGS_PUBLISHED,
+    };
     let q = compile_for(r, params, me)?;
     let scope = scope_for_user(state, me).await?;
     let out = run(state, r, &q, &scope).await?;
     let ids = uuid_ids(&out);
     let mut hl = highlights_for(state, &q, &out, headline_sources::RECORDINGS).await?;
-    let items = crate::recordings::library_items_by_ids(state, me, &ids)
+    let items = crate::recordings::library_items_by_ids(state, me, library, &ids)
         .await?
         .into_iter()
         .map(|mut item| {
