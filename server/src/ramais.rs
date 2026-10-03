@@ -47,8 +47,9 @@
 //! **inteiramente intocado**: continua a servir só o trunk PSTN.
 //!
 //! Duas superfícies HTTP internas suportam essa fronteira, ambas autenticadas
-//! pelo MESMO segredo partilhado que `voice.rs` já usa (`X-Voice-Secret` /
-//! `check_media_secret`, agora `pub(crate)`):
+//! pelo MESMO segredo partilhado que `voice.rs` já usa (`check_media_secret`:
+//! o cabeçalho `X-Voice-Secret`, ou HTTP Basic com o segredo como password —
+//! nunca no URL, R227):
 //! - `POST /api/voice/ivr/directory` — o FreeSWITCH chama isto no REGISTER
 //!   (via `mod_xml_curl`, secção "directory") para obter o `a1-hash` SIP
 //!   Digest do ramal que se está a registar.
@@ -634,33 +635,6 @@ fn xml_escape(s: &str) -> String {
 /// foram confirmados contra uma instância real** — ver o aviso no topo do
 /// ficheiro.
 #[derive(Debug, Deserialize)]
-pub struct DirectoryQuery {
-    #[serde(default)]
-    pub secret: Option<String>,
-}
-
-/// Igual a `check_media_secret`, mas comparando com uma string já extraída
-/// (o `?secret=` do `mod_xml_curl`) em vez de um cabeçalho.
-fn check_media_secret_str(state: &AppState, provided: &str) -> Result<(), ApiError> {
-    // R154: um segredo ausente, curto ou publicado dá 503 com a razão, venha o
-    // valor que vier — o mesmo critério do cabeçalho `X-Voice-Secret`.
-    if let Some(reason) = state.config.voice_secret_refusal {
-        return Err(ApiError::ServiceUnavailable(format!(
-            "API interna de IVR desligada: {reason}"
-        )));
-    }
-    let cfg = state.config.voice_internal_secret.as_bytes();
-    if cfg.is_empty() {
-        return Err(ApiError::NotFound);
-    }
-    if delonix_meet_core::crypto::ct_eq(provided.as_bytes(), cfg) {
-        Ok(())
-    } else {
-        Err(ApiError::Unauthorized)
-    }
-}
-
-#[derive(Debug, Deserialize)]
 pub struct XmlCurlDirectoryReq {
     #[serde(default)]
     pub user: String,
@@ -675,21 +649,14 @@ pub struct XmlCurlDirectoryReq {
 pub async fn ivr_directory(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    axum::extract::Query(q): axum::extract::Query<DirectoryQuery>,
     Form(req): Form<XmlCurlDirectoryReq>,
 ) -> Result<Response, ApiError> {
-    // O `mod_xml_curl` do FreeSWITCH (build stock) não expõe cabeçalhos HTTP
-    // arbitrários na configuração — só o URL do gateway. Por isso o segredo
-    // pode vir por `?secret=` (ver xml_curl.conf.xml) além do cabeçalho
-    // `X-Voice-Secret` normal (usado por `ramais_dial.lua`, que já pode pôr
-    // cabeçalhos, e por qualquer chamador de teste). Isto tem um custo
-    // conhecido — um segredo em URL pode acabar em logs de acesso — por isso
-    // fica só aqui, não no resto da API interna; documentado em
-    // xml_curl.conf.xml para quem for configurar produção decidir se prefere
-    // pôr um proxy à frente que injecte o cabeçalho em vez disto.
-    if check_media_secret(&state, &headers).is_err() {
-        check_media_secret_str(&state, q.secret.as_deref().unwrap_or(""))?;
-    }
+    // O `mod_xml_curl` não põe cabeçalhos arbitrários, mas sabe enviar HTTP
+    // Basic (`gateway-credentials` em xml_curl.conf.xml), e o
+    // `check_media_secret` aceita o segredo como password do Basic. O segredo
+    // NUNCA se aceita no URL (R227): um `?secret=` fica escrito no log do
+    // FreeSWITCH a cada arranque e em qualquer log de acesso pelo caminho.
+    check_media_secret(&state, &headers)?;
 
     let user = req.user.trim();
     let domain = req.domain.trim();
@@ -1047,8 +1014,8 @@ fn first_present<'a>(
 }
 
 /// `POST /api/voice/ivr/dialplan-did` — segunda secção do MESMO `mod_xml_curl`
-/// que a directoria da Fase 1 (`ivr_directory`, mesmo `X-Voice-Secret`/
-/// `?secret=`): o FreeSWITCH pede aqui o dialplan dinâmico da secção
+/// que a directoria da Fase 1 (`ivr_directory`, mesmo segredo, por
+/// `X-Voice-Secret` ou HTTP Basic): o FreeSWITCH pede aqui o dialplan dinâmico da secção
 /// "dialplan" quando uma chamada inbound precisa de ser encaminhada. Só
 /// respondemos quando o número discado é o DID DEDICADO de um ramal
 /// (`voice_did.extension_id`); para qualquer outro número devolvemos "não
@@ -1074,14 +1041,11 @@ fn first_present<'a>(
 pub async fn ivr_dialplan_did(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    axum::extract::Query(q): axum::extract::Query<DirectoryQuery>,
     Form(fields): Form<std::collections::HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
-    // Mesmo segredo, mesmo esquema de fallback ?secret= que ivr_directory —
-    // ver o comentário lá sobre o custo conhecido (segredo em URL de acesso).
-    if check_media_secret(&state, &headers).is_err() {
-        check_media_secret_str(&state, q.secret.as_deref().unwrap_or(""))?;
-    }
+    // O mesmo segredo que `ivr_directory`, pelo cabeçalho ou por HTTP Basic;
+    // nunca no URL (R227).
+    check_media_secret(&state, &headers)?;
 
     let Some(raw_number) = first_present(&fields, DIALPLAN_DESTINATION_KEYS) else {
         return Ok(xml_response(XML_NOT_FOUND.into()));

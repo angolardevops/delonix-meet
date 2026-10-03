@@ -365,3 +365,72 @@ async fn odoo_list_users_excludes_archived_members(db: sqlx::PgPool) {
     assert!(text.contains(&stays.email), "{body}");
     assert!(text.contains(&admin.email), "{body}");
 }
+
+/// Um POST de formulário como o do `mod_xml_curl`, com os cabeçalhos dados.
+async fn xml_curl_post(app: &TestApp, path: &str, headers: &[(&str, String)]) -> (u16, String) {
+    let mut rb = app.http.post(app.url(path)).form(&[
+        ("user", "1001"),
+        ("domain", "ninguem.ramais.delonix.meet"),
+        ("Caller-Destination-Number", "+244222000000"),
+    ]);
+    for (k, v) in headers {
+        rb = rb.header(*k, v);
+    }
+    let res = rb.send().await.expect("pedido HTTP falhou");
+    (res.status().as_u16(), res.text().await.unwrap_or_default())
+}
+
+/// R227 — o segredo de voz nunca se aceita no URL. O `mod_xml_curl` escreve o
+/// URL de cada binding no log do FreeSWITCH, ao arrancar e a cada pedido que
+/// falha; as duas rotas que ele chama recebem por isso o segredo por HTTP
+/// Basic (ou pelo cabeçalho), e um `?secret=` com o valor CERTO é recusado.
+#[sqlx::test(migrations = "./migrations")]
+async fn xml_curl_routes_take_the_secret_by_basic_and_never_in_the_url(db: sqlx::PgPool) {
+    use base64::Engine as _;
+    let app = TestApp::spawn_with(db, &[("VOICE_INTERNAL_SECRET", VOICE_SECRET)]).await;
+    let basic = |secret: &str| {
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("freeswitch:{secret}"))
+        )
+    };
+
+    let good = [("authorization", basic(VOICE_SECRET))];
+    let lua = [("x-voice-secret", VOICE_SECRET.to_string())];
+    let wrong = [("authorization", basic("errado"))];
+
+    for path in ["/api/voice/ivr/directory", "/api/voice/ivr/dialplan-did"] {
+        // Controlos positivos: o Basic do `mod_xml_curl` e o cabeçalho dos Lua.
+        let (st, body) = xml_curl_post(&app, path, &good).await;
+        assert_eq!(st, 200, "{path} com Basic: {body}");
+        assert!(body.contains("freeswitch/xml"), "{path}: {body}");
+        let (st, body) = xml_curl_post(&app, path, &lua).await;
+        assert_eq!(st, 200, "{path} com X-Voice-Secret: {body}");
+
+        // O segredo certo, no URL: recusado.
+        let in_url = format!("{path}?secret={VOICE_SECRET}");
+        let (st, body) = xml_curl_post(&app, &in_url, &[]).await;
+        assert_eq!(st, 401, "{path} com o segredo no URL: {body}");
+
+        // Nem a salvar um Basic errado, nem no corpo do formulário.
+        let (st, body) = xml_curl_post(&app, &in_url, &wrong).await;
+        assert_eq!(
+            st, 401,
+            "{path} com o segredo no URL e Basic errado: {body}"
+        );
+        let res = app
+            .http
+            .post(app.url(path))
+            .form(&[("user", "1001"), ("secret", VOICE_SECRET)])
+            .send()
+            .await
+            .expect("pedido HTTP falhou");
+        assert_eq!(res.status().as_u16(), 401, "{path} com o segredo no corpo");
+
+        // E as recusas de sempre.
+        let (st, _) = xml_curl_post(&app, path, &wrong).await;
+        assert_eq!(st, 401, "{path} com Basic errado");
+        let (st, _) = xml_curl_post(&app, path, &[]).await;
+        assert_eq!(st, 401, "{path} sem segredo");
+    }
+}
