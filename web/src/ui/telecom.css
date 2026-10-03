@@ -249,6 +249,176 @@ p.tel-small {
   font-size: var(--t-md);
 }
 
+/* Acções: barras de botões que quebram em vez de transbordar. */
+.tel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.tel-actions--bar {
+  padding: var(--s-1) var(--s-3) var(--s-2);
+}
+.tel-pad {
+  padding: 0 var(--s-3) var(--s-3);
+}
+
+/* Ordem das operadoras: pega para o rato, botões para o teclado. */
+.tel-trunk__order {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.tel-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ctl-h);
+  height: var(--ctl-h);
+  color: var(--muted);
+  cursor: grab;
+}
+.tel-grip:active {
+  cursor: grabbing;
+}
+.tel-trunk[data-drop] {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+/* Formulários dos diálogos. */
+.tel-form {
+  display: grid;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.tel-form--sep {
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border);
+}
+.tel-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s-3);
+  align-items: start;
+}
+.tel-form__title {
+  margin: 0;
+  font-size: var(--t-lg);
+}
+.tel-form__foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+/* Assistente de operadora móvel. */
+.tel-wizard {
+  display: grid;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.tel-wizard__step {
+  margin: 0;
+}
+.tel-wizard__title {
+  margin: 0;
+  font-size: var(--t-title);
+}
+.tel-wizard__legend {
+  padding: 0;
+  margin-bottom: var(--s-2);
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+.tel-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.tel-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--raised);
+  cursor: pointer;
+}
+.tel-choice:has(input:checked) {
+  border-color: var(--accent);
+}
+.tel-choice input {
+  margin: 2px 0 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+.tel-choice__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--t-md);
+}
+.tel-choice__body .dx-muted {
+  font-size: var(--t-sm);
+}
+.tel-ask {
+  margin: 0;
+  padding-left: var(--s-4);
+  display: grid;
+  gap: var(--s-1);
+  font-size: var(--t-md);
+}
+
+/* Edição do plano de marcação: uma regra por bloco, pela ordem em que casam. */
+.tel-rules {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-3);
+}
+.tel-rule {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  min-width: 0;
+}
+.tel-rule[data-invalid] {
+  border-color: var(--danger);
+}
+.tel-rule__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-2);
+}
+.tel-emergency--box {
+  padding: var(--s-3) 0 0;
+}
+
+/* Câmbio. */
+.tel-rates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-2);
+  font-size: var(--t-md);
+}
+.tel-rates li {
+  display: grid;
+  gap: 1px;
+}
+
 @media (max-width: 1180px) {
   .tel-grid {
     grid-template-columns: minmax(0, 1fr);

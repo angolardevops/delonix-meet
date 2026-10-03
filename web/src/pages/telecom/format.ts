@@ -116,6 +116,7 @@ const KNOWN: Record<string, readonly string[]> = {
   desfecho: ['answered', 'busy', 'no_answer', 'failed', 'forwarded', 'waiting_room', 'wrong_pin'],
   sentido: ['inbound', 'outbound'],
   srtp: ['mandatory', 'optional', 'off'],
+  ambito: ['national', 'international'],
 }
 
 /** A chave de tradução de um valor enumerado, ou null se for um valor novo. */
