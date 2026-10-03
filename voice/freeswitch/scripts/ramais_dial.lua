@@ -25,7 +25,7 @@
 --
 -- Requisitos: mod_lua, mod_curl, mod_sofia. O SRTP à entrada é imposto pela
 -- variável GLOBAL rtp_secure_media=mandatory (R226), não por este script:
--- quando ele corre, o SDP da perna já foi negociado.
+-- o perfil dos ramais negoceia o SDP à chegada, antes de ele correr.
 
 local api = freeswitch.API()
 local control_url = (api:executeString("global_getvar delonix_control_url") or ""):gsub("%s+$", "")

@@ -82,12 +82,14 @@ contexto de dialplan e por domínio SIP, não por processo.
   registrar nem `auth_db` (`:14-15`) — **não regista ninguém**, só encaminha.
 - **Medido:** DTMF por RFC 2833/4733 com payload 101 (`internal.xml:36`);
   `accept-blind-reg` e `accept-blind-auth` a `false`.
-- **Medido (2026-10-03, FreeSWITCH 1.11.3, R226) — quem recusa uma chamada em claro à
-  entrada é só a variável GLOBAL `rtp_secure_media=mandatory`**: com ela, um `INVITE` sem
+- **Medido (2026-10-03, FreeSWITCH 1.11.3, R226) — o que recusa uma chamada em claro à
+  entrada em QUALQUER perfil é a variável GLOBAL `rtp_secure_media=mandatory`**: com ela, um `INVITE` sem
   `a=crypto` leva `488`. Nenhum parâmetro de perfil o faz: `rtp-secure-media` não existe
   no sofia nem no mod_conference, e `require-secure-rtp` só liga uma flag que nada lê —
   com qualquer dos dois e sem a global, a chamada em claro foi aceite. Um
-  `set rtp_secure_media=mandatory` no dialplan antes do `answer` também não a recusa.
+  `set rtp_secure_media=mandatory` no dialplan antes do `answer` só a recusa num perfil
+  com `inbound-late-negotiation=true` (o `external` da vanilla, por onde entra o dial-in);
+  no perfil dos ramais, que negoceia o SDP à chegada, corre tarde e não a recusa.
   A global é posta por `sip_profiles/internal.xml` (uma directiva de pré-processamento no
   topo do ficheiro) e por `vars.xml.inc`. Confirma-o com o controlo negativo
   (`scripts/softphone-prova.sh srtp-real`), não com a leitura do XML.

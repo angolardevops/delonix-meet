@@ -15,8 +15,9 @@
   (dialin_ivr.lua ramal). Um só sítio para o configurar.
 
   O SRTP à entrada é imposto pela variável GLOBAL rtp_secure_media=mandatory
-  (sip_profiles/internal.xml, vars.xml.inc): o `set` abaixo corre com o SDP já
-  negociado e não recusa uma chamada em claro (R226).
+  (sip_profiles/internal.xml, vars.xml.inc): o perfil dos ramais negoceia o SDP
+  à chegada, por isso o `set` abaixo corre tarde e não recusa uma chamada em
+  claro (R226).
 -->
 <include>
   <context name="delonix_ramais">
