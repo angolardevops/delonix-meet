@@ -1420,6 +1420,12 @@ pub async fn ws_directo(
 ) -> Result<Response, ApiError> {
     let claims = crate::auth::verify_jwt(&state.config.jwt_secret, &q.token, "room")?;
     let sala_id = claims.room.ok_or(ApiError::Unauthorized)?;
+    // Um convidado sem conta não emite a reunião para fora. Recusa-se ANTES
+    // do upgrade de propósito: não há razão a mostrar-lhe, porque a interface
+    // nunca lhe oferece o directo.
+    if claims.is_guest() {
+        return Err(ApiError::Forbidden);
+    }
     let user_id = claims.sub;
 
     // Não há helper partilhado de leitura por código — cada handler consulta o

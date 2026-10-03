@@ -19,6 +19,7 @@ mod directory;
 mod dlp;
 mod error;
 pub mod grpc;
+mod guests;
 mod media_probe;
 mod meetings;
 mod meetings_v1;
@@ -154,6 +155,9 @@ pub struct AppState {
     /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
+    /// Entradas de convidado sem conta, por IP e por sala (ver `guests.rs`).
+    pub guest_ip_limiter: RateLimiter,
+    pub guest_room_limiter: RateLimiter,
     /// Envios de SMS por utilizador dentro de uma org (chave `org:user`). Com a
     /// política `members`, um membro não esgota sozinho a quota da org.
     pub sms_user_limiter: RateLimiter,
@@ -399,7 +403,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // ---- Salas ----
         .route("/api/rooms", post(rooms::create_room))
-        .route("/api/rooms/{room_code}", get(rooms::get_room))
+        .route(
+            "/api/rooms/{room_code}",
+            get(rooms::get_room).patch(rooms::patch_room),
+        )
+        // Convidado SEM conta (público por desenho — ver guests.rs e
+        // scripts/rotas-publicas.txt): só produz um token de sala que passa
+        // SEMPRE pela sala de espera.
+        .route(
+            "/api/rooms/{room_code}/guest-join",
+            post(guests::guest_join),
+        )
         // Estado vivo da emissão (G1) — rótulos, bytes, débito. Ver o /live
         // (WebSocket) mais abaixo, que é o que a alimenta.
         .route(
@@ -1197,6 +1211,14 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        guest_ip_limiter: RateLimiter::new(
+            config.guest_join_per_ip_per_min as u32,
+            Duration::from_secs(60),
+        ),
+        guest_room_limiter: RateLimiter::new(
+            config.guest_join_per_room_per_min as u32,
+            Duration::from_secs(60),
+        ),
         sms_user_limiter: RateLimiter::new(
             sms::USER_SENDS_PER_WINDOW,
             Duration::from_secs(sms::USER_SEND_WINDOW_SECS),

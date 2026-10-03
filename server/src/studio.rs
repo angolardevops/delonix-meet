@@ -988,6 +988,8 @@ pub async fn redeem(
             title: None,
             lobby: Some(false),
             wr: Some(false),
+            // Uma fonte de estúdio não é um convidado sem conta.
+            guest: false,
         },
     )?;
     // O actor é quem emitiu o código: a fonte não é uma conta.
