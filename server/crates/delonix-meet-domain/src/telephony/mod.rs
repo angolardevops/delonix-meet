@@ -3,6 +3,8 @@
 //!
 //! O que vive aqui não faz IO:
 //!
+//! - [`extension`] — a forma de um número curto de ramal e o número reservado
+//!   de acesso às reuniões;
 //! - [`number`] — normalizar o número marcado e mascará-lo para listas;
 //! - [`dial_plan`] — padrões, validação do plano e resolução «a primeira regra
 //!   que casar vale», com o invariante de EMERGÊNCIA (nunca gravada, nunca
@@ -19,6 +21,7 @@
 
 pub mod cost;
 pub mod dial_plan;
+pub mod extension;
 pub mod money;
 pub mod number;
 pub mod ports;

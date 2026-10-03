@@ -2484,6 +2484,28 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Ficheiros.** `server/src/rooms.rs` (`room_waiting`), `server/src/application/recording_service.rs`, `server/tests/room_waiting.rs`, `web/e2e/isolamento.mjs`.
 
+### R273 — Um ramal interno não tinha como entrar numa reunião
+
+**Sintoma.** Um ramal registado só podia ligar a outro ramal da sua organização. A ponte telefone↔sala (ADR-0010) existia, mas a única porta para ela era o dial-in PSTN, que identifica a sala por `(DID, PIN)` — e um ramal não marca DID nenhum. O cabeçalho de `ramais.rs` dizia-o: «fase seguinte».
+
+**O risco que a correcção cria.** O PIN de uma sala de voz só é único por DID. Procurar a sala só pelo PIN, sem DID, punha um ramal da org A dentro de uma reunião da org B que tivesse o mesmo PIN — ou a quem o PIN tivesse chegado.
+
+**Regra.**
+- Há um número curto RESERVADO, o número de acesso às reuniões: `VOICE_MEETING_ACCESS_NUMBER` (`config.rs`, 3–5 dígitos sem zero à esquerda, `8000` por omissão), o mesmo para todas as organizações. Configura-se num só sítio: o dialplan não o conhece, pergunta-o — `POST /api/voice/ivr/resolve-extension` responde `{"meeting_access": true}` e o `ramais_dial.lua` entrega a chamada a `dialin_ivr.lua ramal`.
+- Nenhum ramal pode ter esse número: `POST /api/orgs/{org_id}/extensions` recusa com `409 ramais.extension_reserved`. Um ramal que já o tivesse deixa de ser alcançável por ele (o número reservado ganha) e o servidor avisa no arranque.
+- O IVR valida o PIN em `POST /internal/v1/voice/ivr/validate-extension` (listener interno, segredo de voz), com `{sip_username, domain, pin}`. A organização sai do RAMAL (`voice_extensions.org_id`, pelo `sip_username`, que é globalmente único), nunca do pedido; o `domain` tem de ser o domínio SIP dessa org, o ramal tem de estar activo e o membro dono não pode estar arquivado. A sala é a sala de voz ACTIVA dessa org com esse PIN; duas com o mesmo PIN → recusa. Todas as recusas são o mesmo `404`, e contam para o travão de PIN, por ramal.
+- O Lua lê a identidade de `sip_auth_username`/`sip_auth_realm` — o que o perfil `internal` autenticou por digest (`auth-calls=true`) — e desliga se faltarem. Não recua para o `From`.
+- A resposta é a do dial-in (`room_bridge` incluído) e o resto do caminho é o mesmo código: `bridge` para a ponte, recuo para a conferência local. Quem entra por ramal aparece no censo como qualquer telefone (R224), porque o lugar nasce do `BridgeEvent::Started` da ponte, não do IVR.
+- As leituras dos ramais (`GET`/`POST`/`PATCH /api/orgs/{org_id}/extensions…`) trazem `meeting_access_number` em cada ramal.
+
+**Portão.** `server/tests/ramal_entra_na_sala.rs`, contra Postgres real: PIN da própria org → `room_bridge` igual ao do dial-in; ramal de A com o PIN de uma sala de B → `404` (com o controlo positivo do ramal de B); ramal inexistente, inactivo, com o domínio de outra org ou de membro arquivado → `404`; sem o segredo de voz → `401`; PIN em duas salas da org → `404`; ramal com o número reservado → `409 ramais.extension_reserved`; o número vem da configuração. Controlo negativo feito: sem o `vr.org_id = $2` na procura da sala, `ramal_de_outra_org_nao_entra_mesmo_com_o_pin` falha com o ramal de A dentro da sala de B. Unidade: `telephony::extension::tests`. Lua: só `scripts/check-lua-sintaxe.sh`.
+
+**O que NÃO está provado.** Nenhuma chamada real: a imagem do FreeSWITCH do laboratório ainda não traz os sons do IVR, e o modo `ramal` do `dialin_ivr.lua` nunca correu. Por medir contra um FreeSWITCH real: que `sip_auth_username` e `sip_auth_realm` vêm preenchidos num INVITE autenticado do perfil `internal`; que `session:execute("lua", "dialin_ivr.lua ramal")` a partir do `ramais_dial.lua` corre o IVR com `argv[1]`; e a media de ponta a ponta (a R222 mede a ponte, não esta entrada). O censo (R224) também não foi medido por este caminho — decorre de a perna ser a mesma.
+
+**Fora.** Não há CDR da chamada de um ramal para uma sala (o CDR do dial-in cobra a tarifa de entrada PSTN). O ramal entra como «Telefone», anónimo: a ponte não recebe a identidade de quem liga. O gRPC (`IvrService`) não tem o equivalente. Uma organização sem DID não cria salas de voz, logo não tem PIN para marcar. O DID de um ramal (Fase 2) continua a tocar na pessoa, não numa sala.
+
+**Ficheiros.** `server/src/voice.rs` (`validate_pin_for_extension`), `server/src/ramais.rs`, `server/src/config.rs`, `server/src/lib.rs`, `server/crates/delonix-meet-domain/src/telephony/extension.rs`, `server/tests/ramal_entra_na_sala.rs`, `voice/freeswitch/scripts/{ramais_dial,dialin_ivr}.lua`, `voice/freeswitch/dialplan/default/00_delonix_extensions.xml`.
+
 ### R274 — Todo o PIN marcado ao telefone era «errado», e o IVR nem chegava a pedi-lo
 
 **Sintoma.** Duas falhas em cadeia, vistas na primeira chamada que chegou ao IVR (2026-10-03, no laboratório do `compose.yaml`). **Primeira:** a imagem do FreeSWITCH não trazia os sons; o `dialin_ivr.lua` falhava a abrir o pedido do PIN, esgotava as três tentativas em milissegundos e desligava — o chamador ouvia silêncio e caía. **Segunda:** com os sons, o PIN certo era recusado. O `mod_curl` registava `content-type: (null)`: os dois scripts montavam o pedido como `post content-type=application/json '<corpo>' '<cabeçalho>'`, e o módulo quer as opções **antes** do método, cada uma com o valor separado por espaço. O pedido saía sem `Content-Type` e sem o segredo, o servidor respondia `415`, e o IVR tratava isso como PIN errado.

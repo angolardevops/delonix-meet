@@ -21,7 +21,8 @@ when_to_use: >-
 ponte; [ADR-0009](../../../docs/adr/0009-telefonia-troncos-encaminhamento-e-custo.md)
 para troncos, encaminhamento e custo — **ainda «Proposto»** (`:3`) com o código já na
 `main` desde o #136: di-lo no relatório, não o trates como aceite.
-**Catálogo:** R210–R214 (telefonia) e R221–R225 (ponte, imagem, censo, palco) em
+**Catálogo:** R210–R214 (telefonia), R221–R225 (ponte, imagem, censo, palco) e R273
+(ramal entra na sala) em
 [`regressions.md`](../../../docs/reference/regressions.md).
 **Histórico da decisão:** [design da Abordagem B](../../../docs/pstn-sfu-bridge-design.md),
 marcado **superseded** — lê-o para não repetir o erro, não para o seguir.
@@ -122,6 +123,30 @@ chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em l
   (`lib.rs:834-841`) — três rotas de máquina na árvore pública, dívida nomeada em
   `delonix-meet-api`.
 
+### O ramal entra na sala (R273) — a regra está medida, a chamada não
+
+Um ramal marca o **número de acesso às reuniões** (`VOICE_MEETING_ACCESS_NUMBER`, `8000`
+por omissão) e entra pela MESMA ponte. Não há ponte nem IVR novos:
+
+1. o `ramais_dial.lua` pergunta o número em `/api/voice/ivr/resolve-extension`; a resposta
+   `{"meeting_access": true}` manda-o chamar `dialin_ivr.lua ramal`;
+2. o IVR, em modo `ramal`, lê `sip_auth_username`/`sip_auth_realm` (o que o digest
+   autenticou — **nunca o `From`**) e valida o PIN em
+   `/internal/v1/voice/ivr/validate-extension` (`voice::validate_pin_for_extension`);
+3. a sala procura-se **na organização do ramal** — é essa a fronteira, porque o PIN só é
+   único por DID. Ramal inactivo, membro arquivado, domínio de outra org, PIN de outra org
+   ou PIN em duas salas: o mesmo `404`;
+4. daí em diante é o `room_bridge` e o recuo do dial-in, linha por linha o mesmo código.
+
+O número é **só do servidor** (o dialplan não o tem escrito), nenhum ramal o pode ter
+(`409 ramais.extension_reserved`) e as leituras dos ramais trazem-no em
+`meeting_access_number`. **Sem CDR** neste caminho, e quem entra é «Telefone» anónimo no
+censo — a ponte não recebe a identidade de quem liga.
+
+**Por medir, e não o dês por feito:** uma chamada real. O modo `ramal` do Lua nunca
+correu; `sip_auth_*` num INVITE do perfil `internal` e o `session:execute("lua", …)` de
+um script para o outro são pressupostos por confirmar contra um FreeSWITCH real.
+
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
 Mandar e receber RTP cifrado com uma chave dada **por fora**, para um par UDP arbitrário,
@@ -143,6 +168,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | Uma rota `/telephony` | os portões de `delonix-meet-api`, com o caso negativo em `web/e2e/isolamento.mjs` |
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
+| O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
 | Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe, com o `luac5.2`) |
 | A imagem (`voice/freeswitch/image/`) | `make freeswitch-image` — build + prova de fumo; depois a R222 com `FS_IMAGE` |
 | O contrato com o IVR | não há portão automático: ver o aviso do Lua, abaixo |
@@ -194,7 +220,9 @@ chegou.
 `scripts/check-lua-sintaxe.sh` (R223) compila-o com o `luac5.2` no `make fitness` e no CI;
 o **comportamento** do IVR — PIN, `room_bridge`, recuo para a conferência local — continua
 sem portão automático, e **nunca correu de ponta a ponta na imagem do repo** (R223, «por
-medir»). Se mexeres no fluxo, di-lo no relatório em vez de o dar por verificado.
+medir»). Se mexeres no fluxo, di-lo no relatório em vez de o dar por verificado. O mesmo
+ficheiro serve agora **dois modos** (dial-in por DID e `ramal`, R273): uma mudança no
+caminho comum — PIN, `bridge`, recuo — mexe nos dois.
 
 **A imagem** vive em `voice/freeswitch/image/` (três fontes fixadas por commit, base por
 digest, `mod_lua` e `mod_curl`) e publica-se a partir da `main`

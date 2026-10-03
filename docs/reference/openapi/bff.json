@@ -1912,7 +1912,7 @@
       "CreateRoomReq": {
         "properties": {
           "allow_guests": {
-            "description": "Aceitar convidados sem conta. Ausente = sim (ver migração 0086).",
+            "description": "Aceitar convidados sem conta. Ausente = sim (ver migração 0075).",
             "type": [
               "boolean",
               "null"
@@ -12644,6 +12644,10 @@
           "label": {
             "type": "string"
           },
+          "meeting_access_number": {
+            "description": "Número curto que este ramal marca para entrar numa reunião: o\nFreeSWITCH atende e pede o PIN da sala. É o mesmo para todos os ramais\n(configuração do servidor) e nunca é o número de um ramal.",
+            "type": "string"
+          },
           "member_email": {
             "type": "string"
           },
@@ -12673,7 +12677,8 @@
           "sip_username",
           "label",
           "active",
-          "created_at"
+          "created_at",
+          "meeting_access_number"
         ],
         "type": "object"
       },
@@ -17900,7 +17905,7 @@
                 }
               }
             },
-            "description": "O número de ramal já existe na organização."
+            "description": "O número de ramal já existe na organização, ou é o número de acesso às reuniões (`ramais.extension_reserved`)."
           }
         },
         "security": [

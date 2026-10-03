@@ -57,8 +57,8 @@ A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Z
 Infra-as-code de um segundo fluxo, PARALELO ao dial-in PSTN acima e que não o
 toca: um "ramal" é uma conta SIP permanente (1:1 com um `org_member`, número
 curto atribuído, migração `0055_ramais.sql`) para chamadas **só entre ramais
-da MESMA organização**. Sem PSTN, sem ponte para salas de vídeo — ambas são
-fases seguintes do mesmo plano.
+da MESMA organização**. O PSTN é a Fase 2 e a entrada numa reunião a Fase 3,
+as duas mais abaixo.
 
 ```
 Softphone A (ramal 101, acme.ramais.delonix.meet)
@@ -82,7 +82,7 @@ registrar/auth_db/DB), e dar-lhe isso era maior risco do que esta fase pede.
 | `freeswitch/sip_profiles/internal.xml` | Perfil Sofia dos ramais — porta própria, realm por org (`challenge-realm=auto_from`) |
 | `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático |
 | `freeswitch/dialplan/default/00_delonix_extensions.xml` | Contexto `delonix_ramais`: números de 3–5 dígitos → `ramais_dial.lua` |
-| `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge |
+| `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge; o número de acesso às reuniões segue para o IVR (Fase 3) |
 
 **HA1, não Argon2, para o digest SIP.** `voice_extensions.sip_password_hash`
 (Argon2) é só a segurança em repouso da nossa própria base — o protocolo SIP
@@ -143,6 +143,41 @@ porque a via antiga (`00_delonix_dialin.xml`) não foi tocada. Confirmar com
 `debug="true"` em `xml_curl.conf.xml` antes de produção. O modelo de dados,
 a API REST de atribuição e a UI foram corridos e verificados contra um
 Postgres real neste repositório.
+
+## Ramal entra numa reunião — número de acesso (Fase 3, R273)
+
+Um ramal registado marca o **número de acesso às reuniões** (`8000` por
+omissão; `VOICE_MEETING_ACCESS_NUMBER` no servidor, 3–5 dígitos), ouve o pedido
+de PIN e entra na sala pela ponte telefone↔sala abaixo — a mesma do dial-in.
+
+```
+Softphone (ramal 101, acme.ramais.delonix.meet)
+     │ INVITE 8000 (autenticado por digest no perfil "internal")
+     ▼
+FreeSWITCH — dialplan "delonix_ramais" → ramais_dial.lua
+     1) POST /api/voice/ivr/resolve-extension ("8000") ──► Control plane
+                                                        ◄── {"meeting_access": true}
+     2) dialin_ivr.lua ramal → atende, pede o PIN
+     3) POST /internal/v1/voice/ivr/validate-extension ──► Control plane
+        {sip_username, domain, pin}                        (sala ACTIVA da ORG do ramal)
+                                                        ◄── room_code + room_bridge
+     4) bridge para o room_bridge; se falhar, conferência local
+```
+
+- **O número só se configura no servidor.** Nem o dialplan nem o Lua o têm
+  escrito: perguntam. Nenhum ramal o pode ter (`409 ramais.extension_reserved`)
+  e a consola recebe-o em `meeting_access_number`, em cada ramal de
+  `GET /api/orgs/{org}/extensions`.
+- **Isolamento por organização.** A sala procura-se na org do ramal que o
+  FreeSWITCH autenticou (`sip_auth_username`/`sip_auth_realm`), não na de um
+  cabeçalho que o telefone escreva. O PIN de uma sala de outra org é recusado.
+- **Sem CDR** para esta chamada, e quem entra aparece na sala como «Telefone».
+
+**O que NÃO foi verificado:** nenhuma chamada real percorreu este caminho. A
+regra do servidor está medida contra Postgres (`server/tests/ramal_entra_na_sala.rs`);
+os dois Lua só têm a sintaxe verificada. Antes de produção, confirmar contra um
+FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
+`ramais_dial.lua` consegue chamar o `dialin_ivr.lua` com o argumento `ramal`.
 
 ## Ponte telefone↔sala (ADR-0010) — ligada
 

@@ -6,6 +6,12 @@
 -- segredo partilhado) → liga directamente ao registo desse AOR
 -- (`bridge(user/<sip_username>@<domínio>)`).
 --
+-- Excepção (R273): o NÚMERO DE ACESSO ÀS REUNIÕES. Não está escrito aqui nem
+-- no dialplan — é o control plane que o conhece (VOICE_MEETING_ACCESS_NUMBER)
+-- e responde `"meeting_access":true` em vez de um AOR. A chamada passa então
+-- para o IVR da sala (`dialin_ivr.lua ramal`), que pede o PIN e a entrega à
+-- ponte telefone↔sala. NUNCA correu contra um FreeSWITCH real.
+--
 -- Porquê um passo de tradução em vez de discar `user/${destination_number}`
 -- directamente: o número curto (extensão) só é único DENTRO da org — o AOR
 -- registado (sip_username) é que é globalmente único. Ver o comentário no
@@ -60,6 +66,14 @@ end
 
 local body = string.format('{"domain":"%s","extension":"%s"}', domain, destination)
 local resp = http_post("/api/voice/ivr/resolve-extension", body)
+
+if resp and resp:match('"meeting_access"%s*:%s*true') then
+  -- O IVR atende, autentica o ramal pelo digest e fala com o listener INTERNO
+  -- do control plane — por isso é outro script, com o seu próprio URL.
+  session:execute("lua", "dialin_ivr.lua ramal")
+  return
+end
+
 local target_sip_username = json_str(resp, "sip_username")
 
 if not target_sip_username or #target_sip_username == 0 then

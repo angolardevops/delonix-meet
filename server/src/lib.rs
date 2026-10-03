@@ -226,6 +226,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
             "/internal/v1/voice/ivr/validate",
             post(voice::ivr_validate_pin),
         )
+        // O mesmo IVR, quando quem liga é um RAMAL (sem DID): a sala procura-se
+        // na organização do ramal autenticado (R273).
+        .route(
+            "/internal/v1/voice/ivr/validate-extension",
+            post(voice::ivr_validate_extension_pin),
+        )
         .route("/internal/v1/voice/ivr/cdr", post(voice::ivr_record_cdr))
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
         // `mod_xml_curl`. Mesmo segredo interno do IVR.
@@ -1529,6 +1535,7 @@ pub async fn run() {
     // Ponte telefone↔sala (ADR-0010): o UA SIP que atende a segunda perna que
     // o FreeSWITCH origina. Sem configuração não abre socket nenhum.
     voice::start_phone_bridge(&state).await;
+    ramais::warn_if_access_number_is_taken(&state).await;
 
     // Cron: sweep de quarentena a cada 5 min (marca não-respondentes de
     // reuniões já começadas). Idempotente. Nenhum handler varre a base inteira:
