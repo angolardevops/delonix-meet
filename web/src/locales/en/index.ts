@@ -24,5 +24,6 @@ import rbac from './rbac'
 import telemovel from './telemovel'
 import tour from './tour'
 import tv from './tv'
+import telecom from './telecom'
 
-export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search, rbac, telemovel, tour, tv }
+export default { ui, shell, auth, home, schedule, room, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search, rbac, telemovel, tour, tv, telecom }

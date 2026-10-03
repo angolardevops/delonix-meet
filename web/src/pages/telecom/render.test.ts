@@ -1,0 +1,318 @@
+/**
+ * Os cartões da Telefonia desenhados para HTML com dados na forma do contrato.
+ * Não substitui um browser (não prova layout nem temas): prova que cada cartão
+ * diz o que deve — «sem medição» em vez de zero, a razão em vez de um custo
+ * inventado, cabeçalhos nas tabelas — e que nenhuma chave de tradução sai crua.
+ */
+import { createElement as h } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
+import type { CallRecord, DialPlan, SipRegistration, SipSettings, TelephonyUsage, Trunk } from '../../api'
+
+// O cliente da API lê a sessão do armazenamento ao carregar: em Node não existe.
+vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {} })
+
+await import('../../i18n')
+const { default: CallsCard } = await import('./CallsCard')
+const { default: DialPlanCard } = await import('./DialPlanCard')
+const { default: SipCard } = await import('./SipCard')
+const { default: StatusHeader } = await import('./StatusHeader')
+const { default: TrunksCard } = await import('./TrunksCard')
+const { default: UsageCard } = await import('./UsageCard')
+
+const noop = () => {}
+const semChavesCruas = (html: string) => expect(html).not.toMatch(/(telecom|ui|org)\.[a-zA-Z]/)
+
+const status = (over: Partial<Trunk['status']> = {}): Trunk['status'] => ({
+  state: 'up',
+  reasons: [],
+  channels_in_use: 12,
+  channels_max: 60,
+  asr: 0.62,
+  asr_answered: 62,
+  asr_attempts: 100,
+  asr_reason: null,
+  asr_window_hours: 24,
+  measured_at: '2026-10-03T14:00:00Z',
+  ...over,
+})
+
+const trunk = (over: Partial<Trunk>): Trunk => ({
+  id: 't-unitel',
+  name: 'Unitel',
+  short_code: 'UNI',
+  gateway_name: 'dlx-t-unitel',
+  host: 'sip.unitel.example',
+  port: 5061,
+  transport: 'tls',
+  srtp: 'mandatory',
+  scope: 'national',
+  role: 'primary',
+  position: 0,
+  prefixes: ['92', '93', '94'],
+  max_channels: 60,
+  enabled: true,
+  register: true,
+  username: 'dlx',
+  password_configured: true,
+  current_price_per_min: { amount: '12.5000', currency: 'AOA' },
+  status: status(),
+  created_at: '2026-09-01T00:00:00Z',
+  updated_at: '2026-09-01T00:00:00Z',
+  ...over,
+})
+
+const registration = (over: Partial<SipRegistration> = {}): SipRegistration => ({
+  state: 'healthy',
+  reasons: [],
+  domain: 'sip.exemplo.ao',
+  sbc_host: 'sbc.exemplo.ao',
+  transport: 'tls',
+  srtp: 'mandatory',
+  sbc: { software: 'kamailio', version: '5.8.2', uptime_secs: 3600 },
+  sbc_error: null,
+  media: null,
+  media_error: 'media_server_unreachable',
+  channels: { in_use: 36, max: 120 },
+  sessions_active: 18,
+  trunks: { total: 4, up: 3, degraded: 1, down: 0, unknown: 0 },
+  quality: { calls: 210, window_hours: 24, jitter_ms: 6, loss_pct: 0, mos: 4.31, reason: null },
+  codecs_configured: ['OPUS', 'PCMA'],
+  codecs_offered: ['OPUS', 'PCMA'],
+  measured_at: '2026-10-03T14:00:00Z',
+  ...over,
+})
+
+describe('cabeçalho do SBC', () => {
+  it('com medições mostra-as — e uma perda de 0 é zero medido, não «sem medição»', () => {
+    const html = renderToStaticMarkup(h(StatusHeader, { registration: registration() }))
+    expect(html).toContain('SBC saudável')
+    expect(html).toContain('36')
+    expect(html).toContain('de 120')
+    expect(html).toContain('3 activas')
+    expect(html).toContain('1 degradada')
+    expect(html).toContain('6,0 ms')
+    expect(html).toContain('0,0%')
+    expect(html).toContain('4,31')
+    expect(html).not.toContain('sem medição')
+    semChavesCruas(html)
+  })
+
+  it('sem medições diz «sem medição» com a razão, e não escreve zeros', () => {
+    const html = renderToStaticMarkup(
+      h(StatusHeader, { registration: registration({
+          state: 'degraded',
+          reasons: ['media_server_unreachable'],
+          channels: { in_use: null, max: 120 },
+          quality: { calls: 0, window_hours: 24, jitter_ms: null, loss_pct: null, mos: null, reason: 'no_calls_in_window' },
+        }) }),
+    )
+    expect(html).toContain('SBC degradado')
+    expect(html).toContain('servidor de media inacessível')
+    expect(html.match(/sem medição/g)?.length).toBe(4)
+    expect(html).toContain('sem chamadas na janela')
+    expect(html).not.toContain('0 ms')
+    expect(html).not.toContain('0,0')
+    semChavesCruas(html)
+  })
+
+  it('um estado e uma razão que a consola não conhece saem tal qual', () => {
+    const html = renderToStaticMarkup(h(StatusHeader, { registration: registration({ state: 'draining', reasons: ['operator_maintenance'] }) }))
+    expect(html).toContain('draining')
+    expect(html).toContain('operator_maintenance')
+  })
+})
+
+describe('operadoras', () => {
+  const list = [
+    trunk({ id: 't-afr', name: 'Africell', short_code: 'AFR', position: 1, current_price_per_min: null, status: status({ state: 'unknown', reasons: ['no_measurement'], channels_in_use: null, asr: null, asr_answered: 0, asr_attempts: 0, asr_reason: 'no_calls_in_window' }) }),
+    trunk({}),
+  ]
+
+  it('saem pela posição, com estado em texto, preço formatado e ASR com base', () => {
+    const html = renderToStaticMarkup(h(TrunksCard, { state: { s: 'ready', d: { items: list, next: null } }, reload: noop, loadMore: noop, busy: false, err: '' }))
+    expect(html.indexOf('Unitel')).toBeLessThan(html.indexOf('Africell'))
+    expect(html).toContain('sip.unitel.example')
+    expect(html).toContain('Activa')
+    expect(html).toContain('12,50 Kz')
+    expect(html).toContain('62%')
+    expect(html).toContain('62 de 100 em 24 h')
+    expect(html).toContain('92 · 93 · 94')
+    // A segunda não mediu nada: razão por extenso, nenhum zero.
+    expect(html).toContain('Estado desconhecido')
+    expect(html).toContain('ainda sem medição')
+    expect(html).toContain('sem chamadas na janela')
+    expect(html).toContain('sem preço em vigor')
+    expect(html).not.toContain('0%')
+    expect(html).not.toContain('Carregar mais')
+    semChavesCruas(html)
+  })
+
+  it('com cursor oferece «carregar mais»; lista vazia diz que está vazia', () => {
+    const more = renderToStaticMarkup(h(TrunksCard, { state: { s: 'ready', d: { items: list, next: 'abc' } }, reload: noop, loadMore: noop, busy: false, err: '' }))
+    expect(more).toContain('Carregar mais')
+    const empty = renderToStaticMarkup(h(TrunksCard, { state: { s: 'ready', d: { items: [], next: null } }, reload: noop, loadMore: noop, busy: false, err: '' }))
+    expect(empty).toContain('Ainda não há operadoras')
+  })
+
+  it('um erro mostra o erro — não «sem operadoras»', () => {
+    const html = renderToStaticMarkup(h(TrunksCard, { state: { s: 'error', msg: 'Falha de rede' }, reload: noop, loadMore: noop, busy: false, err: '' }))
+    expect(html).toContain('Falha de rede')
+    expect(html).toContain('role="alert"')
+    expect(html).not.toContain('Ainda não há operadoras')
+  })
+})
+
+describe('plano de marcação', () => {
+  const plan: DialPlan = {
+    rules: [
+      { pattern: '9XXXXXXXX', description: 'Móveis nacionais', action: 'external', trunk_id: 't-unitel', fallback_trunk_id: 't-desconhecido-0001', record: true },
+      { pattern: '1XX', description: '', action: 'extension', trunk_id: null, fallback_trunk_id: null, record: false },
+    ],
+    emergency_numbers: ['112', '113', '115'],
+    version: 3,
+    updated_at: '2026-10-01T00:00:00Z',
+  }
+
+  it('é uma tabela com cabeçalhos de coluna e de linha, e os números de emergência', () => {
+    const html = renderToStaticMarkup(h(DialPlanCard, { state: { s: 'ready', d: plan }, reload: noop, trunks: [trunk({})] }))
+    expect(html.match(/<th scope="col"/g)?.length).toBe(6)
+    expect(html.match(/<th scope="row"/g)?.length).toBe(2)
+    expect(html).toContain('9XXXXXXXX')
+    expect(html).toContain('Móveis nacionais')
+    expect(html).toContain('Chamada externa')
+    expect(html).toContain('Unitel')
+    // Uma operadora que não está na lista carregada mostra o identificador, não um nome inventado.
+    expect(html).toContain('t-descon')
+    expect(html).toContain('Ramal interno')
+    for (const n of plan.emergency_numbers) expect(html).toContain(`>${n}<`)
+    semChavesCruas(html)
+  })
+
+  it('sem regras diz que não há regras, e a emergência continua visível', () => {
+    const html = renderToStaticMarkup(h(DialPlanCard, { state: { s: 'ready', d: { ...plan, rules: [] } }, reload: noop, trunks: [] }))
+    expect(html).toContain('ainda não tem regras')
+    expect(html).not.toContain('<table')
+    expect(html).toContain('>112<')
+  })
+})
+
+describe('registo SIP', () => {
+  const settings: SipSettings = { configured: true, domain: 'sip.exemplo.ao', sbc_host: 'sbc.exemplo.ao', transport: 'tls', srtp: 'mandatory', username: 'dlx-org', password_configured: true, codecs: ['OPUS', 'PCMA'], updated_at: null }
+
+  it('mostra as definições, diz só SE há password, e não tem botões', () => {
+    const html = renderToStaticMarkup(h(SipCard, { settings: settings, registration: registration() }))
+    expect(html).toContain('sip.exemplo.ao')
+    expect(html).toContain('TLS')
+    expect(html).toContain('Obrigatório')
+    expect(html).toContain('OPUS · PCMA')
+    expect(html).toContain('dlx-org')
+    expect(html).toContain('configurada')
+    expect(html).toContain('kamailio 5.8.2')
+    // O servidor de media não respondeu: a razão, não uma versão.
+    expect(html).toContain('servidor de media inacessível')
+    expect(html).not.toContain('<button')
+    semChavesCruas(html)
+  })
+
+  it('por configurar: cada campo diz «não definido»', () => {
+    const off: SipSettings = { configured: false, domain: null, sbc_host: null, transport: null, srtp: null, username: null, password_configured: false, codecs: [], updated_at: null }
+    const html = renderToStaticMarkup(h(SipCard, { settings: off, registration: registration({ sbc: null, sbc_error: null, media: null, media_error: 'not_configured', codecs_offered: [] }) }))
+    expect(html).toContain('ainda não foram configuradas')
+    expect(html.match(/não definido/g)?.length).toBe(6)
+    expect(html).toContain('não configurada')
+  })
+})
+
+describe('chamadas externas', () => {
+  const call = (over: Partial<CallRecord>): CallRecord => ({
+    id: 'c1',
+    direction: 'outbound',
+    from_number: '+244222000111',
+    to_number: '+244923447108',
+    destination_label: 'Móveis nacionais',
+    outcome: 'answered',
+    hangup_cause: 'NORMAL_CLEARING',
+    started_at: '2026-10-03T10:00:00Z',
+    answered_at: '2026-10-03T10:00:05Z',
+    ended_at: '2026-10-03T10:02:10Z',
+    duration_secs: 130,
+    billsec: 125,
+    emergency: false,
+    recorded: true,
+    trunk_id: 't-unitel',
+    trunk_name: 'Unitel',
+    cost: { amount: '37.5000', currency: 'AOA' },
+    cost_reason: null,
+    ...over,
+  })
+
+  it('custo formatado quando existe; a razão quando não existe — nunca zero', () => {
+    const items = [call({}), call({ id: 'c2', direction: 'inbound', outcome: 'no_answer', billsec: 0, recorded: false, trunk_name: null, cost: null, cost_reason: 'inbound_not_billed' })]
+    const html = renderToStaticMarkup(h(CallsCard, { state: { s: 'ready', d: { items, next: 'cursor' } }, reload: noop, loadMore: noop, busy: false, err: '' }))
+    expect(html.match(/<th scope="col"/g)?.length).toBe(7)
+    expect(html).toContain('Efectuada')
+    expect(html).toContain('+244923447108')
+    expect(html).toContain('37,50 Kz')
+    expect(html).toContain('2:05')
+    expect(html).toContain('Gravada')
+    expect(html).toContain('Recebida')
+    expect(html).toContain('+244222000111')
+    expect(html).toContain('Sem resposta')
+    expect(html).toContain('recebida, não se cobra')
+    expect(html).not.toContain('0,00 Kz')
+    expect(html).toContain('Carregar mais')
+    semChavesCruas(html)
+  })
+
+  it('a última página — sem cursor — não oferece «carregar mais»', () => {
+    const html = renderToStaticMarkup(h(CallsCard, { state: { s: 'ready', d: { items: [call({})], next: null } }, reload: noop, loadMore: noop, busy: false, err: '' }))
+    expect(html).not.toContain('Carregar mais')
+  })
+
+  it('falhar ao carregar mais mantém as linhas e mostra o erro', () => {
+    const html = renderToStaticMarkup(h(CallsCard, { state: { s: 'ready', d: { items: [call({})], next: 'cursor' } }, reload: noop, loadMore: noop, busy: false, err: 'Falha de rede' }))
+    expect(html).toContain('+244923447108')
+    expect(html).toContain('Falha de rede')
+  })
+})
+
+describe('consumo do mês', () => {
+  const usage: TelephonyUsage = {
+    month: '2026-10',
+    timezone: 'Africa/Luanda',
+    calls: 1204,
+    minutes: 4812,
+    unpriced_calls: 0,
+    totals: [{ amount: '184620.0000', currency: 'AOA' }],
+    total_aoa: { amount: '184620.0000', currency: 'AOA' },
+    total_aoa_reason: null,
+    by_trunk: [
+      { trunk_id: 't-unitel', trunk_name: 'Unitel', calls: 800, minutes: 2983, cost: [{ amount: '114464.4000', currency: 'AOA' }], cost_aoa: { amount: '114464.4000', currency: 'AOA' }, share_pct: 62 },
+      { trunk_id: null, trunk_name: null, calls: 4, minutes: 9, cost: [], cost_aoa: null, share_pct: null },
+    ],
+  }
+
+  it('total, minutos e repartição por operadora', () => {
+    const html = renderToStaticMarkup(h(UsageCard, { state: { s: 'ready', d: usage }, reload: noop }))
+    expect(html).toMatch(/184[\s.]?620,00 Kz/)
+    expect(html).toMatch(/4[\s.]?812 minutos/)
+    expect(html).toContain('Unitel')
+    expect(html).toContain('62,0%')
+    expect(html).toMatch(/114[\s.]?464,40 Kz/)
+    expect(html).toContain('Sem operadora')
+    expect(html).toContain('sem quota')
+    semChavesCruas(html)
+  })
+
+  it('sem total em kwanzas mostra a razão e os totais por moeda — não um zero', () => {
+    const html = renderToStaticMarkup(
+      h(UsageCard, { state: { s: 'ready', d: { ...usage, total_aoa: null, total_aoa_reason: 'missing_exchange_rate', unpriced_calls: 3, totals: [{ amount: '1200.0000', currency: 'AOA' }, { amount: '14.2500', currency: 'USD' }] } }, reload: noop }),
+    )
+    expect(html).toContain('Total em kwanzas indisponível')
+    expect(html).toContain('falta o câmbio para kwanzas')
+    expect(html).toContain('14,25 USD')
+    expect(html).toContain('3 chamadas sem preço')
+    expect(html).not.toContain('tel-usage__big')
+  })
+})

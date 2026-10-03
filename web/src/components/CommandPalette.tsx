@@ -173,6 +173,7 @@ export default function CommandPalette({
         nav('integrations', t('shell.nav.integracoes'), 'plug'),
         nav('analytics', t('shell.nav.analise'), 'chart'),
         nav('admin', t('shell.nav.administracao'), 'building'),
+        nav('telecom', t('telecom.titulo'), 'phone'),
         nav('ai', t('consola.nav.ia'), 'sparkles'),
       )
     }

@@ -2627,7 +2627,7 @@ export type TrunkState = 'up' | 'degraded' | 'down' | 'unknown'
 
 export interface TrunkStatus {
   state: Aberto<TrunkState>
-  /** Porque é que o estado é este — texto do servidor, para mostrar tal qual. */
+  /** Porque é que o estado é este — CÓDIGOS de máquina (`sip_not_configured`…), a traduzir. */
   reasons: string[]
   registration?: string | null
   channels_in_use?: number | null

@@ -167,6 +167,7 @@ export default function Shell({
     { key: 'integrations', label: t('shell.nav.integracoes'), icon: 'plug' },
     { key: 'analytics', label: t('shell.nav.analise'), icon: 'chart' },
     { key: 'admin', label: t('shell.nav.administracao'), icon: 'building' },
+    { key: 'telecom', label: t('telecom.titulo'), icon: 'phone' },
     { key: 'ai', label: t('consola.nav.ia'), icon: 'sparkles' },
   ]
 
