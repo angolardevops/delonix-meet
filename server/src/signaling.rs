@@ -207,6 +207,11 @@ pub enum ClientMsg {
         active: bool,
         #[serde(default)]
         e2ee_key: Option<Secret>,
+        /// O anfitrião confirmou o início. Só é exigido a quem tem «avisar
+        /// antes de gravar» nas preferências de entrada; sem a preferência, o
+        /// pedido antigo (sem este campo) grava como sempre.
+        #[serde(default)]
+        confirmed: bool,
     },
     /// Anuncia partilha de ecrã: a próxima track de vídeo sem rid é o ecrã.
     ScreenShare {
@@ -235,6 +240,31 @@ pub enum ClientMsg {
     BreakoutsClose,
     Leave,
     // SFU mode: SDP/ICE exchanged with the server itself, not another peer.
+    // ---- Estúdio de TV (ADR-0014 §2.2) ----
+    /// Operador: fixa PROGRAMA e PRÉ. Só o anfitrião actual da sala do estúdio.
+    StudioTally {
+        #[serde(default)]
+        program: Vec<Uuid>,
+        #[serde(default)]
+        preview: Vec<Uuid>,
+    },
+    /// Operador: um comando para a app de UMA fonte.
+    StudioCommand {
+        source_id: Uuid,
+        command_id: String,
+        command: delonix_meet_domain::studio::command::SourceCommand,
+    },
+    /// Telefone (fonte): o seu estado. O `source_id` vem do token, nunca daqui.
+    StudioSourceStatus {
+        status: delonix_meet_domain::studio::command::SourceStatus,
+    },
+    /// Telefone (fonte): resultado de um comando.
+    StudioCommandResult {
+        command_id: String,
+        ok: bool,
+        #[serde(default)]
+        error: Option<String>,
+    },
     SfuOffer {
         sdp: String,
     },
@@ -577,6 +607,36 @@ pub enum ServerMsg {
         from: Uuid,
         to: Uuid,
     },
+    // ---- Estúdio de TV (ADR-0014 §2.2) ----
+    /// Para os anfitriões: as fontes emparelhadas desta sala e o `peer_id` que
+    /// liga cada uma às tracks do SFU.
+    StudioSources {
+        sources: Vec<crate::studio_realtime::SourceView>,
+    },
+    /// Para o telefone: o SEU tally.
+    StudioTally {
+        state: delonix_meet_domain::studio::tally::Tally,
+    },
+    /// Para o telefone: um comando já validado.
+    StudioCommand {
+        command_id: String,
+        command: delonix_meet_domain::studio::command::SourceCommand,
+    },
+    /// Para os anfitriões: o estado de uma fonte.
+    StudioSourceStatus {
+        source_id: Uuid,
+        status: delonix_meet_domain::studio::command::SourceStatus,
+        /// Epoch ms.
+        at: i64,
+    },
+    /// Para os anfitriões: o resultado de um comando.
+    StudioCommandResult {
+        source_id: Uuid,
+        command_id: String,
+        ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     Kicked, // para o alvo: foste removido
     /// Definições runtime da sala (lock, só-anfitrião-partilha).
     RoomSettings {
@@ -606,6 +666,9 @@ pub enum ServerMsg {
         active: bool,
         by: String,
     },
+    /// Só para o anfitrião que pediu: tem «avisar antes de gravar» ligado e o
+    /// pedido não trazia `confirmed: true`. A gravação NÃO começou.
+    RecordingConfirmationRequired,
     WbStroke {
         stroke: WbStrokeData,
     },
@@ -745,6 +808,15 @@ pub enum ServerMsg {
         in_room: u32,
         outside_app: u32,
         by_origin: Vec<OriginCount>,
+    },
+    /// Estado de um «adicionar por número» (a chamar, em chamada, recusou…).
+    /// Só anfitriões e co-anfitriões: leva o número completo.
+    DialOutUpdated {
+        dial_out: DialOutView,
+    },
+    /// Custo desta sessão. Só anfitriões e co-anfitriões.
+    SessionCost {
+        cost: SessionCostView,
     },
 }
 
@@ -934,6 +1006,12 @@ pub struct PeerInfo {
     pub is_bot: bool,
     #[serde(default)]
     pub is_pstn: bool,
+    /// Convidado SEM conta (entrou por `guest-join`). O anfitrião tem de o
+    /// ver assim na sala de espera e na lista — um nome escrito à mão não é
+    /// uma identidade verificada. Não é o mesmo que `origin: "guest"`, que
+    /// também marca quem TEM conta e entrou pelo link sem convite.
+    #[serde(default)]
+    pub is_guest: bool,
     /// Papel na sala. `host` sempre que `host` for `true`.
     #[serde(default)]
     pub role: Role,
@@ -1011,6 +1089,62 @@ pub struct OriginCount {
     pub count: u32,
 }
 
+/// Estado de um «adicionar por número» visto pelo anfitrião.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DialOutView {
+    pub id: Uuid,
+    /// `voice`, `sms_pin`, `whatsapp_invite`, `whatsapp_voice`.
+    pub kind: String,
+    /// `phone` ou `whatsapp`.
+    pub channel: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carrier: Option<String>,
+    /// Número completo — este tipo só vai a anfitriões e co-anfitriões.
+    pub number: String,
+    pub number_masked: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// `queued`, `dialing`, `ringing`, `in_call`, `sent`, `ended`,
+    /// `declined`, `no_answer`, `failed`, `cancelled`.
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
+    pub muted: bool,
+    pub on_stage: bool,
+    /// Tarifa em unidades mínimas por minuto (chamadas) ou por mensagem (SMS).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_minor: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Duração em chamada, em segundos (0 se nunca atendeu).
+    pub duration_secs: i64,
+    /// Custo até agora, em unidades mínimas.
+    pub cost_minor: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answered_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Custo desta sessão (só anfitriões).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SessionCostView {
+    /// Um total por moeda, sem conversão.
+    pub totals: Vec<CurrencyTotalView>,
+    pub calls: u32,
+    pub whatsapp: u32,
+    pub sms: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CurrencyTotalView {
+    /// ISO 4217 (`AOA`, `USD`).
+    pub currency: String,
+    /// Unidades mínimas (cêntimos).
+    pub amount_minor: i64,
+}
+
 /// O que se sabe de quem entra além do nome e do papel base. Vem do token de
 /// sala (assinado pelo servidor) — nunca do cliente.
 #[derive(Debug, Clone, Default)]
@@ -1018,6 +1152,9 @@ pub struct JoinExtras {
     pub role: Role,
     pub origin: Option<Origin>,
     pub title: Option<String>,
+    /// Convidado sem conta: entra SEM papel nenhum, seja o que for que venha
+    /// nos outros argumentos (ver `join_with`).
+    pub is_guest: bool,
 }
 
 /// O que o `Hub::join` devolve.
@@ -1167,6 +1304,14 @@ impl PeerTx {
         )
     }
 
+    /// Termina a sessão deste socket de forma ordenada (o laço de leitura acorda
+    /// e corre a limpeza normal). Usado para expulsar uma fonte revogada
+    /// (ADR-0014 §2.1): um `Kicked` só pede ao cliente que saia, e o telefone
+    /// de uma fonte revogada não é de confiança para o fazer.
+    pub fn terminate(&self) {
+        self.shutdown.notify_one();
+    }
+
     /// Entrega best-effort. `true` = entrou na fila.
     pub fn send(&self, msg: ServerMsg) -> bool {
         let droppable = msg.is_droppable();
@@ -1205,6 +1350,8 @@ pub(crate) struct Peer {
     mic_on: bool,
     is_bot: bool,
     is_pstn: bool,
+    /// Convidado sem conta: nunca anfitrião, nunca admite (ver `guests.rs`).
+    is_guest: bool,
     /// Papel quando NÃO é anfitrião (o anfitrião é sempre `Role::Host`).
     role: Role,
     origin: Option<Origin>,
@@ -1241,6 +1388,9 @@ pub struct ReclaimedSeat {
     pub is_host: bool,
     pub can_admit: bool,
     pub role: Role,
+    /// A origem do LUGAR, não a do token com que se volta: um convidado que
+    /// reclama o lugar continua convidado.
+    pub is_guest: bool,
 }
 
 /// 32 bytes de `OsRng` em hexadecimal. Não é um JWT de propósito: não precisa
@@ -1268,6 +1418,8 @@ pub struct WaitingView {
     pub origin: Option<Origin>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Convidado SEM conta (`guest-join`): o nome foi escrito à mão.
+    pub is_guest: bool,
     pub since: i64,
 }
 
@@ -1424,6 +1576,7 @@ impl Peer {
             mic: self.mic_on,
             is_bot: self.is_bot,
             is_pstn: self.is_pstn,
+            is_guest: self.is_guest,
             role: self.effective_role(),
             can_admit: self.admits(),
             origin: self.origin,
@@ -1455,6 +1608,7 @@ impl Room {
             mic: true,
             is_bot: false,
             is_pstn: w.extras.origin == Some(Origin::Pstn),
+            is_guest: w.extras.is_guest,
             role: Role::Attendee,
             can_admit: false,
             origin: w.extras.origin,
@@ -1613,7 +1767,9 @@ impl SignalingHub {
         )
     }
 
-    /// Como o `join`, com papel, origem e cargo.
+    /// Como o `join`, com papel, origem e cargo. Um convidado sem conta
+    /// (`extras.is_guest`) entra SEM papel nenhum, seja o que for que venha nos
+    /// outros argumentos: a regra vive aqui, e não em quem chama.
     #[allow(clippy::too_many_arguments)]
     pub fn join_with(
         &self,
@@ -1627,6 +1783,12 @@ impl SignalingHub {
         tx: PeerTx,
         extras: JoinExtras,
     ) -> Entrada {
+        let is_guest = extras.is_guest;
+        let (is_host, can_admit) = if is_guest {
+            (false, false)
+        } else {
+            (is_host, can_admit)
+        };
         // O segredo de reclamação nasce aqui e é a ÚNICA coisa que sai deste
         // método além do roster: quem entra leva-o, ninguém mais o vê.
         let segredo = novo_segredo_de_reclamacao();
@@ -1659,8 +1821,9 @@ impl SignalingHub {
             } else {
                 extras.origin
             };
-            // Um anfitrião é `Host`; ninguém recebe `Host` por outra via.
-            let role = if extras.role == Role::Host {
+            // Um anfitrião é `Host`; ninguém recebe `Host` por outra via. E um
+            // convidado sem conta não entra como co-anfitrião.
+            let role = if extras.role == Role::Host || (is_guest && extras.role == Role::Cohost) {
                 Role::Attendee
             } else {
                 extras.role
@@ -1675,6 +1838,7 @@ impl SignalingHub {
                 mic_on: true,
                 is_bot,
                 is_pstn: origin == Some(Origin::Pstn),
+                is_guest,
                 role,
                 origin,
                 title: extras.title,
@@ -1785,6 +1949,7 @@ impl SignalingHub {
                     is_host: p.is_host,
                     can_admit: p.can_admit,
                     role: p.role,
+                    is_guest: p.is_guest,
                 },
             ))
         })?;
@@ -1827,7 +1992,7 @@ impl SignalingHub {
     }
 
     /// Como o `add_waiting`, com origem e cargo (o anfitrião vê quem é antes
-    /// de admitir).
+    /// de admitir) — e com a marca de convidado sem conta (`extras.is_guest`).
     pub fn add_waiting_with(
         &self,
         room_id: Uuid,
@@ -1876,6 +2041,7 @@ impl SignalingHub {
                         username: w.username.clone(),
                         origin: w.extras.origin,
                         title: w.extras.title.clone(),
+                        is_guest: w.extras.is_guest,
                         since: w.since,
                     })
                     .collect();
@@ -2025,6 +2191,7 @@ impl SignalingHub {
                 mic_on: true,
                 is_bot: false,
                 is_pstn: seat.outside_app(),
+                is_guest: false,
                 role: Role::Attendee,
                 origin: seat.outside_app().then_some(Origin::Pstn),
                 title: None,
@@ -2535,6 +2702,14 @@ impl SignalingHub {
             .unwrap_or(false)
     }
 
+    /// Este lugar é de um convidado sem conta (`guests.rs`)?
+    pub fn is_guest(&self, room_id: Uuid, peer_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .and_then(|room| room.peers.get(&peer_id).map(|p| p.is_guest))
+            .unwrap_or(false)
+    }
+
     /// Só o anfitrião muda papéis, e nunca o seu nem o de outro anfitrião.
     fn set_role(&self, room_id: Uuid, by: Uuid, to: Uuid, role: Role) {
         if role == Role::Host || to == by || !self.is_host(room_id, by) {
@@ -2543,6 +2718,11 @@ impl SignalingHub {
         let resultado = self.rooms.get_mut(&room_id).and_then(|mut r| {
             let alvo = r.peers.get_mut(&to)?;
             if alvo.is_host {
+                return None;
+            }
+            // Um convidado sem conta pode ir a palco (`speaker`, `broadcast`),
+            // mas não ganha o poder de admitir.
+            if alvo.is_guest && role == Role::Cohost {
                 return None;
             }
             let passou_a_admitir = !alvo.admits() && role == Role::Cohost;
@@ -3339,8 +3519,12 @@ impl SignalingHub {
                     .rooms
                     .get_mut(&room_id)
                     .map(|mut r| {
-                        if !r.peers.contains_key(&to) {
-                            return false;
+                        // Um convidado sem conta NUNCA recebe o papel: não há
+                        // conta por trás que responda pelo que ele fizer com
+                        // ele (fechar a sala, gravar, expulsar os outros).
+                        match r.peers.get(&to) {
+                            Some(alvo) if !alvo.is_guest => {}
+                            _ => return false,
                         }
                         if let Some(novo) = r.peers.get_mut(&to) {
                             novo.is_host = true;
@@ -3378,7 +3562,9 @@ impl SignalingHub {
                             })
                             .collect();
                         let mudou = match r.peers.get_mut(&to) {
-                            Some(alvo) if !alvo.is_host => {
+                            // Um convidado sem conta não admite ninguém — e
+                            // não há `users.id` para o `room_admitters`.
+                            Some(alvo) if !alvo.is_host && !alvo.is_guest => {
                                 alvo.can_admit = allowed;
                                 true
                             }
@@ -3432,6 +3618,10 @@ impl SignalingHub {
             | ClientMsg::ScreenShare { .. }
             | ClientMsg::VideoInterest { .. }
             | ClientMsg::BreakoutsBroadcast { .. }
+            | ClientMsg::StudioTally { .. }
+            | ClientMsg::StudioCommand { .. }
+            | ClientMsg::StudioSourceStatus { .. }
+            | ClientMsg::StudioCommandResult { .. }
             | ClientMsg::BreakoutsClose => {}
         }
         true
@@ -3453,13 +3643,83 @@ pub struct WsQuery {
     reconnect: Option<String>,
 }
 
+/// O lugar com que um token de sala se senta. Separado do handler para a
+/// regra ser testada sem socket.
+#[derive(Debug, Clone)]
+pub struct SeatPolicy {
+    pub is_host: bool,
+    pub can_admit: bool,
+    pub is_bot: bool,
+    /// Papel, origem, cargo — e se é um convidado sem conta.
+    pub extras: JoinExtras,
+    pub wait: WaitPolicy,
+}
+
+/// Decide o lugar a partir dos claims. Um CONVIDADO SEM CONTA espera sempre e
+/// não manda em nada, **seja o que for que o token diga** nos outros campos: o
+/// claim `guest` é a regra, os booleanos são detalhe. Assim um erro futuro na
+/// emissão (um `wait: false` ou um `owner` por engano) não abre a porta — nem
+/// o anfitrião a abre ao desligar a sala de espera a meio da reunião.
+pub fn seat_policy(claims: &crate::auth::Claims) -> SeatPolicy {
+    let origin = claims.origin.as_deref().and_then(parse_origin);
+    if claims.is_guest() {
+        return SeatPolicy {
+            is_host: false,
+            can_admit: false,
+            is_bot: false,
+            extras: JoinExtras {
+                role: Role::Attendee,
+                origin: origin.or(Some(Origin::Guest)),
+                title: None,
+                is_guest: true,
+            },
+            wait: WaitPolicy {
+                token_wait: true,
+                lobby: Some(true),
+                waiting_room: claims.wr,
+            },
+        };
+    }
+    let is_host = claims.owner;
+    SeatPolicy {
+        is_host,
+        // Admite quem é dono ou co-anfitrião persistido (`room_admitters`, que
+        // vai no token como `adm`) — e esse entra com o papel `cohost`.
+        can_admit: is_host || claims.adm,
+        is_bot: claims.is_bot,
+        extras: JoinExtras {
+            role: if claims.adm && !is_host {
+                Role::Cohost
+            } else {
+                Role::Attendee
+            },
+            origin,
+            title: claims.title.clone().filter(|t| !t.trim().is_empty()),
+            is_guest: false,
+        },
+        wait: WaitPolicy {
+            token_wait: claims.wait,
+            lobby: claims.lobby,
+            waiting_room: claims.wr,
+        },
+    }
+}
+
 pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
     Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    // Only short-lived, room-scoped tokens open a signaling socket.
-    let claims = verify_jwt(&state.config.jwt_secret, &query.token, "room")?;
+    // Only short-lived, room-scoped tokens open a signaling socket — a room
+    // token (a person) or a SOURCE token (a studio camera, ADR-0014 §2.1).
+    let (claims, source) = match verify_jwt(&state.config.jwt_secret, &query.token, "room") {
+        Ok(c) => (c, None),
+        Err(_) => {
+            let c = verify_jwt(&state.config.jwt_secret, &query.token, "source")?;
+            let s = crate::studio::source_session_for_token(&state, &c).await?;
+            (c, Some(s))
+        }
+    };
     let room_id = claims.room.ok_or(ApiError::Unauthorized)?;
 
     // Nó a drenar: recusa ENTRADAS NOVAS, mas só as de salas que ainda não
@@ -3475,29 +3735,34 @@ pub async fn ws_handler(
             "Este nó está a encerrar. A tentar noutro…".into(),
         ));
     }
+    // O lugar (papel, origem, espera) decide-se num sítio só, testável sem
+    // socket: ver `seat_policy`.
+    let SeatPolicy {
+        is_host,
+        can_admit,
+        is_bot,
+        extras,
+        wait,
+    } = seat_policy(&claims);
+    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
+    // token de sala ainda válido volta a abrir o /ws.
+    if let Some(sid) = claims.sid {
+        crate::sessions::ensure_active(&state, claims.sub, sid).await?;
+    }
+    let session_id = claims.sid;
     let username = claims.name.clone().unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
-    let is_host = claims.owner;
+    // Uma fonte nunca é anfitriã nem admite, diga o token o que disser.
+    let is_host = is_host && source.is_none();
+    let can_admit = can_admit && source.is_none();
     let user_id = claims.sub;
-    let is_bot = claims.is_bot;
-    // Admite quem é dono ou co-anfitrião persistido (`room_admitters`, que
-    // vai no token como `adm`) — e esse entra com o papel `cohost`.
-    let can_admit = is_host || claims.adm;
-    let extras = JoinExtras {
-        role: if claims.adm && !is_host {
-            Role::Cohost
-        } else {
-            Role::Attendee
-        },
-        origin: claims.origin.as_deref().and_then(parse_origin),
-        title: claims.title.clone().filter(|t| !t.trim().is_empty()),
+    // Uma fonte não reclama lugares: um lugar reclamado traz papel e bandeiras
+    // de anfitrião, e a fonte tem de entrar sempre com as suas.
+    let reconnect = if source.is_some() {
+        None
+    } else {
+        query.reconnect.clone()
     };
-    let wait = WaitPolicy {
-        token_wait: claims.wait,
-        lobby: claims.lobby,
-        waiting_room: claims.wr,
-    };
-    let reconnect = query.reconnect.clone();
     Ok(ws.on_upgrade(move |socket| {
         handle_socket(
             state,
@@ -3513,6 +3778,8 @@ pub async fn ws_handler(
                 reconnect,
                 extras,
                 wait,
+                source,
+                session_id,
             },
         )
     }))
@@ -3559,6 +3826,11 @@ struct SocketSession {
     reconnect: Option<String>,
     extras: JoinExtras,
     wait: WaitPolicy,
+    /// Uma câmara do estúdio (token de fonte). Entra sem sala de espera e só
+    /// manda o que `studio_realtime::source_may_send` permite.
+    source: Option<crate::studio_realtime::SourceSession>,
+    /// A sessão da conta de onde se entrou: terminá-la fecha este /ws.
+    session_id: Option<Uuid>,
 }
 
 /// Cria uma sala-filha de grupo (herda topologia/E2EE da principal).
@@ -3939,10 +4211,14 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         reconnect,
         mut extras,
         wait,
+        source,
+        session_id,
     } = session;
     // Só um participante que não é anfitrião pode ter de esperar; a sala de
-    // espera de runtime (se o anfitrião a mudou) ganha à configurada.
-    let must_wait = !is_host && wait.must_wait(state.hub.waiting_room_of(room_id));
+    // espera de runtime (se o anfitrião a mudou) ganha à configurada. Uma fonte
+    // do estúdio não espera: o código de emparelhamento foi o operador que o deu.
+    let must_wait =
+        !is_host && source.is_none() && wait.must_wait(state.hub.waiting_room_of(room_id));
     // Gauge de ligações /ws ativas (dec automático no fim do handler).
     let _ws_guard = crate::metrics::WsGuard::signaling(state.metrics.clone());
 
@@ -3970,6 +4246,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             // O papel volta com o lugar (um co-anfitrião promovido não volta
             // participante por causa de um F5).
             extras.role = lugar.role;
+            // E a marca de convidado é do LUGAR, não do token com que se
+            // volta: um convidado que reclama o lugar continua convidado.
+            extras.is_guest = lugar.is_guest;
             (
                 lugar.peer_id,
                 lugar.is_host,
@@ -3984,6 +4263,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // Fila de saída LIMITADA (ver `PeerTx`): um consumidor lento passa a
     // custar o próprio socket em vez da memória do nó inteiro.
     let (tx, mut rx, shutdown) = PeerTx::new(state.config.ws_queue_cap, state.metrics.clone());
+    // Terminar a sessão (`sessions::revoke`) acorda este `shutdown`: o laço de
+    // entrada sai pelo caminho ordenado de sempre.
+    let _session_guard = session_id.map(|sid| state.session_kills.register(sid, shutdown.clone()));
 
     // Outbound: hub -> websocket. Um Ping periódico mantém a ligação viva
     // (proxies fecham WebSockets ociosos): sem tráfego, o socket cairia e —
@@ -4015,7 +4297,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
 
     // Sala de espera: convidados aguardam a decisão do anfitrião.
     // Uma sala bloqueada em runtime força espera mesmo sem waiting_room.
-    let must_wait = must_wait || (!is_host && state.hub.is_locked(room_id));
+    let must_wait = must_wait || (!is_host && source.is_none() && state.hub.is_locked(room_id));
     if must_wait {
         let (admit_tx, admit_rx) = oneshot::channel::<bool>();
         state
@@ -4138,7 +4420,14 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             }
         }
     }
-    tracing::info!(%room_id, %peer_id, %username, sfu = sfu_mode, host = is_host, "peer joined");
+    match &source {
+        Some(s) => {
+            crate::studio_realtime::on_source_joined(&state, room_id, s, peer_id, tx.clone())
+        }
+        None if is_host => crate::studio_realtime::on_host_joined(&state, room_id, peer_id).await,
+        None => {}
+    }
+    tracing::info!(%room_id, %peer_id, %username, sfu = sfu_mode, host = is_host, source = source.is_some(), "peer joined");
     // Entrou numa sala de grupo? Atualiza o mapa de grupos dos anfitriões.
     if let Some(parent) = breakout_parent_of(&state, room_id) {
         broadcast_breakout_state(&state, parent);
@@ -4160,7 +4449,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                 _ => break,
             },
             _ = shutdown.notified() => {
-                tracing::warn!(%room_id, %peer_id, "sessão terminada: fila de saída em transbordo");
+                tracing::warn!(%room_id, %peer_id, "sessão terminada: sessão da conta terminada ou fila de saída em transbordo");
                 break;
             }
         };
@@ -4170,6 +4459,50 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         }
         match msg {
             Message::Text(text) => match serde_json::from_str::<ClientMsg>(&text) {
+                // Uma fonte do estúdio: lista de PERMITIDAS (ADR-0014 §2.1).
+                Ok(m) if source.is_some() && !crate::studio_realtime::source_may_send(&m) => {
+                    let _ = tx.send(ServerMsg::Error {
+                        message: "source.forbidden_message".into(),
+                    });
+                }
+                Ok(ClientMsg::StudioTally { program, preview }) => {
+                    crate::studio_realtime::on_tally(&state, room_id, peer_id, program, preview)
+                        .await;
+                }
+                Ok(ClientMsg::StudioCommand {
+                    source_id,
+                    command_id,
+                    command,
+                }) => {
+                    crate::studio_realtime::on_command(
+                        &state, room_id, peer_id, source_id, command_id, command,
+                    )
+                    .await;
+                }
+                Ok(ClientMsg::StudioSourceStatus { status }) => match &source {
+                    Some(s) => {
+                        crate::studio_realtime::on_status(&state, room_id, s, peer_id, status)
+                    }
+                    None => {
+                        let _ = tx.send(ServerMsg::Error {
+                            message: "studio.not_a_source".into(),
+                        });
+                    }
+                },
+                Ok(ClientMsg::StudioCommandResult {
+                    command_id,
+                    ok,
+                    error,
+                }) => match &source {
+                    Some(s) => crate::studio_realtime::on_command_result(
+                        &state, room_id, s, peer_id, command_id, ok, error,
+                    ),
+                    None => {
+                        let _ = tx.send(ServerMsg::Error {
+                            message: "studio.not_a_source".into(),
+                        });
+                    }
+                },
                 Ok(
                     msg @ (ClientMsg::SfuOffer { .. }
                     | ClientMsg::SfuAnswer { .. }
@@ -4247,8 +4580,26 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                         ServerMsg::Presenting { from: peer_id, on },
                     );
                 }
-                Ok(ClientMsg::ServerRecord { active, e2ee_key }) if is_host && sfu_mode => {
-                    if active {
+                Ok(ClientMsg::ServerRecord {
+                    active,
+                    e2ee_key,
+                    confirmed,
+                }) if is_host && sfu_mode => {
+                    // «Avisar antes de gravar» é imposto AQUI, não no cliente:
+                    // sem a confirmação explícita a gravação não começa.
+                    let needs_confirmation = active
+                        && {
+                            let warn = crate::account::load_join_preferences(&state.db, user_id)
+                                .await
+                                .map(|p| p.warn_before_recording)
+                                .unwrap_or(false);
+                            delonix_meet_domain::identity::join_preferences::recording_start_decision(
+                            warn, confirmed,
+                        ) == delonix_meet_domain::identity::join_preferences::RecordingStart::ConfirmationRequired
+                        };
+                    if needs_confirmation {
+                        let _ = tx.send(ServerMsg::RecordingConfirmationRequired);
+                    } else if active {
                         // Chave E2EE (se cedida): 32 bytes AES-256 em base64.
                         use base64::Engine as _;
                         let key = e2ee_key
@@ -4341,7 +4692,12 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                 Ok(ClientMsg::PromoteAdmit { to, allowed }) => {
                     // O papel muda em memória no hub; a PERSISTÊNCIA (para quem
                     // cair e voltar) é IO e fica aqui, fora do lock do hub.
-                    let alvo = if state.hub.is_host(room_id, peer_id) && to != peer_id {
+                    // Um convidado sem conta não tem `users.id` para persistir
+                    // (e o hub recusa-lhe o papel).
+                    let alvo = if state.hub.is_host(room_id, peer_id)
+                        && to != peer_id
+                        && !state.hub.is_guest(room_id, to)
+                    {
                         state.hub.user_id_of(room_id, to)
                     } else {
                         None
@@ -4386,6 +4742,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         }
     }
 
+    if let Some(s) = &source {
+        crate::studio_realtime::on_source_left(&state, room_id, s, peer_id);
+    }
     if sfu_mode {
         // Última pessoa a sair leva a gravação órfã para finalização.
         if let Some(session) = state.sfu.remove_peer(room_id, peer_id).await {
@@ -4459,6 +4818,7 @@ mod tests {
         let msg = ClientMsg::ServerRecord {
             active: true,
             e2ee_key: Some(Secret(chave.to_string())),
+            confirmed: false,
         };
         let s = format!("{msg:?}");
         assert!(!s.contains(chave), "a chave apareceu no Debug: {s}");
@@ -4475,7 +4835,9 @@ mod tests {
         let raw = r#"{"type":"server-record","active":true,"e2ee_key":"QUJD"}"#;
         let msg: ClientMsg = serde_json::from_str(raw).expect("o cliente escreve isto");
         match msg {
-            ClientMsg::ServerRecord { active, e2ee_key } => {
+            ClientMsg::ServerRecord {
+                active, e2ee_key, ..
+            } => {
                 assert!(active);
                 assert_eq!(e2ee_key.as_ref().map(|s| s.expose()), Some("QUJD"));
             }
@@ -5907,6 +6269,7 @@ mod tests {
             mic: true,
             is_bot: false,
             is_pstn: false,
+            is_guest: false,
             role: Role::Host,
             origin: None,
             title: None,
@@ -5947,6 +6310,7 @@ mod tests {
             mic: true,
             is_bot: false,
             is_pstn: true,
+            is_guest: false,
             role: Role::Attendee,
             origin: Some(Origin::Pstn),
             title: None,
@@ -5984,6 +6348,49 @@ mod tests {
         assert_eq!(v["outside_app"], 4);
         assert_eq!(v["by_origin"][0]["origin"], "app");
 
+        let d = DialOutView {
+            id: Uuid::nil(),
+            kind: "voice".into(),
+            channel: "phone".into(),
+            carrier: Some("unitel".into()),
+            number: "+244923000108".into(),
+            number_masked: "+244 923 ***108".into(),
+            display_name: None,
+            status: "ringing".into(),
+            failure_code: None,
+            muted: false,
+            on_stage: false,
+            rate_minor: Some(940),
+            currency: Some("AOA".into()),
+            duration_secs: 0,
+            cost_minor: 0,
+            created_at: chrono::Utc::now(),
+            answered_at: None,
+            ended_at: None,
+        };
+        let v = serde_json::to_value(ServerMsg::DialOutUpdated {
+            dial_out: d.clone(),
+        })
+        .unwrap();
+        assert_eq!(v["type"], "dial-out-updated");
+        assert_eq!(v["dial_out"]["status"], "ringing");
+        assert!(serde_json::from_value::<ServerMsg>(v).is_ok());
+
+        let c = ServerMsg::SessionCost {
+            cost: SessionCostView {
+                totals: vec![CurrencyTotalView {
+                    currency: "AOA".into(),
+                    amount_minor: 61_200,
+                }],
+                calls: 3,
+                whatsapp: 1,
+                sms: 0,
+            },
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["type"], "session-cost");
+        assert_eq!(v["cost"]["totals"][0]["amount_minor"], 61_200);
+
         let u = serde_json::to_value(ServerMsg::PeerUpdated {
             peer: PeerInfo {
                 peer_id: Uuid::nil(),
@@ -5993,6 +6400,7 @@ mod tests {
                 hand: false,
                 cam: false,
                 mic: true,
+                is_guest: false,
                 is_bot: false,
                 is_pstn: true,
                 role: Role::Attendee,
@@ -6106,6 +6514,55 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn estado_do_dial_out_so_chega_a_quem_pode_admitir() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, mut rx_h) = peer();
+        let (membro, tx_m, mut rx_m) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        hub.join(
+            room,
+            membro,
+            membro,
+            "membro".into(),
+            false,
+            false,
+            false,
+            tx_m,
+        );
+        drain(&mut rx_h);
+        drain(&mut rx_m);
+        let d = DialOutView {
+            id: Uuid::new_v4(),
+            kind: "voice".into(),
+            channel: "phone".into(),
+            carrier: Some("unitel".into()),
+            number: "+244923000108".into(),
+            number_masked: "+244 923 ***108".into(),
+            display_name: None,
+            status: "dialing".into(),
+            failure_code: None,
+            muted: false,
+            on_stage: false,
+            rate_minor: Some(940),
+            currency: Some("AOA".into()),
+            duration_secs: 0,
+            cost_minor: 0,
+            created_at: chrono::Utc::now(),
+            answered_at: None,
+            ended_at: None,
+        };
+        hub.broadcast_admitters(room, ServerMsg::DialOutUpdated { dial_out: d });
+        assert!(recolher(&mut rx_h)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::DialOutUpdated { .. })));
+        assert!(
+            recolher(&mut rx_m).is_empty(),
+            "um membro não vê números nem estados de chamada"
+        );
     }
 }
 
@@ -7534,4 +7991,322 @@ mod b1_sala_tests {
     }
 
     use crate::room_chat::ChatWrite;
+
+    // ---------------------------------------------------------------
+    //  Convidado SEM conta (guests.rs). A metade negativa: o convidado
+    //  não passa a espera sozinho, não admite, não recebe o papel, e
+    //  não o ganha por reclamar um lugar.
+    // ---------------------------------------------------------------
+
+    fn claims_de_sala(
+        owner: bool,
+        wait: bool,
+        origin: Option<&str>,
+        guest: bool,
+    ) -> crate::auth::Claims {
+        crate::auth::Claims {
+            sub: Uuid::new_v4(),
+            typ: "room".into(),
+            iat: 0,
+            exp: 1,
+            room: Some(Uuid::new_v4()),
+            name: Some("x".into()),
+            topo: None,
+            owner,
+            wait,
+            adm: owner,
+            is_bot: false,
+            origin: origin.map(str::to_string),
+            title: None,
+            lobby: None,
+            wr: None,
+            guest,
+            sid: None,
+        }
+    }
+
+    /// A mesma conta que o `handle_socket` faz: o anfitrião nunca espera.
+    fn espera(p: &SeatPolicy, runtime: Option<bool>) -> bool {
+        !p.is_host && p.wait.must_wait(runtime)
+    }
+
+    /// Extras de um convidado sem conta, como o `seat_policy` os monta.
+    fn extras_de_convidado() -> JoinExtras {
+        JoinExtras {
+            origin: Some(Origin::Guest),
+            is_guest: true,
+            ..JoinExtras::default()
+        }
+    }
+
+    #[test]
+    fn convidado_espera_sempre_mesmo_com_um_token_mal_emitido() {
+        // Um token de convidado com `owner`/`adm`/`wait: false` por erro de
+        // emissão continua a esperar e continua sem papel: o claim `guest`
+        // manda.
+        let p = seat_policy(&claims_de_sala(
+            true,
+            false,
+            Some(crate::auth::ORIGIN_GUEST),
+            true,
+        ));
+        assert!(p.extras.is_guest);
+        assert_eq!(p.extras.origin, Some(Origin::Guest));
+        assert_eq!(p.extras.role, Role::Attendee, "nem co-anfitrião por `adm`");
+        assert!(espera(&p, None), "um convidado nunca entra directo");
+        assert!(
+            espera(&p, Some(false)),
+            "nem quando o anfitrião desliga a sala de espera a meio"
+        );
+        assert!(!p.is_host && !p.can_admit, "nem manda em nada");
+
+        // Controlo: o dono (membro) entra directo e admite.
+        let dono = seat_policy(&claims_de_sala(true, false, None, false));
+        assert!(dono.is_host && dono.can_admit && !espera(&dono, None) && !dono.extras.is_guest);
+        // E um membro com `wait` espera, como sempre.
+        let membro = seat_policy(&claims_de_sala(false, true, None, false));
+        assert!(espera(&membro, None) && !membro.is_host && !membro.extras.is_guest);
+        // `origin: "guest"` SEM o claim é quem tem conta e entrou pelo link
+        // (`rooms::join_room`): não é convidado sem conta, e fica como estava.
+        let externo = seat_policy(&claims_de_sala(
+            false,
+            true,
+            Some(crate::auth::ORIGIN_GUEST),
+            false,
+        ));
+        assert!(!externo.extras.is_guest);
+        assert_eq!(externo.extras.origin, Some(Origin::Guest));
+    }
+
+    #[tokio::test]
+    async fn o_anfitriao_ve_o_convidado_como_convidado_na_espera_e_na_sala() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, mut rx_h) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        recolher(&mut rx_h);
+
+        let guest = Uuid::new_v4();
+        let (admit_tx, _admit_rx) = oneshot::channel();
+        hub.add_waiting_with(room, guest, "Ana".into(), extras_de_convidado(), admit_tx);
+        match rx_h.recv().await.unwrap() {
+            ServerMsg::WaitingJoin { peer } => {
+                assert_eq!(peer.peer_id, guest);
+                assert!(
+                    peer.is_guest,
+                    "a origem tem de chegar ao anfitrião na sala de espera"
+                );
+            }
+            other => panic!("inesperado: {other:?}"),
+        }
+        // E a quem espreita a sala de espera pela REST.
+        assert!(hub.waiting_list(room).iter().any(|w| w.is_guest));
+
+        // Admitido, entra na sala marcado — no anúncio e no roster de quem chega depois.
+        let (g, tx_g, _rx_g) = peer();
+        hub.join_with(
+            room,
+            g,
+            Uuid::new_v4(),
+            "Ana".into(),
+            false,
+            false,
+            false,
+            tx_g,
+            extras_de_convidado(),
+        );
+        let anuncio = recolher(&mut rx_h).into_iter().find_map(|m| match m {
+            ServerMsg::PeerJoined { peer } if peer.peer_id == g => Some(peer),
+            _ => None,
+        });
+        assert!(anuncio.expect("o anfitrião vê a entrada").is_guest);
+        let (m, tx_m, _rx_m) = peer();
+        let e = hub.join(room, m, m, "membro".into(), false, false, false, tx_m);
+        let visto = e.roster.iter().find(|p| p.peer_id == g).expect("no roster");
+        assert!(visto.is_guest && !visto.host);
+        // Controlo: um membro não vai marcado.
+        let (n, tx_n, _rx_n) = peer();
+        let e = hub.join(room, n, n, "outro".into(), false, false, false, tx_n);
+        assert!(!e.roster.iter().find(|p| p.peer_id == m).unwrap().is_guest);
+    }
+
+    #[tokio::test]
+    async fn convidado_nao_admite_ninguem() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, _rx_h) = peer();
+        let (g, tx_g, _rx_g) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        // Mesmo que alguém chame `join_with` com papel, um convidado não o leva.
+        hub.join_with(
+            room,
+            g,
+            Uuid::new_v4(),
+            "Ana".into(),
+            true,
+            true,
+            false,
+            tx_g,
+            JoinExtras {
+                role: Role::Cohost,
+                ..extras_de_convidado()
+            },
+        );
+        assert!(
+            !hub.is_host(room, g),
+            "um convidado nunca entra como anfitrião"
+        );
+
+        let outro = Uuid::new_v4();
+        let (admit_tx, mut admit_rx) = oneshot::channel();
+        hub.add_waiting_with(room, outro, "Bruno".into(), extras_de_convidado(), admit_tx);
+        hub.handle(room, g, ClientMsg::Admit { to: outro }, None);
+        assert!(
+            admit_rx.try_recv().is_err(),
+            "um convidado não abre a porta a outro"
+        );
+        // Nem depois de o anfitrião tentar dar-lhe esse poder, por qualquer
+        // das duas vias.
+        hub.handle(
+            room,
+            host,
+            ClientMsg::PromoteAdmit {
+                to: g,
+                allowed: true,
+            },
+            None,
+        );
+        hub.handle(
+            room,
+            host,
+            ClientMsg::SetRole {
+                to: g,
+                role: Role::Cohost,
+            },
+            None,
+        );
+        hub.handle(room, g, ClientMsg::Admit { to: outro }, None);
+        assert!(
+            admit_rx.try_recv().is_err(),
+            "um convidado não passa a admitir por promoção"
+        );
+        // Controlo positivo: o anfitrião abre.
+        hub.handle(room, host, ClientMsg::Admit { to: outro }, None);
+        assert_eq!(admit_rx.await, Ok(true));
+    }
+
+    #[tokio::test]
+    async fn um_membro_promovido_admite_e_o_convidado_vai_a_palco() {
+        // Controlo positivo das guardas de cima: as MESMAS mensagens para um
+        // membro passam; e o papel de apresentação não é vedado ao convidado.
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, _rx_h) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        let (g, tx_g, mut rx_g) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+        hub.join_with(
+            room,
+            g,
+            Uuid::new_v4(),
+            "Ana".into(),
+            false,
+            false,
+            false,
+            tx_g,
+            extras_de_convidado(),
+        );
+        hub.handle(
+            room,
+            host,
+            ClientMsg::SetRole {
+                to: b,
+                role: Role::Cohost,
+            },
+            None,
+        );
+        let outro = Uuid::new_v4();
+        let (admit_tx, admit_rx) = oneshot::channel();
+        hub.add_waiting(room, outro, "Bruno".into(), admit_tx);
+        hub.handle(room, b, ClientMsg::Admit { to: outro }, None);
+        assert_eq!(admit_rx.await, Ok(true));
+
+        recolher(&mut rx_g);
+        hub.handle(
+            room,
+            host,
+            ClientMsg::SetRole {
+                to: g,
+                role: Role::Speaker,
+            },
+            None,
+        );
+        assert!(recolher(&mut rx_g).into_iter().any(|m| matches!(
+            m,
+            ServerMsg::PeerRole { peer_id, role: Role::Speaker, can_admit: false } if peer_id == g
+        )));
+    }
+
+    #[tokio::test]
+    async fn convidado_nao_e_promovido_a_anfitriao() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (g, tx_g, _rx_g) = peer();
+        let (b, tx_b, _rx_b) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        hub.join_with(
+            room,
+            g,
+            Uuid::new_v4(),
+            "Ana".into(),
+            false,
+            false,
+            false,
+            tx_g,
+            extras_de_convidado(),
+        );
+        hub.join(room, b, b, "b".into(), false, false, false, tx_b);
+
+        hub.handle(room, a, ClientMsg::TransferHost { to: g }, None);
+        assert!(!hub.is_host(room, g), "o papel não passa para um convidado");
+        assert!(
+            hub.is_host(room, a),
+            "e o anfitrião não o perde pelo caminho"
+        );
+
+        // Controlo positivo: a MESMA chamada para um membro passa. Sem isto, a
+        // asserção de cima passaria com a transferência simplesmente partida.
+        hub.handle(room, a, ClientMsg::TransferHost { to: b }, None);
+        assert!(hub.is_host(room, b) && !hub.is_host(room, a));
+    }
+
+    #[tokio::test]
+    async fn convidado_que_reclama_o_lugar_continua_convidado() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        let (g, tx_g, _rx_g) = peer();
+        hub.join(room, a, a, "anfitriã".into(), true, true, false, tx_a);
+        let segredo = hub
+            .join_with(
+                room,
+                g,
+                Uuid::new_v4(),
+                "Ana".into(),
+                false,
+                false,
+                false,
+                tx_g,
+                extras_de_convidado(),
+            )
+            .reconnect_secret;
+        assert!(hub.disconnect(room, g));
+        let lugar = hub
+            .reclaim(room, &segredo, std::time::Duration::from_secs(45))
+            .expect("reclama o próprio lugar");
+        assert!(lugar.is_guest, "a origem é do LUGAR: voltar não a apaga");
+        assert!(!lugar.is_host && !lugar.can_admit);
+    }
 }

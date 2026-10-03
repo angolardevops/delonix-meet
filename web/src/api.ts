@@ -87,7 +87,10 @@ export function isAbort(e: unknown): boolean {
  * problema é o transporte.
  */
 export function isAuthFailure(e: unknown): boolean {
-  return e instanceof ApiError && (e.status === 401 || e.status === 403)
+  // Só o 401. Desde o #90 o servidor responde 403/404 com `code` a quem ESTÁ
+  // autenticado mas não pode (ex.: `recording.not_owner`): isso é uma recusa
+  // sobre um recurso, não uma sessão inválida, e nunca pode terminar a sessão.
+  return e instanceof ApiError && e.status === 401
 }
 
 /** Mensagem legível de um erro de API, com recurso ao texto dado. */
@@ -159,10 +162,12 @@ async function refreshSession(): Promise<void> {
 async function renovarUmaVez() {
   // Sem corpo: o refresh token vai no cookie HttpOnly (enviado automaticamente).
   const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' })
-  // Só 401/403 são «a sessão não serve». Um 500/502/503 é o servidor com um
-  // problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
+  // Só 401 (cookie ausente, revogado ou expirado) e 404 (a conta do token já
+  // não existe) são «a sessão não serve» — é o contrato do `POST
+  // /api/auth/refresh`. Um 403 é uma recusa, e um 500/502/503 é o servidor com
+  // um problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
   // estava para resolver um problema que não é dele (ver isAuthFailure).
-  if (!res.ok && res.status !== 401 && res.status !== 403) {
+  if (!res.ok && res.status !== 401 && res.status !== 404) {
     throw new ApiError(res.status, null, 'refresh indisponível')
   }
   if (!res.ok) {
@@ -1316,6 +1321,10 @@ export interface ChatHistoryMsg {
   parent_id?: string | null
   /** Contagem de reacções por emoji (`{}` sem reacções). */
   reactions?: Record<string, number>
+  /** Conversa directa: a conta que a recebe. `null` = mensagem pública. O
+   *  servidor só devolve as directas a quem as enviou e a quem as recebeu. */
+  to_user_id?: string | null
+  to_username?: string | null
 }
 
 /** Quem espera na sala de espera (só dono/co-anfitrião — 403/404 aos outros). */
@@ -1324,6 +1333,8 @@ export interface WaitingPeer {
   username: string
   origin?: 'sso' | 'password' | 'guest' | 'pstn' | 'bot'
   title?: string
+  /** Convidado SEM conta (`guestJoin`): o nome foi escrito à mão. */
+  is_guest?: boolean
   /** Epoch ms de quando começou a esperar. */
   since: number
 }
@@ -2102,10 +2113,27 @@ export const sendSmsToContact = (
     headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
   })
 
+/**
+ * Envio AVULSO, a um número escrito à mão — o modo `{to, body}` do mesmo
+ * `POST …/sms/messages`, que o servidor só aceita a um admin da organização.
+ * `idempotencyKey`: uma por intenção de envio, como no envio a contacto.
+ */
+export const sendSmsToNumber = (
+  orgId: string,
+  body: { to: string; body: string; route?: 'auto' | 'usb' | 'operator' },
+  idempotencyKey?: string,
+) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+  })
+
 /** Admin vê todas as mensagens da org; membro vê só as que enviou. */
-export const listSmsMessages = (orgId: string, pageSize = 50) =>
+export const listSmsMessages = (orgId: string, pageSize = 50, signal?: AbortSignal) =>
   request<{ items: SmsMessage[]; next_page_token: string | null }>(
     `/api/orgs/${orgId}/sms/messages?page_size=${pageSize}`,
+    { signal },
   )
 
 export const getSmsMessage = (orgId: string, messageId: string) =>
@@ -2475,3 +2503,101 @@ export const updateSavedSearch = (
 
 export const deleteSavedSearch = (id: string) =>
   request<void>(`/api/users/me/saved-searches/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+// ---------- delonix-meet-backend/convidado-sem-conta ----------
+//
+// Convidado SEM conta. Estas funções são o contrato do ecrã de entrada de
+// convidado, que ainda NÃO existe: nenhuma página as chama.
+//
+// Fluxo: `guestJoin(código, nome)` → `room_token` + `ice_servers` → abrir
+// `/ws?token=…` → chega `waiting` → o anfitrião admite → chega `joined`. A partir
+// daí a sala é igual à de um membro. O convidado NÃO tem sessão: não chama
+// `joinRoom`, `iceServers`, `roomChatHistory`, `listRecordings`, `postQos`,
+// `postTimings` nem nenhuma outra rota autenticada (todas dão 401). Na sala de
+// espera e na lista, o anfitrião recebe-o com `is_guest: true` no `PeerInfo`.
+
+/** O que um convidado vê da sala — sem dono nem política. */
+export interface GuestRoomView {
+  code: string
+  name: string
+  topology: string
+  e2ee: boolean
+  format: string
+}
+
+export interface GuestJoinOk {
+  room: GuestRoomView
+  /** Token de sala (`typ: room`, `origin: guest`, `guest: true`) — só serve para o `/ws`. */
+  room_token: string
+  ws_path: string
+  /** Validade do token em segundos. Uma reentrada pede um novo `guestJoin`. */
+  expires_in: number
+  guest: { id: string; display_name: string }
+  /** Mesma forma do `/api/ice-servers` (que o convidado não pode chamar). */
+  ice_servers: RTCConfiguration
+}
+
+/**
+ * Porque é que a entrada falhou, em termos do ecrã:
+ * - `closed`: a sala não aceita convidados sem conta (403) → «inicia sessão»;
+ * - `not_found`: o código não existe (404);
+ * - `invalid_name`: nome vazio, > 60 caracteres ou com caracteres invisíveis (400);
+ * - `rate_limited`: demasiadas tentativas (429) → esperar `retryAfterSecs` (o que falta da janela);
+ * - `unavailable`: outra coisa (rede, 5xx).
+ */
+export type GuestJoinFailure = 'closed' | 'not_found' | 'invalid_name' | 'rate_limited' | 'unavailable'
+
+export class GuestJoinError extends ApiError {
+  constructor(
+    status: number,
+    body: unknown,
+    readonly reason: GuestJoinFailure,
+    readonly retryAfterSecs: number | null,
+  ) {
+    super(status, body, reason)
+    this.name = 'GuestJoinError'
+  }
+}
+
+export function guestJoinFailure(status: number): GuestJoinFailure {
+  if (status === 403) return 'closed'
+  if (status === 404) return 'not_found'
+  if (status === 400 || status === 422) return 'invalid_name'
+  if (status === 429) return 'rate_limited'
+  return 'unavailable'
+}
+
+/** Máximo de caracteres do nome — o servidor recusa acima disto. */
+export const GUEST_NAME_MAX = 60
+
+/**
+ * `POST /api/rooms/{code}/guest-join`. Pedido PÚBLICO: vai sem `Authorization`
+ * mesmo que haja sessão neste browser (um membro entra por `joinRoom`), e um 401
+ * aqui nunca dispara renovação de sessão.
+ */
+export async function guestJoin(code: string, displayName: string): Promise<GuestJoinOk> {
+  let res: Response
+  try {
+    res = await fetch(`/api/rooms/${encodeURIComponent(code)}/guest-join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'omit',
+      body: JSON.stringify({ display_name: displayName }),
+    })
+  } catch {
+    throw new GuestJoinError(0, null, 'unavailable', null)
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    const ra = Number(res.headers.get('retry-after'))
+    throw new GuestJoinError(res.status, body, guestJoinFailure(res.status), Number.isFinite(ra) && ra > 0 ? ra : null)
+  }
+  return res.json()
+}
+
+/** `PATCH /api/rooms/{code}` — só o dono. Liga/desliga convidados sem conta. */
+export const setRoomAllowGuests = (code: string, allowGuests: boolean) =>
+  request<Room & { allow_guests: boolean }>(`/api/rooms/${encodeURIComponent(code)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ allow_guests: allowGuests }),
+  })

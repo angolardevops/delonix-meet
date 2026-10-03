@@ -291,3 +291,11 @@
     padding: 20px 16px 36px;
   }
 }
+
+.pub-partilha__video {
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--stage);
+  border-radius: var(--r-2);
+}

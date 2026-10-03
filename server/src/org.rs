@@ -76,6 +76,11 @@ pub struct OrgSettingsReq {
     /// Dial-in PSTN: modelo de DID ('shared' | 'dedicated').
     #[serde(default)]
     pub voice_did_model: Option<String>,
+    /// A organização exige autenticação de dois factores. Hoje impede os
+    /// membros de removerem o ÚLTIMO factor; não força a inscrição no login.
+    /// Omisso => mantém o actual.
+    #[serde(default)]
+    pub require_mfa: Option<bool>,
 }
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
@@ -211,7 +216,8 @@ pub async fn update_settings(
              max_groups = $3, max_rooms = $4, max_meetings = $5,
              voice_media_backend = COALESCE($7, voice_media_backend),
              voice_did_model = COALESCE($8, voice_did_model),
-             chat_retention_days = $9
+             chat_retention_days = $9,
+             require_mfa = COALESCE($10, require_mfa)
          WHERE id = $6",
     )
     .bind(&domain)
@@ -223,6 +229,7 @@ pub async fn update_settings(
     .bind(backend)
     .bind(did_model)
     .bind(chat_retention)
+    .bind(req.require_mfa)
     .execute(&state.db)
     .await?;
     crate::audit::log(
@@ -233,6 +240,20 @@ pub async fn update_settings(
         &domain,
     )
     .await;
+    if let Some(on) = req.require_mfa {
+        crate::audit::log(
+            &state.db,
+            Some(org_id),
+            auth.user_id,
+            if on {
+                "org.require_mfa_enabled"
+            } else {
+                "org.require_mfa_disabled"
+            },
+            &org_id.to_string(),
+        )
+        .await;
+    }
     Ok(Json(OrgSettingsUpdated {
         ok: true,
         domain,
@@ -1706,6 +1727,97 @@ pub(crate) async fn title_alongside(
     .await
     .ok()
     .flatten()
+}
+
+/// A organização PRINCIPAL de uma pessoa: a pertença activa mais antiga (a
+/// mesma escolha determinista que a auditoria faz para eventos sem org). É
+/// nela que vivem o cargo (`title`) e o telefone que a própria pessoa edita no
+/// perfil.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct PrimaryMembership {
+    pub org_id: Uuid,
+    pub org_name: String,
+    pub role: String,
+    pub title: String,
+    pub phone_e164: Option<String>,
+    pub phone_source: Option<String>,
+    /// Nome do departamento da pertença (`org_members.department_id`, 0054).
+    pub department: Option<String>,
+    pub joined_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub(crate) async fn primary_membership(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Option<PrimaryMembership>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT m.org_id, o.name AS org_name, m.role, m.title, m.phone_e164, m.phone_source,
+                d.name AS department, m.created_at AS joined_at
+           FROM org_members m JOIN organizations o ON o.id = m.org_id
+           LEFT JOIN departments d ON d.org_id = m.org_id AND d.id = m.department_id
+          WHERE m.user_id = $1 AND m.archived_at IS NULL
+          ORDER BY m.created_at, m.org_id
+          LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
+/// A própria pessoa muda o cargo da pertença principal. O telefone NÃO passa
+/// por aqui: escreve-se por [`set_member_phone`] (uma regra só, a do SMS).
+pub(crate) async fn set_own_title(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    user_id: Uuid,
+    title: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE org_members SET title = $3
+          WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(title)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// `a` e `b` são membros ACTIVOS de pelo menos uma organização em comum (ou
+/// são a mesma pessoa)? Decide quem vê a fotografia de quem.
+pub(crate) async fn shares_active_org(
+    state: &AppState,
+    a: Uuid,
+    b: Uuid,
+) -> Result<bool, ApiError> {
+    if a == b {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members x JOIN org_members y ON x.org_id = y.org_id
+                         WHERE x.user_id = $1 AND y.user_id = $2
+                           AND x.archived_at IS NULL AND y.archived_at IS NULL)",
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(&state.db)
+    .await?)
+}
+
+/// Alguma organização ACTIVA da pessoa exige 2FA? (a leitura mais restritiva,
+/// ver `domain::identity::factors`).
+pub(crate) async fn any_org_requires_mfa(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members m JOIN organizations o ON o.id = m.org_id
+                         WHERE m.user_id = $1 AND m.archived_at IS NULL AND o.require_mfa)",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await?)
 }
 
 /// Utilizadores que partilham pelo menos uma organização com `user_id` (exclui

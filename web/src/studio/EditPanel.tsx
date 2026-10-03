@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, isAbort, recordingObjectUrl, recordingsLibrary } from '../api'
+import { ApiError, apiErrorMessage, isAbort, recordingDetails, recordingObjectUrl } from '../api'
 import type { RecordingItem } from '../api'
 import { getAppName } from '../branding'
 import { useShell } from '../components/shellContext'
@@ -188,14 +188,15 @@ export default function EditPanel({
     semGravacaoNoEndereco()
     if (p?.fontes.some((f) => f.gravacao === id)) return
     const ctl = new AbortController()
-    recordingsLibrary(ctl.signal)
-      .then((lista) => {
-        const r = lista.find((x) => x.id === id)
-        if (!r) setErro(t('editor.biblioteca.naoEncontrada'))
-        else void abrirGravacao(r)
-      })
+    // O próprio recurso, não a biblioteca: uma gravação PUBLICADA da
+    // organização também abre, mesmo sem a pessoa ter estado na sala. 404 =
+    // não existe ou não é para ela — o servidor não distingue.
+    recordingDetails(id, ctl.signal)
+      .then((r) => void abrirGravacao(r))
       .catch((e) => {
-        if (!isAbort(e)) setErro(apiErrorMessage(e, t('editor.biblioteca.erro')))
+        if (isAbort(e)) return
+        if (e instanceof ApiError && e.status === 404) setErro(t('editor.biblioteca.naoEncontrada'))
+        else setErro(apiErrorMessage(e, t('editor.biblioteca.erro')))
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pr.aCarregar])

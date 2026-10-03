@@ -73,9 +73,6 @@ export default {
       quarter: 'Trimestre',
       year: 'Ano',
     },
-    ambito: 'Âmbito',
-    estaOrg: 'Esta organização',
-    todasOrgs: 'Todas as que administro',
     vazio: 'Ninguém em quarentena neste período',
   },
 }

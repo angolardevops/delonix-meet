@@ -149,6 +149,16 @@ pub struct Config {
     pub voice_ramais_domain_suffix: String,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
     pub recordings_dir: std::path::PathBuf,
+    /// Ficheiros ZIP de «os meus dados» (`DATA_EXPORTS_DIR`). Por omissão
+    /// `<RECORDINGS_DIR>/exports`, no mesmo armazenamento das gravações.
+    pub data_exports_dir: std::path::PathBuf,
+    /// Chaves de acesso (WebAuthn, ADR-0011): o RP ID (`WEBAUTHN_RP_ID`, o
+    /// domínio, p.ex. `meet.delonix.co.ao`) e a origem do web
+    /// (`WEBAUTHN_RP_ORIGIN`, `https://meet.delonix.co.ao`). Sem os dois, as
+    /// chaves de acesso ficam `not_configured` — não se adivinha a origem a
+    /// partir de um cabeçalho do pedido.
+    pub webauthn_rp_id: Option<String>,
+    pub webauthn_rp_origin: Option<String>,
     /// URL do Redis para pub/sub cross-nó (presença multi-instância).
     /// Opcional — se vazio, o servidor opera em modo single-node (sem Redis).
     pub redis_url: Option<String>,
@@ -270,6 +280,16 @@ pub struct Config {
     /// controlo de segurança, e um `0` ou um número absurdo não podem entrar
     /// por descuido.
     pub auth_rate_per_min: usize,
+    /// Entradas de convidado sem conta por IP, por minuto
+    /// (`GUEST_JOIN_PER_IP_PER_MIN`, 10 por omissão). A rota é pública e emite
+    /// credenciais TURN: sem travão, qualquer um esgotava o relay ou enchia
+    /// salas de espera alheias.
+    pub guest_join_per_ip_per_min: usize,
+    /// Entradas de convidado por SALA, por minuto
+    /// (`GUEST_JOIN_PER_ROOM_PER_MIN`, 30 por omissão). O travão por IP não
+    /// chega contra quem tem muitos IPs: este protege o anfitrião de ver a sala
+    /// de espera inundada.
+    pub guest_join_per_room_per_min: usize,
     /// Capacidade da fila de escrita de CADA track em gravação
     /// (`REC_QUEUE_CAP`, default 2048 ≈ vários segundos de vídeo). A escrita
     /// corre numa thread dedicada; a fila é o que impede um disco lento de
@@ -479,6 +499,17 @@ impl Config {
                 .var("RECORDINGS_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("recordings")),
+            data_exports_dir: src
+                .var("DATA_EXPORTS_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    src.var("RECORDINGS_DIR")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("recordings"))
+                        .join("exports")
+                }),
+            webauthn_rp_id: src.var("WEBAUTHN_RP_ID").ok().filter(|s| !s.is_empty()),
+            webauthn_rp_origin: src.var("WEBAUTHN_RP_ORIGIN").ok().filter(|s| !s.is_empty()),
             redis_url: src.var("REDIS_URL").ok().filter(|s| !s.is_empty()),
             sfu_external_ip: src.var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()),
             sfu_udp_min: bounded_env(
@@ -514,6 +545,14 @@ impl Config {
             nego_queue_cap: bounded_env(src, "NEGO_QUEUE_CAP", 64, 4, 4_096),
             rec_queue_cap: bounded_env(src, "REC_QUEUE_CAP", 2_048, 64, 65_536),
             auth_rate_per_min: bounded_env(src, "AUTH_RATE_PER_MIN", 20, 5, 10_000),
+            guest_join_per_ip_per_min: bounded_env(src, "GUEST_JOIN_PER_IP_PER_MIN", 10, 1, 1_000),
+            guest_join_per_room_per_min: bounded_env(
+                src,
+                "GUEST_JOIN_PER_ROOM_PER_MIN",
+                30,
+                1,
+                1_000,
+            ),
             drain_grace_secs: bounded_env(src, "DRAIN_GRACE_SECS", 40, 1, 3_600) as u64,
             reconnect_grace_secs: bounded_env(src, "RECONNECT_GRACE_SECS", 45, 5, 300) as u64,
             drain_readiness_secs: bounded_env(src, "DRAIN_READINESS_SECS", 12, 0, 300) as u64,

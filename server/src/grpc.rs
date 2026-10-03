@@ -35,7 +35,9 @@ pub fn status_from(e: ApiError) -> Status {
         ApiError::Conflict(m) => (tonic::Code::AlreadyExists, m.clone()),
         ApiError::Unprocessable(m) => (tonic::Code::FailedPrecondition, m.clone()),
         ApiError::NotFound => (tonic::Code::NotFound, "not found".into()),
-        ApiError::TooManyRequests => (tonic::Code::ResourceExhausted, "too many requests".into()),
+        ApiError::TooManyRequests | ApiError::RateLimited { .. } => {
+            (tonic::Code::ResourceExhausted, "too many requests".into())
+        }
         ApiError::ServiceUnavailable(m) => (tonic::Code::Unavailable, m.clone()),
         ApiError::Internal(detail) => {
             tracing::error!(error = %detail, "internal error (grpc)");

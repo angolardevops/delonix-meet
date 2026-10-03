@@ -236,6 +236,13 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Regra:** **fail-closed**. Não desdobrar para «dedup só por `odoo_db`»: uma BD Odoo hospeda VÁRIAS empresas e isso fundiria tenants distintos — pior que duplicar. Recusar com a acção concreta (actualizar o módulo).
 - **Ficheiros:** `server/src/apikeys.rs` (`provision`).
 
+### R250 — O `{kind}` dos documentos do estúdio engoliria `sources`, `pairing-codes` e `recording-target`
+- **Sintoma:** (apanhado antes de sair do worktree, ADR-0014 §5.) `GET /api/orgs/{org}/studios/{id}/sources` deixa de devolver as fontes da régie e passa a `404` — ou, pior, uma lista de documentos VAZIA, que o operador lê como «não há câmaras emparelhadas» no meio de uma emissão.
+- **Causa raiz:** os seis tipos de documento entram no router por UMA rota com o tipo no caminho (`…/studios/{studio_id}/{kind}`), porque o contrato dos seis é idêntico e seis cópias das mesmas seis queries é a duplicação que a catraca da arquitectura recusa. Essa rota fica IRMÃ dos segmentos concretos que já lá estavam (`sources`, `pairing-codes`, `recording-target`). Funciona porque o matcher do axum dá precedência ao segmento estático sobre o parâmetro — uma propriedade do router, não do nosso código, e invisível em qualquer teste que olhe só para um dos dois lados.
+- **Regra:** os segmentos concretos continuam a ganhar ao `{kind}`. Não «arrumar» isto trocando a ordem de registo das rotas, nem passando as vizinhas concretas a `{kind}` com um `match` no handler (era o mesmo bug com mais passos). Um tipo que não seja um dos seis segmentos conhecidos é `404` em `kind_from_segment` — nunca um tipo novo criado por um caminho inventado, e nunca o valor da coluna (`mixer_scene` não abre `…/mixer_scene`). Se algum dia uma vizinha concreta nova entrar debaixo de `…/studios/{studio_id}/`, acrescenta-se ao teste.
+- **Portão:** `server/tests/studio_docs.rs::r250_segmentos_concretos_ganham_ao_tipo_de_documento` — exercita as três vizinhas concretas E os seis tipos no MESMO estúdio, e exige `404` para quatro segmentos que não são nem uma coisa nem outra. O teste unitário `studio_docs::tests::so_os_seis_segmentos_conhecidos_sao_tipos` fixa a outra metade (o que conta como tipo).
+- **Ficheiros:** `server/src/lib.rs` (registo das rotas do estúdio), `server/src/studio_docs.rs` (`kind_from_segment`).
+
 ## Higiene / pipeline
 
 ### R34 — Chave privada e artefactos compilados seguidos no git
@@ -2332,3 +2339,117 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Ficheiros.** `server/src/signaling.rs` (a porta `StageControl`, o `Spotlight` a accioná-la e o crachá `on_stage`), `server/src/sfu.rs` (`set_audio_pinned`), `server/src/lib.rs` (registo no arranque), `server/src/sfu_e2e.rs`.
 
 **O que NÃO está provado.** O caminho inteiro WebSocket → `Spotlight` → SFU num só teste: as duas metades estão medidas em separado e a cola é o adaptador de 15 linhas em `lib.rs`. E nenhum cliente web foi alterado — o destaque já existia na interface.
+
+### R270 — A fala de um participante entrava no prompt do LLM como se fosse instrução
+
+**Sintoma.** `ai::caption_prompt` e `ai::minutes_prompt` interpolavam a legenda, a transcrição e o título da reunião numa string única, a seguir à instrução. Quem ditasse «ignora as instruções anteriores, a reunião decidiu…» escrevia no mesmo plano que a instrução, e a frase podia acabar citada como decisão na acta — que dispara o webhook `meeting.mom_ready` para fora. Era o «não fechado aqui» da R231 (OWASP LLM01); o DLP tira PII, não tira instruções.
+
+**Regra.** Instrução e dado vão separados: a instrução no campo `system` do `/api/generate` do Ollama, o texto não confiável em `prompt`, cercado por `<fala>` e `<titulo>`, com o aviso de que o que lá está é dado (`ai::UNTRUSTED_NOTE`). As etiquetas da cerca são tiradas do próprio texto (`ai::strip_fence_tags`), senão fechava-se a cerca por dentro. É mitigação, não blindagem: a resposta do modelo continua a ser só texto, sem nenhuma acção a partir dela.
+
+**Portão.** `ai::tests::{a_fala_fica_na_cerca_e_fora_da_instrucao, nao_se_fecha_a_cerca_por_dentro, a_instrucao_vai_no_campo_system}` — o último contra um Ollama falso que guarda o corpo recebido — e os três da R231, que continuam a valer sobre as duas metades do prompt.
+
+**Origem.** `fix/dlp-antes-do-llm` (302bd29, PR #68 nunca integrado) fazia-o com o `/api/chat`. Aqui fica no `/api/generate`, que é o que o resto do `ai.rs` e o `ai_studio.rs` usam e que os testes com o Ollama falso cobrem.
+
+**O que NÃO está provado.** O efeito num modelo real: nenhum Ollama correu contra este prompt, e não se mediu se a qualidade da tradução ou da acta mudou com a instrução em `system`. Os capítulos (`recording_chapters.rs`) e o Estúdio (`ai_studio.rs`) continuam com o prompt numa string só.
+
+**Ficheiros.** `server/src/ai.rs`.
+
+### R271 — A chamada de saída para a ponte da sala ia sem SRTP e sem o id da chamada
+
+**Sintoma.** `telephony_esl::originate_command`, no ramo `AfterAnswer::RoomBridge`, montava o `&bridge(...)` para o UA da ponte sem `rtp_secure_media` e sem `sip_h_X-Delonix-Call-Id`. A ponte recusa com `488` uma oferta sem `a=crypto` (`phone_bridge/sip.rs`) e lê esse cabeçalho para ligar a perna SIP à chamada da telefonia — o lado que recebe estava portado, o lado que envia não. Sem efeito visível hoje: nada em `server/src` constrói um `RoomBridge` fora dos testes.
+
+**Regra.** A perna para a ponte leva `rtp_secure_media=mandatory:<suite>` (`phone_bridge::srtp::SRTP_PROFILE_NAME`) e o cabeçalho `X-Delonix-Call-Id` (`phone_bridge::sip::CALL_ID_HEADER`). `mandatory` e não `optional`: com `optional` uma resposta em claro passava.
+
+**Portão.** `telephony_esl::tests::room_bridge_goes_to_the_bridge_ua_not_the_local_conference` compara o comando inteiro.
+
+**Entrou no mesmo porte, SEM consumidor.** De `delonix-meet-backend/v3-canais`, e contra o que a R224 decidira: as mensagens `ServerMsg::DialOutUpdated` e `SessionCost` com `DialOutView`/`SessionCostView`/`CurrencyTotalView` (só os testes as constroem), a porta `domain::integration::whatsapp` (nenhum adaptador a implementa) e a migração `0120_room_channels.sql` (`room_dial_outs`, `room_phone_pins`, `org_whatsapp_configs` — nenhum código as lê ou escreve). Não são capacidades: nenhuma pode ser anunciada enquanto não tiver quem a produza.
+
+**O que NÃO está provado.** O `originate` com estas variáveis contra um FreeSWITCH real — a R222 mede a ponte com um comando montado no próprio teste (`sfu_e2e.rs`), não com o `originate_command`.
+
+**Ficheiros.** `server/src/telephony_esl.rs`, `server/src/signaling.rs`, `server/crates/delonix-meet-domain/src/integration/whatsapp.rs`, `server/migrations/0120_room_channels.sql`, `server/tests/telephony.rs`.
+### R155 — Um convidado sem conta entra pela porta, e a porta não abre mais nada
+
+**Sintoma (antes).** Um externo sem conta não conseguia entrar numa reunião: o `join_room` exige `AuthUser`, e o link levava ao ecrã de login. Era o bloqueio n.º 1 à adopção face ao Zoom e ao Meet (`notas-ui-template/adopcao-vs-meet-teams-zoom.md`, alavanca 1).
+
+**O risco que a correcção cria.** É a primeira rota PÚBLICA que dá acesso a uma reunião. As quatro formas óbvias de a errar: (1) o token do convidado abrir alguma rota `/api/*` (gravações, chat guardado, actas, quadros, convites); (2) o convidado entrar sem ser admitido — basta um `wait: false` mal emitido; (3) o convidado ganhar o papel de anfitrião (`transfer-host`) ou reclamá-lo por reconexão; (4) a rota servir para esgotar o TURN ou inundar a sala de espera de alguém.
+
+**Regra.**
+- O token é `typ: "room"` com `origin: "guest"`, o claim `guest: true` e um `sub` gerado que não existe em `users`. Nenhum extractor da API aceita `typ: "room"` — a exclusão é por construção, não por lista. O claim é próprio porque `origin: "guest"` sozinho já é o que o `join_room` dá a quem TEM conta e entrou pelo link sem convite (R182): esse continua a poder receber papéis.
+- O `/ws` decide o lugar em `signaling::seat_policy` a partir do claim `guest`: convidado espera sempre (`lobby` forçado — nem o anfitrião a desligar a sala de espera a meio o deixa passar) e não tem papel, seja o que for que venha nos outros campos do token. `Hub::join_with` volta a impô-lo (`JoinExtras::is_guest`), e o lugar reclamado guarda a marca (`ReclaimedSeat::is_guest`). O anfitrião vê-o marcado: `PeerInfo::is_guest` na espera e na sala, `WaitingView::is_guest` na REST.
+- `TransferHost`, `PromoteAdmit` e `SetRole` para `cohost` são recusados quando o alvo é um convidado (os papéis de palco, `speaker`/`broadcast`, não); o directo (`/api/rooms/{room_code}/live`) recusa tokens de convidado com `403`.
+- `rooms.allow_guests` (0086, por omissão `true`, `PATCH /api/rooms/{room_code}` só pelo dono) → `403` antes de emitir seja o que for.
+- Travão por IP (`GUEST_JOIN_PER_IP_PER_MIN`, 10) antes de ler a base e por sala (`GUEST_JOIN_PER_ROOM_PER_MIN`, 30) depois de a sala existir, com `429` + `Retry-After` com o que falta da janela (`ApiError::RateLimited`, do `RateLimiter::acquire`).
+- `room.guest_join` na auditoria da org do dono, com o código da sala e o nome marcado «(convidado)». Nem IP nem agente.
+
+**Portão.** Unidade: `guests::tests` (nome, admissão, forma do token, token ≠ acesso, travão) e `signaling::b1_sala_tests::convidado_*` (espera forçada, não admite nem por promoção, não é promovido, reclama o lugar e continua convidado) — no ramo de origem, os dois de promoção/admissão foram verificados a FALHAR com as guardas retiradas. Servidor real: `web/e2e/isolamento.mjs` (secção «convidado sem conta»: 14 rotas autenticadas recusadas com o token de convidado, sala de espera, directo, `allow_guests`, 400/404/422, travões por IP e por sala, auditoria) e `web/e2e/convidado.mjs` (admissão, recusa, reentrada no mesmo lugar, expulsão), os dois no job `isolamento` do CI.
+
+**Fora.** Media do convidado (não há e2e com `RTCPeerConnection` para convidados), salas de grupo (a troca de sala chama `/join`, que exige conta: um convidado não vai para um grupo), e os travões são por pod (memória), como os restantes.
+
+**Ficheiros.** `server/src/guests.rs`, `server/src/signaling.rs`, `server/src/auth.rs`, `server/src/rooms.rs`, `server/src/audit.rs`, `server/src/error.rs`, `server/src/broadcast.rs`, `server/src/lib.rs`, `server/migrations/0086_room_allow_guests.sql`, `scripts/rotas-publicas.txt`, `web/e2e/isolamento.mjs`, `web/e2e/convidado.mjs`, `web/src/api.ts`, `.github/workflows/ci.yml`.
+
+**Porte para o `develop` (2026-10-03).** A entrada nasceu no ramo `delonix-meet-backend/convidado-sem-conta` (2026-09-16) e foi portada por cima do `develop`: a rota vive em `lib.rs`, a migração passou de 0040 a 0086, e o `join_seat` do ramo deu lugar ao `join_with` com `JoinExtras::is_guest`. **Não revalidado no porte:** os dois e2e (`isolamento.mjs`, `convidado.mjs`) não correram contra servidor e Postgres reais; a prova de que os testes falham sem as guardas é a do ramo de origem; e o que o `handle_socket` do `develop` grava com o `user_id` (chat persistido, presenças) nunca foi medido com um `sub` que não existe em `users`.
+### R200 — Terminar uma sessão não cortava nada até o JWT expirar
+
+**Sintoma.** A sessão tinha identidade (`refresh_tokens.session_id`, 0065) mas não tinha estado: revogar o refresh deixava o access token (15 min) a abrir a API e o `/rtc` e o `/ws` ligados.
+
+**Regra.** `user_sessions` (0101) guarda o estado da sessão com o MESMO id; o access e o room token levam `sid`; `AuthUser`, `/rtc` e `/ws` recusam uma sessão terminada com `401 auth.session_revoked`. Terminar (`DELETE /api/users/me/sessions/{session_id}`, em `account.rs`, por `sessions::revoke`) revoga os refresh tokens dela e acorda o `shutdown` das ligações dela neste nó e, pelo canal Redis `dlx:session-revoked`, nos outros. O logout termina a sessão.
+
+**Portão.** `server/tests/account_sessions.rs::revoking_a_session_kills_refresh_access_and_websockets` (o `/rtc` e o `/ws` fecham, o room token ainda válido não reabre, a sessão de onde se termina continua). **Não validado:** com duas réplicas reais (o caminho Redis entre nós).
+
+**Ficheiros.** `server/src/{sessions,account,auth,presence,signaling,rooms,pubsub,lib}.rs`, migração `0101_sessoes`.
+
+### R201 — «Terminar todas as outras sessões»
+
+**Regra.** `POST /api/users/me/sessions/revoke-others` termina todas menos a do pedido; um access token sem `sid` (anterior às sessões) recebe `422 sessions.current_unknown` em vez de terminar a própria.
+
+**Portão.** `server/tests/account_sessions.rs::revoke_others_keeps_only_the_current_one`.
+
+### R202 — As sessões são só da própria pessoa, também para o administrador da org
+
+**Regra.** Toda a leitura e revogação filtra pelo `user_id` da sessão — também o `UPDATE` dos refresh tokens, porque `refresh_tokens.session_id` não tem chave estrangeira; uma sessão de outra pessoa dá `404`, igual a uma inexistente. Suspender a conta de outro é outra superfície.
+
+**Portão.** `server/tests/account_sessions.rs::sessions_of_others_are_not_found`; `web/e2e/isolamento.mjs` («A termina uma sessão de B»).
+
+### R203 — Reautenticação recente para alterar factores
+
+**Regra.** `POST /api/users/me/reauthentication` (password pela mesma função do login — `auth::password_matches`, Odoo incluído — ou código TOTP/recuperação) abre 5 min NESSA sessão; o travão `mfa_limiter` conta as falhas e recusa também a prova certa durante o bloqueio. Sem janela: `403 auth.reauthentication_required`.
+
+**Portão.** `server/tests/account_sessions.rs::reauthentication_needs_the_real_password`, `account_passkeys.rs`.
+
+### R204 — Os campos do Odoo não se editam no perfil, e o nome legal vem da sincronização
+
+**Sintoma evitado.** Um perfil editável localmente numa conta gerida divergia do ERP em silêncio; o `PATCH /api/users/me` ignorava um idioma desconhecido (200) e aceitava mudar a password de uma conta cuja password é a do Odoo.
+
+**Regra.** `PATCH /api/users/me/profile` valida tudo antes de escrever; `legal_name`, `email`, `department` → `409 profile.field_managed_by_odoo` (conta gerida) ou `409 profile.field_read_only`; telefone pela `sms::normalize_msisdn` (`422 profile.invalid_phone`) e escrito por `org::set_member_phone` (a regra do SMS: apagar fica `manual`); idioma `400 profile.invalid_locale` (também no `PATCH /api/users/me`, onde antes era ignorado); password de conta gerida `409`. A sincronização (`odoo_sso::upsert_member`) escreve `legal_name`, e um email no lugar do nome não o apaga.
+
+**Portão.** `server/tests/account_profile.rs::{profile_validates_normalizes_and_protects_odoo_fields, legal_name_comes_from_the_odoo_sync}`; `tests/identity.rs::users_me_get_and_patch` mudou com intenção (idioma desconhecido 200→400).
+
+### R205 — Fotografia de perfil pelos bytes, com tecto, e só para quem partilha organização
+
+**Regra.** PNG/JPEG/WebP reconhecidos pela assinatura (um SVG com `Content-Type: image/png` → `422 profile.avatar_unsupported_type`), até 1 MiB (`422 profile.avatar_too_large`; acima de 2 MiB o servidor corta com 413). `GET /api/users/{user_id}/avatar` só com organização activa em comum; senão `404`.
+
+**Portão.** `server/tests/account_profile.rs::avatar_is_sniffed_limited_and_scoped`; `isolamento.mjs`.
+
+### R206 — «Avisar antes de gravar» é imposto pelo servidor
+
+**Regra.** As preferências de entrada vêm no `POST /api/rooms/{room_code}/join`. Um anfitrião com `warn_before_recording` que manda `server-record` sem `confirmed: true` recebe `recording-confirmation-required` e a gravação NÃO começa. Sem a preferência, o pedido antigo grava como sempre.
+
+**Portão.** `server/tests/account_profile.rs::join_preferences_reach_the_join_and_recording_needs_confirmation`, `domain::identity::join_preferences::tests`.
+
+### R207 — Preferências de notificação honestas; guia e «Novo PIN»
+
+**Regra.** Só `in_app` entrega; `email` e `sms` são guardados mas anunciados `not_configured`. Com `in_app` desligado para um tipo, o produtor não cria a notificação. O guia valida os ids contra a lista versionada (`404 tour.unknown_step`). «Novo PIN» troca o PIN da sala de voz activa ligada à sala pessoal (o antigo morre), auditado; sem dial-in `409 personal_room.no_dial_in`.
+
+**Portão.** `server/tests/account_profile.rs::{notification_preferences_are_honest_and_enforced, tour_progress_and_new_pin}`.
+
+### R208 — Chaves de acesso: segundo factor, cerimónia de uso único, último factor
+
+**Regra.** ADR-0011. Registar exige reautenticação; o login com password passa a desafio `methods: ["passkey"]`; a cerimónia é consumida uma vez (replay `404 passkeys.ceremony_not_found`) e uma asserção não serve noutra (`401 passkeys.authentication_failed`); com `organizations.require_mfa`, a última chave e o único TOTP não saem (`409 security.last_factor_required`, antes de gastar o código); sem RP configurado `503 passkeys.not_configured`.
+
+**Portão.** `server/tests/account_passkeys.rs` com o `SoftPasskey` do `webauthn-authenticator-rs` (assina de verdade). **Não validado:** com um autenticador de hardware e um browser real.
+
+### R209 — «Os meus dados» só com dados da própria pessoa
+
+**Regra.** Exportação assíncrona (`202`), uma de cada vez (`409 data_export.already_running`), 3 por 24 h (`429 data_export.rate_limited`). O ZIP leva perfil, preferências, gravações CARREGADAS pela pessoa como links, as transcrições dessas, a actividade em que é actora (alvos de acções sobre terceiros → `target_redacted`) e o uso G3. Link por HMAC, 15 min; assinatura errada, outro id ou vencido → `404`; o ficheiro apaga-se às 48 h. Limite escrito: uma transcrição de reunião contém a fala de outros participantes.
+
+**Portão.** `server/tests/account_data_export.rs`; `isolamento.mjs` (A não lê nem pede link da exportação de B; sem assinatura 404).

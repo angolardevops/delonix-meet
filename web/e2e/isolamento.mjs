@@ -1357,6 +1357,317 @@ console.log('\n--- telefonia: org A contra a de B ---')
   }
 }
 
+// ---------------------------------------------------------------------------
+//  Estúdio de TV (ADR-0014): estúdios, códigos de emparelhamento, fontes e os
+//  seis tipos de documento. O que se procura aqui não é só o `403`: um código
+//  de emparelhamento de outra organização é uma CÂMARA na régie de outra
+//  empresa, e um documento é a cena de som e o alinhamento do noticiário dela.
+// ---------------------------------------------------------------------------
+console.log('\n--- estúdio de TV ---')
+{
+  const estudioB = await req(`/api/orgs/${B.orgId}/studios`, {
+    token: B.token, method: 'POST', body: { name: 'Régie da B' },
+  })
+  const eB = estudioB.json?.id ?? inventado
+  if (estudioB.status !== 201) nok('B cria um estúdio para o teste', `devolveu ${estudioB.status}`)
+  const codigoB = await req(`/api/orgs/${B.orgId}/studios/${eB}/pairing-codes`, {
+    token: B.token, method: 'POST', body: { label: 'telefone da B' },
+  })
+  const cB = codigoB.json?.id ?? inventado
+  // O tipo fica numa variável, como o `{kind}` da rota: o portão de cobertura
+  // compara o caminho do router com o do teste, e um tipo escrito à mão não é
+  // o mesmo caminho que `…/{kind}/{document_id}`.
+  const tipoB = 'macros'
+  const docB = await req(`/api/orgs/${B.orgId}/studios/${eB}/${tipoB}`, {
+    token: B.token,
+    method: 'POST',
+    body: { name: 'Macro da B', body: { key: 'F1', steps: [{ action: 'end-broadcast' }] } },
+  })
+  const docBId = docB.json?.id ?? inventado
+  const a = { token: A.token }
+
+  await recusado('A lista os estúdios da org B', `/api/orgs/${B.orgId}/studios`, a)
+  await recusado('A cria um estúdio na org B', `/api/orgs/${B.orgId}/studios`, { ...a, method: 'POST', body: { name: 'intruso' } })
+  await recusado('A lê um estúdio da org B', `/api/orgs/${B.orgId}/studios/${eB}`, a)
+  await recusado('A renomeia um estúdio da org B', `/api/orgs/${B.orgId}/studios/${eB}`, { ...a, method: 'PATCH', body: { name: 'y' } })
+  await recusado('A apaga um estúdio da org B', `/api/orgs/${B.orgId}/studios/${eB}`, { ...a, method: 'DELETE' })
+
+  // Um código de emparelhamento é uma câmara: lê-lo dá entrada na régie.
+  await recusado('A lista os códigos de emparelhamento da org B', `/api/orgs/${B.orgId}/studios/${eB}/pairing-codes`, a)
+  await recusado('A gera um código de emparelhamento na org B', `/api/orgs/${B.orgId}/studios/${eB}/pairing-codes`, { ...a, method: 'POST', body: { label: 'intruso' } })
+  await recusado('A revoga um código de emparelhamento da org B', `/api/orgs/${B.orgId}/studios/${eB}/pairing-codes/${cB}`, { ...a, method: 'DELETE' })
+
+  await recusado('A lista as fontes da org B', `/api/orgs/${B.orgId}/studios/${eB}/sources`, a)
+  await recusado('A lê uma fonte da org B', `/api/orgs/${B.orgId}/studios/${eB}/sources/${inventado}`, a)
+  await recusado('A renomeia uma fonte da org B', `/api/orgs/${B.orgId}/studios/${eB}/sources/${inventado}`, { ...a, method: 'PATCH', body: { label: 'y' } })
+  await recusado('A revoga uma fonte da org B', `/api/orgs/${B.orgId}/studios/${eB}/sources/${inventado}`, { ...a, method: 'DELETE' })
+  await recusado('A lê o destino de gravação da org B', `/api/orgs/${B.orgId}/studios/${eB}/recording-target`, a)
+
+  // Os seis tipos de documento, cada um pelo seu caminho.
+  for (const tipo of ['mixer-scenes', 'macros', 'overlays', 'light-scenes', 'camera-profiles', 'rundowns']) {
+    await recusado(`A lista ${tipo} da org B`, `/api/orgs/${B.orgId}/studios/${eB}/${tipo}`, a)
+    await recusado(`A cria ${tipo} na org B`, `/api/orgs/${B.orgId}/studios/${eB}/${tipo}`, { ...a, method: 'POST', body: { name: 'intruso', body: {} } })
+  }
+  await recusado('A lê um documento da org B', `/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}`, a)
+  await recusado('A grava um documento da org B', `/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}`, { ...a, method: 'PATCH', body: { version: 1, name: 'roubado' } })
+  await recusado('A apaga um documento da org B', `/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}`, { ...a, method: 'DELETE' })
+  await recusado('A lê o histórico de um documento da org B', `/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}/versions`, a)
+
+  // E nada disto mexeu no que é da B.
+  const docAinda = await req(`/api/orgs/${B.orgId}/studios/${eB}/${tipoB}/${docBId}`, { token: B.token })
+  if (docAinda.json?.name === 'Macro da B' && docAinda.json?.version === 1) ok('e o documento da B CONTINUA igual')
+  else nok('e o documento da B CONTINUA igual', JSON.stringify(docAinda.json))
+  // Controlo positivo: a B alcança o seu próprio estúdio.
+  await permitido('controlo: B lê o seu estúdio', `/api/orgs/${B.orgId}/studios/${eB}`, { token: B.token })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONVIDADO SEM CONTA (`POST /api/rooms/{code}/guest-join`, server/src/guests.rs).
+//
+// É a única rota PÚBLICA que dá acesso a uma reunião, por isso a metade que
+// interessa é a negativa: o token que o convidado recebe à porta não abre mais
+// nada da API, não passa a sala de espera sozinho, e a sala pode recusá-lo.
+//
+// Cada pedido leva um `X-Forwarded-For` de TESTE diferente (198.18.0.0/15, rede
+// de benchmark). O servidor só confia nesse cabeçalho vindo de um proxy local —
+// que é o caso de quem corre isto contra 127.0.0.1 — e assim o travão por IP
+// deste ficheiro não consome a quota do IP real do runner, que o `convidado.mjs`
+// usa a seguir.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n--- convidado sem conta: a porta, e o que ela NÃO abre ---')
+let ipSeq = 0
+const ipDeTeste = () => `198.18.${Math.floor(Math.random() * 250)}.${(ipSeq++ % 250) + 1}`
+
+async function guestJoin(code, body, ip = ipDeTeste()) {
+  const r = await fetch(`${API}/api/rooms/${code}/guest-join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip },
+    body: JSON.stringify(body),
+  })
+  let json = null
+  try { json = await r.json() } catch { /* sem corpo */ }
+  return { status: r.status, json, retryAfter: r.headers.get('retry-after') }
+}
+
+const salaG = (await req('/api/rooms', {
+  token: B.token, method: 'POST', body: { name: 'sala da B com externos', topology: 'sfu' },
+})).json
+if (salaG?.allow_guests === true) ok('uma sala nova aceita convidados por omissão (allow_guests = true)')
+else nok('uma sala nova aceita convidados por omissão', JSON.stringify(salaG))
+
+const gj = await guestJoin(salaG.code, { display_name: 'Visitante Externo' })
+if (gj.status === 200 && gj.json?.room_token && gj.json?.ice_servers?.iceServers) {
+  ok('controlo positivo: um anónimo com nome recebe token de sala e ICE → 200')
+} else {
+  nok('controlo positivo: um anónimo recebe token de sala', `${gj.status} ${JSON.stringify(gj.json).slice(0, 160)}`)
+}
+const gTok = gj.json?.room_token
+if (gj.json?.room && gj.json.room.owner_id === undefined) ok('a vista do convidado não traz o dono da sala')
+else nok('a vista do convidado não traz o dono da sala', JSON.stringify(gj.json?.room))
+const payload = gTok ? JSON.parse(Buffer.from(gTok.split('.')[1], 'base64url').toString()) : {}
+if (payload.origin === 'guest' && payload.wait === true && !payload.owner && !payload.adm && payload.sub !== B.userId) {
+  ok('o token é de CONVIDADO: origin=guest, wait, sem owner/adm, sub gerado')
+} else nok('o token é de CONVIDADO', JSON.stringify(payload))
+if (payload.exp - payload.iat <= 600) ok(`o token é efémero (${payload.exp - payload.iat}s)`)
+else nok('o token é efémero', `${payload.exp - payload.iat}s`)
+
+// O token do convidado contra a API autenticada. Nenhuma destas pode passar da
+// porta (só 401/403/404): um 400 queria dizer que o handler correu.
+if (gTok) {
+  const G = { token: gTok }
+  await recusadoNaPorta('convidado lê o CHAT guardado da sala', `/api/rooms/${salaG.code}/messages`, G)
+  await recusadoNaPorta('convidado lista as GRAVAÇÕES da sala', `/api/rooms/${salaG.code}/recordings`, G)
+  await recusadoNaPorta('convidado lê as NOTAS da sala', `/api/rooms/${salaG.code}/notes`, G)
+  await recusadoNaPorta('convidado escreve a ACTA da sala', `/api/rooms/${salaG.code}/minutes`, {
+    ...G, method: 'POST', body: { minutes: 'forjada', transcript: '' },
+  })
+  await recusadoNaPorta('convidado lê a biblioteca de gravações', '/api/recordings', G)
+  await recusadoNaPorta('convidado lista QUADROS guardados', '/api/whiteboards', G)
+  await recusadoNaPorta('convidado lista reuniões', '/api/meetings', G)
+  await recusadoNaPorta('convidado CONVIDA gente para a sala', `/api/rooms/${salaG.code}/invitations`, {
+    ...G, method: 'POST', body: { targets: [B.userId] },
+  })
+  await recusadoNaPorta('convidado pede um token de MEMBRO (/join)', `/api/rooms/${salaG.code}/join`, { ...G, method: 'POST' })
+  await recusadoNaPorta('convidado lê o próprio «perfil»', '/api/users/me', G)
+  await recusadoNaPorta('convidado lê as orgs', '/api/orgs', G)
+  await recusadoNaPorta('convidado lê a auditoria da org B', `/api/orgs/${B.orgId}/audit-events`, G)
+  await recusadoNaPorta('convidado muda a política de convidados da sala', `/api/rooms/${salaG.code}`, {
+    ...G, method: 'PATCH', body: { allow_guests: false },
+  })
+  await recusadoNaPorta('convidado reporta QoS', `/api/rooms/${salaG.code}/quality-samples`, {
+    ...G, method: 'POST', body: { rtt_ms: 1, loss_pct: 0, up_kbps: 1 },
+  })
+}
+
+// Sinalização: o convidado cai na SALA DE ESPERA; o dono entra directo e VÊ-O
+// como convidado.
+async function abrirWs(roomToken) {
+  const ws = new WebSocket(`${WS}/ws?token=${encodeURIComponent(roomToken)}`)
+  const msgs = []
+  ws.on('message', (d) => { try { msgs.push(JSON.parse(d.toString())) } catch { /* binário */ } })
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej) })
+  const esperar = (pred, ms = 8000) => new Promise((resolve) => {
+    const t0 = Date.now()
+    const tick = () => {
+      const m = msgs.find(pred)
+      if (m) return resolve(m)
+      if (Date.now() - t0 > ms) return resolve(null)
+      setTimeout(tick, 50)
+    }
+    tick()
+  })
+  return { ws, msgs, esperar }
+}
+if (gTok) {
+  const conv = await abrirWs(gTok)
+  const esp = await conv.esperar((m) => ['waiting', 'joined'].includes(m.type))
+  if (esp?.type === 'waiting') ok('o convidado cai na SALA DE ESPERA (sem media)')
+  else nok('o convidado cai na sala de espera', `primeiro veredicto: ${JSON.stringify(esp)} — "joined" é entrada directa de um anónimo`)
+
+  const joinDono = await req(`/api/rooms/${salaG.code}/join`, { token: B.token, method: 'POST' })
+  const dono = await abrirWs(joinDono.json.room_token)
+  const vistoPeloDono = await dono.esperar((m) => m.type === 'waiting-join')
+  if (vistoPeloDono?.peer?.is_guest === true && vistoPeloDono.peer.username === 'Visitante Externo') {
+    ok('o anfitrião vê-o na espera MARCADO como convidado')
+  } else nok('o anfitrião vê-o marcado como convidado', JSON.stringify(vistoPeloDono))
+  // Sem ninguém a admitir, o convidado continua à porta.
+  await new Promise((r) => setTimeout(r, 1500))
+  if (!conv.msgs.some((m) => m.type === 'joined')) ok('sem admissão, o convidado NÃO passa a espera sozinho')
+  else nok('sem admissão, o convidado não passa a espera', 'recebeu "joined"')
+  conv.ws.close(); dono.ws.close()
+
+  // O directo (emissão para fora) recusa um token de convidado ANTES do upgrade.
+  const directo = await new Promise((resolve) => {
+    const ws = new WebSocket(`${WS}/api/rooms/${salaG.code}/live?token=${encodeURIComponent(gTok)}&codec=h264&destinos=[]`)
+    ws.on('unexpected-response', (_q, res) => resolve(res.statusCode))
+    ws.on('open', () => { ws.close(); resolve('aberto') })
+    ws.on('error', () => resolve('erro'))
+  })
+  if (directo === 403) ok('convidado NÃO abre o directo da sala → 403')
+  else nok('convidado não abre o directo da sala', `respondeu ${directo}`)
+}
+
+// A sala RECUSA convidados.
+await recusado('A (outra org) desliga os convidados na sala da B', `/api/rooms/${salaG.code}`, {
+  token: A.token, method: 'PATCH', body: { allow_guests: false },
+})
+const fechar = await req(`/api/rooms/${salaG.code}`, { token: B.token, method: 'PATCH', body: { allow_guests: false } })
+if (fechar.status === 200 && fechar.json?.allow_guests === false) ok('o dono desliga os convidados na sua sala → 200')
+else nok('o dono desliga os convidados', `${fechar.status} ${JSON.stringify(fechar.json)}`)
+const fechada = await guestJoin(salaG.code, { display_name: 'Visitante Externo' })
+if (fechada.status === 403 && !fechada.json?.room_token) ok('sala sem convidados → 403, sem token')
+else nok('sala sem convidados → 403', `${fechada.status} ${JSON.stringify(fechada.json).slice(0, 120)}`)
+const reaberta = await req(`/api/rooms/${salaG.code}`, { token: B.token, method: 'PATCH', body: { allow_guests: true } })
+const denovo = await guestJoin(salaG.code, { display_name: 'Visitante Externo' })
+if (reaberta.status === 200 && denovo.status === 200) ok('controlo: religada, a mesma entrada volta a dar 200')
+else nok('controlo: religada, volta a dar 200', `${reaberta.status}/${denovo.status}`)
+const campoInventado = await req(`/api/rooms/${salaG.code}`, { token: B.token, method: 'PATCH', body: { allow_guests: true, name: 'x' } })
+if (campoInventado.status >= 400 && campoInventado.status < 500) ok(`PATCH com campo que o servidor não conhece é recusado → ${campoInventado.status}`)
+else nok('PATCH com campo desconhecido é recusado', `${campoInventado.status}`)
+const criadaFechada = (await req('/api/rooms', {
+  token: B.token, method: 'POST', body: { name: 'só internos', topology: 'sfu', allow_guests: false },
+})).json
+const naCriada = await guestJoin(criadaFechada.code, { display_name: 'Visitante' })
+if (criadaFechada.allow_guests === false && naCriada.status === 403) ok('criada com allow_guests=false → 403 ao convidado')
+else nok('criada com allow_guests=false → 403', `${criadaFechada.allow_guests} / ${naCriada.status}`)
+
+// Forma do pedido.
+const inexistente = await guestJoin('zzz-zzzz-zzz', { display_name: 'Visitante' })
+if (inexistente.status === 404) ok('código que não existe → 404')
+else nok('código que não existe → 404', `${inexistente.status}`)
+for (const [nome, corpo] of [
+  ['nome vazio', { display_name: '   ' }],
+  ['nome com 61 caracteres', { display_name: 'a'.repeat(61) }],
+  ['nome com quebra de linha', { display_name: 'Ana\nAdmin' }],
+  ['nome com inversão de direcção (U+202E)', { display_name: '‮nimda' }],
+]) {
+  const r = await guestJoin(salaG.code, corpo)
+  if (r.status === 400 && !r.json?.room_token) ok(`${nome} → 400`)
+  else nok(`${nome} → 400`, `${r.status} ${JSON.stringify(r.json).slice(0, 100)}`)
+}
+const extra = await guestJoin(salaG.code, { display_name: 'Ana', owner: true })
+if (extra.status >= 400 && extra.status < 500 && !extra.json?.room_token) ok(`campo a mais no corpo (owner) é recusado → ${extra.status}`)
+else nok('campo a mais no corpo é recusado', `${extra.status}`)
+
+// Travão por IP: o mesmo IP esgota a janela e leva 429 com Retry-After; outro
+// IP continua a entrar.
+{
+  const ip = ipDeTeste()
+  let travado = null
+  for (let i = 0; i < 1100 && !travado; i++) {
+    const r = await guestJoin(salaG.code, { display_name: 'Rajada' }, ip)
+    if (r.status === 429) travado = r
+    else if (r.status !== 200) { nok('travão por IP', `pedido ${i} devolveu ${r.status}`); break }
+  }
+  if (travado && Number(travado.retryAfter) > 0) ok(`travão por IP → 429 com Retry-After: ${travado.retryAfter}`)
+  else nok('travão por IP → 429 com Retry-After', JSON.stringify(travado))
+}
+// Travão por sala: muitos IPs diferentes contra UMA sala. Numa sala nova, para
+// o travão de cima (que já gastou quota da salaG) não contaminar a contagem.
+{
+  const salaR = (await req('/api/rooms', { token: B.token, method: 'POST', body: { name: 'rajada', topology: 'sfu' } })).json
+  let travado = null
+  let n = 0
+  for (; n < 1100 && !travado; n++) {
+    const r = await guestJoin(salaR.code, { display_name: 'Rajada' })
+    if (r.status === 429) travado = r
+    else if (r.status !== 200) { nok('travão por sala', `pedido ${n} devolveu ${r.status}`); break }
+  }
+  if (travado && Number(travado.retryAfter) > 0) ok(`travão por SALA com IPs sempre diferentes → 429 ao fim de ${n} (Retry-After: ${travado.retryAfter})`)
+  else nok('travão por sala → 429', JSON.stringify(travado))
+  const outraSala = await guestJoin(salaG.code, { display_name: 'Outro' })
+  if (outraSala.status === 200) ok('controlo: outra sala continua a aceitar')
+  else nok('controlo: outra sala continua a aceitar', `${outraSala.status}`)
+}
+
+// Auditoria: a entrada fica na trilha da org do DONO, com a sala e o nome.
+{
+  const trilha = await req(`/api/orgs/${B.orgId}/audit-events?limit=500`, { token: B.token })
+  const linha = (trilha.json ?? []).find((e) => e.action === 'room.guest_join' && e.target === salaG.code
+    && /Visitante Externo/.test(e.actor))
+  if (linha && /convidado/.test(linha.actor)) {
+    ok(`auditoria: room.guest_join na org B com a sala e o nome («${linha.actor}»)`)
+  } else nok('auditoria: room.guest_join na org B', JSON.stringify((trilha.json ?? []).slice(0, 3)))
+  const trilhaA = await req(`/api/orgs/${A.orgId}/audit-events?limit=500`, { token: A.token })
+  if (!(trilhaA.json ?? []).some((e) => e.action === 'room.guest_join' && e.target === salaG.code)) {
+    ok('e NÃO aparece na trilha de outra org')
+  } else nok('e não aparece na trilha de outra org', 'apareceu na org A')
+}
+
+console.log('\n--- conta pessoal: sessões, fotografia e exportação de B (ADR-0011) ---')
+{
+  const sidB = JSON.parse(Buffer.from(B.token.split('.')[1], 'base64url').toString()).sid
+  await permitido('controlo: B lista as suas sessões', '/api/users/me/sessions', { token: B.token })
+  await recusado('A termina uma sessão de B', `/api/users/me/sessions/${sidB}`, { token: A.token, method: 'DELETE' })
+  const sessA = (await req('/api/users/me/sessions', { token: A.token })).json
+  if (JSON.stringify(sessA ?? {}).includes(sidB)) nok('a lista de sessões de A não traz as de B', JSON.stringify(sessA).slice(0, 160))
+  else ok('a lista de sessões de A não traz as de B')
+  await permitido('controlo: a sessão de B continua viva', '/api/users/me', { token: B.token })
+
+  // Fotografia de B (PNG mínimo): só quem partilha organização a vê.
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
+  const up = await fetch(`${API}/api/users/me/avatar`, {
+    method: 'PUT', headers: { Authorization: `Bearer ${B.token}`, 'Content-Type': 'image/png' }, body: png,
+  })
+  if (up.status === 200) ok('controlo: B carrega a sua fotografia → 200')
+  else nok('controlo: B carrega a sua fotografia', `${up.status}`)
+  await permitido('controlo: B vê a sua fotografia', `/api/users/${B.userId}/avatar`, { token: B.token })
+  await recusado('A vê a fotografia de B (outra org)', `/api/users/${B.userId}/avatar`, { token: A.token })
+
+  // Exportação «os meus dados» de B.
+  const expB = await req('/api/users/me/data-exports', { token: B.token, method: 'POST' })
+  if (expB.status === 202 && expB.json?.id) ok('controlo: B pede a sua exportação → 202')
+  else nok('controlo: B pede a sua exportação', `${expB.status} ${JSON.stringify(expB.json)}`)
+  const expId = expB.json?.id
+  await recusado('A lê a exportação de B', `/api/users/me/data-exports/${expId}`, { token: A.token })
+  await recusado('A pede o link da exportação de B', `/api/users/me/data-exports/${expId}/download-link`, { token: A.token, method: 'POST' })
+  await recusado('anónimo descarrega a exportação de B sem assinatura', `/api/users/me/data-exports/${expId}/content`, {})
+  await recusado('anónimo descarrega com assinatura inventada', `/api/users/me/data-exports/${expId}/content?exp=9999999999&sig=00`, {})
+  await recusado('anónimo lê o perfil da conta', '/api/users/me/profile', {})
+  await recusado('anónimo lista sessões', '/api/users/me/sessions', {})
+  await recusado('anónimo lista chaves de acesso', '/api/users/me/passkeys', {})
+}
+
 console.log('\n--- sem autenticação nenhuma ---')
 await recusado('anónimo lê stats da org B', `/api/orgs/${B.orgId}/stats`, {})
 await recusado('anónimo lista as suas orgs', '/api/orgs', {})

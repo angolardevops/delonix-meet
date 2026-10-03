@@ -126,7 +126,11 @@ for p in docs:
             print(f"✗ drift: {p} cita '{nome}', que não existe em .claude/agents/ nem em .claude/skills/")
             falha = True
     for n, linha in enumerate(texto.splitlines(), 1):
-        if re.search(r'(?<![.\w/])agents/(?!worktrees|launch\.json)', linha):
+        # O `-` entra no lookbehind: `light-agents/{id}` (a rota do agente de
+        # luz do estúdio, ADR-0014 §8) não é uma citação do `agents/` antigo,
+        # e a regra continua a apanhar o que existe para apanhar — uma citação
+        # a sério vem precedida de espaço, de início de linha ou de `(`.
+        if re.search(r'(?<![.\w/-])agents/(?!worktrees|launch\.json)', linha):
             print(f"✗ drift: {p}:{n} cita 'agents/' — os revisores estão em .claude/agents/")
             falha = True
 sys.exit(1 if falha else 0)

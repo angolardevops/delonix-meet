@@ -15,10 +15,12 @@ mod auth;
 mod broadcast;
 pub mod config;
 mod crypto;
+pub mod data_exports;
 mod directory;
 mod dlp;
 mod error;
 pub mod grpc;
+mod guests;
 mod media_probe;
 mod meetings;
 mod meetings_v1;
@@ -33,6 +35,7 @@ mod odoo;
 mod odoo_sso;
 pub mod openapi;
 mod org;
+mod passkeys;
 mod phone_bridge;
 mod presence;
 mod pubsub;
@@ -50,6 +53,7 @@ mod room_tools;
 mod rooms;
 mod search;
 pub mod secrets_at_rest;
+mod sessions;
 mod sfu;
 #[cfg(test)]
 mod sfu_e2e;
@@ -60,6 +64,9 @@ mod sms_notify;
 mod sms_smpp;
 mod storage;
 mod stream_destinations;
+mod studio;
+mod studio_docs;
+mod studio_realtime;
 mod telephony_calls;
 mod telephony_cdr;
 mod telephony_dial_plan;
@@ -136,6 +143,10 @@ pub struct AppState {
     pub sfu: Arc<sfu::SfuState>,
     /// Emissões em directo a decorrer neste pod (ADR-0003).
     pub directos: Arc<broadcast::Registo>,
+    /// Estúdio de TV: fontes, tally e comandos das salas deste pod (ADR-0014).
+    pub studio: studio_realtime::StudioHub,
+    /// Resgate de códigos de emparelhamento por IP (rota pública, ADR-0014 §2.1).
+    pub studio_pairing_limiter: RateLimiter,
     pub presence: presence::PresenceHub,
     pub auth_limiter: RateLimiter,
     /// Anti-brute-force por conta (email) no login.
@@ -148,6 +159,9 @@ pub struct AppState {
     /// Envios de SMS por organização (ADR-0005). Um SMS custa dinheiro: é o
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
+    /// Entradas de convidado sem conta, por IP e por sala (ver `guests.rs`).
+    pub guest_ip_limiter: RateLimiter,
+    pub guest_room_limiter: RateLimiter,
     /// Envios de SMS por utilizador dentro de uma org (chave `org:user`). Com a
     /// política `members`, um membro não esgota sozinho a quota da org.
     pub sms_user_limiter: RateLimiter,
@@ -169,6 +183,11 @@ pub struct AppState {
     pub redis_bus: Option<Arc<pubsub::PubSubBus>>,
     /// Contadores de observabilidade expostos em `/metrics` (ver metrics.rs).
     pub metrics: Arc<metrics::Metrics>,
+    /// WebSockets de cada sessão de conta neste nó — terminar uma sessão
+    /// fecha-os (ver `sessions`).
+    pub session_kills: sessions::KillRegistry,
+    /// Chaves de acesso (ADR-0011). `None` sem `WEBAUTHN_RP_ID`/`_ORIGIN`.
+    pub webauthn: Option<Arc<webauthn_rs::prelude::Webauthn>>,
 }
 
 impl AppState {
@@ -243,6 +262,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Segunda metade do login quando o MFA está activo: troca o desafio
         // de curta duração + o código pelos tokens de sessão.
         .route("/login/mfa", post(auth::mfa_login))
+        // A chave de acesso como segundo factor (ADR-0011).
+        .route("/login/mfa/passkey-options", post(passkeys::login_options))
+        .route("/login/mfa/passkey", post(passkeys::login))
         .route("/refresh", post(auth::refresh))
         .route("/logout", post(auth::logout))
         // SSO / OIDC
@@ -371,7 +393,71 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/users/me/room/rotate-code",
             post(users::rotate_my_room_code),
         )
+        // «Novo PIN» do dial-in da sala pessoal.
+        .route(
+            "/api/users/me/room/rotate-pin",
+            post(users::rotate_my_room_pin),
+        )
+        // «A minha conta» (Navegavel3): perfil, fotografia, preferências, guia.
+        .route(
+            "/api/users/me/profile",
+            get(account::get_profile).patch(account::update_profile),
+        )
+        .route(
+            "/api/users/me/avatar",
+            get(account::get_my_avatar)
+                .put(account::put_avatar)
+                .delete(account::delete_avatar)
+                .layer(DefaultBodyLimit::max(account::AVATAR_BODY_LIMIT)),
+        )
+        .route("/api/users/{user_id}/avatar", get(account::get_avatar))
+        .route(
+            "/api/users/me/join-preferences",
+            get(account::get_join_preferences).put(account::put_join_preferences),
+        )
+        .route(
+            "/api/users/me/notification-preferences",
+            get(account::get_notification_preferences)
+                .put(account::put_notification_preferences),
+        )
+        .route(
+            "/api/users/me/tour",
+            get(account::get_tour).patch(account::update_tour),
+        )
+        .route(
+            "/api/users/me/tour/steps/{step_id}",
+            axum::routing::put(account::put_tour_step),
+        )
+        .route("/api/users/me/tour/skip", post(account::skip_tour))
+        .route("/api/users/me/tour/restart", post(account::restart_tour))
+        // «Os meus dados» (exportação pessoal assíncrona).
+        .route(
+            "/api/users/me/data-exports",
+            get(data_exports::list).post(data_exports::create),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}",
+            get(data_exports::get_one),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}/download-link",
+            post(data_exports::download_link),
+        )
+        .route(
+            "/api/users/me/data-exports/{export_id}/content",
+            get(data_exports::content),
+        )
         .route("/api/users/me/storage-usage", get(usage::my_storage_usage))
+        // Terminar as outras sessões e reautenticação (ADR-0011). A lista e o
+        // «terminar uma» são as de `account` (mais abaixo).
+        .route(
+            "/api/users/me/sessions/revoke-others",
+            post(sessions::revoke_others),
+        )
+        .route(
+            "/api/users/me/reauthentication",
+            post(sessions::reauthenticate),
+        )
         // MFA (TOTP, RFC 6238).
         .route("/api/users/me/mfa", get(mfa::estado))
         .route("/api/users/me/mfa/enroll", post(mfa::inscrever))
@@ -388,6 +474,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/users/me/sms-preferences",
             get(sms::get_preferences).put(sms::put_preferences),
+        )
+        .route(
+            "/api/users/me/mfa/backup-codes/regenerate",
+            post(mfa::regenerar_codigos),
+        )
+        // «Segurança» e chaves de acesso (ADR-0011).
+        .route("/api/users/me/security", get(passkeys::security))
+        .route(
+            "/api/users/me/passkeys",
+            get(passkeys::list).post(passkeys::finish_registration),
+        )
+        .route(
+            "/api/users/me/passkeys/begin-registration",
+            post(passkeys::begin_registration),
+        )
+        .route(
+            "/api/users/me/passkeys/{passkey_id}",
+            get(passkeys::get_one).delete(passkeys::delete),
         )
         // Centro de notificações pessoal (G8).
         .route("/api/users/me/notifications", get(notifications::list))
@@ -407,7 +511,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // ---- Salas ----
         .route("/api/rooms", post(rooms::create_room))
-        .route("/api/rooms/{room_code}", get(rooms::get_room))
+        .route(
+            "/api/rooms/{room_code}",
+            get(rooms::get_room).patch(rooms::patch_room),
+        )
+        // Convidado SEM conta (público por desenho — ver guests.rs e
+        // scripts/rotas-publicas.txt): só produz um token de sala que passa
+        // SEMPRE pela sala de espera.
+        .route(
+            "/api/rooms/{room_code}/guest-join",
+            post(guests::guest_join),
+        )
         // Estado vivo da emissão (G1) — rótulos, bytes, débito. Ver o /live
         // (WebSocket) mais abaixo, que é o que a alimenta.
         .route(
@@ -944,6 +1058,60 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // servidor remultiplexa para RTMP (ADR-0003). Autenticada pelo token de
         // sala na query, como o /ws — um WebSocket não leva cabeçalhos nossos.
         .route("/api/rooms/{room_code}/live", get(broadcast::ws_directo))
+        // ---- Estúdio de TV (ADR-0014) ----
+        .route(
+            "/api/orgs/{org_id}/studios",
+            get(studio::list_studios).post(studio::create_studio),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}",
+            get(studio::get_studio)
+                .patch(studio::update_studio)
+                .delete(studio::delete_studio),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/pairing-codes",
+            get(studio::list_pairing_codes).post(studio::create_pairing_code),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/pairing-codes/{code_id}",
+            axum::routing::delete(studio::delete_pairing_code),
+        )
+        .route("/api/studio-pairings", post(studio::redeem))
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/sources",
+            get(studio::list_sources),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/sources/{source_id}",
+            get(studio::get_source)
+                .patch(studio::update_source)
+                .delete(studio::delete_source),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/recording-target",
+            get(studio::recording_target),
+        )
+        // Documentos do estúdio (ADR-0014 §5): os SEIS tipos no mesmo contrato,
+        // com o tipo no caminho. O `{kind}` é irmão dos segmentos concretos
+        // acima (`sources`, `pairing-codes`, `recording-target`) e o matcher do
+        // axum dá precedência ao segmento ESTÁTICO — por isso `…/sources` chega
+        // às fontes e não ao handler de documentos com `kind = "sources"`.
+        // Essa precedência é o que a regressão R250 fixa.
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/{kind}",
+            get(studio_docs::list_documents).post(studio_docs::create_document),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/{kind}/{document_id}",
+            get(studio_docs::get_document)
+                .patch(studio_docs::update_document)
+                .delete(studio_docs::delete_document),
+        )
+        .route(
+            "/api/orgs/{org_id}/studios/{studio_id}/{kind}/{document_id}/versions",
+            get(studio_docs::list_versions),
+        )
         .route("/rtc", get(presence::rtc_handler))
         .merge(if state.config.internal_bind_addr.is_none() {
             internal_routes()
@@ -1130,6 +1298,8 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         hub,
         breakouts: dashmap::DashMap::new(),
         directos: Arc::new(broadcast::Registo::default()),
+        studio: studio_realtime::StudioHub::default(),
+        studio_pairing_limiter: RateLimiter::new(30, Duration::from_secs(60)),
         sfu: Arc::new(sfu::SfuState::new(
             sfu::IceConfig {
                 external_ip: config.sfu_external_ip.clone(),
@@ -1149,6 +1319,14 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        guest_ip_limiter: RateLimiter::new(
+            config.guest_join_per_ip_per_min as u32,
+            Duration::from_secs(60),
+        ),
+        guest_room_limiter: RateLimiter::new(
+            config.guest_join_per_room_per_min as u32,
+            Duration::from_secs(60),
+        ),
         sms_user_limiter: RateLimiter::new(
             sms::USER_SENDS_PER_WINDOW,
             Duration::from_secs(sms::USER_SEND_WINDOW_SECS),
@@ -1161,10 +1339,19 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,
+        session_kills: sessions::KillRegistry::default(),
+        webauthn: passkeys::build(&config),
     });
 
     // Subscriber Redis: ouve mensagens de outros nós e entrega localmente.
     if let Some(bus) = redis_bus {
+        let state_ref_sessions = Arc::downgrade(&state);
+        pubsub::start_session_revoked_subscriber(bus.clone(), move |sid| {
+            if let Some(s) = state_ref_sessions.upgrade() {
+                s.session_kills.kill_local(sid);
+            }
+        });
+
         let state_ref = Arc::downgrade(&state);
         pubsub::start_subscriber(bus.clone(), move |user_id, msg| {
             if let Some(s) = state_ref.upgrade() {
@@ -1510,6 +1697,45 @@ pub async fn run() {
                 n += 1;
                 if n.is_multiple_of(240) {
                     let _ = nodes::forget_old(&state.db).await;
+                }
+            }
+        });
+    }
+
+    // Cron: sessões de conta sem refresh token vivo passam a `expired`, as
+    // terminadas há 90 dias saem, e as cerimónias WebAuthn vencidas também.
+    {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match sessions::sweep(&db).await {
+                    Ok((0, 0)) => {}
+                    Ok((expired, deleted)) => {
+                        tracing::info!(expired, deleted, "varrimento de sessões")
+                    }
+                    Err(e) => tracing::warn!(error = %e, "varrimento de sessões falhou"),
+                }
+            }
+        });
+    }
+
+    // Cron: exportações «os meus dados» — pedidos na fila (e os abandonados)
+    // a cada minuto; ficheiros vencidos apagados.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                data_exports::run_queue(&state).await;
+                match data_exports::sweep_expired(&state).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(expired = n, "exportações vencidas apagadas"),
+                    Err(e) => tracing::warn!(error = %e, "varrimento de exportações falhou"),
                 }
             }
         });

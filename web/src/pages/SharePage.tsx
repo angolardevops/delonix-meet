@@ -55,6 +55,9 @@ export default function SharePage({ token }: { token: string }) {
     setBusy(false)
   }
 
+  // O MESMO caminho serve o leitor e o download (`…/content`, público).
+  const conteudo = `/api/public/recordings/${token}/content${password ? `?password=${encodeURIComponent(password)}` : ''}`
+
   return (
     <Moldura pagina="share" estreita>
       {estado.k === 'aVerificar' && (
@@ -116,6 +119,16 @@ export default function SharePage({ token }: { token: string }) {
             </div>
             <div className="dx-eyebrow">{t('publico.partilha.gravacao')}</div>
             <h1 className="pub-partilha__nome">{estado.info.filename.replace(/\.(webm|mp4|mkv)$/i, '')}</h1>
+            {/* Sem sessão: o token (e a palavra-passe) é a credencial, por isso o
+                `<video>` lê o ficheiro directamente do mesmo caminho do download. */}
+            <video
+              className="pub-partilha__video"
+              controls
+              playsInline
+              preload="metadata"
+              src={conteudo}
+              aria-label={t('publico.partilha.gravacao')}
+            />
             <dl className="dx-kv">
               <dt>{t('publico.partilha.criada')}</dt>
               <dd className="dx-num">{new Date(estado.info.created_at).toLocaleString(i18n.language)}</dd>
@@ -124,7 +137,7 @@ export default function SharePage({ token }: { token: string }) {
             </dl>
             <a
               className="dx-btn dx-btn--primary dx-btn--lg dx-btn--block"
-              href={`/api/public/recordings/${token}/content${password ? `?password=${encodeURIComponent(password)}` : ''}`}
+              href={conteudo}
               download={estado.info.filename}
             >
               <Icon name="download" />

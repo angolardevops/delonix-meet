@@ -264,6 +264,18 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
+      # Convidado SEM conta, pela API e pelo /ws (sem interface — a consola vai
+      # ser substituída e este é o contrato do ecrã novo): sala de espera,
+      # admissão pelo anfitrião, nunca promovido, reentrada no mesmo lugar e a
+      # sala a fechar a porta. Corre depois do isolamento, que usa IPs de teste
+      # em X-Forwarded-For para não gastar a quota de entradas deste IP.
+      - name: Convidado sem conta (sala de espera, admissão, recusas)
+        run: node web/e2e/convidado.mjs
+
+      # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
+      # só usa a API prova que a API não deixa, não que os dados estão
+      # protegidos. E o adversário que interessa numa auditoria é quem TEM
+      # privilégios.
       - name: Auditoria imutável (ataque directo à base de dados)
         run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/auditoria.mjs
 

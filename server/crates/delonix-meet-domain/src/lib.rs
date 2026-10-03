@@ -15,4 +15,5 @@ pub mod operations;
 pub mod organization;
 pub mod scheduling;
 pub mod search;
+pub mod studio;
 pub mod telephony;

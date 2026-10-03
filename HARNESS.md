@@ -40,6 +40,7 @@
 - `auth.rs` — registo (cria org+admin), login, refresh, logout, room tokens
 - `org.rs` — multi-tenant: organizations, branches, org_members, employee groups, salas presenciais, quotas, stats, SSO stubs. **Ponto único de autorização (ADR-0008 §4):** `require_capability` (uma query: pertença activa + `org_role_effective_capabilities`), `require_admin` = `org.administer`, `require_session_create`, e TODAS as escritas de papel/estado/departamento da pertença (`set_member_role_tx`, `set_system_role`, `archive_member_tx`, `reactivate_member_tx`, `activate_membership_tx`), lugares medidos com `FOR UPDATE` na org, directório de pessoas e aplicação dos grupos do Odoo
 - `rooms.rs` — CRUD salas, `can_access_room` (isolamento cross-org), `insert_room` (helper reutilizado); sala pessoal (G2; migração 0047): `ensure_personal_room` cria-a na primeira leitura com `ON CONFLICT` sobre o índice único parcial `rooms_personal_owner_uidx` (idempotente sob concorrência), `update_personal_room`, `rotate_personal_room_code` (o código antigo deixa de existir). A sala pessoal NÃO tem regras de acesso próprias
+- `guests.rs` — convidado SEM conta: `POST /api/rooms/{room_code}/guest-join` (pública, travão por IP e por sala, `429`+`Retry-After`) emite um token de sala `origin: "guest"` + `guest: true` que o `/ws` força a passar pela sala de espera (`signaling::seat_policy`), nunca promovido a anfitrião nem a co-anfitrião; `rooms.allow_guests` (migração 0086, `PATCH /api/rooms/{room_code}`, só o dono) fecha a porta; auditado como `room.guest_join`. Ver R155
 - `sfu.rs` — SFU Rust: Hub, Room, Publication, simulcast, PLI, gravação RTP→IVF/OGG. `Census`: o que está VIVO de facto (PCs por `Weak`, `close()` que nunca regressou, peers/publicações/tarefas por `Drop`) em `/metrics` — é aí que se vê uma fuga, não nos gauges de negócio (R158)
 - `signaling.rs` — WebSocket `/ws` (room token): transporte SFU (offer/answer/ice) + moderação (admit/kick/lock/host-*, `set-role`, `spotlight`, `admit-all`, sala de espera em runtime) + chat (fios, reacções, conversa directa só ao par) + breakout-* (incl. `breakouts-broadcast`) + media; papéis, origem e cargo no `PeerInfo`, decididos no servidor (R182)
 - `room_tools.rs` — contexto de colaboração in-room extraído de `signaling.rs`: sondagens, Q&A, temporizador, quadro branco (`impl SignalingHub::handle_tool_msg`)
@@ -60,7 +61,10 @@
 - `voice.rs` — PSTN: plano de controlo (DIDs, CDR, facturação, IVR por segredo partilhado em `/internal/v1/voice/ivr/*`), ramais (Fase 2: DID dedicado por ramal) e a ponte telefone↔sala (ADR-0010: `room_bridge` para o IVR, admissão e arranque do UA SIP); a media depende do operador SIP. O IVR é máquina-a-máquina e, no destino, sai da árvore pública para gRPC (ADR-0004 §4)
 - `phone_bridge/` — ponte telefone↔sala (ADR-0010): UA SIP mínimo que só ATENDE (`sip.rs`), SDES-SRTP negociado no SDP por chamada (`srtp.rs`), G.711↔Opus com fila de jitter de 20 ms e mix-minus (`g711.rs`, `audio.rs`, `leg.rs`), qualidade da perna (`quality.rs`); allowlist de origens fail-closed. Arranca em `voice::start_phone_bridge`; a perna entra no SFU como publicador (`sfu::PubSource::Bridge`). Sucede ao `pstn_bridge.rs` da Abordagem B (R222)
 - `ramais.rs` — ramais internos (PBX): CRUD, atribuição/desatribuição de DID e o handler `mod_xml_curl` do dialplan FreeSWITCH (migrações 0055/0056)
-- `account.rs` — «A minha conta»: sessões activas (dispositivos ligados; listar e revogar, `204`) e exportação dos próprios dados. O perfil vive em `users.rs` e a MFA em `mfa.rs`. Migração 0065
+- `account.rs` — «A minha conta»: sessões activas (dispositivos ligados; listar e revogar, `204` — revogar passa por `sessions::revoke` e corta já) e exportação síncrona dos próprios dados (`GET /api/users/me/export`), migração 0065. E, da ADR-0011: `GET|PATCH /api/users/me/profile` (nome a mostrar, cargo, telefone por `org::set_member_phone` com a normalização do gateway de SMS, fuso IANA, idioma `pt-AO|en|fr-FR|zh-CN` e os antigos; nome legal, correio e departamento `409 profile.field_managed_by_odoo` numa conta gerida), fotografia `GET|PUT|DELETE /api/users/me/avatar` e `GET /api/users/{user_id}/avatar` (só com organização activa em comum), `GET|PUT …/join-preferences` (devolvidas no join; «avisar antes de gravar» imposto no `/ws`), `GET|PUT …/notification-preferences` (só `in_app` entrega; o produtor respeita-o), guia `GET|PATCH …/tour`, `PUT …/tour/steps/{step_id}`, `POST …/tour/skip|restart`. O username e a password continuam em `users.rs` e a MFA em `mfa.rs`. Regras em `domain::identity::{profile, join_preferences, tour}` e `domain::notification::preferences`. Migração 0100. Testes: `server/tests/account_profile.rs`
+- `sessions.rs` — o ESTADO das sessões da conta (ADR-0011 §5, migração 0101): `user_sessions.id` é o `refresh_tokens.session_id` da 0065; o access e o room token levam `sid`, e o `AuthUser`, o `/rtc` e o `/ws` recusam uma sessão terminada (`401 auth.session_revoked`). `POST /api/users/me/sessions/revoke-others`, `POST /api/users/me/reauthentication` (a lista e o «terminar uma» são as de `account.rs`). Terminar fecha as ligações neste nó (`KillRegistry`) e nos outros (Redis `dlx:session-revoked`). Testes: `server/tests/account_sessions.rs`
+- `passkeys.rs` — chaves de acesso WebAuthn como SEGUNDO factor (ADR-0011, `webauthn-rs`, migração 0102): `GET /api/users/me/security`, `GET /api/users/me/passkeys[/{passkey_id}]`, `POST …/passkeys/begin-registration`, `POST /api/users/me/passkeys` (`201`), `DELETE …/{passkey_id}`, `POST /api/auth/login/mfa/passkey-options|passkey`. Cerimónias na base, consumidas uma vez; reautenticação recente para alterar factores; último factor protegido com `organizations.require_mfa`. Sem `WEBAUTHN_RP_ID`/`_ORIGIN`: `503 passkeys.not_configured`. Testes: `server/tests/account_passkeys.rs`
+- `data_exports.rs` — «Os meus dados» (migração 0103): `POST /api/users/me/data-exports` (`202`, uma de cada vez, 3 por 24 h), `GET …[/{export_id}]`, `POST …/{export_id}/download-link` (15 min) e `GET …/{export_id}/content?exp&sig` (sem sessão, HMAC). Trabalho com `FOR UPDATE SKIP LOCKED`; ZIP em `DATA_EXPORTS_DIR` com perfil, preferências, gravações próprias como links, transcrições delas, actividade como actor (alvos de terceiros redigidos) e uso G3; apagado ao fim de 48 h. Testes: `server/tests/account_data_export.rs`
 - `ai_studio.rs` — IA local do Estúdio (`/api/orgs/{org_id}/ai/{status,suggestions}`): a transcrição vai só ao Ollama do cluster, nada se guarda, tecto de tarefas em simultâneo por organização (`AI_STUDIO_CONCURRENCY_PER_ORG`) e a proposta (capítulos, bordões) é validada antes de sair
 - `sms.rs` — gateway de SMS (ADR-0005): consola da org em `/api/orgs/{org_id}/sms/*` (só admin), superfície do agente USB em `/api/integrations/sms-agent/v1/*` (token `dlxg_`, extractor `SmsGatewayAuth`), encaminhamento pelo plano de numeração angolano (prefixos **por confirmar**), SMPP em claro ou sobre TLS (`smpps://`, B3 do ADR-0005) e worker dos operadores que pára no drain. Envio a CONTACTO por `{user_id}` (número resolvido no servidor, membro activo, política `sms_send_policy`, opt-out da pessoa, limite por utilizador); `{to}` só de admin. Telefone por membro em `org_members` (`phone_source` odoo|manual). Entrega no máximo uma vez
 - `sms_notify.rs` — SMS de reunião (ADR-0005 §Contactos): convite ao agendar e lembrete N minutos antes, pelos mesmos `org::sms_recipients`/`sms::recipient_phone`/`sms::plan`+`insert` do envio a contacto. O lembrete é um passo do worker de SMS (sem daemon novo), reivindicado com `FOR UPDATE SKIP LOCKED` — no máximo uma vez entre pods
@@ -100,6 +104,9 @@
 - `grpc.rs` — gRPC INTERNO (ADR-0006 §3), `GRPC_BIND_ADDR`, mTLS obrigatório (`GRPC_TLS_CERT/KEY/CLIENT_CA`; texto claro só com `DELONIX_ALLOW_INSECURE=1`), `grpc.health.v1` + reflection. `IvrService` e `TranscriptionService` são adaptadores finos: chamam `voice::validate_pin`/`record_cdr` e `transcription::*`, as mesmas funções do HTTP. Contratos em `server/proto/delonix/meet/*/v1`, gerados pelo crate `delonix-meet-protocol` (protoc vendorizado), `scripts/check-proto.sh` (buf lint/breaking). Nunca para o browser
 - `search/` — pesquisa, filtros e agrupamentos (ADR-0007; migrações 0115–0117; contrato em `docs/reference/pesquisa.md`): `GET /api/search` (Ctrl+K), `GET /api/search/schemas[/{resource}]`, favoritos em `/api/users/me/saved-searches`, e a pesquisa de lista estilo Odoo que as colecções `meetings`, `orgs/{org_id}/members`, `whiteboards` e `orgs/{org_id}/audit-events` servem quando recebem `q`/`filter`/`filters`/`group_by`/`order_by`/`page_size`/`page_token` (sem eles, a forma herdada). Em `recordings`, `q` e/ou `scope` sozinhos continuam a devolver a lista inteira; o envelope responde com `page_size`/`page_token`/`filter`/`filters`/`group_by`/`order_by` e cobre `scope=mine|published` (`resources::RECORDINGS` e `RECORDINGS_PUBLISHED`, a mesma lista branca com a visibilidade de cada biblioteca). O painel do web passa a modo servidor quando `GET /api/search/schemas/{resource}` responde. A parte pura (domínio de filtro, lista branca, keyset) é `core::query`; os schemas vivem no contexto de cada recurso (`domain::{content,scheduling,organization,compliance}::search`); `search/sql.rs` traduz com binds e `search/resources.rs` compõe a visibilidade — a pertença em SQL vem de `org.rs` (`sql_active_colleague_of_viewer`, `SQL_VIEWER_ACTIVE_ORGS`, `sql_viewer_orgs_with(capacidade)`). Os tipos reservados do Ctrl+K pedem a capacidade do endpoint normal (ADR-0008). O directório `orgs/{org_id}/users` tem pesquisa própria em `directory.rs` (`/api/search/schemas/users`) e NÃO passa por aqui. Testes: `server/tests/search.rs`
 - `stream_destinations.rs` — destinos de emissão em directo guardados por organização (G1; migração 0042): CRUD com `broadcast.manage_rtmp_keys` (ADR-0008) e o contrato novo (`201` + `Location`, `204`, paginação por cursor, `rotate-key` como método personalizado), chave RTMP cifrada com `core::secret_box` (contexto = id da linha) e devolvida só na criação e na rotação; `resolve_for_broadcast` decifra-a no servidor para o `ws_directo` (`destination_ids` + `org_id`, com `broadcast.public_destinations` e o limite de destinos do papel — ADR-0008), sem ela voltar ao browser. Regras de forma em `domain::content::stream_destination`
+- `studio.rs` — **estúdio de TV** (ADR-0014; migração 0110): estúdios da org, cada um com a sua sala SFU (`topology=sfu`, sem E2EE — o directo recusa-o); emparelhamento da app Delonix Câmara por código `XXXX-XXXX` (localizador + segredo Crockford base32, 10 min, uso único, 5 tentativas, só o hash SHA-256 guardado) trocado na rota PÚBLICA `POST /api/studio-pairings` por um JWT `typ: "source"` de 12 h; fontes CAM 1–16 com rótulo, número e revogação (que fecha o token e expulsa o socket vivo); `recording-target` com o espaço livre REAL do volume (`statvfs` via `rustix`). Autorização por `org.administer` do ADR-0008 (`org::decide`, uma ida à base para pertença + capacidade), nunca pelo texto do papel; `created_by` também opera o seu estúdio. Contrato: `docs/reference/estudio-tv.md`
+- `studio_realtime.rs` — tally e comandos do estúdio pelo `/ws` da sala (ADR-0014 §4): `studio-tally` (PROGRAMA ganha a PRÉ), `studio-command` para UMA fonte, `studio-source-status` e `studio-command-result` do telefone, e `studio-sources` para os anfitriões (com o `peer_id` que liga as tracks do SFU à fonte). Só o anfitrião ACTUAL da sala comanda; o `source_id` do estado vem sempre do token, nunca do corpo; uma fonte tem lista de PERMITIDAS (`source_may_send`) e estado com tecto de 1/s. O `StudioHub` é por pod, como o SFU
+- `studio_docs.rs` — os SEIS documentos do estúdio (ADR-0014 §5; migração 0111): cenas de mistura, macros, sobreposições, cenas de luz, perfis de correcção por câmara e alinhamentos, todos com o mesmo contrato e o tipo no caminho (`…/studios/{id}/{kind}`), histórico por versão, concorrência optimista (`409 studio.version_conflict`), tecla única por tipo e estúdio (`409 studio.key_taken`, imposta pelo índice e não por um SELECT antes) e referências obrigadas a ser do MESMO estúdio. As formas validam-se todas em `domain::studio::document`; o `summary` do alinhamento é do servidor. **R250**: o `{kind}` é irmão de `sources`/`pairing-codes`/`recording-target` e vive da precedência do segmento estático do router
 - `nodes.rs` — inventário de nós de media (G10; migração 0048): cada pod faz upsert de um batimento a cada 15 s (salas, pares, WebSockets, directos, a drenar, `NODE_PEER_CAPACITY`); `GET /api/operator/v1/nodes` — primeira rota da superfície de OPERADOR (ADR-0004 §4), só `PLATFORM_ADMIN_USER_IDS`, `404 operator.surface_disabled` na edição pessoal — devolve o estado DERIVADO da idade do batimento (`serving`/`draining`/`unreachable`, regra em `domain::operations::media_node`)
 - `notifications.rs` — centro de notificações PESSOAL (G8; migração 0044): `GET/PATCH/DELETE /api/users/me/notifications[/{id}]` e `POST …/mark-all-read` (`{"updated": n}`), paginação por cursor mais recentes primeiro com `unread_count`; um id de outra pessoa dá `404` (não é rota de org, fica fora do `isolamento.mjs`). Produtores best-effort — convite e cancelamento de reunião (`meetings.rs`, só colegas de org do anfitrião), reunião a começar (auto-ring), chamada perdida (`presence::ring_users`), gravação do servidor pronta (`recorder.rs`), transcrição entregue (`transcription::complete`) — e push `{"type":"notification"}` pelo `PresenceHub::notify` (local ou Redis). Regras (tipos, textos, link só relativo, coalescência por `dedupe_key`, retenção 90/180 dias com varredor de 6 h) em `domain::notification`
 - `transcription.rs` — fila de transcrição com reserva (`FOR UPDATE SKIP LOCKED`, token, prazo, tentativas; migração 0041): o ai-worker reserva, transcreve e entrega, e o texto passa pelo `dlp::censor` antes da base. O cliente é o `ai-worker/` (Python: `job_source.py` com `GrpcJobSource`, stubs gerados de `server/proto` no build da imagem por `ai-worker/gen_protos.sh`, nunca versionados); o modo `DATABASE_URL` que escrevia na base por baixo do DLP está deprecado. Portão: `python3 -m unittest discover -s ai-worker/tests` (ciclo, sem GPU) e `bash ai-worker/tests/it_grpc.sh` (contra o servidor real: DLP, falha definitiva e mTLS). Sem `ReportProgress` no contrato: a reserva (`LEASE_SECONDS`, máx. 7200) tem de cobrir a gravação mais longa
@@ -139,7 +146,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0073, 0085 e 0115–0117; estas três são a pesquisa do ADR-0007 e precisam das extensões `unaccent` e `pg_trgm`) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0120; a numeração tem buracos: 0074–0084, 0087–0099, 0104–0109, 0112–0114 e 0118–0119 não existem; 0115–0117 são a pesquisa do ADR-0007 e precisam das extensões `unaccent` e `pg_trgm`) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
@@ -203,48 +210,36 @@ O refresh token vive em `dlx_refresh` (`HttpOnly; SameSite=Strict; Path=/api/aut
 
 ## 5. Design system
 
-Tokens em `web/src/styles/` como custom properties CSS (`:root`). Hierarquia: **primitivos → semânticos → componentes**.
+A UI foi **reconstruída de raiz a partir do template navegável** (v5, em `docs/templates/v5/`) — nada da UI anterior foi reaproveitado. Tokens, kit, fundação e regras de código, medidos na árvore: `docs/reference/design-system.md`.
 
-**Separação AÇÃO / MARCA:** o índigo é a cor de **ação** (botões primários, foco, links, nav ativo); o vermelho + dourado são a **marca** (logo, wordmark «Meet», landing, quadrado da sidebar). Nunca usar o vermelho para navegação nem o índigo para o logo.
+**Onde vive:**
+- `web/src/ui/tokens.css` — tokens claro/escuro do ecrã «Sistema de design». `:root`/`[data-theme=light]` e `[data-theme=dark]`; **`.dx-stage` reafirma o escuro** (sala, pré-entrada, estúdio de emissão) em qualquer tema.
+- `web/src/ui/base.css` + `web/src/ui/kit.tsx` — kit único: `Button`, `IconButton`, `Card`, `SectionHead`, `Tag`, `StatusBadge`, `Field`, `TextInput`, `TextArea`, `Select`, `Checkbox`, `Toggle`, `Segmented`, `Tabs`, `Avatar`/`AvatarStack`, `Meter`, `Empty`, `Alert`, `Spinner`, `Skeleton`, `Dialog`. Classes com prefixo `dx-`.
+- `web/src/ui/icons.tsx` — ícones SVG de traço e o símbolo Delonix (`DelonixSymbol`). Nunca emoji como iconografia.
+- `web/src/ui/shell.css`, `components/Shell.tsx`, `components/PageBar.tsx` — consola: rail de 228 px, barra de página de 58 px, gaveta abaixo de 900 px; paleta Ctrl/Cmd+K.
+- Folhas por área em `web/src/ui/<área>.css`, importadas pela própria página (ficam no chunk lazy).
 
-| Token | Escuro | Claro | Uso |
+| Token | Claro | Escuro | Uso |
 | --- | --- | --- | --- |
-| `--accent` | `#5c6cf2` | `#3947c9` | Ação primária, foco |
-| `--accent-hi` | `#7c88f5` | `#4b5ad9` | Hover da ação |
-| `--accent-text` | `#9aa5ff` | `#3947c9` | Índigo legível como texto/link |
-| `--accent-soft` | `#242b4e` | `#e6e9fb` | Preenchimento de estado ativo/chip |
-| `--bg` | `#14161d` | `#f4f5f7` | Fundo da página |
-| `--surface` | `#1c1f28` | `#ffffff` | Cartões/modais |
-| `--surface-2` | `#1a1d26` | `#f8f9fb` | Hover de linha, superfície aninhada |
-| `--input-bg` | `#171a22` | `#ffffff` | Campos de formulário |
-| `--border` | `#262a34` | `#e2e5eb` | Contorno de superfície |
-| `--border-soft` | `#20242e` | `#eef0f4` | Separadores DENTRO do cartão |
-| `--text` / `--text-2` | `#e8eaf0` / `#8b92a8` | `#1c2333` / `#5f6a82` | Texto primário/secundário |
-| `--sb-bg` / `--sb-text` | `#12141a` / `#aeb4c6` | `#1e2a45` / `#c6cfe4` | **Rail de navegação — escuro nos DOIS temas** |
-| `--hdr-bg` | `#14161d` | `#ffffff` | Barra de aplicação (topo) |
-| `--accent-2` | `#EDA33B` | índigo escuro | Dourado de marca (wordmark) |
-| `--brand` | `#D8352E` | `#C8201D` | Vermelho Delonix (logo, landing) |
+| `--surface` / `--raised` | `#F4F4F5` / `#FFFFFF` | `#0D0D0F` / `#17171A` | Fundo / superfícies |
+| `--stage` | `#000000` | `#000000` | Palco (fixo) |
+| `--border` | `#DEDEE1` | `#2A2A2E` | Contornos |
+| `--text` / `--muted` | `#0B0B0C` / `#5C5C63` | `#F2F2F3` / `#9A9AA0` | Texto (15.4:1 / 5.2:1 claro) |
+| `--accent` / `--accent-strong` | `#AD1017` / `#8A0C12` | `#FF5A60` / `#AD1017` | Acção, foco, activo |
+| `--live` | `#A85B00` | `#F0A32E` | AO VIVO (âmbar) |
+| `--record` · `--danger` | `#AD1017` | `#D41F27` | REC, erro, sair |
+| `--success` | `#1E7A4A` | `#2F9E6A` | Estado bom |
+| `--brand` | `#E8232B` | — | Símbolo Delonix sobre preto (só em `tokens.css`) |
 
-**Regra da sala:** `.room-page` e `.waiting-page` reafirmam tokens dark **com `!important`** no fim de `styles.scss`. A sala é sempre escura independentemente do tema da app. Chrome da sala: fundo `#0d0f14`, barras `#12141a`, palco `linear-gradient(160deg,#1b2030,#12141c)`, painel lateral 320px encostado.
-
-**Rail sempre escuro:** a barra lateral usa os tokens `--sb-*`, que são deliberadamente escuros também no tema claro (navy `#1e2a45`). Não a fazer seguir o tema — é âncora de identidade e evita que a navegação compita com o conteúdo.
-
-**Sistema de controlo único (14/07/2026)** — referência completa em `docs/reference/design-system.md`:
-- Tokens: `--radius-sm: 4px` (controlos) · `--radius-md: 6px` (superfícies) · `--radius-lg: 8px` · `--ctl-h: 30px` (altura única dos controlos). Camada de uniformização no FIM de `styles.scss` (3 tiers: ação / botão-ícone / superfícies) vence os valores históricos hardcoded.
-- **Componentes novos usam o kit `web/src/components/ui.tsx`** (`Btn`/`IconBtn`/`Card`/`Field`/`TextInput`/`SelectCtl`/`Switch`) — nunca `<button className=…>` ad-hoc, nunca `border-radius`/`height` hardcoded na página. Variante nova = classe no CSS + entrada no kit. Migração do código existente é oportunista (referência: painel Ferramentas em `Room.tsx`).
-- **Temas** = mapas de tokens em `styles/tokens.scss` emitidos sob `[data-theme=…]` — nunca overrides espalhados; testar os 4 temas + sala sempre escura (regressão #67).
-
-**Camada CONSOLA (27/07/2026)** — no fim de `styles.scss`, DEPOIS do bloco de controlo único (à mesma especificidade, a última vence):
-
-- Densidade: `html { font-size: 15px }`. A app dimensiona quase toda em `rem`, por isso a raiz é o botão único de densidade — não apertar tamanhos página a página.
-- `.app-bar` (topo do conteúdo, em `Shell.tsx`): data, tema, «Nova reunião» e campo de código. Estas ações **saíram da Home** — não as duplicar lá.
-- Estrutura do Shell: `.shell-main` (flex column, overflow hidden) → `.app-bar` + `.shell-body` (o que faz scroll). Páginas de altura total dentro do Shell usam `height: 100%`, nunca `100vh` (a barra já ocupa ~46px).
-- Superfícies separam-se por **borda de 1px + luminância**, não por sombra: `--shadow` é 1px, `--border-soft` para separadores internos.
-- Sala: controlos quadrados de 38px agrupados em `.ctrl-group` (dispositivos | sessão) + terminar solto. A pill Meet de 50px foi substituída; o chevron de dispositivo é um caret de 15px no canto.
-
-**Fontes:** IBM Plex Sans (títulos e corpo) + IBM Plex Mono (código, horas, códigos de sala) — self-hosted via @fontsource. Família única de propósito: é o que dá a métrica de consola.
-
-**Logo:** Globo vermelho com grelha dourada, anéis segmentados, 5 pinos. SVG em `web/public/logo.svg`. Usar `.brand-logo` para renderizar.
+**Regras (os portões `lote1`/`lote2`/`lote3` e as convenções):**
+- Nenhuma cor, raio (`--r-2`/`--r-3`/`--r-8`) ou altura de controlo (`--ctl-h`) escrita à mão numa página; o vermelho da marca só existe como token.
+- Tipografia: **Archivo** (interface), **Archivo Black** (display), **DM Mono** (horas, códigos, débitos, `tabular-nums`) — self-hosted via @fontsource.
+- Estados: badge = cor + forma/ícone + texto, nunca só cor.
+- Foco: rede global `:where(a, button, input, …):focus-visible { outline: 2px solid }`; inputs sem borda mostram o anel no contentor.
+- `100vh` sempre seguido de `100dvh`; layout funcional a 375 px.
+- i18n por áreas em `web/src/locales/<língua>/<área>.ts`: pt/en/fr/zh com as mesmas chaves (`pt` é a origem), um valor por linha, sem frases fora do `t()`, sem emoji.
+- Dados do servidor em três estados (`components/AsyncSection.tsx`, `useAsync`), pedidos abortáveis.
+- **Não se desenha o que o servidor não faz**: um elemento do template sem backend não aparece como botão inerte nem com números inventados.
 
 ---
 
@@ -365,7 +360,7 @@ Ver `docs/competitive-positioning.md` para análise completa. Resumo:
 | **delonix-meet-security** | Auth, isolamento entre orgs, autoridade de conta (R25), SSRF, segredos, E2EE, MFA, auditoria, BNA/LGPD | `auth.rs`, `org.rs`, `apikeys.rs`, `odoo*.rs`, `storage.rs`, `webhooks.rs`, `net_guard.rs`, `mfa.rs`, `e2ee.ts`, rotas novas |
 | **delonix-meet-rust** | Async Tokio, locks através de `.await`, filas limitadas, tarefas de fundo, hot path | `sfu.rs`, `signaling.rs`, `recorder.rs`, `presence.rs`, `redis_state.rs` |
 | **delonix-meet-webrtc** | Negociação/glare, ICE/TURN, simulcast, oradores, gravação, directo | `sfu.rs`, `webrtc.ts`, `e2ee.ts`, `recorder.rs`, `broadcast.rs` |
-| **delonix-meet-frontend** | React/TS, kit `ui.tsx`, temas, i18n, ecrã estreito, acessibilidade | `web/src/**` |
+| **delonix-meet-frontend** | React/TS, kit `ui/kit.tsx`, temas, i18n, ecrã estreito, acessibilidade | `web/src/**` |
 | **delonix-meet-devops** | K8s, imagens, afinidade por sala, coturn, probes/drain, CI | `deploy/`, Dockerfiles, Makefile, `.github/` |
 | **delonix-meet-product** | Posicionamento, roadmap, o que se pode vender | features novas, preços, landing, roadmap |
 

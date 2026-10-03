@@ -350,8 +350,12 @@ pub async fn rtc_handler(
     // WebSocket pessoal: autenticado pelo access token.
     let claims = verify_jwt(&state.config.jwt_secret, &q.token, "access")?;
     let user_id = claims.sub;
+    // Uma sessão terminada não abre o canal pessoal (ver `sessions`).
+    if let Some(sid) = claims.sid {
+        crate::sessions::ensure_active(&state, user_id, sid).await?;
+    }
     let user = crate::users::fetch_public(&state.db, user_id).await?;
-    Ok(ws.on_upgrade(move |socket| handle(state, socket, user_id, user.username)))
+    Ok(ws.on_upgrade(move |socket| handle(state, socket, user_id, user.username, claims.sid)))
 }
 
 /// RAII guard: garante que presence.remove() é chamado mesmo se o future
@@ -383,7 +387,13 @@ impl Drop for PresenceGuard {
     }
 }
 
-async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username: String) {
+async fn handle(
+    state: Arc<AppState>,
+    socket: WebSocket,
+    user_id: Uuid,
+    username: String,
+    sid: Option<Uuid>,
+) {
     let (mut sink, mut stream) = socket.split();
     // Fila LIMITADA, mesma razão que no `/ws` (ver signaling::PeerTx): um
     // socket de presença estagnado não pode crescer até à memória do nó.
@@ -392,6 +402,9 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
     // dispositivo deixou de acompanhar, e a ligação cai (o cliente já tem
     // reconexão com backoff, ver presence.ts).
     let (tx, mut rx, shutdown) = ConnTx::new(state.config.ws_queue_cap, state.metrics.clone());
+    // Terminar a sessão acorda o mesmo `shutdown` e o laço sai pela porta de
+    // sempre (o guard trata da presença).
+    let _session_guard = sid.map(|sid| state.session_kills.register(sid, shutdown.clone()));
 
     state.presence.add(user_id, tx.clone(), username.clone());
     tracing::info!(%user_id, %username, "presence connected");
@@ -459,7 +472,7 @@ async fn handle(state: Arc<AppState>, socket: WebSocket, user_id: Uuid, username
                 _ => break,
             },
             _ = shutdown.notified() => {
-                tracing::warn!(%user_id, "presença terminada: fila de saída em transbordo");
+                tracing::warn!(%user_id, "presença terminada: sessão terminada ou fila de saída em transbordo");
                 break;
             }
         };

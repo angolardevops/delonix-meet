@@ -554,6 +554,8 @@ pub async fn v1_join_bot_room(
             title: None,
             lobby: None,
             wr: None,
+            guest: false,
+            sid: None, // um bot não tem sessão de pessoa
         },
     )?;
 
@@ -1260,6 +1262,7 @@ mod tests {
             waiting_room: false,
             e2ee: false,
             format: "normal".into(),
+            allow_guests: true,
             created_at: t0,
         };
         let room_json = serde_json::to_value(&room).unwrap();
