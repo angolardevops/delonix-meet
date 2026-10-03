@@ -713,12 +713,21 @@ seed: ## Cria a organização «ngolacloud» e o administrador de validação (B
 	@bash scripts/seed.sh $(or $(BASE),https://$(MEET_HOST):8443)
 compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do PBX e chamada de prova ao IVR
 	@bash scripts/compose-voice-check.sh
-compose-up: ## Simulação de produção (compose.yaml): Meet, Kamailio e PBX, com os URLs e os acessos
+# LAN_IP=<ip desta máquina na rede local> expõe os RAMAIS a um softphone da
+# mesma rede (make compose-up LAN_IP=192.168.1.120). Sem ele, tudo fica só em
+# 127.0.0.1 — que é o que se quer por omissão.
+compose-up: ## Simulação de produção (compose.yaml); LAN_IP=<ip> expõe os ramais à rede local
 	@[ -f .env ] && [ -f deploy/compose/generated/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou deploy/compose/generated/ — corre «make bootstrap»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "delonix-server" || { printf "$(Y)  ✗ faltam as imagens — corre «make build»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "pbx-cliente" || { printf "$(Y)  ✗ faltam as imagens de voz — corre «make voice-images»$(Z)\n"; exit 1; }
 	@printf "$(C)▶ $(COMPOSE) up (simulação de produção)$(Z)\n"
-	@$(COMPOSE) up $(COMPOSE_P) -d
+	@if [ -n "$(LAN_IP)" ]; then \
+	  LAN_IP=$(LAN_IP) bash scripts/compose-lan.sh > deploy/compose/generated/lan.yaml && \
+	  printf "   ramais expostos na rede local em $(Y)$(LAN_IP):5070$(Z) (áudio em 20000–20100/udp)\n" && \
+	  $(COMPOSE) up $(COMPOSE_P) -f $(ROOT)/deploy/compose/generated/lan.yaml -d; \
+	else \
+	  $(COMPOSE) up $(COMPOSE_P) -d; \
+	fi
 	@printf "$(C)▶ organização e conta de validação$(Z)\n"
 	@bash scripts/seed.sh https://$(MEET_HOST):8443 || true
 	@$(MAKE) --no-print-directory compose-info
@@ -739,6 +748,16 @@ compose-info: ## URLs e acessos de administração da simulação de produção
 	printf "     utilizador   admin\n"; \
 	printf "     password     %s\n" "$$(v VOICE_ADMIN_PASSWORD)"; \
 	printf "     consola      $(COMPOSE_EXEC) delonix-pbx asterisk -rvvv\n"; \
+	if [ -f deploy/compose/generated/ramal-linphone.txt ] && [ -f deploy/compose/generated/lan.yaml ]; then \
+	  r() { sed -n "s/^$$1=//p" deploy/compose/generated/ramal-linphone.txt; }; \
+	  ip=$$(sed -n 's/.*DELONIX_EXTERNAL_IP: //p' deploy/compose/generated/lan.yaml); \
+	  printf "$(G)  Ramal para um softphone$(Z) (Linphone, na mesma rede local)   ramal %s\n" "$$(r ramal)"; \
+	  printf "     utilizador   %s\n" "$$(r utilizador)"; \
+	  printf "     password     %s\n" "$$(r password)"; \
+	  printf "     domínio      %s\n" "$$(r dominio)"; \
+	  printf "     servidor     %s:5070   transporte UDP   (proxy: sip:%s:5070;transport=udp)\n" "$$ip" "$$ip"; \
+	  printf "     media        SRTP obrigatório (SDES); sem ICE nem STUN\n"; \
+	fi; \
 	printf "\n  Estado: make compose-ps   ·   Prova da voz: make compose-voice-check\n"
 compose-down: ## Para a simulação de produção (mantém os volumes)
 	@$(COMPOSE) down $(COMPOSE_P)
