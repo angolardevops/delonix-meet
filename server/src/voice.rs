@@ -1156,6 +1156,79 @@ mod tests {
 
     const STRONG: &str = "3f9c1a7e0b5d4c2a8e6f1b3d5a7c9e0f2b4d6a8c";
 
+    fn with_auth(v: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(axum::http::header::AUTHORIZATION, v.parse().unwrap());
+        h
+    }
+
+    fn b64(raw: &str) -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(raw)
+    }
+
+    /// R227 — o FreeSWITCH (`mod_xml_curl`, `mod_json_cdr`) manda o segredo por
+    /// HTTP Basic, como password. Só essa forma passa: nem o segredo como
+    /// utilizador, nem outro esquema, nem um Basic certo atrás de um
+    /// `X-Voice-Secret` errado, nem um Basic certo contra um segredo recusado.
+    #[test]
+    fn ivr_basic_takes_the_secret_only_as_the_password() {
+        let ok = |h: &HeaderMap| status(authorize_media_secret(STRONG, None, h));
+
+        assert_eq!(
+            ok(&with_auth(&format!(
+                "Basic {}",
+                b64(&format!("freeswitch:{STRONG}"))
+            ))),
+            200
+        );
+        // O utilizador não conta, e a password pode ter `:` — corta-se no primeiro.
+        assert_eq!(
+            ok(&with_auth(&format!("Basic {}", b64(&format!(":{STRONG}"))))),
+            200
+        );
+        let with_colon = "a:b-segredo-com-dois-pontos-0123456789";
+        let h = with_auth(&format!("Basic {}", b64(&format!("fs:{with_colon}"))));
+        assert_eq!(status(authorize_media_secret(with_colon, None, &h)), 200);
+
+        for (what, value) in [
+            (
+                "password errada",
+                format!("Basic {}", b64("freeswitch:errado")),
+            ),
+            ("sem dois pontos", format!("Basic {}", b64(STRONG))),
+            (
+                "segredo como utilizador",
+                format!("Basic {}", b64(&format!("{STRONG}:"))),
+            ),
+            ("base64 inválido", "Basic ###".to_string()),
+            (
+                "esquema em minúsculas",
+                format!("basic {}", b64(&format!("fs:{STRONG}"))),
+            ),
+            ("Bearer com o segredo", format!("Bearer {STRONG}")),
+            ("o segredo cru", STRONG.to_string()),
+        ] {
+            assert_eq!(ok(&with_auth(&value)), 401, "{what}");
+        }
+
+        // Um `X-Voice-Secret` errado não é salvo por um Basic certo.
+        let mut both = with_secret("errado");
+        both.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Basic {}", b64(&format!("fs:{STRONG}")))
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(ok(&both), 401);
+
+        // R154 ganha a tudo: um segredo publicado dá 503 mesmo com o Basic certo.
+        let burned = "voice-internal-secret-for-pstn";
+        let refusal = crate::config::voice_secret_refusal(burned, false);
+        let h = with_auth(&format!("Basic {}", b64(&format!("fs:{burned}"))));
+        assert_eq!(status(authorize_media_secret(burned, refusal, &h)), 503);
+    }
+
     /// R154 — sem segredo, ou com o segredo publicado no repositório, as rotas
     /// de IVR dão 503 com razão. Mesmo quem manda o valor «certo».
     #[test]
