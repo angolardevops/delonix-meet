@@ -21,6 +21,8 @@
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
+pub mod preferences;
+
 pub const MAX_TITLE: usize = 140;
 pub const MAX_BODY: usize = 500;
 pub const MAX_LINK: usize = 512;

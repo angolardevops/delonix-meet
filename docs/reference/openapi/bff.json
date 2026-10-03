@@ -2174,6 +2174,82 @@
         ],
         "type": "object"
       },
+      "DataExport": {
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "description": "Motivo para pessoas, quando `failed`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "description": "Quando o ficheiro é apagado (só com `ready`).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`queued` | `running` | `ready` | `failed` | `expired`.",
+            "type": "string"
+          },
+          "summary": {
+            "description": "O que entrou: `recordings`, `transcripts`, `activity_events`.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "summary",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "DataExportPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DataExport"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "DecisionReq": {
         "properties": {
           "reason": {
@@ -3000,6 +3076,23 @@
         ],
         "type": "object"
       },
+      "DownloadLink": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "description": "Caminho relativo, carregável sem sessão até `expires_at`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "DuplicateRoleReq": {
         "properties": {
           "name": {
@@ -3432,6 +3525,29 @@
         "required": [
           "field",
           "description"
+        ],
+        "type": "object"
+      },
+      "FinishRegistrationReq": {
+        "additionalProperties": false,
+        "properties": {
+          "ceremony_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "credential": {
+            "description": "O `PublicKeyCredential` devolvido por `navigator.credentials.create`.",
+            "type": "object"
+          },
+          "name": {
+            "description": "Nome para a pessoa reconhecer a chave (1–60).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ceremony_id",
+          "name",
+          "credential"
         ],
         "type": "object"
       },
@@ -3989,9 +4105,58 @@
         ],
         "type": "object"
       },
+      "JoinPreferencesBody": {
+        "additionalProperties": false,
+        "description": "Preferências de entrada. No `PUT` é a representação COMPLETA: um campo\nomisso volta à omissão (desligado).",
+        "properties": {
+          "blur_background": {
+            "default": false,
+            "description": "Fundo desfocado por omissão.",
+            "type": "boolean"
+          },
+          "captions_always_on": {
+            "default": false,
+            "description": "Legendas sempre visíveis.",
+            "type": "boolean"
+          },
+          "captions_language": {
+            "default": null,
+            "description": "Idioma das legendas (`pt`, `en`, `fr`, `zh`, `es`, `ln`, `kg`, `umb`);\n`null` = o da sessão.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "join_camera_off": {
+            "default": false,
+            "description": "Entrar com a câmara desligada.",
+            "type": "boolean"
+          },
+          "join_muted": {
+            "default": false,
+            "description": "Entrar com o som desligado.",
+            "type": "boolean"
+          },
+          "noise_suppression": {
+            "default": false,
+            "description": "Supressão de ruído.",
+            "type": "boolean"
+          },
+          "warn_before_recording": {
+            "default": false,
+            "description": "Avisar antes de gravar: IMPOSTO pelo servidor — como anfitrião, o\ninício de uma gravação exige `confirmed: true` no `server_record`.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "JoinRoomResp": {
         "description": "Resposta do `join`: a sala e o token de sala para o WebSocket.",
         "properties": {
+          "join_preferences": {
+            "$ref": "#/components/schemas/JoinPreferencesBody",
+            "description": "«Como entro nas sessões» de quem entra: o cliente aplica-as (som,\ncâmara, desfoque, ruído, legendas); `warn_before_recording` é imposto\npelo servidor no início da gravação."
+          },
           "room": {
             "$ref": "#/components/schemas/Room"
           },
@@ -4012,7 +4177,8 @@
           "room",
           "room_token",
           "ws_path",
-          "scheduled"
+          "scheduled",
+          "join_preferences"
         ],
         "type": "object"
       },
@@ -4117,6 +4283,49 @@
             "$ref": "#/components/schemas/MfaChallenge"
           }
         ]
+      },
+      "ManagedBy": {
+        "description": "De onde vêm os campos só de leitura.",
+        "properties": {
+          "fields": {
+            "description": "Campos que só mudam no Odoo: `legal_name`, `email`, `department`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "last_synced_at": {
+            "description": "Última sincronização do directório da organização.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "odoo_url": {
+            "description": "Para o botão «Abrir no Odoo».",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "description": "Sempre `odoo`.",
+            "type": "string"
+          },
+          "sync_interval_minutes": {
+            "description": "«Alterações do Odoo chegam aqui em até N minutos».",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "fields",
+          "sync_interval_minutes"
+        ],
+        "type": "object"
       },
       "MarkAllReadResp": {
         "properties": {
@@ -4832,8 +5041,15 @@
         "type": "object"
       },
       "MfaChallenge": {
-        "description": "Desafio do segundo factor: a password foi aceite mas a conta tem MFA\nactivo, por isso ainda não há sessão. O `mfa_token` troca-se em\n`/api/auth/login/mfa`.",
+        "description": "Desafio do segundo factor: a password foi aceite mas a conta tem MFA\nactivo, por isso ainda não há sessão. O `mfa_token` troca-se em\n`/api/auth/login/mfa` (código) ou `/api/auth/login/mfa/passkey` (chave).",
         "properties": {
+          "methods": {
+            "description": "Factores que a conta tem: `totp` e/ou `passkey`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "mfa_required": {
             "description": "Sempre `true`.",
             "type": "boolean"
@@ -4845,7 +5061,8 @@
         },
         "required": [
           "mfa_required",
-          "mfa_token"
+          "mfa_token",
+          "methods"
         ],
         "type": "object"
       },
@@ -5062,6 +5279,47 @@
         ],
         "type": "object"
       },
+      "NotificationChannelStatus": {
+        "properties": {
+          "channel": {
+            "description": "`email` | `in_app` | `sms`.",
+            "type": "string"
+          },
+          "delivery": {
+            "description": "`available` | `not_configured` — só o `in_app` entrega hoje.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel",
+          "delivery"
+        ],
+        "type": "object"
+      },
+      "NotificationKindPreferences": {
+        "properties": {
+          "email": {
+            "type": "boolean"
+          },
+          "in_app": {
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "Tipo do centro de notificações (`meeting.starting`, …).",
+            "type": "string"
+          },
+          "sms": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "email",
+          "in_app",
+          "sms"
+        ],
+        "type": "object"
+      },
       "NotificationPage": {
         "properties": {
           "items": {
@@ -5085,6 +5343,48 @@
         "required": [
           "items",
           "unread_count"
+        ],
+        "type": "object"
+      },
+      "NotificationPreferenceItem": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "description": "`email` | `in_app` | `sms`.",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "channel",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "NotificationPreferences": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationChannelStatus"
+            },
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationKindPreferences"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "channels",
+          "items"
         ],
         "type": "object"
       },
@@ -5412,6 +5712,13 @@
             "format": "int32",
             "type": [
               "integer",
+              "null"
+            ]
+          },
+          "require_mfa": {
+            "description": "A organização exige autenticação de dois factores. Hoje impede os\nmembros de removerem o ÚLTIMO factor; não força a inscrição no login.\nOmisso => mantém o actual.",
+            "type": [
+              "boolean",
               "null"
             ]
           },
@@ -6100,6 +6407,120 @@
         ],
         "type": "object"
       },
+      "PasskeyChallengeReq": {
+        "additionalProperties": false,
+        "properties": {
+          "mfa_token": {
+            "description": "O `mfa_token` do desafio devolvido por `/api/auth/login`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mfa_token"
+        ],
+        "type": "object"
+      },
+      "PasskeyInfo": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "PasskeyList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PasskeyInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "PasskeyLoginReq": {
+        "additionalProperties": false,
+        "properties": {
+          "ceremony_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "credential": {
+            "description": "O `PublicKeyCredential` devolvido por `navigator.credentials.get`.",
+            "type": "object"
+          },
+          "mfa_token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mfa_token",
+          "ceremony_id",
+          "credential"
+        ],
+        "type": "object"
+      },
+      "PasskeysStatus": {
+        "properties": {
+          "availability": {
+            "description": "`available` | `not_configured` (sem RP ID/origem nesta instalação).",
+            "type": "string"
+          },
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "availability"
+        ],
+        "type": "object"
+      },
+      "PasswordStatus": {
+        "properties": {
+          "changed_at": {
+            "description": "Última alteração conhecida. `null` = desconhecida (conta anterior a\neste registo, ou gerida pelo Odoo).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "managed_by_odoo": {
+            "description": "A password é a do Odoo: não se altera aqui.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "managed_by_odoo"
+        ],
+        "type": "object"
+      },
       "PatchCaptionReq": {
         "properties": {
           "status": {
@@ -6369,6 +6790,165 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "Profile": {
+        "properties": {
+          "avatar_url": {
+            "description": "Caminho da fotografia (`null` sem fotografia). Muda quando a foto muda.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "department": {
+            "description": "Departamento da pertença principal (`org_members.department_id`);\n`null` sem departamento atribuído.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "description": "O nome mostrado na sala e nas legendas (o `username` se não houver um).",
+            "type": "string"
+          },
+          "display_name_set": {
+            "description": "`true` se a pessoa escolheu um nome a mostrar.",
+            "type": "boolean"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "job_title": {
+            "description": "Cargo na organização principal.",
+            "type": "string"
+          },
+          "legal_name": {
+            "description": "Nome legal (do Odoo numa conta gerida; `null` se desconhecido).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "description": "`pt-AO` | `en` | `fr-FR` | `zh-CN` (e os antigos `pt` | `fr`).",
+            "type": "string"
+          },
+          "managed_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagedBy",
+                "description": "Presente numa conta gerida pelo Odoo."
+              }
+            ]
+          },
+          "meetings_hosted": {
+            "description": "Reuniões agendadas por esta pessoa («sessões conduzidas»).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "organization": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProfileOrganization",
+                "description": "Organização principal (a pertença activa mais antiga)."
+              }
+            ]
+          },
+          "password": {
+            "$ref": "#/components/schemas/PasswordStatus"
+          },
+          "phone": {
+            "description": "Telefone em E.164 (`+244923447108`), da organização principal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "description": "`manual` (escrito pela pessoa) | `odoo` (do directório) | `null`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "description": "Nome IANA.",
+            "type": "string"
+          },
+          "timezone_utc_offset_minutes": {
+            "description": "Deslocamento actual do fuso, em minutos (60 = UTC+1).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "description": "Última alteração do perfil («alterações guardadas há N min»).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "username",
+          "display_name",
+          "display_name_set",
+          "job_title",
+          "timezone",
+          "locale",
+          "meetings_hosted",
+          "password",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ProfileOrganization": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "joined_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "description": "Papel na organização (`admin` | `member` | …).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "joined_at"
         ],
         "type": "object"
       },
@@ -6762,6 +7342,22 @@
         ],
         "type": "object"
       },
+      "PutNotificationPreferencesReq": {
+        "additionalProperties": false,
+        "description": "A matriz COMPLETA: os pares omissos voltam à omissão.",
+        "properties": {
+          "preferences": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationPreferenceItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "preferences"
+        ],
+        "type": "object"
+      },
       "PutRouteReq": {
         "properties": {
           "device_id": {
@@ -6987,6 +7583,39 @@
           "user_id",
           "username",
           "count"
+        ],
+        "type": "object"
+      },
+      "ReauthReq": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "Ou um código TOTP / de recuperação, se o MFA estiver activo.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "description": "A password da conta (verificada no Odoo numa conta gerida).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "Reauthenticated": {
+        "properties": {
+          "valid_until": {
+            "description": "Até quando vale para alterar factores.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "valid_until"
         ],
         "type": "object"
       },
@@ -7809,6 +8438,20 @@
         ],
         "type": "object"
       },
+      "RevokedCount": {
+        "properties": {
+          "revoked": {
+            "description": "Quantas sessões foram terminadas.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revoked"
+        ],
+        "type": "object"
+      },
       "RiskAcceptance": {
         "properties": {
           "accepted_at": {
@@ -8466,6 +9109,43 @@
           "inactive_days",
           "inactive",
           "owner_missing"
+        ],
+        "type": "object"
+      },
+      "SecurityOverview": {
+        "properties": {
+          "passkeys": {
+            "$ref": "#/components/schemas/PasskeysStatus"
+          },
+          "password": {
+            "$ref": "#/components/schemas/PasswordStatus"
+          },
+          "reauthenticated_until": {
+            "description": "Reautenticação recente NESTA sessão (para alterar factores).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required_by_organization": {
+            "description": "Uma organização activa da pessoa exige 2FA: o último factor não se remove.",
+            "type": "boolean"
+          },
+          "totp": {
+            "$ref": "#/components/schemas/TotpStatus"
+          },
+          "two_factor_enabled": {
+            "description": "Há pelo menos um segundo factor (TOTP ou chave de acesso).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "two_factor_enabled",
+          "required_by_organization",
+          "password",
+          "totp",
+          "passkeys"
         ],
         "type": "object"
       },
@@ -9924,6 +10604,109 @@
         },
         "type": "object"
       },
+      "TotpStatus": {
+        "properties": {
+          "backup_codes_left": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "pending": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "pending",
+          "backup_codes_left"
+        ],
+        "type": "object"
+      },
+      "TourState": {
+        "properties": {
+          "completed": {
+            "description": "Todos concluídos.",
+            "type": "boolean"
+          },
+          "completed_count": {
+            "description": "«N de M passos concluídos».",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "enabled": {
+            "description": "«Guia activo».",
+            "type": "boolean"
+          },
+          "next_step": {
+            "description": "O primeiro passo por concluir (`null` quando está completo).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skipped_at": {
+            "description": "Quando o guia foi saltado (`null` se não foi).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "steps": {
+            "description": "Os passos, por ordem.",
+            "items": {
+              "$ref": "#/components/schemas/TourStep"
+            },
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "description": "Versão da lista de passos (o conteúdo é do cliente).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "enabled",
+          "steps",
+          "completed_count",
+          "total",
+          "completed"
+        ],
+        "type": "object"
+      },
+      "TourStep": {
+        "properties": {
+          "completed": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "completed"
+        ],
+        "type": "object"
+      },
+      "TourStepReq": {
+        "additionalProperties": false,
+        "properties": {
+          "completed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "completed"
+        ],
+        "type": "object"
+      },
       "Transcript": {
         "properties": {
           "confidence": {
@@ -10422,6 +11205,69 @@
         },
         "type": "object"
       },
+      "UpdateProfileReq": {
+        "additionalProperties": false,
+        "description": "Alteração do perfil. Campo omisso = não muda. Um campo desconhecido é\n`422`; um campo só de leitura (`legal_name`, `email`, `department`) é `409`.",
+        "properties": {
+          "department": {
+            "description": "Só leitura: presente ⇒ `409`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "description": "1–80 caracteres; `\"\"` volta a usar o `username`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "description": "Só leitura: presente ⇒ `409`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_title": {
+            "description": "0–100 caracteres (`\"\"` apaga). Precisa de organização.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "legal_name": {
+            "description": "Só leitura: presente ⇒ `409`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "description": "`pt-AO` | `en` | `fr-FR` | `zh-CN` (e os antigos `pt` | `fr`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "description": "Móvel angolano, normalizado para E.164 como no gateway de SMS\n(`923 447 108`, `+244 923-447-108`); `\"\"` apaga. Precisa de organização.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "description": "Nome IANA (`Africa/Luanda`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UpdateRoleReq": {
         "properties": {
           "description": {
@@ -10568,6 +11414,19 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "UpdateTourReq": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "description": "Liga/desliga o guia (também em Preferências).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
         "type": "object"
       },
       "UpdateTrunkReq": {
@@ -11432,6 +12291,29 @@
         ],
         "type": "object"
       },
+      "WebauthnOptions": {
+        "properties": {
+          "ceremony_id": {
+            "description": "Id da cerimónia, a devolver no passo seguinte.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "options": {
+            "description": "`CredentialCreationOptions` / `CredentialRequestOptions` para\n`navigator.credentials.create/get` (campos binários em base64url).",
+            "type": "object"
+          }
+        },
+        "required": [
+          "ceremony_id",
+          "options",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "Webhook": {
         "properties": {
           "active": {
@@ -11919,6 +12801,148 @@
           }
         },
         "summary": "Segunda metade do login: troca o desafio + código pelos tokens de sessão.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/login/mfa/passkey": {
+      "post": {
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyLoginReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthOk"
+                }
+              }
+            },
+            "description": "Sessão aberta. Define o cookie `dlx_refresh`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Desafio inválido, ou asserção recusada (`passkeys.authentication_failed`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`passkeys.ceremony_not_found`."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Demasiadas tentativas nesta conta."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`passkeys.not_configured`."
+          }
+        },
+        "summary": "Passo 2: verifica a asserção e abre a sessão. O refresh token vai no\ncabeçalho `Set-Cookie: dlx_refresh=…; HttpOnly; SameSite=Strict; Path=/api/auth`.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/login/mfa/passkey-options": {
+      "post": {
+        "operationId": "login_options",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyChallengeReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebauthnOptions"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Desafio de MFA inválido ou expirado."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A conta não tem chaves de acesso (`passkeys.none_registered`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`passkeys.not_configured`."
+          }
+        },
+        "summary": "Segunda metade do login com chave de acesso, passo 1: as opções para\n`navigator.credentials.get`, restritas às chaves da conta do desafio.",
         "tags": [
           "auth"
         ]
@@ -31537,7 +32561,240 @@
                 }
               }
             },
+            "description": "username/password fora da regra, ou `profile.invalid_locale`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
             "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Password de uma conta gerida pelo Odoo (`profile.field_managed_by_odoo`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Atualiza os próprios dados: username e/ou password (cada campo é opcional).",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/me/avatar": {
+      "delete": {
+        "operationId": "delete_avatar",
+        "responses": {
+          "204": {
+            "description": "Removida."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não havia fotografia (`avatar.not_found`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Remove a fotografia.",
+        "tags": [
+          "account"
+        ]
+      },
+      "get": {
+        "operationId": "get_my_avatar",
+        "responses": {
+          "200": {
+            "description": "A imagem (`image/png`, `image/jpeg` ou `image/webp`)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem fotografia (`avatar.not_found`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A minha fotografia.",
+        "tags": [
+          "account"
+        ]
+      },
+      "put": {
+        "operationId": "put_avatar",
+        "requestBody": {
+          "content": {
+            "image/png": {
+              "schema": {
+                "items": {
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            }
+          },
+          "description": "PNG, JPEG ou WebP, até 1 MiB.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Corpo vazio (`profile.avatar_empty`)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Acima de 2 MiB (corte do servidor)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`profile.avatar_too_large` ou `profile.avatar_unsupported_type`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Muda a fotografia. O corpo é a imagem crua (PNG, JPEG ou WebP, até 1 MiB);\no tipo decide-se pelos bytes, não pelo `Content-Type`.",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/me/data-exports": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "1-100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataExportPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "page_token inválido"
           },
           "401": {
             "content": {
@@ -31555,9 +32812,248 @@
             "session": []
           }
         ],
-        "summary": "Atualiza os próprios dados: username e/ou password (cada campo é opcional).",
+        "summary": "Os meus pedidos de exportação, mais recentes primeiro.",
         "tags": [
-          "users"
+          "account"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataExport"
+                }
+              }
+            },
+            "description": "",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Já há uma em curso (`data_export.already_running`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Três nas últimas 24 h (`data_export.rate_limited`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Pede uma exportação dos meus dados. Uma de cada vez e no máximo 3 por 24 h.",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/me/data-exports/{export_id}": {
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataExport"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe ou é de outra pessoa (`data_export.not_found`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Um pedido meu.",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/me/data-exports/{export_id}/content": {
+      "get": {
+        "operationId": "content",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "exp",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sig",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`application/zip`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`data_export.not_found`."
+          }
+        },
+        "security": [
+          {}
+        ],
+        "summary": "O ZIP. Sem sessão: vale a assinatura. Assinatura errada, prazo expirado,\nficheiro apagado ou inexistente dão todos `404`.",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/me/data-exports/{export_id}/download-link": {
+      "post": {
+        "operationId": "download_link",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadLink"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`data_export.not_found`."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Ainda não está pronta, falhou ou expirou (`data_export.not_ready`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: link temporário (15 min) para descarregar o ZIP.",
+        "tags": [
+          "account"
         ]
       }
     },
@@ -31592,6 +33088,106 @@
         "summary": "Exportação dos próprios dados: perfil, organizações, salas criadas e\ngravações próprias — tudo lido das tabelas reais, para descarregar como\nficheiro. Não é um relatório de compliance formal, é o que a conta\nrealmente guarda sobre a pessoa.",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/api/users/me/join-preferences": {
+      "get": {
+        "operationId": "get_join_preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinPreferencesBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "As minhas preferências de entrada nas sessões (valem para todas as salas;\ntambém vêm no `POST /api/rooms/{room_code}/join`).",
+        "tags": [
+          "account"
+        ]
+      },
+      "put": {
+        "operationId": "put_join_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinPreferencesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinPreferencesBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`join_preferences.invalid_captions_language`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Campo desconhecido."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Substitui as preferências de entrada.",
+        "tags": [
+          "account"
         ]
       }
     },
@@ -31697,6 +33293,62 @@
         ]
       }
     },
+    "/api/users/me/mfa/backup-codes/regenerate": {
+      "post": {
+        "operationId": "regenerar_codigos",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodigosRecuperacao"
+                }
+              }
+            },
+            "description": "Códigos novos (mostrados uma vez)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem reautenticação recente (`auth.reauthentication_required`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O TOTP não está activo (`mfa.not_enabled`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: gera um conjunto NOVO de códigos de recuperação (os\nantigos deixam de valer) e mostra-os uma vez. Exige reautenticação recente\ne o TOTP activo.",
+        "tags": [
+          "mfa"
+        ]
+      }
+    },
     "/api/users/me/mfa/disable": {
       "post": {
         "operationId": "desactivar",
@@ -31723,6 +33375,16 @@
               }
             },
             "description": "Sessão inválida, código errado/já usado, ou MFA não inscrito."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "É o último factor e uma organização da conta exige 2FA (`security.last_factor_required`)."
           },
           "429": {
             "content": {
@@ -31836,6 +33498,106 @@
         "summary": "Marca todas as chamadas perdidas do utilizador como vistas.",
         "tags": [
           "calls"
+        ]
+      }
+    },
+    "/api/users/me/notification-preferences": {
+      "get": {
+        "operationId": "get_notification_preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferences"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "As minhas preferências de notificação, por tipo e canal, e o estado de\nentrega de cada canal nesta instalação.",
+        "tags": [
+          "account"
+        ]
+      },
+      "put": {
+        "operationId": "put_notification_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutNotificationPreferencesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferences"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`notification_preferences.unknown_kind`, `notification_preferences.unknown_channel` ou `notification_preferences.duplicate`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Campo desconhecido."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Substitui as preferências de notificação. Guardar para um canal sem entrega\n(`not_configured`) é aceite — fica a vontade da pessoa — mas nada é enviado\npor ele enquanto não houver adaptador.",
+        "tags": [
+          "account"
         ]
       }
     },
@@ -32131,6 +33893,521 @@
         ]
       }
     },
+    "/api/users/me/passkeys": {
+      "get": {
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "As minhas chaves de acesso (no máximo 20 por conta).",
+        "tags": [
+          "security"
+        ]
+      },
+      "post": {
+        "operationId": "finish_registration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinishRegistrationReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyInfo"
+                }
+              }
+            },
+            "description": "",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nome inválido (`passkeys.invalid_name`)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Resposta do autenticador recusada (`passkeys.registration_failed`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`auth.reauthentication_required`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Cerimónia inexistente, usada, vencida ou de outra pessoa (`passkeys.ceremony_not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Esta credencial já está registada (`passkeys.already_registered`)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`passkeys.not_configured`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Conclui o registo com a resposta do autenticador. A cerimónia é consumida\n(uma tentativa por cerimónia).",
+        "tags": [
+          "security"
+        ]
+      }
+    },
+    "/api/users/me/passkeys/begin-registration": {
+      "post": {
+        "operationId": "begin_registration",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebauthnOptions"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem reautenticação recente (`auth.reauthentication_required`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Já tem 20 chaves (`passkeys.limit_reached`)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`passkeys.not_configured`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: começa o registo de uma chave de acesso. Devolve as\nopções para `navigator.credentials.create`. Exige reautenticação recente.",
+        "tags": [
+          "security"
+        ]
+      }
+    },
+    "/api/users/me/passkeys/{passkey_id}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "passkey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removida."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`auth.reauthentication_required`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`passkeys.not_found`."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "É o último factor e a organização exige 2FA (`security.last_factor_required`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Remove uma chave de acesso. Exige reautenticação recente, e recusa remover\no último factor quando a organização exige 2FA.",
+        "tags": [
+          "security"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "passkey_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyInfo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe ou é de outra pessoa (`passkeys.not_found`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Uma chave de acesso minha.",
+        "tags": [
+          "security"
+        ]
+      }
+    },
+    "/api/users/me/profile": {
+      "get": {
+        "operationId": "get_profile",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O meu perfil: dados editáveis, só de leitura (com a origem) e estado da\npassword.",
+        "tags": [
+          "account"
+        ]
+      },
+      "patch": {
+        "operationId": "update_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`profile.invalid_display_name`, `profile.invalid_job_title`, `profile.invalid_timezone`, `profile.invalid_locale`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Campo só de leitura: `profile.field_managed_by_odoo` (conta gerida pelo Odoo — alterar lá) ou `profile.field_read_only`; ou `profile.organization_required` (cargo/telefone sem organização)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Telefone que não é um móvel angolano (`profile.invalid_phone`), ou corpo com campo desconhecido."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Altera o meu perfil. Valida TUDO antes de escrever: um campo inválido não\ndeixa os outros meio gravados.",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/me/reauthentication": {
+      "post": {
+        "description": "Aceita a password (numa conta gerida pelo Odoo, verificada no Odoo; com o\nOdoo em baixo, o hash da última entrada, como no login) ou um código TOTP /\nde recuperação. Uma conta só com SSO e sem MFA não tem como se\nreautenticar aqui (`reauthentication.no_method`).",
+        "operationId": "reauthenticate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reauthenticated"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nem `password` nem `code` (`reauthentication.missing_proof`)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Prova errada (`reauthentication.failed`) ou sessão terminada."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Access token anterior às sessões (`sessions.current_unknown`), ou conta sem método (`reauthentication.no_method`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Cinco provas erradas em 5 minutos."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Prova a identidade outra vez, para alterar factores (chaves de acesso,\ncódigos de recuperação). Vale `REAUTH_WINDOW_SECS` para ESTA sessão.",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/api/users/me/room": {
       "get": {
         "operationId": "my_room",
@@ -32267,6 +34544,88 @@
         ]
       }
     },
+    "/api/users/me/room/rotate-pin": {
+      "post": {
+        "operationId": "rotate_my_room_pin",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalRoom"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A sala pessoal não tem dial-in activo (`personal_room.no_dial_in`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: «Novo PIN» do dial-in da sala pessoal. O PIN antigo\ndeixa de abrir a sala pelo telefone no mesmo instante. Auditado.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/me/security": {
+      "get": {
+        "operationId": "security",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityOverview"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "«Segurança»: o estado da password, do TOTP e das chaves de acesso.",
+        "tags": [
+          "security"
+        ]
+      }
+    },
     "/api/users/me/sessions": {
       "get": {
         "operationId": "list_sessions",
@@ -32303,6 +34662,52 @@
         "summary": "Lista as sessões activas (uma por `session_id` não revogado e não\nexpirado) — cada refresh roda o `token_hash`, mas mantém o `session_id`,\npor isso há exactamente uma linha viva por dispositivo ligado.",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/api/users/me/sessions/revoke-others": {
+      "post": {
+        "operationId": "revoke_others",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokedCount"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O access token é anterior às sessões e não diz qual é a actual (`sessions.current_unknown`): renove a sessão e repita."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: termina todas as minhas sessões excepto a deste\npedido.",
+        "tags": [
+          "sessions"
         ]
       }
     },
@@ -32351,7 +34756,7 @@
             "session": []
           }
         ],
-        "summary": "Termina uma sessão à distância (ex.: \"não reconheço este telemóvel\").\nRevoga a linha viva do `session_id`: o próximo refresh desse dispositivo\nfalha e ele tem de voltar a autenticar-se.",
+        "summary": "Termina uma sessão à distância (ex.: \"não reconheço este telemóvel\").\nRevoga a linha viva do `session_id` e a sessão: o próximo refresh desse\ndispositivo falha, o access token dele deixa de abrir a API de imediato\n(`auth.session_revoked`) e os WebSockets dele fecham.",
         "tags": [
           "users"
         ]
@@ -32470,6 +34875,285 @@
         "summary": "Armazenamento de quem está autenticado: as gravações que carregou e os\nquadros de que é dono. Serve a edição pessoal, onde não há administração de\norganização para consultar.",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/api/users/me/tour": {
+      "get": {
+        "operationId": "get_tour",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TourState"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O meu progresso no guia.",
+        "tags": [
+          "account"
+        ]
+      },
+      "patch": {
+        "operationId": "update_tour",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTourReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TourState"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Corpo inválido ou campo desconhecido."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Liga ou desliga o guia.",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/me/tour/restart": {
+      "post": {
+        "operationId": "restart_tour",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TourState"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: recomeça o guia do início (liga-o, limpa os passos).",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/me/tour/skip": {
+      "post": {
+        "operationId": "skip_tour",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TourState"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: salta o guia (fica desligado, com a data).",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/me/tour/steps/{step_id}": {
+      "put": {
+        "operationId": "put_tour_step",
+        "parameters": [
+          {
+            "description": "Id do passo (`home.start-now`, …).",
+            "in": "path",
+            "name": "step_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TourStepReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TourState"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Passo fora da versão actual (`tour.unknown_step`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Marca (ou desmarca) um passo. O id é validado contra a lista versionada.\nIdempotente: marcar duas vezes é o mesmo que uma.",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/users/{user_id}/avatar": {
+      "get": {
+        "operationId": "get_avatar",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A imagem."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem fotografia, ou pessoa fora das minhas organizações (`avatar.not_found`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A fotografia de alguém com quem partilho uma organização activa (ou a\nminha). De outra pessoa qualquer: `404`, como se não existisse.",
+        "tags": [
+          "account"
         ]
       }
     },

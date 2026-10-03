@@ -149,6 +149,16 @@ pub struct Config {
     pub voice_ramais_domain_suffix: String,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
     pub recordings_dir: std::path::PathBuf,
+    /// Ficheiros ZIP de «os meus dados» (`DATA_EXPORTS_DIR`). Por omissão
+    /// `<RECORDINGS_DIR>/exports`, no mesmo armazenamento das gravações.
+    pub data_exports_dir: std::path::PathBuf,
+    /// Chaves de acesso (WebAuthn, ADR-0011): o RP ID (`WEBAUTHN_RP_ID`, o
+    /// domínio, p.ex. `meet.delonix.co.ao`) e a origem do web
+    /// (`WEBAUTHN_RP_ORIGIN`, `https://meet.delonix.co.ao`). Sem os dois, as
+    /// chaves de acesso ficam `not_configured` — não se adivinha a origem a
+    /// partir de um cabeçalho do pedido.
+    pub webauthn_rp_id: Option<String>,
+    pub webauthn_rp_origin: Option<String>,
     /// URL do Redis para pub/sub cross-nó (presença multi-instância).
     /// Opcional — se vazio, o servidor opera em modo single-node (sem Redis).
     pub redis_url: Option<String>,
@@ -489,6 +499,17 @@ impl Config {
                 .var("RECORDINGS_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("recordings")),
+            data_exports_dir: src
+                .var("DATA_EXPORTS_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    src.var("RECORDINGS_DIR")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("recordings"))
+                        .join("exports")
+                }),
+            webauthn_rp_id: src.var("WEBAUTHN_RP_ID").ok().filter(|s| !s.is_empty()),
+            webauthn_rp_origin: src.var("WEBAUTHN_RP_ORIGIN").ok().filter(|s| !s.is_empty()),
             redis_url: src.var("REDIS_URL").ok().filter(|s| !s.is_empty()),
             sfu_external_ip: src.var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()),
             sfu_udp_min: bounded_env(

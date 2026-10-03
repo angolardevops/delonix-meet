@@ -138,6 +138,15 @@ pub async fn my_storage_usage(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<UserStorageUsage>, ApiError> {
+    Ok(Json(user_storage_usage(&state, auth.user_id).await?))
+}
+
+/// O uso de armazenamento de uma pessoa: a mesma leitura da rota, partilhada
+/// com a exportação «os meus dados».
+pub(crate) async fn user_storage_usage(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<UserStorageUsage, ApiError> {
     let row: Row = sqlx::query_as(
         "SELECT
            (SELECT COUNT(*) FROM recordings WHERE uploader_id = $1),
@@ -145,16 +154,16 @@ pub async fn my_storage_usage(
            (SELECT COUNT(*) FROM whiteboards WHERE owner_id = $1),
            (SELECT COALESCE(SUM(octet_length(png)), 0)::bigint FROM whiteboards WHERE owner_id = $1)",
     )
-    .bind(auth.user_id)
+    .bind(user_id)
     .fetch_one(&state.db)
     .await?;
     let (recordings, whiteboards, usage) = buckets(row);
-    Ok(Json(UserStorageUsage {
-        user_id: auth.user_id,
+    Ok(UserStorageUsage {
+        user_id,
         recordings,
         whiteboards,
         used_bytes: usage.used_bytes(),
-    }))
+    })
 }
 
 /// A quota perante uma gravação NOVA de `incoming` bytes carregada por

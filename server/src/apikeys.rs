@@ -555,6 +555,7 @@ pub async fn v1_join_bot_room(
             lobby: None,
             wr: None,
             guest: false,
+            sid: None, // um bot não tem sessão de pessoa
         },
     )?;
 

@@ -449,11 +449,16 @@ async fn users_me_get_and_patch(db: sqlx::PgPool) {
     assert_eq!(me["username"], "Ana Nova");
     assert_eq!(me["locale"], "en");
 
-    // Locale desconhecido é IGNORADO em silêncio (200, fica o anterior).
-    let (st, me) = app
+    // Locale desconhecido era IGNORADO em silêncio (200). Desde a frente B
+    // (R204) é recusado com código estável, e o anterior fica.
+    let (st, err) = app
         .patch("/api/users/me", Some(&admin.token), json!({"locale": "xx"}))
         .await;
-    assert_eq!(st, 200);
+    assert_eq!(
+        (st, err["code"].as_str()),
+        (400, Some("profile.invalid_locale"))
+    );
+    let (_, me) = app.get("/api/users/me", Some(&admin.token)).await;
     assert_eq!(me["locale"], "en");
 
     // Validações.

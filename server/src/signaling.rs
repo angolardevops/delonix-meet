@@ -207,6 +207,11 @@ pub enum ClientMsg {
         active: bool,
         #[serde(default)]
         e2ee_key: Option<Secret>,
+        /// O anfitrião confirmou o início. Só é exigido a quem tem «avisar
+        /// antes de gravar» nas preferências de entrada; sem a preferência, o
+        /// pedido antigo (sem este campo) grava como sempre.
+        #[serde(default)]
+        confirmed: bool,
     },
     /// Anuncia partilha de ecrã: a próxima track de vídeo sem rid é o ecrã.
     ScreenShare {
@@ -661,6 +666,9 @@ pub enum ServerMsg {
         active: bool,
         by: String,
     },
+    /// Só para o anfitrião que pediu: tem «avisar antes de gravar» ligado e o
+    /// pedido não trazia `confirmed: true`. A gravação NÃO começou.
+    RecordingConfirmationRequired,
     WbStroke {
         stroke: WbStrokeData,
     },
@@ -3736,6 +3744,12 @@ pub async fn ws_handler(
         extras,
         wait,
     } = seat_policy(&claims);
+    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
+    // token de sala ainda válido volta a abrir o /ws.
+    if let Some(sid) = claims.sid {
+        crate::sessions::ensure_active(&state, claims.sub, sid).await?;
+    }
+    let session_id = claims.sid;
     let username = claims.name.clone().unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
     // Uma fonte nunca é anfitriã nem admite, diga o token o que disser.
@@ -3765,6 +3779,7 @@ pub async fn ws_handler(
                 extras,
                 wait,
                 source,
+                session_id,
             },
         )
     }))
@@ -3814,6 +3829,8 @@ struct SocketSession {
     /// Uma câmara do estúdio (token de fonte). Entra sem sala de espera e só
     /// manda o que `studio_realtime::source_may_send` permite.
     source: Option<crate::studio_realtime::SourceSession>,
+    /// A sessão da conta de onde se entrou: terminá-la fecha este /ws.
+    session_id: Option<Uuid>,
 }
 
 /// Cria uma sala-filha de grupo (herda topologia/E2EE da principal).
@@ -4195,6 +4212,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         mut extras,
         wait,
         source,
+        session_id,
     } = session;
     // Só um participante que não é anfitrião pode ter de esperar; a sala de
     // espera de runtime (se o anfitrião a mudou) ganha à configurada. Uma fonte
@@ -4245,6 +4263,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // Fila de saída LIMITADA (ver `PeerTx`): um consumidor lento passa a
     // custar o próprio socket em vez da memória do nó inteiro.
     let (tx, mut rx, shutdown) = PeerTx::new(state.config.ws_queue_cap, state.metrics.clone());
+    // Terminar a sessão (`sessions::revoke`) acorda este `shutdown`: o laço de
+    // entrada sai pelo caminho ordenado de sempre.
+    let _session_guard = session_id.map(|sid| state.session_kills.register(sid, shutdown.clone()));
 
     // Outbound: hub -> websocket. Um Ping periódico mantém a ligação viva
     // (proxies fecham WebSockets ociosos): sem tráfego, o socket cairia e —
@@ -4428,7 +4449,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                 _ => break,
             },
             _ = shutdown.notified() => {
-                tracing::warn!(%room_id, %peer_id, "sessão terminada: fila de saída em transbordo");
+                tracing::warn!(%room_id, %peer_id, "sessão terminada: sessão da conta terminada ou fila de saída em transbordo");
                 break;
             }
         };
@@ -4559,8 +4580,26 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                         ServerMsg::Presenting { from: peer_id, on },
                     );
                 }
-                Ok(ClientMsg::ServerRecord { active, e2ee_key }) if is_host && sfu_mode => {
-                    if active {
+                Ok(ClientMsg::ServerRecord {
+                    active,
+                    e2ee_key,
+                    confirmed,
+                }) if is_host && sfu_mode => {
+                    // «Avisar antes de gravar» é imposto AQUI, não no cliente:
+                    // sem a confirmação explícita a gravação não começa.
+                    let needs_confirmation = active
+                        && {
+                            let warn = crate::account::load_join_preferences(&state.db, user_id)
+                                .await
+                                .map(|p| p.warn_before_recording)
+                                .unwrap_or(false);
+                            delonix_meet_domain::identity::join_preferences::recording_start_decision(
+                            warn, confirmed,
+                        ) == delonix_meet_domain::identity::join_preferences::RecordingStart::ConfirmationRequired
+                        };
+                    if needs_confirmation {
+                        let _ = tx.send(ServerMsg::RecordingConfirmationRequired);
+                    } else if active {
                         // Chave E2EE (se cedida): 32 bytes AES-256 em base64.
                         use base64::Engine as _;
                         let key = e2ee_key
@@ -4779,6 +4818,7 @@ mod tests {
         let msg = ClientMsg::ServerRecord {
             active: true,
             e2ee_key: Some(Secret(chave.to_string())),
+            confirmed: false,
         };
         let s = format!("{msg:?}");
         assert!(!s.contains(chave), "a chave apareceu no Debug: {s}");
@@ -4795,7 +4835,9 @@ mod tests {
         let raw = r#"{"type":"server-record","active":true,"e2ee_key":"QUJD"}"#;
         let msg: ClientMsg = serde_json::from_str(raw).expect("o cliente escreve isto");
         match msg {
-            ClientMsg::ServerRecord { active, e2ee_key } => {
+            ClientMsg::ServerRecord {
+                active, e2ee_key, ..
+            } => {
                 assert!(active);
                 assert_eq!(e2ee_key.as_ref().map(|s| s.expose()), Some("QUJD"));
             }
@@ -7979,6 +8021,7 @@ mod b1_sala_tests {
             lobby: None,
             wr: None,
             guest,
+            sid: None,
         }
     }
 

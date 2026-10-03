@@ -151,6 +151,7 @@ pub fn guest_claims(room: &Room, guest_id: Uuid, name: &str, now: i64, ttl: i64)
         lobby: Some(true),
         wr: Some(room.waiting_room),
         guest: true,
+        sid: None, // um convidado não tem conta, logo não tem sessão
     }
 }
 
