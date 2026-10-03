@@ -6,7 +6,9 @@
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Alert, Button } from '../../ui/kit'
+import { orgErrorMessage } from '../admin/orgShared'
 import { enumKey, reasonKey } from './format'
+import { errorCode, errorKey } from './trunkForm'
 
 /** Travessão para «não se aplica» — nunca no lugar de um valor por medir. */
 export const NA = '—'
@@ -27,7 +29,18 @@ export function useTelecomText() {
     },
     [t],
   )
-  return { reason, label }
+  /**
+   * Uma recusa do servidor na língua de quem lê: pelo CÓDIGO quando a consola
+   * o conhece; senão a recusa de permissão ou, em último caso, o texto dele.
+   */
+  const failure = useCallback(
+    (err: unknown) => {
+      const k = errorKey(errorCode(err))
+      return k ? t(k) : orgErrorMessage(err, t, 'telecom.erro.generico')
+    },
+    [t],
+  )
+  return { reason, label, failure }
 }
 
 export function LoadMore({ next, busy, err, onMore }: { next: string | null; busy: boolean; err: string; onMore: () => void }) {

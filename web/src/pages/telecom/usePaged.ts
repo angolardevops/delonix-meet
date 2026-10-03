@@ -59,5 +59,5 @@ export function usePaged<T>(load: (token: string | undefined, signal: AbortSigna
     reloadFirst()
   }, [reloadFirst])
 
-  return { state, reload, loadMore, busy, err }
+  return { state, reload, loadMore, busy, err, mutate }
 }

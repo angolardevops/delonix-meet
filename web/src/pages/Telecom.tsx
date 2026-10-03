@@ -1,19 +1,20 @@
 /**
- * Telefonia, SIP e SMS — modo de LEITURA (ADR-0009): estado do SBC,
- * operadoras pela ordem de encaminhamento, plano de marcação, registo SIP,
- * chamadas externas e consumo do mês.
+ * Telefonia, SIP e SMS (ADR-0009): estado do SBC, operadoras pela ordem de
+ * encaminhamento, plano de marcação, registo SIP, chamadas externas, consumo
+ * do mês e câmbio.
  *
- * Nada aqui escreve. Criar, editar e reordenar operadoras, editar o plano,
- * testar um número, revelar credenciais e reiniciar o registo são lotes
- * seguintes, e por isso não há botões inertes no lugar deles. O bloco de SMS
- * do desenho continua na Administração.
+ * Escreve-se nas operadoras (criar, editar, activar, apagar, ordenar, preços)
+ * e no câmbio. O que continua sem ecrã não tem botão inerte no lugar: as
+ * definições SIP da organização configuram-se pela API, e o bloco de SMS do
+ * desenho continua na Administração.
  *
  * A entrada no rail só aparece a administradores, mas isso não é autorização:
  * quem decide é o servidor, e uma recusa aparece como recusa.
  *
  * Uma organização sem definições SIP e sem operadoras não tem telefonia: a
- * página diz isso, em vez de seis cartões de zeros. Um pedido que falha
- * mostra o erro no cartão respectivo — nunca «sem dados».
+ * página diz isso, em vez de seis cartões de zeros — e deixa ligar a primeira
+ * operadora. Um pedido que falha mostra o erro no cartão respectivo — nunca
+ * «sem dados».
  */
 import { useTranslation } from 'react-i18next'
 import { getDialPlan, getSipRegistration, getSipSettings, getTelephonyUsage, listCallRecords, listTrunks } from '../api'
@@ -25,6 +26,7 @@ import { refusalAware, useOrgSelection } from './admin/orgShared'
 import CallsCard from './telecom/CallsCard'
 import DialPlanCard from './telecom/DialPlanCard'
 import { pageMode } from './telecom/format'
+import RatesCard from './telecom/RatesCard'
 import { useTelecomText } from './telecom/shared'
 import SipCard from './telecom/SipCard'
 import StatusHeader from './telecom/StatusHeader'
@@ -41,7 +43,7 @@ export default function Telecom() {
     <>
       <PageBar
         title={t('telecom.titulo')}
-        meta={org ? <span data-testid="tel-meta">{[org.name, t('telecom.soLeitura')].join(' · ')}</span> : undefined}
+        meta={org ? <span data-testid="tel-meta">{org.name}</span> : undefined}
       >
         {orgs.length > 1 && org && (
           <Select value={org.id} onChange={(e) => setOrgId(e.target.value)} aria-label={t('org.escolherOrg')} className="org-orgselect">
@@ -107,6 +109,7 @@ function TelecomBody({ orgId }: { orgId: string }) {
             trunks.reload()
           }}
         />
+        <TrunksCard orgId={orgId} {...trunks} onChanged={sip.reload} />
       </div>
     )
   }
@@ -160,8 +163,15 @@ function Sections({
   trunks,
 }: {
   orgId: string
-  sip: { state: Async<{ settings: SipSettings; registration: SipRegistration }> }
-  trunks: { state: Async<PagedList<Trunk>>; reload: () => void; loadMore: () => void; busy: boolean; err: string }
+  sip: { state: Async<{ settings: SipSettings; registration: SipRegistration }>; reload: () => void }
+  trunks: {
+    state: Async<PagedList<Trunk>>
+    reload: () => void
+    loadMore: () => void
+    busy: boolean
+    err: string
+    mutate: (fn: (d: PagedList<Trunk>) => PagedList<Trunk>) => void
+  }
 }) {
   const { t } = useTranslation()
   const plan = useAsync((signal) => refusalAware(getDialPlan(orgId, signal), t), [orgId])
@@ -172,7 +182,15 @@ function Sections({
   return (
     <div className="tel-grid">
       <div className="tel-col">
-        <TrunksCard state={trunks.state} reload={trunks.reload} loadMore={trunks.loadMore} busy={trunks.busy} err={trunks.err} />
+        <TrunksCard
+          orgId={orgId}
+          {...trunks}
+          onChanged={() => {
+            // O estado do SBC conta operadoras e o plano mostra-as pelo nome.
+            sip.reload()
+            plan.reload()
+          }}
+        />
         <DialPlanCard state={plan.state} reload={plan.reload} trunks={trunkList} />
         <CallsCard state={calls.state} reload={calls.reload} loadMore={calls.loadMore} busy={calls.busy} err={calls.err} />
       </div>
@@ -180,6 +198,7 @@ function Sections({
         {/* O erro das definições já está no cabeçalho; aqui só se repete o que há. */}
         {sip.state.s === 'ready' && <SipCard settings={sip.state.d.settings} registration={sip.state.d.registration} />}
         <UsageCard state={usage.state} reload={usage.reload} />
+        <RatesCard orgId={orgId} onChanged={usage.reload} />
       </div>
     </div>
   )
