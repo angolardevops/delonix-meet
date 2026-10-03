@@ -297,7 +297,7 @@ if (destinoB.status === 201 && destinoB.json?.id) {
   })
   await recusado('A apaga um destino da org B', d, { token: A.token, method: 'DELETE' })
   const depois = await req(d, { token: B.token })
-  if (depois.status === 200 && depois.json?.url === 'rtmp://10.0.0.9/live') ok('e o destino da B CONTINUA LÁ, inalterado')
+  if (depois.status === 200 && depois.json?.url === 'rtmp://destino-b.exemplo.invalid/live') ok('e o destino da B CONTINUA LÁ, inalterado')
   else nok('e o destino da B CONTINUA LÁ, inalterado', `${depois.status}: ${JSON.stringify(depois.json).slice(0, 120)}`)
 
   // Emitir com o destino da B a partir de uma sala da A. A recusa chega numa
