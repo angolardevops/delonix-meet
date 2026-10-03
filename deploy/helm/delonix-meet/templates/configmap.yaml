@@ -1,0 +1,62 @@
+{{- include "dm.validate" . -}}
+{{- $v := .Values -}}
+{{- /*
+  Configuração NÃO secreta do servidor. O chart nunca liga o modo inseguro do
+  servidor (a variável que aceita segredos de desenvolvimento): o portão
+  scripts/check-helm.sh falha se ela aparecer no render.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: delonix-config
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+data:
+  BIND_ADDR: "0.0.0.0:8180"
+  LOG_FORMAT: json
+  DELONIX_EDITION: {{ $v.edition | quote }}
+  {{- with $v.registrationMode }}
+  REGISTRATION_MODE: {{ . | quote }}
+  {{- end }}
+  {{- with $v.registrationDomains }}
+  REGISTRATION_DOMAINS: {{ join "," . | quote }}
+  {{- end }}
+  {{- with $v.tenancyMode }}
+  TENANCY_MODE: {{ . | quote }}
+  {{- end }}
+  DELONIX_MIGRATE: {{ ternary "0" "1" (eq $v.server.migrations.mode "job") | quote }}
+  CORS_ORIGINS: {{ printf "https://%s" $v.host | quote }}
+  RECORDINGS_DIR: /var/lib/delonix/recordings
+  # Media relay-only pelo coturn: o IP do pod não é alcançável de fora.
+  FORCE_TURN_RELAY: {{ ternary "1" "0" $v.server.forceTurnRelay | quote }}
+  SFU_EXTERNAL_IP: ""
+  {{- with include "dm.turnHost" . }}
+  TURN_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with include "dm.redisUrl" . }}
+  REDIS_URL: {{ . | quote }}
+  {{- end }}
+  {{- if $v.server.internal.enabled }}
+  INTERNAL_BIND_ADDR: "0.0.0.0:8181"
+  {{- end }}
+  {{- if $v.server.grpc.enabled }}
+  GRPC_BIND_ADDR: "0.0.0.0:9180"
+  GRPC_TLS_CERT: /etc/delonix/grpc-tls/tls.crt
+  GRPC_TLS_KEY: /etc/delonix/grpc-tls/tls.key
+  GRPC_CLIENT_CA: /etc/delonix/grpc-tls/ca.crt
+  {{- end }}
+  {{- if $v.server.phoneBridge.enabled }}
+  PHONE_BRIDGE_SIP_BIND: {{ printf "0.0.0.0:%v" $v.server.phoneBridge.sipPort | quote }}
+  PHONE_BRIDGE_FREESWITCH_IPS: {{ join "," $v.server.phoneBridge.freeswitchIPs | quote }}
+  PHONE_BRIDGE_RTP_MIN: {{ $v.server.phoneBridge.rtp.min | quote }}
+  PHONE_BRIDGE_RTP_MAX: {{ $v.server.phoneBridge.rtp.max | quote }}
+  {{- end }}
+  {{- with $v.server.telephony.eslAddr }}
+  TELEPHONY_ESL_ADDR: {{ . | quote }}
+  {{- end }}
+  {{- with $v.server.telephony.kamailioRpcUrl }}
+  TELEPHONY_KAMAILIO_RPC_URL: {{ . | quote }}
+  {{- end }}
+  {{- range $k, $val := $v.server.config }}
+  {{ $k }}: {{ $val | toString | quote }}
+  {{- end }}

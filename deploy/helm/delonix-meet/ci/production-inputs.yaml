@@ -1,0 +1,8 @@
+# Entradas de PROVA do portão (scripts/check-helm.sh) para o perfil de
+# produção: nomes e endereços de documentação (RFC 5737), nenhum real.
+image:
+  tag: v0.0.0-portao
+secrets:
+  existingSecret: delonix-meet-secrets
+coturn:
+  externalIP: 203.0.113.10

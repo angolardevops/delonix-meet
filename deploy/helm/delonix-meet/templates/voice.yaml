@@ -1,0 +1,437 @@
+{{- $v := .Values -}}
+{{- $vo := $v.voice -}}
+{{- if $vo.enabled }}
+{{- $ns := .Release.Namespace -}}
+{{- $tlsSecret := $vo.kamailio.tls.existingSecret | default "kamailio-tls" -}}
+#   PBX do cliente ──tronco SIP──▶ Kamailio ──▶ FreeSWITCH ──HTTP──▶ servidor
+#   (fora do cluster)              (bordo)      (IVR, ponte)        (listener interno)
+#
+# A configuração sai dos ficheiros de voice/ do repo (files/voice/ são ligações
+# simbólicas para lá; `helm package` resolve-as). Só a allowlist do bordo e o
+# pool do dispatcher são gerados aqui, porque dependem dos valores.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kamailio-cfg
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+data:
+  kamailio.cfg: |
+    {{- .Files.Get "files/voice/kamailio.cfg" | nindent 4 }}
+  tls.cfg: |
+    {{- .Files.Get "files/voice/tls.cfg" | nindent 4 }}
+  # Pool de nós FreeSWITCH (grupo 1). `freeswitch` é o Service headless: o SIP
+  # tem de ir ao IP do pod.
+  dispatcher.list: |
+    1 sip:freeswitch:5080 0 0 weight=100
+  # `address_file` do módulo permissions: grupo, IP, máscara, porta, etiqueta.
+  # Vazio = o bordo responde 403 a todas as origens.
+  address: |
+    {{- range $vo.trunks }}
+    {{ .group | default 1 }} {{ .ip }} {{ .mask }} {{ .port | default 0 }} {{ .tag }}
+    {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: freeswitch-entrypoint
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+data:
+  freeswitch-entrypoint.sh: |
+    {{- .Files.Get "files/voice/freeswitch-entrypoint.sh" | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: freeswitch-meet
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+data:
+  {{- range $nome := list "00_delonix_dialin.xml" "00_delonix_extensions.xml" "conference.conf.xml" "xml_curl.conf.xml" "internal.xml" "dialin_ivr.lua" "ramais_dial.lua" }}
+  {{ $nome }}: |
+    {{- $.Files.Get (printf "files/voice/freeswitch/%s" $nome) | nindent 4 }}
+  {{- end }}
+{{- if not $vo.kamailio.tls.existingSecret }}
+---
+{{- /* Só laboratório (validado em _helpers.tpl): self-signed, preservado entre upgrades. */}}
+{{- $antigo := (lookup "v1" "Secret" $ns "kamailio-tls") | default dict -}}
+{{- $d := get $antigo "data" | default dict -}}
+{{- $cert := genSelfSignedCert (printf "kamailio.%s.svc" $ns) nil (list (printf "kamailio.%s.svc" $ns) (printf "kamailio.%s.svc.cluster.local" $ns)) 825 }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kamailio-tls
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ get $d "tls.crt" | default ($cert.Cert | b64enc) }}
+  tls.key: {{ get $d "tls.key" | default ($cert.Key | b64enc) }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: freeswitch
+  labels:
+    app: freeswitch
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app: freeswitch
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: freeswitch
+        {{- include "dm.labels" . | nindent 8 }}
+      annotations:
+        checksum/meet: {{ printf "%s%s" (.Files.Get "files/voice/freeswitch-entrypoint.sh") (.Files.Glob "files/voice/freeswitch/*").AsConfig | sha256sum }}
+    spec:
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      {{- if $vo.freeswitch.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      {{- with $vo.freeswitch.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $vo.freeswitch.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: freeswitch
+          image: {{ printf "%s:%s" $vo.freeswitch.image.repository $vo.freeswitch.image.tag | quote }}
+          imagePullPolicy: {{ $vo.freeswitch.image.pullPolicy }}
+          # Nunca se arranca a configuração vanilla da imagem: o entrypoint
+          # copia-a, fecha o que ela deixa aberto e põe por cima a do Meet.
+          command: ["/bin/sh", "/entrypoint/freeswitch-entrypoint.sh"]
+          env:
+            # Dois endereços, dois listeners: o IVR fala com o INTERNO, os
+            # ramais (mod_xml_curl) pedem /api/voice/ivr/* ao PÚBLICO.
+            - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.{{ $ns }}.svc.cluster.local:8181" }
+            - { name: DELONIX_API_URL, value: "http://delonix-server.{{ $ns }}.svc.cluster.local:8180" }
+            - { name: DELONIX_RAMAIS_SIP_PORT, value: {{ $vo.freeswitch.ramaisSipPort | quote }} }
+            - name: VOICE_INTERNAL_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: VOICE_INTERNAL_SECRET } }
+            {{- with $vo.freeswitch.ivrVoice }}
+            - { name: DELONIX_IVR_VOICE, value: {{ . | quote }} }
+            {{- end }}
+            {{- with $vo.ramais.acl }}
+            - { name: DELONIX_RAMAIS_ACL, value: {{ join "," . | quote }} }
+            {{- end }}
+            {{- with $vo.freeswitch.externalIP }}
+            - { name: DELONIX_EXTERNAL_IP, value: {{ . | quote }} }
+            - { name: DELONIX_RTP_MIN, value: {{ $vo.freeswitch.rtp.min | quote }} }
+            - { name: DELONIX_RTP_MAX, value: {{ $vo.freeswitch.rtp.max | quote }} }
+            {{- end }}
+          ports:
+            - { name: sip-dialin, containerPort: 5080, protocol: UDP }
+            - { name: sip-ramais, containerPort: {{ $vo.freeswitch.ramaisSipPort }}, protocol: UDP }
+          readinessProbe:
+            exec: { command: ["/bin/sh", "-c", "/usr/local/freeswitch/bin/fs_cli -p \"$(sed -n 's/.*name=\"password\" value=\"\\([^\"]*\\)\".*/\\1/p' /conf/autoload_configs/event_socket.conf.xml)\" -x 'sofia status' | grep -q external"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml $vo.freeswitch.resources | nindent 12 }}
+          # A imagem corre como root e o entrypoint reescreve a configuração:
+          # não dá para non-root nem para rootfs só de leitura sem mudar a
+          # imagem (README §Achados). Fica sem escalada e sem capacidades.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          # /conf NÃO é um volume: o entrypoint de origin/develop faz
+          # `rm -rf /conf`, que falha num ponto de montagem (README §Achados).
+          # O rootfs desta imagem já é de escrita, por isso nada se perde.
+          volumeMounts:
+            - { name: meet, mountPath: /meet, readOnly: true }
+            - { name: entrypoint, mountPath: /entrypoint, readOnly: true }
+      volumes:
+        - { name: meet, configMap: { name: freeswitch-meet } }
+        - { name: entrypoint, configMap: { name: freeswitch-entrypoint } }
+---
+# Headless: o Kamailio tem de falar com o IP do POD (SIP sobre UDP não
+# sobrevive a um ClusterIP à frente). `publishNotReadyAddresses`: o nome tem
+# de resolver antes de o pod estar pronto — o Kamailio resolve o dispatcher AO
+# ARRANCAR e salta para sempre um destino que não resolve.
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch
+  labels:
+    app: freeswitch
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: freeswitch
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: sip-dialin, port: 5080, protocol: UDP }
+    - { name: sip-ramais, port: {{ $vo.freeswitch.ramaisSipPort }}, protocol: UDP }
+{{- if $vo.freeswitch.ramaisService.enabled }}
+---
+# Ramais que se registam de FORA do cluster. Só leva a sinalização: o áudio
+# (RTP) precisa de `voice.freeswitch.externalIP` e da gama RTP alcançável.
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch-ramais
+  labels:
+    app: freeswitch
+    {{- include "dm.labels" . | nindent 4 }}
+  {{- with $vo.freeswitch.ramaisService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $vo.freeswitch.ramaisService.type }}
+  {{- if and (eq $vo.freeswitch.ramaisService.type "LoadBalancer") $vo.freeswitch.ramaisService.loadBalancerIP }}
+  loadBalancerIP: {{ $vo.freeswitch.ramaisService.loadBalancerIP | quote }}
+  {{- end }}
+  {{- if ne $vo.freeswitch.ramaisService.type "ClusterIP" }}
+  externalTrafficPolicy: {{ $vo.freeswitch.ramaisService.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    app: freeswitch
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: sip-ramais, port: {{ $vo.freeswitch.ramaisSipPort }}, targetPort: sip-ramais, protocol: UDP }
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kamailio
+  labels:
+    app: kamailio
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app: kamailio
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: kamailio
+        {{- include "dm.labels" . | nindent 8 }}
+      annotations:
+        # A allowlist e o cfg só são lidos ao arrancar.
+        checksum/cfg: {{ printf "%s%s%s" (.Files.Get "files/voice/kamailio.cfg") (.Files.Get "files/voice/tls.cfg") (toYaml $vo.trunks) | sha256sum }}
+    spec:
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      {{- if $vo.kamailio.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      {{- with $vo.kamailio.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $vo.kamailio.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        # Ordem de arranque FreeSWITCH → Kamailio: espera-se que o nome do
+        # FreeSWITCH resolva antes de o Kamailio ler o dispatcher.
+        - name: espera-freeswitch
+          image: {{ printf "%s:%s" $vo.kamailio.image.repository $vo.kamailio.image.tag | quote }}
+          imagePullPolicy: {{ $vo.kamailio.image.pullPolicy }}
+          command: ["/bin/sh", "-c", "until getent hosts freeswitch >/dev/null; do echo 'à espera do FreeSWITCH'; sleep 2; done"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+      containers:
+        - name: kamailio
+          image: {{ printf "%s:%s" $vo.kamailio.image.repository $vo.kamailio.image.tag | quote }}
+          imagePullPolicy: {{ $vo.kamailio.image.pullPolicy }}
+          # A imagem arranca com `sh -c "kamailio …"`: sem `command`, os args
+          # não chegam ao kamailio.
+          command: ["kamailio"]
+          args:
+            - "-DD"
+            - "-E"
+            {{- if $vo.kamailio.xhttpRpc }}
+            - "-A"
+            - "WITH_XHTTP_RPC"
+            {{- end }}
+            - "-f"
+            - "/etc/kamailio/kamailio.cfg"
+          ports:
+            - { name: sip-udp, containerPort: 5060, protocol: UDP }
+            - { name: sip-tcp, containerPort: 5060, protocol: TCP }
+            - { name: sip-tls, containerPort: 5061, protocol: TCP }
+          readinessProbe:
+            tcpSocket: { port: 5060 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 5060 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml $vo.kamailio.resources | nindent 12 }}
+          # A imagem corre como root (README §Achados). Sem escalada, sem
+          # capacidades (as portas são > 1024) e com o rootfs só de leitura:
+          # o socket de controlo e os temporários vão para volumes.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: run, mountPath: /run/kamailio }
+            - { name: tmp, mountPath: /tmp }
+            - { name: cfg, mountPath: /etc/kamailio/kamailio.cfg, subPath: kamailio.cfg, readOnly: true }
+            - { name: cfg, mountPath: /etc/kamailio/dispatcher.list, subPath: dispatcher.list, readOnly: true }
+            - { name: cfg, mountPath: /etc/kamailio/address, subPath: address, readOnly: true }
+            - { name: cfg, mountPath: /etc/kamailio/tls.cfg, subPath: tls.cfg, readOnly: true }
+            - { name: tls, mountPath: /etc/kamailio/tls, readOnly: true }
+      volumes:
+        - { name: run, emptyDir: { medium: Memory, sizeLimit: 8Mi } }
+        - { name: tmp, emptyDir: { sizeLimit: 32Mi } }
+        - { name: cfg, configMap: { name: kamailio-cfg } }
+        - { name: tls, secret: { secretName: {{ $tlsSecret }} } }
+---
+# Nome interno do bordo (headless): é por ele que o FreeSWITCH e um PBX de
+# laboratório dentro do cluster o resolvem.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kamailio
+  labels:
+    app: kamailio
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: kamailio
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: sip-udp, port: 5060, protocol: UDP }
+    - { name: sip-tcp, port: 5060, protocol: TCP }
+    - { name: sip-tls, port: 5061, protocol: TCP }
+---
+# O BORDO visto de fora: é aqui que o PBX do cliente aponta o tronco.
+# `externalTrafficPolicy: Local` preserva o IP de origem — a allowlist
+# (`address`) decide por ele; com `Cluster` o Kamailio veria o IP de um nó.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kamailio-border
+  labels:
+    app: kamailio
+    {{- include "dm.labels" . | nindent 4 }}
+  {{- with $vo.kamailio.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $vo.kamailio.service.type }}
+  {{- if and (eq $vo.kamailio.service.type "LoadBalancer") $vo.kamailio.service.loadBalancerIP }}
+  loadBalancerIP: {{ $vo.kamailio.service.loadBalancerIP | quote }}
+  {{- end }}
+  {{- if ne $vo.kamailio.service.type "ClusterIP" }}
+  externalTrafficPolicy: {{ $vo.kamailio.service.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    app: kamailio
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: sip-udp, port: 5060, targetPort: sip-udp, protocol: UDP }
+    - { name: sip-tcp, port: 5060, targetPort: sip-tcp, protocol: TCP }
+    - { name: sip-tls, port: 5061, targetPort: sip-tls, protocol: TCP }
+{{- if $vo.labPbx.enabled }}
+---
+# PBX de cliente de LABORATÓRIO (Asterisk). Em produção o PBX é do cliente e
+# não corre aqui — o chart recusa esta opção com production=true.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pbx-cliente-cfg
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+data:
+  # O ficheiro do repo aponta o tronco para o bordo do namespace `delonix-meet`;
+  # aqui aponta para o bordo DESTA release.
+  pjsip.conf: |
+    {{- .Files.Get "files/voice/pbx-cliente/pjsip.conf" | replace "kamailio.delonix-meet.svc.cluster.local" (printf "kamailio.%s.svc.cluster.local" $ns) | nindent 4 }}
+  extensions.conf: |
+    {{- .Files.Get "files/voice/pbx-cliente/extensions.conf" | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pbx-cliente
+  labels:
+    app: pbx-cliente
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pbx-cliente
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: pbx-cliente
+        {{- include "dm.labels" . | nindent 8 }}
+    spec:
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: asterisk
+          image: {{ printf "%s:%s" $vo.labPbx.image.repository $vo.labPbx.image.tag | quote }}
+          imagePullPolicy: {{ $vo.labPbx.image.pullPolicy }}
+          ports:
+            - { name: sip-udp, containerPort: 5060, protocol: UDP }
+          readinessProbe:
+            exec: { command: ["/usr/sbin/asterisk", "-rx", "core show uptime"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml $vo.labPbx.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: cfg, mountPath: /etc/asterisk/pjsip.conf, subPath: pjsip.conf, readOnly: true }
+            - { name: cfg, mountPath: /etc/asterisk/extensions.conf, subPath: extensions.conf, readOnly: true }
+      volumes:
+        - { name: cfg, configMap: { name: pbx-cliente-cfg } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pbx-cliente
+  labels:
+    app: pbx-cliente
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: pbx-cliente
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: sip-udp, port: 5060, protocol: UDP }
+{{- end }}
+{{- end }}

@@ -270,6 +270,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-room-affinity.sh
 	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-k8s-render.sh
+	@HELM=$(HELM) bash scripts/check-helm.sh
 	@bash scripts/check-arquitectura-catraca.sh
 	@bash scripts/check-crate-deps.sh
 	@bash scripts/check-proto.sh
@@ -277,6 +278,21 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-clippy-ratchet.sh
 	@bash scripts/check-dep-audit.sh
 	@bash scripts/check-tenant-rls.sh
+
+# ---- Chart Helm (deploy/helm/delonix-meet) ----
+# O chart é um segundo caminho para o cluster, ao lado de deploy/k8s; o portão
+# é o mesmo que o `make fitness` corre. HELM=/caminho/helm escolhe o binário.
+HELM       ?= helm
+HELM_CHART := deploy/helm/delonix-meet
+HELM_DIST  := deploy/helm/dist
+
+.PHONY: helm-lint helm-package
+helm-lint: ## Portão do chart Helm: lint, recusas, render dos três perfis, ingress, afinidade, segredos, tags
+	@HELM=$(HELM) bash scripts/check-helm.sh
+
+helm-package: helm-lint ## Empacota o chart em deploy/helm/dist (appVersion = IMAGE_TAG)
+	@mkdir -p $(HELM_DIST)
+	@$(HELM) package $(HELM_CHART) -d $(HELM_DIST) --app-version $(IMAGE_TAG) 2>&1 | grep -v 'found symbolic link'
 
 .PHONY: migrate
 migrate: ## Corre as migrações pendentes (sqlx migrate run)

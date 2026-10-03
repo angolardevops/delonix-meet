@@ -1,0 +1,94 @@
+{{- $v := .Values -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-web
+  labels:
+    app: delonix-web
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $v.web.replicas }}
+  selector:
+    matchLabels:
+      app: delonix-web
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: delonix-web
+        {{- include "dm.labels" . | nindent 8 }}
+    spec:
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      # nginx-unprivileged: uid 101, porta 8080.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      {{- with $v.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: delonix-web, app.kubernetes.io/instance: {{ .Release.Name }} }
+      containers:
+        - name: web
+          image: {{ include "dm.webImage" . | quote }}
+          imagePullPolicy: {{ $v.web.image.pullPolicy }}
+          securityContext:
+            {{- include "dm.restricted" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8080, protocol: TCP }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml $v.web.resources | nindent 12 }}
+          volumeMounts:
+            # O nginx escreve o pid e os temporários em /tmp; o resto é só leitura.
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-web
+  labels:
+    app: delonix-web
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: delonix-web
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: http, protocol: TCP, port: 80, targetPort: http }
+{{- if and $v.web.pdb.enabled (gt (int $v.web.replicas) 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: delonix-web
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ $v.web.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: delonix-web
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

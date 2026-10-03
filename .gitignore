@@ -35,6 +35,9 @@ web/public/ort-rvm/
 web/public/models/rvm/
 web/public/models/Xenova/
 
+# Pacote do chart Helm (`make helm-package`)
+deploy/helm/dist/
+
 # Worktrees transitórios de agentes
 agents/worktrees/
 

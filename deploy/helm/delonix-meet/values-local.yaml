@@ -1,0 +1,58 @@
+# ============================================================
+#  Cluster de laboratório (`make cluster`): um nó, sem cert-manager, sem
+#  LoadBalancer. Uma réplica de cada, Postgres e Redis do próprio chart,
+#  segredos gerados na instalação.
+#
+#    helm upgrade --install meet deploy/helm/delonix-meet -n <ns> --create-namespace \
+#      -f deploy/helm/delonix-meet/values-local.yaml --set host=<nome>
+#
+#  As tags `latest` e `lab` só passam porque production=false; as imagens são
+#  as que o `make cluster` carrega nos nós.
+# ============================================================
+production: false
+host: meet.delonix.test
+
+image:
+  tag: latest
+
+secrets:
+  create: true
+
+postgresql:
+  enabled: true
+redis:
+  enabled: true
+
+server:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+  migrations:
+    mode: startup
+
+web:
+  replicas: 1
+
+ingress:
+  tls:
+    # O certificado do `make bootstrap`, posto no namespace pelo scripts/cluster.sh.
+    existingSecret: delonix-tls-secret
+
+coturn:
+  # Sem LoadBalancer: o relay usa a rede do nó e anuncia o IP dele.
+  hostNetwork: true
+  relayPorts: { min: 49160, max: 49400 }
+  relayThreads: 2
+  service:
+    type: ClusterIP
+  resources:
+    requests: { cpu: 100m, memory: 64Mi }
+    limits: { cpu: "2", memory: 512Mi }
+
+voice:
+  enabled: true
+  # Só a rede de pods do laboratório — é de lá que fala o PBX de cliente.
+  trunks:
+    - { group: 1, ip: 10.244.0.0, mask: 16, port: 0, tag: lab-pods }
+  labPbx:
+    enabled: true

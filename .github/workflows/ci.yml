@@ -153,6 +153,9 @@ jobs:
       - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
         run: bash scripts/check-k8s-render.sh
 
+      - name: Chart Helm renderiza, recusa o inseguro e respeita ADR-0001/ADR-0006
+        run: bash scripts/check-helm.sh
+
       - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
         run: bash scripts/check-arquitectura-catraca.sh
 
