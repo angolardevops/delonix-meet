@@ -12,14 +12,17 @@
 # ver voice/README.md.
 services:
   kamailio:
-    image: kamailio/kamailio:5.8
+    # A oficial. `kamailio/kamailio:5.8` no Docker Hub não existe — este compose
+    # nunca tinha arrancado; visto a 2026-10-03, ao subir a voz no cluster local.
+    image: ghcr.io/kamailio/kamailio:5.8.6-bookworm
     restart: unless-stopped
     network_mode: host   # SIP/RTP precisam de portas host previsíveis
     volumes:
       - ./kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
       - ./kamailio/dispatcher.list:/etc/kamailio/dispatcher.list:ro
       # ACL do trunk (IPs do fornecedor 5.1) e TLS — montados, nunca comitados:
-      - ${DELONIX_VOICE_ACL:-./kamailio/ao_trunk.txt}:/etc/kamailio/ao_trunk.txt:ro
+      # O módulo `permissions` lê /etc/kamailio/address (ver kamailio.cfg).
+      - ${DELONIX_VOICE_ACL:-./kamailio/ao_trunk.txt}:/etc/kamailio/address:ro
       - ${DELONIX_TLS_DIR:-/etc/ssl/delonix}:/etc/kamailio/tls:ro
 
   freeswitch:

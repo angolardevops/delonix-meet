@@ -97,7 +97,8 @@ contexto de dialplan e por domínio SIP, não por processo.
   as chaves SDES vão no SDP); prefixos, limite de canais e ordem de recurso. O host
   passa pelo guarda de SSRF (R213) e a password fica cifrada em repouso (R214).
 - **Medido:** a allowlist de IP do tronco é um ficheiro que **não vai para o git**
-  (`voice/kamailio/ao_trunk.txt.example` é o molde).
+  (`voice/kamailio/ao_trunk.txt.example` é o molde; é o `address_file` do módulo
+  `permissions`: grupo, IP, máscara, porta, etiqueta).
 - **GSM não é um protocolo que nós falemos.** Uma chamada para ou de um telemóvel chega
   até nós como SIP, pela interligação da operadora; o que é GSM, VoLTE ou AMR fica do
   lado dela. Do nosso lado é G.711 — a lei (A ou µ) é a da oferta SIP
@@ -162,7 +163,7 @@ contexto de dialplan e por domínio SIP, não por processo.
 | O que mexeste | Portão |
 |---|---|
 | As regras de um tronco (transporte, SRTP, host, prefixos, canais) | os unitários de `telephony/trunk.rs` e `cargo test --release --test telephony` (precisa de `DATABASE_URL`) |
-| `voice/kamailio/` | **não há portão automático** — nenhum teste carrega o `kamailio.cfg` |
+| `voice/kamailio/` | **não há portão no CI**; o `make cluster` carrega o `kamailio.cfg` num Kamailio 5.8.6 a sério e mede o dispatcher e o tronco do PBX de laboratório (`scripts/cluster-voice.sh`) |
 | `voice/freeswitch/sip_profiles/`, `dialplan/` | só a sintaxe do Lua (`scripts/check-lua-sintaxe.sh`); o XML não é validado |
 | A interligação com um PBX ou uma operadora | **prova real, fora do CI**: uma chamada em cada sentido, com captura SIP, e as três medições abaixo |
 
@@ -176,6 +177,12 @@ contexto de dialplan e por domínio SIP, não por processo.
 
 ## O que NÃO está provado (2026-10-03)
 
+- **No cluster local (`make cluster`, medido a 2026-10-03):** uma chamada do PBX de
+  laboratório (Asterisk, tronco PJSIP com SDES) atravessa o Kamailio, chega ao FreeSWITCH e
+  corre o `dialin_ivr.lua`. Foi a primeira vez que o `kamailio.cfg` arrancou: tinha um
+  parâmetro inexistente, o TLS desligado e `xlog` sem o módulo, e a allowlist era montada
+  num ficheiro que o `permissions` não lê. **Não provado aí:** PIN aceite e áudio — a
+  imagem do FreeSWITCH não traz os sons do IVR.
 - Nenhuma chamada passou por **uma operadora a sério através do Kamailio**: o que está
   medido é contra um FreeSWITCH local (`delonix-meet-telefonia`, R222).
 - Nenhuma interligação com um **Issabel ou FreePBX real** foi feita a partir deste repo.

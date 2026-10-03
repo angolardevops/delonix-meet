@@ -87,3 +87,8 @@ ai-worker/gen/
 .fs-canais/
 .fs-smoke.*/
 .fs-build/
+
+# Ferramentas instaladas por `make bootstrap` (helm) — por máquina, nunca versionadas.
+.tools/
+# Gerado por `make bootstrap`; tem o segredo do relay.
+deploy/compose/turnserver.conf

@@ -1,0 +1,47 @@
+# coturn para o cluster LOCAL (`make cluster`).
+#
+# O de stage/produção (../51-coturn.yaml) vive atrás de um LoadBalancer do
+# MetalLB com IP fixo. Um cluster local de um nó não tem MetalLB: aqui o relay
+# usa a rede do nó (hostNetwork) e anuncia o IP dele, que é onde os pods do
+# servidor o alcançam. O browser chega-lhe pela porta que o scripts/cluster.sh
+# publica em 127.0.0.1. `__NODE_IP__` é substituído por esse script.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: coturn, namespace: delonix-meet, labels: { app: coturn } }
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # hostNetwork: duas réplicas disputariam a porta
+  selector: { matchLabels: { app: coturn } }
+  template:
+    metadata:
+      labels: { app: coturn }
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: coturn
+          image: coturn/coturn:4.6
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: TURN_SECRET, valueFrom: { secretKeyRef: { name: delonix-secrets, key: TURN_SECRET } } }
+            - { name: EXTERNAL_IP, value: "__NODE_IP__" }
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              exec turnserver -n --no-cli --log-file=stdout --simple-log
+              --use-auth-secret --static-auth-secret="$TURN_SECRET"
+              --realm=delonix --external-ip="$EXTERNAL_IP"
+              --denied-peer-ip=169.254.0.0-169.254.255.255
+              --no-multicast-peers
+              --listening-port=3478 --min-port=49160 --max-port=49400
+              --fingerprint --stale-nonce=3600
+              --no-tcp-relay --no-tls --no-dtls
+          ports:
+            - { name: turn-udp, containerPort: 3478, protocol: UDP }
+          readinessProbe:
+            tcpSocket: { port: 3478 }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "64Mi" }
+            limits: { cpu: "2", memory: "512Mi" }

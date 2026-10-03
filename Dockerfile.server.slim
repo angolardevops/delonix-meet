@@ -1,0 +1,52 @@
+# ============================================================
+#  Delonix Meet — imagem do backend para o CICLO LOCAL (compose.yaml e
+#  `make cluster`) quando o motor de build é o `delonix build`.
+#
+#  Porquê existe: o `delonix build` 4.4.0 não consegue fazer COPY para uma
+#  imagem final sem shell (falha com «exec /bin/sh: ENOENT»), e a de produção
+#  (Dockerfile.server) acaba em distroless. Esta acaba em debian-slim, com o
+#  MESMO estágio de build — por isso a camada da compilação é partilhada.
+#
+#  NÃO é a imagem de produção: tem shell e gestor de pacotes. A de produção
+#  constrói-se com `make build BUILDER=docker` ou no CI. Quando o motor
+#  corrigir o COPY, este ficheiro apaga-se e o Makefile volta a usar só o outro.
+#
+#  O estágio de build abaixo é cópia EXACTA do de Dockerfile.server: se mudares
+#  um, muda o outro (o scripts/check-repo-hygiene.sh não o confere).
+# ============================================================
+
+FROM rust:1-bookworm AS build
+WORKDIR /src
+# Limita a paralelização do rustc: em hosts com RAM pressionada, o link em
+# release de todos os codegen units em paralelo pode ser morto por OOM
+# (cargo devolve exit 101). 6 jobs é seguro sem penalizar muito o tempo.
+ENV CARGO_BUILD_JOBS=6
+# Sem libopus no build nem no runtime: a ponte telefone↔sala usa o `opus-rs`,
+# em Rust puro (ADR-0010). O `audiopus`, que se ligava à lib do sistema por
+# pkg-config, saiu — e com ele a instalação aqui e a cópia do .so para a
+# imagem final.
+# As migrações são embutidas em compile-time (sqlx::migrate!) — a imagem final
+# não precisa de ficheiros .sql. Copia-se o crate inteiro e compila-se em release.
+COPY server ./server
+# SEM `--mount=type=cache`: o motor de build da plataforma é o `delonix build`
+# (daemonless/rootless) e ainda só suporta `--mount=type=secret` — com os cache
+# mounts o build falhava com «só type=secret é suportado». O trade-off é
+# recompilar as dependências a cada alteração no server/ (~10 min); se isso
+# passar a doer, o caminho é cargo-chef (camada de deps em cache de LAYER, que
+# funciona sem BuildKit), não voltar aos cache mounts.
+RUN cd server && cargo build --release && \
+    cp target/release/delonix-server /usr/local/bin/delonix-server && \
+    strip /usr/local/bin/delonix-server
+
+# Runtime de laboratório: debian-slim, sem root (o mesmo uid do :nonroot do
+# distroless, que é o que os manifestos K8s exigem com runAsUser: 65532).
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/bin/delonix-server /app/delonix-server
+USER 65532:65532
+EXPOSE 8180
+EXPOSE 8181 9180
+ENV BIND_ADDR=0.0.0.0:8180
+ENTRYPOINT ["/app/delonix-server"]

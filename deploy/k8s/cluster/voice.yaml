@@ -1,0 +1,156 @@
+# Voz no cluster LOCAL (`make cluster`): o bordo SIP, o gateway de media do
+# Meet e um PBX de cliente de laboratório.
+#
+#   PBX de cliente (Asterisk) ──tronco SIP──▶ Kamailio ──▶ FreeSWITCH ──HTTP──▶ servidor
+#                                             (bordo)      (IVR, ponte)        (listener interno)
+#
+# As configurações entram por ConfigMap a partir dos ficheiros do repo
+# (scripts/cluster-voice.sh cria-os); aqui só estão os Deployments e Services.
+# Nada disto está exposto fora do cluster: é um laboratório de sinalização.
+---
+# O listener INTERNO do servidor (rotas /internal/v1/*): só dentro do cluster,
+# nunca no Ingress. É para aqui que o IVR do FreeSWITCH fala.
+apiVersion: v1
+kind: Service
+metadata: { name: delonix-server-internal, namespace: delonix-meet }
+spec:
+  selector: { app: delonix-server }
+  ports:
+    - { name: internal, port: 8181, targetPort: 8181, protocol: TCP }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: freeswitch, namespace: delonix-meet, labels: { app: freeswitch } }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: freeswitch } }
+  template:
+    metadata: { labels: { app: freeswitch } }
+    spec:
+      containers:
+        - name: freeswitch
+          image: delonix-meet/freeswitch:1.11.3
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/entrypoint/freeswitch-entrypoint.sh"]
+          env:
+            - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.delonix-meet.svc.cluster.local:8181" }
+            - { name: DELONIX_API_URL, value: "http://delonix-server.delonix-meet.svc.cluster.local:8180" }
+            - { name: DELONIX_RAMAIS_SIP_PORT, value: "5070" }
+            - name: VOICE_INTERNAL_SECRET
+              valueFrom: { secretKeyRef: { name: delonix-voice, key: VOICE_INTERNAL_SECRET } }
+          ports:
+            - { name: sip-dialin, containerPort: 5080, protocol: UDP }
+            - { name: sip-ramais, containerPort: 5070, protocol: UDP }
+          readinessProbe:
+            exec: { command: ["/bin/sh", "-c", "/usr/local/freeswitch/bin/fs_cli -p \"$(sed -n 's/.*name=\"password\" value=\"\\([^\"]*\\)\".*/\\1/p' /conf/autoload_configs/event_socket.conf.xml)\" -x 'sofia status' | grep -q external"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: "200m", memory: "256Mi" }
+            limits: { cpu: "2", memory: "1Gi" }
+          volumeMounts:
+            - { name: conf, mountPath: /conf }
+            - { name: meet, mountPath: /meet, readOnly: true }
+            - { name: entrypoint, mountPath: /entrypoint, readOnly: true }
+      volumes:
+        - { name: conf, emptyDir: {} }
+        - { name: meet, configMap: { name: freeswitch-meet } }
+        - { name: entrypoint, configMap: { name: freeswitch-entrypoint } }
+---
+# Headless: o Kamailio tem de falar com o IP do POD (SIP sobre UDP não
+# sobrevive a um ClusterIP à frente).
+apiVersion: v1
+kind: Service
+metadata: { name: freeswitch, namespace: delonix-meet }
+spec:
+  clusterIP: None
+  selector: { app: freeswitch }
+  ports:
+    - { name: sip-dialin, port: 5080, protocol: UDP }
+    - { name: sip-ramais, port: 5070, protocol: UDP }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: kamailio, namespace: delonix-meet, labels: { app: kamailio } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: kamailio } }
+  template:
+    metadata: { labels: { app: kamailio } }
+    spec:
+      containers:
+        - name: kamailio
+          image: ghcr.io/kamailio/kamailio:5.8.6-bookworm
+          imagePullPolicy: IfNotPresent
+          args: ["-DD", "-E", "-f", "/etc/kamailio/kamailio.cfg"]
+          ports:
+            - { name: sip-udp, containerPort: 5060, protocol: UDP }
+            - { name: sip-tcp, containerPort: 5060, protocol: TCP }
+            - { name: sip-tls, containerPort: 5061, protocol: TCP }
+          readinessProbe:
+            tcpSocket: { port: 5060 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          volumeMounts:
+            - { name: cfg, mountPath: /etc/kamailio/kamailio.cfg, subPath: kamailio.cfg, readOnly: true }
+            - { name: cfg, mountPath: /etc/kamailio/dispatcher.list, subPath: dispatcher.list, readOnly: true }
+            - { name: cfg, mountPath: /etc/kamailio/address, subPath: address, readOnly: true }
+            - { name: cfg, mountPath: /etc/kamailio/tls.cfg, subPath: tls.cfg, readOnly: true }
+            - { name: tls, mountPath: /etc/kamailio/tls, readOnly: true }
+      volumes:
+        - { name: cfg, configMap: { name: kamailio-cfg } }
+        - { name: tls, secret: { secretName: kamailio-tls } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: kamailio, namespace: delonix-meet }
+spec:
+  clusterIP: None
+  selector: { app: kamailio }
+  ports:
+    - { name: sip-udp, port: 5060, protocol: UDP }
+    - { name: sip-tcp, port: 5060, protocol: TCP }
+    - { name: sip-tls, port: 5061, protocol: TCP }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: pbx-cliente, namespace: delonix-meet, labels: { app: pbx-cliente } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: pbx-cliente } }
+  template:
+    metadata: { labels: { app: pbx-cliente } }
+    spec:
+      containers:
+        - name: asterisk
+          image: delonix-meet/pbx-cliente:lab
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: sip-udp, containerPort: 5060, protocol: UDP }
+          readinessProbe:
+            exec: { command: ["/usr/sbin/asterisk", "-rx", "core show uptime"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          volumeMounts:
+            - { name: cfg, mountPath: /etc/asterisk/pjsip.conf, subPath: pjsip.conf, readOnly: true }
+            - { name: cfg, mountPath: /etc/asterisk/extensions.conf, subPath: extensions.conf, readOnly: true }
+      volumes:
+        - { name: cfg, configMap: { name: pbx-cliente-cfg } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: pbx-cliente, namespace: delonix-meet }
+spec:
+  clusterIP: None
+  selector: { app: pbx-cliente }
+  ports:
+    - { name: sip-udp, port: 5060, protocol: UDP }
