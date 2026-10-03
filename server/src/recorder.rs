@@ -630,7 +630,9 @@ pub(crate) async fn auto_record_wanted(state: &AppState, room_id: Uuid) -> bool 
 /// ecrã de um utilizador. O detalhe fica no log, onde é útil a quem opera.
 fn causa_legivel(e: &anyhow::Error) -> &'static str {
     let t = e.to_string();
-    if t.contains("ffmpeg-ausente") {
+    if t.contains("storage.quota_exceeded") {
+        "A organização atingiu a quota de armazenamento, por isso a gravação não foi guardada. Liberte espaço e grave de novo."
+    } else if t.contains("ffmpeg-ausente") {
         // Causa de OPERAÇÃO, não do utilizador. Dizê-lo pelo nome poupa a quem
         // recebe a queixa uma investigação inteira — e a correcção é instalar
         // o ffmpeg, não voltar a gravar.
@@ -943,6 +945,23 @@ async fn finalize_inner(
         anyhow::bail!("ffmpeg exited with {status}");
     }
     let size = tokio::fs::metadata(&out).await?.len() as i64;
+    // Quota de armazenamento (RFC-0001, B7): o upload do cliente já a impunha
+    // (`recordings.rs`); a gravação do servidor passava ao lado. Só se sabe o
+    // tamanho depois de compor, por isso a recusa vem aqui — e segue a regra da
+    // casa, «recusar o novo, nunca apagar o existente»: o ficheiro composto é
+    // descartado e a linha fica `failed` com a causa. Um erro de leitura da
+    // quota NÃO descarta a gravação (um soluço da base não pode custar uma
+    // reunião); regista-se e segue.
+    match crate::usage::enforce_recording_quota(state, session.by_user, size).await {
+        Ok(()) => {}
+        Err(crate::error::ApiError::Domain(d)) if d.code == "storage.quota_exceeded" => {
+            let _ = tokio::fs::remove_file(&out).await;
+            anyhow::bail!("storage.quota_exceeded: a gravação não cabe na quota da organização");
+        }
+        Err(e) => {
+            tracing::warn!(%room_id, error = ?e, "não foi possível verificar a quota; a gravação segue");
+        }
+    }
     let kind = crate::recordings::kind_from_room_format(&info.format);
 
     // A linha normalmente já existe (`insert_processing`, chamado por
@@ -1166,6 +1185,7 @@ mod tests {
             ("nothing recorded", "parada demasiado cedo"),
             ("processo excedeu 3600s e foi terminado", "tempo máximo"),
             ("No space left on device", "espaço em disco"),
+            ("storage.quota_exceeded: não cabe", "quota de armazenamento"),
         ];
         for (erro, esperado) in casos {
             let c = causa_legivel(&anyhow::anyhow!(erro.to_string()));
