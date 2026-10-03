@@ -93,9 +93,9 @@ Os dezasseis portões: `arquitectura-catraca`, `browser-antes-do-e2e`, `capabili
 `route-auth`, `tenant-rls`. O `check-tenant-rls.sh` exige um cluster vivo e **salta sem
 ele** — verde aí não prova nada.
 
-## O estado real (2026-10-03, `main` `024583a`) — não o redescubras
+## O estado real (2026-10-03, `main` `024583a` mais a R225) — não o redescubras
 
-Números medidos, não lembrados: **172 regressões** no catálogo (a última é a R224),
+Números medidos, não lembrados: **173 regressões** no catálogo (a última é a R225),
 **31 binários** em `server/tests/`, **16 portões** `scripts/check-*.sh`, catraca do
 clippy em **13** (`scripts/clippy-baseline.txt`), `rotas_sem_openapi=0`
 (`scripts/openapi-baseline.txt`), **73 migrações** (a última é a `0073`). PRs abertas:
@@ -112,6 +112,8 @@ clippy em **13** (`scripts/clippy-baseline.txt`), `rotas_sem_openapi=0`
 - **Telefone:** a ponte telefone↔sala (#130), o telefone no censo da sala (#135) e a
   telefonia de troncos, plano de marcação e CDR (#136) estão na `main`. O que ficou de
   fora: `delonix-meet-telefonia`.
+- **Palco:** o `Spotlight` do anfitrião fixa o áudio do destacado no SFU pela porta
+  `signaling::StageControl` (R225) — o selector de oradores já não o pode suprimir.
 - **Segurança:** S1–S6 fechadas; o único aberto é decisão de produto. A lista, com a
   regressão que guarda cada uma: `delonix-meet-backend` §Segurança.
 - **Os revisores estão em `.claude/agents/delonix-meet-*.md`.**
@@ -124,6 +126,21 @@ clippy em **13** (`scripts/clippy-baseline.txt`), `rotas_sem_openapi=0`
 - **Postgres e Redis aparecem pausados** (`docker unpause wt-merge-postgres-1
   wt-merge-redis-1`). Os testes falham dentro do `sqlx testing/mod.rs`, não numa asserção
   — não é o teu código.
+
+### Retomar noutra máquina
+
+O que NÃO vem com o `git clone`, e por isso se refaz:
+
+- **Os plugins do workspace** registam-se uma vez por máquina, a partir da raiz do
+  `ngolacloud` (`claude plugin marketplace add <raiz>`); as skills e os revisores deste
+  repo vêm no próprio repo (`.claude/`) e não precisam de nada.
+- **Worktrees e ramos locais não viajam.** Só existe o que está em `origin`: começa por
+  `git fetch origin` e abre o worktree a partir de `origin/main`, nunca de uma `main` local.
+- **A infra dos testes** sobe com `make infra` (Postgres, Redis, coturn) e os testes de
+  integração precisam de `DATABASE_URL` exportada.
+- **O toolchain é `stable` flutuante**, no CI e nas imagens: uma versão nova do Rust pode
+  trazer um aviso que sobe a catraca do clippy sem ninguém ter mexido no código (foi o
+  `fetch_update` depreciado no 1.99). Lista os avisos antes de procurar o defeito no diff.
 
 ## Três regras que valem em tudo
 

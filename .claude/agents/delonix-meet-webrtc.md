@@ -37,7 +37,7 @@ nada.
 |---|---|---|
 | Negociação | R1, R2, R13, R33 | A oferta nasce na construção da `SfuCall`. Um convidado em espera não monta SFU. O glare tem duas metades: o servidor adia e o cliente re-oferta. Há um canal único `NegoMsg` por peer, e o webrtc-rs não tem rollback. |
 | Camadas e keyframes | R14, R15, R38 | Não há PLI periódico. `reevaluate_peer` corre em cada entrada, saída e mudança de perda. A camada não se escolhe por adivinhação. |
-| Áudio | R19, R20, R22, R114 | O áudio vive no `AudioSink`, nunca num tile. `replaceAudioTrack` renegoceia. No top-N de oradores, renumera-se sempre, o decaimento é por tempo, e só com RFC 6464. Dois dispositivos da mesma pessoa não fecham ciclo de eco. |
+| Áudio | R19, R20, R22, R114, R225 | O áudio vive no `AudioSink`, nunca num tile. `replaceAudioTrack` renegoceia. No top-N de oradores, renumera-se sempre, o decaimento é por tempo, e só com RFC 6464. Dois dispositivos da mesma pessoa não fecham ciclo de eco. Quem o anfitrião destaca fica fixado (`pinned`) pela porta `signaling::StageControl`: passa sempre e não ocupa lugar no top-N; trocar de destacado liberta o anterior. |
 | Vídeo | R23, R24, R111 | `video-interest` vai sempre que o conjunto muda. Desligar a câmara liberta-a sem criar m-line nova. Parar a partilha pára a captura. |
 | Transporte | R3, R4, R36, R57 | A afinidade é por sala. Em K8s é relay-only. O par de candidatos lê-se como deve ser. O intervalo UDP não colide com o efémero do SO. |
 | Gravação e directo | R5, R17, R18, R58, R76, R79 | O PTS é em ms do RTP. Grava-se só VP8/Opus. Uma falha de composição é visível. O directo declara o formato. Parar a gravação não emudece o directo. |

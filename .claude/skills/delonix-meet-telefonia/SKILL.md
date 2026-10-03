@@ -21,7 +21,7 @@ when_to_use: >-
 ponte; [ADR-0009](../../../docs/adr/0009-telefonia-troncos-encaminhamento-e-custo.md)
 para troncos, encaminhamento e custo — **ainda «Proposto»** (`:3`) com o código já na
 `main` desde o #136: di-lo no relatório, não o trates como aceite.
-**Catálogo:** R210–R214 (telefonia) e R221–R224 (ponte, imagem, censo) em
+**Catálogo:** R210–R214 (telefonia) e R221–R225 (ponte, imagem, censo, palco) em
 [`regressions.md`](../../../docs/reference/regressions.md).
 **Histórico da decisão:** [design da Abordagem B](../../../docs/pstn-sfu-bridge-design.md),
 marcado **superseded** — lê-o para não repetir o erro, não para o seguir.
@@ -86,6 +86,10 @@ chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em l
   `signaling::PhoneControl`, que a ponte implementa (`phone_bridge/sip.rs:366`). A
   dependência corre no sentido certo — o `signaling` não conhece o `phone_bridge`.
 - O pacote silenciado **conta na mesma** para a estatística e para o RTP simétrico.
+- **Destacar um telefone vale de facto** (R225): o `Spotlight` fixa o áudio da perna no SFU
+  pela porta `signaling::StageControl` (`SfuState::set_audio_pinned`), o selector de
+  oradores deixa de a poder suprimir, e o lugar leva o crachá `on_stage`. Trocar ou limpar
+  o destaque liberta o anterior.
 
 ### A telefonia (#136, ADR-0009, R210–R214)
 
@@ -131,6 +135,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | Qualquer coisa em `phone_bridge/` | `cargo test --lib phone_bridge::` (38 unitários: G.711, SRTP, SDP, mistura, jitter, qualidade) |
 | O caminho da media | `cargo test --lib ponte_telefone_sala -- --nocapture` (R221 — imprime atraso por sentido, mix-minus e CPU por chamada) |
 | O censo e o `ForceMute` | `cargo test --lib force_mute_cala_o_telefone_na_perna` (R224 — o tom desaparece e **volta**) |
+| O palco (`Spotlight`, `StageControl`, `pinned`) | `cargo test --lib destacar_fixa_o_audio_no_sfu` e `cargo test --lib palco_impede_o_selector -- --nocapture` (R225 — suprimido, e fixado **volta**) |
 | Troncos, plano de marcação, CDR, custo, credenciais | `cargo test --release --test telephony -- --test-threads=4` contra Postgres real (14 casos; precisa de `DATABASE_URL`) + os unitários do domínio |
 | Uma rota `/telephony` | os portões de `delonix-meet-api`, com o caso negativo em `web/e2e/isolamento.mjs` |
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
@@ -205,7 +210,6 @@ existem:
 
 | Em falta | Porquê ficou de fora |
 |---|---|
-| Pôr a palco uma perna de telefone (`set_bridge_pinned`) | sem consumidor: nada o chamava, nem na branch de origem (#135) |
 | `DialOutUpdated`, `SessionCost` (mensagens do WebSocket) e os tipos `DialOutView`/`SessionCostView` | descrevem chamadas de saída e custo por sessão; nada na `main` os produz |
 | A porta do WhatsApp Business | sem consumidor |
 | A migração `room_channels` | o censo de canais vive em memória (`signaling::Seat`) |
