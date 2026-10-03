@@ -177,6 +177,8 @@ continua, medido a 2026-10-03:
 - **Três rotas de máquina na árvore pública:** `/api/voice/ivr/{directory,
   resolve-extension,dialplan-did}` (`lib.rs:834-841`), porque os Lua dos ramais já
   chamam esse caminho. Não é modelo: máquina-a-máquina novo vai para `/internal/v1`.
+  Autenticam-se pelo segredo de voz no cabeçalho `X-Voice-Secret` ou em HTTP Basic;
+  **nunca num `?secret=`** — o servidor deixou de o ler: não autentica (R227).
 - **Idempotência e `ETag`:** ver §O que falta.
 
 ## Portões

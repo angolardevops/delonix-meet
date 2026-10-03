@@ -70,6 +70,7 @@ Softphone A (ramal 101, acme.ramais.delonix.meet)
      ▼                                  Kamailio NÃO entra neste caminho
 FreeSWITCH — perfil "internal" (porta DELONIX_RAMAIS_SIP_PORT, default 5070)
      1) REGISTER → mod_xml_curl → POST /api/voice/ivr/directory  ──► Control plane
+                                  (segredo por HTTP Basic — nunca no URL, R227)
                                   (a1-hash do digest SIP)          ◄── XML directory
      2) INVITE 102 → dialplan "delonix_ramais" → ramais_dial.lua
         → POST /api/voice/ivr/resolve-extension  ──────────────────► Control plane

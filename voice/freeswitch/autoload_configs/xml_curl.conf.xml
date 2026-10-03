@@ -35,18 +35,24 @@
   a pedir PIN, nunca perde a chamada) mas precisa de correcção antes de
   produção.
 
-  O segredo (`X-Voice-Secret`) vai por `?secret=` no URL porque a build stock
-  do mod_xml_curl não deixa configurar cabeçalhos HTTP arbitrários — ver o
-  comentário em ramais.rs::ivr_directory sobre esse custo (pode acabar em
-  logs de acesso). Se a instância de produção usar uma build com suporte a
-  cabeçalhos extra, preferir isso e remover o `?secret=` da URL.
+  O segredo vai por HTTP Basic ("gateway-credentials"), como password; o
+  utilizador não conta. NUNCA no URL (R227): o mod_xml_curl escreve o URL de
+  cada binding no log ao arrancar e outra vez a cada pedido que falha, e um
+  "?secret=" ia com ele. O mod_xml_curl de stock não põe cabeçalhos
+  arbitrários, mas o Basic sabe-o enviar, e as credenciais não as escreve no
+  freeswitch.log (medido contra o FreeSWITCH 1.11.3). Ficam, como toda a
+  configuração expandida, no freeswitch.xml.fsxml do directório de logs:
+  trata esse directório como o da configuração. O servidor já não aceita o
+  segredo no URL.
 -->
 <configuration name="xml_curl.conf" description="Delonix — directório e dialplan dinâmicos dos ramais">
   <bindings>
     <binding name="delonix_ramais_directory">
       <param name="gateway-url"
-             value="$${delonix_control_url}/api/voice/ivr/directory?secret=$${delonix_voice_secret}"
+             value="$${delonix_control_url}/api/voice/ivr/directory"
              bindings="directory"/>
+      <param name="gateway-credentials" value="freeswitch:$${delonix_voice_secret}"/>
+      <param name="auth-scheme" value="basic"/>
       <param name="method" value="POST"/>
       <!-- Timeout curto: um REGISTER não deve ficar pendurado à espera do
            control plane — falha rápido e o softphone retenta. -->
@@ -60,8 +66,10 @@
          não estar confirmada contra uma instância real). -->
     <binding name="delonix_ramais_dialplan_did">
       <param name="gateway-url"
-             value="$${delonix_control_url}/api/voice/ivr/dialplan-did?secret=$${delonix_voice_secret}"
+             value="$${delonix_control_url}/api/voice/ivr/dialplan-did"
              bindings="dialplan"/>
+      <param name="gateway-credentials" value="freeswitch:$${delonix_voice_secret}"/>
+      <param name="auth-scheme" value="basic"/>
       <param name="method" value="POST"/>
       <!-- Timeout curto: uma chamada inbound não deve ficar pendurada à
            espera do control plane — falha rápido e cai no dialplan estático. -->

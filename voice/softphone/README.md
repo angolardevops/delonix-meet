@@ -57,6 +57,10 @@ do que o softphone ouviu fica em `.softphone-prova/ultima-chamada-ouvido.wav`.
 | `srtp-cluster`: dial-in (perfil `external`), **com** SRTP | atendido pelo IVR |
 | `srtp-cluster`: dial-in **sem** SRTP | recusado, `488 Not Acceptable Here` |
 | `srtp-cluster` sem nenhuma das duas globais (entrypoint e `internal.xml`) | **falha**: o ramal em claro leva `404` em vez de `488` |
+| `srtp-cluster`: os pedidos ao servidor (R227) | nenhum leva o segredo no URL; o do `mod_xml_curl` leva-o em `Authorization: Basic`, os dos dois Lua em `X-Voice-Secret`, com o corpo JSON certo |
+| `srtp-cluster`: o segredo de voz e o PIN marcado no `freeswitch.log` | 0 ocorrências |
+| `srtp-cluster` com os Lua de antes, ou com o DEBUG ligado no log | **falha**: o segredo aparece 2 vezes e o PIN 1 |
+| `srtp-cluster` com o `xml_curl.conf.xml` de antes | **falha**: segredo no URL e 5 vezes no log |
 
 ## O que esta prova mediu (R226 no catálogo de regressões)
 
@@ -91,10 +95,13 @@ e, numa rede sem saída, deita abaixo o mod_sofia inteiro); e o ESL em loopback.
 
 A configuração é a que o `voice/cluster/freeswitch-entrypoint.sh` monta, com os ficheiros
 que o `scripts/cluster-voice.sh` põe no ConfigMap `freeswitch-meet` e o ambiente do pod.
-O que a prova acrescenta: os endereços do servidor em loopback; um servidor de directório
-que responde como o `server/src/ramais.rs` a um só ramal (com o `a1-hash` do Digest e o
-`auth-acl=delonix_ramais`); e a lista de acesso dos ramais em loopback, porque numa rede
-sem saída o FreeSWITCH fica em `127.0.0.1`.
+O que a prova acrescenta: os endereços do servidor em loopback; um servidor de andaime nos
+dois portos (o público e o interno) que lê cada pedido inteiro, guarda-o, e responde a
+tudo com o directório de um só ramal, como o `server/src/ramais.rs` (com o `a1-hash` do
+Digest e o `auth-acl=delonix_ramais`); e a lista de acesso dos ramais em loopback, porque
+numa rede sem saída o FreeSWITCH fica em `127.0.0.1`. O servidor de andaime **não valida**
+o segredo: a prova lê os pedidos guardados. Que o servidor a sério o aceita assim é do
+teste `security_voice_odoo`.
 
 ## O que NÃO está provado
 
