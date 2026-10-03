@@ -85,7 +85,7 @@ Objectivo: uma chamada real entra numa sala, com áudio nos dois sentidos, pelo 
 | 3.5 | Kamailio de produção: só TLS para fora, limite de taxa, NAT, allowlist editável | DEP | `INVITE` de fora da lista recusado; inundação travada | M |
 | 3.6 | Ramal → sala provado com um softphone real (número de acesso e PIN) | DONO | chamada do Linphone ouvida na sala e vice-versa | P |
 | 3.7 | Endereço público do servidor SIP na consola; diálogos de credenciais sem sobreposição nem scroll horizontal | DONO | captura a 375 px e a 1280 px | P |
-| 3.8 | Ramal automático por utilizador quando a organização adere à voz, e ramais da empresa (sem pessoa) criados pelo administrador | DONO | por desenhar: falta decidir o que é o «PIN» | M |
+| 3.8 | Ramal automático por utilizador quando a organização adere à voz, com PIN secreto gerado e Linphone configurado por QR de uso único; ramais da empresa (sem pessoa) criados pelo administrador, sem PIN por omissão (decisão 3) | DONO | activar a voz numa organização dá um ramal e um PIN a cada pessoa; o QR regista o Linphone sem digitar a password; cinco PIN errados bloqueiam e ficam na auditoria; um ramal da empresa regista sem PIN | M |
 | 3.9 | Consola de operador para o FreeSWITCH e o Kamailio (estado, canais, dispatcher, allowlist) | DONO | editar a allowlist na consola e ver um `INVITE` passar de recusado a aceite | G |
 | 3.10 | Interligação com o PBX do cliente (Issabel, FreePBX) por tronco: assistente e medição | DONO | ligar um PBX de ensaio só pela consola | M |
 | 3.11 | Primeira operadora: enviar o pedido de informação, contratar um tronco de ensaio, fazer as três medições da skill `delonix-meet-voip` | PRD | chamada nos dois sentidos, DTMF, controlo negativo | G |
@@ -173,6 +173,11 @@ O tecto: uma reunião em directo, a sala de espera, a presença e a emissão pre
 
 1. **O caminho de produção** (item 1.6).
 2. **O armazenamento das gravações** (item 2.1).
-3. **O que é o «PIN» de um ramal** (item 3.8): o número do ramal, ou um código secreto.
+3. ~~O que é o «PIN» de um ramal~~ — **decidido pelo dono a 2026-10-04** (item 3.8). São três coisas separadas:
+   - **Número do ramal:** a identidade na lista telefónica; automático ao aderir, de um intervalo que o administrador escolhe; não é secreto.
+   - **Password SIP:** a credencial do aparelho, gerada, longa e aleatória; ninguém a digita — o softphone configura-se por QR de provisionamento de uso único, e o diálogo de credenciais fica como caminho de recurso.
+   - **PIN:** código secreto de 6 dígitos, gerado, guardado só em hash e mostrado uma vez; o utilizador pode mudá-lo e o administrador pode forçar a regeneração sem o ver. Bloqueio temporário após 5 tentativas falhadas, com registo na auditoria; recusa de sequências triviais e de PIN igual ao número do ramal.
+
+   Uso do PIN: do próprio ramal registado não se pede (o aparelho já está autenticado), só o da sala; de fora, pela operadora, ramal mais PIN identificam a pessoa, que entra com o seu nome; e é o PIN que permite a quem liga por telefone agir como anfitrião. Os ramais da empresa (recepção, sala, portaria) não têm PIN por omissão; o administrador só o define se o ramal precisar de abrir reuniões como anfitrião.
 4. **Se a `main` ou o `develop` é o ramo de release** depois da unificação (item 0.2).
 5. **A quem se vende o Estúdio de TV**: sem um cliente de televisão nomeado, a ordem do sprint 6 é hipótese.
