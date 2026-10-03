@@ -256,7 +256,7 @@ await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/st
 const CHAVE_DESTINO_B = `chave-secreta-da-b-${marca}`
 const destinoB = await req(`/api/orgs/${B.orgId}/stream-destinations`, {
   token: B.token, method: 'POST',
-  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://10.0.0.9/live', stream_key: CHAVE_DESTINO_B },
+  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://destino-b.exemplo.invalid/live', stream_key: CHAVE_DESTINO_B },
 })
 if (destinoB.status === 201 && destinoB.json?.id) {
   ok('B guarda um destino de directo → 201')
@@ -297,7 +297,7 @@ if (destinoB.status === 201 && destinoB.json?.id) {
   })
   await recusado('A apaga um destino da org B', d, { token: A.token, method: 'DELETE' })
   const depois = await req(d, { token: B.token })
-  if (depois.status === 200 && depois.json?.url === 'rtmp://10.0.0.9/live') ok('e o destino da B CONTINUA LÁ, inalterado')
+  if (depois.status === 200 && depois.json?.url === 'rtmp://destino-b.exemplo.invalid/live') ok('e o destino da B CONTINUA LÁ, inalterado')
   else nok('e o destino da B CONTINUA LÁ, inalterado', `${depois.status}: ${JSON.stringify(depois.json).slice(0, 120)}`)
 
   // Emitir com o destino da B a partir de uma sala da A. A recusa chega numa
