@@ -801,6 +801,15 @@ pub enum ServerMsg {
         outside_app: u32,
         by_origin: Vec<OriginCount>,
     },
+    /// Estado de um «adicionar por número» (a chamar, em chamada, recusou…).
+    /// Só anfitriões e co-anfitriões: leva o número completo.
+    DialOutUpdated {
+        dial_out: DialOutView,
+    },
+    /// Custo desta sessão. Só anfitriões e co-anfitriões.
+    SessionCost {
+        cost: SessionCostView,
+    },
 }
 
 /// Tipo de objecto do quadro.
@@ -1064,6 +1073,62 @@ pub struct OriginCount {
     /// `movicel`, `national`, `international`.
     pub origin: String,
     pub count: u32,
+}
+
+/// Estado de um «adicionar por número» visto pelo anfitrião.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DialOutView {
+    pub id: Uuid,
+    /// `voice`, `sms_pin`, `whatsapp_invite`, `whatsapp_voice`.
+    pub kind: String,
+    /// `phone` ou `whatsapp`.
+    pub channel: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carrier: Option<String>,
+    /// Número completo — este tipo só vai a anfitriões e co-anfitriões.
+    pub number: String,
+    pub number_masked: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// `queued`, `dialing`, `ringing`, `in_call`, `sent`, `ended`,
+    /// `declined`, `no_answer`, `failed`, `cancelled`.
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
+    pub muted: bool,
+    pub on_stage: bool,
+    /// Tarifa em unidades mínimas por minuto (chamadas) ou por mensagem (SMS).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_minor: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Duração em chamada, em segundos (0 se nunca atendeu).
+    pub duration_secs: i64,
+    /// Custo até agora, em unidades mínimas.
+    pub cost_minor: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answered_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Custo desta sessão (só anfitriões).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SessionCostView {
+    /// Um total por moeda, sem conversão.
+    pub totals: Vec<CurrencyTotalView>,
+    pub calls: u32,
+    pub whatsapp: u32,
+    pub sms: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct CurrencyTotalView {
+    /// ISO 4217 (`AOA`, `USD`).
+    pub currency: String,
+    /// Unidades mínimas (cêntimos).
+    pub amount_minor: i64,
 }
 
 /// O que se sabe de quem entra além do nome e do papel base. Vem do token de
@@ -6127,6 +6192,49 @@ mod tests {
         assert_eq!(v["outside_app"], 4);
         assert_eq!(v["by_origin"][0]["origin"], "app");
 
+        let d = DialOutView {
+            id: Uuid::nil(),
+            kind: "voice".into(),
+            channel: "phone".into(),
+            carrier: Some("unitel".into()),
+            number: "+244923000108".into(),
+            number_masked: "+244 923 ***108".into(),
+            display_name: None,
+            status: "ringing".into(),
+            failure_code: None,
+            muted: false,
+            on_stage: false,
+            rate_minor: Some(940),
+            currency: Some("AOA".into()),
+            duration_secs: 0,
+            cost_minor: 0,
+            created_at: chrono::Utc::now(),
+            answered_at: None,
+            ended_at: None,
+        };
+        let v = serde_json::to_value(ServerMsg::DialOutUpdated {
+            dial_out: d.clone(),
+        })
+        .unwrap();
+        assert_eq!(v["type"], "dial-out-updated");
+        assert_eq!(v["dial_out"]["status"], "ringing");
+        assert!(serde_json::from_value::<ServerMsg>(v).is_ok());
+
+        let c = ServerMsg::SessionCost {
+            cost: SessionCostView {
+                totals: vec![CurrencyTotalView {
+                    currency: "AOA".into(),
+                    amount_minor: 61_200,
+                }],
+                calls: 3,
+                whatsapp: 1,
+                sms: 0,
+            },
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["type"], "session-cost");
+        assert_eq!(v["cost"]["totals"][0]["amount_minor"], 61_200);
+
         let u = serde_json::to_value(ServerMsg::PeerUpdated {
             peer: PeerInfo {
                 peer_id: Uuid::nil(),
@@ -6249,6 +6357,55 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn estado_do_dial_out_so_chega_a_quem_pode_admitir() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, mut rx_h) = peer();
+        let (membro, tx_m, mut rx_m) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        hub.join(
+            room,
+            membro,
+            membro,
+            "membro".into(),
+            false,
+            false,
+            false,
+            tx_m,
+        );
+        drain(&mut rx_h);
+        drain(&mut rx_m);
+        let d = DialOutView {
+            id: Uuid::new_v4(),
+            kind: "voice".into(),
+            channel: "phone".into(),
+            carrier: Some("unitel".into()),
+            number: "+244923000108".into(),
+            number_masked: "+244 923 ***108".into(),
+            display_name: None,
+            status: "dialing".into(),
+            failure_code: None,
+            muted: false,
+            on_stage: false,
+            rate_minor: Some(940),
+            currency: Some("AOA".into()),
+            duration_secs: 0,
+            cost_minor: 0,
+            created_at: chrono::Utc::now(),
+            answered_at: None,
+            ended_at: None,
+        };
+        hub.broadcast_admitters(room, ServerMsg::DialOutUpdated { dial_out: d });
+        assert!(recolher(&mut rx_h)
+            .iter()
+            .any(|m| matches!(m, ServerMsg::DialOutUpdated { .. })));
+        assert!(
+            recolher(&mut rx_m).is_empty(),
+            "um membro não vê números nem estados de chamada"
+        );
     }
 }
 

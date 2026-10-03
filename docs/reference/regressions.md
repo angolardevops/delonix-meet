@@ -2339,3 +2339,17 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Ficheiros.** `server/src/signaling.rs` (a porta `StageControl`, o `Spotlight` a accioná-la e o crachá `on_stage`), `server/src/sfu.rs` (`set_audio_pinned`), `server/src/lib.rs` (registo no arranque), `server/src/sfu_e2e.rs`.
 
 **O que NÃO está provado.** O caminho inteiro WebSocket → `Spotlight` → SFU num só teste: as duas metades estão medidas em separado e a cola é o adaptador de 15 linhas em `lib.rs`. E nenhum cliente web foi alterado — o destaque já existia na interface.
+
+### R271 — A chamada de saída para a ponte da sala ia sem SRTP e sem o id da chamada
+
+**Sintoma.** `telephony_esl::originate_command`, no ramo `AfterAnswer::RoomBridge`, montava o `&bridge(...)` para o UA da ponte sem `rtp_secure_media` e sem `sip_h_X-Delonix-Call-Id`. A ponte recusa com `488` uma oferta sem `a=crypto` (`phone_bridge/sip.rs`) e lê esse cabeçalho para ligar a perna SIP à chamada da telefonia — o lado que recebe estava portado, o lado que envia não. Sem efeito visível hoje: nada em `server/src` constrói um `RoomBridge` fora dos testes.
+
+**Regra.** A perna para a ponte leva `rtp_secure_media=mandatory:<suite>` (`phone_bridge::srtp::SRTP_PROFILE_NAME`) e o cabeçalho `X-Delonix-Call-Id` (`phone_bridge::sip::CALL_ID_HEADER`). `mandatory` e não `optional`: com `optional` uma resposta em claro passava.
+
+**Portão.** `telephony_esl::tests::room_bridge_goes_to_the_bridge_ua_not_the_local_conference` compara o comando inteiro.
+
+**Entrou no mesmo porte, SEM consumidor.** De `delonix-meet-backend/v3-canais`, e contra o que a R224 decidira: as mensagens `ServerMsg::DialOutUpdated` e `SessionCost` com `DialOutView`/`SessionCostView`/`CurrencyTotalView` (só os testes as constroem), a porta `domain::integration::whatsapp` (nenhum adaptador a implementa) e a migração `0120_room_channels.sql` (`room_dial_outs`, `room_phone_pins`, `org_whatsapp_configs` — nenhum código as lê ou escreve). Não são capacidades: nenhuma pode ser anunciada enquanto não tiver quem a produza.
+
+**O que NÃO está provado.** O `originate` com estas variáveis contra um FreeSWITCH real — a R222 mede a ponte com um comando montado no próprio teste (`sfu_e2e.rs`), não com o `originate_command`.
+
+**Ficheiros.** `server/src/telephony_esl.rs`, `server/src/signaling.rs`, `server/crates/delonix-meet-domain/src/integration/whatsapp.rs`, `server/migrations/0120_room_channels.sql`, `server/tests/telephony.rs`.
