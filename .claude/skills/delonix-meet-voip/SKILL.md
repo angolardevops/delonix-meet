@@ -185,6 +185,7 @@ contexto de dialplan e por domínio SIP, não por processo.
 | A interligação com um PBX ou uma operadora | **prova real, fora do CI**: uma chamada em cada sentido, com captura SIP, e as três medições abaixo |
 | O próprio softphone de prova, ou uma regra de DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`) com um perfil de teste. **Fora do CI**: precisa da imagem do FreeSWITCH e de docker |
 | `voice/freeswitch/sip_profiles/internal.xml`, `vars.xml.inc`, as montagens do compose, ou qualquer regra de SRTP | `bash scripts/softphone-prova.sh srtp-real` (R226) — com os ficheiros que o compose monta: o ramal autentica-se, com SRTP a chamada passa a negociação, **sem SRTP leva `488`**, e o `vars.xml.inc` incluído arranca e lê o ambiente. **Fora do CI**, pelas mesmas razões |
+| `voice/cluster/freeswitch-entrypoint.sh`, os ficheiros do ConfigMap `freeswitch-meet`, ou qualquer regra de SRTP no cluster | `bash scripts/softphone-prova.sh srtp-cluster` (R226) — a configuração que o cluster local monta: ramal autenticado e dial-in, cada um com e sem SRTP; **sem SRTP os dois levam `488`**. **Fora do CI**, pelas mesmas razões |
 
 **O que uma interligação tem de mostrar antes de se dizer «a funcionar»:**
 
@@ -214,7 +215,12 @@ contexto de dialplan e por domínio SIP, não por processo.
 - **O compose de voz não corre como está (R226):** nada inclui o `vars.xml.inc`; o
   contexto `delonix_ramais` não existe para o FreeSWITCH (o ficheiro é montado dentro do
   contexto `default` da vanilla → `404`); a vanilla não carrega `mod_xml_curl` nem
-  `mod_curl`; e a imagem do compose (`safarov/freeswitch:latest`) não foi medida.
+  `mod_curl`; e a imagem do compose (`safarov/freeswitch:latest`) não foi medida. **O que
+  corre é o cluster local** (`voice/cluster/freeswitch-entrypoint.sh`), que resolve os
+  quatro, e é essa a configuração que o `srtp-cluster` mede.
+- **O `srtp-cluster` não corre num cluster:** arranca o entrypoint num contentor, com o
+  servidor trocado por um andaime de directório. Um ramal real do control plane, o
+  Kamailio à frente do dial-in e a rede do cluster ficam de fora.
 - **SRTP à entrada de um tronco declarado `srtp=off`:** a global é para todas as pernas,
   e o gateway só a redefine à saída (`telephony_fs_xml.rs:230`). Não medido.
 - As regras de casa acima **não têm portão**. Session timers, `P-Asserted-Identity`,
@@ -226,10 +232,11 @@ contexto de dialplan e por domínio SIP, não por processo.
 
 Propõe um a três pedidos seguintes (escolhe dos quatro abaixo, ou outros), com o alvo, a prova a medir e o que fica de fora:
 
-1. «Põe o compose de voz a correr com a imagem do repo: o `vars.xml.inc` incluído, o
-   contexto `delonix_ramais` no sítio certo, `mod_xml_curl` e `mod_curl` carregados.
-   Prova: o `srtp-real` sem avisos e com a chamada do controlo positivo a chegar ao
-   `ramais_dial.lua`. Fora: o Kamailio e a operadora.»
+1. «Põe o compose de voz a usar o mesmo arranque do cluster
+   (`voice/cluster/freeswitch-entrypoint.sh`) e a imagem do repo, em vez de montar
+   ficheiros soltos sobre `safarov/freeswitch:latest`. Prova: o `srtp-real` sem avisos e
+   com a chamada do controlo positivo a chegar ao `ramais_dial.lua`. Fora: o Kamailio e a
+   operadora.»
 2. «Um portão que carregue o `voice/kamailio/kamailio.cfg` (`kamailio -c`) no
    `make fitness`. Prova: partir a configuração e ver falhar. Fora: o comportamento em
    chamada, e o XML do FreeSWITCH, que já tem o `check-fs-xml.sh`.»

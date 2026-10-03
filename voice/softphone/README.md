@@ -16,6 +16,10 @@ bash scripts/softphone-prova.sh selftest
 #    tem de levar 488.
 bash scripts/softphone-prova.sh srtp-real
 
+#    O mesmo contra a configuração que CORRE — a que o cluster local monta
+#    (voice/cluster/freeswitch-entrypoint.sh): ramais e dial-in, com e sem SRTP.
+bash scripts/softphone-prova.sh srtp-cluster
+
 # 3. Um softphone contra o teu servidor: marca, envia o PIN, mede o tom que ouve.
 SOFTPHONE_PASSWORD=… bash scripts/softphone-prova.sh chamada \
     --servidor 192.168.1.10:5070 --utilizador 1001 --destino 9000 --pin 123456 --espera-tom 440
@@ -47,6 +51,12 @@ do que o softphone ouviu fica em `.softphone-prova/ultima-chamada-ouvido.wav`.
 | `srtp-real`: a mesma chamada **sem** SRTP | recusada, `488 Not Acceptable Here`; no log, «Crypto not negotiated but required» |
 | `srtp-real`: o `vars.xml.inc` incluído pelo `vars.xml` | o FreeSWITCH arranca, o perfil escuta em `:5070`, URL e segredo vêm do ambiente |
 | `srtp-real` com o `voice/` de `origin/main` (`275ced1`) | **falha**: global vazia, sem SRTP `404` em vez de `488`, e o include mata o arranque (`unclosed <!--`) |
+| `srtp-cluster`: ramal com a password errada | recusado, `403 Forbidden` |
+| `srtp-cluster`: ramal autenticado, **com** SRTP | passa a negociação e chega ao `ramais_dial.lua`, que a fecha com `404` (o andaime não resolve números) |
+| `srtp-cluster`: o mesmo ramal **sem** SRTP | recusado, `488 Not Acceptable Here` |
+| `srtp-cluster`: dial-in (perfil `external`), **com** SRTP | atendido pelo IVR |
+| `srtp-cluster`: dial-in **sem** SRTP | recusado, `488 Not Acceptable Here` |
+| `srtp-cluster` sem nenhuma das duas globais (entrypoint e `internal.xml`) | **falha**: o ramal em claro leva `404` em vez de `488` |
 
 ## O que esta prova mediu (R226 no catálogo de regressões)
 
@@ -76,6 +86,15 @@ imagem do FreeSWITCH do repo. O que a prova acrescenta, e só isto: um ramal num
 estático (quem responde pelo directório no Meet é o control plane, que aqui não corre); a
 remoção dos perfis SIP de demonstração da vanilla (o `external` resolve o seu IP por STUN
 e, numa rede sem saída, deita abaixo o mod_sofia inteiro); e o ESL em loopback.
+
+## O andaime do `srtp-cluster`
+
+A configuração é a que o `voice/cluster/freeswitch-entrypoint.sh` monta, com os ficheiros
+que o `scripts/cluster-voice.sh` põe no ConfigMap `freeswitch-meet` e o ambiente do pod.
+O que a prova acrescenta: os endereços do servidor em loopback; um servidor de directório
+que responde como o `server/src/ramais.rs` a um só ramal (com o `a1-hash` do Digest e o
+`auth-acl=delonix_ramais`); e a lista de acesso dos ramais em loopback, porque numa rede
+sem saída o FreeSWITCH fica em `127.0.0.1`.
 
 ## O que NÃO está provado
 
