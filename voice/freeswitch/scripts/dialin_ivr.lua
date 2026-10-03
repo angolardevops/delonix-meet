@@ -9,8 +9,9 @@
 --   ${delonix_control_url}     ex.: http://127.0.0.1:8180
 --   ${delonix_voice_secret}    == VOICE_INTERNAL_SECRET do backend
 --
--- Requisitos: mod_lua, mod_curl, mod_conference, mod_dptools. SRTP é imposto no
--- perfil SIP (rtp_secure_media=mandatory) — este script não faz media em claro.
+-- Requisitos: mod_lua, mod_curl, mod_conference, mod_dptools. O SRTP à entrada
+-- é imposto pela variável GLOBAL rtp_secure_media=mandatory (R226), não por
+-- este script: quando ele corre, o SDP da perna já foi negociado.
 --
 -- ============================================================================
 -- Ponte telefone↔sala (ADR-0010) — LIGADA
@@ -100,7 +101,7 @@ local function room_bridge_from_json(resp)
 end
 
 session:answer()
-session:setVariable("rtp_secure_media", "mandatory") -- SRTP obrigatório, sem fallback
+session:setVariable("rtp_secure_media", "mandatory") -- não recusa esta perna, já negociada: isso é da global (R226)
 session:sleep(300)
 
 local did = session:getVariable("sip_to_user") or session:getVariable("destination_number") or ""
