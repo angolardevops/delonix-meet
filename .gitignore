@@ -87,3 +87,6 @@ ai-worker/gen/
 .fs-canais/
 .fs-smoke.*/
 .fs-build/
+
+# Prova de softphone (scripts/softphone-prova.sh): gravações da última chamada.
+.softphone-prova/

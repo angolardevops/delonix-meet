@@ -80,9 +80,17 @@ contexto de dialplan e por domínio SIP, não por processo.
   15 s e `permissions` por lista de endereços (`voice/kamailio/kamailio.cfg:44-62`); só
   aceita `INVITE` e `OPTIONS` (`:80`); escuta TLS em 5061 (`:39`). Não tem `usrloc`,
   registrar nem `auth_db` (`:14-15`) — **não regista ninguém**, só encaminha.
-- **Medido:** DTMF por RFC 2833/4733 com payload 101 (`internal.xml:28`); SRTP
-  obrigatório no perfil dos ramais (`rtp-secure-media=mandatory`); `accept-blind-reg` e
-  `accept-blind-auth` a `false`.
+- **Medido:** DTMF por RFC 2833/4733 com payload 101 (`internal.xml:28`);
+  `accept-blind-reg` e `accept-blind-auth` a `false`.
+- **Medido (2026-10-03, `scripts/softphone-prova.sh selftest`, FreeSWITCH 1.11.3) — quem
+  recusa uma chamada em claro à entrada é só a variável GLOBAL
+  `rtp_secure_media=mandatory`** (`voice/freeswitch/vars.xml.inc:15`): com ela, um `INVITE`
+  sem `a=crypto` leva `488`. O parâmetro `rtp-secure-media` de `internal.xml:51` e de
+  `conference.conf.xml:17` **não existe** no sofia nem no mod_conference (zero ocorrências
+  no código da v1.11.3) — só com ele, a chamada em claro foi aceite. E um
+  `set rtp_secure_media=mandatory` no dialplan antes do `answer` também não a recusa. Se o
+  `vars.xml.inc` não for incluído pelo `vars.xml` de um deploy, **nada** impõe SRTP à
+  entrada: confirma-o com o controlo negativo, não com a leitura do XML.
 - **Medido:** o perfil dos ramais **não tem ACL de rede** — o comentário em
   `internal.xml` di-lo, e não existe `acl.conf.xml` no repo. Não o abras a troncos.
 - A imagem, o que o FreeSWITCH de stock não faz e as provas contra um FreeSWITCH real:
@@ -165,11 +173,13 @@ contexto de dialplan e por domínio SIP, não por processo.
 | `voice/kamailio/` | **não há portão automático** — nenhum teste carrega o `kamailio.cfg` |
 | `voice/freeswitch/sip_profiles/`, `dialplan/` | só a sintaxe do Lua (`scripts/check-lua-sintaxe.sh`); o XML não é validado |
 | A interligação com um PBX ou uma operadora | **prova real, fora do CI**: uma chamada em cada sentido, com captura SIP, e as três medições abaixo |
+| O próprio softphone de prova, ou uma regra de SRTP/DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`). **Fora do CI**: precisa da imagem do FreeSWITCH e de docker |
 
 **O que uma interligação tem de mostrar antes de se dizer «a funcionar»:**
 
 1. uma chamada de entrada e uma de saída, com áudio **nos dois sentidos** — medido, não
-   ouvido de um lado só;
+   ouvido de um lado só (`scripts/softphone-prova.sh par`: dois softphones na mesma sala,
+   cada um a medir o tom do outro; `voice/softphone/README.md`);
 2. o DTMF a chegar ao IVR (o PIN é aceite);
 3. o controlo negativo: um `INVITE` de um IP fora da allowlist é recusado, e uma chamada
    para um prefixo fechado não sai.
@@ -179,6 +189,9 @@ contexto de dialplan e por domínio SIP, não por processo.
 - Nenhuma chamada passou por **uma operadora a sério através do Kamailio**: o que está
   medido é contra um FreeSWITCH local (`delonix-meet-telefonia`, R222).
 - Nenhuma interligação com um **Issabel ou FreePBX real** foi feita a partir deste repo.
+- O `softphone-prova.sh` **nunca correu contra o Meet a funcionar**: os modos `chamada` e
+  `par` foram exercitados contra um FreeSWITCH de teste, sem autenticação Digest, sem
+  registo, sem o IVR do dial-in e sem a ponte para a sala.
 - As regras de casa acima **não têm portão**. Session timers, `P-Asserted-Identity`,
   tecto de gasto e alarme de fraude não foram procurados no código nesta revisão:
   confirma por `grep` antes de os dares como existentes ou em falta.
