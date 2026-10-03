@@ -1008,7 +1008,7 @@ impl SfuState {
         };
         let _ = room
             .bridges
-            .fetch_update(Relaxed, Relaxed, |n| n.checked_sub(1));
+            .try_update(Relaxed, Relaxed, |n| n.checked_sub(1));
         if room.bridges.load(Relaxed) == 0 && room.peers.lock().await.is_empty() {
             self.rooms.remove_if(&room_id, |_, r| {
                 r.bridges.load(Relaxed) == 0 && r.peers.try_lock().is_ok_and(|p| p.is_empty())
