@@ -1,7 +1,7 @@
 -- Canais na sala (ADR-0010): quem se acrescenta a uma reunião por número —
 -- chamada de voz, SMS com PIN, convite WhatsApp — e o PIN de uso único.
 -- Portada de `delonix-meet-backend/v3-canais` (lá 0075, depois 0095) para a
--- faixa 0120 do develop. AINDA SEM CONSUMIDOR: nenhum código em `server/src`
+-- sequência do develop (0086). AINDA SEM CONSUMIDOR: nenhum código em `server/src`
 -- lê ou escreve estas tabelas — o censo de canais vive em memória
 -- (`signaling::Seat`). Entram com o esquema para o «adicionar por número».
 

@@ -59,7 +59,7 @@ impl AuthMethod {
 /// Com `method` (um login): a sessão nasce, e um login acabado de fazer É uma
 /// prova de identidade — `reauthenticated_at` nasce preenchido. Sem `method`
 /// (um refresh): a sessão já existe e só se toca no «visto por último» e no
-/// dispositivo; se não existir (token emitido antes da 0101 correr neste nó),
+/// dispositivo; se não existir (token emitido antes da 0078 correr neste nó),
 /// nasce `legacy`, sem prova recente.
 pub(crate) async fn upsert(
     state: &AppState,

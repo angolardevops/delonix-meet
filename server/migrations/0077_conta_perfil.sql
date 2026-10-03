@@ -1,7 +1,7 @@
 -- «A minha conta» (Navegavel3, DelonixProfile + DelonixTour) — frente B.
 --
 -- NUMERAÇÃO: era a 0070 da frente B; no develop a 0070 já é `telephony_dial_plan`,
--- por isso entra como 0100 (intervalo 0100–0109 da frente «conta»).
+-- por isso entra como 0077.
 
 -- 1. Perfil. `username` continua a ser o identificador único que o resto do
 --    produto já usa; `display_name` é o nome que aparece na sala e nas

@@ -2380,11 +2380,11 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Portão.** `telephony_esl::tests::room_bridge_goes_to_the_bridge_ua_not_the_local_conference` compara o comando inteiro.
 
-**Entrou no mesmo porte, SEM consumidor.** De `delonix-meet-backend/v3-canais`, e contra o que a R224 decidira: as mensagens `ServerMsg::DialOutUpdated` e `SessionCost` com `DialOutView`/`SessionCostView`/`CurrencyTotalView` (só os testes as constroem), a porta `domain::integration::whatsapp` (nenhum adaptador a implementa) e a migração `0120_room_channels.sql` (`room_dial_outs`, `room_phone_pins`, `org_whatsapp_configs` — nenhum código as lê ou escreve). Não são capacidades: nenhuma pode ser anunciada enquanto não tiver quem a produza.
+**Entrou no mesmo porte, SEM consumidor.** De `delonix-meet-backend/v3-canais`, e contra o que a R224 decidira: as mensagens `ServerMsg::DialOutUpdated` e `SessionCost` com `DialOutView`/`SessionCostView`/`CurrencyTotalView` (só os testes as constroem), a porta `domain::integration::whatsapp` (nenhum adaptador a implementa) e a migração `0086_room_channels.sql` (`room_dial_outs`, `room_phone_pins`, `org_whatsapp_configs` — nenhum código as lê ou escreve). Não são capacidades: nenhuma pode ser anunciada enquanto não tiver quem a produza.
 
 **O que NÃO está provado.** O `originate` com estas variáveis contra um FreeSWITCH real — a R222 mede a ponte com um comando montado no próprio teste (`sfu_e2e.rs`), não com o `originate_command`.
 
-**Ficheiros.** `server/src/telephony_esl.rs`, `server/src/signaling.rs`, `server/crates/delonix-meet-domain/src/integration/whatsapp.rs`, `server/migrations/0120_room_channels.sql`, `server/tests/telephony.rs`.
+**Ficheiros.** `server/src/telephony_esl.rs`, `server/src/signaling.rs`, `server/crates/delonix-meet-domain/src/integration/whatsapp.rs`, `server/migrations/0086_room_channels.sql`, `server/tests/telephony.rs`.
 ### R155 — Um convidado sem conta entra pela porta, e a porta não abre mais nada
 
 **Sintoma (antes).** Um externo sem conta não conseguia entrar numa reunião: o `join_room` exige `AuthUser`, e o link levava ao ecrã de login. Era o bloqueio n.º 1 à adopção face ao Zoom e ao Meet (`notas-ui-template/adopcao-vs-meet-teams-zoom.md`, alavanca 1).
@@ -2395,7 +2395,7 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 - O token é `typ: "room"` com `origin: "guest"`, o claim `guest: true` e um `sub` gerado que não existe em `users`. Nenhum extractor da API aceita `typ: "room"` — a exclusão é por construção, não por lista. O claim é próprio porque `origin: "guest"` sozinho já é o que o `join_room` dá a quem TEM conta e entrou pelo link sem convite (R182): esse continua a poder receber papéis.
 - O `/ws` decide o lugar em `signaling::seat_policy` a partir do claim `guest`: convidado espera sempre (`lobby` forçado — nem o anfitrião a desligar a sala de espera a meio o deixa passar) e não tem papel, seja o que for que venha nos outros campos do token. `Hub::join_with` volta a impô-lo (`JoinExtras::is_guest`), e o lugar reclamado guarda a marca (`ReclaimedSeat::is_guest`). O anfitrião vê-o marcado: `PeerInfo::is_guest` na espera e na sala, `WaitingView::is_guest` na REST.
 - `TransferHost`, `PromoteAdmit` e `SetRole` para `cohost` são recusados quando o alvo é um convidado (os papéis de palco, `speaker`/`broadcast`, não); o directo (`/api/rooms/{room_code}/live`) recusa tokens de convidado com `403`.
-- `rooms.allow_guests` (0086, por omissão `true`, `PATCH /api/rooms/{room_code}` só pelo dono) → `403` antes de emitir seja o que for.
+- `rooms.allow_guests` (0075, por omissão `true`, `PATCH /api/rooms/{room_code}` só pelo dono) → `403` antes de emitir seja o que for.
 - Travão por IP (`GUEST_JOIN_PER_IP_PER_MIN`, 10) antes de ler a base e por sala (`GUEST_JOIN_PER_ROOM_PER_MIN`, 30) depois de a sala existir, com `429` + `Retry-After` com o que falta da janela (`ApiError::RateLimited`, do `RateLimiter::acquire`).
 - `room.guest_join` na auditoria da org do dono, com o código da sala e o nome marcado «(convidado)». Nem IP nem agente.
 
@@ -2403,18 +2403,18 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Fora.** Media do convidado (não há e2e com `RTCPeerConnection` para convidados), salas de grupo (a troca de sala chama `/join`, que exige conta: um convidado não vai para um grupo), e os travões são por pod (memória), como os restantes.
 
-**Ficheiros.** `server/src/guests.rs`, `server/src/signaling.rs`, `server/src/auth.rs`, `server/src/rooms.rs`, `server/src/audit.rs`, `server/src/error.rs`, `server/src/broadcast.rs`, `server/src/lib.rs`, `server/migrations/0086_room_allow_guests.sql`, `scripts/rotas-publicas.txt`, `web/e2e/isolamento.mjs`, `web/e2e/convidado.mjs`, `web/src/api.ts`, `.github/workflows/ci.yml`.
+**Ficheiros.** `server/src/guests.rs`, `server/src/signaling.rs`, `server/src/auth.rs`, `server/src/rooms.rs`, `server/src/audit.rs`, `server/src/error.rs`, `server/src/broadcast.rs`, `server/src/lib.rs`, `server/migrations/0075_room_allow_guests.sql`, `scripts/rotas-publicas.txt`, `web/e2e/isolamento.mjs`, `web/e2e/convidado.mjs`, `web/src/api.ts`, `.github/workflows/ci.yml`.
 
-**Porte para o `develop` (2026-10-03).** A entrada nasceu no ramo `delonix-meet-backend/convidado-sem-conta` (2026-09-16) e foi portada por cima do `develop`: a rota vive em `lib.rs`, a migração passou de 0040 a 0086, e o `join_seat` do ramo deu lugar ao `join_with` com `JoinExtras::is_guest`. **Não revalidado no porte:** os dois e2e (`isolamento.mjs`, `convidado.mjs`) não correram contra servidor e Postgres reais; a prova de que os testes falham sem as guardas é a do ramo de origem; e o que o `handle_socket` do `develop` grava com o `user_id` (chat persistido, presenças) nunca foi medido com um `sub` que não existe em `users`.
+**Porte para o `develop` (2026-10-03).** A entrada nasceu no ramo `delonix-meet-backend/convidado-sem-conta` (2026-09-16) e foi portada por cima do `develop`: a rota vive em `lib.rs`, a migração passou de 0040 a 0075, e o `join_seat` do ramo deu lugar ao `join_with` com `JoinExtras::is_guest`. **Não revalidado no porte:** os dois e2e (`isolamento.mjs`, `convidado.mjs`) não correram contra servidor e Postgres reais; a prova de que os testes falham sem as guardas é a do ramo de origem; e o que o `handle_socket` do `develop` grava com o `user_id` (chat persistido, presenças) nunca foi medido com um `sub` que não existe em `users`.
 ### R200 — Terminar uma sessão não cortava nada até o JWT expirar
 
 **Sintoma.** A sessão tinha identidade (`refresh_tokens.session_id`, 0065) mas não tinha estado: revogar o refresh deixava o access token (15 min) a abrir a API e o `/rtc` e o `/ws` ligados.
 
-**Regra.** `user_sessions` (0101) guarda o estado da sessão com o MESMO id; o access e o room token levam `sid`; `AuthUser`, `/rtc` e `/ws` recusam uma sessão terminada com `401 auth.session_revoked`. Terminar (`DELETE /api/users/me/sessions/{session_id}`, em `account.rs`, por `sessions::revoke`) revoga os refresh tokens dela e acorda o `shutdown` das ligações dela neste nó e, pelo canal Redis `dlx:session-revoked`, nos outros. O logout termina a sessão.
+**Regra.** `user_sessions` (0078) guarda o estado da sessão com o MESMO id; o access e o room token levam `sid`; `AuthUser`, `/rtc` e `/ws` recusam uma sessão terminada com `401 auth.session_revoked`. Terminar (`DELETE /api/users/me/sessions/{session_id}`, em `account.rs`, por `sessions::revoke`) revoga os refresh tokens dela e acorda o `shutdown` das ligações dela neste nó e, pelo canal Redis `dlx:session-revoked`, nos outros. O logout termina a sessão.
 
 **Portão.** `server/tests/account_sessions.rs::revoking_a_session_kills_refresh_access_and_websockets` (o `/rtc` e o `/ws` fecham, o room token ainda válido não reabre, a sessão de onde se termina continua). **Não validado:** com duas réplicas reais (o caminho Redis entre nós).
 
-**Ficheiros.** `server/src/{sessions,account,auth,presence,signaling,rooms,pubsub,lib}.rs`, migração `0101_sessoes`.
+**Ficheiros.** `server/src/{sessions,account,auth,presence,signaling,rooms,pubsub,lib}.rs`, migração `0078_sessoes`.
 
 ### R201 — «Terminar todas as outras sessões»
 

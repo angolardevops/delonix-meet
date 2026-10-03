@@ -104,7 +104,7 @@ pub struct CreateRoomReq {
     /// 'normal' (por defeito), 'training' (ativa salas de grupo), 'broadcast' ou 'hybrid'.
     #[serde(default)]
     pub format: Option<String>,
-    /// Aceitar convidados sem conta. Ausente = sim (ver migração 0086).
+    /// Aceitar convidados sem conta. Ausente = sim (ver migração 0075).
     #[serde(default)]
     pub allow_guests: Option<bool>,
 }

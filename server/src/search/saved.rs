@@ -1,4 +1,4 @@
-//! Favoritos — pesquisas guardadas (contrato §5, migração 0117).
+//! Favoritos — pesquisas guardadas (contrato §5, migração 0085).
 //!
 //! A `query` valida-se contra o schema do recurso ao gravar (os mesmos códigos
 //! da lista) e volta a validar-se ao ler: um schema que mudou devolve

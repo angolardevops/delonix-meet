@@ -46,7 +46,7 @@ a lista de sempre; o envelope novo responde com `page_size`, `page_token`, `filt
 `filters`, `group_by` ou `order_by` — é um superconjunto da página que lá estava — e cobre as
 duas bibliotecas com a mesma lista branca e a visibilidade de cada uma. Nas outras colecções
 vale a regra acima. A autorização dos tipos reservados segue as capacidades do ADR-0008, e as
-migrações são a 0115–0117. O directório de utilizadores (`directory.rs`) já tinha pesquisa
+migrações são a 0083–0085. O directório de utilizadores (`directory.rs`) já tinha pesquisa
 própria antes do porte e não foi trazido para este motor — são hoje dois mecanismos, e
 juntá-los é trabalho por fazer.
 
@@ -101,7 +101,7 @@ de um parâmetro de pesquisa.
   termos ≥ 3 caracteres; um termo CJK de 2 caracteres é correcto mas não indexado — está
   escrito no contrato.
 - **`unaccent()` não é `IMMUTABLE`**, por isso nem coluna gerada nem índice a aceitam. A
-  0115 cria `dlx_unaccent(text)` IMMUTABLE com o dicionário fixado
+  0083 cria `dlx_unaccent(text)` IMMUTABLE com o dicionário fixado
   (`public.unaccent('public.unaccent'::regdictionary, $1)`), que é o padrão documentado.
 - **Gravações alinham com a 0045:** a coluna `recordings.search_vector` e o índice
   `idx_recordings_search` mantêm nome e papel; só a configuração passa de `simple` para

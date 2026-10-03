@@ -11,7 +11,7 @@
 //! corrigido à mão nunca é apagado por uma máquina.
 //!
 //! O ESTADO da última geração (a correr, bem sucedida, falhada e porquê) vive
-//! em `recording_chapter_generations` (migração 0087) e lê-se em
+//! em `recording_chapter_generations` (migração 0076) e lê-se em
 //! `GET …/chapters/generation`. `recordings.chapters_generated_at` só diz que
 //! houve uma geração BEM SUCEDIDA: uma resposta do modelo sem capítulos
 //! utilizáveis fica `failed`, não apaga os automáticos que havia nem marca a

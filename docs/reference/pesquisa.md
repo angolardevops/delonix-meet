@@ -25,7 +25,7 @@
 >   (ADR-0008), não o papel `admin`: `broadcast.manage_rtmp_keys` (destinos),
 >   `org.administer` (webhooks), `admin.view_audit` (auditoria).
 > - **Mensagens:** uma conversa directa só aparece a quem a enviou e a quem a recebeu.
-> - **Migrações:** 0115–0117 (eram 0052–0054 no ramo).
+> - **Migrações:** 0083–0085 (eram 0052–0054 no ramo).
 > - **`users` não está aqui:** o directório `GET /api/orgs/{org_id}/users` tem pesquisa
 >   própria (`directory.rs`, `GET /api/search/schemas/users`) e não aparece em
 >   `GET /api/search/schemas`.
