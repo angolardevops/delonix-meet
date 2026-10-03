@@ -19,6 +19,7 @@
 | **1 · Config e cortes** | 1.1 · 1.2 · 1.3 · 4.3 (+1.6 de borla) | **FECHADO** — `ui/lote-1-carregamento`, medido abaixo |
 | **2 · Layout** | 3.1.1 · 3.1.3 · 3.1.4 · 4.1 · 4.2 · 3.2.5 | **FECHADO** — `ui/lote-2-layout`, medido abaixo |
 | **3 · Sala e higiene** | perfil → 2.1–2.3 · 3.2.1 · 3.2.4 | **FECHADO** — `ui/lote-3-sala`, medido abaixo |
+| **4 · Acessibilidade** | nomes acessíveis, diálogos, `Escape`, navegação por teclado | **FECHADO (código) / NÃO verificado com leitor de ecrã** — `a11y/console-lote-4`, medido abaixo |
 
 ### Lote 1 — o que mudou, medido
 
@@ -174,6 +175,78 @@ também fica: a troca por `grid` + `aspect-ratio` mexe no layout de vídeo, que 
 o sítio onde uma regressão se paga mais caro, e merece o seu próprio lote com
 verificação visual.
 
+### Lote 4 — acessibilidade
+
+Auditoria fresca contra o `origin/main` real (`70c9552`) — a primeira tentativa
+tinha corrido contra uma checkout **126 commits atrasada**, com `Room.tsx`
+sozinho a divergir em 1220 linhas; os achados dessa passagem foram descartados
+e a auditoria repetida do zero antes de qualquer correção, porque um número de
+linha errado não é um achado, é ruído.
+
+| Medida | Antes | Depois |
+|---|---|---|
+| Botões `panel-close` sem nome acessível (Room · Directory · Calendar · Recordings · Whiteboards · PresenceProvider) | 15 | **0** |
+| Modais de página sem `role="dialog"`/`aria-modal`/fecho por `Escape` (Directory ×4 · Calendar ×2 · Recordings ×2 · Whiteboards ×1) | 9 | **0** |
+| Sobreposições da sala sem `Escape` próprio (fx/convite/notas — o `panel` já tinha) | 3 | **0**, via `useEscapeToClose` partilhado |
+| `Room.tsx`: landmark `role="main"` e `<h1>` | 0 | 1 cada (`h1` com `.sr-only`, título = código da sala) |
+| Shell: skip-link para o `<main>` | não existia | 1, oculto até ganhar foco |
+| `<div>`/`<span>` com `onClick` sem `onKeyDown`/`role="button"` (Calendar: mês, dia, coluna da timeline) | 3 | **0** |
+| Toast/chamada a receber sem `aria-live` (`PresenceProvider`) | 3 | **0** (`status`/`alertdialog`, `polite`/`assertive` conforme urgência) |
+| `<select>`/`<input>` sem `<label>`/`aria-label` (Login · Directory · prejoin e definições da Room) | 12 | **0** |
+| Emoji/reação/remover-convidado só com o glifo como nome | 5 | **0** |
+
+O trabalho foi paralelizado por ficheiro (nunca dois agentes no mesmo ficheiro
+ao mesmo tempo) dentro de um único worktree isolado
+(`git worktree add -b a11y/console-lote-4 … origin/main`, per §0.1 do
+`CLAUDE.md` do workspace), com um catálogo de achados fixo e um padrão de
+referência já existente no código — `CommandPalette.tsx` e `OnboardingTour.tsx`
+(`role="dialog" aria-modal="true"`, `Escape` a fechar, foco movido ao abrir) —
+em vez de inventar um novo por ficheiro.
+
+**Uma armadilha evitada, não corrigida.** Os painéis laterais da sala
+(chat/pessoas/ferramentas/definições/fx/notas) são `<aside>`, não modais — o
+próprio código já documenta porquê (`Room.tsx`, perto do efeito de `Escape` do
+`panel`): prender o foco lá dentro impediria de chegar aos controlos da
+chamada. Dar-lhes `role="dialog"` como aos modais a mais teria sido o
+achado genérico da auditoria aplicado às cegas; ficaram de fora de propósito.
+
+**Um limite descoberto, não meu.** `PasswordInput` (componente partilhado) não
+reencaminha `aria-label` para o `<input>` interno — não tem *rest spread* de
+props. Em vez de o alargar (fora do âmbito deste lote, e um componente
+partilhado usado em vários sítios merece o seu próprio olhar), o `Login.tsx`
+embrulhou-o num `<label>` com um `<span className="sr-only">`, que dá nome ao
+campo sem tocar no componente nem mudar o layout. Confirmado no DOM real: o
+`<label>` calcula o nome acessível a partir do `sr-only`, o `PasswordInput` de
+`Directory.tsx` (já correcto) não precisou de mudar.
+
+**Uma perda e uma lição, no meio do lote.** A máquina reiniciou a meio deste
+trabalho e `/tmp` foi limpo — o worktree inteiro, com todo o código já
+corrigido mas ainda por commitar, desapareceu sem aviso. Nada foi perdido do
+lado do `git` (nunca tinha sido commitado), mas foi preciso reconstruir cada
+ficheiro a partir dos diffs e relatórios já vistos nesta sessão. **Regra daqui
+para a frente: commitar no worktree assim que um lote fecha, não deixar
+trabalho substancial por commitar só porque o PR ainda não foi aberto** — um
+worktree em `/tmp` não sobrevive a um reboot, e um `git commit` local é grátis
+e reversível.
+
+**O que ficou provado.** `./node_modules/.bin/tsc --noEmit` limpo, as 292
+`vitest` existentes continuam verdes, `vite build` produz um `dist/` válido, e
+o `Login.tsx` foi verificado num Chromium real contra esse `dist` (`vite
+preview`, `NO_HTTPS=1`): o campo de email tem `aria-label="Email"` e o de
+password herda o nome do `<label>`/`sr-only` — confirmado por leitura do DOM,
+não só da árvore de acessibilidade do painel do agente.
+
+**O que NÃO foi validado.** As superfícies que precisam de sessão autenticada
+— `Shell` (skip-link), `Room` em chamada (landmark/h1, fecho por `Escape` das
+sobreposições, reacções), e os modais de `Calendar`/`Directory`/`Recordings`/
+`Whiteboards` — não foram exercitadas num browser real: precisam de
+Postgres+Redis+backend Rust (`cargo build --release`) a correr, e os portos de
+dev habituais (5435/6379) já estavam ocupados por outro worktree em paralelo
+neste workspace. Não foi corrido leitor de ecrã nenhum (NVDA/VoiceOver/Orca)
+contra nada disto. Antes de fundir, falta pelo menos um passe manual por
+teclado (Tab/Escape/Enter/Espaço) nas superfícies autenticadas, e idealmente
+uma passagem com leitor de ecrã na `Room` — é a página com mais controlos e a
+que este lote mais mudou.
 
 ---
 
