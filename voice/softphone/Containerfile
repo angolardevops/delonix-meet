@@ -1,0 +1,12 @@
+# baresip para a prova de softphone (scripts/softphone-prova.sh): um UA SIP de
+# linha de comandos, guiável por script, com SDES-SRTP, DTMF por RFC 2833 e
+# áudio de/para ficheiro. O do Debian 12, fixado pela base — não se compila nada.
+ARG DEBIAN=debian:bookworm@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26
+FROM ${DEBIAN}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends baresip-core netcat-openbsd ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -u 1000 softphone
+USER softphone
+WORKDIR /home/softphone
+ENTRYPOINT ["baresip"]

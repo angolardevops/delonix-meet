@@ -4,7 +4,9 @@
   inbound (de um DID nosso) para o IVR de dial-in em Lua.
 
   Segurança: o contexto 'public' só deve receber tráfego já filtrado pelo
-  Kamailio (ACL do trunk). SRTP é imposto no IVR e no perfil SIP.
+  Kamailio (ACL do trunk). O SRTP à entrada é imposto pela variável GLOBAL
+  rtp_secure_media=mandatory (sip_profiles/internal.xml, vars.xml.inc): o `set`
+  abaixo corre com o SDP já negociado e não recusa uma chamada em claro (R226).
 -->
 <include>
   <context name="public">
