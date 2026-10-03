@@ -4656,7 +4656,7 @@
             "type": "integer"
           },
           "external_source": {
-            "description": "Sistema que criou a reunião, lido da referência externa\n(`odoo:<bd>:calendar.event:<id>` → `odoo`). `None` = criada no Meet.",
+            "description": "Sistema que criou a reunião, lido da referência externa\n(`odoo:<bd>:calendar.event:<id>` → `odoo`; uma referência que não\ndeclara sistema → `api`). `None` = criada no Meet.",
             "type": [
               "string",
               "null"
@@ -4768,73 +4768,80 @@
         "type": "object"
       },
       "MeetingResp": {
-        "properties": {
-          "duration_min": {
-            "format": "int32",
-            "type": "integer"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptions"
           },
-          "existing": {
-            "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
-            "type": "boolean"
-          },
-          "external_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "host_email": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "invitees": {
-            "description": "Convidados efectivamente registados (email -> id do utilizador).",
-            "items": {
-              "$ref": "#/components/schemas/InviteeResp"
+          {
+            "properties": {
+              "duration_min": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "existing": {
+                "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
+                "type": "boolean"
+              },
+              "external_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "host_email": {
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "invitees": {
+                "description": "Convidados efectivamente registados (email -> id do utilizador).",
+                "items": {
+                  "$ref": "#/components/schemas/InviteeResp"
+                },
+                "type": "array"
+              },
+              "join_url": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "room_code": {
+                "type": "string"
+              },
+              "skipped": {
+                "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
+                "items": {
+                  "$ref": "#/components/schemas/SkippedInvitee"
+                },
+                "type": "array"
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
             },
-            "type": "array"
-          },
-          "join_url": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "room_code": {
-            "type": "string"
-          },
-          "skipped": {
-            "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
-            "items": {
-              "$ref": "#/components/schemas/SkippedInvitee"
-            },
-            "type": "array"
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
+            "required": [
+              "id",
+              "title",
+              "starts_at",
+              "duration_min",
+              "kind",
+              "room_code",
+              "join_url",
+              "host_email",
+              "invitees",
+              "skipped",
+              "existing"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "title",
-          "starts_at",
-          "duration_min",
-          "kind",
-          "room_code",
-          "join_url",
-          "host_email",
-          "invitees",
-          "skipped",
-          "existing"
-        ],
-        "type": "object"
+        ]
       },
       "MeetingRoom": {
         "properties": {
@@ -6551,46 +6558,85 @@
         },
         "type": "object"
       },
-      "PatchMeetingReq": {
+      "PatchMeetingOptionsReq": {
+        "additionalProperties": false,
+        "description": "`PATCH /api/meetings/{meeting_id}` — só as opções de sessão (R184). Campos\nfora destes são recusados, não ignorados: um título mandado aqui não muda\nnada e o cliente tem de o saber.",
         "properties": {
-          "description": {
+          "auto_record": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "format": {
             "type": [
               "string",
               "null"
             ]
           },
-          "duration_min": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "invitees": {
-            "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
-            "items": {
-              "$ref": "#/components/schemas/InviteeReq"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
+          "record_quality": {
             "type": [
               "string",
               "null"
             ]
           },
-          "title": {
+          "waiting_room": {
             "type": [
-              "string",
+              "boolean",
               "null"
             ]
           }
         },
         "type": "object"
+      },
+      "PatchMeetingReq": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionOptionsPatch",
+            "description": "Opções de sessão; a ausente fica como está. Passam também à sala."
+          },
+          {
+            "properties": {
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "duration_min": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "invitees": {
+                "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
+                "items": {
+                  "$ref": "#/components/schemas/InviteeReq"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "starts_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ]
       },
       "PatchRoomReq": {
         "additionalProperties": false,
@@ -7697,6 +7743,59 @@
           "title",
           "source",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "RecordingChapterGeneration": {
+        "description": "O estado da última geração de capítulos de uma gravação.",
+        "properties": {
+          "chapter_count": {
+            "description": "Capítulos automáticos gravados. Só com `succeeded`.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "description": "Só com `failed`: `ai.unavailable`, `ai.bad_response`, `ai.interrupted`\nou `internal`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`idle` (nunca pedida) | `running` | `succeeded` | `failed`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "status"
         ],
         "type": "object"
       },
@@ -9260,6 +9359,36 @@
           },
           "waiting_room": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "SessionOptionsPatch": {
+        "description": "Alteração parcial das opções de sessão: o campo ausente fica como está.",
+        "properties": {
+          "auto_record": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "record_quality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting_room": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "type": "object"
