@@ -2428,8 +2428,16 @@ export function listQueryString(query: ListQuery): string {
   return p.toString()
 }
 
-export const searchList = <T>(path: string, query: ListQuery, signal?: AbortSignal) =>
-  request<ListEnvelope<T>>(`${path}?${listQueryString(query)}`, { signal })
+/**
+ * `extra`: parâmetros próprios da colecção que não são da pesquisa (o `scope`
+ * da biblioteca de gravações). Vão em TODOS os pedidos da lista — página,
+ * grupos e abrir um grupo —, porque escolhem a colecção e não o filtro.
+ */
+export const searchList = <T>(path: string, query: ListQuery, signal?: AbortSignal, extra?: Record<string, string>) => {
+  const p = new URLSearchParams(listQueryString(query))
+  for (const [k, v] of Object.entries(extra ?? {})) p.set(k, v)
+  return request<ListEnvelope<T>>(`${path}?${p.toString()}`, { signal })
+}
 
 export interface SavedSearchQuery {
   q?: string

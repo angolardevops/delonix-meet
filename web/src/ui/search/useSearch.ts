@@ -87,9 +87,9 @@ export function useSearchSchema(resource: string | null): Async<SearchSchema> {
 export type ListFetcher<T> = (query: ListQuery, signal: AbortSignal) => Promise<ListEnvelope<T>>
 
 /** Lista do servidor: a colecção do schema com os parâmetros uniformes. */
-export function serverFetcher<T>(schema: SearchSchema, orgId?: string | null): ListFetcher<T> {
+export function serverFetcher<T>(schema: SearchSchema, orgId?: string | null, extra?: Record<string, string>): ListFetcher<T> {
   const path = collectionPath(schema, orgId)
-  return (query, signal) => searchList<T>(path, query, signal)
+  return (query, signal) => searchList<T>(path, query, signal, extra)
 }
 
 /** Lista local: a colecção inteira que o ecrã já tem. */
