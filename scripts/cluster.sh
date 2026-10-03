@@ -48,7 +48,8 @@ node_ip() { kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=
 # Publica uma porta do nó em 127.0.0.1. Idempotente: se já está, não repete.
 publica() {
   local spec=$1
-  delonix net ingress ls "$NODE" 2>/dev/null | grep -q "publish[[:space:]]\+${spec%%/*}[[:space:]]" && return 0
+  # A listagem mostra a especificação inteira («13478:3478/udp»).
+  delonix net ingress ls "$NODE" 2>/dev/null | grep -q "publish[[:space:]]\+${spec}[[:space:]]" && return 0
   delonix net ingress publish "$NODE" "$spec" >/dev/null 2>&1
 }
 
@@ -123,10 +124,15 @@ up)
   # O TURN tem de estar publicado ANTES da configuração: o servidor diz ao
   # browser onde ele está. A 3478 do host costuma estar ocupada pelo coturn
   # de desenvolvimento (`make infra`); nesse caso publica-se noutra.
-  TURN_PORT=3478
-  if ! publica "${TURN_PORT}:3478/udp"; then
+  # Se uma corrida anterior já o publicou na porta alternativa, é essa que vale.
+  if delonix net ingress ls "$NODE" 2>/dev/null | grep -q "publish[[:space:]]\+13478:3478/udp[[:space:]]"; then
     TURN_PORT=13478
-    publica "${TURN_PORT}:3478/udp" || { TURN_PORT=""; avisa "não consegui publicar o TURN no host — media por relay indisponível"; }
+  else
+    TURN_PORT=3478
+    if ! publica "${TURN_PORT}:3478/udp"; then
+      TURN_PORT=13478
+      publica "${TURN_PORT}:3478/udp" || { TURN_PORT=""; avisa "não consegui publicar o TURN no host — media por relay indisponível"; }
+    fi
   fi
   [ -n "$TURN_PORT" ] && ok "TURN publicado em ${HOST_IP}:${TURN_PORT}/udp"
 

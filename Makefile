@@ -758,6 +758,12 @@ compose-info: ## URLs e acessos de administração da simulação de produção
 	  printf "     servidor     %s:5070   transporte UDP   (proxy: sip:%s:5070;transport=udp)\n" "$$ip" "$$ip"; \
 	  printf "     media        SRTP obrigatório (SDES); sem ICE nem STUN\n"; \
 	fi; \
+	if [ -f deploy/compose/generated/sala-telefone.txt ]; then \
+	  t() { sed -n "s/^$$1=//p" deploy/compose/generated/sala-telefone.txt; }; \
+	  printf "$(G)  Entrar numa reunião por telefone$(Z)   sala %s\n" "$$(t sala)"; \
+	  printf "     de um ramal  marcar 8000 e depois o PIN %s seguido de #\n" "$$(t pin)"; \
+	  printf "     no browser   https://$(MEET_HOST):8443/#/r/%s\n" "$$(t sala)"; \
+	fi; \
 	printf "\n  Estado: make compose-ps   ·   Prova da voz: make compose-voice-check\n"
 compose-down: ## Para a simulação de produção (mantém os volumes)
 	@$(COMPOSE) down $(COMPOSE_P)

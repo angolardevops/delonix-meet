@@ -13,8 +13,9 @@ MEET=/meet
 
 # De raiz a cada arranque: um contentor reiniciado voltava a aplicar as
 # alterações por cima das anteriores.
-rm -rf "$CONF"
+# Esvazia-se, não se remove: no cluster `/conf` é um volume montado.
 mkdir -p "$CONF"
+find "$CONF" -mindepth 1 -delete
 cp -a "$VANILLA/." "$CONF/"
 
 # 1. Utilizadores de demonstração (1000–1019, password 1234) e gateway de exemplo.
