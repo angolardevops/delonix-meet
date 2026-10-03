@@ -227,7 +227,7 @@ web-deps: ## Garante web/node_modules (npm ci) — sem isto o `make test` morria
 	fi
 
 .PHONY: fitness
-fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, autorização de rotas, docs, afinidade (R3), ARQUITECTURA (ADR-0004), clippy, deps, RLS
+fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, autorização de rotas, docs, afinidade (R3), Lua e XML do FreeSWITCH, ARQUITECTURA (ADR-0004), clippy, deps, RLS
 	@# `fmt --check` AQUI e não só no CI: sem ele, uma alteração formatada a
 	@# meio passa o `make test` local e só falha no CI, depois de um push e de
 	@# vários minutos de espera. O portão local tem de ser o mesmo do remoto.
@@ -238,6 +238,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
 	@bash scripts/check-lua-sintaxe.sh
+	@bash scripts/check-fs-xml.sh
 	@bash scripts/check-k8s-render.sh
 	@bash scripts/check-arquitectura-catraca.sh
 	@bash scripts/check-crate-deps.sh

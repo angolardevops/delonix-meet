@@ -178,7 +178,7 @@ contexto de dialplan e por domínio SIP, não por processo.
 |---|---|
 | As regras de um tronco (transporte, SRTP, host, prefixos, canais) | os unitários de `telephony/trunk.rs` e `cargo test --release --test telephony` (precisa de `DATABASE_URL`) |
 | `voice/kamailio/` | **não há portão automático** — nenhum teste carrega o `kamailio.cfg` |
-| `voice/freeswitch/sip_profiles/`, `dialplan/` | só a sintaxe do Lua (`scripts/check-lua-sintaxe.sh`); o XML não é validado |
+| Qualquer `*.xml` ou `*.xml.inc` de `voice/freeswitch/` | `bash scripts/check-fs-xml.sh` (R226, no `make fitness` e no CI) — XML bem formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário, nenhum `$${NOME_EM_MAIÚSCULAS}`. **Estático**: não carrega a configuração num FreeSWITCH. Os `*.lua`: `scripts/check-lua-sintaxe.sh` |
 | A interligação com um PBX ou uma operadora | **prova real, fora do CI**: uma chamada em cada sentido, com captura SIP, e as três medições abaixo |
 | O próprio softphone de prova, ou uma regra de DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`) com um perfil de teste. **Fora do CI**: precisa da imagem do FreeSWITCH e de docker |
 | `voice/freeswitch/sip_profiles/internal.xml`, `vars.xml.inc`, as montagens do compose, ou qualquer regra de SRTP | `bash scripts/softphone-prova.sh srtp-real` (R226) — com os ficheiros que o compose monta: o ramal autentica-se, com SRTP a chamada passa a negociação, **sem SRTP leva `488`**, e o `vars.xml.inc` incluído arranca e lê o ambiente. **Fora do CI**, pelas mesmas razões |
@@ -221,10 +221,9 @@ Propõe um a três pedidos seguintes (escolhe dos quatro abaixo, ou outros), com
    contexto `delonix_ramais` no sítio certo, `mod_xml_curl` e `mod_curl` carregados.
    Prova: o `srtp-real` sem avisos e com a chamada do controlo positivo a chegar ao
    `ramais_dial.lua`. Fora: o Kamailio e a operadora.»
-2. «Um portão que carregue o `voice/kamailio/kamailio.cfg` (`kamailio -c`) e valide o XML
-   do FreeSWITCH no `make fitness`, incluindo uma directiva de pré-processamento dentro
-   de um comentário. Prova: partir a configuração e ver falhar. Fora: o comportamento em
-   chamada.»
+2. «Um portão que carregue o `voice/kamailio/kamailio.cfg` (`kamailio -c`) no
+   `make fitness`. Prova: partir a configuração e ver falhar. Fora: o comportamento em
+   chamada, e o XML do FreeSWITCH, que já tem o `check-fs-xml.sh`.»
 3. «A interligação com um FreePBX 17 de teste por tronco PJSIP sobre TLS: chamada nos dois
    sentidos, DTMF e os dois controlos negativos. Prova: captura SIP e os tons medidos nos
    dois lados. Fora: a operadora.»
