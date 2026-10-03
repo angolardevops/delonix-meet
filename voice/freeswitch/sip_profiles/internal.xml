@@ -16,6 +16,14 @@
   vivem em domínios diferentes (ver sip_domain_for_org em ramais.rs).
 -->
 <include>
+  <!-- SRTP obrigatório à ENTRADA, para o FreeSWITCH inteiro. O que recusa com
+       488 um INVITE sem a=crypto é a variável GLOBAL rtp_secure_media=mandatory:
+       no FreeSWITCH 1.11.3 não há parâmetro de perfil que o faça (R226, medido
+       com chamadas). Fica AQUI, além de vars.xml.inc, para a exigência não
+       depender de alguém ter incluído esse ficheiro no vars.xml: quem carrega
+       este perfil carrega a global.
+       Portão: bash scripts/softphone-prova.sh srtp-real -->
+  <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
   <profile name="internal">
     <domains>
       <!-- 'parse=false': os domínios não vêm de directory/*.xml estático —
@@ -47,8 +55,10 @@
       <param name="accept-blind-reg" value="false"/>
       <param name="accept-blind-auth" value="false"/>
       <param name="multiple-registrations" value="false"/>
-      <!-- SRTP obrigatório — mesma exigência não-negociável do resto de voice/. -->
-      <param name="rtp-secure-media" value="mandatory"/>
+      <!-- O SRTP obrigatório NÃO é um parâmetro daqui: é a global no topo deste
+           ficheiro. "rtp-secure-media" não existe no sofia e "require-secure-rtp"
+           só liga uma flag que nada lê; com qualquer dos dois, e sem a global,
+           uma chamada em claro foi aceite (R226). -->
       <!-- Sem ACL de rede aqui de propósito: esta fase autentica por SIP
            Digest (auth-calls=true), não por origem — um ramal pode estar em
            qualquer rede. Restringir por IP/ACL fica para quando houver um
