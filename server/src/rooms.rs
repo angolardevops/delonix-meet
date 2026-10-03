@@ -829,14 +829,11 @@ pub async fn room_waiting(
     auth: AuthUser,
     Path(code): Path<String>,
 ) -> Result<Json<Vec<crate::signaling::WaitingView>>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(code.to_lowercase())
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(code.to_lowercase())
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     let access = room_access(&state, auth.user_id, &room).await?;
     let em_sala = state.hub.user_admits(room.id, auth.user_id);
     if !access.admitter && !em_sala {
