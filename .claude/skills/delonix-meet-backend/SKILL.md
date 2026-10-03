@@ -112,7 +112,7 @@ Não se reabrem nem se revêem como se estivessem em aberto:
 | S5 | Segredos de integração em claro (webhooks, SSO, WebDAV) | `secrets_at_rest::{seal,open}`; sem chaves a escrita é `422`, o herdado em claro lê-se, e `reseal_legacy` cifra-o no arranque e de hora a hora | R160 |
 | S6 | Chaves `dlx_` sem escopos nem expiração | `key.require(Scope::…)?` na primeira linha de cada handler v1 | R170, R171 |
 | — | Tronco SIP para endereço interno (SSRF por SIP); credenciais SIP legíveis sem reautenticação | ver `delonix-meet-telefonia` | R213, R214 |
-| — | O segredo de voz ia no **URL do `mod_xml_curl`**, e o FreeSWITCH escrevia esse URL no log | o `mod_xml_curl` envia-o por HTTP Basic (`gateway-credentials`); `ivr_directory` e `ivr_dialplan_did` só chamam o `check_media_secret` — o `?secret=` deixou de autenticar. **Só este caminho**: ver «Continuam abertos» | R227 |
+| — | O segredo de voz ia no **URL do `mod_xml_curl`**, e o FreeSWITCH escrevia esse URL no log | o `mod_xml_curl` envia-o por HTTP Basic (`gateway-credentials`); `ivr_directory` e `ivr_dialplan_did` só chamam o `check_media_secret` — o `?secret=` deixou de autenticar. Os dois Lua deixaram de o passar a uma aplicação de dialplan (API do `mod_curl`). O que falta: ver «Continuam abertos» | R227 |
 
 **Continuam abertos** — quem tocar nestes caminhos fecha-os ou nomeia-os no relatório:
 
@@ -120,10 +120,11 @@ Não se reabrem nem se revêem como se estivessem em aberto:
 - **A cópia única `users::provision_by_email`** (ADR-0004 §6 passo 4) continua por fazer
   — a função não existe (`grep`, 2026-10-03): o #76 fechou a cópia que estava errada, não
   juntou as seis.
-- **O segredo de voz ainda chega ao disco do FreeSWITCH** (R227, «por corrigir»): os dois
-  Lua passam-no nos argumentos de `session:execute("curl", …)`, que o FreeSWITCH escreve
-  no log a cada chamada (e o `mod_curl` outra vez, a DEBUG), e o `freeswitch.xml.fsxml` do
-  directório de logs traz a configuração expandida. Rodar o segredo não o tira de lá.
+- **O segredo de voz ainda chega ao disco do FreeSWITCH** (R227, «por corrigir»): o
+  `freeswitch.xml.fsxml` do directório de logs traz a configuração expandida, e fora do
+  cluster local nada tira o nível DEBUG do log — a esse nível o `mod_curl` escreve o
+  segredo e o PIN a cada chamada. No cluster os dois Lua já usam a API do `mod_curl` e o
+  entrypoint tira o DEBUG; mede-o o passo 6 do `softphone-prova.sh srtp-cluster`.
 - **Superfície nova a vigiar:** o socket SIP da ponte telefone↔sala. As barras
   fail-closed estão em `delonix-meet-telefonia` §O que está ligado.
 

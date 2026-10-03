@@ -2401,17 +2401,21 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Prova corrida a 2026-10-03, contra o FreeSWITCH 1.11.3 real** (um `nc` a capturar o pedido). Configuração antiga: pedido `POST /api/voice/ivr/directory?secret=<o segredo>`, sem `Authorization`, segredo 5 vezes no log. Configuração nova: pedido `POST /api/voice/ivr/directory`, `Authorization: Basic` com `freeswitch:<o segredo>`, segredo **0 vezes** no `freeswitch.log`, em claro ou em base64.
 
-**Por corrigir — o segredo continua a chegar ao disco do FreeSWITCH por dois outros caminhos.** Medido a 2026-10-03 na configuração que o cluster da `develop` monta, com uma chamada de ramal:
-- **Os dois Lua** (`ramais_dial.lua`, `dialin_ivr.lua`) chamam o servidor com `session:execute("curl", …)` e o segredo nos argumentos. O FreeSWITCH escreve a linha `EXECUTE … curl(… X-Voice-Secret: <segredo> …)` em cada chamada, e o `mod_curl` escreve outra, a nível DEBUG (`mod_curl.c:246`, `CURL append_header_0: …`): **duas linhas com o segredo por chamada**. Os argumentos de uma aplicação vão também para o `app_log` do CDR (lido no código, não medido). No `dialin_ivr.lua` o corpo do pedido leva além disso o PIN.
-- **O `freeswitch.xml.fsxml`**, que o FreeSWITCH grava no directório de logs com a configuração já pré-processada, traz o segredo expandido — antes no URL, agora no `gateway-credentials`. É assim com qualquer segredo posto na configuração do FreeSWITCH: o directório de logs tem de ser tratado como o da configuração.
+**Os dois Lua também o escreviam, a cada chamada — fechado no cluster local.** `ramais_dial.lua` e `dialin_ivr.lua` chamavam o servidor com `session:execute("curl", …)` e o segredo nos argumentos. Medido a 2026-10-03 na configuração do cluster: o FreeSWITCH escrevia a linha `EXECUTE … curl(… X-Voice-Secret: <segredo> …)` (nível INFO) e o `mod_curl` outra a DEBUG (`mod_curl.c:246`), **duas linhas com o segredo por chamada**; no `dialin_ivr.lua` o corpo levava ainda o PIN de quem liga (`mod_curl.c:262`, `Post data: …`). Os argumentos de uma aplicação vão também para o `app_log` do CDR (lido no código, não medido). Duas correcções, e é preciso as duas:
+- os Lua passam a usar a **API** do `mod_curl` (`api:execute("curl", …)`, mesmos argumentos): deixa de haver linha `EXECUTE` e `app_log`;
+- o `voice/cluster/freeswitch-entrypoint.sh` tira o nível **DEBUG** do log (`DELONIX_FS_LOG_DEBUG=1` volta a ligá-lo, e volta a pôr lá o segredo e o PIN).
 
-Enquanto estes dois existirem, **rodar o `VOICE_INTERNAL_SECRET` não o tira do log**: volta lá na primeira chamada que passe por um Lua.
+**Portão de comportamento (fora do CI).** O passo 6 do `bash scripts/softphone-prova.sh srtp-cluster`, com um servidor de andaime que guarda os pedidos: nenhum pedido leva o segredo no URL; o do `mod_xml_curl` leva-o em `Authorization: Basic`; os do `ramais_dial.lua` e do `dialin_ivr.lua` chegam com `X-Voice-Secret`, `Content-Type: application/json` e o corpo certo (no IVR, com o PIN marcado por DTMF e o `+` do DID intacto); e **o segredo e o PIN aparecem 0 vezes no `freeswitch.log`**. Sensibilidade: com os Lua de antes, ou com o DEBUG ligado, o segredo aparece 2 vezes e o PIN 1; com o `xml_curl.conf.xml` de antes, 5 vezes e no URL.
+
+**Por corrigir.**
+- **O `freeswitch.xml.fsxml`**, que o FreeSWITCH grava no directório de logs com a configuração já pré-processada, traz o segredo expandido — antes no URL, agora no `gateway-credentials` (o `srtp-cluster` avisa-o com `!`). É assim com qualquer segredo posto na configuração do FreeSWITCH: o directório de logs tem de ser tratado como o da configuração.
+- **Fora do cluster local nada tira o DEBUG do log**: o compose de voz não usa o entrypoint, e uma instalação com a configuração montada à mão fica com o que tiver no `logfile.conf.xml`. Com DEBUG, o `mod_curl` escreve o segredo e o PIN a cada chamada, venha o pedido da API ou da aplicação.
 
 **Ordem de actualização.** Primeiro a configuração do FreeSWITCH, depois o servidor. O servidor anterior já aceita Basic; um servidor novo com o `xml_curl.conf.xml` antigo responde `401` a cada registo, e a cada `401` o FreeSWITCH escreve o URL antigo, com o segredo, no log.
 
 **O que NÃO está provado.** O par completo — este FreeSWITCH a registar um ramal contra este servidor — não correu: o cabeçalho foi medido de um lado e a aceitação do outro. A medição do log é uma corrida avulsa, sem portão que a repita. O Basic viaja em claro como viajava o URL: entre o FreeSWITCH e o servidor continua a ser preciso rede privada ou TLS. Não foi visto se o libcurl reenvia o Basic num redireccionamento para outro host (o `mod_xml_curl` segue redireccionamentos).
 
-**Ficheiros.** `voice/freeswitch/autoload_configs/xml_curl.conf.xml`, `server/src/ramais.rs` (sai o `DirectoryQuery` e o `check_media_secret_str`), `server/tests/security_voice_odoo.rs`.
+**Ficheiros.** `voice/freeswitch/autoload_configs/xml_curl.conf.xml`, `server/src/ramais.rs` (sai o `DirectoryQuery` e o `check_media_secret_str`), `server/src/voice.rs` e `server/tests/security_voice_odoo.rs` (testes), `voice/freeswitch/scripts/{dialin_ivr,ramais_dial}.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `scripts/softphone-prova.sh` (passo 6 do `srtp-cluster`).
 
 ### R270 — A fala de um participante entrava no prompt do LLM como se fosse instrução
 
