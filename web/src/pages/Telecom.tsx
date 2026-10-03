@@ -3,8 +3,9 @@
  * encaminhamento, plano de marcação, registo SIP, chamadas externas, consumo
  * do mês e câmbio.
  *
- * Escreve-se nas operadoras (criar, editar, activar, apagar, ordenar, preços)
- * e no câmbio. O que continua sem ecrã não tem botão inerte no lugar: as
+ * Escreve-se nas operadoras (criar, editar, activar, apagar, ordenar, preços),
+ * no câmbio e no plano de marcação (editar as regras, testar um número).
+ * O que continua sem ecrã não tem botão inerte no lugar: as
  * definições SIP da organização configuram-se pela API, e o bloco de SMS do
  * desenho continua na Administração.
  *
@@ -191,7 +192,7 @@ function Sections({
             plan.reload()
           }}
         />
-        <DialPlanCard state={plan.state} reload={plan.reload} trunks={trunkList} />
+        <DialPlanCard orgId={orgId} state={plan.state} reload={plan.reload} trunks={trunkList} />
         <CallsCard state={calls.state} reload={calls.reload} loadMore={calls.loadMore} busy={calls.busy} err={calls.err} />
       </div>
       <div className="tel-col">

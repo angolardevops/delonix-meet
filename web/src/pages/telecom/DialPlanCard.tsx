@@ -1,17 +1,21 @@
 /**
  * «Plano de marcação»: as regras pela ordem em que casam e os números de
- * emergência. Só leitura — editar e «testar número» não existem neste ecrã.
+ * emergência, com «Editar plano» (substitui o plano inteiro) e «Testar número»
+ * (diz o que o plano faria; não liga a ninguém).
  */
-import { ReactNode } from 'react'
+import { ReactNode, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { DialPlan, Trunk } from '../../api'
 import { Async, AsyncSection } from '../../components/AsyncSection'
-import { Card, StatusBadge, Tag } from '../../ui/kit'
+import { Button, Card, StatusBadge, Tag } from '../../ui/kit'
+import DialPlanDialog from './DialPlanDialog'
 import { NA, useTelecomText } from './shared'
+import TestNumberDialog from './TestNumberDialog'
 
-export default function DialPlanCard({ state, reload, trunks }: { state: Async<DialPlan>; reload: () => void; trunks: Trunk[] }) {
+export default function DialPlanCard({ orgId, state, reload, trunks }: { orgId: string; state: Async<DialPlan>; reload: () => void; trunks: Trunk[] }) {
   const { t } = useTranslation()
   const { label } = useTelecomText()
+  const [open, setOpen] = useState<'edit' | 'test' | null>(null)
   const names = new Map(trunks.map((k) => [k.id, k.name]))
   /** Sem operadora diz-se que não há; uma que não está na lista mostra o identificador. */
   const trunkName = (id: string | null | undefined): ReactNode =>
@@ -22,6 +26,14 @@ export default function DialPlanCard({ state, reload, trunks }: { state: Async<D
       <AsyncSection state={state} onRetry={reload}>
         {(plan) => (
           <>
+            <div className="tel-actions tel-actions--bar">
+              <Button size="sm" variant="secondary" icon="edit" onClick={() => setOpen('edit')}>
+                {t('telecom.plano.editar')}
+              </Button>
+              <Button size="sm" variant="secondary" icon="phone" onClick={() => setOpen('test')}>
+                {t('telecom.plano.testar')}
+              </Button>
+            </div>
             {plan.rules.length === 0 ? (
               <p className="dx-muted tel-note">{t('telecom.plano.vazio')}</p>
             ) : (
@@ -81,6 +93,19 @@ export default function DialPlanCard({ state, reload, trunks }: { state: Async<D
               )}
               <span className="dx-muted tel-small">{t('telecom.plano.emergenciaNota')}</span>
             </div>
+            {open === 'edit' && (
+              <DialPlanDialog
+                orgId={orgId}
+                plan={plan}
+                trunks={trunks}
+                onClose={() => setOpen(null)}
+                onSaved={() => {
+                  setOpen(null)
+                  reload()
+                }}
+              />
+            )}
+            {open === 'test' && <TestNumberDialog orgId={orgId} onClose={() => setOpen(null)} />}
           </>
         )}
       </AsyncSection>

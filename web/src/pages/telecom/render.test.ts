@@ -7,7 +7,7 @@
 import { createElement as h } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { CallRecord, DialPlan, SipRegistration, SipSettings, TelephonyUsage, Trunk } from '../../api'
+import type { CallRecord, DialPlan, SipRegistration, SipSettings, TelephonyUsage, TestNumberResult, Trunk } from '../../api'
 
 // O cliente da API lê a sessão do armazenamento ao carregar: em Node não existe.
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {} })
@@ -24,6 +24,8 @@ const { RatesList } = await import('./RatesCard')
 const { TrunkEditor } = await import('./TrunkDialog')
 const { presetForm } = await import('./operatorPresets')
 const { emptyTrunkForm, formFromTrunk } = await import('./trunkForm')
+const { default: DialPlanDialog } = await import('./DialPlanDialog')
+const { default: TestNumberDialog, TestResult } = await import('./TestNumberDialog')
 
 const noop = () => {}
 const semChavesCruas = (html: string) => expect(html).not.toMatch(/(telecom|ui|org)\.[a-zA-Z]/)
@@ -295,7 +297,7 @@ describe('plano de marcação', () => {
   }
 
   it('é uma tabela com cabeçalhos de coluna e de linha, e os números de emergência', () => {
-    const html = renderToStaticMarkup(h(DialPlanCard, { state: { s: 'ready', d: plan }, reload: noop, trunks: [trunk({})] }))
+    const html = renderToStaticMarkup(h(DialPlanCard, { orgId: 'org-1', state: { s: 'ready', d: plan }, reload: noop, trunks: [trunk({})] }))
     expect(html.match(/<th scope="col"/g)?.length).toBe(6)
     expect(html.match(/<th scope="row"/g)?.length).toBe(2)
     expect(html).toContain('9XXXXXXXX')
@@ -309,11 +311,125 @@ describe('plano de marcação', () => {
     semChavesCruas(html)
   })
 
+  it('oferece «Editar plano» e «Testar número»', () => {
+    const html = renderToStaticMarkup(h(DialPlanCard, { orgId: 'org-1', state: { s: 'ready', d: plan }, reload: noop, trunks: [trunk({})] }))
+    expect(html).toContain('Editar plano')
+    expect(html).toContain('Testar número')
+    semChavesCruas(html)
+  })
+
+  it('o editor: uma regra por bloco, com mover e remover por nome, e a emergência só para ler', () => {
+    const comEmergencia: DialPlan = {
+      ...plan,
+      rules: [
+        { pattern: '9XXXXXXXX', description: 'Móveis nacionais', action: 'external', trunk_id: 't-unitel', fallback_trunk_id: null, record: true, emergency: false },
+        { pattern: '1XX', description: 'Ramais', action: 'extension', trunk_id: null, fallback_trunk_id: null, record: false, emergency: false },
+        { pattern: '112', description: 'Emergência', action: 'external', trunk_id: 't-unitel', fallback_trunk_id: null, record: false, emergency: true },
+      ],
+    }
+    const html = renderToStaticMarkup(h(DialPlanDialog, { orgId: 'org-1', plan: comEmergencia, trunks: [trunk({}), trunk({ id: 't-off', name: 'Movicel', position: 1, enabled: false })], onClose: noop, onSaved: noop }))
+    expect(html).toContain('role="dialog"')
+    expect(html.match(/<li class="tel-rule"/g)?.length).toBe(3)
+    for (const n of [1, 2, 3]) {
+      expect(html).toContain(`aria-label="Subir a regra ${n}"`)
+      expect(html).toContain(`aria-label="Descer a regra ${n}"`)
+      expect(html).toContain(`aria-label="Remover a regra ${n}"`)
+    }
+    // A primeira não sobe; a última não desce.
+    expect(html).toMatch(/aria-label="Subir a regra 1"[^>]*disabled=""|disabled=""[^>]*aria-label="Subir a regra 1"/)
+    expect(html).toMatch(/aria-label="Descer a regra 3"[^>]*disabled=""|disabled=""[^>]*aria-label="Descer a regra 3"/)
+    // Só as regras externas escolhem operadora e reserva (duas, não três).
+    expect(html.match(/>Escolher operadora</g)?.length).toBe(2)
+    expect(html.match(/>Sem reserva</g)?.length).toBe(2)
+    expect(html).toContain('Movicel (desactivada)')
+    // A regra de emergência não muda de acção nem se grava.
+    expect(html).toContain('sai sempre por uma operadora e nunca é gravada')
+    expect(html.match(/<select[^>]*disabled=""/g)?.length).toBe(1)
+    expect(html.match(/<input type="checkbox"[^>]*disabled=""/g)?.length).toBe(1)
+    // Os números de emergência mostram-se como etiquetas — não há campo para os editar.
+    for (const n of comEmergencia.emergency_numbers) expect(html).toContain(`>${n}<`)
+    const blocoEmergencia = html.slice(html.indexOf('tel-emergency--box'), html.indexOf('tel-form__foot'))
+    expect(blocoEmergencia).toContain('>113<')
+    expect(blocoEmergencia).not.toMatch(/<input|<select|<button/)
+    expect(html).toContain('não se editam aqui')
+    expect(html).toContain('Gravar plano')
+    semChavesCruas(html)
+  })
+
+  it('o editor de um plano vazio deixa acrescentar a primeira regra', () => {
+    const html = renderToStaticMarkup(h(DialPlanDialog, { orgId: 'org-1', plan: { ...plan, rules: [] }, trunks: [], onClose: noop, onSaved: noop }))
+    expect(html).toContain('acrescente a primeira')
+    expect(html).toContain('Acrescentar regra')
+    expect(html).not.toContain('tel-rule"')
+  })
+
   it('sem regras diz que não há regras, e a emergência continua visível', () => {
-    const html = renderToStaticMarkup(h(DialPlanCard, { state: { s: 'ready', d: { ...plan, rules: [] } }, reload: noop, trunks: [] }))
+    const html = renderToStaticMarkup(h(DialPlanCard, { orgId: 'org-1', state: { s: 'ready', d: { ...plan, rules: [] } }, reload: noop, trunks: [] }))
     expect(html).toContain('ainda não tem regras')
     expect(html).not.toContain('<table')
     expect(html).toContain('>112<')
+  })
+})
+
+describe('testar número', () => {
+  const resultado = (over: Partial<TestNumberResult> = {}): TestNumberResult => ({
+    dialed: '923000000',
+    e164: '+244923000000',
+    outcome: 'route',
+    matched_rule: { position: 0, pattern: '9XXXXXXXX', description: 'Móveis nacionais' },
+    action: 'external',
+    trunk: { id: 't-unitel', name: 'Unitel', short_code: 'UNI' },
+    fallbacks: [{ id: 't-afr', name: 'Africell', short_code: 'AFR' }],
+    recorded: true,
+    emergency: false,
+    overridden_rule_position: null,
+    estimated_price_per_min: { amount: '12.5000', currency: 'AOA' },
+    price_reason: null,
+    ...over,
+  })
+
+  it('o diálogo diz que não liga a ninguém', () => {
+    const html = renderToStaticMarkup(h(TestNumberDialog, { orgId: 'org-1', onClose: noop }))
+    expect(html).toContain('Não liga a ninguém')
+    expect(html).toContain('type="tel"')
+    semChavesCruas(html)
+  })
+
+  it('uma chamada que sai: regra (a contar de 1), operadora, reservas, preço, gravação', () => {
+    const html = renderToStaticMarkup(h(TestResult, { result: resultado() }))
+    expect(html).toContain('Sai por uma operadora')
+    expect(html).toContain('+244923000000')
+    expect(html).toContain('#1 · 9XXXXXXXX')
+    expect(html).toContain('Móveis nacionais')
+    expect(html).toContain('Unitel (UNI)')
+    expect(html).toContain('Africell')
+    expect(html).toContain('12,50 Kz/min')
+    expect(html).toContain('Sim')
+    semChavesCruas(html)
+  })
+
+  it('emergência sem regra: diz que sai sempre, e não «nenhuma regra casa»', () => {
+    const html = renderToStaticMarkup(h(TestResult, { result: resultado({ dialed: '112', e164: null, matched_rule: null, emergency: true, recorded: false, fallbacks: [], overridden_rule_position: 2 }) }))
+    expect(html).toContain('Emergência')
+    expect(html).toContain('sai sempre, não depende das regras')
+    expect(html).not.toContain('Nenhuma regra casa.')
+    expect(html).toContain('A regra #3 casaria primeiro')
+    expect(html).toContain('sem reserva')
+  })
+
+  it('sem regra e sem preço: diz a razão, nunca um zero', () => {
+    const html = renderToStaticMarkup(h(TestResult, { result: resultado({ outcome: 'no_match', matched_rule: null, action: null, trunk: null, fallbacks: [], recorded: false, estimated_price_per_min: null, price_reason: 'not_external' }) }))
+    expect(html).toContain('Nenhuma regra casa')
+    expect(html).toContain('não sai por uma operadora')
+    expect(html).not.toContain('0,00')
+    expect(html).not.toContain('Kz')
+  })
+
+  it('bloqueado mostra-se como bloqueado, e um desfecho ou razão novos saem tal qual', () => {
+    expect(renderToStaticMarkup(h(TestResult, { result: resultado({ outcome: 'blocked', trunk: null, estimated_price_per_min: null, price_reason: 'not_external' }) }))).toContain('Bloqueado')
+    const novo = renderToStaticMarkup(h(TestResult, { result: resultado({ outcome: 'queued', estimated_price_per_min: null, price_reason: 'tariff_pending' }) }))
+    expect(novo).toContain('queued')
+    expect(novo).toContain('tariff_pending')
   })
 })
 
