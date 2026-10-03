@@ -140,4 +140,10 @@ Os ficheiros de harness no repositório devem ser atualizados manualmente ou por
       `scripts/check-lua-sintaxe.sh` compila-os com o `luac5.2` (o Lua do `mod_lua`) no
       `make fitness` e no CI, e falha — não salta — se não houver `luac`. Verifica a
       **sintaxe**, não o comportamento do IVR.
+- [x] **Portão do XML do FreeSWITCH** (R226, 2026-10-03). `scripts/check-fs-xml.sh` lê
+      todo o `*.xml` e `*.xml.inc` de `voice/` no `make fitness` e no CI: XML bem
+      formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário (o FreeSWITCH
+      executa-a lá), e nenhum `$${NOME_EM_MAIÚSCULAS}` (lê uma variável global, não o
+      ambiente). É estático: o que a configuração **faz** em chamada continua a ser do
+      `scripts/softphone-prova.sh srtp-real`, fora do CI.
 - [x] Revisores e skills versionados em `.claude/` e verificados pelo `check-docs-drift.sh` (2026-09-16)
