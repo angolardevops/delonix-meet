@@ -90,7 +90,7 @@ async function recusado(nome, path, opts) {
 /**
  * Recusa ANTES de o handler correr: só 401/403/404. Um `400` não conta — quer
  * dizer que o pedido passou a autorização e o handler o rejeitou por outra
- * razão (no `/platform/storage/test`, o 400 era o servidor a TENTAR o pedido
+ * razão (no `/operator/v1/storage/test`, o 400 era o servidor a TENTAR o pedido
  * ao URL do atacante e a falhar a ligação).
  */
 async function recusadoNaPorta(nome, path, opts) {
