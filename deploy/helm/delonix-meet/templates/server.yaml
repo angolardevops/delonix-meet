@@ -1,0 +1,287 @@
+{{- $v := .Values -}}
+{{- $s := include "dm.secretName" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-server
+  labels:
+    app: delonix-server
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  {{- if not $v.server.autoscaling.enabled }}
+  replicas: {{ $v.server.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: delonix-server
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: delonix-server
+        {{- include "dm.labels" . | nindent 8 }}
+      annotations:
+        # Uma alteração de configuração reinicia os pods (o servidor lê o
+        # ambiente uma vez, ao arrancar).
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ ternary "8181" "8180" $v.server.internal.enabled | quote }}
+        prometheus.io/path: /metrics
+        {{- with $v.server.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      # O SFU é em memória por pod: o SIGTERM abre o drain (o /ready passa a
+      # 503, as salas são avisadas) e o SIGKILL só pode chegar depois dele.
+      terminationGracePeriodSeconds: {{ $v.server.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      {{- with $v.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      topologySpreadConstraints:
+        {{- if $v.server.topologySpreadConstraints }}
+        {{- toYaml $v.server.topologySpreadConstraints | nindent 8 }}
+        {{- else }}
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: delonix-server, app.kubernetes.io/instance: {{ .Release.Name }} }
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: delonix-server, app.kubernetes.io/instance: {{ .Release.Name }} }
+        {{- end }}
+      affinity:
+        {{- if $v.server.affinity }}
+        {{- toYaml $v.server.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: { app: delonix-server, app.kubernetes.io/instance: {{ .Release.Name }} }
+        {{- end }}
+      containers:
+        - name: server
+          image: {{ include "dm.serverImage" . | quote }}
+          imagePullPolicy: {{ $v.server.image.pullPolicy }}
+          securityContext:
+            {{- include "dm.restricted" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8180, protocol: TCP }
+            {{- if $v.server.internal.enabled }}
+            - { name: internal, containerPort: 8181, protocol: TCP }
+            {{- end }}
+            {{- if $v.server.grpc.enabled }}
+            - { name: grpc, containerPort: 9180, protocol: TCP }
+            {{- end }}
+            {{- if $v.server.phoneBridge.enabled }}
+            - { name: bridge-sip, containerPort: {{ $v.server.phoneBridge.sipPort }}, protocol: UDP }
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: delonix-config
+          env:
+            {{- include "dm.serverSecretEnv" . | nindent 12 }}
+            # Opcional: vazio desliga a provisão de organizações (fail-closed).
+            - name: PROVISIONING_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $s }}, key: PROVISIONING_SECRET, optional: true } }
+            {{- if $v.voice.enabled }}
+            - name: VOICE_INTERNAL_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $s }}, key: VOICE_INTERNAL_SECRET } }
+            {{- else }}
+            # Sem ele o servidor arranca e as rotas de IVR respondem 503.
+            - name: VOICE_INTERNAL_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $s }}, key: VOICE_INTERNAL_SECRET, optional: true } }
+            {{- end }}
+            {{- if $v.externalRedis.fromSecret }}
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: {{ $s }}, key: REDIS_URL } }
+            {{- end }}
+            {{- if $v.server.telephony.eslAddr }}
+            - name: TELEPHONY_ESL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $s }}, key: TELEPHONY_ESL_PASSWORD } }
+            {{- end }}
+            {{- if $v.server.phoneBridge.enabled }}
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            # O IP que vai no SDP das pernas, e o destino que o IVR recebe.
+            - name: PHONE_BRIDGE_RTP_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - name: PHONE_BRIDGE_SIP_ADVERTISE
+              value: {{ $v.server.phoneBridge.advertise | default (printf "$(POD_IP):%v" $v.server.phoneBridge.sipPort) | quote }}
+            {{- end }}
+            {{- with $v.server.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # Até 5 min para o primeiro /health: o arranque inclui as migrações
+          # quando DELONIX_MIGRATE=1, e sem isto o liveness matava o pod a meio.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          # /ready e não /health: o /ready responde 503 assim que o SIGTERM
+          # chega, e o pod sai dos endpoints à PRIMEIRA falha.
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            periodSeconds: 5
+            failureThreshold: 1
+          # Um pod a drenar está vivo e deve ser deixado terminar.
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml $v.server.resources | nindent 12 }}
+          volumeMounts:
+            - { name: recordings, mountPath: /var/lib/delonix/recordings }
+            - { name: tmp, mountPath: /tmp }
+            {{- if $v.server.grpc.enabled }}
+            - { name: grpc-tls, mountPath: /etc/delonix/grpc-tls, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: recordings
+          persistentVolumeClaim:
+            claimName: {{ $v.recordings.existingClaim | default "delonix-recordings" }}
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+        {{- if $v.server.grpc.enabled }}
+        - name: grpc-tls
+          secret:
+            secretName: {{ $v.server.grpc.tlsSecretName | default "delonix-server-grpc-tls" }}
+            defaultMode: 0440
+        {{- end }}
+{{- if not $v.recordings.existingClaim }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: delonix-recordings
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+  annotations:
+    # Um `helm uninstall` não leva as gravações.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [{{ $v.recordings.accessMode }}]
+  {{- with $v.recordings.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $v.recordings.size }}
+{{- end }}
+---
+# /api e /rtc.
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-server
+  labels:
+    app: delonix-server
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: delonix-server
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: http, protocol: TCP, port: 8180, targetPort: http }
+---
+# Service DEDICADO ao /ws — os mesmos pods, outro backend no ingress-nginx.
+# Com um só Service, o /ws e o /api fundiam-se num backend e o
+# `upstream-hash-by: $arg_room` era descartado (ADR-0001, regressão R3).
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-server-ws
+  labels:
+    app: delonix-server
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: delonix-server
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: http, protocol: TCP, port: 8180, targetPort: http }
+{{- if $v.server.internal.enabled }}
+---
+# Portas que NUNCA saem do cluster. Nenhum Ingress refere este Service
+# (scripts/check-helm.sh falha se referir).
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-server-internal
+  labels:
+    app: delonix-server
+    delonix.io/exposure: internal
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: delonix-server
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: internal, protocol: TCP, port: 8181, targetPort: internal }
+    {{- if $v.server.grpc.enabled }}
+    - { name: grpc, protocol: TCP, port: 9180, targetPort: grpc, appProtocol: grpc }
+    {{- end }}
+{{- end }}
+{{- if $v.server.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: delonix-server
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ $v.server.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: delonix-server
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+{{- if $v.server.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: delonix-server
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: delonix-server
+  minReplicas: {{ $v.server.autoscaling.minReplicas }}
+  maxReplicas: {{ $v.server.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ $v.server.autoscaling.targetCPUUtilizationPercentage }} }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300 # evita flapping durante reuniões
+{{- end }}

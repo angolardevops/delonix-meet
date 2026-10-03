@@ -1,0 +1,156 @@
+{{- $v := .Values -}}
+{{- $s := include "dm.secretName" . -}}
+{{- if eq $v.server.migrations.mode "job" }}
+# Migrações ANTES de os pods novos arrancarem, com a MESMA imagem do
+# Deployment. É um hook: corre antes de o chart criar ou alterar recursos, por
+# isso só lê o Secret do operador (que já existe) — nunca o ConfigMap.
+# As migrações são aditivas: a versão anterior aguenta o esquema novo.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: delonix-server-migrate
+  labels:
+    app: delonix-server-migrate
+    {{- include "dm.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app: delonix-server-migrate
+    spec:
+      restartPolicy: Never
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: {{ include "dm.serverImage" . | quote }}
+          imagePullPolicy: {{ $v.server.image.pullPolicy }}
+          args: ["migrate"]
+          securityContext:
+            {{- include "dm.restricted" . | nindent 12 }}
+          env:
+            {{- include "dm.serverSecretEnv" . | nindent 12 }}
+            - { name: LOG_FORMAT, value: json }
+            - { name: DELONIX_EDITION, value: {{ $v.edition | quote }} }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+{{- end }}
+{{- if and $v.server.grpc.enabled $v.server.grpc.certManager.enabled }}
+---
+# mTLS do gRPC interno por cert-manager: CA do namespace, que não sai dele.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: delonix-meet-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: delonix-meet-internal-ca
+spec:
+  isCA: true
+  commonName: delonix-meet-internal-ca
+  secretName: delonix-meet-internal-ca
+  duration: 87600h
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: delonix-meet-selfsigned, kind: Issuer }
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: delonix-meet-internal
+spec:
+  ca:
+    secretName: delonix-meet-internal-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: delonix-server-grpc
+spec:
+  secretName: {{ $v.server.grpc.tlsSecretName | default "delonix-server-grpc-tls" }}
+  duration: 2160h
+  renewBefore: 360h
+  commonName: delonix-server-internal.{{ .Release.Namespace }}.svc
+  dnsNames:
+    - delonix-server-internal
+    - delonix-server-internal.{{ .Release.Namespace }}
+    - delonix-server-internal.{{ .Release.Namespace }}.svc
+    - delonix-server-internal.{{ .Release.Namespace }}.svc.cluster.local
+  usages: [server auth]
+  privateKey: { algorithm: ECDSA, size: 256, rotationPolicy: Always }
+  issuerRef: { name: delonix-meet-internal, kind: Issuer }
+{{- end }}
+{{- if $v.networkPolicy.enabled }}
+---
+# Quem fala com os pods do servidor. Uma NetworkPolicy que selecciona um pod
+# FECHA tudo o que não estiver listado — as regras 1 e 2 contam tanto como a 3.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: delonix-server
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: delonix-server
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    # 1. HTTP público (pelo ingress-nginx e pelos Services).
+    - ports:
+        - { protocol: TCP, port: 8180 }
+    # 2. Media do SFU (chega do coturn). Sem isto a sala liga e o vídeo fica preto.
+    - ports:
+        - { protocol: UDP, port: {{ $v.networkPolicy.sfuUdp.min }}, endPort: {{ $v.networkPolicy.sfuUdp.max }} }
+    {{- if or $v.server.internal.enabled $v.server.grpc.enabled $v.server.phoneBridge.enabled }}
+    # 3. Listener interno, gRPC e ponte: só o FreeSWITCH (e o que o operador juntar).
+    - from:
+        - podSelector:
+            matchLabels:
+              app: freeswitch
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- with $v.networkPolicy.extraInternalFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        {{- if $v.server.internal.enabled }}
+        - { protocol: TCP, port: 8181 }
+        {{- end }}
+        {{- if $v.server.grpc.enabled }}
+        - { protocol: TCP, port: 9180 }
+        {{- end }}
+        {{- if $v.server.phoneBridge.enabled }}
+        - { protocol: UDP, port: {{ $v.server.phoneBridge.sipPort }} }
+        - { protocol: UDP, port: {{ $v.server.phoneBridge.rtp.min }}, endPort: {{ $v.server.phoneBridge.rtp.max }} }
+        {{- end }}
+    {{- end }}
+    {{- if and $v.server.internal.enabled $v.networkPolicy.metricsNamespace }}
+    # 4. Prometheus (/metrics no :8181).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $v.networkPolicy.metricsNamespace }}
+      ports:
+        - { protocol: TCP, port: 8181 }
+    {{- end }}
+{{- end }}

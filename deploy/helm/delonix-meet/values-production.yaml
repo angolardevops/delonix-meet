@@ -1,0 +1,75 @@
+# ============================================================
+#  Produção — meet.ngolacloud.com
+#
+#  Este ficheiro fixa a TOPOLOGIA. O que é próprio de cada instalação entra
+#  por --set ou por um ficheiro privado, e o chart FALHA se faltar:
+#
+#    helm upgrade --install meet deploy/helm/delonix-meet -n delonix-meet \
+#      -f deploy/helm/delonix-meet/values-production.yaml \
+#      --set image.tag=<git describe> \
+#      --set secrets.existingSecret=<nome do Secret> \
+#      --set coturn.externalIP=<IP público do relay> \
+#      --set server.image.repository=<registo>/delonix-server \
+#      --set web.image.repository=<registo>/delonix-web
+#
+#  Não há aqui nenhum segredo, nenhum IP real e nenhuma tag.
+# ============================================================
+production: true
+host: meet.ngolacloud.com
+edition: saas
+
+# OBRIGATÓRIO por --set: a tag `git describe` das imagens publicadas.
+image:
+  tag: ""
+
+# OBRIGATÓRIO por --set: o Secret criado fora do chart (README §Segredos).
+secrets:
+  existingSecret: ""
+
+# Postgres e Redis: externos. O DATABASE_URL (e o REDIS_URL, que leva
+# password) vêm do Secret.
+externalRedis:
+  fromSecret: true
+
+server:
+  replicas: 3
+  migrations:
+    mode: job
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 8
+  resources:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
+
+# Várias réplicas em vários nós: o volume tem de ser ReadWriteMany.
+# A StorageClass é da infra-estrutura; vazia = a por omissão do cluster,
+# que tem de suportar RWX.
+recordings:
+  accessMode: ReadWriteMany
+  storageClassName: ""
+  size: 100Gi
+
+web:
+  replicas: 3
+
+ingress:
+  className: nginx
+  tls:
+    clusterIssuer: letsencrypt-prod
+    secretName: meet-ngolacloud-com-tls
+
+networkPolicy:
+  enabled: true
+
+coturn:
+  # OBRIGATÓRIO por --set: coturn.externalIP.
+  externalIP: ""
+  service:
+    type: LoadBalancer
+
+# A voz fica desligada até os achados do README §«Voz em produção» terem
+# dono: o chart sabe instalá-la, mas o caminho de um PBX externo não foi medido.
+voice:
+  enabled: false

@@ -1,0 +1,327 @@
+# ============================================================
+#  Delonix Meet — valores por omissão.
+#
+#  As omissões são FECHADAS: com este ficheiro sozinho o `helm template`
+#  FALHA e diz o que falta (host, tag das imagens, Secret, IP do coturn…).
+#  Nada aqui é um segredo, e nada aqui escolhe uma imagem `latest`.
+#
+#    values-production.yaml  — a topologia de meet.ngolacloud.com
+#    values-local.yaml       — o cluster de laboratório (`make cluster`)
+#
+#  NOMES DOS RECURSOS: são fixos (delonix-server, delonix-server-ws,
+#  delonix-server-internal, delonix-web, coturn, kamailio, freeswitch…), não
+#  levam o nome da release. Razões medidas: o nginx da imagem web faz
+#  `proxy_pass http://delonix-server:8180` (deploy/k8s/nginx.conf:74), o
+#  dispatcher do Kamailio e o PBX de laboratório resolvem `freeswitch` e
+#  `kamailio`, e os portões do repo procuram `delonix-server-ws`.
+#  Consequência: UMA release por namespace.
+# ============================================================
+
+# `true`: recusa segredos gerados, tags `latest`, Postgres/Redis do chart,
+# PBX de laboratório, e exige TLS e o IP público do coturn.
+production: true
+
+# O nome público. Entra no Ingress, no CORS_ORIGINS e no certificado.
+host: ""
+
+imagePullSecrets: []
+
+# Tag partilhada pelo servidor e pela web (saem do mesmo commit: `make image`
+# dá às duas a tag `git describe`). OBRIGATÓRIA; `latest` é recusada em produção.
+image:
+  tag: ""
+
+# Edição (ADR-0006 §2): saas | enterprise | personal. Registo e tenancy seguem
+# a edição quando ficam vazios (server/src/config.rs).
+edition: saas
+registrationMode: ""
+registrationDomains: []
+tenancyMode: ""
+
+# ------------------------------------------------------------
+#  SEGREDOS — o chart nunca traz valores.
+#  Produção: `existingSecret` é obrigatório. As chaves estão no README.
+#  Laboratório (production=false): `create: true` gera aleatórios e preserva
+#  os que já existem no cluster (`lookup`).
+# ------------------------------------------------------------
+secrets:
+  existingSecret: ""
+  create: false
+
+# ------------------------------------------------------------
+#  Postgres e Redis
+# ------------------------------------------------------------
+# Externo: o DATABASE_URL vem da chave `DATABASE_URL` do Secret. O chart não
+# cria utilizadores, não faz backup e não dá HA — isso é de quem opera a base.
+postgresql:
+  # Só laboratório: UM pod, sem réplica, sem backup. Recusado em produção.
+  enabled: false
+  image: { repository: postgres, tag: "17-alpine", pullPolicy: IfNotPresent }
+  database: delonix_meet
+  username: delonix
+  storage: 5Gi
+  storageClassName: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+redis:
+  # Só laboratório: UM pod, sem persistência, sem password. Recusado em produção.
+  enabled: false
+  image: { repository: redis, tag: "7-alpine", pullPolicy: IfNotPresent }
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+externalRedis:
+  # URL sem credenciais (vai para o ConfigMap) …
+  url: ""
+  # … ou, com password, a chave `REDIS_URL` do Secret.
+  fromSecret: false
+
+# ------------------------------------------------------------
+#  Servidor (API + sinalização + SFU)
+# ------------------------------------------------------------
+server:
+  image: { repository: delonix-server, tag: "", pullPolicy: IfNotPresent }
+  replicas: 2
+  # Tem de ser MAIOR que DRAIN_GRACE_SECS (40) + DRAIN_READINESS_SECS (12).
+  terminationGracePeriodSeconds: 60
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  # Vazio = as omissões do chart: espalhar por nó e por zona (ScheduleAnyway)
+  # e anti-afinidade preferida entre réplicas.
+  topologySpreadConstraints: []
+  affinity: {}
+
+  # O que o BROWSER usa para chegar ao TURN (`host:porta`). Vazio = o
+  # `coturn.externalIP` e a porta do coturn deste chart.
+  turnHost: ""
+  # Media em Kubernetes é relay-only: o IP do pod não é alcançável de fora.
+  forceTurnRelay: true
+
+  migrations:
+    # startup — o servidor migra ao arrancar (uma réplica, ou laboratório).
+    # job     — Job `pre-install,pre-upgrade` com a MESMA imagem e
+    #           DELONIX_MIGRATE=0 no Deployment. Exige base externa e
+    #           `secrets.existingSecret` (o Job corre antes de o chart criar
+    #           o que quer que seja).
+    mode: startup
+
+  # Listener interno (:8181 — /internal/v1/*, /metrics). Só no Service
+  # `delonix-server-internal`, que nenhum Ingress refere.
+  internal:
+    enabled: true
+
+  # gRPC interno (:9180), mTLS obrigatório — o servidor recusa arrancar com
+  # GRPC_BIND_ADDR e sem os três ficheiros.
+  grpc:
+    enabled: false
+    # Secret com tls.crt, tls.key e ca.crt …
+    tlsSecretName: ""
+    # … ou a cadeia do cert-manager (CA interna do namespace), como em
+    # deploy/k8s-overlays/components/edition-common/grpc-mtls.yaml.
+    certManager:
+      enabled: false
+
+  # Ponte telefone↔sala (ADR-0010). Ler o README §«Ponte telefone↔sala» antes
+  # de ligar: a allowlist é por IP EXACTO e um pod não tem IP fixo.
+  phoneBridge:
+    enabled: false
+    sipPort: 5090
+    # `host:porta` que o FreeSWITCH marca. Vazio = o IP do próprio pod.
+    advertise: ""
+    # PHONE_BRIDGE_FREESWITCH_IPS — IPs exactos, sem CIDR. Vazia = o chart falha.
+    freeswitchIPs: []
+    rtp: { min: 20200, max: 20400 }
+
+  # Telefonia de troncos (ADR-0009). `eslAddr` exige a chave
+  # TELEPHONY_ESL_PASSWORD no Secret (o servidor recusa arrancar sem ela).
+  telephony:
+    eslAddr: ""
+    kamailioRpcUrl: ""
+
+  # Mais variáveis para o ConfigMap (OLLAMA_URL, WEBAUTHN_RP_ID,
+  # NODE_PEER_CAPACITY…). NUNCA segredos: esses vão no Secret.
+  config: {}
+  # Variáveis com valueFrom (chaves extra do Secret, p.ex. SMS_*_SMPP).
+  extraEnv: []
+
+  autoscaling:
+    # Só é seguro com a afinidade por sala, que este chart põe sempre.
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+
+# Gravações — um volume montado em TODAS as réplicas do servidor.
+recordings:
+  # Vazio = o chart cria o PVC `delonix-recordings`.
+  existingClaim: ""
+  size: 10Gi
+  storageClassName: ""
+  # ReadWriteOnce com mais de uma réplica é recusado (README §Gravações).
+  accessMode: ReadWriteOnce
+  # Só para um cluster de UM nó, onde RWO chega porque os pods partilham o nó.
+  allowReadWriteOnceWithReplicas: false
+
+# ------------------------------------------------------------
+#  Web (SPA + nginx sem privilégios)
+# ------------------------------------------------------------
+web:
+  image: { repository: delonix-web, tag: "", pullPolicy: IfNotPresent }
+  replicas: 2
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  nodeSelector: {}
+  tolerations: []
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+
+# ------------------------------------------------------------
+#  Ingress (ingress-nginx — a afinidade por sala é uma anotação dele)
+# ------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  proxyTimeoutSeconds: 3600
+  tls:
+    # Um dos dois é obrigatório em produção:
+    #  - clusterIssuer: o cert-manager emite para `secretName`;
+    #  - existingSecret: um Secret kubernetes.io/tls que já existe.
+    clusterIssuer: ""
+    existingSecret: ""
+    secretName: delonix-tls-secret
+  # Serviço de transcrição (não é instalado por este chart). Com nome, o
+  # /asr é encaminhado para ele.
+  asr:
+    serviceName: ""
+    servicePort: 8000
+
+# ------------------------------------------------------------
+#  NetworkPolicy do servidor: :8181/:9180 e a ponte só para o FreeSWITCH.
+#  Precisa de um CNI que a aplique.
+# ------------------------------------------------------------
+networkPolicy:
+  enabled: false
+  sfuUdp: { min: 50000, max: 50200 }
+  # Namespace do Prometheus que raspa o /metrics no :8181. Vazio = ninguém.
+  metricsNamespace: monitoring
+  # Mais origens para as portas internas (lista de `from` de NetworkPolicy),
+  # p.ex. o ipBlock de um FreeSWITCH em hostNetwork ou fora do cluster.
+  extraInternalFrom: []
+
+# ------------------------------------------------------------
+#  coturn — relay de media. UMA réplica, de propósito (hairpin; README §Media).
+# ------------------------------------------------------------
+coturn:
+  enabled: true
+  image: { repository: coturn/coturn, tag: "4.6", pullPolicy: IfNotPresent }
+  # O IP por onde o browser E o servidor chegam ao coturn (o do LoadBalancer,
+  # ou o do nó em hostNetwork). Obrigatório em produção. Fora de produção,
+  # vazio = o IP do nó (hostNetwork) ou do pod.
+  externalIP: ""
+  realm: delonix
+  port: 3478
+  relayPorts: { min: 49152, max: 59152 }
+  totalQuota: 5000
+  # Igual a `resources.limits.cpu`: o coturn conta os CPUs do NÓ.
+  relayThreads: 4
+  # Laboratório de um nó sem LoadBalancer: o relay usa a rede do nó.
+  hostNetwork: false
+  service:
+    type: LoadBalancer
+    loadBalancerIP: ""
+    annotations: {}
+    externalTrafficPolicy: Cluster
+  resources:
+    requests: { cpu: 500m, memory: 256Mi }
+    limits: { cpu: "4", memory: 1Gi }
+  nodeSelector: {}
+  tolerations: []
+
+# ------------------------------------------------------------
+#  Voz — bordo SIP (Kamailio) e gateway de media (FreeSWITCH).
+#  O PBX do cliente (Issabel/FreePBX) NÃO é instalado: é do cliente e vive
+#  fora do cluster. Aqui só se declara por onde ele entra.
+# ------------------------------------------------------------
+voice:
+  enabled: false
+
+  # Allowlist de origens do bordo — o `address_file` do Kamailio
+  # (voice/kamailio/kamailio.cfg, `allow_source_address("1")`).
+  # Vazia = o bordo recusa TODAS as origens (403). Os IPs reais de um tronco
+  # não se escrevem num ficheiro versionado.
+  #   - { group: 1, ip: 203.0.113.10, mask: 32, port: 0, tag: pbx-cliente-a }
+  trunks: []
+
+  kamailio:
+    image: { repository: ghcr.io/kamailio/kamailio, tag: "5.8.6-bookworm", pullPolicy: IfNotPresent }
+    # Liga o `-A WITH_XHTTP_RPC` (TELEPHONY_KAMAILIO_RPC_URL). O /rpc fica na
+    # MESMA porta TCP 5060 do bordo — README §Achados antes de ligar.
+    xhttpRpc: false
+    hostNetwork: false
+    tls:
+      # Secret kubernetes.io/tls (tls.crt, tls.key). Obrigatório em produção.
+      # Fora de produção, vazio = self-signed gerado e preservado.
+      existingSecret: ""
+    # O Service do BORDO — por onde o PBX do cliente entra (SIP 5060 UDP/TCP,
+    # 5061 TLS). `Local` preserva o IP de origem, de que a allowlist depende.
+    service:
+      type: ClusterIP
+      loadBalancerIP: ""
+      annotations: {}
+      externalTrafficPolicy: Local
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    nodeSelector: {}
+    tolerations: []
+
+  freeswitch:
+    # Produção: a imagem que o freeswitch-image.yml publica
+    # (ghcr.io/<owner>/delonix-meet-freeswitch:1.11.3-<sha8>).
+    image: { repository: delonix-meet/freeswitch, tag: "1.11.3", pullPolicy: IfNotPresent }
+    hostNetwork: false
+    ivrVoice: ""          # DELONIX_IVR_VOICE; vazio = pt/BR/karina
+    ramaisSipPort: 5070
+    # DELONIX_EXTERNAL_IP — o endereço que o perfil dos ramais anuncia no SIP
+    # e no SDP — e a gama RTP que se publica com ele.
+    externalIP: ""
+    rtp: { min: 20000, max: 20100 }
+    # Service para ramais que se registam de FORA do cluster (5070/UDP).
+    ramaisService:
+      enabled: false
+      type: LoadBalancer
+      loadBalancerIP: ""
+      annotations: {}
+      externalTrafficPolicy: Local
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits: { cpu: "2", memory: 1Gi }
+    nodeSelector: {}
+    tolerations: []
+
+  ramais:
+    # DELONIX_RAMAIS_ACL — redes (CIDR) de onde um ramal se pode registar.
+    # Vazia = a omissão do entrypoint (10/8, 172.16/12, 192.168/16).
+    acl: []
+
+  # PBX de cliente de LABORATÓRIO (Asterisk). Recusado em produção.
+  labPbx:
+    enabled: false
+    image: { repository: delonix-meet/pbx-cliente, tag: "lab", pullPolicy: IfNotPresent }
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: "1", memory: 512Mi }

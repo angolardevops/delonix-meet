@@ -1,0 +1,17 @@
+apiVersion: v2
+name: delonix-meet
+description: >-
+  Delonix Meet — videoconferência self-hosted: servidor (API + SFU), web,
+  ingress com afinidade por sala, coturn relay-only e a voz (Kamailio +
+  FreeSWITCH). Postgres e Redis são externos em produção.
+type: application
+# Versão do CHART. A da aplicação vem da tag da imagem (`image.tag`), que é
+# obrigatória: o chart nunca escolhe uma por omissão.
+version: 0.1.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.26.0-0"
+keywords:
+  - webrtc
+  - sfu
+  - sip
+home: https://meet.ngolacloud.com

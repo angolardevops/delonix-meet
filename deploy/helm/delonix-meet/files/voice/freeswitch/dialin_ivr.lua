@@ -1,0 +1,1 @@
+../../../../../../voice/freeswitch/scripts/dialin_ivr.lua

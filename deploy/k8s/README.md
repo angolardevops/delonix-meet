@@ -26,6 +26,14 @@ da própria base («cycle detected»). Portão: `bash scripts/check-k8s-render.s
 (renderiza a base e os dois overlays, e falha se uma porta interna chegar a um
 Ingress ou se o `/ws` perder a afinidade do ADR-0001).
 
+## Chart Helm
+
+O mesmo conteúdo, empacotado, vive em [`../helm/delonix-meet/`](../helm/delonix-meet/README.md):
+valores por perfil (produção, laboratório), segredos sempre por Secret externo
+em produção, e a voz a sair dos ficheiros de `voice/`. Não substitui esta
+pasta — `make stage`/`make prod` continuam a aplicar estes manifestos. Portão:
+`make helm-lint` (`scripts/check-helm.sh`).
+
 ## Alta Disponibilidade (HA) de Estado e Dados
 
 Para cenários de produção, não recomendamos StatefulSets isolados. O `Makefile` recorre aos *charts* oficiais da Bitnami para instanciar:
