@@ -43,7 +43,7 @@ export default {
   voz: {
     titulo: '语音 · PSTN 电话拨入',
     eyebrow: '控制平面',
-    ponteEmFalta: '号码、PIN 和通话记录均可正常使用，但电话交换机与视频会议室之间的桥接尚未实现：拨入者只能进入纯语音会议，听不到会议内容。',
+    ponte: '号码、PIN 和通话记录均可正常使用。电话交换机与视频会议室之间的桥接已在服务器中实现，但只有在本安装配置后才会接通；未配置时，拨入者只能留在纯语音会议中，听不到会议内容。本页面不显示桥接是否已接通。',
     periodo: '计费周期',
     semana: '7 天',
     mes: '30 天',
@@ -78,7 +78,9 @@ export default {
   ramais: {
     titulo: '内部分机',
     eyebrow: '分机对分机通话',
-    aviso: '本组织内部网络中分机之间的通话。已分配号码的分机（见"号码"一列）也可以直接接听外线来电——无需 PIN，无需菜单。任何分机都不能接入视频会议室——这是本计划后续阶段的内容。',
+    aviso: '本组织内部网络中分机之间的通话。已分配号码的分机（见"号码"一列）也可以直接接听外线来电——无需 PIN，无需菜单。分机要加入会议，需拨打会议接入号码并输入会议室 PIN；只有本安装配置了电话↔会议室桥接，才能进入视频会议室。此路径尚未经过真实通话验证。',
+    acessoNota: '会议接入号码：{{numero}}。分机拨打该号码并输入会议室 PIN。',
+    erroReservado: '号码 {{numero}} 已保留用于加入会议，请为分机选择其他号码。',
     semRamais: '该组织暂无分机。',
     colMembro: '成员',
     colExtensao: '分机号',
@@ -108,6 +110,12 @@ export default {
     utilizador: 'SIP 用户名',
     password: 'SIP 密码',
     dominio: 'SIP 域名',
+    dominioDica: '组织的逻辑名称（realm），不是软电话连接的地址。',
+    servidor: 'SIP 服务器（代理）',
+    servidorEmFalta: '本安装未配置 SIP 服务器的公网地址，请向管理员索取。',
+    numeroAcesso: '会议接入号码',
+    copiarCampo: '复制：{{campo}}',
+    copiarTudo: '全部复制',
     concluido: '完成',
     did: {
       col: '号码（PSTN）',

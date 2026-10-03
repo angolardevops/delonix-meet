@@ -43,7 +43,7 @@ export default {
   voz: {
     titulo: 'Voice · PSTN dial-in',
     eyebrow: 'control plane',
-    ponteEmFalta: 'Numbers, PINs and the call log work. The bridge between the phone exchange and the video room does not exist yet: callers talk in a voice-only conference and cannot hear the meeting.',
+    ponte: 'Numbers, PINs and the call log work. The bridge between the phone exchange and the video room exists on the server, but it only connects when this installation configures it; without it, callers stay in a voice-only conference and cannot hear the meeting. This screen does not show whether the bridge is connected.',
     periodo: 'Billing period',
     semana: '7 days',
     mes: '30 days',
@@ -78,7 +78,9 @@ export default {
   ramais: {
     titulo: 'Internal extensions',
     eyebrow: 'extension-to-extension calling',
-    aviso: "Calls between extensions of this organisation, over the internal network. An extension with a number assigned (see the \"Number\" column) also receives calls from outside directly — no PIN, no menu. No extension joins a video meeting room — that is a later phase of this plan.",
+    aviso: "Calls between extensions of this organisation, over the internal network. An extension with a number assigned (see the \"Number\" column) also receives calls from outside directly — no PIN, no menu. To join a meeting, the extension dials the meeting access number and enters the room PIN; it only reaches the video room if this installation has the phone↔room bridge configured. This path has not yet been verified with a real call.",
+    acessoNota: 'Meeting access number: {{numero}}. An extension dials it and enters the room PIN.',
+    erroReservado: 'The number {{numero}} is reserved for joining meetings. Choose another number for the extension.',
     semRamais: 'This organisation has no extensions yet.',
     colMembro: 'Person',
     colExtensao: 'Extension',
@@ -108,6 +110,12 @@ export default {
     utilizador: 'SIP username',
     password: 'SIP password',
     dominio: 'SIP domain',
+    dominioDica: 'Logical name of the organisation (realm). It is not the address the softphone connects to.',
+    servidor: 'SIP server (proxy)',
+    servidorEmFalta: 'This installation has no public SIP server address configured. Ask whoever administers it.',
+    numeroAcesso: 'Meeting access number',
+    copiarCampo: 'Copy: {{campo}}',
+    copiarTudo: 'Copy all',
     concluido: 'Done',
     did: {
       col: 'Number (PSTN)',

@@ -168,13 +168,49 @@ pub struct VoiceExtensionInfo {
     /// (configuração do servidor) e nunca é o número de um ramal.
     #[sqlx(default)]
     pub meeting_access_number: String,
+    /// Endereço PÚBLICO do servidor SIP onde o softphone deste ramal se liga
+    /// (`VOICE_RAMAIS_PUBLIC_HOST`/`_PORT`/`_TRANSPORT`). `null` quando a
+    /// instalação não o configurou — o servidor não adivinha um valor. Não é o
+    /// `sip_domain`: esse é o realm do digest, um nome lógico.
+    #[sqlx(skip)]
+    pub sip_server: Option<SipServerInfo>,
+}
+
+/// Servidor/proxy SIP público dos ramais. É o mesmo para todos os ramais da
+/// instalação (configuração do servidor).
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct SipServerInfo {
+    /// Nome DNS ou IP público.
+    #[schema(example = "meet.exemplo.ao")]
+    pub host: String,
+    #[schema(example = 5070)]
+    pub port: u16,
+    /// `udp`, `tcp` ou `tls`.
+    #[schema(example = "udp")]
+    pub transport: String,
+    /// O proxy pronto a colar no softphone: `sip:host:porta;transport=x`.
+    #[schema(example = "sip:meet.exemplo.ao:5070;transport=udp")]
+    pub uri: String,
+}
+
+impl From<&ext_rules::SipServer> for SipServerInfo {
+    fn from(s: &ext_rules::SipServer) -> Self {
+        Self {
+            host: s.host().to_string(),
+            port: s.port(),
+            transport: s.transport().as_str().to_string(),
+            uri: s.proxy_uri(),
+        }
+    }
 }
 
 impl VoiceExtensionInfo {
-    /// O número de acesso não é uma coluna: vem da configuração, e todas as
-    /// leituras de um ramal passam por aqui antes de saírem.
-    fn with_access_number(mut self, state: &AppState) -> Self {
+    /// O número de acesso e o endereço público não são colunas: vêm da
+    /// configuração, e todas as leituras de um ramal passam por aqui antes de
+    /// saírem.
+    fn with_server_config(mut self, state: &AppState) -> Self {
         self.meeting_access_number = state.config.voice_meeting_access_number.clone();
+        self.sip_server = state.config.voice_ramais_public.as_ref().map(Into::into);
         self
     }
 }
@@ -194,7 +230,9 @@ pub struct CreatedExtension {
     /// mostrada outra vez (só fica o hash e o HA1 na base).
     pub sip_password: String,
     /// Domínio SIP a usar junto com `sip_username`/`sip_password` na
-    /// configuração da conta do softphone.
+    /// configuração da conta do softphone. É o realm do digest — um nome
+    /// lógico, que pode não resolver em DNS; o endereço a que o softphone se
+    /// liga é `sip_server`.
     pub sip_domain: String,
 }
 
@@ -334,7 +372,7 @@ pub async fn create_extension(
             .bind(id)
             .fetch_one(&state.db)
             .await?;
-    let info = info.with_access_number(&state);
+    let info = info.with_server_config(&state);
 
     crate::audit::log(
         &state.db,
@@ -378,7 +416,7 @@ pub async fn list_extensions(
     .await?;
     Ok(Json(
         rows.into_iter()
-            .map(|r| r.with_access_number(&state))
+            .map(|r| r.with_server_config(&state))
             .collect(),
     ))
 }
@@ -435,7 +473,7 @@ pub async fn update_extension(
     .bind(org_id)
     .fetch_one(&state.db)
     .await?;
-    let info = info.with_access_number(&state);
+    let info = info.with_server_config(&state);
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -497,7 +535,7 @@ pub async fn regenerate_extension_password(
     .bind(org_id)
     .fetch_one(&state.db)
     .await?;
-    let info = info.with_access_number(&state);
+    let info = info.with_server_config(&state);
     crate::audit::log(
         &state.db,
         Some(org_id),
@@ -1274,6 +1312,7 @@ mod tests {
     ),
     components(schemas(
         VoiceExtensionInfo,
+        SipServerInfo,
         CreatedExtension,
         CreateExtensionReq,
         UpdateExtensionReq,

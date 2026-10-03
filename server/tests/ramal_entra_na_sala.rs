@@ -459,3 +459,122 @@ async fn o_numero_de_acesso_vem_da_configuracao(db: sqlx::PgPool) {
     );
     assert_eq!(created["meeting_access_number"], "777", "{created}");
 }
+
+/// O endereço público do servidor SIP é configuração da instalação: sem
+/// `VOICE_RAMAIS_PUBLIC_HOST` as leituras dizem `null` — nunca um valor
+/// inventado a partir do domínio SIP ou do host do pedido.
+#[sqlx::test(migrations = "./migrations")]
+async fn sem_endereco_publico_configurado_o_servidor_sip_vem_nulo(db: sqlx::PgPool) {
+    let app = spawn(db, &[]).await;
+    let a = app.new_org("alfa-ramal.ao").await;
+    let extensions = format!("/api/orgs/{}/extensions", a.org());
+
+    let (st, created) = app
+        .post(
+            &extensions,
+            Some(&a.token),
+            json!({"member_id": a.user_id, "extension": "101"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{created}");
+    assert!(
+        created.as_object().unwrap().contains_key("sip_server"),
+        "o campo existe mesmo sem valor: {created}"
+    );
+    assert_eq!(created["sip_server"], Value::Null, "{created}");
+    let (st, list) = app.get(&extensions, Some(&a.token)).await;
+    assert_eq!(st, 200, "{list}");
+    assert_eq!(list[0]["sip_server"], Value::Null, "{list}");
+}
+
+/// Com o endereço configurado, todas as leituras de um ramal o trazem — lista,
+/// criação, PATCH e regeneração da password — com o proxy pronto a colar.
+#[sqlx::test(migrations = "./migrations")]
+async fn o_endereco_publico_configurado_vem_em_todas_as_leituras(db: sqlx::PgPool) {
+    let app = spawn(
+        db,
+        &[
+            ("VOICE_RAMAIS_PUBLIC_HOST", "sip.exemplo.ao"),
+            ("VOICE_RAMAIS_PUBLIC_PORT", "5080"),
+            ("VOICE_RAMAIS_PUBLIC_TRANSPORT", "TLS"),
+        ],
+    )
+    .await;
+    let a = app.new_org("alfa-ramal.ao").await;
+    let extensions = format!("/api/orgs/{}/extensions", a.org());
+    let expected = json!({
+        "host": "sip.exemplo.ao",
+        "port": 5080,
+        "transport": "tls",
+        "uri": "sip:sip.exemplo.ao:5080;transport=tls",
+    });
+
+    let (st, created) = app
+        .post(
+            &extensions,
+            Some(&a.token),
+            json!({"member_id": a.user_id, "extension": "101"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{created}");
+    assert_eq!(created["sip_server"], expected, "{created}");
+    // O domínio SIP continua a ser o realm lógico: não foi trocado pelo host.
+    assert_ne!(created["sip_domain"], "sip.exemplo.ao", "{created}");
+    let id = created["id"].as_str().unwrap();
+
+    let (st, list) = app.get(&extensions, Some(&a.token)).await;
+    assert_eq!(st, 200, "{list}");
+    assert_eq!(list[0]["sip_server"], expected, "{list}");
+
+    let (st, patched) = app
+        .patch(
+            &format!("{extensions}/{id}"),
+            Some(&a.token),
+            json!({"label": "secretária"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{patched}");
+    assert_eq!(patched["sip_server"], expected, "{patched}");
+
+    let (st, regenerated) = app
+        .post(
+            &format!("{extensions}/{id}/regenerate-password"),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{regenerated}");
+    assert_eq!(regenerated["sip_server"], expected, "{regenerated}");
+}
+
+/// Só o host é obrigatório: porta e transporte têm omissão (5070, udp). Um
+/// host que não é um host (`sip:…`, com porta) não vira endereço.
+#[sqlx::test(migrations = "./migrations")]
+async fn porta_e_transporte_tem_omissao_e_um_host_mal_formado_nao_conta(db: sqlx::PgPool) {
+    let app = spawn(db.clone(), &[("VOICE_RAMAIS_PUBLIC_HOST", "203.0.113.7")]).await;
+    let a = app.new_org("alfa-ramal.ao").await;
+    let extensions = format!("/api/orgs/{}/extensions", a.org());
+    let (st, created) = app
+        .post(
+            &extensions,
+            Some(&a.token),
+            json!({"member_id": a.user_id, "extension": "101"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{created}");
+    assert_eq!(
+        created["sip_server"],
+        json!({
+            "host": "203.0.113.7",
+            "port": 5070,
+            "transport": "udp",
+            "uri": "sip:203.0.113.7:5070;transport=udp",
+        }),
+        "{created}"
+    );
+
+    let bad = spawn(db, &[("VOICE_RAMAIS_PUBLIC_HOST", "sip:meet.ao:5070")]).await;
+    let (st, list) = bad.get(&extensions, Some(&a.token)).await;
+    assert_eq!(st, 200, "{list}");
+    assert_eq!(list[0]["sip_server"], Value::Null, "{list}");
+}

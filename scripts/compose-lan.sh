@@ -15,6 +15,11 @@ set -euo pipefail
 cat <<YAML
 # Gerado por scripts/compose-lan.sh — NÃO versionar (tem o IP desta máquina).
 services:
+  # A consola mostra o endereço onde o softphone se liga: na rede local é este
+  # IP — o nome do compose.yaml só resolve na própria máquina.
+  server:
+    environment:
+      VOICE_RAMAIS_PUBLIC_HOST: ${LAN_IP}
   freeswitch:
     environment:
       DELONIX_EXTERNAL_IP: ${LAN_IP}
