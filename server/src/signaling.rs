@@ -1503,12 +1503,26 @@ pub trait PhoneControl: Send + Sync {
     fn set_muted(&self, leg_id: Uuid, muted: bool);
 }
 
+/// Passar a palco no SFU o que o `Spotlight` só anunciava.
+///
+/// O `Spotlight` do anfitrião difunde «destaquem esta pessoa» e guardava-o na
+/// sala — mas o SFU nunca o soube. Numa sala de cinco ou mais, o selector de
+/// oradores encaminha só os três microfones mais altos, e podia **suprimir a
+/// pessoa destacada** (R225). Implementado pelo SFU; registado no arranque.
+pub trait StageControl: Send + Sync {
+    /// Não bloqueia: a implementação despacha e devolve.
+    fn set_pinned(&self, room_id: Uuid, publisher: Uuid, on: bool);
+}
+
 #[derive(Default)]
 pub struct SignalingHub {
     pub(crate) rooms: DashMap<Uuid, Room>,
     /// A ponte telefone↔sala, quando está a correr. `OnceLock` porque o `Hub`
     /// já está partilhado quando a ponte arranca.
     pub phone: std::sync::OnceLock<Arc<dyn PhoneControl>>,
+    /// O SFU, para o palco valer de facto (R225). `OnceLock` pela mesma razão:
+    /// quando se registam, o `Hub` já está dentro do `AppState`.
+    pub stage: std::sync::OnceLock<Arc<dyn StageControl>>,
     pub bus: Option<Arc<crate::pubsub::PubSubBus>>,
     /// Escrita do chat na base de dados, FORA do caminho quente (fila
     /// limitada consumida por uma tarefa própria). `None` em testes.
@@ -3204,6 +3218,7 @@ impl SignalingHub {
                 if !self.is_host(room_id, peer_id) {
                     return true;
                 }
+                let mut anterior = None;
                 let mudou = self
                     .rooms
                     .get_mut(&room_id)
@@ -3211,12 +3226,45 @@ impl SignalingHub {
                         if peer.is_some_and(|p| !r.peers.contains_key(&p)) {
                             return false;
                         }
+                        anterior = r.spotlight;
                         r.spotlight = peer;
                         true
                     })
                     .unwrap_or(false);
                 if mudou {
                     self.broadcast_all(room_id, ServerMsg::Spotlight { peer });
+                    // E vale de facto: o SFU deixa de poder suprimir quem está
+                    // destacado, e o anterior volta ao top-N (R225). Sem isto,
+                    // numa sala de cinco ou mais o anfitrião destacava alguém e
+                    // o servidor continuava a calá-lo.
+                    if let Some(st) = self.stage.get() {
+                        if let Some(antigo) = anterior {
+                            if Some(antigo) != peer {
+                                st.set_pinned(room_id, antigo, false);
+                            }
+                        }
+                        if let Some(novo) = peer {
+                            st.set_pinned(room_id, novo, true);
+                        }
+                    }
+                    // Quem vem de fora da app leva o crachá de palco: a sala vê
+                    // porque é que aquela pessoa nunca é suprimida.
+                    if let Some(novo) = peer {
+                        if self.seat_of(room_id, novo).is_some_and(|s| s.outside_app()) {
+                            self.update_external(room_id, novo, |seat, _, _| seat.on_stage = true);
+                        }
+                    }
+                    if let Some(antigo) = anterior {
+                        if Some(antigo) != peer
+                            && self
+                                .seat_of(room_id, antigo)
+                                .is_some_and(|s| s.outside_app())
+                        {
+                            self.update_external(room_id, antigo, |seat, _, _| {
+                                seat.on_stage = false
+                            });
+                        }
+                    }
                 }
             }
             ClientMsg::WaitingRoom { on } => {
@@ -6119,6 +6167,16 @@ mod b1_sala_tests {
         }
     }
 
+    /// Grava o que o `Spotlight` pediu ao SFU (R225).
+    #[derive(Default)]
+    struct PalcoFalso(std::sync::Mutex<Vec<(Uuid, bool)>>);
+
+    impl StageControl for PalcoFalso {
+        fn set_pinned(&self, _room_id: Uuid, publisher: Uuid, on: bool) {
+            self.0.lock().unwrap().push((publisher, on));
+        }
+    }
+
     fn chat(text: &str, reply_to: Option<Uuid>, client_id: Option<&str>) -> ClientMsg {
         ClientMsg::Chat {
             text: text.into(),
@@ -6676,6 +6734,58 @@ mod b1_sala_tests {
             .iter()
             .any(|m| matches!(m, ServerMsg::Spotlight { .. })));
         assert!(s.hub.join_snapshot(s.room).is_empty());
+    }
+
+    /// **R225** — destacar passa a valer no ENCAMINHAMENTO, não só na interface.
+    ///
+    /// Antes, o `Spotlight` guardava e difundia; o SFU nunca sabia, e numa sala
+    /// de cinco ou mais podia suprimir o microfone da pessoa destacada. Aqui
+    /// mede-se o que o `Hub` PEDE ao SFU — o efeito na media está em
+    /// `sfu_e2e::palco_impede_o_selector_de_calar_quem_esta_destacado`.
+    #[tokio::test]
+    async fn destacar_fixa_o_audio_no_sfu_e_liberta_o_anterior() {
+        let mut s = sala();
+        let palco = Arc::new(PalcoFalso::default());
+        let _ = s.hub.stage.set(palco.clone() as Arc<dyn StageControl>);
+
+        s.hub
+            .handle(s.room, s.a, ClientMsg::Spotlight { peer: Some(s.b) }, None);
+        assert_eq!(
+            palco.0.lock().unwrap().as_slice(),
+            &[(s.b, true)],
+            "destacar a Bia tem de a fixar no SFU"
+        );
+
+        // Trocar de destacado liberta o anterior: senão ficavam dois fora do
+        // top-N para sempre, e o selector deixava de selecionar.
+        palco.0.lock().unwrap().clear();
+        s.hub
+            .handle(s.room, s.a, ClientMsg::Spotlight { peer: Some(s.c) }, None);
+        let pedidos = palco.0.lock().unwrap().clone();
+        assert!(
+            pedidos.contains(&(s.b, false)) && pedidos.contains(&(s.c, true)),
+            "trocar de destacado liberta o anterior e fixa o novo: {pedidos:?}"
+        );
+
+        // Limpar o destaque liberta quem estava.
+        palco.0.lock().unwrap().clear();
+        s.hub
+            .handle(s.room, s.a, ClientMsg::Spotlight { peer: None }, None);
+        assert_eq!(
+            palco.0.lock().unwrap().as_slice(),
+            &[(s.c, false)],
+            "limpar o destaque devolve o Carlos ao top-N"
+        );
+
+        // E quem não é anfitrião não mexe no palco (R94: as duas metades).
+        palco.0.lock().unwrap().clear();
+        s.hub
+            .handle(s.room, s.b, ClientMsg::Spotlight { peer: Some(s.c) }, None);
+        assert!(
+            palco.0.lock().unwrap().is_empty(),
+            "um participante não destaca ninguém, logo não fixa nada no SFU"
+        );
+        let _ = (&mut s.rx_a, &mut s.rx_b, &mut s.rx_c);
     }
 
     // ------------------------------------------------------ início e ao vivo

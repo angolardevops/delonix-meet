@@ -2320,3 +2320,15 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Ficheiros.** `server/src/signaling.rs` (`Seat`, `join_external`, `update_external`, `channel_summary`, a porta `PhoneControl` e o `ForceMute` a impô-la), `server/src/phone_bridge/{sip,leg}.rs` (registo síncrono de interruptores por perna), `server/src/voice.rs` (a ponte regista-se e os eventos dela alimentam o censo), `server/src/sfu_e2e.rs`.
 
 **O que NÃO entra deste porte, e porquê.** As mensagens `DialOutUpdated` e `SessionCost` e os tipos `DialOutView`/`SessionCostView`: descrevem chamadas de saída e custo, que são da frente da telefonia, e nada na `main` os pode produzir. A porta do WhatsApp Business, pela mesma razão — não tem consumidor. Uma mensagem no protocolo que ninguém produz é uma capacidade anunciada sem código por trás.
+
+### R225 — O anfitrião destacava alguém e o SFU continuava a poder calá-lo
+
+**Sintoma.** O `Spotlight` do anfitrião guardava o destacado na sala e difundia `ServerMsg::Spotlight` — e era só isso. O SFU nunca o soube. Numa sala de cinco ou mais, o selector de oradores encaminha só os três microfones com mais energia (`MAX_ACTIVE_SPEAKERS`), e a pessoa destacada para toda a gente podia ser uma das suprimidas: a interface dizia «em palco» e o áudio não passava. A `Publication` já tinha o campo `pinned` e o selector já o respeitava; **ninguém o escrevia**.
+
+**Regra.** O palco vale no encaminhamento, não só na interface. O `Spotlight` acciona a porta `signaling::StageControl`, implementada sobre o SFU e registada no arranque (`lib.rs`): fixa o áudio do novo destacado (`SfuState::set_audio_pinned`) e **liberta o anterior** — senão ficavam dois fora do concurso para sempre. Quem está fixado passa sempre e não ocupa um dos lugares do top-N; ao fixar, volta a encaminhar já, sem esperar o próximo tique do selector. Vale para qualquer publicador, browser ou perna de telefone; um lugar de fora da app leva além disso o crachá `on_stage`, que a R224 deixara sempre a `false`.
+
+**Portão.** Duas metades. `signaling::b1_sala_tests::destacar_fixa_o_audio_no_sfu_e_liberta_o_anterior` mede o que o `Hub` PEDE ao SFU: destacar fixa, trocar liberta o anterior, limpar liberta, e quem não é anfitrião não fixa nada. `sfu_e2e::palco_impede_o_selector_de_calar_quem_esta_destacado` mede o que um `RTCPeerConnection` real RECEBE: um telefone em silêncio é subscrito, entram três que falam e o selector suprime-o (os pacotes param — sem este passo o teste não mediria nada), e fixado volta a chegar.
+
+**Ficheiros.** `server/src/signaling.rs` (a porta `StageControl`, o `Spotlight` a accioná-la e o crachá `on_stage`), `server/src/sfu.rs` (`set_audio_pinned`), `server/src/lib.rs` (registo no arranque), `server/src/sfu_e2e.rs`.
+
+**O que NÃO está provado.** O caminho inteiro WebSocket → `Spotlight` → SFU num só teste: as duas metades estão medidas em separado e a cola é o adaptador de 15 linhas em `lib.rs`. E nenhum cliente web foi alterado — o destaque já existia na interface.
