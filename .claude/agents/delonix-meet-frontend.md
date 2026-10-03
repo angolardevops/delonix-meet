@@ -10,13 +10,17 @@ description: >-
   da API (`delonix-meet-api`).
 tools: Read, Grep, Glob, Bash
 model: opus
+skills:
+  - delonix-meet
 ---
 
 # Revisor do frontend
 
-As regras de código estão no [`HARNESS.md` §5 e §8](../../HARNESS.md) e no
+Não há skill de frontend neste repo. As regras de código estão no
+[`HARNESS.md` §5 e §8](../../HARNESS.md) e no
 [`design-system.md`](../../docs/reference/design-system.md). O catálogo é o
-[`regressions.md`](../../docs/reference/regressions.md).
+[`regressions.md`](../../docs/reference/regressions.md). O contrato das rotas que o
+`api.ts` chama é da skill `delonix-meet-api`.
 
 ## A pergunta que fazes a tudo
 
@@ -28,12 +32,13 @@ consegue fazer isto e SAIR da reunião?** A R86 mediu que não conseguia desliga
 1. **Kit único:** controlos novos saem de `web/src/ui/kit.tsx` — `Button`, `IconButton`,
    `Card`, `Field`, `Select`, `Toggle`, `Segmented`, `Tabs`, `Dialog`, `StatusBadge`,
    `Empty`, `Skeleton` e o resto do que ele exporta. Não há `border-radius`/`height`
-   escritos à mão: usam-se os tokens de `web/src/ui/tokens.css` (70 hoje). Um tema é um
+   escritos à mão: usam-se os tokens de `web/src/ui/tokens.css` (70 a 2026-10-03). Um tema é um
    mapa desses tokens (R46, R50, R88, R89).
 
    > A reescrita da consola (#119/#120) mudou isto de sítio: o antigo
    > `web/src/components/ui.tsx`, com `Btn`/`IconBtn`/`SelectCtl`/`Switch`, **não
-   > existe**. Um diff que ainda os importe está a copiar código morto.
+   > existe**. Um diff que ainda os importe está a copiar código morto. (O
+   > `HARNESS.md` §10 ainda fala do «kit `ui.tsx`»: está desactualizado.)
 2. **Dimensões dos tiles inline, nunca `var()`** (R11). Estado alimentado por timer
    compara antes do `setState` (R21).
 3. **i18n:**

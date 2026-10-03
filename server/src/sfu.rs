@@ -1008,12 +1008,43 @@ impl SfuState {
         };
         let _ = room
             .bridges
-            .fetch_update(Relaxed, Relaxed, |n| n.checked_sub(1));
+            .try_update(Relaxed, Relaxed, |n| n.checked_sub(1));
         if room.bridges.load(Relaxed) == 0 && room.peers.lock().await.is_empty() {
             self.rooms.remove_if(&room_id, |_, r| {
                 r.bridges.load(Relaxed) == 0 && r.peers.try_lock().is_ok_and(|p| p.is_empty())
             });
         }
+    }
+
+    /// Passa um publicador a palco (ou tira-o): o selector de oradores deixa de
+    /// o poder suprimir, e ele não ocupa um dos lugares do top-N.
+    ///
+    /// Quem chama é o `signaling` pela porta `StageControl`, quando um
+    /// anfitrião destaca alguém (R225). Vale para qualquer publicador — um
+    /// browser ou uma perna de telefone —, porque o problema é o mesmo: numa
+    /// sala de cinco ou mais, quem está destacado para toda a gente não pode
+    /// ser calado por não estar entre os três mais altos.
+    ///
+    /// `false` se esse publicador não tem áudio nesta sala.
+    pub(crate) async fn set_audio_pinned(&self, room_id: Uuid, publisher: Uuid, on: bool) -> bool {
+        let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
+            return false;
+        };
+        let pubs = room.publications.lock().await;
+        let mut found = false;
+        for p in pubs
+            .iter()
+            .filter(|p| p.publisher == publisher && p.kind == "audio")
+        {
+            p.pinned.store(on, Relaxed);
+            // Ao fixar, passa a encaminhar já — não se espera o próximo tique
+            // do selector (200 ms) para a sala voltar a ouvi-lo.
+            if on {
+                p.forwarding.store(true, Relaxed);
+            }
+            found = true;
+        }
+        found
     }
 
     /// Assina o áudio da sala para a mistura de uma chamada.

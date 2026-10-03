@@ -5,13 +5,16 @@ description: >-
   async Tokio, locks através de `.await`, filas limitadas, tarefas de fundo e
   shutdown, `unwrap` em caminho quente, alocações no fan-out RTP, erros engolidos,
   clippy. Usa-o em diffs de `sfu.rs`, `signaling.rs`, `recorder.rs`, `presence.rs`,
-  `pubsub.rs`, `redis_state.rs`, `broadcast.rs`, `main.rs`, ou quando o pedido
+  `pubsub.rs`, `redis_state.rs`, `broadcast.rs`, `phone_bridge/`, `lib.rs` (`run()`),
+  ou quando o pedido
   falar em «performance», «lock», «deadlock», «fuga de memória», «async»,
   «panic». NÃO o uses para decidir onde o código vive
   (`delonix-meet-architecture`) nem para correcção de WebRTC
   (`delonix-meet-webrtc`).
 tools: Read, Grep, Glob, Bash
 model: opus
+skills:
+  - delonix-meet-backend
 ---
 
 # Revisor de Rust
@@ -42,18 +45,22 @@ problema de um participante: leva consigo a sala ou o nó.
 
 1. **Guardas de `DashMap`/`Mutex` vivas através de `.await`.** Mostra a linha do lock e
    a do `.await`.
-2. **`unwrap`/`expect` fora do arranque e da config.** Os conhecidos:
-   `redis_state.rs` (7), `storage.rs:189,272`, `recorder.rs:255`.
-3. **`let _ =` sobre um `Result` que importa.** São 15 `let _ = sqlx::…`, e
-   `require_admin_pub(...).is_ok()` transforma um 500 em «não é admin».
-4. **Tarefas de fundo:** um `tokio::spawn` novo sem cancelamento nem `JoinHandle`. Os 5
-   ciclos de `main.rs` não param no shutdown; não acrescentes um sexto.
+2. **`unwrap`/`expect` fora do arranque e da config.** Os conhecidos (2026-10-03):
+   `redis_state.rs` (7), `storage.rs:291,388`, `recorder.rs:261`.
+3. **`let _ =` sobre um `Result` que importa.** São 20 `let _ = sqlx::…` em
+   `server/src` (2026-10-03). E um `require_admin_pub(...).is_ok()` transforma um 500 em
+   «não é admin» — hoje não há nenhum; não deixes voltar.
+4. **Tarefas de fundo:** um `tokio::spawn` novo sem cancelamento nem `JoinHandle`. O
+   `run()` de `lib.rs` lança catorze (`lib.rs:1282-1509`) e só o `quarantine_sweeper`
+   tem `CancellationToken` (`:1307`); não acrescentes um décimo quinto sem ele.
 5. **Estado partilhado:** um ler-alterar-gravar no Redis sem atomicidade
    (`redis_state.rs`) perde escritas concorrentes.
 6. **Hot path RTP:** alocações, `clone()` de `Arc` por pacote, formatação de strings em
-   logs por pacote. Pede medição antes de «optimizar»: os 217 `.clone()` nunca foram
-   perfilados.
-7. **Clippy:** `bash scripts/check-clippy-ratchet.sh` não sobe. Não limpes avisos de
+   logs por pacote. Pede medição antes de «optimizar»: os `.clone()` de `sfu.rs` (74) e
+   de `signaling.rs` (90) nunca foram perfilados. A perna de telefone
+   (`sfu::PubSource::Bridge`) entra no mesmo fan-out: o pacote silenciado conta na mesma
+   para a estatística (R224).
+7. **Clippy:** `bash scripts/check-clippy-ratchet.sh` não sobe (fasquia: 13). Não limpes avisos de
    `sfu.rs`/`recorder.rs` em bloco num PR com outras coisas.
 
 ## Formato do relatório

@@ -1778,6 +1778,160 @@ impl TestClient {
     }
 }
 
+/// **R225 — o anfitrião destacava alguém e o SFU continuava a calá-lo.**
+///
+/// O `Spotlight` difunde «destaquem esta pessoa» a toda a sala. O SFU nunca o
+/// soube: numa sala de cinco ou mais, o selector encaminha só os três
+/// microfones mais altos (`MAX_ACTIVE_SPEAKERS`), e a pessoa destacada podia
+/// ser um dos suprimidos. Este teste mede o que o subscritor RECEBE.
+///
+/// Monta-se a sala barata de propósito: quatro pernas de telefone são quatro
+/// microfones (as publicações da ponte têm nível medido, logo entram no
+/// concurso) e quatro peers sem media levam a sala aos cinco que acendem a
+/// selecção. O único `RTCPeerConnection` real é o de quem ouve.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn palco_impede_o_selector_de_calar_quem_esta_destacado() {
+    use crate::phone_bridge::{g711::Law, leg};
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let ana = TestClient::join(&sfu, room).await;
+    let (ana_fala, _) = ana.publish_opus_tone("ana-mic", 440.0).await;
+    eventually_com_diagnostico(
+        "a Ana está ligada ao SFU",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.pc.connection_state()
+                    == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+    ana_fala.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // Peers sem media: só para a sala passar de `SPEAKER_SELECTION_MIN_ROOM`.
+    // O selector conta PEERS, e uma perna de telefone não é um peer.
+    for _ in 0..4 {
+        let (tx, mut rx, _sd) = crate::signaling::PeerTx::new(16, _metrics.clone());
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        sfu.add_peer(room, Uuid::new_v4(), tx).await.unwrap();
+    }
+
+    // Quatro telefones. O que vai ser destacado entra PRIMEIRO e fica em
+    // silêncio (energia zero): é o último do concurso sem depender de quem
+    // fala mais alto. Os outros três só entram depois de a Ana o estar a
+    // receber — com dois microfones na sala o selector ainda não escolhe.
+    let mut legs = Vec::new();
+    let mut fones = Vec::new();
+    let mut ligar_telefone = async |freq: f32, a_tocar: bool| {
+        let leg_id = Uuid::new_v4();
+        let (ev_tx, _ev_rx) = mpsc::channel(16);
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let perna = leg::start(
+            sfu.clone(),
+            leg::LegConfig {
+                room_id: room,
+                leg_id,
+                allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+                default_law: Law::A,
+                initial_remote: None,
+            },
+            socket,
+            None,
+            ev_tx,
+        )
+        .await
+        .expect("perna da ponte");
+        let fone = TelefoneFalso::ligar("127.0.0.1:0", perna.local_addr, Law::Mu, freq).await;
+        fone.tocar
+            .store(a_tocar, std::sync::atomic::Ordering::SeqCst);
+        legs.push((leg_id, perna));
+        fones.push(fone);
+        leg_id
+    };
+    let destacado = ligar_telefone(300.0, false).await;
+    let chave = destacado.to_string();
+
+    let contar = {
+        let ana = ana.clone();
+        let chave = chave.clone();
+        move || {
+            let ana = ana.clone();
+            let chave = chave.clone();
+            async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) }
+        }
+    };
+
+    // (1) O áudio do telefone chega, antes de haver selecção.
+    eventually_com_diagnostico(
+        "a Ana recebe o telefone que vai ser suprimido",
+        prazo(30),
+        {
+            let contar = contar.clone();
+            move || {
+                let contar = contar.clone();
+                async move { contar().await > 10 }
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+
+    // Agora os três que falam: passam a ser cinco microfones para três lugares.
+    for _ in 0..3 {
+        ligar_telefone(1000.0, true).await;
+    }
+
+    // (2) A selecção suprime-o: fica fora do top-3 por energia.
+    let mut parou = 0;
+    let suprimido = tokio::time::timeout(prazo(25), async {
+        loop {
+            let a = contar().await;
+            tokio::time::sleep(Duration::from_millis(900)).await;
+            let b = contar().await;
+            if a == b {
+                parou = b;
+                return true;
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        suprimido,
+        "o selector nunca suprimiu o telefone mais baixo — o cenário não está a medir o que devia"
+    );
+
+    // (3) Destacado, volta a passar. É ISTO que o Spotlight não fazia.
+    assert!(
+        sfu.set_audio_pinned(room, destacado, true).await,
+        "set_audio_pinned não encontrou o áudio do telefone destacado"
+    );
+    eventually_com_diagnostico(
+        "destacado, a Ana volta a receber o telefone",
+        prazo(20),
+        {
+            let contar = contar.clone();
+            move || {
+                let contar = contar.clone();
+                async move { contar().await > parou + 10 }
+            }
+        },
+        || format!("parou em {parou} pacotes"),
+    )
+    .await;
+    eprintln!("R225 palco: suprimido aos {parou} pacotes · destacado, voltou a subir");
+
+    for (_, p) in legs {
+        p.stop().await;
+    }
+    sfu.remove_peer(room, ana.id).await;
+    ana.pc.close().await.unwrap();
+}
+
 /// **R224 — o `ForceMute` de um anfitrião não calava quem vem de fora da app.**
 ///
 /// O `ForceMute` é uma MENSAGEM ao alvo (`ServerMsg::ForceMuted`): um browser

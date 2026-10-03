@@ -1297,6 +1297,27 @@ pub async fn run() {
         });
     }
 
+    // O palco do anfitrião vale no encaminhamento, não só na interface (R225).
+    {
+        struct PalcoNoSfu(Arc<sfu::SfuState>);
+        impl signaling::StageControl for PalcoNoSfu {
+            fn set_pinned(&self, room_id: uuid::Uuid, publisher: uuid::Uuid, on: bool) {
+                // Despacha: quem chama está a tratar uma mensagem do WebSocket
+                // e as publicações estão atrás de um `Mutex` assíncrono.
+                let sfu = self.0.clone();
+                tokio::spawn(async move {
+                    if !sfu.set_audio_pinned(room_id, publisher, on).await {
+                        tracing::debug!(%room_id, %publisher, "palco: sem áudio deste publicador");
+                    }
+                });
+            }
+        }
+        let _ = state
+            .hub
+            .stage
+            .set(Arc::new(PalcoNoSfu(state.sfu.clone())) as Arc<dyn signaling::StageControl>);
+    }
+
     // Ponte telefone↔sala (ADR-0010): o UA SIP que atende a segunda perna que
     // o FreeSWITCH origina. Sem configuração não abre socket nenhum.
     voice::start_phone_bridge(&state).await;
