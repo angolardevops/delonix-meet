@@ -43,7 +43,7 @@ KIND_CLUSTER      ?= delonix-stage
 # Cada `make image-push` gera uma tag NOVA e faz pin nos Deployments
 # (kubectl set image) → rollouts deterministas, sem o problema do :latest
 # stale. Override: make image-push IMAGE_TAG=v1.1.0
-IMAGE_TAG         ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+IMAGE_TAG         ?= $(shell git describe --tags --always --dirty --abbrev=10 2>/dev/null || echo dev)
 IMAGE_SERVER_REPO ?= delonix-server
 IMAGE_WEB_REPO    ?= delonix-web
 IMAGE_SERVER      := $(IMAGE_SERVER_REPO):$(IMAGE_TAG)
@@ -766,11 +766,13 @@ voice-images: ## Imagens de voz para o cluster local: FreeSWITCH (importado) + P
 	fi
 	@printf "$(G)  ✓ imagens de voz prontas$(Z)\n"
 
-.PHONY: cluster cluster-status cluster-down
+.PHONY: cluster cluster-status cluster-reset-db cluster-down
 cluster: ## Stack completo num cluster local (delonix cluster) — https://$(MEET_HOST)
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) IMAGE_TAG=$(IMAGE_TAG) bash scripts/cluster.sh up
 cluster-status: ## Estado do cluster local: nós, pods, ingress e a prova de fumo
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh status
+cluster-reset-db: ## Apaga a base de dados do cluster local (depois: make cluster para a recriar)
+	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh reset-db
 cluster-down: ## Destrói o cluster local (nós, rede e kubeconfig)
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh down
 
