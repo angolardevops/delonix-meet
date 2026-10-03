@@ -273,7 +273,9 @@ EOF
   #   · só `require-secure-rtp` no perfil → ACEITE (o sofia lê-o para uma flag,
   #     PFLAG_SECURE, que mais nada no código consulta);
   #   · `set rtp_secure_media=mandatory` no dialplan antes do answer → ACEITE
-  #     (o SDP já foi negociado quando o dialplan corre);
+  #     neste perfil, que negoceia o SDP à chegada; num perfil com
+  #     `inbound-late-negotiation=true` a negociação espera pelo answer e o
+  #     mesmo `set` recusa com 488;
   #   · a variável global → recusada com 488, venha ela do vars.xml ou de
   #     uma directiva no próprio ficheiro do perfil.
   # A mesma prova com os ficheiros do repo, e não com este perfil: `srtp-real`.
