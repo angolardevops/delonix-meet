@@ -59,7 +59,7 @@ pub struct Claims {
     pub wr: Option<bool>,
     /// Sessão de onde o token vem (`user_sessions.id`, o mesmo valor que
     /// `refresh_tokens.session_id`). Os access e room tokens emitidos desde a
-    /// migração 0101 levam-no, e é o que permite terminar uma sessão de
+    /// migração 0078 levam-no, e é o que permite terminar uma sessão de
     /// imediato. Ausente num token anterior (expira sozinho em minutos) e nos
     /// tokens de bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,7 +170,7 @@ pub(crate) fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
 /// (`DELETE /api/users/me/sessions/{id}`) corta-a já, não quando o JWT expirar.
 pub struct AuthUser {
     pub user_id: Uuid,
-    /// A sessão do pedido. `None` num access token anterior à migração 0101.
+    /// A sessão do pedido. `None` num access token anterior à migração 0078.
     pub session_id: Option<Uuid>,
     /// Última prova de identidade NESTA sessão (login ou reautenticação).
     pub reauthenticated_at: Option<chrono::DateTime<Utc>>,
@@ -312,7 +312,7 @@ pub(crate) struct SessionMeta {
     user_agent: Option<String>,
     ip: Option<String>,
     /// Como a sessão foi aberta. `None` num refresh: a sessão já existe e o
-    /// método dela não muda (uma sessão anterior à 0101 nasce `legacy`).
+    /// método dela não muda (uma sessão anterior à 0078 nasce `legacy`).
     method: Option<crate::sessions::AuthMethod>,
 }
 
@@ -367,7 +367,7 @@ async fn issue_tokens(
     user: crate::users::UserPublic,
     session: SessionMeta,
 ) -> Result<TokenPair, ApiError> {
-    // O estado da sessão (`user_sessions`, 0101) nasce no login e é tocado em
+    // O estado da sessão (`user_sessions`, 0078) nasce no login e é tocado em
     // cada refresh; o access token leva o id dela.
     crate::sessions::upsert(
         state,

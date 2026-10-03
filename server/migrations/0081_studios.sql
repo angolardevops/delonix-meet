@@ -1,5 +1,5 @@
 -- Estúdio de TV num PC (ADR-0014). Nasceu como 0068 no ramo de trabalho;
--- renumerada para 0110 no porte para o develop (o 0068 já estava ocupado).
+-- renumerada para 0081 no porte para o develop (o 0068 já estava ocupado).
 --
 -- Um estúdio é da organização e tem uma sala SFU própria. Apagar o estúdio NÃO
 -- apaga a sala: as gravações penduram-se na sala (`recordings.room_id`), e

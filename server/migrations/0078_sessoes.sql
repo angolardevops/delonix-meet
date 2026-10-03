@@ -1,7 +1,7 @@
 -- Sessões da própria conta: terminar de imediato, terminar todas as outras,
 -- reautenticação recente.
 --
--- NUMERAÇÃO: era a 0071 da frente B; entra como 0101.
+-- NUMERAÇÃO: era a 0071 da frente B; entra como 0078.
 --
 -- A 0065 já deu identidade à sessão: `refresh_tokens.session_id` nasce no
 -- login e viaja a cada refresh, e é dela que a lista de sessões se lê

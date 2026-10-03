@@ -9,5 +9,5 @@
 -- (`PATCH /api/rooms/{code}` com `{"allow_guests": false}`).
 --
 -- Era a 0040 no ramo `delonix-meet-backend/convidado-sem-conta`; renumerada
--- para 0086 ao portar para o `develop`, onde a 0040 já existe.
+-- para 0075 ao portar para o `develop`, onde a 0040 já existe.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS allow_guests BOOLEAN NOT NULL DEFAULT TRUE;

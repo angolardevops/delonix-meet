@@ -1,6 +1,6 @@
 -- «Os meus dados»: pedidos de exportação pessoal, assíncronos.
 --
--- NUMERAÇÃO: era a 0073 da frente B; entra como 0103.
+-- NUMERAÇÃO: era a 0073 da frente B; entra como 0080.
 CREATE TABLE IF NOT EXISTS data_exports (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -3,7 +3,8 @@
 **Pausada a 2026-09-17** por decisão do dono do produto (as frentes correm uma de cada vez).
 Branch `delonix-meet-backend/v4-recuperacao`, worktree `.worktrees/delonix-meet/v4-recuperacao`,
 base `origin/seg/ssrf-saida` em `d3ffd8f`. Sem push, sem PR.
-Reservas: migrações 0085–0089, ADR-0013, R230–R239, servidor 8450, Redis db 14, base `v4_e`,
+Reservas do ramo original (já sem efeito: no `develop` a migração é a 0074 e as regressões
+nunca chegaram a ser escritas): migrações «85 a 89», ADR-0013, regressões «230 a 239», servidor 8450, Redis db 14, base `v4_e`,
 `SFU_UDP_MIN=53400 SFU_UDP_MAX=53599`.
 
 ## Feito (commits)

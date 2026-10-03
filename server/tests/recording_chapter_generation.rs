@@ -1,5 +1,5 @@
 //! O estado da geração de capítulos (`recording_chapter_generations`, migração
-//! 0087), contra Postgres real e um servidor a sério, com um Ollama FALSO
+//! 0076), contra Postgres real e um servidor a sério, com um Ollama FALSO
 //! dentro do teste (`common::fake_ollama`):
 //!
 //! - `GET /api/recordings/{id}/chapters/generation` — `idle`, `succeeded`,

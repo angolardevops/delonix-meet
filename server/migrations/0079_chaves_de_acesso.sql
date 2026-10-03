@@ -1,6 +1,6 @@
 -- Chaves de acesso (WebAuthn / passkeys) como SEGUNDO factor — ADR-0011.
 --
--- NUMERAÇÃO: era a 0072 da frente B; entra como 0102.
+-- NUMERAÇÃO: era a 0072 da frente B; entra como 0079.
 --
 -- `credential` é o `Passkey` do webauthn-rs serializado (chave PÚBLICA, id da
 -- credencial, contador). Não é segredo: quem o lê não consegue autenticar-se.

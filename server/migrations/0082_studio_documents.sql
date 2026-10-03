@@ -1,5 +1,5 @@
 -- Documentos do estúdio de TV (ADR-0014 §5). Nasceu como 0069 no ramo de
--- trabalho; renumerada para 0111 no porte para o develop.
+-- trabalho; renumerada para 0082 no porte para o develop.
 --
 -- Seis tipos com o MESMO contrato (cenas de mistura, macros, sobreposições,
 -- cenas de luz, perfis de correcção por câmara e alinhamentos). Um tipo por
