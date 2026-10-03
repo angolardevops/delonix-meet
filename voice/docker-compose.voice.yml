@@ -41,5 +41,8 @@ services:
       - ./freeswitch/sip_profiles/internal.xml:/etc/freeswitch/sip_profiles/internal.xml:ro
       - ./freeswitch/scripts/dialin_ivr.lua:/usr/share/freeswitch/scripts/dialin_ivr.lua:ro
       - ./freeswitch/scripts/ramais_dial.lua:/usr/share/freeswitch/scripts/ramais_dial.lua:ro
+      # Montado, mas NADA o inclui no vars.xml da imagem (R226): o porto dos
+      # ramais, o URL e o segredo só valem depois de alguém o incluir. O SRTP
+      # obrigatório não depende disso — o internal.xml põe a global por si.
       - ./freeswitch/vars.xml.inc:/etc/freeswitch/vars.xml.inc:ro
       - ${DELONIX_TLS_DIR:-/etc/ssl/delonix}:/etc/freeswitch/tls:ro

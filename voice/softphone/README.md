@@ -11,11 +11,16 @@ Linphone). Este script é para a prova repetível.
 # 1. O próprio script, contra o FreeSWITCH da imagem, numa rede docker sem saída.
 bash scripts/softphone-prova.sh selftest
 
-# 2. Um softphone contra o teu servidor: marca, envia o PIN, mede o tom que ouve.
+# 2. O controlo negativo com a configuração REAL do repo (R226): os ficheiros que o
+#    voice/docker-compose.voice.yml monta. Uma chamada sem SRTP ao perfil dos ramais
+#    tem de levar 488.
+bash scripts/softphone-prova.sh srtp-real
+
+# 3. Um softphone contra o teu servidor: marca, envia o PIN, mede o tom que ouve.
 SOFTPHONE_PASSWORD=… bash scripts/softphone-prova.sh chamada \
     --servidor 192.168.1.10:5070 --utilizador 1001 --destino 9000 --pin 123456 --espera-tom 440
 
-# 3. Dois softphones na mesma sala: A toca 1000 Hz, B toca 440 Hz, e cada um tem de
+# 4. Dois softphones na mesma sala: A toca 1000 Hz, B toca 440 Hz, e cada um tem de
 #    ouvir o do outro e não o seu. Dois sentidos, sem browser.
 SOFTPHONE_PASSWORD_A=… SOFTPHONE_PASSWORD_B=… bash scripts/softphone-prova.sh par \
     --servidor 192.168.1.10:5070 --utilizador-a 1001 --utilizador-b 1002 --destino 9000 --pin 123456
@@ -36,25 +41,55 @@ do que o softphone ouviu fica em `.softphone-prova/ultima-chamada-ouvido.wav`.
 | `selftest`: chamada **sem** SRTP | recusada, `488 Not Acceptable Here` |
 | `selftest`: par na mesma conferência | cada um ouve o outro a 0,25 e a si a ≤ 0,003 |
 | `chamada` e `par` em rede *host* contra um FreeSWITCH de teste | passam; com os dois softphones sem se ouvirem, o `par` falha |
+| `srtp-real`: a global `rtp_secure_media`, com os ficheiros que o compose monta | `mandatory` |
+| `srtp-real`: ramal com a password errada | recusado, `403 Forbidden` |
+| `srtp-real`: ramal autenticado, **com** SRTP | passa a autenticação e a negociação; o plano de marcação fecha-a com `404` (ver abaixo) |
+| `srtp-real`: a mesma chamada **sem** SRTP | recusada, `488 Not Acceptable Here`; no log, «Crypto not negotiated but required» |
+| `srtp-real`: o `vars.xml.inc` incluído pelo `vars.xml` | o FreeSWITCH arranca, o perfil escuta em `:5070`, URL e segredo vêm do ambiente |
+| `srtp-real` com o `voice/` de `origin/main` (`275ced1`) | **falha**: global vazia, sem SRTP `404` em vez de `488`, e o include mata o arranque (`unclosed <!--`) |
 
-## Dois factos que esta prova mediu
+## O que esta prova mediu (R226 no catálogo de regressões)
 
 - **Só a variável GLOBAL `rtp_secure_media=mandatory` recusa uma chamada em claro à
-  entrada.** O parâmetro de perfil `rtp-secure-media` não existe no sofia (zero
-  ocorrências em `sofia.c` na v1.11.3): só com ele, a chamada em claro foi aceite. Um
-  `set rtp_secure_media=mandatory` no dialplan antes do `answer` também não a recusa.
-  No Meet, a global está em `voice/freeswitch/vars.xml.inc`; as linhas
-  `rtp-secure-media` de `sip_profiles/internal.xml` e `autoload_configs/conference.conf.xml`
-  não fazem o que o comentário ao lado diz.
+  entrada.** Medido com o `selftest` sem a global: sem nada, a chamada em claro é aceite;
+  só com `rtp-secure-media` no perfil (que não existe no sofia: zero ocorrências em
+  `sofia.c` na v1.11.3), aceite; só com `require-secure-rtp=true` (que o sofia lê para
+  uma flag que mais nada consulta), aceite; com a global posta por uma directiva no
+  próprio ficheiro do perfil, `488`. Um `set rtp_secure_media=mandatory` no dialplan
+  antes do `answer` também não a recusa.
+- **No Meet, a global é posta por `voice/freeswitch/sip_profiles/internal.xml`** (no topo
+  do ficheiro) e por `voice/freeswitch/vars.xml.inc`. As linhas `rtp-secure-media` do
+  perfil e de `conference.conf.xml` saíram.
+- **O `vars.xml.inc` não é incluído por nada no repo**, e como estava não podia sê-lo: o
+  cabeçalho trazia a directiva de include dentro de um comentário, o pré-processador
+  executa-a lá, e o FreeSWITCH não arrancava; e lia o ambiente com `cmd="set"`, que não
+  o lê. As duas coisas estão corrigidas, e o passo 5 do `srtp-real` mede-as.
 - **Dois dígitos DTMF iguais seguidos só chegam os dois se houver «tecla solta» entre
   eles.** Sem isso, `4711` chegava como `471`.
 
+## O andaime do `srtp-real`
+
+A configuração vem das linhas de montagem do próprio compose, postas sobre a vanilla da
+imagem do FreeSWITCH do repo. O que a prova acrescenta, e só isto: um ramal num directório
+estático (quem responde pelo directório no Meet é o control plane, que aqui não corre); a
+remoção dos perfis SIP de demonstração da vanilla (o `external` resolve o seu IP por STUN
+e, numa rede sem saída, deita abaixo o mod_sofia inteiro); e o ESL em loopback.
+
 ## O que NÃO está provado
 
-- **Nada contra o Delonix Meet a correr**: nem um ramal real em `internal.xml`, nem o
-  IVR do dial-in, nem a ponte para a sala. O `chamada` e o `par` foram exercitados contra
-  um FreeSWITCH de teste sem autenticação.
-- **A autenticação Digest** (`auth_pass`) e o **registo**: o script marca sem registar.
+- **Nada contra o Delonix Meet a correr**: nem um ramal real do control plane, nem o IVR
+  do dial-in, nem a ponte para a sala. O `chamada` e o `par` foram exercitados contra um
+  FreeSWITCH de teste sem autenticação.
+- **Uma chamada atendida no perfil dos ramais do repo.** O `srtp-real` prova a
+  autenticação Digest e a negociação, e pára aí: o contexto `delonix_ramais` não existe
+  para o FreeSWITCH tal como o compose o monta (`Context delonix_ramais not found`,
+  `404`), a vanilla não carrega `mod_xml_curl` nem `mod_curl`, e nada inclui o
+  `vars.xml.inc` — o perfil fica no porto 5060, e o script avisa-o com `!`.
+- **A imagem do compose** (`safarov/freeswitch:latest`) não foi medida: a prova corre na
+  imagem do repo.
+- **O registo** (`REGISTER`): o script marca sem registar.
+- **O dial-in** (Kamailio → contexto `public`), um re-INVITE em claro a meio de uma
+  chamada cifrada, e a entrada de um tronco declarado `srtp=off` com a global a valer.
 - **TLS na sinalização**: o baresip 1.0 não valida o certificado do servidor por omissão.
 - **Um PBX à frente** (Issabel, FreePBX): não houve nenhum no caminho.
 - A qualidade do áudio — só a presença do tom.
