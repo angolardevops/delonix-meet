@@ -59,6 +59,7 @@ mod sms_notify;
 mod sms_smpp;
 mod storage;
 mod stream_destinations;
+mod tv_channels;
 mod telephony_calls;
 mod telephony_cdr;
 mod telephony_dial_plan;
@@ -783,6 +784,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/stream-destinations/{dest_id}/rotate-key",
             post(stream_destinations::rotate_key),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/channels",
+            get(tv_channels::list).post(tv_channels::create),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/channels/{channel_id}",
+            get(tv_channels::get_one)
+                .patch(tv_channels::update)
+                .delete(tv_channels::delete),
         )
         .route(
             "/api/orgs/{org_id}/integrations/odoo",
