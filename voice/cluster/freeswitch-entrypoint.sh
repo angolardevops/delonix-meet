@@ -11,6 +11,9 @@ VANILLA=/usr/local/freeswitch/etc/freeswitch
 CONF=/conf
 MEET=/meet
 
+# De raiz a cada arranque: um contentor reiniciado voltava a aplicar as
+# alterações por cima das anteriores.
+rm -rf "$CONF"
 mkdir -p "$CONF"
 cp -a "$VANILLA/." "$CONF/"
 
@@ -75,6 +78,33 @@ cp "$MEET/dialin_ivr.lua" "$MEET/ramais_dial.lua" /scripts/
 #    variável para os dois; aqui separa-se nas cópias.
 sed -i 's#\$\${delonix_control_url}/api/#$${delonix_api_url}/api/#g' "$CONF/autoload_configs/xml_curl.conf.xml"
 sed -i 's#global_getvar delonix_control_url#global_getvar delonix_api_url#' /scripts/ramais_dial.lua
+
+# 9. Ramais alcançáveis de FORA da rede dos contentores (um softphone na rede
+#    local): o FreeSWITCH tem de anunciar no SIP e no SDP o endereço por onde o
+#    telefone o alcança — o IP da máquina —, e usar uma gama de portas de áudio
+#    pequena, que é a que se publica. Sem DELONIX_EXTERNAL_IP nada muda.
+if [ -n "${DELONIX_EXTERNAL_IP:-}" ]; then
+  sed -i "s#<param name=\"sip-ip\" value=\"[^\"]*\"/>#&\n      <param name=\"ext-sip-ip\" value=\"${DELONIX_EXTERNAL_IP}\"/>\n      <param name=\"ext-rtp-ip\" value=\"${DELONIX_EXTERNAL_IP}\"/>#" \
+    "$CONF/sip_profiles/internal.xml"
+  grep -q "ext-rtp-ip" "$CONF/sip_profiles/internal.xml" ||
+    { echo "não consegui pôr o endereço externo no perfil dos ramais" >&2; exit 1; }
+  sed -i -E "s#<!-- <param name=\"rtp-start-port\" value=\"[0-9]+\"/> -->#<param name=\"rtp-start-port\" value=\"${DELONIX_RTP_MIN:-20000}\"/>#; s#<!-- <param name=\"rtp-end-port\" value=\"[0-9]+\"/> -->#<param name=\"rtp-end-port\" value=\"${DELONIX_RTP_MAX:-20100}\"/>#" \
+    "$CONF/autoload_configs/switch.conf.xml"
+fi
+
+# 10. De onde um ramal se pode registar. O servidor responde ao directório com
+#     `auth-acl=delonix_ramais` (server/src/ramais.rs); a lista não existia em
+#     lado nenhum, e sem ela o FreeSWITCH recusa TODOS os registos com 403
+#     («Rejected by user acl»). Por omissão, as redes privadas; em produção
+#     define-se DELONIX_RAMAIS_ACL com as redes de onde os ramais falam.
+ACL=""
+for cidr in $(echo "${DELONIX_RAMAIS_ACL:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}" | tr ',' ' '); do
+  ACL="$ACL      <node type=\"allow\" cidr=\"$cidr\"/>\n"
+done
+sed -i "s#</network-lists>#    <list name=\"delonix_ramais\" default=\"deny\">\n${ACL}    </list>\n  </network-lists>#" \
+  "$CONF/autoload_configs/acl.conf.xml"
+grep -q 'list name="delonix_ramais"' "$CONF/autoload_configs/acl.conf.xml" ||
+  { echo "não consegui definir a lista de acesso dos ramais" >&2; exit 1; }
 
 # -conf, -log e -db vão os três ou nenhum.
 exec /usr/local/freeswitch/bin/freeswitch -conf "$CONF" \
