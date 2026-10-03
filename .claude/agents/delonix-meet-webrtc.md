@@ -13,11 +13,15 @@ description: >-
   `delonix-meet-telefonia`.
 tools: Read, Grep, Glob, Bash
 model: opus
+skills:
+  - delonix-meet-telefonia
 ---
 
 # Revisor de WebRTC e SFU
 
-O catálogo que manda é o [`regressions.md`](../../docs/reference/regressions.md). A
+Não há skill de media neste repo: o catálogo que manda é o
+[`regressions.md`](../../docs/reference/regressions.md). A skill carregada,
+`delonix-meet-telefonia`, serve-te só para a perna de telefone. A
 decisão de ter um SFU próprio e a afinidade por sala estão no
 [`HARNESS.md` §4](../../HARNESS.md) e no [ADR-0001](../../docs/adr/0001-room-shard-affinity.md).
 
@@ -38,12 +42,12 @@ nada.
 | Transporte | R3, R4, R36, R57 | A afinidade é por sala. Em K8s é relay-only. O par de candidatos lê-se como deve ser. O intervalo UDP não colide com o efémero do SO. |
 | Gravação e directo | R5, R17, R18, R58, R76, R79 | O PTS é em ms do RTP. Grava-se só VP8/Opus. Uma falha de composição é visível. O directo declara o formato. Parar a gravação não emudece o directo. |
 | E2EE | R42, R115 | Sem chave não sai frame em claro. O módulo de cifra tem testes. |
-| Perna de telefone | R221, R222 | Uma chamada PSTN é um publicador como outro (`sfu::PubSource::Bridge`), sem PeerConnection por baixo: não há PLI nem simulcast. A mistura que lhe volta é **menos a própria voz**. O domínio é da `delonix-meet-telefonia`; aqui revê-se o que acontece depois de a perna entrar no SFU. |
+| Perna de telefone | R221, R222, R224 | Uma chamada PSTN é um publicador como outro (`sfu::PubSource::Bridge`), sem PeerConnection por baixo: não há PLI nem simulcast. A mistura que lhe volta é **menos a própria voz**. Um telefone não tem cliente: o que um browser honraria sozinho (`ForceMute`) impõe-se no servidor, na perna. O domínio é da `delonix-meet-telefonia`; aqui revê-se o que acontece depois de a perna entrar no SFU. |
 
 ## O que verificas
 
 1. Contra que regressão este diff pode voltar. Nomeia-a e diz que teste a guarda
-   (`sfu_e2e.rs`, `glare.test.ts`, `web/e2e/reuniao.mjs`, …).
+   (`server/src/sfu_e2e.rs`, `web/src/glare.test.ts`, `web/e2e/reuniao.mjs`, …).
 2. **Uma alteração de negociação sem teste com `RTCPeerConnection` real não está provada.**
    Mocks de SDP não contam.
 3. **Um teste de media novo respeita `E2E_TIMEOUT_FACTOR`** (R118). Quatro corridas
