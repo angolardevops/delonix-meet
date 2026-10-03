@@ -2111,10 +2111,27 @@ export const sendSmsToContact = (
     headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
   })
 
+/**
+ * Envio AVULSO, a um número escrito à mão — o modo `{to, body}` do mesmo
+ * `POST …/sms/messages`, que o servidor só aceita a um admin da organização.
+ * `idempotencyKey`: uma por intenção de envio, como no envio a contacto.
+ */
+export const sendSmsToNumber = (
+  orgId: string,
+  body: { to: string; body: string; route?: 'auto' | 'usb' | 'operator' },
+  idempotencyKey?: string,
+) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+  })
+
 /** Admin vê todas as mensagens da org; membro vê só as que enviou. */
-export const listSmsMessages = (orgId: string, pageSize = 50) =>
+export const listSmsMessages = (orgId: string, pageSize = 50, signal?: AbortSignal) =>
   request<{ items: SmsMessage[]; next_page_token: string | null }>(
     `/api/orgs/${orgId}/sms/messages?page_size=${pageSize}`,
+    { signal },
   )
 
 export const getSmsMessage = (orgId: string, messageId: string) =>

@@ -33,6 +33,7 @@ import { refusalAware, useOrgSelection } from './admin/orgShared'
 import RolesCard from './admin/RolesCard'
 import SettingsCard from './admin/SettingsCard'
 import SmsGatewayCard from './admin/SmsGatewayCard'
+import SmsSendCard from './admin/SmsSendCard'
 import { BranchesCard, GroupsCard, RoomsCard } from './admin/StructureCards'
 import VoiceCard from './admin/VoiceCard'
 import type { OrgSummary } from '../api'
@@ -151,6 +152,7 @@ function AdminBody({
           <VoiceCard orgId={org.id} />
           <ExtensionsCard orgId={org.id} people={peopleList} />
           <SmsGatewayCard orgId={org.id} />
+          <SmsSendCard orgId={org.id} />
         </div>
         <div className="org-admin__side">
           <StorageCard stats={stats.state} />

@@ -404,6 +404,11 @@
   font-size: var(--t-sm);
   font-weight: 600;
 }
+/* Histórico de SMS: a razão da falha, por extenso, na cor de perigo. */
+.org-sms__error {
+  font-size: var(--t-sm);
+  color: var(--danger);
+}
 /* DelonixAdmin: cartões sem divisória no cabeçalho, contagem mono à direita,
    tabelas em caixa com cabeçalho cinza, coluna direita de políticas. */
 .org-admin .dx-card__head {
