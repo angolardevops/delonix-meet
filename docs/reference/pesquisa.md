@@ -8,8 +8,26 @@
 >
 > **Estado de cada peça:** «implementado» = servido e provado nesta linha
 > (`server/tests/search.rs`, `web/e2e/isolamento.mjs`); «fase 2» = mesmo mecanismo, a seguir.
-> **Caminhos:** os da reorganização de rotas já aplicada (`origin/integra/backend-fase2`,
-> `fe9faa8`): `/api/orgs/{org_id}/members`, `/api/orgs/{org_id}/audit-events`.
+> **Caminhos:** os da reorganização de rotas: `/api/orgs/{org_id}/members`,
+> `/api/orgs/{org_id}/audit-events`.
+>
+> **Porte para o `develop` (2026-10-03).** O ramo da pesquisa é de 2026-09-17; o `develop`
+> mudou entretanto, e onde os dois se cruzam ganha a forma do `develop`:
+> - **`GET /api/recordings` não mudou de forma.** `q`, `scope`, `page_size` e `page_token`
+>   continuam a ser a biblioteca de sempre (lista inteira, ou página com `next_page_token`,
+>   com `scope=mine|published`). A pesquisa de lista desta página só responde quando o pedido
+>   traz `filter`, `filters`, `group_by` ou `order_by`, e só cobre `scope=mine`
+>   (`scope=published` com esses parâmetros → `400 recording.invalid_scope`).
+> - **Campos das gravações:** `kind` em vez de `category`, `duration_ms` em vez de
+>   `duration_secs` — o item da biblioteca já não tem os antigos.
+> - **Tipos reservados do Ctrl+K e auditoria:** pede-se a capacidade do endpoint normal
+>   (ADR-0008), não o papel `admin`: `broadcast.manage_rtmp_keys` (destinos),
+>   `org.administer` (webhooks), `admin.view_audit` (auditoria).
+> - **Mensagens:** uma conversa directa só aparece a quem a enviou e a quem a recebeu.
+> - **Migrações:** 0115–0117 (eram 0052–0054 no ramo).
+> - **`users` não está aqui:** o directório `GET /api/orgs/{org_id}/users` tem pesquisa
+>   própria (`directory.rs`, `GET /api/search/schemas/users`) e não aparece em
+>   `GET /api/search/schemas`.
 
 ## 0. Resumo para a UI
 
@@ -17,7 +35,7 @@
 |---|---|
 | Ctrl+K | `GET /api/search?q=orc&types=meetings,recordings&limit=5` |
 | Montar o painel de uma lista | `GET /api/search/schemas/recordings` (uma vez por ecrã; cacheável) |
-| A lista com pesquisa/filtros/agrupamento | `GET /api/recordings?q=…&filter=…&filters=mine,this_week&group_by=created_at:month&order_by=-created_at&page_size=50` |
+| A lista com pesquisa/filtros/agrupamento | `GET /api/recordings?q=…&filter=…&filters=mine,this_week&group_by=created_at:month&order_by=-created_at&page_size=50` (nas gravações, pelo menos um de `filter`/`filters`/`group_by`/`order_by`) |
 | Abrir um grupo | a mesma lista com o `filter` que o grupo trouxe e o `group_by` restante |
 | Favoritos | `GET/POST /api/users/me/saved-searches`, `GET/PATCH/DELETE /api/users/me/saved-searches/{saved_search_id}` |
 
@@ -62,10 +80,10 @@ junta-as localmente ao resultado do servidor.
 | `people` | nome de utilizador, email | colegas **activos** de uma organização comum (`GET /api/users?q=`) | `{user_id}` | implementado |
 | `whiteboards` | título, código da sala | membros activos da org do quadro (`GET /api/whiteboards`) | `{whiteboard_id}` | implementado |
 | `rooms` | código, nome | só as salas que a pessoa **já conhece**: dela, onde esteve, convidada para uma reunião nessa sala, co-anfitriã. Mais restrito do que o `room_access` (que deixa qualquer colega pedir para entrar): o Ctrl+K não revela códigos de salas de colegas | `{room_code}` | implementado |
-| `messages` | texto das mensagens de chat persistidas (ordenadas por recência, `score` 0) | dono da sala; ou **participante** da sala que ainda passa no `room_access` (quem saiu da org deixa de ver) | `{room_code, message_id, created_at}` | implementado |
-| `stream_destinations` | nome, tipo | admin activo da org (`GET /api/orgs/{org_id}/stream-destinations`) | `{org_id, stream_destination_id}` | implementado |
-| `webhooks` | tipo e **só o anfitrião** do URL (o caminho de um webhook do Slack é segredo) | admin activo da org | `{org_id, webhook_id}` | implementado |
-| `audit_events` | acção, alvo, nome do actor | admin activo da org — só quando pedido explicitamente em `types`; só os eventos COM org (os sem org, p.ex. logins, ficam na lista da org) | `{org_id, audit_event_id}` | implementado |
+| `messages` | texto das mensagens de chat persistidas (ordenadas por recência, `score` 0) | dono da sala; ou **participante** da sala que ainda passa no `room_access` (quem saiu da org deixa de ver); uma conversa directa só para quem a enviou ou recebeu | `{room_code, message_id, created_at}` | implementado |
+| `stream_destinations` | nome, tipo | `broadcast.manage_rtmp_keys` na org (`GET /api/orgs/{org_id}/stream-destinations`) | `{org_id, stream_destination_id}` | implementado |
+| `webhooks` | tipo e **só o anfitrião** do URL (o caminho de um webhook do Slack é segredo) | `org.administer` na org | `{org_id, webhook_id}` | implementado |
+| `audit_events` | acção, alvo, nome do actor | `admin.view_audit` na org — só quando pedido explicitamente em `types`; só os eventos COM org (os sem org, p.ex. logins, ficam na lista da org) | `{org_id, audit_event_id}` | implementado |
 
 Um tipo que a pessoa não pode ver **não aparece**. Se foi pedido explicitamente em `types`,
 aparece em `skipped` com a razão (`search.forbidden`) — sem dizer nada sobre o que existe.
@@ -127,16 +145,19 @@ aparece em `skipped` com a razão (`search.forbidden`) — sem dizer nada sobre 
 
 Os mesmos parâmetros em todas as colecções da secção 4. **Sem nenhum deles, a colecção
 herdada responde como antes** (array); com qualquer um, responde o envelope da §2.3.
+Excepção: `GET /api/recordings` já tinha `q`, `page_size` e `page_token` com forma própria,
+que se mantém — aí o envelope da §2.3 só responde com `filter`, `filters`, `group_by` ou
+`order_by` (§4.1).
 
 ### 2.1 Parâmetros
 
 | Nome | Forma | Exemplo |
 |---|---|---|
 | `q` | texto livre; pesquisa nos campos de texto do recurso com as regras da §1 | `q=orcamento 2027` |
-| `filter` | JSON (URL-encoded) — o **domínio** (§2.2) | `filter=[["status","eq","ready"],{"or":[["category","eq","lecture"],["duration_secs","gte",3600]]}]` |
+| `filter` | JSON (URL-encoded) — o **domínio** (§2.2) | `filter=[["status","eq","ready"],{"or":[["kind","eq","training"],["duration_ms","gte",3600000]]}]` |
 | `filters` | nomes de filtros pré-definidos do schema, separados por vírgulas | `filters=mine,this_week` |
 | `group_by` | até 3 campos agrupáveis; datas com granularidade `:day`/`:week`/`:month`/`:quarter`/`:year` | `group_by=created_at:month,uploader` |
-| `order_by` | até 3 campos ordenáveis; `-` = descendente; `_score` = relevância (só com `q`) | `order_by=-duration_secs,title` · `order_by=-_score` |
+| `order_by` | até 3 campos ordenáveis; `-` = descendente; `_score` = relevância (só com `q`) | `order_by=-duration_ms,title` · `order_by=-_score` |
 | `page_size` | 1..100, omissão 50 (`core::page`) | |
 | `page_token` | cursor opaco de `next_page_token` | |
 | `groups_page_token` | cursor opaco de `next_groups_page_token` | |
@@ -195,7 +216,7 @@ omissão `Africa/Luanda`): `today`, `yesterday`, `this_week` (segunda a domingo)
       "key": "2026-09",
       "label": "2026-09",
       "count": 12,
-      "aggregates": {"duration_secs": {"sum": 36000}, "size_bytes": {"sum": 9876543}},
+      "aggregates": {"duration_ms": {"sum": 36000000}, "size_bytes": {"sum": 9876543}},
       "range": {"from": "2026-08-31T23:00:00Z", "to": "2026-09-30T23:00:00Z"},
       "filter": {"and": [["created_at", "gte", "2026-08-31T23:00:00Z"], ["created_at", "lt", "2026-09-30T23:00:00Z"]]},
       "group_by": ["uploader"]
@@ -253,7 +274,7 @@ recurso de outra organização continua a ser `404`/`403` como no endpoint norma
 ## 3. Descrição — `GET /api/search/schemas` e `GET /api/search/schemas/{resource}`
 
 A lista devolve `{"items": [schema, …]}` só com os recursos que a pessoa pode listar em
-alguma organização (`members` exige pertença activa; `audit_events` exige ser admin activo). O individual devolve um schema:
+alguma organização (`members` exige pertença activa; `audit_events` exige `admin.view_audit` em alguma). O individual devolve um schema:
 
 ```json
 {
@@ -268,9 +289,9 @@ alguma organização (`members` exige pertença activa; `audit_events` exige ser
      "operators": ["lt", "lte", "gt", "gte", "between", "in_period", "is_set", "is_not_set"],
      "filterable": true, "sortable": true, "groupable": true,
      "granularities": ["day", "week", "month", "quarter", "year"], "aggregates": []},
-    {"name": "category", "label": "Categoria", "type": "enum",
+    {"name": "kind", "label": "Tipo", "type": "enum",
      "operators": ["eq", "ne", "in", "not_in"], "filterable": true, "sortable": false, "groupable": true,
-     "options": [{"value": "meeting", "label": "Reunião"}, {"value": "lecture", "label": "Aula"}]}
+     "options": [{"value": "meeting", "label": "Reunião"}, {"value": "training", "label": "Formação"}]}
   ],
   "filters": [
     {"name": "mine", "label": "As minhas", "group": "owner", "filter": [["uploader", "eq", "me"]]}
@@ -294,8 +315,11 @@ Legenda: **F** filtra · **O** ordena · **A** agrupa · Σ agregado.
 
 ### 4.1 `recordings` — `GET /api/recordings` · implementado
 
-Visibilidade: a da biblioteca (`AccessFacts::can_view`). `q`: título/ficheiro (A) +
-transcrição (B).
+Visibilidade: a da biblioteca `scope=mine` (`AccessFacts::listed_in(Mine)`: carregou,
+participou ou foi-lhe partilhada, e não saiu da organização). `q`: título/ficheiro (A) +
+transcrição (B). O envelope da §2.3 responde quando o pedido traz `filter`, `filters`,
+`group_by` ou `order_by`; só com `q`/`scope`/`page_size`/`page_token` responde a biblioteca
+de sempre. As publicadas na organização (`scope=published`) não entram nesta pesquisa.
 
 | Campo | Tipo | F | O | A | Σ |
 |---|---|---|---|---|---|
@@ -303,11 +327,11 @@ transcrição (B).
 | `filename` | text | ✓ | | | |
 | `uploader` | user | ✓ | | ✓ | |
 | `room_code` | text | ✓ | | ✓ | |
-| `category` | enum `meeting`·`lecture`·`broadcast`·`other` | ✓ | | ✓ | |
-| `status` | enum `ready`·`failed` | ✓ | | ✓ | |
+| `kind` | enum `meeting`·`training`·`broadcast`·`hybrid` | ✓ | | ✓ | |
+| `status` | enum `processing`·`transcribing`·`ready`·`failed` | ✓ | | ✓ | |
 | `transcribed` | bool | ✓ | | ✓ | |
 | `shared_with_me` | bool | ✓ | | | |
-| `duration_secs` | number | ✓ | ✓ | | soma, média |
+| `duration_ms` (`null` se não foi possível medir) | number | ✓ | ✓ | | soma, média |
 | `size_bytes` | number | ✓ | ✓ | | soma |
 | `width` (largura em px; `null` se não se sabe) | number | ✓ | | | |
 | `created_at` | datetime | ✓ | ✓ | ✓ | |
@@ -374,7 +398,7 @@ Filtros: `mine` «Os meus» (`owner`); `public` «Com link público» (`sharing`
 
 ### 4.5 `audit_events` — `GET /api/orgs/{org_id}/audit-events` · implementado
 
-Visibilidade: admin activo da org; os eventos da org e os sem org cujo actor é (ou foi)
+Visibilidade: `admin.view_audit` na org; os eventos da org e os sem org cujo actor é (ou foi)
 membro — a regra do `audit::list`. `q`: acção, alvo, nome do actor.
 
 | Campo | Tipo | F | O | A |
@@ -419,8 +443,8 @@ Corpo do `POST` (o `PATCH` aceita qualquer subconjunto menos `resource`):
 {
   "resource": "recordings",
   "name": "Aulas longas deste mês",
-  "query": {"q": "", "filter": [["category", "eq", "lecture"]], "filters": ["this_month", "long"],
-            "group_by": ["uploader"], "order_by": ["-duration_secs"]},
+  "query": {"q": "", "filter": [["kind", "eq", "training"]], "filters": ["this_month", "long"],
+            "group_by": ["uploader"], "order_by": ["-duration_ms"]},
   "shared": false,
   "is_default": false
 }
