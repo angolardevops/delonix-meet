@@ -1906,6 +1906,30 @@
         ],
         "type": "object"
       },
+      "CreateSavedSearch": {
+        "properties": {
+          "is_default": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/components/schemas/SavedQuery"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "shared": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "resource",
+          "name"
+        ],
+        "type": "object"
+      },
       "CreateStreamDestinationReq": {
         "properties": {
           "kind": {
@@ -3244,6 +3268,126 @@
         },
         "type": "object"
       },
+      "GlobalGroup": {
+        "properties": {
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "count_kind": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GlobalHit"
+            },
+            "type": "array"
+          },
+          "more_href": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "count",
+          "count_kind",
+          "items"
+        ],
+        "type": "object"
+      },
+      "GlobalHit": {
+        "properties": {
+          "highlight": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "href": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "matched_in": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "title",
+          "subtitle",
+          "highlight",
+          "matched_in",
+          "score",
+          "target"
+        ],
+        "type": "object"
+      },
+      "GlobalResponse": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GlobalGroup"
+            },
+            "type": "array"
+          },
+          "query": {
+            "type": "string"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/Skipped"
+            },
+            "type": "array"
+          },
+          "took_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query",
+          "took_ms",
+          "groups",
+          "skipped"
+        ],
+        "type": "object"
+      },
       "Group": {
         "properties": {
           "id": {
@@ -3641,6 +3785,26 @@
         ],
         "type": "object"
       },
+      "ItemSearch": {
+        "description": "O que acompanha um item quando há `q`.",
+        "properties": {
+          "highlight": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "score",
+          "highlight"
+        ],
+        "type": "object"
+      },
       "JoinBotReq": {
         "properties": {
           "bot_name": {
@@ -3681,7 +3845,7 @@
         "type": "object"
       },
       "LibraryResponse": {
-        "description": "Sem parâmetros: a lista inteira (forma herdada, lida pelo web). Com `q`,\n`page_size` ou `page_token`: uma página.",
+        "description": "Sem paginação nem parâmetros de pesquisa de lista: a lista inteira (forma\nherdada, lida pelo web — também com `q` e `scope`). Com eles: uma página.",
         "oneOf": [
           {
             "items": {
@@ -3690,7 +3854,8 @@
             "type": "array"
           },
           {
-            "$ref": "#/components/schemas/RecordingPage"
+            "$ref": "#/components/schemas/RecordingPage",
+            "description": "Só documenta a resposta no OpenAPI; o handler serializa `search::SearchPage`."
           }
         ]
       },
@@ -5533,6 +5698,22 @@
         ],
         "type": "object"
       },
+      "Owner": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "type": "object"
+      },
       "Participant": {
         "properties": {
           "joined_at": {
@@ -6945,23 +7126,55 @@
         "type": "object"
       },
       "RecordingPage": {
-        "description": "Página da biblioteca (com `q`, `page_size` ou `page_token`).",
+        "description": "Página da biblioteca (com `page_size`, `page_token`, `filter`, `filters`,\n`group_by` ou `order_by`): o envelope do ADR-0007\n(`docs/reference/pesquisa.md` §2.3). Só documentação — a resposta é\n`search::SearchPage`, com cada item acompanhado de `search: {score,\nhighlight}` quando há `q`. Continua a ter `items` e `next_page_token`, como a\npágina de antes; `total`, `total_kind` e `groups` são acrescento.",
         "properties": {
+          "groups": {
+            "items": {
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/RecordingLibraryItem"
             },
             "type": "array"
           },
+          "next_groups_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "next_page_token": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "text_match": {
+            "description": "Só com `q`: `exact` | `fuzzy`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_kind": {
+            "description": "`exact` | `at_least`.",
+            "type": "string"
           }
         },
         "required": [
-          "items"
+          "items",
+          "total",
+          "total_kind"
         ],
         "type": "object"
       },
@@ -7800,6 +8013,137 @@
         ],
         "type": "object"
       },
+      "SavedQuery": {
+        "description": "A consulta guardada, na forma dos parâmetros da lista.",
+        "properties": {
+          "filter": {
+            "description": "O domínio (JSON), como no parâmetro `filter`.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "filters": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "group_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "order_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "q": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SavedSearch": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "editable": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "invalid_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/Owner"
+          },
+          "query": {
+            "$ref": "#/components/schemas/SavedQuery"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "shared": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "resource",
+          "name",
+          "query",
+          "shared",
+          "is_default",
+          "owner",
+          "editable",
+          "valid",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "SavedSearchPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SavedSearch"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "SchemaList": {
+        "properties": {
+          "items": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "ScopeReq": {
         "properties": {
           "department_id": {
@@ -8174,6 +8518,21 @@
           "configured",
           "codecs",
           "password_configured"
+        ],
+        "type": "object"
+      },
+      "Skipped": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "code"
         ],
         "type": "object"
       },
@@ -9701,6 +10060,39 @@
               {
                 "$ref": "#/components/schemas/ScopeReq"
               }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateSavedSearch": {
+        "properties": {
+          "is_default": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SavedQuery"
+              }
+            ]
+          },
+          "shared": {
+            "type": [
+              "boolean",
+              "null"
             ]
           }
         },
@@ -11655,6 +12047,80 @@
     "/api/meetings": {
       "get": {
         "operationId": "list",
+        "parameters": [
+          {
+            "description": "Texto livre: sem acentos, prefixos, erros de escrita.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Domínio em JSON: `[campo, operador, valor]`, `{\"and\":[…]}`, `{\"or\":[…]}`, `{\"not\":…}`.",
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filtros pré-definidos do schema, separados por vírgulas.",
+            "in": "query",
+            "name": "filters",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; datas com `:day|week|month|quarter|year`.",
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; `-` = descendente; `_score` = relevância (só com `q`).",
+            "in": "query",
+            "name": "order_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1–100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "groups_page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -11667,7 +12133,17 @@
                 }
               }
             },
-            "description": "Reuniões criadas pelo utilizador e aquelas para que foi convidado, por data"
+            "description": "Sem parâmetros: reuniões criadas pelo utilizador e aquelas para que foi convidado, por data. Com parâmetros de pesquisa: a página do ADR-0007 (`items`, `next_page_token`, `total`, `groups`)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Códigos `search.*` e `page.invalid_token` (docs/reference/pesquisa.md §2.4)."
           },
           "401": {
             "content": {
@@ -14164,6 +14640,78 @@
               "format": "int64",
               "type": "integer"
             }
+          },
+          {
+            "description": "Texto livre: sem acentos, prefixos, erros de escrita.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Domínio em JSON: `[campo, operador, valor]`, `{\"and\":[…]}`, `{\"or\":[…]}`, `{\"not\":…}`.",
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filtros pré-definidos do schema, separados por vírgulas.",
+            "in": "query",
+            "name": "filters",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; datas com `:day|week|month|quarter|year`.",
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; `-` = descendente; `_score` = relevância (só com `q`).",
+            "in": "query",
+            "name": "order_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1–100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "groups_page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -14178,7 +14726,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "Sem parâmetros de pesquisa: os últimos `limit`. Com eles: a página do ADR-0007 (keyset, `total`, `groups`)."
           },
           "400": {
             "content": {
@@ -14188,7 +14736,7 @@
                 }
               }
             },
-            "description": "`limit` não numérico."
+            "description": "`limit` não numérico; códigos `search.*` e `page.invalid_token`."
           },
           "401": {
             "content": {
@@ -16665,6 +17213,78 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Texto livre: sem acentos, prefixos, erros de escrita.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Domínio em JSON: `[campo, operador, valor]`, `{\"and\":[…]}`, `{\"or\":[…]}`, `{\"not\":…}`.",
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filtros pré-definidos do schema, separados por vírgulas.",
+            "in": "query",
+            "name": "filters",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; datas com `:day|week|month|quarter|year`.",
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; `-` = descendente; `_score` = relevância (só com `q`).",
+            "in": "query",
+            "name": "order_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1–100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "groups_page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16679,7 +17299,17 @@
                 }
               }
             },
-            "description": ""
+            "description": "Sem parâmetros: todos os activos. Com parâmetros de pesquisa: a página do ADR-0007."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Códigos `search.*` e `page.invalid_token`."
           },
           "401": {
             "content": {
@@ -24831,20 +25461,11 @@
     },
     "/api/recordings": {
       "get": {
-        "description": "**Duas bibliotecas, pelo `scope`.** `mine` (omissão) é a de sempre: o que\ncarregou, onde participou, e o que lhe foi partilhado. `published` são as\ngravações publicadas para a organização que quem pede vê — incluindo as de\nsalas onde nunca esteve. Sem a segunda, publicar escrevia duas colunas e\nnão mostrava a gravação a ninguém (R235).\n\n**Duas formas, de propósito.** Sem `page_size`/`page_token` devolve a lista\ninteira, como sempre — é o que o web lê (`recordingsLibraryMeta`), também\ncom `q` e `scope`. Com eles devolve uma página (`items` +\n`next_page_token`), por `created_at` descendente — também numa pesquisa,\npara o cursor ser estável; a relevância só decide o `snippet`. A forma sem\nlimite é dívida e sai quando o web passar a paginar.\n\nUm membro arquivado (S3) deixa de ver as gravações da ex-organização, nas\nduas bibliotecas.",
+        "description": "**Duas bibliotecas, pelo `scope`.** `mine` (omissão) é a de sempre: o que\ncarregou, onde participou, e o que lhe foi partilhado. `published` são as\ngravações publicadas para a organização que quem pede vê — incluindo as de\nsalas onde nunca esteve. Sem a segunda, publicar escrevia duas colunas e\nnão mostrava a gravação a ninguém (R235).\n\n**Duas formas, de propósito.** Só com `q` e/ou `scope` devolve a lista\ninteira, como sempre — é o que o web lê (`recordingsLibraryMeta`). Com\n`page_size`, `page_token`, `filter`, `filters`, `group_by` ou `order_by`\nresponde a pesquisa de lista do ADR-0007 (`docs/reference/pesquisa.md`\n§2.3): página keyset com `items` e `next_page_token` como antes, mais\n`total` e os grupos — é o que o painel de pesquisa do web pede. Com `q` e\nsem `order_by` continua por `created_at` descendente; a relevância pede-se\ncom `order_by=-_score`, e o `snippet` mantém-se. As duas respeitam o\n`scope`. A forma sem limite é dívida e sai quando o web passar a paginar.\n\nUm membro arquivado (S3) deixa de ver as gravações da ex-organização, nas\nduas bibliotecas.",
         "operationId": "library",
         "parameters": [
           {
-            "description": "Pesquisa de texto no título, no nome do ficheiro e na transcrição. Cada\npalavra conta como prefixo e todas têm de aparecer. Só letras e dígitos.",
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "`mine` (omissão) = a biblioteca de sempre: carregou, participou, ou\nforam-lhe partilhadas. `published` = as publicadas para a organização\nque quem pede vê, INCLUINDO aquelas em cuja sala nunca esteve — é esta\nque dá sentido a publicar (R235).",
+            "description": "`mine` (omissão) ou `published`.",
             "in": "query",
             "name": "scope",
             "required": false,
@@ -24853,7 +25474,52 @@
             }
           },
           {
-            "description": "1-100, omissão 50. Com este parâmetro (ou `page_token`) a resposta é uma página.",
+            "description": "Texto livre: sem acentos, prefixos, erros de escrita.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Domínio em JSON: `[campo, operador, valor]`, `{\"and\":[…]}`, `{\"or\":[…]}`, `{\"not\":…}`.",
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filtros pré-definidos do schema, separados por vírgulas.",
+            "in": "query",
+            "name": "filters",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; datas com `:day|week|month|quarter|year`.",
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; `-` = descendente; `_score` = relevância (só com `q`).",
+            "in": "query",
+            "name": "order_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1–100, omissão 50.",
             "in": "query",
             "name": "page_size",
             "required": false,
@@ -24870,6 +25536,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "groups_page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -24881,7 +25555,7 @@
                 }
               }
             },
-            "description": "Sem `page_size`/`page_token`: `RecordingLibraryItem[]` (todas). Com eles: `RecordingPage`. Inclui as falhadas (`status = failed`)."
+            "description": "Só com `q`/`scope`: `RecordingLibraryItem[]` (todas). Com `page_size`, `page_token` ou parâmetros de pesquisa de lista: `RecordingPage`. Inclui as falhadas (`status = failed`)."
           },
           "400": {
             "content": {
@@ -24891,7 +25565,7 @@
                 }
               }
             },
-            "description": "`page.invalid_token`; `recording.invalid_query` (`q` sem nenhuma letra ou dígito); `recording.invalid_scope`."
+            "description": "`page.invalid_token`; `recording.invalid_query` (`q` sem nenhuma letra ou dígito); `recording.invalid_scope`; e os `search.*` do contrato de pesquisa."
           },
           "401": {
             "content": {
@@ -28585,6 +29259,120 @@
         ]
       }
     },
+    "/api/search": {
+      "get": {
+        "operationId": "search",
+        "parameters": [
+          {
+            "description": "1–200 caracteres, com pelo menos uma letra ou dígito.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tipos separados por vírgulas (omissão: todos os que a pessoa pode ver).",
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Resultados por tipo, 1–20 (omissão 5).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`search.invalid_query`, `search.invalid_types`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Pesquisa global (Ctrl+K): reuniões, gravações (título, transcrição,\ncapítulos e comentários), pessoas, quadros, salas, mensagens de chat e,\npara admins, destinos de emissão, webhooks e auditoria.",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/api/search/schemas": {
+      "get": {
+        "description": "Os recursos de organização (`org_scoped`) só aparecem a quem é membro\nactivo de alguma; a auditoria só a quem tem `admin.view_audit` em alguma.",
+        "operationId": "schemas",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "As listas brancas de pesquisa de todos os recursos (contrato §3).",
+        "tags": [
+          "search"
+        ]
+      }
+    },
     "/api/search/schemas/users": {
       "get": {
         "operationId": "users_schema",
@@ -28611,6 +29399,63 @@
         "summary": "Descrição da pesquisa do directório, na forma de `GET /api/search/schemas/{resource}`\n(`docs/reference/pesquisa.md` §3). Quando o motor da ADR-0007 chegar a esta\nlinha, este recurso regista-se nele e esta rota sai.",
         "tags": [
           "directory"
+        ]
+      }
+    },
+    "/api/search/schemas/{resource}": {
+      "get": {
+        "operationId": "schema",
+        "parameters": [
+          {
+            "description": "`meetings`, `recordings`, `members`, `whiteboards`, `audit_events`.",
+            "in": "path",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`search.unknown_resource`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A lista branca de pesquisa de um recurso: campos, operadores, filtros\npré-definidos, agrupamentos (contrato §3).",
+        "tags": [
+          "search"
         ]
       }
     },
@@ -29481,6 +30326,382 @@
         ]
       }
     },
+    "/api/users/me/saved-searches": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "Só os deste recurso.",
+            "in": "query",
+            "name": "resource",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedSearchPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Os meus favoritos e os partilhados na minha organização.",
+        "tags": [
+          "search"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSavedSearch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedSearch"
+                }
+              }
+            },
+            "description": "",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Consulta que não valida contra o schema (códigos `search.*`), nome inválido."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`saved_search.duplicate_name`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`saved_search.no_organization`, `saved_search.limit_reached`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Guarda uma pesquisa.",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/api/users/me/saved-searches/{saved_search_id}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "saved_search_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Apaga um favorito. Só o dono.",
+        "tags": [
+          "search"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "saved_search_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedSearch"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Um favorito (meu, ou partilhado na minha organização).",
+        "tags": [
+          "search"
+        ]
+      },
+      "patch": {
+        "operationId": "update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "saved_search_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSavedSearch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedSearch"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`saved_search.not_owner`: partilhado de outra pessoa."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Altera nome, consulta, partilha ou «por omissão». Só o dono.",
+        "tags": [
+          "search"
+        ]
+      }
+    },
     "/api/users/me/sessions": {
       "get": {
         "operationId": "list_sessions",
@@ -29690,6 +30911,80 @@
     "/api/whiteboards": {
       "get": {
         "operationId": "list",
+        "parameters": [
+          {
+            "description": "Texto livre: sem acentos, prefixos, erros de escrita.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Domínio em JSON: `[campo, operador, valor]`, `{\"and\":[…]}`, `{\"or\":[…]}`, `{\"not\":…}`.",
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filtros pré-definidos do schema, separados por vírgulas.",
+            "in": "query",
+            "name": "filters",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; datas com `:day|week|month|quarter|year`.",
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Até 3 campos; `-` = descendente; `_score` = relevância (só com `q`).",
+            "in": "query",
+            "name": "order_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1–100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "groups_page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -29702,7 +30997,17 @@
                 }
               }
             },
-            "description": ""
+            "description": "Sem parâmetros: até 200, mais recentes primeiro. Com parâmetros de pesquisa: a página do ADR-0007."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Códigos `search.*` e `page.invalid_token`."
           },
           "401": {
             "content": {
