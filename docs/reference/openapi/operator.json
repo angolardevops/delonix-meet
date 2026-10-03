@@ -2113,6 +2113,82 @@
         ],
         "type": "object"
       },
+      "DataExport": {
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "description": "Motivo para pessoas, quando `failed`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "description": "Quando o ficheiro é apagado (só com `ready`).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`queued` | `running` | `ready` | `failed` | `expired`.",
+            "type": "string"
+          },
+          "summary": {
+            "description": "O que entrou: `recordings`, `transcripts`, `activity_events`.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "summary",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "DataExportPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DataExport"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "DecisionReq": {
         "properties": {
           "reason": {
@@ -2761,6 +2837,23 @@
         ],
         "type": "object"
       },
+      "DownloadLink": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "description": "Caminho relativo, carregável sem sessão até `expires_at`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "DuplicateRoleReq": {
         "properties": {
           "name": {
@@ -3193,6 +3286,29 @@
         "required": [
           "field",
           "description"
+        ],
+        "type": "object"
+      },
+      "FinishRegistrationReq": {
+        "additionalProperties": false,
+        "properties": {
+          "ceremony_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "credential": {
+            "description": "O `PublicKeyCredential` devolvido por `navigator.credentials.create`.",
+            "type": "object"
+          },
+          "name": {
+            "description": "Nome para a pessoa reconhecer a chave (1–60).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ceremony_id",
+          "name",
+          "credential"
         ],
         "type": "object"
       },
@@ -3653,9 +3769,58 @@
         ],
         "type": "object"
       },
+      "JoinPreferencesBody": {
+        "additionalProperties": false,
+        "description": "Preferências de entrada. No `PUT` é a representação COMPLETA: um campo\nomisso volta à omissão (desligado).",
+        "properties": {
+          "blur_background": {
+            "default": false,
+            "description": "Fundo desfocado por omissão.",
+            "type": "boolean"
+          },
+          "captions_always_on": {
+            "default": false,
+            "description": "Legendas sempre visíveis.",
+            "type": "boolean"
+          },
+          "captions_language": {
+            "default": null,
+            "description": "Idioma das legendas (`pt`, `en`, `fr`, `zh`, `es`, `ln`, `kg`, `umb`);\n`null` = o da sessão.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "join_camera_off": {
+            "default": false,
+            "description": "Entrar com a câmara desligada.",
+            "type": "boolean"
+          },
+          "join_muted": {
+            "default": false,
+            "description": "Entrar com o som desligado.",
+            "type": "boolean"
+          },
+          "noise_suppression": {
+            "default": false,
+            "description": "Supressão de ruído.",
+            "type": "boolean"
+          },
+          "warn_before_recording": {
+            "default": false,
+            "description": "Avisar antes de gravar: IMPOSTO pelo servidor — como anfitrião, o\ninício de uma gravação exige `confirmed: true` no `server_record`.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "JoinRoomResp": {
         "description": "Resposta do `join`: a sala e o token de sala para o WebSocket.",
         "properties": {
+          "join_preferences": {
+            "$ref": "#/components/schemas/JoinPreferencesBody",
+            "description": "«Como entro nas sessões» de quem entra: o cliente aplica-as (som,\ncâmara, desfoque, ruído, legendas); `warn_before_recording` é imposto\npelo servidor no início da gravação."
+          },
           "room": {
             "$ref": "#/components/schemas/Room"
           },
@@ -3676,7 +3841,8 @@
           "room",
           "room_token",
           "ws_path",
-          "scheduled"
+          "scheduled",
+          "join_preferences"
         ],
         "type": "object"
       },
@@ -3781,6 +3947,49 @@
             "$ref": "#/components/schemas/MfaChallenge"
           }
         ]
+      },
+      "ManagedBy": {
+        "description": "De onde vêm os campos só de leitura.",
+        "properties": {
+          "fields": {
+            "description": "Campos que só mudam no Odoo: `legal_name`, `email`, `department`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "last_synced_at": {
+            "description": "Última sincronização do directório da organização.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "odoo_url": {
+            "description": "Para o botão «Abrir no Odoo».",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "description": "Sempre `odoo`.",
+            "type": "string"
+          },
+          "sync_interval_minutes": {
+            "description": "«Alterações do Odoo chegam aqui em até N minutos».",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "fields",
+          "sync_interval_minutes"
+        ],
+        "type": "object"
       },
       "MarkAllReadResp": {
         "properties": {
@@ -4496,8 +4705,15 @@
         "type": "object"
       },
       "MfaChallenge": {
-        "description": "Desafio do segundo factor: a password foi aceite mas a conta tem MFA\nactivo, por isso ainda não há sessão. O `mfa_token` troca-se em\n`/api/auth/login/mfa`.",
+        "description": "Desafio do segundo factor: a password foi aceite mas a conta tem MFA\nactivo, por isso ainda não há sessão. O `mfa_token` troca-se em\n`/api/auth/login/mfa` (código) ou `/api/auth/login/mfa/passkey` (chave).",
         "properties": {
+          "methods": {
+            "description": "Factores que a conta tem: `totp` e/ou `passkey`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "mfa_required": {
             "description": "Sempre `true`.",
             "type": "boolean"
@@ -4509,7 +4725,8 @@
         },
         "required": [
           "mfa_required",
-          "mfa_token"
+          "mfa_token",
+          "methods"
         ],
         "type": "object"
       },
@@ -4683,6 +4900,47 @@
         ],
         "type": "object"
       },
+      "NotificationChannelStatus": {
+        "properties": {
+          "channel": {
+            "description": "`email` | `in_app` | `sms`.",
+            "type": "string"
+          },
+          "delivery": {
+            "description": "`available` | `not_configured` — só o `in_app` entrega hoje.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel",
+          "delivery"
+        ],
+        "type": "object"
+      },
+      "NotificationKindPreferences": {
+        "properties": {
+          "email": {
+            "type": "boolean"
+          },
+          "in_app": {
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "Tipo do centro de notificações (`meeting.starting`, …).",
+            "type": "string"
+          },
+          "sms": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "email",
+          "in_app",
+          "sms"
+        ],
+        "type": "object"
+      },
       "NotificationPage": {
         "properties": {
           "items": {
@@ -4706,6 +4964,48 @@
         "required": [
           "items",
           "unread_count"
+        ],
+        "type": "object"
+      },
+      "NotificationPreferenceItem": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "description": "`email` | `in_app` | `sms`.",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "channel",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "NotificationPreferences": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationChannelStatus"
+            },
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationKindPreferences"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "channels",
+          "items"
         ],
         "type": "object"
       },
@@ -5016,6 +5316,13 @@
             "format": "int32",
             "type": [
               "integer",
+              "null"
+            ]
+          },
+          "require_mfa": {
+            "description": "A organização exige autenticação de dois factores. Hoje impede os\nmembros de removerem o ÚLTIMO factor; não força a inscrição no login.\nOmisso => mantém o actual.",
+            "type": [
+              "boolean",
               "null"
             ]
           },
@@ -5584,6 +5891,120 @@
         ],
         "type": "object"
       },
+      "PasskeyChallengeReq": {
+        "additionalProperties": false,
+        "properties": {
+          "mfa_token": {
+            "description": "O `mfa_token` do desafio devolvido por `/api/auth/login`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mfa_token"
+        ],
+        "type": "object"
+      },
+      "PasskeyInfo": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "PasskeyList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PasskeyInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "PasskeyLoginReq": {
+        "additionalProperties": false,
+        "properties": {
+          "ceremony_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "credential": {
+            "description": "O `PublicKeyCredential` devolvido por `navigator.credentials.get`.",
+            "type": "object"
+          },
+          "mfa_token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mfa_token",
+          "ceremony_id",
+          "credential"
+        ],
+        "type": "object"
+      },
+      "PasskeysStatus": {
+        "properties": {
+          "availability": {
+            "description": "`available` | `not_configured` (sem RP ID/origem nesta instalação).",
+            "type": "string"
+          },
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "availability"
+        ],
+        "type": "object"
+      },
+      "PasswordStatus": {
+        "properties": {
+          "changed_at": {
+            "description": "Última alteração conhecida. `null` = desconhecida (conta anterior a\neste registo, ou gerida pelo Odoo).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "managed_by_odoo": {
+            "description": "A password é a do Odoo: não se altera aqui.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "managed_by_odoo"
+        ],
+        "type": "object"
+      },
       "PatchCaptionReq": {
         "properties": {
           "status": {
@@ -5840,6 +6261,165 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "Profile": {
+        "properties": {
+          "avatar_url": {
+            "description": "Caminho da fotografia (`null` sem fotografia). Muda quando a foto muda.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "department": {
+            "description": "Departamento da pertença principal (`org_members.department_id`);\n`null` sem departamento atribuído.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "description": "O nome mostrado na sala e nas legendas (o `username` se não houver um).",
+            "type": "string"
+          },
+          "display_name_set": {
+            "description": "`true` se a pessoa escolheu um nome a mostrar.",
+            "type": "boolean"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "job_title": {
+            "description": "Cargo na organização principal.",
+            "type": "string"
+          },
+          "legal_name": {
+            "description": "Nome legal (do Odoo numa conta gerida; `null` se desconhecido).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "description": "`pt-AO` | `en` | `fr-FR` | `zh-CN` (e os antigos `pt` | `fr`).",
+            "type": "string"
+          },
+          "managed_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagedBy",
+                "description": "Presente numa conta gerida pelo Odoo."
+              }
+            ]
+          },
+          "meetings_hosted": {
+            "description": "Reuniões agendadas por esta pessoa («sessões conduzidas»).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "organization": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProfileOrganization",
+                "description": "Organização principal (a pertença activa mais antiga)."
+              }
+            ]
+          },
+          "password": {
+            "$ref": "#/components/schemas/PasswordStatus"
+          },
+          "phone": {
+            "description": "Telefone em E.164 (`+244923447108`), da organização principal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone_source": {
+            "description": "`manual` (escrito pela pessoa) | `odoo` (do directório) | `null`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "description": "Nome IANA.",
+            "type": "string"
+          },
+          "timezone_utc_offset_minutes": {
+            "description": "Deslocamento actual do fuso, em minutos (60 = UTC+1).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "description": "Última alteração do perfil («alterações guardadas há N min»).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "username",
+          "display_name",
+          "display_name_set",
+          "job_title",
+          "timezone",
+          "locale",
+          "meetings_hosted",
+          "password",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ProfileOrganization": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "joined_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "description": "Papel na organização (`admin` | `member` | …).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "joined_at"
         ],
         "type": "object"
       },
@@ -6233,6 +6813,22 @@
         ],
         "type": "object"
       },
+      "PutNotificationPreferencesReq": {
+        "additionalProperties": false,
+        "description": "A matriz COMPLETA: os pares omissos voltam à omissão.",
+        "properties": {
+          "preferences": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationPreferenceItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "preferences"
+        ],
+        "type": "object"
+      },
       "PutRouteReq": {
         "properties": {
           "device_id": {
@@ -6458,6 +7054,39 @@
           "user_id",
           "username",
           "count"
+        ],
+        "type": "object"
+      },
+      "ReauthReq": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "Ou um código TOTP / de recuperação, se o MFA estiver activo.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "description": "A password da conta (verificada no Odoo numa conta gerida).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "Reauthenticated": {
+        "properties": {
+          "valid_until": {
+            "description": "Até quando vale para alterar factores.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "valid_until"
         ],
         "type": "object"
       },
@@ -7228,6 +7857,20 @@
         ],
         "type": "object"
       },
+      "RevokedCount": {
+        "properties": {
+          "revoked": {
+            "description": "Quantas sessões foram terminadas.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revoked"
+        ],
+        "type": "object"
+      },
       "RiskAcceptance": {
         "properties": {
           "accepted_at": {
@@ -7880,6 +8523,43 @@
           "inactive_days",
           "inactive",
           "owner_missing"
+        ],
+        "type": "object"
+      },
+      "SecurityOverview": {
+        "properties": {
+          "passkeys": {
+            "$ref": "#/components/schemas/PasskeysStatus"
+          },
+          "password": {
+            "$ref": "#/components/schemas/PasswordStatus"
+          },
+          "reauthenticated_until": {
+            "description": "Reautenticação recente NESTA sessão (para alterar factores).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required_by_organization": {
+            "description": "Uma organização activa da pessoa exige 2FA: o último factor não se remove.",
+            "type": "boolean"
+          },
+          "totp": {
+            "$ref": "#/components/schemas/TotpStatus"
+          },
+          "two_factor_enabled": {
+            "description": "Há pelo menos um segundo factor (TOTP ou chave de acesso).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "two_factor_enabled",
+          "required_by_organization",
+          "password",
+          "totp",
+          "passkeys"
         ],
         "type": "object"
       },
@@ -9182,6 +9862,109 @@
         },
         "type": "object"
       },
+      "TotpStatus": {
+        "properties": {
+          "backup_codes_left": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "pending": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "pending",
+          "backup_codes_left"
+        ],
+        "type": "object"
+      },
+      "TourState": {
+        "properties": {
+          "completed": {
+            "description": "Todos concluídos.",
+            "type": "boolean"
+          },
+          "completed_count": {
+            "description": "«N de M passos concluídos».",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "enabled": {
+            "description": "«Guia activo».",
+            "type": "boolean"
+          },
+          "next_step": {
+            "description": "O primeiro passo por concluir (`null` quando está completo).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skipped_at": {
+            "description": "Quando o guia foi saltado (`null` se não foi).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "steps": {
+            "description": "Os passos, por ordem.",
+            "items": {
+              "$ref": "#/components/schemas/TourStep"
+            },
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "description": "Versão da lista de passos (o conteúdo é do cliente).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "enabled",
+          "steps",
+          "completed_count",
+          "total",
+          "completed"
+        ],
+        "type": "object"
+      },
+      "TourStep": {
+        "properties": {
+          "completed": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "completed"
+        ],
+        "type": "object"
+      },
+      "TourStepReq": {
+        "additionalProperties": false,
+        "properties": {
+          "completed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "completed"
+        ],
+        "type": "object"
+      },
       "Transcript": {
         "properties": {
           "confidence": {
@@ -9654,6 +10437,69 @@
         },
         "type": "object"
       },
+      "UpdateProfileReq": {
+        "additionalProperties": false,
+        "description": "Alteração do perfil. Campo omisso = não muda. Um campo desconhecido é\n`422`; um campo só de leitura (`legal_name`, `email`, `department`) é `409`.",
+        "properties": {
+          "department": {
+            "description": "Só leitura: presente ⇒ `409`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "description": "1–80 caracteres; `\"\"` volta a usar o `username`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "description": "Só leitura: presente ⇒ `409`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_title": {
+            "description": "0–100 caracteres (`\"\"` apaga). Precisa de organização.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "legal_name": {
+            "description": "Só leitura: presente ⇒ `409`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "description": "`pt-AO` | `en` | `fr-FR` | `zh-CN` (e os antigos `pt` | `fr`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "description": "Móvel angolano, normalizado para E.164 como no gateway de SMS\n(`923 447 108`, `+244 923-447-108`); `\"\"` apaga. Precisa de organização.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "description": "Nome IANA (`Africa/Luanda`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UpdateRoleReq": {
         "properties": {
           "description": {
@@ -9763,6 +10609,19 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "UpdateTourReq": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "description": "Liga/desliga o guia (também em Preferências).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
         "type": "object"
       },
       "UpdateTrunkReq": {
@@ -10619,6 +11478,29 @@
           "peer_id",
           "username",
           "since"
+        ],
+        "type": "object"
+      },
+      "WebauthnOptions": {
+        "properties": {
+          "ceremony_id": {
+            "description": "Id da cerimónia, a devolver no passo seguinte.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "options": {
+            "description": "`CredentialCreationOptions` / `CredentialRequestOptions` para\n`navigator.credentials.create/get` (campos binários em base64url).",
+            "type": "object"
+          }
+        },
+        "required": [
+          "ceremony_id",
+          "options",
+          "expires_at"
         ],
         "type": "object"
       },

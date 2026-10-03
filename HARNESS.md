@@ -141,7 +141,7 @@
 ### Infraestrutura
 | Serviço | Port (dev) | Uso |
 |---|---|---|
-| PostgreSQL | 5435 | Dados principais (migrações 0001–0073, 0085 e 0100–0103 da conta) |
+| PostgreSQL | 5435 | Dados principais (migrações 0001–0103; 0074–0084 e 0086–0099 não existem: a 0085 é a do directo e 0100–0103 as da conta) |
 | Redis | 6379 | Presença, pub/sub (multi-instância futura) |
 | coturn | 3478/5349 | STUN/TURN para WebRTC NAT traversal |
 
