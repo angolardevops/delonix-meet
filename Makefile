@@ -64,9 +64,11 @@ ifneq ($(shell command -v delonix 2>/dev/null),)
   # Caminho ABSOLUTO do ficheiro: com ele os binds relativos (./deploy/…)
   # resolvem-se contra a pasta do compose.yaml; sem ele, o delonix não os acha.
   COMPOSE_P := -f $(ROOT)/compose.yaml -p delonix-meet
+  COMPOSE_EXEC := delonix container exec -it
 else
   COMPOSE   ?= docker compose -f $(ROOT)/compose.yaml -p delonix-meet
   COMPOSE_P :=
+  COMPOSE_EXEC := docker exec -it
 endif
 
 # Cores
@@ -706,13 +708,38 @@ bootstrap: ## Prepara a máquina: ferramentas, dependências, .env com segredos 
 
 # O compose.yaml corre as imagens de `make build` atrás de uma borda com TLS.
 # Não constrói nada: sem imagens, falha a dizer isso — não as vai buscar a lado nenhum.
-.PHONY: compose-up compose-down compose-ps compose-logs
-compose-up: ## Simulação de produção numa máquina só (compose.yaml) — https://$(MEET_HOST):8443
-	@[ -f .env ] && [ -f deploy/compose/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou o turnserver.conf — corre «make bootstrap»$(Z)\n"; exit 1; }
+.PHONY: compose-up compose-down compose-ps compose-logs compose-voice-check seed
+seed: ## Cria a organização «ngolacloud» e o administrador de validação (BASE=https://…)
+	@bash scripts/seed.sh $(or $(BASE),https://$(MEET_HOST):8443)
+compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do PBX e chamada de prova ao IVR
+	@bash scripts/compose-voice-check.sh
+compose-up: ## Simulação de produção (compose.yaml): Meet, Kamailio e PBX, com os URLs e os acessos
+	@[ -f .env ] && [ -f deploy/compose/generated/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou deploy/compose/generated/ — corre «make bootstrap»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "delonix-server" || { printf "$(Y)  ✗ faltam as imagens — corre «make build»$(Z)\n"; exit 1; }
+	@$(IMG_LS) 2>/dev/null | grep -q "pbx-cliente" || { printf "$(Y)  ✗ faltam as imagens de voz — corre «make voice-images»$(Z)\n"; exit 1; }
 	@printf "$(C)▶ $(COMPOSE) up (simulação de produção)$(Z)\n"
 	@$(COMPOSE) up $(COMPOSE_P) -d
-	@printf "$(G)  ✓ a subir$(Z) — $(Y)https://$(MEET_HOST):8443$(Z)  (estado: make compose-ps)\n"
+	@printf "$(C)▶ organização e conta de validação$(Z)\n"
+	@bash scripts/seed.sh https://$(MEET_HOST):8443 || true
+	@$(MAKE) --no-print-directory compose-info
+
+# Os acessos vêm do .env desta máquina (gerados por `make bootstrap`): são de
+# laboratório, e mostram-se aqui para não se andar à procura deles.
+.PHONY: compose-info
+compose-info: ## URLs e acessos de administração da simulação de produção
+	@v() { sed -n "s/^$$1=//p" .env | head -1; }; \
+	printf "\n$(G)  Delonix Meet$(Z)      $(Y)https://$(MEET_HOST):8443$(Z)\n"; \
+	printf "     organização  ngolacloud\n"; \
+	printf "     utilizador   admin@ngolacloud.local\n"; \
+	printf "     password     %s\n" "$$(v MEET_ADMIN_PASSWORD)"; \
+	printf "$(G)  Kamailio$(Z)          $(Y)https://$(MEET_HOST):8444/rpc/$(Z)   (bordo SIP — interface de gestão xhttp_rpc)\n"; \
+	printf "     utilizador   admin\n"; \
+	printf "     password     %s\n" "$$(v VOICE_ADMIN_PASSWORD)"; \
+	printf "$(G)  PBX de cliente$(Z)    $(Y)https://$(MEET_HOST):8445/ari/api-docs/resources.json$(Z)   (Asterisk — API de administração ARI)\n"; \
+	printf "     utilizador   admin\n"; \
+	printf "     password     %s\n" "$$(v VOICE_ADMIN_PASSWORD)"; \
+	printf "     consola      $(COMPOSE_EXEC) delonix-pbx asterisk -rvvv\n"; \
+	printf "\n  Estado: make compose-ps   ·   Prova da voz: make compose-voice-check\n"
 compose-down: ## Para a simulação de produção (mantém os volumes)
 	@$(COMPOSE) down $(COMPOSE_P)
 compose-ps: ## Contentores da simulação de produção

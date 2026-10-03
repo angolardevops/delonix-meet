@@ -11,6 +11,7 @@ VANILLA=/usr/local/freeswitch/etc/freeswitch
 CONF=/conf
 MEET=/meet
 
+mkdir -p "$CONF"
 cp -a "$VANILLA/." "$CONF/"
 
 # 1. Utilizadores de demonstração (1000–1019, password 1234) e gateway de exemplo.

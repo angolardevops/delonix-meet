@@ -144,15 +144,23 @@ delonix-meet/
 make bootstrap    # ferramentas, dependências, .env com segredos aleatórios, certificado
 make dev          # desenvolver: infra + backend + frontend com HMR
 make build        # as imagens: delonix-server e delonix-web
+make voice-images # (uma vez) FreeSWITCH + PBX de cliente, para a voz
 make compose-up   # simulação de produção numa máquina só  → https://meet.ngolacloud.local:8443
-make voice-images # (uma vez) FreeSWITCH + PBX de cliente, para a voz do cluster
 make cluster      # o stack completo num cluster local     → https://meet.ngolacloud.local
 ```
 
 - **`make bootstrap`** não instala nada no sistema: o `helm` fica em `.tools/bin` (checksum
   conferido), os segredos em `.env` e o certificado em `deploy/certs/` — os três fora do git.
-- **`compose.yaml`** corre as mesmas imagens atrás de uma borda com TLS. Não usa `${VAR}`:
-  o `delonix compose` não interpola, e assim o ficheiro corre igual no `docker compose`.
+- **`compose.yaml`** corre as mesmas imagens atrás de uma borda com TLS, mais a voz
+  (Kamailio, FreeSWITCH, PBX de cliente). Não usa `${VAR}`: o `delonix compose` não
+  interpola, e assim o ficheiro corre igual no `docker compose`.
+- **`make compose-up`** cria a organização `ngolacloud` com um administrador de validação
+  e mostra os três endereços com os acessos (`make compose-info` repete-os):
+  o Meet em `:8443`, a interface de gestão do Kamailio em `:8444/rpc/` e a API de
+  administração do PBX (Asterisk ARI) em `:8445`. `make compose-voice-check` mede a
+  sinalização: bordo, tronco do PBX e uma chamada de prova até ao IVR.
+- O PBX de cliente é um **Asterisk de stock**, não o Issabel (que não tem imagem de
+  contentor): não há painel gráfico, só a API e a consola.
 - **`make cluster`** cria um cluster `delonix cluster` (o equivalente ao kind, sem Docker)
   com storage, ingress-nginx, Postgres e Redis por Helm, servidor, web, coturn e a voz —
   Kamailio, FreeSWITCH e um PBX de cliente (Asterisk) ligado por tronco SIP. No fim mede o

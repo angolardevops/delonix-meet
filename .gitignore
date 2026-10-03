@@ -90,5 +90,5 @@ ai-worker/gen/
 
 # Ferramentas instaladas por `make bootstrap` (helm) — por máquina, nunca versionadas.
 .tools/
-# Gerado por `make bootstrap`; tem o segredo do relay.
-deploy/compose/turnserver.conf
+# Gerados por `make bootstrap`: segredo do relay, acessos de administração, TLS do bordo.
+deploy/compose/generated/

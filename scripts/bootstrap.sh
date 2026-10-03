@@ -99,7 +99,10 @@ if [ ! -f .env ]; then
   chmod 600 .env
   ok ".env criado a partir de deploy/compose/env.example"
 fi
-for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET:24 VOICE_INTERNAL_SECRET:32; do
+# MEET_ADMIN_PASSWORD: a conta de validação que o `make seed` cria.
+# VOICE_ADMIN_PASSWORD: as interfaces de administração do Kamailio e do PBX.
+for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET:24 VOICE_INTERNAL_SECRET:32 \
+  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12; do
   nome=${par%%:*}
   bytes=${par##*:}
   if grep -qE "^${nome}=.+" .env; then
@@ -122,9 +125,9 @@ if grep -qE "^DATABASE_URL=" .env; then
 else
   printf 'DATABASE_URL=%s\n' "$db" >>.env
 fi
-(
-  umask 077
-  cat >deploy/compose/turnserver.conf <<CONF
+GEN=deploy/compose/generated
+mkdir -p "$GEN/voice-tls"
+cat >"$GEN/turnserver.conf" <<CONF
 # Gerado por «make bootstrap» — NÃO versionar (tem o segredo do relay).
 listening-port=3478
 realm=${MEET_HOST}
@@ -138,10 +141,38 @@ max-port=49340
 fingerprint
 log-file=stdout
 CONF
-)
-# O contentor do coturn lê-o com outro utilizador: tem de ser legível.
-chmod 644 deploy/compose/turnserver.conf
-ok ".env e deploy/compose/turnserver.conf prontos (fora do git)"
+# Interface de gestão do Kamailio: basic auth na borda (utilizador «admin»).
+printf 'admin:%s\n' "$(openssl passwd -apr1 "$(valor_de VOICE_ADMIN_PASSWORD)")" >"$GEN/voice.htpasswd"
+# Interface HTTP do PBX de cliente (Asterisk): ARI com o mesmo acesso.
+cat >"$GEN/pbx-http.conf" <<CONF
+; Gerado por «make bootstrap».
+[general]
+enabled = yes
+bindaddr = 0.0.0.0
+bindport = 8088
+enablestatic = no
+CONF
+cat >"$GEN/pbx-ari.conf" <<CONF
+; Gerado por «make bootstrap» — NÃO versionar (tem a password).
+[general]
+enabled = yes
+pretty = yes
+
+[admin]
+type = user
+read_only = no
+password_format = plain
+password = $(valor_de VOICE_ADMIN_PASSWORD)
+CONF
+# Certificado self-signed do bordo SIP (Kamailio) no compose.
+if [ ! -f "$GEN/voice-tls/tls.crt" ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=delonix-kamailio" \
+    -keyout "$GEN/voice-tls/tls.key" -out "$GEN/voice-tls/tls.crt" 2>/dev/null
+fi
+# Lidos dentro de contentores por outros utilizadores: têm de ser legíveis.
+# A pasta não sai da máquina (gitignore) e os segredos são os deste laboratório.
+chmod -R a+rX "$GEN"
+ok ".env e deploy/compose/generated/ prontos (fora do git)"
 
 # ---- certificado de meet.ngolacloud.local ----
 printf "%s▶ certificado TLS de %s%s\n" "$c" "$MEET_HOST" "$z"

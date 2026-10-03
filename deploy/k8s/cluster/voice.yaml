@@ -84,6 +84,9 @@ spec:
         - name: kamailio
           image: ghcr.io/kamailio/kamailio:5.8.6-bookworm
           imagePullPolicy: IfNotPresent
+          # A imagem arranca com `sh -c "kamailio …"`: sem `command`, os args não
+          # chegam ao kamailio.
+          command: ["kamailio"]
           args: ["-DD", "-E", "-f", "/etc/kamailio/kamailio.cfg"]
           ports:
             - { name: sip-udp, containerPort: 5060, protocol: UDP }
