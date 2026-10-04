@@ -28,9 +28,69 @@ RUN cd server && cargo build --release && \
     cp target/release/delonix-server /usr/local/bin/delonix-server && \
     strip /usr/local/bin/delonix-server
 
+# ------------------------------------------------------------
+# ffmpeg LGPL para o servidor (ADR-0011, D3 e B3).
+#
+# O servidor só precisa de `-c copy`, `aac` nativo, libvpx-vp9 e libopus: nada
+# que exija libx264. Por isso o ffmpeg desta imagem é uma build LGPL (a GPL com
+# libx264 é da imagem do Channel Engine). NÃO se usa o `apt install ffmpeg` do
+# Debian: é compilado com `--enable-gpl` e arrastaria a imagem para a GPL.
+#
+# - `--disable-gpl --disable-nonfree`: a licença é a LGPL v2.1+; um libx264,
+#   libx265 ou libfdk-aac fora de questão (o gate `check-ffmpeg-licenca.sh` falha).
+# - `--enable-shared --disable-static`: a LGPL pede ligação dinâmica para quem
+#   redistribui, e o utilizador tem de poder substituir a biblioteca.
+# - `--disable-autodetect`: só entra o que se pede, nada que o sistema por acaso
+#   tenha instalado.
+# - O código-fonte é o do ffmpeg.org, com versão e SHA-256 fixados. Quem recebe
+#   a imagem recebe também o endereço desse código e a linha de configuração
+#   (`/opt/ffmpeg/SOURCE.txt`) e o texto da licença (`COPYING.LGPLv2.1`).
+# ------------------------------------------------------------
+FROM debian:bookworm-slim AS ffmpeg
+ARG FFMPEG_VERSION=9.0.2
+# SHA-256 de ffmpeg-${FFMPEG_VERSION}.tar.xz. Os zeros são um marcador que o
+# gate recusa: preenche-se depois de verificar a assinatura PGP do tarball.
+ARG FFMPEG_SHA256=0000000000000000000000000000000000000000000000000000000000000000
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl xz-utils build-essential nasm pkg-config \
+        libvpx-dev libopus-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN curl -fsSL -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+    && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
+    && tar xJf ffmpeg.tar.xz
+# `--disable-new-dtags` + rpath: um RUNPATH não é herdado pelas bibliotecas, e o
+# libavcodec não encontraria o libvpx. Assim o binário corre sem LD_LIBRARY_PATH.
+RUN cd "ffmpeg-${FFMPEG_VERSION}" && ./configure \
+        --prefix=/opt/ffmpeg \
+        --disable-gpl --disable-nonfree \
+        --disable-autodetect --disable-doc --disable-ffplay \
+        --enable-shared --disable-static \
+        --enable-libvpx --enable-libopus --enable-zlib \
+        --extra-ldexeflags="-Wl,--disable-new-dtags,-rpath,/opt/ffmpeg/lib" \
+        --extra-ldsoflags="-Wl,--disable-new-dtags,-rpath,/opt/ffmpeg/lib" \
+    && make -j"$(nproc)" && make install \
+    && cp COPYING.LGPLv2.1 /opt/ffmpeg/COPYING.LGPLv2.1
+# As bibliotecas de que o ffmpeg depende e que a imagem final não traz (libvpx,
+# libopus, libz). As da glibc ficam de fora: a imagem final já as tem.
+RUN for b in /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe; do ldd "$b"; done \
+        | awk '/=> \//{print $3}' | sort -u \
+        | grep -vE '/(libc|libm|libdl|libpthread|librt|libgcc_s|ld-linux[^/]*)\.so' \
+        | grep -v '^/opt/ffmpeg/' \
+        | xargs -r -I{} cp -L {} /opt/ffmpeg/lib/ \
+    && { echo "ffmpeg ${FFMPEG_VERSION} — LGPL v2.1+"; \
+         echo "código-fonte: https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz (sha256 ${FFMPEG_SHA256})"; \
+         /opt/ffmpeg/bin/ffmpeg -version | sed -n 's/^configuration: /configuração: /p'; \
+       } > /opt/ffmpeg/SOURCE.txt \
+    && /opt/ffmpeg/bin/ffmpeg -L | head -3 | grep -q Lesser \
+    && ! /opt/ffmpeg/bin/ffmpeg -version | grep -E 'enable-(gpl|nonfree|version3)'
+
 # Runtime mínimo, sem root. `cc` traz a glibc/libssl necessárias ao binário.
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /usr/local/bin/delonix-server /app/delonix-server
+# ffmpeg LGPL + ffprobe + as suas bibliotecas + licença e código-fonte (ver o estágio `ffmpeg`).
+COPY --from=ffmpeg /opt/ffmpeg /opt/ffmpeg
+ENV FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg FFPROBE_BIN=/opt/ffmpeg/bin/ffprobe
 USER nonroot:nonroot
 # 8180 — HTTP público (/api, /ws, /rtc, /health, /ready). BIND_ADDR.
 EXPOSE 8180
