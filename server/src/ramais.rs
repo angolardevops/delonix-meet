@@ -114,6 +114,20 @@ fn gen_sip_password() -> String {
     crate::crypto::random_hex(15)
 }
 
+/// Uma password SIP nova para um AOR que já existe: `(em claro, Argon2, HA1)`.
+/// É o que a regeneração pelo administrador e o resgate de um bilhete de
+/// provisionamento (`extension_provisioning.rs`) gravam — a mesma regra nos
+/// dois, para o directório do FreeSWITCH (que só lê `sip_ha1`) os aceitar.
+pub(crate) fn new_sip_secret(
+    sip_username: &str,
+    sip_domain: &str,
+) -> Result<(String, String, String), ApiError> {
+    let password = gen_sip_password();
+    let hash = crate::auth::hash_password(&password)?;
+    let ha1 = compute_ha1(sip_username, sip_domain, &password);
+    Ok((password, hash, ha1))
+}
+
 /// AOR SIP: globalmente único (não escopado por org — é o directório do
 /// registar que exige isto, ver o comentário no topo do ficheiro).
 fn gen_sip_username() -> String {
@@ -597,9 +611,7 @@ pub async fn regenerate_extension_password(
     .await?
     .ok_or(ApiError::NotFound)?;
 
-    let sip_password = gen_sip_password();
-    let password_hash = crate::auth::hash_password(&sip_password)?;
-    let ha1 = compute_ha1(&sip_username, &sip_domain, &sip_password);
+    let (sip_password, password_hash, ha1) = new_sip_secret(&sip_username, &sip_domain)?;
     sqlx::query(
         "UPDATE voice_extensions SET sip_password_hash = $3, sip_ha1 = $4
           WHERE id = $1 AND org_id = $2",
@@ -1615,7 +1627,10 @@ mod tests {
         crate::extension_pin::regenerate_my_pin,
         crate::extension_pin::set_extension_pin,
         crate::extension_pin::regenerate_extension_pin,
-        crate::extension_pin::clear_extension_pin
+        crate::extension_pin::clear_extension_pin,
+        crate::extension_provisioning::issue_my_ticket,
+        crate::extension_provisioning::issue_extension_ticket,
+        crate::extension_provisioning::redeem
     ),
     components(schemas(
         VoiceExtensionInfo,
@@ -1630,7 +1645,8 @@ mod tests {
         AssignMissingResp,
         crate::extension_pin::MyExtension,
         crate::extension_pin::SetPinReq,
-        crate::extension_pin::GeneratedPin
+        crate::extension_pin::GeneratedPin,
+        crate::extension_provisioning::ProvisioningTicket
     ))
 )]
 pub struct ApiDoc;
