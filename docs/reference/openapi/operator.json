@@ -3655,6 +3655,10 @@
       "ExtensionRange": {
         "description": "O intervalo de onde saem os números automáticos de uma organização.",
         "properties": {
+          "auto_assign_on_join": {
+            "description": "Atribuir um ramal automaticamente a quem entra na organização (R278).\nDesligado por omissão — e num `PUT` que não o traga.",
+            "type": "boolean"
+          },
           "range_end": {
             "description": "Último número do intervalo, inclusive.",
             "example": 1999,

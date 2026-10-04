@@ -3655,6 +3655,10 @@
       "ExtensionRange": {
         "description": "O intervalo de onde saem os números automáticos de uma organização.",
         "properties": {
+          "auto_assign_on_join": {
+            "description": "Atribuir um ramal automaticamente a quem entra na organização (R278).\nDesligado por omissão — e num `PUT` que não o traga.",
+            "type": "boolean"
+          },
           "range_end": {
             "description": "Último número do intervalo, inclusive.",
             "example": 1999,
@@ -18288,7 +18292,7 @@
                 }
               }
             },
-            "description": "O intervalo gravado, ou 1000–1999 se a organização nunca escolheu um."
+            "description": "O intervalo gravado, ou 1000–1999 e a atribuição automática desligada se a organização nunca escolheu."
           },
           "401": {
             "content": {
@@ -18412,7 +18416,7 @@
             "session": []
           }
         ],
-        "summary": "Define o intervalo de numeração automática da org (admin). Não renumera\nnem apaga os ramais que já existem fora dele: só decide de onde saem os\npróximos números automáticos.",
+        "summary": "Define o intervalo de numeração automática da org (admin) e se quem entra\nrecebe um ramal sozinho (`auto_assign_on_join`). Não renumera nem apaga os\nramais que já existem fora dele: só decide de onde saem os próximos números\nautomáticos. Ligar a atribuição automática não dá ramal a quem já cá está —\nisso é `assign-missing`.",
         "tags": [
           "voice"
         ]
