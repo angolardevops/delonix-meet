@@ -84,16 +84,16 @@ próprio e reparte-se por três.
 
 | Área | Portão |
 |---|---|
-| Qualquer mudança | `make fitness` — `cargo fmt --check` mais catorze dos dezasseis `scripts/check-*.sh` (`Makefile:230-248`). Os dois que só correm no CI: `check-isolamento-cobertura.sh` e `check-browser-antes-do-e2e.sh` (`.github/workflows/ci.yml:169,172`) |
+| Qualquer mudança | `make fitness` — `cargo fmt --check` mais dezasseis dos dezoito `scripts/check-*.sh` (`Makefile:230-248`). Os dois que só correm no CI: `check-isolamento-cobertura.sh` e `check-browser-antes-do-e2e.sh` (`.github/workflows/ci.yml:169,172`) |
 | Backend | **o que o CI corre, por esta ordem** (`ci.yml:57-86`): `cargo fmt --manifest-path server/Cargo.toml --check` · `bash scripts/check-clippy-ratchet.sh` · `cargo test --manifest-path server/Cargo.toml --release --workspace -- --test-threads=4` · `cargo build --release` · `bash scripts/check-openapi.sh`. O `fmt` é o primeiro e é o que mais vezes trava um push apressado |
 | Rota nova ou alterada | `delonix-meet-api` §Portões |
 | Frontend | `cd web && npx tsc --noEmit && npx vitest run` + o e2e do ecrã |
 | Media | `cargo test --release sfu_e2e` + `node web/e2e/reuniao.mjs` |
 | Telefone e PSTN | `delonix-meet-telefonia` §Portões — inclui as provas contra um FreeSWITCH real, que **não correm no CI** |
 
-Os dezasseis portões: `arquitectura-catraca`, `browser-antes-do-e2e`, `capability-claims`,
-`clippy-ratchet`, `crate-deps`, `dep-audit`, `docs-drift`, `isolamento-cobertura`,
-`k8s-render`, `lua-sintaxe`, `openapi`, `proto`, `repo-hygiene`, `room-affinity`,
+Os dezoito portões: `arquitectura-catraca`, `browser-antes-do-e2e`, `capability-claims`,
+`clippy-ratchet`, `crate-deps`, `dep-audit`, `docs-drift`, `ffmpeg-licenca`, `fs-xml`,
+`isolamento-cobertura`, `k8s-render`, `lua-sintaxe`, `openapi`, `proto`, `repo-hygiene`, `room-affinity`,
 `route-auth`, `tenant-rls`. O `check-tenant-rls.sh` exige um cluster vivo e **salta sem
 ele** — verde aí não prova nada.
 
