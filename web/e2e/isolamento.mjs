@@ -270,6 +270,20 @@ if (canalB.status === 201 && canalB.json?.id) {
   // Pelo caminho da PRÓPRIA org A, com o id da B: o `WHERE org_id` tem de o esconder.
   await recusado('A lê o canal da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/channels/${canalB.json.id}`, { token: A.token })
   await recusado('A apaga o canal da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/channels/${canalB.json.id}`, { token: A.token, method: 'DELETE' })
+  // Emissões do canal da B: pedir, ver e parar. A sessão da B tem de sobreviver.
+  const emB = await req(`${c}/broadcasts`, { token: B.token, method: 'POST', body: {} })
+  if (emB.status === 201 && emB.json?.id) {
+    ok('B pede a emissão do seu canal → 201 (fica `requested`, não «no ar»)')
+    const e = `${c}/broadcasts/${emB.json.id}`
+    await recusadoNaPorta('A pede a emissão de um canal da org B', `${c}/broadcasts`, { token: A.token, method: 'POST', body: {} })
+    await recusadoNaPorta('A lista as emissões de um canal da org B', `${c}/broadcasts`, { token: A.token })
+    await recusadoNaPorta('A lê uma emissão da org B', e, { token: A.token })
+    await recusadoNaPorta('A pára uma emissão da org B', `/api/orgs/${B.orgId}/tv/channels/${canalB.json.id}/broadcasts/${emB.json.id}/stop`, { token: A.token, method: 'POST', body: {} })
+    await recusado('A lê a emissão da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/channels/${canalB.json.id}/broadcasts/${emB.json.id}`, { token: A.token })
+    const emDepois = await req(e, { token: B.token })
+    if (emDepois.status === 200 && emDepois.json?.state === 'requested' && emDepois.json?.desired_state === 'live') ok('e a emissão da B CONTINUA LÁ, por terminar')
+    else nok('e a emissão da B CONTINUA LÁ, por terminar', `${emDepois.status}: ${JSON.stringify(emDepois.json).slice(0, 120)}`)
+  } else nok('B pede a emissão do seu canal', `${emB.status}: ${JSON.stringify(emB.json).slice(0, 160)}`)
   const depoisC = await req(c, { token: B.token })
   if (depoisC.status === 200 && depoisC.json?.name === 'Canal da B' && depoisC.json?.version === 1) ok('e o canal da B CONTINUA LÁ, inalterado')
   else nok('e o canal da B CONTINUA LÁ, inalterado', `${depoisC.status}: ${JSON.stringify(depoisC.json).slice(0, 120)}`)
