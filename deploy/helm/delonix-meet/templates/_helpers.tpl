@@ -188,6 +188,11 @@ capabilities:
 {{- end -}}
 {{- end -}}
 
+{{- /* a central de uma organização (ADR-0016) */ -}}
+{{- if and $v.voice.enabled $v.voice.centrais.enabled (not $v.voice.centrais.edgeCidrs) -}}
+{{- $e = append $e "voice.centrais.edgeCidrs: com as centrais ligadas, o FreeSWITCH tem de saber de onde fala o bordo — vazia, o IVR rejeita todas as chamadas de centrais (fecha por omissão, voice/cluster/freeswitch-entrypoint.sh)" -}}
+{{- end -}}
+
 {{- /* ponte telefone↔sala */ -}}
 {{- if $v.server.phoneBridge.enabled -}}
 {{- if not $v.server.phoneBridge.freeswitchIPs -}}

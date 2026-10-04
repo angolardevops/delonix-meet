@@ -10,6 +10,12 @@
 # A central (uma VM em QEMU, rede de utilizador) alcança o bordo pelo IP do
 # contentor, e o bordo vê-a chegar do endereço do anfitrião nesta rede
 # (172.30.50.1). É essa a única origem na allowlist.
+#
+# Quem chega de QUALQUER OUTRO endereço desta rede não está na allowlist: só
+# entra como central de uma organização, por TLS e autenticada com a conta SIP
+# dela (ADR-0016) — é o modo `central` do script. Para isso o bordo fala com o
+# servidor (DELONIX_CONTROL_URL), o FreeSWITCH sabe de onde fala o bordo
+# (DELONIX_EDGE_CIDRS), e o servidor tem a ponte telefone↔sala ligada.
 name: pbxtronco
 
 services:
@@ -34,7 +40,9 @@ services:
     networks: { voz: { ipv4_address: 172.30.50.11 } }
 
   server:
-    image: delonix-server:latest
+    # SERVER_IMAGE: a prova de uma mudança no servidor corre contra a imagem
+    # construída dessa árvore, sem tocar na `latest` que outros usam.
+    image: ${SERVER_IMAGE:-delonix-server:latest}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -50,6 +58,17 @@ services:
       TURN_HOST: prova.invalid:3478
       CORS_ORIGINS: https://prova.invalid
       RECORDINGS_DIR: /tmp/recordings
+      # A conta SIP de uma organização guarda-se cifrada.
+      DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS:?}
+      REGISTRATION_MODE: open
+      # A ponte telefone↔sala (ADR-0010): o UA SIP do servidor, que só aceita o
+      # FreeSWITCH desta réplica.
+      PHONE_BRIDGE_SIP_BIND: 172.30.50.12:5099
+      PHONE_BRIDGE_SIP_ADVERTISE: 172.30.50.12:5099
+      PHONE_BRIDGE_FREESWITCH_IPS: 172.30.50.13
+      PHONE_BRIDGE_RTP_IP: 172.30.50.12
+      PHONE_BRIDGE_RTP_MIN: "30000"
+      PHONE_BRIDGE_RTP_MAX: "30100"
     networks: { voz: { ipv4_address: 172.30.50.12 } }
 
   # O FreeSWITCH do Meet, arrancado como o compose.yaml da raiz o arranca.
@@ -63,6 +82,8 @@ services:
       DELONIX_CONTROL_URL: http://172.30.50.12:8181
       DELONIX_API_URL: http://172.30.50.12:8180
       DELONIX_RAMAIS_SIP_PORT: "5070"
+      # Só o bordo pode dizer «esta chamada é da central de X».
+      DELONIX_EDGE_CIDRS: 172.30.50.14/32
     volumes:
       - ../cluster/freeswitch-entrypoint.sh:/entrypoint/freeswitch-entrypoint.sh:ro
       - ../freeswitch/dialplan/public/00_delonix_dialin.xml:/meet/00_delonix_dialin.xml:ro
@@ -81,6 +102,10 @@ services:
     entrypoint: ["kamailio"]
     command: ["-DD", "-E", "-f", "/etc/kamailio/kamailio.cfg"]
     depends_on: [freeswitch]
+    environment:
+      # Com isto o bordo autentica centrais; sem isto só a allowlist entra.
+      DELONIX_CONTROL_URL: http://172.30.50.12:8181
+      VOICE_INTERNAL_SECRET: ${VOICE_INTERNAL_SECRET:?}
     volumes:
       - ../kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
       - ${ESTADO:?}/dispatcher.list:/etc/kamailio/dispatcher.list:ro

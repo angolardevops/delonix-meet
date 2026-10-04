@@ -5,6 +5,7 @@
 //! - `POST /api/orgs/{org_id}/telephony/sip-settings/reveal-credentials`   «Ver credenciais»: reautenticação + auditoria
 //! - `GET  /api/orgs/{org_id}/telephony/sip-registration`                  estado MEDIDO (SBC, media, troncos, qualidade)
 //! - `POST /api/orgs/{org_id}/telephony/sip-registration/restart`          «Reiniciar registo» (`202`)
+//! - `POST /internal/v1/telephony/edge/sip-account`                        o bordo autentica a central (ADR-0016)
 
 use std::sync::Arc;
 
@@ -662,4 +663,105 @@ pub async fn restart_registration(
             gateways: names.len(),
         }),
     ))
+}
+
+// ---------- O bordo autentica a central da organização (ADR-0016) ----------
+
+#[derive(Deserialize)]
+pub struct EdgeSipAccountReq {
+    /// O realm do digest: o domínio SIP que a central apresentou.
+    pub domain: String,
+    /// O utilizador do digest.
+    pub username: String,
+}
+
+/// `POST /internal/v1/telephony/edge/sip-account` — o HA1 da conta SIP de uma
+/// organização, para o bordo (Kamailio) verificar o digest de uma central.
+///
+/// É o primeiro consumidor das credenciais do «Registo SIP» (ADR-0009 §5): até
+/// aqui a conta guardava-se e mostrava-se, e nada se autenticava com ela.
+///
+/// Só no listener interno e com o segredo da media, como o directório dos
+/// ramais: o HA1 vale o mesmo que a password para o digest. A resposta é texto
+/// simples (o HA1 e mais nada) porque quem a lê é o `http_client` do Kamailio,
+/// que entrega a primeira linha do corpo.
+///
+/// Todas as recusas são o mesmo `404` — domínio desconhecido, utilizador que
+/// não é o da conta, conta sem password: quem pergunta não distingue «não
+/// existe» de «errou».
+pub async fn edge_sip_account(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<EdgeSipAccountReq>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse as _;
+    crate::voice::check_media_secret(&state, &headers)?;
+    let ha1 = ha1_for_edge(&state, &req.domain, &req.username)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        ha1,
+    )
+        .into_response())
+}
+
+/// O HA1 de `(domínio, utilizador)`, se for essa a conta SIP de uma organização.
+///
+/// O realm entra no HA1 TAL COMO veio: quem ligou calculou a resposta com o
+/// realm do desafio, letra por letra. A organização procura-se sem olhar a
+/// maiúsculas (o índice é sobre `lower(domain)`).
+pub(crate) async fn ha1_for_edge(
+    state: &AppState,
+    domain: &str,
+    username: &str,
+) -> Result<Option<String>, ApiError> {
+    let (domain, username) = (domain.trim(), username.trim());
+    if domain.is_empty() || username.is_empty() {
+        return Ok(None);
+    }
+    let row: Option<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT org_id, username, password_sealed
+           FROM telephony_sip_settings WHERE lower(domain) = lower($1)",
+    )
+    .bind(domain)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((org_id, stored, sealed)) = row else {
+        return Ok(None);
+    };
+    if stored.is_empty()
+        || sealed.is_empty()
+        || !delonix_meet_core::crypto::ct_eq(stored.as_bytes(), username.as_bytes())
+    {
+        return Ok(None);
+    }
+    // Um segredo que não abre (chave rodada, linha corrompida) não autentica
+    // ninguém — e não é um 500 que o bordo possa confundir com «tenta outra vez».
+    let Ok(password) = crate::secrets_at_rest::open(&state.config, &sealed, &aad(&org_id)) else {
+        tracing::warn!(%org_id, "a password da conta SIP não abre — a central desta organização não se autentica");
+        return Ok(None);
+    };
+    Ok(Some(crate::ramais::compute_ha1(
+        username, domain, &password,
+    )))
+}
+
+/// A organização dona de um domínio SIP, se a conta dela estiver completa
+/// (utilizador e password): é com essa conta que o bordo autentica a central, e
+/// uma conta incompleta não autenticou ninguém.
+pub(crate) async fn org_for_sip_domain(
+    state: &AppState,
+    domain: &str,
+) -> Result<Option<Uuid>, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT org_id FROM telephony_sip_settings
+          WHERE lower(domain) = lower($1) AND username <> '' AND password_sealed <> ''",
+    )
+    .bind(domain.trim())
+    .fetch_optional(&state.db)
+    .await?)
 }

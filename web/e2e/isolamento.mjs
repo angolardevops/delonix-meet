@@ -269,6 +269,14 @@ await recusado('A escolhe «o meu PIN» na org B', `/api/orgs/${B.orgId}/my-exte
 await recusado('A gera «o meu PIN» na org B', `/api/orgs/${B.orgId}/my-extension/regenerate-pin`, {
   token: A.token, method: 'POST', body: {},
 })
+// QR de provisionamento do Linphone (R278): A não emite um bilhete para um
+// ramal da org B, nem para «o meu ramal» numa organização a que não pertence.
+await recusado('A emite um QR do Linphone para um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/provisioning-ticket`, {
+  token: A.token, method: 'POST', body: {},
+})
+await recusado('A emite um QR do Linphone para «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/provisioning-ticket`, {
+  token: A.token, method: 'POST', body: {},
+})
 
 // O segredo mais valioso desta família: com ele, qualquer um emite no canal
 // de YouTube da empresa. A provar: A não alcança os destinos da B (ler, rodar

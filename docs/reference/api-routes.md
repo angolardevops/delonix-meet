@@ -224,6 +224,8 @@ Rotas afectadas:
 | `POST /api/voice/ivr/validate` | `POST /internal/v1/voice/ivr/validate` |
 | `POST /api/voice/ivr/cdr` | `POST /internal/v1/voice/ivr/cdr` |
 | — (nova, R273) | `POST /internal/v1/voice/ivr/validate-extension` |
+| — (nova, R280) | `POST /internal/v1/voice/ivr/validate-central` |
+| — (nova, R280) | `POST /internal/v1/telephony/edge/sip-account` (resposta em texto: o HA1) |
 
 ## Consumidores externos
 - **Módulo Odoo `nk_delonix_meet`** (repositório `kaeso-18`): passa a chamar:

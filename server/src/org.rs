@@ -919,6 +919,9 @@ pub async fn add_employee(
     if existing_member.is_some() && req.role.is_some() {
         set_system_role(&state, org_id, user_id, wanted).await?;
     }
+    if existing_member.is_none() {
+        crate::ramais::assign_on_join(&state, org_id, user_id).await;
+    }
 
     let emp: Employee = sqlx::query_as(&format!(
         "SELECT {EMPLOYEE_COLUMNS}
@@ -2685,6 +2688,26 @@ const SEAT_JOIN: &str = "JOIN users su ON su.id = m.user_id JOIN org_roles sr ON
 const SEAT_OCCUPIED: &str = "m.archived_at IS NULL AND su.email <> $2 \
      AND sr.system_key IS DISTINCT FROM 'external_guest'";
 
+/// O nome de utilizador de `user_id` se ele OCUPA LUGAR nesta organização —
+/// activo, humano e não convidado externo. `None` para todos os outros (quem
+/// não é membro, o arquivado, o utilizador de serviço, o convidado externo). É
+/// a quem a organização dá um ramal ao entrar (`ramais::assign_on_join`).
+pub(crate) async fn seat_holder_username(
+    db: &sqlx::PgPool,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<String>, ApiError> {
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT su.username FROM org_members m {SEAT_JOIN}
+          WHERE m.org_id = $1 AND m.user_id = $3 AND {SEAT_OCCUPIED}"
+    ))
+    .bind(org_id)
+    .bind(SERVICE_ACCOUNT_EMAIL)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?)
+}
+
 /// Reactiva uma pertença suspensa (só de razões reactiváveis), com lugares.
 pub(crate) async fn reactivate_member_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -3314,7 +3337,7 @@ pub(crate) async fn ensure_odoo_membership(
     user_id: Uuid,
     odoo_admin: bool,
 ) -> Result<(), ApiError> {
-    sqlx::query(
+    let joined = sqlx::query(
         "INSERT INTO org_members (org_id, user_id, role, origin) VALUES ($1, $2, $3, 'odoo_sso')
          ON CONFLICT (org_id, user_id) DO NOTHING",
     )
@@ -3323,7 +3346,12 @@ pub(crate) async fn ensure_odoo_membership(
     .bind(if odoo_admin { "admin" } else { "member" })
     .execute(&state.db)
     .await
-    .map_err(map_member_write_error)?;
+    .map_err(map_member_write_error)?
+    .rows_affected()
+        > 0;
+    if joined {
+        crate::ramais::assign_on_join(state, org_id, user_id).await;
+    }
     if odoo_admin {
         if let Some(role) = role_in_org(state, org_id, user_id).await? {
             if role != "admin" {

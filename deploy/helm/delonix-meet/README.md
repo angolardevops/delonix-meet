@@ -173,6 +173,8 @@ cluster. O chart expõe o que a interligação precisa:
 | `voice.trunks[]` | Origens aceites pelo bordo. Vazia = `403` a todas |
 | `voice.kamailio.service.{type,loadBalancerIP,annotations}` | O Service `kamailio-border`: SIP 5060 UDP/TCP e 5061 TLS. `externalTrafficPolicy: Local` para a allowlist ver o IP real |
 | `voice.kamailio.tls.existingSecret` | Certificado do 5061 |
+| `voice.centrais.enabled` | A central de uma organização entra **sem estar em `voice.trunks[]`**: por TLS (5061), autenticada com a conta SIP dessa organização (ADR-0016). O bordo passa a falar com `delonix-server-internal:8181` |
+| `voice.centrais.edgeCidrs[]` | De onde o bordo fala para o FreeSWITCH. O IVR só acredita em «esta chamada é da central de X» vindo daqui; vazia com as centrais ligadas, o chart falha |
 | `voice.ramais.acl` | `DELONIX_RAMAIS_ACL` — redes de onde um ramal se regista |
 | `voice.freeswitch.{externalIP,rtp,ramaisService}` | Ramais registados de fora do cluster |
 

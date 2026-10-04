@@ -159,6 +159,9 @@ jobs:
       - name: O bordo SIP anuncia um endereço real (R277 — sem ele, todas as chamadas caem aos 32 s)
         run: bash scripts/check-bordo-anuncia.sh
 
+      - name: Só o bordo diz de que organização é uma central (ADR-0016)
+        run: bash scripts/check-bordo-central.sh
+
       - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
         run: bash scripts/check-k8s-render.sh
 
