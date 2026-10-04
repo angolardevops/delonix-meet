@@ -7708,6 +7708,18 @@
         ],
         "type": "object"
       },
+      "PublicShareAccessReq": {
+        "description": "A password de um link, no CORPO.",
+        "properties": {
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "type": "object"
+      },
       "PublicShareResp": {
         "description": "Metadados de uma gravação partilhada por link público.",
         "properties": {
@@ -7716,7 +7728,7 @@
             "type": "string"
           },
           "download_url": {
-            "description": "`/api/share/<token>/download`.",
+            "description": "O caminho do conteúdo. Num link com password já leva o passe de\nleitura (`?grant=…`), para o `<video>` e o download o usarem tal e qual.",
             "type": "string"
           },
           "filename": {

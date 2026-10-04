@@ -7708,6 +7708,18 @@
         ],
         "type": "object"
       },
+      "PublicShareAccessReq": {
+        "description": "A password de um link, no CORPO.",
+        "properties": {
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "type": "object"
+      },
       "PublicShareResp": {
         "description": "Metadados de uma gravação partilhada por link público.",
         "properties": {
@@ -7716,7 +7728,7 @@
             "type": "string"
           },
           "download_url": {
-            "description": "`/api/share/<token>/download`.",
+            "description": "O caminho do conteúdo. Num link com password já leva o passe de\nleitura (`?grant=…`), para o `<video>` e o download o usarem tal e qual.",
             "type": "string"
           },
           "filename": {
@@ -31243,7 +31255,7 @@
     },
     "/api/public/recordings/{token}": {
       "get": {
-        "description": "Link expirado responde como inexistente (404).",
+        "description": "Link expirado responde como inexistente (404). Um link com password\nresponde `401`: abre-se com `POST …/access`, que leva a password no corpo.",
         "operationId": "public_share",
         "parameters": [
           {
@@ -31251,15 +31263,6 @@
             "in": "path",
             "name": "token",
             "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Password do link, se tiver. Vai na query string.",
-            "in": "query",
-            "name": "password",
-            "required": false,
             "schema": {
               "type": "string"
             }
@@ -31284,7 +31287,7 @@
                 }
               }
             },
-            "description": "O link tem password e a dada (ou a sua falta) não confere."
+            "description": "O link tem password: use `POST /api/public/recordings/{token}/access`."
           },
           "404": {
             "content": {
@@ -31298,6 +31301,79 @@
           }
         },
         "summary": "Acesso público a uma gravação via token (sem autenticação).",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/public/recordings/{token}/access": {
+      "post": {
+        "description": "Cinco passwords erradas em 5 minutos travam o link (`429`).",
+        "operationId": "public_share_access",
+        "parameters": [
+          {
+            "description": "Token do link público.",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicShareAccessReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicShareResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A password não confere."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token inexistente ou expirado."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Cinco passwords erradas em 5 minutos neste link."
+          }
+        },
+        "summary": "Abre um link com password. A password vai no CORPO — nunca num URL, que\nfica escrito nos logs de acesso — e a resposta traz o `download_url` já com\num passe de leitura de uma hora, para o leitor e o download.",
         "tags": [
           "recordings"
         ]
@@ -31317,9 +31393,9 @@
             }
           },
           {
-            "description": "Password do link, se tiver. Vai na query string.",
+            "description": "Passe de leitura de um link com password — o `download_url` que\n`POST …/access` devolve já o traz. Curto e só deste link; **a password\nnunca vai num URL**.",
             "in": "query",
-            "name": "password",
+            "name": "grant",
             "required": false,
             "schema": {
               "type": "string"
@@ -31347,7 +31423,7 @@
                 }
               }
             },
-            "description": "Password em falta ou errada."
+            "description": "O link tem password e o passe de leitura falta, expirou ou não é deste link."
           },
           "404": {
             "content": {
@@ -31360,7 +31436,7 @@
             "description": "Token inexistente, expirado, ou sem ficheiro (gravação falhada)."
           }
         },
-        "summary": "Download via link público (sem autenticação — token é a credencial).",
+        "summary": "Download via link público (sem autenticação — token é a credencial; num\nlink com password, o passe de leitura que `POST …/access` devolveu).",
         "tags": [
           "recordings"
         ]

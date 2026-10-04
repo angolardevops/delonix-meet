@@ -2767,3 +2767,58 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Por medir, e não o dês por feito.** Um browser na sala (quem ouve a central nesta prova é outro telefone, pela mesma ponte). O `compose.yaml` e o cluster local **não** ligam as centrais. O chart (`voice.centrais`) só foi lido, nunca instalado; o `check-helm.sh` corre no CI. Restringir uma conta a redes de origem não existe. O caminho `delonix-outbound` (`telephony_fs_xml.rs`) continua a decidir a organização pelo domínio do pedido sem o autenticar.
 
 **Ficheiros.** `voice/kamailio/kamailio.cfg`, `voice/freeswitch/scripts/dialin_ivr.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `server/src/telephony_sip.rs`, `server/src/voice.rs`, `server/src/lib.rs`, `server/tests/central_entra_na_sala.rs`, `scripts/check-bordo-central.sh`, `scripts/pbx-tronco-prova.sh` (modo `central`), `scripts/softphone-prova.sh` (`--dominio`, `--rede`), `voice/pbx-tronco-prova/compose.yaml`, `deploy/helm/delonix-meet/` (`voice.centrais`).
+
+### R287 — A chave de emissão de cada destino ia no URL do WebSocket do directo
+
+**Sintoma.** `GET /api/rooms/{code}/live` recebia os destinos em JSON na query — e com eles a chave de emissão de cada destino ad hoc (a «stream key» do YouTube, do Facebook, da Twitch). Um URL fica escrito nos logs de acesso do Nginx, do ingress e de qualquer balanceador pelo caminho: a chave de quem emite ficava em texto, em ficheiros que ninguém trata como segredo (RFC-0001, achado B8).
+
+**Regra.**
+- **Os destinos vão na primeira trama de texto**, depois do upgrade: `{"tipo":"iniciar","destinos":[…]}`. O URL leva o token de sala e o codec, e mais nada. O servidor espera dez segundos por ela (`iniciar_por_mensagem`); outra coisa na primeira trama é recusada com a forma esperada.
+- **No URL continua a caber o que não é segredo:** destinos guardados, só pelo id (`[{"id":…}]`). Um destino com URL e chave na query é recusado com a frase que manda recarregar a página — é o que um cliente antigo em cache recebe.
+- A validação é a mesma nos dois caminhos e pela mesma ordem (`preparar_destinos`): malformado, tecto, E2EE, destinos guardados e capacidade do papel, endereços públicos, codec e capacidade do nó.
+- Na consola, `urlDoDirecto` deixa de receber destinos e `pedidoDeInicio` monta a trama; o cliente dá a emissão por aceite quando chega o primeiro estado dos destinos (ou ao fim de dois segundos), e nenhum pedaço de media sai antes disso.
+
+**Portão.** `server/tests/broadcast_authz.rs`: `a_chave_de_emissao_nao_se_aceita_no_url` (ad hoc no URL recusado, sem repetir a chave na recusa; o mesmo destino pela primeira trama não leva essa recusa; um id no URL continua a passar a guarda) e `a_primeira_trama_tem_de_ser_o_pedido_de_inicio` (binário, JSON de outro tipo e destinos malformados); os três testes que já lá estavam passam a usar a primeira trama. `web/src/studio/directo.test.ts`: o URL só tem `token` e `codec`; a trama de início sai uma vez, depois de a ligação abrir, e a chave não está no URL; a recusa em resposta ao pedido é a razão que se mostra.
+
+**O que NÃO está provado.**
+- **Nenhum browser emitiu.** O `web/e2e/directo-destinos.mjs` (fora do CI: precisa de um servidor RTMP a sério) foi actualizado para a primeira trama e não correu. O `web/e2e/backend-novo-directo.mjs` já estava escrito contra outra linha de backend e não foi tocado.
+- **O token de sala continua na query**, como no `/ws`: um WebSocket do browser não manda cabeçalhos. É curto, tem âmbito de uma sala e expira em minutos — mas aparece nos mesmos logs.
+- Um cliente antigo em cache recebe a recusa e tem de recarregar; não há negociação de versão.
+- Entre o pedido de início e a resposta o servidor consulta a base e resolve nomes: se demorar mais de dois segundos, a consola dá a emissão por aceite e uma recusa tardia aparece como erro da emissão, com a razão do servidor.
+
+**Ficheiros.** `server/src/broadcast.rs`, `server/tests/broadcast_authz.rs`, `web/src/studio/directo.ts`, `web/src/studio/directo.test.ts`, `web/e2e/directo-destinos.mjs`.
+
+### R288 — A palavra-passe de um link de partilha ia no URL, e adivinhava-se sem travão
+
+**Sintoma.** `GET /api/public/recordings/{token}?password=…` e o `…/content?password=…` que o `<video>` e o download usavam: a palavra-passe escolhida por quem partilha — que costuma repetir-se noutros sítios — ficava nos logs de acesso. E não havia limite: adivinhava-se ao ritmo que o Argon2 deixasse.
+
+**Regra.**
+- A palavra-passe vai no **corpo** de `POST /api/public/recordings/{token}/access`. Os dois `GET` deixam de a ler: um link com palavra-passe responde `401` ao `GET` dos metadados, com ela no URL ou sem ela.
+- A resposta traz o `download_url` já com um **passe de leitura** (`?grant=<expira>.<hmac>`): vale uma hora, só abre aquele link, e deixa de valer quando a palavra-passe do link muda (o hash dela entra no que se assina). O `<video>` não manda cabeçalhos nem corpo, por isso alguma coisa tem de ir no URL — passa a ser uma coisa curta e que não é de ninguém.
+- **Cinco palavras-passe erradas em 5 minutos travam o link** (`429`), a certa incluída.
+- A rota nova está em `scripts/rotas-publicas.txt`, com a razão.
+
+**Portão.** `server/tests/content.rs`: a palavra-passe CERTA no URL dá `401` nos dois caminhos; no corpo, errada `401` e certa `200`; o `download_url` traz o passe e não a palavra-passe; sem passe, com o MAC trocado, com a validade esticada ou com lixo, `401`; o passe de um link não abre outro; um link sem palavra-passe não ganha passe; cinco erradas e a certa dá `429`. `check-route-auth.sh` verde (273 rotas).
+
+**O que NÃO está provado.**
+- Nenhum browser abriu a página de partilha: a `SharePage` passa a usar o `download_url` da resposta, lido e não corrido.
+- O passe está num URL e aparece nos logs durante a hora que vale; não é a palavra-passe, mas abre o ficheiro a quem o ler a tempo.
+- O travão é por link e vive em memória de cada réplica (`mfa_limiter`): com três réplicas são quinze tentativas, e um reinício zera-o.
+- A expiração do passe por tempo não tem teste próprio (só a validade adulterada).
+
+**Ficheiros.** `server/src/recordings.rs`, `server/src/lib.rs`, `scripts/rotas-publicas.txt`, `server/tests/content.rs`, `web/src/api.ts`, `web/src/pages/SharePage.tsx`.
+
+### R289 — O destino de um directo só era validado uma vez, e cada reinício do `ffmpeg` resolvia o nome outra vez
+
+**Sintoma.** `check_tenant_stream_url` corria antes de a emissão arrancar. O supervisor reinicia o `ffmpeg` de um destino até oito vezes ao longo de minutos, e cada reinício resolve o nome por conta do `ffmpeg`, sem ninguém olhar para o resultado. Para apontar uma emissão a um endereço interno bastava um nome que respondesse público à primeira, falhasse a ligação, e passasse a responder `10.x` antes do reinício — sem acertar em janela nenhuma.
+
+**Regra.** O supervisor volta a perguntar à guarda antes de cada reinício (`broadcast::StreamUrlGuard`, a mesma `check_tenant_stream_url` com o DNS de agora). Um destino que deixou de resolver para um endereço público pára de vez, com a razão no estado, e o processo não volta a ser arrancado para ele.
+
+**Portão.** `broadcast.rs`: `um_destino_que_deixa_de_ser_publico_nao_e_reiniciado` (com oito tentativas permitidas, pára à primeira consulta e não arranca outro processo) e `um_destino_que_continua_publico_e_reiniciado` (controlo positivo: uma consulta por reinício, e o destino desiste pelo caminho de sempre).
+
+**O que NÃO está provado, e o que fica aberto.**
+- **A janela dentro de um arranque continua aberta.** Entre a resposta da guarda e a resolução que o `ffmpeg` faz a seguir passam milissegundos, e um DNS com TTL zero ainda pode trocar a resposta aí. Fixar o IP no URL parte o RTMPS: o `ffmpeg` não manda SNI para um endereço numérico, e as plataformas que só aceitam RTMPS servem por SNI. **A defesa completa continua a ser de rede** — o processo de emissão não alcançar a rede interna (RFC-0001 §11) — e depende do Channel Engine (plano de lacunas, D3).
+- Os testes usam uma guarda de ensaio; nenhum servidor de nomes trocou uma resposta a meio de uma emissão.
+- O primeiro arranque não passa por esta guarda: é o `preparar_destinos` que o valida, imediatamente antes.
+
+**Ficheiros.** `server/src/broadcast.rs`, `server/src/net_guard.rs`.
