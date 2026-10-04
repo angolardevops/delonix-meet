@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Fitness function: o ffmpeg da imagem do SERVIDOR é LGPL (ADR-0011, D3/B3).
+#  Fitness function: o ffmpeg da imagem do SERVIDOR é LGPL (decisão D3, achado B3; docs/tv/b3-ffmpeg-lgpl-2026-10-04.md).
 #
 #  O servidor só precisa de `-c copy`, `aac` nativo, libvpx-vp9 e libopus — nada
 #  que exija libx264. Por isso a imagem leva uma build LGPL e a GPL fica
@@ -36,7 +36,7 @@ for need in '--disable-gpl' '--disable-nonfree' 'FFMPEG_SHA256' 'FFMPEG_VERSION'
   code | grep -q -- "$need" || bad "$F não tem «$need»"
 done
 for forbid in '--enable-gpl' '--enable-nonfree' '--enable-version3' 'libx264' 'libx265' 'libfdk' 'enable-libx2'; do
-  code | grep -q -- "$forbid" && bad "$F usa «$forbid» — a imagem do servidor é LGPL (ADR-0011)"
+  code | grep -q -- "$forbid" && bad "$F usa «$forbid» — a imagem do servidor é LGPL (docs/tv/b3-ffmpeg-lgpl-2026-10-04.md)"
 done
 # O SHA-256 tem de estar preenchido (64 hex), não um marcador de zeros.
 code | grep -E 'ARG FFMPEG_SHA256=' | grep -qE '=[0-9a-f]{64}$' \

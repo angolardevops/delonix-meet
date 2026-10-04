@@ -1,9 +1,9 @@
 # B3 — ffmpeg LGPL na imagem do servidor (2026-10-04)
 
-Fecha o achado **B3** da [auditoria](auditoria-2026-10-03.md): a imagem do servidor era distroless e não tinha ffmpeg,
+Fecha o achado **B3** da auditoria de 2026-10-03 (`docs/tv/auditoria-2026-10-03.md`, só na `main` à data desta PR): a imagem do servidor era distroless e não tinha ffmpeg,
 por isso o directo e a gravação do servidor falhavam com `ffmpeg-ausente`. Decisão: **LGPL** na imagem do servidor
 (o servidor só usa `-c copy`, `aac` nativo, `libvpx-vp9` e `libopus`); a GPL com libx264 fica para o Channel Engine
-(D3, [ADR-0011](../adr/0011-channel-engine-ingest-e-distribuicao-de-tv.md)).
+(decisão D3 do ADR do Channel Engine, ainda só na `main` como `0011-channel-engine-…`; **na `develop` o 0011 é outro ADR** — o do Channel Engine foi renumerado para 0015 e ainda não chegou aqui).
 
 ## O que mudou
 
@@ -35,5 +35,5 @@ A fonte H.264 do último teste foi criada com o ffmpeg **do host** (com libx264)
 - **O `Dockerfile.server` completo nunca foi construído**: só o estágio `ffmpeg` e uma imagem distroless de teste com `/opt/ffmpeg` copiado. O estágio do Rust (mais de 1 GB, não autorizado) e o `COPY --from=ffmpeg` / `ENV` da imagem final não foram exercitados.
 - **Nenhuma gravação nem directo reais** correram com esta imagem a ser servidor: os testes acima são do ffmpeg isolado, com os mesmos argumentos que o código usa.
 - Sem Kubernetes, sem medição de CPU/RAM sob carga, sem o tempo exacto de construção (minutos; não registado).
-- **Obrigações de redistribuição (a validar com o jurídico, ver ADR-0011):** `ffmpeg.org/legal.html` pede, para redistribuir binários LGPL, o código-fonte **correspondente alojado no mesmo servidor** que o binário. A imagem aponta para `ffmpeg.org`; se a imagem for entregue a terceiros, será preciso alojar também o tarball (e o código do libvpx e do libopus). **Não está feito.**
+- **Obrigações de redistribuição (a validar com o jurídico, ver o ADR do Channel Engine):** `ffmpeg.org/legal.html` pede, para redistribuir binários LGPL, o código-fonte **correspondente alojado no mesmo servidor** que o binário. A imagem aponta para `ffmpeg.org`; se a imagem for entregue a terceiros, será preciso alojar também o tarball (e o código do libvpx e do libopus). **Não está feito.**
 - A construção da imagem depende de `ffmpeg.org`, do Docker Hub e dos espelhos Debian: durante este trabalho o DNS do `ffmpeg.org` e do Docker Hub falhou de forma transitória e houve de repetir.

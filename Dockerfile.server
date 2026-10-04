@@ -29,7 +29,7 @@ RUN cd server && cargo build --release && \
     strip /usr/local/bin/delonix-server
 
 # ------------------------------------------------------------
-# ffmpeg LGPL para o servidor (ADR-0011, D3 e B3).
+# ffmpeg LGPL para o servidor (decisão D3 e achado B3 da TV; ver docs/tv/b3-ffmpeg-lgpl-2026-10-04.md).
 #
 # O servidor só precisa de `-c copy`, `aac` nativo, libvpx-vp9 e libopus: nada
 # que exija libx264. Por isso o ffmpeg desta imagem é uma build LGPL (a GPL com

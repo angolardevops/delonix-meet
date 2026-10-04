@@ -153,7 +153,7 @@ jobs:
       - name: XML do FreeSWITCH (R226 — defeitos que só apareciam no arranque)
         run: bash scripts/check-fs-xml.sh
 
-      - name: ffmpeg do servidor é LGPL, com versão e SHA-256 fixados (ADR-0011)
+      - name: ffmpeg do servidor é LGPL, com versão e SHA-256 fixados (docs/tv/b3-ffmpeg-lgpl-2026-10-04.md)
         run: bash scripts/check-ffmpeg-licenca.sh
 
       - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
