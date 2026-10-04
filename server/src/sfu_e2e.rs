@@ -508,6 +508,15 @@ fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
 }
 
 fn new_sfu_com(ice_timeouts: Option<(Duration, Duration)>) -> (Arc<SfuState>, Arc<Metrics>) {
+    // `DELONIX_IT_LOG=<filtro tracing>` (a mesma variável dos testes de
+    // integração) mostra o que o SFU faz. Sem ela não há subscritor e uma falha
+    // de corrida só diz «faltou media», sem dizer em que ponto da negociação.
+    if let Ok(filter) = std::env::var("DELONIX_IT_LOG") {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    }
     let metrics = Arc::new(Metrics::default());
     (
         Arc::new(SfuState::new(
