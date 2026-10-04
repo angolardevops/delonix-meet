@@ -405,6 +405,11 @@ jobs:
           # admitir → retrato remoto. É a promessa central do produto e não
           # havia teste nenhum a cobri-la ponta a ponta.
           APP=http://localhost:5174 node web/e2e/reuniao.mjs
+          # Um CONVIDADO SEM CONTA entra pela interface: o link, um nome, a
+          # sala de espera, o anfitrião admite. É o caminho que decide a
+          # adopção, e durante meses o servidor teve a rota e nenhum ecrã a
+          # chamava — o `convidado.mjs` prova o servidor, este prova o ecrã.
+          APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/convidado-ecra.mjs
           # A MESMA pessoa entra duas vezes — portátil e telemóvel. A segunda
           # sessão tem de entrar SEM áudio: dois microfones e dois altifalantes
           # da mesma pessoa no mesmo espaço físico realimentam-se, e o ruído é

@@ -13,6 +13,7 @@ import { Spinner } from './ui/kit'
 //  ela webrtc/media/e2ee) nunca entra no chunk da consola.
 // ---------------------------------------------------------------------------
 import Login from './pages/Login'
+import PortaDeConvidado from './pages/PortaDeConvidado'
 import Home from './pages/Home'
 
 const Room = lazy(() => import('./pages/Room'))
@@ -126,13 +127,17 @@ export default function App() {
   if (location.hash.startsWith('#/legal')) return <RouteFallback><Legal /></RouteFallback>
   if (route.kind === 'share') return <RouteFallback><SharePage token={route.token} /></RouteFallback>
   if (!user) {
+    const aoEntrar = (u: User) => {
+      setUser(u)
+      if (location.hash.startsWith('#/login')) location.hash = '/'
+    }
+    // Um link de SALA sem sessão é a entrada de convidado: um nome, e o
+    // anfitrião admite. A moderação e o telemóvel-câmara continuam a pedir conta.
+    if (route.kind === 'room') return <PortaDeConvidado key={route.code} code={route.code} voice={route.voice} onLogin={aoEntrar} />
     return (
       <Login
-        pendingRoom={route.kind === 'room' || route.kind === 'lobby' || route.kind === 'telemovel' ? route.code : null}
-        onLogin={(u) => {
-          setUser(u)
-          if (location.hash.startsWith('#/login')) location.hash = '/'
-        }}
+        pendingRoom={route.kind === 'lobby' || route.kind === 'telemovel' ? route.code : null}
+        onLogin={aoEntrar}
       />
     )
   }

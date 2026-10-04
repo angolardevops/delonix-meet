@@ -2936,3 +2936,28 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 - O primeiro arranque não passa por esta guarda: é o `preparar_destinos` que o valida, imediatamente antes.
 
 **Ficheiros.** `server/src/broadcast.rs`, `server/src/net_guard.rs`.
+
+### R290 — Quem abria o link de uma reunião sem conta caía no login
+
+**Sintoma.** O servidor tinha a entrada de convidado sem conta desde a R155 (`POST /api/rooms/{code}/guest-join`), o cliente tinha `guestJoin` com testes, e **nenhum ecrã a chamava**: `App.tsx` mandava quem não tinha sessão para o `Login`, com a sala como destino «depois de entrares». Um convidado externo — o caso em que o Zoom e o Meet ganham — não conseguia entrar. Era o bloqueio nº 1 de adopção, e esteve dado como «feito» porque a rota existia.
+
+**Regra.**
+- **Um link de sala sem sessão é a entrada de convidado** (`pages/PortaDeConvidado.tsx`): um nome, «pedir para entrar», e a sala. O login fica a um botão, com a mesma sala como destino. A moderação (`#/lobby/…`) e o telemóvel-câmara continuam a pedir conta.
+- **O bilhete do convidado vive num só módulo** (`convidado.ts`): por sala, no `sessionStorage`, com o token de sala, os servidores ICE e o que ele vê da sala. Sobrevive a um F5 e morre com o separador.
+- **A sala entra por uma só função** — `entrarNaSala` — que serve os dois: um membro pede `joinRoom` e `iceServers` com a sessão; um convidado usa o bilhete e, se o token expirou (vale cinco minutos), pede outro com o mesmo nome. **Quem tem conta nunca entra como convidado**, mesmo com um bilhete antigo guardado.
+- **O próprio nome vem de `participanteLocal()`**, não de `currentUser()`: dezassete sítios da sala escreviam o nome da conta, e um convidado ficava com o retrato sem nome.
+- **O convidado não tem o que é da conta:** sem gravar (a gravação guarda-se na biblioteca de quem grava), sem convidar (é pesquisar pessoas da organização), sem presença nem chamadas directas (`PresencaAusente`). O resto da sala é o mesmo dos membros.
+- **Sair devolve-o a este ecrã** («saíste da reunião»), e o bilhete e o lugar reservado são esquecidos.
+- As recusas dizem o que fazer: sala que só aceita contas → iniciar sessão; código que não existe → não existe; travão → quanto falta.
+
+**Portão.** `web/e2e/convidado-ecra.mjs`, no CI, com dois Chromium e media falsa contra o servidor a sério — 25 verificações: sem sessão o link mostra a entrada de convidado e não o login; o convidado fica na sala de espera; o anfitrião vê o pedido com o nome escrito e admite; vêem-se um ao outro (o retrato remoto é o de QUEM se espera, pelo nome); o convidado não tem o botão de gravar e o anfitrião tem (controlo); nenhum pedido dele leva credenciais; depois de um F5 volta à sala sem nova espera e o anfitrião continua a ver um só; sair mostra «saíste da reunião»; sala fechada a convidados e código inexistente dizem-no. `web/src/convidado.test.ts` (11 casos): o bilhete, a renovação com o token expirado, e a regra de a conta ganhar. `tsc` limpo e `vitest` 1076/1076, com a paridade de chaves das quatro línguas.
+
+**O que NÃO está provado.**
+- **A media é a falsa do Chromium**, numa só máquina: nem rede real, nem TURN, nem telemóvel (só a largura de 375 px foi conferida, sem transbordo).
+- **Sala com cifra ponta-a-ponta:** o convidado precisa da frase-passe como qualquer membro; o ecrã da frase-passe é o da sala e não foi exercitado sem conta.
+- **Mais de cinco minutos parado na pré-entrada:** a renovação do bilhete está nos unitários, com relógio fingido; nenhum browser esperou cinco minutos.
+- **O chat anterior à entrada, o relatório de qualidade e as legendas guardadas** pedem sessão: para um convidado esses pedidos dão `401` e são ignorados (já tinham `catch`). Não vê o histórico do chat de antes de entrar.
+- **Convite por email com o link** não existe: não há correio (plano de lacunas, E2). O link partilha-se à mão.
+- Um instante depois do F5 a lista mostra o lugar reservado da própria pessoa como se fosse outra, até a reclamação do lugar terminar — acontece também a membros, e o teste passou a esperar pelo nome certo em vez de por «dois retratos».
+
+**Ficheiros.** `web/src/convidado.ts`, `web/src/pages/PortaDeConvidado.tsx`, `web/src/pages/auth/EntradaDeConvidado.tsx`, `web/src/App.tsx`, `web/src/components/PresenceProvider.tsx`, `web/src/room/useCallSession.ts`, os ficheiros da sala que liam `currentUser()`, `web/src/room/ControlBar.tsx`, `web/src/room/PeoplePanel.tsx`, `web/src/locales/*/auth.ts`, `web/e2e/convidado-ecra.mjs`, `.github/workflows/ci.yml`.

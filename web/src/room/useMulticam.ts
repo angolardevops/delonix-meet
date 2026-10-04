@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser } from '../api'
+import { participanteLocal } from '../convidado'
 import { Cena, Fonte, RoomCompositor } from './compositor'
 import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
 import type { RoomCore } from './useRoomCore'
@@ -39,7 +39,7 @@ export function useMulticam(core: RoomCore) {
     if (!open || !compositorRef.current) return
     const fontes: Fonte[] = [
       ...(boardStream ? [{ id: 'quadro', nome: t('room.quadro.titulo'), stream: boardStream }] : []),
-      { id: 'eu', nome: currentUser()?.username ?? '', stream: core.localStreamRef.current },
+      { id: 'eu', nome: participanteLocal().username, stream: core.localStreamRef.current },
       ...core.peers.filter((p) => p.stream).map((p): Fonte => ({ id: p.peerId, nome: p.username, stream: p.stream })),
     ]
     compositorRef.current.definirParticipantes(fontes)

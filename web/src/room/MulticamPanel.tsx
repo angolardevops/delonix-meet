@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser } from '../api'
+import { participanteLocal } from '../convidado'
 import type { Cena } from './compositor'
 import { Icon } from '../ui/icons'
 import { Alert, Button, Field, IconButton, Segmented, StatusBadge, TextInput, cx } from '../ui/kit'
@@ -14,7 +14,7 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
   const [verChave, setVerChave] = useState<Record<number, boolean>>({})
   const m = multicam
   const noAr = m.estado.fase === 'no-ar'
-  const pessoas = [{ id: 'eu', nome: currentUser()?.username ?? '' }, ...peers.map((p) => ({ id: p.peerId, nome: p.username }))]
+  const pessoas = [{ id: 'eu', nome: participanteLocal().username }, ...peers.map((p) => ({ id: p.peerId, nome: p.username }))]
 
   return (
     <div className="rm-scroll">
@@ -26,7 +26,7 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
             <span className="rm-multicam__onair dx-num" role="status">
               <Since desde={m.estado.desde} render={(txt) => t('room.multicam.noArDesde', { tempo: txt })} />
             </span>
-            <span className="rm-multicam__caption">{t('room.multicam.legendaPrograma', { nome: currentUser()?.username ?? '', titulo: roomTitle })}</span>
+            <span className="rm-multicam__caption">{t('room.multicam.legendaPrograma', { nome: participanteLocal().username, titulo: roomTitle })}</span>
           </>
         )}
       </div>

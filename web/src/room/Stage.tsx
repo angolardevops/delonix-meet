@@ -1,6 +1,6 @@
 import { CSSProperties, ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser } from '../api'
+import { participanteLocal } from '../convidado'
 import { Icon } from '../ui/icons'
 import { cx } from '../ui/kit'
 import { ParticipantTile, rotuloPapel, SpeakingBars, TileAvatar, TileFrame, TileName } from './ParticipantTile'
@@ -69,7 +69,7 @@ function PresenterCam({ stream, name, camOn, speaking, mirror }: { stream: Media
 export function Stage({ core, media, layout, qos, handRaised, onTilePin, onTileMute, onTileKick, onRequestControl, onOpenPeople, children }: StageProps) {
   const { t } = useTranslation()
   const { peers, speaking, presentation, isHost, sharing, topology } = core
-  const me = currentUser()?.username ?? ''
+  const me = participanteLocal().username
   const meSpeaking = speaking.has('me') && media.micOn
   const { effectiveViewMode, visiblePeers, tileSize, pinnedId } = layout
   const isSolo = layout.total === 1
