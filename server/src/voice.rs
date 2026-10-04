@@ -960,7 +960,7 @@ pub(crate) async fn validate_pin_for_extension(
         ApiError::NotFound
     };
 
-    let ext: Option<(Uuid, Uuid, String)> = sqlx::query_as(
+    let ext: Option<(Uuid, Option<Uuid>, String)> = sqlx::query_as(
         "SELECT e.org_id, e.member_id, o.slug
            FROM voice_extensions e JOIN organizations o ON o.id = e.org_id
           WHERE e.sip_username = $1 AND e.active",
@@ -978,9 +978,12 @@ pub(crate) async fn validate_pin_for_extension(
     if !domain.trim().eq_ignore_ascii_case(&expected) {
         return Err(refuse());
     }
-    // O ramal é 1:1 com um membro: arquivado, o softphone não abre reuniões.
-    if role_in_org(state, org_id, member_id).await?.is_none() {
-        return Err(refuse());
+    // O ramal de uma pessoa: arquivada, o softphone não abre reuniões. Um
+    // ramal da empresa (R276) não tem pessoa — vale enquanto estiver activo.
+    if let Some(member_id) = member_id {
+        if role_in_org(state, org_id, member_id).await?.is_none() {
+            return Err(refuse());
+        }
     }
 
     // O PIN é único por (DID, sala activa), não por org: com dois DIDs, duas

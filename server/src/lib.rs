@@ -19,6 +19,7 @@ pub mod data_exports;
 mod directory;
 mod dlp;
 mod error;
+mod extension_pin;
 pub mod grpc;
 mod guests;
 mod media_probe;
@@ -231,6 +232,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
         .route(
             "/internal/v1/voice/ivr/validate-extension",
             post(voice::ivr_validate_extension_pin),
+        )
+        // O PIN de um RAMAL (R276): identifica a pessoa, não a sala. Ainda sem
+        // consumidor — o Lua do IVR passa a chamá-la no lote seguinte.
+        .route(
+            "/internal/v1/voice/ivr/verify-extension-pin",
+            post(extension_pin::ivr_verify_extension_pin),
         )
         .route("/internal/v1/voice/ivr/cdr", post(voice::ivr_record_cdr))
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
@@ -968,6 +975,39 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/extensions/{id}/did",
             axum::routing::put(ramais::assign_extension_did)
                 .delete(ramais::unassign_extension_did),
+        )
+        // Numeração automática: o intervalo da org e a atribuição em massa (R276).
+        .route(
+            "/api/orgs/{org_id}/extension-range",
+            get(ramais::get_extension_range).put(ramais::put_extension_range),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/assign-missing",
+            post(ramais::assign_missing_extensions),
+        )
+        // PIN do ramal (R276). De um ramal da EMPRESA, o administrador gera,
+        // escolhe ou limpa; de um ramal de pessoa só limpa — e ela gera o seu
+        // em `/my-extension`.
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/pin",
+            axum::routing::put(extension_pin::set_extension_pin)
+                .delete(extension_pin::clear_extension_pin),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/regenerate-pin",
+            post(extension_pin::regenerate_extension_pin),
+        )
+        .route(
+            "/api/orgs/{org_id}/my-extension",
+            get(extension_pin::my_extension),
+        )
+        .route(
+            "/api/orgs/{org_id}/my-extension/pin",
+            axum::routing::put(extension_pin::set_my_pin),
+        )
+        .route(
+            "/api/orgs/{org_id}/my-extension/regenerate-pin",
+            post(extension_pin::regenerate_my_pin),
         )
         // API interna do FreeSWITCH para os ramais (mesmo segredo do dial-in PSTN;
         // fica no router público porque os configs `xml_curl.conf.xml`/
