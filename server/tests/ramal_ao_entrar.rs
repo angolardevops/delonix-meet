@@ -4,11 +4,14 @@
 //! caminho de entrada coberto aqui deixa o membro novo com um ramal do
 //! intervalo; desligada, não; e o intervalo esgotado nunca parte a entrada.
 //!
-//! Caminhos medidos: o administrador junta um colaborador (`POST …/members`),
-//! o convite aceite (`POST /api/invitations/accept`) e o convidado de uma
-//! reunião criada pela API v1 (`meetings_v1::resolve_org_user`). Os caminhos
-//! do SSO (OIDC JIT e Odoo) e o registo em modo de organização única chamam a
-//! MESMA função mas não têm teste aqui.
+//! Recebe ramal quem entra por um ACTO de um administrador ou de um IdP.
+//! Caminhos medidos: o administrador junta um colaborador (`POST …/members`) e
+//! o convite aceite (`POST /api/invitations/accept`). O SSO (OIDC JIT e Odoo) e
+//! a reactivação chamam a MESMA função mas não têm teste aqui.
+//!
+//! NÃO recebe, e está medido: quem se regista sozinho (registo aberto numa
+//! instalação de organização única — email não verificado) e o convidado de
+//! uma reunião criada pela API v1 (um endereço que pode nem existir).
 mod common;
 
 use common::{Account, TestApp};
@@ -116,6 +119,25 @@ async fn desligada_por_omissao_ligada_da_ramal_a_quem_o_admin_junta(db: sqlx::Pg
     assert_eq!(st, 200, "{meu}");
     assert_eq!(meu["extension"], "2000");
     assert_eq!(meu["pin_state"], "unset");
+
+    // Um PUT só com o intervalo (cliente que não conhece o campo) MANTÉM-na
+    // ligada (N4): ausente não é «desligar».
+    let (st, body) = app
+        .put(
+            &format!("/api/orgs/{}/extension-range", a.org()),
+            Some(&a.token),
+            json!({"range_start": 2000, "range_end": 2010}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["auto_assign_on_join"], true, "{body}");
+    let (_, lido) = app
+        .get(
+            &format!("/api/orgs/{}/extension-range", a.org()),
+            Some(&a.token),
+        )
+        .await;
+    assert_eq!(lido["auto_assign_on_join"], true, "{lido}");
 
     // Ligar não dá ramal a quem já cá estava: isso é o «atribuir a todos».
     assert_eq!(ramal_de(&app, a.org(), &antes.user_id).await, None);
@@ -261,8 +283,11 @@ async fn convite_aceite_da_ramal_e_convidado_externo_nao(db: sqlx::PgPool) {
     );
 }
 
+/// N8: a API v1 cria uma conta e uma pertença para cada convidado do domínio —
+/// um endereço que pode nem existir. Não é uma entrada decidida por um
+/// administrador: não dá ramal (nem custa um Argon2 por convidado).
 #[sqlx::test(migrations = "./migrations")]
-async fn convidado_de_reuniao_pela_api_v1_recebe_ramal(db: sqlx::PgPool) {
+async fn convidado_de_reuniao_pela_api_v1_nao_recebe_ramal(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa-v1.ao").await;
     definir(&app, &a, 5000, 5010, true).await;
@@ -286,13 +311,68 @@ async fn convidado_de_reuniao_pela_api_v1_recebe_ramal(db: sqlx::PgPool) {
     assert_eq!(r.status, 200, "{}", r.text);
     let novo: Value = r.json();
     assert_eq!(novo["invitees"][0]["email"], "novo@alfa-v1.ao", "{novo}");
-    let numero: Option<String> = sqlx::query_scalar(
-        "SELECT e.extension FROM voice_extensions e JOIN users u ON u.id = e.member_id
-          WHERE e.org_id = $1::uuid AND u.email = 'novo@alfa-v1.ao'",
+    // A pertença nasceu…
+    let membro: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members m JOIN users u ON u.id = m.user_id
+                         WHERE m.org_id = $1::uuid AND u.email = 'novo@alfa-v1.ao')",
     )
     .bind(a.org())
-    .fetch_optional(&app.db)
+    .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!(numero.as_deref(), Some("5000"));
+    assert!(membro);
+    // … e nenhum ramal com ela.
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM voice_extensions WHERE org_id = $1::uuid")
+            .bind(a.org())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(n, 0);
+}
+
+/// A1: instalação de organização única com registo ABERTO. Quem se regista
+/// entra na organização sem acto de ninguém e sem email verificado: NÃO recebe
+/// ramal, mesmo com a atribuição automática ligada — senão um desconhecido
+/// ficava com uma conta SIP (e, repetindo, esgotava o intervalo).
+#[sqlx::test(migrations = "./migrations")]
+async fn quem_se_regista_sozinho_nao_recebe_ramal(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(
+        db,
+        &[("TENANCY_MODE", "single"), ("REGISTRATION_MODE", "open")],
+    )
+    .await;
+    // O primeiro registo cria a organização única e é o seu administrador.
+    let a = app.new_org("unica.ao").await;
+    definir(&app, &a, 6000, 6010, true).await;
+
+    // Um desconhecido, com um email qualquer, regista-se.
+    let (st, reg) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "desconhecido@outro-dominio.test", "username": "desconhecido",
+                   "password": common::PASSWORD}),
+        )
+        .await;
+    assert!(st < 300, "{st} {reg}");
+    let intruso = app.login("desconhecido@outro-dominio.test").await;
+    // Entrou MESMO na organização única (é esta a pré-condição do ataque)…
+    let (st, orgs) = app.get("/api/orgs", Some(&intruso.token)).await;
+    assert_eq!(st, 200);
+    assert_eq!(orgs[0]["id"], json!(a.org()), "{orgs}");
+    // … e não tem ramal, nem bilhete para pedir.
+    assert_eq!(ramal_de(&app, a.org(), &intruso.user_id).await, None);
+    let (st, body) = app
+        .post(
+            &format!("/api/orgs/{}/my-extension/provisioning-ticket", a.org()),
+            Some(&intruso.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 404, "{body}");
+    assert_eq!(body["code"], "ramais.no_extension");
+    assert!(auditoria(&app, a.org(), "ramal.atribuido_ao_entrar")
+        .await
+        .is_empty());
 }

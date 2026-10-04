@@ -22,9 +22,20 @@
 //! **Ler o QR troca a password SIP**: o aparelho que estava registado com a
 //! anterior deixa de registar. A consola di-lo antes de mostrar o QR.
 //!
-//! O token não entra em nenhum registo: nem na auditoria (o alvo é o número do
-//! ramal), nem no `tracing` (o caminho desta rota sai redigido no span HTTP,
-//! `lib.rs::logged_path`).
+//! **Onde o token fica e onde não fica.** NÃO fica na auditoria (o alvo é o
+//! número do ramal e o IP de quem resgatou) nem no `tracing` do servidor (o
+//! caminho desta rota sai redigido do span HTTP — `redact_path`, abaixo). FICA
+//! no registo de acessos de qualquer proxy à frente que não tenha sido
+//! instruído a calar esta rota: os três nginx do repositório têm uma
+//! `location` com `access_log off` para ela; um ingress-nginx de cluster não.
+//! Um bilhete que aparece num registo já foi gasto ou expira em dez minutos.
+//!
+//! **O que protege a rota pública** são os 256 bits do token e o uso único —
+//! não o limite por IP. Esse existe (`provisioning_limiter`), mas
+//! `rate_limit::client_ip` confia no primeiro elemento de `X-Forwarded-For`
+//! quando o par é um proxy, e os proxies do repositório ACRESCENTAM ao que o
+//! cliente mandou: quem forjar o cabeçalho escolhe o seu balde (defeito
+//! anterior a este módulo, aberto na R278).
 //!
 //! **Não verificado:** nenhum Linphone real leu um destes QR. O formato da
 //! configuração é o documentado (`delonix_meet_domain::telephony::extension_provisioning`).
@@ -48,8 +59,9 @@ use delonix_meet_domain::telephony::{extension::SipServer, extension_provisionin
 /// redige o que vem a seguir nos registos.
 pub(crate) const REDEEM_PREFIX: &str = "/api/public/extension-provisioning/";
 
-/// Um bilhete acabado de emitir. O URL leva o token: mostra-se uma vez.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+/// Um bilhete acabado de emitir. O URL leva o token: mostra-se uma vez. Sem
+/// `Debug` de propósito — o URL É a credencial, e um `{:?}` punha-o num registo.
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ProvisioningTicket {
     /// O URL que o Linphone descarrega («remote provisioning»). A consola põe-no
     /// num QR; serve uma vez.
@@ -220,6 +232,24 @@ fn invalid() -> ApiError {
     DomainError::not_found("ramais.provisioning_invalid").into()
 }
 
+/// Apaga os bilhetes de um ramal — os QR ainda por ler deixam de servir. É o
+/// que a regeneração da password pelo administrador chama: sem isto, um QR
+/// emitido antes trocava a password nova outra vez.
+pub(crate) async fn revoke_tickets(
+    db: &sqlx::PgPool,
+    org_id: Uuid,
+    extension_id: Uuid,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "DELETE FROM voice_extension_provisioning_tickets WHERE extension_id = $1 AND org_id = $2",
+    )
+    .bind(extension_id)
+    .bind(org_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 #[derive(sqlx::FromRow)]
 struct RedeemRow {
     org_id: Uuid,
@@ -234,6 +264,7 @@ struct ExtensionRow {
     label: String,
     active: bool,
     member_username: Option<String>,
+    org_slug: String,
 }
 
 /// O telefone troca o bilhete pela configuração do Linphone. Rota PÚBLICA: a
@@ -270,7 +301,26 @@ pub async fn redeem(
     let Some(server) = state.config.voice_ramais_public.as_ref() else {
         return Err(invalid());
     };
+    let token_hash = crate::crypto::sha256_hex(&token);
 
+    // Só quem traz um bilhete vivo custa um Argon2: sem esta pergunta, cada
+    // token inventado punha o servidor a calcular um hash.
+    let alive: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM voice_extension_provisioning_tickets
+                         WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now())",
+    )
+    .bind(&token_hash)
+    .fetch_one(&state.db)
+    .await?;
+    if !alive {
+        return Err(invalid());
+    }
+    // O segredo calcula-se ANTES de abrir a transacção: o Argon2 não corre com
+    // a linha do ramal bloqueada.
+    let secret = crate::ramais::SipSecret::generate()?;
+
+    // Daqui em diante tudo se lê e escreve pela MESMA ligação: com a linha
+    // bloqueada não se vai buscar outra ao pool.
     let mut tx = state.db.begin().await?;
     // Gastar primeiro: de dois resgates em paralelo, o segundo espera pelo
     // bloqueio da linha, volta a avaliar `consumed_at IS NULL` e não a apanha.
@@ -279,7 +329,7 @@ pub async fn redeem(
           WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now()
           RETURNING org_id, extension_id",
     )
-    .bind(crate::crypto::sha256_hex(&token))
+    .bind(&token_hash)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(ticket) = ticket else {
@@ -287,8 +337,10 @@ pub async fn redeem(
     };
     let ext: Option<ExtensionRow> = sqlx::query_as(
         "SELECT e.extension, e.sip_username, e.member_id, e.label, e.active,
-                u.username AS member_username
-           FROM voice_extensions e LEFT JOIN users u ON u.id = e.member_id
+                u.username AS member_username, o.slug AS org_slug
+           FROM voice_extensions e
+           JOIN organizations o ON o.id = e.org_id
+           LEFT JOIN users u ON u.id = e.member_id
           WHERE e.id = $1 AND e.org_id = $2
           FOR UPDATE OF e",
     )
@@ -296,42 +348,46 @@ pub async fn redeem(
     .bind(ticket.org_id)
     .fetch_optional(&mut *tx)
     .await?;
-    // Ramal inactivo: a transacção cai e o bilhete fica como estava.
-    let Some(ext) = ext.filter(|e| e.active) else {
-        return Err(invalid());
-    };
-    // O ramal de quem saiu da organização não se configura.
-    if let Some(member_id) = ext.member_id {
-        if crate::org::role_in_org(&state, ticket.org_id, member_id)
+    // Ramal inactivo, ou de quem saiu da organização: não se configura — e o
+    // bilhete GASTA-SE na mesma (o commit abaixo). Reactivar o ramal não
+    // ressuscita um QR antigo.
+    let mut usable = ext.filter(|e| e.active);
+    if let Some(member_id) = usable.as_ref().and_then(|e| e.member_id) {
+        // A pertença decide-se em org.rs, pela mesma ligação.
+        let active_member = crate::org::member_state(&mut *tx, ticket.org_id, member_id)
             .await?
-            .is_none()
-        {
-            return Err(invalid());
+            .is_some_and(|m| m.archived_at.is_none());
+        if !active_member {
+            usable = None;
         }
     }
+    let Some(ext) = usable else {
+        tx.commit().await?;
+        return Err(invalid());
+    };
 
-    let sip_domain = crate::ramais::sip_domain_for_org(&state, ticket.org_id).await?;
-    let (sip_password, password_hash, ha1) =
-        crate::ramais::new_sip_secret(&ext.sip_username, &sip_domain)?;
+    let sip_domain = crate::ramais::sip_domain_of_slug(&state, &ext.org_slug);
+    let ha1 = secret.ha1(&ext.sip_username, &sip_domain);
     sqlx::query(
         "UPDATE voice_extensions SET sip_password_hash = $3, sip_ha1 = $4
           WHERE id = $1 AND org_id = $2",
     )
     .bind(ticket.extension_id)
     .bind(ticket.org_id)
-    .bind(&password_hash)
+    .bind(&secret.hash)
     .bind(&ha1)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
 
-    // Actor de sistema: quem resgata não tem conta. O alvo é o ramal.
+    // Actor de sistema: quem resgata não tem conta. O alvo é o ramal e a
+    // ORIGEM do pedido — é o que deixa perceber, depois, quem leu o QR.
     crate::audit::log(
         &state.db,
         Some(ticket.org_id),
         Uuid::nil(),
         "ramal.provisionado",
-        &ext.extension,
+        &format!("{} ← {ip}", ext.extension),
     )
     .await;
 
@@ -343,7 +399,7 @@ pub async fn redeem(
         display_name,
         sip_username: &ext.sip_username,
         sip_domain: &sip_domain,
-        sip_password: &sip_password,
+        sip_password: &secret.password,
         server,
     });
     let mut res = (StatusCode::OK, xml).into_response();

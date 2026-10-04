@@ -203,9 +203,13 @@ async fn o_dono_emite_e_o_resgate_da_uma_password_que_regista(db: sqlx::PgPool) 
     let emitidos = auditoria(&app, a.org(), "ramal.provisionamento_emitido").await;
     assert_eq!(emitidos, vec![(ana.user_id.clone(), "1004".to_string())]);
     let resgatados = auditoria(&app, a.org(), "ramal.provisionado").await;
+    // … e com a ORIGEM do pedido (M6): sem ela não se percebe quem leu o QR.
     assert_eq!(
         resgatados,
-        vec![(uuid::Uuid::nil().to_string(), "1004".to_string())]
+        vec![(
+            uuid::Uuid::nil().to_string(),
+            "1004 ← 127.0.0.1".to_string()
+        )]
     );
     let com_token: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs WHERE target LIKE '%' || $1 || '%'")
@@ -296,10 +300,84 @@ async fn expirado_ou_ramal_inactivo_da_404(db: sqlx::PgPool) {
     let r = resgatar(&app, &caminho(&t)).await;
     assert_eq!(r.status, 404);
     assert_eq!(r.json()["code"], "ramais.provisioning_invalid");
+    // E o bilhete GASTOU-SE (N6): reactivar o ramal não ressuscita o QR antigo.
+    let gasto: bool = sqlx::query_scalar(
+        "SELECT consumed_at IS NOT NULL FROM voice_extension_provisioning_tickets",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(gasto, "o bilhete de um ramal inactivo tem de ficar gasto");
+    let caminho_antigo = caminho(&t);
     // Inactivo, nem se emite.
     let (st, body) = emitir_admin(&app, &a, a.org(), id).await;
     assert_eq!(st, 422, "{body}");
     assert_eq!(body["code"], "ramais.extension_inactive");
+
+    let (st, _) = app
+        .patch(
+            &format!("/api/orgs/{}/extensions/{id}", a.org()),
+            Some(&a.token),
+            json!({"active": true}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    let r = resgatar(&app, &caminho_antigo).await;
+    assert_eq!(r.status, 404, "{}", r.text);
+}
+
+/// N6: regenerar a password SIP mata os QR por ler — senão o QR antigo trocava
+/// a password nova outra vez.
+#[sqlx::test(migrations = "./migrations")]
+async fn regenerar_a_password_mata_o_qr_por_ler(db: sqlx::PgPool) {
+    let app = spawn(db).await;
+    let a = app.new_org("alfa-qr-regen.ao").await;
+    let ramal = novo_ramal(&app, &a, None, "1000").await;
+    let id = ramal["id"].as_str().unwrap();
+    let (st, t) = emitir_admin(&app, &a, a.org(), id).await;
+    assert_eq!(st, 200, "{t}");
+
+    let (st, nova) = app
+        .post(
+            &format!("/api/orgs/{}/extensions/{id}/regenerate-password", a.org()),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{nova}");
+    let pass = nova["sip_password"].as_str().unwrap();
+
+    let r = resgatar(&app, &caminho(&t)).await;
+    assert_eq!(r.status, 404, "{}", r.text);
+    assert_eq!(r.json()["code"], "ramais.provisioning_invalid");
+    // A password que o admin acabou de ver continua a ser a que regista.
+    let user = ramal["sip_username"].as_str().unwrap();
+    let domain = ramal["sip_domain"].as_str().unwrap();
+    assert_eq!(
+        a1_do_directorio(&app, user, domain).await,
+        hex::encode(Md5::digest(format!("{user}:{domain}:{pass}")))
+    );
+}
+
+/// O limite por IP da rota pública: 20 por minuto, o 21.º é `429` com
+/// `Retry-After`. Sem `X-Forwarded-For` — com ele forjado atrás de um proxy o
+/// balde é o que o cliente escolher (`rate_limit::client_ip`, aberto na R278).
+#[sqlx::test(migrations = "./migrations")]
+async fn o_vigesimo_primeiro_resgate_do_mesmo_ip_e_429(db: sqlx::PgPool) {
+    let app = spawn(db).await;
+    let path = format!("/api/public/extension-provisioning/{}", "0".repeat(64));
+    for i in 0..20 {
+        let r = resgatar(&app, &path).await;
+        assert_eq!(r.status, 404, "pedido {i}: {}", r.text);
+    }
+    let r = resgatar(&app, &path).await;
+    assert_eq!(r.status, 429, "{}", r.text);
+    let retry: u64 = r
+        .header("retry-after")
+        .expect("Retry-After")
+        .parse()
+        .unwrap();
+    assert!((1..=60).contains(&retry), "{retry}");
 }
 
 #[sqlx::test(migrations = "./migrations")]

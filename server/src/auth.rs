@@ -557,7 +557,9 @@ pub async fn register(
     tx.commit().await?;
 
     crate::audit::log(&state.db, Some(org_id), user.id, action, &target).await;
-    crate::ramais::assign_on_join(&state, org_id, user.id).await;
+    // O auto-registo NÃO dá ramal (R278): ninguém da organização decidiu esta
+    // entrada e o email não foi verificado — com o registo aberto numa
+    // instalação de organização única, um desconhecido ficava com uma conta SIP.
     let session = SessionMeta::fresh(&headers, ip, crate::sessions::AuthMethod::Password);
     Ok(auth_ok(&state, issue_tokens(&state, user, session).await?))
 }

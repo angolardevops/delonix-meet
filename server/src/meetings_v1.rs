@@ -369,19 +369,17 @@ async fn resolve_org_user(
         }
     };
 
-    let joined = sqlx::query(
+    // Sem ramal automático (R278): quem cria esta pertença é uma chave de API a
+    // convidar um endereço — que pode nem existir —, não um administrador a
+    // decidir uma entrada.
+    sqlx::query(
         "INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'member')
          ON CONFLICT (org_id, user_id) DO NOTHING",
     )
     .bind(org_id)
     .bind(user_id)
     .execute(&state.db)
-    .await?
-    .rows_affected()
-        > 0;
-    if joined {
-        crate::ramais::assign_on_join(state, org_id, user_id).await;
-    }
+    .await?;
 
     Ok(Resolved::User(user_id))
 }
