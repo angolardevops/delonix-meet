@@ -3655,6 +3655,10 @@
       "ExtensionRange": {
         "description": "O intervalo de onde saem os números automáticos de uma organização.",
         "properties": {
+          "auto_assign_on_join": {
+            "description": "Atribuir um ramal automaticamente a quem entra na organização (R278).\nDesligado por omissão.",
+            "type": "boolean"
+          },
           "range_end": {
             "description": "Último número do intervalo, inclusive.",
             "example": 1999,
@@ -7605,6 +7609,32 @@
         ],
         "type": "object"
       },
+      "ProvisioningTicket": {
+        "description": "Um bilhete acabado de emitir. O URL leva o token: mostra-se uma vez. Sem\n`Debug` de propósito — o URL É a credencial, e um `{:?}` punha-o num registo.",
+        "properties": {
+          "expires_at": {
+            "description": "Depois disto o URL já não serve.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension": {
+            "description": "O ramal que o QR configura.",
+            "example": "1004",
+            "type": "string"
+          },
+          "provisioning_url": {
+            "description": "O URL que o Linphone descarrega («remote provisioning»). A consola põe-no\nnum QR; serve uma vez.",
+            "example": "https://meet.exemplo.ao/api/public/extension-provisioning/3f9c…",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provisioning_url",
+          "expires_at",
+          "extension"
+        ],
+        "type": "object"
+      },
       "PublicCapabilities": {
         "description": "O que ESTA instalação faz — cada flag lê a configuração que a liga.",
         "properties": {
@@ -7761,6 +7791,35 @@
         },
         "required": [
           "rules"
+        ],
+        "type": "object"
+      },
+      "PutExtensionRangeReq": {
+        "description": "O que o `PUT` do intervalo aceita.",
+        "properties": {
+          "auto_assign_on_join": {
+            "description": "Ausente = MANTER o que está gravado. Um cliente que só conhece o\nintervalo não desliga a atribuição automática sem querer.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "range_end": {
+            "example": 1999,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "range_start": {
+            "example": 1000,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "range_start",
+          "range_end"
         ],
         "type": "object"
       },

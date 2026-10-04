@@ -1203,6 +1203,9 @@ pub async fn accept_invitation(
     tx.commit()
         .await
         .map_err(crate::org::map_member_write_error)?;
+    // Um convidado externo não ocupa lugar e não recebe ramal: decide-o o
+    // próprio `assign_on_join`.
+    crate::ramais::assign_on_join(&state, org_id, auth.user_id).await;
     crate::audit::log(&state.db, Some(org_id), auth.user_id, "invitation.accepted",
         &serde_json::json!({"invitation_id": id, "role_id": role_id, "department_id": department_id,
                             "access_expires_at": access_expires_at}).to_string()).await;
@@ -1384,6 +1387,8 @@ async fn member_action(
                 .await
                 .map_err(crate::org::map_member_write_error)?;
             if changed {
+                // Quem volta e não tem ramal recebe um (quem já tinha fica com ele).
+                crate::ramais::assign_on_join(state, org_id, user_id).await;
                 crate::audit::log(
                     &state.db,
                     Some(org_id),
