@@ -48,9 +48,10 @@ RUN cd server && cargo build --release && \
 # ------------------------------------------------------------
 FROM debian:bookworm-slim AS ffmpeg
 ARG FFMPEG_VERSION=9.0.2
-# SHA-256 de ffmpeg-${FFMPEG_VERSION}.tar.xz. Os zeros são um marcador que o
-# gate recusa: preenche-se depois de verificar a assinatura PGP do tarball.
-ARG FFMPEG_SHA256=0000000000000000000000000000000000000000000000000000000000000000
+# SHA-256 de ffmpeg-${FFMPEG_VERSION}.tar.xz, calculado depois de verificar a
+# assinatura PGP do release (chave FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8,
+# a mesma que ffmpeg.org/download.html publica). Ao subir a versão, refazer as duas coisas.
+ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl xz-utils build-essential nasm pkg-config \
         libvpx-dev libopus-dev zlib1g-dev \
@@ -71,14 +72,21 @@ RUN cd "ffmpeg-${FFMPEG_VERSION}" && ./configure \
         --extra-ldsoflags="-Wl,--disable-new-dtags,-rpath,/opt/ffmpeg/lib" \
     && make -j"$(nproc)" && make install \
     && cp COPYING.LGPLv2.1 /opt/ffmpeg/COPYING.LGPLv2.1
-# As bibliotecas de que o ffmpeg depende e que a imagem final não traz (libvpx,
-# libopus, libz). As da glibc ficam de fora: a imagem final já as tem.
-RUN for b in /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe; do ldd "$b"; done \
+# Sem cabeçalhos nem .pc de desenvolvimento: a imagem só corre o ffmpeg. As
+# bibliotecas de que ele depende e que a imagem final não traz (libvpx, libopus,
+# libz) copiam-se para junto das dele; as da glibc ficam de fora: a imagem final
+# já as tem.
+RUN rm -rf /opt/ffmpeg/include /opt/ffmpeg/lib/pkgconfig \
+    && for b in /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe; do ldd "$b"; done \
         | awk '/=> \//{print $3}' | sort -u \
         | grep -vE '/(libc|libm|libdl|libpthread|librt|libgcc_s|ld-linux[^/]*)\.so' \
         | grep -v '^/opt/ffmpeg/' \
         | xargs -r -I{} cp -L {} /opt/ffmpeg/lib/ \
+    && mkdir -p /opt/ffmpeg/licenses \
+    && for p in libvpx7 libopus0 zlib1g; do \
+         cp "/usr/share/doc/$p/copyright" "/opt/ffmpeg/licenses/$p.copyright"; done \
     && { echo "ffmpeg ${FFMPEG_VERSION} — LGPL v2.1+"; \
+         echo "bibliotecas de terceiros copiadas junto (avisos em licenses/): libvpx, libopus, zlib"; \
          echo "código-fonte: https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz (sha256 ${FFMPEG_SHA256})"; \
          /opt/ffmpeg/bin/ffmpeg -version | sed -n 's/^configuration: /configuração: /p'; \
        } > /opt/ffmpeg/SOURCE.txt \
