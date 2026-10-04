@@ -653,7 +653,7 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<PasskeyLoginReq>,
 ) -> Result<Response, ApiError> {
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     let wa = webauthn(&state)?;
     let user_id = challenge_user(&state, &req.mfa_token)?;
     // O mesmo travão por conta do código TOTP.
