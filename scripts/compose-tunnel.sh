@@ -78,12 +78,15 @@ case "${1:-}" in
       "x:localservertls:$MEET_HOST" "u:Host:$MEET_HOST" "x:https" \
       >"$LOG" 2>&1 </dev/null &
     echo $! >"$PID_FILE"
-    # O Pinggy escreve o URL no terminal, com cores; tira-se o ruído e apanha-se o 1.º https.
+    # O Pinggy escreve os URLs no terminal, com cores, DEPOIS do aviso dos 60 minutos, que
+    # traz o endereço do painel (`dashboard.pinggy.io`): tira-se o ruído, ignora-se o painel e
+    # apanha-se o 1.º URL do túnel (medido a 2026-10-04: `*.run.pinggy-free.link` e `*.free.pinggy.net`).
     url=
     for _ in $(seq 1 "$WAIT_SECS"); do
       alive || break
       url=$(sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$LOG" | tr -d '\r' \
-            | grep -oE 'https://[A-Za-z0-9._-]*pinggy[A-Za-z0-9._-]*' | head -1 || true)
+            | grep -oE 'https://[A-Za-z0-9._-]*pinggy[A-Za-z0-9._-]*' \
+            | grep -v '^https://dashboard\.' | head -1 || true)
       [ -n "$url" ] && break
       sleep 1
     done

@@ -115,7 +115,10 @@ A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Z
    raiz de laboratório, que o telemóvel instala uma vez a partir de
    `http://<ip>:8080/lab-ca.crt`; cobre também o registo SIP) ou `make tunnel` (um túnel
    Pinggy com um URL novo a cada execução, 60 minutos, **publica a borda inteira na
-   Internet**, só o QR e a descarga — o UDP do SIP não passa; `make tunnel-stop` fecha).
+   Internet**, só o QR e a descarga — o UDP do SIP não passa; `make tunnel-stop` fecha). **Medido a 2026-10-04:** o Pinggy
+   serve a página HTML de aviso dele a um cliente com User-Agent de navegador (a câmara ou um
+   navegador a abrir o URL do QR não recebem a configuração); um cliente que não o pareça passa
+   para o servidor.
 3. Registar o softphone no Kamailio e "ligar" para o número da sala.
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
    `GET /api/orgs/{org}/voice/call-records`.
