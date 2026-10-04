@@ -414,6 +414,29 @@ impl TestClient {
         }
     }
 
+    /// Responde a uma oferta do servidor depois de o ICE deste cliente estar
+    /// ligado (ou ao fim de 5 s, para um ICE que nunca liga continuar visível).
+    ///
+    /// Porquê: o webrtc-rs só regista as credenciais remotas ao ARRANCAR o
+    /// transporte ICE, que é assíncrono. Uma oferta do servidor que chegue
+    /// antes disso (o SFU oferece logo a seguir à resposta) é lida como uma
+    /// MUDANÇA de credenciais — um reinício implícito de ICE — e falha com
+    /// «ICE Agent can not be restarted when gathering»; o PC fica preso em
+    /// `have-remote-offer` e recusa tudo o que vem depois. Medido (a oferta e a
+    /// descrição remota anterior tinham o MESMO `ice-ufrag`): o servidor não
+    /// mudou nada. Um browser não tem esta corrida; o cliente de teste tem.
+    async fn responder_com_ice_ligado(&self, sdp: String) {
+        use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState as S;
+        let limite = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < limite {
+            if matches!(self.pc.ice_connection_state(), S::Connected | S::Completed) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.answer_to(sdp).await;
+    }
+
     async fn answer_to(&self, sdp: String) {
         // Cada saída avisa: sem isto, um cliente que recusa a oferta do servidor
         // só se vê como um timeout de 3×10 s do lado do SFU, sem dizer porquê.
@@ -504,7 +527,10 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
                     client.held.lock().await.push(sdp);
                     continue;
                 }
-                client.answer_to(sdp).await;
+                // Fora da bomba: esperar pelo ICE dentro dela travava os
+                // `SfuIce` que vêm na mesma fila, e sem eles o ICE nunca liga.
+                let client = client.clone();
+                tokio::spawn(async move { client.responder_com_ice_ligado(sdp).await });
             }
             ServerMsg::SfuIce { candidate } => {
                 if let Ok(init) = serde_json::from_value::<RTCIceCandidateInit>(candidate) {
