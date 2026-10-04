@@ -266,6 +266,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-room-affinity.sh
 	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-fs-xml.sh
+	@bash scripts/check-ffmpeg-licenca.sh
 	@bash scripts/check-k8s-render.sh
 	@HELM=$(HELM) bash scripts/check-helm.sh
 	@bash scripts/check-arquitectura-catraca.sh
