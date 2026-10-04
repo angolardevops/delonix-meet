@@ -104,3 +104,53 @@ async fn added_employee_without_password_does_not_get_a_known_password(db: sqlx:
     assert_eq!(st, 200, "{emp2}");
     assert!(emp2.get("temporary_password").is_none());
 }
+
+/// R282 — o limite por IP lia o PRIMEIRO valor do `X-Forwarded-For`, que é o
+/// que o cliente escreveu: o proxy acrescenta o endereço real no fim. Bastava
+/// mandar um valor diferente a cada pedido para nunca ser travado.
+///
+/// O servidor de teste é falado a partir de `127.0.0.1`, como um proxy local;
+/// o cabeçalho leva o que o proxy entregaria: o valor do cliente, depois o
+/// endereço que o proxy viu.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_forged_x_forwarded_for_does_not_escape_the_auth_rate_limit(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("AUTH_RATE_PER_MIN", "5")]).await;
+    let attempt = |i: usize, xff: String| {
+        let app = &app;
+        async move {
+            app.raw(
+                reqwest::Method::POST,
+                "/api/auth/login",
+                &[("x-forwarded-for", xff.as_str())],
+                // Uma conta diferente por pedido: o travão por CONTA não entra
+                // na medição, só o travão por IP.
+                Some(
+                    json!({"email": format!("ninguem{i}@alfa.test"), "password": "nao-interessa"}),
+                ),
+            )
+            .await
+            .status
+        }
+    };
+
+    // Controlo positivo: clientes DIFERENTES (muda o endereço que o proxy
+    // escreve) não se travam uns aos outros, mesmo com o mesmo valor forjado.
+    for i in 0..8 {
+        let st = attempt(i, format!("1.2.3.4, 198.51.100.{i}")).await;
+        assert_ne!(st, 429, "cliente {i} travado pelo balde de outro");
+    }
+
+    // O ataque: o mesmo cliente (203.0.113.9) a inventar um valor por pedido.
+    let mut statuses = Vec::new();
+    for i in 0..8 {
+        statuses.push(attempt(100 + i, format!("10.66.0.{i}, 203.0.113.9")).await);
+    }
+    assert!(
+        statuses[..5].iter().all(|s| *s != 429),
+        "as cinco primeiras cabem no limite: {statuses:?}"
+    );
+    assert!(
+        statuses[5..].iter().all(|s| *s == 429),
+        "a partir da sexta é travado, forje o que forjar: {statuses:?}"
+    );
+}

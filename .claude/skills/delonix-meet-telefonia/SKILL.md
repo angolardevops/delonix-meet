@@ -130,7 +130,7 @@ chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em l
 Um ramal marca o **número de acesso às reuniões** (`VOICE_MEETING_ACCESS_NUMBER`, `8000`
 por omissão) e entra pela MESMA ponte. Não há ponte nem IVR novos:
 
-1. o `ramais_dial.lua` pergunta o número em `/api/voice/ivr/resolve-extension`; a resposta
+1. o `ramais_dial.lua` pergunta o número em `/internal/v1/voice/ivr/resolve-extension`; a resposta
    `{"meeting_access": true}` manda-o chamar `dialin_ivr.lua ramal`;
 2. o IVR, em modo `ramal`, lê `sip_auth_username`/`sip_auth_realm` (o que o digest
    autenticou — **nunca o `From`**) e valida o PIN em
@@ -258,6 +258,19 @@ chama-a, não copia a regra.
 foi verificado contra um aparelho real; o diálogo não foi visto num browser. **Aberto:** quem
 sai da organização continua a registar com a password antiga (arquivar não desactiva o
 ramal). A lista completa está na R278.
+
+**Como fazer essa prova no laboratório (2026-10-04).** O QR é um URL https que o TELEMÓVEL
+abre, por isso só serve com `make compose-up LAN_IP=<ip desta máquina>` (`scripts/compose-lan.sh`):
+a borda fica também em `<ip>:8443`, com um certificado assinado por uma raiz de laboratório
+(`deploy/compose/generated/lan-tls/`, fora do git) que cobre o nome e o IP, e o `CORS_ORIGINS`
+leva o IP em primeiro lugar — é da primeira origem que sai o URL do QR, e uma origem `.local`
+é recusada (mDNS não resolve no telemóvel). No telemóvel: instalar a raiz a partir de
+`http://<ip>:8080/lab-ca.crt` como certificado de CA, confirmar que `https://<ip>:8443` abre
+sem aviso, e só então ler o QR no Linphone («obter configuração remota»). Medido até aqui: a
+raiz descarrega-se, o https pelo IP valida contra ela e o bilhete sai com o IP. **Não medido:**
+se o Linphone confia numa raiz instalada pelo utilizador ao descarregar a configuração — se o
+browser do telemóvel abrir e o Linphone recusar o certificado, é isso. O cluster local não
+serve para esta prova: não está exposto à rede local.
 
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 

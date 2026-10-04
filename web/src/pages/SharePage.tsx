@@ -55,8 +55,10 @@ export default function SharePage({ token }: { token: string }) {
     setBusy(false)
   }
 
-  // O MESMO caminho serve o leitor e o download (`…/content`, público).
-  const conteudo = `/api/public/recordings/${token}/content${password ? `?password=${encodeURIComponent(password)}` : ''}`
+  // O MESMO caminho serve o leitor e o download, e é o servidor que o dá: num
+  // link com palavra-passe já traz um passe de leitura de uma hora. A
+  // palavra-passe nunca vai num URL.
+  const conteudo = estado.k === 'pronta' ? estado.info.download_url : ''
 
   return (
     <Moldura pagina="share" estreita>

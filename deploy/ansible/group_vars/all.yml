@@ -92,6 +92,12 @@ jwt_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/jwt_secret c
 turn_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/turn_secret chars=hexdigits length=48') }}"
 postgres_password: "{{ lookup('ansible.builtin.password', _secrets_dir + '/postgres_password chars=ascii_letters,digits length=32') }}"
 voice_secret: "{{ lookup('ansible.builtin.password', _secrets_dir + '/voice_secret chars=hexdigits length=32') }}"
+# Chave de cifra dos segredos guardados na base (DATA_ENCRYPTION_KEYS). O
+# servidor exige `kid:base64` de 32 bytes e não arranca sem ela: 32 caracteres
+# ASCII são 32 bytes, codificados em base64. NUNCA se apaga o ficheiro para a
+# «rodar» — perdê-la é perder todos os segredos que cifrou.
+_data_encryption_material: "{{ lookup('ansible.builtin.password', _secrets_dir + '/data_encryption_key chars=ascii_letters,digits length=32') }}"
+data_encryption_keys: "k1:{{ _data_encryption_material | b64encode }}"
 
 # DATABASE_URL derivada (single-host: Postgres local no loopback).
 database_url: "postgres://delonix:{{ postgres_password }}@127.0.0.1:5435/delonix_meet"

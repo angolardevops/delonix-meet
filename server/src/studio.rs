@@ -877,7 +877,7 @@ pub async fn redeem(
     headers: HeaderMap,
     Json(req): Json<RedeemReq>,
 ) -> Result<Response, ApiError> {
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     if state.studio_pairing_limiter.acquire(&ip).is_err() {
         return Err(ApiError::TooManyRequests);
     }

@@ -49,7 +49,6 @@ done
 cat >"$CONF/vars-meet.xml" <<XML
 <include>
   <X-PRE-PROCESS cmd="set" data="delonix_control_url=${DELONIX_CONTROL_URL}"/>
-  <X-PRE-PROCESS cmd="set" data="delonix_api_url=${DELONIX_API_URL}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_voice_secret=${VOICE_INTERNAL_SECRET}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_ramais_sip_port=${DELONIX_RAMAIS_SIP_PORT:-5070}"/>
   <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
@@ -72,13 +71,11 @@ cp "$MEET/internal.xml" "$CONF/sip_profiles/"
 mkdir -p /scripts
 cp "$MEET/dialin_ivr.lua" "$MEET/ramais_dial.lua" /scripts/
 
-# 8. Dois endereços do servidor, porque são dois listeners: o IVR do dial-in
-#    fala com o INTERNO (/internal/v1/voice/ivr/*, DELONIX_CONTROL_URL); os
-#    ramais — mod_xml_curl e ramais_dial.lua — pedem /api/voice/ivr/*, que
-#    vivem no PÚBLICO (DELONIX_API_URL). Os ficheiros do repo usam uma só
-#    variável para os dois; aqui separa-se nas cópias.
-sed -i 's#\$\${delonix_control_url}/api/#$${delonix_api_url}/api/#g' "$CONF/autoload_configs/xml_curl.conf.xml"
-sed -i 's#global_getvar delonix_control_url#global_getvar delonix_api_url#' /scripts/ramais_dial.lua
+# 8. Um só endereço do servidor: tudo o que o FreeSWITCH lhe pede — o IVR do
+#    dial-in, o directório e o dialplan dos ramais (mod_xml_curl) e o
+#    ramais_dial.lua — vive no listener INTERNO (/internal/v1/voice/ivr/*,
+#    DELONIX_CONTROL_URL). Até à R286 os ramais pediam /api/voice/ivr/* ao
+#    listener público e este passo reescrevia as cópias para o apontar.
 
 # 9. Ramais alcançáveis de FORA da rede dos contentores (um softphone na rede
 #    local): o FreeSWITCH tem de anunciar no SIP e no SDP o endereço por onde o

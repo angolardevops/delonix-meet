@@ -349,3 +349,138 @@ async fn reauthentication_needs_the_real_password(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 429, "bloqueado também com a certa durante a janela");
 }
+
+const NEW_PASSWORD: &str = "NovaPassword-2026!";
+
+/// Faz de conta que a última prova de identidade de todas as sessões da conta
+/// foi há dez minutos (a janela é de cinco). Uma sessão acabada de abrir tem
+/// prova recente — o próprio login — e passava por isso sem a password actual.
+async fn age_identity_proof(app: &TestApp, user_id: &str) {
+    sqlx::query(
+        "UPDATE user_sessions SET reauthenticated_at = now() - interval '10 minutes'
+          WHERE user_id = $1::uuid",
+    )
+    .bind(user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+async fn login_status(app: &TestApp, email: &str, password: &str) -> u16 {
+    app.post(
+        "/api/auth/login",
+        None,
+        json!({"email": email, "password": password}),
+    )
+    .await
+    .0
+}
+
+/// Mudar a password pede prova de identidade e termina as outras sessões
+/// (plano de lacunas de 2026-10-04, S2; plano de produção, 0.5). Antes, um
+/// access token roubado trocava a password com um `PATCH` e ficava com a
+/// conta — e a sessão de quem a roubara sobrevivia à troca feita pelo dono.
+#[sqlx::test(migrations = "./migrations")]
+async fn changing_the_password_needs_proof_and_ends_the_other_sessions(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let admin = app.new_org("alfa.test").await;
+    let owner = login_as(&app, &admin.email, MAC_CHROME).await;
+    let thief = login_as(&app, &admin.email, "curl/8").await;
+    age_identity_proof(&app, &admin.user_id).await;
+    let (_, before) = app.get("/api/users/me", Some(&owner.token)).await;
+
+    // Sem prova: 403, e NADA muda — nem o username que vinha no mesmo pedido.
+    let (st, e) = app
+        .patch(
+            "/api/users/me",
+            Some(&thief.token),
+            json!({"username": "apanhado", "password": NEW_PASSWORD}),
+        )
+        .await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (403, Some("auth.reauthentication_required")),
+        "{e}"
+    );
+    let (_, me) = app.get("/api/users/me", Some(&owner.token)).await;
+    assert_eq!(me["username"], before["username"], "escrita parcial: {me}");
+
+    // Prova errada: 401, e a password antiga continua a ser a da conta.
+    let (st, e) = app
+        .patch(
+            "/api/users/me",
+            Some(&thief.token),
+            json!({"password": NEW_PASSWORD, "current_password": "nao-e-esta-de-todo"}),
+        )
+        .await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (401, Some("reauthentication.failed")),
+        "{e}"
+    );
+    assert_eq!(login_status(&app, &admin.email, NEW_PASSWORD).await, 401);
+
+    // Prova certa: muda, esta sessão continua e as outras acabam JÁ.
+    let (st, body) = app
+        .patch(
+            "/api/users/me",
+            Some(&owner.token),
+            json!({"password": NEW_PASSWORD, "current_password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    let (st, body) = app.get("/api/users/me", Some(&thief.token)).await;
+    assert_eq!(
+        (st, body["code"].as_str()),
+        (401, Some("auth.session_revoked")),
+        "{body}"
+    );
+    assert_eq!(refresh(&app, &thief.cookie).await.0, 401);
+    assert_eq!(app.get("/api/users/me", Some(&owner.token)).await.0, 200);
+    assert_eq!(refresh(&app, &owner.cookie).await.0, 200);
+
+    assert_eq!(login_status(&app, &admin.email, PASSWORD).await, 401);
+    assert_eq!(login_status(&app, &admin.email, NEW_PASSWORD).await, 200);
+
+    let (changed, failed): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE action = 'auth.password_changed'),
+                COUNT(*) FILTER (WHERE action = 'auth.reauthentication_failed')
+           FROM audit_logs WHERE actor_id = $1::uuid",
+    )
+    .bind(&admin.user_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!((changed, failed), (1, 1));
+}
+
+/// A reautenticação recente desta sessão também serve de prova — é o caminho
+/// de quem entra por SSO com MFA e não tem password local para escrever.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_recent_reauthentication_is_proof_enough_to_change_the_password(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let admin = app.new_org("alfa.test").await;
+    let owner = login_as(&app, &admin.email, MAC_CHROME).await;
+    let other = login_as(&app, &admin.email, IPHONE).await;
+    age_identity_proof(&app, &admin.user_id).await;
+
+    let (st, body) = app
+        .post(
+            "/api/users/me/reauthentication",
+            Some(&owner.token),
+            json!({"password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    let (st, body) = app
+        .patch(
+            "/api/users/me",
+            Some(&owner.token),
+            json!({"password": NEW_PASSWORD}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    // A reautenticação de UMA sessão não vale para a outra, e a outra acabou.
+    assert_eq!(app.get("/api/users/me", Some(&other.token)).await.0, 401);
+    assert_eq!(login_status(&app, &admin.email, NEW_PASSWORD).await, 200);
+}

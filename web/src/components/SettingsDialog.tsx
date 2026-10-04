@@ -101,6 +101,7 @@ function Conta({ user }: { user: User }) {
   const [username, setUsername] = useState(user.username)
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [current, setCurrent] = useState('')
   const [msg, setMsg] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [aExportar, setAExportar] = useState(false)
@@ -141,9 +142,16 @@ function Conta({ user }: { user: User }) {
     }
     setBusy(true)
     try {
-      await updateMe({ username: username.trim() || undefined, password: password || undefined })
+      // O servidor só muda a password com a actual (ou com reautenticação
+      // recente) e termina as outras sessões — ver `users::update_me`.
+      await updateMe({
+        username: username.trim() || undefined,
+        password: password || undefined,
+        current_password: password ? current : undefined,
+      })
       setPassword('')
       setConfirm('')
+      setCurrent('')
       setMsg({ tone: 'success', text: t('shell.def.guardado') })
     } catch (err) {
       setMsg({ tone: 'danger', text: apiErrorMessage(err, t('ui.erroGenerico')) })
@@ -173,6 +181,11 @@ function Conta({ user }: { user: User }) {
       <Field label={t('shell.def.confirmarPassword')} htmlFor="set-pass2">
         <TextInput id="set-pass2" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
       </Field>
+      {password && (
+        <Field label={t('shell.def.passwordActual')} htmlFor="set-pass0" hint={t('shell.def.passwordActualDica')}>
+          <TextInput id="set-pass0" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" required />
+        </Field>
+      )}
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
       <div>
         <Button type="submit" variant="primary" busy={busy}>

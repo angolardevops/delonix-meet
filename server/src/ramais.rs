@@ -57,10 +57,10 @@
 //! pelo MESMO segredo partilhado que `voice.rs` já usa (`check_media_secret`:
 //! o cabeçalho `X-Voice-Secret`, ou HTTP Basic com o segredo como password —
 //! nunca no URL, R227):
-//! - `POST /api/voice/ivr/directory` — o FreeSWITCH chama isto no REGISTER
+//! - `POST /internal/v1/voice/ivr/directory` — o FreeSWITCH chama isto no REGISTER
 //!   (via `mod_xml_curl`, secção "directory") para obter o `a1-hash` SIP
 //!   Digest do ramal que se está a registar.
-//! - `POST /api/voice/ivr/resolve-extension` — o dialplan interno
+//! - `POST /internal/v1/voice/ivr/resolve-extension` — o dialplan interno
 //!   (`voice/freeswitch/scripts/ramais_dial.lua`) chama isto quando alguém
 //!   disca um número curto, para descobrir a que `sip_username` (a conta
 //!   registada) esse número corresponde NA ORG do chamador.
@@ -148,6 +148,19 @@ pub(crate) fn sip_domain_of_slug(state: &AppState, slug: &str) -> String {
 /// registar que exige isto, ver o comentário no topo do ficheiro).
 fn gen_sip_username() -> String {
     format!("ramal_{}", crate::crypto::random_hex(8))
+}
+
+fn ha1_aad(id: Uuid) -> String {
+    crate::secrets_at_rest::aad("voice_extensions", "sip_ha1", id)
+}
+
+/// Cifra o HA1 de um ramal para a base. O HA1 (`MD5(user:realm:password)`) é
+/// o que o digest SIP usa: quem o tiver regista-se como o ramal sem nunca ter
+/// visto a password — em claro, uma fuga da tabela era uma fuga das
+/// credenciais de todos os ramais. Sem chaves de cifra é `422`, como qualquer
+/// segredo novo.
+pub(crate) fn seal_ha1(state: &AppState, id: Uuid, ha1: &str) -> Result<String, ApiError> {
+    crate::secrets_at_rest::seal(&state.config, ha1, &ha1_aad(id))
 }
 
 /// HA1 do SIP Digest — RFC 2617: `MD5(username ":" realm ":" password)`. MD5
@@ -458,11 +471,14 @@ async fn insert_extension(
     // não um acidente de geração aleatória, e não se retenta.
     for _ in 0..5 {
         let sip_username = gen_sip_username();
-        let ha1 = secret.ha1(&sip_username, sip_domain);
+        // O id nasce aqui e não no `DEFAULT` da tabela: é ele que amarra o HA1
+        // cifrado a ESTA linha (aad `voice_extensions.sip_ha1:<id>`).
+        let id = Uuid::new_v4();
+        let ha1 = seal_ha1(state, id, &secret.ha1(&sip_username, sip_domain))?;
         let res: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
             "INSERT INTO voice_extensions
-                 (org_id, member_id, extension, sip_username, sip_password_hash, sip_ha1, label)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 (id, org_id, member_id, extension, sip_username, sip_password_hash, sip_ha1, label)
+             VALUES ($8, $1, $2, $3, $4, $5, $6, $7)
              RETURNING id",
         )
         .bind(org_id)
@@ -472,6 +488,7 @@ async fn insert_extension(
         .bind(&secret.hash)
         .bind(&ha1)
         .bind(label)
+        .bind(id)
         .fetch_one(&state.db)
         .await;
         match res {
@@ -627,7 +644,7 @@ pub async fn regenerate_extension_password(
     .ok_or(ApiError::NotFound)?;
 
     let secret = SipSecret::generate()?;
-    let ha1 = secret.ha1(&sip_username, &sip_domain);
+    let ha1 = seal_ha1(&state, id, &secret.ha1(&sip_username, &sip_domain))?;
     sqlx::query(
         "UPDATE voice_extensions SET sip_password_hash = $3, sip_ha1 = $4
           WHERE id = $1 AND org_id = $2",
@@ -1169,7 +1186,7 @@ pub struct XmlCurlDirectoryReq {
     pub domain: String,
 }
 
-/// `POST /api/voice/ivr/directory` — directório dinâmico do FreeSWITCH
+/// `POST /internal/v1/voice/ivr/directory` — directório dinâmico do FreeSWITCH
 /// (`mod_xml_curl`, secção "directory"). Chamado no REGISTER de um ramal para
 /// obter o HA1 do digest SIP. Devolve sempre 200: "não encontrado" também é
 /// uma resposta válida (o FreeSWITCH trata-o como XML, não como erro HTTP).
@@ -1194,17 +1211,21 @@ pub async fn ivr_directory(
         return Ok(xml_response(XML_NOT_FOUND.into()));
     };
 
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT sip_ha1 FROM voice_extensions
+    let row: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, sip_ha1 FROM voice_extensions
           WHERE org_id = $1 AND sip_username = $2 AND active",
     )
     .bind(org_id)
     .bind(user)
     .fetch_optional(&state.db)
     .await?;
-    let Some((ha1,)) = row else {
+    let Some((ext_id, stored)) = row else {
         return Ok(xml_response(XML_NOT_FOUND.into()));
     };
+    // O HA1 está cifrado em repouso (R286); um herdado em claro ainda se lê,
+    // até a tarefa de fundo o cifrar. Só aqui, à saída para o FreeSWITCH, é
+    // que volta a ser o valor que o digest SIP usa.
+    let ha1 = crate::secrets_at_rest::open(&state.config, &stored, &ha1_aad(ext_id))?;
 
     let user_x = xml_escape(user);
     let domain_x = xml_escape(domain);
@@ -1259,7 +1280,7 @@ pub struct ResolveExtensionResp {
     pub meeting_access: bool,
 }
 
-/// `POST /api/voice/ivr/resolve-extension` — chamado pelo dialplan interno
+/// `POST /internal/v1/voice/ivr/resolve-extension` — chamado pelo dialplan interno
 /// (`ramais_dial.lua`) quando um ramal disca um número curto. Traduz
 /// `(domínio do chamador, número discado)` para o AOR (`sip_username`)
 /// registado — a busca fica sempre dentro da MESMA org do domínio, que é a
@@ -1540,7 +1561,7 @@ fn first_present<'a>(
         .find_map(|k| m.get(*k).map(|s| s.trim()).filter(|s| !s.is_empty()))
 }
 
-/// `POST /api/voice/ivr/dialplan-did` — segunda secção do MESMO `mod_xml_curl`
+/// `POST /internal/v1/voice/ivr/dialplan-did` — segunda secção do MESMO `mod_xml_curl`
 /// que a directoria da Fase 1 (`ivr_directory`, mesmo segredo, por
 /// `X-Voice-Secret` ou HTTP Basic): o FreeSWITCH pede aqui o dialplan dinâmico da secção
 /// "dialplan" quando uma chamada inbound precisa de ser encaminhada. Só
@@ -1788,7 +1809,7 @@ mod tests {
 }
 
 /// Documentação OpenAPI dos ramais (`openapi.rs` junta-a). Os três
-/// callbacks `/api/voice/ivr/*` do `mod_xml_curl` do FreeSWITCH ficam de fora:
+/// callbacks `/internal/v1/voice/ivr/*` do `mod_xml_curl` do FreeSWITCH ficam de fora:
 /// são máquina-a-máquina, por segredo partilhado, e respondem XML.
 #[derive(utoipa::OpenApi)]
 #[openapi(

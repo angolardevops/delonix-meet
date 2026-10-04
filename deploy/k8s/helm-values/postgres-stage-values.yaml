@@ -3,9 +3,10 @@
 # foram removidas do Docker Hub em 2024; para stage usa-se o chart
 # simples (bitnami/postgresql) cujas imagens continuam acessíveis em
 # registry-1.docker.io/bitnami/postgresql.
+# A password NÃO vive aqui: quem instala passa-a com `--set auth.password=…` a
+# partir do `.env` (ver `make stage` e scripts/cluster.sh).
 auth:
   username: delonix
-  password: delonix_dev_pass
   database: delonix_meet
 primary:
   extendedConfiguration: |

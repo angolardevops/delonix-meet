@@ -2764,6 +2764,175 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Prova corrida a 2026-10-04**, na réplica do bordo (`bash scripts/pbx-tronco-prova.sh central`, Kamailio 5.8.6, FreeSWITCH 1.11.3 da imagem do repo, servidor desta árvore): de endereços **fora da allowlist**, dois telefones com a conta da organização A entram na sala de A **pela ponte do SFU** (ADR-0010) e ouvem-se um ao outro (440 Hz a 0,2499 e 1000 Hz a 0,2500; o próprio tom a 0,0008 e 0,0012), nenhum cai na conferência local, e o PIN não fica no log. Recusas medidas: UDP com a conta certa → `403`; TLS sem credenciais → `407`; password errada e a conta de B no domínio de A → não entram, falha contada; a central de A com o PIN de uma sala de B → o IVR não a deixa entrar (e o mesmo PIN, pela central de B, abre a sala); um `X-Delonix-Central` forjado pela porta do bordo chega ao FreeSWITCH **sem** o cabeçalho, e direito ao FreeSWITCH é rejeitado (`603`); à décima falha a origem leva `403` mesmo com a password certa, e outra origem continua a entrar.
 
-**Por medir, e não o dês por feito.** Um browser na sala (quem ouve a central nesta prova é outro telefone, pela mesma ponte). O `compose.yaml` e o cluster local **não** ligam as centrais. O chart (`voice.centrais`) só foi lido, nunca instalado; o `check-helm.sh` corre no CI. Restringir uma conta a redes de origem não existe. O caminho `delonix-outbound` (`telephony_fs_xml.rs`) continua a decidir a organização pelo domínio do pedido sem o autenticar.
+**Por medir, e não o dês por feito.** Um browser na sala (quem ouve a central nesta prova é outro telefone, pela mesma ponte). O chart (`voice.centrais`) só foi lido, nunca instalado; o `check-helm.sh` corre no CI. **O `compose.yaml` liga as centrais** desde a entrega seguinte: o PBX de laboratório ganhou um segundo tronco (`meet-central`, TLS, com a conta SIP da organização), a allowlist do laboratório passou a aceitar só a porta 5060 de origem (senão ninguém do laboratório chegava a ser desafiado), e o `make compose-voice-check` mede-o. Corrido a 2026-10-04: numa cópia isolada no docker (9 de 9; com uma CA errada o tronco fica `Unavail`), depois no laboratório que estava a correr, sob o `delonix compose`, pelo caminho de actualização de um laboratório que já existia (`make bootstrap` acrescentou os dois segredos sem mudar os outros e trocou o certificado do bordo, que não tinha SAN — 9 de 9), e **no cluster local**, pelo passo de voz (`scripts/cluster-voice.sh`, 9 de 9). No cluster o `make cluster` completo parou no passo do Helm por falta de rede, antes da voz; correu-se só esse passo. Restringir uma conta a redes de origem não existe. O caminho `delonix-outbound` (`telephony_fs_xml.rs`) continua a decidir a organização pelo domínio do pedido sem o autenticar.
 
 **Ficheiros.** `voice/kamailio/kamailio.cfg`, `voice/freeswitch/scripts/dialin_ivr.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `server/src/telephony_sip.rs`, `server/src/voice.rs`, `server/src/lib.rs`, `server/tests/central_entra_na_sala.rs`, `scripts/check-bordo-central.sh`, `scripts/pbx-tronco-prova.sh` (modo `central`), `scripts/softphone-prova.sh` (`--dominio`, `--rede`), `voice/pbx-tronco-prova/compose.yaml`, `deploy/helm/delonix-meet/` (`voice.centrais`).
+
+### R281 — Um access token roubado trocava a password, e a sessão de quem roubou sobrevivia à troca do dono
+
+**Sintoma.** `PATCH /api/users/me` aceitava `password` só com o access token: sem a password actual, sem reautenticação recente, e sem tocar nas outras sessões. Quem apanhasse um token trocava a password e ficava com a conta; e quando o dono mudava a password por desconfiar de um roubo, a sessão do ladrão continuava a abrir a API até o refresh token expirar. As rotas que alteram os outros factores (MFA, chaves de acesso) já exigiam `sessions::require_recent`; a password, que é o factor principal, não.
+
+**Regra.**
+- Mudar a password pede **prova de identidade**: `current_password` no mesmo pedido (verificada por `auth::check_password_of`, a regra única do login) ou uma reautenticação desta sessão há menos de cinco minutos (`sessions::require_recent`). Sem nenhuma: `403 auth.reauthentication_required`. Prova errada: `401 reauthentication.failed`, com o mesmo travão (cinco em 5 minutos, `reauth:<conta>`) e o mesmo registo (`auth.reauthentication_failed`) da reautenticação — `sessions::failed_proof` é chamado pelas duas.
+- A prova corre **antes de qualquer escrita**: um pedido com `username` e `password` em que a prova falha não deixa o username mudado.
+- Depois de mudar, **todas as outras sessões da conta terminam** (`sessions::revoke_all_except`, a mesma função do `revoke-others`) e fica `auth.password_changed` na auditoria com quantas terminou. A sessão do pedido continua.
+- A conta gerida pelo Odoo continua a recusar primeiro (`409 profile.field_managed_by_odoo`).
+- Na consola, o campo «palavra-passe actual» aparece quando se escreve uma nova (`SettingsDialog.tsx`), nas quatro línguas.
+
+**Portão.** `server/tests/account_sessions.rs`: `changing_the_password_needs_proof_and_ends_the_other_sessions` (sem prova `403` e sem escrita parcial; prova errada `401` e a password antiga continua; prova certa `200`, a outra sessão dá `401 auth.session_revoked` e o refresh dela `401`, a própria continua; a antiga deixa de entrar e a nova entra; uma linha de cada evento na auditoria) e `a_recent_reauthentication_is_proof_enough_to_change_the_password`.
+
+**O que NÃO está provado.**
+- Nenhum browser abriu o diálogo de definições depois da mudança.
+- Um access token **anterior às sessões** (sem `sid`) termina TODAS as sessões ao mudar a password, e ele próprio continua válido até expirar: não tem sessão que se possa terminar.
+- O motivo gravado em `user_sessions.revoked_reason` é `user_revoked_others` — o `CHECK` da 0078 não tem um valor próprio para a mudança de password, e acrescentá-lo pedia uma migração. Distingue-se pelo evento de auditoria.
+- Não há reposição de password para quem a esqueceu (plano de lacunas, E3).
+
+**Ficheiros.** `server/src/users.rs`, `server/src/sessions.rs`, `server/tests/account_sessions.rs`, `web/src/api.ts`, `web/src/components/SettingsDialog.tsx`, `web/src/locales/*/shell.ts`.
+
+### R282 — O limite por IP usava o valor do `X-Forwarded-For` que o cliente escreveu
+
+**Sintoma.** `rate_limit::client_ip` devolvia o PRIMEIRO valor do `X-Forwarded-For` quando o peer era um proxy privado. Os proxies deste repo acrescentam (`$proxy_add_x_forwarded_for` no compose, no Nginx de VPS e no da web): o que o cliente manda fica à esquerda, o endereço real à direita. Um pedido com `X-Forwarded-For: <qualquer coisa>` escolhia a sua própria chave nos limites de autenticação, de convidado sem conta, de chaves de acesso e de emparelhamento do estúdio — e o IP gravado na sessão e na auditoria era o inventado.
+
+**Regra.** O endereço do cliente é a entrada que o proxy de fora escreveu: a `TRUSTED_PROXY_HOPS`-ésima a contar do **fim** (default 1; `Config::trusted_proxy_hops`, de 1 a 8). Com menos entradas do que saltos usa-se a mais à esquerda que houver; um valor que não é um endereço IP nunca é chave (cai para o IP da ligação); numa ligação directa (peer público) o cabeçalho continua a ser ignorado. O cabeçalho repetido conta como uma lista só.
+
+**Portão.** Unitários em `rate_limit.rs` (`a_forged_xff_does_not_choose_the_rate_limit_key`, `hops_count_from_the_right`, `a_value_that_is_not_an_address_is_never_the_key`, e o `xff_trusted_only_from_proxy` reescrito). Contra servidor real: `server/tests/security.rs::a_forged_x_forwarded_for_does_not_escape_the_auth_rate_limit` — com o limite a 5, o mesmo cliente a inventar um valor por pedido é travado à sexta; clientes diferentes com o mesmo valor forjado não se travam uns aos outros.
+
+**O que NÃO está provado.**
+- Nenhum pedido passou por um Nginx ou por um ingress a sério: o teste escreve o cabeçalho como o proxy o entregaria.
+- **Um segundo proxy que acrescente** (um balanceador L7 à frente do ingress) com `TRUSTED_PROXY_HOPS=1` faz todos os clientes aparecerem com o endereço do primeiro proxy e partilharem o limite por IP. É falhar para o lado seguro, mas é uma indisponibilidade: o operador tem de subir o valor. Nenhum manifesto do repo monta essa topologia.
+- Um balanceador L4 com SNAT esconde o endereço real de todos os clientes; isso não se resolve aqui (pede PROXY protocol).
+- Quem já está dentro da rede privada e fala directamente com o servidor escolhe o cabeçalho inteiro.
+
+**Ficheiros.** `server/src/rate_limit.rs`, `server/src/config.rs`, os onze chamadores em `server/src/{auth,guests,passkeys,studio,rate_limit}.rs`, `server/tests/security.rs`, `docs/deployment.md`.
+
+### R283 — A sala de espera não tinha tecto, e um só token enchia a lista de todos os anfitriões
+
+**Sintoma.** `SignalingHub::add_waiting_with` inseria uma entrada por ligação, sem limite e sem olhar a quem era. Um token de sala válido a abrir ligações em ciclo punha milhares de entradas na sala de espera, e cada uma é difundida a todos os anfitriões e devolvida inteira em cada `GET /api/rooms/{code}/waiting`.
+
+**Regra** (`SignalingHub::add_waiting_for`).
+- **Uma espera por identidade.** A chave é o `sub` do token de sala (a conta, ou o `guest_id` que cada `guest-join` gera). Uma segunda ligação da mesma identidade substitui a primeira: a entrada antiga sai (`WaitingLeft` para os anfitriões), a nova entra, e a ligação antiga termina como recusada porque o seu `admit_tx` cai sem decisão.
+- **Um tecto por sala**, `WAITING_ROOM_MAX = 500` por nó. Cheia, a ligação recebe `Error { "waiting room is full" }` e fecha; não se regista nada e fica um aviso no log.
+
+**Portão.** `signaling.rs`: `one_identity_waits_once_however_many_sockets_it_opens` (mil ligações, uma entrada, fica a mais recente, as outras 999 terminam sem decisão, a que ficou é admitida) e `the_waiting_room_has_a_ceiling` (a 501.ª identidade é recusada; uma que sai liberta o lugar).
+
+**O que NÃO está provado.**
+- Só o hub foi exercitado: nenhum WebSocket real abriu mil ligações, e nenhum browser viu a mensagem de sala cheia.
+- Dois separadores da MESMA pessoa à espera: o mais antigo mostra «entrada recusada». Fechar em silêncio faria os dois separadores substituírem-se em ciclo ao religar; a recusa é terminal.
+- O tecto é por nó. A afinidade por sala (ADR-0001) põe uma sala num só nó; se isso falhar, o tecto multiplica-se pelo número de nós.
+- Quinhentas identidades DIFERENTES continuam a caber — o que as trava antes é o limite do `guest-join` por IP e por sala.
+
+**Ficheiros.** `server/src/signaling.rs`.
+
+### R284 — O `JWT_SECRET`, o `TURN_SECRET` e o `PROVISIONING_SECRET` estavam escritos num manifesto de um repositório público
+
+**Sintoma.** `deploy/k8s/01-config.yaml` trazia o Secret `delonix-secrets` com valores literais — `JWT_SECRET`, `TURN_SECRET`, `PROVISIONING_SECRET`, `DATABASE_URL` e `POSTGRES_PASSWORD` — e `deploy/k8s/helm-values/` as passwords do Postgres de stage e de «produção». O `make stage` e o `make prod` aplicavam-nos. A R154 tinha tirado de lá o segredo de voz; os outros ficaram. O servidor só recusava o valor de dev e o comprimento, e os de stage tinham 42 e 21 caracteres: passavam. Com o `JWT_SECRET` publicado assina-se um access token de qualquer conta de qualquer cluster instalado por aquele caminho.
+
+**Regra.**
+- **O Secret não vive no repositório.** Sai do `01-config.yaml` (fica só o ConfigMap) e nasce do `.env` da máquina por `scripts/k8s-app-secrets.sh`, a regra única de «o que entra no `delonix-secrets`»: o `make stage`, o `make prod` e o `scripts/cluster.sh` chamam-no (o `cluster.sh` tinha a sua cópia). As passwords do Postgres saem dos ficheiros de valores e passam por `--set` a partir do `.env`.
+- **O servidor recusa arrancar** em produção com um valor publicado: `config::BURNED_SECRETS` e `refuse_burned`, aplicados ao `JWT_SECRET`, ao `TURN_SECRET` e ao `PROVISIONING_SECRET`. Com `DELONIX_ALLOW_INSECURE=1` passam. A password de base publicada dá um **aviso** no arranque, não uma recusa (`database_url_uses_burned_password`): rodá-la é um `ALTER USER` com a aplicação parada.
+- **Os seis valores entram no livro** (`scripts/leaked-secrets-accepted.txt`), com a razão de cada um, e o portão de higiene recusa que voltem a um ficheiro seguido.
+
+**Portão.** `config.rs` (`mod tests`): o controlo positivo (produção com segredos fortes arranca), uma recusa por cada um dos três valores, desenvolvimento a aceitá-los, e o reconhecimento da password no URL sem confundir o nome do utilizador. `scripts/check-repo-hygiene.sh` verde com os seis valores no livro; `scripts/check-k8s-render.sh` verde (base e os dois overlays). O `k8s-app-secrets.sh` foi corrido contra um `kubectl` que finge o `apply`: sete chaves, `DATABASE_URL` com o host pedido e a password do `.env`, nada de segredos na saída, e recusa com `.env` incompleto.
+
+**O que NÃO está provado.**
+- **Nenhum cluster foi instalado.** O `make stage` e o `make prod` não correram; do `make stage` só se viu o `make -n`. O `make prod` continua LEGADO: aponta para um host de base que não é o do chart que instala, e as chaves `auth.*` que recebe são as que o ficheiro de valores já tinha (plano de lacunas, O1).
+- O `scripts/cluster.sh` não correu depois da troca da cópia pela chamada ao script.
+- A rotação num cluster já instalado (`docs/deployment.md` §6) está escrita, não exercitada.
+- O histórico do git continua a ter os valores, de propósito (mesma decisão da R154).
+- O Redis destes caminhos continua sem autenticação (plano de lacunas, O7).
+
+**Ficheiros.** `deploy/k8s/01-config.yaml`, `deploy/k8s/kustomization.yaml`, `deploy/k8s/helm-values/postgres-{stage-,}values.yaml`, `scripts/k8s-app-secrets.sh`, `scripts/cluster.sh`, `scripts/bootstrap.sh`, `Makefile`, `server/src/config.rs`, `scripts/leaked-secrets-accepted.txt`, `docs/deployment.md`.
+
+### R285 — Sem `DATA_ENCRYPTION_KEYS` o servidor arrancava em produção, e guardar um segredo falhava em silêncio
+
+**Sintoma.** `Config::from_source` devolvia `secret_box: None` em produção quando a variável faltava. O servidor arrancava, a sonda de saúde ficava verde, e cada escrita de um segredo — o `client_secret` do SSO, o segredo de um webhook, a password de um tronco, a chave de um destino de directo — respondia `422 secrets.encryption_unconfigured`. Só o chart Helm a exigia; o compose, o cluster local, os manifestos de `deploy/k8s`, o Ansible, os do PaaS e o deploy legado não a traziam. A documentação mandava definir `SECRETS_KEY`, que o servidor nunca leu.
+
+**Regra.** Em produção a chave é **obrigatória**: sem ela o arranque falha com a razão e o comando para a gerar. Em desenvolvimento (`DELONIX_ALLOW_INSECURE=1`) continua a derivar-se uma. E todos os caminhos que arrancam o servidor passam a trazê-la:
+- `make bootstrap` gera `DATA_ENCRYPTION_KEYS=k1:<base64 de 32 bytes>` no `.env` (acrescenta-a a um `.env` que já exista, sem tocar no resto), e o `make compose-up` recusa um `.env` sem ela;
+- `scripts/k8s-app-secrets.sh` põe-na no `delonix-secrets` (stage, prod, cluster local);
+- Ansible: `data_encryption_keys` em `group_vars/all.yml`, persistida como os outros segredos, nos três modelos;
+- PaaS: `meet-data-encryption-keys` em `deploy/delonix/meet-application.yaml` e no exemplo de segredos;
+- `scripts/pbx-tronco-prova.sh` acrescenta-a ao `.env` da réplica, e o `deploy/deploy.sh` legado recusa sem ela.
+
+**Portão.** `config.rs`: `production_without_the_encryption_key_refuses_to_start` e `development_derives_a_key_when_none_is_given`. O bloco do `bootstrap.sh` foi corrido duas vezes sobre um `.env` de ensaio: uma linha só, 32 bytes depois de descodificar.
+
+**O que NÃO está provado.**
+- Nenhum dos caminhos arrancou um servidor: nem o compose, nem o cluster, nem o Ansible, nem a réplica do tronco. **O laboratório local tem de correr `make bootstrap` antes do próximo `make compose-up` ou `make cluster`**, senão o servidor não arranca — a mensagem diz porquê.
+- O filtro `b64encode` do Ansible sobre 32 caracteres ASCII não foi corrido.
+- No PaaS, o `from_secret` continua por injectar pelo expander (aviso 1 do `deploy/delonix/README.md`): a linha nova fica à espera do mesmo que as outras.
+- Os testes que esvaziam `secret_box` continuam a provar o `422`, agora como defesa em profundidade.
+
+**Ficheiros.** `server/src/config.rs`, `scripts/bootstrap.sh`, `deploy/compose/env.example`, `scripts/k8s-app-secrets.sh`, `scripts/cluster.sh`, `Makefile`, `deploy/ansible/{group_vars/all.yml,roles/secrets/tasks/main.yml,roles/*/templates/*}`, `deploy/delonix/*`, `scripts/pbx-tronco-prova.sh`, `voice/pbx-tronco-prova/compose.yaml`, `deploy/deploy.sh`, `docs/deployment.md`.
+
+### R286 — O HA1 dos ramais estava em claro na base, e as rotas que o entregam ficavam atrás do ingress
+
+**Sintoma.** Duas coisas, a mesma superfície. (1) `voice_extensions.sip_ha1` guardava o `MD5(utilizador:domínio:password)` de cada ramal em claro. O HA1 é o que o digest SIP usa: quem o tiver regista-se como o ramal sem nunca ter visto a password — uma fuga da tabela era uma fuga das credenciais de todos os ramais. (2) As três rotas de máquina dos ramais — o directório, que devolve esse HA1 ao FreeSWITCH, a resolução de um número marcado e o dialplan por DID — estavam no router PÚBLICO como `/api/voice/ivr/*`, com o comentário «fica no público porque os configs já chamam este caminho». Qualquer ingress que publicasse `/api` publicava o caminho que troca o segredo de voz por credenciais SIP.
+
+**Regra.**
+- **O HA1 é cifrado em repouso** (`secrets_at_rest::seal`, aad `voice_extensions.sip_ha1:<id>`), ao criar o ramal e ao regenerar a password. Só à saída para o FreeSWITCH, em `ramais::ivr_directory`, volta a ser o valor do digest. O id do ramal passa a nascer no servidor, para amarrar o valor cifrado à linha. Um HA1 herdado em claro continua a ler-se, e a tarefa de fundo cifra-o (`voice_extensions` é a quarta coluna de `reseal_legacy`; `ResealReport::extension_ha1s`).
+- **As três rotas passam para o listener interno**: `/internal/v1/voice/ivr/{directory,resolve-extension,dialplan-did}`, ao lado do resto da API de máquina. Os caminhos antigos deixam de existir. O `xml_curl.conf.xml`, o `ramais_dial.lua`, o arranque do FreeSWITCH (que reescrevia as cópias para apontar ao listener público), o compose, o cluster local, o chart e os scripts de prova mudam no mesmo commit; `DELONIX_API_URL` deixa de existir.
+
+**Portão.** Contra Postgres real: `ramal_entra_na_sala::the_extension_ha1_is_sealed_at_rest_and_still_reaches_freeswitch` (na base está `enc:v1:` e o MD5 não está lá; o directório devolve o HA1 certo; o herdado em claro ainda serve; o cifrado de um ramal copiado para a linha de outro não abre; regenerar grava cifrado) e `…::the_extension_machine_routes_left_the_public_listener` (com `INTERNAL_BIND_ADDR`, o router público dá `404` às três, no caminho novo e no antigo; sem ele, só o novo responde). `secrets_at_rest::legacy_plaintext_keeps_working_and_is_resealed_idempotently` conta e cifra o HA1 herdado. `security_voice_odoo` (o segredo por Basic e nunca no URL) corre nos caminhos novos. `check-lua-sintaxe.sh` e `check-fs-xml.sh` verdes. **Contra um FreeSWITCH 1.11.3 real** (`scripts/softphone-prova.sh srtp-real`, a configuração que o arranque monta com os ficheiros do compose, numa rede sem saída): um ramal autentica-se por digest — o `mod_xml_curl` pediu o directório em `/internal/v1/voice/ivr/directory` com o segredo em Basic —, o `ramais_dial.lua` chegou a `/internal/v1/voice/ivr/resolve-extension` com `X-Voice-Secret`, o IVR do dial-in atendeu, e os controlos negativos mantêm-se (password errada `403`, sem SRTP `488`); dezassete verificações, todas dentro dos limites.
+
+**O que NÃO está provado.**
+- **Nenhum ramal se registou contra o servidor a sério.** O que correu foi o FreeSWITCH real com um servidor de andaime (ver o portão): o compose e o cluster não foram levantados, por isso o `make compose-voice-check` e o `scripts/cluster-voice.sh` — que passam a exigir que o directório NÃO responda no listener público — ficam por correr.
+- Um FreeSWITCH com a configuração antiga a falar com um servidor novo deixa de registar ramais (pede `/api/voice/ivr/directory`, que já não existe): a configuração e o servidor sobem juntos.
+- Sem `DATA_ENCRYPTION_KEYS` não se cria nem se regenera um ramal (`422`) — a R285 torna a chave obrigatória em produção.
+- O `sip_password_hash` (Argon2) não mudou; o PIN do ramal também não.
+
+**Ficheiros.** `server/src/ramais.rs`, `server/src/secrets_at_rest.rs`, `server/src/lib.rs`, `voice/freeswitch/autoload_configs/xml_curl.conf.xml`, `voice/freeswitch/scripts/ramais_dial.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `compose.yaml`, `deploy/k8s/cluster/voice.yaml`, `deploy/helm/delonix-meet/templates/voice.yaml`, `voice/pbx-tronco-prova/compose.yaml`, `scripts/{softphone-prova,compose-voice-check,cluster-voice,check-openapi}.sh`, `server/tests/{ramal_entra_na_sala,secrets_at_rest,security_voice_odoo}.rs`.
+
+### R287 — A chave de emissão de cada destino ia no URL do WebSocket do directo
+
+**Sintoma.** `GET /api/rooms/{code}/live` recebia os destinos em JSON na query — e com eles a chave de emissão de cada destino ad hoc (a «stream key» do YouTube, do Facebook, da Twitch). Um URL fica escrito nos logs de acesso do Nginx, do ingress e de qualquer balanceador pelo caminho: a chave de quem emite ficava em texto, em ficheiros que ninguém trata como segredo (RFC-0001, achado B8).
+
+**Regra.**
+- **Os destinos vão na primeira trama de texto**, depois do upgrade: `{"tipo":"iniciar","destinos":[…]}`. O URL leva o token de sala e o codec, e mais nada. O servidor espera dez segundos por ela (`iniciar_por_mensagem`); outra coisa na primeira trama é recusada com a forma esperada.
+- **No URL continua a caber o que não é segredo:** destinos guardados, só pelo id (`[{"id":…}]`). Um destino com URL e chave na query é recusado com a frase que manda recarregar a página — é o que um cliente antigo em cache recebe.
+- A validação é a mesma nos dois caminhos e pela mesma ordem (`preparar_destinos`): malformado, tecto, E2EE, destinos guardados e capacidade do papel, endereços públicos, codec e capacidade do nó.
+- Na consola, `urlDoDirecto` deixa de receber destinos e `pedidoDeInicio` monta a trama; o cliente dá a emissão por aceite quando chega o primeiro estado dos destinos (ou ao fim de dois segundos), e nenhum pedaço de media sai antes disso.
+
+**Portão.** `server/tests/broadcast_authz.rs`: `a_chave_de_emissao_nao_se_aceita_no_url` (ad hoc no URL recusado, sem repetir a chave na recusa; o mesmo destino pela primeira trama não leva essa recusa; um id no URL continua a passar a guarda) e `a_primeira_trama_tem_de_ser_o_pedido_de_inicio` (binário, JSON de outro tipo e destinos malformados); os três testes que já lá estavam passam a usar a primeira trama. `web/src/studio/directo.test.ts`: o URL só tem `token` e `codec`; a trama de início sai uma vez, depois de a ligação abrir, e a chave não está no URL; a recusa em resposta ao pedido é a razão que se mostra.
+
+**O que NÃO está provado.**
+- **Nenhum browser emitiu.** O `web/e2e/directo-destinos.mjs` (fora do CI: precisa de um servidor RTMP a sério) foi actualizado para a primeira trama e não correu. O `web/e2e/backend-novo-directo.mjs` já estava escrito contra outra linha de backend e não foi tocado.
+- **O token de sala continua na query**, como no `/ws`: um WebSocket do browser não manda cabeçalhos. É curto, tem âmbito de uma sala e expira em minutos — mas aparece nos mesmos logs.
+- Um cliente antigo em cache recebe a recusa e tem de recarregar; não há negociação de versão.
+- Entre o pedido de início e a resposta o servidor consulta a base e resolve nomes: se demorar mais de dois segundos, a consola dá a emissão por aceite e uma recusa tardia aparece como erro da emissão, com a razão do servidor.
+
+**Ficheiros.** `server/src/broadcast.rs`, `server/tests/broadcast_authz.rs`, `web/src/studio/directo.ts`, `web/src/studio/directo.test.ts`, `web/e2e/directo-destinos.mjs`.
+
+### R288 — A palavra-passe de um link de partilha ia no URL, e adivinhava-se sem travão
+
+**Sintoma.** `GET /api/public/recordings/{token}?password=…` e o `…/content?password=…` que o `<video>` e o download usavam: a palavra-passe escolhida por quem partilha — que costuma repetir-se noutros sítios — ficava nos logs de acesso. E não havia limite: adivinhava-se ao ritmo que o Argon2 deixasse.
+
+**Regra.**
+- A palavra-passe vai no **corpo** de `POST /api/public/recordings/{token}/access`. Os dois `GET` deixam de a ler: um link com palavra-passe responde `401` ao `GET` dos metadados, com ela no URL ou sem ela.
+- A resposta traz o `download_url` já com um **passe de leitura** (`?grant=<expira>.<hmac>`): vale uma hora, só abre aquele link, e deixa de valer quando a palavra-passe do link muda (o hash dela entra no que se assina). O `<video>` não manda cabeçalhos nem corpo, por isso alguma coisa tem de ir no URL — passa a ser uma coisa curta e que não é de ninguém.
+- **Cinco palavras-passe erradas em 5 minutos travam o link** (`429`), a certa incluída.
+- A rota nova está em `scripts/rotas-publicas.txt`, com a razão.
+
+**Portão.** `server/tests/content.rs`: a palavra-passe CERTA no URL dá `401` nos dois caminhos; no corpo, errada `401` e certa `200`; o `download_url` traz o passe e não a palavra-passe; sem passe, com o MAC trocado, com a validade esticada ou com lixo, `401`; o passe de um link não abre outro; um link sem palavra-passe não ganha passe; cinco erradas e a certa dá `429`. `check-route-auth.sh` verde (273 rotas).
+
+**O que NÃO está provado.**
+- Nenhum browser abriu a página de partilha: a `SharePage` passa a usar o `download_url` da resposta, lido e não corrido.
+- O passe está num URL e aparece nos logs durante a hora que vale; não é a palavra-passe, mas abre o ficheiro a quem o ler a tempo.
+- O travão é por link e vive em memória de cada réplica (`mfa_limiter`): com três réplicas são quinze tentativas, e um reinício zera-o.
+- A expiração do passe por tempo não tem teste próprio (só a validade adulterada).
+
+**Ficheiros.** `server/src/recordings.rs`, `server/src/lib.rs`, `scripts/rotas-publicas.txt`, `server/tests/content.rs`, `web/src/api.ts`, `web/src/pages/SharePage.tsx`.
+
+### R289 — O destino de um directo só era validado uma vez, e cada reinício do `ffmpeg` resolvia o nome outra vez
+
+**Sintoma.** `check_tenant_stream_url` corria antes de a emissão arrancar. O supervisor reinicia o `ffmpeg` de um destino até oito vezes ao longo de minutos, e cada reinício resolve o nome por conta do `ffmpeg`, sem ninguém olhar para o resultado. Para apontar uma emissão a um endereço interno bastava um nome que respondesse público à primeira, falhasse a ligação, e passasse a responder `10.x` antes do reinício — sem acertar em janela nenhuma.
+
+**Regra.** O supervisor volta a perguntar à guarda antes de cada reinício (`broadcast::StreamUrlGuard`, a mesma `check_tenant_stream_url` com o DNS de agora). Um destino que deixou de resolver para um endereço público pára de vez, com a razão no estado, e o processo não volta a ser arrancado para ele.
+
+**Portão.** `broadcast.rs`: `um_destino_que_deixa_de_ser_publico_nao_e_reiniciado` (com oito tentativas permitidas, pára à primeira consulta e não arranca outro processo) e `um_destino_que_continua_publico_e_reiniciado` (controlo positivo: uma consulta por reinício, e o destino desiste pelo caminho de sempre).
+
+**O que NÃO está provado, e o que fica aberto.**
+- **A janela dentro de um arranque continua aberta.** Entre a resposta da guarda e a resolução que o `ffmpeg` faz a seguir passam milissegundos, e um DNS com TTL zero ainda pode trocar a resposta aí. Fixar o IP no URL parte o RTMPS: o `ffmpeg` não manda SNI para um endereço numérico, e as plataformas que só aceitam RTMPS servem por SNI. **A defesa completa continua a ser de rede** — o processo de emissão não alcançar a rede interna (RFC-0001 §11) — e depende do Channel Engine (plano de lacunas, D3).
+- Os testes usam uma guarda de ensaio; nenhum servidor de nomes trocou uma resposta a meio de uma emissão.
+- O primeiro arranque não passa por esta guarda: é o `preparar_destinos` que o valida, imediatamente antes.
+
+**Ficheiros.** `server/src/broadcast.rs`, `server/src/net_guard.rs`.

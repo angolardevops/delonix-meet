@@ -86,10 +86,20 @@ pub async fn me(
 pub struct UpdateMeReq {
     pub username: Option<String>,
     pub password: Option<String>,
+    /// A password ACTUAL. Obrigatória com `password`, a não ser que esta
+    /// sessão se tenha reautenticado há menos de 5 minutos
+    /// (`POST /api/users/me/reauthentication`).
+    pub current_password: Option<String>,
     pub locale: Option<String>,
 }
 
 /// Atualiza os próprios dados: username e/ou password (cada campo é opcional).
+///
+/// Mudar a password pede prova de identidade — a password actual no mesmo
+/// pedido, ou uma reautenticação recente desta sessão — e termina todas as
+/// OUTRAS sessões da conta. Sem isto, um access token roubado trocava a
+/// password e ficava com a conta, e as sessões de quem a tinha roubado
+/// sobreviviam à troca feita pelo dono.
 #[utoipa::path(
     patch, path = "/api/users/me", tag = "users",
     security(("session" = [])),
@@ -97,8 +107,10 @@ pub struct UpdateMeReq {
     responses(
         (status = 200, body = UserPublic),
         (status = 400, description = "username/password fora da regra, ou `profile.invalid_locale`.", body = crate::openapi::ErrorBody),
-        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 401, description = "Sessão inválida, ou `current_password` não confere (`reauthentication.failed`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Mudança de password sem `current_password` e sem reautenticação recente (`auth.reauthentication_required`).", body = crate::openapi::ErrorBody),
         (status = 409, description = "Password de uma conta gerida pelo Odoo (`profile.field_managed_by_odoo`).", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Cinco provas de identidade erradas em 5 minutos.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn update_me(
@@ -106,6 +118,35 @@ pub async fn update_me(
     auth: AuthUser,
     Json(req): Json<UpdateMeReq>,
 ) -> Result<Json<UserPublic>, ApiError> {
+    // Tudo o que pode recusar a mudança de password corre ANTES de qualquer
+    // escrita: um pedido com username e password em que a prova falha não
+    // deixa o username mudado.
+    let new_password_hash = match req.password.as_deref() {
+        None => None,
+        Some(password) => {
+            // Numa conta gerida pelo Odoo a password é a do Odoo: um hash
+            // local novo seria sobrescrito no próximo login, e até lá abria a
+            // conta com uma password que o Odoo não conhece.
+            if crate::account::is_odoo_managed(&state, auth.user_id).await? {
+                return Err(delonix_meet_core::DomainError::conflict(
+                    delonix_meet_domain::identity::profile::FIELD_MANAGED_BY_ODOO,
+                    "a password desta conta é a do Odoo: altere-a no Odoo",
+                )
+                .into());
+            }
+            // A mesma política de password do registo, num só sítio
+            // (ADR-0004, Fase 2).
+            delonix_meet_domain::identity::validation::validate_password(password)
+                .map_err(ApiError::BadRequest)?;
+            match req.current_password.as_deref().filter(|p| !p.is_empty()) {
+                Some(current) => {
+                    crate::sessions::prove_current_password(&state, auth.user_id, current).await?
+                }
+                None => crate::sessions::require_recent(&auth)?,
+            }
+            Some(crate::auth::hash_password(password)?)
+        }
+    };
     if let Some(raw) = req.username.as_deref() {
         let username = raw.trim();
         if username.is_empty() || username.len() > 40 {
@@ -119,23 +160,7 @@ pub async fn update_me(
             .execute(&state.db)
             .await?;
     }
-    if let Some(password) = req.password.as_deref() {
-        // Numa conta gerida pelo Odoo a password é a do Odoo: um hash local
-        // novo seria sobrescrito no próximo login, e até lá abria a conta
-        // com uma password que o Odoo não conhece.
-        if crate::account::is_odoo_managed(&state, auth.user_id).await? {
-            return Err(delonix_meet_core::DomainError::conflict(
-                delonix_meet_domain::identity::profile::FIELD_MANAGED_BY_ODOO,
-                "a password desta conta é a do Odoo: altere-a no Odoo",
-            )
-            .into());
-        }
-        // Antes desta chamada faltava aqui o tecto de 128 que auth::register
-        // já impunha — a mesma política de password, agora num só sítio
-        // (ADR-0004, Fase 2).
-        delonix_meet_domain::identity::validation::validate_password(password)
-            .map_err(ApiError::BadRequest)?;
-        let hash = crate::auth::hash_password(password)?;
+    if let Some(hash) = new_password_hash {
         sqlx::query(
             "UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2",
         )
@@ -143,6 +168,18 @@ pub async fn update_me(
         .bind(auth.user_id)
         .execute(&state.db)
         .await?;
+        // Quem tinha uma sessão aberta com a password antiga deixa de a ter:
+        // é para isso que se muda a password depois de um roubo.
+        let revoked =
+            crate::sessions::revoke_all_except(&state, auth.user_id, auth.session_id).await?;
+        crate::audit::log(
+            &state.db,
+            None,
+            auth.user_id,
+            "auth.password_changed",
+            &format!("other_sessions_revoked={revoked}"),
+        )
+        .await;
     }
     if let Some(locale) = req.locale.as_deref() {
         // Catálogo do domínio: os novos (`pt-AO`, `fr-FR`, `zh-CN`) e os antigos

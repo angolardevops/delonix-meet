@@ -99,7 +99,7 @@ fn entrada(xml: &str, section: &str, name: &str) -> String {
 async fn a1_do_directorio(app: &TestApp, user: &str, domain: &str) -> String {
     let res = app
         .http
-        .post(app.url("/api/voice/ivr/directory"))
+        .post(app.url("/internal/v1/voice/ivr/directory"))
         .header("x-voice-secret", VOICE_SECRET)
         .form(&[("user", user), ("domain", domain)])
         .send()

@@ -60,7 +60,7 @@ EXCLUIDAS = {'/ws', '/rtc', '/api/rooms/{room_code}/live', '/health', '/ready', 
              '/internal/v1/voice/ivr/verify-extension-pin',
              # Callbacks `mod_xml_curl` do FreeSWITCH (ramais): máquina-a-máquina, por
              # segredo partilhado, respondem XML — o contrato é o do FreeSWITCH.
-             '/api/voice/ivr/directory', '/api/voice/ivr/dialplan-did', '/api/voice/ivr/resolve-extension',
+             '/internal/v1/voice/ivr/directory', '/internal/v1/voice/ivr/dialplan-did', '/internal/v1/voice/ivr/resolve-extension',
              # Telefonia máquina-a-máquina: o contrato é o do FreeSWITCH
              # (mod_json_cdr, mod_xml_curl), escrito no ADR-0009.
              '/internal/v1/telephony/call-records', '/internal/v1/telephony/freeswitch-config',

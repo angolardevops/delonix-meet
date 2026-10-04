@@ -3,4 +3,10 @@
 #
 # Só a rede de pods do laboratório — é de lá que fala o PBX de cliente.
 # Em produção este ficheiro leva os IPs do tronco contratado e NUNCA vai para o git.
-1 10.244.0.0 16 0 lab-pods
+#
+# SÓ a porta 5060 de origem: é a do tronco UDP do PBX (o `meet`), que faz de
+# tronco contratado. O outro tronco do mesmo PBX (o `meet-central`, por TLS) sai
+# de uma porta efémera, não está na lista, e por isso só entra como central
+# autenticada da organização (ADR-0016). Com a porta 0 (qualquer), o bordo nunca
+# chegava a desafiar ninguém do laboratório.
+1 10.244.0.0 16 5060 lab-tronco-udp

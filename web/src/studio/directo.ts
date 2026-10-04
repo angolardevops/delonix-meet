@@ -140,39 +140,49 @@ export function directoSuportado(): boolean {
 /**
  * Monta o URL do WebSocket. Separado para ser testável sem rede.
  *
- * Um ARRAY de destinos, não um só — é o multi-canal tipo StreamYard: uma só
- * ligação, um só `MediaRecorder` a codificar uma vez, e é o `ffmpeg` do
- * servidor que reparte para N plataformas (`montar_argumentos` em
- * `broadcast.rs` já sabia fazer isto; só faltava a query aceitar mais que um).
- * Vai como JSON porque um WebSocket não tem corpo — a query é o único sítio,
- * e um array cresce sem inventar `destino2`/`chave2` por cada plataforma a
- * mais.
+ * O URL leva o token de sala e o codec — e MAIS NADA. Os destinos iam aqui,
+ * em JSON, e com eles a chave de emissão de cada um: um URL fica escrito nos
+ * logs de acesso de todos os proxies pelo caminho, e a chave do YouTube de
+ * alguém não é coisa para lá ficar. Vão agora na primeira trama de texto
+ * (`pedidoDeInicio`), depois de a ligação estar aberta.
  */
-export function urlDoDirecto(
-  base: { protocol: string; host: string },
-  codigo: string,
-  token: string,
-  destinos: Destino[],
-): string {
+export function urlDoDirecto(base: { protocol: string; host: string }, codigo: string, token: string): string {
   const esquema = base.protocol === 'https:' ? 'wss:' : 'ws:'
-  const q = new URLSearchParams({
-    token,
-    destinos: JSON.stringify(
-      destinos.map((d) =>
-        d.id
-          ? // Destino guardado: só o id. A chave fica no servidor.
-            { id: d.id, ...(d.rotulo ? { rotulo: d.rotulo } : {}) }
-          : {
-              url: d.url.trim(),
-              chave: d.chave.trim(),
-              ...(d.rotulo ? { rotulo: d.rotulo } : {}),
-            },
-      ),
-    ),
-    codec: CODEC_DIRECTO,
-  })
+  const q = new URLSearchParams({ token, codec: CODEC_DIRECTO })
   return `${esquema}//${base.host}/api/rooms/${encodeURIComponent(codigo)}/live?${q}`
 }
+
+/**
+ * A primeira trama que o servidor espera: os destinos da emissão.
+ *
+ * Um ARRAY, não um só — é o multi-canal tipo StreamYard: uma só ligação, um
+ * só `MediaRecorder` a codificar uma vez, e é o `ffmpeg` do servidor que
+ * reparte para N plataformas. Um destino guardado vai só pelo `id`: a chave
+ * dele nunca volta ao browser.
+ */
+export function pedidoDeInicio(destinos: Destino[]): string {
+  return JSON.stringify({
+    tipo: 'iniciar',
+    destinos: destinos.map((d) =>
+      d.id
+        ? { id: d.id, ...(d.rotulo ? { rotulo: d.rotulo } : {}) }
+        : {
+            url: d.url.trim(),
+            chave: d.chave.trim(),
+            ...(d.rotulo ? { rotulo: d.rotulo } : {}),
+          },
+    ),
+  })
+}
+
+/**
+ * Quanto se espera pela primeira resposta do servidor ao pedido de início
+ * antes de dar a emissão por aceite. O servidor valida os destinos depois de
+ * receber o pedido (base de dados, resolução de nomes) e responde com o estado
+ * deles ou com a recusa; isto é só o tecto para o caso de nenhuma das duas
+ * chegar.
+ */
+const ESPERA_DO_ACEITE_MS = 2000
 
 export interface OpcoesDoDirecto {
   /** Débito de vídeo. 4,5 Mbps é o que o YouTube pede para 1080p30. */
@@ -248,7 +258,7 @@ export class Directo {
     this.destinos = []
     this.motivoDoServidor = null
 
-    const url = urlDoDirecto(location, codigo, token, destinos)
+    const url = urlDoDirecto(location, codigo, token)
     const socket = new WebSocket(url)
     socket.binaryType = 'arraybuffer'
     this.socket = socket
@@ -270,9 +280,11 @@ export class Directo {
         else if (m?.tipo === 'destinos') resolve()
       }
       socket.onopen = () => {
-        // Não resolve já: o servidor pode estar prestes a recusar. Uma volta
-        // do event loop chega para a trama de texto chegar, se vier.
-        setTimeout(() => (recusa ? reject(new Error(recusa)) : resolve()), 250)
+        // Os destinos — e as chaves — só saem daqui, numa trama, nunca no URL.
+        socket.send(pedidoDeInicio(destinos))
+        // Não resolve já: o servidor valida o pedido e responde com o estado
+        // dos destinos (aceite) ou com a recusa. O temporizador é só o tecto.
+        setTimeout(() => (recusa ? reject(new Error(recusa)) : resolve()), ESPERA_DO_ACEITE_MS)
       }
       socket.onclose = () => reject(new Error(recusa ?? 'o servidor recusou a emissão'))
       socket.onerror = () => reject(new Error(recusa ?? 'não foi possível ligar ao servidor de emissão'))

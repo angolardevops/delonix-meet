@@ -2,7 +2,7 @@
 --
 -- Fluxo: um ramal já registado disca um número curto (3–5 dígitos) → resolve
 -- no control plane Rust QUAL AOR (sip_username) esse número é, DENTRO da
--- mesma org do chamador (/api/voice/ivr/resolve-extension, autenticado por
+-- mesma org do chamador (/internal/v1/voice/ivr/resolve-extension, autenticado por
 -- segredo partilhado) → liga directamente ao registo desse AOR
 -- (`bridge(user/<sip_username>@<domínio>)`).
 --
@@ -20,7 +20,7 @@
 --
 -- Segredos NUNCA em claro: lidos de variáveis globais do FreeSWITCH que, por
 -- sua vez, vêm do ambiente (ver voice/cluster/freeswitch-entrypoint.sh):
---   ${delonix_control_url}     ex.: http://127.0.0.1:8180
+--   ${delonix_control_url}     ex.: http://127.0.0.1:8181 (o listener INTERNO)
 --   ${delonix_voice_secret}    == VOICE_INTERNAL_SECRET do backend
 --
 -- Requisitos: mod_lua, mod_curl, mod_sofia. O SRTP à entrada é imposto pela
@@ -69,7 +69,7 @@ if domain == "" or destination == "" then
 end
 
 local body = string.format('{"domain":"%s","extension":"%s"}', domain, destination)
-local resp = http_post("/api/voice/ivr/resolve-extension", body)
+local resp = http_post("/internal/v1/voice/ivr/resolve-extension", body)
 
 if resp and resp:match('"meeting_access"%s*:%s*true') then
   -- O IVR atende, autentica o ramal pelo digest e fala com o listener INTERNO

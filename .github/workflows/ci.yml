@@ -25,8 +25,15 @@ on:
 # substitui. Num ramo de integração cada commit fundido tem de ficar com o seu
 # veredicto: com `cancel-in-progress: true` em todo o lado, três commits da
 # `main` ficaram sem CI concluído porque a fusão seguinte cancelou a corrida.
+#
+# Por isso o grupo é o RAMO numa PR e o COMMIT num push. Não chega pôr
+# `cancel-in-progress: false` com o grupo por ramo: um grupo guarda no máximo
+# uma corrida a correr e UMA à espera, e a terceira fusão cancela a que estava
+# à espera. Medido a 2026-10-04, na própria noite em que a regra entrou: com
+# três fusões seguidas na `develop`, a corrida do commit do meio (`4479dcc8`)
+# ficou «cancelled».
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

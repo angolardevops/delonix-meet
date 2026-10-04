@@ -33,7 +33,7 @@ grep -l CHANGE_ME *.secrets.env && echo "ainda há CHANGE_ME" >&2
 | Ficheiro | Chaves | Tem de bater com |
 |---|---|---|
 | `meet-db.secrets.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | a password do `DATABASE_URL` |
-| `meet-server.secrets.env` | `DATABASE_URL`, `JWT_SECRET`, `TURN_SECRET`, `TURN_HOST`, `SFU_EXTERNAL_IP`, `PROVISIONING_SECRET`, `VOICE_INTERNAL_SECRET`, `PLATFORM_ADMIN_USER_IDS` | — |
+| `meet-server.secrets.env` | `DATABASE_URL`, `JWT_SECRET`, `TURN_SECRET`, `DATA_ENCRYPTION_KEYS`, `TURN_HOST`, `SFU_EXTERNAL_IP`, `PROVISIONING_SECRET`, `VOICE_INTERNAL_SECRET`, `PLATFORM_ADMIN_USER_IDS` | — |
 | `meet-coturn.secrets.env` | `TURN_CONFIG=static-auth-secret=<segredo>` | o `TURN_SECRET` do servidor |
 
 O coturn recebe o segredo como **ficheiro** (`secretFiles: true` →

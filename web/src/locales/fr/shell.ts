@@ -60,6 +60,8 @@ export default {
     passwordDica: "Laissez vide pour garder l'actuel.",
     confirmarPassword: 'Confirmer le mot de passe',
     passwordsDiferentes: 'Les mots de passe ne correspondent pas.',
+    passwordActual: 'Mot de passe actuel',
+    passwordActualDica: "Confirme que c'est bien vous. Le changement ferme les autres sessions de ce compte.",
     guardado: 'Modifications enregistrées.',
     tema: 'Thème',
     claro: 'Clair',

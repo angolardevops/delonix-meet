@@ -489,12 +489,30 @@ struct Feed {
     overflowed: bool,
 }
 
+/// Volta a perguntar se o URL de um destino ainda é de ligar. Devolve `false`
+/// quando deixou de resolver para um endereço público.
+///
+/// Existe por causa dos REINÍCIOS. A validação (`check_tenant_stream_url`)
+/// corria uma vez, antes de a emissão arrancar, e o supervisor reinicia o
+/// `ffmpeg` até oito vezes ao longo de minutos — cada reinício resolve o nome
+/// outra vez, por conta do `ffmpeg`, sem ninguém olhar para o resultado. Para
+/// apontar a emissão a um endereço interno bastava um nome que respondesse
+/// público na primeira vez, falhasse a ligação, e passasse a responder
+/// `10.x` antes do reinício: não era preciso acertar numa janela de
+/// milissegundos.
+pub type StreamUrlGuard =
+    Arc<dyn Fn(String) -> futures_util::future::BoxFuture<'static, bool> + Send + Sync>;
+
 struct Output {
     index: usize,
     label: String,
     id: Option<Uuid>,
     platform: String,
     key: Secret,
+    /// O URL do destino SEM a chave — o que a guarda revalida antes de cada
+    /// reinício.
+    url: String,
+    guard: Option<StreamUrlGuard>,
     args: Vec<String>,
     feed: StdMutex<Feed>,
     received: AtomicU64,
@@ -509,6 +527,15 @@ fn lock<T>(m: &StdMutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Output {
+    /// `true` se não há guarda (testes) ou se o URL continua a resolver para
+    /// um endereço público.
+    async fn still_public(&self) -> bool {
+        match &self.guard {
+            Some(guard) => guard(self.url.clone()).await,
+            None => true,
+        }
+    }
+
     fn report(&self) -> DestinationReport {
         let s = lock(&self.status);
         let received = self.received.load(Ordering::Relaxed);
@@ -845,6 +872,10 @@ pub fn classify_failure(
     }
 }
 
+/// O motivo de um destino parado pela guarda dos reinícios.
+const DEIXOU_DE_SER_PUBLICO: &str =
+    "o destino deixou de resolver para um endereço público — a emissão para ele parou";
+
 /// O ciclo de vida de UM destino: arrancar, vigiar, reiniciar, desistir.
 async fn supervise(
     output: Arc<Output>,
@@ -861,6 +892,17 @@ async fn supervise(
 ) {
     let mut next = Some(first);
     loop {
+        // Um reinício: o `ffmpeg` vai resolver o nome outra vez. Revalida-se
+        // ANTES, e um destino que deixou de ser público pára aqui, de vez.
+        if next.is_none() && !output.still_public().await {
+            tracing::warn!(destino = %output.label, "directo: o destino deixou de resolver para um endereço público — parado");
+            output.set_state(
+                DestinationState::Stopped,
+                Some(DEIXOU_DE_SER_PUBLICO.into()),
+                &changes,
+            );
+            return;
+        }
         let proc = match next.take() {
             Some(p) => p,
             None => match spawn_process(&program, &output.args) {
@@ -1098,6 +1140,20 @@ impl Emissao {
         programa: &str,
         policy: RetryPolicy,
     ) -> std::io::Result<Arc<Self>> {
+        Self::arrancar_com_guarda(destinos, threads, programa, policy, None)
+    }
+
+    /// Como o [`Self::arrancar`], com a guarda que revalida o URL de cada
+    /// destino antes de cada REINÍCIO do seu processo (ver [`StreamUrlGuard`]).
+    /// É por aqui que o servidor arranca uma emissão; sem guarda ficam os
+    /// testes do ciclo de vida, que não têm rede.
+    pub fn arrancar_com_guarda(
+        destinos: &[Destino],
+        threads: u32,
+        programa: &str,
+        policy: RetryPolicy,
+        guard: Option<StreamUrlGuard>,
+    ) -> std::io::Result<Arc<Self>> {
         let (end, _) = watch::channel(false);
         let (changes, _) = watch::channel(0u64);
         let mut outputs = Vec::with_capacity(destinos.len());
@@ -1113,6 +1169,8 @@ impl Emissao {
                 id: d.id,
                 platform: d.platform.clone(),
                 key: Secret::new(d.chave.expose().to_string()),
+                url: d.url.clone(),
+                guard: guard.clone(),
                 args,
                 feed: StdMutex::new(Feed {
                     tx: None,
@@ -1367,23 +1425,47 @@ const REPORT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct DirectoQuery {
     /// Token de sala, o mesmo que o `/ws` usa — curto e com âmbito.
     pub token: String,
-    /// Os destinos, como JSON: `[{"url":"...","chave":"...","rotulo":"..."}]`
-    /// ou, para um destino guardado da organização, `[{"id":"<uuid>"}]`.
+    /// LEGADO. Os destinos vinham aqui, como JSON, e com eles a CHAVE DE
+    /// EMISSÃO de cada destino ad hoc — num URL, que fica nos logs de acesso
+    /// do proxy, do ingress e de qualquer balanceador pelo caminho (RFC-0001,
+    /// B8). O cliente manda-os agora na primeira trama de texto
+    /// (`{"tipo":"iniciar","destinos":[…]}`, ver `iniciar_por_mensagem`).
     ///
-    /// Um array e não N parâmetros nomeados (`destino1`, `chave1`,
-    /// `destino2`…): um WebSocket não tem corpo, a query é o único lugar, e
-    /// um array cresce para o multi-canal (tipo StreamYard) sem inventar
-    /// esquema novo por cada plataforma a mais. O parsing é manual (ver
-    /// `ws_directo`) e não `#[derive(Deserialize)]` num `Vec<DestinoBruto>`
-    /// directo no extractor: um JSON malformado tem de dar a MESMA recusa
-    /// legível pós-upgrade que as outras regras — um erro do extractor do
-    /// axum falha ANTES do upgrade, e é exactamente o que o comentário em
-    /// `ws_directo` explica que fica invisível para o browser.
-    pub destinos: String,
+    /// Continua a aceitar-se aqui SÓ o que não é segredo: destinos guardados,
+    /// `[{"id":"<uuid>"}]`. Um destino com `url` ou `chave` no URL é recusado.
+    #[serde(default)]
+    pub destinos: Option<String>,
     /// MIME do vídeo que o browser vai empurrar, para se poder recusar ANTES
     /// de arrancar o ffmpeg.
     pub codec: String,
 }
+
+/// O que se sabe do pedido antes de se conhecerem os destinos.
+struct PedidoDeDirecto {
+    sala_id: Uuid,
+    codigo: String,
+    user_id: Uuid,
+    e2ee: bool,
+    codec: String,
+}
+
+/// Por onde chegaram os destinos — o URL só leva o que não é segredo.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OrigemDosDestinos {
+    Url,
+    Mensagem,
+}
+
+/// Quanto se espera pela trama de início depois do upgrade.
+const ESPERA_DO_INICIO: Duration = Duration::from_secs(10);
+
+/// A recusa de um destino com URL e chave no endereço da ligação. É o que um
+/// cliente antigo (em cache) recebe: diz-lhe o que fazer.
+const CHAVE_NO_URL: &str = "as chaves de emissão já não se aceitam no endereço da ligação: \
+     recarregue a página para actualizar a aplicação";
+
+const DESTINO_GUARDADO_INDISPONIVEL: &str =
+    "um dos destinos guardados não existe, não é desta organização, ou não está pronto";
 
 /// A forma solta que chega na query, antes de a chave virar `Secret`.
 #[derive(Deserialize)]
@@ -1461,21 +1543,101 @@ pub async fn ws_directo(
             "só o anfitrião da sala (ou quem ele autorizou) pode pôr a sala no ar".into(),
         );
     }
-    let brutos = match serde_json::from_str::<Vec<DestinoBruto>>(&q.destinos) {
-        Ok(b) => b,
-        Err(e) => return recusa(ws, format!("os destinos vieram malformados: {e}")),
+    let pedido = PedidoDeDirecto {
+        sala_id,
+        codigo,
+        user_id,
+        e2ee,
+        codec: q.codec,
     };
+    match q.destinos {
+        // A forma antiga, com os destinos no URL: só destinos guardados.
+        Some(json) => {
+            match preparar_destinos(&state, &pedido, &json, OrigemDosDestinos::Url).await {
+                Ok(destinos) => Ok(ws.on_upgrade(move |socket| {
+                    emitir(
+                        socket,
+                        state,
+                        pedido.sala_id,
+                        pedido.codigo,
+                        pedido.user_id,
+                        destinos,
+                    )
+                })),
+                Err(m) => recusa(ws, m),
+            }
+        }
+        // A forma actual: os destinos (e as chaves) vêm na primeira trama.
+        None => Ok(ws.on_upgrade(move |socket| iniciar_por_mensagem(socket, state, pedido))),
+    }
+}
+
+/// Lê o pedido de início — a primeira trama, de texto:
+/// `{"tipo":"iniciar","destinos":[{"url":…,"chave":…,"rotulo":…} | {"id":…}]}` —
+/// valida-o e, se passar, emite. É por aqui que a chave de emissão chega ao
+/// servidor sem nunca ter estado num URL.
+async fn iniciar_por_mensagem(mut socket: WebSocket, state: Arc<AppState>, p: PedidoDeDirecto) {
+    let texto = match tokio::time::timeout(ESPERA_DO_INICIO, socket.recv()).await {
+        Ok(Some(Ok(Message::Text(t)))) => t,
+        Ok(Some(Ok(_))) => {
+            return recusar(
+                socket,
+                "a primeira mensagem tem de ser o pedido de início, em texto".into(),
+            )
+            .await
+        }
+        _ => return recusar(socket, "o pedido de início não chegou".into()).await,
+    };
+    let destinos_json = match serde_json::from_str::<serde_json::Value>(&texto) {
+        Ok(v) if v.get("tipo").and_then(|t| t.as_str()) == Some("iniciar") => v
+            .get("destinos")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+            .to_string(),
+        _ => {
+            return recusar(
+                socket,
+                "a primeira mensagem tem de ser {\"tipo\":\"iniciar\",\"destinos\":[…]}".into(),
+            )
+            .await
+        }
+    };
+    match preparar_destinos(&state, &p, &destinos_json, OrigemDosDestinos::Mensagem).await {
+        Ok(destinos) => emitir(socket, state, p.sala_id, p.codigo, p.user_id, destinos).await,
+        Err(m) => recusar(socket, m).await,
+    }
+}
+
+/// Os destinos que vão para o ar, ou a frase da recusa. As regras correm todas
+/// ANTES de gastar um processo; a ordem é a de sempre (malformado, tecto, E2EE,
+/// destinos guardados, endereços públicos, codec e capacidade do nó).
+async fn preparar_destinos(
+    state: &Arc<AppState>,
+    p: &PedidoDeDirecto,
+    destinos_json: &str,
+    origem: OrigemDosDestinos,
+) -> Result<Vec<Destino>, String> {
+    let (codigo, user_id, e2ee) = (&p.codigo, p.user_id, p.e2ee);
+    let brutos = match serde_json::from_str::<Vec<DestinoBruto>>(destinos_json) {
+        Ok(b) => b,
+        Err(e) => return Err(format!("os destinos vieram malformados: {e}")),
+    };
+    // No URL só cabe o que não é segredo. Um destino ad hoc traz a chave de
+    // emissão, e um URL fica escrito em todos os logs de acesso pelo caminho.
+    if origem == OrigemDosDestinos::Url && brutos.iter().any(|b| b.id.is_none()) {
+        return Err(CHAVE_NO_URL.into());
+    }
     // O tecto conta ANTES de ir à base: mil ids não podem ser mil consultas.
     if brutos.len() > state.config.max_destinos_por_directo {
         let r = Recusa::DemasiadosDestinos {
             pedidos: brutos.len(),
             maximo: state.config.max_destinos_por_directo,
         };
-        return recusa(ws, r.to_string());
+        return Err(r.to_string());
     }
     if e2ee {
         // A recusa do E2EE ganha a todas, e não se decifra uma chave para nada.
-        return recusa(ws, Recusa::E2ee.to_string());
+        return Err(Recusa::E2ee.to_string());
     }
     // Destinos guardados: um só pedido em lote (não N, um por `id`) — a
     // organização vem de quem pede, nunca do corpo do pedido.
@@ -1483,20 +1645,17 @@ pub async fn ws_directo(
     let mut resolvidos: std::collections::HashMap<Uuid, (String, String, String, String)> =
         std::collections::HashMap::new();
     if !ids_guardados.is_empty() {
-        let org_id: Option<Uuid> = crate::org::orgs_of_user(&state, user_id)
+        let org_id: Option<Uuid> = crate::org::orgs_of_user(state, user_id)
             .await
             .first()
             .copied();
         let Some(org_id) = org_id else {
-            return recusa(
-                ws,
-                "sem organização: não pode usar destinos guardados".into(),
-            );
+            return Err("sem organização: não pode usar destinos guardados".into());
         };
         // `broadcast.public_destinations` (ADR-0008 §4) e o limite de destinos em
         // simultâneo do papel (§8): quem pede tem de ter a capacidade.
         match crate::org::require_capability_for(
-            &state,
+            state,
             org_id,
             user_id,
             delonix_meet_domain::identity::authorization::Capability::BroadcastPublicDestinations,
@@ -1508,42 +1667,33 @@ pub async fn ws_directo(
         )
         .await
         {
-            Ok(grant) => match crate::org::role_destination_limit(&state, grant.role_id).await {
+            Ok(grant) => match crate::org::role_destination_limit(state, grant.role_id).await {
                 Ok(Some(max)) if ids_guardados.len() > max as usize => {
-                    return recusa(
-                        ws,
-                        format!(
-                            "o seu papel permite {max} destinos em simultâneo e pediu {}",
-                            ids_guardados.len()
-                        ),
-                    )
+                    return Err(format!(
+                        "o seu papel permite {max} destinos em simultâneo e pediu {}",
+                        ids_guardados.len()
+                    ))
                 }
-                Err(_) => return recusa(ws, "não foi possível ler o limite do papel".into()),
+                Err(_) => return Err("não foi possível ler o limite do papel".into()),
                 _ => {}
             },
             Err(ApiError::Domain(e)) if e.code == "authz.approval_required" => {
-                return recusa(ws, e.message)
+                return Err(e.message)
             }
             Err(_) => {
-                return recusa(
-                    ws,
+                return Err(
                     "sem a capacidade broadcast.public_destinations nesta organização".into(),
                 )
             }
         }
-        match crate::stream_destinations::resolve_for_broadcast(&state, org_id, &ids_guardados)
-            .await
+        match crate::stream_destinations::resolve_for_broadcast(state, org_id, &ids_guardados).await
         {
             Ok(rows) => {
                 for (id, url, chave, label, kind) in rows {
                     resolvidos.insert(id, (url, chave, label, kind));
                 }
             }
-            Err(_) => return recusa(
-                ws,
-                "um dos destinos guardados não existe, não é desta organização, ou não está pronto"
-                    .into(),
-            ),
+            Err(_) => return Err(DESTINO_GUARDADO_INDISPONIVEL.into()),
         }
     }
     let mut destinos = Vec::with_capacity(brutos.len());
@@ -1551,11 +1701,7 @@ pub async fn ws_directo(
         match b.id {
             Some(id) => {
                 let Some((url, chave, label, kind)) = resolvidos.remove(&id) else {
-                    return recusa(
-                        ws,
-                        "um dos destinos guardados não existe, não é desta organização, ou não está pronto"
-                            .into(),
-                    );
+                    return Err(DESTINO_GUARDADO_INDISPONIVEL.into());
                 };
                 let rotulo = b.rotulo.filter(|r| !r.trim().is_empty()).unwrap_or(label);
                 destinos.push(Destino {
@@ -1589,20 +1735,17 @@ pub async fn ws_directo(
             .is_err()
         {
             tracing::warn!(sala = %codigo, destino = %d.rotulo, "directo recusado: destino não público");
-            return recusa(
-                ws,
-                format!(
-                    "o destino «{}» não é alcançável: aponta para um endereço interno ou não resolve",
-                    d.rotulo
-                ),
-            );
+            return Err(format!(
+                "o destino «{}» não é alcançável: aponta para um endereço interno ou não resolve",
+                d.rotulo
+            ));
         }
     }
 
     let activas = state.directos.quantas();
     let mut motivo: Option<String> = match pode_emitir(
         e2ee,
-        &q.codec,
+        &p.codec,
         &destinos,
         activas,
         state.config.max_directos,
@@ -1614,17 +1757,17 @@ pub async fn ws_directo(
         }
         Ok(()) => None,
     };
-    if motivo.is_none() && state.directos.tem(sala_id) {
+    if motivo.is_none() && state.directos.tem(p.sala_id) {
         motivo = Some("esta sala já está em directo".into());
     }
     if let Some(m) = motivo {
-        return recusa(ws, m);
+        return Err(m);
     }
 
-    // Os processos só arrancam DEPOIS do upgrade. Antes arrancavam aqui, e um
-    // cliente que desistisse a meio do handshake deixava um ffmpeg registado
-    // que ninguém parava: o `on_upgrade` nunca corria.
-    Ok(ws.on_upgrade(move |socket| emitir(socket, state, sala_id, codigo, user_id, destinos)))
+    // Os processos só arrancam DEPOIS disto, em `emitir`, já com o socket na
+    // mão: arrancados antes do upgrade, um cliente que desistisse a meio do
+    // handshake deixava um ffmpeg registado que ninguém parava.
+    Ok(destinos)
 }
 
 /// Entrega a razão da recusa e fecha.
@@ -1650,11 +1793,21 @@ async fn emitir(
     user_id: Uuid,
     destinos: Vec<Destino>,
 ) {
-    let emissao = match Emissao::arrancar(
+    // A guarda que o supervisor consulta antes de cada reinício: a mesma regra
+    // que validou os destinos à entrada, feita outra vez com o DNS de agora.
+    let outbound = state.outbound.clone();
+    let guard: StreamUrlGuard = Arc::new(
+        move |url: String| -> futures_util::future::BoxFuture<'static, bool> {
+            let outbound = outbound.clone();
+            Box::pin(async move { outbound.check_tenant_stream_url(&url).await.is_ok() })
+        },
+    );
+    let emissao = match Emissao::arrancar_com_guarda(
         &destinos,
         state.config.directo_threads,
         &state.config.ffmpeg_bin,
         RetryPolicy::default(),
+        Some(guard),
     ) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -2637,6 +2790,92 @@ esac
                     .is_some_and(|m| m.contains("não ficou no ar"))
         })
         .await;
+        e.parar().await;
+    }
+
+    /// R289 — a guarda corre antes de cada REINÍCIO. Um destino cujo nome
+    /// deixa de resolver para um endereço público depois da primeira queda
+    /// pára de vez, com a razão, e o `ffmpeg` não volta a ser arrancado para
+    /// ele — antes, cada reinício resolvia o nome outra vez sem ninguém olhar.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn um_destino_que_deixa_de_ser_publico_nao_e_reiniciado() {
+        let consultas = Arc::new(AtomicUsize::new(0));
+        let c = consultas.clone();
+        // Público à entrada (quem valida antes de arrancar não é esta guarda),
+        // interno a partir da primeira consulta — a do primeiro reinício.
+        let guarda: StreamUrlGuard = Arc::new(
+            move |_url: String| -> futures_util::future::BoxFuture<'static, bool> {
+                c.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { false })
+            },
+        );
+        let e = Emissao::arrancar_com_guarda(
+            &[destino("Mudou", &chave("recusa"))],
+            1,
+            prog(&falsos().ffmpeg),
+            RetryPolicy {
+                max_attempts: 8,
+                ..rapida()
+            },
+            Some(guarda),
+        )
+        .unwrap();
+        esperar(&e, "o destino a parar pela guarda", |r| {
+            r[0].estado == DestinationState::Stopped
+        })
+        .await;
+        let r = e.report();
+        assert!(
+            r[0].motivo
+                .as_deref()
+                .is_some_and(|m| m.contains("deixou de resolver")),
+            "{:?}",
+            r[0].motivo
+        );
+        // Parou à PRIMEIRA consulta: com oito tentativas permitidas, não gastou
+        // nenhuma a arrancar outro processo.
+        assert_eq!(consultas.load(Ordering::SeqCst), 1);
+        assert_eq!(r[0].tentativas, 1, "só a queda do primeiro processo conta");
+        e.parar().await;
+    }
+
+    /// Controlo positivo: com a guarda a dizer que sim, o reinício acontece
+    /// como sempre — a guarda não pára um destino que continua público.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn um_destino_que_continua_publico_e_reiniciado() {
+        let consultas = Arc::new(AtomicUsize::new(0));
+        let c = consultas.clone();
+        let guarda: StreamUrlGuard = Arc::new(
+            move |_url: String| -> futures_util::future::BoxFuture<'static, bool> {
+                c.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { true })
+            },
+        );
+        let e = Emissao::arrancar_com_guarda(
+            &[destino("Fica", &chave("recusa"))],
+            1,
+            prog(&falsos().ffmpeg),
+            rapida(),
+            Some(guarda),
+        )
+        .unwrap();
+        esperar(&e, "o destino a desistir depois de tentar", |r| {
+            r[0].estado == DestinationState::Stopped
+        })
+        .await;
+        let r = e.report();
+        assert!(
+            r[0].motivo
+                .as_deref()
+                .is_some_and(|m| m.contains("desistiu depois de")),
+            "{:?}",
+            r[0].motivo
+        );
+        assert_eq!(
+            consultas.load(Ordering::SeqCst),
+            2,
+            "uma consulta por reinício"
+        );
         e.parar().await;
     }
 

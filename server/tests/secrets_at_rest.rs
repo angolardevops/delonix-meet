@@ -149,6 +149,9 @@ async fn dav_password(app: &TestApp) -> String {
         .unwrap()
 }
 
+/// Um HA1 como os que a tabela dos ramais guardava em claro (32 hex).
+const LEGACY_HA1: &str = "0123456789abcdef0123456789abcdef";
+
 fn assert_sealed(value: &str, plain: &str) {
     assert!(value.starts_with("enc:v1:"), "não está cifrado: {value}");
     assert!(!value.contains(plain), "o texto claro está na coluna");
@@ -375,7 +378,19 @@ async fn legacy_plaintext_keeps_working_and_is_resealed_idempotently(db: sqlx::P
     .execute(&app.db)
     .await
     .unwrap();
-    assert_eq!(count_legacy(&app.db).await.unwrap(), 3);
+    // E o HA1 de um ramal, em claro como estava até à R286 (um ramal da
+    // empresa: sem pessoa, com etiqueta).
+    sqlx::query(
+        "INSERT INTO voice_extensions
+             (org_id, extension, sip_username, sip_password_hash, sip_ha1, label)
+         VALUES ($1::uuid, '100', 'ramal_herdado', 'x', $2, 'Recepção')",
+    )
+    .bind(a.org())
+    .bind(LEGACY_HA1)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(count_legacy(&app.db).await.unwrap(), 4);
 
     // Antes da tarefa: o herdado serve.
     app.new_meeting(&a, "antes", &[]).await;
@@ -390,9 +405,17 @@ async fn legacy_plaintext_keeps_working_and_is_resealed_idempotently(db: sqlx::P
         ResealReport {
             webhook_secrets: 1,
             sso_client_secrets: 1,
-            webdav_passwords: 1
+            webdav_passwords: 1,
+            extension_ha1s: 1
         }
     );
+    let sealed_ha1: String = sqlx::query_scalar(
+        "SELECT sip_ha1 FROM voice_extensions WHERE sip_username = 'ramal_herdado'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_sealed(&sealed_ha1, LEGACY_HA1);
     let sealed_hook = hook_secret(&app, &hook).await;
     let sealed_sso = sso_secret(&app, a.org()).await;
     let sealed_dav = dav_password(&app).await;

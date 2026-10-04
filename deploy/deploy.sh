@@ -107,6 +107,7 @@ set -a; source "$ENV_FILE"; set +a
 [ "${JWT_SECRET}"  != "dev-only-secret-change-in-production" ] || die "JWT_SECRET ainda é o default de dev"
 [ "${TURN_SECRET:-}" != "delonix_turn_dev_secret" ] || die "TURN_SECRET ainda é o default de dev"
 case "${DATABASE_URL:-}" in *delonix_dev*) die "DATABASE_URL ainda usa a password de dev";; esac
+[ -n "${DATA_ENCRYPTION_KEYS:-}" ] || die "DATA_ENCRYPTION_KEYS não definida em $ENV_FILE — o servidor não arranca sem ela: echo \"k1:\$(openssl rand -base64 32)\""
 [ "${DELONIX_ALLOW_INSECURE:-}" != "1" ] || die "DELONIX_ALLOW_INSECURE=1 em produção — remover de $ENV_FILE"
 ok "segredos presentes e não-default"
 

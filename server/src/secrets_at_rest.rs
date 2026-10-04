@@ -79,11 +79,13 @@ pub struct ResealReport {
     pub webhook_secrets: u64,
     pub sso_client_secrets: u64,
     pub webdav_passwords: u64,
+    /// HA1 dos ramais (`voice_extensions.sip_ha1`, R286).
+    pub extension_ha1s: u64,
 }
 
 impl ResealReport {
     pub fn total(&self) -> u64 {
-        self.webhook_secrets + self.sso_client_secrets + self.webdav_passwords
+        self.webhook_secrets + self.sso_client_secrets + self.webdav_passwords + self.extension_ha1s
     }
 }
 
@@ -100,7 +102,7 @@ struct Column {
     update: &'static str,
 }
 
-const COLUMNS: [Column; 3] = [
+const COLUMNS: [Column; 4] = [
     Column {
         table: "org_webhooks",
         column: "secret",
@@ -124,14 +126,21 @@ const COLUMNS: [Column; 3] = [
         update: "UPDATE platform_storage SET webdav_password = $1
                   WHERE id = $2::int AND webdav_password = $3",
     },
+    Column {
+        table: "voice_extensions",
+        column: "sip_ha1",
+        select: "SELECT id::text, sip_ha1 FROM voice_extensions
+                  WHERE sip_ha1 <> '' AND sip_ha1 NOT LIKE 'enc:v1:%' ORDER BY id LIMIT $1",
+        update: "UPDATE voice_extensions SET sip_ha1 = $1 WHERE id = $2::uuid AND sip_ha1 = $3",
+    },
 ];
 
-/// Cifra os segredos herdados em claro das três colunas. Idempotente: uma
+/// Cifra os segredos herdados em claro das colunas de `COLUMNS`. Idempotente: uma
 /// linha já cifrada não é seleccionada. Em lotes de `BATCH`. O `UPDATE` só
 /// escreve se o valor ainda for o lido — uma escrita concorrente (já cifrada)
 /// não é pisada.
 pub async fn reseal_legacy(db: &PgPool, sb: &SecretBox) -> Result<ResealReport, sqlx::Error> {
-    let mut counts = [0u64; 3];
+    let mut counts = [0u64; 4];
     for (count, col) in counts.iter_mut().zip(&COLUMNS) {
         let mut sealed = 0u64;
         loop {
@@ -160,15 +169,16 @@ pub async fn reseal_legacy(db: &PgPool, sb: &SecretBox) -> Result<ResealReport, 
         }
         *count = sealed;
     }
-    let [webhook_secrets, sso_client_secrets, webdav_passwords] = counts;
+    let [webhook_secrets, sso_client_secrets, webdav_passwords, extension_ha1s] = counts;
     Ok(ResealReport {
         webhook_secrets,
         sso_client_secrets,
         webdav_passwords,
+        extension_ha1s,
     })
 }
 
-/// Quantos segredos herdados continuam em claro (as três colunas somadas).
+/// Quantos segredos herdados continuam em claro (todas as colunas somadas).
 pub async fn count_legacy(db: &PgPool) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT
@@ -177,7 +187,9 @@ pub async fn count_legacy(db: &PgPool) -> Result<i64, sqlx::Error> {
          + (SELECT COUNT(*) FROM org_sso_configs
              WHERE client_secret <> '' AND client_secret NOT LIKE 'enc:v1:%')
          + (SELECT COUNT(*) FROM platform_storage
-             WHERE webdav_password <> '' AND webdav_password NOT LIKE 'enc:v1:%')",
+             WHERE webdav_password <> '' AND webdav_password NOT LIKE 'enc:v1:%')
+         + (SELECT COUNT(*) FROM voice_extensions
+             WHERE sip_ha1 <> '' AND sip_ha1 NOT LIKE 'enc:v1:%')",
     )
     .fetch_one(db)
     .await
@@ -192,6 +204,7 @@ pub(crate) async fn reseal_pass(db: &PgPool, config: &Config) {
                 webhook_secrets = r.webhook_secrets,
                 sso_client_secrets = r.sso_client_secrets,
                 webdav_passwords = r.webdav_passwords,
+                extension_ha1s = r.extension_ha1s,
                 "segredos herdados cifrados em repouso"
             ),
             Ok(_) => {}

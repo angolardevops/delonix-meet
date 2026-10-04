@@ -144,10 +144,13 @@ impl Outbound {
     }
 
     /// Antes de o `ffmpeg` LIGAR a um destino de directo (`rtmp`/`rtmps`)
-    /// escrito por um cliente: só endereços públicos. O `ffmpeg` resolve o
-    /// nome outra vez por conta própria, por isso resta uma janela de DNS
-    /// rebinding que esta validação não fecha (ver a RFC-0001 §11): a defesa
-    /// completa é a rede do worker de emissão não alcançar a rede interna.
+    /// escrito por um cliente: só endereços públicos. Corre à entrada e, de
+    /// novo, antes de cada REINÍCIO do processo (`broadcast::StreamUrlGuard`,
+    /// R289) — era nos reinícios que a troca de DNS não pedia pontaria. O
+    /// `ffmpeg` resolve o nome por conta própria logo a seguir, por isso
+    /// resta a janela entre esta resposta e a dele (ver a RFC-0001 §11): a
+    /// defesa completa é a rede do worker de emissão não alcançar a rede
+    /// interna.
     pub async fn check_tenant_stream_url(&self, raw: &str) -> Result<Url, ApiError> {
         check_url(
             raw,
