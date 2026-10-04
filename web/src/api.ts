@@ -505,9 +505,22 @@ export interface PublicShareInfo {
   has_password: boolean
 }
 
+/**
+ * A partilha por link. Sem `password` é um `GET`; com ela é um `POST` com a
+ * password no CORPO — nunca no URL, que fica escrito nos logs de acesso de
+ * todos os proxies pelo caminho. O `download_url` da resposta já traz o passe
+ * de leitura que o `<video>` e o download usam.
+ */
 export async function getPublicShare(token: string, password?: string): Promise<PublicShareInfo> {
-  const url = `/api/public/recordings/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`
-  const res = await fetch(url, { credentials: 'same-origin' })
+  const base = `/api/public/recordings/${encodeURIComponent(token)}`
+  const res = password
+    ? await fetch(`${base}/access`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+    : await fetch(base, { credentials: 'same-origin' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw Object.assign(new Error(body.error ?? 'request failed'), { status: res.status })

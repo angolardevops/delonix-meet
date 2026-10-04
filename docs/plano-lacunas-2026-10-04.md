@@ -14,6 +14,44 @@ re-mede-o (a coluna «≙» aponta o item de lá) e junta-lhe o que ele não cob
 enterprise e uma operadora pedem antes de assinar. «Ausente» só aparece onde ficou um grep
 registado com mais de uma variante de nome.
 
+## 0. Estado da onda 0 (2026-10-04, ao fim do dia)
+
+A onda 0 foi executada no mesmo dia do plano. Cada item tem a sua entrada no
+catálogo de regressões, com o que ficou provado e o que não.
+
+| Item | O que ficou | PR | Regressão |
+|---|---|---|---|
+| V1 | CI em push na `develop`; num ramo de integração uma corrida já não cancela a anterior | #190 | — |
+| V2 | `check-capability-claims.sh` lê os 100 ficheiros das quatro línguas e falha se não ler nenhum | #190 | — |
+| V3 | protocolos de luz fora do ecrã. **Aberto:** a bandeira `iso_recording` e o `kind: "minio"` de `studio.rs` (contrato do estúdio; dependem da D3) | #190 | — |
+| V4 | documentos corrigidos nos dois sentidos | #190 | — |
+| V5 | **aberto — decisão do dono** (D9): oito ADR continuam «Proposto» com código fundido (0005, 0007, 0009, 0011, 0013, 0014, 0015, 0016) | — | — |
+| S1 | o Secret da aplicação sai do repositório e nasce do `.env`; o servidor recusa os três valores publicados | #195 | R284 |
+| S2 | mudar a password pede prova de identidade e termina as outras sessões | #193 | R281 |
+| S3 | `sip_ha1` cifrado em repouso; as três rotas de máquina dos ramais no listener interno | #195 | R286 |
+| S4 | `X-Forwarded-For` lido da direita, com `TRUSTED_PROXY_HOPS`; tecto e uma espera por identidade na sala de espera | #193 | R282, R283 |
+| S5 | `DATA_ENCRYPTION_KEYS` obrigatória em produção, e presente em todos os caminhos que arrancam o servidor | #195 | R285 |
+| S6 | a chave de emissão vai na primeira trama do `/live`, não no URL; a palavra-passe de um link de partilha vai no corpo, com passe de leitura e travão | #199 | R287, R288 |
+| S7 | o destino de um directo é revalidado antes de cada reinício do `ffmpeg`. **Aberto:** a janela de DNS dentro de um arranque — a defesa completa é de rede e depende do Channel Engine | #199 | R289 |
+
+**O que a onda 0 não validou.** Nada correu com o laboratório de pé: nem um
+browser, nem o `make compose-voice-check`, nem um cluster instalado pelos caminhos
+que mudaram. O que correu foi a bateria de testes contra Postgres real, os
+portões, e — para o S3 — um FreeSWITCH 1.11.3 real com um servidor de andaime
+(`scripts/softphone-prova.sh srtp-real`).
+
+**O que quem opera tem de fazer depois de actualizar** (está em cada PR e em
+`docs/deployment.md` §6):
+
+1. `make bootstrap` antes do próximo `make compose-up` ou `make cluster`:
+   acrescenta `DATA_ENCRYPTION_KEYS` ao `.env`. Sem ela o servidor não arranca.
+2. Um cluster instalado com o `deploy/k8s/01-config.yaml` antigo tem de ser rodado:
+   a imagem nova não arranca com o `JWT_SECRET` publicado.
+3. O FreeSWITCH e o servidor sobem juntos: a configuração antiga pede o directório
+   dos ramais num caminho que já não existe.
+4. Uma instalação com dois proxies que acrescentam ao `X-Forwarded-For` precisa de
+   `TRUSTED_PROXY_HOPS=2`.
+
 ## 1. O que a validação mudou
 
 ### Estava dado como feito, e não está

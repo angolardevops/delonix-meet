@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { CODEC_DIRECTO, MIME_DIRECTO, urlDoDirecto } from './directo'
+import { CODEC_DIRECTO, MIME_DIRECTO, pedidoDeInicio, urlDoDirecto } from './directo'
 
 const raiz = join(__dirname, '..', '..', '..')
 const ler = (p: string) => readFileSync(join(raiz, p), 'utf8')
@@ -39,58 +39,62 @@ describe('o codec é um contrato, não uma preferência', () => {
 })
 
 describe('urlDoDirecto', () => {
-  const destino = { url: 'rtmp://a.rtmp.youtube.com/live2', chave: 'k-123', rotulo: 'YouTube' }
-
   it('usa wss quando a página é https', () => {
-    const u = urlDoDirecto({ protocol: 'https:', host: 'meet.exemplo' }, 'sala-azul', 't', [destino])
+    const u = urlDoDirecto({ protocol: 'https:', host: 'meet.exemplo' }, 'sala-azul', 't')
     expect(u.startsWith('wss://meet.exemplo/')).toBe(true)
   })
 
   it('e ws quando é http (rede interna)', () => {
-    const u = urlDoDirecto({ protocol: 'http:', host: 'localhost:5173' }, 'sala-azul', 't', [destino])
+    const u = urlDoDirecto({ protocol: 'http:', host: 'localhost:5173' }, 'sala-azul', 't')
     expect(u.startsWith('ws://localhost:5173/')).toBe(true)
   })
 
-  it('leva o token, os destinos (em JSON) e o codec', () => {
-    const q = new URL(urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 'tok', [destino])).searchParams
+  it('leva o token e o codec — e NADA dos destinos', () => {
+    const u = urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 'tok')
+    const q = new URL(u).searchParams
     expect(q.get('token')).toBe('tok')
-    expect(JSON.parse(q.get('destinos')!)).toEqual([destino])
     // O codec vai declarado para o servidor poder RECUSAR antes de gastar um
     // processo de ffmpeg.
     expect(q.get('codec')).toBe('video/h264')
+    // A chave de emissão não pode estar num URL: fica nos logs de acesso de
+    // todos os proxies pelo caminho.
+    expect([...q.keys()].sort()).toEqual(['codec', 'token'])
+    expect(u).not.toContain('destinos')
   })
 
   it('escapa o código da sala', () => {
-    const u = urlDoDirecto({ protocol: 'https:', host: 'h' }, 'a/b?c', 't', [destino])
+    const u = urlDoDirecto({ protocol: 'https:', host: 'h' }, 'a/b?c', 't')
     expect(u).toContain('/api/rooms/a%2Fb%3Fc/live')
+  })
+})
+
+describe('pedidoDeInicio — os destinos vão numa trama, não no URL', () => {
+  const destino = { url: 'rtmp://a.rtmp.youtube.com/live2', chave: 'k-123', rotulo: 'YouTube' }
+  const destinosDe = (p: string) => (JSON.parse(p) as { tipo: string; destinos: Record<string, unknown>[] }).destinos
+
+  it('é a mensagem que o servidor espera: tipo «iniciar» e os destinos', () => {
+    expect(JSON.parse(pedidoDeInicio([destino]))).toEqual({ tipo: 'iniciar', destinos: [destino] })
   })
 
   it('apara espaços à volta do url e da chave de cada destino', () => {
     // Colar uma chave de uma página web traz espaços, e um URL com espaço no
     // fim dá um erro do ffmpeg que ninguém liga à causa.
-    const q = new URL(
-      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [
-        { url: '  rtmp://x/live  ', chave: '  k  ' },
-      ]),
-    ).searchParams
-    expect(JSON.parse(q.get('destinos')!)).toEqual([{ url: 'rtmp://x/live', chave: 'k' }])
+    expect(destinosDe(pedidoDeInicio([{ url: '  rtmp://x/live  ', chave: '  k  ' }]))).toEqual([
+      { url: 'rtmp://x/live', chave: 'k' },
+    ])
   })
 
   it('leva VÁRIOS destinos — o multi-canal tipo StreamYard', () => {
     // É a capacidade inteira desta mudança: um array, não um campo.
     const outro = { url: 'rtmp://live.twitch.tv/app', chave: 'k-456', rotulo: 'Twitch' }
-    const q = new URL(urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [destino, outro])).searchParams
-    expect(JSON.parse(q.get('destinos')!)).toEqual([destino, outro])
+    expect(destinosDe(pedidoDeInicio([destino, outro]))).toEqual([destino, outro])
   })
 
   it('um destino sem rótulo não leva a chave "rotulo" no JSON', () => {
     // O servidor já tem uma predefinição («directo») para quando falta — não
     // se manda `rotulo: undefined`, que o `JSON.stringify` normal omitiria de
     // qualquer forma, mas é o contrato que se quer garantido, não um acaso.
-    const q = new URL(
-      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [{ url: 'rtmp://x', chave: 'k' }]),
-    ).searchParams
-    const brutos = JSON.parse(q.get('destinos')!) as Record<string, unknown>[]
+    const brutos = destinosDe(pedidoDeInicio([{ url: 'rtmp://x', chave: 'k' }]))
     expect('rotulo' in brutos[0]).toBe(false)
   })
 })
@@ -137,7 +141,12 @@ class SocketFalso {
   static ABERTO = 1
   readyState = 1
   binaryType = ''
+  /** Pedaços de media (binário) — o que os testes do ciclo de vida contam. */
   enviados: unknown[] = []
+  /** Tramas de TEXTO: o pedido de início. */
+  pedidos: string[] = []
+  /** `false` para um servidor que não responde ao pedido de início. */
+  static aceita = true
   onopen: (() => void) | null = null
   onclose: ((e?: unknown) => void) | null = null
   onerror: (() => void) | null = null
@@ -148,6 +157,15 @@ class SocketFalso {
   }
   send(b: unknown) {
     if (this.readyState !== 1) throw new Error('send num socket fechado')
+    if (typeof b === 'string') {
+      this.pedidos.push(b)
+      // O servidor a sério valida o pedido e responde com o estado dos
+      // destinos: é isso que o cliente toma por «aceite».
+      if (SocketFalso.aceita) {
+        queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ tipo: 'destinos', destinos: [] }) }))
+      }
+      return
+    }
     this.enviados.push(b)
   }
   close(c: number, r: string) {
@@ -424,16 +442,14 @@ describe('resumirDestinos', () => {
   })
 })
 
-describe('urlDoDirecto · destinos guardados', () => {
+describe('pedidoDeInicio · destinos guardados', () => {
   it('um destino guardado vai SÓ pelo id: nem URL nem chave saem do browser', () => {
-    const q = new URL(
-      urlDoDirecto({ protocol: 'https:', host: 'h' }, 'c', 't', [
-        { id: 'd-1', url: 'rtmp://nao-vai', chave: 'nao-vai', rotulo: 'Canal' },
-        { url: 'rtmp://x/live', chave: 'k' },
-      ]),
-    ).searchParams
-    expect(JSON.parse(q.get('destinos')!)).toEqual([{ id: 'd-1', rotulo: 'Canal' }, { url: 'rtmp://x/live', chave: 'k' }])
-    expect(q.get('destinos')).not.toContain('nao-vai')
+    const p = pedidoDeInicio([
+      { id: 'd-1', url: 'rtmp://nao-vai', chave: 'nao-vai', rotulo: 'Canal' },
+      { url: 'rtmp://x/live', chave: 'k' },
+    ])
+    expect(JSON.parse(p).destinos).toEqual([{ id: 'd-1', rotulo: 'Canal' }, { url: 'rtmp://x/live', chave: 'k' }])
+    expect(p).not.toContain('nao-vai')
   })
 })
 
@@ -447,7 +463,9 @@ describe('Directo · estado por destino', () => {
     d.aoMudarDestinos = (x) => vistos.push(x.length)
     await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     criados[0].onmessage?.(estadoTexto([destinoDoServidor, { ...destinoDoServidor, dest: 1, estado: 'erro' }]))
-    expect(vistos).toEqual([2])
+    // O primeiro anúncio é o do aceite (o duplo do servidor responde ao pedido
+    // de início com uma lista vazia); o segundo é o estado a sério.
+    expect(vistos).toEqual([0, 2])
     expect(d.destinos.map((x) => x.estado)).toEqual(['no-ar', 'erro'])
     // Uma trama binária ou desconhecida não mexe no que se sabe.
     criados[0].onmessage?.({ data: new ArrayBuffer(1) })
@@ -457,13 +475,44 @@ describe('Directo · estado por destino', () => {
 
   it('o estado a chegar durante o aceite também conta', async () => {
     const { criados } = montarAmbiente()
+    // Aqui é o teste que faz de servidor: a resposta ao pedido de início é o
+    // estado a sério, e é ela que o cliente toma por aceite.
+    SocketFalso.aceita = false
     const d = new Directo()
     const p = d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x', chave: 'k' }])
     await Promise.resolve()
     criados[0].onmessage?.(estadoTexto([destinoDoServidor]))
     await p
+    SocketFalso.aceita = true
     expect(d.noAr).toBe(true)
     expect(d.destinos).toHaveLength(1)
+  })
+
+  it('o pedido de início sai numa trama de texto, depois de a ligação abrir, e a chave nunca vai no URL', async () => {
+    const { criados } = montarAmbiente()
+    const d = new Directo()
+    await d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://x/live', chave: 'chave-secreta' }])
+    expect(criados[0].url).not.toContain('chave-secreta')
+    expect(criados[0].url).not.toContain('destinos')
+    expect(criados[0].pedidos).toHaveLength(1)
+    expect(JSON.parse(criados[0].pedidos[0])).toEqual({
+      tipo: 'iniciar',
+      destinos: [{ url: 'rtmp://x/live', chave: 'chave-secreta' }],
+    })
+    // E nenhum pedaço de media saiu antes do aceite.
+    expect(criados[0].enviados).toHaveLength(0)
+  })
+
+  it('a recusa que chega em resposta ao pedido de início é a razão que se mostra', async () => {
+    const { criados } = montarAmbiente()
+    SocketFalso.aceita = false
+    const d = new Directo()
+    const p = d.comecar({} as MediaStream, 'sala', 'tok', [{ url: 'rtmp://10.0.0.5/live', chave: 'k' }])
+    await Promise.resolve()
+    criados[0].onmessage?.({ data: '{"erro":"o destino «directo» não é alcançável"}' })
+    criados[0].onclose?.()
+    SocketFalso.aceita = true
+    await expect(p).rejects.toThrow('o destino «directo» não é alcançável')
   })
 
   it('um fim pedido pelo servidor mostra a razão dele, não «caiu»', async () => {

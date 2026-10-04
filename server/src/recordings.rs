@@ -77,6 +77,7 @@ pub struct WebmBytes(Vec<u8>);
         create_link,
         revoke_link,
         public_share,
+        public_share_access,
         public_share_download,
         get_metadata,
         update,
@@ -106,7 +107,8 @@ pub struct WebmBytes(Vec<u8>);
         ShareReq,
         ShareLink,
         CreateLinkReq,
-        PublicShareResp
+        PublicShareResp,
+        PublicShareAccessReq
     ))
 )]
 pub struct ApiDoc;
@@ -1484,12 +1486,21 @@ pub async fn revoke_link(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// O que o caminho do conteúdo aceita na query.
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
-pub struct PublicShareQuery {
-    /// Password do link, se tiver. Vai na query string.
+pub struct PublicShareContentQuery {
+    /// Passe de leitura de um link com password — o `download_url` que
+    /// `POST …/access` devolve já o traz. Curto e só deste link; **a password
+    /// nunca vai num URL**.
     #[serde(default)]
-    pub password: Option<String>,
+    pub grant: Option<String>,
+}
+
+/// A password de um link, no CORPO.
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct PublicShareAccessReq {
+    pub password: String,
 }
 
 /// Metadados de uma gravação partilhada por link público.
@@ -1499,110 +1510,188 @@ pub struct PublicShareResp {
     pub filename: String,
     pub size_bytes: i64,
     pub created_at: DateTime<Utc>,
-    /// `/api/share/<token>/download`.
+    /// O caminho do conteúdo. Num link com password já leva o passe de
+    /// leitura (`?grant=…`), para o `<video>` e o download o usarem tal e qual.
     pub download_url: String,
     pub has_password: bool,
 }
 
-/// Acesso público a uma gravação via token (sem autenticação).
-///
-/// Link expirado responde como inexistente (404).
-#[utoipa::path(
-    get, path = "/api/public/recordings/{token}", tag = "recordings",
-    params(("token" = String, Path, description = "Token do link público."), PublicShareQuery),
-    responses(
-        (status = 200, body = PublicShareResp),
-        (status = 401, description = "O link tem password e a dada (ou a sua falta) não confere.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
-    )
-)]
-pub async fn public_share(
-    State(state): State<Arc<AppState>>,
-    Path(token): Path<String>,
-    Query(q): Query<PublicShareQuery>,
-) -> Result<Json<PublicShareResp>, ApiError> {
-    let row: Option<(
-        Uuid,
-        Option<String>,
-        Option<DateTime<Utc>>,
-        String,
-        i64,
-        DateTime<Utc>,
-    )> = sqlx::query_as(
+/// Quanto vale o passe de leitura de um link com password.
+const SHARE_GRANT_SECS: i64 = 3600;
+
+/// O passe de leitura: `<expira>.<hmac>`. Existe porque um `<video src>` não
+/// manda cabeçalhos nem corpo — alguma coisa tem de ir no URL — e essa coisa
+/// não pode ser a password, que é escolhida por uma pessoa, costuma repetir-se
+/// noutros sítios e ficava escrita nos logs de acesso de todos os proxies. O
+/// passe expira numa hora, só abre ESTE link, e deixa de valer quando a
+/// password do link muda (o hash dela entra no que se assina).
+fn share_grant(state: &AppState, token: &str, password_hash: &str, expires_at: i64) -> String {
+    let key =
+        delonix_meet_core::crypto::derive_key(&state.config.jwt_secret, "recording-share-grant");
+    let mac = delonix_meet_core::crypto::hmac_sha256(
+        key,
+        format!("{token}\n{password_hash}\n{expires_at}"),
+    );
+    let hex: String = mac.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{expires_at}.{hex}")
+}
+
+fn share_grant_is_valid(state: &AppState, token: &str, password_hash: &str, grant: &str) -> bool {
+    let Some((exp, _)) = grant.split_once('.') else {
+        return false;
+    };
+    let Ok(exp) = exp.parse::<i64>() else {
+        return false;
+    };
+    exp > Utc::now().timestamp()
+        && delonix_meet_core::crypto::ct_eq(
+            share_grant(state, token, password_hash, exp).as_bytes(),
+            grant.as_bytes(),
+        )
+}
+
+/// O link, se existir e não tiver expirado: `(gravação, hash da password,
+/// nome, tamanho, criada em)`. Expirado responde como inexistente.
+type ShareLinkRow = (Uuid, Option<String>, String, i64, DateTime<Utc>);
+
+/// A linha tal como vem da base, ainda com a validade por verificar.
+type ShareLinkDbRow = (
+    Uuid,
+    Option<String>,
+    Option<DateTime<Utc>>,
+    String,
+    i64,
+    DateTime<Utc>,
+);
+
+async fn live_share_link(state: &AppState, token: &str) -> Result<ShareLinkRow, ApiError> {
+    let row: Option<ShareLinkDbRow> = sqlx::query_as(
         r#"SELECT l.recording_id, l.password_hash, l.expires_at,
                       r.filename, r.size_bytes, r.created_at
                FROM recording_share_links l
                JOIN recordings r ON r.id = l.recording_id
                WHERE l.token = $1"#,
     )
-    .bind(&token)
+    .bind(token)
     .fetch_optional(&state.db)
     .await?;
-
     let (rec_id, password_hash, expires_at, filename, size_bytes, created_at) =
         row.ok_or(ApiError::NotFound)?;
-
-    // Verificar expiração.
-    if let Some(exp) = expires_at {
-        if Utc::now() > exp {
-            return Err(ApiError::NotFound);
-        }
+    if expires_at.is_some_and(|exp| Utc::now() > exp) {
+        return Err(ApiError::NotFound);
     }
+    Ok((rec_id, password_hash, filename, size_bytes, created_at))
+}
 
-    // Verificar password.
-    if let Some(ref hash) = password_hash {
-        // Um hash ilegível na base conta como password errada (falha fechado).
-        let pw = q.password.as_deref().unwrap_or("");
-        if !crate::auth::verify_password(pw, hash) {
-            return Err(ApiError::Unauthorized);
-        }
+/// Acesso público a uma gravação via token (sem autenticação).
+///
+/// Link expirado responde como inexistente (404). Um link com password
+/// responde `401`: abre-se com `POST …/access`, que leva a password no corpo.
+#[utoipa::path(
+    get, path = "/api/public/recordings/{token}", tag = "recordings",
+    params(("token" = String, Path, description = "Token do link público.")),
+    responses(
+        (status = 200, body = PublicShareResp),
+        (status = 401, description = "O link tem password: use `POST /api/public/recordings/{token}/access`.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn public_share(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+) -> Result<Json<PublicShareResp>, ApiError> {
+    let (rec_id, password_hash, filename, size_bytes, created_at) =
+        live_share_link(&state, &token).await?;
+    if password_hash.is_some() {
+        return Err(ApiError::Unauthorized);
     }
-
     Ok(Json(PublicShareResp {
         recording_id: rec_id,
         filename,
         size_bytes,
         created_at,
         download_url: format!("/api/public/recordings/{token}/content"),
+        has_password: false,
+    }))
+}
+
+/// Abre um link com password. A password vai no CORPO — nunca num URL, que
+/// fica escrito nos logs de acesso — e a resposta traz o `download_url` já com
+/// um passe de leitura de uma hora, para o leitor e o download.
+///
+/// Cinco passwords erradas em 5 minutos travam o link (`429`).
+#[utoipa::path(
+    post, path = "/api/public/recordings/{token}/access", tag = "recordings",
+    params(("token" = String, Path, description = "Token do link público.")),
+    request_body = PublicShareAccessReq,
+    responses(
+        (status = 200, body = PublicShareResp),
+        (status = 401, description = "A password não confere.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 429, description = "Cinco passwords erradas em 5 minutos neste link.", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn public_share_access(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    Json(req): Json<PublicShareAccessReq>,
+) -> Result<Json<PublicShareResp>, ApiError> {
+    let (rec_id, password_hash, filename, size_bytes, created_at) =
+        live_share_link(&state, &token).await?;
+    let content = format!("/api/public/recordings/{token}/content");
+    let download_url = match password_hash.as_deref() {
+        None => content,
+        Some(hash) => {
+            // Antes não havia travão nenhum: a password de um link adivinhava-se
+            // ao ritmo que o Argon2 deixasse.
+            let key = format!("share:{token}");
+            if state.mfa_limiter.is_blocked(&key) {
+                return Err(ApiError::TooManyRequests);
+            }
+            // Um hash ilegível na base conta como password errada (falha fechado).
+            if !crate::auth::verify_password(&req.password, hash) {
+                if !state.mfa_limiter.check(&key) {
+                    return Err(ApiError::TooManyRequests);
+                }
+                return Err(ApiError::Unauthorized);
+            }
+            let exp = Utc::now().timestamp() + SHARE_GRANT_SECS;
+            format!("{content}?grant={}", share_grant(&state, &token, hash, exp))
+        }
+    };
+    Ok(Json(PublicShareResp {
+        recording_id: rec_id,
+        filename,
+        size_bytes,
+        created_at,
+        download_url,
         has_password: password_hash.is_some(),
     }))
 }
 
-/// Download via link público (sem autenticação — token é a credencial).
+/// Download via link público (sem autenticação — token é a credencial; num
+/// link com password, o passe de leitura que `POST …/access` devolveu).
 #[utoipa::path(
     get, path = "/api/public/recordings/{token}/content", tag = "recordings",
-    params(("token" = String, Path, description = "Token do link público."), PublicShareQuery),
+    params(("token" = String, Path, description = "Token do link público."), PublicShareContentQuery),
     responses(
         (status = 200, body = inline(WebmBytes), content_type = "video/webm", description = "Sempre `Content-Disposition: attachment`."),
-        (status = 401, description = "Password em falta ou errada.", body = crate::openapi::ErrorBody),
+        (status = 401, description = "O link tem password e o passe de leitura falta, expirou ou não é deste link.", body = crate::openapi::ErrorBody),
         (status = 404, description = "Token inexistente, expirado, ou sem ficheiro (gravação falhada).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn public_share_download(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
-    Query(q): Query<PublicShareQuery>,
+    Query(q): Query<PublicShareContentQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let row: Option<(Uuid, Option<String>, Option<DateTime<Utc>>, String)> = sqlx::query_as(
-        "SELECT l.recording_id, l.password_hash, l.expires_at, r.filename
-             FROM recording_share_links l JOIN recordings r ON r.id = l.recording_id
-             WHERE l.token = $1",
-    )
-    .bind(&token)
-    .fetch_optional(&state.db)
-    .await?;
-
-    let (rec_id, password_hash, expires_at, filename) = row.ok_or(ApiError::NotFound)?;
-
-    if let Some(exp) = expires_at {
-        if Utc::now() > exp {
-            return Err(ApiError::NotFound);
-        }
-    }
-    if let Some(ref hash) = password_hash {
-        // Um hash ilegível na base conta como password errada (falha fechado).
-        let pw = q.password.as_deref().unwrap_or("");
-        if !crate::auth::verify_password(pw, hash) {
+    let (rec_id, password_hash, filename, _, _) = live_share_link(&state, &token).await?;
+    if let Some(hash) = password_hash.as_deref() {
+        let ok = q
+            .grant
+            .as_deref()
+            .is_some_and(|g| share_grant_is_valid(&state, &token, hash, g));
+        if !ok {
             return Err(ApiError::Unauthorized);
         }
     }
