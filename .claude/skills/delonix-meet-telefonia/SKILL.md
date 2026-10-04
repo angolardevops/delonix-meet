@@ -259,6 +259,19 @@ foi verificado contra um aparelho real; o diálogo não foi visto num browser. *
 sai da organização continua a registar com a password antiga (arquivar não desactiva o
 ramal). A lista completa está na R278.
 
+**Como fazer essa prova no laboratório (2026-10-04).** O QR é um URL https que o TELEMÓVEL
+abre, por isso só serve com `make compose-up LAN_IP=<ip desta máquina>` (`scripts/compose-lan.sh`):
+a borda fica também em `<ip>:8443`, com um certificado assinado por uma raiz de laboratório
+(`deploy/compose/generated/lan-tls/`, fora do git) que cobre o nome e o IP, e o `CORS_ORIGINS`
+leva o IP em primeiro lugar — é da primeira origem que sai o URL do QR, e uma origem `.local`
+é recusada (mDNS não resolve no telemóvel). No telemóvel: instalar a raiz a partir de
+`http://<ip>:8080/lab-ca.crt` como certificado de CA, confirmar que `https://<ip>:8443` abre
+sem aviso, e só então ler o QR no Linphone («obter configuração remota»). Medido até aqui: a
+raiz descarrega-se, o https pelo IP valida contra ela e o bilhete sai com o IP. **Não medido:**
+se o Linphone confia numa raiz instalada pelo utilizador ao descarregar a configuração — se o
+browser do telemóvel abrir e o Linphone recusar o certificado, é isso. O cluster local não
+serve para esta prova: não está exposto à rede local.
+
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
 Mandar e receber RTP cifrado com uma chave dada **por fora**, para um par UDP arbitrário,
