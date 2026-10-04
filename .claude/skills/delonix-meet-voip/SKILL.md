@@ -80,6 +80,12 @@ contexto de dialplan e por domínio SIP, não por processo.
   15 s e `permissions` por lista de endereços (`voice/kamailio/kamailio.cfg:44-62`); só
   aceita `INVITE` e `OPTIONS` (`:80`); escuta TLS em 5061 (`:39`). Não tem `usrloc`,
   registrar nem `auth_db` (`:14-15`) — **não regista ninguém**, só encaminha.
+- **Medido (2026-10-04, R277) — o bordo escuta numa interface, nunca em `0.0.0.0`.** Com
+  `listen=…:0.0.0.0:…` o Kamailio escrevia `0.0.0.0` no `Record-Route`: o `ACK` de quem
+  liga não saía e o FreeSWITCH cortava **todas** as chamadas aos 32 s. As provas de 4 s
+  nunca o viram. `DELONIX_SIP_IFACE` muda a interface (omissão `eth0`);
+  `DELONIX_SIP_ADVERTISE` dá o endereço a anunciar atrás de NAT. Uma prova de voz que
+  dure menos de 32 s não prova que a chamada se aguenta.
 - **Medido:** DTMF por RFC 2833/4733 com payload 101 (`internal.xml:36`);
   `accept-blind-reg` e `accept-blind-auth` a `false`.
 - **Medido (2026-10-03, FreeSWITCH 1.11.3, R226) — o que recusa uma chamada em claro à
@@ -181,7 +187,9 @@ contexto de dialplan e por domínio SIP, não por processo.
 | O que mexeste | Portão |
 |---|---|
 | As regras de um tronco (transporte, SRTP, host, prefixos, canais) | os unitários de `telephony/trunk.rs` e `cargo test --release --test telephony` (precisa de `DATABASE_URL`) |
-| `voice/kamailio/` | **não há portão no CI**; o `make cluster` carrega o `kamailio.cfg` num Kamailio 5.8.6 a sério e mede o dispatcher e o tronco do PBX de laboratório (`scripts/cluster-voice.sh`) |
+| `voice/kamailio/kamailio.cfg` (os `listen=`) | `bash scripts/check-bordo-anuncia.sh` (R277, `make fitness` e CI) — estático: nenhum `listen=` em `0.0.0.0` sem `advertise`. Com chamada: `bash scripts/pbx-tronco-prova.sh longa`, fora do CI |
+| O tronco de uma central (FreePBX) até ao bordo | `bash scripts/pbx-tronco-prova.sh up` · `freepbx --seed …` · `negativos` · `longa` · `down` — uma réplica isolada do bordo e a appliance real em QEMU (`voice/pbx-tronco-prova/README.md`). **Fora do CI** |
+| `voice/kamailio/` (o resto) | **não há portão no CI**; o `make cluster` carrega o `kamailio.cfg` num Kamailio 5.8.6 a sério e mede o dispatcher e o tronco do PBX de laboratório (`scripts/cluster-voice.sh`) |
 | Qualquer `*.xml` ou `*.xml.inc` de `voice/freeswitch/` | `bash scripts/check-fs-xml.sh` (R226, no `make fitness` e no CI) — XML bem formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário, nenhum `$${NOME_EM_MAIÚSCULAS}`. **Estático**: não carrega a configuração num FreeSWITCH. Os `*.lua`: `scripts/check-lua-sintaxe.sh` |
 | A interligação com um PBX ou uma operadora | **prova real, fora do CI**: uma chamada em cada sentido, com captura SIP, e as três medições abaixo |
 | O próprio softphone de prova, ou uma regra de DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`) com um perfil de teste. **No CI: o workflow «Imagem FreeSWITCH» corre-o contra a imagem acabada de construir, quando `voice/` ou o script mudam** |
@@ -207,7 +215,13 @@ contexto de dialplan e por domínio SIP, não por processo.
   imagem do FreeSWITCH não traz os sons do IVR.
 - Nenhuma chamada passou por **uma operadora a sério através do Kamailio**: o que está
   medido é contra um FreeSWITCH local (`delonix-meet-telefonia`, R222).
-- Nenhuma interligação com um **Issabel ou FreePBX real** foi feita a partir deste repo.
+- **Uma FreePBX 17 real interligou-se** (2026-10-04, `scripts/pbx-tronco-prova.sh`, numa
+  réplica do bordo): tronco PJSIP sobre TLS com o certificado do bordo verificado, SRTP por
+  SDES, o PIN certo aceite por DTMF e o errado recusado, a voz do IVR ouvida pela central, e
+  as duas recusas (sem SRTP → `488`; origem fora da allowlist → `403`). **Não provado:** um
+  Issabel; a central dentro da sala WebRTC (a ponte para o SFU não está ligada na réplica —
+  com o PIN certo a chamada entra na conferência local do FreeSWITCH); e **a organização de
+  origem** — o bordo só filtra por IP, não sabe de que inquilino é a central que entra.
 - O `softphone-prova.sh` **nunca correu contra o Meet a funcionar**: os modos `chamada` e
   `par` foram exercitados contra um FreeSWITCH de teste, sem autenticação Digest, sem
   registo, sem o IVR do dial-in e sem a ponte para a sala. O `srtp-real` e o
