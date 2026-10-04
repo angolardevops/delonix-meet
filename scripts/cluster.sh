@@ -83,7 +83,8 @@ up)
   [ -f .env ] || morre "falta o .env — corre «make bootstrap»"
   [ -f "deploy/certs/${MEET_HOST}.crt" ] || morre "falta o certificado de ${MEET_HOST} — corre «make bootstrap»"
   set -a; . ./.env; set +a
-  for v in POSTGRES_PASSWORD JWT_SECRET TURN_SECRET PROVISIONING_SECRET VOICE_INTERNAL_SECRET; do
+  for v in POSTGRES_PASSWORD JWT_SECRET TURN_SECRET PROVISIONING_SECRET VOICE_INTERNAL_SECRET \
+    VOICE_CENTRAL_PASSWORD DATA_ENCRYPTION_KEYS; do
     [ -n "${!v:-}" ] || morre "o .env não tem ${v} — corre «make bootstrap»"
   done
   for img in "delonix-server:${IMAGE_TAG}" "delonix-web:${IMAGE_TAG}"; do
@@ -159,6 +160,7 @@ up)
     --from-literal=TURN_SECRET="$TURN_SECRET" \
     --from-literal=PROVISIONING_SECRET="$PROVISIONING_SECRET" \
     --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+    --from-literal=DATA_ENCRYPTION_KEYS="$DATA_ENCRYPTION_KEYS" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl -n "$NS" create secret generic delonix-voice \
     --from-literal=VOICE_INTERNAL_SECRET="$VOICE_INTERNAL_SECRET" \
@@ -214,7 +216,8 @@ up)
 
   if [ -f deploy/k8s/cluster/voice.yaml ]; then
     passo "voz: Kamailio, FreeSWITCH e PBX de cliente"
-    CLUSTER_NAME="$CLUSTER_NAME" NS="$NS" NODE_IP="$NODE_IP" bash scripts/cluster-voice.sh
+    CLUSTER_NAME="$CLUSTER_NAME" NS="$NS" NODE_IP="$NODE_IP" MEET_HOST="$MEET_HOST" \
+      VOICE_CENTRAL_PASSWORD="$VOICE_CENTRAL_PASSWORD" bash scripts/cluster-voice.sh
   fi
 
   passo "prova de fumo"
