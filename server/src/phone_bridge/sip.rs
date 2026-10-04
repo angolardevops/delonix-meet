@@ -352,8 +352,9 @@ pub struct SipBridgeConfig {
     pub rtp_ip: IpAddr,
     /// Portas RTP, inclusive. `None` = efémera do SO.
     pub rtp_ports: Option<(u16, u16)>,
-    /// IPs dos FreeSWITCH. Vazio recusa tudo.
-    pub allowed_sources: Vec<IpAddr>,
+    /// IPs dos FreeSWITCH. Vazio recusa tudo. Partilhada com a tarefa que a refresca
+    /// quando a lista veio por nome (`origens`).
+    pub allowed_sources: super::origens::SourceAllowlist,
 }
 
 struct Dialog {

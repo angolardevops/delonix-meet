@@ -2495,7 +2495,9 @@ async fn um_invite_recusado_devolve_o_bilhete_para_invalidar() {
             sip_bind: "127.0.0.1:0".parse().unwrap(),
             rtp_ip: "127.0.0.1".parse().unwrap(),
             rtp_ports: None,
-            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            allowed_sources: crate::phone_bridge::origens::SourceAllowlist::new(vec!["127.0.0.1"
+                .parse()
+                .unwrap()]),
         },
         sfu,
         Arc::new(AdmissaoFixa {
@@ -2739,7 +2741,9 @@ async fn ponte_com_freeswitch_real_tom_nos_dois_sentidos() {
             sip_bind: "127.0.0.1:0".parse().unwrap(),
             rtp_ip: "127.0.0.1".parse().unwrap(),
             rtp_ports: None,
-            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            allowed_sources: crate::phone_bridge::origens::SourceAllowlist::new(vec!["127.0.0.1"
+                .parse()
+                .unwrap()]),
         },
         sfu.clone(),
         Arc::new(AdmissaoFixa {
