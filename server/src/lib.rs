@@ -240,6 +240,13 @@ fn internal_routes() -> Router<Arc<AppState>> {
             "/internal/v1/voice/ivr/validate-extension",
             post(voice::ivr_validate_extension_pin),
         )
+        // O mesmo IVR, quando quem liga é a CENTRAL de uma organização: o bordo
+        // autenticou-a com a conta SIP dela, e a sala procura-se nessa
+        // organização (ADR-0016).
+        .route(
+            "/internal/v1/voice/ivr/validate-central",
+            post(voice::ivr_validate_central_pin),
+        )
         // O PIN de um RAMAL (R276): identifica a pessoa, não a sala. Ainda sem
         // consumidor — o Lua do IVR passa a chamá-la no lote seguinte.
         .route(
@@ -256,6 +263,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
         .route(
             "/internal/v1/telephony/freeswitch-config",
             post(telephony_fs_xml::handler),
+        )
+        // O bordo (Kamailio) pede o HA1 da conta SIP de uma organização para
+        // verificar o digest da central dela (ADR-0016).
+        .route(
+            "/internal/v1/telephony/edge/sip-account",
+            post(telephony_sip::edge_sip_account),
         )
 }
 

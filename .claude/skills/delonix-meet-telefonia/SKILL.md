@@ -101,13 +101,15 @@ chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em l
   (`cost`, `dial_plan`, `money`, `number`, `ports`, `trunk`); adaptadores e handlers em
   `server/src/telephony_{trunks,dial_plan,sip,calls,cdr,esl,fs_xml,service}.rs`;
   migrações `0069`–`0072`.
-- **Rotas:** dezassete registos — quinze em `lib.rs:845-902`, sob
+- **Rotas:** dezoito registos — quinze em `lib.rs:845-902`, sob
   `/api/orgs/{org_id}/telephony/` (`trunks`, `trunks/{id}`, `trunks/{id}/prices`,
   `trunk-order`, `exchange-rates`, `dial-plan`, `dial-plan/test`, `sip-settings`,
   `sip-settings/reveal-credentials`, `sip-registration`, `sip-registration/restart`,
-  `test-calls`, `test-calls/{id}`, `call-records`, `usage`) e dois no listener interno,
-  `lib.rs:213-218` (`/internal/v1/telephony/call-records`, onde o `mod_json_cdr` entrega os CDR, e
-  `/internal/v1/telephony/freeswitch-config`, que serve o `mod_xml_curl`).
+  `test-calls`, `test-calls/{id}`, `call-records`, `usage`) e três no listener interno,
+  em `internal_routes()` (`/internal/v1/telephony/call-records`, onde o `mod_json_cdr` entrega os CDR,
+  `/internal/v1/telephony/freeswitch-config`, que serve o `mod_xml_curl`, e
+  `/internal/v1/telephony/edge/sip-account`, onde o bordo pede o HA1 da conta SIP de uma
+  organização — ADR-0016).
 - **As cinco regras que custaram**, e não se reabrem:
   - **R210** — a emergência (112) nunca é gravada, bloqueada nem travada pelo limite de
     canais, por muito que o plano de marcação do cliente diga o contrário;
@@ -146,6 +148,24 @@ censo — a ponte não recebe a identidade de quem liga.
 **Por medir, e não o dês por feito:** uma chamada real. O modo `ramal` do Lua nunca
 correu; `sip_auth_*` num INVITE do perfil `internal` e o `session:execute("lua", …)` de
 um script para o outro são pressupostos por confirmar contra um FreeSWITCH real.
+
+### A central de uma organização entra na sala (ADR-0016, R280)
+
+A central (PBX) de uma organização liga-se ao bordo por TLS e autentica-se com a **conta
+SIP dessa organização** — o «Registo SIP» do ADR-0009 §5, que até aqui se guardava e não
+tinha consumidor. O que acontece antes de a chamada entrar (o desafio, o HA1, o
+cabeçalho) é da `delonix-meet-voip`. Aqui:
+
+1. o `dialin_ivr.lua` vê `X-Delonix-Central: <domínio>` — e só o aceita se a chamada veio
+   de um endereço do bordo (lista `delonix_bordo`); de outro lado, desliga;
+2. valida o PIN em `/internal/v1/voice/ivr/validate-central`
+   (`voice::validate_pin_for_central`): a organização sai do domínio autenticado, e a sala
+   é a do PIN **dentro dela** — o mesmo `room_by_pin_in_org` do ramal;
+3. daí em diante é o `room_bridge` e o recuo do dial-in, o mesmo código.
+
+**É um terceiro modo do mesmo IVR**, que não se pede: reconhece-se pelo cabeçalho. Sem
+CDR (não é PSTN), o número marcado não conta, e quem entra é «Telefone» anónimo no censo.
+Uma conta SIP sem password não autentica nem abre salas.
 
 ### O PIN do ramal, os ramais da empresa e a numeração automática (R276)
 
@@ -187,6 +207,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
 | O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
+| A central de uma organização a entrar na sala (`validate_pin_for_central`, `ha1_for_edge`) | `cargo test --release --test central_entra_na_sala` contra Postgres real (ADR-0016 — 6 casos) + `bash scripts/check-bordo-central.sh`; a cadeia toda é `bash scripts/pbx-tronco-prova.sh central`, **fora do CI** |
 | O PIN do ramal, os ramais da empresa e a atribuição em massa | `cargo test --release --test ramal_pin` contra Postgres real (R276 — 9 casos, dois de concorrência) + `telephony::extension_pin::tests` |
 | Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe, com o `luac5.2`) |
 | Os `*.xml` e `*.xml.inc` do FreeSWITCH | `bash scripts/check-fs-xml.sh` (R226 — bem formado, sem directivas `X-PRE-PROCESS` em comentários, sem `$${AMBIENTE}`); o comportamento é do `scripts/softphone-prova.sh srtp-real`, fora do CI |

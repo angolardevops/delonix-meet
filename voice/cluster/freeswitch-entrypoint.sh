@@ -107,6 +107,19 @@ sed -i "s#</network-lists>#    <list name=\"delonix_ramais\" default=\"deny\">\n
 grep -q 'list name="delonix_ramais"' "$CONF/autoload_configs/acl.conf.xml" ||
   { echo "não consegui definir a lista de acesso dos ramais" >&2; exit 1; }
 
+# 10b. De onde fala o BORDO (ADR-0016). O IVR só acredita no cabeçalho
+#      `X-Delonix-Central` — «esta chamada é da central da organização X» — se
+#      a chamada veio de um endereço desta lista. Sem DELONIX_EDGE_CIDRS a
+#      lista fica vazia e nenhuma chamada entra como central: fecha por omissão.
+BORDO=""
+for cidr in $(echo "${DELONIX_EDGE_CIDRS:-}" | tr ',' ' '); do
+  BORDO="$BORDO      <node type=\"allow\" cidr=\"$cidr\"/>\n"
+done
+sed -i "s#</network-lists>#    <list name=\"delonix_bordo\" default=\"deny\">\n${BORDO}    </list>\n  </network-lists>#" \
+  "$CONF/autoload_configs/acl.conf.xml"
+grep -q 'list name="delonix_bordo"' "$CONF/autoload_configs/acl.conf.xml" ||
+  { echo "não consegui definir a lista de endereços do bordo" >&2; exit 1; }
+
 # 11. O log sem o nível DEBUG. A esse nível o mod_curl escreve cada cabeçalho e
 #     cada corpo que os scripts mandam ao servidor: o segredo de voz e o PIN de
 #     quem liga (R227). DELONIX_FS_LOG_DEBUG=1 volta a ligá-lo para diagnóstico

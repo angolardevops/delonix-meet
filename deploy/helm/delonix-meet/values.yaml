@@ -266,6 +266,17 @@ voice:
   #   - { group: 1, ip: 203.0.113.10, mask: 32, port: 0, tag: pbx-cliente-a }
   trunks: []
 
+  # A central (PBX) de uma organização — ADR-0016. Quem não está em `trunks`
+  # só entra por TLS (5061) e autenticado por digest com a conta SIP dessa
+  # organização («Registo SIP»); o bordo pede o HA1 ao servidor e o IVR procura
+  # a sala nessa organização. Desligado, quem não está em `trunks` leva 403.
+  centrais:
+    enabled: false
+    # De onde o BORDO fala para o FreeSWITCH (DELONIX_EDGE_CIDRS). O IVR só
+    # acredita em «esta chamada é da central de X» vindo daqui. Com o bordo num
+    # pod, é a rede de pods (ou o IP do nó, com hostNetwork); obrigatório.
+    edgeCidrs: []
+
   kamailio:
     image: { repository: ghcr.io/kamailio/kamailio, tag: "5.8.6-bookworm", pullPolicy: IfNotPresent }
     # Liga o `-A WITH_XHTTP_RPC` (TELEPHONY_KAMAILIO_RPC_URL). O /rpc fica na

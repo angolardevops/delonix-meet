@@ -986,9 +986,23 @@ pub(crate) async fn validate_pin_for_extension(
         }
     }
 
-    // O PIN é único por (DID, sala activa), não por org: com dois DIDs, duas
-    // salas da mesma org podem ter o mesmo PIN. Sem DID não há como desempatar
-    // — recusa-se em vez de escolher uma.
+    match room_by_pin_in_org(state, org_id, pin).await? {
+        Some(resp) => Ok(resp),
+        None => Err(refuse()),
+    }
+}
+
+/// A sala de voz ACTIVA de `org_id` com este PIN — a regra de quem entra sem
+/// DID (um ramal, R273; a central da organização, ADR-0016).
+///
+/// O PIN é único por (DID, sala activa), não por org: com dois DIDs, duas
+/// salas da mesma org podem ter o mesmo PIN. Sem DID não há como desempatar —
+/// devolve `None` em vez de escolher uma.
+async fn room_by_pin_in_org(
+    state: &AppState,
+    org_id: Uuid,
+    pin: &str,
+) -> Result<Option<ValidatePinResp>, ApiError> {
     let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
         "SELECT vr.id, vr.room_code, vr.media_backend
            FROM voice_room vr
@@ -1002,19 +1016,75 @@ pub(crate) async fn validate_pin_for_extension(
     match <[_; 1]>::try_from(rows) {
         Ok([(id, room_code, backend)]) => {
             let room_bridge = room_bridge_for(state, &room_code, &backend).await;
-            Ok(ValidatePinResp {
+            Ok(Some(ValidatePinResp {
                 voice_room_id: id,
                 room_code,
                 media_backend: backend,
                 room_bridge,
-            })
+            }))
         }
         Err(rows) => {
             if rows.len() > 1 {
-                tracing::warn!(%org_id, "PIN em duas salas de voz activas da mesma org — recusado ao ramal");
+                tracing::warn!(%org_id, "PIN em duas salas de voz activas da mesma org — recusado a quem liga sem DID");
             }
-            Err(refuse())
+            Ok(None)
         }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ValidateCentralPinReq {
+    /// O domínio SIP com que o BORDO autenticou a central (o realm do digest,
+    /// no cabeçalho `X-Delonix-Central`). É ele que decide a org.
+    pub domain: String,
+    pub pin: String,
+}
+
+/// `POST /internal/v1/voice/ivr/validate-central` — o IVR da sala quando quem
+/// liga é a CENTRAL de uma organização, autenticada no bordo com a conta SIP
+/// dela (ADR-0016).
+///
+/// Rota própria pela mesma razão da do ramal: aqui não há DID, e a fronteira é
+/// a ORGANIZAÇÃO — a que o bordo autenticou, nunca uma que o pedido escolha.
+pub async fn ivr_validate_central_pin(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ValidateCentralPinReq>,
+) -> Result<Json<ValidatePinResp>, ApiError> {
+    check_media_secret(&state, &headers)?;
+    validate_pin_for_central(&state, &req.domain, &req.pin)
+        .await
+        .map(Json)
+}
+
+/// A regra do IVR para uma central: `(domínio SIP autenticado, PIN)` → a sala
+/// de voz ACTIVA **da organização dona desse domínio** com esse PIN.
+///
+/// Fronteira de isolamento: a central da org A não entra numa sala da org B,
+/// mesmo sabendo o PIN. Todas as recusas dão o mesmo `404`: domínio de
+/// ninguém, organização sem conta SIP completa, PIN errado, PIN de outra org,
+/// PIN ambíguo.
+pub(crate) async fn validate_pin_for_central(
+    state: &AppState,
+    domain: &str,
+    pin: &str,
+) -> Result<ValidatePinResp, ApiError> {
+    let domain = domain.trim().to_ascii_lowercase();
+    let limiter_key = format!("central:{domain}");
+    let refuse = || {
+        // O mesmo travão do dial-in, por central: só as FALHAS contam.
+        if !state.voice_pin_limiter.check(&limiter_key) {
+            tracing::warn!(central = %domain, "possível brute-force de PIN por uma central — a bloquear");
+            return ApiError::TooManyRequests;
+        }
+        ApiError::NotFound
+    };
+    let Some(org_id) = crate::telephony_sip::org_for_sip_domain(state, &domain).await? else {
+        return Err(refuse());
+    };
+    match room_by_pin_in_org(state, org_id, pin).await? {
+        Some(resp) => Ok(resp),
+        None => Err(refuse()),
     }
 }
 
