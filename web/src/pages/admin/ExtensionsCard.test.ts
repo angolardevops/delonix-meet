@@ -364,7 +364,7 @@ describe('o meu ramal (R276)', () => {
     expect(html).toContain('Ramal 1004')
     expect(html).toContain('data-pin-state="locked"')
     expect(html).toContain('PIN bloqueado por tentativas falhadas')
-    expect(botoes(html)).toEqual(['Gerar PIN novo', 'Escolher o meu PIN'])
+    expect(botoes(html)).toEqual(['Gerar PIN novo', 'Escolher o meu PIN', 'Configurar o Linphone'])
     // À partida não há PIN revelado nem campo aberto.
     expect(html).not.toContain('data-testid="ramal-pin"')
     expect(html).not.toContain('<input')
@@ -385,6 +385,109 @@ describe('o meu ramal (R276)', () => {
       await usar(lng)
       semChavesCruas(painel([]))
       semChavesCruas(painel([meu('unset'), meu('set', 'org-2', 'Beta'), meu('locked', 'org-3', 'Gama')]))
+    }
+    await usar('pt-AO')
+  })
+})
+
+describe('«Configurar o Linphone» (R278)', async () => {
+  const { LinphoneQrBody, qrErrorMessage, remainingText } = await import('../../components/LinphoneQrDialog')
+  const AGORA = Date.parse('2026-10-04T10:00:00Z')
+  const ticket = {
+    provisioning_url: `https://meet.exemplo.ao/api/public/extension-provisioning/${'ab'.repeat(32)}`,
+    expires_at: '2026-10-04T10:10:00Z',
+    extension: '1004',
+  }
+  const corpo = (step: Parameters<typeof LinphoneQrBody>[0]['step'], now = AGORA) =>
+    renderToStaticMarkup(h(LinphoneQrBody, { extension: '1004', step, now, onIssue: nada }))
+
+  it('avisa ANTES de emitir que ler o QR troca a password SIP', async () => {
+    await usar('pt-AO')
+    const html = corpo({ k: 'confirm' })
+    expect(html).toContain('troca a password SIP')
+    expect(html).toContain('deixa de registar')
+    expect(botoes(html)).toEqual(['Gerar o QR'])
+    expect(html).not.toContain('extension-provisioning')
+  })
+
+  it('mostra o QR, o tempo que falta e o URL que quebra — e o aviso continua', async () => {
+    await usar('pt-AO')
+    const html = corpo({ k: 'shown', ticket, qr: '<svg data-qr="1"></svg>' }, AGORA + 1500)
+    expect(html).toContain('data-qr="1"')
+    expect(html).toContain('role="img"')
+    expect(html).toContain('Válido durante mais 9:59')
+    expect(html).toContain('class="linphone-qr__url')
+    expect(html).toContain(ticket.provisioning_url)
+    expect(html).toContain('troca a password SIP')
+  })
+
+  it('expirado, deixa de mostrar o URL e oferece outro', async () => {
+    await usar('pt-AO')
+    const html = corpo({ k: 'shown', ticket, qr: '<svg></svg>' }, AGORA + 601_000)
+    expect(html).toContain('expirou')
+    expect(html).not.toContain(ticket.provisioning_url)
+    expect(botoes(html)).toEqual(['Gerar outro QR'])
+  })
+
+  it('o tempo que falta nunca é negativo', () => {
+    expect(remainingText(600_000)).toBe('10:00')
+    expect(remainingText(59_001)).toBe('1:00')
+    expect(remainingText(-5)).toBe('0:00')
+  })
+
+  it('cada recusa da emissão tem a sua frase', async () => {
+    await usar('pt-AO')
+    const erro = (code: string) => new ApiError(422, { error: 'x', code }, 'x')
+    expect(qrErrorMessage(erro('ramais.sip_server_missing'), i18n.t)).toContain('servidor SIP')
+    expect(qrErrorMessage(erro('ramais.public_url_missing'), i18n.t)).toContain('https')
+    expect(qrErrorMessage(erro('ramais.extension_inactive'), i18n.t)).toContain('inactivo')
+    expect(qrErrorMessage(new Error('rede'), i18n.t)).toBe('Não foi possível gerar o QR.')
+  })
+
+  it('na consola, o botão só aparece num ramal activo', async () => {
+    await usar('pt-AO')
+    const html = renderToStaticMarkup(
+      h(ExtensionList, {
+        list: [ramal(), ramal({ id: 'e-9', extension: '1009', active: false })],
+        busyId: null,
+        onToggleActive: nada,
+        onRegeneratePassword: nada,
+        onRemove: nada,
+        onGeneratePin: nada,
+        onChoosePin: nada,
+        onClearPin: nada,
+        onConfigureLinphone: nada,
+      }),
+    )
+    expect(botoes(linha(html, '1004'))).toContain('Configurar o Linphone')
+    expect(botoes(linha(html, '1009'))).not.toContain('Configurar o Linphone')
+  })
+
+  it('nenhuma chave crua, e tudo traduzido, nas quatro línguas', async () => {
+    const keys = [
+      'consola.ramais.qr.botao',
+      'consola.ramais.qr.titulo',
+      'consola.ramais.qr.explica',
+      'consola.ramais.qr.trocaPassword',
+      'consola.ramais.qr.instrucoes',
+      'consola.ramais.qr.validade',
+      'consola.ramais.qr.expirou',
+      'consola.ramais.qr.erro.semServidor',
+      'consola.ramais.qr.erro.semEndereco',
+      'consola.ramais.qr.erro.inactivo',
+      'consola.ramais.qr.erro.generico',
+    ]
+    for (const lng of Object.keys(DICTS) as Lng[]) {
+      await usar(lng)
+      semChavesCruas(corpo({ k: 'confirm' }))
+      semChavesCruas(corpo({ k: 'error', text: 'x' }))
+      semChavesCruas(corpo({ k: 'shown', ticket, qr: null }))
+      semChavesCruas(corpo({ k: 'shown', ticket, qr: null }, AGORA + 700_000))
+      for (const key of keys) {
+        const text = i18n.t(key, { extensao: '1004', tempo: '9:59' })
+        expect(text, `${lng} ${key}`).not.toBe(key)
+        if (lng !== 'pt-AO') expect(text, `${lng} ${key}`).not.toBe(i18n.t(key, { extensao: '1004', tempo: '9:59', lng: 'pt-AO' }))
+      }
     }
     await usar('pt-AO')
   })

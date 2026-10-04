@@ -43,6 +43,7 @@ import {
   ExtensionPinState,
   GeneratedPin,
   getExtensionRange,
+  issueExtensionProvisioningTicket,
   listExtensions,
   listVoiceDids,
   putExtensionRange,
@@ -54,6 +55,7 @@ import {
   VoiceDid,
 } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
+import LinphoneQrDialog from '../../components/LinphoneQrDialog'
 import PinOnce from '../../components/PinOnce'
 import { Alert, Button, Card, Dialog, Field, IconButton, Segmented, Select, StatusBadge, TextInput } from '../../ui/kit'
 import { orgErrorMessage, refusalAware } from './orgShared'
@@ -66,6 +68,7 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
   const [reveal, setReveal] = useState<ExtensionCreated | null>(null)
   const [pinReveal, setPinReveal] = useState<GeneratedPin | null>(null)
   const [choosingPin, setChoosingPin] = useState<Extension | null>(null)
+  const [qrFor, setQrFor] = useState<Extension | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [err, setErr] = useState('')
 
@@ -203,6 +206,7 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
               onGeneratePin={generatePin}
               onChoosePin={setChoosingPin}
               onClearPin={clearPin}
+              onConfigureLinphone={setQrFor}
               renderDid={(e) => (
                 <DidCell
                   extension={e}
@@ -252,6 +256,13 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
       )}
       {reveal && <RevealDialog created={reveal} onClose={() => setReveal(null)} />}
       {pinReveal && <PinRevealDialog generated={pinReveal} onClose={() => setPinReveal(null)} />}
+      {qrFor && (
+        <LinphoneQrDialog
+          extension={qrFor.extension}
+          issue={() => issueExtensionProvisioningTicket(orgId, qrFor.id)}
+          onClose={() => setQrFor(null)}
+        />
+      )}
       {choosingPin && (
         <ChoosePinDialog
           orgId={orgId}
@@ -305,6 +316,7 @@ export function ExtensionList({
   onGeneratePin,
   onChoosePin,
   onClearPin,
+  onConfigureLinphone,
   renderDid,
 }: {
   list: Extension[]
@@ -315,6 +327,8 @@ export function ExtensionList({
   onGeneratePin: (e: Extension) => void
   onChoosePin: (e: Extension) => void
   onClearPin: (e: Extension) => void
+  /** «Configurar o Linphone» (R278): só num ramal activo. */
+  onConfigureLinphone?: (e: Extension) => void
   renderDid?: (e: Extension) => ReactNode
 }) {
   const { t } = useTranslation()
@@ -352,6 +366,11 @@ export function ExtensionList({
               <Button size="sm" variant="secondary" busy={busy} onClick={() => onToggleActive(e)}>
                 {e.active ? t('consola.ramais.desactivar') : t('consola.ramais.activar')}
               </Button>
+              {onConfigureLinphone && e.active && (
+                <Button size="sm" variant="primary" icon="phone" busy={busy} onClick={() => onConfigureLinphone(e)}>
+                  {t('consola.ramais.qr.botao')}
+                </Button>
+              )}
               <Button size="sm" variant="secondary" busy={busy} onClick={() => onRegeneratePassword(e)}>
                 {t('consola.ramais.regenerar')}
               </Button>

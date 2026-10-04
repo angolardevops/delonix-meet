@@ -2108,6 +2108,20 @@ export const setMyExtensionPin = (orgId: string, pin: string) =>
 export const regenerateMyExtensionPin = (orgId: string) =>
   request<GeneratedPin>(`/api/orgs/${orgId}/my-extension/regenerate-pin`, { method: 'POST' })
 
+// ---------- QR de provisionamento do Linphone (R278) ----------
+// O URL leva um bilhete de uso único (10 min). Quando o Linphone o lê, o
+// servidor troca a password SIP do ramal e devolve-lhe a configuração: o
+// aparelho que estava registado com a anterior deixa de registar.
+export interface ProvisioningTicket {
+  provisioning_url: string
+  expires_at: string
+  extension: string
+}
+export const issueMyProvisioningTicket = (orgId: string) =>
+  request<ProvisioningTicket>(`/api/orgs/${orgId}/my-extension/provisioning-ticket`, { method: 'POST' })
+export const issueExtensionProvisioningTicket = (orgId: string, id: string) =>
+  request<ProvisioningTicket>(`/api/orgs/${orgId}/extensions/${id}/provisioning-ticket`, { method: 'POST' })
+
 // ---------- Fase 2: ramal alcançável do PSTN via DID dedicado ----------
 // Só voz directa (bridge ao ramal, sem PIN) — continua SEM ponte para salas
 // de reunião em vídeo. Ver server/src/ramais.rs para a fronteira exacta.
