@@ -2,8 +2,9 @@
 //! Contra Postgres real.
 //!
 //! O que se mede aqui é a REGRA do servidor. Nenhum FreeSWITCH corre nestes
-//! testes, e o Lua do IVR ainda não chama a verificação: o que faz de IVR é o
-//! próprio teste, com o segredo de voz.
+//! testes: o que faz de IVR é o próprio teste, com o segredo de voz. O travão
+//! por origem e o IVR a usar a verificação são da R277
+//! (`ramal_pin_origem.rs`, `ivr_identifica_quem_liga.rs`).
 mod common;
 
 use common::{Account, TestApp};
