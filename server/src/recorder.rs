@@ -566,6 +566,56 @@ fn spawn_progress_writer(
     })
 }
 
+/// De quanto em quanto tempo uma composição à espera de vaga dá sinal de vida.
+/// Tem de ser muito menor do que o tecto da varredura (`ffmpeg_timeout_secs` +
+/// 600 s em `fail_stale_processing`): sem batimento, uma gravação que espera
+/// há mais do que isso era marcada como falhada com o pod vivo e a fila a andar.
+const COMPOSE_QUEUE_BEAT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Sobe um gauge enquanto vive e desce-o ao cair — inclusive quando o future
+/// que o guarda é cancelado (shutdown), que é onde um `fetch_sub` à mão se perde.
+struct GaugeGuard<'a>(&'a std::sync::atomic::AtomicI64);
+
+impl<'a> GaugeGuard<'a> {
+    fn up(g: &'a std::sync::atomic::AtomicI64) -> Self {
+        g.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(g)
+    }
+}
+
+impl Drop for GaugeGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Espera por uma vaga de composição, chamando `on_beat` a cada `beat_every`
+/// enquanto espera. O `acquire` fica fixo e é re-sondado: o semáforo do tokio
+/// serve por ordem de chegada, e largar o future perdia o lugar na fila.
+async fn wait_for_slot<F, Fut>(
+    slots: Arc<tokio::sync::Semaphore>,
+    beat_every: std::time::Duration,
+    mut on_beat: F,
+) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let acquire = slots.acquire_owned();
+    tokio::pin!(acquire);
+    let mut tick = tokio::time::interval(beat_every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick.tick().await; // o primeiro tick é imediato; o batimento só conta ao fim de um período
+    loop {
+        tokio::select! {
+            permit = &mut acquire => {
+                return permit.map_err(|_| anyhow::anyhow!("semáforo de composição fechado"));
+            }
+            _ = tick.tick() => on_beat().await,
+        }
+    }
+}
+
 /// Gravações presas em `processing` há mais do que o tecto do ffmpeg (com
 /// folga) passam a `failed`: o pod que as compunha morreu a meio.
 ///
@@ -928,6 +978,30 @@ async fn finalize_inner(
     // volume, a gravação nunca chegava à biblioteca, e não havia erro nenhum
     // para ver. Falhar em tempo limitado é a única resposta honesta.
     let limit = std::time::Duration::from_secs(state.config.ffmpeg_timeout_secs);
+    // Vaga de composição ANTES de arrancar o ffmpeg e de o relógio do tecto
+    // começar: esperar a vez não conta como tempo de composição.
+    let waiting = GaugeGuard::up(&state.metrics.recording_compose_queued);
+    let queued_at = std::time::Instant::now();
+    let _slot = wait_for_slot(state.compose_slots.clone(), COMPOSE_QUEUE_BEAT, || async {
+        if let Some(id) = rec_id {
+            let _ = sqlx::query(
+                "UPDATE recordings SET progress_at = now() WHERE id = $1 AND status = 'processing'",
+            )
+            .bind(id)
+            .execute(&state.db)
+            .await;
+        }
+    })
+    .await?;
+    drop(waiting);
+    let _running = GaugeGuard::up(&state.metrics.recording_compose_running);
+    if queued_at.elapsed() > std::time::Duration::from_secs(1) {
+        tracing::info!(
+            %room_id,
+            waited_secs = queued_at.elapsed().as_secs(),
+            "server recording: vaga de composição obtida após espera"
+        );
+    }
     let (tx, rx) = tokio::sync::watch::channel(0i64);
     let writer = rec_id.map(|id| spawn_progress_writer(state.clone(), id, expected_ms, rx));
     let status = run_bounded_progress(&mut cmd, limit, Some(tx)).await;
@@ -1551,5 +1625,93 @@ mod tests {
             .await
             .unwrap();
         assert!(!st.success(), "um ffmpeg que falha tem de ser visível");
+    }
+
+    #[tokio::test]
+    async fn gauge_guard_sobe_e_desce_inclusive_ao_cancelar() {
+        use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
+        let g = AtomicI64::new(0);
+        {
+            let _a = GaugeGuard::up(&g);
+            let _b = GaugeGuard::up(&g);
+            assert_eq!(g.load(Relaxed), 2);
+        }
+        assert_eq!(g.load(Relaxed), 0, "o gauge tem de voltar a zero ao largar");
+    }
+
+    #[tokio::test]
+    async fn wait_for_slot_da_batimentos_enquanto_espera_e_entrega_a_vaga() {
+        use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let held = slots.clone().acquire_owned().await.unwrap();
+        let beats = Arc::new(AtomicUsize::new(0));
+        let b = beats.clone();
+        let waiter = tokio::spawn(wait_for_slot(
+            slots.clone(),
+            Duration::from_millis(20),
+            move || {
+                let b = b.clone();
+                async move {
+                    b.fetch_add(1, Relaxed);
+                }
+            },
+        ));
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !waiter.is_finished(),
+            "não havia vaga: não podia ter acabado"
+        );
+        assert!(
+            beats.load(Relaxed) >= 2,
+            "sem batimento a varredura marca como falhada uma gravação que só espera"
+        );
+        drop(held);
+        let permit = tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("com a vaga livre tinha de acabar")
+            .unwrap()
+            .expect("a vaga tinha de ser entregue");
+        assert_eq!(
+            slots.available_permits(),
+            0,
+            "a vaga está agora com quem esperou"
+        );
+        drop(permit);
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn o_tecto_de_vagas_nunca_e_excedido() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        const CAP: usize = 2;
+        let slots = Arc::new(tokio::sync::Semaphore::new(CAP));
+        let now = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let (slots, now, peak) = (slots.clone(), now.clone(), peak.clone());
+            tasks.push(tokio::spawn(async move {
+                let _slot = wait_for_slot(slots, Duration::from_secs(60), || async {})
+                    .await
+                    .unwrap();
+                let n = now.fetch_add(1, SeqCst) + 1;
+                peak.fetch_max(n, SeqCst);
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                now.fetch_sub(1, SeqCst);
+            }));
+        }
+        for t in tasks {
+            t.await.unwrap();
+        }
+        assert!(
+            peak.load(SeqCst) <= CAP,
+            "composições simultâneas acima do tecto: {}",
+            peak.load(SeqCst)
+        );
+        assert_eq!(
+            peak.load(SeqCst),
+            CAP,
+            "o tecto tem de ser usado, não só respeitado"
+        );
     }
 }
