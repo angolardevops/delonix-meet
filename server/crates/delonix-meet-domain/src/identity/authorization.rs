@@ -16,7 +16,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 /// Versão do catálogo. Sobe quando entra ou sai uma capacidade.
-pub const CATALOG_VERSION: u32 = 2;
+pub const CATALOG_VERSION: u32 = 3;
 
 /// Profundidade máxima da cadeia de herança (o papel e 4 antepassados).
 pub const MAX_INHERITANCE_DEPTH: usize = 5;
@@ -34,6 +34,7 @@ pub enum Capability {
     BroadcastPublicDestinations,
     BroadcastManageRtmpKeys,
     BroadcastManageChannels,
+    BroadcastGoLive,
     BroadcastHighlightQuestions,
     StudioEditTimeline,
     StudioGenerateCaptions,
@@ -64,7 +65,7 @@ pub struct CapabilityInfo {
 }
 
 impl Capability {
-    pub const ALL: [Capability; 20] = [
+    pub const ALL: [Capability; 21] = [
         Capability::SessionsCreate,
         Capability::SessionsAdmitWaitingRoom,
         Capability::SessionsMuteRemove,
@@ -76,6 +77,7 @@ impl Capability {
         Capability::BroadcastPublicDestinations,
         Capability::BroadcastManageRtmpKeys,
         Capability::BroadcastManageChannels,
+        Capability::BroadcastGoLive,
         Capability::BroadcastHighlightQuestions,
         Capability::StudioEditTimeline,
         Capability::StudioGenerateCaptions,
@@ -210,6 +212,16 @@ impl Capability {
                 "Gerir canais de TV",
                 "criar, configurar e apagar canais da organização (preparar; pôr no ar é outra capacidade)",
                 &["/api/orgs/{org_id}/tv/channels"],
+            ),
+            BroadcastGoLive => mk(
+                "broadcast.go_live",
+                B,
+                "Pôr canais no ar",
+                "pedir e parar emissões de um canal (separada de preparar o canal)",
+                &[
+                    "POST /api/orgs/{org_id}/tv/channels/{channel_id}/broadcasts",
+                    "POST /api/orgs/{org_id}/tv/channels/{channel_id}/broadcasts/{broadcast_id}/stop",
+                ],
             ),
             BroadcastHighlightQuestions => mk(
                 "broadcast.highlight_questions",

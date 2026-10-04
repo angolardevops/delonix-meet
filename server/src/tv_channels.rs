@@ -422,6 +422,7 @@ pub async fn update(
         (status = 204, description = "Apagado."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`tv.channel.on_air`"),
     )
 )]
 pub async fn delete(
@@ -430,13 +431,27 @@ pub async fn delete(
     Path((org_id, channel_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
     require_manage(&state, org_id, auth.user_id).await?;
-    let deleted: Option<String> =
-        sqlx::query_scalar("DELETE FROM tv_channels WHERE id = $1 AND org_id = $2 RETURNING slug")
-            .bind(channel_id)
-            .bind(org_id)
-            .fetch_optional(&state.db)
-            .await?;
-    let slug = deleted.ok_or(ApiError::NotFound)?;
+    // Um canal com uma emissão por terminar não se apaga: o `ON DELETE CASCADE`
+    // levava a sessão e o executor ficava a emitir para um canal que já não existe.
+    let deleted: Option<String> = sqlx::query_scalar(
+        "DELETE FROM tv_channels c WHERE c.id = $1 AND c.org_id = $2
+            AND NOT EXISTS (SELECT 1 FROM tv_broadcast_sessions s
+                             WHERE s.channel_id = c.id AND s.ended_at IS NULL)
+          RETURNING c.slug",
+    )
+    .bind(channel_id)
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(slug) = deleted else {
+        // Nenhuma linha: não existe (404) ou está em emissão (409).
+        fetch(&state, org_id, channel_id).await?;
+        return Err(DomainError::conflict(
+            "tv.channel.on_air",
+            "o canal tem uma emissão por terminar — pare-a antes de o apagar",
+        )
+        .into());
+    };
     crate::audit::log(
         &state.db,
         Some(org_id),
