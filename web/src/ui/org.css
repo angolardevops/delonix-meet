@@ -874,3 +874,35 @@
   flex-direction: column;
   gap: 3px;
 }
+
+/* «Configurar o Linphone» (R278): o QR nunca alarga o diálogo — encolhe com
+   ele, e o URL quebra em qualquer sítio. */
+.linphone-qr {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.linphone-qr__code {
+  align-self: center;
+  background: #fff;
+  padding: 6px;
+  border-radius: var(--r-2);
+  line-height: 0;
+  width: min(220px, 100%);
+}
+.linphone-qr__code svg {
+  width: 100%;
+  height: auto;
+}
+.linphone-qr__left {
+  margin: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.linphone-qr__url {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}

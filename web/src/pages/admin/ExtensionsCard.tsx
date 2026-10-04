@@ -43,6 +43,7 @@ import {
   ExtensionPinState,
   GeneratedPin,
   getExtensionRange,
+  issueExtensionProvisioningTicket,
   listExtensions,
   listVoiceDids,
   putExtensionRange,
@@ -54,8 +55,9 @@ import {
   VoiceDid,
 } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
+import LinphoneQrDialog from '../../components/LinphoneQrDialog'
 import PinOnce from '../../components/PinOnce'
-import { Alert, Button, Card, Dialog, Field, IconButton, Segmented, Select, StatusBadge, TextInput } from '../../ui/kit'
+import { Alert, Button, Card, Dialog, Field, IconButton, Segmented, Select, StatusBadge, TextInput, Toggle } from '../../ui/kit'
 import { orgErrorMessage, refusalAware } from './orgShared'
 
 export default function ExtensionsCard({ orgId, people }: { orgId: string; people: Employee[] }) {
@@ -66,6 +68,7 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
   const [reveal, setReveal] = useState<ExtensionCreated | null>(null)
   const [pinReveal, setPinReveal] = useState<GeneratedPin | null>(null)
   const [choosingPin, setChoosingPin] = useState<Extension | null>(null)
+  const [qrFor, setQrFor] = useState<Extension | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [err, setErr] = useState('')
 
@@ -203,6 +206,7 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
               onGeneratePin={generatePin}
               onChoosePin={setChoosingPin}
               onClearPin={clearPin}
+              onConfigureLinphone={setQrFor}
               renderDid={(e) => (
                 <DidCell
                   extension={e}
@@ -252,6 +256,13 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
       )}
       {reveal && <RevealDialog created={reveal} onClose={() => setReveal(null)} />}
       {pinReveal && <PinRevealDialog generated={pinReveal} onClose={() => setPinReveal(null)} />}
+      {qrFor && (
+        <LinphoneQrDialog
+          extension={qrFor.extension}
+          issue={() => issueExtensionProvisioningTicket(orgId, qrFor.id)}
+          onClose={() => setQrFor(null)}
+        />
+      )}
       {choosingPin && (
         <ChoosePinDialog
           orgId={orgId}
@@ -305,6 +316,7 @@ export function ExtensionList({
   onGeneratePin,
   onChoosePin,
   onClearPin,
+  onConfigureLinphone,
   renderDid,
 }: {
   list: Extension[]
@@ -315,6 +327,8 @@ export function ExtensionList({
   onGeneratePin: (e: Extension) => void
   onChoosePin: (e: Extension) => void
   onClearPin: (e: Extension) => void
+  /** «Configurar o Linphone» (R278): só num ramal activo. */
+  onConfigureLinphone?: (e: Extension) => void
   renderDid?: (e: Extension) => ReactNode
 }) {
   const { t } = useTranslation()
@@ -352,6 +366,11 @@ export function ExtensionList({
               <Button size="sm" variant="secondary" busy={busy} onClick={() => onToggleActive(e)}>
                 {e.active ? t('consola.ramais.desactivar') : t('consola.ramais.activar')}
               </Button>
+              {onConfigureLinphone && e.active && (
+                <Button size="sm" variant="primary" icon="phone" busy={busy} onClick={() => onConfigureLinphone(e)}>
+                  {t('consola.ramais.qr.botao')}
+                </Button>
+              )}
               <Button size="sm" variant="secondary" busy={busy} onClick={() => onRegeneratePassword(e)}>
                 {t('consola.ramais.regenerar')}
               </Button>
@@ -418,9 +437,26 @@ function AutoAssign({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [outcome, setOutcome] = useState<AssignOutcome | null>(null)
+  // O interruptor grava-se sozinho; enquanto o pedido corre mostra o valor novo.
+  const [autoPending, setAutoPending] = useState<boolean | null>(null)
 
   if (range.state.s !== 'ready') return null
   const saved = range.state.d
+  const auto = autoPending ?? saved.auto_assign_on_join
+
+  /** Liga ou desliga «ramal a quem entra», sem tocar no intervalo gravado. */
+  async function toggleAuto(next: boolean) {
+    setErr('')
+    setAutoPending(next)
+    try {
+      await putExtensionRange(orgId, { range_start: saved.range_start, range_end: saved.range_end, auto_assign_on_join: next })
+      range.reload()
+    } catch (x) {
+      setErr(orgErrorMessage(x, t, 'consola.ramais.atribuir.automaticoErro'))
+    } finally {
+      setAutoPending(null)
+    }
+  }
   const startValue = start ?? String(saved.range_start)
   const endValue = end ?? String(saved.range_end)
   const digits = (v: string) => v.replace(/\D/g, '').slice(0, 5)
@@ -489,6 +525,14 @@ function AutoAssign({
           {t('consola.ramais.atribuir.botao')}
         </Button>
       </div>
+      <Toggle
+        label={t('consola.ramais.atribuir.automatico')}
+        hint={t('consola.ramais.atribuir.automaticoDica')}
+        checked={auto}
+        disabled={busy || autoPending !== null}
+        onChange={(e) => void toggleAuto(e.target.checked)}
+        data-testid="ramais-automatico"
+      />
       {err && <Alert tone="danger">{err}</Alert>}
       {outcome && (
         <Alert tone={outcome.exhausted && outcome.remaining > 0 ? 'warning' : 'success'}>

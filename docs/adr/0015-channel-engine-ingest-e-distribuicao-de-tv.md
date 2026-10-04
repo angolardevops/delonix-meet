@@ -61,7 +61,7 @@ Regras que a decisão fixa:
 | `live_sessions` (0074) | **Registo observado** de uma emissão: o estado de cada destino e o registo minuto a minuto (ADR-0013) | o executor |
 
 - **Um canal → muitas `live_sessions`** ao longo do tempo (histórico), mas **uma só em curso** por canal: índice parcial único. É a regra que a 0074 já tem para as salas.
-- A migração 0092 faz as três mudanças que isto exige: `live_sessions.room_id` passa a nulo (uma emissão em playout não tem sala), ganha `channel_id`, e um `CHECK` exige sala **ou** canal.
+- A migração 0094 faz as três mudanças que isto exige: `live_sessions.room_id` passa a nulo (uma emissão em playout não tem sala), ganha `channel_id`, e um `CHECK` exige sala **ou** canal.
 - A `tv_broadcast_sessions` ganha `live_session_id`: quando o executor arranca a emissão, cria a `live_session` e liga-a. Um pedido pode nunca chegar a ter `live_session` (falhou antes de arrancar); uma `live_session` nasce sempre de um executor.
 - Apagar um canal apaga o seu histórico (`CASCADE`); o handler recusa apagar um canal com emissão em curso, em qualquer das duas tabelas.
 - **O executor reutiliza a máquina de estados por destino** (`live_output`, ADR-0013) em vez de a refazer.

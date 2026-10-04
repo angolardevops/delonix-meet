@@ -114,6 +114,36 @@ fn gen_sip_password() -> String {
     crate::crypto::random_hex(15)
 }
 
+/// Uma password SIP nova: a password em claro e o seu Argon2.
+/// É o que a regeneração pelo administrador e o resgate de um bilhete de
+/// provisionamento (`extension_provisioning.rs`) gravam — a mesma regra nos
+/// dois, para o directório do FreeSWITCH (que só lê `sip_ha1`) os aceitar.
+pub(crate) struct SipSecret {
+    /// Em claro: só existe até sair na resposta que a entrega.
+    pub(crate) password: String,
+    /// Argon2, para repouso. É a parte cara — gera-se UMA vez por ramal, fora
+    /// de qualquer ciclo de tentativas e de qualquer transacção.
+    pub(crate) hash: String,
+}
+
+impl SipSecret {
+    pub(crate) fn generate() -> Result<Self, ApiError> {
+        let password = gen_sip_password();
+        let hash = crate::auth::hash_password(&password)?;
+        Ok(Self { password, hash })
+    }
+
+    /// O HA1 depende do AOR e do domínio; é um MD5, barato.
+    pub(crate) fn ha1(&self, sip_username: &str, sip_domain: &str) -> String {
+        compute_ha1(sip_username, sip_domain, &self.password)
+    }
+}
+
+/// O domínio SIP a partir do slug da organização.
+pub(crate) fn sip_domain_of_slug(state: &AppState, slug: &str) -> String {
+    format!("{slug}.{}", state.config.voice_ramais_domain_suffix)
+}
+
 /// AOR SIP: globalmente único (não escopado por org — é o directório do
 /// registar que exige isto, ver o comentário no topo do ficheiro).
 fn gen_sip_username() -> String {
@@ -136,10 +166,7 @@ pub(crate) async fn sip_domain_for_org(state: &AppState, org_id: Uuid) -> Result
         .bind(org_id)
         .fetch_one(&state.db)
         .await?;
-    Ok(format!(
-        "{slug}.{}",
-        state.config.voice_ramais_domain_suffix
-    ))
+    Ok(sip_domain_of_slug(state, &slug))
 }
 
 /// Caminho inverso: de um domínio SIP para o `org_id`. `None` se o sufixo não
@@ -356,17 +383,19 @@ pub async fn create_extension(
         .into());
     }
     let sip_domain = sip_domain_for_org(&state, org_id).await?;
-    let (id, sip_password) = match insert_extension(
+    let secret = SipSecret::generate()?;
+    let id = match insert_extension(
         &state,
         org_id,
         &sip_domain,
         req.member_id,
         extension,
         &label,
+        &secret,
     )
     .await?
     {
-        Inserted::Created { id, sip_password } => (id, sip_password),
+        Inserted::Created { id } => id,
         Inserted::NumberTaken => {
             return Err(ApiError::Conflict(
                 "já existe um ramal com esse número nesta organização".into(),
@@ -393,7 +422,7 @@ pub async fn create_extension(
     .await;
 
     Ok(Json(CreatedExtension {
-        sip_password,
+        sip_password: secret.password,
         sip_domain,
         extension: info,
     }))
@@ -401,8 +430,8 @@ pub async fn create_extension(
 
 /// O que aconteceu ao tentar gravar um ramal novo.
 enum Inserted {
-    /// Gravado. A password SIP em claro só existe aqui.
-    Created { id: Uuid, sip_password: String },
+    /// Gravado, com o segredo que quem chamou trouxe.
+    Created { id: Uuid },
     /// O número já é de outro ramal desta organização.
     NumberTaken,
     /// A pessoa já tem ramal.
@@ -412,7 +441,9 @@ enum Inserted {
 /// Grava um ramal com credenciais SIP novas. É o ÚNICO `INSERT` em
 /// `voice_extensions`: a criação pelo admin e a atribuição em massa passam as
 /// duas por aqui. Quem chama já validou a forma do número, o número reservado
-/// e a pertença da pessoa.
+/// e a pertença da pessoa — e traz o segredo SIP já gerado: quem tenta vários
+/// números para o mesmo ramal (um ocupado, tenta o seguinte) paga UM Argon2,
+/// não um por tentativa.
 async fn insert_extension(
     state: &AppState,
     org_id: Uuid,
@@ -420,16 +451,14 @@ async fn insert_extension(
     member_id: Option<Uuid>,
     extension: &str,
     label: &str,
+    secret: &SipSecret,
 ) -> Result<Inserted, ApiError> {
-    let sip_password = gen_sip_password();
-    let password_hash = crate::auth::hash_password(&sip_password)?;
-
     // Retenta só em colisão do AOR globalmente único (extremamente
     // improvável com 64 bits) — colisão de extensão/membro é definitiva,
     // não um acidente de geração aleatória, e não se retenta.
     for _ in 0..5 {
         let sip_username = gen_sip_username();
-        let ha1 = compute_ha1(&sip_username, sip_domain, &sip_password);
+        let ha1 = secret.ha1(&sip_username, sip_domain);
         let res: Result<(Uuid,), sqlx::Error> = sqlx::query_as(
             "INSERT INTO voice_extensions
                  (org_id, member_id, extension, sip_username, sip_password_hash, sip_ha1, label)
@@ -440,13 +469,13 @@ async fn insert_extension(
         .bind(member_id)
         .bind(extension)
         .bind(&sip_username)
-        .bind(&password_hash)
+        .bind(&secret.hash)
         .bind(&ha1)
         .bind(label)
         .fetch_one(&state.db)
         .await;
         match res {
-            Ok((id,)) => return Ok(Inserted::Created { id, sip_password }),
+            Ok((id,)) => return Ok(Inserted::Created { id }),
             Err(sqlx::Error::Database(dbe)) if dbe.is_unique_violation() => {
                 match dbe.constraint() {
                     Some("voice_extensions_sip_username_uidx") => continue, // retenta com outro AOR
@@ -597,19 +626,20 @@ pub async fn regenerate_extension_password(
     .await?
     .ok_or(ApiError::NotFound)?;
 
-    let sip_password = gen_sip_password();
-    let password_hash = crate::auth::hash_password(&sip_password)?;
-    let ha1 = compute_ha1(&sip_username, &sip_domain, &sip_password);
+    let secret = SipSecret::generate()?;
+    let ha1 = secret.ha1(&sip_username, &sip_domain);
     sqlx::query(
         "UPDATE voice_extensions SET sip_password_hash = $3, sip_ha1 = $4
           WHERE id = $1 AND org_id = $2",
     )
     .bind(id)
     .bind(org_id)
-    .bind(&password_hash)
+    .bind(&secret.hash)
     .bind(&ha1)
     .execute(&state.db)
     .await?;
+    // Um QR do Linphone ainda por ler trocaria esta password outra vez (R278).
+    crate::extension_provisioning::revoke_tickets(&state.db, org_id, id).await?;
 
     let info = extension_info(&state, org_id, id)
         .await?
@@ -623,7 +653,7 @@ pub async fn regenerate_extension_password(
     )
     .await;
     Ok(Json(CreatedExtension {
-        sip_password,
+        sip_password: secret.password,
         sip_domain,
         extension: info,
     }))
@@ -685,24 +715,44 @@ pub struct ExtensionRange {
     /// Último número do intervalo, inclusive.
     #[schema(example = 1999)]
     pub range_end: u32,
+    /// Atribuir um ramal automaticamente a quem entra na organização (R278).
+    /// Desligado por omissão.
+    #[serde(default)]
+    pub auto_assign_on_join: bool,
+}
+
+/// O que o `PUT` do intervalo aceita.
+#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
+pub struct PutExtensionRangeReq {
+    #[schema(example = 1000)]
+    pub range_start: u32,
+    #[schema(example = 1999)]
+    pub range_end: u32,
+    /// Ausente = MANTER o que está gravado. Um cliente que só conhece o
+    /// intervalo não desliga a atribuição automática sem querer.
+    #[serde(default)]
+    pub auto_assign_on_join: Option<bool>,
 }
 
 /// O intervalo gravado, ou a omissão (1000–1999) se a org nunca escolheu um.
 async fn range_for_org(state: &AppState, org_id: Uuid) -> Result<ExtensionRange, ApiError> {
-    let row: Option<(i32, i32)> = sqlx::query_as(
-        "SELECT range_start, range_end FROM voice_extension_ranges WHERE org_id = $1",
+    let row: Option<(i32, i32, bool)> = sqlx::query_as(
+        "SELECT range_start, range_end, auto_assign_on_join
+           FROM voice_extension_ranges WHERE org_id = $1",
     )
     .bind(org_id)
     .fetch_optional(&state.db)
     .await?;
     Ok(match row {
-        Some((s, e)) => ExtensionRange {
+        Some((s, e, auto)) => ExtensionRange {
             range_start: u32::try_from(s).unwrap_or(pin_rules::DEFAULT_RANGE_START),
             range_end: u32::try_from(e).unwrap_or(pin_rules::DEFAULT_RANGE_END),
+            auto_assign_on_join: auto,
         },
         None => ExtensionRange {
             range_start: pin_rules::DEFAULT_RANGE_START,
             range_end: pin_rules::DEFAULT_RANGE_END,
+            auto_assign_on_join: false,
         },
     })
 }
@@ -713,7 +763,7 @@ async fn range_for_org(state: &AppState, org_id: Uuid) -> Result<ExtensionRange,
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
-        (status = 200, body = ExtensionRange, description = "O intervalo gravado, ou 1000–1999 se a organização nunca escolheu um."),
+        (status = 200, body = ExtensionRange, description = "O intervalo gravado, ou 1000–1999 e a atribuição automática desligada se a organização nunca escolheu."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -728,14 +778,16 @@ pub async fn get_extension_range(
     range_for_org(&state, org_id).await.map(Json)
 }
 
-/// Define o intervalo de numeração automática da org (admin). Não renumera
-/// nem apaga os ramais que já existem fora dele: só decide de onde saem os
-/// próximos números automáticos.
+/// Define o intervalo de numeração automática da org (admin) e se quem entra
+/// recebe um ramal sozinho (`auto_assign_on_join`; ausente = manter). Não renumera nem apaga os
+/// ramais que já existem fora dele: só decide de onde saem os próximos números
+/// automáticos. Ligar a atribuição automática não dá ramal a quem já cá está —
+/// isso é `assign-missing`.
 #[utoipa::path(
     put, path = "/api/orgs/{org_id}/extension-range", tag = "voice",
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
-    request_body = ExtensionRange,
+    request_body = PutExtensionRangeReq,
     responses(
         (status = 200, body = ExtensionRange),
         (status = 400, body = crate::openapi::ErrorBody, description = "Intervalo fora de 100–99999 ou invertido (`ramais.range_invalid`)."),
@@ -748,7 +800,7 @@ pub async fn put_extension_range(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
-    Json(req): Json<ExtensionRange>,
+    Json(req): Json<PutExtensionRangeReq>,
 ) -> Result<Json<ExtensionRange>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     if !pin_rules::is_valid_range(req.range_start, req.range_end) {
@@ -763,27 +815,158 @@ pub async fn put_extension_range(
         .into());
     }
     // `is_valid_range` garante que os dois cabem num i32.
-    sqlx::query(
-        "INSERT INTO voice_extension_ranges (org_id, range_start, range_end)
-         VALUES ($1, $2, $3)
+    // `$4` nulo (campo ausente) mantém o que está gravado; numa linha nova é FALSE.
+    let auto: bool = sqlx::query_scalar(
+        "INSERT INTO voice_extension_ranges (org_id, range_start, range_end, auto_assign_on_join)
+         VALUES ($1, $2, $3, COALESCE($4, FALSE))
          ON CONFLICT (org_id) DO UPDATE
             SET range_start = EXCLUDED.range_start, range_end = EXCLUDED.range_end,
-                updated_at = now()",
+                auto_assign_on_join = COALESCE($4, voice_extension_ranges.auto_assign_on_join),
+                updated_at = now()
+         RETURNING auto_assign_on_join",
     )
     .bind(org_id)
     .bind(req.range_start as i32)
     .bind(req.range_end as i32)
-    .execute(&state.db)
+    .bind(req.auto_assign_on_join)
+    .fetch_one(&state.db)
     .await?;
+    let req = ExtensionRange {
+        range_start: req.range_start,
+        range_end: req.range_end,
+        auto_assign_on_join: auto,
+    };
     crate::audit::log(
         &state.db,
         Some(org_id),
         auth.user_id,
         "ramal.intervalo_alterado",
-        &format!("{}–{}", req.range_start, req.range_end),
+        &format!(
+            "{}–{}; ramal automático ao entrar: {}",
+            req.range_start,
+            req.range_end,
+            if req.auto_assign_on_join {
+                "ligado"
+            } else {
+                "desligado"
+            }
+        ),
     )
     .await;
     Ok(Json(req))
+}
+
+/// O que a atribuição automática fez a quem entrou.
+#[derive(Debug, PartialEq, Eq)]
+enum JoinAssignment {
+    /// A organização não a tem ligada, a pessoa não ocupa lugar (convidado
+    /// externo, utilizador de serviço, arquivado) ou já tinha ramal.
+    Skipped,
+    Assigned(String),
+    RangeExhausted,
+}
+
+/// Dá um ramal a quem ACABOU de entrar na organização, se ela tiver a
+/// atribuição automática ligada (R278). É o ÚNICO ponto: cada caminho que cria
+/// uma pertença chama isto DEPOIS do seu commit, e mais nada.
+///
+/// **Nunca faz falhar a entrada.** Não devolve erro: o intervalo esgotado fica
+/// na auditoria (`ramal.atribuicao_automatica_falhou`) e uma avaria fica no
+/// registo — a pessoa entra sem ramal e o administrador resolve com
+/// «Atribuir ramais a todos».
+///
+/// Quem recebe: quem ocupa lugar (`org::seat_holder_username`) — activo,
+/// humano e não convidado externo. Idempotente: quem já tem ramal não é tocado.
+pub(crate) async fn assign_on_join(state: &AppState, org_id: Uuid, user_id: Uuid) {
+    // Actor de sistema: ninguém pediu este ramal, foi a regra da organização.
+    let actor = Uuid::nil();
+    match try_assign_on_join(state, org_id, user_id).await {
+        Ok(JoinAssignment::Skipped) => {}
+        Ok(JoinAssignment::Assigned(number)) => {
+            crate::audit::log(
+                &state.db,
+                Some(org_id),
+                actor,
+                "ramal.atribuido_ao_entrar",
+                &format!("{number} → {user_id}"),
+            )
+            .await;
+        }
+        Ok(JoinAssignment::RangeExhausted) => {
+            tracing::warn!(%org_id, %user_id, "ramal automático: o intervalo esgotou-se — o membro entrou sem ramal");
+            crate::audit::log(
+                &state.db,
+                Some(org_id),
+                actor,
+                "ramal.atribuicao_automatica_falhou",
+                &format!("intervalo esgotado → {user_id}"),
+            )
+            .await;
+        }
+        Err(e) => {
+            tracing::error!(%org_id, %user_id, error = %e, "ramal automático: falhou — o membro entrou sem ramal");
+        }
+    }
+}
+
+async fn try_assign_on_join(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<JoinAssignment, ApiError> {
+    let range = range_for_org(state, org_id).await?;
+    if !range.auto_assign_on_join {
+        return Ok(JoinAssignment::Skipped);
+    }
+    // Pertença: decide-se em org.rs (regra 1, ADR-0004 §5).
+    if crate::org::seat_holder_username(&state.db, org_id, user_id)
+        .await?
+        .is_none()
+    {
+        return Ok(JoinAssignment::Skipped);
+    }
+    let existing: Vec<(String, Option<Uuid>)> =
+        sqlx::query_as("SELECT extension, member_id FROM voice_extensions WHERE org_id = $1")
+            .bind(org_id)
+            .fetch_all(&state.db)
+            .await?;
+    if existing.iter().any(|(_, m)| *m == Some(user_id)) {
+        return Ok(JoinAssignment::Skipped);
+    }
+    let taken: HashSet<String> = existing.into_iter().map(|(e, _)| e).collect();
+    let sip_domain = sip_domain_for_org(state, org_id).await?;
+    let mut free = pin_rules::free_numbers(
+        range.range_start,
+        range.range_end,
+        &taken,
+        &state.config.voice_meeting_access_number,
+    )
+    .peekable();
+    // Intervalo esgotado: nem se paga o Argon2.
+    if free.peek().is_none() {
+        return Ok(JoinAssignment::RangeExhausted);
+    }
+    // Um Argon2 por entrada, fora do ciclo — não um por número tentado.
+    let secret = SipSecret::generate()?;
+    for number in free {
+        match insert_extension(
+            state,
+            org_id,
+            &sip_domain,
+            Some(user_id),
+            &number,
+            "",
+            &secret,
+        )
+        .await?
+        {
+            Inserted::Created { .. } => return Ok(JoinAssignment::Assigned(number)),
+            // Outra entrada ficou com o número entretanto: tenta o seguinte.
+            Inserted::NumberTaken => continue,
+            Inserted::MemberHasOne => return Ok(JoinAssignment::Skipped),
+        }
+    }
+    Ok(JoinAssignment::RangeExhausted)
 }
 
 /// Quantos ramais uma chamada de `assign-missing` cria no máximo. Cada ramal
@@ -878,14 +1061,24 @@ pub async fn assign_missing_extensions(
             unresolved += missing.len() - i;
             break;
         }
+        // Um Argon2 por pessoa, não por número tentado.
+        let secret = SipSecret::generate()?;
         loop {
             let Some(number) = free.next() else {
                 range_exhausted = true;
                 unresolved += missing.len() - i;
                 break 'people;
             };
-            match insert_extension(&state, org_id, &sip_domain, Some(*member_id), &number, "")
-                .await?
+            match insert_extension(
+                &state,
+                org_id,
+                &sip_domain,
+                Some(*member_id),
+                &number,
+                "",
+                &secret,
+            )
+            .await?
             {
                 Inserted::Created { id, .. } => {
                     assigned.push(AssignedExtension {
@@ -1615,7 +1808,10 @@ mod tests {
         crate::extension_pin::regenerate_my_pin,
         crate::extension_pin::set_extension_pin,
         crate::extension_pin::regenerate_extension_pin,
-        crate::extension_pin::clear_extension_pin
+        crate::extension_pin::clear_extension_pin,
+        crate::extension_provisioning::issue_my_ticket,
+        crate::extension_provisioning::issue_extension_ticket,
+        crate::extension_provisioning::redeem
     ),
     components(schemas(
         VoiceExtensionInfo,
@@ -1626,11 +1822,13 @@ mod tests {
         AssignExtensionDidReq,
         ExtensionDidInfo,
         ExtensionRange,
+        PutExtensionRangeReq,
         AssignedExtension,
         AssignMissingResp,
         crate::extension_pin::MyExtension,
         crate::extension_pin::SetPinReq,
-        crate::extension_pin::GeneratedPin
+        crate::extension_pin::GeneratedPin,
+        crate::extension_provisioning::ProvisioningTicket
     ))
 )]
 pub struct ApiDoc;
