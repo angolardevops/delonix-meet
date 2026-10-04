@@ -1,7 +1,7 @@
 # ADR-0011 — Channel Engine, ingestão e distribuição de TV
 
 **Estado:** Proposto · **Data:** 2026-10-04 · **Contexto:** [RFC-0001](../tv/rfc-0001-estudio-e-estacao-de-tv.md) §6–7, decisões D1 e D2.
-**Não é Aceite:** a D3 (licença do ffmpeg/x264) está por responder e a escolha do componente ainda não foi medida.
+**Não é Aceite:** a escolha do componente ainda não foi medida (ver o spike). A D3 (licença do ffmpeg/x264) foi **decidida em 2026-10-04: GPL, com libx264** — ver «Decisão D3» abaixo; falta a validação jurídica.
 
 ## Decisão proposta
 
@@ -39,10 +39,22 @@ Um erro apanhado nesta verificação: a ferramenta de leitura de páginas aprese
 
 Ver [docs/tv/spike-mediamtx-2026-10-04.md](../tv/spike-mediamtx-2026-10-04.md). Em resumo, na v1.21.0, numa máquina **partilhada e carregada**, com 60 s de amostra: SRT, RTMP e RTMPS autenticam por HTTP e recusam a chave errada; o atraso de **empacotamento** do LL-HLS foi p50 0,11 s / p95 0,21 s (**não é** a latência do espectador); a revogação exige **expulsar** pela API; a credencial viaja em *query*; a configuração por omissão expõe o ICE UDP e o MoQ em todas as interfaces. **Não** foram testados: WHIP, leitores reais, encoder real, ≥ 30 min, carga de espectadores. A decisão continua **Proposta**.
 
+## Decisão D3 — ffmpeg com GPL (2026-10-04)
+
+**Decidido pelo dono do produto:** a imagem do Channel Engine usa ffmpeg compilado com `--enable-gpl` (libx264).
+
+Regras que a decisão fixa:
+
+1. **GPL sim, `nonfree` não.** A build leva `--enable-gpl` e **nunca** `--enable-nonfree` (nada de libfdk-aac: o AAC sai do encoder nativo do ffmpeg). Um *gate* de CI deve falhar a imagem se `ffmpeg -version` mostrar `--enable-nonfree`, e a linha de `configure` fica registada no SBOM.
+2. **Processo separado.** O ffmpeg corre como processo à parte, invocado por execução; não é ligado ao `delonix-server`. A intenção é que o resto do Meet não passe a ser GPL por usar o binário. **É um juízo técnico, não um parecer jurídico** — a fronteira entre «agregação» e «obra derivada» é uma questão de facto a validar.
+3. **Distribuição.** Se a imagem for **entregue a terceiros** (a edição `personal`/self-hosted ou instalações on-premises; o README fala de «open core»), aplicam-se as obrigações da GPL: código-fonte correspondente do ffmpeg e do x264 **na mesma versão** (ou oferta escrita), texto da licença e atribuição (ffmpeg.org/legal.html). Se só for operada por nós como serviço, a imagem não é distribuída. **A confirmar com o jurídico qual é o caso de cada edição.**
+4. **Patentes são outra coisa.** A licença GPL é de direitos de autor e **não** concede licença de patentes de H.264/H.265. **Não foi verificado** neste ADR; fica como decisão jurídica explícita antes de emitir comercialmente.
+5. **O que isto desbloqueia e o que não.** Desbloqueia o encoder H.264 do Channel Engine. **Não é necessário para o B3** (ffmpeg em falta na imagem do servidor): o directo actual usa `-c:v copy` e `-c:a aac` (`broadcast.rs:303-308`) e a gravação usa `libvpx-vp9` e `libopus` (`recorder.rs:974,1167`; `libvpx` no `media_probe.rs:348`) — nada disto precisa de libx264. O B3 pode, por isso, ser resolvido com uma build **sem GPL**, o que evita estender as obrigações de distribuição à imagem do servidor. É uma escolha a fazer à parte.
+
 ## Consequências
 
 - Mais um serviço a operar (imagem, saúde, métricas, actualizações de segurança), em troca de não implementar WHIP/RTMP/SRT/HLS.
-- O Channel Engine ainda precisa de ffmpeg (ou GStreamer) para compor: **a D3 continua a bloquear a imagem**. Enquanto a build for LGPL e sem libx264, a codificação H.264 teria de vir de outro encoder (por exemplo, por hardware); isso tem de ser medido, não suposto.
+- O Channel Engine precisa de ffmpeg para compor. Com a D3 decidida (GPL), o libx264 está disponível; as obrigações que isso traz estão em «Decisão D3».
 - O SFU actual não muda. O Meet continua a ser a sala interactiva; o canal é outro plano.
 
 ## Spike que fecha esta decisão (antes de passar a Aceite)
