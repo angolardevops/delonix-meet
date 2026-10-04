@@ -88,12 +88,28 @@ spec:
               port: http
             initialDelaySeconds: 15
             periodSeconds: 20
+          # DIMENSIONAMENTO DE CPU — medido em docs/ops/teste-de-carga-2026-09-17.md:
+          # ~1 núcleo por ~180 Mbps encaminhados (o SFU não descodifica), uma sala
+          # de 30 pessoas com câmara pede 5,6 núcleos e 160 pessoas em chamadas de 4
+          # pedem 4,8. Com `limits.cpu: 1000m` o CFS estrangulava o processo muito
+          # antes de a rede ou a máquina serem o limite, e em media em tempo real
+          # estrangular é jitter e perda, não só lentidão (o mesmo erro está
+          # documentado no coturn, 51-coturn.yaml).
+          #
+          # 4 = a dimensão dos workers de referência (docs/ops/platform-engineering.md
+          # §2.3); acima disso o limite não passa do que o nó tem. Os tectos de CPU
+          # por tarefa (`FFMPEG_MAX_CONCURRENT`, `FFMPEG_THREADS`, `MAX_DIRECTOS`)
+          # existem por causa deste limite: se o subires, revê-los. A memória NÃO foi
+          # medida com carga e fica como estava.
+          #
+          # O Rust não precisa de `worker_threads`: o `tokio` usa
+          # `available_parallelism`, que respeita a quota do cgroup.
           resources:
             requests:
-              cpu: 250m
+              cpu: "1"
               memory: 256Mi
             limits:
-              cpu: 1000m
+              cpu: "4"
               memory: 1Gi
           volumeMounts:
             # Gravações PARTILHADAS entre as réplicas e persistentes a restarts.
