@@ -286,7 +286,7 @@ pub async fn redeem(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Response, ApiError> {
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     state
         .provisioning_limiter
         .acquire(&ip)
