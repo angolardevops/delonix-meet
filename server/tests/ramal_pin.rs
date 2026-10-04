@@ -631,7 +631,10 @@ async fn atribuir_ramais_a_todos_e_idempotente_e_salta_o_reservado(db: sqlx::PgP
     // Por omissão 1000–1999.
     let (st, body) = app.get(&range, Some(&a.token)).await;
     assert_eq!(st, 200, "{body}");
-    assert_eq!(body, json!({"range_start": 1000, "range_end": 1999}));
+    assert_eq!(
+        body,
+        json!({"range_start": 1000, "range_end": 1999, "auto_assign_on_join": false})
+    );
 
     for bad in [
         json!({"range_start": 99, "range_end": 200}),
