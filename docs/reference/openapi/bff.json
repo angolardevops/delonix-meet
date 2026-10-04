@@ -3656,7 +3656,7 @@
         "description": "O intervalo de onde saem os números automáticos de uma organização.",
         "properties": {
           "auto_assign_on_join": {
-            "description": "Atribuir um ramal automaticamente a quem entra na organização (R278).\nDesligado por omissão — e num `PUT` que não o traga.",
+            "description": "Atribuir um ramal automaticamente a quem entra na organização (R278).\nDesligado por omissão.",
             "type": "boolean"
           },
           "range_end": {
@@ -7610,7 +7610,7 @@
         "type": "object"
       },
       "ProvisioningTicket": {
-        "description": "Um bilhete acabado de emitir. O URL leva o token: mostra-se uma vez.",
+        "description": "Um bilhete acabado de emitir. O URL leva o token: mostra-se uma vez. Sem\n`Debug` de propósito — o URL É a credencial, e um `{:?}` punha-o num registo.",
         "properties": {
           "expires_at": {
             "description": "Depois disto o URL já não serve.",
@@ -7791,6 +7791,35 @@
         },
         "required": [
           "rules"
+        ],
+        "type": "object"
+      },
+      "PutExtensionRangeReq": {
+        "description": "O que o `PUT` do intervalo aceita.",
+        "properties": {
+          "auto_assign_on_join": {
+            "description": "Ausente = MANTER o que está gravado. Um cliente que só conhece o\nintervalo não desliga a atribuição automática sem querer.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "range_end": {
+            "example": 1999,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "range_start": {
+            "example": 1000,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "range_start",
+          "range_end"
         ],
         "type": "object"
       },
@@ -18353,7 +18382,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExtensionRange"
+                "$ref": "#/components/schemas/PutExtensionRangeReq"
               }
             }
           },
@@ -18416,7 +18445,7 @@
             "session": []
           }
         ],
-        "summary": "Define o intervalo de numeração automática da org (admin) e se quem entra\nrecebe um ramal sozinho (`auto_assign_on_join`). Não renumera nem apaga os\nramais que já existem fora dele: só decide de onde saem os próximos números\nautomáticos. Ligar a atribuição automática não dá ramal a quem já cá está —\nisso é `assign-missing`.",
+        "summary": "Define o intervalo de numeração automática da org (admin) e se quem entra\nrecebe um ramal sozinho (`auto_assign_on_join`; ausente = manter). Não renumera nem apaga os\nramais que já existem fora dele: só decide de onde saem os próximos números\nautomáticos. Ligar a atribuição automática não dá ramal a quem já cá está —\nisso é `assign-missing`.",
         "tags": [
           "voice"
         ]
