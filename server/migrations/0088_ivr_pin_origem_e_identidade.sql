@@ -36,3 +36,23 @@ CREATE TABLE voice_pin_origins (
     locked_until TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 3. Quem entra na sala pela ponte, IDENTIFICADO. O IVR não passa o nome nem
+--    a pessoa à ponte (o Lua não é fonte de verdade de identidade): passa um
+--    bilhete opaco, de uso único e de dois minutos, que o servidor emitiu
+--    quando identificou quem liga. A ponte troca-o pela identidade ao sentar
+--    a chamada no censo (`server/src/voice_caller.rs`). Só o hash (sha256)
+--    fica guardado, e o bilhete vale para UMA sala. Isolamento: a tabela só
+--    se lê pelo hash do bilhete; `org_id` fica para a limpeza em cascata.
+CREATE TABLE voice_caller_tickets (
+    token_hash TEXT PRIMARY KEY,
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    room_code TEXT NOT NULL,
+    extension_id UUID NOT NULL REFERENCES voice_extensions(id) ON DELETE CASCADE,
+    member_id UUID,
+    display_name TEXT NOT NULL CHECK (char_length(display_name) BETWEEN 1 AND 120),
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX voice_caller_tickets_expires_idx ON voice_caller_tickets (expires_at);

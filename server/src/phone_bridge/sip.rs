@@ -40,6 +40,18 @@ use crate::sfu::SfuState;
 /// `originate` na perna para a ponte. É o que liga a perna SIP ao dial-out.
 pub const CALL_ID_HEADER: &str = "X-Delonix-Call-Id";
 
+/// Cabeçalho com o bilhete de identidade de quem liga (R277), posto pelo IVR
+/// na perna para a ponte a partir das `channel_vars` que o servidor lhe deu.
+/// Opaco para a ponte: quem o troca pela identidade é `voice_caller::redeem`.
+pub const CALLER_TICKET_HEADER: &str = "X-Delonix-Caller-Ticket";
+
+/// O bilhete só tem uma forma: 64 dígitos hexadecimais. Qualquer outra coisa
+/// no cabeçalho é ignorada, e a chamada entra anónima.
+fn caller_ticket_from(value: Option<&str>) -> Option<String> {
+    let v = value?.trim();
+    (v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())).then(|| v.to_ascii_lowercase())
+}
+
 // ============================================================
 //  Mensagens SIP
 // ============================================================
@@ -317,6 +329,8 @@ pub enum BridgeEvent {
         room_id: Uuid,
         room_code: String,
         call_id: Option<Uuid>,
+        /// O bilhete de identidade de quem liga, se a perna o trouxe.
+        caller_ticket: Option<String>,
     },
     Leg {
         leg_id: Uuid,
@@ -558,6 +572,7 @@ impl SipBridge {
         let delonix_call = msg
             .header(CALL_ID_HEADER)
             .and_then(|v| Uuid::parse_str(v.trim()).ok());
+        let caller_ticket = caller_ticket_from(msg.header(CALLER_TICKET_HEADER));
         let Some(adm) = admission.admit(&room_code, delonix_call).await else {
             self.send(from, &reject("404 Not Found")).await;
             return;
@@ -646,6 +661,7 @@ impl SipBridge {
                 room_id: adm.room_id,
                 room_code,
                 call_id: delonix_call,
+                caller_ticket,
             })
             .await;
         let ev = events.clone();
@@ -756,6 +772,20 @@ a=fmtp:101 0-16\r\n\
 a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:AAECAwQFBgcICQoLDA0OD/DxAgMEBQYHCAkKCwwN\r\n\
 a=ptime:20\r\n\
 a=sendrecv\r\n";
+
+    #[test]
+    fn o_bilhete_de_quem_liga_so_tem_uma_forma() {
+        let bom = "ab".repeat(32);
+        assert_eq!(caller_ticket_from(Some(&bom)), Some(bom.clone()));
+        assert_eq!(
+            caller_ticket_from(Some(&format!("  {}  ", bom.to_uppercase()))),
+            Some(bom.clone())
+        );
+        for mau in ["", "abc", &bom[1..], &format!("{bom}0"), &"zz".repeat(32)] {
+            assert_eq!(caller_ticket_from(Some(mau)), None, "{mau}");
+        }
+        assert_eq!(caller_ticket_from(None), None);
+    }
 
     #[test]
     fn le_o_invite_do_freeswitch() {

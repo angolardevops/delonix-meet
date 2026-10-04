@@ -801,6 +801,12 @@ pub struct VerifyExtensionPinReq {
     pub pin: String,
     /// De onde vem a chamada. Obrigatório: é a chave do travão por origem.
     pub origin: CallOrigin,
+    /// A sala de voz em que quem liga vai entrar (a do `validate`). Com ela, um
+    /// acerto traz em `channel_vars` o bilhete que identifica a pessoa na
+    /// ponte. Não escolhe a organização — essa é a do `domain` —; uma sala
+    /// que não é ACTIVA nessa organização responde como um PIN errado.
+    #[serde(default)]
+    pub voice_room_id: Option<Uuid>,
 }
 
 /// Contrato com o IVR. Sempre `200`: um PIN errado é uma resposta, não uma
@@ -822,6 +828,10 @@ pub struct VerifyExtensionPinResp {
     /// Nome com que a pessoa (ou o ramal da empresa) entra.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Variáveis de canal a juntar às do `room_bridge` antes do `bridge`:
+    /// trazem o bilhete de identidade para a ponte. Só com `voice_room_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_vars: Option<std::collections::BTreeMap<String, String>>,
 }
 
 impl VerifyExtensionPinResp {
@@ -833,6 +843,7 @@ impl VerifyExtensionPinResp {
             extension_id: None,
             member_id: None,
             display_name: None,
+            channel_vars: None,
         }
     }
 
@@ -849,6 +860,7 @@ impl VerifyExtensionPinResp {
                 extension_id: Some(extension_id),
                 member_id,
                 display_name: Some(display_name),
+                channel_vars: None,
             },
             PinCheck::Invalid => Self::refused("invalid", None),
             PinCheck::NotSet => Self::refused("not_set", None),
@@ -870,8 +882,18 @@ pub async fn ivr_verify_extension_pin(
     Json(req): Json<VerifyExtensionPinReq>,
 ) -> Result<Json<VerifyExtensionPinResp>, ApiError> {
     check_media_secret(&state, &headers)?;
-    // Um domínio que não é de nenhuma organização responde como um PIN errado.
-    let org_id = crate::ramais::org_id_by_sip_domain(&state, req.domain.trim()).await;
+    // Um domínio que não é de nenhuma organização responde como um PIN errado
+    // — e uma sala que não é dessa organização também: sem organização, a
+    // verificação cobra a falha à origem e não lê ramal nenhum.
+    let mut org_id = crate::ramais::org_id_by_sip_domain(&state, req.domain.trim()).await;
+    if let (Some(org), Some(room)) = (org_id, req.voice_room_id) {
+        if crate::voice::voice_room_code_in_org(&state, org, room)
+            .await
+            .is_none()
+        {
+            org_id = None;
+        }
+    }
     let check = verify_from_call(
         &state,
         org_id,
@@ -880,7 +902,29 @@ pub async fn ivr_verify_extension_pin(
         &req.origin,
     )
     .await?;
-    Ok(Json(VerifyExtensionPinResp::from_check(check)))
+    // Identificado, e a caminho de uma sala: o bilhete para a ponte.
+    let ticket_vars = match (&check, org_id, req.voice_room_id) {
+        (
+            PinCheck::Valid {
+                extension_id,
+                member_id,
+                display_name,
+            },
+            Some(org),
+            Some(room),
+        ) => {
+            let who = crate::voice_caller::CallerIdentity {
+                display_name: display_name.clone(),
+                member_id: *member_id,
+            };
+            crate::voice::caller_ticket_vars_for_voice_room(&state, org, room, *extension_id, &who)
+                .await
+        }
+        _ => None,
+    };
+    let mut resp = VerifyExtensionPinResp::from_check(check);
+    resp.channel_vars = ticket_vars;
+    Ok(Json(resp))
 }
 
 #[cfg(test)]
