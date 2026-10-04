@@ -1,5 +1,5 @@
 //! Quem liga por telefone, IDENTIFICADO (plano de produção, item 3.8, lote 2
-//! — R277).
+//! — R279).
 //!
 //! O IVR sabe quem liga em dois casos: a chamada vem de um ramal registado
 //! (o FreeSWITCH autenticou-o por digest), ou quem liga de fora marcou o seu

@@ -40,7 +40,7 @@ use crate::sfu::SfuState;
 /// `originate` na perna para a ponte. É o que liga a perna SIP ao dial-out.
 pub const CALL_ID_HEADER: &str = "X-Delonix-Call-Id";
 
-/// Cabeçalho com o bilhete de identidade de quem liga (R277), posto pelo IVR
+/// Cabeçalho com o bilhete de identidade de quem liga (R279), posto pelo IVR
 /// na perna para a ponte a partir das `channel_vars` que o servidor lhe deu.
 /// Opaco para a ponte: quem o troca pela identidade é `voice_caller::redeem`.
 pub const CALLER_TICKET_HEADER: &str = "X-Delonix-Caller-Ticket";
@@ -340,7 +340,7 @@ pub enum BridgeEvent {
     /// `BYE`/`CANCEL` recebido, ou a ponte fechou a perna.
     Ended { leg_id: Uuid, room_id: Uuid },
     /// Um `INVITE` que trazia um bilhete de identidade foi RECUSADO: o
-    /// bilhete não entrou em sala nenhuma e tem de deixar de valer (R277).
+    /// bilhete não entrou em sala nenhuma e tem de deixar de valer (R279).
     Refused { caller_ticket: String },
 }
 

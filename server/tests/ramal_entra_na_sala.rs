@@ -127,7 +127,7 @@ async fn ramal_com_o_pin_da_sua_org_recebe_a_ponte(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(did.status, 200);
-    // A única diferença é o bilhete de identidade de quem liga (R277): o
+    // A única diferença é o bilhete de identidade de quem liga (R279): o
     // ramal já vem identificado, o dial-in ainda não.
     const TICKET: &str = "sip_h_X-Delonix-Caller-Ticket";
     let mut do_ramal = body["room_bridge"].clone();

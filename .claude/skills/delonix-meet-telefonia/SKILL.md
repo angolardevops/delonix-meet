@@ -22,7 +22,7 @@ ponte; [ADR-0009](../../../docs/adr/0009-telefonia-troncos-encaminhamento-e-cust
 para troncos, encaminhamento e custo — **ainda «Proposto»** (`:3`) com o código já na
 `main` desde o #136: di-lo no relatório, não o trates como aceite.
 **Catálogo:** R210–R214 (telefonia), R221–R225 (ponte, imagem, censo, palco), R273
-(ramal entra na sala), R276 (PIN do ramal) e R277 (o IVR identifica quem liga) em
+(ramal entra na sala), R276 (PIN do ramal) e R279 (o IVR identifica quem liga) em
 [`regressions.md`](../../../docs/reference/regressions.md).
 **Histórico da decisão:** [design da Abordagem B](../../../docs/pstn-sfu-bridge-design.md),
 marcado **superseded** — lê-o para não repetir o erro, não para o seguir.
@@ -162,7 +162,7 @@ com `POST …/extensions/assign-missing`.
 **Por fazer, e não o dês por feito:** o ramal automático quando um membro entra e o QR
 de provisionamento do Linphone. A lista completa está na R276.
 
-### O IVR identifica quem liga (R277) — a regra está medida, a chamada não
+### O IVR identifica quem liga (R279) — a regra está medida, a chamada não
 
 **A verificação** (`extension_pin::verify_from_call`, rota
 `/internal/v1/voice/ivr/verify-extension-pin`) tem agora consumidor, e foi endurecida
@@ -204,7 +204,7 @@ sala não tem um estado «à espera do anfitrião», e dar `is_host` a uma perna
 ficou por desenhar. O número de quem liga pode ser forjado: contra quem o rode a cada
 chamada só o contador do ramal trava, e quatro falhas por janela nunca bloqueiam (384
 palpites por dia por ramal). O travão por origem pode negar a IDENTIFICAÇÃO a terceiros
-(número forjado, PBX com um só número de tronco, chamadas sem número). A lista completa está na R277.
+(número forjado, PBX com um só número de tronco, chamadas sem número). A lista completa está na R279.
 
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
@@ -229,7 +229,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
 | O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
 | O PIN do ramal, os ramais da empresa e a atribuição em massa | `cargo test --release --test ramal_pin` contra Postgres real (R276 — 9 casos, dois de concorrência) + `telephony::extension_pin::tests` |
-| A verificação do PIN (origem, janela, bloqueio crescente) e quem liga identificado (bilhete, nome no censo) | `cargo test --release --test ramal_pin_origem --test ivr_identifica_quem_liga` contra Postgres real (R277 — 9 + 4 casos; nenhum FreeSWITCH) + `cargo test --lib um_invite_recusado` |
+| A verificação do PIN (origem, janela, bloqueio crescente) e quem liga identificado (bilhete, nome no censo) | `cargo test --release --test ramal_pin_origem --test ivr_identifica_quem_liga` contra Postgres real (R279 — 9 + 4 casos; nenhum FreeSWITCH) + `cargo test --lib um_invite_recusado` |
 | O `kamailio.cfg` | `kamailio -c -f` na imagem `ghcr.io/kamailio/kamailio:5.8.6-bookworm` (só sintaxe; **não há portão no repo**) |
 | Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe, com o `luac5.2`) |
 | Os `*.xml` e `*.xml.inc` do FreeSWITCH | `bash scripts/check-fs-xml.sh` (R226 — bem formado, sem directivas `X-PRE-PROCESS` em comentários, sem `$${AMBIENTE}`); o comportamento é do `scripts/softphone-prova.sh srtp-real`, fora do CI |
@@ -286,7 +286,7 @@ sem portão automático, e **nunca correu de ponta a ponta na imagem do repo** (
 medir»). Se mexeres no fluxo, di-lo no relatório em vez de o dar por verificado. O mesmo
 ficheiro serve agora **dois modos** (dial-in por DID e `ramal`, R273): uma mudança no
 caminho comum — PIN, `bridge`, recuo — mexe nos dois. A identificação por ramal e PIN
-(R277) corre só no dial-in e só com a ponte; **nunca correu numa chamada**.
+(R279) corre só no dial-in e só com a ponte; **nunca correu numa chamada**.
 
 **A imagem** vive em `voice/freeswitch/image/` (três fontes fixadas por commit, base por
 digest, `mod_lua` e `mod_curl`) e publica-se a partir da `main`

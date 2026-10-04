@@ -18,7 +18,7 @@
 --   O modo `ramal` NUNCA correu contra um FreeSWITCH real: só a sintaxe está
 --   verificada (scripts/check-lua-sintaxe.sh).
 --
--- QUEM LIGA, IDENTIFICADO (R277):
+-- QUEM LIGA, IDENTIFICADO (R279):
 --   modo `ramal`     o aparelho já está autenticado: NÃO se pede PIN pessoal.
 --                    O control plane resolve o ramal → pessoa e devolve, nas
 --                    `channel_vars` do `room_bridge`, um bilhete opaco de uso
@@ -82,7 +82,7 @@ local modo_ramal = (argv ~= nil and argv[1] == "ramal")
 
 local MAX_TRIES = 3
 local PIN_LEN   = 6
--- Identificação de quem liga de fora (R277): tentativas por chamada.
+-- Identificação de quem liga de fora (R279): tentativas por chamada.
 local MAX_ID_TRIES = 2
 -- Perfil sofia de onde sai a perna para a ponte. Só `internal` existe na
 -- configuração distribuída (voice/freeswitch/sip_profiles/); a variável deixa
@@ -224,7 +224,7 @@ if not room_code then
   return
 end
 
--- Identificação de quem liga de fora (R277). Só faz sentido com a ponte: na
+-- Identificação de quem liga de fora (R279). Só faz sentido com a ponte: na
 -- conferência local do FreeSWITCH não há censo onde o nome apareça. E só com
 -- o que o `validate` devolveu — o domínio da organização e a sala de voz —,
 -- validados antes de irem para dentro de um JSON entre plicas.
@@ -303,7 +303,7 @@ if room_bridge then
   if #vars > 0 then prefixo = "[" .. table.concat(vars, ",") .. "]" end
   local dial = string.format("%ssofia/%s/%s", prefixo, bridge_profile, room_bridge.sip_uri)
   -- O log leva o destino, não as variáveis: entre elas pode ir o bilhete de
-  -- identidade de quem liga (R277).
+  -- identidade de quem liga (R279).
   freeswitch.consoleLog("info", string.format(
     "[delonix ponte] sala=%s -> sofia/%s/%s (srtp=%s)\n",
     room_code, bridge_profile, room_bridge.sip_uri, tostring(room_bridge.srtp_profile)))

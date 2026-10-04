@@ -33,7 +33,7 @@ pub const EXTENSION_THROTTLE: Throttle = Throttle {
 /// O travão de uma ORIGEM (quem liga: número e rede de onde a chamada vem).
 /// Trava à TERCEIRA falha — antes de a mesma origem chegar às cinco de um
 /// ramal: quem experimenta PIN de fora não consegue bloquear o ramal de um
-/// colega, nem um, nem vários (R277). Conta todas as recusas da origem,
+/// colega, nem um, nem vários (R279). Conta todas as recusas da origem,
 /// sejam em que ramal forem.
 ///
 /// O primeiro bloqueio dura VINTE minutos, mais que a janela do ramal

@@ -2482,7 +2482,7 @@ impl crate::phone_bridge::sip::BridgeAdmission for AdmissaoFixa {
     }
 }
 
-/// R277 — um `INVITE` RECUSADO que trazia um bilhete de identidade avisa
+/// R279 — um `INVITE` RECUSADO que trazia um bilhete de identidade avisa
 /// para o bilhete ser invalidado; um que não trazia não avisa nada. Sem
 /// FreeSWITCH: o `INVITE` é escrito à mão e enviado por UDP ao UA da ponte.
 #[tokio::test]

@@ -1,4 +1,4 @@
-//! R277 — a verificação do PIN do ramal, endurecida antes de o IVR a usar:
+//! R279 — a verificação do PIN do ramal, endurecida antes de o IVR a usar:
 //! travão por ORIGEM da chamada, bloqueio de duração crescente e contador com
 //! janela. Contra Postgres real.
 //!
@@ -413,7 +413,7 @@ async fn sem_origem_o_pedido_e_recusado(db: sqlx::PgPool) {
     assert!(!r.text.contains("\"valid\""), "{}", r.text);
 }
 
-/// A fronteira exacta (revisão de segurança da R277): a origem acabou de sair
+/// A fronteira exacta (revisão de segurança da R279): a origem acabou de sair
 /// do bloqueio e a janela do ramal faz 900 s nesse instante. As três falhas
 /// de antes NÃO se podem juntar às duas de agora — senão uma origem sozinha
 /// bloqueava o ramal de um colega com 3 + 2.

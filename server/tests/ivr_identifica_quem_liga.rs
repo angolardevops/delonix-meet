@@ -1,4 +1,4 @@
-//! R277 — o IVR identifica quem liga, e a pessoa entra na sala com o seu nome.
+//! R279 — o IVR identifica quem liga, e a pessoa entra na sala com o seu nome.
 //! Contra Postgres real.
 //!
 //! O que se mede é a REGRA do servidor e o censo da sala. Nenhum FreeSWITCH
@@ -409,7 +409,7 @@ async fn falhar_a_identificacao_trava_a_origem_e_nao_o_ramal(db: sqlx::PgPool) {
 }
 
 /// O bilhete vive pouco, e um que a ponte recusou deixa de valer na hora
-/// (revisão de segurança da R277): não fica a valer no log do FreeSWITCH.
+/// (revisão de segurança da R279): não fica a valer no log do FreeSWITCH.
 #[sqlx::test(migrations = "./migrations")]
 async fn um_bilhete_recusado_pela_ponte_deixa_de_valer(db: sqlx::PgPool) {
     let app = spawn(db).await;

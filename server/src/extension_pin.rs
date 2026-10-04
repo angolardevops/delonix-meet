@@ -24,7 +24,7 @@
 //!   actor de SISTEMA e o ramal no alvo — nunca em nome do dono do ramal, que
 //!   é a vítima de quem anda a adivinhar.
 //!
-//! **A verificação (R277)** passa primeiro por um travão por ORIGEM da
+//! **A verificação (R279)** passa primeiro por um travão por ORIGEM da
 //! chamada (número e rede, segundo o FreeSWITCH), que trava à terceira falha,
 //! por vinte minutos — antes de a mesma origem poder juntar as cinco que
 //! bloqueiam um ramal, e por mais tempo do que a janela dele. O
@@ -378,7 +378,7 @@ pub async fn clear_extension_pin(
 }
 
 // ============================================================
-//  Verificação — para o IVR (R276, endurecida na R277)
+//  Verificação — para o IVR (R276, endurecida na R279)
 // ============================================================
 
 /// O que a verificação de um PIN conclui.
@@ -397,7 +397,7 @@ pub(crate) enum PinCheck {
     /// O ramal existe mas não tem PIN.
     NotSet,
     /// A ORIGEM da chamada está travada: nada foi verificado, e o ramal não
-    /// foi tocado (R277).
+    /// foi tocado (R279).
     OriginLocked { retry_after_secs: i64 },
 }
 
@@ -649,7 +649,7 @@ fn burn_like_a_verification(pin: &str) {
 }
 
 /// A verificação vinda de uma chamada: o travão por ORIGEM primeiro, depois o
-/// ramal (R277).
+/// ramal (R279).
 ///
 /// 1. Cobra-se uma falha à origem ([`charge_origin`]). Travada, a resposta é
 ///    `OriginLocked` e nem a organização nem o ramal são lidos: uma origem
@@ -842,7 +842,7 @@ async fn verify_pin(
     // O actor é o de sistema (`Uuid::nil()`, como em `member.guest_expired` e
     // `odoo.provision`): atribuir a falha à pessoa do ramal punha a VÍTIMA de
     // uma tentativa de adivinhação como autora dela na trilha. O ramal vai no
-    // `target`, com a origem da chamada (R277). O PIN tentado NUNCA entra.
+    // `target`, com a origem da chamada (R279). O PIN tentado NUNCA entra.
     let actor = Uuid::nil();
     let from = origin.describe();
     crate::audit::log_com_metricas(

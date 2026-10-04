@@ -3,7 +3,7 @@
 //!
 //! O que se mede aqui é a REGRA do servidor. Nenhum FreeSWITCH corre nestes
 //! testes: o que faz de IVR é o próprio teste, com o segredo de voz. O travão
-//! por origem e o IVR a usar a verificação são da R277
+//! por origem e o IVR a usar a verificação são da R279
 //! (`ramal_pin_origem.rs`, `ivr_identifica_quem_liga.rs`).
 mod common;
 
@@ -73,7 +73,7 @@ async fn dominio(app: &TestApp, org: &str) -> String {
 
 /// O que o IVR envia. Cada chamada vem de uma ORIGEM diferente: estes testes
 /// medem o contador do RAMAL, que é o que trava quem ataca de muitas origens.
-/// O travão por origem (R277) mede-se em `tests/ramal_pin_origem.rs`.
+/// O travão por origem (R279) mede-se em `tests/ramal_pin_origem.rs`.
 async fn verificar(app: &TestApp, domain: &str, extension: &str, pin: &str) -> Value {
     static ORIGEM: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = ORIGEM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

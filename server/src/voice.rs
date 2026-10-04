@@ -851,7 +851,7 @@ pub struct ValidatePinResp {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub room_bridge: Option<RoomBridgeResp>,
     /// O domínio SIP da organização da sala. É com ele que o IVR do dial-in
-    /// pede a identificação de quem liga (`verify-extension-pin`, R277).
+    /// pede a identificação de quem liga (`verify-extension-pin`, R279).
     /// Ausente no modo `ramal`: aí quem liga já vem identificado.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub org_sip_domain: Option<String>,
@@ -1013,7 +1013,7 @@ pub(crate) async fn validate_pin_for_extension(
             let mut room_bridge = room_bridge_for(state, &room_code, &backend).await;
             // O aparelho já está autenticado (digest): não se pede PIN pessoal.
             // Quem entra é a pessoa do ramal — ou o ramal da empresa, pela
-            // etiqueta —, e a ponte fica a sabê-lo pelo bilhete (R277).
+            // etiqueta —, e a ponte fica a sabê-lo pelo bilhete (R279).
             if let Some(bridge) = room_bridge.as_mut() {
                 let who = crate::voice_caller::CallerIdentity {
                     display_name: person
@@ -1164,7 +1164,7 @@ pub(crate) async fn voice_room_code_in_org(
     .flatten()
 }
 
-/// Invalida o bilhete de uma perna que a ponte recusou (R277).
+/// Invalida o bilhete de uma perna que a ponte recusou (R279).
 pub async fn discard_caller_ticket(state: &Arc<AppState>, caller_ticket: &str) {
     crate::voice_caller::discard(&state.db, caller_ticket).await;
 }
@@ -1178,7 +1178,7 @@ pub async fn discard_caller_ticket(state: &Arc<AppState>, caller_ticket: &str) {
 /// **O que NÃO faz:** não dá papel de anfitrião a ninguém. Quem entra por
 /// telefone já não passa pela sala de espera (`join_external`), e a sala ao
 /// vivo não tem um estado «à espera do anfitrião» que um telefone pudesse
-/// abrir. Ver a R277, «por fazer».
+/// abrir. Ver a R279, «por fazer».
 pub async fn seat_phone_caller(
     state: &Arc<AppState>,
     room_id: Uuid,

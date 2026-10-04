@@ -1,4 +1,4 @@
--- O IVR usa o PIN do ramal (plano de produção, item 3.8, lote 2; R277).
+-- O IVR usa o PIN do ramal (plano de produção, item 3.8, lote 2; R279).
 --
 -- Pré-condição de dar à verificação um consumidor:
 --
