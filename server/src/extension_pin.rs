@@ -19,7 +19,9 @@
 //!   novo. O PIN de um ramal da EMPRESA (sem pessoa) é do administrador: é ele
 //!   que o gera ou escolhe, e o vê uma vez;
 //! - cinco falhas seguidas bloqueiam o PIN durante quinze minutos, e cada
-//!   falha e cada bloqueio ficam na auditoria imutável (`audit::log`).
+//!   falha e cada bloqueio ficam na auditoria imutável (`audit::log`), com o
+//!   actor de SISTEMA e o ramal no alvo — nunca em nome do dono do ramal, que
+//!   é a vítima de quem anda a adivinhar.
 //!
 //! **O que NÃO existe ainda:** nenhum consumidor da verificação. A rota
 //! `/internal/v1/voice/ivr/verify-extension-pin` está montada e medida contra
@@ -401,7 +403,10 @@ pub(crate) enum PinCheck {
 /// regista cada falha e cada bloqueio na auditoria imutável.
 ///
 /// A linha do ramal é lida com `FOR UPDATE`: duas tentativas simultâneas não
-/// contam como uma, e cinco pedidos em paralelo não dão cinco palpites grátis.
+/// contam como uma, e pedidos em paralelo não dão palpites a mais — dez
+/// verificações erradas ao mesmo tempo contam cinco falhas e as outras cinco
+/// já encontram o ramal bloqueado (`tests/ramal_pin.rs`,
+/// `dez_palpites_em_paralelo_contam_cinco_e_bloqueiam`).
 pub(crate) async fn verify_pin(
     state: &AppState,
     org_id: Uuid,
@@ -500,9 +505,12 @@ pub(crate) async fn verify_pin(
     .await?;
     tx.commit().await?;
 
-    // Sem sessão: o actor é a pessoa do ramal, ou ninguém (ramal da empresa).
-    // O PIN tentado NUNCA entra no registo.
-    let actor = row.member_id.unwrap_or(Uuid::nil());
+    // Quem falhou NÃO é o dono do ramal — é quem ligou, e esse não se conhece.
+    // O actor é o de sistema (`Uuid::nil()`, como em `member.guest_expired` e
+    // `odoo.provision`): atribuir a falha à pessoa do ramal punha a VÍTIMA de
+    // uma tentativa de adivinhação como autora dela na trilha. O ramal vai no
+    // `target`. O PIN tentado NUNCA entra no registo.
+    let actor = Uuid::nil();
     crate::audit::log_com_metricas(
         &state.db,
         Some(&state.metrics),

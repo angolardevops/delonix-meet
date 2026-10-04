@@ -320,6 +320,30 @@ async fn cinco_falhas_bloqueiam_e_ficam_na_auditoria(db: sqlx::PgPool) {
         .iter()
         .chain(&bloqueios)
         .all(|t| !t.contains(mau) && !t.contains(&pin)));
+    // Quem falhou foi quem ligou, não o dono do ramal: nenhuma destas linhas
+    // tem a pessoa do ramal como actor — nem pelo id, nem pelo nome.
+    let actores: Vec<(String, String)> = sqlx::query_as(
+        "SELECT actor_id::text, actor_name FROM audit_logs
+          WHERE org_id = $1::uuid AND action IN ('ramal.pin_falhado', 'ramal.pin_bloqueado')",
+    )
+    .bind(a.org())
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(actores.len(), 6, "{actores:?}");
+    for (id, nome) in &actores {
+        assert_ne!(id, &colega.user_id, "a falha ficou em nome da vítima");
+        assert_eq!(id, "00000000-0000-0000-0000-000000000000");
+        assert!(
+            !nome.contains("colega"),
+            "a falha ficou em nome da vítima: {nome}"
+        );
+    }
+    // E o ramal está no alvo, para a trilha dizer QUAL foi atacado.
+    assert!(falhas
+        .iter()
+        .chain(&bloqueios)
+        .all(|t| t.contains("ramal 1004")));
     // O administrador vê-a pela rota de auditoria, e a cadeia continua inteira.
     let (st, eventos) = app
         .get(
@@ -336,6 +360,17 @@ async fn cinco_falhas_bloqueiam_e_ficam_na_auditoria(db: sqlx::PgPool) {
             .any(|e| e["action"] == "ramal.pin_bloqueado"),
         "{eventos}"
     );
+    // O que o administrador LÊ também não aponta para a vítima.
+    for e in eventos.as_array().unwrap() {
+        if e["action"]
+            .as_str()
+            .unwrap()
+            .starts_with("ramal.pin_falhado")
+            || e["action"] == "ramal.pin_bloqueado"
+        {
+            assert!(!e["actor"].as_str().unwrap().contains("colega"), "{e}");
+        }
+    }
     let (st, cadeia) = app
         .get(
             &format!("/api/orgs/{}/audit-events/verification", a.org()),
@@ -707,4 +742,94 @@ async fn atribuir_ramais_a_todos_e_idempotente_e_salta_o_reservado(db: sqlx::PgP
             .len(),
         2
     );
+}
+
+/// O `FOR UPDATE` da verificação: palpites em paralelo não rendem mais do que
+/// em série. Dez errados ao mesmo tempo → cinco contam, e o ramal bloqueia.
+#[sqlx::test(migrations = "./migrations")]
+async fn dez_palpites_em_paralelo_contam_cinco_e_bloqueiam(db: sqlx::PgPool) {
+    let app = spawn(db).await;
+    let a = app.new_org("alfa-paralelo.ao").await;
+    let colega = app.add_member(&a, "colega", "member").await;
+    let ramal = novo_ramal(&app, &a, Some(&colega), "1004", "").await;
+    let id = ramal["id"].as_str().unwrap();
+    let pin = gerar_o_meu(&app, &colega).await;
+    let mau = errado(&pin);
+    let dom = dominio(&app, a.org()).await;
+
+    let respostas =
+        futures_util::future::join_all((0..10).map(|_| verificar(&app, &dom, "1004", mau))).await;
+    assert!(
+        respostas.iter().all(|r| r["valid"] == false),
+        "{respostas:?}"
+    );
+    let por_razao = |razao: &str| respostas.iter().filter(|r| r["reason"] == razao).count();
+    assert_eq!(por_razao("invalid"), 4, "{respostas:?}");
+    assert_eq!(por_razao("locked"), 6, "{respostas:?}");
+
+    assert_eq!(
+        accoes_de_auditoria(&app, a.org(), "ramal.pin_falhado")
+            .await
+            .len(),
+        5
+    );
+    assert_eq!(
+        accoes_de_auditoria(&app, a.org(), "ramal.pin_bloqueado")
+            .await
+            .len(),
+        1
+    );
+    assert_eq!(estado_do_pin(&app, &a, id).await, "locked");
+    // Bloqueado: o PIN certo não passa.
+    assert_eq!(
+        verificar(&app, &dom, "1004", &pin).await["reason"],
+        "locked"
+    );
+}
+
+/// Dois administradores carregam em «atribuir ramais a todos» ao mesmo tempo:
+/// nenhum número repetido, e cada pessoa com exactamente um ramal.
+#[sqlx::test(migrations = "./migrations")]
+async fn duas_atribuicoes_em_paralelo_nao_duplicam_nada(db: sqlx::PgPool) {
+    let app = spawn(db).await;
+    let a = app.new_org("alfa-corrida.ao").await;
+    for nome in ["ana", "rui", "eva", "ivo", "lia", "gil"] {
+        app.add_member(&a, nome, "member").await;
+    }
+    let assign = ext_path(a.org(), "/assign-missing");
+    let (um, dois) = tokio::join!(
+        app.post(&assign, Some(&a.token), json!({})),
+        app.post(&assign, Some(&a.token), json!({})),
+    );
+    assert_eq!(um.0, 200, "{}", um.1);
+    assert_eq!(dois.0, 200, "{}", dois.1);
+    let criados =
+        um.1["assigned"].as_array().unwrap().len() + dois.1["assigned"].as_array().unwrap().len();
+    assert_eq!(
+        criados, 7,
+        "sete pessoas, sete ramais: {} / {}",
+        um.1, dois.1
+    );
+
+    let ramais = listar(&app, &a).await;
+    assert_eq!(ramais.len(), 7, "{ramais:?}");
+    let numeros: std::collections::HashSet<&str> = ramais
+        .iter()
+        .map(|r| r["extension"].as_str().unwrap())
+        .collect();
+    let pessoas: std::collections::HashSet<&str> = ramais
+        .iter()
+        .map(|r| r["member_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(numeros.len(), 7, "número repetido: {ramais:?}");
+    assert_eq!(pessoas.len(), 7, "pessoa com dois ramais: {ramais:?}");
+    assert!(numeros
+        .iter()
+        .all(|n| (1000..=1999).contains(&n.parse::<u32>().unwrap())));
+
+    // E depois da corrida continua idempotente.
+    let (st, body) = app.post(&assign, Some(&a.token), json!({})).await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["assigned"], json!([]));
+    assert_eq!(body["remaining"], 0);
 }
