@@ -14,16 +14,16 @@
 #               chegar, os tons medidos nos dois sentidos, o par de softphones
 #               numa conferência, e o controlo negativo (sem SRTP → recusada).
 #               Não toca no Meet nem em nada da tua rede.
-#    srtp-real  o controlo negativo com a configuração REAL do repo (R226): os
-#               ficheiros que o voice/docker-compose.voice.yml monta, sobre a
-#               vanilla da imagem, numa rede docker sem saída. Um ramal
-#               autentica-se no perfil «internal»; com SRTP a chamada passa a
-#               negociação, sem SRTP tem de levar 488. Mede também o que
-#               acontece quando o vars.xml.inc é incluído pelo vars.xml.
-#    srtp-cluster  o mesmo controlo contra a configuração que CORRE: a que o
-#               voice/cluster/freeswitch-entrypoint.sh monta no cluster local.
-#               Mede o perfil dos ramais (com um servidor de directório a
-#               responder) e o do dial-in: sem SRTP, os dois têm de dar 488.
+#    srtp-real  o controlo negativo com a configuração que CORRE (R226): a
+#               que o voice/cluster/freeswitch-entrypoint.sh monta com os
+#               ficheiros que o compose.yaml põe em /meet, numa rede docker sem
+#               saída. Mede o perfil dos ramais (um ramal autentica-se, com um
+#               servidor de directório de andaime a responder) e o do dial-in:
+#               sem SRTP, os dois têm de dar 488. E o segredo de voz: chega ao
+#               servidor em cabeçalhos, nunca no URL, e não fica — nem ele nem
+#               o PIN marcado — no log (R227).
+#    srtp-cluster  o mesmo, com os ficheiros que o scripts/cluster-voice.sh
+#               põe no ConfigMap do cluster local.
 #    chamada    um softphone contra um servidor teu (ramal no FreeSWITCH, ou
 #               um ramal do PBX): marca --destino, envia --pin, toca --tom e
 #               mede --espera-tom no que ouviu.
@@ -59,10 +59,10 @@ TAG=sp$$                       # prefixo dos contentores desta corrida
 PRESENTE=${SOFTPHONE_LIMIAR_PRESENTE:-0.03}   # amplitude a partir da qual um tom «está lá»
 AUSENTE=${SOFTPHONE_LIMIAR_AUSENTE:-0.01}     # e abaixo da qual «não está»
 SELFTEST_SUBNET=${SOFTPHONE_SELFTEST_SUBNET:-172.31.250.0/29}
-PORTO_RAMAIS=5070              # o DELONIX_RAMAIS_SIP_PORT por omissão do compose
+PORTO_RAMAIS=5070              # o DELONIX_RAMAIS_SIP_PORT do compose.yaml e do cluster
 DESTINO_REAL=101               # um número curto: o que o contexto dos ramais aceita
-URL_CONTROLO=http://127.0.0.1:8180   # o DELONIX_CONTROL_URL por omissão do compose
 DESTINO_DIALIN=244923000000    # um número qualquer: o contexto `public` aceita 6 a 15 dígitos
+PIN_DIALIN=482913              # um PIN qualquer, de 6 dígitos: só interessa vê-lo chegar ao servidor
 fail=0
 ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
@@ -271,7 +271,7 @@ selftest() {
 </profile>
 EOF
   # O que RECUSA uma chamada em claro à entrada é a variável GLOBAL
-  # `rtp_secure_media=mandatory` (no Meet: voice/freeswitch/vars.xml.inc), posta
+  # `rtp_secure_media=mandatory` (no Meet: sip_profiles/internal.xml e o arranque), posta
   # no arranque do contentor, abaixo. Medido aqui, com o controlo negativo do
   # passo 2, contra o FreeSWITCH 1.11.3 (R226):
   #   · só `rtp-secure-media` no perfil  → chamada em claro ACEITE (não é um
@@ -284,7 +284,7 @@ EOF
   #     mesmo `set` recusa com 488;
   #   · a variável global → recusada com 488, venha ela do vars.xml ou de
   #     uma directiva no próprio ficheiro do perfil.
-  # A mesma prova com os ficheiros do repo, e não com este perfil: `srtp-real`.
+  # A mesma prova com a configuração que corre, e não com este perfil: `srtp-real`.
   cat > "$d/zz.xml" <<'EOF'
 <include>
   <context name="softphone-prova">
@@ -366,175 +366,30 @@ EOF
   fi
 }
 
-# ------------------------------------------------------------ srtp-real
-# O controlo negativo com a configuração REAL do repo, e não a do selftest: os
-# ficheiros que o voice/docker-compose.voice.yml monta, nos sítios onde os
-# monta, sobre a vanilla da imagem. Mede o que acontece a uma chamada em claro
-# ao perfil dos ramais (R226).
+# ------------------------------------------------------------ srtp-real / srtp-cluster
+# O controlo negativo contra a configuração que CORRE (R226, R227). Nos dois
+# ambientes o FreeSWITCH arranca pelo voice/cluster/freeswitch-entrypoint.sh,
+# com os ficheiros do Meet montados em /meet; o que muda é quem os monta:
+#   srtp-real     o serviço `freeswitch` do compose.yaml;
+#   srtp-cluster  o ConfigMap `freeswitch-meet` do scripts/cluster-voice.sh.
+# A lista de ficheiros tira-se de cada um deles, para a prova não ter a sua.
+# Mede os dois perfis: o dos ramais (autenticado) e o `external` do dial-in,
+# que é o que o Kamailio alcança.
 
-# As montagens «./freeswitch/<origem>:<destino>» do serviço freeswitch do compose,
-# uma por linha: «<origem> <destino>». É daqui que a prova tira a configuração —
-# se o compose deixar de montar um ficheiro, a prova deixa de o ter.
-montagens_compose() {
-  sed -n 's#^ *- \./freeswitch/\([^:]*\):\([^:]*\)\(:ro\)\{0,1\} *$#\1 \2#p' voice/docker-compose.voice.yml
+# «<origem no repo> <nome em /meet>», um por linha.
+ficheiros_compose() {
+  sed -n 's#^ *- \./\(voice/[^:]*\):/meet/\([^:]*\)\(:ro\)\{0,1\} *$#\1 \2#p' compose.yaml
 }
-
-# fs_real <nome> <ip> <incluir o vars.xml.inc no vars.xml: sim|nao> — arranca o
-# FreeSWITCH com o que está em $WORK/$TAG/fs. O ambiente é o do compose, com os
-# valores por omissão dele. A vanilla fica como está (é sobre ela que o compose
-# monta), menos três coisas: o directório de demonstração; os perfis SIP de
-# demonstração, porque o `external` resolve o seu IP por STUN e, numa rede sem
-# saída, deita abaixo o mod_sofia inteiro; e o ESL, que fica em loopback.
-fs_real() {
-  docker create --name "${TAG}-$1" --network "${TAG}-net" --ip "$2" \
-    -e DELONIX_CONTROL_URL="$URL_CONTROLO" -e VOICE_INTERNAL_SECRET="$segredo" -e DELONIX_RAMAIS_SIP_PORT="$PORTO_RAMAIS" \
-    --entrypoint sh "$IMG_FS" -c '
-    C=/usr/local/freeswitch/etc/freeswitch
-    rm -rf $C/directory/* $C/sip_profiles/*
-    cp -r /prova/conf/. $C/ && cp -r /prova/scripts/. /usr/local/freeswitch/share/freeswitch/scripts/ || exit 1
-    sed -i "s#name=\"listen-ip\" value=\"[^\"]*\"#name=\"listen-ip\" value=\"127.0.0.1\"#" $C/autoload_configs/event_socket.conf.xml
-    [ "$0" = sim ] && sed -i "s#</include>#  <X-PRE-PROCESS cmd=\"include\" data=\"vars.xml.inc\"/>\n</include>#" $C/vars.xml
-    exec freeswitch -nonat -nf -nc' "$3" >/dev/null
-  docker cp "$WORK/$TAG/fs" "${TAG}-$1:/prova" >/dev/null
-  docker start "${TAG}-$1" >/dev/null
+ficheiros_cluster() {
+  sed -n '/^cm freeswitch-meet/,/^cm [a-z]/p' scripts/cluster-voice.sh \
+    | sed -n 's#.*--from-file=\(voice/[^ ]*\).*#\1#p' | while read -r f; do echo "$f ${f##*/}"; done
 }
-
-# perfil_real <nome> — «ip:porto» onde o perfil «internal» escuta; vazio se em
-# 60 s não arrancou, ou se o FreeSWITCH morreu entretanto.
-perfil_real() {
-  local i b
-  for i in $(seq 1 60); do
-    [ "$(docker inspect -f '{{.State.Running}}' "${TAG}-$1" 2>/dev/null)" = true ] || return 0
-    b=$(docker exec "${TAG}-$1" fs_cli -x "sofia status" 2>/dev/null \
-        | sed -n 's/^ *internal[[:space:]]\{1,\}profile[[:space:]]\{1,\}sip:mod_sofia@\([^[:space:]]*\)[[:space:]]\{1,\}RUNNING.*/\1/p' | head -1)
-    [ -n "$b" ] && { echo "$b"; return 0; }
-    sleep 1
-  done
-}
-global() { docker exec "${TAG}-$1" fs_cli -x "global_getvar $2" 2>/dev/null | tr -d '[:space:]'; }
 
 # fim_da_chamada <nome> <segundos> — «estabelecida», ou a resposta SIP que a fechou
 fim_da_chamada() {
   esperar "${TAG}-$1" 'Call established|session closed: ' "$2" || { echo "sem resposta em $2 s"; return; }
   if logs "${TAG}-$1" | grep -q 'Call established'; then echo estabelecida
   else logs "${TAG}-$1" | sed -n 's/.*session closed: //p' | head -1; fi
-}
-
-srtp_real() {
-  docker image inspect "$IMG_FS" >/dev/null 2>&1 \
-    || { echo "✗ falta a imagem $IMG_FS (make freeswitch-image, ou FS_IMAGE=<a publicada>)"; exit 1; }
-  local d="$WORK/$TAG/fs" ip ip2 senha errada=senha-errada segredo origem destino alvo n=0 bind resp v
-  ip=$(python3 -c "import ipaddress,sys; print(list(ipaddress.ip_network(sys.argv[1]).hosts())[1])" "$SELFTEST_SUBNET")
-  ip2=$(python3 -c "import ipaddress,sys; print(list(ipaddress.ip_network(sys.argv[1]).hosts())[2])" "$SELFTEST_SUBNET")
-  senha=$(python3 -c "import secrets; print(secrets.token_hex(12))")
-  segredo=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-  mkdir -p "$d/conf/directory" "$d/scripts"
-  while read -r origem destino; do
-    case "$destino" in
-      /etc/freeswitch/*)               alvo="$d/conf/${destino#/etc/freeswitch/}" ;;
-      /usr/share/freeswitch/scripts/*) alvo="$d/scripts/${destino#/usr/share/freeswitch/scripts/}" ;;
-      *) echo "✗ o compose monta $origem em $destino, que esta prova não sabe pôr na imagem"; exit 1 ;;
-    esac
-    [ -f "voice/freeswitch/$origem" ] || { echo "✗ o compose monta voice/freeswitch/$origem, que não existe"; exit 1; }
-    mkdir -p "$(dirname "$alvo")"; cp "voice/freeswitch/$origem" "$alvo"; n=$(( n + 1 ))
-  done < <(montagens_compose)
-  [ "$n" -gt 0 ] || { echo "✗ não encontrei montagens ./freeswitch/… em voice/docker-compose.voice.yml"; exit 1; }
-  # Andaime, e só isto: um ramal num directório estático, porque quem responde
-  # pelo directório no Meet é o control plane, que aqui não corre.
-  ( umask 077; cat > "$d/conf/directory/prova.xml" <<EOF
-<include>
-  <domain name="\$\${local_ip_v4}">
-    <user id="prova"><params><param name="password" value="$senha"/></params></user>
-  </domain>
-</include>
-EOF
-  )
-  docker network create --internal --subnet "$SELFTEST_SUBNET" "${TAG}-net" >/dev/null \
-    || { echo "✗ não consegui criar a rede interna $SELFTEST_SUBNET (SOFTPHONE_SELFTEST_SUBNET para outra)"; exit 1; }
-  echo "configuração: os $n ficheiros que o voice/docker-compose.voice.yml monta, sobre a vanilla de $IMG_FS"
-  echo "andaime: um ramal em directório estático (o control plane não corre aqui), sem os perfis SIP de demonstração, ESL em loopback"
-
-  echo "1) tal como o compose a monta — sem nada a incluir o vars.xml.inc"
-  fs_real fs "$ip" nao
-  bind=$(perfil_real fs)
-  if [ -z "$bind" ]; then
-    bad "o perfil «internal» dos ramais não arrancou em 60 s"
-    logs "${TAG}-fs" | grep -iE 'cannot|error near' | head -3 | sed 's/^/       /'
-    rm -f "$d/conf/directory/prova.xml"
-    return
-  fi
-  if [ "${bind##*:}" = "$PORTO_RAMAIS" ]; then ok "perfil «internal» a escutar em $bind"
-  else aviso "perfil «internal» a escutar em $bind, não no porto $PORTO_RAMAIS do ambiente: nada inclui o vars.xml.inc (R226, por corrigir)"; fi
-  v=$(global fs rtp_secure_media)
-  if [ "$v" = mandatory ]; then ok "variável global rtp_secure_media=mandatory"
-  else bad "variável global rtp_secure_media=«$v» — nada impõe SRTP à entrada"; fi
-  local rede="container:${TAG}-fs" srv="$bind" lip=${bind%%:*}
-
-  echo "2) o perfil autentica: com SRTP e a password ERRADA a chamada não entra"
-  perna e "$rede" "$srv" prova errada "$DESTINO_REAL" 1000 udp srtp-mand 5080 5555 42000 "$lip" 20
-  resp=$(fim_da_chamada e 15)
-  case "$resp" in
-    401*|403*|407*) ok "password errada: recusada ($resp)" ;;
-    *) bad "com a password errada a chamada não foi recusada pela autenticação ($resp)" ;;
-  esac
-  docker rm -f "${TAG}-e" >/dev/null 2>&1
-
-  echo "3) controlo positivo: com a password certa e COM SRTP, a chamada passa a negociação"
-  perna p "$rede" "$srv" prova senha "$DESTINO_REAL" 1000 udp srtp-mand 5080 5555 42000 "$lip" 20
-  resp=$(fim_da_chamada p 15)
-  case "$resp" in
-    estabelecida) ok "com SRTP: chamada estabelecida" ;;
-    488*|401*|403*|407*|"sem resposta"*) bad "com SRTP a chamada não passou a autenticação e a negociação ($resp) — o controlo negativo abaixo não prova nada" ;;
-    *) ok "com SRTP: autenticada e negociada; quem a fechou foi o plano de marcação ($resp)" ;;
-  esac
-  docker rm -f "${TAG}-p" >/dev/null 2>&1
-
-  echo "4) controlo negativo: a MESMA chamada sem SRTP tem de levar 488"
-  perna n "$rede" "$srv" prova senha "$DESTINO_REAL" 1000 udp nenhum 5080 5555 42000 "$lip" 20
-  resp=$(fim_da_chamada n 15)
-  case "$resp" in
-    488*) ok "sem SRTP: recusada ($resp)" ;;
-    estabelecida) bad "uma chamada SEM SRTP ao perfil dos ramais foi ACEITE" ;;
-    *) bad "sem SRTP: a chamada não levou 488, levou «$resp»" ;;
-  esac
-  if docker exec "${TAG}-fs" grep -aq 'Crypto not negotiated but required' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log; then
-    ok "o FreeSWITCH registou a razão: «Crypto not negotiated but required»"
-  else
-    bad "o FreeSWITCH não registou «Crypto not negotiated but required»"
-  fi
-  docker rm -f "${TAG}-n" "${TAG}-fs" >/dev/null 2>&1
-
-  echo "5) com o vars.xml.inc incluído pelo vars.xml, como o cabeçalho dele descreve"
-  fs_real fs2 "$ip2" sim
-  rm -f "$d/conf/directory/prova.xml"     # a password do ramal de prova não fica no disco do host
-  bind=$(perfil_real fs2)
-  if [ -z "$bind" ]; then
-    bad "com o vars.xml.inc incluído o FreeSWITCH não arranca o perfil «internal»: $(logs "${TAG}-fs2" | grep -iE 'cannot initialize|error near' | head -1)"
-    return
-  fi
-  if [ "${bind##*:}" = "$PORTO_RAMAIS" ]; then ok "o FreeSWITCH arranca e o perfil «internal» escuta em $bind (DELONIX_RAMAIS_SIP_PORT=$PORTO_RAMAIS)"
-  else bad "perfil «internal» a escutar em $bind, não no porto $PORTO_RAMAIS do ambiente"; fi
-  v=$(global fs2 rtp_secure_media)
-  if [ "$v" = mandatory ]; then ok "variável global rtp_secure_media=mandatory"
-  else bad "variável global rtp_secure_media=«$v»"; fi
-  v=$(global fs2 delonix_control_url)
-  if [ "$v" = "$URL_CONTROLO" ]; then ok "delonix_control_url veio do ambiente ($v)"
-  else bad "delonix_control_url=«$v», não o DELONIX_CONTROL_URL do ambiente"; fi
-  if [ "$(global fs2 delonix_voice_secret)" = "$segredo" ]; then ok "delonix_voice_secret veio do ambiente (valor não mostrado)"
-  else bad "delonix_voice_secret não é o VOICE_INTERNAL_SECRET do ambiente"; fi
-}
-
-# ------------------------------------------------------------ srtp-cluster
-# O mesmo controlo negativo contra a configuração que CORRE: a que o
-# voice/cluster/freeswitch-entrypoint.sh monta no cluster local, com os
-# ficheiros que o scripts/cluster-voice.sh põe no ConfigMap `freeswitch-meet`.
-# Mede os dois perfis: o dos ramais (autenticado) e o `external` do dial-in,
-# que é o que o Kamailio alcança.
-
-# Os ficheiros do ConfigMap `freeswitch-meet`, um por linha — tirados do script
-# que o cria, para a prova não ter a sua própria lista.
-ficheiros_configmap() {
-  sed -n '/^cm freeswitch-meet/,/^cm [a-z]/p' scripts/cluster-voice.sh | sed -n 's#.*--from-file=\(voice/[^ ]*\).*#\1#p'
 }
 # fs_cli_cluster <comando> — o entrypoint dá ao ESL uma password aleatória
 fs_cli_cluster() {
@@ -545,23 +400,32 @@ perfil_cluster() {
   fs_cli_cluster "sofia status" | sed -n "s/^ *$1[[:space:]]\{1,\}profile[[:space:]]\{1,\}sip:mod_sofia@\([^[:space:]]*\)[[:space:]]\{1,\}RUNNING.*/\1/p" | head -1
 }
 
-srtp_cluster() {
+# srtp_arranque <compose|cluster>
+srtp_arranque() {
+  local origem=$1 quem
+  case "$origem" in
+    compose) quem="o serviço freeswitch do compose.yaml"
+             grep -q '\./voice/cluster/freeswitch-entrypoint\.sh:/entrypoint/freeswitch-entrypoint\.sh' compose.yaml \
+               || { echo "✗ o compose.yaml já não arranca o FreeSWITCH pelo voice/cluster/freeswitch-entrypoint.sh"; exit 1; } ;;
+    cluster) quem="o ConfigMap freeswitch-meet (scripts/cluster-voice.sh)" ;;
+  esac
   docker image inspect "$IMG_FS" >/dev/null 2>&1 \
     || { echo "✗ falta a imagem $IMG_FS (make freeswitch-image, ou FS_IMAGE=<a publicada>)"; exit 1; }
-  local d="$WORK/$TAG/fs" ip senha errada=senha-errada segredo f n=0 i ram="" ext="" resp v lip
+  local d="$WORK/$TAG/fs" ip senha errada=senha-errada segredo f nome n=0 i ram="" ext="" resp v lip
   ip=$(python3 -c "import ipaddress,sys; print(list(ipaddress.ip_network(sys.argv[1]).hosts())[1])" "$SELFTEST_SUBNET")
   senha=$(python3 -c "import secrets; print(secrets.token_hex(12))")
   segredo=$(python3 -c "import secrets; print(secrets.token_hex(32))")
   mkdir -p "$d/meet" "$d/entrypoint"
-  while read -r f; do
-    [ -f "$f" ] || { echo "✗ o cluster-voice.sh põe $f no ConfigMap, e o ficheiro não existe"; exit 1; }
-    cp "$f" "$d/meet/"; n=$(( n + 1 ))
-  done < <(ficheiros_configmap)
-  [ "$n" -gt 0 ] || { echo "✗ não encontrei os ficheiros do ConfigMap freeswitch-meet em scripts/cluster-voice.sh"; exit 1; }
+  while read -r f nome; do
+    [ -f "$f" ] || { echo "✗ $quem monta $f, e o ficheiro não existe"; exit 1; }
+    cp "$f" "$d/meet/$nome"; n=$(( n + 1 ))
+  done < <("ficheiros_$origem")
+  [ "$n" -gt 0 ] || { echo "✗ não encontrei os ficheiros que $quem monta em /meet"; exit 1; }
   cp voice/cluster/freeswitch-entrypoint.sh "$d/entrypoint/"
   docker network create --internal --subnet "$SELFTEST_SUBNET" "${TAG}-net" >/dev/null \
     || { echo "✗ não consegui criar a rede interna $SELFTEST_SUBNET (SOFTPHONE_SELFTEST_SUBNET para outra)"; exit 1; }
-  # O ambiente é o do pod (deploy/k8s/cluster/voice.yaml), com os endereços do
+  # O ambiente é o do contentor do FreeSWITCH (compose.yaml e
+  # deploy/k8s/cluster/voice.yaml dão-lhe o mesmo), com os endereços do
   # servidor trocados por loopback. Numa rede sem saída o FreeSWITCH fica em
   # 127.0.0.1, e por isso a lista de acesso dos ramais é a de loopback.
   docker create --name "${TAG}-fs" --network "${TAG}-net" --ip "$ip" \
@@ -577,8 +441,8 @@ srtp_cluster() {
     [ -n "$ram" ] && [ -n "$ext" ] && break
     sleep 1
   done
-  echo "configuração: a que o voice/cluster/freeswitch-entrypoint.sh monta, com os $n ficheiros do ConfigMap freeswitch-meet, em $IMG_FS"
-  echo "andaime: um servidor de directório que responde como o ramais.rs a um só ramal; lista de acesso dos ramais em loopback"
+  echo "configuração: a que o voice/cluster/freeswitch-entrypoint.sh monta, com os $n ficheiros que $quem põe em /meet, em $IMG_FS"
+  echo "andaime: um servidor que responde a tudo com o directório de um só ramal (como o ramais.rs) e guarda os pedidos; lista de acesso dos ramais em loopback"
   if [ -z "$ram" ] || [ -z "$ext" ]; then
     bad "o FreeSWITCH do entrypoint não pôs os dois perfis a correr (internal=«$ram» external=«$ext»)"
     logs "${TAG}-fs" | tail -8 | sed 's/^/       /'
@@ -619,9 +483,30 @@ corpo = f"""<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 sys.stdout.write("HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s"
                  % (len(corpo.encode()), corpo))
 PY
+  # O servidor de andaime lê o pedido INTEIRO, guarda-o, e só depois responde.
+  # Um `nc` que respondesse logo à ligação deixava o FreeSWITCH fechar antes de
+  # o pedido ser lido, e a prova ficava a depender de uma corrida.
+  cat > "$d/servidor.sh" <<'SH'
+p=$1; CR=$(printf '\r'); mkfifo "/f-$p"; exec 3<>"/f-$p"
+# Um só `nc -k`: o porto fica sempre à escuta, e dois pedidos seguidos (o
+# directório e logo o Lua) não encontram a porta fechada entre um e outro.
+nc -l -k -p "$p" <&3 | while :; do
+  cl=0; visto=0
+  while IFS= read -r l; do
+    visto=1; l=${l%"$CR"}; printf '%s\n' "$l" >> "/pedidos-$p"
+    [ -z "$l" ] && break
+    case "$l" in [Cc]ontent-[Ll]ength:*) cl=${l#*:}; cl=${cl# } ;; esac
+  done
+  [ "$visto" = 1 ] || exit 0
+  [ "${cl:-0}" -gt 0 ] && head -c "$cl" >> "/pedidos-$p"
+  printf '\n' >> "/pedidos-$p"
+  cat /resposta >&3
+done
+SH
   docker create --name "${TAG}-dir" --network "container:${TAG}-fs" --user 0 --entrypoint sh "$IMG_BS" \
-    -c 'while :; do nc -l -p 8180 -q 1 < /resposta >/dev/null 2>&1; done' >/dev/null
+    -c 'sh /servidor.sh 8180 & sh /servidor.sh 8181 & wait' >/dev/null
   docker cp "$d/resposta" "${TAG}-dir:/resposta" >/dev/null
+  docker cp "$d/servidor.sh" "${TAG}-dir:/servidor.sh" >/dev/null
   rm -f "$d/resposta"
   docker start "${TAG}-dir" >/dev/null
   local rede="container:${TAG}-fs"
@@ -659,7 +544,8 @@ PY
   perna q "$rede" "$ext" tronco - "$DESTINO_DIALIN" 1000 udp srtp-mand 5082 5555 42000 "$lip" 25
   resp=$(fim_da_chamada q 20)
   case "$resp" in
-    estabelecida) ok "com SRTP: chamada estabelecida" ;;
+    estabelecida) ok "com SRTP: chamada estabelecida"
+                  sleep 2; dtmf q 5555 "$PIN_DIALIN"; sleep 4 ;;   # o IVR valida o PIN no servidor
     *) bad "com SRTP a chamada ao dial-in não foi atendida ($resp) — o controlo negativo abaixo não prova nada" ;;
   esac
   docker rm -f "${TAG}-q" >/dev/null 2>&1
@@ -676,6 +562,60 @@ PY
   v=$(docker exec "${TAG}-fs" grep -ac 'Crypto not negotiated but required' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-0}" -ge 2 ]; then ok "o FreeSWITCH registou a razão das duas recusas: «Crypto not negotiated but required»"
   else bad "o FreeSWITCH registou «Crypto not negotiated but required» ${v:-0} vez(es), não duas"; fi
+
+  echo "6) o segredo de voz chega ao servidor em cabeçalhos, e não fica no log (R227)"
+  docker exec "${TAG}-dir" sh -c 'cat /pedidos-8180 /pedidos-8181 2>/dev/null' | tr -d '\r' > "$d/pedidos"
+  while IFS='|' read -r veredicto texto; do
+    if [ "$veredicto" = ok ]; then ok "$texto"; else bad "$texto"; fi
+  done < <(python3 - "$d/pedidos" "$segredo" "$PIN_DIALIN" <<'PY'
+import base64, re, sys
+pedidos, segredo, pin = open(sys.argv[1], errors="replace").read(), sys.argv[2], sys.argv[3]
+# Cada pedido começa numa linha «POST <caminho> HTTP/1.1».
+blocos = re.split(r"(?m)^(?=POST \S+ HTTP/1\.[01]$)", pedidos)
+def pedido(caminho):
+    return next((b for b in blocos if b.startswith("POST " + caminho + " ")), None)
+def sai(certo, texto):
+    print(("ok" if certo else "falha") + "|" + texto)
+
+linhas = [b.split("\n", 1)[0] for b in blocos if b.startswith("POST ")]
+no_url = [l for l in linhas if segredo in l or "secret=" in l]
+sai(bool(linhas) and not no_url,
+    "nenhum dos %d pedidos ao servidor leva o segredo no URL" % len(linhas) if linhas and not no_url
+    else "%d dos %d pedidos ao servidor levam o segredo no URL" % (len(no_url), len(linhas)))
+
+b = pedido("/api/voice/ivr/directory")
+m = b and re.search(r"(?mi)^Authorization: Basic (\S+)$", b)
+certo = False
+if m:
+    try:
+        certo = base64.b64decode(m.group(1)).decode().split(":", 1)[1] == segredo
+    except Exception:
+        certo = False
+sai(certo, "directório (mod_xml_curl): o segredo vai em Authorization: Basic" if certo
+    else "directório (mod_xml_curl): o pedido não leva o segredo em Authorization: Basic")
+
+for caminho, quem, corpo in (("/api/voice/ivr/resolve-extension", "ramais_dial.lua", None),
+                             ("/internal/v1/voice/ivr/validate", "dialin_ivr.lua", pin)):
+    b = pedido(caminho)
+    if b is None:
+        sai(False, "%s: o pedido a %s nunca chegou ao servidor" % (quem, caminho))
+        continue
+    tem = re.search(r"(?mi)^X-Voice-Secret: (\S+)$", b)
+    json_ok = re.search(r"(?mi)^Content-Type: application/json", b) is not None
+    certo = bool(tem) and tem.group(1) == segredo and json_ok and (corpo is None or ('"pin":"%s"' % corpo) in b)
+    sai(certo, "%s: o pedido chega com X-Voice-Secret e o corpo JSON%s" % (quem, " com o PIN marcado" if corpo else "")
+        if certo else "%s: o pedido a %s não chegou como devia (X-Voice-Secret, Content-Type ou corpo)" % (quem, caminho))
+PY
+  )
+  v=$(docker exec "${TAG}-fs" grep -ac "$segredo" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  if [ "${v:-1}" -eq 0 ]; then ok "o segredo de voz não aparece no freeswitch.log"
+  else bad "o segredo de voz aparece $v vez(es) no freeswitch.log"; fi
+  v=$(docker exec "${TAG}-fs" grep -ac "\"pin\":\"$PIN_DIALIN\"" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  if [ "${v:-1}" -eq 0 ]; then ok "o PIN marcado não aparece no freeswitch.log"
+  else bad "o PIN marcado aparece $v vez(es) no freeswitch.log"; fi
+  v=$(docker exec "${TAG}-fs" sh -c "grep -ac '$segredo' /usr/local/freeswitch/var/log/freeswitch/freeswitch.xml.fsxml 2>/dev/null")
+  [ "${v:-0}" -gt 0 ] && aviso "o freeswitch.xml.fsxml do directório de logs traz a configuração expandida, com o segredo ($v vez(es)): trata esse directório como o da configuração (R227)"
+  rm -f "$d/pedidos"
 }
 
 # ------------------------------------------------------------ chamada / par
@@ -751,8 +691,8 @@ mkdir -p "$WORK/$TAG"
 imagem_baresip
 case "$modo" in
   selftest) selftest ;;
-  srtp-real) srtp_real ;;
-  srtp-cluster) srtp_cluster ;;
+  srtp-real) srtp_arranque compose ;;
+  srtp-cluster) srtp_arranque cluster ;;
   chamada)  chamada "$@" ;;
   par)      par "$@" ;;
   *) echo "✗ modo desconhecido: $modo"; uso 2 ;;

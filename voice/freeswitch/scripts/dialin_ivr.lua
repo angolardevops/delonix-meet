@@ -19,7 +19,7 @@
 --   verificada (scripts/check-lua-sintaxe.sh).
 --
 -- Segredos NUNCA em claro: lidos de variáveis globais do FreeSWITCH que, por sua
--- vez, vêm do ambiente (ver vars.xml / docker-compose.voice.yml):
+-- vez, vêm do ambiente (ver voice/cluster/freeswitch-entrypoint.sh):
 --   ${delonix_control_url}     ex.: http://127.0.0.1:8180
 --   ${delonix_voice_secret}    == VOICE_INTERNAL_SECRET do backend
 --
@@ -69,7 +69,6 @@ if bridge_profile == "" then bridge_profile = "internal" end
 
 -- POST JSON ao control plane via mod_curl; devolve o corpo (string) ou nil.
 local function http_post(path, body)
-  -- curl app: url, método, headers e dados; resultado fica em ${curl_response_data}
   -- Sintaxe do mod_curl: as opções vêm ANTES do método, cada uma com o seu
   -- valor separado por espaço (`content-type <tipo>`, `append_headers
   -- <nome:valor>`), e o corpo é o argumento a seguir a `post`. Na forma
@@ -79,8 +78,11 @@ local function http_post(path, body)
   local args = string.format(
     "%s%s content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
     control_url, path, secret, body)
-  session:execute("curl", args)
-  return session:getVariable("curl_response_data")
+  -- Pela API do mod_curl, e não pela aplicação de dialplan (R227): os
+  -- argumentos de uma aplicação — o segredo e, no IVR, o PIN — ficam escritos
+  -- na linha EXECUTE do log a cada chamada, e no app_log do CDR. A API leva os
+  -- mesmos argumentos e devolve o corpo da resposta.
+  return api:execute("curl", args)
 end
 
 -- Extrai um valor STRING simples de um JSON plano (sem dependências externas).

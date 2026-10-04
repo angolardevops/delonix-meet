@@ -5,19 +5,21 @@ Debian 12, numa imagem local) e **mede** o resultado: chamada estabelecida com S
 o PIN a chegar por DTMF, e o tom de cada lado ouvido pelo outro.
 
 Para testar à mão, com ouvidos, usa-se um softphone com interface (por exemplo o
-Linphone). Este script é para a prova repetível.
+Linphone). Este script é para a prova repetível: o `selftest`, o `srtp-real` e o
+`srtp-cluster` correm no CI (workflow «Imagem FreeSWITCH») sempre que `voice/freeswitch/`,
+`voice/cluster/`, o `compose.yaml`, o `cluster-voice.sh` ou o próprio script mudam.
 
 ```bash
 # 1. O próprio script, contra o FreeSWITCH da imagem, numa rede docker sem saída.
 bash scripts/softphone-prova.sh selftest
 
-# 2. O controlo negativo com a configuração REAL do repo (R226): os ficheiros que o
-#    voice/docker-compose.voice.yml monta. Uma chamada sem SRTP ao perfil dos ramais
-#    tem de levar 488.
+# 2. O controlo negativo com a configuração que CORRE (R226, R227): a que o arranque
+#    (voice/cluster/freeswitch-entrypoint.sh) monta com os ficheiros que o compose.yaml
+#    põe em /meet. Ramais e dial-in, com e sem SRTP: sem SRTP os dois levam 488. E o
+#    segredo de voz e o PIN marcado não ficam no log.
 bash scripts/softphone-prova.sh srtp-real
 
-#    O mesmo contra a configuração que CORRE — a que o cluster local monta
-#    (voice/cluster/freeswitch-entrypoint.sh): ramais e dial-in, com e sem SRTP.
+#    O mesmo, com a lista de ficheiros que o cluster local põe no ConfigMap.
 bash scripts/softphone-prova.sh srtp-cluster
 
 # 3. Um softphone contra o teu servidor: marca, envia o PIN, mede o tom que ouve.
@@ -45,18 +47,16 @@ do que o softphone ouviu fica em `.softphone-prova/ultima-chamada-ouvido.wav`.
 | `selftest`: chamada **sem** SRTP | recusada, `488 Not Acceptable Here` |
 | `selftest`: par na mesma conferência | cada um ouve o outro a 0,25 e a si a ≤ 0,003 |
 | `chamada` e `par` em rede *host* contra um FreeSWITCH de teste | passam; com os dois softphones sem se ouvirem, o `par` falha |
-| `srtp-real`: a global `rtp_secure_media`, com os ficheiros que o compose monta | `mandatory` |
-| `srtp-real`: ramal com a password errada | recusado, `403 Forbidden` |
-| `srtp-real`: ramal autenticado, **com** SRTP | passa a autenticação e a negociação; o plano de marcação fecha-a com `404` (ver abaixo) |
-| `srtp-real`: a mesma chamada **sem** SRTP | recusada, `488 Not Acceptable Here`; no log, «Crypto not negotiated but required» |
-| `srtp-real`: o `vars.xml.inc` incluído pelo `vars.xml` | o FreeSWITCH arranca, o perfil escuta em `:5070`, URL e segredo vêm do ambiente |
-| `srtp-real` com o `voice/` de `origin/main` (`275ced1`) | **falha**: global vazia, sem SRTP `404` em vez de `488`, e o include mata o arranque (`unclosed <!--`) |
-| `srtp-cluster`: ramal com a password errada | recusado, `403 Forbidden` |
-| `srtp-cluster`: ramal autenticado, **com** SRTP | passa a negociação e chega ao `ramais_dial.lua`, que a fecha com `404` (o andaime não resolve números) |
-| `srtp-cluster`: o mesmo ramal **sem** SRTP | recusado, `488 Not Acceptable Here` |
-| `srtp-cluster`: dial-in (perfil `external`), **com** SRTP | atendido pelo IVR |
-| `srtp-cluster`: dial-in **sem** SRTP | recusado, `488 Not Acceptable Here` |
-| `srtp-cluster` sem nenhuma das duas globais (entrypoint e `internal.xml`) | **falha**: o ramal em claro leva `404` em vez de `488` |
+| `srtp-real` e `srtp-cluster`: ramal com a password errada | recusado, `403 Forbidden` |
+| `srtp-real` e `srtp-cluster`: ramal autenticado, **com** SRTP | passa a negociação e chega ao `ramais_dial.lua`, que a fecha com `404` (o andaime não resolve números) |
+| `srtp-real` e `srtp-cluster`: o mesmo ramal **sem** SRTP | recusado, `488 Not Acceptable Here` |
+| `srtp-real` e `srtp-cluster`: dial-in (perfil `external`), **com** SRTP | atendido pelo IVR |
+| `srtp-real` e `srtp-cluster`: dial-in **sem** SRTP | recusado, `488 Not Acceptable Here` |
+| `srtp-real` e `srtp-cluster` sem nenhuma das duas globais (entrypoint e `internal.xml`) | **falha**: o ramal em claro leva `404` em vez de `488` |
+| `srtp-real` e `srtp-cluster`: os pedidos ao servidor (R227) | nenhum leva o segredo no URL; o do `mod_xml_curl` leva-o em `Authorization: Basic`, os dos dois Lua em `X-Voice-Secret`, com o corpo JSON certo |
+| `srtp-real` e `srtp-cluster`: o segredo de voz e o PIN marcado no `freeswitch.log` | 0 ocorrências |
+| `srtp-real` e `srtp-cluster` com os Lua de antes, ou com o DEBUG ligado no log | **falha**: o segredo aparece 2 vezes e o PIN 1 |
+| `srtp-real` e `srtp-cluster` com o `xml_curl.conf.xml` de antes | **falha**: segredo no URL e 5 vezes no log |
 
 ## O que esta prova mediu (R226 no catálogo de regressões)
 
@@ -70,44 +70,36 @@ do que o softphone ouviu fica em `.softphone-prova/ultima-chamada-ouvido.wav`.
   num perfil com `inbound-late-negotiation=true` (o `external` da vanilla) recusa — medido
   nos dois sentidos, com e sem o `set`.
 - **No Meet, a global é posta por `voice/freeswitch/sip_profiles/internal.xml`** (no topo
-  do ficheiro) e por `voice/freeswitch/vars.xml.inc`. As linhas `rtp-secure-media` do
+  do ficheiro) e pelo arranque (`voice/cluster/freeswitch-entrypoint.sh`). As linhas `rtp-secure-media` do
   perfil e de `conference.conf.xml` saíram.
-- **O `vars.xml.inc` não é incluído por nada no repo**, e como estava não podia sê-lo: o
-  cabeçalho trazia a directiva de include dentro de um comentário, o pré-processador
-  executa-a lá, e o FreeSWITCH não arrancava; e lia o ambiente com `cmd="set"`, que não
-  o lê. As duas coisas estão corrigidas, e o passo 5 do `srtp-real` mede-as.
+- **O compose de voz antigo nunca correu, e foi retirado** (2026-10-04). Montava ficheiros
+  soltos sobre a vanilla e um `vars.xml.inc` que nada incluía: o perfil dos ramais ficava
+  no porto 5060 e o contexto `delonix_ramais` nem existia. O `compose.yaml` e o cluster
+  sobem o FreeSWITCH pelo mesmo arranque, e é essa configuração que a prova mede.
 - **Dois dígitos DTMF iguais seguidos só chegam os dois se houver «tecla solta» entre
   eles.** Sem isso, `4711` chegava como `471`.
 
-## O andaime do `srtp-real`
-
-A configuração vem das linhas de montagem do próprio compose, postas sobre a vanilla da
-imagem do FreeSWITCH do repo. O que a prova acrescenta, e só isto: um ramal num directório
-estático (quem responde pelo directório no Meet é o control plane, que aqui não corre); a
-remoção dos perfis SIP de demonstração da vanilla (o `external` resolve o seu IP por STUN
-e, numa rede sem saída, deita abaixo o mod_sofia inteiro); e o ESL em loopback.
-
-## O andaime do `srtp-cluster`
+## O andaime do `srtp-real` e do `srtp-cluster`
 
 A configuração é a que o `voice/cluster/freeswitch-entrypoint.sh` monta, com os ficheiros
-que o `scripts/cluster-voice.sh` põe no ConfigMap `freeswitch-meet` e o ambiente do pod.
-O que a prova acrescenta: os endereços do servidor em loopback; um servidor de directório
-que responde como o `server/src/ramais.rs` a um só ramal (com o `a1-hash` do Digest e o
-`auth-acl=delonix_ramais`); e a lista de acesso dos ramais em loopback, porque numa rede
-sem saída o FreeSWITCH fica em `127.0.0.1`.
+que o `compose.yaml` (`srtp-real`) ou o ConfigMap `freeswitch-meet` do
+`scripts/cluster-voice.sh` (`srtp-cluster`) põem em `/meet`, e o ambiente do contentor.
+O que a prova acrescenta: os endereços do servidor em loopback; um servidor de andaime nos
+dois portos (o público e o interno) que lê cada pedido inteiro, guarda-o, e responde a
+tudo com o directório de um só ramal, como o `server/src/ramais.rs` (com o `a1-hash` do
+Digest e o `auth-acl=delonix_ramais`); e a lista de acesso dos ramais em loopback, porque
+numa rede sem saída o FreeSWITCH fica em `127.0.0.1`. O servidor de andaime **não valida**
+o segredo: a prova lê os pedidos guardados. Que o servidor a sério o aceita assim é do
+teste `security_voice_odoo`.
 
 ## O que NÃO está provado
 
 - **Nada contra o Delonix Meet a correr**: nem um ramal real do control plane, nem o IVR
   do dial-in, nem a ponte para a sala. O `chamada` e o `par` foram exercitados contra um
   FreeSWITCH de teste sem autenticação.
-- **Uma chamada atendida no perfil dos ramais do repo.** O `srtp-real` prova a
-  autenticação Digest e a negociação, e pára aí: o contexto `delonix_ramais` não existe
-  para o FreeSWITCH tal como o compose o monta (`Context delonix_ramais not found`,
-  `404`), a vanilla não carrega `mod_xml_curl` nem `mod_curl`, e nada inclui o
-  `vars.xml.inc` — o perfil fica no porto 5060, e o script avisa-o com `!`.
-- **A imagem do compose** (`safarov/freeswitch:latest`) não foi medida: a prova corre na
-  imagem do repo.
+- **O compose e o cluster a correr.** A prova arranca o entrypoint num contentor, com um
+  servidor de andaime: um ramal real do control plane, o Kamailio à frente do dial-in e a
+  rede de cada ambiente ficam de fora (`make compose-voice-check`, `make cluster`).
 - **O registo** (`REGISTER`): o script marca sem registar.
 - **O dial-in** (Kamailio → contexto `public`), um re-INVITE em claro a meio de uma
   chamada cifrada, e a entrada de um tronco declarado `srtp=off` com a global a valer.

@@ -28,13 +28,13 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
 | `freeswitch/scripts/dialin_ivr.lua` | IVR: PIN → valida no control plane → junta à conferência → CDR |
 | `freeswitch/dialplan/public/00_delonix_dialin.xml` | Encaminha inbound para o IVR |
 | `freeswitch/autoload_configs/conference.conf.xml` | Perfil de conferência `delonix` (não impõe SRTP: isso é de cada perna SIP) |
-| `freeswitch/vars.xml.inc` | Vars globais (URL do control plane, segredo, SRTP obrigatório) — **nenhum ficheiro do repo o inclui** no `vars.xml` (R226) |
-| `docker-compose.voice.yml` | Serviços de dev (Kamailio + FreeSWITCH) |
+| `cluster/freeswitch-entrypoint.sh` | O arranque do FreeSWITCH: fecha a vanilla da imagem, põe as variáveis do ambiente e os ficheiros do Meet. É o mesmo no `compose.yaml` e no cluster |
+| `../compose.yaml` (serviços `kamailio`, `freeswitch`, `pbx`) | O laboratório de voz: `make compose-up`, medido por `make compose-voice-check` |
 
 ## Segurança (não-negociável)
 - **SRTP obrigatório**, sem fallback: quem recusa com `488` uma chamada em claro é a
   variável **global** `rtp_secure_media=mandatory`, posta por `sip_profiles/internal.xml`
-  (e por `vars.xml.inc`, onde for incluído). Não há parâmetro de perfil nem de
+  (e pelo arranque, `cluster/freeswitch-entrypoint.sh`). Não há parâmetro de perfil nem de
   conferência que o faça, e o `set` do dialplan só a recusa num perfil que negoceie tarde
   (`inbound-late-negotiation=true`), o que não é o caso do perfil dos ramais (R226).
   Portão: `bash scripts/softphone-prova.sh srtp-real`.
@@ -51,7 +51,8 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
 A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Zoiper):
 1. Backend Rust a correr com `VOICE_INTERNAL_SECRET` definido; criar um DID + sala de
    voz (obter o número e o PIN) — ver `docs/pstn-dial-in-fase0.md` e o E2E do control plane.
-2. `docker compose -f voice/docker-compose.voice.yml up -d`.
+2. `make voice-images` e `make compose-up` (o `compose.yaml` da raiz; `LAN_IP=<ip>` expõe
+   os ramais à rede local).
 3. Registar o softphone no Kamailio e "ligar" para o número da sala.
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
    `GET /api/orgs/{org}/voice/call-records`.
@@ -70,6 +71,7 @@ Softphone A (ramal 101, acme.ramais.delonix.meet)
      ▼                                  Kamailio NÃO entra neste caminho
 FreeSWITCH — perfil "internal" (porta DELONIX_RAMAIS_SIP_PORT, default 5070)
      1) REGISTER → mod_xml_curl → POST /api/voice/ivr/directory  ──► Control plane
+                                  (segredo por HTTP Basic — nunca no URL, R227)
                                   (a1-hash do digest SIP)          ◄── XML directory
      2) INVITE 102 → dialplan "delonix_ramais" → ramais_dial.lua
         → POST /api/voice/ivr/resolve-extension  ──────────────────► Control plane

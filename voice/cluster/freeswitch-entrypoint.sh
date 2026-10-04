@@ -107,6 +107,18 @@ sed -i "s#</network-lists>#    <list name=\"delonix_ramais\" default=\"deny\">\n
 grep -q 'list name="delonix_ramais"' "$CONF/autoload_configs/acl.conf.xml" ||
   { echo "não consegui definir a lista de acesso dos ramais" >&2; exit 1; }
 
+# 11. O log sem o nível DEBUG. A esse nível o mod_curl escreve cada cabeçalho e
+#     cada corpo que os scripts mandam ao servidor: o segredo de voz e o PIN de
+#     quem liga (R227). DELONIX_FS_LOG_DEBUG=1 volta a ligá-lo para diagnóstico
+#     — e volta a pôr os dois no log.
+if [ "${DELONIX_FS_LOG_DEBUG:-0}" != 1 ]; then
+  for f in logfile console; do
+    sed -i -E 's#(<map name="all" value=")console,debug,#\1console,#' "$CONF/autoload_configs/$f.conf.xml"
+    grep -q '<map name="all" value="console,info,' "$CONF/autoload_configs/$f.conf.xml" ||
+      { echo "não consegui tirar o nível DEBUG de $f.conf.xml" >&2; exit 1; }
+  done
+fi
+
 # -conf, -log e -db vão os três ou nenhum.
 exec /usr/local/freeswitch/bin/freeswitch -conf "$CONF" \
   -log /usr/local/freeswitch/var/log/freeswitch -db /usr/local/freeswitch/var/lib/freeswitch/db \

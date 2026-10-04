@@ -2,7 +2,7 @@
   Delonix Meet — perfil de conferência 'delonix'.
   A conferência mistura áudio já decifrado: NÃO é aqui que se impõe SRTP. Isso
   é de cada perna SIP, pela variável global rtp_secure_media=mandatory
-  (sip_profiles/internal.xml e vars.xml.inc; R226). O mod_conference 1.11.3
+  (sip_profiles/internal.xml e o arranque; R226). O mod_conference 1.11.3
   não tem nenhum parâmetro de segurança de media.
   Drop-in em /etc/freeswitch/autoload_configs/conference.conf.xml (ou incluir).
   Cada sala de conferência é criada dinamicamente com o nome = room_code.
