@@ -102,7 +102,11 @@ contexto de dialplan e por domínio SIP, não por processo.
   o IVR só acredita nesse cabeçalho vindo de um endereço do bordo (`DELONIX_EDGE_CIDRS`;
   sem ela, nenhuma chamada entra como central). Sem TLS, `403` sem desafio; à décima falha
   de autenticação em 5 min, `403` à origem. **Desligado sem `DELONIX_CONTROL_URL` no
-  Kamailio** — e é assim que o `compose.yaml` e o cluster local estão.
+  Kamailio.** O `compose.yaml` e o cluster local ligam-no, e o PBX de laboratório tem
+  **dois troncos**: `meet` (UDP, pela allowlist — que nos laboratórios só aceita a porta
+  5060 de origem) e `meet-central` (TLS, autenticado com a conta SIP da organização
+  «ngolacloud»; `voice/pbx-cliente/central.conf.tmpl`). Medido no compose a 2026-10-04,
+  numa cópia isolada no docker; **no cluster local só está escrito, não foi aplicado.**
 - **Medido:** DTMF por RFC 2833/4733 com payload 101 (`internal.xml:36`);
   `accept-blind-reg` e `accept-blind-auth` a `false`.
 - **Medido (2026-10-03, FreeSWITCH 1.11.3, R226) — o que recusa uma chamada em claro à

@@ -715,6 +715,9 @@ compose-up: ## Simulação de produção (compose.yaml); LAN_IP=<ip> expõe os r
 	@[ -f .env ] && [ -f deploy/compose/generated/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou deploy/compose/generated/ — corre «make bootstrap»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "delonix-server" || { printf "$(Y)  ✗ faltam as imagens — corre «make build»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "pbx-cliente" || { printf "$(Y)  ✗ faltam as imagens de voz — corre «make voice-images»$(Z)\n"; exit 1; }
+	@# A central da organização (ADR-0016) precisa de dois ficheiros que um
+	@# bootstrap antigo não gerou; sem eles o PBX nem arranca.
+	@[ -f deploy/compose/generated/pbx-central.conf ] && grep -qE '^DATA_ENCRYPTION_KEYS=.+' .env || { printf "$(Y)  ✗ falta a conta da central ou a chave da cifra em repouso — corre «make bootstrap» (não muda os segredos que já tens)$(Z)\n"; exit 1; }
 	@printf "$(C)▶ $(COMPOSE) up (simulação de produção)$(Z)\n"
 	@if [ -n "$(LAN_IP)" ]; then \
 	  LAN_IP=$(LAN_IP) bash scripts/compose-lan.sh > deploy/compose/generated/lan.yaml && \

@@ -102,7 +102,7 @@ fi
 # MEET_ADMIN_PASSWORD: a conta de validação que o `make seed` cria.
 # VOICE_ADMIN_PASSWORD: as interfaces de administração do Kamailio e do PBX.
 for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET:24 VOICE_INTERNAL_SECRET:32 \
-  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12; do
+  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12 VOICE_CENTRAL_PASSWORD:16; do
   nome=${par%%:*}
   bytes=${par##*:}
   if grep -qE "^${nome}=.+" .env; then
@@ -116,6 +116,16 @@ for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET
   fi
   ok "$nome gerado"
 done
+# A chave da cifra em repouso não é hexadecimal: é `kid:base64` de 32 bytes.
+if ! grep -qE "^DATA_ENCRYPTION_KEYS=.+" .env; then
+  chave="lab:$(openssl rand -base64 32)"
+  if grep -qE "^DATA_ENCRYPTION_KEYS=" .env; then
+    sed -i "s|^DATA_ENCRYPTION_KEYS=.*|DATA_ENCRYPTION_KEYS=${chave}|" .env
+  else
+    printf 'DATA_ENCRYPTION_KEYS=%s\n' "$chave" >>.env
+  fi
+  ok "DATA_ENCRYPTION_KEYS gerado"
+fi
 # O que se DERIVA dos segredos: o URL da base de dados do compose e a
 # configuração do relay. Reescrevem-se sempre, para nunca ficarem desencontrados.
 valor_de() { sed -n "s/^$1=//p" .env | head -1; }
@@ -164,9 +174,18 @@ read_only = no
 password_format = plain
 password = $(valor_de VOICE_ADMIN_PASSWORD)
 CONF
-# Certificado self-signed do bordo SIP (Kamailio) no compose.
+# A conta com que o PBX de laboratório entra no bordo como CENTRAL da
+# organização (ADR-0016): a mesma que o `make seed` grava no «Registo SIP».
+{
+  printf '; Gerado por «make bootstrap» a partir de voice/pbx-cliente/central.conf.tmpl — NÃO versionar (tem a password).\n'
+  sed -e '/^;/d' -e "s/__BORDO__/delonix-kamailio/" -e "s/__PASSWORD__/$(valor_de VOICE_CENTRAL_PASSWORD)/" \
+    voice/pbx-cliente/central.conf.tmpl
+} >"$GEN/pbx-central.conf"
+# Certificado self-signed do bordo SIP (Kamailio) no compose. O nome vai também
+# no SAN: é por ele que a central confere o certificado.
 if [ ! -f "$GEN/voice-tls/tls.crt" ]; then
   openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=delonix-kamailio" \
+    -addext "subjectAltName=DNS:delonix-kamailio" \
     -keyout "$GEN/voice-tls/tls.key" -out "$GEN/voice-tls/tls.crt" 2>/dev/null
 fi
 # Lidos dentro de contentores por outros utilizadores: têm de ser legíveis.

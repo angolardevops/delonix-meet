@@ -146,8 +146,8 @@ estático (`scripts/check-bordo-central.sh`, com quatro controlos negativos corr
 
 **Não medido:** um browser na sala — quem ouve a central é outro telefone, pela mesma
 ponte, e a media entre a ponte e um participante WebRTC é da R221/R222; o chart Helm
-(`voice.centrais`), que só foi lido; o `compose.yaml` e o cluster local, que não ligam as
-centrais; o bordo atrás de NAT; uma central que não seja FreePBX.
+(`voice.centrais`), que só foi lido; o cluster local, onde as centrais estão ligadas no
+código e por aplicar (no `compose.yaml` mediram-se depois, numa cópia isolada); o bordo atrás de NAT; uma central que não seja FreePBX.
 
 ## O que este ADR não decide
 

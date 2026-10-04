@@ -30,6 +30,34 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
 | `freeswitch/autoload_configs/conference.conf.xml` | Perfil de conferência `delonix` (não impõe SRTP: isso é de cada perna SIP) |
 | `cluster/freeswitch-entrypoint.sh` | O arranque do FreeSWITCH: fecha a vanilla da imagem, põe as variáveis do ambiente e os ficheiros do Meet. É o mesmo no `compose.yaml` e no cluster |
 | `../compose.yaml` (serviços `kamailio`, `freeswitch`, `pbx`) | O laboratório de voz: `make compose-up`, medido por `make compose-voice-check` |
+| `pbx-cliente/central.conf.tmpl` | O tronco da CENTRAL do PBX de laboratório (TLS, autenticado com a conta SIP da organização — ADR-0016). Modelo: o `make bootstrap` e o `scripts/cluster-voice.sh` põem-lhe o nome do bordo e a password |
+
+## O PBX de laboratório tem dois troncos
+
+O mesmo Asterisk (`pbx` no compose, `pbx-cliente` no cluster) entra no bordo de duas
+maneiras, e não são a mesma coisa:
+
+| Tronco | Como entra | O que o Meet sabe da chamada |
+|---|---|---|
+| `meet` (UDP 5060) | pela **allowlist** do bordo — faz de tronco contratado | nada: é um dial-in por `(número, PIN)` |
+| `meet-central` (TLS 5061) | **autenticado** com a conta SIP da organização «ngolacloud» («Registo SIP», que o `make seed` grava) | a organização: a sala procura-se dentro dela |
+
+Para os dois caberem no mesmo PBX, a allowlist do laboratório só aceita a **porta 5060 de
+origem** — a do tronco UDP. O tronco TLS sai de uma porta efémera, não está na lista, e é
+desafiado. O `make seed` cria também uma sala com PIN
+(`deploy/compose/generated/sala-telefone.txt`), e o `make compose-voice-check` liga por cada
+tronco: pelo da central, com o PIN certo (entra) e com um errado (autenticada, e recusada
+pelo IVR).
+
+```bash
+make bootstrap     # gera VOICE_CENTRAL_PASSWORD, DATA_ENCRYPTION_KEYS e o tronco da central
+make compose-up    # recusa arrancar se o bootstrap for anterior a isto
+make compose-voice-check
+# À mão, do PBX:  channel originate PJSIP/+244222000001@meet-central extension <PIN>@prova-pin
+```
+
+Um laboratório criado antes disto precisa de `make bootstrap` outra vez (não muda os
+segredos que já tem) e de `make compose-down && make compose-up`.
 
 ## Segurança (não-negociável)
 - **SRTP obrigatório**, sem fallback: quem recusa com `488` uma chamada em claro é a
