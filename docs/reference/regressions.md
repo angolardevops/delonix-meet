@@ -2961,3 +2961,38 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 - Um instante depois do F5 a lista mostra o lugar reservado da própria pessoa como se fosse outra, até a reclamação do lugar terminar — acontece também a membros, e o teste passou a esperar pelo nome certo em vez de por «dois retratos».
 
 **Ficheiros.** `web/src/convidado.ts`, `web/src/pages/PortaDeConvidado.tsx`, `web/src/pages/auth/EntradaDeConvidado.tsx`, `web/src/App.tsx`, `web/src/components/PresenceProvider.tsx`, `web/src/room/useCallSession.ts`, os ficheiros da sala que liam `currentUser()`, `web/src/room/ControlBar.tsx`, `web/src/room/PeoplePanel.tsx`, `web/src/locales/*/auth.ts`, `web/e2e/convidado-ecra.mjs`, `.github/workflows/ci.yml`.
+
+### R291 — A telefonia de troncos só existia numa pasta de prova: a instalação que corre não registava um tronco nem recebia um CDR
+
+**Sintoma.** O servidor tem troncos, plano de marcação, custo e registos de chamada desde o #136 (ADR-0009), e a consola deixa criar um tronco. O FreeSWITCH que o compose, o cluster e o chart arrancam não sabia de nada disso: o `xml_curl.conf.xml` distribuído só tinha os dois bindings dos ramais, o `mod_json_cdr` não estava carregado, e o perfil `external` não pedia gateways ao servidor. O binding `freeswitch-config`, o `json_cdr.conf.xml` e o perfil com os troncos viviam só em `voice/freeswitch/telefonia-prova/`, montados à mão sobre uma configuração que não está no repo. Um tronco criado na consola nunca se registava em lado nenhum (plano de lacunas, T1).
+
+**Regra.**
+- **O binding dos troncos está no `xml_curl.conf.xml` distribuído** (`delonix_telefonia`, `dialplan|directory`), DEPOIS dos dois dos ramais: um «not found» passa a pergunta ao seguinte, e este responde «not found» a tudo o que não seja seu.
+- **Os troncos são gateways do perfil `external`** — o que o bordo já usa e o que o servidor nomeia por omissão. O arranque TROCA o `<domain name="all">` da vanilla por `<domain name="delonix-trunks">`. Trocar, não acrescentar: o `all` também chega ao servidor, e com os dois a lista era lida duas vezes (medido: duas linhas «Ignoring duplicate gateway» por tronco e por ciclo). O comentário do `telephony_fs_xml.rs` que dizia que o `all` só lia o directório estático estava errado e foi corrigido.
+- **O `mod_json_cdr` carrega no arranque** e entrega os registos em `/internal/v1/telephony/call-records`, com o segredo em Basic. Nada em disco enquanto o servidor responde; o que ele não aceitar fica em `cdr-pendentes`, um directório `700` FORA de `/conf` (que é esvaziado a cada arranque).
+- **O FreeSWITCH entrega o registo de TODAS as chamadas, e o servidor escolhe.** Um CDR sem organização E sem tronco — ramal para ramal, o IVR do dial-in, a perna para a ponte da sala — é aceite e ignorado (`204`). Recusá-lo (`422`, como antes) fazia o módulo tentar outra vez e guardar dois ficheiros em disco por chamada, para sempre. Um CDR COM tronco e sem organização continua a ser recusado.
+- **Os troncos voltam a ler-se sozinhos**: um ciclo no arranque manda `sofia profile external rescan` de 60 em 60 s (`DELONIX_TRUNKS_RESCAN_SECS`; `0` desliga). O FreeSWITCH só pergunta pelos gateways quando o perfil arranca — se o servidor não respondia nesse instante ficava sem tronco nenhum, e um tronco novo só aparecia reiniciando-o.
+
+**Portão.** `bash scripts/troncos-prova.sh` — fora do CI (precisa de uma imagem do servidor da árvore), 28 verificações numa réplica com o servidor a sério, o FreeSWITCH arrancado pelo `freeswitch-entrypoint.sh` com os ficheiros que o `compose.yaml` monta, e uma operadora de ensaio. Medido a 2026-10-05, host a carga 4 a 8:
+- um tronco criado PELA API aparece e fica `REGED` na operadora sem reiniciar nada, e a operadora tem o registo;
+- uma chamada pelo plano de marcação sai por ele, e o registo chega: atendida, de saída, 5 s facturáveis, **9,40 AOA** (o preço do tronco, ao minuto), **MOS 4,50**, jitter e perda medidos; a API mostra-o ao administrador;
+- ocupado fica `busy` sem custo; o 112 sai, fica marcado como emergência e não é gravado;
+- um número sem regra não sai e não deixa registo;
+- uma chamada ao IVR do dial-in não deixa registo nem ficheiro em disco — **controlo negativo: com um servidor sem a regra do `204` ficam dois ficheiros, e a prova falha**;
+- reiniciar o FreeSWITCH: o tronco volta; reiniciá-lo com o servidor EM BAIXO: arranca sem tronco (controlo), e o tronco regista-se sozinho quando o servidor volta;
+- sem servidor o registo de uma chamada fica em disco (controlo do «nada por entregar»); com ele, nenhum; quatro chamadas por tronco, quatro registos;
+- nem o segredo de voz nem a password do tronco aparecem no `freeswitch.log` nem no directório de logs.
+
+No CI: `tests/telephony.rs` (o `204`, e que nada fica guardado), `check-fs-xml.sh`, e — no workflow da imagem do FreeSWITCH — `softphone-prova.sh srtp-real` e `srtp-cluster`, que passaram a medir que os registos chegam com o segredo em Basic e que **nenhum leva o PIN marcado** (`digits_dialed` fica vazio com `sensitive_dtmf`, medido no 1.11.3). As duas correram em local com a configuração nova: os ramais e o dial-in continuam a recusar chamadas sem SRTP.
+
+**O que NÃO está provado.**
+- **Ninguém marca.** A chamada da prova nasce dentro do FreeSWITCH (`originate loopback/…/delonix-outbound`), já com a organização. Na configuração distribuída nenhum perfil leva um ramal ou uma central ao contexto `delonix-outbound`: um cliente ainda NÃO consegue fazer uma chamada para a rede pública (T2). O que ficou ligado é o caminho de saída e o registo, não a porta de entrada.
+- **Um tronco ALTERADO ou APAGADO não se actualiza.** O `rescan` só acrescenta. Mudar a password ou desactivar um tronco precisa de `killgw`, que o servidor manda pelo ESL — fechado em loopback nesta configuração (T11). Até lá é reiniciar o FreeSWITCH: **um passo manual no caminho do cliente, por fechar.** Pela mesma razão a consola não mostra o estado do registo, e a «chamada de teste» não funciona.
+- **O cluster e o chart.** A lista de ficheiros do cluster (`cluster-voice.sh`) passou no `srtp-cluster`, mas nenhuma chamada por tronco correu num cluster, e o chart não foi renderizado em local (não há `helm` nesta máquina — fica para o CI).
+- **Uma operadora de verdade**: TLS, SRTP, NAT de media, DTMF, identidade do chamador, e uma chamada que ENTRA por um tronco registado (T3 a T6). A operadora de ensaio é o FreeSWITCH vanilla na mesma rede.
+- **O ruído do ciclo.** Cada `rescan` escreve uma linha de aviso por tronco que já existe: com cem troncos são cem linhas por minuto. Abrir o ESL ao servidor (T11) deixa o ciclo servir só para o arranque.
+- **Os registos pendentes não se reenviam sozinhos**, e não sobrevivem ao contentor — é um ficheiro por registo, à espera de alguém.
+- **O ADR-0009 continua «Proposto»**: esta entrada liga o que ele descreve, não o aceita.
+- A custo: 5 s de chamada custam o minuto inteiro (9,40 AOA). É a regra que já lá estava (`cost.rs`), não foi mexida; o incremento configurável é o T12.
+
+**Ficheiros.** `voice/cluster/freeswitch-entrypoint.sh`, `voice/freeswitch/autoload_configs/xml_curl.conf.xml`, `voice/freeswitch/autoload_configs/json_cdr.conf.xml`, `compose.yaml`, `scripts/cluster-voice.sh`, `deploy/helm/delonix-meet/templates/voice.yaml`, `deploy/helm/delonix-meet/files/voice/freeswitch/json_cdr.conf.xml`, `voice/pbx-tronco-prova/compose.yaml`, `server/src/telephony_cdr.rs`, `server/src/telephony_fs_xml.rs`, `server/tests/telephony.rs`, `scripts/troncos-prova.sh`, `voice/troncos-prova/`, `scripts/softphone-prova.sh`.

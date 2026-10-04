@@ -16,8 +16,12 @@
 //!   `limit_execute` para os canais máximos — excepto na emergência, que nunca
 //!   é travada por limite de canais —, gravação só quando a regra o diz).
 //! - `section=directory`, `purpose=gateways`: os gateways de todos os troncos
-//!   activos (o perfil sofia usa `<domain name="delonix-trunks" parse="true"/>`; `all` só lê o directório estático), com a
-//!   password decifrada — por isso só no listener interno e com o segredo.
+//!   activos, com a password decifrada — por isso só no listener interno e
+//!   com o segredo. O perfil sofia pede-os com
+//!   `<domain name="delonix-trunks" parse="true"/>`, e SÓ com esse: o
+//!   `<domain name="all">` da vanilla também chega aqui, e com os dois a lista
+//!   é lida duas vezes a cada `rescan` (R291). O arranque distribuído troca um
+//!   pelo outro (`voice/cluster/freeswitch-entrypoint.sh`, passo 7b).
 //!
 //! Autenticação: `VOICE_INTERNAL_SECRET` por HTTP Basic (`gateway-credentials`).
 

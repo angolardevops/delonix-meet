@@ -1,0 +1,36 @@
+<!--
+  Plano de marcação da operadora de ENSAIO (voice/troncos-prova/). Uma conta
+  registada cai no contexto "default": termina em 000 dá ocupado, termina em
+  503 recusa, 112 e o resto atendem com um tom durante uns segundos, para a
+  perna do tronco receber áudio e o registo de chamada trazer a qualidade.
+-->
+<include>
+  <context name="default">
+    <extension name="ocupado">
+      <condition field="destination_number" expression="000$">
+        <action application="respond" data="486 Busy Here"/>
+      </condition>
+    </extension>
+    <extension name="recusa">
+      <condition field="destination_number" expression="503$">
+        <action application="respond" data="503 Service Unavailable"/>
+      </condition>
+    </extension>
+    <extension name="atende">
+      <condition field="destination_number" expression="^\+?\d+$">
+        <action application="ring_ready"/>
+        <action application="sleep" data="300"/>
+        <action application="answer"/>
+        <action application="playback" data="tone_stream://%(5000,0,440)"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+  </context>
+  <context name="public">
+    <extension name="sem-conta">
+      <condition field="destination_number" expression="^.*$">
+        <action application="respond" data="403 Forbidden"/>
+      </condition>
+    </extension>
+  </context>
+</include>

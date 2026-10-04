@@ -272,6 +272,27 @@ se o Linphone confia numa raiz instalada pelo utilizador ao descarregar a config
 browser do telemóvel abrir e o Linphone recusar o certificado, é isso. O cluster local não
 serve para esta prova: não está exposto à rede local.
 
+### Os troncos na configuração que corre (R291) — a saída está ligada, a entrada não
+
+Até 2026-10-05 a telefonia de troncos só existia em `voice/freeswitch/telefonia-prova/`.
+Agora o `voice/cluster/freeswitch-entrypoint.sh` liga-a no compose, no cluster e no chart:
+
+- o binding `delonix_telefonia` do `xml_curl.conf.xml` (gateways e o contexto
+  `delonix-outbound`), depois dos dois dos ramais;
+- os troncos como gateways do perfil `external`, pelo domínio `delonix-trunks` — que
+  SUBSTITUI o `all` da vanilla (com os dois a lista lia-se duas vezes);
+- o `mod_json_cdr` (`json_cdr.conf.xml`): o FreeSWITCH entrega o registo de TODAS as
+  chamadas, e o servidor aceita e ignora (`204`) as que não têm organização nem tronco;
+- um ciclo de `sofia profile external rescan` (`DELONIX_TRUNKS_RESCAN_SECS`, 60 s): um
+  tronco novo regista-se sozinho, e um arranque com o servidor em baixo recupera.
+
+**Não o dês por feito além disto:** nenhum perfil leva um ramal ou uma central ao
+`delonix-outbound` — um cliente ainda não faz uma chamada para a rede pública (T2); um
+tronco alterado ou apagado só se actualiza reiniciando o FreeSWITCH, porque o `killgw` vai
+pelo ESL, fechado em loopback (T11) — e por isso a consola não mostra o estado do registo
+nem faz a «chamada de teste»; nenhuma operadora de verdade, e nenhuma chamada por tronco
+num cluster.
+
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
 Mandar e receber RTP cifrado com uma chave dada **por fora**, para um par UDP arbitrário,
@@ -289,6 +310,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | O caminho da media | `cargo test --lib ponte_telefone_sala -- --nocapture` (R221 — imprime atraso por sentido, mix-minus e CPU por chamada) |
 | O censo e o `ForceMute` | `cargo test --lib force_mute_cala_o_telefone_na_perna` (R224 — o tom desaparece e **volta**) |
 | O palco (`Spotlight`, `StageControl`, `pinned`) | `cargo test --lib destacar_fixa_o_audio_no_sfu` e `cargo test --lib palco_impede_o_selector -- --nocapture` (R225 — suprimido, e fixado **volta**) |
+| Os troncos no arranque do FreeSWITCH (`freeswitch-entrypoint.sh`, `xml_curl.conf.xml`, `json_cdr.conf.xml`, a ingestão de CDR) | `bash scripts/troncos-prova.sh` — **fora do CI** (R291: tronco registado numa operadora de ensaio, chamada com custo e MOS, reinícios, e o controlo do `204`); mais `softphone-prova.sh srtp-real` |
 | Troncos, plano de marcação, CDR, custo, credenciais | `cargo test --release --test telephony -- --test-threads=4` contra Postgres real (14 casos; precisa de `DATABASE_URL`) + os unitários do domínio |
 | Uma rota `/telephony` | os portões de `delonix-meet-api`, com o caso negativo em `web/e2e/isolamento.mjs` |
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
@@ -319,7 +341,11 @@ FS_ESL_ADDR=127.0.0.1:8221 FS_ESL_PASSWORD=$(cat .fs-canais/esl-password.txt) \
 bash scripts/fs-canais.sh down
 ```
 
-**A telefonia (ADR-0009):** o comando está em
+**Os troncos na configuração distribuída (R291):** `bash scripts/troncos-prova.sh`, com
+`SERVER_IMAGE` (a do `make image`) ou `SERVER_BIN=<binário da árvore>`. Ergue uma réplica
+própria, mede e desmonta; não toca no laboratório.
+
+**A telefonia com o ESL (ADR-0009):** o comando está em
 [`voice/freeswitch/telefonia-prova/README.md`](../../../voice/freeswitch/telefonia-prova/README.md)
 e no cabeçalho de `server/tests/telephony_freeswitch.rs` (`FS_ESL_ADDR`, `FS_ESL_PASSWORD`,
 `FS_GW_DOWN`, `FS_GW_UP`; o servidor com `TELEPHONY_ESL_ADDR`/`TELEPHONY_ESL_PASSWORD` e

@@ -784,6 +784,24 @@ async fn cdr_ingestion_idempotent_priced_at_time_of_call_listed_and_summed(db: s
         (st, e["code"].as_str()),
         (422, Some("telephony.cdr_org_unresolved"))
     );
+    // Sem organização E sem tronco não é uma chamada da telefonia (ramal para
+    // ramal, o IVR do dial-in): aceita-se, para o FreeSWITCH não a reenviar
+    // nem a guardar em disco, e não se regista nada.
+    let mut interna = orphan.clone();
+    interna["variables"]["uuid"] = json!("call-interna");
+    interna["variables"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sip_gateway_name");
+    let (st, _) = ingest(&app, Some(&auth), &interna).await;
+    assert_eq!(st, 204);
+    let guardadas: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM telephony_call_records WHERE source_call_id IN ('call-x', 'call-interna')",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(guardadas, 0);
     // Um tronco de B num CDR de A não é atribuído a A.
     let (st, _) = ingest(
         &app,

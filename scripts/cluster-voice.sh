@@ -51,6 +51,7 @@ cm freeswitch-meet \
   --from-file=voice/freeswitch/dialplan/default/00_delonix_extensions.xml \
   --from-file=voice/freeswitch/autoload_configs/conference.conf.xml \
   --from-file=voice/freeswitch/autoload_configs/xml_curl.conf.xml \
+  --from-file=voice/freeswitch/autoload_configs/json_cdr.conf.xml \
   --from-file=voice/freeswitch/sip_profiles/internal.xml \
   --from-file=voice/freeswitch/scripts/dialin_ivr.lua \
   --from-file=voice/freeswitch/scripts/ramais_dial.lua

@@ -48,7 +48,7 @@ metadata:
   labels:
     {{- include "dm.labels" . | nindent 4 }}
 data:
-  {{- range $nome := list "00_delonix_dialin.xml" "00_delonix_extensions.xml" "conference.conf.xml" "xml_curl.conf.xml" "internal.xml" "dialin_ivr.lua" "ramais_dial.lua" }}
+  {{- range $nome := list "00_delonix_dialin.xml" "00_delonix_extensions.xml" "conference.conf.xml" "xml_curl.conf.xml" "json_cdr.conf.xml" "internal.xml" "dialin_ivr.lua" "ramais_dial.lua" }}
   {{ $nome }}: |
     {{- $.Files.Get (printf "files/voice/freeswitch/%s" $nome) | nindent 4 }}
   {{- end }}

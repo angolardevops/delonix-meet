@@ -571,6 +571,9 @@ SH
   else bad "o FreeSWITCH registou «Crypto not negotiated but required» ${v:-0} vez(es), não duas"; fi
 
   echo "6) o segredo de voz chega ao servidor em cabeçalhos, e não fica no log (R227)"
+  # Os registos de chamada (mod_json_cdr) saem quando a chamada ACABA: os
+  # softphones foram removidos sem desligar, por isso desliga-se tudo aqui.
+  fs_cli_cluster "hupall" >/dev/null; sleep 4
   docker exec "${TAG}-dir" sh -c 'cat /pedidos-8180 /pedidos-8181 2>/dev/null' | tr -d '\r' > "$d/pedidos"
   while IFS='|' read -r veredicto texto; do
     if [ "$veredicto" = ok ]; then ok "$texto"; else bad "$texto"; fi
@@ -612,6 +615,26 @@ for caminho, quem, corpo in (("/internal/v1/voice/ivr/resolve-extension", "ramai
     certo = bool(tem) and tem.group(1) == segredo and json_ok and (corpo is None or ('"pin":"%s"' % corpo) in b)
     sai(certo, "%s: o pedido chega com X-Voice-Secret e o corpo JSON%s" % (quem, " com o PIN marcado" if corpo else "")
         if certo else "%s: o pedido a %s não chegou como devia (X-Voice-Secret, Content-Type ou corpo)" % (quem, caminho))
+
+# Os registos de chamada (mod_json_cdr). Um registo leva TODAS as variáveis do
+# canal: o segredo vai em Basic como no directório, e o PIN que alguém marcou
+# não pode ir lá dentro — nem como `digits_dialed`, nem de outra maneira.
+# O módulo acrescenta «?uuid=<a chamada>» ao endereço.
+cdrs = [b for b in blocos if re.match(r"POST /internal/v1/telephony/call-records[? ]", b)]
+def basic_certo(b):
+    m = re.search(r"(?mi)^Authorization: Basic (\S+)$", b)
+    try:
+        return bool(m) and base64.b64decode(m.group(1)).decode().split(":", 1)[1] == segredo
+    except Exception:
+        return False
+sai(bool(cdrs) and all(basic_certo(b) for b in cdrs),
+    "registos de chamada (mod_json_cdr): %d entregues, todos com o segredo em Authorization: Basic" % len(cdrs)
+    if cdrs and all(basic_certo(b) for b in cdrs)
+    else "registos de chamada (mod_json_cdr): %d entregues; nem todos (ou nenhum) com o segredo em Authorization: Basic" % len(cdrs))
+com_pin = [b for b in cdrs if pin in b.split("\n\n", 1)[-1]]
+sai(bool(cdrs) and not com_pin,
+    "nenhum dos %d registos de chamada leva o PIN marcado" % len(cdrs) if cdrs and not com_pin
+    else "%d dos %d registos de chamada levam o PIN marcado" % (len(com_pin), len(cdrs)))
 PY
   )
   v=$(docker exec "${TAG}-fs" grep -ac "$segredo" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
