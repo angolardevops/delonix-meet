@@ -326,6 +326,14 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 
 ## Ponte telefone↔sala (ADR-0010) — ligada
 
+> **No compose e no cluster locais a ponte está DESLIGADA** (medido a 2026-10-04): o servidor
+> regista «`PHONE_BRIDGE_SIP_BIND` não configurado» e o dial-in cai na conferência local, por isso
+> um ramal que marca `8000` + PIN **não aparece na sala do browser**. Ligá-la exige `PHONE_BRIDGE_FREESWITCH_IPS`
+> com **IPs exactos** e `PHONE_BRIDGE_RTP_IP` com o IP do próprio servidor, e o `delonix compose`
+> recusa sub-redes fixas (`ipam:`) e dá um IP novo a cada recriação (4 amostras seguidas, nunca o
+> mesmo); o chart do Helm também não o resolve (ver o «Achado» em `deploy/helm/delonix-meet/README.md`).
+> A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
+
 Quem entra por telefone é um **participante da sala**: fala e ouve os
 participantes WebRTC. O caminho é o que o FreeSWITCH de stock sabe percorrer:
 o IVR valida o PIN, o control plane devolve `room_bridge` (para onde fazer

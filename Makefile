@@ -786,7 +786,14 @@ compose-info: ## URLs e acessos de administração da simulação de produção
 	  t() { sed -n "s/^$$1=//p" deploy/compose/generated/sala-telefone.txt; }; \
 	  printf "$(G)  Entrar numa reunião por telefone$(Z)   sala %s\n" "$$(t sala)"; \
 	  printf "     de um ramal  marcar 8000 e depois o PIN %s seguido de #\n" "$$(t pin)"; \
-	  printf "     no browser   https://$(MEET_HOST):8443/#/r/%s\n" "$$(t sala)"; \
+	  if grep -q 'PHONE_BRIDGE_SIP_BIND' compose.yaml; then \
+	    printf "     no browser   https://$(MEET_HOST):8443/#/r/%s\n" "$$(t sala)"; \
+	  else \
+	    printf "     $(Y)ponte telefone↔sala DESLIGADA neste compose$(Z): o PIN é aceite, mas a chamada cai numa conferência\n"; \
+	    printf "     SÓ de telefones e o ramal NÃO aparece na sala do browser (medido a 2026-10-04: o servidor regista\n"; \
+	    printf "     «PHONE_BRIDGE_SIP_BIND não configurado»). Ligá-la exige IPs exactos que este motor muda a cada arranque.\n"; \
+	    printf "     sala (sem o telefone)  https://$(MEET_HOST):8443/#/r/%s\n" "$$(t sala)"; \
+	  fi; \
 	fi; \
 	printf "\n  Estado: make compose-ps   ·   Prova da voz: make compose-voice-check\n"
 # O QR do Linphone é um URL https que o TELEMÓVEL abre; `meet.ngolacloud.local` é
