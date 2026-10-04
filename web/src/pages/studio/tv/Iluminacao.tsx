@@ -6,9 +6,9 @@
  * luminância MEDIDA nos dois monitores, e o equilíbrio de brancos entre
  * câmaras pelo cinzento médio.
  *
- * O que é do agente local de iluminação (DMX por Art-Net, Philips Hue): os
- * aparelhos e as cenas de luz. Sem agente ligado o ecrã diz isso — não
- * desenha aparelhos que não existem.
+ * O que é do agente local de iluminação: os aparelhos e as cenas de luz. O
+ * agente não existe — o ecrã diz «sem agente» e não nomeia protocolos que
+ * nenhum código fala (o portão `check-capability-claims.sh` recusa-os).
  */
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -117,12 +117,10 @@ export default function Iluminacao({ s, c }: PropsDoEcra) {
               <h2 id="tv-aparelhos-h" className="tv-t1" style={{ fontSize: 12 }}>
                 {t('tv.luz.aparelhos')}
               </h2>
-              <span className="tv-mono-9">{t('tv.luz.aparelhosDica')}</span>
             </div>
             <div className="tv-vazio" data-tv="aparelhos-vazio">
               <strong>{t('tv.luz.semAgente')}</strong>
               <span>{t('tv.luz.semAgenteNota')}</span>
-              <span className="tv-mono-9">{t('tv.luz.protocolos')}</span>
             </div>
           </section>
         </section>

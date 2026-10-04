@@ -719,6 +719,7 @@ compose-up: ## Simulação de produção (compose.yaml); LAN_IP=<ip> expõe os r
 	@if [ -n "$(LAN_IP)" ]; then \
 	  LAN_IP=$(LAN_IP) bash scripts/compose-lan.sh > deploy/compose/generated/lan.yaml && \
 	  printf "   ramais expostos na rede local em $(Y)$(LAN_IP):5070$(Z) (áudio em 20000–20100/udp)\n" && \
+	  printf "   borda na rede local em $(Y)https://$(LAN_IP):8443$(Z); raiz de laboratório para o telemóvel: $(Y)http://$(LAN_IP):8080/lab-ca.crt$(Z)\n" && \
 	  $(COMPOSE) up $(COMPOSE_P) -f $(ROOT)/deploy/compose/generated/lan.yaml -d; \
 	else \
 	  $(COMPOSE) up $(COMPOSE_P) -d; \

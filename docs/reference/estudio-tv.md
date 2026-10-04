@@ -13,6 +13,13 @@ Postgres e servidor reais e casos de isolamento em `web/e2e/isolamento.mjs`. A 5
 deste texto **não existe em nenhum ramo** — nem na `main`, nem na `feat/console-ui-template`.
 Este ficheiro é o único texto do contrato; não há segunda cópia a divergir.
 
+**Re-medido a 2026-10-04 sobre a `develop`:** a pasta `studio-agent/` (§0 e §8) **não
+existe em nenhum ramo de `origin`** — o agente local de iluminação e os adaptadores
+Art-Net e Hue que o §8.3 dá como «provados» não estão no repositório. E nenhum ecrã
+consome as rotas `/api/orgs/{org_id}/studios…` das secções `FEITO`: no web há zero
+chamadas (plano de lacunas, TV1). Lê `FEITO` como «o servidor tem a rota e o teste»,
+não como «o operador consegue usar».
+
 > **Estado.** Cada secção diz se está `CONTRATO` (acordado, por implementar), `FEITO` (commitado e com teste) ou
 > `EXTERNAL` (depende de hardware que não existe nesta máquina). A UI só consome o que
 > está `FEITO`. O OpenAPI gerado (`docs/reference/openapi/bff.json` e

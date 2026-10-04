@@ -114,19 +114,19 @@ Exportar dados do Zoom/Teams/Meet para outro sistema é difícil por design.
 
 | Funcionalidade | Zoom | Teams | Meet | Status Delonix |
 |---|---|---|---|---|
-| Entrada de convidado SEM conta | ✅ | ✅ | ✅ | **Não existe — é o bloqueio nº 1 à adopção.** `join_room` exige `AuthUser` (`server/src/rooms.rs:480`); o papel `guest` é convidado da agenda e também precisa de conta. Ver [adopção vs concorrência](adopcao-vs-concorrencia.md), alavanca 1 |
-| PSTN dial-in | ✅ | ✅ | ✅ | **Existe** desde o #130: um telefone entra na reunião e ouve e é ouvido ([ADR-0010](adr/0010-ponte-telefone-sala.md), R221/R222), medido contra um FreeSWITCH real. Falta a cadeia com operadora e Kamailio, e os troncos/CDR por portar |
-| App mobile nativa | ✅ | ✅ | ✅ | Flutter em progresso |
-| SSO OIDC | ✅ | ✅ | ✅ | **Implementado** (`auth.rs`, rotas `/sso/check\|login\|callback`, tabela `org_sso_configs`) — não é stub |
+| Entrada de convidado SEM conta | ✅ | ✅ | ✅ | **Meio feito — continua a ser o bloqueio nº 1 à adopção.** O servidor tem a rota pública `POST /api/rooms/{room_code}/guest-join` (`server/src/guests.rs`) e o cliente tem `guestJoin` (`web/src/api.ts`), mas **nenhum ecrã a chama**: quem não tem sessão é mandado para o Login (`web/src/App.tsx`). Medido a 2026-10-04; ver o plano de lacunas de 2026-10-04 (`docs/plano-lacunas-2026-10-04.md`), item E1 |
+| PSTN dial-in | ✅ | ✅ | ✅ | **Existe** desde o #130: um telefone entra na reunião e ouve e é ouvido ([ADR-0010](adr/0010-ponte-telefone-sala.md), R221/R222), medido contra um FreeSWITCH real. Falta a cadeia com operadora e Kamailio. Os troncos, o plano de marcação e o CDR estão no servidor (#136), mas a configuração que o compose, o cluster e o chart distribuem **não os liga** — só `voice/freeswitch/telefonia-prova/` (plano de lacunas, T1) |
+| App mobile nativa | ✅ | ✅ | ✅ | **Não existe neste repositório** (zero projectos nativos, medido a 2026-10-04). Há PWA, sem notificações com a aplicação fechada |
+| SSO OIDC | ✅ | ✅ | ✅ | **Implementado** (`auth.rs`, rotas `/sso/discovery\|authorize\|callback`, tabela `org_sso_configs`) — não é stub |
 | SAML | ✅ | ✅ | ✅ | Não existe |
 | SCIM provisioning | ✅ | ✅ | ✅ | Roadmap |
 | Marketplace/plugins | ✅ | ✅ | ⚠️ | Roadmap |
 | Webinar mode | ✅ | ✅ | ⚠️ | Não planeado (Fase 7+) |
 | Hardware rooms | ✅ | ✅ | ✅ | Não planeado |
 | Live captions (API) | ✅ | ✅ | ✅ | Whisper local (feito) |
-| MLS key agreement | ✅ (Zoom) | ⚠️ | ❌ | Roadmap |
+| MLS key agreement | ✅ (Zoom) | ⚠️ | ❌ | Roadmap. `server/src/mls.rs` é desenho, sem rota montada nem cliente — a E2EE é chave partilhada AES-GCM (`web/src/e2ee.ts`) |
 | Remote desktop control | ✅ | ✅ | ❌ | **Recusado até haver agente nativo** — o handshake de sinalização existe e está testado; o encaminhamento de input não existe e NÃO PODE existir só no browser (ver `web/src/capabilities.ts` e R109) |
-| DLP / information protection | ❌ (⚠️Teams) | ✅ | ❌ | Roadmap |
+| DLP / information protection | ❌ (⚠️Teams) | ✅ | ❌ | **Existe, estreito** (`server/src/dlp.rs`, ligado ao chat, às actas, às transcrições e às gravações): três expressões fixas (cartão, NIF, chave `sk-…`) e máscara de palavrões. Sem política por organização, sem registo de ocorrências, sem ficheiros nem ecrã partilhado |
 
 ---
 

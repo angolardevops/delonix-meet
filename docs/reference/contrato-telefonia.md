@@ -3,9 +3,10 @@
 > **Resgatado a 2026-09-30 de uma pasta temporária, onde esteve treze dias.** É o
 > contrato de interface que a frente C escreveu para a frente D, datado de
 > **2026-09-17** e provado contra um FreeSWITCH 1.11.3 real. Entra no repositório
-> porque a frente C **ainda não está portada** (9 772 linhas em
-> `origin/delonix-meet-backend/v3-telecom` e `…/v3-canais`), e este documento é o
-> mapa para a portar — ver a skill `delonix-meet-telefonia`.
+> porque, a 2026-09-30, a frente C ainda não estava portada. **Está desde o #136**
+> (troncos, plano de marcação, CDR e custo no servidor); o que continua por fazer é
+> ligá-la na configuração que se distribui e dar consumidor à frente D — ver a skill
+> `delonix-meet-telefonia`, «O que NÃO tem consumidor».
 >
 > **O que mudou desde que foi escrito, e o texto abaixo não sabe:**
 >

@@ -356,17 +356,27 @@ foi retirado a 2026-10-04: nunca correu. A voz sobe pelo `compose.yaml` e pelo c
 local, os dois com a imagem do repo e o mesmo arranque
 (`voice/cluster/freeswitch-entrypoint.sh`).
 
-## O que NÃO está na `main`, e porquê
+## O que NÃO tem consumidor, e porquê
 
-Medido por `grep` em `server/src` e `server/migrations` a 2026-10-03 — os símbolos não
-existem:
+Re-medido por `grep` a 2026-10-04 sobre a `develop` (`974edaae`). A tabela de 2026-10-03
+dizia que estes símbolos e a migração não existiam: **existem na `develop`** (entraram com
+os ramos antigos), mas continuam sem quem os produza.
 
-| Em falta | Porquê ficou de fora |
+| O que existe | O que lhe falta |
 |---|---|
-| `DialOutUpdated`, `SessionCost` (mensagens do WebSocket) e os tipos `DialOutView`/`SessionCostView` | descrevem chamadas de saída e custo por sessão; nada na `main` os produz |
-| A porta do WhatsApp Business | sem consumidor |
-| A migração `room_channels` | o censo de canais vive em memória (`signaling::Seat`) |
-| Os consumidores «frente D» de cinco adaptadores da telefonia | `#[allow(dead_code)]` em `telephony_service.rs:287,301,630,658,682` — custo antes de convidar, `RoomInvite`, canais na sala, SMS com PIN |
+| `DialOutUpdated`, `SessionCost` (mensagens do WebSocket) e os tipos `DialOutView`/`SessionCostView` (`signaling.rs`, `conferencing/channels.rs`) | um produtor: só os testes os emitem, e o web não os lê. A única chamada originada de facto é o tom de teste de 3 s (`telephony_calls.rs`) |
+| A migração `0086_room_channels.sql` | código que leia ou escreva `room_dial_outs`: zero ocorrências em `server/src` |
+| A porta do WhatsApp Business | consumidor |
+| Cinco adaptadores da telefonia «frente D» | `#[allow(dead_code)]` em `telephony_service.rs:287,301,630,658,682` — custo antes de convidar, `RoomInvite`, canais na sala, SMS com PIN |
+
+**E a telefonia de troncos não está ligada na configuração distribuída** (medido a
+2026-10-04). `voice/freeswitch/autoload_configs/xml_curl.conf.xml` só tem as duas bindings
+dos ramais; a binding de `/internal/v1/telephony/freeswitch-config` (gateways e o contexto
+de saída) e o `json_cdr.conf.xml` só existem em `voice/freeswitch/telefonia-prova/`, e o
+`voice/cluster/freeswitch-entrypoint.sh` não copia nenhum dos dois. No compose, no cluster
+e no chart: nenhum gateway é carregado, um ramal não sai para a PSTN, e o único CDR que
+chega é o magro do `dialin_ivr.lua`. É o item T1 do
+plano de lacunas de 2026-10-04 (`docs/plano-lacunas-2026-10-04.md`).
 
 A origem é `origin/delonix-meet-backend/v3-canais` e `…/v3-telecom`. **O
 `git diff --stat origin/main...<branch>` já não mede o que falta**: as branches estão a

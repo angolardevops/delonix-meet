@@ -446,3 +446,28 @@ async fn sem_servidor_sip_ou_origem_publica_nao_se_emite(db: sqlx::PgPool) {
         .unwrap();
     assert_eq!(n, 0);
 }
+
+/// Uma origem `*.local` é mDNS: o telefone não a resolve, e o Linphone falharia
+/// a descarregar sem que o servidor o tivesse avisado. Recusa-se à emissão,
+/// com o mesmo código estável das outras origens que um telefone não alcança.
+#[sqlx::test(migrations = "./migrations")]
+async fn origem_local_mdns_nao_emite_qr(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(
+        db,
+        &[
+            ("VOICE_RAMAIS_PUBLIC_HOST", "sip.exemplo.ao"),
+            ("CORS_ORIGINS", "https://meet.ngolacloud.local:8443"),
+        ],
+    )
+    .await;
+    let a = app.new_org("alfa-qr-local.ao").await;
+    novo_ramal(&app, &a, Some(&a), "1000").await;
+    let (st, body) = emitir_meu(&app, &a).await;
+    assert_eq!(st, 422, "{body}");
+    assert_eq!(body["code"], "ramais.public_url_missing");
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_extension_provisioning_tickets")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "nenhum bilhete fica emitido para um QR inútil");
+}

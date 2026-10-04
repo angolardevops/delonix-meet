@@ -12,15 +12,22 @@
 # ============================================================
 name: CI
 
+# A `develop` é a branch default e é para onde as PRs fundem: sem `push` nela, o
+# commit FUNDIDO nunca era medido — só a cabeça de cada PR, antes de se juntar às
+# outras (medido a 2026-10-04: a cabeça da develop não tinha corrida nenhuma).
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   workflow_dispatch:
 
+# Cancelar a corrida anterior só faz sentido numa PR, onde o push novo a
+# substitui. Num ramo de integração cada commit fundido tem de ficar com o seu
+# veredicto: com `cancel-in-progress: true` em todo o lado, três commits da
+# `main` ficaram sem CI concluído porque a fusão seguinte cancelou a corrida.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
