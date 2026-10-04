@@ -380,10 +380,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/openapi.json", get(openapi::bff_json))
         .route("/api/v1/openapi.json", get(openapi::v1_json))
         .route("/api/operator/v1/openapi.json", get(openapi::operator_json))
-        .route(
-            "/api/integrations/openapi.json",
-            get(openapi::integrations_json),
-        )
+        .route("/api/integrations/openapi.json", get(openapi::integrations_json))
         .nest("/api/auth", auth_routes)
         .nest("/api/v1", v1_routes)
         .nest("/api/operator/v1", operator_routes)
@@ -444,7 +441,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/users/me/notification-preferences",
-            get(account::get_notification_preferences).put(account::put_notification_preferences),
+            get(account::get_notification_preferences)
+                .put(account::put_notification_preferences),
         )
         .route(
             "/api/users/me/tour",
@@ -559,19 +557,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // (`?room={code}` é a chave de afinidade do balanceador).
         .route("/api/rooms/{room_code}/waiting", get(rooms::room_waiting))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
-        .route(
-            "/api/rooms/{room_code}/invitations",
-            post(rooms::invite_to_room),
-        )
-        .route(
-            "/api/rooms/{room_code}/quality-samples",
-            post(rooms::post_qos),
-        )
+        .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
+        .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
-        .route(
-            "/api/rooms/{room_code}/join-timings",
-            post(rooms::post_timings),
-        )
+        .route("/api/rooms/{room_code}/join-timings", post(rooms::post_timings))
         // Sondagem de rede da pré-entrada (descarga e subida).
         .route(
             "/api/net-probe",
@@ -603,10 +592,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/ai/translations", post(ai::translate_caption))
         // ---- Reuniões, agenda e plano de acção 5W2H ----
         .route("/api/meetings", get(meetings::list).post(meetings::create))
-        .route(
-            "/api/meetings/check-conflicts",
-            post(meetings::check_conflicts),
-        )
+        .route("/api/meetings/check-conflicts", post(meetings::check_conflicts))
         .route(
             "/api/meetings/{meeting_id}",
             get(meetings::get_one)
@@ -614,29 +600,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(meetings::delete),
         )
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
-        .route(
-            "/api/meetings/{meeting_id}/calendar.ics",
-            get(meetings::ics),
-        )
-        .route(
-            "/api/meetings/{meeting_id}/minutes",
-            axum::routing::put(meetings::save_minutes),
-        )
-        .route(
-            "/api/meetings/{meeting_id}/invitees",
-            get(meetings::invitees),
-        )
-        .route(
-            "/api/meetings/{meeting_id}/invitees/me",
-            axum::routing::put(meetings::respond),
-        )
+        .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
+        .route("/api/meetings/{meeting_id}/minutes", axum::routing::put(meetings::save_minutes))
+        .route("/api/meetings/{meeting_id}/invitees", get(meetings::invitees))
+        .route("/api/meetings/{meeting_id}/invitees/me", axum::routing::put(meetings::respond))
         .route(
             "/api/meetings/{meeting_id}/agenda-items",
             get(actions::list_agenda).post(actions::add_agenda_item),
         )
         .route(
             "/api/meetings/{meeting_id}/agenda-items/{item_id}",
-            axum::routing::patch(actions::patch_agenda_item).delete(actions::delete_agenda_item),
+            axum::routing::patch(actions::patch_agenda_item)
+                .delete(actions::delete_agenda_item),
         )
         .route(
             "/api/meetings/{meeting_id}/action-plan",
@@ -648,7 +623,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/meetings/{meeting_id}/action-plan/items/{item_id}",
-            axum::routing::patch(actions::patch_action_item).delete(actions::delete_action_item),
+            axum::routing::patch(actions::patch_action_item)
+                .delete(actions::delete_action_item),
         )
         // ---- Gravações ----
         .route("/api/recordings", get(recordings::library))
@@ -656,14 +632,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/recordings/{recording_id}",
             get(recordings::get_metadata).patch(recordings::update),
         )
-        .route(
-            "/api/recordings/{recording_id}/content",
-            get(recordings::download),
-        )
-        .route(
-            "/api/recordings/{recording_id}/details",
-            get(recordings::details),
-        )
+        .route("/api/recordings/{recording_id}/content", get(recordings::download))
+        .route("/api/recordings/{recording_id}/details", get(recordings::details))
         .route(
             "/api/recordings/{recording_id}/chapters",
             get(recordings::list_chapters).post(recordings::create_chapter),
@@ -706,10 +676,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .put(recordings::create_link)
                 .delete(recordings::revoke_link),
         )
-        .route(
-            "/api/public/recordings/{token}",
-            get(recordings::public_share),
-        )
+        .route("/api/public/recordings/{token}", get(recordings::public_share))
         .route(
             "/api/public/recordings/{token}/content",
             get(recordings::public_share_download),
@@ -718,10 +685,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // miniatura, visualizações, participantes, transcrição. Sem sobreposição
         // com as rotas de `recordings.rs` acima (essas cobrem metadados/chapters/
         // comments/shares) — ver `recording_meta.rs`.
-        .route(
-            "/api/recordings/{recording_id}/publish",
-            post(recording_meta::publish),
-        )
+        .route("/api/recordings/{recording_id}/publish", post(recording_meta::publish))
         .route(
             "/api/recordings/{recording_id}/unpublish",
             post(recording_meta::unpublish),
@@ -779,10 +743,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/whiteboards/{whiteboard_id}",
             get(whiteboards::get_one).delete(whiteboards::delete),
         )
-        .route(
-            "/api/whiteboards/{whiteboard_id}/image",
-            get(whiteboards::png),
-        )
+        .route("/api/whiteboards/{whiteboard_id}/image", get(whiteboards::png))
         // URL assinado da imagem (G11): o `<img>` carrega-o sem sessão.
         .route(
             "/api/whiteboards/{whiteboard_id}/signed-url",
@@ -807,14 +768,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/analytics/quarantine",
             get(meetings::quarantine_analytics),
         )
-        .route(
-            "/api/orgs/{org_id}/branches",
-            get(org::list_branches).post(org::create_branch),
-        )
-        .route(
-            "/api/orgs/{org_id}/members",
-            get(org::list_employees).post(org::add_employee),
-        )
+        .route("/api/orgs/{org_id}/branches", get(org::list_branches).post(org::create_branch))
+        .route("/api/orgs/{org_id}/members", get(org::list_employees).post(org::add_employee))
         .route(
             "/api/orgs/{org_id}/members/{user_id}",
             axum::routing::patch(org::update_employee).delete(org::remove_employee),
@@ -826,10 +781,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/users/bulk-actions",
             post(directory::bulk_actions),
         )
-        .route(
-            "/api/orgs/{org_id}/users/imports",
-            post(directory::import_users),
-        )
+        .route("/api/orgs/{org_id}/users/imports", post(directory::import_users))
         .route(
             "/api/orgs/{org_id}/invitations",
             get(directory::list_invitations).post(directory::create_invitation),
@@ -861,24 +813,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(directory::delete_department),
         )
         .route("/api/orgs/{org_id}/seats", get(directory::seats))
-        .route(
-            "/api/orgs/{org_id}/seats/release",
-            post(directory::release_seats),
-        )
-        .route(
-            "/api/orgs/{org_id}/provisioning",
-            get(directory::provisioning),
-        )
+        .route("/api/orgs/{org_id}/seats/release", post(directory::release_seats))
+        .route("/api/orgs/{org_id}/provisioning", get(directory::provisioning))
         .route(
             "/api/orgs/{org_id}/entry-rules",
             get(directory::get_entry_rules).put(directory::put_entry_rules),
         )
         // ---- Papéis e permissões (ADR-0008) ----
         .route("/api/capabilities", get(roles::catalog))
-        .route(
-            "/api/orgs/{org_id}/roles",
-            get(roles::list_roles).post(roles::create_role),
-        )
+        .route("/api/orgs/{org_id}/roles", get(roles::list_roles).post(roles::create_role))
         .route(
             "/api/orgs/{org_id}/roles/{role_id}",
             get(roles::get_role)
@@ -920,19 +863,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/sod-rules/{rule_id}/risk-acceptances",
             post(roles::accept_risk),
         )
-        .route(
-            "/api/orgs/{org_id}/sod-violations",
-            get(roles::sod_violations),
-        )
-        .route(
-            "/api/orgs/{org_id}/role-conflicts",
-            get(roles::list_role_conflicts),
-        )
+        .route("/api/orgs/{org_id}/sod-violations", get(roles::sod_violations))
+        .route("/api/orgs/{org_id}/role-conflicts", get(roles::list_role_conflicts))
         .route(
             "/api/orgs/{org_id}/role-conflicts/{conflict_id}/resolve",
             post(roles::resolve_role_conflict),
         )
-        .route("/api/orgs/{org_id}/approval-requests", get(approvals::list))
+        .route(
+            "/api/orgs/{org_id}/approval-requests",
+            get(approvals::list),
+        )
         .route(
             "/api/orgs/{org_id}/approval-requests/{request_id}",
             get(approvals::get_one),
@@ -948,14 +888,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // IA local do Estúdio (Ollama in-cluster): estado e tarefas sobre a
         // transcrição enviada. Nada se guarda; tecto de tarefas por org.
         .route("/api/orgs/{org_id}/ai/status", get(ai_studio::status))
-        .route(
-            "/api/orgs/{org_id}/ai/suggestions",
-            post(ai_studio::suggestions),
-        )
-        .route(
-            "/api/orgs/{org_id}/groups",
-            get(org::list_groups).post(org::create_group),
-        )
+        .route("/api/orgs/{org_id}/ai/suggestions", post(ai_studio::suggestions))
+        .route("/api/orgs/{org_id}/groups", get(org::list_groups).post(org::create_group))
         .route(
             "/api/orgs/{org_id}/meeting-rooms",
             get(org::list_meeting_rooms).post(org::create_meeting_room),
@@ -972,22 +906,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .put(org::upsert_sso_config)
                 .delete(org::delete_sso_config),
         )
-        .route(
-            "/api/orgs/{org_id}/storage-usage",
-            get(usage::org_storage_usage),
-        )
-        .route(
-            "/api/orgs/{org_id}/api-keys",
-            get(apikeys::list).post(apikeys::create),
-        )
+        .route("/api/orgs/{org_id}/storage-usage", get(usage::org_storage_usage))
+        .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route(
             "/api/orgs/{org_id}/api-keys/{key_id}",
             axum::routing::delete(apikeys::revoke),
         )
-        .route(
-            "/api/orgs/{org_id}/webhooks",
-            get(webhooks::list).post(webhooks::create),
-        )
+        .route("/api/orgs/{org_id}/webhooks", get(webhooks::list).post(webhooks::create))
         .route(
             "/api/orgs/{org_id}/webhooks/{hook_id}",
             get(webhooks::get_one).delete(webhooks::delete),
@@ -1062,18 +987,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/voice/rooms/{voice_room_id}/close",
             post(voice::close_room),
         )
-        .route(
-            "/api/orgs/{org_id}/voice/dids",
-            get(voice::list_dids).post(voice::create_did),
-        )
-        .route(
-            "/api/orgs/{org_id}/voice/call-records",
-            get(voice::list_cdr),
-        )
-        .route(
-            "/api/orgs/{org_id}/voice/billing",
-            get(voice::billing_summary),
-        )
+        .route("/api/orgs/{org_id}/voice/dids", get(voice::list_dids).post(voice::create_did))
+        .route("/api/orgs/{org_id}/voice/call-records", get(voice::list_cdr))
+        .route("/api/orgs/{org_id}/voice/billing", get(voice::billing_summary))
         // ---- Ramais internos (chamada ramal-a-ramal, Fase 1 — ver ramais.rs) ----
         .route(
             "/api/orgs/{org_id}/extensions",
@@ -1090,7 +1006,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // ---- Fase 2: ramal alcançável do PSTN via DID dedicado ----
         .route(
             "/api/orgs/{org_id}/extensions/{id}/did",
-            axum::routing::put(ramais::assign_extension_did).delete(ramais::unassign_extension_did),
+            axum::routing::put(ramais::assign_extension_did)
+                .delete(ramais::unassign_extension_did),
         )
         // Numeração automática: o intervalo da org e a atribuição em massa (R276).
         .route(
@@ -1210,25 +1127,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/telephony/call-records",
             get(telephony_calls::list_call_records),
         )
-        .route(
-            "/api/orgs/{org_id}/telephony/usage",
-            get(telephony_calls::usage),
-        )
+        .route("/api/orgs/{org_id}/telephony/usage", get(telephony_calls::usage))
         .route("/api/orgs/{org_id}/sms/overview", get(sms::overview))
         // Gateway de SMS (ADR-0005): consola da org (sessão, admin).
-        .route(
-            "/api/orgs/{org_id}/sms/gateways",
-            get(sms::list_gateways).post(sms::create_gateway),
-        )
+        .route("/api/orgs/{org_id}/sms/gateways", get(sms::list_gateways).post(sms::create_gateway))
         .route(
             "/api/orgs/{org_id}/sms/gateways/{gateway_id}",
             axum::routing::delete(sms::revoke_gateway),
         )
         .route("/api/orgs/{org_id}/sms/devices", get(sms::list_devices))
-        .route(
-            "/api/orgs/{org_id}/sms/route",
-            get(sms::get_route).put(sms::put_route),
-        )
+        .route("/api/orgs/{org_id}/sms/route", get(sms::get_route).put(sms::put_route))
         // Contactos: telefone por membro e política de quem pode enviar (ADR-0005 §Contactos).
         .route(
             "/api/orgs/{org_id}/members/{user_id}/phone",
@@ -1238,10 +1146,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/sms/policy",
             get(sms::get_policy).put(sms::put_policy),
         )
-        .route(
-            "/api/orgs/{org_id}/sms/messages",
-            get(sms::list_messages).post(sms::send_message),
-        )
+        .route("/api/orgs/{org_id}/sms/messages", get(sms::list_messages).post(sms::send_message))
         .route(
             "/api/orgs/{org_id}/sms/messages/{message_id}",
             get(sms::get_message),
