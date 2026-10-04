@@ -80,7 +80,9 @@ A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Z
 1. Backend Rust a correr com `VOICE_INTERNAL_SECRET` definido; criar um DID + sala de
    voz (obter o número e o PIN) — ver `docs/pstn-dial-in-fase0.md` e o E2E do control plane.
 2. `make voice-images` e `make compose-up` (o `compose.yaml` da raiz; `LAN_IP=<ip>` expõe
-   os ramais à rede local).
+   à rede local os ramais e a borda — esta com um certificado de uma raiz de laboratório,
+   que o telemóvel instala a partir de `http://<ip>:8080/lab-ca.crt` para poder ler o QR do
+   Linphone).
 3. Registar o softphone no Kamailio e "ligar" para o número da sala.
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
    `GET /api/orgs/{org}/voice/call-records`.
