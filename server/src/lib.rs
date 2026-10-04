@@ -695,6 +695,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/public/recordings/{token}", get(recordings::public_share))
         .route(
+            "/api/public/recordings/{token}/access",
+            post(recordings::public_share_access),
+        )
+        .route(
             "/api/public/recordings/{token}/content",
             get(recordings::public_share_download),
         )
