@@ -70,6 +70,7 @@ export default function Fontes({ s, c }: PropsDoEcra) {
                 <span className="tv-dir tv-mono-85">{t('tv.fontes.nDispositivos', { count: s.camaras.length })}</span>
               </div>
               <p className="tv-nota">{t('tv.fontes.usbNota')}</p>
+              <p className="tv-nota" data-tv="usb-telemovel">{t('tv.fontes.usbTelemovel')}</p>
               {s.camaras.length > 0 && (
                 <ul className="tv-dispositivos">
                   {s.camaras.map((d) => {

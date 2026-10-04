@@ -250,6 +250,7 @@ export default {
     ligacoes: 'Ligações',
     usb: 'Câmaras USB',
     usbNota: 'Câmaras e capturadoras que o browser vê nesta máquina.',
+    usbTelemovel: 'Um telemóvel ligado por cabo em modo de ficheiros não conta como câmara: só aparece aqui quando o sistema o vê como webcam.',
     nDispositivos_one: '{{count}} dispositivo',
     nDispositivos_other: '{{count}} dispositivos',
     ligar: 'Ligar',
