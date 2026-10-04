@@ -290,6 +290,14 @@ pub struct Config {
     /// default 2000). O cliente acrescenta jitter por cima — sem isso, uma sala
     /// inteira reconecta no mesmo milissegundo e o pod novo leva com tudo de uma vez.
     pub drain_reconnect_ms: u64,
+    /// Quantos proxies de confiança há entre o cliente e este servidor
+    /// (`TRUSTED_PROXY_HOPS`, default 1). Diz qual entrada do `X-Forwarded-For`
+    /// é o endereço do cliente: a `n`-ésima a contar do FIM, que é a que o
+    /// proxy de fora escreveu. Tudo o que está à esquerda dela veio do cliente
+    /// e não é de confiar — ver `rate_limit::client_ip`. Errar para menos faz
+    /// toda a gente partilhar o endereço de um proxy (e o limite por IP);
+    /// errar para mais devolve a chave ao cliente.
+    pub trusted_proxy_hops: usize,
     /// Pedidos de autenticação aceites por IP e por minuto (`AUTH_RATE_PER_MIN`,
     /// default 20 — o valor que estava escrito no código).
     ///
@@ -605,6 +613,7 @@ impl Config {
             ws_queue_cap: bounded_env(src, "WS_QUEUE_CAP", 512, 32, 65_536),
             nego_queue_cap: bounded_env(src, "NEGO_QUEUE_CAP", 64, 4, 4_096),
             rec_queue_cap: bounded_env(src, "REC_QUEUE_CAP", 2_048, 64, 65_536),
+            trusted_proxy_hops: bounded_env(src, "TRUSTED_PROXY_HOPS", 1, 1, 8),
             auth_rate_per_min: bounded_env(src, "AUTH_RATE_PER_MIN", 20, 5, 10_000),
             guest_join_per_ip_per_min: bounded_env(src, "GUEST_JOIN_PER_IP_PER_MIN", 10, 1, 1_000),
             guest_join_per_room_per_min: bounded_env(

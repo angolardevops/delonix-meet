@@ -222,7 +222,7 @@ pub async fn guest_join(
 ) -> Result<Json<GuestJoinResp>, ApiError> {
     // Travão por IP ANTES de qualquer leitura: é também o que torna caro
     // adivinhar códigos de sala por esta rota.
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     state.guest_ip_limiter.acquire(&ip).map_err(rate_limited)?;
     let name = validate_display_name(&req.display_name)?;
     let room = crate::rooms::find_room(&state.db, &code)

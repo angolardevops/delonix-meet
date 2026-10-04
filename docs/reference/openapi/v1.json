@@ -12116,6 +12116,13 @@
       },
       "UpdateMeReq": {
         "properties": {
+          "current_password": {
+            "description": "A password ACTUAL. Obrigatória com `password`, a não ser que esta\nsessão se tenha reautenticado há menos de 5 minutos\n(`POST /api/users/me/reauthentication`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "locale": {
             "type": [
               "string",

@@ -2767,3 +2767,58 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Por medir, e não o dês por feito.** Um browser na sala (quem ouve a central nesta prova é outro telefone, pela mesma ponte). O `compose.yaml` e o cluster local **não** ligam as centrais. O chart (`voice.centrais`) só foi lido, nunca instalado; o `check-helm.sh` corre no CI. Restringir uma conta a redes de origem não existe. O caminho `delonix-outbound` (`telephony_fs_xml.rs`) continua a decidir a organização pelo domínio do pedido sem o autenticar.
 
 **Ficheiros.** `voice/kamailio/kamailio.cfg`, `voice/freeswitch/scripts/dialin_ivr.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `server/src/telephony_sip.rs`, `server/src/voice.rs`, `server/src/lib.rs`, `server/tests/central_entra_na_sala.rs`, `scripts/check-bordo-central.sh`, `scripts/pbx-tronco-prova.sh` (modo `central`), `scripts/softphone-prova.sh` (`--dominio`, `--rede`), `voice/pbx-tronco-prova/compose.yaml`, `deploy/helm/delonix-meet/` (`voice.centrais`).
+
+### R281 — Um access token roubado trocava a password, e a sessão de quem roubou sobrevivia à troca do dono
+
+**Sintoma.** `PATCH /api/users/me` aceitava `password` só com o access token: sem a password actual, sem reautenticação recente, e sem tocar nas outras sessões. Quem apanhasse um token trocava a password e ficava com a conta; e quando o dono mudava a password por desconfiar de um roubo, a sessão do ladrão continuava a abrir a API até o refresh token expirar. As rotas que alteram os outros factores (MFA, chaves de acesso) já exigiam `sessions::require_recent`; a password, que é o factor principal, não.
+
+**Regra.**
+- Mudar a password pede **prova de identidade**: `current_password` no mesmo pedido (verificada por `auth::check_password_of`, a regra única do login) ou uma reautenticação desta sessão há menos de cinco minutos (`sessions::require_recent`). Sem nenhuma: `403 auth.reauthentication_required`. Prova errada: `401 reauthentication.failed`, com o mesmo travão (cinco em 5 minutos, `reauth:<conta>`) e o mesmo registo (`auth.reauthentication_failed`) da reautenticação — `sessions::failed_proof` é chamado pelas duas.
+- A prova corre **antes de qualquer escrita**: um pedido com `username` e `password` em que a prova falha não deixa o username mudado.
+- Depois de mudar, **todas as outras sessões da conta terminam** (`sessions::revoke_all_except`, a mesma função do `revoke-others`) e fica `auth.password_changed` na auditoria com quantas terminou. A sessão do pedido continua.
+- A conta gerida pelo Odoo continua a recusar primeiro (`409 profile.field_managed_by_odoo`).
+- Na consola, o campo «palavra-passe actual» aparece quando se escreve uma nova (`SettingsDialog.tsx`), nas quatro línguas.
+
+**Portão.** `server/tests/account_sessions.rs`: `changing_the_password_needs_proof_and_ends_the_other_sessions` (sem prova `403` e sem escrita parcial; prova errada `401` e a password antiga continua; prova certa `200`, a outra sessão dá `401 auth.session_revoked` e o refresh dela `401`, a própria continua; a antiga deixa de entrar e a nova entra; uma linha de cada evento na auditoria) e `a_recent_reauthentication_is_proof_enough_to_change_the_password`.
+
+**O que NÃO está provado.**
+- Nenhum browser abriu o diálogo de definições depois da mudança.
+- Um access token **anterior às sessões** (sem `sid`) termina TODAS as sessões ao mudar a password, e ele próprio continua válido até expirar: não tem sessão que se possa terminar.
+- O motivo gravado em `user_sessions.revoked_reason` é `user_revoked_others` — o `CHECK` da 0078 não tem um valor próprio para a mudança de password, e acrescentá-lo pedia uma migração. Distingue-se pelo evento de auditoria.
+- Não há reposição de password para quem a esqueceu (plano de lacunas, E3).
+
+**Ficheiros.** `server/src/users.rs`, `server/src/sessions.rs`, `server/tests/account_sessions.rs`, `web/src/api.ts`, `web/src/components/SettingsDialog.tsx`, `web/src/locales/*/shell.ts`.
+
+### R282 — O limite por IP usava o valor do `X-Forwarded-For` que o cliente escreveu
+
+**Sintoma.** `rate_limit::client_ip` devolvia o PRIMEIRO valor do `X-Forwarded-For` quando o peer era um proxy privado. Os proxies deste repo acrescentam (`$proxy_add_x_forwarded_for` no compose, no Nginx de VPS e no da web): o que o cliente manda fica à esquerda, o endereço real à direita. Um pedido com `X-Forwarded-For: <qualquer coisa>` escolhia a sua própria chave nos limites de autenticação, de convidado sem conta, de chaves de acesso e de emparelhamento do estúdio — e o IP gravado na sessão e na auditoria era o inventado.
+
+**Regra.** O endereço do cliente é a entrada que o proxy de fora escreveu: a `TRUSTED_PROXY_HOPS`-ésima a contar do **fim** (default 1; `Config::trusted_proxy_hops`, de 1 a 8). Com menos entradas do que saltos usa-se a mais à esquerda que houver; um valor que não é um endereço IP nunca é chave (cai para o IP da ligação); numa ligação directa (peer público) o cabeçalho continua a ser ignorado. O cabeçalho repetido conta como uma lista só.
+
+**Portão.** Unitários em `rate_limit.rs` (`a_forged_xff_does_not_choose_the_rate_limit_key`, `hops_count_from_the_right`, `a_value_that_is_not_an_address_is_never_the_key`, e o `xff_trusted_only_from_proxy` reescrito). Contra servidor real: `server/tests/security.rs::a_forged_x_forwarded_for_does_not_escape_the_auth_rate_limit` — com o limite a 5, o mesmo cliente a inventar um valor por pedido é travado à sexta; clientes diferentes com o mesmo valor forjado não se travam uns aos outros.
+
+**O que NÃO está provado.**
+- Nenhum pedido passou por um Nginx ou por um ingress a sério: o teste escreve o cabeçalho como o proxy o entregaria.
+- **Um segundo proxy que acrescente** (um balanceador L7 à frente do ingress) com `TRUSTED_PROXY_HOPS=1` faz todos os clientes aparecerem com o endereço do primeiro proxy e partilharem o limite por IP. É falhar para o lado seguro, mas é uma indisponibilidade: o operador tem de subir o valor. Nenhum manifesto do repo monta essa topologia.
+- Um balanceador L4 com SNAT esconde o endereço real de todos os clientes; isso não se resolve aqui (pede PROXY protocol).
+- Quem já está dentro da rede privada e fala directamente com o servidor escolhe o cabeçalho inteiro.
+
+**Ficheiros.** `server/src/rate_limit.rs`, `server/src/config.rs`, os onze chamadores em `server/src/{auth,guests,passkeys,studio,rate_limit}.rs`, `server/tests/security.rs`, `docs/deployment.md`.
+
+### R283 — A sala de espera não tinha tecto, e um só token enchia a lista de todos os anfitriões
+
+**Sintoma.** `SignalingHub::add_waiting_with` inseria uma entrada por ligação, sem limite e sem olhar a quem era. Um token de sala válido a abrir ligações em ciclo punha milhares de entradas na sala de espera, e cada uma é difundida a todos os anfitriões e devolvida inteira em cada `GET /api/rooms/{code}/waiting`.
+
+**Regra** (`SignalingHub::add_waiting_for`).
+- **Uma espera por identidade.** A chave é o `sub` do token de sala (a conta, ou o `guest_id` que cada `guest-join` gera). Uma segunda ligação da mesma identidade substitui a primeira: a entrada antiga sai (`WaitingLeft` para os anfitriões), a nova entra, e a ligação antiga termina como recusada porque o seu `admit_tx` cai sem decisão.
+- **Um tecto por sala**, `WAITING_ROOM_MAX = 500` por nó. Cheia, a ligação recebe `Error { "waiting room is full" }` e fecha; não se regista nada e fica um aviso no log.
+
+**Portão.** `signaling.rs`: `one_identity_waits_once_however_many_sockets_it_opens` (mil ligações, uma entrada, fica a mais recente, as outras 999 terminam sem decisão, a que ficou é admitida) e `the_waiting_room_has_a_ceiling` (a 501.ª identidade é recusada; uma que sai liberta o lugar).
+
+**O que NÃO está provado.**
+- Só o hub foi exercitado: nenhum WebSocket real abriu mil ligações, e nenhum browser viu a mensagem de sala cheia.
+- Dois separadores da MESMA pessoa à espera: o mais antigo mostra «entrada recusada». Fechar em silêncio faria os dois separadores substituírem-se em ciclo ao religar; a recusa é terminal.
+- O tecto é por nó. A afinidade por sala (ADR-0001) põe uma sala num só nó; se isso falhar, o tecto multiplica-se pelo número de nós.
+- Quinhentas identidades DIFERENTES continuam a caber — o que as trava antes é o limite do `guest-join` por IP e por sala.
+
+**Ficheiros.** `server/src/signaling.rs`.
