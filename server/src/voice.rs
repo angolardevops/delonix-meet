@@ -850,6 +850,11 @@ pub struct ValidatePinResp {
     /// IVR cai na conferência local do FreeSWITCH, SEM áudio WebRTC.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub room_bridge: Option<RoomBridgeResp>,
+    /// O domínio SIP da organização da sala. É com ele que o IVR do dial-in
+    /// pede a identificação de quem liga (`verify-extension-pin`, R279).
+    /// Ausente no modo `ramal`: aí quem liga já vem identificado.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub org_sip_domain: Option<String>,
 }
 
 /// Valida (DID, PIN) → devolve a sala a que o chamador PSTN deve ser ligado.
@@ -874,8 +879,8 @@ pub(crate) async fn validate_pin(
     pin: &str,
 ) -> Result<ValidatePinResp, ApiError> {
     let did = did_e164.trim();
-    let row: Option<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT vr.id, vr.room_code, vr.media_backend
+    let row: Option<(Uuid, String, String, Uuid)> = sqlx::query_as(
+        "SELECT vr.id, vr.room_code, vr.media_backend, vr.org_id
          FROM voice_room vr JOIN voice_did d ON d.id = vr.did_id
          WHERE d.e164 = $1 AND vr.pin = $2 AND vr.status = 'active'",
     )
@@ -884,13 +889,14 @@ pub(crate) async fn validate_pin(
     .fetch_optional(&state.db)
     .await?;
     match row {
-        Some((id, room_code, backend)) => {
+        Some((id, room_code, backend, org_id)) => {
             let room_bridge = room_bridge_for(state, &room_code, &backend).await;
             Ok(ValidatePinResp {
                 voice_room_id: id,
                 room_code,
                 media_backend: backend,
                 room_bridge,
+                org_sip_domain: crate::ramais::sip_domain_for_org(state, org_id).await.ok(),
             })
         }
         None => {
@@ -960,15 +966,18 @@ pub(crate) async fn validate_pin_for_extension(
         ApiError::NotFound
     };
 
-    let ext: Option<(Uuid, Option<Uuid>, String)> = sqlx::query_as(
-        "SELECT e.org_id, e.member_id, o.slug
+    #[allow(clippy::type_complexity)]
+    let ext: Option<(Uuid, Option<Uuid>, String, Uuid, String, Option<String>)> = sqlx::query_as(
+        "SELECT e.org_id, e.member_id, o.slug, e.id, e.label,
+                COALESCE(u.display_name, u.username)
            FROM voice_extensions e JOIN organizations o ON o.id = e.org_id
+           LEFT JOIN users u ON u.id = e.member_id
           WHERE e.sip_username = $1 AND e.active",
     )
     .bind(sip_username)
     .fetch_optional(&state.db)
     .await?;
-    let Some((org_id, member_id, slug)) = ext else {
+    let Some((org_id, member_id, slug, extension_id, label, person)) = ext else {
         return Err(refuse());
     };
     // O realm com que o FreeSWITCH autenticou tem de ser o domínio da org do
@@ -986,10 +995,24 @@ pub(crate) async fn validate_pin_for_extension(
         }
     }
 
-    match room_by_pin_in_org(state, org_id, pin).await? {
-        Some(resp) => Ok(resp),
-        None => Err(refuse()),
+    let Some(mut resp) = room_by_pin_in_org(state, org_id, pin).await? else {
+        return Err(refuse());
+    };
+    // O aparelho já está autenticado (digest): não se pede PIN pessoal.
+    // Quem entra é a pessoa do ramal — ou o ramal da empresa, pela
+    // etiqueta —, e a ponte fica a sabê-lo pelo bilhete (R279).
+    let room_code = resp.room_code.clone();
+    if let Some(bridge) = resp.room_bridge.as_mut() {
+        let who = crate::voice_caller::CallerIdentity {
+            display_name: person
+                .filter(|n| !n.trim().is_empty())
+                .or_else(|| Some(label).filter(|l| !l.trim().is_empty()))
+                .unwrap_or_else(|| format!("Ramal {sip_username}")),
+            member_id,
+        };
+        attach_caller_ticket(state, bridge, org_id, &room_code, extension_id, &who).await;
     }
+    Ok(resp)
 }
 
 /// A sala de voz ACTIVA de `org_id` com este PIN — a regra de quem entra sem
@@ -1021,6 +1044,9 @@ async fn room_by_pin_in_org(
                 room_code,
                 media_backend: backend,
                 room_bridge,
+                // Quem entra sem DID já vem identificado pela origem (o ramal
+                // autenticado, a central autenticada): o IVR não pede mais nada.
+                org_sip_domain: None,
             }))
         }
         Err(rows) => {
@@ -1148,6 +1174,115 @@ async fn room_bridge_for(
     })
 }
 
+/// Emite o bilhete de identidade de quem liga e junta-o às variáveis de canal
+/// da perna para a ponte. Uma falha aqui não derruba a entrada: a chamada
+/// segue sem bilhete e entra anónima, como sempre entrou.
+async fn attach_caller_ticket(
+    state: &AppState,
+    bridge: &mut RoomBridgeResp,
+    org_id: Uuid,
+    room_code: &str,
+    extension_id: Uuid,
+    who: &crate::voice_caller::CallerIdentity,
+) {
+    match crate::voice_caller::issue(state, org_id, room_code, extension_id, who).await {
+        Ok(ticket) => {
+            bridge
+                .channel_vars
+                .insert(crate::voice_caller::channel_var(), ticket);
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, room_code, "bilhete de identidade da chamada não emitido — entra anónima")
+        }
+    }
+}
+
+/// O que o IVR do dial-in junta às variáveis da perna para a ponte depois de
+/// identificar quem liga por ramal+PIN (`extension_pin::ivr_verify_extension_pin`).
+/// `None` se a sala de voz não é ACTIVA nesta organização — a fronteira é a
+/// organização do domínio, e uma sala de outra não recebe bilhete.
+pub(crate) async fn caller_ticket_vars_for_voice_room(
+    state: &AppState,
+    org_id: Uuid,
+    voice_room_id: Uuid,
+    extension_id: Uuid,
+    who: &crate::voice_caller::CallerIdentity,
+) -> Option<std::collections::BTreeMap<String, String>> {
+    let room_code = voice_room_code_in_org(state, org_id, voice_room_id).await?;
+    let ticket = crate::voice_caller::issue(state, org_id, &room_code, extension_id, who)
+        .await
+        .map_err(|e| tracing::warn!(error = ?e, "bilhete de identidade da chamada não emitido"))
+        .ok()?;
+    Some(
+        [(crate::voice_caller::channel_var(), ticket)]
+            .into_iter()
+            .collect(),
+    )
+}
+
+/// O `room_code` de uma sala de voz ACTIVA desta organização.
+pub(crate) async fn voice_room_code_in_org(
+    state: &AppState,
+    org_id: Uuid,
+    voice_room_id: Uuid,
+) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT room_code FROM voice_room WHERE id = $1 AND org_id = $2 AND status = 'active'",
+    )
+    .bind(voice_room_id)
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Invalida o bilhete de uma perna que a ponte recusou (R279).
+pub async fn discard_caller_ticket(state: &Arc<AppState>, caller_ticket: &str) {
+    crate::voice_caller::discard(&state.db, caller_ticket).await;
+}
+
+/// Senta no censo da sala uma chamada que a ponte acabou de atender.
+///
+/// Com um bilhete válido para ESTA sala (`voice_caller::redeem`), entra com o
+/// nome de quem ligou e sem o crachá «sem nome». Sem bilhete — ou com um
+/// gasto, expirado ou de outra sala — entra como sempre: «Telefone», anónimo.
+///
+/// **O que NÃO faz:** não dá papel de anfitrião a ninguém. Quem entra por
+/// telefone já não passa pela sala de espera (`join_external`), e a sala ao
+/// vivo não tem um estado «à espera do anfitrião» que um telefone pudesse
+/// abrir. Ver a R279, «por fazer».
+pub async fn seat_phone_caller(
+    state: &Arc<AppState>,
+    room_id: Uuid,
+    room_code: &str,
+    leg_id: Uuid,
+    caller_ticket: Option<&str>,
+) {
+    let who = match caller_ticket {
+        Some(t) => crate::voice_caller::redeem(&state.db, t, room_code).await,
+        None => None,
+    };
+    // O telefone não tem WebSocket: o lado receptor é drenado e deitado fora.
+    // A fila existe só porque o censo a exige para toda a gente.
+    let (tx, mut rx_peer, _sd) = crate::signaling::PeerTx::new(16, state.metrics.clone());
+    tokio::spawn(async move { while rx_peer.recv().await.is_some() {} });
+    let anonymous = who.is_none();
+    state.hub.join_external(
+        room_id,
+        leg_id,
+        who.map(|w| w.display_name)
+            .unwrap_or_else(|| "Telefone".to_string()),
+        crate::signaling::Seat {
+            channel: delonix_meet_domain::conferencing::channels::Channel::Phone,
+            anonymous,
+            video_unavailable: true,
+            ..Default::default()
+        },
+        tx,
+    );
+}
+
 /// `host:porta` que o FreeSWITCH usa para alcançar o UA SIP. O
 /// `PHONE_BRIDGE_SIP_ADVERTISE` ganha (em K8s o Service e o bind não
 /// coincidem); sem ele, o host do `PSTN_BRIDGE_HOST` com a porta do bind.
@@ -1241,7 +1376,6 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                 .phone
                 .set(b.clone() as Arc<dyn crate::signaling::PhoneControl>);
             let st = state.clone();
-            let metrics = state.metrics.clone();
             tokio::spawn(async move {
                 while let Some(ev) = rx.recv().await {
                     use crate::phone_bridge::sip::BridgeEvent;
@@ -1250,27 +1384,20 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                         // com o crachá do telefone e o número mascarado. Sem
                         // isto, um anfitrião não a vê — logo não a modera.
                         BridgeEvent::Started {
-                            leg_id, room_id, ..
+                            leg_id,
+                            room_id,
+                            room_code,
+                            caller_ticket,
+                            ..
                         } => {
-                            // O telefone não tem WebSocket: o lado receptor é
-                            // drenado e deitado fora. A fila existe só porque o
-                            // censo a exige para toda a gente.
-                            let (tx, mut rx_peer, _sd) =
-                                crate::signaling::PeerTx::new(16, metrics.clone());
-                            tokio::spawn(async move { while rx_peer.recv().await.is_some() {} });
-                            st.hub.join_external(
+                            seat_phone_caller(
+                                &st,
                                 *room_id,
+                                room_code,
                                 *leg_id,
-                                "Telefone".to_string(),
-                                crate::signaling::Seat {
-                                    channel:
-                                        delonix_meet_domain::conferencing::channels::Channel::Phone,
-                                    anonymous: true,
-                                    video_unavailable: true,
-                                    ..Default::default()
-                                },
-                                tx,
-                            );
+                                caller_ticket.as_deref(),
+                            )
+                            .await;
                         }
                         // A «ligação fraca» é MEDIDA no RTP da perna, não
                         // adivinhada: o crachá acende e apaga com ela.
@@ -1285,9 +1412,31 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                             });
                         }
                         BridgeEvent::Ended { leg_id, room_id } => st.hub.leave(*room_id, *leg_id),
+                        // A ponte recusou a perna: o bilhete que ela trazia
+                        // não entrou em sala nenhuma e deixa de valer.
+                        BridgeEvent::Refused { caller_ticket } => {
+                            discard_caller_ticket(&st, caller_ticket).await
+                        }
                         BridgeEvent::Leg { .. } => {}
                     }
-                    tracing::info!(?ev, "ponte telefone↔sala");
+                    // O bilhete não vai para o log, nem gasto.
+                    match &ev {
+                        BridgeEvent::Started {
+                            leg_id,
+                            room_id,
+                            room_code,
+                            call_id,
+                            caller_ticket,
+                        } => tracing::info!(
+                            %leg_id, %room_id, room_code, ?call_id,
+                            com_bilhete = caller_ticket.is_some(),
+                            "ponte telefone↔sala: perna atendida"
+                        ),
+                        BridgeEvent::Refused { .. } => {
+                            tracing::warn!("ponte telefone↔sala: perna com bilhete recusada")
+                        }
+                        _ => tracing::info!(?ev, "ponte telefone↔sala"),
+                    }
                 }
             });
         }
