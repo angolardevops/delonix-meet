@@ -70,7 +70,7 @@ segredos que já tem) e de `make compose-down && make compose-up`.
   nunca comitado. Em dev usar self-signed; nunca desativar a camada.
 - **Sem excepção por tronco**: um tronco declarado `srtp=off` só faz chamadas de **saída**
   em claro. À entrada, uma chamada em claro leva `488` venha de onde vier — uma operadora
-  sem SRTP não nos consegue ligar. É de propósito.
+  sem SRTP não nos consegue ligar. É de propósito, e foi decidido assim a 2026-10-04.
 - **Anti-toll-fraud**: só se aceita inbound dos **IPs do trunk** (`ao_trunk.txt`,
   fornecido pelo provedor 5.1). Sem outbound não autenticado.
 - **Segredos do ambiente**: `VOICE_INTERNAL_SECRET` (== do backend) e URLs vêm de env,
