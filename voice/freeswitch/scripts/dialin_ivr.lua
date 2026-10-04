@@ -18,6 +18,27 @@
 --   O modo `ramal` NUNCA correu contra um FreeSWITCH real: só a sintaxe está
 --   verificada (scripts/check-lua-sintaxe.sh).
 --
+-- QUEM LIGA, IDENTIFICADO (R277):
+--   modo `ramal`     o aparelho já está autenticado: NÃO se pede PIN pessoal.
+--                    O control plane resolve o ramal → pessoa e devolve, nas
+--                    `channel_vars` do `room_bridge`, um bilhete opaco de uso
+--                    único que a ponte troca pelo nome. Este script não sabe
+--                    que o bilhete existe: copia as variáveis, como sempre.
+--   dial-in          depois do PIN da sala, o IVR oferece a identificação:
+--                    ramal + cardinal, ou só cardinal (ou silêncio) para
+--                    continuar. Com ramal, pede o PIN PESSOAL e verifica-o em
+--                    /internal/v1/voice/ivr/verify-extension-pin, com a ORIGEM
+--                    da chamada (número de quem liga e endereço do par SIP) —
+--                    é a chave do travão do servidor. Acerto: o bilhete vem na
+--                    resposta e junta-se às variáveis da perna para a ponte.
+--                    Falha: UMA só frase, igual para PIN errado, ramal que não
+--                    existe, PIN por definir, ramal bloqueado e origem travada
+--                    — por telefone não se enumera ramais. Duas tentativas por
+--                    chamada, e a pessoa entra na mesma, como anónima: falhar
+--                    a identificação nunca desliga a chamada.
+--   Nem o ramal, nem o PIN pessoal, nem o bilhete são escritos no log por este
+--   script (R227). NADA disto correu contra um FreeSWITCH real: só a sintaxe.
+--
 -- Segredos NUNCA em claro: lidos de variáveis globais do FreeSWITCH que, por sua
 -- vez, vêm do ambiente (ver voice/cluster/freeswitch-entrypoint.sh):
 --   ${delonix_control_url}     ex.: http://127.0.0.1:8180
@@ -61,6 +82,8 @@ local modo_ramal = (argv ~= nil and argv[1] == "ramal")
 
 local MAX_TRIES = 3
 local PIN_LEN   = 6
+-- Identificação de quem liga de fora (R277): tentativas por chamada.
+local MAX_ID_TRIES = 2
 -- Perfil sofia de onde sai a perna para a ponte. Só `internal` existe na
 -- configuração distribuída (voice/freeswitch/sip_profiles/); a variável deixa
 -- apontar a outro sem tocar no script.
@@ -157,6 +180,7 @@ end
 local room_code = nil
 local voice_room_id = nil
 local room_bridge = nil
+local org_sip_domain = nil
 for try = 1, MAX_TRIES do
   -- Pede o PIN (min=len, max=len, tries=1, timeout, terminador #).
   local pin = session:playAndGetDigits(
@@ -178,6 +202,7 @@ for try = 1, MAX_TRIES do
     room_code = json_str(resp, "room_code")
     voice_room_id = json_str(resp, "voice_room_id")
     room_bridge = room_bridge_from_json(resp)
+    org_sip_domain = json_str(resp, "org_sip_domain")
     if room_code and #room_code > 0 then break end
   end
 
@@ -191,6 +216,58 @@ if not room_code then
   session:hangup()
   return
 end
+
+-- Identificação de quem liga de fora (R277). Só faz sentido com a ponte: na
+-- conferência local do FreeSWITCH não há censo onde o nome apareça. E só com
+-- o que o `validate` devolveu — o domínio da organização e a sala de voz —,
+-- validados antes de irem para dentro de um JSON entre plicas.
+local function identificar_quem_liga()
+  if modo_ramal or not room_bridge then return end
+  if not org_sip_domain or not org_sip_domain:match("^[%w%._%-]+$") then return end
+  if not voice_room_id or not voice_room_id:match("^[%x%-]+$") then return end
+  -- A origem, como o FreeSWITCH a vê. Só o alfabeto de um número e de um
+  -- endereço; o resto cai (o servidor volta a limpar).
+  local function limpa(v) return ((v or ""):gsub("[^%w%+%.:_%-]", "")) end
+  local origem_numero = limpa(session:getVariable("caller_id_number"))
+  local origem_rede = limpa(session:getVariable("sip_network_ip"))
+
+  for _ = 1, MAX_ID_TRIES do
+    if not session:ready() then return end
+    -- «Por favor digite o seu ramal, depois a tecla sustenido.» Só cardinal,
+    -- ou silêncio, é «continuar sem me identificar».
+    local ramal = session:read(0, 5, "ivr/ivr-please_enter_extension_followed_by_pound.wav", 5000, "#") or ""
+    if ramal == "" then return end
+    local pin_pessoal = ""
+    if ramal:match("^%d%d%d%d?%d?$") then
+      pin_pessoal = session:read(PIN_LEN, PIN_LEN, "ivr/ivr-please_enter_pin_followed_by_pound.wav", 7000, "#") or ""
+    end
+    -- Um ramal ou um PIN mal formados nem chegam ao servidor — e levam a
+    -- MESMA recusa que um PIN errado.
+    if pin_pessoal:match("^%d%d%d%d%d%d$") then
+      local body = string.format(
+        '{"domain":"%s","extension":"%s","pin":"%s","voice_room_id":"%s","origin":{"caller_number":"%s","network_ip":"%s"}}',
+        org_sip_domain, ramal, pin_pessoal, voice_room_id, origem_numero, origem_rede)
+      local resp = http_post("/internal/v1/voice/ivr/verify-extension-pin", body)
+      if resp and resp:match('"valid"%s*:%s*true') then
+        -- O bilhete para a ponte vem em `channel_vars`; copia-se par a par,
+        -- sem o conhecer pelo nome (como as do `room_bridge`).
+        local obj_vars = json_sub_object(resp, "channel_vars")
+        if obj_vars then
+          for k, v in obj_vars:gmatch('"([^"]+)"%s*:%s*"([^"]*)"') do
+            room_bridge.channel_vars[k] = v
+          end
+        end
+        session:streamFile("ivr/ivr-thank_you.wav")
+        return
+      end
+    end
+    -- UMA só recusa («O seu número PIN ou ramal não é válido»), seja qual for
+    -- a razão do servidor: `invalid`, `not_set`, `locked` ou `origin_locked`.
+    session:streamFile("ivr/ivr-pin_or_extension_is-invalid.wav")
+  end
+  -- Esgotadas as tentativas: continua como participante anónimo.
+end
+identificar_quem_liga()
 
 -- Marca o início e junta à conferência da sala (perfil 'delonix' com SRTP).
 local started = os.time()
@@ -211,9 +288,11 @@ if room_bridge then
   local prefixo = ""
   if #vars > 0 then prefixo = "[" .. table.concat(vars, ",") .. "]" end
   local dial = string.format("%ssofia/%s/%s", prefixo, bridge_profile, room_bridge.sip_uri)
+  -- O log leva o destino, não as variáveis: entre elas pode ir o bilhete de
+  -- identidade de quem liga (R277).
   freeswitch.consoleLog("info", string.format(
-    "[delonix ponte] sala=%s -> %s (srtp=%s)\n",
-    room_code, dial, tostring(room_bridge.srtp_profile)))
+    "[delonix ponte] sala=%s -> sofia/%s/%s (srtp=%s)\n",
+    room_code, bridge_profile, room_bridge.sip_uri, tostring(room_bridge.srtp_profile)))
   session:execute("bridge", dial)
   ponte_ok = (session:getVariable("originate_disposition") == "SUCCESS")
   if not ponte_ok then
