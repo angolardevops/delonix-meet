@@ -278,3 +278,107 @@ async fn other_org_and_plain_member_are_refused(db: sqlx::PgPool) {
         "e o canal sobrevive"
     );
 }
+
+/// Um canal tem várias `live_sessions` (ADR-0015): a tabela deixa de exigir sala,
+/// exige sala OU canal, e só uma sessão por canal pode estar em curso.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_channel_has_many_live_sessions_but_one_open(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.ao").await;
+    let (_, c) = app
+        .post(
+            &path(a.org()),
+            Some(&a.token),
+            json!({"slug": "tv-alfa", "name": "Alfa"}),
+        )
+        .await;
+    let ch = c["id"].as_str().unwrap().to_string();
+    let loc = format!("{}/{ch}", path(a.org()));
+
+    let insert = |channel: Option<String>, room: Option<String>, ended: bool| {
+        let db = app.db.clone();
+        let user = a.user_id.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO live_sessions (id, room_id, channel_id, started_by, node_id, ended_at)
+                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, gen_random_uuid(),
+                         CASE WHEN $4 THEN now() END)",
+            )
+            .bind(room)
+            .bind(channel)
+            .bind(user)
+            .bind(ended)
+            .execute(&db)
+            .await
+        }
+    };
+
+    // Sem sala nem canal: recusada pela base.
+    assert!(insert(None, None, false).await.is_err(), "sessão órfã");
+    // Várias já terminadas + uma em curso: cabem.
+    for _ in 0..3 {
+        insert(Some(ch.clone()), None, true).await.unwrap();
+    }
+    insert(Some(ch.clone()), None, false).await.unwrap();
+    // Uma segunda em curso para o MESMO canal: recusada.
+    assert!(
+        insert(Some(ch.clone()), None, false).await.is_err(),
+        "duas em curso"
+    );
+
+    // Com uma em curso, o canal não se apaga; o histórico sobrevive à tentativa.
+    let (st, v) = app.delete(&loc, Some(&a.token)).await;
+    assert_eq!(st, 409, "{v}");
+    assert_eq!(v["code"], "tv.channel.on_air");
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM live_sessions WHERE channel_id = $1::uuid")
+            .bind(&ch)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(n, 4);
+
+    // Terminada a em curso, o canal apaga-se e leva o histórico.
+    sqlx::query("UPDATE live_sessions SET ended_at = now() WHERE channel_id = $1::uuid")
+        .bind(&ch)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(app.delete(&loc, Some(&a.token)).await.0, 204);
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM live_sessions WHERE channel_id = $1::uuid")
+            .bind(&ch)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(n, 0, "o histórico segue o canal");
+}
+
+/// As sessões de SALA (o que a 0074 já previa) continuam a funcionar, com a sua
+/// regra de uma em curso por sala.
+#[sqlx::test(migrations = "./migrations")]
+async fn room_live_sessions_still_work(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.ao").await;
+    let room = app.new_room(&a, "Estúdio").await;
+    let room_id = room["id"].as_str().unwrap().to_string();
+    let insert = |ended: bool| {
+        let db = app.db.clone();
+        let (r, u) = (room_id.clone(), a.user_id.clone());
+        async move {
+            sqlx::query(
+                "INSERT INTO live_sessions (id, room_id, started_by, node_id, ended_at)
+                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, gen_random_uuid(),
+                         CASE WHEN $3 THEN now() END)",
+            )
+            .bind(r)
+            .bind(u)
+            .bind(ended)
+            .execute(&db)
+            .await
+        }
+    };
+    insert(false).await.unwrap();
+    assert!(insert(false).await.is_err(), "duas em curso na mesma sala");
+    insert(true).await.unwrap();
+}
