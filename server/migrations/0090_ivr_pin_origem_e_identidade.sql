@@ -36,6 +36,9 @@ CREATE TABLE voice_pin_origins (
     locked_until TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- A limpeza das origens que já não contam (`extension_pin::forget_stale_origins`)
+-- procura por `updated_at`.
+CREATE INDEX voice_pin_origins_updated_idx ON voice_pin_origins (updated_at);
 
 -- 3. Quem entra na sala pela ponte, IDENTIFICADO. O IVR não passa o nome nem
 --    a pessoa à ponte (o Lua não é fonte de verdade de identidade): passa um

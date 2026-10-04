@@ -407,3 +407,40 @@ async fn falhar_a_identificacao_trava_a_origem_e_nao_o_ramal(db: sqlx::PgPool) {
     .await;
     assert_eq!(st, 200);
 }
+
+/// O bilhete vive pouco, e um que a ponte recusou deixa de valer na hora
+/// (revisão de segurança da R277): não fica a valer no log do FreeSWITCH.
+#[sqlx::test(migrations = "./migrations")]
+async fn um_bilhete_recusado_pela_ponte_deixa_de_valer(db: sqlx::PgPool) {
+    let app = spawn(db).await;
+    let a = app.new_org("alfa-bilhete.ao").await;
+    let ana = app.add_member(&a, "ana", "member").await;
+    let (code, pin_sala, _, room_id) = sala(&app, &a, "+244222300401").await;
+    let (user, dom) = ramal(
+        &app,
+        &a,
+        json!({"extension": "1001", "member_id": ana.user_id}),
+    )
+    .await;
+
+    let t = bilhete_do_ramal(&app, &user, &dom, &pin_sala).await;
+    let vida: f64 = sqlx::query_scalar(
+        "SELECT EXTRACT(EPOCH FROM (expires_at - created_at))::float8 FROM voice_caller_tickets",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(vida <= 45.5, "o bilhete vale {vida} s");
+
+    // O que o UA da ponte dispara ao recusar o INVITE que o trazia.
+    delonix_server::discard_caller_ticket(&app.state, &t).await;
+    assert_eq!(
+        senta(&app, room_id, &code, Some(&t)).await,
+        ("Telefone".to_string(), true),
+        "um bilhete recusado pela ponte ainda identificou alguém"
+    );
+    // Invalidar um bilhete que não existe não faz nada (nem a outro bilhete).
+    let outro = bilhete_do_ramal(&app, &user, &dom, &pin_sala).await;
+    delonix_server::discard_caller_ticket(&app.state, &"cd".repeat(32)).await;
+    assert!(!senta(&app, room_id, &code, Some(&outro)).await.1);
+}

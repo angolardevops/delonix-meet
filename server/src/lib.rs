@@ -94,7 +94,7 @@ pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
 pub use webhooks::retry_due as webhook_retry_due;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
-pub use voice::seat_phone_caller;
+pub use voice::{discard_caller_ticket, seat_phone_caller};
 
 use axum::{
     extract::DefaultBodyLimit,

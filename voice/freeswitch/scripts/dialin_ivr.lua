@@ -108,6 +108,13 @@ local function http_post(path, body)
   return api:execute("curl", args)
 end
 
+-- Tudo o que vem da REDE e vai para dentro de um JSON entre plicas (o
+-- argumento do mod_curl) passa por aqui: o DID marcado, o número de quem liga,
+-- o endereço do par SIP. Só fica o alfabeto de um número e de um endereço —
+-- uma plica, uma aspa ou uma chaveta no `To` ou no `From` de um INVITE não
+-- chegam ao corpo do pedido nem partem o argumento.
+local function limpa(v) return ((v or ""):gsub("[^%w%+%.:_%-]", "")) end
+
 -- Extrai um valor STRING simples de um JSON plano (sem dependências externas).
 local function json_str(json, key)
   if not json then return nil end
@@ -172,7 +179,7 @@ session:sleep(300)
 
 local did = ""
 if not modo_ramal then
-  did = session:getVariable("sip_to_user") or session:getVariable("destination_number") or ""
+  did = limpa(session:getVariable("sip_to_user") or session:getVariable("destination_number"))
   -- Normaliza para +E.164 (o DID chega tipicamente sem '+').
   if did ~= "" and did:sub(1, 1) ~= "+" then did = "+" .. did end
 end
@@ -225,9 +232,7 @@ local function identificar_quem_liga()
   if modo_ramal or not room_bridge then return end
   if not org_sip_domain or not org_sip_domain:match("^[%w%._%-]+$") then return end
   if not voice_room_id or not voice_room_id:match("^[%x%-]+$") then return end
-  -- A origem, como o FreeSWITCH a vê. Só o alfabeto de um número e de um
-  -- endereço; o resto cai (o servidor volta a limpar).
-  local function limpa(v) return ((v or ""):gsub("[^%w%+%.:_%-]", "")) end
+  -- A origem, como o FreeSWITCH a vê (o servidor volta a limpar).
   local origem_numero = limpa(session:getVariable("caller_id_number"))
   local origem_rede = limpa(session:getVariable("sip_network_ip"))
 
@@ -275,6 +280,15 @@ session:streamFile("conference/conf-welcome.wav")
 
 local ponte_ok = false
 if room_bridge then
+  -- Os cabeçalhos `X-Delonix-*` são NOSSOS e nascem cá dentro. O FreeSWITCH
+  -- copia os `X-` que chegaram na perna A para a perna B: um ramal ou um PBX
+  -- de fora que mandasse um `X-Delonix-Caller-Ticket` seu chegava com ele à
+  -- ponte. Não lhe dava identidade (o bilhete são 256 bits que só o servidor
+  -- emite), mas a perna para a ponte só leva o que o servidor mandou. O
+  -- Kamailio tira-os no bordo do tronco; os ramais registam-se directamente
+  -- aqui, por isso tiram-se também aqui. NUNCA correu numa chamada.
+  session:execute("unset", "sip_h_X-Delonix-Caller-Ticket")
+  session:execute("unset", "sip_h_X-Delonix-Call-Id")
   -- As variáveis do backend vão no PREFIXO `[...]` da dial string, não por
   -- `session:setVariable`: essas ficariam na perna A (o chamador), e o que
   -- precisa delas é a perna B. É o `rtp_secure_media=mandatory:<perfil>` que
@@ -313,7 +327,7 @@ end
 
 -- Pós-chamada: envia o CDR ao control plane (duração em segundos).
 local duration = os.time() - started
-local caller = session:getVariable("caller_id_number") or ""
+local caller = limpa(session:getVariable("caller_id_number"))
 if not modo_ramal and voice_room_id and #voice_room_id > 0 then
   local cdr = string.format(
     '{"voice_room_id":"%s","caller_number":"%s","did_e164":"%s","duration_secs":%d}',

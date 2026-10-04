@@ -477,8 +477,41 @@ impl From<CounterRow> for rules::Counter {
 enum OriginCharge {
     /// Travada: não se verifica nada.
     Locked(i64),
-    /// Cobrada uma falha; `lock_now` se foi esta que a travou.
-    Charged { lock_now: bool },
+    /// Cobrada uma falha; `lock` se foi esta que a travou.
+    Charged { lock: Option<OriginLock> },
+}
+
+/// O bloqueio que uma cobrança causou, e como a origem estava ANTES dela —
+/// para um acerto o poder desfazer sem perder nada ([`refund_origin`]).
+struct OriginLock {
+    /// Quanto dura (é o que vai para a auditoria).
+    secs: i64,
+    /// O nível com que a origem ficou.
+    level: i32,
+    prev_window_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    prev_locked_until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// As origens não se guardam para sempre (o número de quem liga é um dado
+/// pessoal, e a tabela crescia com cada número que alguma vez falhou): sai a
+/// linha que não mexe há mais do que o maior bloqueio mais o esquecimento do
+/// nível, e cujo último bloqueio — se houve — já foi esquecido. Uma linha
+/// assim é igual a não ter linha. Oportunista, a cada verificação: o volume
+/// é o das chamadas, e há índice em `updated_at`.
+async fn forget_stale_origins(state: &AppState) {
+    let t = rules::ORIGIN_THROTTLE;
+    if let Err(e) = sqlx::query(
+        "DELETE FROM voice_pin_origins
+          WHERE updated_at < now() - make_interval(secs => $1)
+            AND (locked_until IS NULL OR locked_until < now() - make_interval(secs => $2))",
+    )
+    .bind((t.max_lock_secs + t.level_decay_secs) as f64)
+    .bind(t.level_decay_secs as f64)
+    .execute(&state.db)
+    .await
+    {
+        tracing::warn!(error = %e, "limpeza das origens de PIN falhou");
+    }
 }
 
 /// Cobra uma falha à origem ANTES de verificar — e devolve-a se o PIN estiver
@@ -487,7 +520,15 @@ enum OriginCharge {
 /// ramal: cinco deles bloqueavam-no. Cobrando primeiro, com a linha da origem
 /// em `FOR UPDATE`, só `ORIGIN_THROTTLE.max_failures` chegam a ver um ramal.
 async fn charge_origin(state: &AppState, key: &str) -> Result<OriginCharge, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        #[sqlx(flatten)]
+        counter: CounterRow,
+        window_started_at: Option<chrono::DateTime<chrono::Utc>>,
+        locked_until: Option<chrono::DateTime<chrono::Utc>>,
+    }
     let t = rules::ORIGIN_THROTTLE;
+    forget_stale_origins(state).await;
     let mut tx = state.db.begin().await?;
     sqlx::query(
         "INSERT INTO voice_pin_origins (origin) VALUES ($1) ON CONFLICT (origin) DO NOTHING",
@@ -495,17 +536,19 @@ async fn charge_origin(state: &AppState, key: &str) -> Result<OriginCharge, ApiE
     .bind(key)
     .execute(&mut *tx)
     .await?;
-    let c: rules::Counter = sqlx::query_as::<_, CounterRow>(
+    let row: Row = sqlx::query_as(
         "SELECT failures,
                 FLOOR(EXTRACT(EPOCH FROM (now() - window_started_at)))::BIGINT AS window_age,
                 lock_level,
-                FLOOR(EXTRACT(EPOCH FROM (now() - locked_until)))::BIGINT AS lock_ended_ago
+                FLOOR(EXTRACT(EPOCH FROM (now() - locked_until)))::BIGINT AS lock_ended_ago,
+                window_started_at, locked_until
            FROM voice_pin_origins WHERE origin = $1 FOR UPDATE",
     )
     .bind(key)
     .fetch_one(&mut *tx)
-    .await?
-    .into();
+    .await?;
+    let (prev_window_started_at, prev_locked_until) = (row.window_started_at, row.locked_until);
+    let c: rules::Counter = row.counter.into();
     if let Some(secs) = t.locked_for(&c) {
         tx.commit().await?;
         return Ok(OriginCharge::Locked(secs));
@@ -531,35 +574,73 @@ async fn charge_origin(state: &AppState, key: &str) -> Result<OriginCharge, ApiE
     .await?;
     tx.commit().await?;
     Ok(OriginCharge::Charged {
-        lock_now: a.lock_secs.is_some(),
+        lock: a.lock_secs.map(|secs| OriginLock {
+            secs,
+            level: a.lock_level,
+            prev_window_started_at,
+            prev_locked_until,
+        }),
     })
 }
 
 /// Um acerto devolve à origem a falha que se lhe cobrou — e só essa: o
 /// contador fica como estava antes deste pedido. Zerá-lo deixava quem tem um
 /// PIN válido alternar «dois palpites, um acerto» sem nunca ser travado.
-async fn refund_origin(state: &AppState, key: &str, lock_now: bool) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE voice_pin_origins
-            SET failures = CASE WHEN $2 THEN $3 - 1 ELSE GREATEST(failures - 1, 0) END,
-                window_started_at = CASE WHEN $2 THEN now() ELSE window_started_at END,
-                lock_level = CASE WHEN $2 THEN GREATEST(lock_level - 1, 0) ELSE lock_level END,
-                locked_until = CASE WHEN $2 THEN NULL ELSE locked_until END,
-                updated_at = now()
-          WHERE origin = $1",
-    )
-    .bind(key)
-    .bind(lock_now)
-    .bind(rules::ORIGIN_THROTTLE.max_failures)
-    .execute(&state.db)
-    .await?;
+///
+/// Dois casos:
+/// - a cobrança só contou uma falha: desconta-se UMA (as que outros pedidos
+///   da mesma origem contaram entretanto ficam — repor um retrato apagava-as);
+/// - a cobrança TRAVOU a origem: desfaz-se o bloqueio e repõem-se os valores
+///   de antes dela — a janela onde estava (não «agora», que a esticava), o
+///   nível anterior e o `locked_until` do bloqueio anterior, que é a memória
+///   por onde o nível se esquece. Só se a linha ainda estiver como a cobrança
+///   a deixou; travada, ninguém mais lhe mexeu.
+async fn refund_origin(
+    state: &AppState,
+    key: &str,
+    lock: Option<&OriginLock>,
+) -> Result<(), ApiError> {
+    match lock {
+        None => {
+            sqlx::query(
+                "UPDATE voice_pin_origins
+                    SET failures = GREATEST(failures - 1, 0), updated_at = now()
+                  WHERE origin = $1",
+            )
+            .bind(key)
+            .execute(&state.db)
+            .await?;
+        }
+        Some(l) => {
+            sqlx::query(
+                "UPDATE voice_pin_origins
+                    SET failures = $2, window_started_at = $3, lock_level = $4,
+                        locked_until = $5, updated_at = now()
+                  WHERE origin = $1 AND lock_level = $6 AND failures = 0
+                    AND window_started_at IS NULL",
+            )
+            .bind(key)
+            .bind(rules::ORIGIN_THROTTLE.max_failures - 1)
+            .bind(l.prev_window_started_at)
+            .bind(l.level - 1)
+            .bind(l.prev_locked_until)
+            .bind(l.level)
+            .execute(&state.db)
+            .await?;
+        }
+    }
     Ok(())
 }
 
 /// Um Argon2 contra um hash que não é de ninguém: os caminhos que não têm PIN
-/// para verificar (ramal inexistente, PIN por definir) custam o mesmo tempo
-/// que um PIN errado. A resposta ao IVR distingue-os; o tempo deixa de o
-/// fazer.
+/// para verificar (ramal inexistente, PIN por definir, ramal BLOQUEADO)
+/// custam o mesmo tempo que um PIN errado. A resposta ao IVR distingue-os; o
+/// tempo deixa de o fazer — senão «bloqueado» respondia mais depressa que
+/// «não existe», e dava para enumerar ramais pelo relógio.
+///
+/// A única recusa que NÃO queima é a da origem travada (`OriginLocked`): não
+/// leu ramal nenhum, por isso o tempo dela não diz nada sobre ramais; e é o
+/// ramo que tem de ser barato, porque é o que responde a quem está a abusar.
 fn burn_like_a_verification(pin: &str) {
     static DUMMY: std::sync::LazyLock<String> =
         std::sync::LazyLock::new(|| crate::auth::hash_password("590317").unwrap_or_default());
@@ -587,14 +668,14 @@ pub(crate) async fn verify_from_call(
     origin: &CallOrigin,
 ) -> Result<PinCheck, ApiError> {
     let key = origin.key();
-    let lock_now = match charge_origin(state, &key).await? {
+    let lock = match charge_origin(state, &key).await? {
         OriginCharge::Locked(secs) => {
             tracing::warn!(origem = %origin.describe(), "PIN de ramal: origem travada — nada verificado");
             return Ok(PinCheck::OriginLocked {
                 retry_after_secs: secs,
             });
         }
-        OriginCharge::Charged { lock_now } => lock_now,
+        OriginCharge::Charged { lock } => lock,
     };
     let check = match org_id {
         Some(org_id) => verify_pin(state, org_id, extension, pin, origin).await?,
@@ -604,8 +685,8 @@ pub(crate) async fn verify_from_call(
         }
     };
     if matches!(check, PinCheck::Valid { .. }) {
-        refund_origin(state, &key, lock_now).await?;
-    } else if lock_now {
+        refund_origin(state, &key, lock.as_ref()).await?;
+    } else if let Some(lock) = lock {
         tracing::warn!(origem = %origin.describe(), "PIN de ramal: origem travada por falhas");
         crate::audit::log_com_metricas(
             &state.db,
@@ -614,9 +695,10 @@ pub(crate) async fn verify_from_call(
             Uuid::nil(),
             "ramal.origem_travada",
             &format!(
-                "{} — {} min — ramal {extension}",
+                "{} — {} min (bloqueio n.º {}) — ramal {extension}",
                 origin.describe(),
-                rules::ORIGIN_THROTTLE.base_lock_secs / 60
+                lock.secs / 60,
+                lock.level
             ),
         )
         .await;
@@ -701,6 +783,9 @@ async fn verify_pin(
     };
     let counter: rules::Counter = row.counter.into();
     if let Some(secs) = t.locked_for(&counter) {
+        // Larga-se a linha antes de queimar: o Argon2 não segura o ramal.
+        drop(tx);
+        burn_like_a_verification(pin);
         return Ok(PinCheck::Locked {
             retry_after_secs: secs,
         });

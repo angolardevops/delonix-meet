@@ -19,10 +19,14 @@ use uuid::Uuid;
 
 use crate::{error::ApiError, AppState};
 
-/// Quanto tempo o bilhete vale: entre o IVR o receber e a ponte atender o
-/// `INVITE` passam décimos de segundo; dois minutos cobrem um FreeSWITCH lento
-/// sem deixar um bilhete esquecido a valer.
-const TICKET_TTL_SECS: f64 = 120.0;
+/// Quanto tempo o bilhete vale. Entre o IVR o receber e a ponte atender o
+/// `INVITE` passam as frases de boas-vindas — segundos. Quarenta e cinco
+/// cobrem um FreeSWITCH lento; mais do que isso era só tempo em que um
+/// bilhete que não chegou à ponte (ela em baixo, a chamada caída na
+/// conferência local) continuava a valer, escrito no log e no CDR do
+/// FreeSWITCH. Se a ponte RECUSAR o `INVITE`, o bilhete é invalidado na hora
+/// ([`discard`]).
+const TICKET_TTL_SECS: f64 = 45.0;
 
 /// A variável de canal que faz o FreeSWITCH pôr o cabeçalho na perna para a
 /// ponte (`sip_h_<Cabeçalho>`). O Lua copia as `channel_vars` que o servidor
@@ -94,4 +98,19 @@ pub(crate) async fn redeem(
         display_name,
         member_id,
     })
+}
+
+/// Invalida um bilhete que não entrou em sala nenhuma (a ponte recusou o
+/// `INVITE` que o trazia). Idempotente; um bilhete que não existe não é erro.
+pub(crate) async fn discard(db: &sqlx::PgPool, token: &str) {
+    if let Err(e) = sqlx::query(
+        "UPDATE voice_caller_tickets SET used_at = now(), expires_at = now()
+          WHERE token_hash = $1 AND used_at IS NULL",
+    )
+    .bind(delonix_meet_core::crypto::sha256_hex(token))
+    .execute(db)
+    .await
+    {
+        tracing::warn!(error = %e, "bilhete de identidade da chamada: invalidação falhou");
+    }
 }

@@ -35,10 +35,14 @@ pub const EXTENSION_THROTTLE: Throttle = Throttle {
 /// ramal: quem experimenta PIN de fora não consegue bloquear o ramal de um
 /// colega, nem um, nem vários (R277). Conta todas as recusas da origem,
 /// sejam em que ramal forem.
+///
+/// O primeiro bloqueio dura VINTE minutos, mais que a janela do ramal
+/// (quinze): quando a origem volta a poder tentar, as falhas que deixou no
+/// ramal já saíram da janela dele, com folga — ver as asserções abaixo.
 pub const ORIGIN_THROTTLE: Throttle = Throttle {
     max_failures: 3,
     window_secs: 15 * 60,
-    base_lock_secs: 15 * 60,
+    base_lock_secs: 20 * 60,
     max_lock_secs: 24 * 3600,
     level_decay_secs: 24 * 3600,
 };
@@ -46,7 +50,7 @@ pub const ORIGIN_THROTTLE: Throttle = Throttle {
 /// Uma política de travão: falhas contadas numa janela, e um bloqueio que
 /// cresce com as reincidências.
 ///
-/// - **Janela.** Uma falha mais velha que `window_secs` (contada desde a
+/// - **Janela.** Uma falha com `window_secs` ou mais (contados desde a
 ///   primeira da janela) já não conta: quatro enganos em Janeiro e um em
 ///   Março não bloqueiam.
 /// - **Duração crescente.** O bloqueio de nível `n` dura
@@ -96,7 +100,15 @@ pub struct AfterFailure {
 // bloqueio da origem não é mais curto que a janela do ramal, por isso o
 // segundo lote de falhas dela já não encontra o primeiro.
 const _: () = assert!(ORIGIN_THROTTLE.max_failures < EXTENSION_THROTTLE.max_failures);
-const _: () = assert!(ORIGIN_THROTTLE.base_lock_secs >= EXTENSION_THROTTLE.window_secs);
+// COM FOLGA: as idades chegam da base em segundos inteiros, e «igual» deixava
+// um segundo em que as duas contas se sobrepunham (3 falhas + 2 = o ramal de
+// um colega bloqueado por uma só origem).
+const _: () = assert!(
+    ORIGIN_THROTTLE.base_lock_secs >= EXTENSION_THROTTLE.window_secs + ORIGIN_LOCK_MARGIN_SECS
+);
+
+/// Folga mínima entre o fim da janela do ramal e o fim do bloqueio da origem.
+pub const ORIGIN_LOCK_MARGIN_SECS: i64 = 60;
 
 impl Throttle {
     /// A duração do bloqueio de nível `level` (1 = o primeiro).
@@ -114,7 +126,9 @@ impl Throttle {
 
     /// Mais uma falha, num contador que NÃO está bloqueado.
     pub fn after_failure(&self, c: &Counter) -> AfterFailure {
-        let in_window = c.window_age_secs.is_some_and(|age| age <= self.window_secs);
+        // Estrita: a idade vem em segundos inteiros (FLOOR), e `<=` fazia a
+        // janela durar um segundo a mais do que diz.
+        let in_window = c.window_age_secs.is_some_and(|age| age < self.window_secs);
         let attempt = if in_window { c.failures + 1 } else { 1 };
         let level = match c.lock_ended_secs_ago {
             Some(ago) if ago > self.level_decay_secs => 0,
@@ -405,6 +419,29 @@ mod tests {
         let a = t.after_failure(&c);
         assert_eq!(a.lock_secs, None);
         assert_eq!((a.failures, a.attempt, a.restart_window), (1, 1, true));
+    }
+
+    #[test]
+    fn a_janela_e_estrita_no_segundo_exacto() {
+        // As idades vêm da base em segundos inteiros (FLOOR): 900 quer dizer
+        // «entre 900 e 901». Uma janela de 900 s que ainda contasse aos 900
+        // durava 901 — o segundo que deixava uma origem acabada de sair do
+        // bloqueio juntar as suas falhas novas às velhas do ramal.
+        for t in [EXTENSION_THROTTLE, ORIGIN_THROTTLE] {
+            let c = Counter {
+                failures: t.max_failures - 1,
+                window_age_secs: Some(t.window_secs),
+                ..Counter::default()
+            };
+            let a = t.after_failure(&c);
+            assert_eq!(a.lock_secs, None);
+            assert_eq!((a.attempt, a.restart_window), (1, true));
+            let dentro = Counter {
+                window_age_secs: Some(t.window_secs - 1),
+                ..c
+            };
+            assert!(t.after_failure(&dentro).lock_secs.is_some());
+        }
     }
 
     #[test]

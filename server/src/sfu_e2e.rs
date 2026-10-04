@@ -2482,6 +2482,88 @@ impl crate::phone_bridge::sip::BridgeAdmission for AdmissaoFixa {
     }
 }
 
+/// R277 — um `INVITE` RECUSADO que trazia um bilhete de identidade avisa
+/// para o bilhete ser invalidado; um que não trazia não avisa nada. Sem
+/// FreeSWITCH: o `INVITE` é escrito à mão e enviado por UDP ao UA da ponte.
+#[tokio::test]
+async fn um_invite_recusado_devolve_o_bilhete_para_invalidar() {
+    use crate::phone_bridge::sip::{Admitted, BridgeEvent, SipBridge, SipBridgeConfig};
+    let (sfu, _) = new_sfu();
+    let (ev_tx, mut ev_rx) = mpsc::channel(8);
+    let bridge = SipBridge::start(
+        SipBridgeConfig {
+            sip_bind: "127.0.0.1:0".parse().unwrap(),
+            rtp_ip: "127.0.0.1".parse().unwrap(),
+            rtp_ports: None,
+            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+        },
+        sfu,
+        Arc::new(AdmissaoFixa {
+            room_code: "a-unica-sala".into(),
+            admitted: Admitted {
+                room_id: Uuid::new_v4(),
+                leg_id: Uuid::new_v4(),
+            },
+        }),
+        ev_tx,
+    )
+    .await
+    .unwrap();
+    let sock = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let bilhete = "ab".repeat(32);
+    let invite = |call: &str, extra: &str| {
+        let sdp = "v=0\r\no=FreeSWITCH 1 2 IN IP4 127.0.0.1\r\ns=FreeSWITCH\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n\
+m=audio 32810 RTP/SAVP 8\r\na=rtpmap:8 PCMA/8000\r\n\
+a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:AAECAwQFBgcICQoLDA0OD/DxAgMEBQYHCAkKCwwN\r\na=sendrecv\r\n";
+        format!(
+            "INVITE sip:room-sala-que-nao-existe@{to} SIP/2.0\r\n\
+Via: SIP/2.0/UDP 127.0.0.1:5280;rport;branch=z9hG4bK{call}\r\n\
+From: <sip:fs@127.0.0.1>;tag=Fr0m\r\nTo: <sip:room-sala-que-nao-existe@{to}>\r\n\
+Call-ID: {call}\r\nCSeq: 1 INVITE\r\n{extra}Content-Type: application/sdp\r\n\
+Content-Length: {len}\r\n\r\n{sdp}",
+            to = bridge.local_sip,
+            len = sdp.len(),
+        )
+    };
+    // Sem bilhete: recusado, e nenhum aviso.
+    sock.send_to(invite("sem-bilhete", "").as_bytes(), bridge.local_sip)
+        .await
+        .unwrap();
+    assert!(resposta_final(&sock).await.starts_with("SIP/2.0 404"));
+    // Com bilhete: recusado, e o bilhete volta para ser invalidado.
+    let cab = format!("X-Delonix-Caller-Ticket: {bilhete}\r\n");
+    sock.send_to(invite("com-bilhete", &cab).as_bytes(), bridge.local_sip)
+        .await
+        .unwrap();
+    assert!(resposta_final(&sock).await.starts_with("SIP/2.0 404"));
+    let ev = tokio::time::timeout(prazo(10), ev_rx.recv())
+        .await
+        .expect("a recusa com bilhete avisa")
+        .unwrap();
+    assert_eq!(
+        ev,
+        BridgeEvent::Refused {
+            caller_ticket: bilhete
+        },
+        "o primeiro evento tem de ser o do INVITE com bilhete"
+    );
+}
+
+/// A primeira resposta SIP que não é o `100 Trying`.
+async fn resposta_final(sock: &tokio::net::UdpSocket) -> String {
+    let mut buf = [0u8; 2048];
+    loop {
+        let n = tokio::time::timeout(prazo(10), sock.recv(&mut buf))
+            .await
+            .expect("a ponte respondeu")
+            .unwrap();
+        let r = String::from_utf8_lossy(&buf[..n]).to_string();
+        if !r.starts_with("SIP/2.0 100") {
+            break r;
+        }
+    }
+}
+
 /// O chunk `data` do WAV já declara o seu tamanho? O FreeSWITCH só o escreve
 /// ao fechar a gravação; até lá o campo é 0 e qualquer leitor vê 0 amostras.
 fn data_chunk_fechado(b: &[u8]) -> bool {

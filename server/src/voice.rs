@@ -1164,6 +1164,11 @@ pub(crate) async fn voice_room_code_in_org(
     .flatten()
 }
 
+/// Invalida o bilhete de uma perna que a ponte recusou (R277).
+pub async fn discard_caller_ticket(state: &Arc<AppState>, caller_ticket: &str) {
+    crate::voice_caller::discard(&state.db, caller_ticket).await;
+}
+
 /// Senta no censo da sala uma chamada que a ponte acabou de atender.
 ///
 /// Com um bilhete válido para ESTA sala (`voice_caller::redeem`), entra com o
@@ -1334,6 +1339,11 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                             });
                         }
                         BridgeEvent::Ended { leg_id, room_id } => st.hub.leave(*room_id, *leg_id),
+                        // A ponte recusou a perna: o bilhete que ela trazia
+                        // não entrou em sala nenhuma e deixa de valer.
+                        BridgeEvent::Refused { caller_ticket } => {
+                            discard_caller_ticket(&st, caller_ticket).await
+                        }
                         BridgeEvent::Leg { .. } => {}
                     }
                     // O bilhete não vai para o log, nem gasto.
@@ -1349,6 +1359,9 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                             com_bilhete = caller_ticket.is_some(),
                             "ponte telefone↔sala: perna atendida"
                         ),
+                        BridgeEvent::Refused { .. } => {
+                            tracing::warn!("ponte telefone↔sala: perna com bilhete recusada")
+                        }
                         _ => tracing::info!(?ev, "ponte telefone↔sala"),
                     }
                 }

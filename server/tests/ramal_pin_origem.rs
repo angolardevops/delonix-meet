@@ -412,3 +412,190 @@ async fn sem_origem_o_pedido_e_recusado(db: sqlx::PgPool) {
     assert_eq!(r.status, 422, "{}", r.text);
     assert!(!r.text.contains("\"valid\""), "{}", r.text);
 }
+
+/// A fronteira exacta (revisão de segurança da R277): a origem acabou de sair
+/// do bloqueio e a janela do ramal faz 900 s nesse instante. As três falhas
+/// de antes NÃO se podem juntar às duas de agora — senão uma origem sozinha
+/// bloqueava o ramal de um colega com 3 + 2.
+#[sqlx::test(migrations = "./migrations")]
+async fn na_fronteira_do_bloqueio_a_origem_nao_completa_as_cinco_do_ramal(db: sqlx::PgPool) {
+    let app = spawn(db).await;
+    let a = app.new_org("alfa-origem-fronteira.ao").await;
+    let quem = app.add_member(&a, "colega", "member").await;
+    let pin = ramal_com_pin(&app, &a, &quem, "1004").await;
+    let dom = dominio(&app, a.org()).await;
+    let mau = errado(&pin);
+    let atacante = "+244930000321";
+
+    for _ in 0..3 {
+        assert_eq!(
+            verificar(&app, &dom, "1004", mau, atacante).await["reason"],
+            "invalid"
+        );
+    }
+    assert_eq!(contador(&app, a.org(), "1004").await, (3, 0, false));
+    // O instante em que o bloqueio da origem acaba, com a janela do ramal
+    // aberta há exactamente 900 s.
+    sqlx::query("UPDATE voice_pin_origins SET locked_until = now() WHERE origin = $1")
+        .bind(format!("{REDE}|{atacante}"))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE voice_extensions SET pin_failure_window_at = now() - interval '900 seconds'
+          WHERE extension = '1004'",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        let r = verificar(&app, &dom, "1004", mau, atacante).await;
+        assert_eq!(r["reason"], "invalid", "{r}");
+    }
+    let (falhas, nivel, bloqueado) = contador(&app, a.org(), "1004").await;
+    assert!(
+        !bloqueado,
+        "uma origem sozinha bloqueou o ramal na fronteira"
+    );
+    assert_eq!((falhas, nivel), (2, 0));
+    assert_eq!(
+        verificar(&app, &dom, "1004", &pin, "+244923000777").await["valid"],
+        true
+    );
+}
+
+/// As origens não se acumulam para sempre: uma linha velha, sem bloqueio vivo
+/// e com o nível já esquecido, é apagada. As que ainda contam ficam.
+#[sqlx::test(migrations = "./migrations")]
+async fn as_origens_velhas_sao_limpas(db: sqlx::PgPool) {
+    let app = spawn(db).await;
+    let a = app.new_org("alfa-origem-limpeza.ao").await;
+    let quem = app.add_member(&a, "colega", "member").await;
+    let pin = ramal_com_pin(&app, &a, &quem, "1004").await;
+    let dom = dominio(&app, a.org()).await;
+    for (origem, actualizada, bloqueio) in [
+        ("velha|1", "3 days", None),
+        (
+            "velha-com-bloqueio-antigo|2",
+            "3 days",
+            Some("now() - interval '2 days 12 hours'"),
+        ),
+        (
+            "velha-mas-bloqueada|3",
+            "3 days",
+            Some("now() + interval '1 hour'"),
+        ),
+        ("recente|4", "1 hour", None),
+        (
+            "nivel-por-esquecer|5",
+            "3 days",
+            Some("now() - interval '2 hours'"),
+        ),
+    ] {
+        sqlx::query(&format!(
+            "INSERT INTO voice_pin_origins (origin, failures, lock_level, locked_until, updated_at)
+             VALUES ($1, 1, 1, {}, now() - interval '{actualizada}')",
+            bloqueio.unwrap_or("NULL")
+        ))
+        .bind(origem)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        verificar(&app, &dom, "1004", &pin, "+244923000888").await["valid"],
+        true
+    );
+    let mut ficaram: Vec<String> =
+        sqlx::query_scalar("SELECT origin FROM voice_pin_origins WHERE origin NOT LIKE '10.%'")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    ficaram.sort();
+    assert_eq!(
+        ficaram,
+        ["nivel-por-esquecer|5", "recente|4", "velha-mas-bloqueada|3"]
+    );
+}
+
+/// O acerto que cai em cima do bloqueio que ele próprio causou repõe a origem
+/// como estava ANTES do pedido: o nível, a memória do último bloqueio (é por
+/// ela que o nível se esquece) e o início da janela. E a auditoria de uma
+/// origem travada diz a duração REAL do nível.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_devolucao_repoe_a_origem_e_a_auditoria_diz_a_duracao_real(db: sqlx::PgPool) {
+    let app = spawn(db).await;
+    let a = app.new_org("alfa-origem-devolve.ao").await;
+    let ana = app.add_member(&a, "ana", "member").await;
+    let beto = app.add_member(&a, "beto", "member").await;
+    let pin_ana = ramal_com_pin(&app, &a, &ana, "1001").await;
+    let pin_beto = ramal_com_pin(&app, &a, &beto, "1002").await;
+    let dom = dominio(&app, a.org()).await;
+    let quem = "+244930000654";
+    let chave = format!("{REDE}|{quem}");
+
+    // Primeiro bloqueio (nível 1), já acabado há um segundo.
+    for _ in 0..3 {
+        verificar(&app, &dom, "1002", errado(&pin_beto), quem).await;
+    }
+    sqlx::query(
+        "UPDATE voice_pin_origins SET locked_until = now() - interval '1 second' WHERE origin = $1",
+    )
+    .bind(&chave)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // O ramal do Beto não entra nesta conta: limpa-se o contador dele.
+    sqlx::query(
+        "UPDATE voice_extensions SET pin_failed_attempts = 0, pin_failure_window_at = NULL",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // Duas falhas, com a janela a ter começado há cinco minutos…
+    for _ in 0..2 {
+        verificar(&app, &dom, "1002", errado(&pin_beto), quem).await;
+    }
+    sqlx::query(
+        "UPDATE voice_pin_origins SET window_started_at = now() - interval '5 minutes'
+          WHERE origin = $1",
+    )
+    .bind(&chave)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // …e o terceiro pedido, que travaria a origem, é um ACERTO.
+    assert_eq!(
+        verificar(&app, &dom, "1001", &pin_ana, quem).await["valid"],
+        true
+    );
+    let (falhas, nivel, memoria, janela_velha): (i32, i32, bool, bool) = sqlx::query_as(
+        "SELECT failures, lock_level, COALESCE(locked_until < now(), false),
+                COALESCE(window_started_at < now() - interval '4 minutes', false)
+           FROM voice_pin_origins WHERE origin = $1",
+    )
+    .bind(&chave)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!((falhas, nivel), (2, 1));
+    assert!(memoria, "a devolução apagou a memória do último bloqueio");
+    assert!(janela_velha, "a devolução esticou a janela");
+
+    // A falha seguinte trava-a outra vez — segundo bloqueio, e a auditoria
+    // diz a duração dele, não a do primeiro.
+    verificar(&app, &dom, "1002", errado(&pin_beto), quem).await;
+    let travadas = auditoria(&app, a.org(), "ramal.origem_travada").await;
+    assert_eq!(travadas.len(), 2, "{travadas:?}");
+    assert!(travadas[0].1.contains("— 20 min (bloqueio n.º 1) —"), "{travadas:?}");
+    assert!(travadas[1].1.contains("— 40 min (bloqueio n.º 2) —"), "{travadas:?}");
+    let resta: i64 = sqlx::query_scalar(
+        "SELECT CEIL(EXTRACT(EPOCH FROM (locked_until - now())))::BIGINT
+           FROM voice_pin_origins WHERE origin = $1",
+    )
+    .bind(&chave)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!((40 * 60 - 30..=40 * 60).contains(&resta), "{resta}");
+}
