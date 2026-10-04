@@ -186,6 +186,7 @@ contexto de dialplan e por domínio SIP, não por processo.
 | O próprio softphone de prova, ou uma regra de DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`) com um perfil de teste. **Fora do CI**: precisa da imagem do FreeSWITCH e de docker |
 | `voice/freeswitch/sip_profiles/internal.xml`, `vars.xml.inc`, as montagens do compose, ou qualquer regra de SRTP | `bash scripts/softphone-prova.sh srtp-real` (R226) — com os ficheiros que o compose monta: o ramal autentica-se, com SRTP a chamada passa a negociação, **sem SRTP leva `488`**, e o `vars.xml.inc` incluído arranca e lê o ambiente. **Fora do CI**, pelas mesmas razões |
 | `voice/cluster/freeswitch-entrypoint.sh`, os ficheiros do ConfigMap `freeswitch-meet`, ou qualquer regra de SRTP no cluster | `bash scripts/softphone-prova.sh srtp-cluster` (R226) — a configuração que o cluster local monta: ramal autenticado e dial-in, cada um com e sem SRTP; **sem SRTP os dois levam `488`**. **Fora do CI**, pelas mesmas razões |
+| `voice/freeswitch/scripts/*.lua`, `autoload_configs/xml_curl.conf.xml`, ou o nível de log do FreeSWITCH | o passo 6 do mesmo `srtp-cluster` (R227) — o segredo de voz chega ao servidor em cabeçalhos (Basic no `mod_xml_curl`, `X-Voice-Secret` nos Lua), nunca no URL, e **nem ele nem o PIN marcado aparecem no `freeswitch.log`**. **Fora do CI** |
 
 **O que uma interligação tem de mostrar antes de se dizer «a funcionar»:**
 

@@ -24,6 +24,8 @@
 #               voice/cluster/freeswitch-entrypoint.sh monta no cluster local.
 #               Mede o perfil dos ramais (com um servidor de directório a
 #               responder) e o do dial-in: sem SRTP, os dois têm de dar 488.
+#               E o segredo de voz: chega ao servidor em cabeçalhos, nunca no
+#               URL, e não fica — nem ele nem o PIN marcado — no log (R227).
 #    chamada    um softphone contra um servidor teu (ramal no FreeSWITCH, ou
 #               um ramal do PBX): marca --destino, envia --pin, toca --tom e
 #               mede --espera-tom no que ouviu.
@@ -63,12 +65,13 @@ PORTO_RAMAIS=5070              # o DELONIX_RAMAIS_SIP_PORT por omissão do compo
 DESTINO_REAL=101               # um número curto: o que o contexto dos ramais aceita
 URL_CONTROLO=http://127.0.0.1:8180   # o DELONIX_CONTROL_URL por omissão do compose
 DESTINO_DIALIN=244923000000    # um número qualquer: o contexto `public` aceita 6 a 15 dígitos
+PIN_DIALIN=482913              # um PIN qualquer, de 6 dígitos: só interessa vê-lo chegar ao servidor
 fail=0
 ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
 aviso() { printf '  ! %s\n' "$*"; }   # medido e fora do que esta prova julga
 
-uso() { sed -n '2,51p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+uso() { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 
 limpar() {
   local c
@@ -578,7 +581,7 @@ srtp_cluster() {
     sleep 1
   done
   echo "configuração: a que o voice/cluster/freeswitch-entrypoint.sh monta, com os $n ficheiros do ConfigMap freeswitch-meet, em $IMG_FS"
-  echo "andaime: um servidor de directório que responde como o ramais.rs a um só ramal; lista de acesso dos ramais em loopback"
+  echo "andaime: um servidor que responde a tudo com o directório de um só ramal (como o ramais.rs) e guarda os pedidos; lista de acesso dos ramais em loopback"
   if [ -z "$ram" ] || [ -z "$ext" ]; then
     bad "o FreeSWITCH do entrypoint não pôs os dois perfis a correr (internal=«$ram» external=«$ext»)"
     logs "${TAG}-fs" | tail -8 | sed 's/^/       /'
@@ -619,9 +622,30 @@ corpo = f"""<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 sys.stdout.write("HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s"
                  % (len(corpo.encode()), corpo))
 PY
+  # O servidor de andaime lê o pedido INTEIRO, guarda-o, e só depois responde.
+  # Um `nc` que respondesse logo à ligação deixava o FreeSWITCH fechar antes de
+  # o pedido ser lido, e a prova ficava a depender de uma corrida.
+  cat > "$d/servidor.sh" <<'SH'
+p=$1; CR=$(printf '\r'); mkfifo "/f-$p"; exec 3<>"/f-$p"
+# Um só `nc -k`: o porto fica sempre à escuta, e dois pedidos seguidos (o
+# directório e logo o Lua) não encontram a porta fechada entre um e outro.
+nc -l -k -p "$p" <&3 | while :; do
+  cl=0; visto=0
+  while IFS= read -r l; do
+    visto=1; l=${l%"$CR"}; printf '%s\n' "$l" >> "/pedidos-$p"
+    [ -z "$l" ] && break
+    case "$l" in [Cc]ontent-[Ll]ength:*) cl=${l#*:}; cl=${cl# } ;; esac
+  done
+  [ "$visto" = 1 ] || exit 0
+  [ "${cl:-0}" -gt 0 ] && head -c "$cl" >> "/pedidos-$p"
+  printf '\n' >> "/pedidos-$p"
+  cat /resposta >&3
+done
+SH
   docker create --name "${TAG}-dir" --network "container:${TAG}-fs" --user 0 --entrypoint sh "$IMG_BS" \
-    -c 'while :; do nc -l -p 8180 -q 1 < /resposta >/dev/null 2>&1; done' >/dev/null
+    -c 'sh /servidor.sh 8180 & sh /servidor.sh 8181 & wait' >/dev/null
   docker cp "$d/resposta" "${TAG}-dir:/resposta" >/dev/null
+  docker cp "$d/servidor.sh" "${TAG}-dir:/servidor.sh" >/dev/null
   rm -f "$d/resposta"
   docker start "${TAG}-dir" >/dev/null
   local rede="container:${TAG}-fs"
@@ -659,7 +683,8 @@ PY
   perna q "$rede" "$ext" tronco - "$DESTINO_DIALIN" 1000 udp srtp-mand 5082 5555 42000 "$lip" 25
   resp=$(fim_da_chamada q 20)
   case "$resp" in
-    estabelecida) ok "com SRTP: chamada estabelecida" ;;
+    estabelecida) ok "com SRTP: chamada estabelecida"
+                  sleep 2; dtmf q 5555 "$PIN_DIALIN"; sleep 4 ;;   # o IVR valida o PIN no servidor
     *) bad "com SRTP a chamada ao dial-in não foi atendida ($resp) — o controlo negativo abaixo não prova nada" ;;
   esac
   docker rm -f "${TAG}-q" >/dev/null 2>&1
@@ -676,6 +701,60 @@ PY
   v=$(docker exec "${TAG}-fs" grep -ac 'Crypto not negotiated but required' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-0}" -ge 2 ]; then ok "o FreeSWITCH registou a razão das duas recusas: «Crypto not negotiated but required»"
   else bad "o FreeSWITCH registou «Crypto not negotiated but required» ${v:-0} vez(es), não duas"; fi
+
+  echo "6) o segredo de voz chega ao servidor em cabeçalhos, e não fica no log (R227)"
+  docker exec "${TAG}-dir" sh -c 'cat /pedidos-8180 /pedidos-8181 2>/dev/null' | tr -d '\r' > "$d/pedidos"
+  while IFS='|' read -r veredicto texto; do
+    if [ "$veredicto" = ok ]; then ok "$texto"; else bad "$texto"; fi
+  done < <(python3 - "$d/pedidos" "$segredo" "$PIN_DIALIN" <<'PY'
+import base64, re, sys
+pedidos, segredo, pin = open(sys.argv[1], errors="replace").read(), sys.argv[2], sys.argv[3]
+# Cada pedido começa numa linha «POST <caminho> HTTP/1.1».
+blocos = re.split(r"(?m)^(?=POST \S+ HTTP/1\.[01]$)", pedidos)
+def pedido(caminho):
+    return next((b for b in blocos if b.startswith("POST " + caminho + " ")), None)
+def sai(certo, texto):
+    print(("ok" if certo else "falha") + "|" + texto)
+
+linhas = [b.split("\n", 1)[0] for b in blocos if b.startswith("POST ")]
+no_url = [l for l in linhas if segredo in l or "secret=" in l]
+sai(bool(linhas) and not no_url,
+    "nenhum dos %d pedidos ao servidor leva o segredo no URL" % len(linhas) if linhas and not no_url
+    else "%d dos %d pedidos ao servidor levam o segredo no URL" % (len(no_url), len(linhas)))
+
+b = pedido("/api/voice/ivr/directory")
+m = b and re.search(r"(?mi)^Authorization: Basic (\S+)$", b)
+certo = False
+if m:
+    try:
+        certo = base64.b64decode(m.group(1)).decode().split(":", 1)[1] == segredo
+    except Exception:
+        certo = False
+sai(certo, "directório (mod_xml_curl): o segredo vai em Authorization: Basic" if certo
+    else "directório (mod_xml_curl): o pedido não leva o segredo em Authorization: Basic")
+
+for caminho, quem, corpo in (("/api/voice/ivr/resolve-extension", "ramais_dial.lua", None),
+                             ("/internal/v1/voice/ivr/validate", "dialin_ivr.lua", pin)):
+    b = pedido(caminho)
+    if b is None:
+        sai(False, "%s: o pedido a %s nunca chegou ao servidor" % (quem, caminho))
+        continue
+    tem = re.search(r"(?mi)^X-Voice-Secret: (\S+)$", b)
+    json_ok = re.search(r"(?mi)^Content-Type: application/json", b) is not None
+    certo = bool(tem) and tem.group(1) == segredo and json_ok and (corpo is None or ('"pin":"%s"' % corpo) in b)
+    sai(certo, "%s: o pedido chega com X-Voice-Secret e o corpo JSON%s" % (quem, " com o PIN marcado" if corpo else "")
+        if certo else "%s: o pedido a %s não chegou como devia (X-Voice-Secret, Content-Type ou corpo)" % (quem, caminho))
+PY
+  )
+  v=$(docker exec "${TAG}-fs" grep -ac "$segredo" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  if [ "${v:-1}" -eq 0 ]; then ok "o segredo de voz não aparece no freeswitch.log"
+  else bad "o segredo de voz aparece $v vez(es) no freeswitch.log"; fi
+  v=$(docker exec "${TAG}-fs" grep -ac "\"pin\":\"$PIN_DIALIN\"" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  if [ "${v:-1}" -eq 0 ]; then ok "o PIN marcado não aparece no freeswitch.log"
+  else bad "o PIN marcado aparece $v vez(es) no freeswitch.log"; fi
+  v=$(docker exec "${TAG}-fs" sh -c "grep -ac '$segredo' /usr/local/freeswitch/var/log/freeswitch/freeswitch.xml.fsxml 2>/dev/null")
+  [ "${v:-0}" -gt 0 ] && aviso "o freeswitch.xml.fsxml do directório de logs traz a configuração expandida, com o segredo ($v vez(es)): trata esse directório como o da configuração (R227)"
+  rm -f "$d/pedidos"
 }
 
 # ------------------------------------------------------------ chamada / par

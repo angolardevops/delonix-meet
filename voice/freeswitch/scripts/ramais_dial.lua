@@ -42,8 +42,11 @@ local function http_post(path, body)
   local args = string.format(
     "%s%s content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
     control_url, path, secret, body)
-  session:execute("curl", args)
-  return session:getVariable("curl_response_data")
+  -- Pela API do mod_curl, e não pela aplicação de dialplan (R227): os
+  -- argumentos de uma aplicação — o segredo e, no IVR, o PIN — ficam escritos
+  -- na linha EXECUTE do log a cada chamada, e no app_log do CDR. A API leva os
+  -- mesmos argumentos e devolve o corpo da resposta.
+  return api:execute("curl", args)
 end
 
 -- Extrai um valor string simples de um JSON plano (sem dependências externas).
