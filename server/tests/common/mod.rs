@@ -11,6 +11,8 @@
 //! não passa a verde por engano.
 #![allow(dead_code)]
 
+pub mod fake_ollama;
+
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use delonix_server::{build_router, build_state, config::Config, AppState};
@@ -107,6 +109,7 @@ impl TestApp {
         slot: tokio::sync::OwnedSemaphorePermit,
     ) -> Self {
         let dir = std::env::temp_dir().join(format!("delonix-it-{}", uuid::Uuid::new_v4()));
+        config.data_exports_dir = dir.join("exports");
         config.recordings_dir = dir;
         let state = build_state(config, db.clone()).await;
         let app = build_router(state.clone());

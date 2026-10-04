@@ -73,9 +73,6 @@ export default {
       quarter: 'Quarter',
       year: 'Year',
     },
-    ambito: 'Scope',
-    estaOrg: 'This organisation',
-    todasOrgs: 'All I administer',
     vazio: 'Nobody quarantined in this period',
   },
 }

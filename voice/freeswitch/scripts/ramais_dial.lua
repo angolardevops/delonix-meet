@@ -6,6 +6,12 @@
 -- segredo partilhado) → liga directamente ao registo desse AOR
 -- (`bridge(user/<sip_username>@<domínio>)`).
 --
+-- Excepção (R273): o NÚMERO DE ACESSO ÀS REUNIÕES. Não está escrito aqui nem
+-- no dialplan — é o control plane que o conhece (VOICE_MEETING_ACCESS_NUMBER)
+-- e responde `"meeting_access":true` em vez de um AOR. A chamada passa então
+-- para o IVR da sala (`dialin_ivr.lua ramal`), que pede o PIN e a entrega à
+-- ponte telefone↔sala. NUNCA correu contra um FreeSWITCH real.
+--
 -- Porquê um passo de tradução em vez de discar `user/${destination_number}`
 -- directamente: o número curto (extensão) só é único DENTRO da org — o AOR
 -- registado (sip_username) é que é globalmente único. Ver o comentário no
@@ -13,7 +19,7 @@
 -- contra uma instância real.
 --
 -- Segredos NUNCA em claro: lidos de variáveis globais do FreeSWITCH que, por
--- sua vez, vêm do ambiente (ver vars.xml.inc / docker-compose.voice.yml):
+-- sua vez, vêm do ambiente (ver voice/cluster/freeswitch-entrypoint.sh):
 --   ${delonix_control_url}     ex.: http://127.0.0.1:8180
 --   ${delonix_voice_secret}    == VOICE_INTERNAL_SECRET do backend
 --
@@ -27,12 +33,20 @@ local secret      = (api:executeString("global_getvar delonix_voice_secret") or 
 
 -- POST JSON ao control plane via mod_curl; devolve o corpo (string) ou nil.
 local function http_post(path, body)
+  -- Sintaxe do mod_curl: as opções vêm ANTES do método, cada uma com o seu
+  -- valor separado por espaço (`content-type <tipo>`, `append_headers
+  -- <nome:valor>`), e o corpo é o argumento a seguir a `post`. Na forma
+  -- antiga (`post content-type=… '<corpo>' '<cabeçalho>'`) o módulo tomava
+  -- «content-type=application/json» pelo corpo e mandava o pedido sem
+  -- Content-Type nem segredo: o servidor respondia 415 e todo o PIN era «errado».
   local args = string.format(
-    "%s%s post content-type=application/json '%s' " ..
-    "'X-Voice-Secret: %s'",
-    control_url, path, body, secret)
-  session:execute("curl", args)
-  return session:getVariable("curl_response_data")
+    "%s%s content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
+    control_url, path, secret, body)
+  -- Pela API do mod_curl, e não pela aplicação de dialplan (R227): os
+  -- argumentos de uma aplicação — o segredo e, no IVR, o PIN — ficam escritos
+  -- na linha EXECUTE do log a cada chamada, e no app_log do CDR. A API leva os
+  -- mesmos argumentos e devolve o corpo da resposta.
+  return api:execute("curl", args)
 end
 
 -- Extrai um valor string simples de um JSON plano (sem dependências externas).
@@ -56,6 +70,14 @@ end
 
 local body = string.format('{"domain":"%s","extension":"%s"}', domain, destination)
 local resp = http_post("/api/voice/ivr/resolve-extension", body)
+
+if resp and resp:match('"meeting_access"%s*:%s*true') then
+  -- O IVR atende, autentica o ramal pelo digest e fala com o listener INTERNO
+  -- do control plane — por isso é outro script, com o seu próprio URL.
+  session:execute("lua", "dialin_ivr.lua ramal")
+  return
+end
+
 local target_sip_username = json_str(resp, "sip_username")
 
 if not target_sip_username or #target_sip_username == 0 then

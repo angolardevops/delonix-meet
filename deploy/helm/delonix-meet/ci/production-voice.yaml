@@ -1,0 +1,14 @@
+# Prova do portão: produção COM voz (bordo exposto, tronco de documentação).
+voice:
+  enabled: true
+  trunks:
+    - { group: 1, ip: 198.51.100.20, mask: 32, port: 0, tag: pbx-cliente-prova }
+  kamailio:
+    tls:
+      existingSecret: kamailio-tls
+    service:
+      type: LoadBalancer
+  freeswitch:
+    image: { repository: ghcr.io/exemplo/delonix-meet-freeswitch, tag: "1.11.3-00000000" }
+  ramais:
+    acl: ["198.51.100.0/24"]

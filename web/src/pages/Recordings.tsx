@@ -60,7 +60,10 @@ export default function Recordings() {
   // «Minhas» (participei, partilhadas comigo) ou «Publicadas» na organização.
   const [scope, setScope] = useState<'mine' | 'published'>(() => (hashParam('scope') === 'published' ? 'published' : 'mine'))
   const fallback = useMemo(() => recordingsFallbackFor(scope), [scope])
-  const rs = useResourceSearch<RecordingLibraryItem>({ resource: 'recordings', fallback, deps: [scope] })
+  // Com a pesquisa do servidor, o `scope` vai em todos os pedidos da lista:
+  // sem ele, «Publicadas» mostrava a biblioteca pessoal (R235).
+  const serverParams = useMemo(() => ({ scope }), [scope])
+  const rs = useResourceSearch<RecordingLibraryItem>({ resource: 'recordings', fallback, serverParams, deps: [scope] })
   const [view, setView] = useState<View>(storedView)
   // Seleccionada: o painel mostra-a. `picked` distingue a escolha da pessoa
   // (carrega o vídeo, e em ecrã estreito abre o painel por cima) da selecção

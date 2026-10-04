@@ -50,6 +50,20 @@ message CompleteJobRequest {
   string transcript = 3;
   // Acta em Markdown (pode vir vazia).
   string minutes = 4;
+  // Segmentos com tempos, pela ordem do modelo. Um worker que não os envia
+  // (versão anterior) entrega só o texto e a transcrição fica sem tempos.
+  // O servidor aplica o DLP a cada segmento e descarta os incoerentes.
+  repeated TranscriptSegment segments = 5;
+  // Língua detectada (BCP 47 curto, ex. "pt"); vazia = desconhecida.
+  string language = 6;
+}
+
+message TranscriptSegment {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+  string text = 3;
+  // Confiança 0–1 (ex. exp(avg_logprob)); ausente = desconhecida.
+  optional float confidence = 4;
 }
 
 message CompleteJobResponse {}

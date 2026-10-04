@@ -4,8 +4,22 @@
 -- (/internal/v1/voice/ivr/validate, autenticado por segredo partilhado) → junta o
 -- chamador à conferência da sala (nome = room_code). No fim, envia o CDR.
 --
+-- DOIS MODOS, o mesmo IVR (R273):
+--   (sem argumento)  dial-in PSTN: a sala é a do (DID marcado, PIN).
+--   `ramal`          um ramal interno marcou o número de acesso às reuniões
+--                    (ramais_dial.lua chama `dialin_ivr.lua ramal`): não há
+--                    DID; a sala é a do PIN DENTRO DA ORGANIZAÇÃO DO RAMAL, e
+--                    quem decide isso é o control plane
+--                    (/internal/v1/voice/ivr/validate-extension). O ramal
+--                    identifica-se pelo que o FreeSWITCH AUTENTICOU por digest
+--                    (sip_auth_username / sip_auth_realm) — nunca pelo From,
+--                    que o telefone escreve como quiser. Sem CDR: não é uma
+--                    chamada PSTN, e o CDR do dial-in cobra a tarifa de entrada.
+--   O modo `ramal` NUNCA correu contra um FreeSWITCH real: só a sintaxe está
+--   verificada (scripts/check-lua-sintaxe.sh).
+--
 -- Segredos NUNCA em claro: lidos de variáveis globais do FreeSWITCH que, por sua
--- vez, vêm do ambiente (ver vars.xml / docker-compose.voice.yml):
+-- vez, vêm do ambiente (ver voice/cluster/freeswitch-entrypoint.sh):
 --   ${delonix_control_url}     ex.: http://127.0.0.1:8180
 --   ${delonix_voice_secret}    == VOICE_INTERNAL_SECRET do backend
 --
@@ -42,6 +56,9 @@ local api = freeswitch.API()
 local control_url = (api:executeString("global_getvar delonix_control_url") or ""):gsub("%s+$", "")
 local secret      = (api:executeString("global_getvar delonix_voice_secret") or ""):gsub("%s+$", "")
 
+-- `argv` é o que o dialplan (ou outro script) passou depois do nome do ficheiro.
+local modo_ramal = (argv ~= nil and argv[1] == "ramal")
+
 local MAX_TRIES = 3
 local PIN_LEN   = 6
 -- Perfil sofia de onde sai a perna para a ponte. Só `internal` existe na
@@ -52,13 +69,20 @@ if bridge_profile == "" then bridge_profile = "internal" end
 
 -- POST JSON ao control plane via mod_curl; devolve o corpo (string) ou nil.
 local function http_post(path, body)
-  -- curl app: url, método, headers e dados; resultado fica em ${curl_response_data}
+  -- Sintaxe do mod_curl: as opções vêm ANTES do método, cada uma com o seu
+  -- valor separado por espaço (`content-type <tipo>`, `append_headers
+  -- <nome:valor>`), e o corpo é o argumento a seguir a `post`. Na forma
+  -- antiga (`post content-type=… '<corpo>' '<cabeçalho>'`) o módulo tomava
+  -- «content-type=application/json» pelo corpo e mandava o pedido sem
+  -- Content-Type nem segredo: o servidor respondia 415 e todo o PIN era «errado».
   local args = string.format(
-    "%s%s post content-type=application/json '%s' " ..
-    "'X-Voice-Secret: %s'",
-    control_url, path, body, secret)
-  session:execute("curl", args)
-  return session:getVariable("curl_response_data")
+    "%s%s content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
+    control_url, path, secret, body)
+  -- Pela API do mod_curl, e não pela aplicação de dialplan (R227): os
+  -- argumentos de uma aplicação — o segredo e, no IVR, o PIN — ficam escritos
+  -- na linha EXECUTE do log a cada chamada, e no app_log do CDR. A API leva os
+  -- mesmos argumentos e devolve o corpo da resposta.
+  return api:execute("curl", args)
 end
 
 -- Extrai um valor STRING simples de um JSON plano (sem dependências externas).
@@ -101,13 +125,34 @@ local function room_bridge_from_json(resp)
   return { sip_uri = sip_uri, channel_vars = vars, srtp_profile = json_str(obj, "srtp_profile") }
 end
 
+-- Modo `ramal`: quem liga é o utilizador que o perfil `internal` autenticou
+-- (auth-calls=true). Sem essas duas variáveis a chamada não foi autenticada —
+-- desliga-se, não se recua para o From. Os valores vão para dentro de um JSON
+-- e de um argumento entre plicas: só se aceita o alfabeto de um AOR e de um
+-- domínio.
+local ramal_user, ramal_domain = "", ""
+if modo_ramal then
+  ramal_user = session:getVariable("sip_auth_username") or ""
+  ramal_domain = session:getVariable("sip_auth_realm") or ""
+  local limpo = "^[%w%._%-]+$"
+  if not ramal_user:match(limpo) or not ramal_domain:match(limpo) then
+    freeswitch.consoleLog("warning",
+      "[delonix ivr] modo ramal sem sip_auth_username/sip_auth_realm validos — a rejeitar\n")
+    session:hangup("CALL_REJECTED")
+    return
+  end
+end
+
 session:answer()
 session:setVariable("rtp_secure_media", "mandatory") -- não recusa esta perna, já negociada: isso é da global (R226)
 session:sleep(300)
 
-local did = session:getVariable("sip_to_user") or session:getVariable("destination_number") or ""
--- Normaliza para +E.164 (o DID chega tipicamente sem '+').
-if did ~= "" and did:sub(1, 1) ~= "+" then did = "+" .. did end
+local did = ""
+if not modo_ramal then
+  did = session:getVariable("sip_to_user") or session:getVariable("destination_number") or ""
+  -- Normaliza para +E.164 (o DID chega tipicamente sem '+').
+  if did ~= "" and did:sub(1, 1) ~= "+" then did = "+" .. did end
+end
 
 local room_code = nil
 local voice_room_id = nil
@@ -121,8 +166,15 @@ for try = 1, MAX_TRIES do
     "\\d+")
 
   if pin and #pin == PIN_LEN then
-    local body = string.format('{"did_e164":"%s","pin":"%s"}', did, pin)
-    local resp = http_post("/internal/v1/voice/ivr/validate", body)
+    local resp
+    if modo_ramal then
+      local body = string.format('{"sip_username":"%s","domain":"%s","pin":"%s"}',
+        ramal_user, ramal_domain, pin)
+      resp = http_post("/internal/v1/voice/ivr/validate-extension", body)
+    else
+      local body = string.format('{"did_e164":"%s","pin":"%s"}', did, pin)
+      resp = http_post("/internal/v1/voice/ivr/validate", body)
+    end
     room_code = json_str(resp, "room_code")
     voice_room_id = json_str(resp, "voice_room_id")
     room_bridge = room_bridge_from_json(resp)
@@ -183,7 +235,7 @@ end
 -- Pós-chamada: envia o CDR ao control plane (duração em segundos).
 local duration = os.time() - started
 local caller = session:getVariable("caller_id_number") or ""
-if voice_room_id and #voice_room_id > 0 then
+if not modo_ramal and voice_room_id and #voice_room_id > 0 then
   local cdr = string.format(
     '{"voice_room_id":"%s","caller_number":"%s","did_e164":"%s","duration_secs":%d}',
     voice_room_id, caller, did, duration)

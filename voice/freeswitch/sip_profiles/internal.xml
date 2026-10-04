@@ -4,8 +4,7 @@
   FreeSWITCH (que traz utilizadores de demonstração estáticos) — este fala
   com o control plane Rust via mod_xml_curl (xml_curl.conf.xml).
 
-  Porcaquê uma porta DISTINTA da do Kamailio (que já ocupa 5060/5061 no
-  `network_mode: host` — ver docker-compose.voice.yml): softphones dos ramais
+  Porquê uma porta DISTINTA da do Kamailio (5060/5061): softphones dos ramais
   registam-se DIRECTAMENTE aqui, sem passar pelo Kamailio. O Kamailio fica
   inteiramente dedicado ao trunk PSTN, tal como estava antes desta mudança —
   ver o comentário no topo de kamailio.cfg sobre porquê essa fronteira NÃO
@@ -19,9 +18,10 @@
   <!-- SRTP obrigatório à ENTRADA, para o FreeSWITCH inteiro. O que recusa com
        488 um INVITE sem a=crypto é a variável GLOBAL rtp_secure_media=mandatory:
        no FreeSWITCH 1.11.3 não há parâmetro de perfil que o faça (R226, medido
-       com chamadas). Fica AQUI, além de vars.xml.inc, para a exigência não
-       depender de alguém ter incluído esse ficheiro no vars.xml: quem carrega
-       este perfil carrega a global.
+       com chamadas). Fica AQUI, além de o arranque a pôr também
+       (voice/cluster/freeswitch-entrypoint.sh), para a exigência não depender
+       de como o FreeSWITCH foi arrancado: quem carrega este perfil carrega a
+       global.
        Portão: bash scripts/softphone-prova.sh srtp-real -->
   <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
   <profile name="internal">

@@ -77,22 +77,49 @@ fn lease_lost() -> ApiError {
     .into()
 }
 
+/// O que o worker entrega.
+pub struct Delivery<'a> {
+    pub transcript: &'a str,
+    pub minutes: &'a str,
+    /// Vazio num worker que só entrega o texto (versão anterior do contrato).
+    pub segments: Vec<rules::Segment>,
+    /// Língua detectada; vazia = desconhecida.
+    pub language: &'a str,
+}
+
 /// Entrega a transcrição. Só quem tem a reserva em vigor entrega.
 pub async fn complete(
     state: &AppState,
     recording_id: Uuid,
     lease_token: &str,
-    transcript: &str,
-    minutes: &str,
+    delivery: Delivery<'_>,
 ) -> Result<(), ApiError> {
     // DLP antes de qualquer byte chegar à base (e daí ao LLM da acta ou a um
-    // webhook): cartões, NIF, chaves de API.
-    let transcript = crate::dlp::censor(transcript);
-    let minutes = crate::dlp::censor(minutes);
+    // webhook): cartões, NIF, chaves de API. Nos segmentos também: são o mesmo
+    // texto, e é deles que saem as legendas.
+    let transcript = crate::dlp::censor(delivery.transcript);
+    let minutes = crate::dlp::censor(delivery.minutes);
+    // Censura ANTES de truncar: sanitize_segments corta a MAX_SEGMENT_CHARS,
+    // e um padrão (chave, cartão) que atravesse esse corte deixa de bater
+    // certo com a expressão regular depois de partido ao meio.
+    let censored: Vec<rules::Segment> = delivery
+        .segments
+        .into_iter()
+        .map(|mut s| {
+            s.text = crate::dlp::censor(&s.text);
+            s
+        })
+        .collect();
+    let segments: Vec<rules::Segment> = rules::sanitize_segments(censored);
+    let confidence = rules::mean_confidence(&segments);
+    let language = rules::sanitize_language(delivery.language);
+    let segments_json = serde_json::to_value(&segments).map_err(ApiError::internal)?;
     let mut tx = state.db.begin().await?;
     let room_code: Option<(String,)> = sqlx::query_as(
         "UPDATE recordings r
             SET transcript = $3, minutes = $4, transcribed_at = now(),
+                transcript_segments = $5, transcript_language = $6,
+                transcript_confidence = $7,
                 transcription_lease_token = NULL, transcription_lease_expires_at = NULL,
                 transcription_error = NULL
           WHERE r.id = $1 AND r.transcription_lease_token = $2
@@ -103,6 +130,9 @@ pub async fn complete(
     .bind(lease_token)
     .bind(&transcript)
     .bind(&minutes)
+    .bind(&segments_json)
+    .bind(&language)
+    .bind(confidence)
     .fetch_optional(&mut *tx)
     .await?;
     let Some((room_code,)) = room_code else {

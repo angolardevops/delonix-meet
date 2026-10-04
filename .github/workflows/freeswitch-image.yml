@@ -5,8 +5,8 @@
 #  compilar o FreeSWITCH leva um quarto de hora (a cache poupa-o quando a
 #  imagem não mudou), e não há razão para o pagar em cada PR.
 #
-#  PR   → build + prova de fumo + as provas com chamadas (softphone-prova.sh);
-#         nada é publicado.
+#  PR   → build + prova de fumo + as provas com chamadas (softphone-prova.sh:
+#         selftest, srtp-real, srtp-cluster); nada é publicado.
 #  main → o mesmo, e depois publica em
 #         ghcr.io/<owner>/delonix-meet-freeswitch:1.11.3-<sha8>, com SBOM e
 #         proveniência. A tag é imutável: nunca :latest nem :1.11.3 sozinho —
@@ -25,7 +25,9 @@ on:
       # um perfil ou um dialplan que mude tem de voltar a passar por elas.
       - voice/freeswitch/**
       - voice/softphone/**
-      - voice/docker-compose.voice.yml
+      - voice/cluster/**
+      - compose.yaml
+      - scripts/cluster-voice.sh
       - scripts/softphone-prova.sh
       - scripts/freeswitch-image-smoke.sh
       - scripts/check-lua-sintaxe.sh
@@ -36,7 +38,9 @@ on:
       # um perfil ou um dialplan que mude tem de voltar a passar por elas.
       - voice/freeswitch/**
       - voice/softphone/**
-      - voice/docker-compose.voice.yml
+      - voice/cluster/**
+      - compose.yaml
+      - scripts/cluster-voice.sh
       - scripts/softphone-prova.sh
       - scripts/freeswitch-image-smoke.sh
       - scripts/check-lua-sintaxe.sh
@@ -84,8 +88,13 @@ jobs:
       - name: Softphone — PIN por DTMF, tons nos dois sentidos, e sem SRTP → 488
         run: FS_IMAGE="$LOCAL" bash scripts/softphone-prova.sh selftest
 
-      - name: SRTP obrigatório com a configuração do repo (R226) — a chamada em claro leva 488
+      # A configuração que CORRE: a que o arranque monta com os ficheiros do
+      # compose.yaml e, a seguir, com os do ConfigMap do cluster.
+      - name: Compose — sem SRTP → 488 nos ramais e no dial-in; segredo e PIN fora do log (R226, R227)
         run: FS_IMAGE="$LOCAL" bash scripts/softphone-prova.sh srtp-real
+
+      - name: Cluster — a mesma prova, com os ficheiros do ConfigMap
+        run: FS_IMAGE="$LOCAL" bash scripts/softphone-prova.sh srtp-cluster
 
       - name: Nome publicado
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

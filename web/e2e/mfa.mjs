@@ -81,7 +81,13 @@ console.log('\n--- activação ---')
 const mau = await req('/api/users/me/mfa/activate', { token: tok, method: 'POST', body: { code: '000000' } })
 mau.status === 401 ? ok('código errado não activa → 401') : nok('activar com código errado', `HTTP ${mau.status}`)
 
-const act = await req('/api/users/me/mfa/activate', { token: tok, method: 'POST', body: { code: totp(segredo) } })
+// O código da activação guarda-se: mais abaixo testa-se o replay DESTE código.
+// Recalculá-lo lá era uma corrida com o relógio — se a janela de 30 s virasse
+// entre a activação e o replay, saía o código da janela SEGUINTE, que o servidor
+// aceita com razão, e o teste acusava um replay que não houve (CI vermelho a
+// 2026-10-04, na mesma árvore que tinha passado minutos antes).
+const codigoDaActivacao = totp(segredo)
+const act = await req('/api/users/me/mfa/activate', { token: tok, method: 'POST', body: { code: codigoDaActivacao } })
 const backup = act.json?.backup_codes
 Array.isArray(backup) && backup.length === 10 ? ok('activação devolve 10 códigos de recuperação') : nok('activar', JSON.stringify(act.json))
 
@@ -101,7 +107,6 @@ errado.status === 401 ? ok('código errado no login → 401') : nok('código err
 // A ACTIVAÇÃO consumiu o código daquela janela. Reutilizá-lo para entrar é um
 // replay, e tem de ser recusado — mesmo sendo uma operação diferente. Não é
 // óbvio, e é por isso que se testa explicitamente.
-const codigoDaActivacao = totp(segredo)
 const replayEntreOperacoes = await req('/api/auth/login/mfa', { method: 'POST', body: { mfa_token: desafio, code: codigoDaActivacao } })
 replayEntreOperacoes.status === 401
   ? ok('o código usado para ACTIVAR não serve para entrar (anti-replay entre operações)')

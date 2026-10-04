@@ -1,5 +1,5 @@
 /**
- * Domínio, retenção e quotas (POST /api/orgs/:id/settings). A retenção só apaga
+ * Domínio, retenção e quotas (PATCH /api/orgs/:id). A retenção só apaga
  * GRAVAÇÕES (`recorder.rs`); o texto não promete retenção de chat nem de
  * auditoria, que não existe. Quota vazia = ilimitado (o servidor grava NULL).
  */

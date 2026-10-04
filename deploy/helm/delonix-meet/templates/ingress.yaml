@@ -1,0 +1,81 @@
+{{- $v := .Values -}}
+{{- if $v.ingress.enabled }}
+{{- $tlsSecret := $v.ingress.tls.existingSecret | default $v.ingress.tls.secretName -}}
+{{- $comTls := or $v.ingress.tls.clusterIssuer $v.ingress.tls.existingSecret -}}
+# /api, /rtc e a web. As portas internas (8181, 9180) e o Service
+# delonix-server-internal NUNCA entram aqui (ADR-0006 §3).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-ingress
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+  annotations:
+    {{- with $v.ingress.tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ . | quote }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ $v.ingress.proxyTimeoutSeconds | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ $v.ingress.proxyTimeoutSeconds | quote }}
+    nginx.ingress.kubernetes.io/websocket-services: delonix-server
+    {{- with $v.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $v.ingress.className }}
+  {{- if $comTls }}
+  tls:
+    - hosts: [{{ $v.host | quote }}]
+      secretName: {{ $tlsSecret }}
+  {{- end }}
+  rules:
+    - host: {{ $v.host | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
+          - path: /rtc
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
+          {{- if $v.ingress.asr.serviceName }}
+          - path: /asr
+            pathType: Prefix
+            backend:
+              service: { name: {{ $v.ingress.asr.serviceName }}, port: { number: {{ $v.ingress.asr.servicePort }} } }
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: delonix-web, port: { number: 80 } }
+---
+# Ingress DEDICADO ao /ws, com afinidade por sala: consistent-hash pelo `room`
+# do URL (/ws?token=…&room=CODE). O SFU é em memória por pod — todos os pares
+# de uma sala têm de cair no mesmo. ADR-0001; a regressão R3 foi perder isto.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-ws
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ $v.ingress.proxyTimeoutSeconds | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ $v.ingress.proxyTimeoutSeconds | quote }}
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"
+spec:
+  ingressClassName: {{ $v.ingress.className }}
+  {{- if $comTls }}
+  tls:
+    - hosts: [{{ $v.host | quote }}]
+      secretName: {{ $tlsSecret }}
+  {{- end }}
+  rules:
+    - host: {{ $v.host | quote }}
+      http:
+        paths:
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server-ws, port: { number: 8180 } }
+{{- end }}

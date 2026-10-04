@@ -116,7 +116,7 @@ if (a1.item) {
   chk(d.width > 0 && d.height > 0 && d.height <= 1080, `resolução medida ${d.width}×${d.height}`)
   chk(d.video_codec && d.audio_codec, `codecs ${d.video_codec}/${d.audio_codec}`)
   chk(d.has_thumbnail, 'miniatura gerada')
-  const dl = await fetch(`${API}/api/recordings/${a1.item.id}?dl=1`, { headers: { Authorization: `Bearer ${tok}` } })
+  const dl = await fetch(`${API}/api/recordings/${a1.item.id}/content?dl=1`, { headers: { Authorization: `Bearer ${tok}` } })
   chk(dl.ok && Number(dl.headers.get('content-length') ?? (await dl.arrayBuffer()).byteLength) > 1000, 'o ficheiro descarrega')
   for (let k = 0; k < 25 && !recebidos.some((w) => w.data?.recording_id === a1.item.id); k++) await sleep(200)
   const w = recebidos.find((x) => x.data?.recording_id === a1.item.id)

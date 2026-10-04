@@ -3,7 +3,7 @@
  *  - chamadas perdidas entre contactos (`missed_calls`, pela presença) —
  *    devolvem-se com um clique;
  *  - chamadas telefónicas que entraram pelo dial-in da organização
- *    (GET /api/orgs/{org}/voice/cdr, só admins), com número e duração.
+ *    (GET /api/orgs/{org}/voice/call-records, só admins), com número e duração.
  *
  * «Efectuadas» e «recebidas» entre contactos não aparecem porque não se
  * guardam; saídas PSTN não existem («Sem outbound» em `voice/README.md`).

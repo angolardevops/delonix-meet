@@ -28,18 +28,21 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
 | `freeswitch/scripts/dialin_ivr.lua` | IVR: PIN → valida no control plane → junta à conferência → CDR |
 | `freeswitch/dialplan/public/00_delonix_dialin.xml` | Encaminha inbound para o IVR |
 | `freeswitch/autoload_configs/conference.conf.xml` | Perfil de conferência `delonix` (não impõe SRTP: isso é de cada perna SIP) |
-| `freeswitch/vars.xml.inc` | Vars globais (URL do control plane, segredo, SRTP obrigatório) — **nenhum ficheiro do repo o inclui** no `vars.xml` (R226) |
-| `docker-compose.voice.yml` | Serviços de dev (Kamailio + FreeSWITCH) |
+| `cluster/freeswitch-entrypoint.sh` | O arranque do FreeSWITCH: fecha a vanilla da imagem, põe as variáveis do ambiente e os ficheiros do Meet. É o mesmo no `compose.yaml` e no cluster |
+| `../compose.yaml` (serviços `kamailio`, `freeswitch`, `pbx`) | O laboratório de voz: `make compose-up`, medido por `make compose-voice-check` |
 
 ## Segurança (não-negociável)
 - **SRTP obrigatório**, sem fallback: quem recusa com `488` uma chamada em claro é a
   variável **global** `rtp_secure_media=mandatory`, posta por `sip_profiles/internal.xml`
-  (e por `vars.xml.inc`, onde for incluído). Não há parâmetro de perfil nem de
+  (e pelo arranque, `cluster/freeswitch-entrypoint.sh`). Não há parâmetro de perfil nem de
   conferência que o faça, e o `set` do dialplan só a recusa num perfil que negoceie tarde
   (`inbound-late-negotiation=true`), o que não é o caso do perfil dos ramais (R226).
   Portão: `bash scripts/softphone-prova.sh srtp-real`.
 - **SIP-TLS** (5061) no Kamailio; certificado montado por volume (`/etc/ssl/delonix`),
   nunca comitado. Em dev usar self-signed; nunca desativar a camada.
+- **Sem excepção por tronco**: um tronco declarado `srtp=off` só faz chamadas de **saída**
+  em claro. À entrada, uma chamada em claro leva `488` venha de onde vier — uma operadora
+  sem SRTP não nos consegue ligar. É de propósito.
 - **Anti-toll-fraud**: só se aceita inbound dos **IPs do trunk** (`ao_trunk.txt`,
   fornecido pelo provedor 5.1). Sem outbound não autenticado.
 - **Segredos do ambiente**: `VOICE_INTERNAL_SECRET` (== do backend) e URLs vêm de env,
@@ -47,11 +50,36 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
   caracteres ou que já tenha estado publicado no repositório (R154); gera-o com
   `openssl rand -hex 32`.
 
+## Rodar o segredo de voz
+
+O `VOICE_INTERNAL_SECRET` autentica o FreeSWITCH perante o servidor: IVR, directório dos
+ramais (o HA1 de cada ramal) e CDR. Roda-o sempre que possa ter sido lido por quem não
+devia — em particular, uma instalação que tenha corrido com a configuração de antes da R227
+escreveu-o no log do FreeSWITCH.
+
+```bash
+make voice-secret-rotate        # troca-o no .env; não mostra o valor
+make compose-up                 # compose: recria o servidor e o FreeSWITCH com o valor novo
+make cluster                    # cluster: reaplica o Secret delonix-voice e reinicia os dois
+make compose-voice-check        # o FreeSWITCH volta a falar com o servidor
+```
+
+O servidor e o FreeSWITCH têm de mudar no mesmo passo: com valores diferentes, o servidor
+responde `401` a cada registo de ramal e a cada PIN. Em produção (chart Helm) o Secret é
+teu (`secrets.existingSecret`): troca-lhe a chave `VOICE_INTERNAL_SECRET` e reinicia os dois.
+No fim, apaga os logs antigos do FreeSWITCH que possam ter o valor anterior.
+
+O directório de logs do FreeSWITCH não leva o segredo: o arranque tira o nível DEBUG do
+log e manda a configuração expandida (`freeswitch.xml.fsxml`) para um directório privado
+ao lado da configuração. `DELONIX_FS_LOG_DEBUG=1` volta a ligar o DEBUG — e, com ele, o
+segredo e os PIN no log.
+
 ## Testar sem trunk (com softphone SIP)
 A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Zoiper):
 1. Backend Rust a correr com `VOICE_INTERNAL_SECRET` definido; criar um DID + sala de
    voz (obter o número e o PIN) — ver `docs/pstn-dial-in-fase0.md` e o E2E do control plane.
-2. `docker compose -f voice/docker-compose.voice.yml up -d`.
+2. `make voice-images` e `make compose-up` (o `compose.yaml` da raiz; `LAN_IP=<ip>` expõe
+   os ramais à rede local).
 3. Registar o softphone no Kamailio e "ligar" para o número da sala.
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
    `GET /api/orgs/{org}/voice/call-records`.
@@ -61,8 +89,8 @@ A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Z
 Infra-as-code de um segundo fluxo, PARALELO ao dial-in PSTN acima e que não o
 toca: um "ramal" é uma conta SIP permanente (1:1 com um `org_member`, número
 curto atribuído, migração `0055_ramais.sql`) para chamadas **só entre ramais
-da MESMA organização**. Sem PSTN, sem ponte para salas de vídeo — ambas são
-fases seguintes do mesmo plano.
+da MESMA organização**. O PSTN é a Fase 2 e a entrada numa reunião a Fase 3,
+as duas mais abaixo.
 
 ```
 Softphone A (ramal 101, acme.ramais.delonix.meet)
@@ -87,7 +115,34 @@ registrar/auth_db/DB), e dar-lhe isso era maior risco do que esta fase pede.
 | `freeswitch/sip_profiles/internal.xml` | Perfil Sofia dos ramais — porta própria, realm por org (`challenge-realm=auto_from`) |
 | `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático |
 | `freeswitch/dialplan/default/00_delonix_extensions.xml` | Contexto `delonix_ramais`: números de 3–5 dígitos → `ramais_dial.lua` |
-| `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge |
+| `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge; o número de acesso às reuniões segue para o IVR (Fase 3) |
+
+**Domínio SIP e endereço público são duas coisas.** O softphone precisa de
+quatro dados, e a consola mostra-os no diálogo «Credenciais SIP» de um ramal:
+
+| Dado | De onde vem | O que é |
+|---|---|---|
+| Servidor / proxy | `sip_server` — `VOICE_RAMAIS_PUBLIC_HOST`, `VOICE_RAMAIS_PUBLIC_PORT` (omissão `5070`), `VOICE_RAMAIS_PUBLIC_TRANSPORT` (`udp`\|`tcp`\|`tls`, omissão `udp`) | O endereço PÚBLICO a que o softphone se liga, pronto a colar: `sip:host:porta;transport=x` |
+| Utilizador | `sip_username` | A conta SIP (`ramal_…`) |
+| Password | `sip_password` | Só aparece na criação e na regeneração |
+| Domínio | `sip_domain` — `<slug>.<VOICE_RAMAIS_DOMAIN_SUFFIX>` | O realm do digest: um nome LÓGICO, que não tem de resolver em DNS |
+
+- **Sem `VOICE_RAMAIS_PUBLIC_HOST` a API devolve `sip_server: null`** e a
+  consola diz que a instalação não tem o endereço configurado. O servidor não
+  adivinha por onde é alcançável — um host mal formado (com `sip:` ou com a
+  porta lá dentro) conta como ausente, com aviso no arranque.
+- **Em produção, `VOICE_RAMAIS_DOMAIN_SUFFIX` deve ser um sufixo do domínio
+  público da instalação** (p.ex. `ramais.meet.exemplo.ao`), e não a omissão
+  `ramais.delonix.meet`: um softphone que derive o servidor do domínio, ou um
+  SRV/NAPTR futuro, só funciona se o nome for da instalação.
+- **Não se muda o sufixo com ramais criados.** O domínio entra no HA1 (abaixo):
+  mudá-lo invalida as passwords de TODOS os ramais existentes, que têm de ser
+  regeneradas uma a uma. Escolhe-se antes do primeiro ramal.
+- Os dois laboratórios definem o endereço: `compose.yaml` (`meet.ngolacloud.local`,
+  trocado pelo IP da máquina com `make compose-up LAN_IP=…`) e
+  `scripts/cluster.sh` (`${MEET_HOST}`). **Não validado:** que a porta 5070 é
+  alcançável de fora nesses endereços — no compose só com `LAN_IP`, e no
+  cluster o serviço do FreeSWITCH é interno (`clusterIP: None`).
 
 **HA1, não Argon2, para o digest SIP.** `voice_extensions.sip_password_hash`
 (Argon2) é só a segurança em repouso da nossa própria base — o protocolo SIP
@@ -148,6 +203,41 @@ porque a via antiga (`00_delonix_dialin.xml`) não foi tocada. Confirmar com
 `debug="true"` em `xml_curl.conf.xml` antes de produção. O modelo de dados,
 a API REST de atribuição e a UI foram corridos e verificados contra um
 Postgres real neste repositório.
+
+## Ramal entra numa reunião — número de acesso (Fase 3, R273)
+
+Um ramal registado marca o **número de acesso às reuniões** (`8000` por
+omissão; `VOICE_MEETING_ACCESS_NUMBER` no servidor, 3–5 dígitos), ouve o pedido
+de PIN e entra na sala pela ponte telefone↔sala abaixo — a mesma do dial-in.
+
+```
+Softphone (ramal 101, acme.ramais.delonix.meet)
+     │ INVITE 8000 (autenticado por digest no perfil "internal")
+     ▼
+FreeSWITCH — dialplan "delonix_ramais" → ramais_dial.lua
+     1) POST /api/voice/ivr/resolve-extension ("8000") ──► Control plane
+                                                        ◄── {"meeting_access": true}
+     2) dialin_ivr.lua ramal → atende, pede o PIN
+     3) POST /internal/v1/voice/ivr/validate-extension ──► Control plane
+        {sip_username, domain, pin}                        (sala ACTIVA da ORG do ramal)
+                                                        ◄── room_code + room_bridge
+     4) bridge para o room_bridge; se falhar, conferência local
+```
+
+- **O número só se configura no servidor.** Nem o dialplan nem o Lua o têm
+  escrito: perguntam. Nenhum ramal o pode ter (`409 ramais.extension_reserved`)
+  e a consola recebe-o em `meeting_access_number`, em cada ramal de
+  `GET /api/orgs/{org}/extensions`.
+- **Isolamento por organização.** A sala procura-se na org do ramal que o
+  FreeSWITCH autenticou (`sip_auth_username`/`sip_auth_realm`), não na de um
+  cabeçalho que o telefone escreva. O PIN de uma sala de outra org é recusado.
+- **Sem CDR** para esta chamada, e quem entra aparece na sala como «Telefone».
+
+**O que NÃO foi verificado:** nenhuma chamada real percorreu este caminho. A
+regra do servidor está medida contra Postgres (`server/tests/ramal_entra_na_sala.rs`);
+os dois Lua só têm a sintaxe verificada. Antes de produção, confirmar contra um
+FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
+`ramais_dial.lua` consegue chamar o `dialin_ivr.lua` com o argumento `ramal`.
 
 ## Ponte telefone↔sala (ADR-0010) — ligada
 

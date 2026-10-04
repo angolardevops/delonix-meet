@@ -1,6 +1,6 @@
 # Spike local do MediaMTX (2026-10-04)
 
-Fecha **parte** do spike descrito no [ADR-0011](../adr/0011-channel-engine-ingest-e-distribuicao-de-tv.md).
+Fecha **parte** do spike descrito no [ADR-0015](../adr/0015-channel-engine-ingest-e-distribuicao-de-tv.md).
 O ADR continua **Proposto**: o que aqui se mediu é um subconjunto, numa máquina partilhada e carregada.
 
 ## Cenário

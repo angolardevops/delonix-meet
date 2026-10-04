@@ -43,7 +43,7 @@ este projecto parte.
 | R34, R84, R119 | Nenhuma chave, artefacto ou symlink local no git. Uma chave que sai do índice fica no histórico. |
 | R62, R90, R97 | Um portão de CI não se calibra para o portátil de quem o escreveu. Um portão que falha num teste diferente de cada vez não guarda nada. Browsers instalam-se antes dos e2e. |
 | R72 | Um teste que existe e nunca corre não é portão. Um `skip` silencioso no CI dá verde sem provar. O que fica fora do CI tem linha e razão em `scripts/e2e-fora-do-ci.txt`. |
-| R223 | A imagem do FreeSWITCH vive no repo, com as fontes fixadas por commit e a base por digest; um módulo pedido e não compilado parte o build; publica-se só a partir da `main`, com tag imutável `1.11.3-<sha8>`. O `voice/docker-compose.voice.yml` ainda usa `safarov/freeswitch:latest` — dívida nomeada na `delonix-meet-telefonia`. |
+| R223 | A imagem do FreeSWITCH vive no repo, com as fontes fixadas por commit e a base por digest; um módulo pedido e não compilado parte o build; publica-se só a partir da `main`, com tag imutável `1.11.3-<sha8>`. O compose de voz antigo (`voice/docker-compose.voice.yml`, `safarov/freeswitch:latest`) foi retirado a 2026-10-04: a voz sobe pelo `compose.yaml` e pelo cluster, os dois com a imagem do repo. |
 
 ## O que verificas
 

@@ -147,8 +147,31 @@ pub struct Config {
     /// DENTRO da org (ver migração 0064); sem isto, o ramal "101" da Acme e o
     /// "101" da Zeta colidiriam no mesmo directório SIP.
     pub voice_ramais_domain_suffix: String,
+    /// Número curto RESERVADO que um ramal marca para entrar numa reunião
+    /// (`VOICE_MEETING_ACCESS_NUMBER`, 3–5 dígitos sem zero à esquerda; por
+    /// omissão `8000`). O FreeSWITCH não o conhece: pergunta-o ao servidor em
+    /// `resolve-extension`, por isso este é o único sítio onde se configura.
+    /// Nenhum ramal pode ter este número (`ramais.extension_reserved`).
+    pub voice_meeting_access_number: String,
+    /// Endereço PÚBLICO do servidor SIP dos ramais — o que um softphone põe em
+    /// «servidor/proxy»: `VOICE_RAMAIS_PUBLIC_HOST` (nome DNS ou IP, sem
+    /// esquema nem porta), `VOICE_RAMAIS_PUBLIC_PORT` (omissão 5070) e
+    /// `VOICE_RAMAIS_PUBLIC_TRANSPORT` (`udp`|`tcp`|`tls`, omissão `udp`).
+    /// Sem host (ou com um host mal formado) fica `None` e a API devolve
+    /// `sip_server: null` — o servidor não adivinha por onde é alcançável.
+    pub voice_ramais_public: Option<delonix_meet_domain::telephony::extension::SipServer>,
     /// Diretório onde as gravações são armazenadas (lido uma vez no arranque).
     pub recordings_dir: std::path::PathBuf,
+    /// Ficheiros ZIP de «os meus dados» (`DATA_EXPORTS_DIR`). Por omissão
+    /// `<RECORDINGS_DIR>/exports`, no mesmo armazenamento das gravações.
+    pub data_exports_dir: std::path::PathBuf,
+    /// Chaves de acesso (WebAuthn, ADR-0011): o RP ID (`WEBAUTHN_RP_ID`, o
+    /// domínio, p.ex. `meet.delonix.co.ao`) e a origem do web
+    /// (`WEBAUTHN_RP_ORIGIN`, `https://meet.delonix.co.ao`). Sem os dois, as
+    /// chaves de acesso ficam `not_configured` — não se adivinha a origem a
+    /// partir de um cabeçalho do pedido.
+    pub webauthn_rp_id: Option<String>,
+    pub webauthn_rp_origin: Option<String>,
     /// URL do Redis para pub/sub cross-nó (presença multi-instância).
     /// Opcional — se vazio, o servidor opera em modo single-node (sem Redis).
     pub redis_url: Option<String>,
@@ -281,6 +304,16 @@ pub struct Config {
     /// controlo de segurança, e um `0` ou um número absurdo não podem entrar
     /// por descuido.
     pub auth_rate_per_min: usize,
+    /// Entradas de convidado sem conta por IP, por minuto
+    /// (`GUEST_JOIN_PER_IP_PER_MIN`, 10 por omissão). A rota é pública e emite
+    /// credenciais TURN: sem travão, qualquer um esgotava o relay ou enchia
+    /// salas de espera alheias.
+    pub guest_join_per_ip_per_min: usize,
+    /// Entradas de convidado por SALA, por minuto
+    /// (`GUEST_JOIN_PER_ROOM_PER_MIN`, 30 por omissão). O travão por IP não
+    /// chega contra quem tem muitos IPs: este protege o anfitrião de ver a sala
+    /// de espera inundada.
+    pub guest_join_per_room_per_min: usize,
     /// Capacidade da fila de escrita de CADA track em gravação
     /// (`REC_QUEUE_CAP`, default 2048 ≈ vários segundos de vídeo). A escrita
     /// corre numa thread dedicada; a fila é o que impede um disco lento de
@@ -486,10 +519,58 @@ impl Config {
                 .unwrap_or(0.0),
             voice_ramais_domain_suffix: opt("VOICE_RAMAIS_DOMAIN_SUFFIX")
                 .unwrap_or_else(|| "ramais.delonix.meet".into()),
+            voice_meeting_access_number: {
+                use delonix_meet_domain::telephony::extension as ext;
+                bounded_env(
+                    src,
+                    "VOICE_MEETING_ACCESS_NUMBER",
+                    ext::DEFAULT_MEETING_ACCESS_NUMBER,
+                    ext::MEETING_ACCESS_NUMBER_MIN,
+                    ext::MEETING_ACCESS_NUMBER_MAX,
+                )
+                .to_string()
+            },
+            voice_ramais_public: opt("VOICE_RAMAIS_PUBLIC_HOST").and_then(|host| {
+                use delonix_meet_domain::telephony::extension as ext;
+                let port = bounded_env(
+                    src,
+                    "VOICE_RAMAIS_PUBLIC_PORT",
+                    ext::DEFAULT_SIP_PUBLIC_PORT,
+                    1,
+                    65_535,
+                ) as u16;
+                let transport = match opt("VOICE_RAMAIS_PUBLIC_TRANSPORT") {
+                    None => ext::SipTransport::Udp,
+                    Some(v) => ext::SipTransport::parse(&v).unwrap_or_else(|| {
+                        tracing::warn!(
+                            "VOICE_RAMAIS_PUBLIC_TRANSPORT='{v}' inválido (esperado udp, tcp ou tls) — a usar udp"
+                        );
+                        ext::SipTransport::Udp
+                    }),
+                };
+                let server = ext::SipServer::new(&host, port, transport);
+                if server.is_none() {
+                    tracing::warn!(
+                        "VOICE_RAMAIS_PUBLIC_HOST='{host}' não é um nome DNS nem um IP — os ramais saem sem endereço público (sip_server: null)"
+                    );
+                }
+                server
+            }),
             recordings_dir: src
                 .var("RECORDINGS_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("recordings")),
+            data_exports_dir: src
+                .var("DATA_EXPORTS_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    src.var("RECORDINGS_DIR")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("recordings"))
+                        .join("exports")
+                }),
+            webauthn_rp_id: src.var("WEBAUTHN_RP_ID").ok().filter(|s| !s.is_empty()),
+            webauthn_rp_origin: src.var("WEBAUTHN_RP_ORIGIN").ok().filter(|s| !s.is_empty()),
             redis_url: src.var("REDIS_URL").ok().filter(|s| !s.is_empty()),
             sfu_external_ip: src.var("SFU_EXTERNAL_IP").ok().filter(|s| !s.is_empty()),
             sfu_udp_min: bounded_env(
@@ -525,6 +606,14 @@ impl Config {
             nego_queue_cap: bounded_env(src, "NEGO_QUEUE_CAP", 64, 4, 4_096),
             rec_queue_cap: bounded_env(src, "REC_QUEUE_CAP", 2_048, 64, 65_536),
             auth_rate_per_min: bounded_env(src, "AUTH_RATE_PER_MIN", 20, 5, 10_000),
+            guest_join_per_ip_per_min: bounded_env(src, "GUEST_JOIN_PER_IP_PER_MIN", 10, 1, 1_000),
+            guest_join_per_room_per_min: bounded_env(
+                src,
+                "GUEST_JOIN_PER_ROOM_PER_MIN",
+                30,
+                1,
+                1_000,
+            ),
             drain_grace_secs: bounded_env(src, "DRAIN_GRACE_SECS", 40, 1, 3_600) as u64,
             reconnect_grace_secs: bounded_env(src, "RECONNECT_GRACE_SECS", 45, 5, 300) as u64,
             drain_readiness_secs: bounded_env(src, "DRAIN_READINESS_SECS", 12, 0, 300) as u64,

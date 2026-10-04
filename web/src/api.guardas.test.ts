@@ -41,7 +41,13 @@ describe('isAbort', () => {
 describe('isAuthFailure', () => {
   it('é verdade só quando o servidor DIZ que a sessão não serve', () => {
     expect(isAuthFailure(new ApiError(401, null, ''))).toBe(true)
-    expect(isAuthFailure(new ApiError(403, null, ''))).toBe(true)
+  })
+
+  it('um 403 é uma RECUSA sobre o recurso, não uma sessão inválida (#90)', () => {
+    // Desde o contrato legado (#90) o servidor responde 403/404 com `code` a
+    // quem está autenticado mas não pode — ex.: `recording.not_owner`.
+    expect(isAuthFailure(new ApiError(403, { code: 'recording.not_owner' }, ''))).toBe(false)
+    expect(isAuthFailure(new ApiError(404, { code: 'recording.not_found' }, ''))).toBe(false)
   })
 
   it('um servidor avariado NÃO é sessão inválida', () => {
@@ -79,6 +85,36 @@ describe('a sessão só termina quando o servidor o diz', () => {
     vi.stubGlobal('fetch', vi.fn(async () => respostas.shift()!))
     await expect(listMeetings()).rejects.toThrow()
     expect(localStorage.getItem('dx_user')).not.toBeNull()   // continua autenticado
+  })
+
+  it('um 403 da API não renova nem desloga: chega a quem chamou como recusa', async () => {
+    const chamadas: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      chamadas.push(String(url))
+      return new Response(JSON.stringify({ error: 'não és o dono', code: 'recording.not_owner' }), { status: 403 })
+    }))
+    const err = await listMeetings().catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as InstanceType<typeof ApiError>).status).toBe(403)
+    expect(chamadas.some((u) => u.includes('/api/auth/refresh'))).toBe(false)
+    expect(localStorage.getItem('dx_user')).not.toBeNull()
+  })
+
+  it('um 403 no refresh também NÃO desloga', async () => {
+    const respostas = [new Response('{}', { status: 401 }), new Response('{}', { status: 403 })]
+    vi.stubGlobal('fetch', vi.fn(async () => respostas.shift()!))
+    await expect(listMeetings()).rejects.toThrow()
+    expect(localStorage.getItem('dx_user')).not.toBeNull()
+  })
+
+  it('o refresh a dizer 401 ou 404 (conta já não existe) termina a sessão', async () => {
+    for (const st of [401, 404]) {
+      localStorage.setItem('dx_user', JSON.stringify({ id: 1, username: 'w', email: 'w@x' }))
+      const respostas = [new Response('{}', { status: 401 }), new Response('{}', { status: st })]
+      vi.stubGlobal('fetch', vi.fn(async () => respostas.shift()!))
+      await expect(listMeetings()).rejects.toThrow()
+      expect(localStorage.getItem('dx_user')).toBeNull()
+    }
   })
 })
 

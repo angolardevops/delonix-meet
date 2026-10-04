@@ -1,0 +1,148 @@
+{{- $v := .Values -}}
+{{- if $v.postgresql.enabled }}
+# SÓ LABORATÓRIO (recusado com production=true): UM pod, sem réplica, sem
+# backup, sem PITR. Em produção a base é externa e é de quem a opera.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: delonix-postgres
+  labels:
+    app: delonix-postgres
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  serviceName: delonix-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: delonix-postgres
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: delonix-postgres
+        {{- include "dm.labels" . | nindent 8 }}
+    spec:
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      # uid 70 = `postgres` na imagem alpine.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgres
+          image: {{ printf "%s:%s" $v.postgresql.image.repository $v.postgresql.image.tag | quote }}
+          imagePullPolicy: {{ $v.postgresql.image.pullPolicy }}
+          args: ["-c", "max_connections=200"]
+          env:
+            - { name: POSTGRES_DB, value: {{ $v.postgresql.database | quote }} }
+            - { name: POSTGRES_USER, value: {{ $v.postgresql.username | quote }} }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: delonix-secrets, key: POSTGRES_PASSWORD } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports:
+            - { name: pg, containerPort: 5432 }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", {{ $v.postgresql.username | quote }}, "-d", {{ $v.postgresql.database | quote }}] }
+            periodSeconds: 5
+          resources:
+            {{- toYaml $v.postgresql.resources | nindent 12 }}
+          securityContext:
+            {{- include "dm.restricted" . | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: run, mountPath: /var/run/postgresql }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: run, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with $v.postgresql.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $v.postgresql.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-postgres
+  labels:
+    app: delonix-postgres
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: delonix-postgres
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: pg, port: 5432, targetPort: pg }
+{{- end }}
+{{- if $v.redis.enabled }}
+---
+# SÓ LABORATÓRIO: UM pod, sem persistência nem password. Guarda presença e
+# sinalização entre réplicas — perde-se num reinício.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-redis
+  labels:
+    app: delonix-redis
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app: delonix-redis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: delonix-redis
+        {{- include "dm.labels" . | nindent 8 }}
+    spec:
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: redis
+          image: {{ printf "%s:%s" $v.redis.image.repository $v.redis.image.tag | quote }}
+          imagePullPolicy: {{ $v.redis.image.pullPolicy }}
+          args: ["--save", "", "--appendonly", "no"]
+          ports:
+            - { name: redis, containerPort: 6379 }
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 5
+          resources:
+            {{- toYaml $v.redis.resources | nindent 12 }}
+          securityContext:
+            {{- include "dm.restricted" . | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - { name: data, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-redis
+  labels:
+    app: delonix-redis
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: delonix-redis
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: redis, port: 6379, targetPort: redis }
+{{- end }}

@@ -1,0 +1,195 @@
+# Delonix Meet — simulação de PRODUÇÃO numa máquina só.
+#
+#   make build && make compose-up        (ou: delonix compose up -d)
+#
+# Corre as MESMAS imagens que vão para o cluster (`make build`), atrás de um
+# proxy de borda com TLS, sem nada exposto além dele e do TURN. Não é o
+# ambiente de desenvolvimento (isso é `make dev`, com HMR) nem substitui o
+# cluster (`make cluster`): aqui não há réplicas, ingress nem afinidade por sala.
+#
+# Compatível com `delonix compose` (daemonless, rootless) e com `docker compose`.
+# Por ser rootless, a borda escuta em 8443/8080 e não em 443/80.
+#
+# Os serviços falam uns com os outros pelo NOME DO CONTENTOR (`delonix-server`,
+# `delonix-postgres`…): é o que resolve nos dois motores — o delonix não cria
+# um alias com o nome do serviço. `delonix-server` é também o nome que o nginx
+# da imagem web já procura (o do Service no cluster).
+#
+# SEM interpolação (`${VAR}`), de propósito: o `delonix compose` não a faz, e um
+# ficheiro que dependesse dela só correria no docker. Os segredos entram por
+# `env_file: .env` e pelo `deploy/compose/turnserver.conf`, ambos gerados por
+# `make bootstrap` e nunca versionados. Sem eles, o `up` falha — de propósito.
+services:
+  postgres:
+    container_name: delonix-postgres
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file: [.env] # POSTGRES_PASSWORD
+    environment:
+      POSTGRES_USER: delonix
+      POSTGRES_DB: delonix_meet
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delonix -d delonix_meet"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [meet]
+
+  redis:
+    container_name: delonix-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [meet]
+
+  # Relay de media. O segredo está no turnserver.conf e TEM de ser o
+  # TURN_SECRET do servidor (o `make bootstrap` escreve os dois).
+  # No host fica em 23478 e 49300–49340: a 3478 e a gama 49160–49200 são as do
+  # coturn de desenvolvimento (`make infra`), e a 13478 é a do `make cluster`.
+  coturn:
+    container_name: delonix-coturn
+    image: coturn/coturn:4.6-alpine
+    restart: unless-stopped
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    ports:
+      - "23478:3478/udp"
+      - "49300-49340:49300-49340/udp"
+    volumes:
+      - ./deploy/compose/generated/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    networks: [meet]
+
+  server:
+    container_name: delonix-server
+    image: delonix-server:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # DATABASE_URL, JWT_SECRET, TURN_SECRET, PROVISIONING_SECRET, VOICE_INTERNAL_SECRET
+    env_file: [.env]
+    environment:
+      BIND_ADDR: 0.0.0.0:8180
+      REDIS_URL: redis://delonix-redis:6379
+      # O listener interno (/internal/v1/*): só na rede do compose, para o IVR.
+      INTERNAL_BIND_ADDR: 0.0.0.0:8181
+      TURN_HOST: meet.ngolacloud.local:23478
+      CORS_ORIGINS: https://meet.ngolacloud.local:8443
+      RECORDINGS_DIR: /var/lib/delonix/recordings
+      # Endereço público do servidor SIP dos ramais, que a consola mostra nas
+      # credenciais de um ramal (perfil «internal» do FreeSWITCH). A porta só
+      # fica alcançável de fora com `make compose-up LAN_IP=…`, que também
+      # troca este host pelo IP da máquina (scripts/compose-lan.sh).
+      VOICE_RAMAIS_PUBLIC_HOST: meet.ngolacloud.local
+      VOICE_RAMAIS_PUBLIC_PORT: "5070"
+      VOICE_RAMAIS_PUBLIC_TRANSPORT: udp
+    volumes:
+      - recordings:/var/lib/delonix/recordings
+    networks: [meet]
+
+  web:
+    container_name: delonix-web
+    image: delonix-web:latest
+    restart: unless-stopped
+    networks: [meet]
+
+  # A borda: termina TLS e reparte /api, /ws e /rtc para o servidor e o resto
+  # para a web — o papel que o ingress tem no cluster.
+  edge:
+    container_name: delonix-edge
+    image: nginxinc/nginx-unprivileged:1.27-alpine
+    restart: unless-stopped
+    depends_on: [server, web, kamailio, pbx]
+    ports:
+      - "8443:8443" # Delonix Meet
+      - "8444:8444" # Kamailio — interface de gestão (xhttp_rpc), com password
+      - "8445:8445" # PBX de cliente — interface HTTP do Asterisk (ARI)
+      - "8080:8080"
+    volumes:
+      - ./deploy/compose/edge.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/compose/generated/voice.htpasswd:/etc/nginx/voice.htpasswd:ro
+      - ./deploy/certs/meet.ngolacloud.local.crt:/etc/nginx/tls/tls.crt:ro
+      - ./deploy/certs/meet.ngolacloud.local.key:/etc/nginx/tls/tls.key:ro
+    networks: [meet]
+
+  # ---------------------------------------------------------------- a voz
+  #   PBX de cliente ──tronco SIP──▶ Kamailio ──▶ FreeSWITCH ──HTTP──▶ server
+  # As imagens do FreeSWITCH e do PBX vêm de `make voice-images`.
+
+  # O bordo SIP. `-A WITH_XHTTP_RPC` liga a interface web de gestão, que só
+  # se alcança pela borda (porta 8444, com password).
+  kamailio:
+    container_name: delonix-kamailio
+    image: ghcr.io/kamailio/kamailio:5.8.6-bookworm
+    restart: unless-stopped
+    # A imagem arranca com `sh -c "kamailio …"`: argumentos acrescentados não
+    # chegam ao kamailio. Substitui-se o entrypoint e dão-se todos.
+    entrypoint: ["kamailio"]
+    command: ["-DD", "-E", "-A", "WITH_XHTTP_RPC", "-f", "/etc/kamailio/kamailio.cfg"]
+    depends_on: [freeswitch]
+    volumes:
+      - ./voice/kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
+      - ./deploy/compose/voice/dispatcher.list:/etc/kamailio/dispatcher.list:ro
+      - ./deploy/compose/voice/address:/etc/kamailio/address:ro
+      - ./voice/cluster/tls.cfg:/etc/kamailio/tls.cfg:ro
+      - ./deploy/compose/generated/voice-tls:/etc/kamailio/tls:ro
+    networks: [meet]
+
+  # O gateway de media do Meet. O arranque fecha o que a configuração vanilla
+  # da imagem deixa aberto e põe por cima os ficheiros de voice/freeswitch/.
+  freeswitch:
+    container_name: delonix-freeswitch
+    image: delonix-meet/freeswitch:1.11.3
+    restart: unless-stopped
+    # Um elemento no entrypoint e o resto no command: o delonix compose perde
+    # o segundo elemento de um entrypoint com dois.
+    entrypoint: ["/bin/sh"]
+    command: ["/entrypoint/freeswitch-entrypoint.sh"]
+    depends_on: [server]
+    env_file: [.env] # VOICE_INTERNAL_SECRET
+    environment:
+      DELONIX_CONTROL_URL: http://delonix-server:8181
+      DELONIX_API_URL: http://delonix-server:8180
+      DELONIX_RAMAIS_SIP_PORT: "5070"
+    volumes:
+      - ./voice/cluster/freeswitch-entrypoint.sh:/entrypoint/freeswitch-entrypoint.sh:ro
+      - ./voice/freeswitch/dialplan/public/00_delonix_dialin.xml:/meet/00_delonix_dialin.xml:ro
+      - ./voice/freeswitch/dialplan/default/00_delonix_extensions.xml:/meet/00_delonix_extensions.xml:ro
+      - ./voice/freeswitch/autoload_configs/conference.conf.xml:/meet/conference.conf.xml:ro
+      - ./voice/freeswitch/autoload_configs/xml_curl.conf.xml:/meet/xml_curl.conf.xml:ro
+      - ./voice/freeswitch/sip_profiles/internal.xml:/meet/internal.xml:ro
+      - ./voice/freeswitch/scripts/dialin_ivr.lua:/meet/dialin_ivr.lua:ro
+      - ./voice/freeswitch/scripts/ramais_dial.lua:/meet/ramais_dial.lua:ro
+    networks: [meet]
+
+  # O PBX que um cliente já tem (Issabel, FreePBX…), simulado por um Asterisk
+  # de stock ligado por tronco PJSIP. Não é o Issabel — ver voice/pbx-cliente/.
+  pbx:
+    container_name: delonix-pbx
+    image: delonix-meet/pbx-cliente:lab
+    restart: unless-stopped
+    depends_on: [kamailio]
+    volumes:
+      - ./deploy/compose/voice/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./voice/pbx-cliente/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./deploy/compose/generated/pbx-http.conf:/etc/asterisk/http.conf:ro
+      - ./deploy/compose/generated/pbx-ari.conf:/etc/asterisk/ari.conf:ro
+    networks: [meet]
+
+volumes:
+  pgdata:
+  redisdata:
+  recordings:
+
+networks:
+  meet:

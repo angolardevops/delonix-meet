@@ -1,0 +1,1 @@
+../../../../../voice/cluster/freeswitch-entrypoint.sh

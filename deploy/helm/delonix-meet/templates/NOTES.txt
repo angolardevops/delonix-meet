@@ -1,0 +1,41 @@
+Delonix Meet — release {{ .Release.Name }} no namespace {{ .Release.Namespace }}
+
+  https://{{ .Values.host }}
+  servidor: {{ include "dm.serverImage" . }}   web: {{ include "dm.webImage" . }}
+  segredos: Secret «{{ include "dm.secretName" . }}»{{ if .Values.secrets.create }} (GERADO pelo chart — laboratório){{ end }}
+
+Ver se subiu:
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/delonix-server
+  kubectl -n {{ .Release.Namespace }} get pods,svc,ingress,pvc
+
+O que este chart NÃO faz (README §«Fora do chart»):
+  - o DNS de {{ .Values.host }} e o IP público do coturn{{ if .Values.coturn.enabled }} ({{ include "dm.turnHost" . | default "IP do nó/pod — laboratório" }}, UDP){{ end }};
+  - o ingress-nginx{{ if .Values.ingress.tls.clusterIssuer }} e o cert-manager com o ClusterIssuer «{{ .Values.ingress.tls.clusterIssuer }}»{{ end }};
+{{- if not .Values.postgresql.enabled }}
+  - a base de dados: é externa (DATABASE_URL no Secret) — HA, backup e PITR são de quem a opera;
+{{- end }}
+  - whisper e ollama (transcrição e IA): não são instalados.
+{{- if .Values.voice.enabled }}
+
+Voz:
+  bordo SIP: Service «kamailio-border» ({{ .Values.voice.kamailio.service.type }}), 5060 UDP/TCP e 5061 TLS
+{{- if .Values.voice.trunks }}
+  origens aceites: {{ range .Values.voice.trunks }}{{ .ip }}/{{ .mask }} ({{ .tag }}) {{ end }}
+{{- else }}
+  ATENÇÃO: voice.trunks está vazio — o bordo responde 403 a TODAS as origens.
+{{- end }}
+{{- if not .Values.server.phoneBridge.enabled }}
+  A ponte telefone↔sala está DESLIGADA: com PIN certo, o telefone entra na
+  conferência local do FreeSWITCH, não na sala WebRTC (README §«Ponte»).
+{{- end }}
+{{- end }}
+{{- if not .Values.server.forceTurnRelay }}
+
+ATENÇÃO: server.forceTurnRelay=false — em Kubernetes o IP do pod não é
+alcançável de fora; sem relay-only o ICE liga e o vídeo fica preto.
+{{- end }}
+{{- if and (include "dm.serverMulti" .) .Values.recordings.allowReadWriteOnceWithReplicas }}
+
+ATENÇÃO: gravações em ReadWriteOnce com várias réplicas — só serve num
+cluster de UM nó.
+{{- end }}

@@ -855,7 +855,7 @@ async fn finalize_inner(
     }
 
     let out = session.dir.join("out.webm");
-    let mut cmd = tokio::process::Command::new("ffmpeg");
+    let mut cmd = tokio::process::Command::new(&state.config.ffmpeg_bin);
     cmd.arg("-y").arg("-loglevel").arg("error");
     // `-nostdin`: sem isto o ffmpeg herda o stdin do servidor e pode ficar à
     // espera de input que nunca chega. `-threads`: travão de CPU — a

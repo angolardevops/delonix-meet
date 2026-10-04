@@ -153,8 +153,14 @@ jobs:
       - name: XML do FreeSWITCH (R226 — defeitos que só apareciam no arranque)
         run: bash scripts/check-fs-xml.sh
 
+      - name: ffmpeg do servidor é LGPL, com versão e SHA-256 fixados (docs/tv/b3-ffmpeg-lgpl-2026-10-04.md)
+        run: bash scripts/check-ffmpeg-licenca.sh
+
       - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
         run: bash scripts/check-k8s-render.sh
+
+      - name: Chart Helm renderiza, recusa o inseguro e respeita ADR-0001/ADR-0006
+        run: bash scripts/check-helm.sh
 
       - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
         run: bash scripts/check-arquitectura-catraca.sh
@@ -272,6 +278,18 @@ jobs:
       - name: Isolamento e permissões negativas
         run: node web/e2e/isolamento.mjs
 
+      # Convidado SEM conta, pela API e pelo /ws (sem interface — a consola vai
+      # ser substituída e este é o contrato do ecrã novo): sala de espera,
+      # admissão pelo anfitrião, nunca promovido, reentrada no mesmo lugar e a
+      # sala a fechar a porta. Corre depois do isolamento, que usa IPs de teste
+      # em X-Forwarded-For para não gastar a quota de entradas deste IP.
+      - name: Convidado sem conta (sala de espera, admissão, recusas)
+        run: node web/e2e/convidado.mjs
+
+      # A auditoria é atacada DIRECTAMENTE por SQL, não pela API: um teste que
+      # só usa a API prova que a API não deixa, não que os dados estão
+      # protegidos. E o adversário que interessa numa auditoria é quem TEM
+      # privilégios.
       - name: Auditoria imutável (ataque directo à base de dados)
         run: PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/auditoria.mjs
 

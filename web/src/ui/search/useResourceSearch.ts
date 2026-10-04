@@ -57,6 +57,7 @@ export function useResourceSearch<T>({
   orgId,
   ns = '',
   fallback,
+  serverParams,
   deps = [],
 }: {
   /** `null` quando o recurso não existe no servidor (fase 2): vai direito ao local. */
@@ -65,6 +66,12 @@ export function useResourceSearch<T>({
   /** Prefixo do estado na URL; `null` = estado só em memória (um diálogo). */
   ns?: string | null
   fallback: LocalFallback<T> | null
+  /**
+   * Parâmetros da colecção que não são da pesquisa e têm de ir em todos os
+   * pedidos ao servidor (o `scope` das gravações). Em modo local é o
+   * `fallback.load` que os aplica.
+   */
+  serverParams?: Record<string, string>
   deps?: unknown[]
 }): ResourceSearch<T> {
   const { t } = useTranslation()
@@ -96,11 +103,12 @@ export function useResourceSearch<T>({
   const schema = s.s === 'ready' ? s.d.schema : null
   const fetcher = useMemo<ListFetcher<T> | null>(() => {
     if (s.s !== 'ready' || s.d.mode === 'unsupported') return null
-    if (s.d.mode === 'server') return serverFetcher<T>(s.d.schema, orgId)
+    if (s.d.mode === 'server') return serverFetcher<T>(s.d.schema, orgId, serverParams)
     return localFetcher(s.d.rows, { ...fallback!.source, schema: s.d.schema })
-    // A fonte local é estável por ecrã; só a colecção muda.
+    // A fonte local é estável por ecrã; só a colecção muda. Os parâmetros do
+    // servidor comparam-se pelo conteúdo (quem chama passa um objecto novo).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s, orgId])
+  }, [s, orgId, JSON.stringify(serverParams ?? null)])
 
   const list = useListSearch<T>(fetcher, schema, search, setSearch)
   const serverFavorites = useFavorites(s.s === 'ready' && s.d.mode === 'server' ? resource : null, schema, search, setSearch)

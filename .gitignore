@@ -35,6 +35,9 @@ web/public/ort-rvm/
 web/public/models/rvm/
 web/public/models/Xenova/
 
+# Pacote do chart Helm (`make helm-package`)
+deploy/helm/dist/
+
 # Worktrees transitórios de agentes
 agents/worktrees/
 
@@ -88,5 +91,9 @@ ai-worker/gen/
 .fs-smoke.*/
 .fs-build/
 
+# Ferramentas instaladas por `make bootstrap` (helm) — por máquina, nunca versionadas.
+.tools/
+# Gerados por `make bootstrap`: segredo do relay, acessos de administração, TLS do bordo.
+deploy/compose/generated/
 # Prova de softphone (scripts/softphone-prova.sh): gravações da última chamada.
 .softphone-prova/

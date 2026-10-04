@@ -44,6 +44,32 @@ RUN set -eu; for m in $(sed -n 's#^[a-z_]*/##p' /usr/src/freeswitch/modules.conf
       test -f "/usr/local/freeswitch/lib/freeswitch/mod/$m.so" || { echo "módulo em falta: $m"; exit 1; }; \
     done
 
+# Os sons do IVR. Sem eles o `dialin_ivr.lua` falha a abrir os ficheiros, não
+# chega a pedir o PIN e desliga: o chamador ouve silêncio e cai (visto a
+# 2026-10-03, na primeira chamada que chegou ao IVR). São os pacotes oficiais
+# do FreeSWITCH, a 8 kHz (o que o G.711 leva), fixados por versão e conferidos
+# pelo SHA-256 publicado ao lado de cada um. Em português (pt-BR, a única voz
+# portuguesa que o projecto publica) e em inglês; só as pastas que os scripts
+# usam ou podem vir a usar — o conjunto inteiro são centenas de megabytes.
+FROM ${DEBIAN} AS sounds
+ARG SOUNDS_BASE=https://files.freeswitch.org/releases/sounds
+ARG SOUNDS_PT=freeswitch-sounds-pt-BR-karina-8000-1.0.51.tar.gz
+ARG SOUNDS_PT_SHA256=ba9b5d7f97675c560823a6f94804a6716dac66efe203dd1779952518c3944a77
+ARG SOUNDS_EN=freeswitch-sounds-en-us-callie-8000-1.0.53.tar.gz
+ARG SOUNDS_EN_SHA256=24a2baad88696169950c84cafc236124b2bfa63114c7c8ac7d330fd980c8db05
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN set -eu; mkdir -p /sounds /tmp/s; cd /tmp/s; \
+    curl -fsSL "$SOUNDS_BASE/$SOUNDS_PT" -o pt.tar.gz; echo "$SOUNDS_PT_SHA256  pt.tar.gz" | sha256sum -c -; \
+    curl -fsSL "$SOUNDS_BASE/$SOUNDS_EN" -o en.tar.gz; echo "$SOUNDS_EN_SHA256  en.tar.gz" | sha256sum -c -; \
+    tar -xzf pt.tar.gz -C /sounds --wildcards 'pt/BR/karina/ivr/*' 'pt/BR/karina/conference/*' 'pt/BR/karina/voicemail/*' 'pt/BR/karina/digits/*'; \
+    tar -xzf en.tar.gz -C /sounds --wildcards 'en/us/callie/ivr/*' 'en/us/callie/conference/*' 'en/us/callie/voicemail/*' 'en/us/callie/digits/*'; \
+    for v in pt/BR/karina en/us/callie; do for f in ivr/8000/ivr-please_enter_pin_followed_by_pound.wav \
+      ivr/8000/ivr-that_was_an_invalid_entry.wav conference/8000/conf-bad-pin.wav conference/8000/conf-welcome.wav \
+      voicemail/8000/vm-goodbye.wav; do test -s "/sounds/$v/$f" || { echo "som em falta: $v/$f"; exit 1; }; done; done; \
+    rm -rf /tmp/s
+
 FROM ${DEBIAN}
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -55,6 +81,7 @@ COPY --from=build /usr/lib/libsofia-sip-ua.so* /usr/lib/
 COPY --from=build /usr/lib/x86_64-linux-gnu/libspandsp.so* /usr/lib/x86_64-linux-gnu/
 COPY --from=build /usr/local/freeswitch /usr/local/freeswitch
 COPY --from=build /REF-freeswitch /REF-sofia-sip /REF-spandsp /
+COPY --from=sounds /sounds /usr/local/freeswitch/share/freeswitch/sounds
 RUN ldconfig && ln -s /usr/local/freeswitch/bin/freeswitch /usr/local/bin/ \
  && ln -s /usr/local/freeswitch/bin/fs_cli /usr/local/bin/
 EXPOSE 5060/udp 5060/tcp 8021/tcp

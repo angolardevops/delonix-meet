@@ -1,0 +1,1 @@
+../../../../../../voice/freeswitch/scripts/ramais_dial.lua

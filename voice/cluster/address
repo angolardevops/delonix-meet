@@ -1,0 +1,6 @@
+# Allowlist de origens do bordo no cluster LOCAL (módulo `permissions`,
+# `address_file`): grupo, IP, máscara, porta, etiqueta.
+#
+# Só a rede de pods do laboratório — é de lá que fala o PBX de cliente.
+# Em produção este ficheiro leva os IPs do tronco contratado e NUNCA vai para o git.
+1 10.244.0.0 16 0 lab-pods

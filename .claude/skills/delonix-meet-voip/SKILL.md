@@ -34,8 +34,8 @@ Esta skill tem duas espécies de afirmação, e nunca as mistures num relatório
   condições se aceita o tráfego dele.
 - **Revisor `delonix-meet-security`** — a allowlist, as credenciais de tronco, o material
   SRTP. Chama-o em qualquer diff que abra uma origem nova.
-- **Revisor `delonix-meet-devops`** — `voice/docker-compose.voice.yml`, a imagem do
-  FreeSWITCH, portas e NAT no deploy.
+- **Revisor `delonix-meet-devops`** — os serviços de voz do `compose.yaml`, o arranque
+  (`voice/cluster/freeswitch-entrypoint.sh`), a imagem do FreeSWITCH, portas e NAT no deploy.
 - **Fora deste repo** — a appliance de PBX de cliente é do `delonix-runtime` (esteira de
   appliances) e o seu Kind é do `delonix-paas`. Esta skill só cobre a ligação SIP entre
   esse PBX e o Meet.
@@ -91,12 +91,13 @@ contexto de dialplan e por domínio SIP, não por processo.
   com `inbound-late-negotiation=true` (o `external` da vanilla, por onde entra o dial-in);
   no perfil dos ramais, que negoceia o SDP à chegada, corre tarde e não a recusa.
   A global é posta por `sip_profiles/internal.xml` (uma directiva de pré-processamento no
-  topo do ficheiro) e por `vars.xml.inc`. Confirma-o com o controlo negativo
-  (`scripts/softphone-prova.sh srtp-real`), não com a leitura do XML.
-- **Medido (R226) — o `vars.xml.inc` não é incluído por nada.** O compose monta-o
-  (`voice/docker-compose.voice.yml:47`) e nenhum `vars.xml` o inclui: tal como o repo a
-  monta, a configuração deixa o perfil dos ramais no porto **5060** e o URL e o segredo
-  do control plane vazios. Incluído pelo `vars.xml`, funciona — o `srtp-real` mede-o.
+  topo do ficheiro) e pelo arranque (`voice/cluster/freeswitch-entrypoint.sh`). Confirma-o
+  com o controlo negativo (`scripts/softphone-prova.sh srtp-real`), não com a leitura do XML.
+- **Um só arranque, dois ambientes.** O `compose.yaml` e o cluster local sobem o
+  FreeSWITCH pelo mesmo `voice/cluster/freeswitch-entrypoint.sh`, com os mesmos ficheiros
+  de `voice/freeswitch/` em `/meet`. O compose de voz antigo
+  (`voice/docker-compose.voice.yml`) e o `vars.xml.inc` que ele montava sem incluir foram
+  retirados a 2026-10-04 (R226): nunca correram.
 - **Duas armadilhas do pré-processador do FreeSWITCH (R226):** uma directiva
   `X-PRE-PROCESS` é executada **mesmo dentro de um comentário** — nunca a escrevas por
   extenso num; e o ambiente lê-se com `cmd="env-set"` e `$NOME`, não com `cmd="set"`.
@@ -114,7 +115,8 @@ contexto de dialplan e por domínio SIP, não por processo.
   as chaves SDES vão no SDP); prefixos, limite de canais e ordem de recurso. O host
   passa pelo guarda de SSRF (R213) e a password fica cifrada em repouso (R214).
 - **Medido:** a allowlist de IP do tronco é um ficheiro que **não vai para o git**
-  (`voice/kamailio/ao_trunk.txt.example` é o molde).
+  (`voice/kamailio/ao_trunk.txt.example` é o molde; é o `address_file` do módulo
+  `permissions`: grupo, IP, máscara, porta, etiqueta).
 - **GSM não é um protocolo que nós falemos.** Uma chamada para ou de um telemóvel chega
   até nós como SIP, pela interligação da operadora; o que é GSM, VoLTE ou AMR fica do
   lado dela. Do nosso lado é G.711 — a lei (A ou µ) é a da oferta SIP
@@ -179,11 +181,12 @@ contexto de dialplan e por domínio SIP, não por processo.
 | O que mexeste | Portão |
 |---|---|
 | As regras de um tronco (transporte, SRTP, host, prefixos, canais) | os unitários de `telephony/trunk.rs` e `cargo test --release --test telephony` (precisa de `DATABASE_URL`) |
-| `voice/kamailio/` | **não há portão automático** — nenhum teste carrega o `kamailio.cfg` |
+| `voice/kamailio/` | **não há portão no CI**; o `make cluster` carrega o `kamailio.cfg` num Kamailio 5.8.6 a sério e mede o dispatcher e o tronco do PBX de laboratório (`scripts/cluster-voice.sh`) |
 | Qualquer `*.xml` ou `*.xml.inc` de `voice/freeswitch/` | `bash scripts/check-fs-xml.sh` (R226, no `make fitness` e no CI) — XML bem formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário, nenhum `$${NOME_EM_MAIÚSCULAS}`. **Estático**: não carrega a configuração num FreeSWITCH. Os `*.lua`: `scripts/check-lua-sintaxe.sh` |
 | A interligação com um PBX ou uma operadora | **prova real, fora do CI**: uma chamada em cada sentido, com captura SIP, e as três medições abaixo |
 | O próprio softphone de prova, ou uma regra de DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`) com um perfil de teste. **No CI: o workflow «Imagem FreeSWITCH» corre-o contra a imagem acabada de construir, quando `voice/` ou o script mudam** |
-| `voice/freeswitch/sip_profiles/internal.xml`, `vars.xml.inc`, as montagens do compose, ou qualquer regra de SRTP | `bash scripts/softphone-prova.sh srtp-real` (R226) — com os ficheiros que o compose monta: o ramal autentica-se, com SRTP a chamada passa a negociação, **sem SRTP leva `488`**, e o `vars.xml.inc` incluído arranca e lê o ambiente. **No CI**, no mesmo workflow |
+| Qualquer ficheiro de `voice/freeswitch/` que o FreeSWITCH carregue, o arranque (`voice/cluster/freeswitch-entrypoint.sh`), os serviços de voz do `compose.yaml`, ou qualquer regra de SRTP | `bash scripts/softphone-prova.sh srtp-real` (R226, R227) — a configuração que o arranque monta com os ficheiros do `compose.yaml`: ramal autenticado e dial-in, cada um com e sem SRTP (**sem SRTP os dois levam `488`**); o segredo de voz chega ao servidor em cabeçalhos, nunca no URL, e **nem ele nem o PIN marcado aparecem no `freeswitch.log`**. **No CI**, no workflow «Imagem FreeSWITCH» |
+| `scripts/cluster-voice.sh` (o ConfigMap `freeswitch-meet`) | `bash scripts/softphone-prova.sh srtp-cluster` — a mesma prova, com a lista de ficheiros do cluster. **No CI**, no mesmo workflow |
 
 **O que uma interligação tem de mostrar antes de se dizer «a funcionar»:**
 
@@ -196,20 +199,32 @@ contexto de dialplan e por domínio SIP, não por processo.
 
 ## O que NÃO está provado (2026-10-03)
 
+- **No cluster local (`make cluster`, medido a 2026-10-03):** uma chamada do PBX de
+  laboratório (Asterisk, tronco PJSIP com SDES) atravessa o Kamailio, chega ao FreeSWITCH e
+  corre o `dialin_ivr.lua`. Foi a primeira vez que o `kamailio.cfg` arrancou: tinha um
+  parâmetro inexistente, o TLS desligado e `xlog` sem o módulo, e a allowlist era montada
+  num ficheiro que o `permissions` não lê. **Não provado aí:** PIN aceite e áudio — a
+  imagem do FreeSWITCH não traz os sons do IVR.
 - Nenhuma chamada passou por **uma operadora a sério através do Kamailio**: o que está
   medido é contra um FreeSWITCH local (`delonix-meet-telefonia`, R222).
 - Nenhuma interligação com um **Issabel ou FreePBX real** foi feita a partir deste repo.
 - O `softphone-prova.sh` **nunca correu contra o Meet a funcionar**: os modos `chamada` e
   `par` foram exercitados contra um FreeSWITCH de teste, sem autenticação Digest, sem
-  registo, sem o IVR do dial-in e sem a ponte para a sala. O `srtp-real` autentica um
-  ramal por Digest no perfil do repo, mas com um directório estático de andaime — o
-  control plane não corre — e **não chega a atender**.
-- **O compose de voz não corre como está (R226):** nada inclui o `vars.xml.inc`; o
-  contexto `delonix_ramais` não existe para o FreeSWITCH (o ficheiro é montado dentro do
-  contexto `default` da vanilla → `404`); a vanilla não carrega `mod_xml_curl` nem
-  `mod_curl`; e a imagem do compose (`safarov/freeswitch:latest`) não foi medida.
-- **SRTP à entrada de um tronco declarado `srtp=off`:** a global é para todas as pernas,
-  e o gateway só a redefine à saída (`telephony_fs_xml.rs:230`). Não medido.
+  registo, sem o IVR do dial-in e sem a ponte para a sala. O `srtp-real` e o
+  `srtp-cluster` autenticam um ramal por Digest e chegam ao `ramais_dial.lua` e ao IVR do
+  dial-in, mas com um servidor de andaime — o control plane não corre.
+- **O `srtp-real` e o `srtp-cluster` não correm o compose nem o cluster:** arrancam o
+  entrypoint num contentor, com a lista de ficheiros de cada um e o servidor trocado por
+  um andaime. Um ramal real do control plane, o Kamailio à frente do dial-in e a rede de
+  cada ambiente ficam de fora — isso é do `make compose-voice-check` e do `make cluster`.
+- **SRTP à entrada não tem excepção por tronco** (regra de casa, fixada a 2026-10-04). A
+  global vale para todas as pernas: uma chamada em claro ao perfil do dial-in leva `488`
+  venha de onde vier (medido). O `srtp=off` de um tronco só vale **à saída**
+  (`telephony_fs_xml.rs:230`): uma operadora sem SRTP recebe chamadas nossas e não nos
+  consegue ligar. Fica assim de propósito — abrir a entrada em claro a um tronco era pôr
+  media da reunião em claro na rede da operadora. Não foi medido com um tronco a sério: o
+  arranque não carrega gateways. Mudar isto é uma decisão do dono do produto, e um pedido
+  próprio (ver «Ao fechar uma tarefa»).
 - As regras de casa acima **não têm portão**. Session timers, `P-Asserted-Identity`,
   tecto de gasto e alarme de fraude não foram procurados no código nesta revisão:
   confirma por `grep` antes de os dares como existentes ou em falta.
@@ -219,10 +234,11 @@ contexto de dialplan e por domínio SIP, não por processo.
 
 Propõe um a três pedidos seguintes (escolhe dos quatro abaixo, ou outros), com o alvo, a prova a medir e o que fica de fora:
 
-1. «Põe o compose de voz a correr com a imagem do repo: o `vars.xml.inc` incluído, o
-   contexto `delonix_ramais` no sítio certo, `mod_xml_curl` e `mod_curl` carregados.
-   Prova: o `srtp-real` sem avisos e com a chamada do controlo positivo a chegar ao
-   `ramais_dial.lua`. Fora: o Kamailio e a operadora.»
+1. «Se o dono do produto decidir aceitar chamadas em claro de um tronco declarado
+   `srtp=off`: o Kamailio marca o tronco de origem, o servidor decide pelo tronco, e o
+   dialplan do dial-in aplica a decisão antes do `answer` (o perfil `external` negoceia
+   tarde). Prova: a chamada em claro aceite só desse tronco, e recusada de qualquer outra
+   origem. Revisor `delonix-meet-security`. Fora: a operadora a sério.»
 2. «Um portão que carregue o `voice/kamailio/kamailio.cfg` (`kamailio -c`) no
    `make fitness`. Prova: partir a configuração e ver falhar. Fora: o comportamento em
    chamada, e o XML do FreeSWITCH, que já tem o `check-fs-xml.sh`.»

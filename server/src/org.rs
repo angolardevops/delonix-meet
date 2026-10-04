@@ -76,6 +76,11 @@ pub struct OrgSettingsReq {
     /// Dial-in PSTN: modelo de DID ('shared' | 'dedicated').
     #[serde(default)]
     pub voice_did_model: Option<String>,
+    /// A organização exige autenticação de dois factores. Hoje impede os
+    /// membros de removerem o ÚLTIMO factor; não força a inscrição no login.
+    /// Omisso => mantém o actual.
+    #[serde(default)]
+    pub require_mfa: Option<bool>,
 }
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
@@ -211,7 +216,8 @@ pub async fn update_settings(
              max_groups = $3, max_rooms = $4, max_meetings = $5,
              voice_media_backend = COALESCE($7, voice_media_backend),
              voice_did_model = COALESCE($8, voice_did_model),
-             chat_retention_days = $9
+             chat_retention_days = $9,
+             require_mfa = COALESCE($10, require_mfa)
          WHERE id = $6",
     )
     .bind(&domain)
@@ -223,6 +229,7 @@ pub async fn update_settings(
     .bind(backend)
     .bind(did_model)
     .bind(chat_retention)
+    .bind(req.require_mfa)
     .execute(&state.db)
     .await?;
     crate::audit::log(
@@ -233,6 +240,20 @@ pub async fn update_settings(
         &domain,
     )
     .await;
+    if let Some(on) = req.require_mfa {
+        crate::audit::log(
+            &state.db,
+            Some(org_id),
+            auth.user_id,
+            if on {
+                "org.require_mfa_enabled"
+            } else {
+                "org.require_mfa_disabled"
+            },
+            &org_id.to_string(),
+        )
+        .await;
+    }
     Ok(Json(OrgSettingsUpdated {
         ok: true,
         domain,
@@ -937,9 +958,10 @@ pub struct AddEmployeeResp {
 #[utoipa::path(
     get, path = "/api/orgs/{org_id}/members", tag = "orgs",
     security(("session" = [])),
-    params(("org_id" = Uuid, Path, description = "Organização.")),
+    params(("org_id" = Uuid, Path, description = "Organização."), crate::search::SearchParams),
     responses(
-        (status = 200, body = Vec<Employee>),
+        (status = 200, body = Vec<Employee>, description = "Sem parâmetros: todos os activos. Com parâmetros de pesquisa: a página do ADR-0007."),
+        (status = 400, description = "Códigos `search.*` e `page.invalid_token`.", body = crate::openapi::ErrorBody),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
     )
@@ -948,11 +970,17 @@ pub async fn list_employees(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(org_id): Path<Uuid>,
-) -> Result<Json<Vec<Employee>>, ApiError> {
+    axum::extract::Query(params): axum::extract::Query<crate::search::SearchParams>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
     let is_admin = match role_in_org(&state, org_id, auth.user_id).await? {
         Some(role) => role == "admin",
         None => return Err(ApiError::NotFound),
     };
+    if params.is_search() {
+        let page = crate::search::list_members(&state, auth.user_id, org_id, &params).await?;
+        return Ok(Json(page).into_response());
+    }
     // O número é dado pessoal: colegas sabem que existe (`can_sms`), não qual é.
     let emps: Vec<Employee> = sqlx::query_as(
         r#"SELECT m.user_id, u.username, u.email, m.role, m.title, m.branch_id, b.name AS branch_name,
@@ -969,7 +997,7 @@ pub async fn list_employees(
     .bind(auth.user_id)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(emps))
+    Ok(Json(emps).into_response())
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1699,6 +1727,97 @@ pub(crate) async fn title_alongside(
     .await
     .ok()
     .flatten()
+}
+
+/// A organização PRINCIPAL de uma pessoa: a pertença activa mais antiga (a
+/// mesma escolha determinista que a auditoria faz para eventos sem org). É
+/// nela que vivem o cargo (`title`) e o telefone que a própria pessoa edita no
+/// perfil.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct PrimaryMembership {
+    pub org_id: Uuid,
+    pub org_name: String,
+    pub role: String,
+    pub title: String,
+    pub phone_e164: Option<String>,
+    pub phone_source: Option<String>,
+    /// Nome do departamento da pertença (`org_members.department_id`, 0054).
+    pub department: Option<String>,
+    pub joined_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub(crate) async fn primary_membership(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Option<PrimaryMembership>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT m.org_id, o.name AS org_name, m.role, m.title, m.phone_e164, m.phone_source,
+                d.name AS department, m.created_at AS joined_at
+           FROM org_members m JOIN organizations o ON o.id = m.org_id
+           LEFT JOIN departments d ON d.org_id = m.org_id AND d.id = m.department_id
+          WHERE m.user_id = $1 AND m.archived_at IS NULL
+          ORDER BY m.created_at, m.org_id
+          LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
+/// A própria pessoa muda o cargo da pertença principal. O telefone NÃO passa
+/// por aqui: escreve-se por [`set_member_phone`] (uma regra só, a do SMS).
+pub(crate) async fn set_own_title(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    user_id: Uuid,
+    title: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE org_members SET title = $3
+          WHERE org_id = $1 AND user_id = $2 AND archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(title)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// `a` e `b` são membros ACTIVOS de pelo menos uma organização em comum (ou
+/// são a mesma pessoa)? Decide quem vê a fotografia de quem.
+pub(crate) async fn shares_active_org(
+    state: &AppState,
+    a: Uuid,
+    b: Uuid,
+) -> Result<bool, ApiError> {
+    if a == b {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members x JOIN org_members y ON x.org_id = y.org_id
+                         WHERE x.user_id = $1 AND y.user_id = $2
+                           AND x.archived_at IS NULL AND y.archived_at IS NULL)",
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(&state.db)
+    .await?)
+}
+
+/// Alguma organização ACTIVA da pessoa exige 2FA? (a leitura mais restritiva,
+/// ver `domain::identity::factors`).
+pub(crate) async fn any_org_requires_mfa(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members m JOIN organizations o ON o.id = m.org_id
+                         WHERE m.user_id = $1 AND m.archived_at IS NULL AND o.require_mfa)",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await?)
 }
 
 /// Utilizadores que partilham pelo menos uma organização com `user_id` (exclui
@@ -3356,6 +3475,152 @@ pub(crate) async fn suspend_odoo_leavers(
         }
     }
     Ok(n)
+}
+
+// ---------------------------------------------------------------------------
+//  Pertença em SQL para a pesquisa (ADR-0007 §3)
+// ---------------------------------------------------------------------------
+//
+// A pesquisa monta consultas com `sqlx::QueryBuilder` e precisa das regras de
+// pertença DENTRO do SQL (filtrar antes de paginar). Moram aqui, e não no
+// módulo de pesquisa, pela regra 1 do ADR-0004 §5. Todas referem a relação
+// `viewer(id, org_id, tz)` que o construtor põe à cabeça do FROM, com os
+// valores ligados por bind; nenhuma leva texto de fora — `other` é sempre uma
+// expressão escrita no código (`r.uploader_id`, `rm.owner_id`).
+
+/// «Quem pede é colega ACTIVO de `other`» — a mesma regra de
+/// `rooms::room_access` e `users::search` (S3: activos dos dois lados).
+pub(crate) fn sql_active_colleague_of_viewer(other: &'static str) -> String {
+    [
+        "EXISTS (SELECT 1 FROM org_members va JOIN org_members vb ON va.org_id = vb.org_id \
+         WHERE va.user_id = viewer.id AND vb.user_id = ",
+        other,
+        " AND va.archived_at IS NULL AND vb.archived_at IS NULL)",
+    ]
+    .concat()
+}
+
+/// «Quem pede saiu da organização de `owner` e não ficou noutra dele» —
+/// `AccessFacts::departed` em SQL (o sujeito não se filtra, quem pede sim).
+pub(crate) fn sql_viewer_departed_from(owner: &'static str) -> String {
+    [
+        "(EXISTS (SELECT 1 FROM org_members va JOIN org_members vo ON vo.org_id = va.org_id \
+         WHERE va.user_id = viewer.id AND vo.user_id = ",
+        owner,
+        " AND va.archived_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM org_members va \
+         JOIN org_members vo ON vo.org_id = va.org_id WHERE va.user_id = viewer.id AND vo.user_id = ",
+        owner,
+        " AND va.archived_at IS NULL))",
+    ]
+    .concat()
+}
+
+/// As organizações onde quem pede é membro activo (subconsulta).
+pub(crate) const SQL_VIEWER_ACTIVE_ORGS: &str =
+    "(SELECT va.org_id FROM org_members va WHERE va.user_id = viewer.id AND va.archived_at IS NULL)";
+
+/// As organizações onde quem pede é membro activo E o seu papel tem `cap` em
+/// `allow` no âmbito da organização (subconsulta) — a mesma leitura de
+/// [`decide`] com `ResourceScope::Organization` (ADR-0008 §4). Um
+/// `requires_approval` NÃO abre a pesquisa: aprova-se uma acção, não uma lista.
+/// `cap.as_str()` é um código escrito no domínio, nunca texto de fora.
+pub(crate) fn sql_viewer_orgs_with(cap: Capability) -> String {
+    [
+        "(SELECT va.org_id FROM org_members va \
+         JOIN org_role_effective_capabilities vc ON vc.role_id = va.role_id \
+         WHERE va.user_id = viewer.id AND va.archived_at IS NULL \
+           AND vc.org_decision = 'allow' AND vc.capability = '",
+        cap.as_str(),
+        "')",
+    ]
+    .concat()
+}
+
+/// Quem pede tem `cap` (em `allow`, âmbito da organização) em ALGUMA das suas
+/// organizações activas? Gateia os tipos reservados da pesquisa global.
+pub(crate) async fn has_capability_in_any_org(
+    state: &AppState,
+    user_id: Uuid,
+    cap: Capability,
+) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members m
+           JOIN org_role_effective_capabilities e ON e.role_id = m.role_id
+          WHERE m.user_id = $1 AND m.archived_at IS NULL
+            AND e.capability = $2 AND e.org_decision = 'allow')",
+    )
+    .bind(user_id)
+    .bind(cap.as_str())
+    .fetch_one(&state.db)
+    .await?)
+}
+
+/// Continuação do FROM (`… viewer CROSS JOIN …`) da pesquisa de membros: os activos da org do caminho (`viewer.org_id`),
+/// a mesma regra do `list_employees`.
+pub(crate) const SQL_MEMBERS_SEARCH_FROM: &str =
+    ", org_members m JOIN users u ON u.id = m.user_id \
+     LEFT JOIN branches b ON b.id = m.branch_id \
+     WHERE m.org_id = viewer.org_id AND m.archived_at IS NULL";
+
+/// FROM da pesquisa de auditoria: a regra do `audit::list` — eventos da org
+/// e os sem org cujo actor é (ou foi) membro dela.
+pub(crate) const SQL_AUDIT_SEARCH_FROM: &str = " CROSS JOIN audit_logs a \
+     WHERE (a.org_id = viewer.org_id OR (a.org_id IS NULL AND EXISTS ( \
+       SELECT 1 FROM org_members om WHERE om.org_id = viewer.org_id AND om.user_id = a.actor_id)))";
+
+/// Os membros da listagem pelos ids, na forma do `list_employees` — incluindo
+/// a regra do telefone: só o vê um admin da org ou o próprio.
+pub(crate) async fn employees_by_ids(
+    state: &AppState,
+    org_id: Uuid,
+    viewer: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<Employee>, ApiError> {
+    let is_admin = role_in_org(state, org_id, viewer).await?.as_deref() == Some("admin");
+    Ok(sqlx::query_as(&format!(
+        "SELECT {EMPLOYEE_COLUMNS},
+                (SELECT MAX(a.created_at) FROM audit_logs a WHERE a.actor_id = m.user_id) AS last_active,
+                CASE WHEN $3 OR m.user_id = $4 THEN m.phone_e164 END AS phone,
+                CASE WHEN $3 OR m.user_id = $4 THEN m.phone_source END AS phone_source,
+                (m.phone_e164 IS NOT NULL AND NOT u.sms_contact_opt_out) AS can_sms
+           FROM org_members m JOIN users u ON u.id = m.user_id
+           LEFT JOIN branches b ON b.id = m.branch_id
+          WHERE m.org_id = $1 AND m.archived_at IS NULL AND m.user_id = ANY($2)"
+    ))
+    .bind(org_id)
+    .bind(ids)
+    .bind(is_admin)
+    .bind(viewer)
+    .fetch_all(&state.db)
+    .await?)
+}
+
+/// A organização «principal» de quem pede: a pertença activa mais antiga.
+/// É a que dá o fuso às listas sem `{org_id}` e a que recebe um favorito
+/// partilhado. `None` = sem organização activa.
+pub(crate) async fn primary_org_of_user(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<Option<(Uuid, String)>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT o.id, o.timezone FROM org_members m JOIN organizations o ON o.id = m.org_id
+          WHERE m.user_id = $1 AND m.archived_at IS NULL
+          ORDER BY m.created_at, o.id LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
+/// O fuso de uma organização (omissão da coluna: Africa/Luanda).
+pub(crate) async fn org_timezone(state: &AppState, org_id: Uuid) -> Result<String, ApiError> {
+    Ok(
+        sqlx::query_scalar("SELECT timezone FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_else(|| "Africa/Luanda".to_string()),
+    )
 }
 
 #[cfg(test)]

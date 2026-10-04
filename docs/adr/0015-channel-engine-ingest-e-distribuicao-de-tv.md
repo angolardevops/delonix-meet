@@ -1,4 +1,4 @@
-# ADR-0011 — Channel Engine, ingestão e distribuição de TV
+# ADR-0015 — Channel Engine, ingestão e distribuição de TV
 
 **Estado:** Proposto · **Data:** 2026-10-04 · **Contexto:** [RFC-0001](../tv/rfc-0001-estudio-e-estacao-de-tv.md) §6–7, decisões D1 e D2.
 **Não é Aceite:** a D3 (licença do ffmpeg/x264) está por responder e a escolha do componente ainda não foi medida.

@@ -593,6 +593,31 @@ kbd {
   max-width: 440px;
 }
 
+/* «O meu ramal» (R276): número, estado do PIN e as duas acções; tudo quebra. */
+.my-ext,
+.my-ext__row,
+.my-ext__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.my-ext__row {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.my-ext__head,
+.my-ext__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.my-ext__form {
+  align-items: flex-start;
+}
+
 .mfa-panel,
 .mfa-estado,
 .mfa-inscrever,

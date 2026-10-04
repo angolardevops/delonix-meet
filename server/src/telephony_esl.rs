@@ -381,7 +381,18 @@ pub fn originate_command(
                 None => String::new(),
             };
             format!(
-                "&bridge([{codec}delonix_room_code={room},delonix_leg=room_bridge,delonix_cdr_skip=true]sofia/{profile}/room-{room}@{host}:{bridge_port})",
+                "&bridge([{codec}delonix_room_code={room},delonix_leg=room_bridge,delonix_cdr_skip=true,rtp_secure_media=mandatory:{srtp},sip_h_X-Delonix-Call-Id={call}]sofia/{profile}/room-{room}@{host}:{bridge_port})",
+                // O UA da ponte liga a perna SIP ao dial-out por este cabeçalho
+                // (pedido da frente D; `phone_bridge::sip::CALL_ID_HEADER`).
+                //
+                // `rtp_secure_media=mandatory:<suite>` obriga o FreeSWITCH a
+                // OFERECER SDES-SRTP nesta perna e a desistir se a resposta não
+                // trouxer `a=crypto` — que é exactamente a barra que a ponte
+                // impõe do outro lado (`phone_bridge::sip`, `488` sem cifra).
+                // `mandatory` e não `optional`: com `optional` uma resposta em
+                // claro passava, e a media da reunião ia em claro pela rede.
+                srtp = crate::phone_bridge::srtp::SRTP_PROFILE_NAME,
+                call = req.call_id,
                 room = safe(room_code, b"-")?,
                 profile = safe(bridge_profile, b"-_")?,
             )
@@ -958,7 +969,7 @@ mod tests {
         };
         let cmd = originate_command(&r, "external").unwrap();
         assert!(cmd.contains("delonix_room_code=voz-arq-2026"), "{cmd}");
-        assert!(cmd.ends_with(" &bridge([absolute_codec_string=PCMA,delonix_room_code=voz-arq-2026,delonix_leg=room_bridge,delonix_cdr_skip=true]sofia/external/room-voz-arq-2026@127.0.0.1:5190)"), "{cmd}");
+        assert!(cmd.ends_with(&format!(" &bridge([absolute_codec_string=PCMA,delonix_room_code=voz-arq-2026,delonix_leg=room_bridge,delonix_cdr_skip=true,rtp_secure_media=mandatory:AES_CM_128_HMAC_SHA1_80,sip_h_X-Delonix-Call-Id={}]sofia/external/room-voz-arq-2026@127.0.0.1:5190)", r.call_id)), "{cmd}");
         assert!(!cmd.contains("conference"));
     }
 

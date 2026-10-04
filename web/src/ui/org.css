@@ -392,6 +392,157 @@
   margin: 0;
   font-size: var(--t-title);
   line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+/* Dados para copiar (credenciais de um ramal): um campo por linha, o valor
+   quebra onde for preciso e o botão de copiar fica ao lado sem encolher. Nunca
+   uma grelha de colunas — um utilizador SIP ou um domínio não cabem num terço
+   do diálogo. */
+.org-creds {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  min-width: 0;
+}
+.org-creds__row {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border);
+}
+.org-creds__row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.org-creds dt {
+  font-size: var(--t-sm);
+}
+.org-creds dd {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  min-width: 0;
+}
+.org-creds__value {
+  flex: 1;
+  min-width: 0;
+  padding-top: 6px;
+  font-size: var(--t-md);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.org-creds dd.org-creds__hint {
+  display: block;
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
+}
+/* Ramais (R276): uma linha por ramal que QUEBRA em vez de rolar. Identidade e
+   estado em cima; número PSTN e acções por baixo, cada grupo com flex-wrap.
+   Nenhuma largura mínima — a tabela anterior tinha scroll horizontal a ~847 px
+   e cortava os dois últimos botões. */
+.org-exts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.org-ext {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  font-size: var(--t-md);
+}
+.org-ext__id {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.org-ext__num {
+  flex: none;
+  min-width: 5ch;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.org-ext__who {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.org-ext__who .dx-muted,
+.org-ext__did > .dx-muted {
+  font-size: var(--t-sm);
+}
+.org-ext__state,
+.org-ext__did,
+.org-ext__actions,
+.org-ext__didpick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.org-ext__state {
+  justify-content: flex-end;
+}
+.org-ext__did,
+.org-ext__actions {
+  grid-column: 1 / -1;
+}
+.org-ext__didpick select {
+  min-width: 0;
+  max-width: 100%;
+}
+.org-ext-auto {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+.org-ext-auto h3,
+.org-ext-auto p {
+  margin: 0;
+}
+.org-ext-auto p {
+  font-size: var(--t-sm);
+}
+.org-ext-auto__fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.org-ext-auto__fields .dx-field {
+  flex: 0 1 140px;
+  min-width: 0;
+}
+/* Um PIN mostrado uma vez: grande, espaçado, seleccionável com um toque. */
+.org-pin-once {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.org-pin-once__value {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  user-select: all;
+}
+@media (max-width: 760px) {
+  .org-ext {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .org-ext__state {
+    justify-content: flex-start;
+  }
 }
 .org-voice__note {
   margin: 0;
@@ -403,6 +554,11 @@
   border-top: 1px solid var(--border);
   font-size: var(--t-sm);
   font-weight: 600;
+}
+/* Histórico de SMS: a razão da falha, por extenso, na cor de perigo. */
+.org-sms__error {
+  font-size: var(--t-sm);
+  color: var(--danger);
 }
 /* DelonixAdmin: cartões sem divisória no cabeçalho, contagem mono à direita,
    tabelas em caixa com cabeçalho cinza, coluna direita de políticas. */

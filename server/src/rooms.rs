@@ -33,6 +33,9 @@ pub struct Room {
     /// `normal` (por defeito), `training` (só este permite salas de grupo),
     /// `broadcast` ou `hybrid`. Passa a `recordings.kind` das gravações da sala.
     pub format: String,
+    /// A sala aceita convidados SEM conta (`POST /api/rooms/{code}/guest-join`).
+    /// Mesmo aceitando, um convidado passa SEMPRE pela sala de espera.
+    pub allow_guests: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -43,7 +46,7 @@ pub struct Room {
 /// ficheiro, mais um em `apikeys.rs` e um em `recordings.rs`) — o mesmo padrão
 /// que partiu `meetings::start`/`ics` na migração 0022 (ver ADR-0004, Fase 3).
 pub const ROOM_COLUMNS: &str =
-    "id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at";
+    "id, code, name, owner_id, topology, waiting_room, e2ee, format, allow_guests, created_at";
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
 #[derive(utoipa::OpenApi)]
@@ -52,6 +55,7 @@ pub const ROOM_COLUMNS: &str =
         room_waiting,
         create_room,
         get_room,
+        patch_room,
         join_room,
         ice_servers,
         room_chat,
@@ -62,6 +66,7 @@ pub const ROOM_COLUMNS: &str =
     components(schemas(
         Room,
         CreateRoomReq,
+        PatchRoomReq,
         JoinRoomResp,
         ChatMessage,
         InviteReq,
@@ -99,6 +104,9 @@ pub struct CreateRoomReq {
     /// 'normal' (por defeito), 'training' (ativa salas de grupo), 'broadcast' ou 'hybrid'.
     #[serde(default)]
     pub format: Option<String>,
+    /// Aceitar convidados sem conta. Ausente = sim (ver migração 0075).
+    #[serde(default)]
+    pub allow_guests: Option<bool>,
 }
 
 /// Formatos de sala aceites.
@@ -163,6 +171,29 @@ pub async fn insert_room(
         }
     }
     Err(ApiError::internal("could not allocate room code"))
+}
+
+/// As opções de sessão de uma reunião passam à sala dela (R184): sala de
+/// espera, formato, gravação automática e a qualidade pedida ao gravador.
+/// Chamado na criação pela v1 e nos `PATCH` da BFF e da v1 (o `start` da BFF
+/// cria a sala já com elas).
+pub(crate) async fn apply_session_options(
+    db: &sqlx::PgPool,
+    room_code: &str,
+    options: &crate::meetings::SessionOptions,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE rooms SET waiting_room = $2, format = $3, auto_record = $4, record_quality = $5
+         WHERE code = $1",
+    )
+    .bind(room_code)
+    .bind(options.waiting_room)
+    .bind(room_format_for_meeting(&options.format))
+    .bind(options.auto_record)
+    .bind(&options.record_quality)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 // ---------- Sala pessoal («a minha sala», G2) ----------
@@ -315,7 +346,74 @@ pub async fn create_room(
         format,
     )
     .await?;
+    let room = match req.allow_guests {
+        Some(allow) if allow != room.allow_guests => {
+            set_allow_guests(&state.db, room.id, allow).await?
+        }
+        _ => room,
+    };
     Ok(Json(room))
+}
+
+/// Liga/desliga a entrada de convidados sem conta. Devolve a sala actualizada.
+async fn set_allow_guests(db: &sqlx::PgPool, room_id: Uuid, allow: bool) -> Result<Room, ApiError> {
+    Ok(sqlx::query_as(&format!(
+        "UPDATE rooms SET allow_guests = $1 WHERE id = $2 RETURNING {ROOM_COLUMNS}"
+    ))
+    .bind(allow)
+    .bind(room_id)
+    .fetch_one(db)
+    .await?)
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PatchRoomReq {
+    /// Único campo alterável hoje. `deny_unknown_fields`: um campo que o
+    /// cliente escreve e o servidor ignora é pior do que um que não existe.
+    pub allow_guests: bool,
+}
+
+/// Liga ou desliga a entrada de convidados sem conta. Só o DONO da sala: um
+/// colega ou um co-anfitrião não muda a política de convidados — é a decisão
+/// de quem a criou.
+#[utoipa::path(
+    patch, path = "/api/rooms/{room_code}", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
+    request_body = PatchRoomReq,
+    responses(
+        (status = 200, body = Room),
+        (status = 400, description = "Corpo inválido ou com campos desconhecidos.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Quem pede não é o dono da sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn patch_room(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+    Json(req): Json<PatchRoomReq>,
+) -> Result<Json<Room>, ApiError> {
+    let room = find_room(&state.db, &code)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if room.owner_id != auth.user_id {
+        return Err(ApiError::Forbidden);
+    }
+    let room = set_allow_guests(&state.db, room.id, req.allow_guests).await?;
+    Ok(Json(room))
+}
+
+/// A sala com este código, se existir. O código é normalizado para minúsculas.
+pub(crate) async fn find_room(db: &sqlx::PgPool, code: &str) -> Result<Option<Room>, ApiError> {
+    Ok(
+        sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+            .bind(code.to_lowercase())
+            .fetch_optional(db)
+            .await?,
+    )
 }
 
 /// Metadados de uma sala. O código é a credencial: qualquer sessão válida que
@@ -456,6 +554,10 @@ pub struct JoinRoomResp {
     pub ws_path: String,
     /// Existe uma reunião agendada para esta sala (senão é chamada instantânea).
     pub scheduled: bool,
+    /// «Como entro nas sessões» de quem entra: o cliente aplica-as (som,
+    /// câmara, desfoque, ruído, legendas); `warn_before_recording` é imposto
+    /// pelo servidor no início da gravação.
+    pub join_preferences: crate::account::JoinPreferencesBody,
 }
 
 /// Exchange an access token for a short-lived, signed **room token** — the
@@ -544,6 +646,9 @@ pub async fn join_room(
             title,
             lobby: Some(!access.direct),
             wr: Some(room.waiting_room),
+            guest: false,
+            // A sessão de onde se entra: terminá-la fecha também este /ws.
+            sid: auth.session_id,
         },
     )?;
 
@@ -556,11 +661,15 @@ pub async fn join_room(
             .fetch_one(&state.db)
             .await?;
 
+    let join_preferences = crate::account::load_join_preferences(&state.db, auth.user_id)
+        .await?
+        .into();
     Ok(Json(JoinRoomResp {
         room,
         ws_path: format!("/ws?token={room_token}"),
         room_token,
         scheduled,
+        join_preferences,
     }))
 }
 
@@ -583,6 +692,12 @@ pub async fn ice_servers(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(ice_config(&state)?))
+}
+
+/// A configuração ICE (STUN + TURN com credenciais de 1 h). Partilhada pelo
+/// `/api/ice` e pela entrada de convidado, que não tem sessão para o chamar.
+pub(crate) fn ice_config(state: &AppState) -> Result<serde_json::Value, ApiError> {
     let expiry = Utc::now().timestamp() + 3600;
     let username = expiry.to_string();
     let mut mac = Hmac::<Sha1>::new_from_slice(state.config.turn_secret.as_bytes())
@@ -612,7 +727,7 @@ pub async fn ice_servers(
     if state.config.force_turn_relay {
         cfg["iceTransportPolicy"] = json!("relay");
     }
-    Ok(Json(cfg))
+    Ok(cfg)
 }
 
 // ---------- Chat persistente ----------
@@ -714,14 +829,11 @@ pub async fn room_waiting(
     auth: AuthUser,
     Path(code): Path<String>,
 ) -> Result<Json<Vec<crate::signaling::WaitingView>>, ApiError> {
-    let room: Room = sqlx::query_as(
-        "SELECT id, code, name, owner_id, topology, waiting_room, e2ee, format, created_at
-         FROM rooms WHERE code = $1",
-    )
-    .bind(code.to_lowercase())
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let room: Room = sqlx::query_as(&format!("SELECT {ROOM_COLUMNS} FROM rooms WHERE code = $1"))
+        .bind(code.to_lowercase())
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     let access = room_access(&state, auth.user_id, &room).await?;
     let em_sala = state.hub.user_admits(room.id, auth.user_id);
     if !access.admitter && !em_sala {

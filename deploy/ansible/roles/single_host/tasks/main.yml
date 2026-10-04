@@ -79,7 +79,7 @@
 
 - name: "Build (cargo release + npm build)"
   ansible.builtin.command:
-    cmd: make build
+    cmd: make compile
     chdir: "{{ repo_root }}"
   environment:
     PATH: "{{ (node_bin_eff + ':') if (node_bin_eff | length > 0) else '' }}{{ ansible_env.PATH }}"

@@ -59,7 +59,7 @@ function endpoints(base: string): Endpoint[] {
     },
     {
       metodo: 'GET',
-      caminho: '/api/v1/rooms/{code}',
+      caminho: '/api/v1/rooms/{room_code}',
       desc: 'publico.api.metadadosSala',
       resposta: sala,
       curl: (b) => [`curl ${b}/api/v1/rooms/${CODIGO} \\`, `  -H "${AUTH}: Bearer ${CHAVE}"`].join('\n'),
@@ -76,7 +76,7 @@ function endpoints(base: string): Endpoint[] {
             size_bytes: 12345678,
             created_at: '2026-07-07T20:00:00Z',
             room_code: CODIGO,
-            download_url: '/api/recordings/…',
+            download_url: '/api/public/recordings/…/content',
           },
         ],
       },

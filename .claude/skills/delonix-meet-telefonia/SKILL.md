@@ -21,7 +21,8 @@ when_to_use: >-
 ponte; [ADR-0009](../../../docs/adr/0009-telefonia-troncos-encaminhamento-e-custo.md)
 para troncos, encaminhamento e custo — **ainda «Proposto»** (`:3`) com o código já na
 `main` desde o #136: di-lo no relatório, não o trates como aceite.
-**Catálogo:** R210–R214 (telefonia) e R221–R225 (ponte, imagem, censo, palco) em
+**Catálogo:** R210–R214 (telefonia), R221–R225 (ponte, imagem, censo, palco) e R273
+(ramal entra na sala) em
 [`regressions.md`](../../../docs/reference/regressions.md).
 **Histórico da decisão:** [design da Abordagem B](../../../docs/pstn-sfu-bridge-design.md),
 marcado **superseded** — lê-o para não repetir o erro, não para o seguir.
@@ -122,6 +123,48 @@ chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em l
   (`lib.rs:834-841`) — três rotas de máquina na árvore pública, dívida nomeada em
   `delonix-meet-api`.
 
+### O ramal entra na sala (R273) — a regra está medida, a chamada não
+
+Um ramal marca o **número de acesso às reuniões** (`VOICE_MEETING_ACCESS_NUMBER`, `8000`
+por omissão) e entra pela MESMA ponte. Não há ponte nem IVR novos:
+
+1. o `ramais_dial.lua` pergunta o número em `/api/voice/ivr/resolve-extension`; a resposta
+   `{"meeting_access": true}` manda-o chamar `dialin_ivr.lua ramal`;
+2. o IVR, em modo `ramal`, lê `sip_auth_username`/`sip_auth_realm` (o que o digest
+   autenticou — **nunca o `From`**) e valida o PIN em
+   `/internal/v1/voice/ivr/validate-extension` (`voice::validate_pin_for_extension`);
+3. a sala procura-se **na organização do ramal** — é essa a fronteira, porque o PIN só é
+   único por DID. Ramal inactivo, membro arquivado, domínio de outra org, PIN de outra org
+   ou PIN em duas salas: o mesmo `404`;
+4. daí em diante é o `room_bridge` e o recuo do dial-in, linha por linha o mesmo código.
+
+O número é **só do servidor** (o dialplan não o tem escrito), nenhum ramal o pode ter
+(`409 ramais.extension_reserved`) e as leituras dos ramais trazem-no em
+`meeting_access_number`. **Sem CDR** neste caminho, e quem entra é «Telefone» anónimo no
+censo — a ponte não recebe a identidade de quem liga.
+
+**Por medir, e não o dês por feito:** uma chamada real. O modo `ramal` do Lua nunca
+correu; `sip_auth_*` num INVITE do perfil `internal` e o `session:execute("lua", …)` de
+um script para o outro são pressupostos por confirmar contra um FreeSWITCH real.
+
+### O PIN do ramal, os ramais da empresa e a numeração automática (R276)
+
+Número do ramal, password SIP e PIN são **três coisas separadas** (decisão de 2026-10-04,
+item 3.8 do plano). O PIN (6 dígitos, só o hash, mostrado uma vez) vive em
+`server/src/extension_pin.rs`; as recusas e o sorteio em
+`crates/delonix-meet-domain/src/telephony/extension_pin.rs`. O PIN de um ramal de pessoa é
+dela (`/my-extension`); o administrador só o limpa. Um ramal sem pessoa (`member_id` nulo,
+etiqueta obrigatória) é da empresa, e o PIN dele é do administrador. Os números
+automáticos saem do intervalo da organização (`extension-range`, por omissão 1000–1999)
+com `POST …/extensions/assign-missing`.
+
+**Por fazer, e não o dês por feito:** nenhuma chamada usa o PIN — a verificação
+(`/internal/v1/voice/ivr/verify-extension-pin`, bloqueio à quinta falha, auditoria) não
+tem consumidor, e o `dialin_ivr.lua` não mudou. Faltam também o ramal automático quando
+um membro entra, o QR de provisionamento do Linphone e o travão a quem experimente o
+mesmo PIN em muitos ramais. O lote do IVR **não liga a verificação** sem travão por origem e bloqueio de duração
+crescente, e o Lua dá uma só recusa a quem liga. A lista completa está na R276.
+
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
 Mandar e receber RTP cifrado com uma chave dada **por fora**, para um par UDP arbitrário,
@@ -143,6 +186,8 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | Uma rota `/telephony` | os portões de `delonix-meet-api`, com o caso negativo em `web/e2e/isolamento.mjs` |
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
+| O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
+| O PIN do ramal, os ramais da empresa e a atribuição em massa | `cargo test --release --test ramal_pin` contra Postgres real (R276 — 9 casos, dois de concorrência) + `telephony::extension_pin::tests` |
 | Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe, com o `luac5.2`) |
 | Os `*.xml` e `*.xml.inc` do FreeSWITCH | `bash scripts/check-fs-xml.sh` (R226 — bem formado, sem directivas `X-PRE-PROCESS` em comentários, sem `$${AMBIENTE}`); o comportamento é do `scripts/softphone-prova.sh srtp-real`, fora do CI |
 | A imagem (`voice/freeswitch/image/`) | `make freeswitch-image` — build + prova de fumo; depois a R222 com `FS_IMAGE` |
@@ -195,17 +240,22 @@ chegou.
 `scripts/check-lua-sintaxe.sh` (R223) compila-o com o `luac5.2` no `make fitness` e no CI;
 o **comportamento** do IVR — PIN, `room_bridge`, recuo para a conferência local — continua
 sem portão automático, e **nunca correu de ponta a ponta na imagem do repo** (R223, «por
-medir»). Se mexeres no fluxo, di-lo no relatório em vez de o dar por verificado.
+medir»). Se mexeres no fluxo, di-lo no relatório em vez de o dar por verificado. O mesmo
+ficheiro serve agora **dois modos** (dial-in por DID e `ramal`, R273): uma mudança no
+caminho comum — PIN, `bridge`, recuo — mexe nos dois.
 
 **A imagem** vive em `voice/freeswitch/image/` (três fontes fixadas por commit, base por
 digest, `mod_lua` e `mod_curl`) e publica-se a partir da `main`
-(`.github/workflows/freeswitch-image.yml`), com tag imutável `1.11.3-<sha8>`. Duas pontas
-soltas, medidas a 2026-10-03:
+(`.github/workflows/freeswitch-image.yml`), com tag imutável `1.11.3-<sha8>`. Uma ponta
+solta, medida a 2026-10-03:
 
 - a configuração segura que o `fs-canais.sh` e a prova da telefonia montam por cima
-  **ainda não está no repo** (`.worktrees/freeswitch-build/conf/`);
-- o `voice/docker-compose.voice.yml:26` continua em `safarov/freeswitch:latest`, e não
-  na imagem do repo.
+  **ainda não está no repo** (`.worktrees/freeswitch-build/conf/`).
+
+O compose de voz antigo (`voice/docker-compose.voice.yml`, sobre `safarov/freeswitch:latest`)
+foi retirado a 2026-10-04: nunca correu. A voz sobe pelo `compose.yaml` e pelo cluster
+local, os dois com a imagem do repo e o mesmo arranque
+(`voice/cluster/freeswitch-entrypoint.sh`).
 
 ## O que NÃO está na `main`, e porquê
 
@@ -237,9 +287,8 @@ Propõe um a três pedidos seguintes, cada um com o alvo, a prova a medir e o qu
 fora. Por ordem de valor, hoje:
 
 1. «Traz a configuração segura do FreeSWITCH (`.worktrees/freeswitch-build/conf/`) para o
-   repo, com o `mod_curl` carregado, troca o `safarov/freeswitch:latest` do
-   `voice/docker-compose.voice.yml` pela imagem de `voice/freeswitch/image/`, e põe o
-   `telefonia-prova/README.md` a usar essa imagem. Prova: a R222 e o
+   repo, com o `mod_curl` carregado, e põe o `telefonia-prova/README.md` a usar a
+   imagem de `voice/freeswitch/image/`. Prova: a R222 e o
    `telefonia-freeswitch.mjs` a correr só a partir do repo, sem nada fora dele. Fora: o
    PBX de cliente.»
 2. «Um portão de comportamento para o `dialin_ivr.lua`: PIN certo → `bridge` para o

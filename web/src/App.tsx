@@ -27,6 +27,7 @@ const Whiteboards = lazy(() => import('./pages/Whiteboards'))
 const Studio = lazy(() => import('./pages/Studio'))
 const Integrations = lazy(() => import('./pages/Integrations'))
 const Admin = lazy(() => import('./pages/Admin'))
+const Telecom = lazy(() => import('./pages/Telecom'))
 const Intelligence = lazy(() => import('./pages/Intelligence'))
 const Status = lazy(() => import('./pages/Status'))
 const ApiDocs = lazy(() => import('./pages/ApiDocs'))
@@ -53,7 +54,7 @@ type Route =
   | { kind: 'diagram'; id: string | null }
   | { kind: 'player'; id: string }
 
-const PAGES: NavKey[] = ['calendar', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'ai']
+const PAGES: NavKey[] = ['calendar', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'telecom', 'ai']
 
 function parseHash(): Route {
   const h = location.hash
@@ -208,6 +209,7 @@ export default function App() {
               {route.kind === 'integrations' && <Integrations />}
               {route.kind === 'analytics' && <Analytics />}
               {route.kind === 'admin' && <Admin />}
+              {route.kind === 'telecom' && <Telecom />}
               {route.kind === 'ai' && <Intelligence />}
             </RouteFallback>
           </Shell>

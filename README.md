@@ -138,10 +138,42 @@ delonix-meet/
 
 ---
 
-## 4. Build, testes e fitness functions
+## 4. Ciclo local: do clone ao cluster
 
 ```bash
-make build      # backend (release) + frontend (produção)
+make bootstrap    # ferramentas, dependências, .env com segredos aleatórios, certificado
+make dev          # desenvolver: infra + backend + frontend com HMR
+make build        # as imagens: delonix-server e delonix-web
+make voice-images # (uma vez) FreeSWITCH + PBX de cliente, para a voz
+make compose-up   # simulação de produção numa máquina só  → https://meet.ngolacloud.local:8443
+make cluster      # o stack completo num cluster local     → https://meet.ngolacloud.local
+```
+
+- **`make bootstrap`** não instala nada no sistema: o `helm` fica em `.tools/bin` (checksum
+  conferido), os segredos em `.env` e o certificado em `deploy/certs/` — os três fora do git.
+- **`compose.yaml`** corre as mesmas imagens atrás de uma borda com TLS, mais a voz
+  (Kamailio, FreeSWITCH, PBX de cliente). Não usa `${VAR}`: o `delonix compose` não
+  interpola, e assim o ficheiro corre igual no `docker compose`.
+- **`make compose-up`** cria a organização `ngolacloud` com um administrador de validação
+  e mostra os três endereços com os acessos (`make compose-info` repete-os):
+  o Meet em `:8443`, a interface de gestão do Kamailio em `:8444/rpc/` e a API de
+  administração do PBX (Asterisk ARI) em `:8445`. `make compose-voice-check` mede a
+  sinalização: bordo, tronco do PBX e uma chamada de prova até ao IVR.
+- O PBX de cliente é um **Asterisk de stock**, não o Issabel (que não tem imagem de
+  contentor): não há painel gráfico, só a API e a consola.
+- **`make cluster`** cria um cluster `delonix cluster` (o equivalente ao kind, sem Docker)
+  com storage, ingress-nginx, Postgres e Redis por Helm, servidor, web, coturn e a voz —
+  Kamailio, FreeSWITCH e um PBX de cliente (Asterisk) ligado por tronco SIP. No fim mede o
+  que subiu; `make cluster-status` repete a medição e `make cluster-down` destrói tudo.
+- O cluster é rootless: o que se vê de fora é publicado em `127.0.0.1`. O único passo manual
+  é a linha de `/etc/hosts` (pede sudo): `127.0.0.1 meet.ngolacloud.local`.
+- **Não está provado no cluster:** uma chamada com PIN aceite e áudio (a imagem do
+  FreeSWITCH não traz os sons do IVR) e media WebRTC num browser.
+
+## 4.1 Build, testes e fitness functions
+
+```bash
+make build      # imagens do backend e do frontend (make compile = só os binários)
 make test       # fitness + cargo test + tsc + vitest
 make migrate    # cargo sqlx migrate run
 ```

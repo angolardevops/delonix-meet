@@ -160,8 +160,8 @@ só passam a «cumpridas» com relatório reproduzível (cenário, ferramenta, a
 
 ## 18. Decisões pendentes (precisam do dono do produto)
 
-- **D1** Channel Engine: composição server-side (A) ou browser headless (B)? *(recomendo A; confirmada em 2026-10-04 — ver ADR-0011, Proposto)*
-- **D2** Origem HLS/ingest: componente externo (MediaMTX ou equivalente) ou módulo próprio? *(recomendo externo; confirmada em 2026-10-04; versão e licença verificadas, desempenho **não** — ver ADR-0011)*
+- **D1** Channel Engine: composição server-side (A) ou browser headless (B)? *(recomendo A; confirmada em 2026-10-04 — ver ADR-0015, Proposto)*
+- **D2** Origem HLS/ingest: componente externo (MediaMTX ou equivalente) ou módulo próprio? *(recomendo externo; confirmada em 2026-10-04; versão e licença verificadas, desempenho **não** — ver ADR-0015)*
 - **D3** Licenciamento do ffmpeg/x264 a empacotar (LGPL vs GPL) — implica decisão jurídica.
 - **D4** Nome `TvChannel` e prefixo `tv_` aceites?
 - **D5** Object storage (S3-compatível) como pré-requisito de F2, ou continuar PVC (RWO limita multi-nó)?

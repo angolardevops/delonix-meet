@@ -3,7 +3,7 @@
 -- 1) Capacidade `broadcast.go_live` (catálogo v3, ADR-0008): PÔR NO AR é uma
 --    capacidade distinta de PREPARAR (`broadcast.manage_channels`, RF-19).
 --    owner/admin = allow; member/external_guest = deny; papéis personalizados
---    recusam até um admin a conceder (fail-closed, como na 0074).
+--    recusam até um admin a conceder (fail-closed, como na 0088).
 -- 2) `tv_broadcast_sessions`: uma emissão. Separa a INTENÇÃO (`desired_state`,
 --    escrita pelo plano de controlo) do ESTADO OBSERVADO (`state`, escrito só
 --    pelo executor com o lease válido). Sem executor, fica em `requested`.

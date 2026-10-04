@@ -1,0 +1,8 @@
+.git/
+*.swp
+*.bak
+*.tmp
+*.orig
+*.tgz
+# Entradas de prova do portão (scripts/check-helm.sh): não vão no pacote.
+ci/

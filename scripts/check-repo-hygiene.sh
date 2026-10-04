@@ -235,8 +235,17 @@ while IFS= read -r caminho; do
       fail=1
       ;;
     *../*|../*)
-      echo "✗ higiene: SYMLINK versionado a SAIR da árvore: $caminho -> $alvo"
-      fail=1
+      # Um `../` só é mau se o caminho, RESOLVIDO a partir da pasta do link,
+      # sair da raiz. O padrão sozinho recusava também as ligações relativas
+      # que ficam cá dentro (deploy/helm/delonix-meet/files/voice/* → voice/*),
+      # que o parágrafo acima dá por legítimas. `-m`: o alvo não tem de existir.
+      destino=$(realpath -m --relative-to="$PWD" "$(dirname "$caminho")/$alvo" 2>/dev/null || echo "..")
+      case "$destino" in
+        ..|../*|/*)
+          echo "✗ higiene: SYMLINK versionado a SAIR da árvore: $caminho -> $alvo"
+          fail=1
+          ;;
+      esac
       ;;
   esac
 done <<EOF_SYMLINKS

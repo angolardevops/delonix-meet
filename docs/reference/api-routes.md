@@ -57,6 +57,23 @@
 | `/api/users/me/notifications…` | igual |
 | `POST /api/missed-calls/ack` | `POST /api/users/me/missed-calls/acknowledge` |
 
+### Conta pessoal (ADR-0011 — rotas novas, sem «antes»)
+| Rota | Notas |
+|---|---|
+| `GET/PATCH /api/users/me/profile` | `409 profile.field_managed_by_odoo` nos campos do Odoo |
+| `GET/PUT/DELETE /api/users/me/avatar`, `GET /api/users/{user_id}/avatar` | imagem crua; a de outra pessoa só com org em comum |
+| `GET/PUT /api/users/me/join-preferences` | singleton (`PUT` completo) |
+| `GET/PUT /api/users/me/notification-preferences` | singleton (`PUT` completo) |
+| `GET/PATCH /api/users/me/tour`, `PUT /api/users/me/tour/steps/{step_id}`, `POST /api/users/me/tour/skip`, `POST /api/users/me/tour/restart` | passos versionados |
+| `POST /api/users/me/sessions/revoke-others` | termina todas menos a do pedido (`GET /api/users/me/sessions` e `DELETE …/{session_id}` já existiam) |
+| `POST /api/users/me/reauthentication` | abre a janela de 5 min para alterar factores |
+| `GET /api/users/me/security` | resumo de segurança |
+| `GET/POST /api/users/me/passkeys`, `GET/DELETE /api/users/me/passkeys/{passkey_id}`, `POST /api/users/me/passkeys/begin-registration` | `201` + `Location` ao registar |
+| `POST /api/users/me/mfa/backup-codes/regenerate` | exige reautenticação |
+| `POST /api/auth/login/mfa/passkey-options`, `POST /api/auth/login/mfa/passkey` | segundo factor com chave |
+| `POST /api/users/me/room/rotate-pin` | «Novo PIN» |
+| `GET/POST /api/users/me/data-exports`, `GET /api/users/me/data-exports/{export_id}`, `POST …/{export_id}/download-link`, `GET …/{export_id}/content` | `202` + `Location`; `content` sem sessão (assinatura). A síncrona `GET /api/users/me/export` fica |
+
 ### Salas
 | Antes | Depois |
 |---|---|
@@ -79,6 +96,7 @@
 |---|---|
 | `GET/POST /api/meetings` | igual |
 | — | `GET /api/meetings/{meeting_id}` (**novo**: recurso completo) |
+| — | `PATCH /api/meetings/{meeting_id}` (**novo**, R184: só as opções de sessão, só o anfitrião) |
 | `DELETE /api/meetings/{id}` | `DELETE /api/meetings/{meeting_id}` (`204`) |
 | `POST /api/meetings/conflicts` | `POST /api/meetings/check-conflicts` |
 | `POST /api/meetings/{id}/start` | `POST /api/meetings/{meeting_id}/start` |
@@ -122,6 +140,7 @@
 | `DELETE /api/recordings/{id}/share/{user_id}` | `DELETE /api/recordings/{recording_id}/shares/{user_id}` |
 | `GET/POST/DELETE /api/recordings/{id}/link` | `GET/PUT/DELETE /api/recordings/{recording_id}/public-link` |
 | `…/chapters`, `…/comments` | iguais (com `{recording_id}`) |
+| — | `GET /api/recordings/{recording_id}/chapters/generation` (**novo**) — estado da última geração de capítulos: `idle`, `running`, `succeeded`, `failed` com `error_code` |
 | `GET /api/share/{token}` | `GET /api/public/recordings/{token}` |
 | `GET /api/share/{token}/download` | `GET /api/public/recordings/{token}/content` |
 
@@ -204,6 +223,7 @@ Rotas afectadas:
 |---|---|
 | `POST /api/voice/ivr/validate` | `POST /internal/v1/voice/ivr/validate` |
 | `POST /api/voice/ivr/cdr` | `POST /internal/v1/voice/ivr/cdr` |
+| — (nova, R273) | `POST /internal/v1/voice/ivr/validate-extension` |
 
 ## Consumidores externos
 - **Módulo Odoo `nk_delonix_meet`** (repositório `kaeso-18`): passa a chamar:

@@ -1,0 +1,128 @@
+{{- $v := .Values -}}
+{{- $c := $v.coturn -}}
+{{- if $c.enabled }}
+# coturn — relay de media. UMA réplica, de propósito: em relay-only dos dois
+# lados o servidor e o browser relayam um pelo outro através de alocações no
+# MESMO turnserver (hairpin). Duas réplicas partiam a media; escalar exige um
+# redesenho (deploy/k8s/51-coturn.yaml). Por isso não há PDB nem HPA aqui.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coturn
+  labels:
+    app: coturn
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app: coturn
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: coturn
+        {{- include "dm.labels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9641"
+    spec:
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      {{- if $c.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: coturn
+          image: {{ printf "%s:%s" $c.image.repository $c.image.tag | quote }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          env:
+            # O MESMO segredo com que o servidor assina as credenciais TURN.
+            - name: TURN_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: TURN_SECRET } }
+            - name: EXTERNAL_IP
+              {{- if $c.externalIP }}
+              value: {{ $c.externalIP | quote }}
+              {{- else }}
+              valueFrom: { fieldRef: { fieldPath: {{ ternary "status.hostIP" "status.podIP" $c.hostNetwork }} } }
+              {{- end }}
+          command: ["/bin/sh", "-c"]
+          args:
+            # allowed-peer-ip autoriza o hairpin (sem ele: 403 Forbidden IP e
+            # vídeo preto). denied-peer-ip fecha o SSRF-por-TURN para os
+            # metadados da cloud. NÃO negar RFC1918 em bloco: o relay vive lá.
+            - >
+              exec turnserver -n --no-cli --log-file=stdout --simple-log
+              --use-auth-secret --static-auth-secret="$TURN_SECRET"
+              --realm={{ $c.realm }} --external-ip="$EXTERNAL_IP"
+              --allowed-peer-ip="$EXTERNAL_IP"
+              --denied-peer-ip=169.254.0.0-169.254.255.255
+              --no-multicast-peers
+              --listening-port={{ $c.port }} --min-port={{ $c.relayPorts.min }} --max-port={{ $c.relayPorts.max }}
+              --total-quota={{ $c.totalQuota }}
+              --fingerprint --stale-nonce=3600
+              --relay-threads={{ $c.relayThreads }}
+              --no-tcp-relay --no-tls --no-dtls
+              --prometheus
+          ports:
+            - { name: turn-udp, containerPort: {{ $c.port }}, protocol: UDP }
+            - { name: metrics, containerPort: 9641, protocol: TCP }
+          readinessProbe:
+            tcpSocket: { port: {{ $c.port }} }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          # Um STUN binding a sério: apanha o turnserver preso com o socket aberto.
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "turnutils_stunclient -p {{ $c.port }} 127.0.0.1 >/dev/null 2>&1"]
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          # `allowPrivilegeEscalation: true` não é descuido: o binário desta
+          # imagem tem file-capabilities e com no-new-privs o exec dá EPERM
+          # (deploy/k8s/51-coturn.yaml). Largam-se todas as outras.
+          securityContext:
+            allowPrivilegeEscalation: true
+            capabilities: { drop: ["ALL"], add: ["NET_BIND_SERVICE"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coturn
+  labels:
+    app: coturn
+    {{- include "dm.labels" . | nindent 4 }}
+  {{- with $c.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $c.service.type }}
+  {{- if and (eq $c.service.type "LoadBalancer") $c.service.loadBalancerIP }}
+  loadBalancerIP: {{ $c.service.loadBalancerIP | quote }}
+  {{- end }}
+  {{- if ne $c.service.type "ClusterIP" }}
+  # `Cluster` enquanto houver UMA réplica: com `Local`, o tráfego que chegue a
+  # um nó sem o pod é descartado.
+  externalTrafficPolicy: {{ $c.service.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    app: coturn
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: turn-udp, port: {{ $c.port }}, targetPort: {{ $c.port }}, protocol: UDP }
+{{- end }}

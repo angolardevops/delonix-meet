@@ -87,7 +87,10 @@ export function isAbort(e: unknown): boolean {
  * problema é o transporte.
  */
 export function isAuthFailure(e: unknown): boolean {
-  return e instanceof ApiError && (e.status === 401 || e.status === 403)
+  // Só o 401. Desde o #90 o servidor responde 403/404 com `code` a quem ESTÁ
+  // autenticado mas não pode (ex.: `recording.not_owner`): isso é uma recusa
+  // sobre um recurso, não uma sessão inválida, e nunca pode terminar a sessão.
+  return e instanceof ApiError && e.status === 401
 }
 
 /** Mensagem legível de um erro de API, com recurso ao texto dado. */
@@ -159,10 +162,12 @@ async function refreshSession(): Promise<void> {
 async function renovarUmaVez() {
   // Sem corpo: o refresh token vai no cookie HttpOnly (enviado automaticamente).
   const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' })
-  // Só 401/403 são «a sessão não serve». Um 500/502/503 é o servidor com um
-  // problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
+  // Só 401 (cookie ausente, revogado ou expirado) e 404 (a conta do token já
+  // não existe) são «a sessão não serve» — é o contrato do `POST
+  // /api/auth/refresh`. Um 403 é uma recusa, e um 500/502/503 é o servidor com
+  // um problema SEU: terminar a sessão aí faz o utilizador perder o sítio onde
   // estava para resolver um problema que não é dele (ver isAuthFailure).
-  if (!res.ok && res.status !== 401 && res.status !== 403) {
+  if (!res.ok && res.status !== 401 && res.status !== 404) {
     throw new ApiError(res.status, null, 'refresh indisponível')
   }
   if (!res.ok) {
@@ -481,6 +486,7 @@ export interface ShareLink {
 export const getRecordingLink = (id: string) =>
   request<ShareLink | null>(`/api/recordings/${id}/public-link`)
 
+/** Singleton: `PUT` cria OU substitui o link público (era `POST …/link`). */
 export const createRecordingLink = (id: string, opts: { password?: string; expires_at?: string | null }) =>
   request<ShareLink>(`/api/recordings/${id}/public-link`, {
     method: 'PUT',
@@ -544,6 +550,7 @@ export const deleteMeeting = (id: string) => request(`/api/meetings/${id}`, { me
 export const startMeeting = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' }>(`/api/meetings/${id}/start`, { method: 'POST' })
 
+/** A minha resposta ao convite é singleton: `PUT …/invitees/me` (era `POST …/respond`). */
 export const respondMeeting = (id: string, status: 'accepted' | 'declined', reason = '') =>
   request(`/api/meetings/${id}/invitees/me`, { method: 'PUT', body: JSON.stringify({ status, reason }) })
 
@@ -559,6 +566,7 @@ export const createMeetingRoom = (orgId: string, name: string, location: string,
     body: JSON.stringify({ name, location, capacity }),
   })
 
+/** Acta da sala é singleton: `PUT` (era `POST`). Leitura: `roomNotes`, no MESMO caminho. */
 export const saveMinutesByRoom = (code: string, minutes: string, transcript: string) =>
   request(`/api/rooms/${code}/minutes`, { method: 'PUT', body: JSON.stringify({ minutes, transcript }) })
 
@@ -599,6 +607,7 @@ export const saveWhiteboard = (title: string, roomCode: string, pngBase64: strin
     body: JSON.stringify({ title, room_code: roomCode, png_base64: pngBase64 }),
   })
 export const deleteWhiteboard = (id: string) => request(`/api/whiteboards/${id}`, { method: 'DELETE' })
+/** Link público do quadro é singleton: `PUT …/public-link` (era `POST …/share`). */
 export const shareWhiteboard = (id: string, isPublic: boolean) =>
   request<WhiteboardMeta>(`/api/whiteboards/${id}/public-link`, {
     method: 'PUT',
@@ -1251,6 +1260,10 @@ export async function addActionItem(
   })
 }
 
+/**
+ * O item do plano passou a viver debaixo da reunião — e o servidor VERIFICA que
+ * o item é dessa reunião (id de outra reunião = 404). Daí o `meetingId` novo.
+ */
 export async function patchActionItem(
   meetingId: string,
   itemId: string,
@@ -1308,6 +1321,10 @@ export interface ChatHistoryMsg {
   parent_id?: string | null
   /** Contagem de reacções por emoji (`{}` sem reacções). */
   reactions?: Record<string, number>
+  /** Conversa directa: a conta que a recebe. `null` = mensagem pública. O
+   *  servidor só devolve as directas a quem as enviou e a quem as recebeu. */
+  to_user_id?: string | null
+  to_username?: string | null
 }
 
 /** Quem espera na sala de espera (só dono/co-anfitrião — 403/404 aos outros). */
@@ -1316,6 +1333,8 @@ export interface WaitingPeer {
   username: string
   origin?: 'sso' | 'password' | 'guest' | 'pstn' | 'bot'
   title?: string
+  /** Convidado SEM conta (`guestJoin`): o nome foi escrito à mão. */
+  is_guest?: boolean
   /** Epoch ms de quando começou a esperar. */
   since: number
 }
@@ -1971,21 +1990,40 @@ export const listVoiceCdr = (orgId: string, signal?: AbortSignal) =>
 export const voiceBilling = (orgId: string, period: VoicePeriod = 'month', signal?: AbortSignal) =>
   request<VoiceBilling>(`/api/orgs/${orgId}/voice/billing?period=${period}`, { signal })
 
-// ---------- Ramais internos (extensão SIP — chamada ramal-a-ramal, Fase 1) ----------
-// Só interno: SEM PSTN e SEM ponte para salas de reunião (fases seguintes do
-// mesmo plano). Ver server/src/ramais.rs para a fronteira exata.
+// ---------- Ramais internos (extensão SIP) ----------
+// Chamada ramal-a-ramal; com um DID atribuído, alcançável do PSTN; e entrada
+// numa reunião pelo número de acesso (R273). Ver server/src/ramais.rs para a
+// fronteira exacta e para o que NÃO está provado com uma chamada real.
+
+/** Endereço público do servidor SIP dos ramais (configuração da instalação). */
+export interface SipServer {
+  host: string
+  port: number
+  transport: 'udp' | 'tcp' | 'tls'
+  /** O proxy pronto a colar no softphone: `sip:host:porta;transport=x`. */
+  uri: string
+}
+
+/** Estado do PIN de um ramal. O VALOR nunca sai numa leitura. */
+export type ExtensionPinState = 'unset' | 'set' | 'locked'
 
 export interface Extension {
   id: string
   org_id: string
-  member_id: string
-  member_username: string
-  member_email: string
+  /** `null` num ramal da EMPRESA (recepção, sala, portaria): identifica-se pela etiqueta. */
+  member_id: string | null
+  member_username: string | null
+  member_email: string | null
   extension: string
   sip_username: string
   label: string
   active: boolean
   created_at: string
+  pin_state: ExtensionPinState
+  /** Número curto que um ramal marca para entrar numa reunião (o mesmo para todos). */
+  meeting_access_number: string
+  /** `null` quando a instalação não configurou o endereço público — nunca se inventa. */
+  sip_server: SipServer | null
 }
 /** Resposta de criação/regeneração: só existe UMA VEZ — copiar para o softphone. */
 export interface ExtensionCreated extends Extension {
@@ -1997,7 +2035,8 @@ export const listExtensions = (orgId: string, signal?: AbortSignal) =>
   request<Extension[]>(`/api/orgs/${orgId}/extensions`, { signal })
 export const createExtension = (
   orgId: string,
-  body: { member_id: string; extension: string; label?: string },
+  /** Sem `member_id` é um ramal da empresa, e a etiqueta é obrigatória. */
+  body: { member_id?: string; extension: string; label?: string },
 ) => request<ExtensionCreated>(`/api/orgs/${orgId}/extensions`, { method: 'POST', body: JSON.stringify(body) })
 export const updateExtension = (orgId: string, id: string, body: { label?: string; active?: boolean }) =>
   request<Extension>(`/api/orgs/${orgId}/extensions/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
@@ -2005,6 +2044,69 @@ export const regenerateExtensionPassword = (orgId: string, id: string) =>
   request<ExtensionCreated>(`/api/orgs/${orgId}/extensions/${id}/regenerate-password`, { method: 'POST' })
 export const deleteExtension = (orgId: string, id: string) =>
   requestEmpty(`/api/orgs/${orgId}/extensions/${id}`, { method: 'DELETE' })
+
+// ---------- Numeração automática e PIN do ramal (R276) ----------
+// O número do ramal, a password SIP e o PIN são três coisas separadas. O PIN
+// (6 dígitos) só existe em claro na resposta que o gera. O de um ramal de
+// PESSOA é dela — gera-o ou escolhe-o em «o meu ramal»; o administrador só o
+// limpa. O de um ramal da EMPRESA é do administrador.
+
+export interface ExtensionRange {
+  range_start: number
+  range_end: number
+}
+export const getExtensionRange = (orgId: string, signal?: AbortSignal) =>
+  request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { signal })
+export const putExtensionRange = (orgId: string, body: ExtensionRange) =>
+  request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { method: 'PUT', body: JSON.stringify(body) })
+
+export interface AssignMissingResult {
+  assigned: { id: string; member_id: string; member_username: string; extension: string }[]
+  already_assigned: number
+  /** Pessoas activas que continuam sem ramal depois desta chamada. */
+  remaining: number
+  range_exhausted: boolean
+  range_start: number
+  range_end: number
+}
+/** Um lote (no máximo 100 ramais). Idempotente: repete-se enquanto `remaining` > 0. */
+export const assignMissingExtensions = (orgId: string) =>
+  request<AssignMissingResult>(`/api/orgs/${orgId}/extensions/assign-missing`, { method: 'POST' })
+
+/** Um PIN acabado de gerar: só existe UMA VEZ. */
+export interface GeneratedPin {
+  pin: string
+  extension: string
+}
+export const regenerateExtensionPin = (orgId: string, id: string) =>
+  request<GeneratedPin>(`/api/orgs/${orgId}/extensions/${id}/regenerate-pin`, { method: 'POST' })
+export const setExtensionPin = (orgId: string, id: string, pin: string) =>
+  requestEmpty(`/api/orgs/${orgId}/extensions/${id}/pin`, { method: 'PUT', body: JSON.stringify({ pin }) })
+export const clearExtensionPin = (orgId: string, id: string) =>
+  requestEmpty(`/api/orgs/${orgId}/extensions/${id}/pin`, { method: 'DELETE' })
+
+/** O ramal de quem está na sessão, numa organização. */
+export interface MyExtension {
+  id: string
+  extension: string
+  label: string
+  active: boolean
+  pin_state: ExtensionPinState
+  meeting_access_number: string
+}
+/** `null` quando a pessoa ainda não tem ramal nesta organização (404). */
+export const getMyExtension = async (orgId: string, signal?: AbortSignal): Promise<MyExtension | null> => {
+  try {
+    return await request<MyExtension>(`/api/orgs/${orgId}/my-extension`, { signal })
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null
+    throw e
+  }
+}
+export const setMyExtensionPin = (orgId: string, pin: string) =>
+  requestEmpty(`/api/orgs/${orgId}/my-extension/pin`, { method: 'PUT', body: JSON.stringify({ pin }) })
+export const regenerateMyExtensionPin = (orgId: string) =>
+  request<GeneratedPin>(`/api/orgs/${orgId}/my-extension/regenerate-pin`, { method: 'POST' })
 
 // ---------- Fase 2: ramal alcançável do PSTN via DID dedicado ----------
 // Só voz directa (bridge ao ramal, sem PIN) — continua SEM ponte para salas
@@ -2094,10 +2196,27 @@ export const sendSmsToContact = (
     headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
   })
 
+/**
+ * Envio AVULSO, a um número escrito à mão — o modo `{to, body}` do mesmo
+ * `POST …/sms/messages`, que o servidor só aceita a um admin da organização.
+ * `idempotencyKey`: uma por intenção de envio, como no envio a contacto.
+ */
+export const sendSmsToNumber = (
+  orgId: string,
+  body: { to: string; body: string; route?: 'auto' | 'usb' | 'operator' },
+  idempotencyKey?: string,
+) =>
+  request<SmsMessage>(`/api/orgs/${orgId}/sms/messages`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+  })
+
 /** Admin vê todas as mensagens da org; membro vê só as que enviou. */
-export const listSmsMessages = (orgId: string, pageSize = 50) =>
+export const listSmsMessages = (orgId: string, pageSize = 50, signal?: AbortSignal) =>
   request<{ items: SmsMessage[]; next_page_token: string | null }>(
     `/api/orgs/${orgId}/sms/messages?page_size=${pageSize}`,
+    { signal },
   )
 
 export const getSmsMessage = (orgId: string, messageId: string) =>
@@ -2420,8 +2539,16 @@ export function listQueryString(query: ListQuery): string {
   return p.toString()
 }
 
-export const searchList = <T>(path: string, query: ListQuery, signal?: AbortSignal) =>
-  request<ListEnvelope<T>>(`${path}?${listQueryString(query)}`, { signal })
+/**
+ * `extra`: parâmetros próprios da colecção que não são da pesquisa (o `scope`
+ * da biblioteca de gravações). Vão em TODOS os pedidos da lista — página,
+ * grupos e abrir um grupo —, porque escolhem a colecção e não o filtro.
+ */
+export const searchList = <T>(path: string, query: ListQuery, signal?: AbortSignal, extra?: Record<string, string>) => {
+  const p = new URLSearchParams(listQueryString(query))
+  for (const [k, v] of Object.entries(extra ?? {})) p.set(k, v)
+  return request<ListEnvelope<T>>(`${path}?${p.toString()}`, { signal })
+}
 
 export interface SavedSearchQuery {
   q?: string
@@ -2459,3 +2586,470 @@ export const updateSavedSearch = (
 
 export const deleteSavedSearch = (id: string) =>
   request<void>(`/api/users/me/saved-searches/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+// ---------- delonix-meet-backend/convidado-sem-conta ----------
+//
+// Convidado SEM conta. Estas funções são o contrato do ecrã de entrada de
+// convidado, que ainda NÃO existe: nenhuma página as chama.
+//
+// Fluxo: `guestJoin(código, nome)` → `room_token` + `ice_servers` → abrir
+// `/ws?token=…` → chega `waiting` → o anfitrião admite → chega `joined`. A partir
+// daí a sala é igual à de um membro. O convidado NÃO tem sessão: não chama
+// `joinRoom`, `iceServers`, `roomChatHistory`, `listRecordings`, `postQos`,
+// `postTimings` nem nenhuma outra rota autenticada (todas dão 401). Na sala de
+// espera e na lista, o anfitrião recebe-o com `is_guest: true` no `PeerInfo`.
+
+/** O que um convidado vê da sala — sem dono nem política. */
+export interface GuestRoomView {
+  code: string
+  name: string
+  topology: string
+  e2ee: boolean
+  format: string
+}
+
+export interface GuestJoinOk {
+  room: GuestRoomView
+  /** Token de sala (`typ: room`, `origin: guest`, `guest: true`) — só serve para o `/ws`. */
+  room_token: string
+  ws_path: string
+  /** Validade do token em segundos. Uma reentrada pede um novo `guestJoin`. */
+  expires_in: number
+  guest: { id: string; display_name: string }
+  /** Mesma forma do `/api/ice-servers` (que o convidado não pode chamar). */
+  ice_servers: RTCConfiguration
+}
+
+/**
+ * Porque é que a entrada falhou, em termos do ecrã:
+ * - `closed`: a sala não aceita convidados sem conta (403) → «inicia sessão»;
+ * - `not_found`: o código não existe (404);
+ * - `invalid_name`: nome vazio, > 60 caracteres ou com caracteres invisíveis (400);
+ * - `rate_limited`: demasiadas tentativas (429) → esperar `retryAfterSecs` (o que falta da janela);
+ * - `unavailable`: outra coisa (rede, 5xx).
+ */
+export type GuestJoinFailure = 'closed' | 'not_found' | 'invalid_name' | 'rate_limited' | 'unavailable'
+
+export class GuestJoinError extends ApiError {
+  constructor(
+    status: number,
+    body: unknown,
+    readonly reason: GuestJoinFailure,
+    readonly retryAfterSecs: number | null,
+  ) {
+    super(status, body, reason)
+    this.name = 'GuestJoinError'
+  }
+}
+
+export function guestJoinFailure(status: number): GuestJoinFailure {
+  if (status === 403) return 'closed'
+  if (status === 404) return 'not_found'
+  if (status === 400 || status === 422) return 'invalid_name'
+  if (status === 429) return 'rate_limited'
+  return 'unavailable'
+}
+
+/** Máximo de caracteres do nome — o servidor recusa acima disto. */
+export const GUEST_NAME_MAX = 60
+
+/**
+ * `POST /api/rooms/{code}/guest-join`. Pedido PÚBLICO: vai sem `Authorization`
+ * mesmo que haja sessão neste browser (um membro entra por `joinRoom`), e um 401
+ * aqui nunca dispara renovação de sessão.
+ */
+export async function guestJoin(code: string, displayName: string): Promise<GuestJoinOk> {
+  let res: Response
+  try {
+    res = await fetch(`/api/rooms/${encodeURIComponent(code)}/guest-join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'omit',
+      body: JSON.stringify({ display_name: displayName }),
+    })
+  } catch {
+    throw new GuestJoinError(0, null, 'unavailable', null)
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    const ra = Number(res.headers.get('retry-after'))
+    throw new GuestJoinError(res.status, body, guestJoinFailure(res.status), Number.isFinite(ra) && ra > 0 ? ra : null)
+  }
+  return res.json()
+}
+
+/** `PATCH /api/rooms/{code}` — só o dono. Liga/desliga convidados sem conta. */
+export const setRoomAllowGuests = (code: string, allowGuests: boolean) =>
+  request<Room & { allow_guests: boolean }>(`/api/rooms/${encodeURIComponent(code)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ allow_guests: allowGuests }),
+  })
+
+// ============================================================================
+//  Telefonia (ADR-0009) — troncos, plano de marcação, SIP, chamadas e consumo.
+//  As 23 operações de `/api/orgs/{org_id}/telephony/*`, tal como estão no
+//  contrato (docs/reference/openapi/bff.json). Só administradores da org.
+//
+//  Valores enumerados: os que o servidor fixa estão como união; onde o contrato
+//  diz só `string`, a união fica ABERTA (`| (string & {})`) — um valor novo do
+//  servidor não pode partir a consola nem ser «corrigido» para um conhecido.
+// ============================================================================
+
+type Aberto<T extends string> = T | (string & {})
+
+/** Dinheiro como o servidor o manda: decimal em texto, nunca `number`. */
+export interface Money {
+  amount: string
+  currency: string
+}
+
+export type TrunkScope = 'national' | 'international'
+export type SipTransport = 'udp' | 'tcp' | 'tls'
+export type SrtpMode = 'mandatory' | 'optional' | 'off'
+export type TrunkState = 'up' | 'degraded' | 'down' | 'unknown'
+
+export interface TrunkStatus {
+  state: Aberto<TrunkState>
+  /** Porque é que o estado é este — CÓDIGOS de máquina (`sip_not_configured`…), a traduzir. */
+  reasons: string[]
+  registration?: string | null
+  channels_in_use?: number | null
+  channels_max: number
+  /** Taxa de chamadas atendidas na janela; `null` sem tentativas (ver `asr_reason`). */
+  asr?: number | null
+  asr_answered: number
+  asr_attempts: number
+  asr_reason?: string | null
+  asr_window_hours: number
+  measured_at: string
+}
+
+export interface Trunk {
+  id: string
+  name: string
+  short_code: string
+  gateway_name: string
+  host: string
+  port: number
+  transport: Aberto<SipTransport>
+  srtp: Aberto<SrtpMode>
+  scope: Aberto<TrunkScope>
+  role: Aberto<'primary' | 'reserve' | 'international'>
+  reserve_rank?: number | null
+  position: number
+  prefixes: string[]
+  max_channels: number
+  enabled: boolean
+  register: boolean
+  username: string
+  /** A password NUNCA vem num GET (R214): só se sabe se existe. */
+  password_configured: boolean
+  current_price_per_min?: Money | null
+  status: TrunkStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateTrunkReq {
+  name: string
+  short_code: string
+  host: string
+  max_channels: number
+  port?: number
+  transport?: SipTransport
+  srtp?: SrtpMode
+  scope?: TrunkScope
+  prefixes?: string[]
+  enabled?: boolean
+  register?: boolean
+  username?: string
+  password?: string | null
+  price_per_min?: Money | null
+}
+
+/** PATCH: só vai o que muda. `password: null` não apaga — omite-se para manter. */
+export type UpdateTrunkReq = Partial<Omit<CreateTrunkReq, 'price_per_min'>>
+
+export interface TrunkPrice {
+  id: string
+  trunk_id: string
+  price_per_min: Money
+  valid_from: string
+  /** É este o preço que vale agora? Os anteriores ficam para o custo histórico (R212). */
+  in_force: boolean
+  created_at: string
+}
+
+export interface ExchangeRate {
+  id: string
+  currency: string
+  aoa_per_unit: string
+  valid_from: string
+  created_at: string
+}
+
+export type DialRuleAction = 'external' | 'extension' | 'room_pin' | 'block'
+
+export interface DialRule {
+  pattern: string
+  description: string
+  action: Aberto<DialRuleAction>
+  trunk_id?: string | null
+  fallback_trunk_id?: string | null
+  record?: boolean
+  emergency?: boolean
+}
+
+export interface DialPlan {
+  rules: DialRule[]
+  /** Números de emergência: nunca bloqueados, gravados nem travados por limite (R210). */
+  emergency_numbers: string[]
+  version: number
+  updated_at?: string | null
+}
+
+export interface TrunkSummary {
+  id: string
+  name: string
+  short_code: string
+}
+
+export interface TestNumberResult {
+  dialed: string
+  e164?: string | null
+  outcome: string
+  action?: string | null
+  emergency: boolean
+  recorded: boolean
+  matched_rule?: { position: number; pattern: string; description: string } | null
+  overridden_rule_position?: number | null
+  trunk?: TrunkSummary | null
+  fallbacks: TrunkSummary[]
+  estimated_price_per_min?: Money | null
+  price_reason?: string | null
+}
+
+export interface SipSettings {
+  configured: boolean
+  domain?: string | null
+  sbc_host?: string | null
+  transport?: string | null
+  srtp?: string | null
+  username?: string | null
+  password_configured: boolean
+  codecs: string[]
+  updated_at?: string | null
+}
+
+export interface PutSipSettingsReq {
+  domain: string
+  transport: SipTransport
+  srtp: SrtpMode
+  sbc_host?: string
+  username?: string
+  password?: string | null
+  codecs?: string[]
+}
+
+export interface RevealedSipCredentials {
+  domain: string
+  username: string
+  password: string
+}
+
+export interface TelephonyComponent {
+  software: string
+  version?: string | null
+  uptime_secs?: number | null
+}
+
+export interface SipRegistration {
+  state: Aberto<'healthy' | 'degraded' | 'down' | 'not_configured'>
+  reasons: string[]
+  domain?: string | null
+  sbc_host?: string | null
+  transport?: string | null
+  srtp?: string | null
+  sbc?: TelephonyComponent | null
+  sbc_error?: string | null
+  media?: TelephonyComponent | null
+  media_error?: string | null
+  channels: { in_use?: number | null; max: number }
+  sessions_active?: number | null
+  trunks: { total: number; up: number; degraded: number; down: number; unknown: number }
+  /** Medições podem faltar: sem chamadas na janela não há jitter (ver `reason`). */
+  quality: {
+    calls: number
+    window_hours: number
+    jitter_ms?: number | null
+    loss_pct?: number | null
+    mos?: number | null
+    reason?: string | null
+  }
+  codecs_configured: string[]
+  codecs_offered: string[]
+  measured_at: string
+}
+
+export interface OutboundCall {
+  id: string
+  purpose: string
+  status: Aberto<'dialing' | 'ringing' | 'answered' | 'failed'>
+  to_masked: string
+  trunk_ids: string[]
+  rule_position?: number | null
+  emergency: boolean
+  record: boolean
+  room_code?: string | null
+  answer_latency_ms?: number | null
+  answered_at?: string | null
+  billsec?: number | null
+  hangup_cause?: string | null
+  error?: string | null
+  created_at: string
+  finished_at?: string | null
+}
+
+export type CallOutcome = 'answered' | 'busy' | 'no_answer' | 'failed' | 'forwarded' | 'waiting_room' | 'wrong_pin'
+
+export interface CallRecord {
+  id: string
+  direction: Aberto<'inbound' | 'outbound'>
+  from_number: string
+  to_number: string
+  destination_label?: string | null
+  outcome: Aberto<CallOutcome>
+  hangup_cause?: string | null
+  started_at: string
+  answered_at?: string | null
+  ended_at: string
+  duration_secs: number
+  billsec: number
+  emergency: boolean
+  recorded: boolean
+  room_code?: string | null
+  trunk_id?: string | null
+  trunk_name?: string | null
+  /** `null` quando não foi possível custear — o porquê vem em `cost_reason`. */
+  cost?: Money | null
+  cost_reason?: string | null
+}
+
+export interface CallRecordFilter extends PageParams {
+  direction?: 'inbound' | 'outbound'
+  trunk_id?: string
+  outcome?: CallOutcome
+}
+
+export interface TelephonyUsage {
+  /** `YYYY-MM`, no fuso que o servidor diz em `timezone`. */
+  month: string
+  timezone: string
+  calls: number
+  minutes: number
+  unpriced_calls: number
+  totals: Money[]
+  total_aoa?: Money | null
+  total_aoa_reason?: string | null
+  by_trunk: {
+    trunk_id?: string | null
+    trunk_name?: string | null
+    calls: number
+    minutes: number
+    cost: Money[]
+    cost_aoa?: Money | null
+    share_pct?: number | null
+  }[]
+}
+
+const tel = (orgId: string, resto = '') => `/api/orgs/${orgId}/telephony${resto}`
+
+function query(params: Record<string, string | number | null | undefined>): string {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+/**
+ * O código de erro `telephony.*` de uma falha da API, ou `null`. É por ele
+ * que a interface escolhe a mensagem — nunca pelo texto, que é do servidor.
+ */
+export function telephonyErrorCode(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null
+  const code = (err.body as { code?: unknown } | null)?.code
+  return typeof code === 'string' && code.startsWith('telephony.') ? code : null
+}
+
+// ---- troncos ----
+export const listTrunks = (orgId: string, p?: PageParams & { asr_window_hours?: number }, signal?: AbortSignal) =>
+  request<Page<Trunk>>(tel(orgId, `/trunks${query({ ...p })}`), { signal })
+export const getTrunk = (orgId: string, trunkId: string, signal?: AbortSignal) =>
+  request<Trunk>(tel(orgId, `/trunks/${trunkId}`), { signal })
+export const createTrunk = (orgId: string, body: CreateTrunkReq) =>
+  request<Trunk>(tel(orgId, '/trunks'), { method: 'POST', body: JSON.stringify(body) })
+export const updateTrunk = (orgId: string, trunkId: string, body: UpdateTrunkReq) =>
+  request<Trunk>(tel(orgId, `/trunks/${trunkId}`), { method: 'PATCH', body: JSON.stringify(body) })
+/** 204 sem corpo. Um tronco usado por uma regra do plano recusa-se (`telephony.trunk_in_use`). */
+export const deleteTrunk = (orgId: string, trunkId: string) =>
+  requestEmpty(tel(orgId, `/trunks/${trunkId}`), { method: 'DELETE' })
+/** A ordem É o encaminhamento: manda-se a lista inteira, na ordem pretendida. */
+export const setTrunkOrder = (orgId: string, trunkIds: string[]) =>
+  request<Page<Trunk>>(tel(orgId, '/trunk-order'), { method: 'PUT', body: JSON.stringify({ trunk_ids: trunkIds }) })
+
+// ---- preços e câmbio ----
+export const listTrunkPrices = (orgId: string, trunkId: string, p?: PageParams, signal?: AbortSignal) =>
+  request<Page<TrunkPrice>>(tel(orgId, `/trunks/${trunkId}/prices${pageQuery(p)}`), { signal })
+export const createTrunkPrice = (orgId: string, trunkId: string, body: { price_per_min: Money; valid_from?: string }) =>
+  request<TrunkPrice>(tel(orgId, `/trunks/${trunkId}/prices`), { method: 'POST', body: JSON.stringify(body) })
+export const listExchangeRates = (orgId: string, p?: PageParams, signal?: AbortSignal) =>
+  request<Page<ExchangeRate>>(tel(orgId, `/exchange-rates${pageQuery(p)}`), { signal })
+export const createExchangeRate = (
+  orgId: string,
+  body: { currency: string; aoa_per_unit: string; valid_from?: string },
+) => request<ExchangeRate>(tel(orgId, '/exchange-rates'), { method: 'POST', body: JSON.stringify(body) })
+
+// ---- plano de marcação ----
+export const getDialPlan = (orgId: string, signal?: AbortSignal) =>
+  request<DialPlan>(tel(orgId, '/dial-plan'), { signal })
+/** Substitui o plano inteiro: a ordem das regras é a ordem em que casam. */
+export const putDialPlan = (orgId: string, rules: DialRule[]) =>
+  request<DialPlan>(tel(orgId, '/dial-plan'), { method: 'PUT', body: JSON.stringify({ rules }) })
+/** Não liga a ninguém: diz que regra casaria, por que tronco sairia e a que preço. */
+export const testDialNumber = (orgId: string, number: string) =>
+  request<TestNumberResult>(tel(orgId, '/dial-plan/test'), { method: 'POST', body: JSON.stringify({ number }) })
+
+// ---- SIP ----
+export const getSipSettings = (orgId: string, signal?: AbortSignal) =>
+  request<SipSettings>(tel(orgId, '/sip-settings'), { signal })
+export const putSipSettings = (orgId: string, body: PutSipSettingsReq) =>
+  request<SipSettings>(tel(orgId, '/sip-settings'), { method: 'PUT', body: JSON.stringify(body) })
+/**
+ * A ÚNICA saída da password SIP (R214): exige reautenticação (password ou código
+ * MFA), bloqueia às cinco falhas (`telephony.reauth_rate_limited`) e fica na
+ * auditoria. Quem chama não guarda o resultado — mostra-o e larga-o.
+ */
+export const revealSipCredentials = (orgId: string, reauth: { password?: string; mfa_code?: string }) =>
+  request<RevealedSipCredentials>(tel(orgId, '/sip-settings/reveal-credentials'), {
+    method: 'POST',
+    body: JSON.stringify(reauth),
+  })
+export const getSipRegistration = (orgId: string, signal?: AbortSignal) =>
+  request<SipRegistration>(tel(orgId, '/sip-registration'), { signal })
+/** 202: o registo reinicia em fundo; `gateways` é quantos foram reiniciados. */
+export const restartSipRegistration = (orgId: string) =>
+  request<{ gateways: number }>(tel(orgId, '/sip-registration/restart'), { method: 'POST' })
+
+// ---- chamadas ----
+/** 202: a chamada de teste arranca em fundo — acompanha-se com `getTestCall`. */
+export const startTestCall = (orgId: string, number: string) =>
+  request<OutboundCall>(tel(orgId, '/test-calls'), { method: 'POST', body: JSON.stringify({ number }) })
+export const getTestCall = (orgId: string, testCallId: string, signal?: AbortSignal) =>
+  request<OutboundCall>(tel(orgId, `/test-calls/${testCallId}`), { signal })
+export const listTestCalls = (orgId: string, p?: PageParams, signal?: AbortSignal) =>
+  request<Page<OutboundCall>>(tel(orgId, `/test-calls${pageQuery(p)}`), { signal })
+export const listCallRecords = (orgId: string, f?: CallRecordFilter, signal?: AbortSignal) =>
+  request<Page<CallRecord>>(tel(orgId, `/call-records${query({ ...f })}`), { signal })
+/** `month` em `YYYY-MM`; sem ele, o mês corrente no fuso do servidor. */
+export const getTelephonyUsage = (orgId: string, month?: string, signal?: AbortSignal) =>
+  request<TelephonyUsage>(tel(orgId, `/usage${query({ month })}`), { signal })

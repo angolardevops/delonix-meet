@@ -4,10 +4,11 @@
  * Tudo só para admins; o servidor decide e o cartão mostra a recusa.
  *
  * O que o cartão diz sem rodeios: a camada de media (Kamailio + FreeSWITCH,
- * `voice/`) atende, pede o PIN e valida-o aqui, mas a ponte FreeSWITCH↔SFU
- * ainda não existe (`voice/README.md`, sub-fase 2b). Quem liga fala numa
- * conferência só de voz — não ouve a reunião de vídeo. Por isso este ecrã não
- * oferece «entrar por telefone» a ninguém: gere números e mostra chamadas.
+ * `voice/`) atende, pede o PIN e valida-o aqui. A ponte telefone↔sala existe
+ * no servidor (ADR-0010) mas só liga quando a instalação a configura
+ * (`PHONE_BRIDGE_SIP_BIND` + `PHONE_BRIDGE_FREESWITCH_IPS`); sem ela, quem liga
+ * fica numa conferência só de voz. A API deste cartão não diz se a ponte está
+ * ligada, por isso o aviso diz a condição e não um estado.
  */
 import { FormEvent, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -62,7 +63,7 @@ export default function VoiceCard({ orgId }: { orgId: string }) {
     <Card title={t('consola.voz.titulo')} eyebrow={t('consola.voz.eyebrow')} flush className="org-voice" as="section">
       <div className="org-card-pad">
         <Alert tone="warning" icon="phone">
-          {t('consola.voz.ponteEmFalta')}
+          {t('consola.voz.ponte')}
         </Alert>
       </div>
 
