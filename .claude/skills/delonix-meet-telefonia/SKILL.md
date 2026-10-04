@@ -179,7 +179,7 @@ etiqueta obrigatória) é da empresa, e o PIN dele é do administrador. Os núme
 automáticos saem do intervalo da organização (`extension-range`, por omissão 1000–1999)
 com `POST …/extensions/assign-missing`.
 
-### O IVR identifica quem liga (R279) — a regra está medida, a chamada não
+### O IVR identifica quem liga (R279) — o ramal registado está medido numa chamada, o PIN de fora não
 
 **A verificação** (`extension_pin::verify_from_call`, rota
 `/internal/v1/voice/ivr/verify-extension-pin`) tem agora consumidor, e foi endurecida
@@ -213,9 +213,17 @@ antes de o ter:
 4. os cabeçalhos `X-Delonix-*` só nascem dentro: o Kamailio tira-os no bordo do tronco e
    o Lua tira-os da perna que recebe antes do `bridge`.
 
-**Por medir, e não o dês por feito:** uma chamada real. O Lua só tem a sintaxe
-verificada — `session:read(0, …)`, as variáveis de origem na perna e o cabeçalho a
-chegar à ponte são pressupostos. **Os direitos de anfitrião por telefone não existem:**
+**Medido no laboratório (compose, 2026-10-04):** o caminho 1 correu em duas chamadas
+reais de Linphone para a mesma sala — o servidor emitiu o bilhete de quem liga
+(`voice_caller_tickets`) para o ramal 101 e para o ramal 1000, cada um com o nome da
+pessoa, e cada um foi gasto 2 segundos depois; o dono viu o telefone no censo com o
+crachá e o nome. **O áudio nos dois sentidos é relato do dono, não medição.** Os registos
+dos contentores perderam-se num `compose-down`: a prova que fica é a das tabelas.
+
+**Por medir, e não o dês por feito:** o caminho 2 — ramal e PIN pessoal pedidos a quem
+liga de fora — nunca correu numa chamada, nem a recusa, nem o travão por origem. Nesse
+caminho o Lua só tem a sintaxe verificada: `session:read(0, …)` e as variáveis de origem
+na perna são pressupostos. **Os direitos de anfitrião por telefone não existem:**
 quem entra por telefone já passa à frente da sala de espera (identificado ou não), a
 sala não tem um estado «à espera do anfitrião», e dar `is_host` a uma perna sem cliente
 ficou por desenhar. O número de quem liga pode ser forjado: contra quem o rode a cada
@@ -254,8 +262,14 @@ email, e numa instalação `single` + `open` um desconhecido ficava com uma cont
 caminho novo que insira em `org_members` faz esta pergunta antes de chamar a função — e
 chama-a, não copia a regra.
 
-**Por medir, e não o dês por feito:** nenhum Linphone leu um destes QR, e o formato do XML não
-foi verificado contra um aparelho real; o diálogo não foi visto num browser. **Aberto:** quem
+**Medido no laboratório (compose, 2026-10-04):** o QR foi resgatado três vezes
+(`ramal.provisionado` na auditoria: ramal 101 duas vezes, ramal 1000 uma), e o Linphone
+do ramal 1000 ligou para a sala 95 segundos depois do seu resgate, identificado como
+ramal registado — ou seja, o `lpconfig` serviu a um Linphone real, um só resgate bastou, e
+o aparelho autenticou-se com um realm que não é o host do proxy. O dono confirma que
+configurou pelo QR, sem digitar a password. **Continua por medir:** a versão do Linphone e do Android
+não ficaram registadas; se `media_encryption_mandatory` é respeitado; o diálogo a 375 px.
+**Aberto:** quem
 sai da organização continua a registar com a password antiga (arquivar não desactiva o
 ramal). A lista completa está na R278.
 
@@ -267,10 +281,14 @@ leva o IP em primeiro lugar — é da primeira origem que sai o URL do QR, e uma
 é recusada (mDNS não resolve no telemóvel). No telemóvel: instalar a raiz a partir de
 `http://<ip>:8080/lab-ca.crt` como certificado de CA, confirmar que `https://<ip>:8443` abre
 sem aviso, e só então ler o QR no Linphone («obter configuração remota»). Medido até aqui: a
-raiz descarrega-se, o https pelo IP valida contra ela e o bilhete sai com o IP. **Não medido:**
-se o Linphone confia numa raiz instalada pelo utilizador ao descarregar a configuração — se o
-browser do telemóvel abrir e o Linphone recusar o certificado, é isso. O cluster local não
-serve para esta prova: não está exposto à rede local.
+raiz descarrega-se, o https pelo IP valida contra ela e o bilhete sai com o IP. **Continua
+não medido:** se o Linphone confia numa raiz instalada pelo utilizador ao descarregar a
+configuração. A 2026-10-04 houve um resgate vindo de um endereço da rede local (ramal 101),
+mas a auditoria não diz que cliente o fez — a câmara ou o browser do telemóvel gastam o
+bilhete da mesma maneira — e os dois resgates que se sabe terem servido um Linphone
+chegaram pelo túnel público, com um certificado de uma AC pública. Se o browser do telemóvel
+abrir e o Linphone recusar o certificado, é isso. O cluster local não serve para esta prova:
+não está exposto à rede local.
 
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
@@ -354,7 +372,8 @@ sem portão automático, e **nunca correu de ponta a ponta na imagem do repo** (
 medir»). Se mexeres no fluxo, di-lo no relatório em vez de o dar por verificado. O mesmo
 ficheiro serve agora **dois modos** (dial-in por DID e `ramal`, R273): uma mudança no
 caminho comum — PIN, `bridge`, recuo — mexe nos dois. A identificação por ramal e PIN
-(R279) corre só no dial-in e só com a ponte; **nunca correu numa chamada**.
+(R279) corre só no dial-in e só com a ponte; **nunca correu numa chamada** — o que correu,
+a 2026-10-04, foi a do ramal registado, à mão e sem portão.
 
 **A imagem** vive em `voice/freeswitch/image/` (três fontes fixadas por commit, base por
 digest, `mod_lua` e `mod_curl`) e publica-se a partir da `main`
