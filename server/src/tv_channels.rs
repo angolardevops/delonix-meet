@@ -437,6 +437,8 @@ pub async fn delete(
         "DELETE FROM tv_channels c WHERE c.id = $1 AND c.org_id = $2
             AND NOT EXISTS (SELECT 1 FROM tv_broadcast_sessions s
                              WHERE s.channel_id = c.id AND s.ended_at IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM live_sessions l
+                             WHERE l.channel_id = c.id AND l.ended_at IS NULL)
           RETURNING c.slug",
     )
     .bind(channel_id)
