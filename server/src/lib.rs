@@ -84,12 +84,16 @@ mod ui;
 mod usage;
 mod users;
 mod voice;
+mod voice_caller;
 mod webhooks;
 mod whiteboards;
 
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
+/// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
+/// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
+pub use voice::{discard_caller_ticket, seat_phone_caller};
 /// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
 pub use webhooks::retry_due as webhook_retry_due;
 

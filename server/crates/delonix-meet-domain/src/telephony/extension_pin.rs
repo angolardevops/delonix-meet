@@ -13,11 +13,148 @@ use std::collections::HashSet;
 /// Um PIN tem exactamente seis dígitos.
 pub const PIN_LEN: usize = 6;
 
-/// Falhas seguidas que bloqueiam o PIN.
+/// Falhas, dentro da janela, que bloqueiam o PIN de um ramal.
 pub const MAX_FAILED_ATTEMPTS: i32 = 5;
 
-/// Quanto tempo o PIN fica bloqueado depois da quinta falha.
+/// Quanto tempo o PIN fica bloqueado no PRIMEIRO bloqueio. Os seguintes
+/// dobram (ver [`Throttle`]).
 pub const LOCK_SECS: i64 = 15 * 60;
+
+/// O travão de um ramal: cinco falhas em quinze minutos bloqueiam; o
+/// bloqueio começa nos quinze minutos e dobra a cada reincidência, até um dia.
+pub const EXTENSION_THROTTLE: Throttle = Throttle {
+    max_failures: MAX_FAILED_ATTEMPTS,
+    window_secs: 15 * 60,
+    base_lock_secs: LOCK_SECS,
+    max_lock_secs: 24 * 3600,
+    level_decay_secs: 24 * 3600,
+};
+
+/// O travão de uma ORIGEM (quem liga: número e rede de onde a chamada vem).
+/// Trava à TERCEIRA falha — antes de a mesma origem chegar às cinco de um
+/// ramal: quem experimenta PIN de fora não consegue bloquear o ramal de um
+/// colega, nem um, nem vários (R279). Conta todas as recusas da origem,
+/// sejam em que ramal forem.
+///
+/// O primeiro bloqueio dura VINTE minutos, mais que a janela do ramal
+/// (quinze): quando a origem volta a poder tentar, as falhas que deixou no
+/// ramal já saíram da janela dele, com folga — ver as asserções abaixo.
+pub const ORIGIN_THROTTLE: Throttle = Throttle {
+    max_failures: 3,
+    window_secs: 15 * 60,
+    base_lock_secs: 20 * 60,
+    max_lock_secs: 24 * 3600,
+    level_decay_secs: 24 * 3600,
+};
+
+/// Uma política de travão: falhas contadas numa janela, e um bloqueio que
+/// cresce com as reincidências.
+///
+/// - **Janela.** Uma falha com `window_secs` ou mais (contados desde a
+///   primeira da janela) já não conta: quatro enganos em Janeiro e um em
+///   Março não bloqueiam.
+/// - **Duração crescente.** O bloqueio de nível `n` dura
+///   `base_lock_secs · 2ⁿ⁻¹`, com tecto em `max_lock_secs`.
+/// - **Esquecimento.** Passados `level_decay_secs` desde o fim do último
+///   bloqueio sem nenhum outro, o nível volta a zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Throttle {
+    pub max_failures: i32,
+    pub window_secs: i64,
+    pub base_lock_secs: i64,
+    pub max_lock_secs: i64,
+    pub level_decay_secs: i64,
+}
+
+/// O estado guardado de um contador, visto AGORA.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counter {
+    /// Falhas contadas na janela em curso.
+    pub failures: i32,
+    /// Há quantos segundos começou a janela em curso (`None`: nenhuma).
+    pub window_age_secs: Option<i64>,
+    /// Quantos bloqueios seguidos já houve (0: nenhum).
+    pub lock_level: i32,
+    /// Há quantos segundos ACABOU o último bloqueio (negativo: ainda dura;
+    /// `None`: nunca houve).
+    pub lock_ended_secs_ago: Option<i64>,
+}
+
+/// O que gravar depois de uma falha.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AfterFailure {
+    /// O contador a gravar (0 quando esta falha bloqueou).
+    pub failures: i32,
+    /// A janela recomeça agora (esta é a primeira falha dela).
+    pub restart_window: bool,
+    /// O nível a gravar.
+    pub lock_level: i32,
+    /// `Some(segundos)`: esta falha bloqueia, durante tanto tempo.
+    pub lock_secs: Option<i64>,
+    /// A falha que esta é, na janela (para a auditoria: «tentativa 3 de 5»).
+    pub attempt: i32,
+}
+
+// A regra que impede a negação de serviço a um colega, verificada AO COMPILAR:
+// uma origem sozinha nunca junta, num ramal, as falhas que o bloqueiam — e o
+// bloqueio da origem não é mais curto que a janela do ramal, por isso o
+// segundo lote de falhas dela já não encontra o primeiro.
+const _: () = assert!(ORIGIN_THROTTLE.max_failures < EXTENSION_THROTTLE.max_failures);
+// COM FOLGA: as idades chegam da base em segundos inteiros, e «igual» deixava
+// um segundo em que as duas contas se sobrepunham (3 falhas + 2 = o ramal de
+// um colega bloqueado por uma só origem).
+const _: () = assert!(
+    ORIGIN_THROTTLE.base_lock_secs >= EXTENSION_THROTTLE.window_secs + ORIGIN_LOCK_MARGIN_SECS
+);
+
+/// Folga mínima entre o fim da janela do ramal e o fim do bloqueio da origem.
+pub const ORIGIN_LOCK_MARGIN_SECS: i64 = 60;
+
+impl Throttle {
+    /// A duração do bloqueio de nível `level` (1 = o primeiro).
+    pub fn lock_secs(&self, level: i32) -> i64 {
+        let doublings = level.saturating_sub(1).clamp(0, 30) as u32;
+        self.base_lock_secs
+            .saturating_mul(1_i64 << doublings)
+            .min(self.max_lock_secs)
+    }
+
+    /// Ainda bloqueado? Devolve os segundos que faltam.
+    pub fn locked_for(&self, c: &Counter) -> Option<i64> {
+        c.lock_ended_secs_ago.filter(|s| *s < 0).map(|s| -s)
+    }
+
+    /// Mais uma falha, num contador que NÃO está bloqueado.
+    pub fn after_failure(&self, c: &Counter) -> AfterFailure {
+        // Estrita: a idade vem em segundos inteiros (FLOOR), e `<=` fazia a
+        // janela durar um segundo a mais do que diz.
+        let in_window = c.window_age_secs.is_some_and(|age| age < self.window_secs);
+        let attempt = if in_window { c.failures + 1 } else { 1 };
+        let level = match c.lock_ended_secs_ago {
+            Some(ago) if ago > self.level_decay_secs => 0,
+            _ => c.lock_level.max(0),
+        };
+        if attempt >= self.max_failures {
+            let next = level + 1;
+            return AfterFailure {
+                // Ao bloquear o contador volta a zero: passado o bloqueio, são
+                // outra vez `max_failures` tentativas — não uma.
+                failures: 0,
+                restart_window: false,
+                lock_level: next,
+                lock_secs: Some(self.lock_secs(next)),
+                attempt,
+            };
+        }
+        AfterFailure {
+            failures: attempt,
+            restart_window: !in_window,
+            lock_level: level,
+            lock_secs: None,
+            attempt,
+        }
+    }
+}
 
 /// Intervalo de numeração automática quando a organização não escolheu um.
 pub const DEFAULT_RANGE_START: u32 = 1000;
@@ -228,6 +365,112 @@ mod tests {
         for (s, e) in [(99, 200), (0, 10), (2000, 1000), (100, 100_000)] {
             assert!(!is_valid_range(s, e), "{s}-{e}");
         }
+    }
+
+    #[test]
+    fn o_bloqueio_dobra_ate_ao_tecto() {
+        let t = EXTENSION_THROTTLE;
+        assert_eq!(t.lock_secs(1), 15 * 60);
+        assert_eq!(t.lock_secs(2), 30 * 60);
+        assert_eq!(t.lock_secs(3), 60 * 60);
+        assert_eq!(t.lock_secs(7), 16 * 60 * 60);
+        assert_eq!(t.lock_secs(8), 24 * 3600, "tecto de um dia");
+        assert_eq!(t.lock_secs(1000), 24 * 3600, "sem transbordo");
+    }
+
+    #[test]
+    fn a_quinta_falha_na_janela_bloqueia_e_o_nivel_sobe() {
+        let t = EXTENSION_THROTTLE;
+        let mut c = Counter::default();
+        for n in 1..=4 {
+            let a = t.after_failure(&c);
+            assert_eq!(a.lock_secs, None, "falha {n}");
+            assert_eq!(a.attempt, n);
+            assert_eq!(a.restart_window, n == 1);
+            c.failures = a.failures;
+            c.window_age_secs = Some(60);
+        }
+        let quinta = t.after_failure(&c);
+        assert_eq!(quinta.lock_secs, Some(15 * 60));
+        assert_eq!(quinta.lock_level, 1);
+        assert_eq!(quinta.failures, 0);
+        // Reincidência logo a seguir ao fim do bloqueio: o nível sobe e o
+        // bloqueio dobra.
+        let c = Counter {
+            failures: 4,
+            window_age_secs: Some(60),
+            lock_level: 1,
+            lock_ended_secs_ago: Some(120),
+        };
+        let a = t.after_failure(&c);
+        assert_eq!((a.lock_level, a.lock_secs), (2, Some(30 * 60)));
+    }
+
+    #[test]
+    fn a_janela_expira_e_a_falha_velha_nao_conta() {
+        let t = EXTENSION_THROTTLE;
+        // Quatro falhas há mais de quinze minutos: a quinta não bloqueia —
+        // abre uma janela nova e é a primeira dela.
+        let c = Counter {
+            failures: 4,
+            window_age_secs: Some(15 * 60 + 1),
+            ..Counter::default()
+        };
+        let a = t.after_failure(&c);
+        assert_eq!(a.lock_secs, None);
+        assert_eq!((a.failures, a.attempt, a.restart_window), (1, 1, true));
+    }
+
+    #[test]
+    fn a_janela_e_estrita_no_segundo_exacto() {
+        // As idades vêm da base em segundos inteiros (FLOOR): 900 quer dizer
+        // «entre 900 e 901». Uma janela de 900 s que ainda contasse aos 900
+        // durava 901 — o segundo que deixava uma origem acabada de sair do
+        // bloqueio juntar as suas falhas novas às velhas do ramal.
+        for t in [EXTENSION_THROTTLE, ORIGIN_THROTTLE] {
+            let c = Counter {
+                failures: t.max_failures - 1,
+                window_age_secs: Some(t.window_secs),
+                ..Counter::default()
+            };
+            let a = t.after_failure(&c);
+            assert_eq!(a.lock_secs, None);
+            assert_eq!((a.attempt, a.restart_window), (1, true));
+            let dentro = Counter {
+                window_age_secs: Some(t.window_secs - 1),
+                ..c
+            };
+            assert!(t.after_failure(&dentro).lock_secs.is_some());
+        }
+    }
+
+    #[test]
+    fn o_nivel_esquece_se_um_dia_depois_do_ultimo_bloqueio() {
+        let t = EXTENSION_THROTTLE;
+        let c = Counter {
+            failures: 4,
+            window_age_secs: Some(10),
+            lock_level: 5,
+            lock_ended_secs_ago: Some(24 * 3600 + 1),
+        };
+        assert_eq!(t.after_failure(&c).lock_level, 1, "recomeça do primeiro");
+        assert_eq!(t.after_failure(&c).lock_secs, Some(15 * 60));
+    }
+
+    #[test]
+    fn bloqueado_diz_quanto_falta() {
+        let t = ORIGIN_THROTTLE;
+        let c = Counter {
+            lock_ended_secs_ago: Some(-42),
+            ..Counter::default()
+        };
+        assert_eq!(t.locked_for(&c), Some(42));
+        assert_eq!(t.locked_for(&Counter::default()), None);
+        let fim = Counter {
+            lock_ended_secs_ago: Some(0),
+            ..Counter::default()
+        };
+        assert_eq!(t.locked_for(&fim), None);
     }
 
     #[test]
