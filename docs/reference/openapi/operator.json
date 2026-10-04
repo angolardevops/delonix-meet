@@ -664,6 +664,50 @@
         ],
         "type": "object"
       },
+      "AssignMissingResp": {
+        "properties": {
+          "already_assigned": {
+            "description": "Pessoas activas que já tinham ramal antes da chamada.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "assigned": {
+            "description": "Ramais criados NESTA chamada.",
+            "items": {
+              "$ref": "#/components/schemas/AssignedExtension"
+            },
+            "type": "array"
+          },
+          "range_end": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "range_exhausted": {
+            "description": "`true` se não há mais números livres no intervalo: alargar o intervalo\né a única forma de `remaining` chegar a zero.",
+            "type": "boolean"
+          },
+          "range_start": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remaining": {
+            "description": "Pessoas activas que continuam sem ramal depois desta chamada, por\ntecto do lote ou por o intervalo se ter esgotado.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assigned",
+          "already_assigned",
+          "remaining",
+          "range_exhausted",
+          "range_start",
+          "range_end"
+        ],
+        "type": "object"
+      },
       "AssignRoleReq": {
         "properties": {
           "role_id": {
@@ -673,6 +717,32 @@
         },
         "required": [
           "role_id"
+        ],
+        "type": "object"
+      },
+      "AssignedExtension": {
+        "description": "Um ramal criado pela atribuição em massa. Sem password SIP: ninguém a viu\n— o administrador regenera-a por ramal quando for configurar o aparelho.",
+        "properties": {
+          "extension": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "member_username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "member_id",
+          "member_username",
+          "extension"
         ],
         "type": "object"
       },
@@ -1535,12 +1605,15 @@
             ]
           },
           "member_id": {
+            "description": "A pessoa dona do ramal. Ausente = ramal da EMPRESA (recepção, sala,\nportaria): a etiqueta passa a ser obrigatória e o ramal nasce sem PIN.",
             "format": "uuid",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "member_id",
           "extension"
         ],
         "type": "object"
@@ -3537,6 +3610,30 @@
         ],
         "type": "object"
       },
+      "ExtensionRange": {
+        "description": "O intervalo de onde saem os números automáticos de uma organização.",
+        "properties": {
+          "range_end": {
+            "description": "Último número do intervalo, inclusive.",
+            "example": 1999,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "range_start": {
+            "description": "Primeiro número do intervalo (3 a 5 dígitos, sem zero à esquerda).",
+            "example": 1000,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "range_start",
+          "range_end"
+        ],
+        "type": "object"
+      },
       "FieldViolation": {
         "properties": {
           "description": {
@@ -3621,6 +3718,25 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "GeneratedPin": {
+        "description": "Um PIN acabado de gerar. Sai UMA vez: só o hash fica guardado.",
+        "properties": {
+          "extension": {
+            "description": "O ramal a que o PIN pertence.",
+            "example": "1004",
+            "type": "string"
+          },
+          "pin": {
+            "example": "482913",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pin",
+          "extension"
+        ],
         "type": "object"
       },
       "GlobalGroup": {
@@ -5358,6 +5474,43 @@
           "capability",
           "organization",
           "own_department"
+        ],
+        "type": "object"
+      },
+      "MyExtension": {
+        "description": "O ramal de quem pede, visto pela própria pessoa.",
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "extension": {
+            "example": "1004",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "meeting_access_number": {
+            "description": "Número curto que o ramal marca para entrar numa reunião.",
+            "type": "string"
+          },
+          "pin_state": {
+            "description": "`unset` (por definir), `set` (definido) ou `locked` (bloqueado).",
+            "example": "set",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "extension",
+          "label",
+          "active",
+          "pin_state",
+          "meeting_access_number"
         ],
         "type": "object"
       },
@@ -9737,6 +9890,19 @@
         },
         "type": "object"
       },
+      "SetPinReq": {
+        "properties": {
+          "pin": {
+            "description": "Seis dígitos. Recusados: todos iguais, sequências, e o que contém o\nnúmero do ramal.",
+            "example": "482913",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pin"
+        ],
+        "type": "object"
+      },
       "SipRegistration": {
         "properties": {
           "channels": {
@@ -12682,18 +12848,33 @@
             "type": "string"
           },
           "member_email": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "member_id": {
+            "description": "A pessoa dona do ramal. `null` num ramal da EMPRESA (recepção, sala,\nportaria), que se identifica pela etiqueta.",
             "format": "uuid",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "member_username": {
-            "description": "Nome do membro dono — junção com `users`, só para exibição na consola.",
-            "type": "string"
+            "description": "Nome do membro dono — junção com `users`, só para exibição na consola.\n`null` num ramal da empresa.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "org_id": {
             "format": "uuid",
+            "type": "string"
+          },
+          "pin_state": {
+            "description": "Estado do PIN: `unset` (por definir), `set` (definido) ou `locked`\n(bloqueado por falhas seguidas). O valor do PIN nunca sai numa leitura.",
+            "example": "unset",
             "type": "string"
           },
           "sip_server": {
@@ -12714,14 +12895,12 @@
         "required": [
           "id",
           "org_id",
-          "member_id",
-          "member_username",
-          "member_email",
           "extension",
           "sip_username",
           "label",
           "active",
           "created_at",
+          "pin_state",
           "meeting_access_number"
         ],
         "type": "object"

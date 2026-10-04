@@ -664,6 +664,50 @@
         ],
         "type": "object"
       },
+      "AssignMissingResp": {
+        "properties": {
+          "already_assigned": {
+            "description": "Pessoas activas que já tinham ramal antes da chamada.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "assigned": {
+            "description": "Ramais criados NESTA chamada.",
+            "items": {
+              "$ref": "#/components/schemas/AssignedExtension"
+            },
+            "type": "array"
+          },
+          "range_end": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "range_exhausted": {
+            "description": "`true` se não há mais números livres no intervalo: alargar o intervalo\né a única forma de `remaining` chegar a zero.",
+            "type": "boolean"
+          },
+          "range_start": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remaining": {
+            "description": "Pessoas activas que continuam sem ramal depois desta chamada, por\ntecto do lote ou por o intervalo se ter esgotado.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assigned",
+          "already_assigned",
+          "remaining",
+          "range_exhausted",
+          "range_start",
+          "range_end"
+        ],
+        "type": "object"
+      },
       "AssignRoleReq": {
         "properties": {
           "role_id": {
@@ -673,6 +717,32 @@
         },
         "required": [
           "role_id"
+        ],
+        "type": "object"
+      },
+      "AssignedExtension": {
+        "description": "Um ramal criado pela atribuição em massa. Sem password SIP: ninguém a viu\n— o administrador regenera-a por ramal quando for configurar o aparelho.",
+        "properties": {
+          "extension": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "member_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "member_username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "member_id",
+          "member_username",
+          "extension"
         ],
         "type": "object"
       },
@@ -1535,12 +1605,15 @@
             ]
           },
           "member_id": {
+            "description": "A pessoa dona do ramal. Ausente = ramal da EMPRESA (recepção, sala,\nportaria): a etiqueta passa a ser obrigatória e o ramal nasce sem PIN.",
             "format": "uuid",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "member_id",
           "extension"
         ],
         "type": "object"
@@ -3537,6 +3610,30 @@
         ],
         "type": "object"
       },
+      "ExtensionRange": {
+        "description": "O intervalo de onde saem os números automáticos de uma organização.",
+        "properties": {
+          "range_end": {
+            "description": "Último número do intervalo, inclusive.",
+            "example": 1999,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "range_start": {
+            "description": "Primeiro número do intervalo (3 a 5 dígitos, sem zero à esquerda).",
+            "example": 1000,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "range_start",
+          "range_end"
+        ],
+        "type": "object"
+      },
       "FieldViolation": {
         "properties": {
           "description": {
@@ -3621,6 +3718,25 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "GeneratedPin": {
+        "description": "Um PIN acabado de gerar. Sai UMA vez: só o hash fica guardado.",
+        "properties": {
+          "extension": {
+            "description": "O ramal a que o PIN pertence.",
+            "example": "1004",
+            "type": "string"
+          },
+          "pin": {
+            "example": "482913",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pin",
+          "extension"
+        ],
         "type": "object"
       },
       "GlobalGroup": {
@@ -5358,6 +5474,43 @@
           "capability",
           "organization",
           "own_department"
+        ],
+        "type": "object"
+      },
+      "MyExtension": {
+        "description": "O ramal de quem pede, visto pela própria pessoa.",
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "extension": {
+            "example": "1004",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "meeting_access_number": {
+            "description": "Número curto que o ramal marca para entrar numa reunião.",
+            "type": "string"
+          },
+          "pin_state": {
+            "description": "`unset` (por definir), `set` (definido) ou `locked` (bloqueado).",
+            "example": "set",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "extension",
+          "label",
+          "active",
+          "pin_state",
+          "meeting_access_number"
         ],
         "type": "object"
       },
@@ -9737,6 +9890,19 @@
         },
         "type": "object"
       },
+      "SetPinReq": {
+        "properties": {
+          "pin": {
+            "description": "Seis dígitos. Recusados: todos iguais, sequências, e o que contém o\nnúmero do ramal.",
+            "example": "482913",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pin"
+        ],
+        "type": "object"
+      },
       "SipRegistration": {
         "properties": {
           "channels": {
@@ -12682,18 +12848,33 @@
             "type": "string"
           },
           "member_email": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "member_id": {
+            "description": "A pessoa dona do ramal. `null` num ramal da EMPRESA (recepção, sala,\nportaria), que se identifica pela etiqueta.",
             "format": "uuid",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "member_username": {
-            "description": "Nome do membro dono — junção com `users`, só para exibição na consola.",
-            "type": "string"
+            "description": "Nome do membro dono — junção com `users`, só para exibição na consola.\n`null` num ramal da empresa.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "org_id": {
             "format": "uuid",
+            "type": "string"
+          },
+          "pin_state": {
+            "description": "Estado do PIN: `unset` (por definir), `set` (definido) ou `locked`\n(bloqueado por falhas seguidas). O valor do PIN nunca sai numa leitura.",
+            "example": "unset",
             "type": "string"
           },
           "sip_server": {
@@ -12714,14 +12895,12 @@
         "required": [
           "id",
           "org_id",
-          "member_id",
-          "member_username",
-          "member_email",
           "extension",
           "sip_username",
           "label",
           "active",
           "created_at",
+          "pin_state",
           "meeting_access_number"
         ],
         "type": "object"
@@ -17796,6 +17975,160 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/extension-range": {
+      "get": {
+        "operationId": "get_extension_range",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtensionRange"
+                }
+              }
+            },
+            "description": "O intervalo gravado, ou 1000–1999 se a organização nunca escolheu um."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O intervalo de numeração automática da org (admin).",
+        "tags": [
+          "voice"
+        ]
+      },
+      "put": {
+        "operationId": "put_extension_range",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtensionRange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtensionRange"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Intervalo fora de 100–99999 ou invertido (`ramais.range_invalid`)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Define o intervalo de numeração automática da org (admin). Não renumera\nnem apaga os ramais que já existem fora dele: só decide de onde saem os\npróximos números automáticos.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/extensions": {
       "get": {
         "operationId": "list_extensions",
@@ -17861,7 +18194,7 @@
             "session": []
           }
         ],
-        "summary": "Lista os ramais da org (admin). Nunca devolve hash nem HA1.",
+        "summary": "Lista os ramais da org (admin). Nunca devolve hash nem HA1 — nem o PIN: só\no estado dele (`pin_state`).",
         "tags": [
           "voice"
         ]
@@ -17909,7 +18242,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "Número fora da forma, pessoa de outra organização, ou ramal da empresa sem etiqueta (`ramais.label_required`)."
           },
           "401": {
             "content": {
@@ -17957,7 +18290,76 @@
             "session": []
           }
         ],
-        "summary": "Cria um ramal para um membro da org (admin). Gera credenciais SIP novas e\ndevolve a password em claro UMA VEZ.",
+        "summary": "Cria um ramal (admin): de uma pessoa da org, ou — sem `member_id` — da\nempresa, com etiqueta obrigatória. Gera credenciais SIP novas e devolve a\npassword em claro UMA VEZ. O PIN nasce «por definir».",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/extensions/assign-missing": {
+      "post": {
+        "description": "As passwords SIP dos ramais criados aqui não saem na resposta (seriam\ndezenas de segredos num só ecrã): regeneram-se por ramal. O PIN nasce «por\ndefinir»; cada pessoa gera o seu na sua área.",
+        "operationId": "assign_missing_extensions",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignMissingResp"
+                }
+              }
+            },
+            "description": "No máximo 100 ramais por chamada; repetir enquanto `remaining` > 0 e `range_exhausted` for falso."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Dá um ramal a cada pessoa ACTIVA da org que ainda não tem (admin). É um\n*custom method*: os números saem do intervalo da org por ordem crescente,\nsaltando os ocupados e o número de acesso às reuniões. Idempotente — quem\njá tem ramal não é tocado, e repetir sem pessoas novas não cria nada.",
         "tags": [
           "voice"
         ]
@@ -18086,7 +18488,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "Um ramal da empresa não pode ficar sem etiqueta (`ramais.label_required`)."
           },
           "401": {
             "content": {
@@ -18297,6 +18699,176 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/extensions/{id}/pin": {
+      "delete": {
+        "operationId": "clear_extension_pin",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "PIN limpo; a resposta não traz PIN nenhum."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Limpa o PIN de um ramal (admin): fica «por definir» e o bloqueio é\nlevantado. Num ramal de pessoa é assim que o administrador FORÇA a\nregeneração sem ver o PIN — a pessoa gera um novo na sua área. Idempotente.",
+        "tags": [
+          "voice"
+        ]
+      },
+      "put": {
+        "operationId": "set_extension_pin",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPinReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "PIN guardado (só o hash)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ramais.pin_format`, `ramais.pin_repeated`, `ramais.pin_sequence` ou `ramais.pin_contains_extension`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O ramal é de uma pessoa (`ramais.pin_belongs_to_member`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O administrador escolhe o PIN de um ramal da EMPRESA.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/extensions/{id}/regenerate-password": {
       "post": {
         "operationId": "regenerate_extension_password",
@@ -18370,6 +18942,94 @@
           }
         ],
         "summary": "Regenera a password SIP de um ramal (admin) — mesma revelação única que a\ncriação. O `sip_username` (AOR) não muda; só a credencial.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/extensions/{id}/regenerate-pin": {
+      "post": {
+        "operationId": "regenerate_extension_pin",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedPin"
+                }
+              }
+            },
+            "description": "O PIN sai UMA vez; o anterior deixa de servir."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O ramal é de uma pessoa (`ramais.pin_belongs_to_member`): o administrador não vê o PIN dela."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Gera o PIN de um ramal da EMPRESA e mostra-o UMA vez ao administrador\n(*custom method*).",
         "tags": [
           "voice"
         ]
@@ -20010,6 +20670,193 @@
         "summary": "Atribui um papel a uma pessoa (sem escalada; último dono; `owner` só por `owner`).",
         "tags": [
           "authorization"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension": {
+      "get": {
+        "operationId": "my_extension",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyExtension"
+                }
+              }
+            },
+            "description": "O número e o ESTADO do PIN — nunca o valor."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, ou ainda não tem ramal (`ramais.no_extension`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O ramal de quem pede nesta organização (qualquer membro activo).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/pin": {
+      "put": {
+        "operationId": "set_my_pin",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPinReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "PIN guardado (só o hash)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ramais.pin_format`, `ramais.pin_repeated`, `ramais.pin_sequence` ou `ramais.pin_contains_extension`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A pessoa escolhe o PIN do seu ramal. Substitui o anterior e levanta o\nbloqueio: quem chegou aqui autenticou-se com a sessão.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/regenerate-pin": {
+      "post": {
+        "operationId": "regenerate_my_pin",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedPin"
+                }
+              }
+            },
+            "description": "O PIN sai UMA vez; o anterior deixa de servir."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Gera um PIN novo para o ramal de quem pede e mostra-o UMA vez (*custom\nmethod*). É também como a pessoa obtém o primeiro PIN, e o caminho depois\nde o administrador o ter limpo.",
+        "tags": [
+          "voice"
         ]
       }
     },
