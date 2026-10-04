@@ -271,7 +271,7 @@ selftest() {
 </profile>
 EOF
   # O que RECUSA uma chamada em claro à entrada é a variável GLOBAL
-  # `rtp_secure_media=mandatory` (no Meet: voice/freeswitch/vars.xml.inc), posta
+  # `rtp_secure_media=mandatory` (no Meet: sip_profiles/internal.xml e o arranque), posta
   # no arranque do contentor, abaixo. Medido aqui, com o controlo negativo do
   # passo 2, contra o FreeSWITCH 1.11.3 (R226):
   #   · só `rtp-secure-media` no perfil  → chamada em claro ACEITE (não é um

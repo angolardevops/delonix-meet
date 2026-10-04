@@ -227,13 +227,16 @@ caminho comum — PIN, `bridge`, recuo — mexe nos dois.
 
 **A imagem** vive em `voice/freeswitch/image/` (três fontes fixadas por commit, base por
 digest, `mod_lua` e `mod_curl`) e publica-se a partir da `main`
-(`.github/workflows/freeswitch-image.yml`), com tag imutável `1.11.3-<sha8>`. Duas pontas
-soltas, medidas a 2026-10-03:
+(`.github/workflows/freeswitch-image.yml`), com tag imutável `1.11.3-<sha8>`. Uma ponta
+solta, medida a 2026-10-03:
 
 - a configuração segura que o `fs-canais.sh` e a prova da telefonia montam por cima
-  **ainda não está no repo** (`.worktrees/freeswitch-build/conf/`);
-- o `voice/docker-compose.voice.yml:26` continua em `safarov/freeswitch:latest`, e não
-  na imagem do repo.
+  **ainda não está no repo** (`.worktrees/freeswitch-build/conf/`).
+
+O compose de voz antigo (`voice/docker-compose.voice.yml`, sobre `safarov/freeswitch:latest`)
+foi retirado a 2026-10-04: nunca correu. A voz sobe pelo `compose.yaml` e pelo cluster
+local, os dois com a imagem do repo e o mesmo arranque
+(`voice/cluster/freeswitch-entrypoint.sh`).
 
 ## O que NÃO está na `main`, e porquê
 
@@ -265,9 +268,8 @@ Propõe um a três pedidos seguintes, cada um com o alvo, a prova a medir e o qu
 fora. Por ordem de valor, hoje:
 
 1. «Traz a configuração segura do FreeSWITCH (`.worktrees/freeswitch-build/conf/`) para o
-   repo, com o `mod_curl` carregado, troca o `safarov/freeswitch:latest` do
-   `voice/docker-compose.voice.yml` pela imagem de `voice/freeswitch/image/`, e põe o
-   `telefonia-prova/README.md` a usar essa imagem. Prova: a R222 e o
+   repo, com o `mod_curl` carregado, e põe o `telefonia-prova/README.md` a usar a
+   imagem de `voice/freeswitch/image/`. Prova: a R222 e o
    `telefonia-freeswitch.mjs` a correr só a partir do repo, sem nada fora dele. Fora: o
    PBX de cliente.»
 2. «Um portão de comportamento para o `dialin_ivr.lua`: PIN certo → `bridge` para o
