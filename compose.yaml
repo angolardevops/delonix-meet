@@ -110,13 +110,17 @@ services:
     image: nginxinc/nginx-unprivileged:1.27-alpine
     restart: unless-stopped
     depends_on: [server, web, kamailio, pbx]
+    environment:
+      # Põe o DNS da rede em NGINX_LOCAL_RESOLVERS, para o `resolver` da borda.
+      NGINX_ENTRYPOINT_LOCAL_RESOLVERS: "1"
     ports:
       - "8443:8443" # Delonix Meet
       - "8444:8444" # Kamailio — interface de gestão (xhttp_rpc), com password
       - "8445:8445" # PBX de cliente — interface HTTP do Asterisk (ARI)
       - "8080:8080"
     volumes:
-      - ./deploy/compose/edge.conf:/etc/nginx/conf.d/default.conf:ro
+      # Modelo: o envsubst da imagem gera o /etc/nginx/conf.d/default.conf.
+      - ./deploy/compose/edge.conf:/etc/nginx/templates/default.conf.template:ro
       - ./deploy/compose/generated/voice.htpasswd:/etc/nginx/voice.htpasswd:ro
       - ./deploy/certs/meet.ngolacloud.local.crt:/etc/nginx/tls/tls.crt:ro
       - ./deploy/certs/meet.ngolacloud.local.key:/etc/nginx/tls/tls.key:ro
