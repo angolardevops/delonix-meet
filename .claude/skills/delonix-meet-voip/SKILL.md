@@ -182,8 +182,8 @@ contexto de dialplan e por domínio SIP, não por processo.
 | `voice/kamailio/` | **não há portão automático** — nenhum teste carrega o `kamailio.cfg` |
 | Qualquer `*.xml` ou `*.xml.inc` de `voice/freeswitch/` | `bash scripts/check-fs-xml.sh` (R226, no `make fitness` e no CI) — XML bem formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário, nenhum `$${NOME_EM_MAIÚSCULAS}`. **Estático**: não carrega a configuração num FreeSWITCH. Os `*.lua`: `scripts/check-lua-sintaxe.sh` |
 | A interligação com um PBX ou uma operadora | **prova real, fora do CI**: uma chamada em cada sentido, com captura SIP, e as três medições abaixo |
-| O próprio softphone de prova, ou uma regra de DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`) com um perfil de teste. **Fora do CI**: precisa da imagem do FreeSWITCH e de docker |
-| `voice/freeswitch/sip_profiles/internal.xml`, `vars.xml.inc`, as montagens do compose, ou qualquer regra de SRTP | `bash scripts/softphone-prova.sh srtp-real` (R226) — com os ficheiros que o compose monta: o ramal autentica-se, com SRTP a chamada passa a negociação, **sem SRTP leva `488`**, e o `vars.xml.inc` incluído arranca e lê o ambiente. **Fora do CI**, pelas mesmas razões |
+| O próprio softphone de prova, ou uma regra de DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`) com um perfil de teste. **No CI: o workflow «Imagem FreeSWITCH» corre-o contra a imagem acabada de construir, quando `voice/` ou o script mudam** |
+| `voice/freeswitch/sip_profiles/internal.xml`, `vars.xml.inc`, as montagens do compose, ou qualquer regra de SRTP | `bash scripts/softphone-prova.sh srtp-real` (R226) — com os ficheiros que o compose monta: o ramal autentica-se, com SRTP a chamada passa a negociação, **sem SRTP leva `488`**, e o `vars.xml.inc` incluído arranca e lê o ambiente. **No CI**, no mesmo workflow |
 
 **O que uma interligação tem de mostrar antes de se dizer «a funcionar»:**
 

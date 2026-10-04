@@ -5,7 +5,9 @@ Debian 12, numa imagem local) e **mede** o resultado: chamada estabelecida com S
 o PIN a chegar por DTMF, e o tom de cada lado ouvido pelo outro.
 
 Para testar à mão, com ouvidos, usa-se um softphone com interface (por exemplo o
-Linphone). Este script é para a prova repetível.
+Linphone). Este script é para a prova repetível: o `selftest` e o `srtp-real` correm no
+CI (workflow «Imagem FreeSWITCH») sempre que `voice/freeswitch/`, o compose de voz ou o
+próprio script mudam.
 
 ```bash
 # 1. O próprio script, contra o FreeSWITCH da imagem, numa rede docker sem saída.
