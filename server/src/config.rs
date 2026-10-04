@@ -421,7 +421,18 @@ impl Config {
             None if insecure => Some(std::sync::Arc::new(
                 delonix_meet_core::secret_box::SecretBox::derived_for_dev(&jwt_secret),
             )),
-            None => None,
+            // Em produção a chave é obrigatória. Antes, o servidor arrancava
+            // sem ela e cada escrita de um segredo dava `422` — um deploy
+            // «a funcionar» em que guardar um webhook, um tronco ou um destino
+            // de directo falhava, e ninguém o sabia até tentar. O campo
+            // continua `Option` porque os testes o esvaziam para exercitar
+            // essa recusa, que fica como defesa em profundidade.
+            None => panic!(
+                "DATA_ENCRYPTION_KEYS tem de estar definida em produção: é a chave que cifra os \
+                 segredos guardados na base (formato kid:base64 de 32 bytes — \
+                 `echo \"k1:$(openssl rand -base64 32)\"`; o `make bootstrap` gera-a). \
+                 Em desenvolvimento, DELONIX_ALLOW_INSECURE=1 deriva uma."
+            ),
         };
         let ollama_model_summary = src
             .var("OLLAMA_MODEL_SUMMARY")
@@ -449,7 +460,20 @@ impl Config {
             grpc_client_ca: opt("GRPC_CLIENT_CA"),
             ui_dir: opt("UI_DIR").map(std::path::PathBuf::from),
             allow_insecure: insecure,
-            database_url: secret(src, "DATABASE_URL", DEV_DB, insecure, 0),
+            database_url: {
+                let url = secret(src, "DATABASE_URL", DEV_DB, insecure, 0);
+                if !insecure && database_url_uses_burned_password(&url) {
+                    // Aviso e não recusa: rodar a password de uma base é um
+                    // `ALTER USER` com a aplicação parada, e a base não está
+                    // exposta para fora do cluster. Os outros três abrem a
+                    // API a quem os tem — esses recusam-se.
+                    tracing::warn!(
+                        "DATABASE_URL usa uma password que esteve publicada no repositório \
+                         (deploy/k8s) — roda-a: está ao alcance de qualquer clone"
+                    );
+                }
+                url
+            },
             bind_addr: src
                 .var("BIND_ADDR")
                 .unwrap_or_else(|_| "0.0.0.0:8180".into()),
@@ -476,11 +500,15 @@ impl Config {
                 let v = src.var("VOICE_INTERNAL_SECRET").unwrap_or_default();
                 let refusal = voice_secret_refusal(&v, insecure);
                 if let Some(r) = refusal {
-                    tracing::warn!("API interna de IVR (/api/voice/ivr/*) DESLIGADA: {r}");
+                    tracing::warn!("API interna de IVR (/internal/v1/voice/ivr/*) DESLIGADA: {r}");
                 }
                 refusal
             },
-            provisioning_secret: src.var("PROVISIONING_SECRET").unwrap_or_default(),
+            provisioning_secret: {
+                let v = src.var("PROVISIONING_SECRET").unwrap_or_default();
+                refuse_burned("PROVISIONING_SECRET", &v, insecure);
+                v
+            },
             platform_admin_user_ids: uuid_list(src, "PLATFORM_ADMIN_USER_IDS"),
             sms_unitel_smpp: opt("SMS_UNITEL_SMPP"),
             sms_movicel_smpp: opt("SMS_MOVICEL_SMPP"),
@@ -785,9 +813,58 @@ pub fn voice_secret_refusal(secret: &str, insecure: bool) -> Option<&'static str
     None
 }
 
+/// Segredos da aplicação que estiveram escritos em `deploy/k8s/01-config.yaml`
+/// (o Secret `delonix-secrets`) até 2026-10-04, num repositório PÚBLICO. Estão
+/// queimados, como os de voz acima: com o `JWT_SECRET` forja-se a sessão de
+/// qualquer conta, com o `PROVISIONING_SECRET` cria-se uma organização, com o
+/// `TURN_SECRET` usa-se o relay de media. Um servidor em produção que ainda os
+/// traga recusa arrancar — ver `scripts/leaked-secrets-accepted.txt`.
+pub const BURNED_SECRETS: &[(&str, &str)] = &[
+    ("JWT_SECRET", "stage-jwt-secret-min-32-chars-abcdef123456"),
+    ("TURN_SECRET", "stage-turn-secret-key"),
+    (
+        "PROVISIONING_SECRET",
+        "dlxprov_bcdc13c52115d2b67942298b6d548b65f47980470090a2e0",
+    ),
+];
+
+/// Passwords de base de dados publicadas no mesmo sítio e nos ficheiros de
+/// valores do Postgres (`deploy/k8s/helm-values/`).
+pub const BURNED_DB_PASSWORDS: &[&str] =
+    &["delonix_dev_pass", "delonix_prod_pass", "repl_prod_pass"];
+
+/// `true` se `value` é o valor publicado de `var`.
+pub fn is_burned(var: &str, value: &str) -> bool {
+    BURNED_SECRETS
+        .iter()
+        .any(|(v, burned)| *v == var && *burned == value)
+}
+
+/// `true` se a password dentro do URL é uma das publicadas.
+pub fn database_url_uses_burned_password(url: &str) -> bool {
+    BURNED_DB_PASSWORDS
+        .iter()
+        .any(|p| url.contains(&format!(":{p}@")))
+}
+
+/// Em produção, um segredo publicado no repositório faz o arranque falhar em
+/// voz alta. Com `DELONIX_ALLOW_INSECURE=1` aceita-se — é desenvolvimento.
+fn refuse_burned(var: &str, value: &str, insecure: bool) {
+    if !insecure && is_burned(var, value) {
+        panic!(
+            "{var} é um valor que esteve publicado neste repositório (deploy/k8s/01-config.yaml) — \
+             está queimado. Gera um novo fora do repo (`make bootstrap`) e roda-o no cluster."
+        );
+    }
+}
+
 /// Lê um segredo do ambiente. Em produção (insecure=false) faz panic se estiver
-/// ausente, igual ao default de dev, ou abaixo do comprimento mínimo.
+/// ausente, igual ao default de dev, publicado no repositório, ou abaixo do
+/// comprimento mínimo.
 fn secret(src: &Source, var: &str, dev_default: &str, insecure: bool, min_len: usize) -> String {
+    if let Ok(v) = src.var(var) {
+        refuse_burned(var, &v, insecure);
+    }
     match src.var(var) {
         Ok(v) if v == dev_default => {
             if insecure {
@@ -830,5 +907,122 @@ impl Config {
     /// janela de 45 ms e a reclamação nunca aconteceria.
     pub fn reconnect_grace(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.reconnect_grace_secs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    const KEY: &str = "k1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const STRONG_JWT: &str = "0123456789abcdef0123456789abcdef0123456789abcdef";
+    const STRONG_TURN: &str = "0123456789abcdef01234567";
+
+    /// Um ambiente de produção que arranca: sem `DELONIX_ALLOW_INSECURE`, com
+    /// os três segredos fortes e a chave de cifra. Cada teste troca UMA coisa.
+    fn production<'a>(change: &[(&'a str, Option<&'a str>)]) -> Config {
+        let mut vars: HashMap<&str, &str> = HashMap::from([
+            ("JWT_SECRET", STRONG_JWT),
+            ("TURN_SECRET", STRONG_TURN),
+            (
+                "DATABASE_URL",
+                "postgres://delonix:uma-password-forte@db:5432/delonix_meet",
+            ),
+            ("DATA_ENCRYPTION_KEYS", KEY),
+        ]);
+        for (k, v) in change {
+            match v {
+                Some(v) => vars.insert(k, v),
+                None => vars.remove(k),
+            };
+        }
+        Config::from_map(&vars)
+    }
+
+    /// Controlo positivo: sem ele, os `should_panic` abaixo podiam estar a
+    /// medir outra coisa que falta no mapa.
+    #[test]
+    fn production_with_strong_secrets_and_the_key_starts() {
+        let c = production(&[]);
+        assert!(!c.allow_insecure);
+        assert!(c.secret_box.is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "DATA_ENCRYPTION_KEYS tem de estar definida em produção")]
+    fn production_without_the_encryption_key_refuses_to_start() {
+        production(&[("DATA_ENCRYPTION_KEYS", None)]);
+    }
+
+    #[test]
+    fn development_derives_a_key_when_none_is_given() {
+        let c = production(&[
+            ("DATA_ENCRYPTION_KEYS", None),
+            ("DELONIX_ALLOW_INSECURE", Some("1")),
+        ]);
+        assert!(c.secret_box.is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "JWT_SECRET é um valor que esteve publicado")]
+    fn the_published_jwt_secret_is_refused() {
+        production(&[(
+            "JWT_SECRET",
+            Some("stage-jwt-secret-min-32-chars-abcdef123456"),
+        )]);
+    }
+
+    #[test]
+    #[should_panic(expected = "TURN_SECRET é um valor que esteve publicado")]
+    fn the_published_turn_secret_is_refused() {
+        production(&[("TURN_SECRET", Some("stage-turn-secret-key"))]);
+    }
+
+    #[test]
+    #[should_panic(expected = "PROVISIONING_SECRET é um valor que esteve publicado")]
+    fn the_published_provisioning_secret_is_refused() {
+        production(&[(
+            "PROVISIONING_SECRET",
+            Some("dlxprov_bcdc13c52115d2b67942298b6d548b65f47980470090a2e0"),
+        )]);
+    }
+
+    /// Em desenvolvimento os valores publicados passam: é o que deixa um
+    /// laboratório antigo continuar a arrancar com `DELONIX_ALLOW_INSECURE=1`.
+    #[test]
+    fn development_accepts_the_published_values() {
+        let c = production(&[
+            ("DELONIX_ALLOW_INSECURE", Some("1")),
+            (
+                "JWT_SECRET",
+                Some("stage-jwt-secret-min-32-chars-abcdef123456"),
+            ),
+            ("TURN_SECRET", Some("stage-turn-secret-key")),
+        ]);
+        assert!(c.allow_insecure);
+    }
+
+    #[test]
+    fn every_burned_secret_is_recognised_only_under_its_own_name() {
+        for (var, value) in BURNED_SECRETS {
+            assert!(is_burned(var, value));
+            assert!(!is_burned("OUTRA_VARIAVEL", value));
+        }
+        assert!(!is_burned("JWT_SECRET", STRONG_JWT));
+    }
+
+    #[test]
+    fn a_database_url_with_a_published_password_is_recognised() {
+        for p in BURNED_DB_PASSWORDS {
+            assert!(database_url_uses_burned_password(&format!(
+                "postgres://delonix:{p}@delonix-postgres:5432/delonix_meet"
+            )));
+        }
+        // O nome do UTILIZADOR ou da base não conta: só a password.
+        assert!(!database_url_uses_burned_password(
+            "postgres://delonix_dev_pass:forte@db:5432/delonix_dev_pass"
+        ));
+        assert!(!database_url_uses_burned_password(DEV_DB));
     }
 }

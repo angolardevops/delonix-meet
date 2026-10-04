@@ -101,8 +101,9 @@ if [ ! -f .env ]; then
 fi
 # MEET_ADMIN_PASSWORD: a conta de validação que o `make seed` cria.
 # VOICE_ADMIN_PASSWORD: as interfaces de administração do Kamailio e do PBX.
+# POSTGRES_REPLICATION_PASSWORD: só o `make prod` (Postgres com réplicas) o usa.
 for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET:24 VOICE_INTERNAL_SECRET:32 \
-  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12; do
+  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12 POSTGRES_REPLICATION_PASSWORD:24; do
   nome=${par%%:*}
   bytes=${par##*:}
   if grep -qE "^${nome}=.+" .env; then
@@ -116,6 +117,19 @@ for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET
   fi
   ok "$nome gerado"
 done
+# DATA_ENCRYPTION_KEYS: a chave que cifra os segredos guardados na base. Não é
+# hexadecimal como os outros — o formato é `kid:base64` de 32 bytes — e o
+# servidor recusa arrancar sem ela fora do modo de desenvolvimento. NUNCA se
+# regenera: perder a chave é perder todos os segredos que ela cifrou.
+if ! grep -qE "^DATA_ENCRYPTION_KEYS=.+" .env; then
+  chave="k1:$(openssl rand -base64 32)"
+  if grep -qE "^DATA_ENCRYPTION_KEYS=" .env; then
+    sed -i "s|^DATA_ENCRYPTION_KEYS=.*|DATA_ENCRYPTION_KEYS=${chave}|" .env
+  else
+    printf 'DATA_ENCRYPTION_KEYS=%s\n' "$chave" >>.env
+  fi
+  ok "DATA_ENCRYPTION_KEYS gerada"
+fi
 # O que se DERIVA dos segredos: o URL da base de dados do compose e a
 # configuração do relay. Reescrevem-se sempre, para nunca ficarem desencontrados.
 valor_de() { sed -n "s/^$1=//p" .env | head -1; }
