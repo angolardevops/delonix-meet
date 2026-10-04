@@ -120,11 +120,12 @@ Não se reabrem nem se revêem como se estivessem em aberto:
 - **A cópia única `users::provision_by_email`** (ADR-0004 §6 passo 4) continua por fazer
   — a função não existe (`grep`, 2026-10-03): o #76 fechou a cópia que estava errada, não
   juntou as seis.
-- **O segredo de voz ainda chega ao disco do FreeSWITCH** (R227, «por corrigir»): o
-  `freeswitch.xml.fsxml` do directório de logs traz a configuração expandida, e fora do
-  cluster local nada tira o nível DEBUG do log — a esse nível o `mod_curl` escreve o
-  segredo e o PIN a cada chamada. No cluster os dois Lua já usam a API do `mod_curl` e o
-  entrypoint tira o DEBUG; mede-o o passo 6 do `softphone-prova.sh srtp-cluster`.
+- **O segredo de voz numa instalação sem o arranque** (R227, «por corrigir»): quem monte a
+  configuração do FreeSWITCH à mão, sem o `voice/cluster/freeswitch-entrypoint.sh`, fica
+  com DEBUG no log (o `mod_curl` escreve o segredo e o PIN a cada chamada) e com o
+  `freeswitch.xml.fsxml` ao lado do log. O `compose.yaml`, o cluster e o chart Helm usam o
+  arranque, e o passo 6 do `softphone-prova.sh srtp-real` mede que nada disto chega ao
+  directório de logs. Rodar o segredo: `make voice-secret-rotate`.
 - **Superfície nova a vigiar:** o socket SIP da ponte telefone↔sala. As barras
   fail-closed estão em `delonix-meet-telefonia` §O que está ligado.
 

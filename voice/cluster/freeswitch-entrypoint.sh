@@ -119,7 +119,21 @@ if [ "${DELONIX_FS_LOG_DEBUG:-0}" != 1 ]; then
   done
 fi
 
+# 12. O directório de logs sem a configuração. No directório do `-log` o
+#     FreeSWITCH grava também o freeswitch.xml.fsxml: a configuração já
+#     expandida, com o segredo de voz lá dentro (R227). O `-log` passa a ser um
+#     directório privado, ao lado da configuração, e o freeswitch.log fica por
+#     caminho explícito onde sempre esteve — quem lê os logs não leva o segredo.
+LOGS=/usr/local/freeswitch/var/log/freeswitch
+PRIV="$CONF/.estado"
+mkdir -p "$LOGS" "$PRIV"
+chmod 700 "$PRIV"
+sed -i "s#<!--<param name=\"logfile\" value=\"[^\"]*\"/>-->#<param name=\"logfile\" value=\"$LOGS/freeswitch.log\"/>#" \
+  "$CONF/autoload_configs/logfile.conf.xml"
+grep -q "<param name=\"logfile\" value=\"$LOGS/freeswitch.log\"/>" "$CONF/autoload_configs/logfile.conf.xml" ||
+  { echo "não consegui fixar o caminho do freeswitch.log" >&2; exit 1; }
+
 # -conf, -log e -db vão os três ou nenhum.
 exec /usr/local/freeswitch/bin/freeswitch -conf "$CONF" \
-  -log /usr/local/freeswitch/var/log/freeswitch -db /usr/local/freeswitch/var/lib/freeswitch/db \
+  -log "$PRIV" -db /usr/local/freeswitch/var/lib/freeswitch/db \
   -scripts /scripts -nonat -nf -nc
