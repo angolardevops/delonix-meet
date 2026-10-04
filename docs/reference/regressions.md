@@ -2767,3 +2767,62 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 **Por medir, e não o dês por feito.** Um browser na sala (quem ouve a central nesta prova é outro telefone, pela mesma ponte). O `compose.yaml` e o cluster local **não** ligam as centrais. O chart (`voice.centrais`) só foi lido, nunca instalado; o `check-helm.sh` corre no CI. Restringir uma conta a redes de origem não existe. O caminho `delonix-outbound` (`telephony_fs_xml.rs`) continua a decidir a organização pelo domínio do pedido sem o autenticar.
 
 **Ficheiros.** `voice/kamailio/kamailio.cfg`, `voice/freeswitch/scripts/dialin_ivr.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `server/src/telephony_sip.rs`, `server/src/voice.rs`, `server/src/lib.rs`, `server/tests/central_entra_na_sala.rs`, `scripts/check-bordo-central.sh`, `scripts/pbx-tronco-prova.sh` (modo `central`), `scripts/softphone-prova.sh` (`--dominio`, `--rede`), `voice/pbx-tronco-prova/compose.yaml`, `deploy/helm/delonix-meet/` (`voice.centrais`).
+
+### R284 — O `JWT_SECRET`, o `TURN_SECRET` e o `PROVISIONING_SECRET` estavam escritos num manifesto de um repositório público
+
+**Sintoma.** `deploy/k8s/01-config.yaml` trazia o Secret `delonix-secrets` com valores literais — `JWT_SECRET`, `TURN_SECRET`, `PROVISIONING_SECRET`, `DATABASE_URL` e `POSTGRES_PASSWORD` — e `deploy/k8s/helm-values/` as passwords do Postgres de stage e de «produção». O `make stage` e o `make prod` aplicavam-nos. A R154 tinha tirado de lá o segredo de voz; os outros ficaram. O servidor só recusava o valor de dev e o comprimento, e os de stage tinham 42 e 21 caracteres: passavam. Com o `JWT_SECRET` publicado assina-se um access token de qualquer conta de qualquer cluster instalado por aquele caminho.
+
+**Regra.**
+- **O Secret não vive no repositório.** Sai do `01-config.yaml` (fica só o ConfigMap) e nasce do `.env` da máquina por `scripts/k8s-app-secrets.sh`, a regra única de «o que entra no `delonix-secrets`»: o `make stage`, o `make prod` e o `scripts/cluster.sh` chamam-no (o `cluster.sh` tinha a sua cópia). As passwords do Postgres saem dos ficheiros de valores e passam por `--set` a partir do `.env`.
+- **O servidor recusa arrancar** em produção com um valor publicado: `config::BURNED_SECRETS` e `refuse_burned`, aplicados ao `JWT_SECRET`, ao `TURN_SECRET` e ao `PROVISIONING_SECRET`. Com `DELONIX_ALLOW_INSECURE=1` passam. A password de base publicada dá um **aviso** no arranque, não uma recusa (`database_url_uses_burned_password`): rodá-la é um `ALTER USER` com a aplicação parada.
+- **Os seis valores entram no livro** (`scripts/leaked-secrets-accepted.txt`), com a razão de cada um, e o portão de higiene recusa que voltem a um ficheiro seguido.
+
+**Portão.** `config.rs` (`mod tests`): o controlo positivo (produção com segredos fortes arranca), uma recusa por cada um dos três valores, desenvolvimento a aceitá-los, e o reconhecimento da password no URL sem confundir o nome do utilizador. `scripts/check-repo-hygiene.sh` verde com os seis valores no livro; `scripts/check-k8s-render.sh` verde (base e os dois overlays). O `k8s-app-secrets.sh` foi corrido contra um `kubectl` que finge o `apply`: sete chaves, `DATABASE_URL` com o host pedido e a password do `.env`, nada de segredos na saída, e recusa com `.env` incompleto.
+
+**O que NÃO está provado.**
+- **Nenhum cluster foi instalado.** O `make stage` e o `make prod` não correram; do `make stage` só se viu o `make -n`. O `make prod` continua LEGADO: aponta para um host de base que não é o do chart que instala, e as chaves `auth.*` que recebe são as que o ficheiro de valores já tinha (plano de lacunas, O1).
+- O `scripts/cluster.sh` não correu depois da troca da cópia pela chamada ao script.
+- A rotação num cluster já instalado (`docs/deployment.md` §6) está escrita, não exercitada.
+- O histórico do git continua a ter os valores, de propósito (mesma decisão da R154).
+- O Redis destes caminhos continua sem autenticação (plano de lacunas, O7).
+
+**Ficheiros.** `deploy/k8s/01-config.yaml`, `deploy/k8s/kustomization.yaml`, `deploy/k8s/helm-values/postgres-{stage-,}values.yaml`, `scripts/k8s-app-secrets.sh`, `scripts/cluster.sh`, `scripts/bootstrap.sh`, `Makefile`, `server/src/config.rs`, `scripts/leaked-secrets-accepted.txt`, `docs/deployment.md`.
+
+### R285 — Sem `DATA_ENCRYPTION_KEYS` o servidor arrancava em produção, e guardar um segredo falhava em silêncio
+
+**Sintoma.** `Config::from_source` devolvia `secret_box: None` em produção quando a variável faltava. O servidor arrancava, a sonda de saúde ficava verde, e cada escrita de um segredo — o `client_secret` do SSO, o segredo de um webhook, a password de um tronco, a chave de um destino de directo — respondia `422 secrets.encryption_unconfigured`. Só o chart Helm a exigia; o compose, o cluster local, os manifestos de `deploy/k8s`, o Ansible, os do PaaS e o deploy legado não a traziam. A documentação mandava definir `SECRETS_KEY`, que o servidor nunca leu.
+
+**Regra.** Em produção a chave é **obrigatória**: sem ela o arranque falha com a razão e o comando para a gerar. Em desenvolvimento (`DELONIX_ALLOW_INSECURE=1`) continua a derivar-se uma. E todos os caminhos que arrancam o servidor passam a trazê-la:
+- `make bootstrap` gera `DATA_ENCRYPTION_KEYS=k1:<base64 de 32 bytes>` no `.env` (acrescenta-a a um `.env` que já exista, sem tocar no resto), e o `make compose-up` recusa um `.env` sem ela;
+- `scripts/k8s-app-secrets.sh` põe-na no `delonix-secrets` (stage, prod, cluster local);
+- Ansible: `data_encryption_keys` em `group_vars/all.yml`, persistida como os outros segredos, nos três modelos;
+- PaaS: `meet-data-encryption-keys` em `deploy/delonix/meet-application.yaml` e no exemplo de segredos;
+- `scripts/pbx-tronco-prova.sh` acrescenta-a ao `.env` da réplica, e o `deploy/deploy.sh` legado recusa sem ela.
+
+**Portão.** `config.rs`: `production_without_the_encryption_key_refuses_to_start` e `development_derives_a_key_when_none_is_given`. O bloco do `bootstrap.sh` foi corrido duas vezes sobre um `.env` de ensaio: uma linha só, 32 bytes depois de descodificar.
+
+**O que NÃO está provado.**
+- Nenhum dos caminhos arrancou um servidor: nem o compose, nem o cluster, nem o Ansible, nem a réplica do tronco. **O laboratório local tem de correr `make bootstrap` antes do próximo `make compose-up` ou `make cluster`**, senão o servidor não arranca — a mensagem diz porquê.
+- O filtro `b64encode` do Ansible sobre 32 caracteres ASCII não foi corrido.
+- No PaaS, o `from_secret` continua por injectar pelo expander (aviso 1 do `deploy/delonix/README.md`): a linha nova fica à espera do mesmo que as outras.
+- Os testes que esvaziam `secret_box` continuam a provar o `422`, agora como defesa em profundidade.
+
+**Ficheiros.** `server/src/config.rs`, `scripts/bootstrap.sh`, `deploy/compose/env.example`, `scripts/k8s-app-secrets.sh`, `scripts/cluster.sh`, `Makefile`, `deploy/ansible/{group_vars/all.yml,roles/secrets/tasks/main.yml,roles/*/templates/*}`, `deploy/delonix/*`, `scripts/pbx-tronco-prova.sh`, `voice/pbx-tronco-prova/compose.yaml`, `deploy/deploy.sh`, `docs/deployment.md`.
+
+### R286 — O HA1 dos ramais estava em claro na base, e as rotas que o entregam ficavam atrás do ingress
+
+**Sintoma.** Duas coisas, a mesma superfície. (1) `voice_extensions.sip_ha1` guardava o `MD5(utilizador:domínio:password)` de cada ramal em claro. O HA1 é o que o digest SIP usa: quem o tiver regista-se como o ramal sem nunca ter visto a password — uma fuga da tabela era uma fuga das credenciais de todos os ramais. (2) As três rotas de máquina dos ramais — o directório, que devolve esse HA1 ao FreeSWITCH, a resolução de um número marcado e o dialplan por DID — estavam no router PÚBLICO como `/api/voice/ivr/*`, com o comentário «fica no público porque os configs já chamam este caminho». Qualquer ingress que publicasse `/api` publicava o caminho que troca o segredo de voz por credenciais SIP.
+
+**Regra.**
+- **O HA1 é cifrado em repouso** (`secrets_at_rest::seal`, aad `voice_extensions.sip_ha1:<id>`), ao criar o ramal e ao regenerar a password. Só à saída para o FreeSWITCH, em `ramais::ivr_directory`, volta a ser o valor do digest. O id do ramal passa a nascer no servidor, para amarrar o valor cifrado à linha. Um HA1 herdado em claro continua a ler-se, e a tarefa de fundo cifra-o (`voice_extensions` é a quarta coluna de `reseal_legacy`; `ResealReport::extension_ha1s`).
+- **As três rotas passam para o listener interno**: `/internal/v1/voice/ivr/{directory,resolve-extension,dialplan-did}`, ao lado do resto da API de máquina. Os caminhos antigos deixam de existir. O `xml_curl.conf.xml`, o `ramais_dial.lua`, o arranque do FreeSWITCH (que reescrevia as cópias para apontar ao listener público), o compose, o cluster local, o chart e os scripts de prova mudam no mesmo commit; `DELONIX_API_URL` deixa de existir.
+
+**Portão.** Contra Postgres real: `ramal_entra_na_sala::the_extension_ha1_is_sealed_at_rest_and_still_reaches_freeswitch` (na base está `enc:v1:` e o MD5 não está lá; o directório devolve o HA1 certo; o herdado em claro ainda serve; o cifrado de um ramal copiado para a linha de outro não abre; regenerar grava cifrado) e `…::the_extension_machine_routes_left_the_public_listener` (com `INTERNAL_BIND_ADDR`, o router público dá `404` às três, no caminho novo e no antigo; sem ele, só o novo responde). `secrets_at_rest::legacy_plaintext_keeps_working_and_is_resealed_idempotently` conta e cifra o HA1 herdado. `security_voice_odoo` (o segredo por Basic e nunca no URL) corre nos caminhos novos. `check-lua-sintaxe.sh` e `check-fs-xml.sh` verdes. **Contra um FreeSWITCH 1.11.3 real** (`scripts/softphone-prova.sh srtp-real`, a configuração que o arranque monta com os ficheiros do compose, numa rede sem saída): um ramal autentica-se por digest — o `mod_xml_curl` pediu o directório em `/internal/v1/voice/ivr/directory` com o segredo em Basic —, o `ramais_dial.lua` chegou a `/internal/v1/voice/ivr/resolve-extension` com `X-Voice-Secret`, o IVR do dial-in atendeu, e os controlos negativos mantêm-se (password errada `403`, sem SRTP `488`); dezassete verificações, todas dentro dos limites.
+
+**O que NÃO está provado.**
+- **Nenhum ramal se registou contra o servidor a sério.** O que correu foi o FreeSWITCH real com um servidor de andaime (ver o portão): o compose e o cluster não foram levantados, por isso o `make compose-voice-check` e o `scripts/cluster-voice.sh` — que passam a exigir que o directório NÃO responda no listener público — ficam por correr.
+- Um FreeSWITCH com a configuração antiga a falar com um servidor novo deixa de registar ramais (pede `/api/voice/ivr/directory`, que já não existe): a configuração e o servidor sobem juntos.
+- Sem `DATA_ENCRYPTION_KEYS` não se cria nem se regenera um ramal (`422`) — a R285 torna a chave obrigatória em produção.
+- O `sip_password_hash` (Argon2) não mudou; o PIN do ramal também não.
+
+**Ficheiros.** `server/src/ramais.rs`, `server/src/secrets_at_rest.rs`, `server/src/lib.rs`, `voice/freeswitch/autoload_configs/xml_curl.conf.xml`, `voice/freeswitch/scripts/ramais_dial.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `compose.yaml`, `deploy/k8s/cluster/voice.yaml`, `deploy/helm/delonix-meet/templates/voice.yaml`, `voice/pbx-tronco-prova/compose.yaml`, `scripts/{softphone-prova,compose-voice-check,cluster-voice,check-openapi}.sh`, `server/tests/{ramal_entra_na_sala,secrets_at_rest,security_voice_odoo}.rs`.
