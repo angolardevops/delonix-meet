@@ -1,0 +1,46 @@
+; O tronco da CENTRAL para o Meet (ADR-0016) — MODELO.
+;
+; O PBX de laboratório, como central da organização «ngolacloud»: por TLS, com
+; o certificado do bordo conferido, e autenticado com a conta SIP da organização
+; (o «Registo SIP» que o `make seed` grava). O bordo desafia com o domínio do
+; `From` como realm, e a sala procura-se DENTRO dessa organização.
+;
+; Não se monta tal como está: o `make bootstrap` (compose) e o
+; scripts/cluster-voice.sh (cluster) trocam __BORDO__ pelo nome do bordo nesse
+; ambiente e __PASSWORD__ pelo VOICE_CENTRAL_PASSWORD do .env, e o resultado —
+; que tem a password — não vai para o git. O pjsip.conf inclui-o se existir.
+[transport-tls]
+type = transport
+protocol = tls
+bind = 0.0.0.0:5062
+method = tlsv1_2
+ca_list_file = /etc/asterisk/meet-bordo-ca.pem
+verify_server = yes
+
+[meet-central]
+type = endpoint
+transport = transport-tls
+context = do-meet            ; o que vem do Meet NÃO alcança as rotas de saída
+disallow = all
+allow = alaw,ulaw
+aors = meet-central
+direct_media = no
+dtmf_mode = rfc4733
+media_encryption = sdes
+media_encryption_optimistic = no
+from_domain = pbx.ngolacloud.local   ; o realm com que o bordo desafia
+from_user = central
+outbound_auth = meet-central-auth
+send_pai = yes
+
+[meet-central]
+type = aor
+contact = sip:__BORDO__:5061;transport=tls
+qualify_frequency = 15
+
+[meet-central-auth]
+type = auth
+auth_type = userpass
+username = central
+password = __PASSWORD__
+realm = pbx.ngolacloud.local         ; só responde ao desafio deste realm

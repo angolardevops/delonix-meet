@@ -4,6 +4,13 @@
 # As redes privadas, porque a sub-rede do compose muda de motor para motor
 # (10.x no delonix, 172.x no docker) — é de lá que fala o PBX de laboratório.
 # Em produção este ficheiro leva os IPs do tronco contratado e NUNCA vai para o git.
-1 10.0.0.0 8 0 lab-rede-privada
-1 172.16.0.0 12 0 lab-rede-privada
-1 192.168.0.0 16 0 lab-rede-privada
+#
+# SÓ a porta 5060 de origem: é a do tronco UDP do PBX (o `meet`), que faz de
+# tronco contratado — entra por estar na lista, e a chamada é um dial-in por
+# número. O OUTRO tronco do mesmo PBX (o `meet-central`, por TLS) sai de uma
+# porta efémera, não está na lista, e por isso só entra como central autenticada
+# da organização (ADR-0016). Com a porta 0 (qualquer), o bordo nunca chegava a
+# desafiar ninguém do laboratório.
+1 10.0.0.0 8 5060 lab-tronco-udp
+1 172.16.0.0 12 5060 lab-tronco-udp
+1 192.168.0.0 16 5060 lab-tronco-udp

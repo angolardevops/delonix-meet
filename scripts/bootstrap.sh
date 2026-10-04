@@ -103,7 +103,7 @@ fi
 # VOICE_ADMIN_PASSWORD: as interfaces de administração do Kamailio e do PBX.
 # POSTGRES_REPLICATION_PASSWORD: só o `make prod` (Postgres com réplicas) o usa.
 for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET:24 VOICE_INTERNAL_SECRET:32 \
-  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12 POSTGRES_REPLICATION_PASSWORD:24; do
+  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12 VOICE_CENTRAL_PASSWORD:16 POSTGRES_REPLICATION_PASSWORD:24; do
   nome=${par%%:*}
   bytes=${par##*:}
   if grep -qE "^${nome}=.+" .env; then
@@ -122,13 +122,13 @@ done
 # servidor recusa arrancar sem ela fora do modo de desenvolvimento. NUNCA se
 # regenera: perder a chave é perder todos os segredos que ela cifrou.
 if ! grep -qE "^DATA_ENCRYPTION_KEYS=.+" .env; then
-  chave="k1:$(openssl rand -base64 32)"
+  chave="lab:$(openssl rand -base64 32)"
   if grep -qE "^DATA_ENCRYPTION_KEYS=" .env; then
     sed -i "s|^DATA_ENCRYPTION_KEYS=.*|DATA_ENCRYPTION_KEYS=${chave}|" .env
   else
     printf 'DATA_ENCRYPTION_KEYS=%s\n' "$chave" >>.env
   fi
-  ok "DATA_ENCRYPTION_KEYS gerada"
+  ok "DATA_ENCRYPTION_KEYS gerado"
 fi
 # O que se DERIVA dos segredos: o URL da base de dados do compose e a
 # configuração do relay. Reescrevem-se sempre, para nunca ficarem desencontrados.
@@ -178,9 +178,19 @@ read_only = no
 password_format = plain
 password = $(valor_de VOICE_ADMIN_PASSWORD)
 CONF
-# Certificado self-signed do bordo SIP (Kamailio) no compose.
-if [ ! -f "$GEN/voice-tls/tls.crt" ]; then
+# A conta com que o PBX de laboratório entra no bordo como CENTRAL da
+# organização (ADR-0016): a mesma que o `make seed` grava no «Registo SIP».
+{
+  printf '; Gerado por «make bootstrap» a partir de voice/pbx-cliente/central.conf.tmpl — NÃO versionar (tem a password).\n'
+  sed -e '/^;/d' -e "s/__BORDO__/delonix-kamailio/" -e "s/__PASSWORD__/$(valor_de VOICE_CENTRAL_PASSWORD)/" \
+    voice/pbx-cliente/central.conf.tmpl
+} >"$GEN/pbx-central.conf"
+# Certificado self-signed do bordo SIP (Kamailio) no compose. O nome vai também
+# no SAN: é por ele que a central confere o certificado. Um certificado de um
+# bootstrap anterior, sem SAN, é substituído (é de laboratório e self-signed).
+if ! openssl x509 -in "$GEN/voice-tls/tls.crt" -noout -ext subjectAltName 2>/dev/null | grep -q "DNS:delonix-kamailio"; then
   openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=delonix-kamailio" \
+    -addext "subjectAltName=DNS:delonix-kamailio" \
     -keyout "$GEN/voice-tls/tls.key" -out "$GEN/voice-tls/tls.crt" 2>/dev/null
 fi
 # Lidos dentro de contentores por outros utilizadores: têm de ser legíveis.

@@ -28,7 +28,13 @@ pub fn is_ticket_shape(s: &str) -> bool {
 /// A origem pública do servidor, pronta a levar um caminho — ou `None` se não
 /// serve para um QR. Tem de ser `https://host[:porta]`, sem caminho: a
 /// configuração descarregada leva a password SIP, e um telefone não alcança um
-/// nome interno do cluster (`*.svc`, `*.cluster.local`) nem `localhost`.
+/// nome interno do cluster (`*.svc`), `localhost`, nem um nome `*.local`.
+///
+/// `.local` é o domínio reservado do mDNS (RFC 6762): resolve-se na rede local
+/// por multicast, não por DNS, e um telemóvel (o Android em particular) em geral
+/// não o resolve — o Linphone falha a descarregar sem nunca chegar ao
+/// certificado. Cobre também `*.cluster.local`. Fica de fora quem precisar de um
+/// laboratório: usa um nome que o telefone resolva (um domínio, ou `sslip.io`).
 pub fn public_base_url(origin: &str) -> Option<&str> {
     let origin = origin.trim().trim_end_matches('/');
     let authority = origin.strip_prefix("https://")?;
@@ -43,7 +49,8 @@ pub fn public_base_url(origin: &str) -> Option<&str> {
     let internal = host == "localhost"
         || host.ends_with(".localhost")
         || host.ends_with(".svc")
-        || host.ends_with(".cluster.local");
+        || host == "local"
+        || host.ends_with(".local");
     (!host.is_empty() && !internal).then_some(origin)
 }
 
@@ -152,9 +159,24 @@ mod tests {
         for (origin, want) in [
             ("https://meet.exemplo.ao", Some("https://meet.exemplo.ao")),
             ("https://meet.exemplo.ao/", Some("https://meet.exemplo.ao")),
+            // `.local` é mDNS: o telefone não o resolve (ver `public_base_url`).
+            ("https://meet.ngolacloud.local:8443", None),
+            ("https://meet.local", None),
+            ("https://MEET.Local", None),
+            ("https://local", None),
+            // Um nome que só TERMINA em «local» (sem o ponto) é um domínio público.
             (
-                "https://meet.ngolacloud.local:8443",
-                Some("https://meet.ngolacloud.local:8443"),
+                "https://meet.notlocal.example",
+                Some("https://meet.notlocal.example"),
+            ),
+            (
+                "https://meet.local.exemplo.ao",
+                Some("https://meet.local.exemplo.ao"),
+            ),
+            // Um laboratório que o telefone resolve: sslip.io aponta ao IP da máquina.
+            (
+                "https://meet.192-168-1-10.sslip.io",
+                Some("https://meet.192-168-1-10.sslip.io"),
             ),
             ("http://meet.exemplo.ao", None),
             ("https://", None),
