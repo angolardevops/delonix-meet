@@ -54,14 +54,6 @@ impl SourceAllowlist {
         self.0.read().map(|v| v.clone()).unwrap_or_default()
     }
 
-    pub fn len(&self) -> usize {
-        self.0.read().map(|v| v.len()).unwrap_or(0)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     pub fn replace(&self, ips: Vec<IpAddr>) {
         if let Ok(mut g) = self.0.write() {
             *g = ips;
@@ -91,7 +83,10 @@ pub fn parse_origem(s: &str) -> Option<Origem> {
     }
     let valid = s.len() <= 253
         && !s.starts_with(['.', '-'])
-        && !s.ends_with(['.', '-'])
+        // Um ponto final é permitido: o nome absoluto (`x.ns.svc.cluster.local.`) não passa
+        // pelos domínios de pesquisa do resolvedor, que um nome curto atravessa.
+        && !s.ends_with('-')
+        && !s.ends_with("..")
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'))
         // Um número com pontos que não é IP (`10.0.0`, `1.2.3.4.5`) é um erro, não um nome.
@@ -129,7 +124,9 @@ pub async fn resolve_private(name: &str) -> Result<(Vec<IpAddr>, usize), std::io
     let mut ok = BTreeSet::new();
     let mut recusados = 0usize;
     for a in addrs {
-        if is_private_ip(a.ip()) {
+        // Loopback só como literal: por nome, um `localhost` ou um `127.0.1.1` do `/etc/hosts`
+        // poria na lista processos do próprio netns do servidor.
+        if is_private_ip(a.ip()) && !a.ip().is_loopback() {
             ok.insert(a.ip());
         } else {
             recusados += 1;
@@ -187,6 +184,9 @@ pub fn local_ip_towards(alvo: Option<IpAddr>) -> Option<IpAddr> {
     (!ip.is_unspecified()).then_some(ip)
 }
 
+/// Ciclos seguidos sem resolver nenhum nome antes de a lista cair para os literais.
+const MAX_FALHAS_SEGUIDAS: u32 = 3;
+
 /// Refresca a lista de tempos a tempos. Só se lança se houver nomes.
 pub fn spawn_refresh(
     lista: SourceAllowlist,
@@ -200,13 +200,22 @@ pub fn spawn_refresh(
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(cada);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut falhas = 0u32;
         tick.tick().await; // o 1.º tick é imediato: a lista inicial já foi posta
         loop {
             tick.tick().await;
-            // Falha geral do resolvedor: mantém-se a lista (não se esvazia).
+            // Falha geral do resolvedor: mantém-se a lista, mas só por `MAX_FALHAS_SEGUIDAS`
+            // ticks. Sem prazo, um FreeSWITCH que caiu deixava o seu IP autorizado e um
+            // contentor novo que o herdasse entrava nas salas.
             let Some(nova) = resolve_all(&literais, &nomes).await else {
+                falhas += 1;
+                if falhas == MAX_FALHAS_SEGUIDAS {
+                    tracing::warn!("ponte: os nomes do FreeSWITCH não resolvem há {falhas} ciclos — só ficam os IPs literais");
+                    lista.replace(literais.clone());
+                }
                 continue;
             };
+            falhas = 0;
             let antiga = lista.snapshot();
             if antiga != nova {
                 tracing::info!(
@@ -275,6 +284,10 @@ mod tests {
             parse_origem("freeswitch.delonix-meet.svc"),
             Some(Origem::Nome("freeswitch.delonix-meet.svc".into()))
         );
+        assert_eq!(
+            parse_origem("freeswitch.ns.svc.cluster.local."),
+            Some(Origem::Nome("freeswitch.ns.svc.cluster.local.".into()))
+        );
         for mau in [
             "",
             "  ",
@@ -288,7 +301,7 @@ mod tests {
             "-host",
             "host-",
             ".host",
-            "host.",
+            "host..",
             "10.0.0.0/8",
             "ho$t",
         ] {
@@ -299,7 +312,7 @@ mod tests {
     #[test]
     fn a_lista_vazia_nao_aceita_nada_e_nunca_tudo() {
         let l = SourceAllowlist::default();
-        assert!(l.is_empty());
+        assert!(l.snapshot().is_empty());
         assert!(!l.contains(&ip("10.0.0.1")));
         assert!(!l.contains(&ip("127.0.0.1")));
         l.replace(vec![ip("10.0.0.1")]);
@@ -313,13 +326,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn localhost_resolve_para_enderecos_locais() {
+    async fn por_nome_o_loopback_e_recusado() {
         let (ips, recusados) = resolve_private("localhost")
             .await
             .expect("localhost resolve");
-        assert!(!ips.is_empty(), "localhost tem de dar um endereço local");
-        assert!(ips.iter().all(|i| i.is_loopback()));
-        assert_eq!(recusados, 0);
+        assert!(ips.is_empty(), "loopback só entra como literal");
+        assert!(recusados > 0);
     }
 
     #[tokio::test]
@@ -329,11 +341,11 @@ mod tests {
         // Com um nome que não resolve, nada resolveu: quem chama mantém a lista de antes.
         let r = resolve_all(&[ip("10.0.0.9")], &["nao-existe.invalid".to_string()]).await;
         assert_eq!(r, None, "uma falha total do DNS não esvazia a lista");
-        // Com um nome que resolve (localhost), junta ao literal.
+        // Um nome que resolve só para loopback conta como resolvido, sem acrescentar nada.
         let r = resolve_all(&[ip("10.0.0.9")], &["localhost".to_string()])
             .await
             .unwrap();
-        assert!(r.contains(&ip("10.0.0.9")) && r.iter().any(|i| i.is_loopback()));
+        assert_eq!(r, vec![ip("10.0.0.9")]);
     }
 
     #[test]

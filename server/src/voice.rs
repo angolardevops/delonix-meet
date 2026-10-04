@@ -1378,7 +1378,7 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
         Some(ip) => ip,
         None if !sip_bind.ip().is_unspecified() => sip_bind.ip(),
         None => match crate::phone_bridge::origens::local_ip_towards(
-            allowed.snapshot().first().copied(),
+            allowed.snapshot().into_iter().find(|ip| !ip.is_loopback()),
         ) {
             Some(ip) => ip,
             None => {
@@ -1420,7 +1420,7 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
             tracing::info!(
                 sip = %b.local_sip,
                 anuncia = %bridge_advertise(state, sip_bind),
-                origens = allowed.len(),
+                origens = allowed.snapshot().len(),
                 "ponte telefone↔sala à escuta"
             );
             // A ponte é quem impõe o `ForceMute` a quem não tem cliente (R224).
