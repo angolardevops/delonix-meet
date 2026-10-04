@@ -257,14 +257,13 @@ contexto de dialplan e por domínio SIP, não por processo.
   entrypoint num contentor, com a lista de ficheiros de cada um e o servidor trocado por
   um andaime. Um ramal real do control plane, o Kamailio à frente do dial-in e a rede de
   cada ambiente ficam de fora — isso é do `make compose-voice-check` e do `make cluster`.
-- **SRTP à entrada não tem excepção por tronco** (regra de casa, fixada a 2026-10-04). A
-  global vale para todas as pernas: uma chamada em claro ao perfil do dial-in leva `488`
-  venha de onde vier (medido). O `srtp=off` de um tronco só vale **à saída**
-  (`telephony_fs_xml.rs:230`): uma operadora sem SRTP recebe chamadas nossas e não nos
-  consegue ligar. Fica assim de propósito — abrir a entrada em claro a um tronco era pôr
-  media da reunião em claro na rede da operadora. Não foi medido com um tronco a sério: o
-  arranque não carrega gateways. Mudar isto é uma decisão do dono do produto, e um pedido
-  próprio (ver «Ao fechar uma tarefa»).
+- **SRTP à entrada não tem excepção por tronco — decidido pelo dono do produto a
+  2026-10-04.** A global vale para todas as pernas: uma chamada em claro ao perfil do
+  dial-in leva `488` venha de onde vier (medido). O `srtp=off` de um tronco só vale **à
+  saída** (`telephony_fs_xml.rs:230`): uma operadora que só ofereça media em claro recebe
+  chamadas nossas e **não serve para entrada**. Fica assim de propósito — aceitar a entrada
+  em claro era pôr media da reunião em claro na rede da operadora. Não reabrir sem uma
+  decisão nova dele. Não foi medido com um tronco a sério: o arranque não carrega gateways.
 - As regras de casa acima **não têm portão**. Session timers, `P-Asserted-Identity`,
   tecto de gasto e alarme de fraude não foram procurados no código nesta revisão:
   confirma por `grep` antes de os dares como existentes ou em falta.
@@ -272,19 +271,14 @@ contexto de dialplan e por domínio SIP, não por processo.
 
 ## Ao fechar uma tarefa
 
-Propõe um a três pedidos seguintes (escolhe dos quatro abaixo, ou outros), com o alvo, a prova a medir e o que fica de fora:
+Propõe um a três pedidos seguintes (escolhe dos três abaixo, ou outros), com o alvo, a prova a medir e o que fica de fora:
 
-1. «Se o dono do produto decidir aceitar chamadas em claro de um tronco declarado
-   `srtp=off`: o Kamailio marca o tronco de origem, o servidor decide pelo tronco, e o
-   dialplan do dial-in aplica a decisão antes do `answer` (o perfil `external` negoceia
-   tarde). Prova: a chamada em claro aceite só desse tronco, e recusada de qualquer outra
-   origem. Revisor `delonix-meet-security`. Fora: a operadora a sério.»
-2. «Um portão que carregue o `voice/kamailio/kamailio.cfg` (`kamailio -c`) no
+1. «Um portão que carregue o `voice/kamailio/kamailio.cfg` (`kamailio -c`) no
    `make fitness`. Prova: partir a configuração e ver falhar. Fora: o comportamento em
    chamada, e o XML do FreeSWITCH, que já tem o `check-fs-xml.sh`.»
-3. «A interligação com um FreePBX 17 de teste por tronco PJSIP sobre TLS: chamada nos dois
+2. «A interligação com um FreePBX 17 de teste por tronco PJSIP sobre TLS: chamada nos dois
    sentidos, DTMF e os dois controlos negativos. Prova: captura SIP e os tons medidos nos
    dois lados. Fora: a operadora.»
-4. «Mede no código o que existe das regras de fraude (tecto de gasto, destinos fechados
+3. «Mede no código o que existe das regras de fraude (tecto de gasto, destinos fechados
    por omissão, alarme) e escreve o que falta como achados. Prova: `grep` com ficheiro e
    linha. Fora: implementar.»
