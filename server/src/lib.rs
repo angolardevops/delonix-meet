@@ -1243,8 +1243,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
                 // O caminho do resgate de um QR do Linphone leva o token (R278).
-                let path = extension_provisioning::redact_path(req.uri().path());
-                tracing::info_span!("http", method = %req.method(), path = %path, request_id)
+                tracing::info_span!("http", method = %req.method(), path = %extension_provisioning::redact_path(req.uri().path()), request_id)
             },
         ))
         // Por DENTRO do request_id (o envelope leva o id) e por fora de tudo o
