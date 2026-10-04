@@ -764,6 +764,28 @@ compose-info: ## URLs e acessos de administração da simulação de produção
 	  printf "     no browser   https://$(MEET_HOST):8443/#/r/%s\n" "$$(t sala)"; \
 	fi; \
 	printf "\n  Estado: make compose-ps   ·   Prova da voz: make compose-voice-check\n"
+# O QR do Linphone é um URL https que o TELEMÓVEL abre; `meet.ngolacloud.local` é
+# mDNS e o certificado do bootstrap é autoassinado (ver compose-tunnel.sh). O túnel
+# dá um nome público e um certificado válido, com um URL NOVO a cada execução
+# (Pinggy sem conta: 60 minutos). Publica a borda INTEIRA na Internet — só em
+# laboratório — e NÃO resolve o registo SIP (UDP): para isso, `compose-up LAN_IP=…`.
+# A ordem dos ficheiros conta: o `lan.yaml` (se existir) primeiro, o túnel por cima.
+TUNNEL_FILES = $(if $(wildcard deploy/compose/generated/lan.yaml),-f $(ROOT)/deploy/compose/generated/lan.yaml)
+tunnel: ## Publica a borda do compose num túnel Pinggy (URL novo, 60 min) para ler o QR do Linphone no telemóvel
+	@printf "$(C)▶ túnel Pinggy para a borda do compose (publica a borda INTEIRA na Internet)$(Z)\n"
+	@URL=$$(MEET_HOST=$(MEET_HOST) bash scripts/compose-tunnel.sh up) || exit 1; \
+	printf "   URL do túnel: $(Y)$$URL$(Z)\n"; \
+	printf "$(C)▶ $(COMPOSE) up (o servidor passa a pôr o túnel na 1.ª origem de CORS_ORIGINS)$(Z)\n"; \
+	$(COMPOSE) up $(COMPOSE_P) $(TUNNEL_FILES) -f $(ROOT)/deploy/compose/generated/tunnel.yaml -d || { bash scripts/compose-tunnel.sh down; exit 1; }; \
+	printf "\n   Na consola ($(Y)https://$(MEET_HOST):8443$(Z)) emite um QR novo: o URL dele já é o do túnel.\n"; \
+	printf "   Só o QR e a descarga da configuração; o registo SIP (UDP 5070) não passa por aqui.\n"; \
+	printf "   Acabou? $(Y)make tunnel-stop$(Z)\n"
+
+tunnel-stop: ## Fecha o túnel e devolve o servidor às origens do compose
+	@bash scripts/compose-tunnel.sh down
+	@printf "$(C)▶ $(COMPOSE) up (origens do compose, sem túnel)$(Z)\n"
+	@$(COMPOSE) up $(COMPOSE_P) $(TUNNEL_FILES) -d
+
 compose-down: ## Para a simulação de produção (mantém os volumes)
 	@$(COMPOSE) down $(COMPOSE_P)
 compose-ps: ## Contentores da simulação de produção
