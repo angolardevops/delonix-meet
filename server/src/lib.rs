@@ -77,6 +77,8 @@ mod telephony_service;
 mod telephony_sip;
 mod telephony_trunks;
 mod transcription;
+mod tv_broadcasts;
+mod tv_channels;
 mod ui;
 mod usage;
 mod users;
@@ -189,6 +191,9 @@ pub struct AppState {
     pub session_kills: sessions::KillRegistry,
     /// Chaves de acesso (ADR-0011). `None` sem `WEBAUTHN_RP_ID`/`_ORIGIN`.
     pub webauthn: Option<Arc<webauthn_rs::prelude::Webauthn>>,
+    /// Vagas de composição de gravação (`FFMPEG_MAX_CONCURRENT`): o `ffmpeg`
+    /// de uma gravação só arranca com uma vaga. Ver `recorder::acquire_compose_slot`.
+    pub compose_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -933,6 +938,28 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(stream_destinations::rotate_key),
         )
         .route(
+            "/api/orgs/{org_id}/tv/channels",
+            get(tv_channels::list).post(tv_channels::create),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/channels/{channel_id}",
+            get(tv_channels::get_one)
+                .patch(tv_channels::update)
+                .delete(tv_channels::delete),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/channels/{channel_id}/broadcasts",
+            get(tv_broadcasts::list).post(tv_broadcasts::request_live),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/channels/{channel_id}/broadcasts/{broadcast_id}",
+            get(tv_broadcasts::get_one),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/channels/{channel_id}/broadcasts/{broadcast_id}/stop",
+            post(tv_broadcasts::request_stop),
+        )
+        .route(
             "/api/orgs/{org_id}/integrations/odoo",
             get(odoo::get_config).put(odoo::save_config),
         )
@@ -1388,6 +1415,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         telephony_reveal_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         telephony: telephony_service::Adapters::from_config(&config, &outbound),
         outbound,
+        compose_slots: Arc::new(tokio::sync::Semaphore::new(config.ffmpeg_max_concurrent)),
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,

@@ -275,12 +275,50 @@ await recusado('A gera «o meu PIN» na org B', `/api/orgs/${B.orgId}/my-extensi
 // a chave, alterar, apagar — e o de B sobrevive), a chave nunca volta em claro
 // nem à própria B (fora da criação/rotação), e A não consegue EMITIR com um
 // destino da B referindo-o por id.
+console.log('\n--- canais de TV da org B (RFC-0001) ---')
+// Um canal é identidade pública e configuração de emissão: A não o lista, lê,
+// altera, apaga nem cria na B — e o canal da B tem de CONTINUAR LÁ, inalterado.
+const canalB = await req(`/api/orgs/${B.orgId}/tv/channels`, {
+  token: B.token, method: 'POST', body: { slug: `canal-b-${marca}`.slice(0, 40), name: 'Canal da B' },
+})
+if (canalB.status === 201 && canalB.json?.id) {
+  ok('B cria um canal de TV → 201')
+  const c = `/api/orgs/${B.orgId}/tv/channels/${canalB.json.id}`
+  await recusadoNaPorta('A lista os canais da org B', `/api/orgs/${B.orgId}/tv/channels`, { token: A.token })
+  await recusadoNaPorta('A lê um canal da org B', c, { token: A.token })
+  await recusadoNaPorta('A altera um canal da org B', c, { token: A.token, method: 'PATCH', body: { version: 1, name: 'roubado' } })
+  await recusadoNaPorta('A apaga um canal da org B', c, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A cria um canal na org B', `/api/orgs/${B.orgId}/tv/channels`, {
+    token: A.token, method: 'POST', body: { slug: 'intruso', name: 'intruso' },
+  })
+  // Pelo caminho da PRÓPRIA org A, com o id da B: o `WHERE org_id` tem de o esconder.
+  await recusado('A lê o canal da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/channels/${canalB.json.id}`, { token: A.token })
+  await recusado('A apaga o canal da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/channels/${canalB.json.id}`, { token: A.token, method: 'DELETE' })
+  // Emissões do canal da B: pedir, ver e parar. A sessão da B tem de sobreviver.
+  const emB = await req(`${c}/broadcasts`, { token: B.token, method: 'POST', body: {} })
+  if (emB.status === 201 && emB.json?.id) {
+    ok('B pede a emissão do seu canal → 201 (fica `requested`, não «no ar»)')
+    const e = `${c}/broadcasts/${emB.json.id}`
+    await recusadoNaPorta('A pede a emissão de um canal da org B', `${c}/broadcasts`, { token: A.token, method: 'POST', body: {} })
+    await recusadoNaPorta('A lista as emissões de um canal da org B', `${c}/broadcasts`, { token: A.token })
+    await recusadoNaPorta('A lê uma emissão da org B', e, { token: A.token })
+    await recusadoNaPorta('A pára uma emissão da org B', `/api/orgs/${B.orgId}/tv/channels/${canalB.json.id}/broadcasts/${emB.json.id}/stop`, { token: A.token, method: 'POST', body: {} })
+    await recusado('A lê a emissão da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/channels/${canalB.json.id}/broadcasts/${emB.json.id}`, { token: A.token })
+    const emDepois = await req(e, { token: B.token })
+    if (emDepois.status === 200 && emDepois.json?.state === 'requested' && emDepois.json?.desired_state === 'live') ok('e a emissão da B CONTINUA LÁ, por terminar')
+    else nok('e a emissão da B CONTINUA LÁ, por terminar', `${emDepois.status}: ${JSON.stringify(emDepois.json).slice(0, 120)}`)
+  } else nok('B pede a emissão do seu canal', `${emB.status}: ${JSON.stringify(emB.json).slice(0, 160)}`)
+  const depoisC = await req(c, { token: B.token })
+  if (depoisC.status === 200 && depoisC.json?.name === 'Canal da B' && depoisC.json?.version === 1) ok('e o canal da B CONTINUA LÁ, inalterado')
+  else nok('e o canal da B CONTINUA LÁ, inalterado', `${depoisC.status}: ${JSON.stringify(depoisC.json).slice(0, 120)}`)
+} else nok('B cria um canal de TV', `${canalB.status}: ${JSON.stringify(canalB.json).slice(0, 160)}`)
+
 console.log('\n--- destinos de directo guardados da org B ---')
 await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/stream-destinations`, { token: A.token })
 const CHAVE_DESTINO_B = `chave-secreta-da-b-${marca}`
 const destinoB = await req(`/api/orgs/${B.orgId}/stream-destinations`, {
   token: B.token, method: 'POST',
-  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://10.0.0.9/live', stream_key: CHAVE_DESTINO_B },
+  body: { kind: 'rtmp', label: 'Destino da B', url: 'rtmp://destino-b.exemplo.invalid/live', stream_key: CHAVE_DESTINO_B },
 })
 if (destinoB.status === 201 && destinoB.json?.id) {
   ok('B guarda um destino de directo → 201')
@@ -321,7 +359,7 @@ if (destinoB.status === 201 && destinoB.json?.id) {
   })
   await recusado('A apaga um destino da org B', d, { token: A.token, method: 'DELETE' })
   const depois = await req(d, { token: B.token })
-  if (depois.status === 200 && depois.json?.url === 'rtmp://10.0.0.9/live') ok('e o destino da B CONTINUA LÁ, inalterado')
+  if (depois.status === 200 && depois.json?.url === 'rtmp://destino-b.exemplo.invalid/live') ok('e o destino da B CONTINUA LÁ, inalterado')
   else nok('e o destino da B CONTINUA LÁ, inalterado', `${depois.status}: ${JSON.stringify(depois.json).slice(0, 120)}`)
 
   // Emitir com o destino da B a partir de uma sala da A. A recusa chega numa

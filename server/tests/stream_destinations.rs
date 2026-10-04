@@ -104,7 +104,7 @@ async fn pagination_is_bounded_and_complete(db: sqlx::PgPool) {
             .post(
                 &path(a.org()),
                 Some(&a.token),
-                json!({"kind": "rtmp", "label": format!("d{i}"), "url": "rtmp://10.0.0.5/live"}),
+                json!({"kind": "rtmp", "label": format!("d{i}"), "url": "rtmp://destino.exemplo.invalid/live"}),
             )
             .await;
         assert_eq!(st, 201);

@@ -52,7 +52,7 @@ pendentes e regras de entrada.
 ### 1. Catálogo FECHADO de capacidades, no domínio
 
 `delonix_meet_domain::identity::authorization::Capability` é um `enum` fechado, versionado
-(`CATALOG_VERSION = 1`). Copia o PADRÃO dos escopos S6 (catálogo no domínio, `as_str`,
+(`CATALOG_VERSION = 3`: `broadcast.manage_channels` na migração 0088 e `broadcast.go_live` na 0089). Copia o PADRÃO dos escopos S6 (catálogo no domínio, `as_str`,
 `parse` que recusa desconhecidos com `authz.unknown_capability`), mas **não os reutiliza**:
 escopos são de máquinas, capacidades são de pessoas. Uma chave `dlx_` continua só com
 escopos e **não herda** as capacidades de quem a criou.
