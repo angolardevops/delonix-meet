@@ -86,7 +86,13 @@ Um host serve **control-plane + media** juntos. O gargalo é quase sempre a **re
 | Dev / demo (≤5 pessoas) | 2 | 4 GB | 50 Mbps | 20 GB | `make dev` / compose |
 | Pequena (≤30 em 5–8 salas) | 4 | 8 GB | 200 Mbps | 100 GB SSD | systemd 1.1 confortável |
 | Média (≤100 em 15–20 salas) | 8 | 16 GB | 500 Mbps sim. | 250 GB SSD | ativar TURN-TLS; considerar K8s |
-| Gravação server-side ativa | +2 vCPU | +2 GB | — | +ffmpeg I/O | recorder + ffmpeg post-stop |
+| Gravação server-side ativa | +2 vCPU **por composição simultânea** | +2 GB | — | +ffmpeg I/O | recorder + ffmpeg post-stop; `FFMPEG_MAX_CONCURRENT` (default 1) põe o resto em fila |
+
+**Regra de CPU (medida, 2026-09-17, loopback, não é produção):** ~1 núcleo por ~180 Mbps
+encaminhados; uma sala de 30 com câmara pede ~5,6 núcleos. Por isso o pod do servidor
+tem `limits.cpu: 4` (`deploy/k8s/02-server.yaml`) e a composição de gravações é limitada por
+`FFMPEG_MAX_CONCURRENT`: 20 composições em simultâneo deixaram as chamadas do mesmo nó com 64%
+de perda. Detalhe e o que não ficou provado em [teste-de-carga-2026-09-17.md](teste-de-carga-2026-09-17.md).
 
 **Regra de banda:** vídeo 720p ≈ 1.5–2.5 Mbps por publicador. Reserva **upload = downlink dos
 subscritores** — numa sala de 10 câmaras, o servidor emite ~9× o bitrate de cada. É a rede,
