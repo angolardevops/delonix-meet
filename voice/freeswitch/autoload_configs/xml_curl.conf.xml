@@ -49,7 +49,7 @@
   <bindings>
     <binding name="delonix_ramais_directory">
       <param name="gateway-url"
-             value="$${delonix_control_url}/api/voice/ivr/directory"
+             value="$${delonix_control_url}/internal/v1/voice/ivr/directory"
              bindings="directory"/>
       <param name="gateway-credentials" value="freeswitch:$${delonix_voice_secret}"/>
       <param name="auth-scheme" value="basic"/>
@@ -66,7 +66,7 @@
          não estar confirmada contra uma instância real). -->
     <binding name="delonix_ramais_dialplan_did">
       <param name="gateway-url"
-             value="$${delonix_control_url}/api/voice/ivr/dialplan-did"
+             value="$${delonix_control_url}/internal/v1/voice/ivr/dialplan-did"
              bindings="dialplan"/>
       <param name="gateway-credentials" value="freeswitch:$${delonix_voice_secret}"/>
       <param name="auth-scheme" value="basic"/>

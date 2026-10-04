@@ -169,7 +169,6 @@ services:
     env_file: [.env] # VOICE_INTERNAL_SECRET
     environment:
       DELONIX_CONTROL_URL: http://delonix-server:8181
-      DELONIX_API_URL: http://delonix-server:8180
       DELONIX_RAMAIS_SIP_PORT: "5070"
       # De onde fala o bordo: o IVR só acredita em «esta chamada é da central
       # de X» vindo daqui. As redes privadas, como na allowlist do bordo — a

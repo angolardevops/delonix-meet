@@ -101,8 +101,9 @@ if [ ! -f .env ]; then
 fi
 # MEET_ADMIN_PASSWORD: a conta de validação que o `make seed` cria.
 # VOICE_ADMIN_PASSWORD: as interfaces de administração do Kamailio e do PBX.
+# POSTGRES_REPLICATION_PASSWORD: só o `make prod` (Postgres com réplicas) o usa.
 for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET:24 VOICE_INTERNAL_SECRET:32 \
-  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12 VOICE_CENTRAL_PASSWORD:16; do
+  MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12 VOICE_CENTRAL_PASSWORD:16 POSTGRES_REPLICATION_PASSWORD:24; do
   nome=${par%%:*}
   bytes=${par##*:}
   if grep -qE "^${nome}=.+" .env; then
@@ -116,7 +117,10 @@ for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET
   fi
   ok "$nome gerado"
 done
-# A chave da cifra em repouso não é hexadecimal: é `kid:base64` de 32 bytes.
+# DATA_ENCRYPTION_KEYS: a chave que cifra os segredos guardados na base. Não é
+# hexadecimal como os outros — o formato é `kid:base64` de 32 bytes — e o
+# servidor recusa arrancar sem ela fora do modo de desenvolvimento. NUNCA se
+# regenera: perder a chave é perder todos os segredos que ela cifrou.
 if ! grep -qE "^DATA_ENCRYPTION_KEYS=.+" .env; then
   chave="lab:$(openssl rand -base64 32)"
   if grep -qE "^DATA_ENCRYPTION_KEYS=" .env; then

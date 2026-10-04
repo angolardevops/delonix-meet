@@ -154,14 +154,8 @@ up)
     --from-literal=VOICE_RAMAIS_PUBLIC_TRANSPORT=udp \
     --from-literal=REDIS_URL="redis://delonix-redis-master.${NS}.svc.cluster.local:6379" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  kubectl -n "$NS" create secret generic delonix-secrets \
-    --from-literal=DATABASE_URL="postgres://delonix:${POSTGRES_PASSWORD}@delonix-postgres-postgresql.${NS}.svc.cluster.local:5432/delonix_meet" \
-    --from-literal=JWT_SECRET="$JWT_SECRET" \
-    --from-literal=TURN_SECRET="$TURN_SECRET" \
-    --from-literal=PROVISIONING_SECRET="$PROVISIONING_SECRET" \
-    --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-    --from-literal=DATA_ENCRYPTION_KEYS="$DATA_ENCRYPTION_KEYS" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  # A regra de «o que entra no delonix-secrets» vive num só sítio.
+  bash scripts/k8s-app-secrets.sh "delonix-postgres-postgresql.${NS}.svc.cluster.local" "$NS" >/dev/null
   kubectl -n "$NS" create secret generic delonix-voice \
     --from-literal=VOICE_INTERNAL_SECRET="$VOICE_INTERNAL_SECRET" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null

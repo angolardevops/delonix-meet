@@ -133,11 +133,11 @@ Softphone A (ramal 101, acme.ramais.delonix.meet)
      │ REGISTER + INVITE 102           DIRECTAMENTE ao FreeSWITCH — o
      ▼                                  Kamailio NÃO entra neste caminho
 FreeSWITCH — perfil "internal" (porta DELONIX_RAMAIS_SIP_PORT, default 5070)
-     1) REGISTER → mod_xml_curl → POST /api/voice/ivr/directory  ──► Control plane
+     1) REGISTER → mod_xml_curl → POST /internal/v1/voice/ivr/directory  ──► Control plane
                                   (segredo por HTTP Basic — nunca no URL, R227)
                                   (a1-hash do digest SIP)          ◄── XML directory
      2) INVITE 102 → dialplan "delonix_ramais" → ramais_dial.lua
-        → POST /api/voice/ivr/resolve-extension  ──────────────────► Control plane
+        → POST /internal/v1/voice/ivr/resolve-extension  ──────────────────► Control plane
           (domínio do chamador + "102")                            ◄── sip_username
      3) bridge(user/<sip_username_de_102>@acme.ramais.delonix.meet)
 ```
@@ -254,7 +254,7 @@ reunião em vídeo (fase seguinte, continua por fazer).
 Telefone → SIP Trunk → Kamailio → FreeSWITCH (contexto "public")
                                        │
                                        ▼  mod_xml_curl, secção "dialplan"
-                        POST /api/voice/ivr/dialplan-did ───► Control plane
+                        POST /internal/v1/voice/ivr/dialplan-did ───► Control plane
                         (X-Voice-Secret, número discado)   ◄── XML dialplan
                                        │
                           número é DID de ramal?
@@ -297,7 +297,7 @@ Softphone (ramal 101, acme.ramais.delonix.meet)
      │ INVITE 8000 (autenticado por digest no perfil "internal")
      ▼
 FreeSWITCH — dialplan "delonix_ramais" → ramais_dial.lua
-     1) POST /api/voice/ivr/resolve-extension ("8000") ──► Control plane
+     1) POST /internal/v1/voice/ivr/resolve-extension ("8000") ──► Control plane
                                                         ◄── {"meeting_access": true}
      2) dialin_ivr.lua ramal → atende, pede o PIN
      3) POST /internal/v1/voice/ivr/validate-extension ──► Control plane

@@ -46,9 +46,13 @@ depois=$(conta)
 fs "curl http://delonix-server:8181/internal/v1/voice/ivr/validate post {}" | grep -q '"code":"unsupported_media_type"\|"code":"auth' &&
   ok "FreeSWITCH → servidor (listener interno): responde" ||
   avisa "FreeSWITCH → servidor (listener interno): NÃO responde"
-fs "curl http://delonix-server:8180/api/voice/ivr/dialplan-did post {}" | grep -q '"code":"auth' &&
-  ok "FreeSWITCH → servidor (listener público): responde e exige o segredo" ||
-  avisa "FreeSWITCH → servidor (listener público): NÃO responde"
+fs "curl http://delonix-server:8181/internal/v1/voice/ivr/dialplan-did post {}" | grep -q '"code":"auth' &&
+  ok "FreeSWITCH → servidor (ramais, listener interno): responde e exige o segredo" ||
+  avisa "FreeSWITCH → servidor (ramais, listener interno): NÃO responde"
+# R286: as rotas dos ramais saíram do listener público — lá têm de dar 404.
+fs "curl http://delonix-server:8180/api/voice/ivr/directory post {}" | grep -q '"code":"auth' &&
+  avisa "o directório dos ramais AINDA responde no listener público (/api/voice/ivr/directory)" ||
+  ok "o directório dos ramais não responde no listener público"
 # ---- a central da organização (ADR-0016) ----
 # O MESMO PBX, pelo seu outro tronco: por TLS, fora da allowlist (que só cobre
 # a porta 5060 de origem), autenticado com a conta SIP da organização.

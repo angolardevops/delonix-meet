@@ -130,7 +130,7 @@ chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em l
 Um ramal marca o **número de acesso às reuniões** (`VOICE_MEETING_ACCESS_NUMBER`, `8000`
 por omissão) e entra pela MESMA ponte. Não há ponte nem IVR novos:
 
-1. o `ramais_dial.lua` pergunta o número em `/api/voice/ivr/resolve-extension`; a resposta
+1. o `ramais_dial.lua` pergunta o número em `/internal/v1/voice/ivr/resolve-extension`; a resposta
    `{"meeting_access": true}` manda-o chamar `dialin_ivr.lua ramal`;
 2. o IVR, em modo `ramal`, lê `sip_auth_username`/`sip_auth_realm` (o que o digest
    autenticou — **nunca o `From`**) e valida o PIN em
