@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser, Recording } from '../api'
+import { Recording } from '../api'
+import { participanteLocal } from '../convidado'
 import { Icon } from '../ui/icons'
 import { Avatar, Button, IconButton, Tag, Toggle, cx } from '../ui/kit'
 import { BreakoutsCard } from './BreakoutsCard'
@@ -55,7 +56,8 @@ export function PeoplePanel({
   breakouts: Breakouts
   recordings: Recording[]
   onDownload: (r: Recording) => void
-  onInvite: () => void
+  /** Ausente para um convidado sem conta: convidar é pesquisar pessoas da organização, e ele não tem nenhuma. */
+  onInvite?: () => void
   /** «Mensagem privada»: abre o chat com o «Para» nessa pessoa. */
   onPrivateMessage?: (peer: RemotePeer) => void
   /** Destaque para todos (só anfitrião). */
@@ -64,7 +66,7 @@ export function PeoplePanel({
 }) {
   const { t, i18n } = useTranslation()
   const [search, setSearch] = useState('')
-  const me = currentUser()?.username ?? ''
+  const me = participanteLocal().username
   const q = search.trim().toLowerCase()
   const lista = peers.filter((p) => !q || p.username.toLowerCase().includes(q))
   const maos = peers.filter((p) => p.hand).length
@@ -72,9 +74,11 @@ export function PeoplePanel({
   return (
     <div className="rm-scroll">
       <div className="rm-block__row">
-        <Button size="sm" variant="primary" icon="userPlus" onClick={onInvite}>
-          {t('room.pessoas.convidar')}
-        </Button>
+        {onInvite && (
+          <Button size="sm" variant="primary" icon="userPlus" onClick={onInvite}>
+            {t('room.pessoas.convidar')}
+          </Button>
+        )}
         {isHost && (
           <Button size="sm" variant="outline" icon="micOff" onClick={() => participants.muteAll(true)}>
             {t('room.pessoas.silenciarTodos')}

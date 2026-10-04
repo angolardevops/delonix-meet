@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../i18n'
 import type { TFunction } from 'i18next'
-import { accessTokenValue, currentUser, saveMinutesByRoom, translateCaption } from '../api'
+import { accessTokenValue, saveMinutesByRoom, translateCaption } from '../api'
+import { participanteLocal } from '../convidado'
 import { Transcriber } from '../media'
 import type { RoomCore } from './useRoomCore'
 
@@ -34,7 +35,7 @@ export function useTranscription(core: RoomCore) {
   const { t, i18n } = useTranslation()
   const { signal, code, setStatus } = core
   const locale = intlLocale(i18n.language)
-  const me = currentUser()?.username ?? ''
+  const me = participanteLocal().username
 
   const [ccOn, setCcOn] = useState(false)
   const [caption, setCaption] = useState<{ who: string; text: string } | null>(null)

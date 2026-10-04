@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError, currentUser, iceServers, isAbort, joinRoom, postTimings } from '../api'
+import { ApiError, isAbort, postTimings } from '../api'
+import { entrarNaSala, participanteLocal } from '../convidado'
 import { audioConstraints, LevelWatcher, listDevices, videoConstraints } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Signaling } from '../signaling'
@@ -132,7 +133,7 @@ export function useCallSession(
         // interessa medir, não o do código.
         const tempos = new LinhaDoTempo()
         tempos.marcar('intencao')
-        const [{ room, room_token, scheduled }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
+        const [{ room, room_token, scheduled }, rtcConfig] = await entrarNaSala(code)
         if (cancelled) return
         tempos.marcar('token')
         core.roomTokenRef.current = room_token
@@ -141,7 +142,7 @@ export function useCallSession(
         setIsTraining(room.format === 'training')
         setIsInstant(scheduled === false) // só se o servidor o confirmar
         setWaitingRoomOn(room.waiting_room)
-        const amHost = room.owner_id === currentUser()?.id
+        const amHost = room.owner_id === participanteLocal().id
         core.setIsHost(amHost)
         setCanAdmit(amHost)
 

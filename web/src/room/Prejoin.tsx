@@ -1,7 +1,8 @@
 import { ReactNode, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../i18n'
-import { currentUser, type RecordQuality } from '../api'
+import { type RecordQuality } from '../api'
+import { participanteLocal } from '../convidado'
 import { DelonixSymbol, Icon } from '../ui/icons'
 import { Alert, AvatarStack, Button, Checkbox, cx } from '../ui/kit'
 import { metaCurta, metaLonga, videoMeta } from './mediaMeta'
@@ -75,7 +76,7 @@ export function Prejoin({
   onCancel: () => void
 }) {
   const { t, i18n } = useTranslation()
-  const me = currentUser()?.username ?? ''
+  const me = participanteLocal().username
   const { devices } = media
   const { info } = prejoin
   const [picker, setPicker] = useState(false)

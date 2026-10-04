@@ -178,7 +178,7 @@ Objectivo: passar um questionário de segurança e um RFP de banco, governo ou o
 
 | # | Item | Evidência | Prova | Tam. |
 |---|---|---|---|---|
-| E1 | **Ecrã de convidado sem conta**: link, nome, sala de espera, sala | `guestJoin` sem chamador; `App.tsx:128-137` | e2e sem conta, do link à sala, em menos de 60 s | M |
+| E1 | **Ecrã de convidado sem conta**: link, nome, sala de espera, sala — **FEITO a 2026-10-05 (R290)** | `web/src/pages/PortaDeConvidado.tsx`, `web/src/convidado.ts` | `web/e2e/convidado-ecra.mjs` no CI: do link à sala sem conta, com F5, saída e os dois controlos negativos | M |
 | E2 | Correio (D7): entrega dos convites, lembretes e alteração de hora | grep `smtp\|lettre` em `server/` = só um comentário (`directory.rs:479`) | convite recebido numa caixa de ensaio; SSRF do relay guardado | M |
 | E3 | Reposição de password (pela própria pessoa e pelo administrador) e política de password além do comprimento | únicos `UPDATE … password_hash`: `users.rs:140`, `auth.rs:731`, `odoo_sso.rs:879` | fluxo completo com token de uso único e auditoria | M |
 | E4 | SAML 2.0 (D6) | grep `saml` = 0 | entrada por um IdP de ensaio, com asserção assinada e a recusa da não assinada | G |

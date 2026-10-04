@@ -25,7 +25,7 @@
 >
 > | Onde | O que dizia | O que é verdade a 2026-10-04 |
 > |---|---|---|
-> | Alavanca 1, bloqueio 1 | «não há entrada anónima por link» | **meio feito**: a rota pública `guest-join` existe no servidor e `guestJoin` no cliente, mas nenhum ecrã a chama — quem não tem sessão vai para o Login. O bloqueio mantém-se até haver ecrã |
+> | Alavanca 1, bloqueio 1 | «não há entrada anónima por link» | **fechado a 2026-10-05 (R290)**: o link de uma sala, sem sessão, abre a entrada de convidado — um nome, sala de espera, o anfitrião admite. Medido no browser (`web/e2e/convidado-ecra.mjs`) |
 > | §3, bloqueio 6 | «o `client_secret` está em claro (S5)… as chaves de API não têm escopos nem expiração (S6)» | as duas fechadas (R160, R170/R171). SAML e SCIM continuam a não existir |
 > | §3, bloqueio 2 | «não existe SMTP» | continua verdade: o servidor não envia correio; os convites têm token e entrega manual |
 > | Alavanca 10 | «faltam chamadas de saída» | o servidor tem troncos, plano de marcação e CDR, mas a configuração distribuída não os liga (só a pasta de prova) |
