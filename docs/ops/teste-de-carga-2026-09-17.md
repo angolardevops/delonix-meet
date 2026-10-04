@@ -118,3 +118,52 @@ Com 40 pessoas colapsou (13–46% de perda).
 - **Intervalo UDP sobreposto:** até à reunião grande, o intervalo UDP do
   servidor (40000–49999) apanhava as portas de relay de um coturn local.
   Estes testes não usam TURN, mas o efeito não foi verificado.
+
+## Reavaliação dos defeitos do SFU — 2026-10-04
+
+Repetida contra a `main` em `b4ac7cc7` e contra a `develop` em `70ccd9bf`, na
+mesma máquina (Ryzen 9, servidor fixado a 16 threads, gerador nos outros 16,
+base e portas UDP dedicadas). Números de `server/examples/loadgen.rs` com
+`--no-simulcast`. **As corridas da `main` foram feitas com `RUST_LOG=info`; as
+da `develop` com o filtro por omissão** — a diferença conta (ver abaixo).
+
+| Configuração | Execuções | Fluxos de vídeo | Subscrições (pico) | Perda máx. por execução | Carga do host |
+|---|---|---|---|---|---|
+| `main`: 8 salas × 4, entradas a 40 ms | 1 | 96/96 | 192/192 | 0% | 4 |
+| `main`: 8 salas × 4, entradas a 0 ms | 3 | 96/96 | 192/192 | 0% | 4–5 |
+| `main`: 8 salas × 4, entradas a 10 ms | 3 | 96/96 | 192/192 | 0% | 8–10 |
+| `main`: 16 salas × 4, entradas a 10 ms | 3 | 192/192 | 384/384 | 0,09%, 0%, 9,3% | 15–27 |
+| `main`: 16 salas × 4, entradas a 0 ms | 3 | 192/192 | 384/384 | 39%, 0%, 0% | 18–28 |
+| `develop`: 8 salas × 4, entradas a 40 ms | 3 | 96/96 | 192/192 | 0% | 3–10 |
+| `develop`: 16 salas × 4, entradas a 10 ms | 2 | 192/192 | 384/384 | 0%, 0,16% | 15–19 |
+
+As perdas de 9,3% e 39% da `main` aconteceram com `RUST_LOG=info` e carga do
+host entre 18 e 28: com esse filtro o `webrtc_srtp` escreve ~8 milhões de linhas
+(`srtp … duplicated`, ~1 GB de log) no mesmo CPU, por isso **não medem o
+servidor** e não foram repetidas sem o filtro. Não correr cargas com
+`RUST_LOG=info`.
+
+- **Defeito 1 (troca de camada simulcast).** Corrigido no código (R156, com
+  `sfu_e2e` a percorrer f→h→f→q→f). **Não foi re-medido aqui**: estas corridas
+  foram sem simulcast.
+- **Defeito 2 (subscrições em falta em entradas quase simultâneas).** **Não
+  reproduz**: 13 execuções na `main` e 5 na `develop`, até 16 salas × 4 sem
+  intervalo de entrada, sempre com todas as subscrições. Não se sabe porquê:
+  pode ter sido corrigido entre 17/09 e 04/10, ou o original pode ter sido
+  efeito da carga de 75 que a máquina tinha na altura. Com esta máquina nunca
+  chegou a 75 durante as corridas (máx. 28), por isso **a condição original
+  não foi recriada**.
+- **Defeito 3 (sockets UDP presos, memória).** Corrigido no código (R158). Com
+  a `develop`, 25 s depois do fim: 0 PeerConnections, 0 presas
+  (`delonix_sfu_pc_unclosed`), 0 sockets UDP. **Confirmação fraca**: não se
+  provocou um colapso, que era a condição em que os 359 sockets ficaram presos.
+  RSS 828 MB 25 s depois da carga (1076 MB noutra corrida): retenção, não uma
+  fuga provada — não se esperou os ~30 min em que a corrida de 17/09 baixou.
+- **Avisos no log.** 221 linhas `create_offer failed: connection closed` e
+  `renegotiation timed out` durante as corridas da `develop`, sem efeito nos
+  fluxos nem nas subscrições. Não se verificou que só ocorrem quando um cliente
+  do gerador sai com uma renegociação pendente.
+
+**Continua sem prova:** capacidade com browsers reais, com TURN e com rede real;
+capacidade com simulcast; o limite de 4 CPU do pod (`deploy/k8s/02-server.yaml`)
+sob carga; e clientes noutra máquina.
