@@ -134,7 +134,7 @@ falhar isola-se (já verdade em `broadcast.rs`). Gravação: segmentos válidos 
 
 Nada do existente é removido. O directo RTMP actual fica como «modo rápido» atrás da sua rota;
 passa a exigir capacidade. Feature flag `TV_STUDIO_ENABLED` por org. Migrações aditivas.
-Imagem do servidor inalterada; **nova imagem** a imagem do Channel Engine (nome a fixar) com ffmpeg (decisão de licença D3).
+Imagem do servidor inalterada; **nova imagem** a imagem do Channel Engine (nome a fixar) com ffmpeg (D3: GPL, ver ADR-0015).
 
 ## 15. Alternativas e trade-offs
 
@@ -162,7 +162,7 @@ só passam a «cumpridas» com relatório reproduzível (cenário, ferramenta, a
 
 - **D1** Channel Engine: composição server-side (A) ou browser headless (B)? *(recomendo A; confirmada em 2026-10-04 — ver ADR-0015, Proposto)*
 - **D2** Origem HLS/ingest: componente externo (MediaMTX ou equivalente) ou módulo próprio? *(recomendo externo; confirmada em 2026-10-04; versão e licença verificadas, desempenho **não** — ver ADR-0015)*
-- **D3** Licenciamento do ffmpeg/x264 a empacotar (LGPL vs GPL) — implica decisão jurídica.
+- **D3** Licenciamento do ffmpeg/x264 a empacotar (LGPL vs GPL) — **decidida em 2026-10-04: GPL com libx264 no Channel Engine, sem `nonfree`; o servidor fica LGPL** (ver ADR-0015). A validação jurídica (distribuição, patentes) continua por fazer.
 - **D4** Nome `TvChannel` e prefixo `tv_` aceites?
 - **D5** Object storage (S3-compatível) como pré-requisito de F2, ou continuar PVC (RWO limita multi-nó)?
 - **D6** Abrir F0.5 já, em PRs separadas, antes de F1?

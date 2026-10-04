@@ -1,7 +1,7 @@
 # ADR-0015 — Channel Engine, ingestão e distribuição de TV
 
 **Estado:** Proposto · **Data:** 2026-10-04 · **Contexto:** [RFC-0001](../tv/rfc-0001-estudio-e-estacao-de-tv.md) §6–7, decisões D1 e D2.
-**Não é Aceite:** a D3 (licença do ffmpeg/x264) está por responder e a escolha do componente ainda não foi medida.
+**Não é Aceite:** a escolha do componente ainda não foi medida (ver o spike). A D3 (licença do ffmpeg/x264) foi **decidida em 2026-10-04: GPL, com libx264, no Channel Engine** — ver «Decisão D3» abaixo; falta a validação jurídica.
 
 ## Decisão proposta
 
@@ -39,10 +39,22 @@ Um erro apanhado nesta verificação: a ferramenta de leitura de páginas aprese
 
 Ver [docs/tv/spike-mediamtx-2026-10-04.md](../tv/spike-mediamtx-2026-10-04.md). Em resumo, na v1.21.0, numa máquina **partilhada e carregada**, com 60 s de amostra: SRT, RTMP e RTMPS autenticam por HTTP e recusam a chave errada; o atraso de **empacotamento** do LL-HLS foi p50 0,11 s / p95 0,21 s (**não é** a latência do espectador); a revogação exige **expulsar** pela API; a credencial viaja em *query*; a configuração por omissão expõe o ICE UDP e o MoQ em todas as interfaces. **Não** foram testados: WHIP, leitores reais, encoder real, ≥ 30 min, carga de espectadores. A decisão continua **Proposta**.
 
+## Decisão D3 — ffmpeg com GPL no Channel Engine (2026-10-04)
+
+**Decidido pelo dono do produto:** a imagem do **Channel Engine** usa ffmpeg compilado com `--enable-gpl` (libx264). A imagem do **servidor** é outra coisa e **mantém-se LGPL** (já entregue: `Dockerfile.server`, `scripts/check-ffmpeg-licenca.sh`, `docs/tv/b3-ffmpeg-lgpl-2026-10-04.md`).
+
+Regras que a decisão fixa:
+
+1. **GPL sim, `nonfree` não.** A build do Channel Engine leva `--enable-gpl` e **nunca** `--enable-nonfree` (nada de libfdk-aac: o AAC sai do encoder nativo). Um *gate* de CI para essa imagem deve falhar se `ffmpeg -version` mostrar `--enable-nonfree`, e a linha de `configure` fica registada no SBOM. **Esse gate ainda não existe**: o `check-ffmpeg-licenca.sh` actual só cobre o `Dockerfile.server` e recusa GPL de propósito.
+2. **Duas imagens, duas licenças, sem mistura.** O ffmpeg GPL só existe na imagem do Channel Engine; o `delonix-server` não o inclui nem o liga. O ffmpeg corre como **processo separado**, invocado por execução. A intenção é que o resto do Meet não passe a ser GPL por usar o binário. **É um juízo técnico, não um parecer jurídico** — a fronteira entre «agregação» e «obra derivada» é uma questão de facto a validar.
+3. **Distribuição.** Se a imagem do Channel Engine for **entregue a terceiros** (edição self-hosted ou on-premises; o README fala de «open core»), aplicam-se as obrigações da GPL: código-fonte correspondente do ffmpeg e do x264 **na mesma versão** (ou oferta escrita), texto da licença e atribuição (ffmpeg.org/legal.html). Se só for operada por nós como serviço, a imagem não é distribuída. **A confirmar com o jurídico qual é o caso de cada edição.**
+4. **Patentes são outra coisa.** A GPL é uma licença de direitos de autor e **não** concede licença de patentes de H.264/H.265. **Não foi verificado**; fica como decisão jurídica explícita antes de emitir comercialmente.
+5. **O que isto desbloqueia.** O encoder H.264 do Channel Engine. O B3 (ffmpeg em falta na imagem do servidor) **não** dependia disto e foi resolvido com uma build LGPL (#175, #179).
+
 ## Consequências
 
 - Mais um serviço a operar (imagem, saúde, métricas, actualizações de segurança), em troca de não implementar WHIP/RTMP/SRT/HLS.
-- O Channel Engine ainda precisa de ffmpeg (ou GStreamer) para compor: **a D3 continua a bloquear a imagem**. Enquanto a build for LGPL e sem libx264, a codificação H.264 teria de vir de outro encoder (por exemplo, por hardware); isso tem de ser medido, não suposto.
+- O Channel Engine precisa de ffmpeg para compor. Com a D3 decidida (GPL), o libx264 está disponível; as obrigações que isso traz estão em «Decisão D3».
 - O SFU actual não muda. O Meet continua a ser a sala interactiva; o canal é outro plano.
 
 ## Spike que fecha esta decisão (antes de passar a Aceite)
