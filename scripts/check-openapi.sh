@@ -64,6 +64,11 @@ EXCLUIDAS = {'/ws', '/rtc', '/api/rooms/{room_code}/live', '/health', '/ready', 
              # Telefonia máquina-a-máquina: o contrato é o do FreeSWITCH
              # (mod_json_cdr, mod_xml_curl), escrito no ADR-0009.
              '/internal/v1/telephony/call-records', '/internal/v1/telephony/freeswitch-config',
+             # A central de uma organização (ADR-0016): o IVR valida o PIN na
+             # organização que o bordo autenticou, e o bordo (Kamailio) pede o
+             # HA1 da conta SIP — máquina-a-máquina, no listener interno; a
+             # segunda responde texto, que é o que o `http_client` lê.
+             '/internal/v1/voice/ivr/validate-central', '/internal/v1/telephony/edge/sip-account',
              '/api/openapi.json', '/api/v1/openapi.json', '/api/operator/v1/openapi.json',
              '/api/integrations/openapi.json'}
 
