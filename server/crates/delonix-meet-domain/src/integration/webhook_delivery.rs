@@ -180,6 +180,37 @@ pub fn next_attempt(previous: i32) -> i32 {
     previous.saturating_add(1)
 }
 
+/// Tentativas automáticas por evento, a primeira incluída. Depois da última a
+/// entrega fica `failed` para sempre, e só um reenvio manual a volta a tentar.
+pub const MAX_AUTO_ATTEMPTS: i32 = 5;
+
+/// Espera, em segundos, depois de a tentativa `n` falhar (índice `n - 1`).
+/// Quatro esperas dão as cinco tentativas: 30 s, 2 min, 10 min, 1 h. Cobre um
+/// reinício do destino e um rollout de minutos, e para a seguir: um destino
+/// morto não deve receber martelo durante dias.
+pub const RETRY_DELAYS_SECS: [i64; 4] = [30, 120, 600, 3600];
+
+/// A falha merece nova tentativa? Só as que podem passar sozinhas: `408`,
+/// `425`, `429` e `5xx`. Um `4xx` é o destino a dizer que o pedido está errado
+/// (URL, autenticação, recurso removido) e repeti-lo só gasta tentativas; um
+/// `3xx` também — o cliente não segue redirecções, ver [`status_for_http`].
+pub fn is_retryable_http(code: u16) -> bool {
+    matches!(code, 408 | 425 | 429) || (500..600).contains(&code)
+}
+
+/// Quanto esperar antes de repetir, dado o número da tentativa que acabou de
+/// falhar. `None` = não repetir (esgotadas, ou número inválido). O espalhamento
+/// aleatório não é daqui: é do adaptador, para que um destino que volta não
+/// receba, no mesmo segundo, todos os eventos que falharam juntos.
+pub fn retry_delay_secs(failed_attempt: i32) -> Option<i64> {
+    if !(1..MAX_AUTO_ATTEMPTS).contains(&failed_attempt) {
+        return None;
+    }
+    RETRY_DELAYS_SECS
+        .get(usize::try_from(failed_attempt - 1).ok()?)
+        .copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +282,35 @@ mod tests {
         assert_eq!(e.code, "webhook_delivery.redelivery_rate_limited");
         assert_eq!(next_attempt(1), 2);
         assert_eq!(next_attempt(i32::MAX), i32::MAX);
+    }
+
+    #[test]
+    fn only_transient_http_failures_are_retried() {
+        for code in [408, 425, 429, 500, 502, 503, 504, 599] {
+            assert!(is_retryable_http(code), "{code}");
+        }
+        for code in [200, 204, 301, 302, 400, 401, 403, 404, 410, 422, 600] {
+            assert!(!is_retryable_http(code), "{code}");
+        }
+    }
+
+    #[test]
+    fn the_schedule_gives_exactly_the_attempts_it_promises() {
+        // As esperas e o tecto têm de andar juntos: uma espera a mais ou a
+        // menos desalinha-os em silêncio.
+        assert_eq!(RETRY_DELAYS_SECS.len() as i32, MAX_AUTO_ATTEMPTS - 1);
+        assert_eq!(retry_delay_secs(1), Some(30));
+        assert_eq!(retry_delay_secs(2), Some(120));
+        assert_eq!(retry_delay_secs(3), Some(600));
+        assert_eq!(retry_delay_secs(4), Some(3600));
+        assert_eq!(retry_delay_secs(MAX_AUTO_ATTEMPTS), None);
+        assert_eq!(retry_delay_secs(MAX_AUTO_ATTEMPTS + 7), None);
+        assert_eq!(retry_delay_secs(0), None);
+        assert_eq!(retry_delay_secs(-3), None);
+        assert_eq!(retry_delay_secs(i32::MAX), None);
+        assert!(
+            RETRY_DELAYS_SECS.windows(2).all(|w| w[0] < w[1]),
+            "o recuo tem de crescer"
+        );
     }
 }
