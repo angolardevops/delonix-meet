@@ -15,6 +15,10 @@
     <extension name="delonix_dialin">
       <!-- Aceita qualquer número destino (o DID concreto é resolvido no IVR). -->
       <condition field="destination_number" expression="^\+?\d{6,15}$">
+        <!-- O PIN marca-se por DTMF, e o FreeSWITCH escreve cada dígito recebido
+             no log ("RECV DTMF 3:1600"): quem lê o log reconstrói o PIN. Esta
+             variável cala essa linha para a chamada inteira (R227). -->
+        <action application="set" data="sensitive_dtmf=true"/>
         <action application="set" data="rtp_secure_media=mandatory"/>
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="lua" data="dialin_ivr.lua"/>

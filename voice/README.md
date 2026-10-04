@@ -59,7 +59,7 @@ escreveu-o no log do FreeSWITCH.
 
 ```bash
 make voice-secret-rotate        # troca-o no .env; não mostra o valor
-make compose-up                 # compose: recria o servidor e o FreeSWITCH com o valor novo
+make compose-down && make compose-up   # compose: o `up` sozinho NÃO recria contentores que já existem
 make cluster                    # cluster: reaplica o Secret delonix-voice e reinicia os dois
 make compose-voice-check        # o FreeSWITCH volta a falar com o servidor
 ```
@@ -72,7 +72,8 @@ No fim, apaga os logs antigos do FreeSWITCH que possam ter o valor anterior.
 O directório de logs do FreeSWITCH não leva o segredo: o arranque tira o nível DEBUG do
 log e manda a configuração expandida (`freeswitch.xml.fsxml`) para um directório privado
 ao lado da configuração. `DELONIX_FS_LOG_DEBUG=1` volta a ligar o DEBUG — e, com ele, o
-segredo e os PIN no log.
+segredo e os PIN no log. Os dígitos marcados (o PIN) também não: os dois planos de
+marcação põem `sensitive_dtmf=true`, sem o qual o FreeSWITCH escreve uma linha por tecla.
 
 ## Testar sem trunk (com softphone SIP)
 A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Zoiper):
