@@ -78,7 +78,8 @@ contexto de dialplan e por domínio SIP, não por processo.
 
 - **Medido:** o bordo é o Kamailio — `sanity`, `dispatcher` com sonda `OPTIONS` a cada
   15 s e `permissions` por lista de endereços (`voice/kamailio/kamailio.cfg:44-62`); só
-  aceita `INVITE` e `OPTIONS` (`:80`); escuta TLS em 5061 (`:39`). Não tem `usrloc`,
+  aceita `INVITE` e `OPTIONS` (`:80`); escuta TLS em 5061 **e também UDP e TCP em 5060**
+  (`:54-61`, re-medido a 2026-10-04 — não é «só TLS para fora»). Não tem `usrloc`,
   registrar nem `auth_db` (`:14-15`) — **não regista ninguém**, só encaminha.
 - **Medido (2026-10-04, R277) — o bordo escuta numa interface, nunca em `0.0.0.0`.** Com
   `listen=…:0.0.0.0:…` o Kamailio escrevia `0.0.0.0` no `Record-Route`: o `ACK` de quem

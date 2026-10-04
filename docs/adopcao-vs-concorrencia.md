@@ -21,6 +21,15 @@
 > | Bloqueio 11 | «o ramo de UI está afastado de `main`» | **resolvido**: a consola nova entrou nos #119/#120 e o Estúdio-TV no #129 |
 > | §0 | «`gap-sessao.md` diz que o chat nunca é gravado» | já estava corrigido no próprio texto; confirma-se — `room_chat.rs` faz o `INSERT` |
 >
+> **Re-medido a 2026-10-04 sobre a `develop`** (plano de lacunas de 2026-10-04 (`docs/plano-lacunas-2026-10-04.md`)):
+>
+> | Onde | O que dizia | O que é verdade a 2026-10-04 |
+> |---|---|---|
+> | Alavanca 1, bloqueio 1 | «não há entrada anónima por link» | **meio feito**: a rota pública `guest-join` existe no servidor e `guestJoin` no cliente, mas nenhum ecrã a chama — quem não tem sessão vai para o Login. O bloqueio mantém-se até haver ecrã |
+> | §3, bloqueio 6 | «o `client_secret` está em claro (S5)… as chaves de API não têm escopos nem expiração (S6)» | as duas fechadas (R160, R170/R171). SAML e SCIM continuam a não existir |
+> | §3, bloqueio 2 | «não existe SMTP» | continua verdade: o servidor não envia correio; os convites têm token e entrega manual |
+> | Alavanca 10 | «faltam chamadas de saída» | o servidor tem troncos, plano de marcação e CDR, mas a configuração distribuída não os liga (só a pasta de prova) |
+>
 > O resto — os segmentos, as dez alavancas, o plano a 90 dias e o «o que não está
 > validado» — **não foi reverificado**. Lê-o como uma análise datada, não como o estado
 > de hoje.
