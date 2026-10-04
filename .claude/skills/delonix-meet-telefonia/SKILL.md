@@ -147,6 +147,23 @@ censo — a ponte não recebe a identidade de quem liga.
 correu; `sip_auth_*` num INVITE do perfil `internal` e o `session:execute("lua", …)` de
 um script para o outro são pressupostos por confirmar contra um FreeSWITCH real.
 
+### O PIN do ramal, os ramais da empresa e a numeração automática (R276)
+
+Número do ramal, password SIP e PIN são **três coisas separadas** (decisão de 2026-10-04,
+item 3.8 do plano). O PIN (6 dígitos, só o hash, mostrado uma vez) vive em
+`server/src/extension_pin.rs`; as recusas e o sorteio em
+`crates/delonix-meet-domain/src/telephony/extension_pin.rs`. O PIN de um ramal de pessoa é
+dela (`/my-extension`); o administrador só o limpa. Um ramal sem pessoa (`member_id` nulo,
+etiqueta obrigatória) é da empresa, e o PIN dele é do administrador. Os números
+automáticos saem do intervalo da organização (`extension-range`, por omissão 1000–1999)
+com `POST …/extensions/assign-missing`.
+
+**Por fazer, e não o dês por feito:** nenhuma chamada usa o PIN — a verificação
+(`/internal/v1/voice/ivr/verify-extension-pin`, bloqueio à quinta falha, auditoria) não
+tem consumidor, e o `dialin_ivr.lua` não mudou. Faltam também o ramal automático quando
+um membro entra, o QR de provisionamento do Linphone e o travão a quem experimente o
+mesmo PIN em muitos ramais. A lista completa está na R276.
+
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
 Mandar e receber RTP cifrado com uma chave dada **por fora**, para um par UDP arbitrário,
@@ -169,6 +186,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
 | O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
+| O PIN do ramal, os ramais da empresa e a atribuição em massa | `cargo test --release --test ramal_pin` contra Postgres real (R276 — 7 casos) + `telephony::extension_pin::tests` |
 | Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe, com o `luac5.2`) |
 | Os `*.xml` e `*.xml.inc` do FreeSWITCH | `bash scripts/check-fs-xml.sh` (R226 — bem formado, sem directivas `X-PRE-PROCESS` em comentários, sem `$${AMBIENTE}`); o comportamento é do `scripts/softphone-prova.sh srtp-real`, fora do CI |
 | A imagem (`voice/freeswitch/image/`) | `make freeswitch-image` — build + prova de fumo; depois a R222 com `FS_IMAGE` |
