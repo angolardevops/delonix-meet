@@ -214,6 +214,9 @@ pub async fn create(
     let kind = rules::Kind::parse(&req.kind)?;
     let label = rules::validate_label(&req.label)?;
     let url = rules::validate_url(&req.url)?;
+    // Um destino é um sítio a que o `ffmpeg` do servidor vai LIGAR: um nome ou
+    // IP interno é SSRF, e diz-se logo ao gravar (RFC-0001, B2).
+    state.outbound.check_tenant_stream_config_url(&url).await?;
     let key = req.stream_key.as_deref().filter(|k| !k.is_empty());
     let id = Uuid::new_v4();
     let (sealed, prefix) = match key {
@@ -318,6 +321,9 @@ pub async fn update(
         .map(rules::validate_label)
         .transpose()?;
     let url = req.url.as_deref().map(rules::validate_url).transpose()?;
+    if let Some(u) = url.as_deref() {
+        state.outbound.check_tenant_stream_config_url(u).await?;
+    }
     if let Some(s) = &req.state {
         rules::validate_state(s)?;
     }

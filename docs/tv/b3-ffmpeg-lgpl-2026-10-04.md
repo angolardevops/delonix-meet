@@ -3,7 +3,7 @@
 Fecha o achado **B3** da auditoria de 2026-10-03 (`docs/tv/auditoria-2026-10-03.md`, só na `main` à data desta PR): a imagem do servidor era distroless e não tinha ffmpeg,
 por isso o directo e a gravação do servidor falhavam com `ffmpeg-ausente`. Decisão: **LGPL** na imagem do servidor
 (o servidor só usa `-c copy`, `aac` nativo, `libvpx-vp9` e `libopus`); a GPL com libx264 fica para o Channel Engine
-(decisão D3 do ADR do Channel Engine, ainda só na `main` como `0011-channel-engine-…`; **na `develop` o 0011 é outro ADR** — o do Channel Engine foi renumerado para 0015 e ainda não chegou aqui).
+(decisão D3 do [ADR-0015](../adr/0015-channel-engine-ingest-e-distribuicao-de-tv.md), o do Channel Engine — era o 0011 na `main` antiga; o 0011 é o das chaves de acesso).
 
 ## O que mudou
 

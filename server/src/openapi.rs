@@ -112,6 +112,8 @@ fn parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::users::ApiDoc::openapi(),
         crate::webhooks::ApiDoc::openapi(),
         crate::stream_destinations::ApiDoc::openapi(),
+        crate::tv_channels::ApiDoc::openapi(),
+        crate::tv_broadcasts::ApiDoc::openapi(),
         crate::broadcast::ApiDoc::openapi(),
         crate::studio::ApiDoc::openapi(),
         crate::studio_docs::ApiDoc::openapi(),
