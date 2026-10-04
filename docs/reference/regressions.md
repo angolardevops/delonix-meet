@@ -2629,3 +2629,17 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 - O `isolamento.mjs` não foi corrido (precisa de servidor e Postgres próprios). A 375 px o diálogo de Definições inteiro é mais largo que o ecrã e o cartão de Membros da consola transborda — os dois já eram assim e não foram tocados.
 
 **Ficheiros.** `server/migrations/0087_ramal_pin_e_ramais_da_empresa.sql`, `server/crates/delonix-meet-domain/src/telephony/extension_pin.rs`, `server/src/{extension_pin,ramais,voice,lib}.rs`, `server/tests/ramal_pin.rs`, `scripts/check-openapi.sh`, `docs/reference/openapi/*.json`, `web/e2e/isolamento.mjs`, `web/src/api.ts`, `web/src/pages/admin/ExtensionsCard.tsx`, `web/src/components/{MyExtensionPanel,PinOnce,SettingsDialog}.tsx`, `web/src/ui/{org,shell}.css`, `web/src/locales/*/{consola,shell}.ts`.
+
+### R277 — O bordo anunciava-se como `0.0.0.0`, e todas as chamadas por ele eram cortadas aos 32 segundos
+
+**Sintoma.** Uma chamada que entrava pelo Kamailio era atendida, o IVR falava, o PIN era aceite — e exactamente 32 s depois o FreeSWITCH desligava-a com `NORMAL_UNSPECIFIED`. Com qualquer origem: uma central FreePBX por tronco TLS e um softphone. Nunca se tinha visto porque a chamada de prova do `compose-voice-check` e do `cluster-voice` dura 4 s (`application Wait 4`), e as provas da ponte (R222) não passam pelo bordo.
+
+**Causa.** O `kamailio.cfg` escutava em `0.0.0.0` (`listen=udp:0.0.0.0:5060` e as outras duas) sem `advertise`. O Kamailio escrevia literalmente `Record-Route: <sip:0.0.0.0:5061;transport=tls;r2=on;lr>` — o endereço para onde quem liga tem de mandar o `ACK` e o `BYE`. O `ACK` não saía (o baresip diz `Invalid argument`), o FreeSWITCH repetia o `200 OK` e, sem confirmação, desligava ao fim do temporizador. Medido com o rasto SIP no FreeSWITCH: onze `200 OK` enviados, zero `ACK` recebidos.
+
+**Regra.** O bordo escuta numa **interface**, não em `0.0.0.0`: `listen=udp:DELONIX_SIP_IFACE:5060` (por omissão `eth0`, a de um contentor ou de um pod — confirmado no docker, no motor delonix e no cluster local), e o Kamailio anuncia o endereço dela. Um bordo atrás de NAT, ou com o endereço público noutro equipamento, dá-o em `DELONIX_SIP_ADVERTISE` (`listen=… advertise <endereço>:<porto>`). As duas variáveis lêem-se do ambiente com `#!trydefenv`; sem nenhuma, o ficheiro funciona tal como está.
+
+**Portão.** `scripts/check-bordo-anuncia.sh` (`make fitness` e CI): estático, recusa um `listen=` em `0.0.0.0`, `*` ou `[::]` sem `advertise`; controlo negativo corrido contra o ficheiro anterior (as três linhas, com o número). `bash scripts/pbx-tronco-prova.sh longa` — **fora do CI**: uma chamada de 40 s por TLS com SRTP; exige o endereço real no `Record-Route`, o `ACK` enviado e nenhum `NORMAL_UNSPECIFIED`.
+
+**Prova corrida a 2026-10-04**, numa réplica do bordo (`voice/pbx-tronco-prova/`). Antes: `Record-Route: <sip:0.0.0.0…>`, chamada cortada aos 32,08 s. Depois: `Record-Route: <sip:172.30.50.14:5061;transport=tls…>`, um `ACK`, chamada de 40 s e de 45 s até o softphone desligar. **Por medir:** o laboratório do `compose.yaml` e o cluster local com a correcção (correm o mesmo ficheiro, mas não foram reiniciados nesta entrega), e um bordo atrás de NAT com `DELONIX_SIP_ADVERTISE` — a variante só foi validada com `kamailio -c`, que mostra `advertise tls:203.0.113.9:5061`.
+
+**Ficheiros.** `voice/kamailio/kamailio.cfg`, `scripts/check-bordo-anuncia.sh`, `scripts/pbx-tronco-prova.sh` (modo `longa`), `Makefile` e `.github/workflows/ci.yml` (o portão).

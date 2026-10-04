@@ -156,6 +156,9 @@ jobs:
       - name: ffmpeg do servidor é LGPL, com versão e SHA-256 fixados (docs/tv/b3-ffmpeg-lgpl-2026-10-04.md)
         run: bash scripts/check-ffmpeg-licenca.sh
 
+      - name: O bordo SIP anuncia um endereço real (R277 — sem ele, todas as chamadas caem aos 32 s)
+        run: bash scripts/check-bordo-anuncia.sh
+
       - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
         run: bash scripts/check-k8s-render.sh
 
