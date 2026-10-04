@@ -20,6 +20,7 @@ mod directory;
 mod dlp;
 mod error;
 mod extension_pin;
+mod extension_provisioning;
 pub mod grpc;
 mod guests;
 mod media_probe;
@@ -182,6 +183,9 @@ pub struct AppState {
     pub telephony_call_limiter: RateLimiter,
     /// «Ver credenciais» SIP: só conta FALHAS de reautenticação, por conta.
     pub telephony_reveal_limiter: RateLimiter,
+    /// Resgate de bilhetes de provisionamento do Linphone, por IP (rota
+    /// pública, R278).
+    pub provisioning_limiter: RateLimiter,
     /// Portas da telefonia (FreeSWITCH ESL, Kamailio) montadas da configuração.
     pub telephony: telephony_service::Adapters,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
@@ -244,6 +248,13 @@ fn internal_routes() -> Router<Arc<AppState>> {
             "/internal/v1/voice/ivr/validate-extension",
             post(voice::ivr_validate_extension_pin),
         )
+        // O mesmo IVR, quando quem liga é a CENTRAL de uma organização: o bordo
+        // autenticou-a com a conta SIP dela, e a sala procura-se nessa
+        // organização (ADR-0016).
+        .route(
+            "/internal/v1/voice/ivr/validate-central",
+            post(voice::ivr_validate_central_pin),
+        )
         // O PIN de um RAMAL (R276): identifica a pessoa, não a sala. Ainda sem
         // consumidor — o Lua do IVR passa a chamá-la no lote seguinte.
         .route(
@@ -260,6 +271,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
         .route(
             "/internal/v1/telephony/freeswitch-config",
             post(telephony_fs_xml::handler),
+        )
+        // O bordo (Kamailio) pede o HA1 da conta SIP de uma organização para
+        // verificar o digest da central dela (ADR-0016).
+        .route(
+            "/internal/v1/telephony/edge/sip-account",
+            post(telephony_sip::edge_sip_account),
         )
 }
 
@@ -1042,6 +1059,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/my-extension/regenerate-pin",
             post(extension_pin::regenerate_my_pin),
         )
+        // QR de provisionamento do Linphone (R278): emite-se com sessão…
+        .route(
+            "/api/orgs/{org_id}/my-extension/provisioning-ticket",
+            post(extension_provisioning::issue_my_ticket),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/provisioning-ticket",
+            post(extension_provisioning::issue_extension_ticket),
+        )
+        // …e resgata-se sem ela: a credencial é o token de uso único.
+        .route(
+            "/api/public/extension-provisioning/{token}",
+            get(extension_provisioning::redeem),
+        )
         // API interna do FreeSWITCH para os ramais (mesmo segredo do dial-in PSTN;
         // fica no router público porque os configs `xml_curl.conf.xml`/
         // `ramais_dial.lua` já chamam este caminho, não `/internal/v1/*`).
@@ -1224,7 +1255,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     .get(REQUEST_ID_HEADER)
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
-                tracing::info_span!("http", method = %req.method(), path = %req.uri().path(), request_id)
+                // O caminho do resgate de um QR do Linphone leva o token (R278).
+                tracing::info_span!("http", method = %req.method(), path = %extension_provisioning::redact_path(req.uri().path()), request_id)
             },
         ))
         // Por DENTRO do request_id (o envelope leva o id) e por fora de tudo o
@@ -1419,6 +1451,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         telephony_call_limiter: RateLimiter::new(10, Duration::from_secs(600)),
         telephony_reveal_limiter: RateLimiter::new(5, Duration::from_secs(300)),
+        provisioning_limiter: RateLimiter::new(20, Duration::from_secs(60)),
         telephony: telephony_service::Adapters::from_config(&config, &outbound),
         outbound,
         compose_slots: Arc::new(tokio::sync::Semaphore::new(config.ffmpeg_max_concurrent)),

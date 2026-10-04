@@ -369,6 +369,9 @@ async fn resolve_org_user(
         }
     };
 
+    // Sem ramal automático (R278): quem cria esta pertença é uma chave de API a
+    // convidar um endereço — que pode nem existir —, não um administrador a
+    // decidir uma entrada.
     sqlx::query(
         "INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'member')
          ON CONFLICT (org_id, user_id) DO NOTHING",

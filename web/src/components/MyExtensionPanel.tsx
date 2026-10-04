@@ -8,6 +8,9 @@
  * gerado.
  *
  * O texto não promete o que não existe: neste lote nenhuma chamada pede o PIN.
+ *
+ * «Configurar o Linphone» (R278): a pessoa gera um QR de uso único para o seu
+ * ramal e o Linphone configura-se sem ninguém digitar a password SIP.
  */
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -18,11 +21,13 @@ import {
   ExtensionPinState,
   GeneratedPin,
   getMyExtension,
+  issueMyProvisioningTicket,
   MyExtension,
   myOrgs,
   regenerateMyExtensionPin,
   setMyExtensionPin,
 } from '../api'
+import LinphoneQrDialog from './LinphoneQrDialog'
 import PinOnce from './PinOnce'
 import { Alert, Button, Field, Spinner, StatusBadge, TextInput } from '../ui/kit'
 
@@ -122,6 +127,7 @@ function MyExtensionRow({ own, showOrg, onChanged }: { own: OwnExtension; showOr
   const [choosing, setChoosing] = useState(false)
   const [pin, setPin] = useState('')
   const [msg, setMsg] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null)
+  const [qr, setQr] = useState(false)
   const fieldId = `meu-pin-${own.orgId}`
 
   async function gerar() {
@@ -174,7 +180,19 @@ function MyExtensionRow({ own, showOrg, onChanged }: { own: OwnExtension; showOr
         <Button variant="secondary" size="sm" disabled={busy} onClick={() => setChoosing((v) => !v)} aria-expanded={choosing}>
           {t('shell.def.ramal.escolher')}
         </Button>
+        {extension.active && (
+          <Button variant="secondary" size="sm" icon="phone" disabled={busy} onClick={() => setQr(true)}>
+            {t('consola.ramais.qr.botao')}
+          </Button>
+        )}
       </div>
+      {qr && (
+        <LinphoneQrDialog
+          extension={extension.extension}
+          issue={() => issueMyProvisioningTicket(own.orgId)}
+          onClose={() => setQr(false)}
+        />
+      )}
       {generated && (
         <>
           <Alert tone="warning">{t('shell.def.ramal.revelado')}</Alert>

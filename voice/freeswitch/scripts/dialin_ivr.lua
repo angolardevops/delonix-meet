@@ -18,6 +18,19 @@
 --   O modo `ramal` NUNCA correu contra um FreeSWITCH real: só a sintaxe está
 --   verificada (scripts/check-lua-sintaxe.sh).
 --
+-- E UM TERCEIRO, que não se pede — reconhece-se (ADR-0016):
+--   central          a chamada traz `X-Delonix-Central: <domínio SIP>`. Quem o
+--                    escreve é o BORDO (Kamailio), depois de autenticar a
+--                    central de uma organização com a conta SIP dela; vindo de
+--                    fora, o bordo tira-o. A sala é a do PIN DENTRO DESSA
+--                    ORGANIZAÇÃO (/internal/v1/voice/ivr/validate-central), o
+--                    número marcado não conta, e não há CDR (não é PSTN).
+--                    O cabeçalho só vale se a chamada veio de um endereço da
+--                    lista `delonix_bordo` (DELONIX_EDGE_CIDRS no arranque):
+--                    de qualquer outro lado é uma chamada a fazer-se passar
+--                    pelo bordo, e desliga-se. Quem liga fica anónimo: a
+--                    conta é da central, não de uma pessoa.
+--
 -- QUEM LIGA, IDENTIFICADO (R279):
 --   modo `ramal`     o aparelho já está autenticado: NÃO se pede PIN pessoal.
 --                    O control plane resolve o ramal → pessoa e devolve, nas
@@ -173,12 +186,31 @@ if modo_ramal then
   end
 end
 
+-- Modo `central`: o bordo autenticou a central de uma organização e disse-o no
+-- cabeçalho. Só o bordo o pode dizer.
+local central = ""
+if not modo_ramal then
+  central = session:getVariable("sip_h_X-Delonix-Central") or ""
+  if central ~= "" then
+    local origem = session:getVariable("sip_network_ip") or ""
+    local do_bordo = origem:match("^[%x%.:]+$") ~= nil
+      and (api:executeString("acl " .. origem .. " delonix_bordo") or ""):gsub("%s+$", "") == "true"
+    if not do_bordo or not central:match("^[%w%.%-]+$") then
+      freeswitch.consoleLog("warning", string.format(
+        "[delonix ivr] X-Delonix-Central de %s, que nao e o bordo — a rejeitar\n", origem))
+      session:hangup("CALL_REJECTED")
+      return
+    end
+  end
+end
+local modo_central = (central ~= "")
+
 session:answer()
 session:setVariable("rtp_secure_media", "mandatory") -- não recusa esta perna, já negociada: isso é da global (R226)
 session:sleep(300)
 
 local did = ""
-if not modo_ramal then
+if not modo_ramal and not modo_central then
   did = limpa(session:getVariable("sip_to_user") or session:getVariable("destination_number"))
   -- Normaliza para +E.164 (o DID chega tipicamente sem '+').
   if did ~= "" and did:sub(1, 1) ~= "+" then did = "+" .. did end
@@ -202,6 +234,9 @@ for try = 1, MAX_TRIES do
       local body = string.format('{"sip_username":"%s","domain":"%s","pin":"%s"}',
         ramal_user, ramal_domain, pin)
       resp = http_post("/internal/v1/voice/ivr/validate-extension", body)
+    elseif modo_central then
+      local body = string.format('{"domain":"%s","pin":"%s"}', central, pin)
+      resp = http_post("/internal/v1/voice/ivr/validate-central", body)
     else
       local body = string.format('{"did_e164":"%s","pin":"%s"}', did, pin)
       resp = http_post("/internal/v1/voice/ivr/validate", body)
@@ -289,6 +324,9 @@ if room_bridge then
   -- aqui, por isso tiram-se também aqui. NUNCA correu numa chamada.
   session:execute("unset", "sip_h_X-Delonix-Caller-Ticket")
   session:execute("unset", "sip_h_X-Delonix-Call-Id")
+  -- O que o bordo disse sobre ESTA perna (ADR-0016) já foi lido lá em cima, e
+  -- também não segue para a ponte.
+  session:execute("unset", "sip_h_X-Delonix-Central")
   -- As variáveis do backend vão no PREFIXO `[...]` da dial string, não por
   -- `session:setVariable`: essas ficariam na perna A (o chamador), e o que
   -- precisa delas é a perna B. É o `rtp_secure_media=mandatory:<perfil>` que
@@ -328,7 +366,7 @@ end
 -- Pós-chamada: envia o CDR ao control plane (duração em segundos).
 local duration = os.time() - started
 local caller = limpa(session:getVariable("caller_id_number"))
-if not modo_ramal and voice_room_id and #voice_room_id > 0 then
+if not modo_ramal and not modo_central and voice_room_id and #voice_room_id > 0 then
   local cdr = string.format(
     '{"voice_room_id":"%s","caller_number":"%s","did_e164":"%s","duration_secs":%d}',
     voice_room_id, caller, did, duration)
