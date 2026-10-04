@@ -51,7 +51,10 @@ async fn auditoria(app: &TestApp, org: &str, action: &str) -> Vec<(String, Strin
 
 async fn role_id(app: &TestApp, admin: &Account, key: &str) -> String {
     let (_, page) = app
-        .get(&format!("/api/orgs/{}/roles", admin.org()), Some(&admin.token))
+        .get(
+            &format!("/api/orgs/{}/roles", admin.org()),
+            Some(&admin.token),
+        )
         .await;
     page["items"]
         .as_array()
@@ -71,7 +74,10 @@ async fn desligada_por_omissao_ligada_da_ramal_a_quem_o_admin_junta(db: sqlx::Pg
 
     // Nasce desligada: a leitura di-lo, e quem entra não recebe ramal.
     let (st, range) = app
-        .get(&format!("/api/orgs/{}/extension-range", a.org()), Some(&a.token))
+        .get(
+            &format!("/api/orgs/{}/extension-range", a.org()),
+            Some(&a.token),
+        )
         .await;
     assert_eq!(st, 200, "{range}");
     assert_eq!(range["auto_assign_on_join"], false);
@@ -92,11 +98,20 @@ async fn desligada_por_omissao_ligada_da_ramal_a_quem_o_admin_junta(db: sqlx::Pg
     // Ligada: quem entra recebe o primeiro número livre, sem PIN.
     definir(&app, &a, 2000, 2010, true).await;
     let ana = app.add_member(&a, "ana", "member").await;
-    assert_eq!(ramal_de(&app, a.org(), &ana.user_id).await.as_deref(), Some("2000"));
+    assert_eq!(
+        ramal_de(&app, a.org(), &ana.user_id).await.as_deref(),
+        Some("2000")
+    );
     let rui = app.add_member(&a, "rui", "admin").await;
-    assert_eq!(ramal_de(&app, a.org(), &rui.user_id).await.as_deref(), Some("2001"));
+    assert_eq!(
+        ramal_de(&app, a.org(), &rui.user_id).await.as_deref(),
+        Some("2001")
+    );
     let (st, meu) = app
-        .get(&format!("/api/orgs/{}/my-extension", a.org()), Some(&ana.token))
+        .get(
+            &format!("/api/orgs/{}/my-extension", a.org()),
+            Some(&ana.token),
+        )
         .await;
     assert_eq!(st, 200, "{meu}");
     assert_eq!(meu["extension"], "2000");
@@ -115,11 +130,12 @@ async fn desligada_por_omissao_ligada_da_ramal_a_quem_o_admin_junta(db: sqlx::Pg
         )
         .await;
     assert_eq!(st, 200);
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_extensions WHERE org_id = $1::uuid")
-        .bind(a.org())
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM voice_extensions WHERE org_id = $1::uuid")
+            .bind(a.org())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
     assert_eq!(n, 2);
 
     // Fica na auditoria, com o actor de sistema.
@@ -156,7 +172,10 @@ async fn intervalo_esgotado_nao_parte_a_entrada(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{body}");
 
     let um = app.add_member(&a, "um", "member").await;
-    assert_eq!(ramal_de(&app, a.org(), &um.user_id).await.as_deref(), Some("3001"));
+    assert_eq!(
+        ramal_de(&app, a.org(), &um.user_id).await.as_deref(),
+        Some("3001")
+    );
 
     // Esgotado: a pessoa ENTRA (o `add_member` exige 200 e faz login), sem ramal.
     let dois = app.add_member(&a, "dois", "member").await;
@@ -211,7 +230,10 @@ async fn convite_aceite_da_ramal_e_convidado_externo_nao(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200, "{ok}");
-    assert_eq!(ramal_de(&app, a.org(), &ex.user_id).await.as_deref(), Some("4000"));
+    assert_eq!(
+        ramal_de(&app, a.org(), &ex.user_id).await.as_deref(),
+        Some("4000")
+    );
 
     // Um convidado externo (conta de outra organização) entra e NÃO recebe ramal.
     let fora = app.new_org("gama-convite.ao").await;
@@ -232,9 +254,11 @@ async fn convite_aceite_da_ramal_e_convidado_externo_nao(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "{ok}");
     assert_eq!(ramal_de(&app, a.org(), &fora.user_id).await, None);
-    assert!(auditoria(&app, a.org(), "ramal.atribuicao_automatica_falhou")
-        .await
-        .is_empty());
+    assert!(
+        auditoria(&app, a.org(), "ramal.atribuicao_automatica_falhou")
+            .await
+            .is_empty()
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
