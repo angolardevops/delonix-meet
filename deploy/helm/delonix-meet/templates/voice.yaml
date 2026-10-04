@@ -115,10 +115,10 @@ spec:
           # copia-a, fecha o que ela deixa aberto e põe por cima a do Meet.
           command: ["/bin/sh", "/entrypoint/freeswitch-entrypoint.sh"]
           env:
-            # Dois endereços, dois listeners: o IVR fala com o INTERNO, os
-            # ramais (mod_xml_curl) pedem /api/voice/ivr/* ao PÚBLICO.
+            # Um só endereço: o IVR, o directório e o dialplan dos ramais
+            # (mod_xml_curl) e o ramais_dial.lua falam todos com o listener
+            # INTERNO (/internal/v1/voice/ivr/*, R286).
             - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.{{ $ns }}.svc.cluster.local:8181" }
-            - { name: DELONIX_API_URL, value: "http://delonix-server.{{ $ns }}.svc.cluster.local:8180" }
             - { name: DELONIX_RAMAIS_SIP_PORT, value: {{ $vo.freeswitch.ramaisSipPort | quote }} }
             - name: VOICE_INTERNAL_SECRET
               valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: VOICE_INTERNAL_SECRET } }

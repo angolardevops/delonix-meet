@@ -262,6 +262,25 @@ fn internal_routes() -> Router<Arc<AppState>> {
             post(extension_pin::ivr_verify_extension_pin),
         )
         .route("/internal/v1/voice/ivr/cdr", post(voice::ivr_record_cdr))
+        // Os ramais, vistos pelo FreeSWITCH: o directório (que devolve o HA1
+        // do digest SIP), a resolução de um número marcado e o dialplan por
+        // DID. Estiveram no router PÚBLICO como `/api/voice/ivr/*` — a
+        // superfície que devolve credenciais SIP a quem tiver o segredo de
+        // voz ficava atrás do ingress. Passam para aqui com o resto da
+        // máquina (R286); o `xml_curl.conf.xml` e o `ramais_dial.lua` mudam
+        // no mesmo commit.
+        .route(
+            "/internal/v1/voice/ivr/directory",
+            post(ramais::ivr_directory),
+        )
+        .route(
+            "/internal/v1/voice/ivr/resolve-extension",
+            post(ramais::ivr_resolve_extension),
+        )
+        .route(
+            "/internal/v1/voice/ivr/dialplan-did",
+            post(ramais::ivr_dialplan_did),
+        )
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
         // `mod_xml_curl`. Mesmo segredo interno do IVR.
         .route(
@@ -1076,18 +1095,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/public/extension-provisioning/{token}",
             get(extension_provisioning::redeem),
-        )
-        // API interna do FreeSWITCH para os ramais (mesmo segredo do dial-in PSTN;
-        // fica no router público porque os configs `xml_curl.conf.xml`/
-        // `ramais_dial.lua` já chamam este caminho, não `/internal/v1/*`).
-        .route("/api/voice/ivr/directory", post(ramais::ivr_directory))
-        .route(
-            "/api/voice/ivr/resolve-extension",
-            post(ramais::ivr_resolve_extension),
-        )
-        .route(
-            "/api/voice/ivr/dialplan-did",
-            post(ramais::ivr_dialplan_did),
         )
         // Telefonia, SIP e SMS (ADR-0009): consola da org (sessão, admin).
         .route(

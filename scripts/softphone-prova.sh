@@ -436,7 +436,7 @@ srtp_arranque() {
   # servidor trocados por loopback. Numa rede sem saída o FreeSWITCH fica em
   # 127.0.0.1, e por isso a lista de acesso dos ramais é a de loopback.
   docker create --name "${TAG}-fs" --network "${TAG}-net" --ip "$ip" \
-    -e DELONIX_CONTROL_URL=http://127.0.0.1:8181 -e DELONIX_API_URL=http://127.0.0.1:8180 \
+    -e DELONIX_CONTROL_URL=http://127.0.0.1:8181 \
     -e DELONIX_RAMAIS_SIP_PORT="$PORTO_RAMAIS" -e VOICE_INTERNAL_SECRET="$segredo" -e DELONIX_RAMAIS_ACL=127.0.0.0/8 \
     --entrypoint sh "$IMG_FS" /entrypoint/freeswitch-entrypoint.sh >/dev/null
   docker cp "$d/meet" "${TAG}-fs:/meet" >/dev/null
@@ -590,7 +590,7 @@ sai(bool(linhas) and not no_url,
     "nenhum dos %d pedidos ao servidor leva o segredo no URL" % len(linhas) if linhas and not no_url
     else "%d dos %d pedidos ao servidor levam o segredo no URL" % (len(no_url), len(linhas)))
 
-b = pedido("/api/voice/ivr/directory")
+b = pedido("/internal/v1/voice/ivr/directory")
 m = b and re.search(r"(?mi)^Authorization: Basic (\S+)$", b)
 certo = False
 if m:
@@ -601,7 +601,7 @@ if m:
 sai(certo, "directório (mod_xml_curl): o segredo vai em Authorization: Basic" if certo
     else "directório (mod_xml_curl): o pedido não leva o segredo em Authorization: Basic")
 
-for caminho, quem, corpo in (("/api/voice/ivr/resolve-extension", "ramais_dial.lua", None),
+for caminho, quem, corpo in (("/internal/v1/voice/ivr/resolve-extension", "ramais_dial.lua", None),
                              ("/internal/v1/voice/ivr/validate", "dialin_ivr.lua", pin)):
     b = pedido(caminho)
     if b is None:

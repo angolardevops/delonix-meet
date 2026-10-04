@@ -163,7 +163,6 @@ services:
     env_file: [.env] # VOICE_INTERNAL_SECRET
     environment:
       DELONIX_CONTROL_URL: http://delonix-server:8181
-      DELONIX_API_URL: http://delonix-server:8180
       DELONIX_RAMAIS_SIP_PORT: "5070"
     volumes:
       - ./voice/cluster/freeswitch-entrypoint.sh:/entrypoint/freeswitch-entrypoint.sh:ro

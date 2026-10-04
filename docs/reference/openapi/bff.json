@@ -12128,6 +12128,13 @@
       },
       "UpdateMeReq": {
         "properties": {
+          "current_password": {
+            "description": "A password ACTUAL. Obrigatória com `password`, a não ser que esta\nsessão se tenha reautenticado há menos de 5 minutos\n(`POST /api/users/me/reauthentication`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "locale": {
             "type": [
               "string",
@@ -35920,6 +35927,7 @@
         ]
       },
       "patch": {
+        "description": "Mudar a password pede prova de identidade — a password actual no mesmo\npedido, ou uma reautenticação recente desta sessão — e termina todas as\nOUTRAS sessões da conta. Sem isto, um access token roubado trocava a\npassword e ficava com a conta, e as sessões de quem a tinha roubado\nsobreviviam à troca feita pelo dono.",
         "operationId": "update_me",
         "requestBody": {
           "content": {
@@ -35960,7 +35968,17 @@
                 }
               }
             },
-            "description": ""
+            "description": "Sessão inválida, ou `current_password` não confere (`reauthentication.failed`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Mudança de password sem `current_password` e sem reautenticação recente (`auth.reauthentication_required`)."
           },
           "409": {
             "content": {
@@ -35971,6 +35989,16 @@
               }
             },
             "description": "Password de uma conta gerida pelo Odoo (`profile.field_managed_by_odoo`)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Cinco provas de identidade erradas em 5 minutos."
           }
         },
         "security": [

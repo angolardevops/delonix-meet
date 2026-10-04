@@ -469,7 +469,18 @@ metallb-kind: ## Instala MetalLB no kind e cria pool com IPs da rede docker kind
 #  KUBERNETES STAGE & PROD
 # ============================================================
 .PHONY: stage
-stage: image-push ## Build + kind load + deploy k8s completo no cluster kind local
+# O Service do Postgres visto de dentro do cluster, para o DATABASE_URL do
+# Secret que scripts/k8s-app-secrets.sh monta a partir do .env.
+STAGE_DB_HOST ?= delonix-postgres-postgresql.delonix-meet.svc.cluster.local
+# O `make prod` é LEGADO e não foi validado num cluster (plano de lacunas, O1):
+# este host é o que o 01-config.yaml antigo apontava, mantido tal e qual.
+PROD_DB_HOST  ?= $(STAGE_DB_HOST)
+
+.PHONY: env-file
+env-file:
+	@[ -f .env ] || { printf "$(Y)  ✗ falta o .env com os segredos — corre «make bootstrap»$(Z)\n"; exit 1; }
+
+stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster kind local
 	@printf "$(C)▶ Criando cluster '$(KIND_CLUSTER)' (idempotente)...$(Z)\n"
 	@$(CLUSTER_CREATE) --name $(KIND_CLUSTER) 2>/dev/null || true
 	@printf "$(C)▶ Instalando NGINX Ingress Controller...$(Z)\n"
@@ -497,12 +508,17 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	@# postgresql-repmgr) removeu as imagens do Docker Hub em 2024; o chart
 	@# simples continua acessível via registry-1.docker.io. Para prod usa-se
 	@# postgresql-ha (make prod) com acesso ao OCI registry da Bitnami.
-	@helm upgrade --install delonix-postgres bitnami/postgresql \
-	  -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet
+	@# A password da base vem do .env (make bootstrap), nunca de um ficheiro
+	@# de valores versionado.
+	@set -a; . ./.env; set +a; \
+	  helm upgrade --install delonix-postgres bitnami/postgresql \
+	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet \
+	    --set auth.password="$$POSTGRES_PASSWORD" --set auth.postgresPassword="$$POSTGRES_PASSWORD"
 	@helm upgrade --install delonix-redis bitnami/redis \
 	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet
 	@printf "$(C)▶ Aplicação Delonix (config + server + web + ingress + coturn)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
+	@bash scripts/k8s-app-secrets.sh $(STAGE_DB_HOST)
 	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
@@ -543,7 +559,7 @@ voice-secret-k8s: ## Cria o Secret delonix-voice (VOICE_INTERNAL_SECRET aleatór
 	fi
 
 .PHONY: prod
-prod: ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
+prod: env-file ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@printf "$(C)▶ Provisionando Cluster K8s Bare-Metal via Ansible...$(Z)\n"
 	@ansible-playbook -i deploy/ansible/inventory.ini deploy/ansible/playbook.yml
 	@printf "$(C)▶ Instalando cert-manager (Let's Encrypt)...$(Z)\n"
@@ -554,12 +570,15 @@ prod: ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@kubectl apply -f deploy/k8s/00-namespace.yaml
 	@helm repo add bitnami https://charts.bitnami.com/bitnami
 	@helm repo update
-	@helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n delonix-meet
+	@set -a; . ./.env; set +a; \
+	  helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n delonix-meet \
+	    --set auth.password="$$POSTGRES_PASSWORD" --set auth.replicationPassword="$$POSTGRES_REPLICATION_PASSWORD"
 	@helm upgrade --install delonix-redis bitnami/redis -f deploy/k8s/helm-values/redis-values.yaml -n delonix-meet
 	@printf "$(C)▶ Compilando e gerando Docker Image (Distroless Security)...$(Z)\n"
 	@docker build -t delonix-meet-server:latest -f Dockerfile.server .
 	@printf "$(C)▶ Fazendo deploy da Aplicação com Domínio $(DOMAIN)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
+	@bash scripts/k8s-app-secrets.sh $(PROD_DB_HOST)
 	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
@@ -713,12 +732,14 @@ compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do
 # 127.0.0.1 — que é o que se quer por omissão.
 compose-up: ## Simulação de produção (compose.yaml); LAN_IP=<ip> expõe os ramais à rede local
 	@[ -f .env ] && [ -f deploy/compose/generated/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou deploy/compose/generated/ — corre «make bootstrap»$(Z)\n"; exit 1; }
+	@grep -qE '^DATA_ENCRYPTION_KEYS=.+' .env || { printf "$(Y)  ✗ o .env não tem DATA_ENCRYPTION_KEYS (o servidor já não arranca sem ela) — corre «make bootstrap»: acrescenta-a sem mexer no resto$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "delonix-server" || { printf "$(Y)  ✗ faltam as imagens — corre «make build»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "pbx-cliente" || { printf "$(Y)  ✗ faltam as imagens de voz — corre «make voice-images»$(Z)\n"; exit 1; }
 	@printf "$(C)▶ $(COMPOSE) up (simulação de produção)$(Z)\n"
 	@if [ -n "$(LAN_IP)" ]; then \
 	  LAN_IP=$(LAN_IP) bash scripts/compose-lan.sh > deploy/compose/generated/lan.yaml && \
 	  printf "   ramais expostos na rede local em $(Y)$(LAN_IP):5070$(Z) (áudio em 20000–20100/udp)\n" && \
+	  printf "   borda na rede local em $(Y)https://$(LAN_IP):8443$(Z); raiz de laboratório para o telemóvel: $(Y)http://$(LAN_IP):8080/lab-ca.crt$(Z)\n" && \
 	  $(COMPOSE) up $(COMPOSE_P) -f $(ROOT)/deploy/compose/generated/lan.yaml -d; \
 	else \
 	  $(COMPOSE) up $(COMPOSE_P) -d; \

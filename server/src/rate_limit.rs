@@ -114,22 +114,44 @@ impl TokenBucket {
     }
 }
 
-/// IP real do cliente. Só confia em `X-Forwarded-For` quando o peer é um proxy
-/// local/privado (o Nginx); caso contrário usa o IP da ligação. Impede que um
-/// atacante direto forje o XFF para escapar ao rate-limit.
-pub fn client_ip(headers: &HeaderMap, peer: IpAddr) -> String {
+/// IP real do cliente.
+///
+/// Só olha para o `X-Forwarded-For` quando o peer é um proxy local/privado (o
+/// Nginx, o ingress); numa ligação directa usa o IP da ligação.
+///
+/// E lê-o **da direita**. Os proxies deste produto ACRESCENTAM
+/// (`$proxy_add_x_forwarded_for`): o que o cliente mandou fica à esquerda, e o
+/// endereço que o proxy viu fica à direita. Ler o primeiro valor — como isto
+/// fazia — era ler o que o cliente escreveu: um pedido com
+/// `X-Forwarded-For: 1.2.3.4` ganhava um balde novo no limite por IP a cada
+/// valor inventado. O valor certo é o que o proxy de fora escreveu, ou seja, o
+/// `hops`-ésimo a contar do fim (`TRUSTED_PROXY_HOPS`, 1 por omissão: um proxy
+/// entre o cliente e o servidor, que é o que o compose, o chart e os
+/// manifestos montam).
+///
+/// Com MENOS entradas do que `hops` o pedido não atravessou todos os proxies
+/// (alguém de dentro da rede a falar directamente com o servidor): usa-se a
+/// mais à esquerda que houver. Um valor que não seja um endereço IP não serve
+/// de chave: cai para o IP da ligação.
+pub fn client_ip(headers: &HeaderMap, peer: IpAddr, hops: usize) -> String {
     let peer_is_proxy = peer.is_loopback()
         || matches!(peer, IpAddr::V4(v4) if v4.is_private())
         || matches!(peer, IpAddr::V6(v6) if v6.is_loopback());
     if peer_is_proxy {
-        if let Some(first) = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.split(',').next())
+        let entries: Vec<&str> = headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|s| s.split(','))
             .map(str::trim)
             .filter(|s| !s.is_empty())
-        {
-            return first.to_string();
+            .collect();
+        let chosen = entries
+            .len()
+            .checked_sub(hops.max(1))
+            .map_or(entries.first(), |i| entries.get(i));
+        if let Some(ip) = chosen.and_then(|s| s.parse::<IpAddr>().ok()) {
+            return ip.to_string();
         }
     }
     peer.to_string()
@@ -151,7 +173,11 @@ pub async fn auth_rate_limit(
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let ip = client_ip(request.headers(), addr.ip());
+    let ip = client_ip(
+        request.headers(),
+        addr.ip(),
+        state.config.trusted_proxy_hops,
+    );
     if !state.auth_limiter.check(&ip) {
         return Err(ApiError::TooManyRequests);
     }
@@ -193,7 +219,11 @@ pub async fn v1_rate_limit(
     mut request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let ip = client_ip(request.headers(), addr.ip());
+    let ip = client_ip(
+        request.headers(),
+        addr.ip(),
+        state.config.trusted_proxy_hops,
+    );
     let lookup = lookup_key(&state, request.headers()).await?;
     if let Err(retry_in) = state.v1_limiter.acquire(&v1_bucket(&lookup, &ip)) {
         return Ok(too_many(retry_in));
@@ -212,7 +242,11 @@ pub async fn ip_rate_limit(
     request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let ip = client_ip(request.headers(), addr.ip());
+    let ip = client_ip(
+        request.headers(),
+        addr.ip(),
+        state.config.trusted_proxy_hops,
+    );
     if let Err(retry_in) = state.v1_limiter.acquire(&ip) {
         return Ok(too_many(retry_in));
     }
@@ -357,16 +391,61 @@ mod tests {
         );
     }
 
+    fn xff(values: &[&str]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for v in values {
+            h.append("x-forwarded-for", v.parse().unwrap());
+        }
+        h
+    }
+
     #[test]
     fn xff_trusted_only_from_proxy() {
-        let mut h = HeaderMap::new();
-        h.insert("x-forwarded-for", "203.0.113.9, 10.0.0.1".parse().unwrap());
-        // peer é o proxy (loopback) → confia no primeiro XFF
-        assert_eq!(client_ip(&h, "127.0.0.1".parse().unwrap()), "203.0.113.9");
+        let h = xff(&["203.0.113.9"]);
+        let proxy: IpAddr = "127.0.0.1".parse().unwrap();
+        // peer é o proxy (loopback) → o valor que ELE escreveu
+        assert_eq!(client_ip(&h, proxy, 1), "203.0.113.9");
         // peer é público (ligação direta) → ignora XFF, usa o peer
         assert_eq!(
-            client_ip(&h, "198.51.100.7".parse().unwrap()),
+            client_ip(&h, "198.51.100.7".parse().unwrap(), 1),
             "198.51.100.7"
         );
+    }
+
+    /// O cliente manda um `X-Forwarded-For` seu e o proxy ACRESCENTA o endereço
+    /// que viu. O valor forjado fica à esquerda e não pode ser a chave do
+    /// limite — era, e bastava mudá-lo a cada pedido para nunca ser travado.
+    #[test]
+    fn a_forged_xff_does_not_choose_the_rate_limit_key() {
+        let proxy: IpAddr = "10.0.0.7".parse().unwrap();
+        for forged in ["1.2.3.4", "10.9.9.9", "8.8.8.8, 9.9.9.9"] {
+            let h = xff(&[&format!("{forged}, 203.0.113.9")]);
+            assert_eq!(client_ip(&h, proxy, 1), "203.0.113.9", "forjado: {forged}");
+        }
+        // O mesmo com o cabeçalho repetido em vez de separado por vírgulas.
+        assert_eq!(
+            client_ip(&xff(&["1.2.3.4", "203.0.113.9"]), proxy, 1),
+            "203.0.113.9"
+        );
+    }
+
+    #[test]
+    fn hops_count_from_the_right() {
+        let proxy: IpAddr = "10.0.0.7".parse().unwrap();
+        // Dois proxies de confiança: cliente, depois o endereço do primeiro.
+        let h = xff(&["6.6.6.6, 203.0.113.9, 10.0.0.1"]);
+        assert_eq!(client_ip(&h, proxy, 2), "203.0.113.9");
+        assert_eq!(client_ip(&h, proxy, 1), "10.0.0.1");
+        // Menos entradas do que saltos: a mais à esquerda que houver.
+        assert_eq!(client_ip(&xff(&["203.0.113.9"]), proxy, 2), "203.0.113.9");
+        // `hops = 0` não existe: trata-se como 1, nunca como «o peer».
+        assert_eq!(client_ip(&h, proxy, 0), "10.0.0.1");
+    }
+
+    #[test]
+    fn a_value_that_is_not_an_address_is_never_the_key() {
+        let proxy: IpAddr = "127.0.0.1".parse().unwrap();
+        assert_eq!(client_ip(&xff(&["nao-e-um-ip"]), proxy, 1), "127.0.0.1");
+        assert_eq!(client_ip(&HeaderMap::new(), proxy, 1), "127.0.0.1");
     }
 }

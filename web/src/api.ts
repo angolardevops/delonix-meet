@@ -415,7 +415,7 @@ export async function loginMfa(mfa_token: string, code: string): Promise<User> {
   return t.user
 }
 
-export async function updateMe(data: { username?: string; password?: string; locale?: string }): Promise<User> {
+export async function updateMe(data: { username?: string; password?: string; current_password?: string; locale?: string }): Promise<User> {
   const user = await request<User>('/api/users/me', { method: 'PATCH', body: JSON.stringify(data) })
   localStorage.setItem('dx_user', JSON.stringify(user))
   return user

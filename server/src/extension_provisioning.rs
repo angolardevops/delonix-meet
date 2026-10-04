@@ -286,7 +286,7 @@ pub async fn redeem(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Response, ApiError> {
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     state
         .provisioning_limiter
         .acquire(&ip)
@@ -367,7 +367,12 @@ pub async fn redeem(
     };
 
     let sip_domain = crate::ramais::sip_domain_of_slug(&state, &ext.org_slug);
-    let ha1 = secret.ha1(&ext.sip_username, &sip_domain);
+    // Cifrado em repouso, como em todos os sítios que escrevem o HA1 (R286).
+    let ha1 = crate::ramais::seal_ha1(
+        &state,
+        ticket.extension_id,
+        &secret.ha1(&ext.sip_username, &sip_domain),
+    )?;
     sqlx::query(
         "UPDATE voice_extensions SET sip_password_hash = $3, sip_ha1 = $4
           WHERE id = $1 AND org_id = $2",

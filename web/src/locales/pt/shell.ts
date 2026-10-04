@@ -60,6 +60,8 @@ export default {
     passwordDica: 'Deixa em branco para manter a actual.',
     confirmarPassword: 'Confirmar palavra-passe',
     passwordsDiferentes: 'As palavras-passe não coincidem.',
+    passwordActual: 'Palavra-passe actual',
+    passwordActualDica: 'Confirma que és tu. Ao mudar, as outras sessões desta conta terminam.',
     guardado: 'Alterações guardadas.',
     tema: 'Tema',
     claro: 'Claro',

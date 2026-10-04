@@ -126,6 +126,7 @@ openssl rand -hex 24   # → password do Postgres
 |---|---|
 | `DATABASE_URL` | `postgres://delonix:<password>@localhost:5435/delonix_meet` |
 | `JWT_SECRET` | ≥ 32 bytes. **Trocá-la invalida todas as sessões.** |
+| `DATA_ENCRYPTION_KEYS` | Chaves que cifram os segredos guardados na base (segredos de integração, chaves de emissão, credenciais de tronco). `kid:base64` de 32 bytes: `echo "k1:$(openssl rand -base64 32)"`; várias separadas por vírgula para rodar (a primeira cifra, todas decifram). **Sem ela o servidor não arranca** (desde 2026-10-04, R285; antes arrancava e cada escrita de um segredo dava `422`). Perdê-la é perder todos os segredos que cifrou — guarda-se FORA da base e nunca se regenera. |
 | `TURN_HOST` | `turn.meet.example.com:3478` — host **alcançável pelos clientes** |
 | `TURN_SECRET` | ≥ 16 bytes, **idêntico** ao `--static-auth-secret` do coturn |
 
@@ -149,7 +150,7 @@ openssl rand -hex 24   # → password do Postgres
 | `PLATFORM_ADMIN_USER_IDS` | UUIDs (separados por vírgula) dos administradores da PLATAFORMA — os únicos que leem e alteram o armazenamento das gravações (`/api/operator/v1/storage*`). Vazio = ninguém (fail-closed). UUID e não email, porque o registo não verifica emails. Obter com `SELECT id FROM users WHERE email = '…'` depois de a conta existir. Um valor que não seja UUID impede o arranque |
 | `PLATFORM_ODOO_URL` / `PLATFORM_ODOO_DB` | Login com conta Odoo ([§7](#7-integração-odoo)). Vazias = desligado |
 | `OUTBOUND_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF para URLs escritos por clientes (webhooks, `odoo_url` da organização, emissor OIDC), por nome exacto — nunca redes. Necessário para um Odoo ou IdP on-prem em rede privada. O host de `PLATFORM_ODOO_URL` entra sozinho. Os destinos do operador (WebDAV, `OLLAMA_URL`) não precisam: alcançam a rede privada, só os metadados da cloud (link-local) ficam recusados |
-| `SECRETS_KEY` | Chave AES-256 (32 bytes em base64 ou hex; `openssl rand -base64 32`) que cifra os segredos guardados na base — hoje as chaves de emissão dos destinos de directo por organização. Ausente = `POST /api/orgs/{id}/stream-destinations` responde `503` com a razão; inválida = o servidor não arranca. Guardar FORA da base e dos backups dela: quem tem a base e não tem a chave não lê nada, e quem perde a chave tem de reintroduzir os destinos. Sem rotação por agora |
+| `TRUSTED_PROXY_HOPS` | Quantos proxies de confiança há entre o cliente e o servidor (default `1`, de 1 a 8). Diz qual entrada do `X-Forwarded-For` é o endereço do cliente: a n-ésima a contar do fim, que é a que o proxy de fora escreveu — o que está à esquerda veio do cliente e pode ser forjado. `1` serve o compose, o chart e os manifestos deste repo (ingress ou Nginx directamente à frente do servidor). Só se sobe quando há um segundo proxy que ACRESCENTA ao cabeçalho (por exemplo um balanceador L7 à frente do ingress). Errar para menos faz todos os clientes partilharem o limite por IP; errar para mais devolve a escolha da chave ao cliente |
 | `WEBHOOK_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF dos webhooks, por nome exacto. Necessário para um Odoo on-prem em rede privada |
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |
 | `OLLAMA_MODEL_SUMMARY` / `OLLAMA_MODEL_TRANSLATE` | modelos (ex. `qwen2.5:7b` / `qwen2.5:1.5b`) |
@@ -295,6 +296,36 @@ kubectl -n delonix-meet patch secret delonix-secrets --type=json \
 make voice-secret-k8s                                   # cria o delonix-voice novo
 kubectl -n delonix-meet rollout restart deploy/delonix-server
 ```
+
+**Os segredos da aplicação (`delonix-secrets`) também saíram do repositório
+(2026-10-04, R284).** O `JWT_SECRET`, o `TURN_SECRET`, o `PROVISIONING_SECRET` e a
+password do Postgres estiveram escritos em `deploy/k8s/01-config.yaml` e em
+`deploy/k8s/helm-values/`, num repositório público. Estão queimados: com o
+`JWT_SECRET` assina-se a sessão de qualquer conta. O servidor **recusa arrancar**
+com os três primeiros e avisa no arranque se o `DATABASE_URL` trouxer a password
+publicada.
+
+O Secret passa a nascer do `.env` desta máquina (`make bootstrap` gera-o, aleatório),
+por `scripts/k8s-app-secrets.sh` — é o que o `make stage`, o `make prod` e o
+`make cluster` correm. Quem aplica os manifestos à mão cria-o antes:
+
+```bash
+make bootstrap                                   # .env com segredos novos (idempotente)
+bash scripts/k8s-app-secrets.sh <host-do-postgres-no-cluster>
+```
+
+**Um cluster instalado com o `01-config.yaml` antigo tem de ser rodado**, e isto não
+é opcional — a imagem nova não arranca com os valores antigos:
+
+1. `make bootstrap` (se a máquina ainda não tem `.env`) e
+   `bash scripts/k8s-app-secrets.sh <host>`: o `JWT_SECRET` novo **desliga todas as
+   sessões**, que é o que se quer depois de uma chave publicada.
+2. O coturn lê o `TURN_SECRET` do mesmo Secret:
+   `kubectl -n delonix-meet rollout restart deploy/delonix-coturn deploy/delonix-server`.
+3. A password do Postgres **não muda sozinha**: o chart da Bitnami só a define quando
+   cria o volume. Num cluster de ensaio, apaga-se o volume e reinstala-se; num
+   cluster com dados, `ALTER USER delonix PASSWORD '…'` com a do `.env`, e só depois
+   o passo 1. Enquanto a base tiver a password publicada, o servidor avisa no arranque.
 
 Pontos que exigem atenção: `FORCE_TURN_RELAY=1`, o Service dedicado para `/ws`
 com afinidade por sala ([§4](#4-a-rede-de-media-a-parte-que-mais-falha)), e

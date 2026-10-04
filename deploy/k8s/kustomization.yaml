@@ -11,7 +11,7 @@ kind: Kustomization
 #  base de dados via helm — ver os targets `stage`/`prod` do Makefile.)
 resources:
   - 00-namespace.yaml
-  - 01-config.yaml # ConfigMap + Secret (stage). Prod: usar gestor de segredos.
+  - 01-config.yaml # só o ConfigMap. O Secret delonix-secrets cria-se ANTES: scripts/k8s-app-secrets.sh
   - 02-server.yaml # Deployment + Services (/api + /ws dedicado) + PDB
   - 03-web.yaml
   - 04-ingress.yaml # /api,/rtc + /ws (upstream-hash-by:$arg_room — afinidade R3)
