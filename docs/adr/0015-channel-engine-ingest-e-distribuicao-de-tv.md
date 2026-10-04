@@ -51,6 +51,23 @@ Regras que a decisão fixa:
 4. **Patentes são outra coisa.** A GPL é uma licença de direitos de autor e **não** concede licença de patentes de H.264/H.265. **Não foi verificado**; fica como decisão jurídica explícita antes de emitir comercialmente.
 5. **O que isto desbloqueia.** O encoder H.264 do Channel Engine. O B3 (ffmpeg em falta na imagem do servidor) **não** dependia disto e foi resolvido com uma build LGPL (#175, #179).
 
+## Relação com as `live_sessions` (decidido em 2026-10-04)
+
+**Decisão do dono do produto: um canal tem várias `live_sessions`.** Duas tabelas existem na `develop` com nomes parecidos e responsabilidades diferentes; a decisão fixa-lhes a fronteira em vez de as fundir:
+
+| Tabela | Papel | Quem escreve |
+|---|---|---|
+| `tv_broadcast_sessions` (0089) | **Plano de controlo**: a *intenção* («pôr no ar», «parar») e o *lease* do executor (`executor_id`, `fencing_token`) | o servidor de controlo (intenção); o executor com o lease válido (estado) |
+| `live_sessions` (0074) | **Registo observado** de uma emissão: o estado de cada destino e o registo minuto a minuto (ADR-0013) | o executor |
+
+- **Um canal → muitas `live_sessions`** ao longo do tempo (histórico), mas **uma só em curso** por canal: índice parcial único. É a regra que a 0074 já tem para as salas.
+- A migração 0092 faz as três mudanças que isto exige: `live_sessions.room_id` passa a nulo (uma emissão em playout não tem sala), ganha `channel_id`, e um `CHECK` exige sala **ou** canal.
+- A `tv_broadcast_sessions` ganha `live_session_id`: quando o executor arranca a emissão, cria a `live_session` e liga-a. Um pedido pode nunca chegar a ter `live_session` (falhou antes de arrancar); uma `live_session` nasce sempre de um executor.
+- Apagar um canal apaga o seu histórico (`CASCADE`); o handler recusa apagar um canal com emissão em curso, em qualquer das duas tabelas.
+- **O executor reutiliza a máquina de estados por destino** (`live_output`, ADR-0013) em vez de a refazer.
+
+**Em aberto, de propósito:** (a) `live_sessions.started_by` é `NOT NULL`; uma emissão agendada sem pessoa por trás (playout) precisa de um actor de sistema, que não existe — decide-se com o agendador; (b) **nenhum código usa ainda a `live_sessions`** (só a migração e a máquina de estados no domínio): esta decisão é de esquema e não prova que o supervisor a escreva como aqui se descreve.
+
 ## Consequências
 
 - Mais um serviço a operar (imagem, saúde, métricas, actualizações de segurança), em troca de não implementar WHIP/RTMP/SRT/HLS.
