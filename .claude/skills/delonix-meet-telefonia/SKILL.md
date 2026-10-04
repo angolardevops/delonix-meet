@@ -160,10 +160,35 @@ com `POST …/extensions/assign-missing`.
 
 **Por fazer, e não o dês por feito:** nenhuma chamada usa o PIN — a verificação
 (`/internal/v1/voice/ivr/verify-extension-pin`, bloqueio à quinta falha, auditoria) não
-tem consumidor, e o `dialin_ivr.lua` não mudou. Faltam também o ramal automático quando
-um membro entra, o QR de provisionamento do Linphone e o travão a quem experimente o
+tem consumidor, e o `dialin_ivr.lua` não mudou. Falta também o travão a quem experimente o
 mesmo PIN em muitos ramais. O lote do IVR **não liga a verificação** sem travão por origem e bloqueio de duração
 crescente, e o Lua dá uma só recusa a quem liga. A lista completa está na R276.
+
+### O Linphone por QR e o ramal automático a quem entra (R278)
+
+**A password SIP não se digita.** `server/src/extension_provisioning.rs` emite um bilhete de
+uso único (256 bits, só o SHA-256 em `voice_extension_provisioning_tickets`, 10 minutos, um
+vivo por ramal) — a pessoa para o seu ramal (`POST …/my-extension/provisioning-ticket`), o
+administrador para qualquer um da organização (`POST …/extensions/{id}/provisioning-ticket`).
+O URL sai da primeira origem de `CORS_ORIGINS`, só se for `https` e pública; sem ela ou sem
+`VOICE_RAMAIS_PUBLIC_HOST` a emissão é `422`. O resgate é a rota PÚBLICA
+`GET /api/public/extension-provisioning/{token}`: gasta o bilhete num só `UPDATE`, gera uma
+password SIP **nova** (`ramais::new_sip_secret`, o mesmo helper da regeneração) e devolve o
+`lpconfig` do Linphone (regras e XML em
+`crates/delonix-meet-domain/src/telephony/extension_provisioning.rs`). Toda a recusa é o
+mesmo `404 ramais.provisioning_invalid`; o token não entra na auditoria nem no span HTTP.
+**Ler o QR troca a password: o aparelho antigo deixa de registar.**
+
+**Quem entra recebe ramal** se a organização tiver `auto_assign_on_join` ligado (desligado por
+omissão; vive na linha e na rota do `extension-range`). O ÚNICO ponto é
+`ramais::assign_on_join`, chamado depois do commit de cada caminho que cria uma pertença;
+nunca devolve erro — intervalo esgotado fica na auditoria e o membro entra sem ramal. Recebe
+quem ocupa lugar (`org::seat_holder_username`): convidados externos e o utilizador de serviço
+não. Um caminho novo que insira em `org_members` **chama esta função**, não copia a regra.
+
+**Por medir, e não o dês por feito:** nenhum Linphone leu um destes QR, e o formato do XML não
+foi verificado contra um aparelho real; o diálogo não foi visto num browser. A lista completa
+está na R278.
 
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
@@ -188,6 +213,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
 | O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
 | O PIN do ramal, os ramais da empresa e a atribuição em massa | `cargo test --release --test ramal_pin` contra Postgres real (R276 — 9 casos, dois de concorrência) + `telephony::extension_pin::tests` |
+| O QR de provisionamento do Linphone e o ramal automático a quem entra | `cargo test --release --test ramal_provisionamento --test ramal_ao_entrar` contra Postgres real (R278 — 5 + 4 casos, um de concorrência) + `telephony::extension_provisioning::tests` |
 | Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe, com o `luac5.2`) |
 | Os `*.xml` e `*.xml.inc` do FreeSWITCH | `bash scripts/check-fs-xml.sh` (R226 — bem formado, sem directivas `X-PRE-PROCESS` em comentários, sem `$${AMBIENTE}`); o comportamento é do `scripts/softphone-prova.sh srtp-real`, fora do CI |
 | A imagem (`voice/freeswitch/image/`) | `make freeswitch-image` — build + prova de fumo; depois a R222 com `FS_IMAGE` |

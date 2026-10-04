@@ -160,6 +160,36 @@ real. Tudo o resto (modelo de dados, API REST de gestão, geração/regeneraçã
 de credenciais, UI de administração) foi corrido e verificado contra um
 Postgres real neste repositório.
 
+### Configurar o Linphone por QR (R278)
+
+Ninguém digita a password SIP. Na consola (cada ramal activo) e em Definições →
+Segurança → «O meu ramal» há **«Configurar o Linphone»**: o servidor emite um
+bilhete de uso único (10 minutos) e a consola mostra-o num QR. No Linphone:
+Assistente → Configuração remota → ler o QR. O aparelho descarrega de
+`https://<origem pública>/api/public/extension-provisioning/<bilhete>` um XML
+`lpconfig` com a conta (utilizador, domínio/realm, o proxy público
+`sip:host:porta;transport=…` como registo e rota, e SRTP obrigatório).
+
+- **Ler o QR troca a password SIP do ramal.** O aparelho que estava registado
+  com a anterior deixa de registar. O bilhete serve uma vez; um segundo pedido
+  ao mesmo URL recebe `404`.
+- **Precisa de duas coisas da instalação:** `VOICE_RAMAIS_PUBLIC_HOST` (onde o
+  aparelho regista) e a primeira origem de `CORS_ORIGINS` em `https` e pública
+  (de onde descarrega). Sem uma delas a emissão é recusada com `422` — o
+  servidor não emite um QR que não leva a lado nenhum.
+- O diálogo «Credenciais SIP» (regenerar a password e copiar os quatro dados)
+  continua a existir como caminho de recurso, para softphones que não lêem QR.
+- **Não validado:** nenhum Linphone real leu um destes QR, e o formato do XML
+  não foi verificado contra um aparelho. No laboratório do compose o certificado
+  é auto-assinado e o nome é `meet.ngolacloud.local`: um telemóvel só o
+  descarrega se resolver esse nome e confiar no certificado.
+
+**Ramal automático a quem entra.** Com «Atribuir ramal automaticamente a quem
+entra» ligado na consola (ao lado do intervalo; desligado por omissão), cada
+pessoa que entra na organização recebe o primeiro número livre do intervalo.
+Convidados externos não recebem. Se o intervalo se esgotar, a pessoa entra sem
+ramal e fica um registo na auditoria.
+
 ## Ramal alcançável do PSTN — DID dedicado (Fase 2, `server/src/ramais.rs`)
 
 Estende o fluxo acima: um ramal pode receber um DID (migração
