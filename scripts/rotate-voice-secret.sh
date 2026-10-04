@@ -35,7 +35,7 @@ cat <<EOF
   ✓ VOICE_INTERNAL_SECRET trocado em $ENVF (64 hex; o valor não é mostrado)
 
   Falta pô-lo a valer — o servidor e o FreeSWITCH têm de reiniciar com ele:
-    compose:  make compose-up              (recria os contentores que leem o .env)
+    compose:  make compose-down && make compose-up   (o «up» sozinho não recria os que já existem)
     cluster:  make cluster                 (reaplica o Secret delonix-voice e reinicia a voz e o servidor)
     Helm:     o Secret é teu (secrets.existingSecret): troca-lhe a chave
               VOICE_INTERNAL_SECRET e reinicia o servidor e o FreeSWITCH.
