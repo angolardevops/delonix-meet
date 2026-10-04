@@ -131,9 +131,15 @@ if sonda "http://delonix-server-internal.${NS}.svc.cluster.local:8181/internal/v
 else
   avisa "FreeSWITCH → servidor (listener interno): NÃO responde"
 fi
-if sonda "http://delonix-server.${NS}.svc.cluster.local:8180/api/voice/ivr/dialplan-did" | grep -q '"code":"auth'; then
-  ok "FreeSWITCH → servidor (listener público, /api/voice/ivr/*): responde e exige o segredo"
+if sonda "http://delonix-server-internal.${NS}.svc.cluster.local:8181/internal/v1/voice/ivr/dialplan-did" | grep -q '"code":"auth'; then
+  ok "FreeSWITCH → servidor (ramais, listener interno): responde e exige o segredo"
 else
-  avisa "FreeSWITCH → servidor (listener público): NÃO responde"
+  avisa "FreeSWITCH → servidor (ramais, listener interno): NÃO responde"
+fi
+# R286: as rotas dos ramais saíram do listener público — lá têm de dar 404.
+if sonda "http://delonix-server.${NS}.svc.cluster.local:8180/api/voice/ivr/directory" | grep -q '"code":"auth'; then
+  avisa "o directório dos ramais AINDA responde no listener público (/api/voice/ivr/directory)"
+else
+  ok "o directório dos ramais não responde no listener público"
 fi
 avisa "por provar aqui: o telefone a entrar na sala WebRTC — com PIN certo entra na conferência local do FreeSWITCH, porque a ponte para o SFU não está ligada neste ambiente"

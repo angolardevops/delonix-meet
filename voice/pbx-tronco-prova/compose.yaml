@@ -51,6 +51,7 @@ services:
       REDIS_URL: redis://172.30.50.11:6379
       JWT_SECRET: ${JWT_SECRET:?}
       TURN_SECRET: ${TURN_SECRET:?}
+      DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS:?}
       PROVISIONING_SECRET: ${PROVISIONING_SECRET:?}
       VOICE_INTERNAL_SECRET: ${VOICE_INTERNAL_SECRET:?}
       BIND_ADDR: 0.0.0.0:8180
@@ -80,7 +81,6 @@ services:
     environment:
       VOICE_INTERNAL_SECRET: ${VOICE_INTERNAL_SECRET:?}
       DELONIX_CONTROL_URL: http://172.30.50.12:8181
-      DELONIX_API_URL: http://172.30.50.12:8180
       DELONIX_RAMAIS_SIP_PORT: "5070"
       # Só o bordo pode dizer «esta chamada é da central de X».
       DELONIX_EDGE_CIDRS: 172.30.50.14/32
