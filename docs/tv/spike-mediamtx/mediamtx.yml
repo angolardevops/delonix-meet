@@ -1,0 +1,23 @@
+logLevel: info
+api: yes
+apiAddress: 127.0.0.1:9997
+metrics: yes
+metricsAddress: 127.0.0.1:9998
+rtsp: no
+webrtc: yes
+webrtcAddress: 127.0.0.1:8889
+hls: yes
+hlsAddress: 127.0.0.1:8888
+hlsVariant: lowLatency
+rtmp: yes
+rtmpAddress: 127.0.0.1:1935
+srt: yes
+srtAddress: 127.0.0.1:8890
+authMethod: http
+authHTTPAddress: http://127.0.0.1:9099/auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+paths:
+  all_others:

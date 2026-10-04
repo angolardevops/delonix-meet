@@ -31,9 +31,13 @@ Um erro apanhado nesta verificação: a ferramenta de leitura de páginas aprese
 
 - Latência p95 do LL-HLS no MediaMTX, nem o custo de CPU por canal, nem o número de espectadores por origem.
 - Compatibilidade com encoders reais (OBS, vMix, câmaras SRT) e com os browsers/telemóveis-alvo.
-- O contrato da autenticação HTTP e se permite revogação com efeito imediato em sessões já abertas (CA-09 fala de *nova* publicação; uma sessão a decorrer é outro caso).
+- ~~O contrato da autenticação HTTP e a revogação em sessões abertas~~ — **medido no [spike local](../tv/spike-mediamtx-2026-10-04.md)**: a autenticação corre só ao ligar; uma sessão aberta sobrevive à rotação da chave e só se corta expulsando-a pela API de controlo.
 - Como o Channel Engine entrega o sinal composto ao MediaMTX e como se recupera se qualquer um deles reinicia.
 - Alternativas não avaliadas ao mesmo nível: GStreamer/ffmpeg directos como origem HLS, nginx-rtmp, SRS. A escolha só passa a «Aceite» depois do *spike* abaixo.
+
+## Resultados do spike local (parcial)
+
+Ver [docs/tv/spike-mediamtx-2026-10-04.md](../tv/spike-mediamtx-2026-10-04.md). Em resumo, na v1.21.0, numa máquina **partilhada e carregada**, com 60 s de amostra: SRT, RTMP e RTMPS autenticam por HTTP e recusam a chave errada; o atraso de **empacotamento** do LL-HLS foi p50 0,11 s / p95 0,21 s (**não é** a latência do espectador); a revogação exige **expulsar** pela API; a credencial viaja em *query*; a configuração por omissão expõe o ICE UDP e o MoQ em todas as interfaces. **Não** foram testados: WHIP, leitores reais, encoder real, ≥ 30 min, carga de espectadores. A decisão continua **Proposta**.
 
 ## Consequências
 
