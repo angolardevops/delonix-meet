@@ -1,6 +1,6 @@
 /**
- * Definições pessoais: conta, aparência (tema e língua), segurança (MFA) e
- * marca (nome da aplicação e fundo do ecrã de entrada, guardados neste
+ * Definições pessoais: conta, aparência (tema e língua), segurança (MFA,
+ * sessões e o PIN do ramal da pessoa) e marca (nome da aplicação e fundo do ecrã de entrada, guardados neste
  * browser).
  */
 import { FormEvent, useState } from 'react'
@@ -12,6 +12,7 @@ import { currentLang, intlLocale, Lang, LANG_NAMES, LANGS, serverLocale, setLang
 import { applyTheme, storedTheme, Theme } from '../theme'
 import { Alert, Avatar, Button, Dialog, Field, Segmented, Tabs, TextInput, Toggle } from '../ui/kit'
 import MfaPanel from './MfaPanel'
+import MyExtensionPanel from './MyExtensionPanel'
 import SessionsPanel from './SessionsPanel'
 
 export type SettingsTab = 'account' | 'appearance' | 'security' | 'brand'
@@ -85,6 +86,7 @@ export default function SettingsDialog({
                 <h3 className="dx-eyebrow" style={{ margin: '8px 0' }}>{t('shell.def.sessoesActivas')}</h3>
                 <SessionsPanel />
               </div>
+              <MyExtensionPanel />
             </div>
           )}
           {tab === 'brand' && <Marca />}

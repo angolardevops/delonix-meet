@@ -5,6 +5,8 @@
 //!
 //! - [`extension`] — a forma de um número curto de ramal e o número reservado
 //!   de acesso às reuniões;
+//! - [`extension_pin`] — o PIN de seis dígitos de um ramal (o que se recusa,
+//!   como se sorteia sem enviesamento) e o intervalo de numeração automática;
 //! - [`number`] — normalizar o número marcado e mascará-lo para listas;
 //! - [`dial_plan`] — padrões, validação do plano e resolução «a primeira regra
 //!   que casar vale», com o invariante de EMERGÊNCIA (nunca gravada, nunca
@@ -22,6 +24,7 @@
 pub mod cost;
 pub mod dial_plan;
 pub mod extension;
+pub mod extension_pin;
 pub mod money;
 pub mod number;
 pub mod ports;

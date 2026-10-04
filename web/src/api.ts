@@ -2004,17 +2004,22 @@ export interface SipServer {
   uri: string
 }
 
+/** Estado do PIN de um ramal. O VALOR nunca sai numa leitura. */
+export type ExtensionPinState = 'unset' | 'set' | 'locked'
+
 export interface Extension {
   id: string
   org_id: string
-  member_id: string
-  member_username: string
-  member_email: string
+  /** `null` num ramal da EMPRESA (recepção, sala, portaria): identifica-se pela etiqueta. */
+  member_id: string | null
+  member_username: string | null
+  member_email: string | null
   extension: string
   sip_username: string
   label: string
   active: boolean
   created_at: string
+  pin_state: ExtensionPinState
   /** Número curto que um ramal marca para entrar numa reunião (o mesmo para todos). */
   meeting_access_number: string
   /** `null` quando a instalação não configurou o endereço público — nunca se inventa. */
@@ -2030,7 +2035,8 @@ export const listExtensions = (orgId: string, signal?: AbortSignal) =>
   request<Extension[]>(`/api/orgs/${orgId}/extensions`, { signal })
 export const createExtension = (
   orgId: string,
-  body: { member_id: string; extension: string; label?: string },
+  /** Sem `member_id` é um ramal da empresa, e a etiqueta é obrigatória. */
+  body: { member_id?: string; extension: string; label?: string },
 ) => request<ExtensionCreated>(`/api/orgs/${orgId}/extensions`, { method: 'POST', body: JSON.stringify(body) })
 export const updateExtension = (orgId: string, id: string, body: { label?: string; active?: boolean }) =>
   request<Extension>(`/api/orgs/${orgId}/extensions/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
@@ -2038,6 +2044,69 @@ export const regenerateExtensionPassword = (orgId: string, id: string) =>
   request<ExtensionCreated>(`/api/orgs/${orgId}/extensions/${id}/regenerate-password`, { method: 'POST' })
 export const deleteExtension = (orgId: string, id: string) =>
   requestEmpty(`/api/orgs/${orgId}/extensions/${id}`, { method: 'DELETE' })
+
+// ---------- Numeração automática e PIN do ramal (R276) ----------
+// O número do ramal, a password SIP e o PIN são três coisas separadas. O PIN
+// (6 dígitos) só existe em claro na resposta que o gera. O de um ramal de
+// PESSOA é dela — gera-o ou escolhe-o em «o meu ramal»; o administrador só o
+// limpa. O de um ramal da EMPRESA é do administrador.
+
+export interface ExtensionRange {
+  range_start: number
+  range_end: number
+}
+export const getExtensionRange = (orgId: string, signal?: AbortSignal) =>
+  request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { signal })
+export const putExtensionRange = (orgId: string, body: ExtensionRange) =>
+  request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { method: 'PUT', body: JSON.stringify(body) })
+
+export interface AssignMissingResult {
+  assigned: { id: string; member_id: string; member_username: string; extension: string }[]
+  already_assigned: number
+  /** Pessoas activas que continuam sem ramal depois desta chamada. */
+  remaining: number
+  range_exhausted: boolean
+  range_start: number
+  range_end: number
+}
+/** Um lote (no máximo 100 ramais). Idempotente: repete-se enquanto `remaining` > 0. */
+export const assignMissingExtensions = (orgId: string) =>
+  request<AssignMissingResult>(`/api/orgs/${orgId}/extensions/assign-missing`, { method: 'POST' })
+
+/** Um PIN acabado de gerar: só existe UMA VEZ. */
+export interface GeneratedPin {
+  pin: string
+  extension: string
+}
+export const regenerateExtensionPin = (orgId: string, id: string) =>
+  request<GeneratedPin>(`/api/orgs/${orgId}/extensions/${id}/regenerate-pin`, { method: 'POST' })
+export const setExtensionPin = (orgId: string, id: string, pin: string) =>
+  requestEmpty(`/api/orgs/${orgId}/extensions/${id}/pin`, { method: 'PUT', body: JSON.stringify({ pin }) })
+export const clearExtensionPin = (orgId: string, id: string) =>
+  requestEmpty(`/api/orgs/${orgId}/extensions/${id}/pin`, { method: 'DELETE' })
+
+/** O ramal de quem está na sessão, numa organização. */
+export interface MyExtension {
+  id: string
+  extension: string
+  label: string
+  active: boolean
+  pin_state: ExtensionPinState
+  meeting_access_number: string
+}
+/** `null` quando a pessoa ainda não tem ramal nesta organização (404). */
+export const getMyExtension = async (orgId: string, signal?: AbortSignal): Promise<MyExtension | null> => {
+  try {
+    return await request<MyExtension>(`/api/orgs/${orgId}/my-extension`, { signal })
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null
+    throw e
+  }
+}
+export const setMyExtensionPin = (orgId: string, pin: string) =>
+  requestEmpty(`/api/orgs/${orgId}/my-extension/pin`, { method: 'PUT', body: JSON.stringify({ pin }) })
+export const regenerateMyExtensionPin = (orgId: string) =>
+  request<GeneratedPin>(`/api/orgs/${orgId}/my-extension/regenerate-pin`, { method: 'POST' })
 
 // ---------- Fase 2: ramal alcançável do PSTN via DID dedicado ----------
 // Só voz directa (bridge ao ramal, sem PIN) — continua SEM ponte para salas

@@ -245,6 +245,30 @@ await recusado('A regenera a password de um ramal da org B', `/api/orgs/${B.orgI
 await recusado('A atribui um DID a um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/did`, {
   token: A.token, method: 'PUT', body: { did_id: fantasma },
 })
+// PIN do ramal, numeração automática e «o meu ramal» (R276). A não lê nem
+// muda o intervalo da B, não lhe cria ramais em massa, não toca no PIN de um
+// ramal dela e não tem «o meu ramal» numa organização a que não pertence.
+await recusado('A lê o intervalo de ramais da org B', `/api/orgs/${B.orgId}/extension-range`, { token: A.token })
+await recusado('A muda o intervalo de ramais da org B', `/api/orgs/${B.orgId}/extension-range`, {
+  token: A.token, method: 'PUT', body: { range_start: 1000, range_end: 1999 },
+})
+await recusado('A atribui ramais a todos na org B', `/api/orgs/${B.orgId}/extensions/assign-missing`, {
+  token: A.token, method: 'POST', body: {},
+})
+await recusado('A escolhe o PIN de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/pin`, {
+  token: A.token, method: 'PUT', body: { pin: '584930' },
+})
+await recusado('A limpa o PIN de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/pin`, { token: A.token, method: 'DELETE' })
+await recusado('A gera o PIN de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/regenerate-pin`, {
+  token: A.token, method: 'POST', body: {},
+})
+await recusado('A lê «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension`, { token: A.token })
+await recusado('A escolhe «o meu PIN» na org B', `/api/orgs/${B.orgId}/my-extension/pin`, {
+  token: A.token, method: 'PUT', body: { pin: '584930' },
+})
+await recusado('A gera «o meu PIN» na org B', `/api/orgs/${B.orgId}/my-extension/regenerate-pin`, {
+  token: A.token, method: 'POST', body: {},
+})
 
 // O segredo mais valioso desta família: com ele, qualquer um emite no canal
 // de YouTube da empresa. A provar: A não alcança os destinos da B (ler, rodar
