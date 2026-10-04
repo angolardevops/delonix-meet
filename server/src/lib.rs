@@ -189,6 +189,9 @@ pub struct AppState {
     pub session_kills: sessions::KillRegistry,
     /// Chaves de acesso (ADR-0011). `None` sem `WEBAUTHN_RP_ID`/`_ORIGIN`.
     pub webauthn: Option<Arc<webauthn_rs::prelude::Webauthn>>,
+    /// Vagas de composição de gravação (`FFMPEG_MAX_CONCURRENT`): o `ffmpeg`
+    /// de uma gravação só arranca com uma vaga. Ver `recorder::wait_for_slot`.
+    pub compose_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -1388,6 +1391,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         telephony_reveal_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         telephony: telephony_service::Adapters::from_config(&config, &outbound),
         outbound,
+        compose_slots: Arc::new(tokio::sync::Semaphore::new(config.ffmpeg_max_concurrent)),
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,
