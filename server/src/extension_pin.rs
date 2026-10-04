@@ -18,17 +18,16 @@
 //!   (`DELETE …/extensions/{id}/pin`): fica «por definir» e a pessoa gera um
 //!   novo. O PIN de um ramal da EMPRESA (sem pessoa) é do administrador: é ele
 //!   que o gera ou escolhe, e o vê uma vez;
-//! - cinco falhas seguidas bloqueiam o PIN durante quinze minutos, e cada
+//! - cinco falhas numa janela de quinze minutos bloqueiam o PIN — quinze
+//!   minutos no primeiro bloqueio, o dobro em cada reincidência —, e cada
 //!   falha e cada bloqueio ficam na auditoria imutável (`audit::log`), com o
 //!   actor de SISTEMA e o ramal no alvo — nunca em nome do dono do ramal, que
 //!   é a vítima de quem anda a adivinhar.
 //!
-//! **O que NÃO existe ainda:** nenhum consumidor da verificação. A rota
-//! `/internal/v1/voice/ivr/verify-extension-pin` está montada e medida contra
-//! Postgres, mas o Lua do IVR não a chama — identificar quem liga de fora por
-//! ramal+PIN e o anfitrião por telefone são do lote seguinte. O bloqueio é POR
-//! RAMAL: não trava quem experimente o mesmo PIN em muitos ramais; esse travão
-//! desenha-se com o fluxo do IVR, que é quem sabe de onde vem a chamada.
+//! **A verificação (R277)** passa primeiro por um travão por ORIGEM da
+//! chamada (número e rede, segundo o FreeSWITCH), que trava à terceira falha
+//! — antes de a mesma origem poder juntar as cinco que bloqueiam um ramal. O
+//! contador do ramal tem janela, e o bloqueio dobra a cada reincidência.
 
 use axum::{
     extract::{Path, State},
@@ -378,7 +377,7 @@ pub async fn clear_extension_pin(
 }
 
 // ============================================================
-//  Verificação — para o IVR (lote seguinte)
+//  Verificação — para o IVR (R276, endurecida na R277)
 // ============================================================
 
 /// O que a verificação de um PIN conclui.
@@ -392,36 +391,266 @@ pub(crate) enum PinCheck {
     /// PIN errado — e também ramal inexistente, inactivo ou de pessoa
     /// arquivada: quem liga não distingue os casos.
     Invalid,
-    /// Bloqueado por falhas seguidas. Não se verifica nada enquanto durar.
+    /// O RAMAL está bloqueado por falhas. Não se verifica nada enquanto durar.
     Locked { retry_after_secs: i64 },
     /// O ramal existe mas não tem PIN.
     NotSet,
+    /// A ORIGEM da chamada está travada: nada foi verificado, e o ramal não
+    /// foi tocado (R277).
+    OriginLocked { retry_after_secs: i64 },
 }
 
-/// Verifica o PIN de um ramal ACTIVO da organização. Conta as falhas, bloqueia
-/// à quinta (`rules::MAX_FAILED_ATTEMPTS`) durante `rules::LOCK_SECS`, e
-/// regista cada falha e cada bloqueio na auditoria imutável.
+/// De onde vem a chamada, segundo o FreeSWITCH: o número de quem liga
+/// (`caller_id_number`) e o endereço do par SIP que a entregou
+/// (`sip_network_ip` — atrás do Kamailio, o do Kamailio). Nenhum dos dois é
+/// uma prova de identidade: o número de quem liga pode ser forjado na rede
+/// telefónica. Servem para TRAVAR, não para autenticar.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CallOrigin {
+    #[serde(default)]
+    pub caller_number: String,
+    #[serde(default)]
+    pub network_ip: String,
+}
+
+impl CallOrigin {
+    fn clean(raw: &str, max: usize) -> String {
+        raw.trim()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | ':' | '-' | '_'))
+            .take(max)
+            .collect()
+    }
+
+    /// A chave do travão: `<rede>|<número>`. Sem número (chamada anónima),
+    /// todas as anónimas da mesma rede partilham UMA chave — é o travão mais
+    /// apertado, de propósito.
+    pub(crate) fn key(&self) -> String {
+        format!(
+            "{}|{}",
+            Self::clean(&self.network_ip, 64),
+            Self::clean(&self.caller_number, 32)
+        )
+    }
+
+    /// Para a auditoria: o administrador vê de onde vieram as tentativas.
+    pub(crate) fn describe(&self) -> String {
+        let number = Self::clean(&self.caller_number, 32);
+        let net = Self::clean(&self.network_ip, 64);
+        format!(
+            "origem {} via {}",
+            if number.is_empty() {
+                "sem número"
+            } else {
+                &number
+            },
+            if net.is_empty() {
+                "rede desconhecida"
+            } else {
+                &net
+            },
+        )
+    }
+}
+
+/// Um contador, com as idades calculadas pela base (um só relógio).
+#[derive(sqlx::FromRow)]
+struct CounterRow {
+    failures: i32,
+    window_age: Option<i64>,
+    lock_level: i32,
+    lock_ended_ago: Option<i64>,
+}
+
+impl From<CounterRow> for rules::Counter {
+    fn from(r: CounterRow) -> Self {
+        rules::Counter {
+            failures: r.failures,
+            window_age_secs: r.window_age,
+            lock_level: r.lock_level,
+            lock_ended_secs_ago: r.lock_ended_ago,
+        }
+    }
+}
+
+/// O que cobrar à origem devolveu.
+enum OriginCharge {
+    /// Travada: não se verifica nada.
+    Locked(i64),
+    /// Cobrada uma falha; `lock_now` se foi esta que a travou.
+    Charged { lock_now: bool },
+}
+
+/// Cobra uma falha à origem ANTES de verificar — e devolve-a se o PIN estiver
+/// certo ([`refund_origin`]). Contar depois deixava dez pedidos em paralelo
+/// da mesma origem passarem todos pelo «ainda não travada» e chegarem ao
+/// ramal: cinco deles bloqueavam-no. Cobrando primeiro, com a linha da origem
+/// em `FOR UPDATE`, só `ORIGIN_THROTTLE.max_failures` chegam a ver um ramal.
+async fn charge_origin(state: &AppState, key: &str) -> Result<OriginCharge, ApiError> {
+    let t = rules::ORIGIN_THROTTLE;
+    let mut tx = state.db.begin().await?;
+    sqlx::query(
+        "INSERT INTO voice_pin_origins (origin) VALUES ($1) ON CONFLICT (origin) DO NOTHING",
+    )
+    .bind(key)
+    .execute(&mut *tx)
+    .await?;
+    let c: rules::Counter = sqlx::query_as::<_, CounterRow>(
+        "SELECT failures,
+                FLOOR(EXTRACT(EPOCH FROM (now() - window_started_at)))::BIGINT AS window_age,
+                lock_level,
+                FLOOR(EXTRACT(EPOCH FROM (now() - locked_until)))::BIGINT AS lock_ended_ago
+           FROM voice_pin_origins WHERE origin = $1 FOR UPDATE",
+    )
+    .bind(key)
+    .fetch_one(&mut *tx)
+    .await?
+    .into();
+    if let Some(secs) = t.locked_for(&c) {
+        tx.commit().await?;
+        return Ok(OriginCharge::Locked(secs));
+    }
+    let a = t.after_failure(&c);
+    sqlx::query(
+        "UPDATE voice_pin_origins
+            SET failures = $2,
+                window_started_at = CASE WHEN $5::float8 IS NOT NULL THEN NULL
+                                         WHEN $3 THEN now() ELSE window_started_at END,
+                lock_level = $4,
+                locked_until = CASE WHEN $5::float8 IS NULL THEN locked_until
+                                    ELSE now() + make_interval(secs => $5::float8) END,
+                updated_at = now()
+          WHERE origin = $1",
+    )
+    .bind(key)
+    .bind(a.failures)
+    .bind(a.restart_window)
+    .bind(a.lock_level)
+    .bind(a.lock_secs.map(|s| s as f64))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(OriginCharge::Charged {
+        lock_now: a.lock_secs.is_some(),
+    })
+}
+
+/// Um acerto devolve à origem a falha que se lhe cobrou — e só essa: o
+/// contador fica como estava antes deste pedido. Zerá-lo deixava quem tem um
+/// PIN válido alternar «dois palpites, um acerto» sem nunca ser travado.
+async fn refund_origin(state: &AppState, key: &str, lock_now: bool) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE voice_pin_origins
+            SET failures = CASE WHEN $2 THEN $3 - 1 ELSE GREATEST(failures - 1, 0) END,
+                window_started_at = CASE WHEN $2 THEN now() ELSE window_started_at END,
+                lock_level = CASE WHEN $2 THEN GREATEST(lock_level - 1, 0) ELSE lock_level END,
+                locked_until = CASE WHEN $2 THEN NULL ELSE locked_until END,
+                updated_at = now()
+          WHERE origin = $1",
+    )
+    .bind(key)
+    .bind(lock_now)
+    .bind(rules::ORIGIN_THROTTLE.max_failures)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Um Argon2 contra um hash que não é de ninguém: os caminhos que não têm PIN
+/// para verificar (ramal inexistente, PIN por definir) custam o mesmo tempo
+/// que um PIN errado. A resposta ao IVR distingue-os; o tempo deixa de o
+/// fazer.
+fn burn_like_a_verification(pin: &str) {
+    static DUMMY: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| crate::auth::hash_password("590317").unwrap_or_default());
+    let _ = crate::auth::verify_password(pin, &DUMMY);
+}
+
+/// A verificação vinda de uma chamada: o travão por ORIGEM primeiro, depois o
+/// ramal (R277).
+///
+/// 1. Cobra-se uma falha à origem ([`charge_origin`]). Travada, a resposta é
+///    `OriginLocked` e nem a organização nem o ramal são lidos: uma origem
+///    abusiva não gasta tentativas de ninguém.
+/// 2. A organização é a do domínio; um domínio que não é de ninguém é um PIN
+///    errado (e a falha fica cobrada à origem).
+/// 3. O ramal ([`verify_pin`]), com o seu próprio contador.
+/// 4. Um acerto devolve à origem a falha cobrada.
+///
+/// Como a origem trava à terceira falha e o ramal à quinta, a mesma origem
+/// não bloqueia o ramal de ninguém — nem falhando em muitos ramais.
+pub(crate) async fn verify_from_call(
+    state: &AppState,
+    org_id: Option<Uuid>,
+    extension: &str,
+    pin: &str,
+    origin: &CallOrigin,
+) -> Result<PinCheck, ApiError> {
+    let key = origin.key();
+    let lock_now = match charge_origin(state, &key).await? {
+        OriginCharge::Locked(secs) => {
+            tracing::warn!(origem = %origin.describe(), "PIN de ramal: origem travada — nada verificado");
+            return Ok(PinCheck::OriginLocked {
+                retry_after_secs: secs,
+            });
+        }
+        OriginCharge::Charged { lock_now } => lock_now,
+    };
+    let check = match org_id {
+        Some(org_id) => verify_pin(state, org_id, extension, pin, origin).await?,
+        None => {
+            burn_like_a_verification(pin);
+            PinCheck::Invalid
+        }
+    };
+    if matches!(check, PinCheck::Valid { .. }) {
+        refund_origin(state, &key, lock_now).await?;
+    } else if lock_now {
+        tracing::warn!(origem = %origin.describe(), "PIN de ramal: origem travada por falhas");
+        crate::audit::log_com_metricas(
+            &state.db,
+            Some(&state.metrics),
+            org_id,
+            Uuid::nil(),
+            "ramal.origem_travada",
+            &format!(
+                "{} — {} min — ramal {extension}",
+                origin.describe(),
+                rules::ORIGIN_THROTTLE.base_lock_secs / 60
+            ),
+        )
+        .await;
+    }
+    Ok(check)
+}
+
+/// Verifica o PIN de um ramal ACTIVO da organização. Conta as falhas numa
+/// janela, bloqueia à quinta com duração crescente
+/// (`rules::EXTENSION_THROTTLE`), e regista cada falha e cada bloqueio na
+/// auditoria imutável, com a origem da chamada.
 ///
 /// A linha do ramal é lida com `FOR UPDATE`: duas tentativas simultâneas não
 /// contam como uma, e pedidos em paralelo não dão palpites a mais — dez
 /// verificações erradas ao mesmo tempo contam cinco falhas e as outras cinco
 /// já encontram o ramal bloqueado (`tests/ramal_pin.rs`,
 /// `dez_palpites_em_paralelo_contam_cinco_e_bloqueiam`).
-pub(crate) async fn verify_pin(
+async fn verify_pin(
     state: &AppState,
     org_id: Uuid,
     extension: &str,
     pin: &str,
+    origin: &CallOrigin,
 ) -> Result<PinCheck, ApiError> {
+    let t = rules::EXTENSION_THROTTLE;
     #[derive(sqlx::FromRow)]
     struct Row {
         id: Uuid,
         member_id: Option<Uuid>,
         label: String,
-        username: Option<String>,
+        name: Option<String>,
         pin_hash: Option<String>,
-        pin_failed_attempts: i32,
-        locked_secs: Option<i64>,
+        #[sqlx(flatten)]
+        counter: CounterRow,
     }
     // O ramal de uma pessoa arquivada não identifica ninguém. A pertença
     // decide-se em org.rs (regra 1, ADR-0004 §5) — e ANTES de abrir a
@@ -435,12 +664,16 @@ pub(crate) async fn verify_pin(
     .fetch_optional(&state.db)
     .await?;
     match owner {
-        None => return Ok(PinCheck::Invalid),
+        None => {
+            burn_like_a_verification(pin);
+            return Ok(PinCheck::Invalid);
+        }
         Some(Some(member_id)) => {
             if crate::org::role_in_org(state, org_id, member_id)
                 .await?
                 .is_none()
             {
+                burn_like_a_verification(pin);
                 return Ok(PinCheck::Invalid);
             }
         }
@@ -449,8 +682,11 @@ pub(crate) async fn verify_pin(
 
     let mut tx = state.db.begin().await?;
     let row: Option<Row> = sqlx::query_as(
-        "SELECT e.id, e.member_id, e.label, u.username, e.pin_hash, e.pin_failed_attempts,
-                CEIL(EXTRACT(EPOCH FROM (e.pin_locked_until - now())))::BIGINT AS locked_secs
+        "SELECT e.id, e.member_id, e.label, COALESCE(u.display_name, u.username) AS name,
+                e.pin_hash, e.pin_failed_attempts AS failures,
+                FLOOR(EXTRACT(EPOCH FROM (now() - e.pin_failure_window_at)))::BIGINT AS window_age,
+                e.pin_lock_level AS lock_level,
+                FLOOR(EXTRACT(EPOCH FROM (now() - e.pin_locked_until)))::BIGINT AS lock_ended_ago
            FROM voice_extensions e LEFT JOIN users u ON u.id = e.member_id
           WHERE e.org_id = $1 AND e.extension = $2 AND e.active
             FOR UPDATE OF e",
@@ -460,20 +696,26 @@ pub(crate) async fn verify_pin(
     .fetch_optional(&mut *tx)
     .await?;
     let Some(row) = row else {
+        burn_like_a_verification(pin);
         return Ok(PinCheck::Invalid);
     };
-    if let Some(secs) = row.locked_secs.filter(|s| *s > 0) {
+    let counter: rules::Counter = row.counter.into();
+    if let Some(secs) = t.locked_for(&counter) {
         return Ok(PinCheck::Locked {
             retry_after_secs: secs,
         });
     }
     let Some(hash) = row.pin_hash else {
+        burn_like_a_verification(pin);
         return Ok(PinCheck::NotSet);
     };
 
     if crate::auth::verify_password(pin, &hash) {
+        // Um acerto zera tudo, incluindo o nível: quem sabe o PIN é o dono.
         sqlx::query(
-            "UPDATE voice_extensions SET pin_failed_attempts = 0, pin_locked_until = NULL
+            "UPDATE voice_extensions
+                SET pin_failed_attempts = 0, pin_failure_window_at = NULL,
+                    pin_lock_level = 0, pin_locked_until = NULL
               WHERE id = $1",
         )
         .bind(row.id)
@@ -483,24 +725,29 @@ pub(crate) async fn verify_pin(
         return Ok(PinCheck::Valid {
             extension_id: row.id,
             member_id: row.member_id,
-            display_name: row.username.unwrap_or(row.label),
+            display_name: row.name.unwrap_or(row.label),
         });
     }
 
-    let attempts = row.pin_failed_attempts + 1;
-    let lock = attempts >= rules::MAX_FAILED_ATTEMPTS;
-    // Ao bloquear, o contador volta a zero: passado o bloqueio, são outra vez
-    // cinco tentativas — não uma.
+    let a = t.after_failure(&counter);
+    // Ao bloquear, a janela fecha: passado o bloqueio, são outra vez cinco
+    // tentativas numa janela nova. O `pin_locked_until` de um bloqueio antigo
+    // fica: é por ele que o nível se esquece (`level_decay_secs`).
     sqlx::query(
         "UPDATE voice_extensions
-            SET pin_failed_attempts = CASE WHEN $2 THEN 0 ELSE $3 END,
-                pin_locked_until = CASE WHEN $2 THEN now() + make_interval(secs => $4) ELSE NULL END
+            SET pin_failed_attempts = $2,
+                pin_failure_window_at = CASE WHEN $5::float8 IS NOT NULL THEN NULL
+                                             WHEN $3 THEN now() ELSE pin_failure_window_at END,
+                pin_lock_level = $4,
+                pin_locked_until = CASE WHEN $5::float8 IS NULL THEN pin_locked_until
+                                        ELSE now() + make_interval(secs => $5::float8) END
           WHERE id = $1",
     )
     .bind(row.id)
-    .bind(lock)
-    .bind(attempts)
-    .bind(rules::LOCK_SECS as f64)
+    .bind(a.failures)
+    .bind(a.restart_window)
+    .bind(a.lock_level)
+    .bind(a.lock_secs.map(|s| s as f64))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -509,8 +756,9 @@ pub(crate) async fn verify_pin(
     // O actor é o de sistema (`Uuid::nil()`, como em `member.guest_expired` e
     // `odoo.provision`): atribuir a falha à pessoa do ramal punha a VÍTIMA de
     // uma tentativa de adivinhação como autora dela na trilha. O ramal vai no
-    // `target`. O PIN tentado NUNCA entra no registo.
+    // `target`, com a origem da chamada (R277). O PIN tentado NUNCA entra.
     let actor = Uuid::nil();
+    let from = origin.describe();
     crate::audit::log_com_metricas(
         &state.db,
         Some(&state.metrics),
@@ -518,24 +766,28 @@ pub(crate) async fn verify_pin(
         actor,
         "ramal.pin_falhado",
         &format!(
-            "ramal {extension} — tentativa {attempts} de {}",
-            rules::MAX_FAILED_ATTEMPTS
+            "ramal {extension} — tentativa {} de {} — {from}",
+            a.attempt, t.max_failures
         ),
     )
     .await;
-    if lock {
-        tracing::warn!(%org_id, ramal = %extension, "PIN de ramal bloqueado por falhas seguidas");
+    if let Some(secs) = a.lock_secs {
+        tracing::warn!(%org_id, ramal = %extension, nivel = a.lock_level, "PIN de ramal bloqueado por falhas");
         crate::audit::log_com_metricas(
             &state.db,
             Some(&state.metrics),
             Some(org_id),
             actor,
             "ramal.pin_bloqueado",
-            &format!("ramal {extension} — {} min", rules::LOCK_SECS / 60),
+            &format!(
+                "ramal {extension} — {} min (bloqueio n.º {}) — {from}",
+                secs / 60,
+                a.lock_level
+            ),
         )
         .await;
         return Ok(PinCheck::Locked {
-            retry_after_secs: rules::LOCK_SECS,
+            retry_after_secs: secs,
         });
     }
     Ok(PinCheck::Invalid)
@@ -547,14 +799,17 @@ pub struct VerifyExtensionPinReq {
     pub domain: String,
     pub extension: String,
     pub pin: String,
+    /// De onde vem a chamada. Obrigatório: é a chave do travão por origem.
+    pub origin: CallOrigin,
 }
 
-/// Contrato com o IVR (lote seguinte). Sempre `200`: um PIN errado é uma
-/// resposta, não uma falha HTTP.
+/// Contrato com o IVR. Sempre `200`: um PIN errado é uma resposta, não uma
+/// falha HTTP. **As razões são para o IVR e para os testes, não para quem
+/// liga:** o Lua dá UMA só recusa, igual para todas.
 #[derive(Serialize)]
 pub struct VerifyExtensionPinResp {
     pub valid: bool,
-    /// `invalid`, `locked` ou `not_set`. Ausente quando `valid`.
+    /// `invalid`, `locked`, `not_set` ou `origin_locked`. Ausente quando `valid`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -580,11 +835,35 @@ impl VerifyExtensionPinResp {
             display_name: None,
         }
     }
+
+    fn from_check(check: PinCheck) -> Self {
+        match check {
+            PinCheck::Valid {
+                extension_id,
+                member_id,
+                display_name,
+            } => Self {
+                valid: true,
+                reason: None,
+                retry_after_secs: None,
+                extension_id: Some(extension_id),
+                member_id,
+                display_name: Some(display_name),
+            },
+            PinCheck::Invalid => Self::refused("invalid", None),
+            PinCheck::NotSet => Self::refused("not_set", None),
+            PinCheck::Locked { retry_after_secs } => {
+                Self::refused("locked", Some(retry_after_secs))
+            }
+            PinCheck::OriginLocked { retry_after_secs } => {
+                Self::refused("origin_locked", Some(retry_after_secs))
+            }
+        }
+    }
 }
 
 /// `POST /internal/v1/voice/ivr/verify-extension-pin` — no listener interno,
 /// com o segredo de voz (`X-Voice-Secret`), como as outras rotas do IVR.
-/// **Ainda sem consumidor:** o `dialin_ivr.lua` não a chama neste lote.
 pub async fn ivr_verify_extension_pin(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -592,29 +871,16 @@ pub async fn ivr_verify_extension_pin(
 ) -> Result<Json<VerifyExtensionPinResp>, ApiError> {
     check_media_secret(&state, &headers)?;
     // Um domínio que não é de nenhuma organização responde como um PIN errado.
-    let Some(org_id) = crate::ramais::org_id_by_sip_domain(&state, req.domain.trim()).await else {
-        return Ok(Json(VerifyExtensionPinResp::refused("invalid", None)));
-    };
-    let resp = match verify_pin(&state, org_id, req.extension.trim(), req.pin.trim()).await? {
-        PinCheck::Valid {
-            extension_id,
-            member_id,
-            display_name,
-        } => VerifyExtensionPinResp {
-            valid: true,
-            reason: None,
-            retry_after_secs: None,
-            extension_id: Some(extension_id),
-            member_id,
-            display_name: Some(display_name),
-        },
-        PinCheck::Invalid => VerifyExtensionPinResp::refused("invalid", None),
-        PinCheck::NotSet => VerifyExtensionPinResp::refused("not_set", None),
-        PinCheck::Locked { retry_after_secs } => {
-            VerifyExtensionPinResp::refused("locked", Some(retry_after_secs))
-        }
-    };
-    Ok(Json(resp))
+    let org_id = crate::ramais::org_id_by_sip_domain(&state, req.domain.trim()).await;
+    let check = verify_from_call(
+        &state,
+        org_id,
+        req.extension.trim(),
+        req.pin.trim(),
+        &req.origin,
+    )
+    .await?;
+    Ok(Json(VerifyExtensionPinResp::from_check(check)))
 }
 
 #[cfg(test)]

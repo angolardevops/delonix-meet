@@ -70,14 +70,21 @@ async fn dominio(app: &TestApp, org: &str) -> String {
     format!("{slug}.{}", app.state.config.voice_ramais_domain_suffix)
 }
 
-/// O que o IVR enviará (lote seguinte).
+/// O que o IVR envia. Cada chamada vem de uma ORIGEM diferente: estes testes
+/// medem o contador do RAMAL, que é o que trava quem ataca de muitas origens.
+/// O travão por origem (R277) mede-se em `tests/ramal_pin_origem.rs`.
 async fn verificar(app: &TestApp, domain: &str, extension: &str, pin: &str) -> Value {
+    static ORIGEM: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = ORIGEM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let r = app
         .raw(
             reqwest::Method::POST,
             "/internal/v1/voice/ivr/verify-extension-pin",
             &[("x-voice-secret", VOICE_SECRET)],
-            Some(json!({"domain": domain, "extension": extension, "pin": pin})),
+            Some(json!({
+                "domain": domain, "extension": extension, "pin": pin,
+                "origin": {"caller_number": format!("+24492{n:07}"), "network_ip": "10.9.0.1"},
+            })),
         )
         .await;
     assert_eq!(r.status, 200, "{}", r.text);
@@ -422,7 +429,10 @@ async fn a_verificacao_exige_o_segredo_de_voz_e_nao_sai_da_org(db: sqlx::PgPool)
     let pin = gerar_o_meu(&app, &a).await;
     let dom_a = dominio(&app, a.org()).await;
     let dom_b = dominio(&app, b.org()).await;
-    let corpo = json!({"domain": dom_a, "extension": "1004", "pin": pin});
+    let corpo = json!({
+        "domain": dom_a, "extension": "1004", "pin": pin,
+        "origin": {"caller_number": "+244923000001", "network_ip": "10.9.0.1"},
+    });
 
     let bearer = format!("Bearer {}", a.token);
     for headers in [
