@@ -2424,6 +2424,17 @@ async fn entradas_concorrentes_todos_recebem_todos() {
     // as 96 subscrições todas feitas, e o CI da main ficou vermelho por isso.
     // Escala-se pelo que a máquina tem, em vez de subir o prazo (mais prazo
     // não liga um ICE que já desistiu).
+    //
+    // CAUSA MEDIDA a 2026-10-05 — não era só a máquina. Com `DELONIX_IT_LOG`
+    // ligado, os dois subscritores sem media tinham o MESMO `ice-ufrag` na
+    // oferta do servidor e na descrição remota anterior: o servidor não mudou
+    // credenciais. Quem falhava era o CLIENTE webrtc-rs, que lia a oferta como
+    // um reinício de ICE («ICE Agent can not be restarted when gathering») por
+    // ela chegar antes de o transporte ICE ter registado as credenciais
+    // remotas, e ficava preso em `have-remote-offer` (ver
+    // `TestClient::responder_com_ice_ligado`). O SFU dava 3 timeouts e
+    // «peer sem media nova». Controlo (100 execuções cada, mesma máquina):
+    // sem a correcção 8 falhas, com ela 0 (p ≈ 0,003).
     let nucleos = std::thread::available_parallelism().map_or(2, |n| n.get());
     let n_salas: usize = if nucleos >= 8 { 4 } else { 2 };
     let por_sala: usize = 4;
