@@ -1,10 +1,12 @@
 # ============================================================
 #  Imagem FreeSWITCH do Meet (voice/freeswitch/image/, R223).
 #
-#  Só corre quando a imagem ou a sua prova mudam: compilar o FreeSWITCH
-#  leva um quarto de hora, e não há razão para o pagar em cada PR.
+#  Só corre quando a imagem, a configuração de voz ou as suas provas mudam:
+#  compilar o FreeSWITCH leva um quarto de hora (a cache poupa-o quando a
+#  imagem não mudou), e não há razão para o pagar em cada PR.
 #
-#  PR   → build + prova de fumo; nada é publicado.
+#  PR   → build + prova de fumo + as provas com chamadas (softphone-prova.sh:
+#         selftest, srtp-real, srtp-cluster); nada é publicado.
 #  main → o mesmo, e depois publica em
 #         ghcr.io/<owner>/delonix-meet-freeswitch:1.11.3-<sha8>, com SBOM e
 #         proveniência. A tag é imutável: nunca :latest nem :1.11.3 sozinho —
@@ -19,17 +21,29 @@ on:
   push:
     branches: [main]
     paths:
-      - voice/freeswitch/image/**
+      # Toda a configuração de voz que as provas com chamadas exercitam (R226):
+      # um perfil ou um dialplan que mude tem de voltar a passar por elas.
+      - voice/freeswitch/**
+      - voice/softphone/**
+      - voice/cluster/**
+      - compose.yaml
+      - scripts/cluster-voice.sh
+      - scripts/softphone-prova.sh
       - scripts/freeswitch-image-smoke.sh
       - scripts/check-lua-sintaxe.sh
-      - voice/freeswitch/scripts/**
       - .github/workflows/freeswitch-image.yml
   pull_request:
     paths:
-      - voice/freeswitch/image/**
+      # Toda a configuração de voz que as provas com chamadas exercitam (R226):
+      # um perfil ou um dialplan que mude tem de voltar a passar por elas.
+      - voice/freeswitch/**
+      - voice/softphone/**
+      - voice/cluster/**
+      - compose.yaml
+      - scripts/cluster-voice.sh
+      - scripts/softphone-prova.sh
       - scripts/freeswitch-image-smoke.sh
       - scripts/check-lua-sintaxe.sh
-      - voice/freeswitch/scripts/**
       - .github/workflows/freeswitch-image.yml
   workflow_dispatch:
 
@@ -67,6 +81,20 @@ jobs:
 
       - name: Prova de fumo (fontes fixadas, módulos carregam, mod_lua executa)
         run: bash scripts/freeswitch-image-smoke.sh "$LOCAL"
+
+      # As provas com chamadas, contra a imagem acabada de construir: um
+      # softphone (baresip) numa rede docker sem saída. Estavam fora do CI, e
+      # «SRTP obrigatório» só se prova com a chamada em claro a ser recusada.
+      - name: Softphone — PIN por DTMF, tons nos dois sentidos, e sem SRTP → 488
+        run: FS_IMAGE="$LOCAL" bash scripts/softphone-prova.sh selftest
+
+      # A configuração que CORRE: a que o arranque monta com os ficheiros do
+      # compose.yaml e, a seguir, com os do ConfigMap do cluster.
+      - name: Compose — sem SRTP → 488 nos ramais e no dial-in; segredo e PIN fora do log (R226, R227)
+        run: FS_IMAGE="$LOCAL" bash scripts/softphone-prova.sh srtp-real
+
+      - name: Cluster — a mesma prova, com os ficheiros do ConfigMap
+        run: FS_IMAGE="$LOCAL" bash scripts/softphone-prova.sh srtp-cluster
 
       - name: Nome publicado
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

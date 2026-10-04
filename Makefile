@@ -30,7 +30,6 @@ RUNDIR     := $(ROOT)/.dev
 # pelo backend E pela camada de media (FreeSWITCH), senão a auth do IVR falha.
 VOICE_SECRET ?= dev-voice-secret-abc123
 # Certificados TLS/SRTP da voz (dev: self-signed no repo, gitignored).
-VOICE_TLS_DIR ?= $(ROOT)/voice/tls
 # Nginx standalone de dev (termina TLS para https://meet.delonix.local; ver
 # deploy/nginx-dev.conf.template). Path próprio, nunca /etc/nginx/sites-*.
 NGINX_DEV_CONF := $(RUNDIR)/nginx-dev.conf
@@ -198,8 +197,6 @@ stop: nginx-dev-stop ## Para o backend + frontend + nginx de dev (mantém a infr
 down: stop ## Para TODA a stack Delonix: dev (processos + docker compose + voice)
 	@printf "$(C)▶ docker compose down (dev infra)$(Z)\n"
 	@docker compose down
-	@printf "$(C)▶ docker compose down (voice, se ativo)$(Z)\n"
-	@docker compose -f voice/docker-compose.voice.yml down 2>/dev/null || true
 	@printf "$(G)  ✓ stack completa parada (kind continua; 'make destroy' para o k8s)$(Z)\n"
 
 .PHONY: kill
@@ -212,7 +209,6 @@ kill: nginx-dev-stop ## Para TUDO (processos locais + docker + k8s) — estado z
 	@$(call KILL_PORT,$(WEB_PORT),TERM)
 	@printf "$(C)▶ a parar docker compose (infra dev + voice)...$(Z)\n"
 	@docker compose down 2>/dev/null || true
-	@docker compose -f voice/docker-compose.voice.yml down 2>/dev/null || true
 	@printf "$(C)▶ a escalar workloads k8s para 0 (namespace delonix-meet)...$(Z)\n"
 	@kubectl scale deployment --all -n delonix-meet --replicas=0 2>/dev/null || true
 	@kubectl scale statefulset --all -n delonix-meet --replicas=0 2>/dev/null || true
@@ -692,29 +688,6 @@ certs: ## Gera o wildcard *.delonix.local de DEV (mkcert; openssl como alternati
 	  printf "$(Y)  ! mkcert ausente — wildcard self-signed (o browser vai avisar).$(Z)\n"; \
 	  printf "$(Y)    Instala o mkcert e corre 'make certs' outra vez para um cert confiado.$(Z)\n"; \
 	fi
-
-.PHONY: voice-certs voice-up voice-down
-voice-certs: ## Gera certificados self-signed de dev para a voz (SIP-TLS/SRTP)
-	@mkdir -p $(VOICE_TLS_DIR)
-	@openssl req -x509 -newkey rsa:2048 -nodes \
-	  -keyout $(VOICE_TLS_DIR)/privkey.pem -out $(VOICE_TLS_DIR)/fullchain.pem \
-	  -days 825 -subj "/CN=delonix-voice" \
-	  -addext "subjectAltName=DNS:localhost,DNS:delonix-voice,IP:127.0.0.1" 2>/dev/null
-	@chmod 600 $(VOICE_TLS_DIR)/privkey.pem
-	@printf "$(G)  ✓ certificados de voz em $(VOICE_TLS_DIR)$(Z)\n"
-
-voice-up: ## Sobe Kamailio + FreeSWITCH (dial-in PSTN). Usa o mesmo VOICE_SECRET do backend
-	@printf "$(C)▶ camada de media de voz (Kamailio + FreeSWITCH)$(Z)\n"
-	@# ACL do trunk (só existe .example até haver IPs reais do fornecedor 5.1).
-	@[ -f voice/kamailio/ao_trunk.txt ] || { cp voice/kamailio/ao_trunk.txt.example voice/kamailio/ao_trunk.txt; \
-	  printf "$(Y)  ! criei voice/kamailio/ao_trunk.txt vazio — preencher com os IPs do trunk$(Z)\n"; }
-	@# Certificados TLS de dev (gera se faltarem).
-	@[ -f $(VOICE_TLS_DIR)/fullchain.pem ] || $(MAKE) --no-print-directory voice-certs
-	@VOICE_INTERNAL_SECRET=$(VOICE_SECRET) DELONIX_CONTROL_URL=$(API_URL) DELONIX_TLS_DIR=$(VOICE_TLS_DIR) \
-	  docker compose -f voice/docker-compose.voice.yml up -d
-	@printf "$(G)  ✓ voz a subir (media real exige o trunk contratado — IPs em ao_trunk.txt)$(Z)\n"
-voice-down: ## Para a camada de media de voz
-	@docker compose -f voice/docker-compose.voice.yml down
 
 # ============================================================
 #  CICLO LOCAL — bootstrap, simulação de produção e cluster

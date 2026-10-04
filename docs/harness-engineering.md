@@ -145,5 +145,14 @@ Os ficheiros de harness no repositório devem ser atualizados manualmente ou por
       formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário (o FreeSWITCH
       executa-a lá), e nenhum `$${NOME_EM_MAIÚSCULAS}` (lê uma variável global, não o
       ambiente). É estático: o que a configuração **faz** em chamada continua a ser do
-      `scripts/softphone-prova.sh srtp-real`, fora do CI.
+      `scripts/softphone-prova.sh srtp-real`.
+- [x] **As provas de voz com chamadas correm no CI** (2026-10-04). O workflow «Imagem
+      FreeSWITCH» já construía a imagem; passa a correr contra ela o
+      `softphone-prova.sh selftest` (PIN por DTMF, tons nos dois sentidos), o `srtp-real` e
+      o `srtp-cluster` (R226, R227: a configuração que o arranque monta com os ficheiros do
+      `compose.yaml` e com os do cluster — a chamada em claro leva `488`, e o segredo de
+      voz e o PIN não ficam no log), e dispara com qualquer mudança em `voice/freeswitch/`,
+      `voice/cluster/`, no `compose.yaml`, no `cluster-voice.sh` ou no script. Um softphone
+      e um FreeSWITCH numa rede docker sem saída — não prova a operadora, o Kamailio nem o
+      browser.
 - [x] Revisores e skills versionados em `.claude/` e verificados pelo `check-docs-drift.sh` (2026-09-16)

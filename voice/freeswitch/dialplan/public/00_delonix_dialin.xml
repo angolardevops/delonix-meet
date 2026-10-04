@@ -5,7 +5,7 @@
 
   Segurança: o contexto 'public' só deve receber tráfego já filtrado pelo
   Kamailio (ACL do trunk). O SRTP à entrada é imposto pela variável GLOBAL
-  rtp_secure_media=mandatory (sip_profiles/internal.xml, vars.xml.inc). O `set`
+  rtp_secure_media=mandatory (sip_profiles/internal.xml e o arranque). O `set`
   abaixo só recusa uma chamada em claro se o perfil por onde ela entra negociar
   tarde (inbound-late-negotiation=true, como o `external` da vanilla); num
   perfil que negoceie à chegada corre tarde. Não é dele que se depende (R226).

@@ -19,7 +19,7 @@
 --   verificada (scripts/check-lua-sintaxe.sh).
 --
 -- Segredos NUNCA em claro: lidos de variáveis globais do FreeSWITCH que, por sua
--- vez, vêm do ambiente (ver vars.xml / docker-compose.voice.yml):
+-- vez, vêm do ambiente (ver voice/cluster/freeswitch-entrypoint.sh):
 --   ${delonix_control_url}     ex.: http://127.0.0.1:8180
 --   ${delonix_voice_secret}    == VOICE_INTERNAL_SECRET do backend
 --
