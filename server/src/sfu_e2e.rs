@@ -415,17 +415,27 @@ impl TestClient {
     }
 
     async fn answer_to(&self, sdp: String) {
+        // Cada saída avisa: sem isto, um cliente que recusa a oferta do servidor
+        // só se vê como um timeout de 3×10 s do lado do SFU, sem dizer porquê.
         let offer = RTCSessionDescription::offer(sdp).unwrap();
-        if self.pc.set_remote_description(offer).await.is_err() {
+        let estado = self.pc.signaling_state();
+        if let Err(e) = self.pc.set_remote_description(offer).await {
+            tracing::warn!(cliente = %self.id, ?estado, erro = %e, "TestClient: set_remote(oferta do servidor) recusado");
             return;
         }
-        let Ok(answer) = self.pc.create_answer(None).await else {
-            return;
+        let answer = match self.pc.create_answer(None).await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(cliente = %self.id, erro = %e, "TestClient: create_answer falhou");
+                return;
+            }
         };
-        if self.pc.set_local_description(answer).await.is_err() {
+        if let Err(e) = self.pc.set_local_description(answer).await {
+            tracing::warn!(cliente = %self.id, erro = %e, "TestClient: set_local(resposta) falhou");
             return;
         }
         let Some(local) = self.pc.local_description().await else {
+            tracing::warn!(cliente = %self.id, "TestClient: sem local_description depois da resposta");
             return;
         };
         let sdp = local.sdp;
