@@ -7605,6 +7605,32 @@
         ],
         "type": "object"
       },
+      "ProvisioningTicket": {
+        "description": "Um bilhete acabado de emitir. O URL leva o token: mostra-se uma vez.",
+        "properties": {
+          "expires_at": {
+            "description": "Depois disto o URL já não serve.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension": {
+            "description": "O ramal que o QR configura.",
+            "example": "1004",
+            "type": "string"
+          },
+          "provisioning_url": {
+            "description": "O URL que o Linphone descarrega («remote provisioning»). A consola põe-no\nnum QR; serve uma vez.",
+            "example": "https://meet.exemplo.ao/api/public/extension-provisioning/3f9c…",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provisioning_url",
+          "expires_at",
+          "extension"
+        ],
+        "type": "object"
+      },
       "PublicCapabilities": {
         "description": "O que ESTA instalação faz — cada flag lê a configuração que a liga.",
         "properties": {

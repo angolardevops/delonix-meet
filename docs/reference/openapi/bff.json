@@ -7605,6 +7605,32 @@
         ],
         "type": "object"
       },
+      "ProvisioningTicket": {
+        "description": "Um bilhete acabado de emitir. O URL leva o token: mostra-se uma vez.",
+        "properties": {
+          "expires_at": {
+            "description": "Depois disto o URL já não serve.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension": {
+            "description": "O ramal que o QR configura.",
+            "example": "1004",
+            "type": "string"
+          },
+          "provisioning_url": {
+            "description": "O URL que o Linphone descarrega («remote provisioning»). A consola põe-no\nnum QR; serve uma vez.",
+            "example": "https://meet.exemplo.ao/api/public/extension-provisioning/3f9c…",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provisioning_url",
+          "expires_at",
+          "extension"
+        ],
+        "type": "object"
+      },
       "PublicCapabilities": {
         "description": "O que ESTA instalação faz — cada flag lê a configuração que a liga.",
         "properties": {
@@ -19132,6 +19158,94 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/extensions/{id}/provisioning-ticket": {
+      "post": {
+        "operationId": "issue_extension_ticket",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisioningTicket"
+                }
+              }
+            },
+            "description": "O URL serve UMA vez, durante dez minutos. Lê-lo troca a password SIP do ramal."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ramais.sip_server_missing`, `ramais.public_url_missing` ou `ramais.extension_inactive`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O administrador pede um QR para configurar o Linphone de um ramal da\norganização — de pessoa ou da empresa (*custom method*). Não lhe dá poder\nnovo: já pode regenerar a password SIP de qualquer ramal.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/extensions/{id}/regenerate-password": {
       "post": {
         "operationId": "regenerate_extension_password",
@@ -21060,6 +21174,74 @@
           }
         ],
         "summary": "A pessoa escolhe o PIN do seu ramal. Substitui o anterior e levanta o\nbloqueio: quem chegou aqui autenticou-se com a sessão.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/provisioning-ticket": {
+      "post": {
+        "operationId": "issue_my_ticket",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisioningTicket"
+                }
+              }
+            },
+            "description": "O URL serve UMA vez, durante dez minutos. Lê-lo troca a password SIP do ramal."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, ou não tem ramal (`ramais.no_extension`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ramais.sip_server_missing`, `ramais.public_url_missing` ou `ramais.extension_inactive`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A pessoa pede um QR para configurar o Linphone do SEU ramal (*custom\nmethod*). Cada pedido substitui o QR anterior.",
         "tags": [
           "voice"
         ]
@@ -30971,6 +31153,58 @@
         "summary": "Método personalizado: volta a enviar o MESMO payload ao URL ACTUAL do\nwebhook (guarda anti-SSRF reaplicada), numa entrega nova com\n`redelivery_of`. Responde `202` com a entrega nova em `pending`; o\nresultado lê-se no `Location`.",
         "tags": [
           "webhooks"
+        ]
+      }
+    },
+    "/api/public/extension-provisioning/{token}": {
+      "get": {
+        "operationId": "redeem",
+        "parameters": [
+          {
+            "description": "O bilhete do QR (64 hex).",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Configuração `lpconfig` do Linphone, com uma password SIP nova. `Cache-Control: no-store`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`ramais.provisioning_invalid` — não existe, já usado, expirado ou ramal inactivo (a mesma resposta para todos)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "O telefone troca o bilhete pela configuração do Linphone. Rota PÚBLICA: a\ncredencial é o token no caminho, de uso único e com dez minutos. É um `GET`\ncom efeito (gasta o bilhete e troca a password SIP) porque é assim que o\nLinphone descarrega a configuração — não há outro verbo à escolha.",
+        "tags": [
+          "voice"
         ]
       }
     },
