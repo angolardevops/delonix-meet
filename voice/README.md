@@ -30,6 +30,34 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
 | `freeswitch/autoload_configs/conference.conf.xml` | Perfil de conferência `delonix` (não impõe SRTP: isso é de cada perna SIP) |
 | `cluster/freeswitch-entrypoint.sh` | O arranque do FreeSWITCH: fecha a vanilla da imagem, põe as variáveis do ambiente e os ficheiros do Meet. É o mesmo no `compose.yaml` e no cluster |
 | `../compose.yaml` (serviços `kamailio`, `freeswitch`, `pbx`) | O laboratório de voz: `make compose-up`, medido por `make compose-voice-check` |
+| `pbx-cliente/central.conf.tmpl` | O tronco da CENTRAL do PBX de laboratório (TLS, autenticado com a conta SIP da organização — ADR-0016). Modelo: o `make bootstrap` e o `scripts/cluster-voice.sh` põem-lhe o nome do bordo e a password |
+
+## O PBX de laboratório tem dois troncos
+
+O mesmo Asterisk (`pbx` no compose, `pbx-cliente` no cluster) entra no bordo de duas
+maneiras, e não são a mesma coisa:
+
+| Tronco | Como entra | O que o Meet sabe da chamada |
+|---|---|---|
+| `meet` (UDP 5060) | pela **allowlist** do bordo — faz de tronco contratado | nada: é um dial-in por `(número, PIN)` |
+| `meet-central` (TLS 5061) | **autenticado** com a conta SIP da organização «ngolacloud» («Registo SIP», que o `make seed` grava) | a organização: a sala procura-se dentro dela |
+
+Para os dois caberem no mesmo PBX, a allowlist do laboratório só aceita a **porta 5060 de
+origem** — a do tronco UDP. O tronco TLS sai de uma porta efémera, não está na lista, e é
+desafiado. O `make seed` cria também uma sala com PIN
+(`deploy/compose/generated/sala-telefone.txt`), e o `make compose-voice-check` liga por cada
+tronco: pelo da central, com o PIN certo (entra) e com um errado (autenticada, e recusada
+pelo IVR).
+
+```bash
+make bootstrap     # gera VOICE_CENTRAL_PASSWORD, DATA_ENCRYPTION_KEYS e o tronco da central
+make compose-up    # recusa arrancar se o bootstrap for anterior a isto
+make compose-voice-check
+# À mão, do PBX:  channel originate PJSIP/+244222000001@meet-central extension <PIN>@prova-pin
+```
+
+Um laboratório criado antes disto precisa de `make bootstrap` outra vez (não muda os
+segredos que já tem) e de `make compose-down && make compose-up`.
 
 ## Segurança (não-negociável)
 - **SRTP obrigatório**, sem fallback: quem recusa com `488` uma chamada em claro é a
@@ -42,7 +70,7 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
   nunca comitado. Em dev usar self-signed; nunca desativar a camada.
 - **Sem excepção por tronco**: um tronco declarado `srtp=off` só faz chamadas de **saída**
   em claro. À entrada, uma chamada em claro leva `488` venha de onde vier — uma operadora
-  sem SRTP não nos consegue ligar. É de propósito.
+  sem SRTP não nos consegue ligar. É de propósito, e foi decidido assim a 2026-10-04.
 - **Anti-toll-fraud**: só se aceita inbound dos **IPs do trunk** (`ao_trunk.txt`,
   fornecido pelo provedor 5.1). Sem outbound não autenticado.
 - **Segredos do ambiente**: `VOICE_INTERNAL_SECRET` (== do backend) e URLs vêm de env,
@@ -81,6 +109,12 @@ A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Z
    voz (obter o número e o PIN) — ver `docs/pstn-dial-in-fase0.md` e o E2E do control plane.
 2. `make voice-images` e `make compose-up` (o `compose.yaml` da raiz; `LAN_IP=<ip>` expõe
    os ramais à rede local).
+   **QR do Linphone no telemóvel:** o URL do QR tem de ser um nome que o telefone resolva e
+   com um certificado em que ele confie — `meet.ngolacloud.local` (mDNS, autoassinado) não é.
+   Duas vias: `make compose-up LAN_IP=…` (a rede local, com a raiz de laboratório instalada
+   uma vez no telemóvel; cobre também o registo SIP) ou `make tunnel` (um túnel Pinggy com um
+   URL novo a cada execução, 60 minutos, **publica a borda inteira na Internet**, só o QR e a
+   descarga — o UDP do SIP não passa; `make tunnel-stop` fecha).
 3. Registar o softphone no Kamailio e "ligar" para o número da sala.
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
    `GET /api/orgs/{org}/voice/call-records`.

@@ -141,6 +141,12 @@ services:
     entrypoint: ["kamailio"]
     command: ["-DD", "-E", "-A", "WITH_XHTTP_RPC", "-f", "/etc/kamailio/kamailio.cfg"]
     depends_on: [freeswitch]
+    # As centrais (ADR-0016): quem não está na allowlist entra por TLS,
+    # autenticado com a conta SIP da sua organização. O bordo pede o HA1 ao
+    # listener interno do servidor, com o segredo de voz do .env.
+    env_file: [.env] # VOICE_INTERNAL_SECRET
+    environment:
+      DELONIX_CONTROL_URL: http://delonix-server:8181
     volumes:
       - ./voice/kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
       - ./deploy/compose/voice/dispatcher.list:/etc/kamailio/dispatcher.list:ro
@@ -164,6 +170,11 @@ services:
     environment:
       DELONIX_CONTROL_URL: http://delonix-server:8181
       DELONIX_RAMAIS_SIP_PORT: "5070"
+      # De onde fala o bordo: o IVR só acredita em «esta chamada é da central
+      # de X» vindo daqui. As redes privadas, como na allowlist do bordo — a
+      # sub-rede do compose muda de motor para motor. É um laboratório: em
+      # produção são os endereços do bordo e mais nenhum.
+      DELONIX_EDGE_CIDRS: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
     volumes:
       - ./voice/cluster/freeswitch-entrypoint.sh:/entrypoint/freeswitch-entrypoint.sh:ro
       - ./voice/freeswitch/dialplan/public/00_delonix_dialin.xml:/meet/00_delonix_dialin.xml:ro
@@ -187,6 +198,10 @@ services:
       - ./voice/pbx-cliente/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./deploy/compose/generated/pbx-http.conf:/etc/asterisk/http.conf:ro
       - ./deploy/compose/generated/pbx-ari.conf:/etc/asterisk/ari.conf:ro
+      # O tronco da CENTRAL: a conta SIP da organização e o certificado do
+      # bordo, que ela confere.
+      - ./deploy/compose/generated/pbx-central.conf:/etc/asterisk/pbx-central.conf:ro
+      - ./deploy/compose/generated/voice-tls/tls.crt:/etc/asterisk/meet-bordo-ca.pem:ro
     networks: [meet]
 
 volumes:
