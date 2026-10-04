@@ -32,6 +32,11 @@
 #               e NÃO o próprio (mix-minus). É a prova de dois sentidos sem
 #               precisar de um browser na sala.
 #
+#               Nos dois: --dominio D põe D no endereço da conta (o `From`),
+#               para um servidor que decide por domínio — o bordo desafia a
+#               central com o realm do `From` (ADR-0016); --rede R corre os
+#               softphones numa rede docker em vez de na do anfitrião.
+#
 #  As passwords vêm do AMBIENTE, nunca da linha de comandos:
 #    SOFTPHONE_PASSWORD (chamada) · SOFTPHONE_PASSWORD_A / _B (par)
 #
@@ -68,7 +73,7 @@ ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
 aviso() { printf '  ! %s\n' "$*"; }   # medido e fora do que esta prova julga
 
-uso() { sed -n '2,51p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+uso() { sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 
 limpar() {
   local c
@@ -172,7 +177,9 @@ module_app		menu.so
 cons_listen		127.0.0.1:$consp
 snd_path		/rec
 EOF
-  acc="<sip:$user@$srv;transport=$transp>;regint=0;audio_codecs=PCMA/8000/1,PCMU/8000/1"
+  # O endereço da conta é o `From`. Com --dominio é esse domínio, e o servidor
+  # só entra no URI que se marca.
+  acc="<sip:$user@${DOMINIO:-$srv};transport=$transp>;regint=0;audio_codecs=PCMA/8000/1,PCMU/8000/1"
   [ "$menc" != nenhum ] && acc="$acc;mediaenc=$menc"
   if [ "$pwvar" != - ]; then
     [ -n "${!pwvar:-}" ] || { echo "✗ falta a password no ambiente: $pwvar"; exit 2; }
@@ -429,7 +436,7 @@ srtp_arranque() {
   # servidor trocados por loopback. Numa rede sem saída o FreeSWITCH fica em
   # 127.0.0.1, e por isso a lista de acesso dos ramais é a de loopback.
   docker create --name "${TAG}-fs" --network "${TAG}-net" --ip "$ip" \
-    -e DELONIX_CONTROL_URL=http://127.0.0.1:8181 -e DELONIX_API_URL=http://127.0.0.1:8180 \
+    -e DELONIX_CONTROL_URL=http://127.0.0.1:8181 \
     -e DELONIX_RAMAIS_SIP_PORT="$PORTO_RAMAIS" -e VOICE_INTERNAL_SECRET="$segredo" -e DELONIX_RAMAIS_ACL=127.0.0.0/8 \
     --entrypoint sh "$IMG_FS" /entrypoint/freeswitch-entrypoint.sh >/dev/null
   docker cp "$d/meet" "${TAG}-fs:/meet" >/dev/null
@@ -583,7 +590,7 @@ sai(bool(linhas) and not no_url,
     "nenhum dos %d pedidos ao servidor leva o segredo no URL" % len(linhas) if linhas and not no_url
     else "%d dos %d pedidos ao servidor levam o segredo no URL" % (len(no_url), len(linhas)))
 
-b = pedido("/api/voice/ivr/directory")
+b = pedido("/internal/v1/voice/ivr/directory")
 m = b and re.search(r"(?mi)^Authorization: Basic (\S+)$", b)
 certo = False
 if m:
@@ -594,7 +601,7 @@ if m:
 sai(certo, "directório (mod_xml_curl): o segredo vai em Authorization: Basic" if certo
     else "directório (mod_xml_curl): o pedido não leva o segredo em Authorization: Basic")
 
-for caminho, quem, corpo in (("/api/voice/ivr/resolve-extension", "ramais_dial.lua", None),
+for caminho, quem, corpo in (("/internal/v1/voice/ivr/resolve-extension", "ramais_dial.lua", None),
                              ("/internal/v1/voice/ivr/validate", "dialin_ivr.lua", pin)):
     b = pedido(caminho)
     if b is None:
@@ -613,6 +620,11 @@ PY
   v=$(docker exec "${TAG}-fs" grep -ac "\"pin\":\"$PIN_DIALIN\"" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-1}" -eq 0 ]; then ok "o PIN marcado não aparece no freeswitch.log"
   else bad "o PIN marcado aparece $v vez(es) no freeswitch.log"; fi
+  # Nem dígito a dígito: sem `sensitive_dtmf` o FreeSWITCH escreve uma linha
+  # «RECV DTMF <dígito>» por tecla, e o PIN lê-se de cima para baixo.
+  v=$(docker exec "${TAG}-fs" grep -ac 'RECV DTMF' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  if [ "${v:-1}" -eq 0 ]; then ok "os dígitos marcados não aparecem no freeswitch.log (nenhuma linha «RECV DTMF»)"
+  else bad "o freeswitch.log tem $v linha(s) «RECV DTMF»: o PIN lê-se dígito a dígito"; fi
   # O freeswitch.xml.fsxml (a configuração expandida, com o segredo) não pode
   # estar no directório de logs: o arranque manda-o para um directório privado.
   v=$(docker exec "${TAG}-fs" sh -c "grep -rl -a '$segredo' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")
@@ -622,7 +634,7 @@ PY
 }
 
 # ------------------------------------------------------------ chamada / par
-SERVIDOR= DESTINO= PIN= TRANSPORTE=udp SEGUNDOS=10 ESPERA_PIN=3 INTERFACE=0.0.0.0
+SERVIDOR= DESTINO= PIN= TRANSPORTE=udp SEGUNDOS=10 ESPERA_PIN=3 INTERFACE=0.0.0.0 DOMINIO= REDE=host
 UTIL= UTIL_A= UTIL_B= TOM=1000 ESPERA_TOM=-
 argumentos() {
   while [ $# -gt 0 ]; do
@@ -634,6 +646,8 @@ argumentos() {
       --segundos) SEGUNDOS=$2; shift ;;
       --espera-pin) ESPERA_PIN=$2; shift ;;
       --escuta) INTERFACE=$2; shift ;;
+      --dominio) DOMINIO=$2; shift ;;
+      --rede) REDE=$2; shift ;;
       --utilizador) UTIL=$2; shift ;;
       --utilizador-a) UTIL_A=$2; shift ;;
       --utilizador-b) UTIL_B=$2; shift ;;
@@ -657,7 +671,7 @@ chamada() {
   argumentos "$@"
   [ -n "$UTIL" ] || { echo "✗ falta --utilizador"; uso 2; }
   echo "chamada: $UTIL → $DESTINO em $SERVIDOR ($TRANSPORTE, SRTP obrigatório)"
-  perna a host "$SERVIDOR" "$UTIL" SOFTPHONE_PASSWORD "$DESTINO" "$TOM" "$TRANSPORTE" srtp-mand 5082 55551 42000 "$INTERFACE" $(( SEGUNDOS + 60 ))
+  perna a "$REDE" "$SERVIDOR" "$UTIL" SOFTPHONE_PASSWORD "$DESTINO" "$TOM" "$TRANSPORTE" srtp-mand 5082 55551 42000 "$INTERFACE" $(( SEGUNDOS + 60 ))
   if estabelecida a 25; then
     enviar_pin a 55551
     sleep "$SEGUNDOS"; desligar a 55551
@@ -672,10 +686,10 @@ par() {
   argumentos "$@"
   [ -n "$UTIL_A" ] && [ -n "$UTIL_B" ] || { echo "✗ faltam --utilizador-a e --utilizador-b"; uso 2; }
   echo "par: $UTIL_A (1000 Hz) e $UTIL_B (440 Hz) → $DESTINO em $SERVIDOR ($TRANSPORTE, SRTP obrigatório)"
-  perna a host "$SERVIDOR" "$UTIL_A" SOFTPHONE_PASSWORD_A "$DESTINO" 1000 "$TRANSPORTE" srtp-mand 5082 55551 42000 "$INTERFACE" $(( SEGUNDOS + 90 ))
+  perna a "$REDE" "$SERVIDOR" "$UTIL_A" SOFTPHONE_PASSWORD_A "$DESTINO" 1000 "$TRANSPORTE" srtp-mand 5082 55551 42000 "$INTERFACE" $(( SEGUNDOS + 90 ))
   estabelecida a 25 || return
   enviar_pin a 55551
-  perna b host "$SERVIDOR" "$UTIL_B" SOFTPHONE_PASSWORD_B "$DESTINO" 440 "$TRANSPORTE" srtp-mand 5086 55552 42200 "$INTERFACE" $(( SEGUNDOS + 60 ))
+  perna b "$REDE" "$SERVIDOR" "$UTIL_B" SOFTPHONE_PASSWORD_B "$DESTINO" 440 "$TRANSPORTE" srtp-mand 5086 55552 42200 "$INTERFACE" $(( SEGUNDOS + 60 ))
   estabelecida b 25 || return
   enviar_pin b 55552
   sleep "$SEGUNDOS"; desligar a 55551; desligar b 55552

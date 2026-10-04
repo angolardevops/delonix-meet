@@ -415,7 +415,7 @@ export async function loginMfa(mfa_token: string, code: string): Promise<User> {
   return t.user
 }
 
-export async function updateMe(data: { username?: string; password?: string; locale?: string }): Promise<User> {
+export async function updateMe(data: { username?: string; password?: string; current_password?: string; locale?: string }): Promise<User> {
   const user = await request<User>('/api/users/me', { method: 'PATCH', body: JSON.stringify(data) })
   localStorage.setItem('dx_user', JSON.stringify(user))
   return user
@@ -505,9 +505,22 @@ export interface PublicShareInfo {
   has_password: boolean
 }
 
+/**
+ * A partilha por link. Sem `password` é um `GET`; com ela é um `POST` com a
+ * password no CORPO — nunca no URL, que fica escrito nos logs de acesso de
+ * todos os proxies pelo caminho. O `download_url` da resposta já traz o passe
+ * de leitura que o `<video>` e o download usam.
+ */
 export async function getPublicShare(token: string, password?: string): Promise<PublicShareInfo> {
-  const url = `/api/public/recordings/${token}${password ? `?password=${encodeURIComponent(password)}` : ''}`
-  const res = await fetch(url, { credentials: 'same-origin' })
+  const base = `/api/public/recordings/${encodeURIComponent(token)}`
+  const res = password
+    ? await fetch(`${base}/access`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+    : await fetch(base, { credentials: 'same-origin' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw Object.assign(new Error(body.error ?? 'request failed'), { status: res.status })
@@ -2054,10 +2067,12 @@ export const deleteExtension = (orgId: string, id: string) =>
 export interface ExtensionRange {
   range_start: number
   range_end: number
+  /** Quem entra na organização recebe um ramal do intervalo sozinho (R278). */
+  auto_assign_on_join: boolean
 }
 export const getExtensionRange = (orgId: string, signal?: AbortSignal) =>
   request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { signal })
-export const putExtensionRange = (orgId: string, body: ExtensionRange) =>
+export const putExtensionRange = (orgId: string, body: { range_start: number; range_end: number; /** Ausente = manter o que está gravado. */ auto_assign_on_join?: boolean }) =>
   request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { method: 'PUT', body: JSON.stringify(body) })
 
 export interface AssignMissingResult {
@@ -2107,6 +2122,20 @@ export const setMyExtensionPin = (orgId: string, pin: string) =>
   requestEmpty(`/api/orgs/${orgId}/my-extension/pin`, { method: 'PUT', body: JSON.stringify({ pin }) })
 export const regenerateMyExtensionPin = (orgId: string) =>
   request<GeneratedPin>(`/api/orgs/${orgId}/my-extension/regenerate-pin`, { method: 'POST' })
+
+// ---------- QR de provisionamento do Linphone (R278) ----------
+// O URL leva um bilhete de uso único (10 min). Quando o Linphone o lê, o
+// servidor troca a password SIP do ramal e devolve-lhe a configuração: o
+// aparelho que estava registado com a anterior deixa de registar.
+export interface ProvisioningTicket {
+  provisioning_url: string
+  expires_at: string
+  extension: string
+}
+export const issueMyProvisioningTicket = (orgId: string) =>
+  request<ProvisioningTicket>(`/api/orgs/${orgId}/my-extension/provisioning-ticket`, { method: 'POST' })
+export const issueExtensionProvisioningTicket = (orgId: string, id: string) =>
+  request<ProvisioningTicket>(`/api/orgs/${orgId}/extensions/${id}/provisioning-ticket`, { method: 'POST' })
 
 // ---------- Fase 2: ramal alcançável do PSTN via DID dedicado ----------
 // Só voz directa (bridge ao ramal, sem PIN) — continua SEM ponte para salas

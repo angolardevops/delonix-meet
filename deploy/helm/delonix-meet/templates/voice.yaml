@@ -115,10 +115,10 @@ spec:
           # copia-a, fecha o que ela deixa aberto e põe por cima a do Meet.
           command: ["/bin/sh", "/entrypoint/freeswitch-entrypoint.sh"]
           env:
-            # Dois endereços, dois listeners: o IVR fala com o INTERNO, os
-            # ramais (mod_xml_curl) pedem /api/voice/ivr/* ao PÚBLICO.
+            # Um só endereço: o IVR, o directório e o dialplan dos ramais
+            # (mod_xml_curl) e o ramais_dial.lua falam todos com o listener
+            # INTERNO (/internal/v1/voice/ivr/*, R286).
             - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.{{ $ns }}.svc.cluster.local:8181" }
-            - { name: DELONIX_API_URL, value: "http://delonix-server.{{ $ns }}.svc.cluster.local:8180" }
             - { name: DELONIX_RAMAIS_SIP_PORT, value: {{ $vo.freeswitch.ramaisSipPort | quote }} }
             - name: VOICE_INTERNAL_SECRET
               valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: VOICE_INTERNAL_SECRET } }
@@ -127,6 +127,10 @@ spec:
             {{- end }}
             {{- with $vo.ramais.acl }}
             - { name: DELONIX_RAMAIS_ACL, value: {{ join "," . | quote }} }
+            {{- end }}
+            {{- if $vo.centrais.enabled }}
+            # Só o bordo pode dizer «esta chamada é da central de X» (ADR-0016).
+            - { name: DELONIX_EDGE_CIDRS, value: {{ join "," $vo.centrais.edgeCidrs | quote }} }
             {{- end }}
             {{- with $vo.freeswitch.externalIP }}
             - { name: DELONIX_EXTERNAL_IP, value: {{ . | quote }} }
@@ -276,6 +280,14 @@ spec:
             {{- end }}
             - "-f"
             - "/etc/kamailio/kamailio.cfg"
+          {{- if $vo.centrais.enabled }}
+          # O bordo autentica a central de uma organização com a conta SIP dela:
+          # pede o HA1 ao listener interno do servidor (ADR-0016).
+          env:
+            - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.{{ $ns }}.svc.cluster.local:8181" }
+            - name: VOICE_INTERNAL_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: VOICE_INTERNAL_SECRET } }
+          {{- end }}
           ports:
             - { name: sip-udp, containerPort: 5060, protocol: UDP }
             - { name: sip-tcp, containerPort: 5060, protocol: TCP }

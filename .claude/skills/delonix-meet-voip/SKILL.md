@@ -61,6 +61,13 @@ da plataforma.
 - **Liga-se por tronco SIP ao nosso bordo (Kamailio), não ao FreeSWITCH directamente.**
   O perfil `internal` do FreeSWITCH é dos ramais e autentica por Digest
   (`voice/freeswitch/sip_profiles/internal.xml:54`); não é porta de troncos.
+- **Duas portas para uma central, e não são a mesma coisa (medido, 2026-10-04,
+  ADR-0016).** Pela **allowlist**, o operador põe o IP dela no `address_file` e a chamada
+  é um dial-in por `(número, PIN)` — o Meet não sabe de que organização vem. Pela **conta
+  SIP da organização**, o inquilino grava o «Registo SIP» (domínio, utilizador, password)
+  e põe os mesmos três valores na central: entra por TLS, autenticada no bordo, e a sala
+  procura-se **na organização dela**. A segunda não precisa do operador, e é a que o
+  `kind: PbxService` do delonix-paas usa (`meet_trunk.account`).
 - **Regra de casa — do lado do Asterisk:** `chan_pjsip`, não `chan_sip` (removido no
   Asterisk 21; num Issabel com Asterisk 18 ainda existe e é o que a interface antiga
   cria — pede o PJSIP). Um endpoint por tronco, com `identify` por IP **e** autenticação;
@@ -78,8 +85,30 @@ contexto de dialplan e por domínio SIP, não por processo.
 
 - **Medido:** o bordo é o Kamailio — `sanity`, `dispatcher` com sonda `OPTIONS` a cada
   15 s e `permissions` por lista de endereços (`voice/kamailio/kamailio.cfg:44-62`); só
-  aceita `INVITE` e `OPTIONS` (`:80`); escuta TLS em 5061 (`:39`). Não tem `usrloc`,
+  aceita `INVITE` e `OPTIONS` (`:80`); escuta TLS em 5061 **e também UDP e TCP em 5060**
+  (`:54-61`, re-medido a 2026-10-04 — não é «só TLS para fora»). Não tem `usrloc`,
   registrar nem `auth_db` (`:14-15`) — **não regista ninguém**, só encaminha.
+- **Medido (2026-10-04, R277) — o bordo escuta numa interface, nunca em `0.0.0.0`.** Com
+  `listen=…:0.0.0.0:…` o Kamailio escrevia `0.0.0.0` no `Record-Route`: o `ACK` de quem
+  liga não saía e o FreeSWITCH cortava **todas** as chamadas aos 32 s. As provas de 4 s
+  nunca o viram. `DELONIX_SIP_IFACE` muda a interface (omissão `eth0`);
+  `DELONIX_SIP_ADVERTISE` dá o endereço a anunciar atrás de NAT. Uma prova de voz que
+  dure menos de 32 s não prova que a chamada se aguenta.
+- **Medido (2026-10-04, ADR-0016) — quem não está na allowlist só entra como central de
+  uma organização.** Por TLS, o bordo desafia (`407`, com o domínio do `From` como realm),
+  pede ao servidor o HA1 da conta SIP dessa organização
+  (`POST /internal/v1/telephony/edge/sip-account`, listener interno, segredo da media) e
+  verifica ele o digest — continua sem base de dados. A chamada segue com
+  `X-Delonix-Central: <domínio>`: o bordo tira os `X-Delonix-*` a tudo o que vem de fora, e
+  o IVR só acredita nesse cabeçalho vindo de um endereço do bordo (`DELONIX_EDGE_CIDRS`;
+  sem ela, nenhuma chamada entra como central). Sem TLS, `403` sem desafio; à décima falha
+  de autenticação em 5 min, `403` à origem. **Desligado sem `DELONIX_CONTROL_URL` no
+  Kamailio.** O `compose.yaml` e o cluster local ligam-no, e o PBX de laboratório tem
+  **dois troncos**: `meet` (UDP, pela allowlist — que nos laboratórios só aceita a porta
+  5060 de origem) e `meet-central` (TLS, autenticado com a conta SIP da organização
+  «ngolacloud»; `voice/pbx-cliente/central.conf.tmpl`). Medido a 2026-10-04 nos dois
+  (`make compose-voice-check` sob o `delonix compose`, e o passo de voz do `make cluster`):
+  9 de 9 em cada, com o PIN certo a entrar e o errado autenticado e recusado.
 - **Medido:** DTMF por RFC 2833/4733 com payload 101 (`internal.xml:36`);
   `accept-blind-reg` e `accept-blind-auth` a `false`.
 - **Medido (2026-10-03, FreeSWITCH 1.11.3, R226) — o que recusa uma chamada em claro à
@@ -138,6 +167,10 @@ contexto de dialplan e por domínio SIP, não por processo.
 **Autenticação e origem**
 - IP na allowlist **e** credenciais, quando a operadora o permitir; só IP quando ela não
   autentica. Nunca só credenciais num porto aberto à internet.
+  **A excepção, escrita no ADR-0016:** a central de uma organização entra só com
+  credenciais (por TLS). Uma credencial de tronco roubada dá chamadas pagas por nós; a de
+  uma central dá o direito de adivinhar PINs das salas dessa organização, com dois
+  travões. Restringir uma conta a redes de origem está por fazer.
 - Interligação por rede privada (VPN, ligação dedicada) antes de IP público.
 - Um tronco, um inquilino ou um papel. Não se partilham credenciais entre troncos.
 
@@ -181,8 +214,12 @@ contexto de dialplan e por domínio SIP, não por processo.
 | O que mexeste | Portão |
 |---|---|
 | As regras de um tronco (transporte, SRTP, host, prefixos, canais) | os unitários de `telephony/trunk.rs` e `cargo test --release --test telephony` (precisa de `DATABASE_URL`) |
-| `voice/kamailio/` | **não há portão no CI**; o `make cluster` carrega o `kamailio.cfg` num Kamailio 5.8.6 a sério e mede o dispatcher e o tronco do PBX de laboratório (`scripts/cluster-voice.sh`) |
-| Qualquer `*.xml` ou `*.xml.inc` de `voice/freeswitch/` | `bash scripts/check-fs-xml.sh` (R226, no `make fitness` e no CI) — XML bem formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário, nenhum `$${NOME_EM_MAIÚSCULAS}`. **Estático**: não carrega a configuração num FreeSWITCH. Os `*.lua`: `scripts/check-lua-sintaxe.sh` |
+| `voice/kamailio/kamailio.cfg` (os `listen=`) | `bash scripts/check-bordo-anuncia.sh` (R277, `make fitness` e CI) — estático: nenhum `listen=` em `0.0.0.0` sem `advertise`. Com chamada: `bash scripts/pbx-tronco-prova.sh longa`, fora do CI |
+| O tronco de uma central (FreePBX) até ao bordo | `bash scripts/pbx-tronco-prova.sh up` · `freepbx --seed … [--central]` · `negativos` · `longa` · `central` · `down` — uma réplica isolada do bordo e a appliance real em QEMU (`voice/pbx-tronco-prova/README.md`). **Fora do CI** |
+| A rota da central (`route[CENTRAL]`, o `X-Delonix-Central`), o modo `central` do `dialin_ivr.lua`, a lista `delonix_bordo` do arranque | `bash scripts/check-bordo-central.sh` (ADR-0016, `make fitness` e CI) — estático: o bordo tira os `X-Delonix-*` antes de decidir quem liga, só escreve o cabeçalho depois do digest e por TLS, e o IVR só acredita nele vindo do bordo. Com chamadas: `bash scripts/pbx-tronco-prova.sh central`, fora do CI |
+| Que conta o bordo verifica e em que salas a central entra (`telephony_sip::ha1_for_edge`, `voice::validate_pin_for_central`) | `cargo test --release --test central_entra_na_sala` contra Postgres real (6 casos; o isolamento por organização tem controlo positivo) |
+| `voice/kamailio/` (o resto) | **não há portão no CI**; o `make cluster` carrega o `kamailio.cfg` num Kamailio 5.8.6 a sério e mede o dispatcher e o tronco do PBX de laboratório (`scripts/cluster-voice.sh`) |
+| Qualquer `*.xml` ou `*.xml.inc` de `voice/freeswitch/` | `bash scripts/check-fs-xml.sh` (R226, no `make fitness` e no CI) — XML bem formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário, nenhum `$${NOME_EM_MAIÚSCULAS}`, e num `conference.conf` os controlos pedidos (`caller-controls`, `moderator-controls`) são `none` ou um grupo definido no ficheiro (R228). **Estático**: não carrega a configuração num FreeSWITCH. Os `*.lua`: `scripts/check-lua-sintaxe.sh` |
 | A interligação com um PBX ou uma operadora | **prova real, fora do CI**: uma chamada em cada sentido, com captura SIP, e as três medições abaixo |
 | O próprio softphone de prova, ou uma regra de DTMF no FreeSWITCH | `bash scripts/softphone-prova.sh selftest` — PIN por DTMF, tons medidos nos dois sentidos, e o controlo negativo (sem SRTP → `488`) com um perfil de teste. **No CI: o workflow «Imagem FreeSWITCH» corre-o contra a imagem acabada de construir, quando `voice/` ou o script mudam** |
 | Qualquer ficheiro de `voice/freeswitch/` que o FreeSWITCH carregue, o arranque (`voice/cluster/freeswitch-entrypoint.sh`), os serviços de voz do `compose.yaml`, ou qualquer regra de SRTP | `bash scripts/softphone-prova.sh srtp-real` (R226, R227) — a configuração que o arranque monta com os ficheiros do `compose.yaml`: ramal autenticado e dial-in, cada um com e sem SRTP (**sem SRTP os dois levam `488`**); o segredo de voz chega ao servidor em cabeçalhos, nunca no URL, e **nem ele nem o PIN marcado aparecem no `freeswitch.log`**. **No CI**, no workflow «Imagem FreeSWITCH» |
@@ -207,7 +244,15 @@ contexto de dialplan e por domínio SIP, não por processo.
   imagem do FreeSWITCH não traz os sons do IVR.
 - Nenhuma chamada passou por **uma operadora a sério através do Kamailio**: o que está
   medido é contra um FreeSWITCH local (`delonix-meet-telefonia`, R222).
-- Nenhuma interligação com um **Issabel ou FreePBX real** foi feita a partir deste repo.
+- **Uma FreePBX 17 real interligou-se** (2026-10-04, `scripts/pbx-tronco-prova.sh`, numa
+  réplica do bordo): tronco PJSIP sobre TLS com o certificado do bordo verificado, SRTP por
+  SDES, o PIN certo aceite por DTMF e o errado recusado, a voz do IVR ouvida pela central, e
+  as recusas. **Com a conta SIP da organização e a allowlist vazia** (ADR-0016), entra
+  autenticada e a chamada do PIN certo vai para a sala da organização **pela ponte do SFU**.
+  **Não provado:** um Issabel; um browser na sala (com dois telefones como central, cada um
+  ouve o outro pela ponte — a media entre a ponte e um participante WebRTC é da R221/R222);
+  o bordo atrás de NAT; e as centrais ligadas no `compose.yaml`, no cluster local ou pelo
+  chart (`voice.centrais`), que só foram lidos.
 - O `softphone-prova.sh` **nunca correu contra o Meet a funcionar**: os modos `chamada` e
   `par` foram exercitados contra um FreeSWITCH de teste, sem autenticação Digest, sem
   registo, sem o IVR do dial-in e sem a ponte para a sala. O `srtp-real` e o
@@ -217,14 +262,13 @@ contexto de dialplan e por domínio SIP, não por processo.
   entrypoint num contentor, com a lista de ficheiros de cada um e o servidor trocado por
   um andaime. Um ramal real do control plane, o Kamailio à frente do dial-in e a rede de
   cada ambiente ficam de fora — isso é do `make compose-voice-check` e do `make cluster`.
-- **SRTP à entrada não tem excepção por tronco** (regra de casa, fixada a 2026-10-04). A
-  global vale para todas as pernas: uma chamada em claro ao perfil do dial-in leva `488`
-  venha de onde vier (medido). O `srtp=off` de um tronco só vale **à saída**
-  (`telephony_fs_xml.rs:230`): uma operadora sem SRTP recebe chamadas nossas e não nos
-  consegue ligar. Fica assim de propósito — abrir a entrada em claro a um tronco era pôr
-  media da reunião em claro na rede da operadora. Não foi medido com um tronco a sério: o
-  arranque não carrega gateways. Mudar isto é uma decisão do dono do produto, e um pedido
-  próprio (ver «Ao fechar uma tarefa»).
+- **SRTP à entrada não tem excepção por tronco — decidido pelo dono do produto a
+  2026-10-04.** A global vale para todas as pernas: uma chamada em claro ao perfil do
+  dial-in leva `488` venha de onde vier (medido). O `srtp=off` de um tronco só vale **à
+  saída** (`telephony_fs_xml.rs:230`): uma operadora que só ofereça media em claro recebe
+  chamadas nossas e **não serve para entrada**. Fica assim de propósito — aceitar a entrada
+  em claro era pôr media da reunião em claro na rede da operadora. Não reabrir sem uma
+  decisão nova dele. Não foi medido com um tronco a sério: o arranque não carrega gateways.
 - As regras de casa acima **não têm portão**. Session timers, `P-Asserted-Identity`,
   tecto de gasto e alarme de fraude não foram procurados no código nesta revisão:
   confirma por `grep` antes de os dares como existentes ou em falta.
@@ -232,19 +276,14 @@ contexto de dialplan e por domínio SIP, não por processo.
 
 ## Ao fechar uma tarefa
 
-Propõe um a três pedidos seguintes (escolhe dos quatro abaixo, ou outros), com o alvo, a prova a medir e o que fica de fora:
+Propõe um a três pedidos seguintes (escolhe dos três abaixo, ou outros), com o alvo, a prova a medir e o que fica de fora:
 
-1. «Se o dono do produto decidir aceitar chamadas em claro de um tronco declarado
-   `srtp=off`: o Kamailio marca o tronco de origem, o servidor decide pelo tronco, e o
-   dialplan do dial-in aplica a decisão antes do `answer` (o perfil `external` negoceia
-   tarde). Prova: a chamada em claro aceite só desse tronco, e recusada de qualquer outra
-   origem. Revisor `delonix-meet-security`. Fora: a operadora a sério.»
-2. «Um portão que carregue o `voice/kamailio/kamailio.cfg` (`kamailio -c`) no
+1. «Um portão que carregue o `voice/kamailio/kamailio.cfg` (`kamailio -c`) no
    `make fitness`. Prova: partir a configuração e ver falhar. Fora: o comportamento em
    chamada, e o XML do FreeSWITCH, que já tem o `check-fs-xml.sh`.»
-3. «A interligação com um FreePBX 17 de teste por tronco PJSIP sobre TLS: chamada nos dois
+2. «A interligação com um FreePBX 17 de teste por tronco PJSIP sobre TLS: chamada nos dois
    sentidos, DTMF e os dois controlos negativos. Prova: captura SIP e os tons medidos nos
    dois lados. Fora: a operadora.»
-4. «Mede no código o que existe das regras de fraude (tecto de gasto, destinos fechados
+3. «Mede no código o que existe das regras de fraude (tecto de gasto, destinos fechados
    por omissão, alarme) e escreve o que falta como achados. Prova: `grep` com ficheiro e
    linha. Fora: implementar.»

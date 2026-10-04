@@ -1400,10 +1400,19 @@ fn novo_segredo_de_reclamacao() -> String {
     delonix_meet_core::crypto::random_hex(32)
 }
 
+/// Tecto de pessoas à espera numa sala, neste nó. A sala de espera não tinha
+/// limite: cada ligação de um token válido acrescentava uma entrada, e a lista
+/// vai inteira para cada anfitrião a cada alteração.
+pub const WAITING_ROOM_MAX: usize = 500;
+
 struct WaitingPeer {
     username: String,
     admit_tx: oneshot::Sender<bool>,
     extras: JoinExtras,
+    /// De quem é a espera (o `sub` do token de sala). Uma segunda ligação da
+    /// mesma identidade SUBSTITUI a primeira em vez de se somar a ela. `None`
+    /// só nos chamadores que não têm token (testes do hub).
+    subject: Option<Uuid>,
     /// Epoch ms de quando começou a esperar.
     since: i64,
 }
@@ -2001,20 +2010,68 @@ impl SignalingHub {
         extras: JoinExtras,
         admit_tx: oneshot::Sender<bool>,
     ) {
+        self.add_waiting_for(room_id, peer_id, None, username, extras, admit_tx);
+    }
+
+    /// Põe alguém à espera, com dono. Duas regras que a sala de espera não
+    /// tinha, e sem as quais um só token a abrir ligações enchia a lista de
+    /// toda a gente:
+    ///
+    /// - **uma espera por identidade:** se `subject` já estava à espera, a
+    ///   entrada antiga sai e esta fica no lugar dela. O `admit_tx` antigo
+    ///   cai sem decisão, e essa ligação termina como recusada — é a de um
+    ///   separador que ficou para trás ou de um F5;
+    /// - **um tecto por sala** ([`WAITING_ROOM_MAX`]): cheia, devolve `false`
+    ///   e não regista nada. Quem chama fecha a ligação.
+    pub fn add_waiting_for(
+        &self,
+        room_id: Uuid,
+        peer_id: Uuid,
+        subject: Option<Uuid>,
+        username: String,
+        extras: JoinExtras,
+        admit_tx: oneshot::Sender<bool>,
+    ) -> bool {
         // Insert under lock, broadcast after lock is released.
-        let info = {
+        let (replaced, info) = {
             let mut room = self.rooms.entry(room_id).or_default();
-            let w = WaitingPeer {
-                username,
-                admit_tx,
-                extras,
-                since: now_ms(),
+            let replaced: Vec<Uuid> = match subject {
+                Some(s) => room
+                    .waiting
+                    .iter()
+                    .filter(|(_, w)| w.subject == Some(s))
+                    .map(|(id, _)| *id)
+                    .collect(),
+                None => Vec::new(),
             };
-            let info = room.waiting_info(peer_id, &w);
-            room.waiting.insert(peer_id, w);
-            info
+            for id in &replaced {
+                room.waiting.remove(id);
+            }
+            if room.waiting.len() >= WAITING_ROOM_MAX {
+                (replaced, None)
+            } else {
+                let w = WaitingPeer {
+                    username,
+                    admit_tx,
+                    extras,
+                    subject,
+                    since: now_ms(),
+                };
+                let info = room.waiting_info(peer_id, &w);
+                room.waiting.insert(peer_id, w);
+                (replaced, Some(info))
+            }
         };
-        self.broadcast_admitters(room_id, ServerMsg::WaitingJoin { peer: info });
+        for peer_id in replaced {
+            self.broadcast_admitters(room_id, ServerMsg::WaitingLeft { peer_id });
+        }
+        match info {
+            Some(peer) => {
+                self.broadcast_admitters(room_id, ServerMsg::WaitingJoin { peer });
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn remove_waiting(&self, room_id: Uuid, peer_id: Uuid) {
@@ -4300,9 +4357,25 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     let must_wait = must_wait || (!is_host && source.is_none() && state.hub.is_locked(room_id));
     if must_wait {
         let (admit_tx, admit_rx) = oneshot::channel::<bool>();
-        state
-            .hub
-            .add_waiting_with(room_id, peer_id, username.clone(), extras.clone(), admit_tx);
+        let queued = state.hub.add_waiting_for(
+            room_id,
+            peer_id,
+            Some(user_id),
+            username.clone(),
+            extras.clone(),
+            admit_tx,
+        );
+        if !queued {
+            // Sala de espera cheia: não se regista mais ninguém. A mensagem é
+            // para a pessoa; o aviso é para quem opera.
+            tracing::warn!(%room_id, %peer_id, max = WAITING_ROOM_MAX, "waiting room full: connection refused");
+            let _ = tx.send(ServerMsg::Error {
+                message: "waiting room is full".into(),
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            writer.abort();
+            return;
+        }
         let _ = tx.send(ServerMsg::Waiting);
         tracing::info!(%room_id, %peer_id, %username, "guest waiting for admission");
 
@@ -5277,6 +5350,102 @@ mod tests {
         // O anfitrião admite.
         hub.handle(room, host, ClientMsg::Admit { to: guest }, None);
         assert_eq!(admit_rx.await, Ok(true));
+    }
+
+    /// Mil ligações com o mesmo token não enchem a sala de espera: cada uma
+    /// substitui a anterior, o anfitrião vê UMA entrada, e as ligações que
+    /// ficaram para trás terminam sem decisão (plano de lacunas, S4).
+    #[tokio::test]
+    async fn one_identity_waits_once_however_many_sockets_it_opens() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (host, tx_h, mut rx_h) = peer();
+        hub.join(room, host, host, "host".into(), true, true, false, tx_h);
+        drain(&mut rx_h);
+
+        let subject = Uuid::new_v4();
+        let mut receivers = Vec::new();
+        let mut last = Uuid::nil();
+        for _ in 0..1000 {
+            let (admit_tx, admit_rx) = oneshot::channel();
+            last = Uuid::new_v4();
+            assert!(hub.add_waiting_for(
+                room,
+                last,
+                Some(subject),
+                "convidado".into(),
+                JoinExtras::default(),
+                admit_tx,
+            ));
+            receivers.push(admit_rx);
+        }
+        let waiting = hub.waiting_list(room);
+        assert_eq!(waiting.len(), 1, "uma espera por identidade");
+        assert_eq!(waiting[0].peer_id, last, "fica a ligação mais recente");
+
+        // As 999 que ficaram para trás perderam o emissor: terminam sem decisão.
+        let current = receivers.pop().unwrap();
+        for mut rx in receivers {
+            assert!(matches!(
+                rx.try_recv(),
+                Err(oneshot::error::TryRecvError::Closed)
+            ));
+        }
+        // E a que ficou é admitida normalmente.
+        hub.handle(room, host, ClientMsg::Admit { to: last }, None);
+        assert_eq!(current.await, Ok(true));
+    }
+
+    /// Identidades DIFERENTES somam-se, até ao tecto; a seguinte é recusada e
+    /// não entra na lista. Uma espera que sai liberta o lugar.
+    #[tokio::test]
+    async fn the_waiting_room_has_a_ceiling() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let mut kept = Vec::new();
+        let mut first = Uuid::nil();
+        for i in 0..WAITING_ROOM_MAX {
+            let (admit_tx, admit_rx) = oneshot::channel();
+            let id = Uuid::new_v4();
+            if i == 0 {
+                first = id;
+            }
+            assert!(hub.add_waiting_for(
+                room,
+                id,
+                Some(Uuid::new_v4()),
+                format!("g{i}"),
+                JoinExtras::default(),
+                admit_tx,
+            ));
+            kept.push(admit_rx);
+        }
+        let (admit_tx, _admit_rx) = oneshot::channel();
+        let extra = Uuid::new_v4();
+        assert!(
+            !hub.add_waiting_for(
+                room,
+                extra,
+                Some(Uuid::new_v4()),
+                "a mais".into(),
+                JoinExtras::default(),
+                admit_tx,
+            ),
+            "acima do tecto recusa"
+        );
+        assert_eq!(hub.waiting_list(room).len(), WAITING_ROOM_MAX);
+
+        hub.remove_waiting(room, first);
+        let (admit_tx, _admit_rx2) = oneshot::channel();
+        assert!(hub.add_waiting_for(
+            room,
+            extra,
+            Some(Uuid::new_v4()),
+            "agora cabe".into(),
+            JoinExtras::default(),
+            admit_tx,
+        ));
+        assert_eq!(hub.waiting_list(room).len(), WAITING_ROOM_MAX);
     }
 
     /// `promote-admit` (o web enviava-o e o servidor recusava-o): o anfitrião

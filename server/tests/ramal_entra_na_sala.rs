@@ -127,7 +127,18 @@ async fn ramal_com_o_pin_da_sua_org_recebe_a_ponte(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(did.status, 200);
-    assert_eq!(did.json()["room_bridge"], body["room_bridge"]);
+    // A única diferença é o bilhete de identidade de quem liga (R279): o
+    // ramal já vem identificado, o dial-in ainda não.
+    const TICKET: &str = "sip_h_X-Delonix-Caller-Ticket";
+    let mut do_ramal = body["room_bridge"].clone();
+    let bilhete = do_ramal["channel_vars"]
+        .as_object_mut()
+        .unwrap()
+        .remove(TICKET);
+    assert!(bilhete.is_some(), "o ramal não trouxe bilhete: {body}");
+    let do_did = did.json()["room_bridge"].clone();
+    assert!(do_did["channel_vars"].get(TICKET).is_none(), "{do_did}");
+    assert_eq!(do_did, do_ramal);
 
     // PIN errado: recusado.
     let wrong = if pin == "000000" { "000001" } else { "000000" };
@@ -410,7 +421,7 @@ async fn o_numero_de_acesso_e_reservado_e_anunciado(db: sqlx::PgPool) {
             let r = app
                 .raw(
                     reqwest::Method::POST,
-                    "/api/voice/ivr/resolve-extension",
+                    "/internal/v1/voice/ivr/resolve-extension",
                     &[("x-voice-secret", VOICE_SECRET)],
                     Some(json!({"domain": domain, "extension": ext})),
                 )
@@ -577,4 +588,154 @@ async fn porta_e_transporte_tem_omissao_e_um_host_mal_formado_nao_conta(db: sqlx
     let (st, list) = bad.get(&extensions, Some(&a.token)).await;
     assert_eq!(st, 200, "{list}");
     assert_eq!(list[0]["sip_server"], Value::Null, "{list}");
+}
+
+/// O `POST` de formulário do `mod_xml_curl` ao directório, com o segredo em
+/// HTTP Basic como o FreeSWITCH o manda.
+async fn directory(app: &TestApp, path: &str, user: &str, domain: &str) -> (u16, String) {
+    use base64::Engine as _;
+    let basic = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("freeswitch:{VOICE_SECRET}"))
+    );
+    let res = app
+        .http
+        .post(app.url(path))
+        .header("authorization", basic)
+        .form(&[("user", user), ("domain", domain)])
+        .send()
+        .await
+        .expect("pedido HTTP falhou");
+    (res.status().as_u16(), res.text().await.unwrap_or_default())
+}
+
+fn md5_hex(s: &str) -> String {
+    use md5::{Digest, Md5};
+    Md5::digest(s.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+const DIRECTORY: &str = "/internal/v1/voice/ivr/directory";
+
+/// R286 — o HA1 do ramal está cifrado na base, e o directório continua a
+/// entregar ao FreeSWITCH o valor que o digest SIP usa. O herdado em claro
+/// lê-se, e um HA1 cifrado copiado para a linha de outro ramal não abre.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_extension_ha1_is_sealed_at_rest_and_still_reaches_freeswitch(db: sqlx::PgPool) {
+    let app = spawn(db, &[]).await;
+    let a = app.new_org("alfa-ha1.ao").await;
+    let colega = app.add_member(&a, "colega", "member").await;
+
+    let (st, body) = app
+        .post(
+            &format!("/api/orgs/{}/extensions", a.org()),
+            Some(&a.token),
+            json!({"member_id": a.user_id, "extension": "101"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    let (id, user, domain, password) = (
+        body["id"].as_str().unwrap().to_string(),
+        body["sip_username"].as_str().unwrap().to_string(),
+        body["sip_domain"].as_str().unwrap().to_string(),
+        body["sip_password"].as_str().unwrap().to_string(),
+    );
+    let ha1 = md5_hex(&format!("{user}:{domain}:{password}"));
+
+    // Na base: cifrado, e o valor que o SIP usa não está lá.
+    let stored: String =
+        sqlx::query_scalar("SELECT sip_ha1 FROM voice_extensions WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(
+        stored.starts_with("enc:v1:"),
+        "HA1 em claro na base: {stored}"
+    );
+    assert!(!stored.contains(&ha1));
+
+    // Para o FreeSWITCH: o HA1 de sempre.
+    let (st, xml) = directory(&app, DIRECTORY, &user, &domain).await;
+    assert_eq!(st, 200, "{xml}");
+    assert!(
+        xml.contains(&format!(r#"<param name="a1-hash" value="{ha1}"/>"#)),
+        "o directório não devolveu o HA1 do ramal: {xml}"
+    );
+
+    // Um ramal criado antes da R286 (HA1 em claro) continua a registar-se.
+    sqlx::query("UPDATE voice_extensions SET sip_ha1 = $2 WHERE id = $1::uuid")
+        .bind(&id)
+        .bind(&ha1)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (st, xml) = directory(&app, DIRECTORY, &user, &domain).await;
+    assert_eq!(st, 200);
+    assert!(
+        xml.contains(&ha1),
+        "o HA1 herdado em claro deixou de servir: {xml}"
+    );
+
+    // O cifrado de um ramal, copiado para a linha de OUTRO, não abre: o
+    // directório não entrega credenciais trocadas.
+    let outro = novo_ramal(&app, &a, &colega, "102").await;
+    sqlx::query("UPDATE voice_extensions SET sip_ha1 = $2 WHERE id = $1::uuid")
+        .bind(&outro.id)
+        .bind(&stored)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (st, xml) = directory(&app, DIRECTORY, &outro.sip_username, &outro.sip_domain).await;
+    assert_ne!(st, 200, "abriu um HA1 de outra linha: {xml}");
+    assert!(!xml.contains(&ha1));
+
+    // Regenerar a password volta a gravar cifrado.
+    let (st, body) = app
+        .post(
+            &format!("/api/orgs/{}/extensions/{id}/regenerate-password", a.org()),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    let stored: String =
+        sqlx::query_scalar("SELECT sip_ha1 FROM voice_extensions WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(
+        stored.starts_with("enc:v1:"),
+        "regenerar gravou em claro: {stored}"
+    );
+}
+
+/// R286 — as três rotas de máquina dos ramais deixaram o router público. Com
+/// o listener interno configurado, o router público (o que o ingress publica)
+/// não as tem, nem no caminho novo nem no antigo; sem ele, ficam no mesmo
+/// porto, como o resto da API interna, e só no caminho novo.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_extension_machine_routes_left_the_public_listener(db: sqlx::PgPool) {
+    const ROUTES: [&str; 3] = ["directory", "resolve-extension", "dialplan-did"];
+
+    // Com listener interno: o router público não responde a nenhuma.
+    let split = spawn(db.clone(), &[("INTERNAL_BIND_ADDR", "127.0.0.1:0")]).await;
+    for r in ROUTES {
+        for prefix in ["/internal/v1/voice/ivr", "/api/voice/ivr"] {
+            let (st, body) = directory(&split, &format!("{prefix}/{r}"), "x", "y").await;
+            assert_eq!(st, 404, "{prefix}/{r} no listener público: {body}");
+        }
+    }
+
+    // Sem listener interno (um só porto): o caminho novo responde, o antigo não.
+    let single = spawn(db, &[]).await;
+    for r in ROUTES {
+        let (st, _) = directory(&single, &format!("/internal/v1/voice/ivr/{r}"), "x", "y").await;
+        assert_ne!(st, 404, "/internal/v1/voice/ivr/{r} devia existir");
+        let (st, _) = directory(&single, &format!("/api/voice/ivr/{r}"), "x", "y").await;
+        assert_eq!(st, 404, "/api/voice/ivr/{r} ainda existe");
+    }
 }

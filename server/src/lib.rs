@@ -20,6 +20,7 @@ mod directory;
 mod dlp;
 mod error;
 mod extension_pin;
+mod extension_provisioning;
 pub mod grpc;
 mod guests;
 mod media_probe;
@@ -83,12 +84,18 @@ mod ui;
 mod usage;
 mod users;
 mod voice;
+mod voice_caller;
 mod webhooks;
 mod whiteboards;
 
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
+/// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
+/// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
+pub use voice::{discard_caller_ticket, seat_phone_caller};
+/// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
+pub use webhooks::retry_due as webhook_retry_due;
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -176,6 +183,9 @@ pub struct AppState {
     pub telephony_call_limiter: RateLimiter,
     /// «Ver credenciais» SIP: só conta FALHAS de reautenticação, por conta.
     pub telephony_reveal_limiter: RateLimiter,
+    /// Resgate de bilhetes de provisionamento do Linphone, por IP (rota
+    /// pública, R278).
+    pub provisioning_limiter: RateLimiter,
     /// Portas da telefonia (FreeSWITCH ESL, Kamailio) montadas da configuração.
     pub telephony: telephony_service::Adapters,
     /// Salas de grupo ativas: sala principal -> conjunto de salas filhas.
@@ -238,6 +248,13 @@ fn internal_routes() -> Router<Arc<AppState>> {
             "/internal/v1/voice/ivr/validate-extension",
             post(voice::ivr_validate_extension_pin),
         )
+        // O mesmo IVR, quando quem liga é a CENTRAL de uma organização: o bordo
+        // autenticou-a com a conta SIP dela, e a sala procura-se nessa
+        // organização (ADR-0016).
+        .route(
+            "/internal/v1/voice/ivr/validate-central",
+            post(voice::ivr_validate_central_pin),
+        )
         // O PIN de um RAMAL (R276): identifica a pessoa, não a sala. Ainda sem
         // consumidor — o Lua do IVR passa a chamá-la no lote seguinte.
         .route(
@@ -245,6 +262,25 @@ fn internal_routes() -> Router<Arc<AppState>> {
             post(extension_pin::ivr_verify_extension_pin),
         )
         .route("/internal/v1/voice/ivr/cdr", post(voice::ivr_record_cdr))
+        // Os ramais, vistos pelo FreeSWITCH: o directório (que devolve o HA1
+        // do digest SIP), a resolução de um número marcado e o dialplan por
+        // DID. Estiveram no router PÚBLICO como `/api/voice/ivr/*` — a
+        // superfície que devolve credenciais SIP a quem tiver o segredo de
+        // voz ficava atrás do ingress. Passam para aqui com o resto da
+        // máquina (R286); o `xml_curl.conf.xml` e o `ramais_dial.lua` mudam
+        // no mesmo commit.
+        .route(
+            "/internal/v1/voice/ivr/directory",
+            post(ramais::ivr_directory),
+        )
+        .route(
+            "/internal/v1/voice/ivr/resolve-extension",
+            post(ramais::ivr_resolve_extension),
+        )
+        .route(
+            "/internal/v1/voice/ivr/dialplan-did",
+            post(ramais::ivr_dialplan_did),
+        )
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
         // `mod_xml_curl`. Mesmo segredo interno do IVR.
         .route(
@@ -254,6 +290,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
         .route(
             "/internal/v1/telephony/freeswitch-config",
             post(telephony_fs_xml::handler),
+        )
+        // O bordo (Kamailio) pede o HA1 da conta SIP de uma organização para
+        // verificar o digest da central dela (ADR-0016).
+        .route(
+            "/internal/v1/telephony/edge/sip-account",
+            post(telephony_sip::edge_sip_account),
         )
 }
 
@@ -672,6 +714,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/public/recordings/{token}", get(recordings::public_share))
         .route(
+            "/api/public/recordings/{token}/access",
+            post(recordings::public_share_access),
+        )
+        .route(
             "/api/public/recordings/{token}/content",
             get(recordings::public_share_download),
         )
@@ -1036,17 +1082,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/my-extension/regenerate-pin",
             post(extension_pin::regenerate_my_pin),
         )
-        // API interna do FreeSWITCH para os ramais (mesmo segredo do dial-in PSTN;
-        // fica no router público porque os configs `xml_curl.conf.xml`/
-        // `ramais_dial.lua` já chamam este caminho, não `/internal/v1/*`).
-        .route("/api/voice/ivr/directory", post(ramais::ivr_directory))
+        // QR de provisionamento do Linphone (R278): emite-se com sessão…
         .route(
-            "/api/voice/ivr/resolve-extension",
-            post(ramais::ivr_resolve_extension),
+            "/api/orgs/{org_id}/my-extension/provisioning-ticket",
+            post(extension_provisioning::issue_my_ticket),
         )
         .route(
-            "/api/voice/ivr/dialplan-did",
-            post(ramais::ivr_dialplan_did),
+            "/api/orgs/{org_id}/extensions/{id}/provisioning-ticket",
+            post(extension_provisioning::issue_extension_ticket),
+        )
+        // …e resgata-se sem ela: a credencial é o token de uso único.
+        .route(
+            "/api/public/extension-provisioning/{token}",
+            get(extension_provisioning::redeem),
         )
         // Telefonia, SIP e SMS (ADR-0009): consola da org (sessão, admin).
         .route(
@@ -1218,7 +1266,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     .get(REQUEST_ID_HEADER)
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
-                tracing::info_span!("http", method = %req.method(), path = %req.uri().path(), request_id)
+                // O caminho do resgate de um QR do Linphone leva o token (R278).
+                tracing::info_span!("http", method = %req.method(), path = %extension_provisioning::redact_path(req.uri().path()), request_id)
             },
         ))
         // Por DENTRO do request_id (o envelope leva o id) e por fora de tudo o
@@ -1413,6 +1462,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         mfa_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         telephony_call_limiter: RateLimiter::new(10, Duration::from_secs(600)),
         telephony_reveal_limiter: RateLimiter::new(5, Duration::from_secs(300)),
+        provisioning_limiter: RateLimiter::new(20, Duration::from_secs(60)),
         telephony: telephony_service::Adapters::from_config(&config, &outbound),
         outbound,
         compose_slots: Arc::new(tokio::sync::Semaphore::new(config.ffmpeg_max_concurrent)),
@@ -1719,6 +1769,25 @@ pub async fn run() {
                         tracing::info!(abandoned, deleted, "webhook deliveries sweep")
                     }
                     Err(e) => tracing::warn!(error = %e, "webhook deliveries sweep failed"),
+                }
+            }
+        });
+    }
+
+    // Worker: repetição automática de webhooks falhados, a cada 15 s. Todos os
+    // nós correm este ciclo; `retry_due` reclama com `SKIP LOCKED`, por isso
+    // não se repetem uns aos outros. Sem `JoinHandle`, como os ciclos vizinhos.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(15));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match webhooks::retry_due(&state).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(n, "webhook: repetições enviadas"),
+                    Err(e) => tracing::warn!(error = %e, "webhook: passo de repetição falhou"),
                 }
             }
         });

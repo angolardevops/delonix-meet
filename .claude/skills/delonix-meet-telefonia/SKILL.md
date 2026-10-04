@@ -21,8 +21,8 @@ when_to_use: >-
 ponte; [ADR-0009](../../../docs/adr/0009-telefonia-troncos-encaminhamento-e-custo.md)
 para troncos, encaminhamento e custo — **ainda «Proposto»** (`:3`) com o código já na
 `main` desde o #136: di-lo no relatório, não o trates como aceite.
-**Catálogo:** R210–R214 (telefonia), R221–R225 (ponte, imagem, censo, palco) e R273
-(ramal entra na sala) em
+**Catálogo:** R210–R214 (telefonia), R221–R225 (ponte, imagem, censo, palco), R273
+(ramal entra na sala), R276 (PIN do ramal) e R279 (o IVR identifica quem liga) em
 [`regressions.md`](../../../docs/reference/regressions.md).
 **Histórico da decisão:** [design da Abordagem B](../../../docs/pstn-sfu-bridge-design.md),
 marcado **superseded** — lê-o para não repetir o erro, não para o seguir.
@@ -101,13 +101,15 @@ chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em l
   (`cost`, `dial_plan`, `money`, `number`, `ports`, `trunk`); adaptadores e handlers em
   `server/src/telephony_{trunks,dial_plan,sip,calls,cdr,esl,fs_xml,service}.rs`;
   migrações `0069`–`0072`.
-- **Rotas:** dezassete registos — quinze em `lib.rs:845-902`, sob
+- **Rotas:** dezoito registos — quinze em `lib.rs:845-902`, sob
   `/api/orgs/{org_id}/telephony/` (`trunks`, `trunks/{id}`, `trunks/{id}/prices`,
   `trunk-order`, `exchange-rates`, `dial-plan`, `dial-plan/test`, `sip-settings`,
   `sip-settings/reveal-credentials`, `sip-registration`, `sip-registration/restart`,
-  `test-calls`, `test-calls/{id}`, `call-records`, `usage`) e dois no listener interno,
-  `lib.rs:213-218` (`/internal/v1/telephony/call-records`, onde o `mod_json_cdr` entrega os CDR, e
-  `/internal/v1/telephony/freeswitch-config`, que serve o `mod_xml_curl`).
+  `test-calls`, `test-calls/{id}`, `call-records`, `usage`) e três no listener interno,
+  em `internal_routes()` (`/internal/v1/telephony/call-records`, onde o `mod_json_cdr` entrega os CDR,
+  `/internal/v1/telephony/freeswitch-config`, que serve o `mod_xml_curl`, e
+  `/internal/v1/telephony/edge/sip-account`, onde o bordo pede o HA1 da conta SIP de uma
+  organização — ADR-0016).
 - **As cinco regras que custaram**, e não se reabrem:
   - **R210** — a emergência (112) nunca é gravada, bloqueada nem travada pelo limite de
     canais, por muito que o plano de marcação do cliente diga o contrário;
@@ -128,7 +130,7 @@ chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em l
 Um ramal marca o **número de acesso às reuniões** (`VOICE_MEETING_ACCESS_NUMBER`, `8000`
 por omissão) e entra pela MESMA ponte. Não há ponte nem IVR novos:
 
-1. o `ramais_dial.lua` pergunta o número em `/api/voice/ivr/resolve-extension`; a resposta
+1. o `ramais_dial.lua` pergunta o número em `/internal/v1/voice/ivr/resolve-extension`; a resposta
    `{"meeting_access": true}` manda-o chamar `dialin_ivr.lua ramal`;
 2. o IVR, em modo `ramal`, lê `sip_auth_username`/`sip_auth_realm` (o que o digest
    autenticou — **nunca o `From`**) e valida o PIN em
@@ -140,12 +142,31 @@ por omissão) e entra pela MESMA ponte. Não há ponte nem IVR novos:
 
 O número é **só do servidor** (o dialplan não o tem escrito), nenhum ramal o pode ter
 (`409 ramais.extension_reserved`) e as leituras dos ramais trazem-no em
-`meeting_access_number`. **Sem CDR** neste caminho, e quem entra é «Telefone» anónimo no
-censo — a ponte não recebe a identidade de quem liga.
+`meeting_access_number`. **Sem CDR** neste caminho. Quem entra leva o nome da pessoa do
+ramal (ou a etiqueta do ramal da empresa) para o censo — ver «O IVR identifica quem
+liga», abaixo.
 
 **Por medir, e não o dês por feito:** uma chamada real. O modo `ramal` do Lua nunca
 correu; `sip_auth_*` num INVITE do perfil `internal` e o `session:execute("lua", …)` de
 um script para o outro são pressupostos por confirmar contra um FreeSWITCH real.
+
+### A central de uma organização entra na sala (ADR-0016, R280)
+
+A central (PBX) de uma organização liga-se ao bordo por TLS e autentica-se com a **conta
+SIP dessa organização** — o «Registo SIP» do ADR-0009 §5, que até aqui se guardava e não
+tinha consumidor. O que acontece antes de a chamada entrar (o desafio, o HA1, o
+cabeçalho) é da `delonix-meet-voip`. Aqui:
+
+1. o `dialin_ivr.lua` vê `X-Delonix-Central: <domínio>` — e só o aceita se a chamada veio
+   de um endereço do bordo (lista `delonix_bordo`); de outro lado, desliga;
+2. valida o PIN em `/internal/v1/voice/ivr/validate-central`
+   (`voice::validate_pin_for_central`): a organização sai do domínio autenticado, e a sala
+   é a do PIN **dentro dela** — o mesmo `room_by_pin_in_org` do ramal;
+3. daí em diante é o `room_bridge` e o recuo do dial-in, o mesmo código.
+
+**É um terceiro modo do mesmo IVR**, que não se pede: reconhece-se pelo cabeçalho. Sem
+CDR (não é PSTN), o número marcado não conta, e quem entra é «Telefone» anónimo no censo.
+Uma conta SIP sem password não autentica nem abre salas.
 
 ### O PIN do ramal, os ramais da empresa e a numeração automática (R276)
 
@@ -158,12 +179,98 @@ etiqueta obrigatória) é da empresa, e o PIN dele é do administrador. Os núme
 automáticos saem do intervalo da organização (`extension-range`, por omissão 1000–1999)
 com `POST …/extensions/assign-missing`.
 
-**Por fazer, e não o dês por feito:** nenhuma chamada usa o PIN — a verificação
-(`/internal/v1/voice/ivr/verify-extension-pin`, bloqueio à quinta falha, auditoria) não
-tem consumidor, e o `dialin_ivr.lua` não mudou. Faltam também o ramal automático quando
-um membro entra, o QR de provisionamento do Linphone e o travão a quem experimente o
-mesmo PIN em muitos ramais. O lote do IVR **não liga a verificação** sem travão por origem e bloqueio de duração
-crescente, e o Lua dá uma só recusa a quem liga. A lista completa está na R276.
+### O IVR identifica quem liga (R279) — a regra está medida, a chamada não
+
+**A verificação** (`extension_pin::verify_from_call`, rota
+`/internal/v1/voice/ivr/verify-extension-pin`) tem agora consumidor, e foi endurecida
+antes de o ter:
+
+- **travão por ORIGEM** — o pedido exige `origin` (`caller_number`, `network_ip`); a
+  origem é cobrada ANTES de se verificar e a falha devolvida num acerto; trava à terceira
+  falha em 15 minutos (primeiro bloqueio: 20, mais que a janela do ramal), e travada nem
+  o ramal é lido (`origin_locked`). O estado vive em
+  Postgres (`voice_pin_origins`): o servidor tem várias réplicas e o `RateLimiter` é por
+  processo. Como trava à terceira e o ramal à quinta, **uma origem não bloqueia o ramal
+  de ninguém**;
+- **janela e duração crescente** — falhas contadas numa janela estrita de 15 minutos; bloqueio de 15, 30,
+  60 min… até 24 h, no ramal e na origem (`telephony::extension_pin::Throttle`);
+- a origem vai no alvo da auditoria (`ramal.pin_falhado`, `ramal.pin_bloqueado`,
+  `ramal.origem_travada`); o actor é o de sistema.
+
+**Quem entra com nome:**
+
+1. **ramal registado** (`dialin_ivr.lua ramal`) — sem PIN pessoal: o aparelho já está
+   autenticado. `validate_pin_for_extension` resolve a pessoa (ou a etiqueta);
+2. **de fora** — depois do PIN da sala, o IVR pede ramal e PIN pessoal e chama a
+   verificação com a origem e o `voice_room_id` (o domínio vem do `validate`,
+   `org_sip_domain`). **Uma só frase de recusa** para todas as razões, duas tentativas, e
+   quem falha entra na mesma, anónimo;
+3. nos dois casos o servidor emite um **bilhete** (`voice_caller.rs`: opaco, uso único,
+   45 segundos, uma só sala, só o hash guardado; invalidado se a ponte recusar a perna) que vai nas `channel_vars` como
+   `sip_h_X-Delonix-Caller-Ticket`. O UA da ponte leva-o no `BridgeEvent::Started` e
+   `voice::seat_phone_caller` troca-o pelo nome no censo. **O Lua não é a fonte do nome** (a resposta da
+   verificação traz o nome até ao FreeSWITCH, mas o Lua não o usa nem o regista).
+4. os cabeçalhos `X-Delonix-*` só nascem dentro: o Kamailio tira-os no bordo do tronco e
+   o Lua tira-os da perna que recebe antes do `bridge`.
+
+**Por medir, e não o dês por feito:** uma chamada real. O Lua só tem a sintaxe
+verificada — `session:read(0, …)`, as variáveis de origem na perna e o cabeçalho a
+chegar à ponte são pressupostos. **Os direitos de anfitrião por telefone não existem:**
+quem entra por telefone já passa à frente da sala de espera (identificado ou não), a
+sala não tem um estado «à espera do anfitrião», e dar `is_host` a uma perna sem cliente
+ficou por desenhar. O número de quem liga pode ser forjado: contra quem o rode a cada
+chamada só o contador do ramal trava, e quatro falhas por janela nunca bloqueiam (384
+palpites por dia por ramal). O travão por origem pode negar a IDENTIFICAÇÃO a terceiros
+(número forjado, PBX com um só número de tronco, chamadas sem número). A lista completa está na R279.
+
+### O Linphone por QR e o ramal automático a quem entra (R278)
+
+**A password SIP não se digita.** `server/src/extension_provisioning.rs` emite um bilhete de
+uso único (256 bits, só o SHA-256 em `voice_extension_provisioning_tickets`, 10 minutos, um
+vivo por ramal) — a pessoa para o seu ramal (`POST …/my-extension/provisioning-ticket`), o
+administrador para qualquer um da organização (`POST …/extensions/{id}/provisioning-ticket`).
+O URL sai da primeira origem de `CORS_ORIGINS`, só se for `https` e pública; sem ela ou sem
+`VOICE_RAMAIS_PUBLIC_HOST` a emissão é `422`. O resgate é a rota PÚBLICA
+`GET /api/public/extension-provisioning/{token}`: gasta o bilhete num só `UPDATE`, grava uma
+password SIP **nova** (`ramais::SipSecret`, o mesmo da regeneração — o Argon2 calcula-se antes
+da transacção) e devolve o `lpconfig` do Linphone (regras e XML em
+`crates/delonix-meet-domain/src/telephony/extension_provisioning.rs`). Toda a recusa é o
+mesmo `404 ramais.provisioning_invalid`. O bilhete de um ramal inactivo gasta-se na tentativa,
+e regenerar a password apaga os bilhetes do ramal. O que protege a rota são os 256 bits e o
+uso único — o limite por IP contorna-se (R278 §Aberto). O token não entra na auditoria (que
+guarda o IP de quem resgatou) nem no span HTTP; nos nginx do repositório a rota tem
+`access_log off`. **Ler o QR troca a password: o aparelho antigo deixa de registar.**
+
+**Quem entra recebe ramal** se a organização tiver `auto_assign_on_join` ligado (desligado por
+omissão; vive na linha e na rota do `extension-range`; num `PUT`, ausente = manter). O ÚNICO
+ponto é `ramais::assign_on_join`, chamado depois do commit; nunca devolve erro — intervalo
+esgotado fica na auditoria e o membro entra sem ramal. Recebe quem ocupa lugar
+(`org::seat_holder_username`): convidados externos e o utilizador de serviço não.
+
+**Só o chama um caminho em que houve um acto de um administrador ou de um IdP:** juntar um
+colaborador, convite aceite, reactivação, SSO OIDC, Odoo. **O auto-registo (`auth::register`)
+e o convidado de reunião da API v1 NÃO o chamam, de propósito:** o registo não verifica o
+email, e numa instalação `single` + `open` um desconhecido ficava com uma conta SIP. Um
+caminho novo que insira em `org_members` faz esta pergunta antes de chamar a função — e
+chama-a, não copia a regra.
+
+**Por medir, e não o dês por feito:** nenhum Linphone leu um destes QR, e o formato do XML não
+foi verificado contra um aparelho real; o diálogo não foi visto num browser. **Aberto:** quem
+sai da organização continua a registar com a password antiga (arquivar não desactiva o
+ramal). A lista completa está na R278.
+
+**Como fazer essa prova no laboratório (2026-10-04).** O QR é um URL https que o TELEMÓVEL
+abre, por isso só serve com `make compose-up LAN_IP=<ip desta máquina>` (`scripts/compose-lan.sh`):
+a borda fica também em `<ip>:8443`, com um certificado assinado por uma raiz de laboratório
+(`deploy/compose/generated/lan-tls/`, fora do git) que cobre o nome e o IP, e o `CORS_ORIGINS`
+leva o IP em primeiro lugar — é da primeira origem que sai o URL do QR, e uma origem `.local`
+é recusada (mDNS não resolve no telemóvel). No telemóvel: instalar a raiz a partir de
+`http://<ip>:8080/lab-ca.crt` como certificado de CA, confirmar que `https://<ip>:8443` abre
+sem aviso, e só então ler o QR no Linphone («obter configuração remota»). Medido até aqui: a
+raiz descarrega-se, o https pelo IP valida contra ela e o bilhete sai com o IP. **Não medido:**
+se o Linphone confia numa raiz instalada pelo utilizador ao descarregar a configuração — se o
+browser do telemóvel abrir e o Linphone recusar o certificado, é isso. O cluster local não
+serve para esta prova: não está exposto à rede local.
 
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
@@ -187,7 +294,11 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
 | O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
+| A central de uma organização a entrar na sala (`validate_pin_for_central`, `ha1_for_edge`) | `cargo test --release --test central_entra_na_sala` contra Postgres real (ADR-0016 — 6 casos) + `bash scripts/check-bordo-central.sh`; a cadeia toda é `bash scripts/pbx-tronco-prova.sh central`, **fora do CI** |
 | O PIN do ramal, os ramais da empresa e a atribuição em massa | `cargo test --release --test ramal_pin` contra Postgres real (R276 — 9 casos, dois de concorrência) + `telephony::extension_pin::tests` |
+| O QR de provisionamento do Linphone e o ramal automático a quem entra | `cargo test --release --test ramal_provisionamento --test ramal_ao_entrar` contra Postgres real (R278 — 7 + 5 casos, um de concorrência) + `telephony::extension_provisioning::tests` |
+| A verificação do PIN (origem, janela, bloqueio crescente) e quem liga identificado (bilhete, nome no censo) | `cargo test --release --test ramal_pin_origem --test ivr_identifica_quem_liga` contra Postgres real (R279 — 9 + 4 casos; nenhum FreeSWITCH) + `cargo test --lib um_invite_recusado` |
+| O `kamailio.cfg` | `kamailio -c -f` na imagem `ghcr.io/kamailio/kamailio:5.8.6-bookworm` (só sintaxe; **não há portão no repo**) |
 | Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe, com o `luac5.2`) |
 | Os `*.xml` e `*.xml.inc` do FreeSWITCH | `bash scripts/check-fs-xml.sh` (R226 — bem formado, sem directivas `X-PRE-PROCESS` em comentários, sem `$${AMBIENTE}`); o comportamento é do `scripts/softphone-prova.sh srtp-real`, fora do CI |
 | A imagem (`voice/freeswitch/image/`) | `make freeswitch-image` — build + prova de fumo; depois a R222 com `FS_IMAGE` |
@@ -242,7 +353,8 @@ o **comportamento** do IVR — PIN, `room_bridge`, recuo para a conferência loc
 sem portão automático, e **nunca correu de ponta a ponta na imagem do repo** (R223, «por
 medir»). Se mexeres no fluxo, di-lo no relatório em vez de o dar por verificado. O mesmo
 ficheiro serve agora **dois modos** (dial-in por DID e `ramal`, R273): uma mudança no
-caminho comum — PIN, `bridge`, recuo — mexe nos dois.
+caminho comum — PIN, `bridge`, recuo — mexe nos dois. A identificação por ramal e PIN
+(R279) corre só no dial-in e só com a ponte; **nunca correu numa chamada**.
 
 **A imagem** vive em `voice/freeswitch/image/` (três fontes fixadas por commit, base por
 digest, `mod_lua` e `mod_curl`) e publica-se a partir da `main`
@@ -257,17 +369,27 @@ foi retirado a 2026-10-04: nunca correu. A voz sobe pelo `compose.yaml` e pelo c
 local, os dois com a imagem do repo e o mesmo arranque
 (`voice/cluster/freeswitch-entrypoint.sh`).
 
-## O que NÃO está na `main`, e porquê
+## O que NÃO tem consumidor, e porquê
 
-Medido por `grep` em `server/src` e `server/migrations` a 2026-10-03 — os símbolos não
-existem:
+Re-medido por `grep` a 2026-10-04 sobre a `develop` (`974edaae`). A tabela de 2026-10-03
+dizia que estes símbolos e a migração não existiam: **existem na `develop`** (entraram com
+os ramos antigos), mas continuam sem quem os produza.
 
-| Em falta | Porquê ficou de fora |
+| O que existe | O que lhe falta |
 |---|---|
-| `DialOutUpdated`, `SessionCost` (mensagens do WebSocket) e os tipos `DialOutView`/`SessionCostView` | descrevem chamadas de saída e custo por sessão; nada na `main` os produz |
-| A porta do WhatsApp Business | sem consumidor |
-| A migração `room_channels` | o censo de canais vive em memória (`signaling::Seat`) |
-| Os consumidores «frente D» de cinco adaptadores da telefonia | `#[allow(dead_code)]` em `telephony_service.rs:287,301,630,658,682` — custo antes de convidar, `RoomInvite`, canais na sala, SMS com PIN |
+| `DialOutUpdated`, `SessionCost` (mensagens do WebSocket) e os tipos `DialOutView`/`SessionCostView` (`signaling.rs`, `conferencing/channels.rs`) | um produtor: só os testes os emitem, e o web não os lê. A única chamada originada de facto é o tom de teste de 3 s (`telephony_calls.rs`) |
+| A migração `0086_room_channels.sql` | código que leia ou escreva `room_dial_outs`: zero ocorrências em `server/src` |
+| A porta do WhatsApp Business | consumidor |
+| Cinco adaptadores da telefonia «frente D» | `#[allow(dead_code)]` em `telephony_service.rs:287,301,630,658,682` — custo antes de convidar, `RoomInvite`, canais na sala, SMS com PIN |
+
+**E a telefonia de troncos não está ligada na configuração distribuída** (medido a
+2026-10-04). `voice/freeswitch/autoload_configs/xml_curl.conf.xml` só tem as duas bindings
+dos ramais; a binding de `/internal/v1/telephony/freeswitch-config` (gateways e o contexto
+de saída) e o `json_cdr.conf.xml` só existem em `voice/freeswitch/telefonia-prova/`, e o
+`voice/cluster/freeswitch-entrypoint.sh` não copia nenhum dos dois. No compose, no cluster
+e no chart: nenhum gateway é carregado, um ramal não sai para a PSTN, e o único CDR que
+chega é o magro do `dialin_ivr.lua`. É o item T1 do
+plano de lacunas de 2026-10-04 (`docs/plano-lacunas-2026-10-04.md`).
 
 A origem é `origin/delonix-meet-backend/v3-canais` e `…/v3-telecom`. **O
 `git diff --stat origin/main...<branch>` já não mede o que falta**: as branches estão a

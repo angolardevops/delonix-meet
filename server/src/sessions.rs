@@ -251,6 +251,32 @@ pub(crate) async fn revoke(
     Ok(any)
 }
 
+/// Termina todas as sessões activas de `user_id` menos `keep` — a regra ÚNICA
+/// de «terminar as outras», chamada pelo `revoke-others` e pela mudança de
+/// password. Com `keep = None` (access token anterior às sessões, que não diz
+/// qual é a actual) termina todas. Devolve quantas terminou.
+pub(crate) async fn revoke_all_except(
+    state: &AppState,
+    user_id: Uuid,
+    keep: Option<Uuid>,
+) -> Result<u64, ApiError> {
+    let ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM user_sessions
+          WHERE user_id = $1 AND revoked_at IS NULL AND ($2::uuid IS NULL OR id <> $2)",
+    )
+    .bind(user_id)
+    .bind(keep)
+    .fetch_all(&state.db)
+    .await?;
+    let mut revoked = 0;
+    for sid in ids {
+        if revoke(state, user_id, sid, "user_revoked_others").await? {
+            revoked += 1;
+        }
+    }
+    Ok(revoked)
+}
+
 /// Varredor: sessões sem refresh token vivo passam a `expired`; sessões
 /// terminadas há mais de 90 dias e cerimónias WebAuthn vencidas saem.
 pub(crate) async fn sweep(db: &sqlx::PgPool) -> Result<(u64, u64), sqlx::Error> {
@@ -328,19 +354,7 @@ pub async fn revoke_others(
             "esta sessão é anterior à lista de sessões: renove-a (/api/auth/refresh) e repita",
         )
     })?;
-    let ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM user_sessions WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
-    )
-    .bind(auth.user_id)
-    .bind(current)
-    .fetch_all(&state.db)
-    .await?;
-    let mut revoked = 0;
-    for sid in ids {
-        if revoke(&state, auth.user_id, sid, "user_revoked_others").await? {
-            revoked += 1;
-        }
-    }
+    let revoked = revoke_all_except(&state, auth.user_id, Some(current)).await?;
     crate::audit::log(
         &state.db,
         None,
@@ -412,23 +426,7 @@ pub async fn reauthenticate(
         }
     };
     if !ok {
-        if !state.mfa_limiter.check(&key) {
-            return Err(ApiError::TooManyRequests);
-        }
-        crate::audit::log(
-            &state.db,
-            None,
-            auth.user_id,
-            "auth.reauthentication_failed",
-            "",
-        )
-        .await;
-        return Err(DomainError::new(
-            ErrorKind::Unauthenticated,
-            "reauthentication.failed",
-            "a prova não confere",
-        )
-        .into());
+        return Err(failed_proof(&state, auth.user_id, &key).await);
     }
     let at: DateTime<Utc> = sqlx::query_scalar(
         "UPDATE user_sessions SET reauthenticated_at = now()
@@ -451,6 +449,43 @@ pub async fn reauthenticate(
     Ok(Json(Reauthenticated {
         valid_until: at + chrono::Duration::seconds(rules::REAUTH_WINDOW_SECS),
     }))
+}
+
+/// Uma prova de identidade que não confere: conta para o travão (cinco em 5
+/// minutos, partilhado entre a reautenticação e a mudança de password — quem
+/// adivinha passwords não ganha tentativas por mudar de rota) e fica na
+/// auditoria.
+async fn failed_proof(state: &AppState, user_id: Uuid, key: &str) -> ApiError {
+    if !state.mfa_limiter.check(key) {
+        return ApiError::TooManyRequests;
+    }
+    crate::audit::log(&state.db, None, user_id, "auth.reauthentication_failed", "").await;
+    DomainError::new(
+        ErrorKind::Unauthenticated,
+        "reauthentication.failed",
+        "a prova não confere",
+    )
+    .into()
+}
+
+/// Prova a identidade com a password ACTUAL, no próprio pedido — para a
+/// mudança de password, onde pedir uma reautenticação à parte só para depois
+/// escrever a password outra vez seria cerimónia. Mesma regra de «esta
+/// password é desta conta» do login (`auth::check_password_of`), mesmo travão
+/// e mesmo registo da reautenticação. Não abre a janela de reautenticação.
+pub(crate) async fn prove_current_password(
+    state: &Arc<AppState>,
+    user_id: Uuid,
+    password: &str,
+) -> Result<(), ApiError> {
+    let key = format!("reauth:{user_id}");
+    if state.mfa_limiter.is_blocked(&key) {
+        return Err(ApiError::TooManyRequests);
+    }
+    match crate::auth::check_password_of(state, user_id, password).await? {
+        crate::auth::PasswordCheck::Valid => Ok(()),
+        _ => Err(failed_proof(state, user_id, &key).await),
+    }
 }
 
 /// Exige reautenticação recente NESTA sessão (para alterar factores).

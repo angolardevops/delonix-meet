@@ -465,7 +465,7 @@ pub async fn register(
     };
     use delonix_meet_domain::identity::validation;
 
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     let email = validation::normalize_email(&req.email);
     // Sem username explícito → deriva da parte local do email.
     let username = if req.username.trim().len() >= 2 {
@@ -557,6 +557,9 @@ pub async fn register(
     tx.commit().await?;
 
     crate::audit::log(&state.db, Some(org_id), user.id, action, &target).await;
+    // O auto-registo NÃO dá ramal (R278): ninguém da organização decidiu esta
+    // entrada e o email não foi verificado — com o registo aberto numa
+    // instalação de organização única, um desconhecido ficava com uma conta SIP.
     let session = SessionMeta::fresh(&headers, ip, crate::sessions::AuthMethod::Password);
     Ok(auth_ok(&state, issue_tokens(&state, user, session).await?))
 }
@@ -611,7 +614,7 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<Response, ApiError> {
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     let email = req.email.trim().to_lowercase();
 
     // Anti-brute-force por conta (complementa o limite por IP): trava após
@@ -842,7 +845,7 @@ pub async fn mfa_login(
     headers: HeaderMap,
     Json(req): Json<MfaReq>,
 ) -> Result<Response, ApiError> {
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     // O `verify_jwt` exige o `typ` esperado: um access token NÃO serve de
     // desafio, nem o desafio serve de access token. É a mesma chave a assinar
     // os dois, e sem esta verificação seriam intermutáveis.
@@ -884,7 +887,7 @@ pub async fn refresh(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     // O refresh token vem do cookie HttpOnly (não do corpo — imune a XSS).
     let token = read_refresh_cookie(&headers).ok_or(ApiError::Unauthorized)?;
     let hash = hash_refresh_token(&token);
@@ -1185,7 +1188,7 @@ pub async fn sso_callback(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
-    let ip = crate::rate_limit::client_ip(&headers, addr.ip());
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     let code = params
         .get("code")
         .ok_or_else(|| ApiError::BadRequest("code is required".into()))?;
@@ -1391,6 +1394,7 @@ pub async fn sso_callback(
 
             tx.commit().await?;
             tracing::info!(%email, org_id = %entry.org_id, "SSO JIT provisioned new user");
+            crate::ramais::assign_on_join(&state, entry.org_id, new_user.id).await;
             new_user
         }
     };

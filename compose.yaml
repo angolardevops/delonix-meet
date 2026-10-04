@@ -110,13 +110,17 @@ services:
     image: nginxinc/nginx-unprivileged:1.27-alpine
     restart: unless-stopped
     depends_on: [server, web, kamailio, pbx]
+    environment:
+      # Põe o DNS da rede em NGINX_LOCAL_RESOLVERS, para o `resolver` da borda.
+      NGINX_ENTRYPOINT_LOCAL_RESOLVERS: "1"
     ports:
       - "8443:8443" # Delonix Meet
       - "8444:8444" # Kamailio — interface de gestão (xhttp_rpc), com password
       - "8445:8445" # PBX de cliente — interface HTTP do Asterisk (ARI)
       - "8080:8080"
     volumes:
-      - ./deploy/compose/edge.conf:/etc/nginx/conf.d/default.conf:ro
+      # Modelo: o envsubst da imagem gera o /etc/nginx/conf.d/default.conf.
+      - ./deploy/compose/edge.conf:/etc/nginx/templates/default.conf.template:ro
       - ./deploy/compose/generated/voice.htpasswd:/etc/nginx/voice.htpasswd:ro
       - ./deploy/certs/meet.ngolacloud.local.crt:/etc/nginx/tls/tls.crt:ro
       - ./deploy/certs/meet.ngolacloud.local.key:/etc/nginx/tls/tls.key:ro
@@ -137,6 +141,12 @@ services:
     entrypoint: ["kamailio"]
     command: ["-DD", "-E", "-A", "WITH_XHTTP_RPC", "-f", "/etc/kamailio/kamailio.cfg"]
     depends_on: [freeswitch]
+    # As centrais (ADR-0016): quem não está na allowlist entra por TLS,
+    # autenticado com a conta SIP da sua organização. O bordo pede o HA1 ao
+    # listener interno do servidor, com o segredo de voz do .env.
+    env_file: [.env] # VOICE_INTERNAL_SECRET
+    environment:
+      DELONIX_CONTROL_URL: http://delonix-server:8181
     volumes:
       - ./voice/kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
       - ./deploy/compose/voice/dispatcher.list:/etc/kamailio/dispatcher.list:ro
@@ -159,8 +169,12 @@ services:
     env_file: [.env] # VOICE_INTERNAL_SECRET
     environment:
       DELONIX_CONTROL_URL: http://delonix-server:8181
-      DELONIX_API_URL: http://delonix-server:8180
       DELONIX_RAMAIS_SIP_PORT: "5070"
+      # De onde fala o bordo: o IVR só acredita em «esta chamada é da central
+      # de X» vindo daqui. As redes privadas, como na allowlist do bordo — a
+      # sub-rede do compose muda de motor para motor. É um laboratório: em
+      # produção são os endereços do bordo e mais nenhum.
+      DELONIX_EDGE_CIDRS: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
     volumes:
       - ./voice/cluster/freeswitch-entrypoint.sh:/entrypoint/freeswitch-entrypoint.sh:ro
       - ./voice/freeswitch/dialplan/public/00_delonix_dialin.xml:/meet/00_delonix_dialin.xml:ro
@@ -184,6 +198,10 @@ services:
       - ./voice/pbx-cliente/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./deploy/compose/generated/pbx-http.conf:/etc/asterisk/http.conf:ro
       - ./deploy/compose/generated/pbx-ari.conf:/etc/asterisk/ari.conf:ro
+      # O tronco da CENTRAL: a conta SIP da organização e o certificado do
+      # bordo, que ela confere.
+      - ./deploy/compose/generated/pbx-central.conf:/etc/asterisk/pbx-central.conf:ro
+      - ./deploy/compose/generated/voice-tls/tls.crt:/etc/asterisk/meet-bordo-ca.pem:ro
     networks: [meet]
 
 volumes:

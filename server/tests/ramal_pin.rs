@@ -2,8 +2,9 @@
 //! Contra Postgres real.
 //!
 //! O que se mede aqui é a REGRA do servidor. Nenhum FreeSWITCH corre nestes
-//! testes, e o Lua do IVR ainda não chama a verificação: o que faz de IVR é o
-//! próprio teste, com o segredo de voz.
+//! testes: o que faz de IVR é o próprio teste, com o segredo de voz. O travão
+//! por origem e o IVR a usar a verificação são da R279
+//! (`ramal_pin_origem.rs`, `ivr_identifica_quem_liga.rs`).
 mod common;
 
 use common::{Account, TestApp};
@@ -70,14 +71,21 @@ async fn dominio(app: &TestApp, org: &str) -> String {
     format!("{slug}.{}", app.state.config.voice_ramais_domain_suffix)
 }
 
-/// O que o IVR enviará (lote seguinte).
+/// O que o IVR envia. Cada chamada vem de uma ORIGEM diferente: estes testes
+/// medem o contador do RAMAL, que é o que trava quem ataca de muitas origens.
+/// O travão por origem (R279) mede-se em `tests/ramal_pin_origem.rs`.
 async fn verificar(app: &TestApp, domain: &str, extension: &str, pin: &str) -> Value {
+    static ORIGEM: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = ORIGEM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let r = app
         .raw(
             reqwest::Method::POST,
             "/internal/v1/voice/ivr/verify-extension-pin",
             &[("x-voice-secret", VOICE_SECRET)],
-            Some(json!({"domain": domain, "extension": extension, "pin": pin})),
+            Some(json!({
+                "domain": domain, "extension": extension, "pin": pin,
+                "origin": {"caller_number": format!("+24492{n:07}"), "network_ip": "10.9.0.1"},
+            })),
         )
         .await;
     assert_eq!(r.status, 200, "{}", r.text);
@@ -422,7 +430,10 @@ async fn a_verificacao_exige_o_segredo_de_voz_e_nao_sai_da_org(db: sqlx::PgPool)
     let pin = gerar_o_meu(&app, &a).await;
     let dom_a = dominio(&app, a.org()).await;
     let dom_b = dominio(&app, b.org()).await;
-    let corpo = json!({"domain": dom_a, "extension": "1004", "pin": pin});
+    let corpo = json!({
+        "domain": dom_a, "extension": "1004", "pin": pin,
+        "origin": {"caller_number": "+244923000001", "network_ip": "10.9.0.1"},
+    });
 
     let bearer = format!("Bearer {}", a.token);
     for headers in [
@@ -631,7 +642,10 @@ async fn atribuir_ramais_a_todos_e_idempotente_e_salta_o_reservado(db: sqlx::PgP
     // Por omissão 1000–1999.
     let (st, body) = app.get(&range, Some(&a.token)).await;
     assert_eq!(st, 200, "{body}");
-    assert_eq!(body, json!({"range_start": 1000, "range_end": 1999}));
+    assert_eq!(
+        body,
+        json!({"range_start": 1000, "range_end": 1999, "auto_assign_on_join": false})
+    );
 
     for bad in [
         json!({"range_start": 99, "range_end": 200}),

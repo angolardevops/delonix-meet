@@ -1,9 +1,9 @@
 architecture: replication
+# As passwords NÃO vivem aqui: o `make prod` passa-as com `--set` a partir do
+# `.env` (POSTGRES_PASSWORD e POSTGRES_REPLICATION_PASSWORD).
 auth:
   username: delonix
-  password: delonix_prod_pass
   database: delonix_meet
-  replicationPassword: repl_prod_pass
 primary:
   extendedConfiguration: |
     max_connections = 500

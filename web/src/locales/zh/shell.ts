@@ -60,6 +60,8 @@ export default {
     passwordDica: '留空则保留当前密码。',
     confirmarPassword: '确认密码',
     passwordsDiferentes: '两次输入的密码不一致。',
+    passwordActual: '当前密码',
+    passwordActualDica: '确认是您本人。修改后，此账户的其他会话将结束。',
     guardado: '更改已保存。',
     tema: '主题',
     claro: '浅色',

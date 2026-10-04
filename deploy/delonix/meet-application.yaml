@@ -67,6 +67,8 @@ spec:
     - { name: TURN_SECRET, from_secret: meet-turn-secret }
     - { name: PROVISIONING_SECRET, from_secret: meet-provisioning-secret }
     - { name: VOICE_INTERNAL_SECRET, from_secret: meet-voice-internal-secret }
+    # Cifra dos segredos guardados na base: o servidor não arranca sem ela.
+    - { name: DATA_ENCRYPTION_KEYS, from_secret: meet-data-encryption-keys }
   addons:
     - { name: meet-pg, type: postgres, version: "17" }
     - { name: meet-redis, type: redis }

@@ -399,7 +399,10 @@ async fn xml_curl_routes_take_the_secret_by_basic_and_never_in_the_url(db: sqlx:
     let lua = [("x-voice-secret", VOICE_SECRET.to_string())];
     let wrong = [("authorization", basic("errado"))];
 
-    for path in ["/api/voice/ivr/directory", "/api/voice/ivr/dialplan-did"] {
+    for path in [
+        "/internal/v1/voice/ivr/directory",
+        "/internal/v1/voice/ivr/dialplan-did",
+    ] {
         // Controlos positivos: o Basic do `mod_xml_curl` e o cabeçalho dos Lua.
         let (st, body) = xml_curl_post(&app, path, &good).await;
         assert_eq!(st, 200, "{path} com Basic: {body}");

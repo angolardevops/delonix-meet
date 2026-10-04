@@ -530,34 +530,47 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
         .get(&format!("/api/public/recordings/{token}"), None)
         .await;
     assert_eq!(st, 401, "sem password");
-    let (st, _) = app
-        .get(
-            &format!("/api/public/recordings/{token}?password=errada"),
-            None,
-        )
-        .await;
+    // A password NÃO se aceita no URL (R288) — nem a certa. Um URL fica nos
+    // logs de acesso de todos os proxies pelo caminho.
+    for path in [
+        format!("/api/public/recordings/{token}?password=abrir"),
+        format!("/api/public/recordings/{token}/content?password=abrir"),
+    ] {
+        let (st, _) = app.get(&path, None).await;
+        assert_eq!(st, 401, "a password certa no URL abriu {path}");
+    }
+    // Vai no corpo: errada 401, certa 200.
+    let access = format!("/api/public/recordings/{token}/access");
+    let (st, _) = app.post(&access, None, json!({"password": "errada"})).await;
     assert_eq!(st, 401);
-    let (st, pubv) = app
-        .get(
-            &format!("/api/public/recordings/{token}?password=abrir"),
-            None,
-        )
-        .await;
+    let (st, pubv) = app.post(&access, None, json!({"password": "abrir"})).await;
     assert_eq!(st, 200, "{pubv}");
     assert_eq!(pubv["recording_id"], rec.as_str());
     assert_eq!(pubv["filename"], "teste.webm");
     assert_eq!(pubv["has_password"], true);
-    assert_eq!(
-        pubv["download_url"],
-        format!("/api/public/recordings/{token}/content")
+    // O caminho do conteúdo vem com um passe de leitura — e sem a password.
+    let content = pubv["download_url"].as_str().unwrap().to_string();
+    let prefix = format!("/api/public/recordings/{token}/content?grant=");
+    assert!(content.starts_with(&prefix), "{content}");
+    assert!(
+        !content.contains("abrir"),
+        "a password está no URL: {content}"
     );
-    let (st, _) = app
-        .get(
-            &format!("/api/public/recordings/{token}/content?password=abrir"),
-            None,
-        )
-        .await;
+    let (st, _) = app.get(&content, None).await;
     assert_eq!(st, 404, "autorizado; sem ficheiro");
+    // Sem passe, com o passe mexido, ou com a validade esticada: 401.
+    let grant = content.strip_prefix(&prefix).unwrap();
+    let (exp, mac) = grant.split_once('.').unwrap();
+    let later = exp.parse::<i64>().unwrap() + 86_400;
+    for bad in [
+        format!("/api/public/recordings/{token}/content"),
+        format!("{prefix}{exp}.{}", "0".repeat(mac.len())),
+        format!("{prefix}{later}.{mac}"),
+        format!("{prefix}lixo"),
+    ] {
+        let (st, _) = app.get(&bad, None).await;
+        assert_eq!(st, 401, "{bad}");
+    }
 
     // Recriar roda o token; o antigo morre.
     let (_, l2) = app.put(&link, Some(&a.token), json!({})).await;
@@ -572,6 +585,48 @@ async fn recording_download_share_and_links(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200);
     assert_eq!(pubv["has_password"], false);
+    // Um link sem password não pede passe nenhum, e o `access` dele responde
+    // sem o inventar.
+    let (st, open) = app
+        .post(
+            &format!("/api/public/recordings/{token2}/access"),
+            None,
+            json!({"password": "qualquer"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{open}");
+    assert_eq!(
+        open["download_url"],
+        format!("/api/public/recordings/{token2}/content")
+    );
+
+    // Outra gravação, com password: o passe da primeira não a abre, e cinco
+    // passwords erradas travam o link — a certa incluída.
+    let rec3 = app
+        .insert_recording(room["id"].as_str().unwrap(), &a.user_id)
+        .await;
+    let link3 = format!("/api/recordings/{rec3}/public-link");
+    let (st, l3) = app
+        .put(&link3, Some(&a.token), json!({"password": "abrir"}))
+        .await;
+    assert_eq!(st, 200, "{l3}");
+    let token3 = l3["token"].as_str().unwrap().to_string();
+    let (st, _) = app
+        .get(
+            &format!("/api/public/recordings/{token3}/content?grant={grant}"),
+            None,
+        )
+        .await;
+    assert_eq!(st, 401, "o passe de um link abriu outro");
+    let access3 = format!("/api/public/recordings/{token3}/access");
+    for i in 0..5 {
+        let (st, _) = app
+            .post(&access3, None, json!({"password": format!("errada-{i}")}))
+            .await;
+        assert_eq!(st, 401, "tentativa {i}");
+    }
+    let (st, _) = app.post(&access3, None, json!({"password": "abrir"})).await;
+    assert_eq!(st, 429, "o link devia estar travado");
 
     // Expirado: 404.
     sqlx::query("UPDATE recording_share_links SET expires_at = now() - interval '1 minute'")

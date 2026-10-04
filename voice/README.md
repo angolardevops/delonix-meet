@@ -30,6 +30,34 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
 | `freeswitch/autoload_configs/conference.conf.xml` | Perfil de conferência `delonix` (não impõe SRTP: isso é de cada perna SIP) |
 | `cluster/freeswitch-entrypoint.sh` | O arranque do FreeSWITCH: fecha a vanilla da imagem, põe as variáveis do ambiente e os ficheiros do Meet. É o mesmo no `compose.yaml` e no cluster |
 | `../compose.yaml` (serviços `kamailio`, `freeswitch`, `pbx`) | O laboratório de voz: `make compose-up`, medido por `make compose-voice-check` |
+| `pbx-cliente/central.conf.tmpl` | O tronco da CENTRAL do PBX de laboratório (TLS, autenticado com a conta SIP da organização — ADR-0016). Modelo: o `make bootstrap` e o `scripts/cluster-voice.sh` põem-lhe o nome do bordo e a password |
+
+## O PBX de laboratório tem dois troncos
+
+O mesmo Asterisk (`pbx` no compose, `pbx-cliente` no cluster) entra no bordo de duas
+maneiras, e não são a mesma coisa:
+
+| Tronco | Como entra | O que o Meet sabe da chamada |
+|---|---|---|
+| `meet` (UDP 5060) | pela **allowlist** do bordo — faz de tronco contratado | nada: é um dial-in por `(número, PIN)` |
+| `meet-central` (TLS 5061) | **autenticado** com a conta SIP da organização «ngolacloud» («Registo SIP», que o `make seed` grava) | a organização: a sala procura-se dentro dela |
+
+Para os dois caberem no mesmo PBX, a allowlist do laboratório só aceita a **porta 5060 de
+origem** — a do tronco UDP. O tronco TLS sai de uma porta efémera, não está na lista, e é
+desafiado. O `make seed` cria também uma sala com PIN
+(`deploy/compose/generated/sala-telefone.txt`), e o `make compose-voice-check` liga por cada
+tronco: pelo da central, com o PIN certo (entra) e com um errado (autenticada, e recusada
+pelo IVR).
+
+```bash
+make bootstrap     # gera VOICE_CENTRAL_PASSWORD, DATA_ENCRYPTION_KEYS e o tronco da central
+make compose-up    # recusa arrancar se o bootstrap for anterior a isto
+make compose-voice-check
+# À mão, do PBX:  channel originate PJSIP/+244222000001@meet-central extension <PIN>@prova-pin
+```
+
+Um laboratório criado antes disto precisa de `make bootstrap` outra vez (não muda os
+segredos que já tem) e de `make compose-down && make compose-up`.
 
 ## Segurança (não-negociável)
 - **SRTP obrigatório**, sem fallback: quem recusa com `488` uma chamada em claro é a
@@ -42,7 +70,7 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
   nunca comitado. Em dev usar self-signed; nunca desativar a camada.
 - **Sem excepção por tronco**: um tronco declarado `srtp=off` só faz chamadas de **saída**
   em claro. À entrada, uma chamada em claro leva `488` venha de onde vier — uma operadora
-  sem SRTP não nos consegue ligar. É de propósito.
+  sem SRTP não nos consegue ligar. É de propósito, e foi decidido assim a 2026-10-04.
 - **Anti-toll-fraud**: só se aceita inbound dos **IPs do trunk** (`ao_trunk.txt`,
   fornecido pelo provedor 5.1). Sem outbound não autenticado.
 - **Segredos do ambiente**: `VOICE_INTERNAL_SECRET` (== do backend) e URLs vêm de env,
@@ -59,7 +87,7 @@ escreveu-o no log do FreeSWITCH.
 
 ```bash
 make voice-secret-rotate        # troca-o no .env; não mostra o valor
-make compose-up                 # compose: recria o servidor e o FreeSWITCH com o valor novo
+make compose-down && make compose-up   # compose: o `up` sozinho NÃO recria contentores que já existem
 make cluster                    # cluster: reaplica o Secret delonix-voice e reinicia os dois
 make compose-voice-check        # o FreeSWITCH volta a falar com o servidor
 ```
@@ -72,14 +100,25 @@ No fim, apaga os logs antigos do FreeSWITCH que possam ter o valor anterior.
 O directório de logs do FreeSWITCH não leva o segredo: o arranque tira o nível DEBUG do
 log e manda a configuração expandida (`freeswitch.xml.fsxml`) para um directório privado
 ao lado da configuração. `DELONIX_FS_LOG_DEBUG=1` volta a ligar o DEBUG — e, com ele, o
-segredo e os PIN no log.
+segredo e os PIN no log. Os dígitos marcados (o PIN) também não: os dois planos de
+marcação põem `sensitive_dtmf=true`, sem o qual o FreeSWITCH escreve uma linha por tecla.
 
 ## Testar sem trunk (com softphone SIP)
 A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Zoiper):
 1. Backend Rust a correr com `VOICE_INTERNAL_SECRET` definido; criar um DID + sala de
    voz (obter o número e o PIN) — ver `docs/pstn-dial-in-fase0.md` e o E2E do control plane.
 2. `make voice-images` e `make compose-up` (o `compose.yaml` da raiz; `LAN_IP=<ip>` expõe
-   os ramais à rede local).
+   os ramais e a borda à rede local).
+   **QR do Linphone no telemóvel:** o URL do QR tem de ser um nome que o telefone resolva e
+   com um certificado em que ele confie — `meet.ngolacloud.local` (mDNS, autoassinado) não é.
+   Duas vias: `make compose-up LAN_IP=…` (a rede local: a borda fica com um certificado de uma
+   raiz de laboratório, que o telemóvel instala uma vez a partir de
+   `http://<ip>:8080/lab-ca.crt`; cobre também o registo SIP) ou `make tunnel` (um túnel
+   Pinggy com um URL novo a cada execução, 60 minutos, **publica a borda inteira na
+   Internet**, só o QR e a descarga — o UDP do SIP não passa; `make tunnel-stop` fecha). **Medido a 2026-10-04:** o Pinggy
+   serve a página HTML de aviso dele a um cliente com User-Agent de navegador (a câmara ou um
+   navegador a abrir o URL do QR não recebem a configuração); um cliente que não o pareça passa
+   para o servidor.
 3. Registar o softphone no Kamailio e "ligar" para o número da sala.
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
    `GET /api/orgs/{org}/voice/call-records`.
@@ -97,11 +136,11 @@ Softphone A (ramal 101, acme.ramais.delonix.meet)
      │ REGISTER + INVITE 102           DIRECTAMENTE ao FreeSWITCH — o
      ▼                                  Kamailio NÃO entra neste caminho
 FreeSWITCH — perfil "internal" (porta DELONIX_RAMAIS_SIP_PORT, default 5070)
-     1) REGISTER → mod_xml_curl → POST /api/voice/ivr/directory  ──► Control plane
+     1) REGISTER → mod_xml_curl → POST /internal/v1/voice/ivr/directory  ──► Control plane
                                   (segredo por HTTP Basic — nunca no URL, R227)
                                   (a1-hash do digest SIP)          ◄── XML directory
      2) INVITE 102 → dialplan "delonix_ramais" → ramais_dial.lua
-        → POST /api/voice/ivr/resolve-extension  ──────────────────► Control plane
+        → POST /internal/v1/voice/ivr/resolve-extension  ──────────────────► Control plane
           (domínio do chamador + "102")                            ◄── sip_username
      3) bridge(user/<sip_username_de_102>@acme.ramais.delonix.meet)
 ```
@@ -160,6 +199,52 @@ real. Tudo o resto (modelo de dados, API REST de gestão, geração/regeneraçã
 de credenciais, UI de administração) foi corrido e verificado contra um
 Postgres real neste repositório.
 
+### Configurar o Linphone por QR (R278)
+
+Ninguém digita a password SIP. Na consola (cada ramal activo) e em Definições →
+Segurança → «O meu ramal» há **«Configurar o Linphone»**: o servidor emite um
+bilhete de uso único (10 minutos) e a consola mostra-o num QR. No Linphone:
+Assistente → Configuração remota → ler o QR. O aparelho descarrega de
+`https://<origem pública>/api/public/extension-provisioning/<bilhete>` um XML
+`lpconfig` com a conta (utilizador, domínio/realm, o proxy público
+`sip:host:porta;transport=…` como registo e rota, e SRTP obrigatório).
+
+- **Ler o QR troca a password SIP do ramal.** O aparelho que estava registado
+  com a anterior deixa de registar. O bilhete serve uma vez; um segundo pedido
+  ao mesmo URL recebe `404`.
+- **Lê-se só com o Linphone.** O resgate é um `GET`: a câmara do telemóvel, um
+  leitor de QR genérico ou uma pré-visualização de link abrem o endereço,
+  gastam o bilhete e trocam a password na mesma. Por isso a consola não mostra
+  o URL em texto (só se não conseguir desenhar o QR).
+- **O bilhete vai no caminho do URL.** Os três nginx do repositório não o
+  registam (`access_log off` em `/api/public/extension-provisioning/`); um
+  proxy ou ingress à frente que não seja nosso regista, se ninguém lho disser.
+- **A password vai em claro no XML**, sobre `https`. E com o transporte por
+  omissão (`udp`) as chaves SRTP (SDES) seguem em claro na sinalização SIP:
+  `VOICE_RAMAIS_PUBLIC_TRANSPORT=tls` é o que fecha isso.
+- **Precisa de duas coisas da instalação:** `VOICE_RAMAIS_PUBLIC_HOST` (onde o
+  aparelho regista) e a primeira origem de `CORS_ORIGINS` em `https` e pública
+  (de onde descarrega). Sem uma delas a emissão é recusada com `422` — o
+  servidor não emite um QR que não leva a lado nenhum.
+- O diálogo «Credenciais SIP» (regenerar a password e copiar os quatro dados)
+  continua a existir como caminho de recurso, para softphones que não lêem QR.
+- **Não validado:** nenhum Linphone real leu um destes QR, e o formato do XML
+  não foi verificado contra um aparelho. No laboratório do compose o certificado
+  é auto-assinado e o nome é `meet.ngolacloud.local`: um telemóvel só o
+  descarrega se resolver esse nome e confiar no certificado.
+
+**Ramal automático a quem entra.** Com «Atribuir ramal automaticamente a quem
+entra» ligado na consola (ao lado do intervalo; desligado por omissão), cada
+pessoa que entra na organização **por um acto de um administrador ou de um
+IdP** (colaborador junto pelo administrador, convite aceite, SSO, Odoo,
+reactivação) recebe o primeiro número livre do intervalo. Convidados externos
+não recebem; quem se regista sozinho e o convidado de uma reunião criada pela
+API v1 também não — o registo não verifica o email. Se o intervalo se esgotar,
+a pessoa entra sem ramal e fica um registo na auditoria.
+
+**Aberto:** quem sai da organização continua a registar com a password antiga —
+arquivar um membro não desactiva o ramal dele (R278).
+
 ## Ramal alcançável do PSTN — DID dedicado (Fase 2, `server/src/ramais.rs`)
 
 Estende o fluxo acima: um ramal pode receber um DID (migração
@@ -172,7 +257,7 @@ reunião em vídeo (fase seguinte, continua por fazer).
 Telefone → SIP Trunk → Kamailio → FreeSWITCH (contexto "public")
                                        │
                                        ▼  mod_xml_curl, secção "dialplan"
-                        POST /api/voice/ivr/dialplan-did ───► Control plane
+                        POST /internal/v1/voice/ivr/dialplan-did ───► Control plane
                         (X-Voice-Secret, número discado)   ◄── XML dialplan
                                        │
                           número é DID de ramal?
@@ -215,7 +300,7 @@ Softphone (ramal 101, acme.ramais.delonix.meet)
      │ INVITE 8000 (autenticado por digest no perfil "internal")
      ▼
 FreeSWITCH — dialplan "delonix_ramais" → ramais_dial.lua
-     1) POST /api/voice/ivr/resolve-extension ("8000") ──► Control plane
+     1) POST /internal/v1/voice/ivr/resolve-extension ("8000") ──► Control plane
                                                         ◄── {"meeting_access": true}
      2) dialin_ivr.lua ramal → atende, pede o PIN
      3) POST /internal/v1/voice/ivr/validate-extension ──► Control plane
@@ -240,6 +325,14 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 `ramais_dial.lua` consegue chamar o `dialin_ivr.lua` com o argumento `ramal`.
 
 ## Ponte telefone↔sala (ADR-0010) — ligada
+
+> **No compose e no cluster locais a ponte está DESLIGADA** (medido a 2026-10-04): o servidor
+> regista «`PHONE_BRIDGE_SIP_BIND` não configurado» e o dial-in cai na conferência local, por isso
+> um ramal que marca `8000` + PIN **não aparece na sala do browser**. Ligá-la exige `PHONE_BRIDGE_FREESWITCH_IPS`
+> com **IPs exactos** e `PHONE_BRIDGE_RTP_IP` com o IP do próprio servidor, e o `delonix compose`
+> recusa sub-redes fixas (`ipam:`) e dá um IP novo a cada recriação (4 amostras seguidas, nunca o
+> mesmo); o chart do Helm também não o resolve (ver o «Achado» em `deploy/helm/delonix-meet/README.md`).
+> A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
 
 Quem entra por telefone é um **participante da sala**: fala e ouve os
 participantes WebRTC. O caminho é o que o FreeSWITCH de stock sabe percorrer:

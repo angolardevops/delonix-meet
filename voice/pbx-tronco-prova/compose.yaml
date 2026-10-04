@@ -1,0 +1,122 @@
+# Réplica do bordo de voz do Meet para provar o tronco de uma central FreePBX
+# (o `kind: PbxService` do delonix-paas, ADR 0063 I4) — scripts/pbx-tronco-prova.sh.
+#
+# NÃO é o laboratório do compose.yaml da raiz: projecto, rede, nomes e endereços
+# próprios, para correr ao lado dele sem lhe tocar. Os endereços são fixos porque
+# a allowlist do bordo tem de ser EXACTA — o controlo negativo («uma origem fora
+# da lista é recusada») não prova nada contra as redes privadas inteiras que o
+# laboratório deixa entrar.
+#
+# A central (uma VM em QEMU, rede de utilizador) alcança o bordo pelo IP do
+# contentor, e o bordo vê-a chegar do endereço do anfitrião nesta rede
+# (172.30.50.1). É essa a única origem na allowlist.
+#
+# Quem chega de QUALQUER OUTRO endereço desta rede não está na allowlist: só
+# entra como central de uma organização, por TLS e autenticada com a conta SIP
+# dela (ADR-0016) — é o modo `central` do script. Para isso o bordo fala com o
+# servidor (DELONIX_CONTROL_URL), o FreeSWITCH sabe de onde fala o bordo
+# (DELONIX_EDGE_CIDRS), e o servidor tem a ponte telefone↔sala ligada.
+name: pbxtronco
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: delonix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: delonix
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delonix"]
+      interval: 2s
+      retries: 30
+    networks: { voz: { ipv4_address: 172.30.50.10 } }
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+    networks: { voz: { ipv4_address: 172.30.50.11 } }
+
+  server:
+    # SERVER_IMAGE: a prova de uma mudança no servidor corre contra a imagem
+    # construída dessa árvore, sem tocar na `latest` que outros usam.
+    image: ${SERVER_IMAGE:-delonix-server:latest}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://delonix:${POSTGRES_PASSWORD}@172.30.50.10:5432/delonix
+      REDIS_URL: redis://172.30.50.11:6379
+      JWT_SECRET: ${JWT_SECRET:?}
+      TURN_SECRET: ${TURN_SECRET:?}
+      DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS:?}
+      PROVISIONING_SECRET: ${PROVISIONING_SECRET:?}
+      VOICE_INTERNAL_SECRET: ${VOICE_INTERNAL_SECRET:?}
+      BIND_ADDR: 0.0.0.0:8180
+      INTERNAL_BIND_ADDR: 0.0.0.0:8181
+      TURN_HOST: prova.invalid:3478
+      CORS_ORIGINS: https://prova.invalid
+      RECORDINGS_DIR: /tmp/recordings
+      # A conta SIP de uma organização guarda-se cifrada.
+      DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS:?}
+      REGISTRATION_MODE: open
+      # A ponte telefone↔sala (ADR-0010): o UA SIP do servidor, que só aceita o
+      # FreeSWITCH desta réplica.
+      PHONE_BRIDGE_SIP_BIND: 172.30.50.12:5099
+      PHONE_BRIDGE_SIP_ADVERTISE: 172.30.50.12:5099
+      PHONE_BRIDGE_FREESWITCH_IPS: 172.30.50.13
+      PHONE_BRIDGE_RTP_IP: 172.30.50.12
+      PHONE_BRIDGE_RTP_MIN: "30000"
+      PHONE_BRIDGE_RTP_MAX: "30100"
+    networks: { voz: { ipv4_address: 172.30.50.12 } }
+
+  # O FreeSWITCH do Meet, arrancado como o compose.yaml da raiz o arranca.
+  freeswitch:
+    image: delonix-meet/freeswitch:1.11.3
+    entrypoint: ["/bin/sh"]
+    command: ["/entrypoint/freeswitch-entrypoint.sh"]
+    depends_on: [server]
+    environment:
+      VOICE_INTERNAL_SECRET: ${VOICE_INTERNAL_SECRET:?}
+      DELONIX_CONTROL_URL: http://172.30.50.12:8181
+      DELONIX_RAMAIS_SIP_PORT: "5070"
+      # Só o bordo pode dizer «esta chamada é da central de X».
+      DELONIX_EDGE_CIDRS: 172.30.50.14/32
+    volumes:
+      - ../cluster/freeswitch-entrypoint.sh:/entrypoint/freeswitch-entrypoint.sh:ro
+      - ../freeswitch/dialplan/public/00_delonix_dialin.xml:/meet/00_delonix_dialin.xml:ro
+      - ../freeswitch/dialplan/default/00_delonix_extensions.xml:/meet/00_delonix_extensions.xml:ro
+      - ../freeswitch/autoload_configs/conference.conf.xml:/meet/conference.conf.xml:ro
+      - ../freeswitch/autoload_configs/xml_curl.conf.xml:/meet/xml_curl.conf.xml:ro
+      - ../freeswitch/sip_profiles/internal.xml:/meet/internal.xml:ro
+      - ../freeswitch/scripts/dialin_ivr.lua:/meet/dialin_ivr.lua:ro
+      - ../freeswitch/scripts/ramais_dial.lua:/meet/ramais_dial.lua:ro
+    networks: { voz: { ipv4_address: 172.30.50.13 } }
+
+  # O bordo, com o kamailio.cfg do repo; só a allowlist, o dispatcher e o
+  # certificado são desta prova (gerados pelo script em $ESTADO).
+  kamailio:
+    image: ghcr.io/kamailio/kamailio:5.8.6-bookworm
+    entrypoint: ["kamailio"]
+    command: ["-DD", "-E", "-f", "/etc/kamailio/kamailio.cfg"]
+    depends_on: [freeswitch]
+    environment:
+      # Com isto o bordo autentica centrais; sem isto só a allowlist entra.
+      DELONIX_CONTROL_URL: http://172.30.50.12:8181
+      VOICE_INTERNAL_SECRET: ${VOICE_INTERNAL_SECRET:?}
+    volumes:
+      - ../kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
+      - ${ESTADO:?}/dispatcher.list:/etc/kamailio/dispatcher.list:ro
+      - ${ESTADO:?}/address:/etc/kamailio/address:ro
+      - ../cluster/tls.cfg:/etc/kamailio/tls.cfg:ro
+      - ${ESTADO:?}/tls:/etc/kamailio/tls:ro
+    networks: { voz: { ipv4_address: 172.30.50.14 } }
+
+networks:
+  voz:
+    ipam:
+      config:
+        - subnet: 172.30.50.0/24
+          gateway: 172.30.50.1

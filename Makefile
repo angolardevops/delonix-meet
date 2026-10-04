@@ -64,10 +64,15 @@ ifneq ($(shell command -v delonix 2>/dev/null),)
   # resolvem-se contra a pasta do compose.yaml; sem ele, o delonix não os acha.
   COMPOSE_P := -f $(ROOT)/compose.yaml -p delonix-meet
   COMPOSE_EXEC := delonix container exec -it
+  # `delonix compose up` responde «already exists, nothing to do» e NÃO recria um
+  # contentor cuja configuração mudou (medido a 2026-10-04): o servidor tem de sair para
+  # o `CORS_ORIGINS` novo (o do túnel) valer. Só o servidor; a base e o resto ficam.
+  SERVER_RECREATE := delonix container stop delonix-server >/dev/null 2>&1; delonix container rm delonix-server >/dev/null 2>&1
 else
   COMPOSE   ?= docker compose -f $(ROOT)/compose.yaml -p delonix-meet
   COMPOSE_P :=
   COMPOSE_EXEC := docker exec -it
+  SERVER_RECREATE := true  # o `docker compose up` recria sozinho o serviço cuja configuração mudou
 endif
 
 # Cores
@@ -267,6 +272,8 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-fs-xml.sh
 	@bash scripts/check-ffmpeg-licenca.sh
+	@bash scripts/check-bordo-anuncia.sh
+	@bash scripts/check-bordo-central.sh
 	@bash scripts/check-k8s-render.sh
 	@HELM=$(HELM) bash scripts/check-helm.sh
 	@bash scripts/check-arquitectura-catraca.sh
@@ -467,7 +474,18 @@ metallb-kind: ## Instala MetalLB no kind e cria pool com IPs da rede docker kind
 #  KUBERNETES STAGE & PROD
 # ============================================================
 .PHONY: stage
-stage: image-push ## Build + kind load + deploy k8s completo no cluster kind local
+# O Service do Postgres visto de dentro do cluster, para o DATABASE_URL do
+# Secret que scripts/k8s-app-secrets.sh monta a partir do .env.
+STAGE_DB_HOST ?= delonix-postgres-postgresql.delonix-meet.svc.cluster.local
+# O `make prod` é LEGADO e não foi validado num cluster (plano de lacunas, O1):
+# este host é o que o 01-config.yaml antigo apontava, mantido tal e qual.
+PROD_DB_HOST  ?= $(STAGE_DB_HOST)
+
+.PHONY: env-file
+env-file:
+	@[ -f .env ] || { printf "$(Y)  ✗ falta o .env com os segredos — corre «make bootstrap»$(Z)\n"; exit 1; }
+
+stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster kind local
 	@printf "$(C)▶ Criando cluster '$(KIND_CLUSTER)' (idempotente)...$(Z)\n"
 	@$(CLUSTER_CREATE) --name $(KIND_CLUSTER) 2>/dev/null || true
 	@printf "$(C)▶ Instalando NGINX Ingress Controller...$(Z)\n"
@@ -495,12 +513,17 @@ stage: image-push ## Build + kind load + deploy k8s completo no cluster kind loc
 	@# postgresql-repmgr) removeu as imagens do Docker Hub em 2024; o chart
 	@# simples continua acessível via registry-1.docker.io. Para prod usa-se
 	@# postgresql-ha (make prod) com acesso ao OCI registry da Bitnami.
-	@helm upgrade --install delonix-postgres bitnami/postgresql \
-	  -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet
+	@# A password da base vem do .env (make bootstrap), nunca de um ficheiro
+	@# de valores versionado.
+	@set -a; . ./.env; set +a; \
+	  helm upgrade --install delonix-postgres bitnami/postgresql \
+	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet \
+	    --set auth.password="$$POSTGRES_PASSWORD" --set auth.postgresPassword="$$POSTGRES_PASSWORD"
 	@helm upgrade --install delonix-redis bitnami/redis \
 	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet
 	@printf "$(C)▶ Aplicação Delonix (config + server + web + ingress + coturn)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
+	@bash scripts/k8s-app-secrets.sh $(STAGE_DB_HOST)
 	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
@@ -541,7 +564,7 @@ voice-secret-k8s: ## Cria o Secret delonix-voice (VOICE_INTERNAL_SECRET aleatór
 	fi
 
 .PHONY: prod
-prod: ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
+prod: env-file ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@printf "$(C)▶ Provisionando Cluster K8s Bare-Metal via Ansible...$(Z)\n"
 	@ansible-playbook -i deploy/ansible/inventory.ini deploy/ansible/playbook.yml
 	@printf "$(C)▶ Instalando cert-manager (Let's Encrypt)...$(Z)\n"
@@ -552,12 +575,15 @@ prod: ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@kubectl apply -f deploy/k8s/00-namespace.yaml
 	@helm repo add bitnami https://charts.bitnami.com/bitnami
 	@helm repo update
-	@helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n delonix-meet
+	@set -a; . ./.env; set +a; \
+	  helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n delonix-meet \
+	    --set auth.password="$$POSTGRES_PASSWORD" --set auth.replicationPassword="$$POSTGRES_REPLICATION_PASSWORD"
 	@helm upgrade --install delonix-redis bitnami/redis -f deploy/k8s/helm-values/redis-values.yaml -n delonix-meet
 	@printf "$(C)▶ Compilando e gerando Docker Image (Distroless Security)...$(Z)\n"
 	@docker build -t delonix-meet-server:latest -f Dockerfile.server .
 	@printf "$(C)▶ Fazendo deploy da Aplicação com Domínio $(DOMAIN)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
+	@bash scripts/k8s-app-secrets.sh $(PROD_DB_HOST)
 	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
@@ -711,12 +737,17 @@ compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do
 # 127.0.0.1 — que é o que se quer por omissão.
 compose-up: ## Simulação de produção (compose.yaml); LAN_IP=<ip> expõe os ramais à rede local
 	@[ -f .env ] && [ -f deploy/compose/generated/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou deploy/compose/generated/ — corre «make bootstrap»$(Z)\n"; exit 1; }
+	@grep -qE '^DATA_ENCRYPTION_KEYS=.+' .env || { printf "$(Y)  ✗ o .env não tem DATA_ENCRYPTION_KEYS (o servidor já não arranca sem ela) — corre «make bootstrap»: acrescenta-a sem mexer no resto$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "delonix-server" || { printf "$(Y)  ✗ faltam as imagens — corre «make build»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "pbx-cliente" || { printf "$(Y)  ✗ faltam as imagens de voz — corre «make voice-images»$(Z)\n"; exit 1; }
+	@# A central da organização (ADR-0016) precisa de dois ficheiros que um
+	@# bootstrap antigo não gerou; sem eles o PBX nem arranca.
+	@[ -f deploy/compose/generated/pbx-central.conf ] && grep -qE '^DATA_ENCRYPTION_KEYS=.+' .env || { printf "$(Y)  ✗ falta a conta da central ou a chave da cifra em repouso — corre «make bootstrap» (não muda os segredos que já tens)$(Z)\n"; exit 1; }
 	@printf "$(C)▶ $(COMPOSE) up (simulação de produção)$(Z)\n"
 	@if [ -n "$(LAN_IP)" ]; then \
 	  LAN_IP=$(LAN_IP) bash scripts/compose-lan.sh > deploy/compose/generated/lan.yaml && \
 	  printf "   ramais expostos na rede local em $(Y)$(LAN_IP):5070$(Z) (áudio em 20000–20100/udp)\n" && \
+	  printf "   borda na rede local em $(Y)https://$(LAN_IP):8443$(Z); raiz de laboratório para o telemóvel: $(Y)http://$(LAN_IP):8080/lab-ca.crt$(Z)\n" && \
 	  $(COMPOSE) up $(COMPOSE_P) -f $(ROOT)/deploy/compose/generated/lan.yaml -d; \
 	else \
 	  $(COMPOSE) up $(COMPOSE_P) -d; \
@@ -755,9 +786,39 @@ compose-info: ## URLs e acessos de administração da simulação de produção
 	  t() { sed -n "s/^$$1=//p" deploy/compose/generated/sala-telefone.txt; }; \
 	  printf "$(G)  Entrar numa reunião por telefone$(Z)   sala %s\n" "$$(t sala)"; \
 	  printf "     de um ramal  marcar 8000 e depois o PIN %s seguido de #\n" "$$(t pin)"; \
-	  printf "     no browser   https://$(MEET_HOST):8443/#/r/%s\n" "$$(t sala)"; \
+	  if grep -q 'PHONE_BRIDGE_SIP_BIND' compose.yaml; then \
+	    printf "     no browser   https://$(MEET_HOST):8443/#/r/%s\n" "$$(t sala)"; \
+	  else \
+	    printf "     $(Y)ponte telefone↔sala DESLIGADA neste compose$(Z): o PIN é aceite, mas a chamada cai numa conferência\n"; \
+	    printf "     SÓ de telefones e o ramal NÃO aparece na sala do browser (medido a 2026-10-04: o servidor regista\n"; \
+	    printf "     «PHONE_BRIDGE_SIP_BIND não configurado»). Ligá-la exige IPs exactos que este motor muda a cada arranque.\n"; \
+	    printf "     sala (sem o telefone)  https://$(MEET_HOST):8443/#/r/%s\n" "$$(t sala)"; \
+	  fi; \
 	fi; \
 	printf "\n  Estado: make compose-ps   ·   Prova da voz: make compose-voice-check\n"
+# O QR do Linphone é um URL https que o TELEMÓVEL abre; `meet.ngolacloud.local` é
+# mDNS e o certificado do bootstrap é autoassinado (ver compose-tunnel.sh). O túnel
+# dá um nome público e um certificado válido, com um URL NOVO a cada execução
+# (Pinggy sem conta: 60 minutos). Publica a borda INTEIRA na Internet — só em
+# laboratório — e NÃO resolve o registo SIP (UDP): para isso, `compose-up LAN_IP=…`.
+# A ordem dos ficheiros conta: o `lan.yaml` (se existir) primeiro, o túnel por cima.
+TUNNEL_FILES = $(if $(wildcard deploy/compose/generated/lan.yaml),-f $(ROOT)/deploy/compose/generated/lan.yaml)
+tunnel: ## Publica a borda do compose num túnel Pinggy (URL novo, 60 min) para ler o QR do Linphone no telemóvel
+	@printf "$(C)▶ túnel Pinggy para a borda do compose (publica a borda INTEIRA na Internet)$(Z)\n"
+	@URL=$$(MEET_HOST=$(MEET_HOST) bash scripts/compose-tunnel.sh up) || exit 1; \
+	printf "   URL do túnel: $(Y)$$URL$(Z)\n"; \
+	printf "$(C)▶ $(COMPOSE) up (o servidor passa a pôr o túnel na 1.ª origem de CORS_ORIGINS)$(Z)\n"; \
+	$(SERVER_RECREATE); \
+	$(COMPOSE) up $(COMPOSE_P) $(TUNNEL_FILES) -f $(ROOT)/deploy/compose/generated/tunnel.yaml -d || { bash scripts/compose-tunnel.sh down; exit 1; }; \
+	printf "\n   Na consola ($(Y)https://$(MEET_HOST):8443$(Z)) emite um QR novo: o URL dele já é o do túnel.\n"; \
+	printf "   Só o QR e a descarga da configuração; o registo SIP (UDP 5070) não passa por aqui.\n"; \
+	printf "   Acabou? $(Y)make tunnel-stop$(Z)\n"
+
+tunnel-stop: ## Fecha o túnel e devolve o servidor às origens do compose
+	@bash scripts/compose-tunnel.sh down
+	@printf "$(C)▶ $(COMPOSE) up (origens do compose, sem túnel)$(Z)\n"
+	@$(SERVER_RECREATE); $(COMPOSE) up $(COMPOSE_P) $(TUNNEL_FILES) -d
+
 compose-down: ## Para a simulação de produção (mantém os volumes)
 	@$(COMPOSE) down $(COMPOSE_P)
 compose-ps: ## Contentores da simulação de produção
