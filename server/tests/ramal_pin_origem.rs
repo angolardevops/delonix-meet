@@ -587,8 +587,14 @@ async fn a_devolucao_repoe_a_origem_e_a_auditoria_diz_a_duracao_real(db: sqlx::P
     verificar(&app, &dom, "1002", errado(&pin_beto), quem).await;
     let travadas = auditoria(&app, a.org(), "ramal.origem_travada").await;
     assert_eq!(travadas.len(), 2, "{travadas:?}");
-    assert!(travadas[0].1.contains("— 20 min (bloqueio n.º 1) —"), "{travadas:?}");
-    assert!(travadas[1].1.contains("— 40 min (bloqueio n.º 2) —"), "{travadas:?}");
+    assert!(
+        travadas[0].1.contains("— 20 min (bloqueio n.º 1) —"),
+        "{travadas:?}"
+    );
+    assert!(
+        travadas[1].1.contains("— 40 min (bloqueio n.º 2) —"),
+        "{travadas:?}"
+    );
     let resta: i64 = sqlx::query_scalar(
         "SELECT CEIL(EXTRACT(EPOCH FROM (locked_until - now())))::BIGINT
            FROM voice_pin_origins WHERE origin = $1",

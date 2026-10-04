@@ -25,8 +25,9 @@
 //!   é a vítima de quem anda a adivinhar.
 //!
 //! **A verificação (R277)** passa primeiro por um travão por ORIGEM da
-//! chamada (número e rede, segundo o FreeSWITCH), que trava à terceira falha
-//! — antes de a mesma origem poder juntar as cinco que bloqueiam um ramal. O
+//! chamada (número e rede, segundo o FreeSWITCH), que trava à terceira falha,
+//! por vinte minutos — antes de a mesma origem poder juntar as cinco que
+//! bloqueiam um ramal, e por mais tempo do que a janela dele. O
 //! contador do ramal tem janela, e o bloqueio dobra a cada reincidência.
 
 use axum::{

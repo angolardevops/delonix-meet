@@ -42,7 +42,7 @@ CREATE INDEX voice_pin_origins_updated_idx ON voice_pin_origins (updated_at);
 
 -- 3. Quem entra na sala pela ponte, IDENTIFICADO. O IVR não passa o nome nem
 --    a pessoa à ponte (o Lua não é fonte de verdade de identidade): passa um
---    bilhete opaco, de uso único e de dois minutos, que o servidor emitiu
+--    bilhete opaco, de uso único e de 45 segundos, que o servidor emitiu
 --    quando identificou quem liga. A ponte troca-o pela identidade ao sentar
 --    a chamada no censo (`server/src/voice_caller.rs`). Só o hash (sha256)
 --    fica guardado, e o bilhete vale para UMA sala. Isolamento: a tabela só
