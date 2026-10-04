@@ -245,6 +245,7 @@ export default {
     ligacoes: 'Connexions',
     usb: 'Caméras USB',
     usbNota: 'Caméras et cartes d’acquisition vues par le navigateur sur cette machine.',
+    usbTelemovel: 'Un téléphone branché par câble en mode transfert de fichiers n’est pas une caméra : il n’apparaît ici que lorsque le système le voit comme une webcam.',
     nDispositivos_one: '{{count}} appareil',
     nDispositivos_other: '{{count}} appareils',
     ligar: 'Connecter',

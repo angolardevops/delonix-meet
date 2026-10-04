@@ -245,6 +245,7 @@ export default {
     ligacoes: '接入方式',
     usb: 'USB 摄像机',
     usbNota: '浏览器在本机看到的摄像机与采集卡。',
+    usbTelemovel: '以文件传输模式用数据线连接的手机不算摄像机：只有系统把它识别为网络摄像头时，才会出现在这里。',
     nDispositivos_one: '{{count}} 台设备',
     nDispositivos_other: '{{count}} 台设备',
     ligar: '接入',

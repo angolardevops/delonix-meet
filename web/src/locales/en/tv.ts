@@ -245,6 +245,7 @@ export default {
     ligacoes: 'Connections',
     usb: 'USB cameras',
     usbNota: 'Cameras and capture cards the browser sees on this machine.',
+    usbTelemovel: 'A phone plugged in by cable in file-transfer mode is not a camera: it only shows up here once the system sees it as a webcam.',
     nDispositivos_one: '{{count}} device',
     nDispositivos_other: '{{count}} devices',
     ligar: 'Connect',
