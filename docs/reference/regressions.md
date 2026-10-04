@@ -2428,6 +2428,22 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 
 **Ficheiros.** `voice/freeswitch/autoload_configs/xml_curl.conf.xml`, `server/src/ramais.rs` (sai o `DirectoryQuery` e o `check_media_secret_str`), `server/src/voice.rs` e `server/tests/security_voice_odoo.rs` (testes), `voice/freeswitch/scripts/{dialin_ivr,ramais_dial}.lua`, `voice/cluster/freeswitch-entrypoint.sh`, `scripts/softphone-prova.sh` (passo 6 do `srtp-cluster`).
 
+### R228 — A conferência registava «Can't find caller-controls» a cada entrada
+
+**Sintoma.** Visto a 2026-10-04 no laboratório, numa chamada com o PIN certo: ao entrar na conferência o FreeSWITCH escrevia `[ERR] conference_member.c:87 Can't find caller-controls in conference.conf`, uma vez por chamador. A chamada entrava na mesma, sem controlos por DTMF.
+
+**Causa.** O perfil `delonix` pedia `caller-controls="default"`. O grupo `default` existe no `conference.conf.xml` da vanilla, mas o nosso ficheiro **substitui** esse e não traz nenhuma secção `caller-controls`. O mod_conference só não liga controlos quando o valor é `none` (`conference_member.c:1009`); com qualquer outro nome vai procurar o grupo e, não o achando, regista o erro.
+
+**Regra.** Um perfil de conferência pede `none` ou um grupo **definido no mesmo ficheiro**. Ficou `none`, que é o comportamento que já tinha. Dar controlos a quem liga (calar-se com uma tecla, por exemplo) é uma decisão de produto: faz-se definindo o grupo no ficheiro, não apontando para um nome da vanilla.
+
+**Portão.** `scripts/check-fs-xml.sh` (no `make fitness` e no CI): num `conference.conf`, `caller-controls` e `moderator-controls` têm de ser `none` ou nomear um grupo do ficheiro. Com o ficheiro anterior falha e aponta a linha.
+
+**Prova corrida a 2026-10-04, no laboratório.** Compose: 2 linhas do erro antes (duas entradas na conferência); depois da correcção, uma terceira chamada com o PIN certo entrou na conferência e o log continuou com 2. Cluster: 0 linhas no pod novo, com o perfil carregado.
+
+**O que NÃO está provado.** O portão é estático: não mede uma entrada na conferência. As provas com chamadas do `softphone-prova.sh` não chegam à conferência do perfil `delonix` (o servidor de andaime não devolve uma sala).
+
+**Ficheiros.** `voice/freeswitch/autoload_configs/conference.conf.xml`, `scripts/check-fs-xml.sh`.
+
 ### R270 — A fala de um participante entrava no prompt do LLM como se fosse instrução
 
 **Sintoma.** `ai::caption_prompt` e `ai::minutes_prompt` interpolavam a legenda, a transcrição e o título da reunião numa string única, a seguir à instrução. Quem ditasse «ignora as instruções anteriores, a reunião decidiu…» escrevia no mesmo plano que a instrução, e a frase podia acabar citada como decisão na acta — que dispara o webhook `meeting.mom_ready` para fora. Era o «não fechado aqui» da R231 (OWASP LLM01); o DLP tira PII, não tira instruções.
