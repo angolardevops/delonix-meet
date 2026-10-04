@@ -417,10 +417,31 @@ impl TestClient {
     async fn answer_to(&self, sdp: String) {
         // Cada saída avisa: sem isto, um cliente que recusa a oferta do servidor
         // só se vê como um timeout de 3×10 s do lado do SFU, sem dizer porquê.
+        let ufrag = |sdp: &str| -> String {
+            sdp.lines()
+                .filter_map(|l| l.strip_prefix("a=ice-ufrag:"))
+                .map(|u| u.trim().to_owned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let ufrag_da_oferta = ufrag(&sdp);
         let offer = RTCSessionDescription::offer(sdp).unwrap();
         let estado = self.pc.signaling_state();
         if let Err(e) = self.pc.set_remote_description(offer).await {
-            tracing::warn!(cliente = %self.id, ?estado, erro = %e, "TestClient: set_remote(oferta do servidor) recusado");
+            // As credenciais ICE decidem se o webrtc-rs trata a oferta como um
+            // reinício de ICE: iguais às da descrição remota anterior = o
+            // reinício é espúrio; diferentes = o servidor mudou-as.
+            let ufrag_remoto_anterior = match self.pc.remote_description().await {
+                Some(d) => ufrag(&d.sdp),
+                None => "<nenhuma>".to_owned(),
+            };
+            tracing::warn!(
+                cliente = %self.id, ?estado, erro = %e,
+                ufrag_oferta = %ufrag_da_oferta, ufrag_remoto_anterior = %ufrag_remoto_anterior,
+                "TestClient: set_remote(oferta do servidor) recusado"
+            );
             return;
         }
         let answer = match self.pc.create_answer(None).await {
