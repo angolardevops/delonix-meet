@@ -64,10 +64,15 @@ ifneq ($(shell command -v delonix 2>/dev/null),)
   # resolvem-se contra a pasta do compose.yaml; sem ele, o delonix não os acha.
   COMPOSE_P := -f $(ROOT)/compose.yaml -p delonix-meet
   COMPOSE_EXEC := delonix container exec -it
+  # `delonix compose up` responde «already exists, nothing to do» e NÃO recria um
+  # contentor cuja configuração mudou (medido a 2026-10-04): o servidor tem de sair para
+  # o `CORS_ORIGINS` novo (o do túnel) valer. Só o servidor; a base e o resto ficam.
+  SERVER_RECREATE := delonix container stop delonix-server >/dev/null 2>&1; delonix container rm delonix-server >/dev/null 2>&1
 else
   COMPOSE   ?= docker compose -f $(ROOT)/compose.yaml -p delonix-meet
   COMPOSE_P :=
   COMPOSE_EXEC := docker exec -it
+  SERVER_RECREATE := true  # o `docker compose up` recria sozinho o serviço cuja configuração mudou
 endif
 
 # Cores
@@ -796,6 +801,7 @@ tunnel: ## Publica a borda do compose num túnel Pinggy (URL novo, 60 min) para 
 	@URL=$$(MEET_HOST=$(MEET_HOST) bash scripts/compose-tunnel.sh up) || exit 1; \
 	printf "   URL do túnel: $(Y)$$URL$(Z)\n"; \
 	printf "$(C)▶ $(COMPOSE) up (o servidor passa a pôr o túnel na 1.ª origem de CORS_ORIGINS)$(Z)\n"; \
+	$(SERVER_RECREATE); \
 	$(COMPOSE) up $(COMPOSE_P) $(TUNNEL_FILES) -f $(ROOT)/deploy/compose/generated/tunnel.yaml -d || { bash scripts/compose-tunnel.sh down; exit 1; }; \
 	printf "\n   Na consola ($(Y)https://$(MEET_HOST):8443$(Z)) emite um QR novo: o URL dele já é o do túnel.\n"; \
 	printf "   Só o QR e a descarga da configuração; o registo SIP (UDP 5070) não passa por aqui.\n"; \
@@ -804,7 +810,7 @@ tunnel: ## Publica a borda do compose num túnel Pinggy (URL novo, 60 min) para 
 tunnel-stop: ## Fecha o túnel e devolve o servidor às origens do compose
 	@bash scripts/compose-tunnel.sh down
 	@printf "$(C)▶ $(COMPOSE) up (origens do compose, sem túnel)$(Z)\n"
-	@$(COMPOSE) up $(COMPOSE_P) $(TUNNEL_FILES) -d
+	@$(SERVER_RECREATE); $(COMPOSE) up $(COMPOSE_P) $(TUNNEL_FILES) -d
 
 compose-down: ## Para a simulação de produção (mantém os volumes)
 	@$(COMPOSE) down $(COMPOSE_P)
