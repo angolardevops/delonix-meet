@@ -1,9 +1,9 @@
 /**
  * Entrar numa sala com o código (ou o link colado). O código leva a
  * `#/r/<código>`, e é a própria entrada que depois diz à pessoa que segue para
- * essa sala mal se autentique. O servidor JÁ tem entrada sem conta
- * (`POST /api/rooms/{code}/guest-join`, `guestJoin` em `api.ts`); o que falta é
- * o ecrã que a use — este ainda manda toda a gente autenticar-se.
+ * essa sala mal se autentique. O servidor JÁ tem entrada sem conta (a rota
+ * `guest-join` da sala, `guestJoin` em `api.ts`); o que falta é o ecrã que a
+ * use — este ainda manda toda a gente autenticar-se.
  */
 import { FormEvent, useState } from 'react'
 import { useTranslation } from 'react-i18next'
