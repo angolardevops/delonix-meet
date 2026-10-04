@@ -414,18 +414,72 @@ impl TestClient {
         }
     }
 
+    /// Responde a uma oferta do servidor depois de o ICE deste cliente estar
+    /// ligado (ou ao fim de 5 s, para um ICE que nunca liga continuar visível).
+    ///
+    /// Porquê: o webrtc-rs só regista as credenciais remotas ao ARRANCAR o
+    /// transporte ICE, que é assíncrono. Uma oferta do servidor que chegue
+    /// antes disso (o SFU oferece logo a seguir à resposta) é lida como uma
+    /// MUDANÇA de credenciais — um reinício implícito de ICE — e falha com
+    /// «ICE Agent can not be restarted when gathering»; o PC fica preso em
+    /// `have-remote-offer` e recusa tudo o que vem depois. Medido (a oferta e a
+    /// descrição remota anterior tinham o MESMO `ice-ufrag`): o servidor não
+    /// mudou nada. Um browser não tem esta corrida; o cliente de teste tem.
+    async fn responder_com_ice_ligado(&self, sdp: String) {
+        use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState as S;
+        let limite = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < limite {
+            if matches!(self.pc.ice_connection_state(), S::Connected | S::Completed) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.answer_to(sdp).await;
+    }
+
     async fn answer_to(&self, sdp: String) {
+        // Cada saída avisa: sem isto, um cliente que recusa a oferta do servidor
+        // só se vê como um timeout de 3×10 s do lado do SFU, sem dizer porquê.
+        let ufrag = |sdp: &str| -> String {
+            sdp.lines()
+                .filter_map(|l| l.strip_prefix("a=ice-ufrag:"))
+                .map(|u| u.trim().to_owned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let ufrag_da_oferta = ufrag(&sdp);
         let offer = RTCSessionDescription::offer(sdp).unwrap();
-        if self.pc.set_remote_description(offer).await.is_err() {
+        let estado = self.pc.signaling_state();
+        if let Err(e) = self.pc.set_remote_description(offer).await {
+            // As credenciais ICE decidem se o webrtc-rs trata a oferta como um
+            // reinício de ICE: iguais às da descrição remota anterior = o
+            // reinício é espúrio; diferentes = o servidor mudou-as.
+            let ufrag_remoto_anterior = match self.pc.remote_description().await {
+                Some(d) => ufrag(&d.sdp),
+                None => "<nenhuma>".to_owned(),
+            };
+            tracing::warn!(
+                cliente = %self.id, ?estado, erro = %e,
+                ufrag_oferta = %ufrag_da_oferta, ufrag_remoto_anterior = %ufrag_remoto_anterior,
+                "TestClient: set_remote(oferta do servidor) recusado"
+            );
             return;
         }
-        let Ok(answer) = self.pc.create_answer(None).await else {
-            return;
+        let answer = match self.pc.create_answer(None).await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(cliente = %self.id, erro = %e, "TestClient: create_answer falhou");
+                return;
+            }
         };
-        if self.pc.set_local_description(answer).await.is_err() {
+        if let Err(e) = self.pc.set_local_description(answer).await {
+            tracing::warn!(cliente = %self.id, erro = %e, "TestClient: set_local(resposta) falhou");
             return;
         }
         let Some(local) = self.pc.local_description().await else {
+            tracing::warn!(cliente = %self.id, "TestClient: sem local_description depois da resposta");
             return;
         };
         let sdp = local.sdp;
@@ -473,7 +527,10 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
                     client.held.lock().await.push(sdp);
                     continue;
                 }
-                client.answer_to(sdp).await;
+                // Fora da bomba: esperar pelo ICE dentro dela travava os
+                // `SfuIce` que vêm na mesma fila, e sem eles o ICE nunca liga.
+                let client = client.clone();
+                tokio::spawn(async move { client.responder_com_ice_ligado(sdp).await });
             }
             ServerMsg::SfuIce { candidate } => {
                 if let Ok(init) = serde_json::from_value::<RTCIceCandidateInit>(candidate) {
@@ -508,6 +565,15 @@ fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
 }
 
 fn new_sfu_com(ice_timeouts: Option<(Duration, Duration)>) -> (Arc<SfuState>, Arc<Metrics>) {
+    // `DELONIX_IT_LOG=<filtro tracing>` (a mesma variável dos testes de
+    // integração) mostra o que o SFU faz. Sem ela não há subscritor e uma falha
+    // de corrida só diz «faltou media», sem dizer em que ponto da negociação.
+    if let Ok(filter) = std::env::var("DELONIX_IT_LOG") {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    }
     let metrics = Arc::new(Metrics::default());
     (
         Arc::new(SfuState::new(
@@ -2358,6 +2424,17 @@ async fn entradas_concorrentes_todos_recebem_todos() {
     // as 96 subscrições todas feitas, e o CI da main ficou vermelho por isso.
     // Escala-se pelo que a máquina tem, em vez de subir o prazo (mais prazo
     // não liga um ICE que já desistiu).
+    //
+    // CAUSA MEDIDA a 2026-10-05 — não era só a máquina. Com `DELONIX_IT_LOG`
+    // ligado, os dois subscritores sem media tinham o MESMO `ice-ufrag` na
+    // oferta do servidor e na descrição remota anterior: o servidor não mudou
+    // credenciais. Quem falhava era o CLIENTE webrtc-rs, que lia a oferta como
+    // um reinício de ICE («ICE Agent can not be restarted when gathering») por
+    // ela chegar antes de o transporte ICE ter registado as credenciais
+    // remotas, e ficava preso em `have-remote-offer` (ver
+    // `TestClient::responder_com_ice_ligado`). O SFU dava 3 timeouts e
+    // «peer sem media nova». Controlo (100 execuções cada, mesma máquina):
+    // sem a correcção 8 falhas, com ela 0 (p ≈ 0,003).
     let nucleos = std::thread::available_parallelism().map_or(2, |n| n.get());
     let n_salas: usize = if nucleos >= 8 { 4 } else { 2 };
     let por_sala: usize = 4;
