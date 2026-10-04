@@ -170,6 +170,9 @@ pub struct AppState {
     pub redis_bus: Option<Arc<pubsub::PubSubBus>>,
     /// Contadores de observabilidade expostos em `/metrics` (ver metrics.rs).
     pub metrics: Arc<metrics::Metrics>,
+    /// Vagas de composição de gravação (`FFMPEG_MAX_CONCURRENT`): o `ffmpeg`
+    /// de uma gravação só arranca com uma vaga. Ver `recorder::acquire_compose_slot`.
+    pub compose_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -1167,6 +1170,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         telephony_reveal_limiter: RateLimiter::new(5, Duration::from_secs(300)),
         telephony: telephony_service::Adapters::from_config(&config, &outbound),
         outbound,
+        compose_slots: Arc::new(tokio::sync::Semaphore::new(config.ffmpeg_max_concurrent)),
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,

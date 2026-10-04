@@ -202,10 +202,21 @@ pub struct Config {
     /// núcleos do nó e a composição de uma gravação degrada as chamadas VIVAS
     /// que estão a decorrer no mesmo pod.
     pub ffmpeg_threads: u32,
+    /// Composições de gravação a correr ao mesmo tempo neste pod
+    /// (`FFMPEG_MAX_CONCURRENT`, default 1). As restantes esperam a vez.
+    ///
+    /// Medido a 2026-09-17 (`docs/ops/teste-de-carga-2026-09-17.md`): 20
+    /// composições em simultâneo, com `FFMPEG_THREADS=2`, tomaram ~12 núcleos e
+    /// deixaram as chamadas VIVAS do mesmo nó com 64% de perda. `FFMPEG_THREADS`
+    /// limita UM ffmpeg; sem este tecto, N gravações a acabar juntas (o fim de
+    /// uma reunião grande, ou de várias) somam N× esse limite. O custo de
+    /// esperar é tempo até a gravação aparecer na biblioteca; o de não esperar
+    /// é a chamada de quem ainda está a falar.
+    pub ffmpeg_max_concurrent: usize,
     /// Emissões em directo simultâneas por nó (`MAX_DIRECTOS`, default 2).
     ///
-    /// O tecto existe porque o pod tem `limits.cpu: 1000m` e a sala em directo
-    /// vive no MESMO pod que a serve (ADR-0001). Cada emissão copia o vídeo e
+    /// O tecto existe porque a sala em directo vive no MESMO pod que a serve
+    /// (ADR-0001), e o CPU desse pod é finito. Cada emissão copia o vídeo e
     /// só transcodifica o áudio — barato —, mas «barato» vezes N deixa de ser.
     /// Sem tecto, uma organização entusiasmada derruba as chamadas do nó.
     pub max_directos: usize,
@@ -520,6 +531,7 @@ impl Config {
             drain_reconnect_ms: bounded_env(src, "DRAIN_RECONNECT_MS", 2_000, 100, 60_000) as u64,
             ffmpeg_timeout_secs: bounded_env(src, "FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
             ffmpeg_threads: bounded_env(src, "FFMPEG_THREADS", 2, 1, 64) as u32,
+            ffmpeg_max_concurrent: bounded_env(src, "FFMPEG_MAX_CONCURRENT", 1, 1, 64),
             max_directos: bounded_env(src, "MAX_DIRECTOS", 2, 0, 32),
             max_destinos_por_directo: bounded_env(src, "MAX_DESTINOS_POR_DIRECTO", 4, 1, 8),
             directo_threads: bounded_env(src, "DIRECTO_THREADS", 1, 1, 16) as u32,
