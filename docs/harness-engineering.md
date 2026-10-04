@@ -144,7 +144,8 @@ Os ficheiros de harness no repositório devem ser atualizados manualmente ou por
       todo o `*.xml` e `*.xml.inc` de `voice/` no `make fitness` e no CI: XML bem
       formado, nenhuma directiva `X-PRE-PROCESS` dentro de um comentário (o FreeSWITCH
       executa-a lá), e nenhum `$${NOME_EM_MAIÚSCULAS}` (lê uma variável global, não o
-      ambiente). É estático: o que a configuração **faz** em chamada continua a ser do
+      ambiente), e desde a R228 nenhum perfil de conferência a pedir um grupo de controlos que
+      o ficheiro não define. É estático: o que a configuração **faz** em chamada continua a ser do
       `scripts/softphone-prova.sh srtp-real`.
 - [x] **As provas de voz com chamadas correm no CI** (2026-10-04). O workflow «Imagem
       FreeSWITCH» já construía a imagem; passa a correr contra ela o

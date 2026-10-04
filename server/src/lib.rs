@@ -83,12 +83,18 @@ mod ui;
 mod usage;
 mod users;
 mod voice;
+mod voice_caller;
 mod webhooks;
 mod whiteboards;
 
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
+/// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
+/// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
+pub use voice::{discard_caller_ticket, seat_phone_caller};
+/// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
+pub use webhooks::retry_due as webhook_retry_due;
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -1719,6 +1725,25 @@ pub async fn run() {
                         tracing::info!(abandoned, deleted, "webhook deliveries sweep")
                     }
                     Err(e) => tracing::warn!(error = %e, "webhook deliveries sweep failed"),
+                }
+            }
+        });
+    }
+
+    // Worker: repetição automática de webhooks falhados, a cada 15 s. Todos os
+    // nós correm este ciclo; `retry_due` reclama com `SKIP LOCKED`, por isso
+    // não se repetem uns aos outros. Sem `JoinHandle`, como os ciclos vizinhos.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(15));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match webhooks::retry_due(&state).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(n, "webhook: repetições enviadas"),
+                    Err(e) => tracing::warn!(error = %e, "webhook: passo de repetição falhou"),
                 }
             }
         });

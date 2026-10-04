@@ -40,6 +40,18 @@ use crate::sfu::SfuState;
 /// `originate` na perna para a ponte. É o que liga a perna SIP ao dial-out.
 pub const CALL_ID_HEADER: &str = "X-Delonix-Call-Id";
 
+/// Cabeçalho com o bilhete de identidade de quem liga (R279), posto pelo IVR
+/// na perna para a ponte a partir das `channel_vars` que o servidor lhe deu.
+/// Opaco para a ponte: quem o troca pela identidade é `voice_caller::redeem`.
+pub const CALLER_TICKET_HEADER: &str = "X-Delonix-Caller-Ticket";
+
+/// O bilhete só tem uma forma: 64 dígitos hexadecimais. Qualquer outra coisa
+/// no cabeçalho é ignorada, e a chamada entra anónima.
+fn caller_ticket_from(value: Option<&str>) -> Option<String> {
+    let v = value?.trim();
+    (v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())).then(|| v.to_ascii_lowercase())
+}
+
 // ============================================================
 //  Mensagens SIP
 // ============================================================
@@ -317,6 +329,8 @@ pub enum BridgeEvent {
         room_id: Uuid,
         room_code: String,
         call_id: Option<Uuid>,
+        /// O bilhete de identidade de quem liga, se a perna o trouxe.
+        caller_ticket: Option<String>,
     },
     Leg {
         leg_id: Uuid,
@@ -325,6 +339,9 @@ pub enum BridgeEvent {
     },
     /// `BYE`/`CANCEL` recebido, ou a ponte fechou a perna.
     Ended { leg_id: Uuid, room_id: Uuid },
+    /// Um `INVITE` que trazia um bilhete de identidade foi RECUSADO: o
+    /// bilhete não entrou em sala nenhuma e tem de deixar de valer (R279).
+    Refused { caller_ticket: String },
 }
 
 #[derive(Debug, Clone)]
@@ -538,13 +555,23 @@ impl SipBridge {
         }
         self.send(from, &response(&msg, "100 Trying", None, None, None))
             .await;
-        let reject = |status: &'static str| response(&msg, status, None, None, None);
+        // Lido já aqui: uma recusa, seja por que razão for, tem de poder
+        // invalidar o bilhete que a perna trazia.
+        let caller_ticket = caller_ticket_from(msg.header(CALLER_TICKET_HEADER));
         let Some(room_code) = msg.request_uri().and_then(room_code_from_uri) else {
-            self.send(from, &reject("404 Not Found")).await;
+            self.refuse(from, &msg, "404 Not Found", &caller_ticket, events)
+                .await;
             return;
         };
         let Some(offer) = parse_sdp_offer(&msg.body) else {
-            self.send(from, &reject("488 Not Acceptable Here")).await;
+            self.refuse(
+                from,
+                &msg,
+                "488 Not Acceptable Here",
+                &caller_ticket,
+                events,
+            )
+            .await;
             return;
         };
         // SRTP obrigatório: uma oferta sem SDES que saibamos fazer é recusada
@@ -552,14 +579,22 @@ impl SipBridge {
         // `RTP/AVP` a quem ofereceu SAVP nem se aceita media em claro.
         let Some(oferta_crypto) = offer.crypto.clone() else {
             tracing::warn!(%from, sala = %room_code, "ponte: INVITE sem a=crypto utilizável — 488");
-            self.send(from, &reject("488 Not Acceptable Here")).await;
+            self.refuse(
+                from,
+                &msg,
+                "488 Not Acceptable Here",
+                &caller_ticket,
+                events,
+            )
+            .await;
             return;
         };
         let delonix_call = msg
             .header(CALL_ID_HEADER)
             .and_then(|v| Uuid::parse_str(v.trim()).ok());
         let Some(adm) = admission.admit(&room_code, delonix_call).await else {
-            self.send(from, &reject("404 Not Found")).await;
+            self.refuse(from, &msg, "404 Not Found", &caller_ticket, events)
+                .await;
             return;
         };
         // A nossa chave: nova por chamada, e só existe aqui e no SDP da
@@ -574,7 +609,14 @@ impl SipBridge {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!(error = %e, "ponte: contexto SRTP não construiu — 488");
-                self.send(from, &reject("488 Not Acceptable Here")).await;
+                self.refuse(
+                    from,
+                    &msg,
+                    "488 Not Acceptable Here",
+                    &caller_ticket,
+                    events,
+                )
+                .await;
                 return;
             }
         };
@@ -586,7 +628,14 @@ impl SipBridge {
             Ok(l) => l,
             Err(e) => {
                 tracing::warn!(error = %e, "ponte: sem porta RTP para a perna");
-                self.send(from, &reject("503 Service Unavailable")).await;
+                self.refuse(
+                    from,
+                    &msg,
+                    "503 Service Unavailable",
+                    &caller_ticket,
+                    events,
+                )
+                .await;
                 return;
             }
         };
@@ -646,6 +695,7 @@ impl SipBridge {
                 room_id: adm.room_id,
                 room_code,
                 call_id: delonix_call,
+                caller_ticket,
             })
             .await;
         let ev = events.clone();
@@ -660,6 +710,26 @@ impl SipBridge {
                     .await;
             }
         });
+    }
+
+    /// Recusa o `INVITE` e, se ele trazia um bilhete de identidade, avisa
+    /// para que seja invalidado: ninguém entrou com ele. `try_send`: uma fila
+    /// cheia não atrasa a resposta SIP (o bilhete expira sozinho).
+    async fn refuse(
+        &self,
+        from: SocketAddr,
+        msg: &SipMessage,
+        status: &'static str,
+        caller_ticket: &Option<String>,
+        events: &mpsc::Sender<BridgeEvent>,
+    ) {
+        self.send(from, &response(msg, status, None, None, None))
+            .await;
+        if let Some(t) = caller_ticket {
+            let _ = events.try_send(BridgeEvent::Refused {
+                caller_ticket: t.clone(),
+            });
+        }
     }
 
     fn contact(&self) -> String {
@@ -756,6 +826,20 @@ a=fmtp:101 0-16\r\n\
 a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:AAECAwQFBgcICQoLDA0OD/DxAgMEBQYHCAkKCwwN\r\n\
 a=ptime:20\r\n\
 a=sendrecv\r\n";
+
+    #[test]
+    fn o_bilhete_de_quem_liga_so_tem_uma_forma() {
+        let bom = "ab".repeat(32);
+        assert_eq!(caller_ticket_from(Some(&bom)), Some(bom.clone()));
+        assert_eq!(
+            caller_ticket_from(Some(&format!("  {}  ", bom.to_uppercase()))),
+            Some(bom.clone())
+        );
+        for mau in ["", "abc", &bom[1..], &format!("{bom}0"), &"zz".repeat(32)] {
+            assert_eq!(caller_ticket_from(Some(mau)), None, "{mau}");
+        }
+        assert_eq!(caller_ticket_from(None), None);
+    }
 
     #[test]
     fn le_o_invite_do_freeswitch() {

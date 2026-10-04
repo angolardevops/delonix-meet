@@ -97,3 +97,6 @@ ai-worker/gen/
 deploy/compose/generated/
 # Prova de softphone (scripts/softphone-prova.sh): gravações da última chamada.
 .softphone-prova/
+
+# Prova do tronco FreePBX (scripts/pbx-tronco-prova.sh): segredos, CA e discos da réplica.
+.pbx-tronco-prova/

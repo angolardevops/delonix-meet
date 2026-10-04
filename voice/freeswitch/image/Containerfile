@@ -66,7 +66,8 @@ RUN set -eu; mkdir -p /sounds /tmp/s; cd /tmp/s; \
     tar -xzf pt.tar.gz -C /sounds --wildcards 'pt/BR/karina/ivr/*' 'pt/BR/karina/conference/*' 'pt/BR/karina/voicemail/*' 'pt/BR/karina/digits/*'; \
     tar -xzf en.tar.gz -C /sounds --wildcards 'en/us/callie/ivr/*' 'en/us/callie/conference/*' 'en/us/callie/voicemail/*' 'en/us/callie/digits/*'; \
     for v in pt/BR/karina en/us/callie; do for f in ivr/8000/ivr-please_enter_pin_followed_by_pound.wav \
-      ivr/8000/ivr-that_was_an_invalid_entry.wav conference/8000/conf-bad-pin.wav conference/8000/conf-welcome.wav \
+      ivr/8000/ivr-that_was_an_invalid_entry.wav ivr/8000/ivr-please_enter_extension_followed_by_pound.wav \
+      ivr/8000/ivr-pin_or_extension_is-invalid.wav ivr/8000/ivr-thank_you.wav conference/8000/conf-bad-pin.wav conference/8000/conf-welcome.wav \
       voicemail/8000/vm-goodbye.wav; do test -s "/sounds/$v/$f" || { echo "som em falta: $v/$f"; exit 1; }; done; done; \
     rm -rf /tmp/s
 

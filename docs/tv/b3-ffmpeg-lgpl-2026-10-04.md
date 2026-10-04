@@ -30,9 +30,22 @@ por isso o directo e a gravação do servidor falhavam com `ffmpeg-ausente`. Dec
 
 A fonte H.264 do último teste foi criada com o ffmpeg **do host** (com libx264), apenas como entrada de teste; o ffmpeg LGPL só a passou por cópia.
 
+## Imagem completa construída (2026-10-04, a partir da `develop` `c0659014`)
+
+Construí o `Dockerfile.server` inteiro (estágio Rust incluído) e verifiquei a imagem final:
+
+| Verificação | Resultado |
+|---|---|
+| Construção completa | ok; **103 MB**, utilizador `nonroot:nonroot` |
+| `ENV` | `FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg`, `FFPROBE_BIN=/opt/ffmpeg/bin/ffprobe` |
+| `COPY --from=ffmpeg` | presente; `ffmpeg -L` = LGPL, 9.0.2, zero `enable-gpl/nonfree/version3`; `ffprobe` 9.0.2; encoders `libvpx-vp9`, `libopus`, `aac` presentes |
+| O servidor arranca na imagem contra uma base Postgres própria | `/api/status` → `{"status":"ok","db":true}`; sem erro de biblioteca em falta |
+| `docker exec` do ffmpeg dentro do contentor do servidor | ok |
+
+Dificuldades de ambiente (não do código): o DNS do Docker Hub/gcr.io falhou de forma intermitente e a construção foi repetida; a primeira tentativa de compilação morreu quando a sessão que a lançou terminou. A construção durou mais de 18 minutos num host com load médio entre 28 e 117.
+
 ## O que NÃO foi verificado
 
-- **O `Dockerfile.server` completo nunca foi construído**: só o estágio `ffmpeg` e uma imagem distroless de teste com `/opt/ffmpeg` copiado. O estágio do Rust (mais de 1 GB, não autorizado) e o `COPY --from=ffmpeg` / `ENV` da imagem final não foram exercitados.
 - **Nenhuma gravação nem directo reais** correram com esta imagem a ser servidor: os testes acima são do ffmpeg isolado, com os mesmos argumentos que o código usa.
 - Sem Kubernetes, sem medição de CPU/RAM sob carga, sem o tempo exacto de construção (minutos; não registado).
 - **Obrigações de redistribuição (a validar com o jurídico, ver o ADR do Channel Engine):** `ffmpeg.org/legal.html` pede, para redistribuir binários LGPL, o código-fonte **correspondente alojado no mesmo servidor** que o binário. A imagem aponta para `ffmpeg.org`; se a imagem for entregue a terceiros, será preciso alojar também o tarball (e o código do libvpx e do libopus). **Não está feito.**

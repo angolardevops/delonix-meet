@@ -427,3 +427,267 @@ async fn other_org_and_non_admin_are_refused(db: sqlx::PgPool) {
     assert_eq!(n, 1, "nenhuma recusa criou um reenvio");
     assert_eq!(rx.received().len(), 1);
 }
+
+/// Há `retry_at` agendado na entrega `id`?
+async fn scheduled(app: &TestApp, id: &str) -> bool {
+    sqlx::query_scalar("SELECT retry_at IS NOT NULL FROM webhook_deliveries WHERE id = $1::uuid")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// Faz passar o relógio: o que está agendado fica vencido.
+async fn make_due(app: &TestApp) {
+    sqlx::query(
+        "UPDATE webhook_deliveries SET retry_at = now() - interval '1 second'
+          WHERE retry_at IS NOT NULL",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_transient_failure_is_retried_until_it_succeeds(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(503, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r", &[]).await;
+
+    let items = wait_final(&app, &a, &hook, 1).await;
+    let first = items[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(items[0]["status"], "failed");
+    assert!(
+        scheduled(&app, &first).await,
+        "503 é repetível: tinha de ficar agendado"
+    );
+    // Ainda não venceu: um passo do worker agora não manda nada.
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        0
+    );
+    assert_eq!(rx.received().len(), 1);
+
+    // Venceu mas o destino continua em baixo: nova tentativa, também falhada,
+    // e agendada outra vez — com a história na linha nova.
+    make_due(&app).await;
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        1
+    );
+    let items = wait_final(&app, &a, &hook, 2).await;
+    assert_eq!(items[0]["status"], "failed");
+    assert_eq!(items[0]["attempt"], 2);
+    assert_eq!(items[0]["redelivery_of"], first.as_str());
+    assert!(
+        !scheduled(&app, &first).await,
+        "a original deixa de estar agendada"
+    );
+    assert!(scheduled(&app, items[0]["id"].as_str().unwrap()).await);
+
+    // O destino recupera: a seguinte fecha com sucesso e nada fica agendado.
+    rx.status.store(204, Ordering::SeqCst);
+    make_due(&app).await;
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        1
+    );
+    let items = wait_final(&app, &a, &hook, 3).await;
+    assert_eq!(items[0]["status"], "succeeded");
+    assert_eq!(items[0]["attempt"], 3);
+    let left: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM webhook_deliveries WHERE retry_at IS NOT NULL")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        0
+    );
+
+    // Os três envios levaram o MESMO corpo, bit a bit, e assinaturas válidas.
+    let got = rx.received();
+    assert_eq!(got.len(), 3);
+    assert!(
+        got.iter().all(|r| r.body == got[0].body),
+        "o corpo muda entre tentativas"
+    );
+    for r in &got {
+        assert_eq!(
+            r.headers["x-delonix-signature"].to_str().unwrap(),
+            signature(&r.body)
+        );
+    }
+    let ids: std::collections::HashSet<_> = got
+        .iter()
+        .map(|r| {
+            r.headers["x-delonix-delivery"]
+                .to_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(ids.len(), 3, "cada tentativa tem o seu X-Delonix-Delivery");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_permanent_failure_is_not_retried(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(404, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r", &[]).await;
+
+    let items = wait_final(&app, &a, &hook, 1).await;
+    assert_eq!(items[0]["status"], "failed");
+    assert_eq!(items[0]["response_status"], 404);
+    assert!(
+        !scheduled(&app, items[0]["id"].as_str().unwrap()).await,
+        "um 404 não passa sozinho"
+    );
+    make_due(&app).await;
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        0
+    );
+    assert_eq!(rx.received().len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retries_stop_after_the_last_attempt(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(500, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r", &[]).await;
+    wait_final(&app, &a, &hook, 1).await;
+
+    let max = delonix_meet_domain::integration::webhook_delivery::MAX_AUTO_ATTEMPTS as usize;
+    for n in 2..=max {
+        make_due(&app).await;
+        assert_eq!(
+            delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+            1,
+            "tentativa {n}"
+        );
+        wait_final(&app, &a, &hook, n).await;
+    }
+    let left: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM webhook_deliveries WHERE retry_at IS NOT NULL")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(left, 0, "esgotadas as tentativas não fica nada agendado");
+    make_due(&app).await;
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        0
+    );
+    assert_eq!(rx.received().len(), max);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn two_workers_never_retry_the_same_delivery(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(502, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    for i in 0..6 {
+        app.new_meeting(&a, &format!("r{i}"), &[]).await;
+    }
+    wait_final(&app, &a, &hook, 6).await;
+    make_due(&app).await;
+
+    // Quatro passos em simultâneo (quatro nós) sobre seis entregas vencidas.
+    let results = futures_util::future::join_all(
+        (0..4).map(|_| delonix_server::webhook_retry_due(&app.state)),
+    )
+    .await;
+    let sent: usize = results.into_iter().map(|r| r.unwrap()).sum();
+    assert_eq!(
+        sent, 6,
+        "cada entrega vencida é repetida exactamente uma vez"
+    );
+    let items = wait_final(&app, &a, &hook, 12).await;
+    assert_eq!(items.len(), 12);
+    let retries: Vec<&Value> = items.iter().filter(|d| d["attempt"] == 2).collect();
+    assert_eq!(retries.len(), 6);
+    let originals: std::collections::HashSet<&str> = retries
+        .iter()
+        .map(|d| d["redelivery_of"].as_str().unwrap())
+        .collect();
+    assert_eq!(originals.len(), 6, "duas repetições da mesma entrega");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn manual_redelivery_takes_over_the_scheduled_retry(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(503, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r", &[]).await;
+    let items = wait_final(&app, &a, &hook, 1).await;
+    let first = items[0]["id"].as_str().unwrap().to_string();
+    assert!(scheduled(&app, &first).await);
+
+    rx.status.store(204, Ordering::SeqCst);
+    let (st, v) = app
+        .post(
+            &format!("{}/{hook}/deliveries/{first}/redeliver", hooks(a.org())),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 202, "{v}");
+    wait_final(&app, &a, &hook, 2).await;
+    assert!(
+        !scheduled(&app, &first).await,
+        "o reenvio manual cancela o agendado"
+    );
+    make_due(&app).await;
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        0
+    );
+    assert_eq!(
+        rx.received().len(),
+        2,
+        "o destino recebeu o evento duas vezes, não três"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_removed_or_disabled_webhook_ends_the_retries(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(503, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r", &[]).await;
+    let items = wait_final(&app, &a, &hook, 1).await;
+    let first = items[0]["id"].as_str().unwrap().to_string();
+
+    sqlx::query("UPDATE org_webhooks SET active = FALSE WHERE id = $1::uuid")
+        .bind(&hook)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    make_due(&app).await;
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        0
+    );
+    assert!(
+        !scheduled(&app, &first).await,
+        "desligado: a repetição acaba, não fica a pairar"
+    );
+    assert_eq!(rx.received().len(), 1);
+}
