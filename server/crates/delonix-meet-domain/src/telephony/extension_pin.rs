@@ -91,6 +91,13 @@ pub struct AfterFailure {
     pub attempt: i32,
 }
 
+// A regra que impede a negação de serviço a um colega, verificada AO COMPILAR:
+// uma origem sozinha nunca junta, num ramal, as falhas que o bloqueiam — e o
+// bloqueio da origem não é mais curto que a janela do ramal, por isso o
+// segundo lote de falhas dela já não encontra o primeiro.
+const _: () = assert!(ORIGIN_THROTTLE.max_failures < EXTENSION_THROTTLE.max_failures);
+const _: () = assert!(ORIGIN_THROTTLE.base_lock_secs >= EXTENSION_THROTTLE.window_secs);
+
 impl Throttle {
     /// A duração do bloqueio de nível `level` (1 = o primeiro).
     pub fn lock_secs(&self, level: i32) -> i64 {
@@ -427,16 +434,6 @@ mod tests {
             ..Counter::default()
         };
         assert_eq!(t.locked_for(&fim), None);
-    }
-
-    #[test]
-    fn a_origem_trava_antes_de_poder_bloquear_um_ramal() {
-        // É a regra que impede a negação de serviço a um colega: uma origem
-        // sozinha nunca junta, num ramal, as falhas que o bloqueiam — e a
-        // janela da origem não é mais curta que a do ramal, por isso o
-        // segundo lote de falhas dela já não encontra o primeiro.
-        assert!(ORIGIN_THROTTLE.max_failures < EXTENSION_THROTTLE.max_failures);
-        assert!(ORIGIN_THROTTLE.base_lock_secs >= EXTENSION_THROTTLE.window_secs);
     }
 
     #[test]
