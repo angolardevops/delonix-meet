@@ -697,24 +697,31 @@ pub struct ExtensionRange {
     /// Último número do intervalo, inclusive.
     #[schema(example = 1999)]
     pub range_end: u32,
+    /// Atribuir um ramal automaticamente a quem entra na organização (R278).
+    /// Desligado por omissão — e num `PUT` que não o traga.
+    #[serde(default)]
+    pub auto_assign_on_join: bool,
 }
 
 /// O intervalo gravado, ou a omissão (1000–1999) se a org nunca escolheu um.
 async fn range_for_org(state: &AppState, org_id: Uuid) -> Result<ExtensionRange, ApiError> {
-    let row: Option<(i32, i32)> = sqlx::query_as(
-        "SELECT range_start, range_end FROM voice_extension_ranges WHERE org_id = $1",
+    let row: Option<(i32, i32, bool)> = sqlx::query_as(
+        "SELECT range_start, range_end, auto_assign_on_join
+           FROM voice_extension_ranges WHERE org_id = $1",
     )
     .bind(org_id)
     .fetch_optional(&state.db)
     .await?;
     Ok(match row {
-        Some((s, e)) => ExtensionRange {
+        Some((s, e, auto)) => ExtensionRange {
             range_start: u32::try_from(s).unwrap_or(pin_rules::DEFAULT_RANGE_START),
             range_end: u32::try_from(e).unwrap_or(pin_rules::DEFAULT_RANGE_END),
+            auto_assign_on_join: auto,
         },
         None => ExtensionRange {
             range_start: pin_rules::DEFAULT_RANGE_START,
             range_end: pin_rules::DEFAULT_RANGE_END,
+            auto_assign_on_join: false,
         },
     })
 }
@@ -725,7 +732,7 @@ async fn range_for_org(state: &AppState, org_id: Uuid) -> Result<ExtensionRange,
     security(("session" = [])),
     params(("org_id" = Uuid, Path, description = "Organização.")),
     responses(
-        (status = 200, body = ExtensionRange, description = "O intervalo gravado, ou 1000–1999 se a organização nunca escolheu um."),
+        (status = 200, body = ExtensionRange, description = "O intervalo gravado, ou 1000–1999 e a atribuição automática desligada se a organização nunca escolheu."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -740,9 +747,11 @@ pub async fn get_extension_range(
     range_for_org(&state, org_id).await.map(Json)
 }
 
-/// Define o intervalo de numeração automática da org (admin). Não renumera
-/// nem apaga os ramais que já existem fora dele: só decide de onde saem os
-/// próximos números automáticos.
+/// Define o intervalo de numeração automática da org (admin) e se quem entra
+/// recebe um ramal sozinho (`auto_assign_on_join`). Não renumera nem apaga os
+/// ramais que já existem fora dele: só decide de onde saem os próximos números
+/// automáticos. Ligar a atribuição automática não dá ramal a quem já cá está —
+/// isso é `assign-missing`.
 #[utoipa::path(
     put, path = "/api/orgs/{org_id}/extension-range", tag = "voice",
     security(("session" = [])),
@@ -776,15 +785,17 @@ pub async fn put_extension_range(
     }
     // `is_valid_range` garante que os dois cabem num i32.
     sqlx::query(
-        "INSERT INTO voice_extension_ranges (org_id, range_start, range_end)
-         VALUES ($1, $2, $3)
+        "INSERT INTO voice_extension_ranges (org_id, range_start, range_end, auto_assign_on_join)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT (org_id) DO UPDATE
             SET range_start = EXCLUDED.range_start, range_end = EXCLUDED.range_end,
+                auto_assign_on_join = EXCLUDED.auto_assign_on_join,
                 updated_at = now()",
     )
     .bind(org_id)
     .bind(req.range_start as i32)
     .bind(req.range_end as i32)
+    .bind(req.auto_assign_on_join)
     .execute(&state.db)
     .await?;
     crate::audit::log(
@@ -792,10 +803,114 @@ pub async fn put_extension_range(
         Some(org_id),
         auth.user_id,
         "ramal.intervalo_alterado",
-        &format!("{}–{}", req.range_start, req.range_end),
+        &format!(
+            "{}–{}; ramal automático ao entrar: {}",
+            req.range_start,
+            req.range_end,
+            if req.auto_assign_on_join {
+                "ligado"
+            } else {
+                "desligado"
+            }
+        ),
     )
     .await;
     Ok(Json(req))
+}
+
+/// O que a atribuição automática fez a quem entrou.
+#[derive(Debug, PartialEq, Eq)]
+enum JoinAssignment {
+    /// A organização não a tem ligada, a pessoa não ocupa lugar (convidado
+    /// externo, utilizador de serviço, arquivado) ou já tinha ramal.
+    Skipped,
+    Assigned(String),
+    RangeExhausted,
+}
+
+/// Dá um ramal a quem ACABOU de entrar na organização, se ela tiver a
+/// atribuição automática ligada (R278). É o ÚNICO ponto: cada caminho que cria
+/// uma pertença chama isto DEPOIS do seu commit, e mais nada.
+///
+/// **Nunca faz falhar a entrada.** Não devolve erro: o intervalo esgotado fica
+/// na auditoria (`ramal.atribuicao_automatica_falhou`) e uma avaria fica no
+/// registo — a pessoa entra sem ramal e o administrador resolve com
+/// «Atribuir ramais a todos».
+///
+/// Quem recebe: quem ocupa lugar (`org::seat_holder_username`) — activo,
+/// humano e não convidado externo. Idempotente: quem já tem ramal não é tocado.
+pub(crate) async fn assign_on_join(state: &AppState, org_id: Uuid, user_id: Uuid) {
+    // Actor de sistema: ninguém pediu este ramal, foi a regra da organização.
+    let actor = Uuid::nil();
+    match try_assign_on_join(state, org_id, user_id).await {
+        Ok(JoinAssignment::Skipped) => {}
+        Ok(JoinAssignment::Assigned(number)) => {
+            crate::audit::log(
+                &state.db,
+                Some(org_id),
+                actor,
+                "ramal.atribuido_ao_entrar",
+                &format!("{number} → {user_id}"),
+            )
+            .await;
+        }
+        Ok(JoinAssignment::RangeExhausted) => {
+            tracing::warn!(%org_id, %user_id, "ramal automático: o intervalo esgotou-se — o membro entrou sem ramal");
+            crate::audit::log(
+                &state.db,
+                Some(org_id),
+                actor,
+                "ramal.atribuicao_automatica_falhou",
+                &format!("intervalo esgotado → {user_id}"),
+            )
+            .await;
+        }
+        Err(e) => {
+            tracing::error!(%org_id, %user_id, error = %e, "ramal automático: falhou — o membro entrou sem ramal");
+        }
+    }
+}
+
+async fn try_assign_on_join(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<JoinAssignment, ApiError> {
+    let range = range_for_org(state, org_id).await?;
+    if !range.auto_assign_on_join {
+        return Ok(JoinAssignment::Skipped);
+    }
+    // Pertença: decide-se em org.rs (regra 1, ADR-0004 §5).
+    if crate::org::seat_holder_username(&state.db, org_id, user_id)
+        .await?
+        .is_none()
+    {
+        return Ok(JoinAssignment::Skipped);
+    }
+    let existing: Vec<(String, Option<Uuid>)> =
+        sqlx::query_as("SELECT extension, member_id FROM voice_extensions WHERE org_id = $1")
+            .bind(org_id)
+            .fetch_all(&state.db)
+            .await?;
+    if existing.iter().any(|(_, m)| *m == Some(user_id)) {
+        return Ok(JoinAssignment::Skipped);
+    }
+    let taken: HashSet<String> = existing.into_iter().map(|(e, _)| e).collect();
+    let sip_domain = sip_domain_for_org(state, org_id).await?;
+    for number in pin_rules::free_numbers(
+        range.range_start,
+        range.range_end,
+        &taken,
+        &state.config.voice_meeting_access_number,
+    ) {
+        match insert_extension(state, org_id, &sip_domain, Some(user_id), &number, "").await? {
+            Inserted::Created { .. } => return Ok(JoinAssignment::Assigned(number)),
+            // Outra entrada ficou com o número entretanto: tenta o seguinte.
+            Inserted::NumberTaken => continue,
+            Inserted::MemberHasOne => return Ok(JoinAssignment::Skipped),
+        }
+    }
+    Ok(JoinAssignment::RangeExhausted)
 }
 
 /// Quantos ramais uma chamada de `assign-missing` cria no máximo. Cada ramal
