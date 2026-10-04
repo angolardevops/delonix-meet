@@ -492,3 +492,20 @@ describe('«Configurar o Linphone» (R278)', async () => {
     await usar('pt-AO')
   })
 })
+
+describe('ramal automático a quem entra (R278)', () => {
+  it('o interruptor e a sua dica estão traduzidos nas quatro línguas', async () => {
+    const keys = ['consola.ramais.atribuir.automatico', 'consola.ramais.atribuir.automaticoDica', 'consola.ramais.atribuir.automaticoErro']
+    for (const lng of Object.keys(DICTS) as Lng[]) {
+      await usar(lng)
+      for (const key of keys) {
+        const text = i18n.t(key)
+        expect(text, `${lng} ${key}`).not.toBe(key)
+        if (lng !== 'pt-AO') expect(text, `${lng} ${key}`).not.toBe(i18n.t(key, { lng: 'pt-AO' }))
+      }
+      // A dica aponta para o botão da acção em massa pelo nome que ele tem nessa língua.
+      expect(i18n.t('consola.ramais.atribuir.automaticoDica')).toContain(i18n.t('consola.ramais.atribuir.botao'))
+    }
+    await usar('pt-AO')
+  })
+})

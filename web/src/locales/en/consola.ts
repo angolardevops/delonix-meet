@@ -175,6 +175,9 @@ export default {
       },
     },
     atribuir: {
+      automatico: 'Give an extension automatically to whoever joins',
+      automaticoDica: 'Each person who joins the organisation gets the first free number in the range. External guests do not. People already here are not touched: for them, use “Assign extensions to everyone”.',
+      automaticoErro: 'The automatic assignment could not be saved.',
       titulo: 'Automatic numbering',
       dica: 'Each active person without an extension gets the first free number in the range. Anyone who already has an extension is left alone, and number {{numero}} (meeting access) is skipped.',
       inicio: 'First number',

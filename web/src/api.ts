@@ -2054,6 +2054,8 @@ export const deleteExtension = (orgId: string, id: string) =>
 export interface ExtensionRange {
   range_start: number
   range_end: number
+  /** Quem entra na organização recebe um ramal do intervalo sozinho (R278). */
+  auto_assign_on_join: boolean
 }
 export const getExtensionRange = (orgId: string, signal?: AbortSignal) =>
   request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { signal })

@@ -175,6 +175,9 @@ export default {
       },
     },
     atribuir: {
+      automatico: 'Attribuer automatiquement un poste à qui arrive',
+      automaticoDica: 'Chaque personne qui rejoint l’organisation reçoit le premier numéro libre de la plage. Les invités externes n’en reçoivent pas. Les personnes déjà présentes ne sont pas touchées : pour elles, utilisez « Attribuer des postes à tous ».',
+      automaticoErro: 'Impossible d’enregistrer l’attribution automatique.',
       titulo: 'Numérotation automatique',
       dica: 'Chaque personne active sans poste reçoit le premier numéro libre de la plage. Qui a déjà un poste n’est pas touché, et le numéro {{numero}} (accès aux réunions) est sauté.',
       inicio: 'Premier numéro',

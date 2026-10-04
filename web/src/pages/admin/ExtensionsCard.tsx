@@ -57,7 +57,7 @@ import {
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import LinphoneQrDialog from '../../components/LinphoneQrDialog'
 import PinOnce from '../../components/PinOnce'
-import { Alert, Button, Card, Dialog, Field, IconButton, Segmented, Select, StatusBadge, TextInput } from '../../ui/kit'
+import { Alert, Button, Card, Dialog, Field, IconButton, Segmented, Select, StatusBadge, TextInput, Toggle } from '../../ui/kit'
 import { orgErrorMessage, refusalAware } from './orgShared'
 
 export default function ExtensionsCard({ orgId, people }: { orgId: string; people: Employee[] }) {
@@ -437,9 +437,26 @@ function AutoAssign({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [outcome, setOutcome] = useState<AssignOutcome | null>(null)
+  // O interruptor grava-se sozinho; enquanto o pedido corre mostra o valor novo.
+  const [autoPending, setAutoPending] = useState<boolean | null>(null)
 
   if (range.state.s !== 'ready') return null
   const saved = range.state.d
+  const auto = autoPending ?? saved.auto_assign_on_join
+
+  /** Liga ou desliga «ramal a quem entra», sem tocar no intervalo gravado. */
+  async function toggleAuto(next: boolean) {
+    setErr('')
+    setAutoPending(next)
+    try {
+      await putExtensionRange(orgId, { range_start: saved.range_start, range_end: saved.range_end, auto_assign_on_join: next })
+      range.reload()
+    } catch (x) {
+      setErr(orgErrorMessage(x, t, 'consola.ramais.atribuir.automaticoErro'))
+    } finally {
+      setAutoPending(null)
+    }
+  }
   const startValue = start ?? String(saved.range_start)
   const endValue = end ?? String(saved.range_end)
   const digits = (v: string) => v.replace(/\D/g, '').slice(0, 5)
@@ -457,7 +474,7 @@ function AutoAssign({
     setBusy(true)
     try {
       if (s !== saved.range_start || f !== saved.range_end) {
-        await putExtensionRange(orgId, { range_start: s, range_end: f })
+        await putExtensionRange(orgId, { range_start: s, range_end: f, auto_assign_on_join: saved.auto_assign_on_join })
         range.reload()
       }
       const total: AssignOutcome = { created: 0, remaining: 0, exhausted: false }
@@ -508,6 +525,14 @@ function AutoAssign({
           {t('consola.ramais.atribuir.botao')}
         </Button>
       </div>
+      <Toggle
+        label={t('consola.ramais.atribuir.automatico')}
+        hint={t('consola.ramais.atribuir.automaticoDica')}
+        checked={auto}
+        disabled={busy || autoPending !== null}
+        onChange={(e) => void toggleAuto(e.target.checked)}
+        data-testid="ramais-automatico"
+      />
       {err && <Alert tone="danger">{err}</Alert>}
       {outcome && (
         <Alert tone={outcome.exhausted && outcome.remaining > 0 ? 'warning' : 'success'}>

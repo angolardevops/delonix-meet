@@ -175,6 +175,9 @@ export default {
       },
     },
     atribuir: {
+      automatico: 'Atribuir ramal automaticamente a quem entra',
+      automaticoDica: 'Cada pessoa que entrar na organização recebe o primeiro número livre do intervalo. Convidados externos não recebem. Quem já cá está não é tocado: para esses, usa «Atribuir ramais a todos».',
+      automaticoErro: 'Não foi possível gravar a atribuição automática.',
       titulo: 'Numeração automática',
       dica: 'Cada pessoa activa sem ramal recebe o primeiro número livre do intervalo. Quem já tem ramal não é tocado, e o número {{numero}} (acesso às reuniões) é saltado.',
       inicio: 'Primeiro número',
