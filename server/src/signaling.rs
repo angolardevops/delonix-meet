@@ -1972,21 +1972,44 @@ impl SignalingHub {
     /// Varre os lugares reservados que passaram da janela e transforma-os em
     /// saídas a sério. Chamado periodicamente; devolve quantos expiraram.
     pub fn expire_disconnected(&self, janela: std::time::Duration) -> usize {
+        self.expire_disconnected_seats(janela).len()
+    }
+
+    /// Como `expire_disconnected`, mas devolve `(sala, segredo)` de cada lugar
+    /// que expirou: quem guarda uma cópia do lugar fora do pod (`redis_state`)
+    /// precisa do segredo para a apagar, e depois de o `leave` já não o tem.
+    pub fn expire_disconnected_seats(&self, janela: std::time::Duration) -> Vec<(Uuid, String)> {
         let agora = std::time::Instant::now();
-        let mut expirados: Vec<(Uuid, Uuid)> = Vec::new();
+        let mut expirados: Vec<(Uuid, Uuid, String)> = Vec::new();
         for room in self.rooms.iter() {
             for (peer_id, p) in room.peers.iter() {
                 if let Some(caiu) = p.disconnected_at {
                     if agora.duration_since(caiu) > janela {
-                        expirados.push((*room.key(), *peer_id));
+                        expirados.push((
+                            *room.key(),
+                            *peer_id,
+                            p.reconnect_secret.expose().to_string(),
+                        ));
                     }
                 }
             }
         }
-        for (room_id, peer_id) in &expirados {
+        for (room_id, peer_id, _) in &expirados {
             self.leave(*room_id, *peer_id);
         }
-        expirados.len()
+        expirados
+            .into_iter()
+            .map(|(room_id, _, secret)| (room_id, secret))
+            .collect()
+    }
+
+    /// Há neste nó um peer com este id na sala — vivo ou com o lugar reservado?
+    /// Serve para recusar a cópia do lugar guardada no Redis enquanto o dono
+    /// ainda aqui está: um segredo copiado não pode expulsá-lo.
+    pub fn peer_present(&self, room_id: Uuid, peer_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .is_some_and(|r| r.peers.contains_key(&peer_id))
     }
 
     /// Regista um convidado na fila de espera e avisa os anfitriões presentes.
@@ -4256,6 +4279,45 @@ async fn drain_while_waiting(stream: &mut SplitStream<WebSocket>) {
     }
 }
 
+/// O lugar não está neste pod: procura a cópia no Redis (`redis_state::seat_*`).
+///
+/// Recusa quando um peer com o mesmo id ainda está AQUI, vivo ou com o lugar
+/// reservado: é o segredo copiado a tentar entrar por cima do dono, a mesma
+/// recusa que `Hub::reclaim` faz com a memória local. Só depois de passar essa
+/// guarda o registo é consumido (`GETDEL`), por isso uma tentativa recusada não
+/// gasta o lugar do dono.
+///
+/// Como a reclamação local, não confere a identidade de quem volta: o segredo
+/// de 256 bits é a credencial, e fica no Redis só como SHA-256.
+async fn reclaim_from_redis(
+    state: &AppState,
+    room_id: Uuid,
+    segredo: &str,
+) -> Option<ReclaimedSeat> {
+    if segredo.is_empty() {
+        return None;
+    }
+    let bus = state.redis_bus.as_ref()?;
+    let peek = crate::redis_state::seat_peek(bus.conn.clone(), room_id, segredo).await?;
+    if state.hub.peer_present(room_id, peek.peer_id) {
+        return None;
+    }
+    let rec = crate::redis_state::seat_take(bus.conn.clone(), room_id, segredo).await?;
+    state
+        .metrics
+        .seats_reclaimed_redis_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Some(ReclaimedSeat {
+        peer_id: rec.peer_id,
+        username: rec.username,
+        user_id: rec.user_id,
+        is_host: rec.is_host,
+        can_admit: rec.can_admit,
+        role: rec.role,
+        is_guest: rec.is_guest,
+    })
+}
+
 async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketSession) {
     let SocketSession {
         room_id,
@@ -4286,11 +4348,27 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // O que NÃO se herda: nada de media. O socket é novo, a `RTCPeerConnection`
     // é nova, e a negociação faz-se do zero. Tentar reaproveitar o estado de
     // media seria reabrir o glare que o R13 fechou.
-    let reclamado = reconnect.as_deref().and_then(|seg| {
-        state
+    //
+    // Primeiro o lugar DESTE pod; só se ele não o tiver se vai ao Redis (o pod
+    // que o guardava morreu, ou a sala passou para outro pod). A ordem importa:
+    // o lugar local conhece o estado vivo (um dono vivo recusa o segredo).
+    let reclamado = match reconnect.as_deref() {
+        None => None,
+        Some(seg) => match state
             .hub
             .reclaim(room_id, seg, state.config.reconnect_grace())
-    });
+        {
+            Some(lugar) => {
+                // Este pod tinha o lugar: a cópia do Redis ficou velha e,
+                // se ficasse, um segredo já gasto voltava a servir noutro pod.
+                if let Some(bus) = &state.redis_bus {
+                    crate::redis_state::seat_drop(bus.conn.clone(), room_id, seg).await;
+                }
+                Some(lugar)
+            }
+            None => reclaim_from_redis(&state, room_id, seg).await,
+        },
+    };
     let (peer_id, is_host, can_admit, must_wait, username) = match reclamado {
         Some(lugar) => {
             tracing::info!(%room_id, peer_id = %lugar.peer_id, "seat reclaimed");
@@ -4411,6 +4489,8 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             .apply_redis_state(room_id, polls, qa, wb, timer, locked, host_share);
     }
 
+    // `extras` é consumido por `join_with`; o que o lugar herda sai daqui antes.
+    let (seat_role, seat_guest) = (extras.role, extras.is_guest);
     let entrada = state.hub.join_with(
         room_id,
         peer_id,
@@ -4429,6 +4509,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             state.hub.init_waiting_room(room_id, wr);
         }
     }
+    let seat_secret = entrada.reconnect_secret.clone();
     let _ = tx.send(ServerMsg::Joined {
         peer_id,
         peers: entrada.roster,
@@ -4436,6 +4517,30 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         companion: entrada.companion,
         started_at: entrada.started_at,
     });
+    // Copia o lugar para fora do pod: se este morrer, outro pode reconhecê-lo.
+    // Depois do `Joined`, para não atrasar quem entra; uma falha do Redis só
+    // deixa o lugar com a protecção que já tinha (a memória deste pod).
+    //
+    // Só o papel que o lugar tinha à ENTRADA: uma promoção feita durante a
+    // reunião (co-anfitrião) não é copiada, e depois de uma morte do pod
+    // volta o papel do token.
+    if let Some(bus) = &state.redis_bus {
+        crate::redis_state::seat_put(
+            bus.conn.clone(),
+            room_id,
+            &seat_secret,
+            &crate::redis_state::SeatRecord {
+                peer_id,
+                username: username.clone(),
+                user_id,
+                is_host,
+                can_admit,
+                role: seat_role,
+                is_guest: seat_guest,
+            },
+        )
+        .await;
+    }
     // Quem entra a meio recebe o estado ATUAL da sala. A condição é «alguma
     // coisa está diferente do normal», e por isso inclui os campos novos: sem
     // eles, quem entrasse depois de o chat ser fechado via-o aberto.
