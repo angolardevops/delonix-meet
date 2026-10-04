@@ -81,6 +81,12 @@ A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Z
    voz (obter o número e o PIN) — ver `docs/pstn-dial-in-fase0.md` e o E2E do control plane.
 2. `make voice-images` e `make compose-up` (o `compose.yaml` da raiz; `LAN_IP=<ip>` expõe
    os ramais à rede local).
+   **QR do Linphone no telemóvel:** o URL do QR tem de ser um nome que o telefone resolva e
+   com um certificado em que ele confie — `meet.ngolacloud.local` (mDNS, autoassinado) não é.
+   Duas vias: `make compose-up LAN_IP=…` (a rede local, com a raiz de laboratório instalada
+   uma vez no telemóvel; cobre também o registo SIP) ou `make tunnel` (um túnel Pinggy com um
+   URL novo a cada execução, 60 minutos, **publica a borda inteira na Internet**, só o QR e a
+   descarga — o UDP do SIP não passa; `make tunnel-stop` fecha).
 3. Registar o softphone no Kamailio e "ligar" para o número da sala.
 4. Introduzir o PIN → deve entrar na conferência. Confirmar o CDR em
    `GET /api/orgs/{org}/voice/call-records`.
