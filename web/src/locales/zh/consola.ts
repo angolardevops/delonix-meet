@@ -127,6 +127,7 @@ export default {
     erroEtiqueta: '公司分机需要一个标签。',
     accoes: '分机 {{extensao}} 的操作',
     qr: {
+      soLinphone: '只能用 Linphone 扫描：手机相机、其他二维码扫描器或链接预览都会打开该地址，照样用掉二维码并更换密码。',
       botao: '配置 Linphone',
       titulo: '配置 Linphone — 分机 {{extensao}}',
       explica: '生成一个二维码，Linphone 扫描后会自动配置分机 {{extensao}}：无需任何人输入 SIP 密码。在 Linphone 中：助手 → 远程配置 → 扫描二维码。',

@@ -410,15 +410,25 @@ describe('«Configurar o Linphone» (R278)', async () => {
     expect(html).not.toContain('extension-provisioning')
   })
 
-  it('mostra o QR, o tempo que falta e o URL que quebra — e o aviso continua', async () => {
+  it('mostra o QR e o tempo que falta — e NÃO o URL em texto, que é a credencial', async () => {
     await usar('pt-AO')
     const html = corpo({ k: 'shown', ticket, qr: '<svg data-qr="1"></svg>' }, AGORA + 1500)
     expect(html).toContain('data-qr="1"')
     expect(html).toContain('role="img"')
     expect(html).toContain('Válido durante mais 9:59')
+    // Abrir o URL fora do Linphone gasta o bilhete e troca a password: com o
+    // QR desenhado não há razão para o deixar copiável.
+    expect(html).not.toContain('extension-provisioning')
+    expect(html).not.toContain('linphone-qr__url')
+    expect(html).toContain('troca a password SIP')
+    expect(html).toContain('Lê-o só com o Linphone')
+  })
+
+  it('só sem imagem do QR é que o URL aparece, como recurso', async () => {
+    await usar('pt-AO')
+    const html = corpo({ k: 'shown', ticket, qr: null }, AGORA + 1500)
     expect(html).toContain('class="linphone-qr__url')
     expect(html).toContain(ticket.provisioning_url)
-    expect(html).toContain('troca a password SIP')
   })
 
   it('expirado, deixa de mostrar o URL e oferece outro', async () => {
@@ -472,6 +482,7 @@ describe('«Configurar o Linphone» (R278)', async () => {
       'consola.ramais.qr.instrucoes',
       'consola.ramais.qr.validade',
       'consola.ramais.qr.expirou',
+      'consola.ramais.qr.soLinphone',
       'consola.ramais.qr.erro.semServidor',
       'consola.ramais.qr.erro.semEndereco',
       'consola.ramais.qr.erro.inactivo',

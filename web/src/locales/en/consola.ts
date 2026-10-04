@@ -127,6 +127,7 @@ export default {
     erroEtiqueta: 'A company extension needs a label.',
     accoes: 'Actions for extension {{extensao}}',
     qr: {
+      soLinphone: 'Scan it only with Linphone: the phone camera, another QR reader or a link preview open the address, use up the QR code and change the password all the same.',
       botao: 'Set up Linphone',
       titulo: 'Set up Linphone — extension {{extensao}}',
       explica: 'Generates a QR code that Linphone reads to configure extension {{extensao}} by itself: nobody types the SIP password. In Linphone: Assistant → Remote provisioning → scan the QR code.',

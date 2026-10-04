@@ -127,6 +127,7 @@ export default {
     erroEtiqueta: 'Um ramal da empresa precisa de uma etiqueta.',
     accoes: 'Acções do ramal {{extensao}}',
     qr: {
+      soLinphone: 'Lê-o só com o Linphone: a câmara do telemóvel, outro leitor de QR ou uma pré-visualização de link abrem o endereço, gastam o QR e trocam a password na mesma.',
       botao: 'Configurar o Linphone',
       titulo: 'Configurar o Linphone — ramal {{extensao}}',
       explica: 'Gera um QR que o Linphone lê para configurar o ramal {{extensao}} sozinho: ninguém digita a password SIP. No Linphone: Assistente → Configuração remota → ler o QR.',

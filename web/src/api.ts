@@ -2059,7 +2059,7 @@ export interface ExtensionRange {
 }
 export const getExtensionRange = (orgId: string, signal?: AbortSignal) =>
   request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { signal })
-export const putExtensionRange = (orgId: string, body: ExtensionRange) =>
+export const putExtensionRange = (orgId: string, body: { range_start: number; range_end: number; /** Ausente = manter o que está gravado. */ auto_assign_on_join?: boolean }) =>
   request<ExtensionRange>(`/api/orgs/${orgId}/extension-range`, { method: 'PUT', body: JSON.stringify(body) })
 
 export interface AssignMissingResult {

@@ -127,6 +127,7 @@ export default {
     erroEtiqueta: 'Un poste de l’entreprise a besoin d’un libellé.',
     accoes: 'Actions du poste {{extensao}}',
     qr: {
+      soLinphone: 'Ne le scannez qu’avec Linphone : l’appareil photo du téléphone, un autre lecteur de QR ou un aperçu de lien ouvrent l’adresse, consomment le QR code et changent quand même le mot de passe.',
       botao: 'Configurer Linphone',
       titulo: 'Configurer Linphone — poste {{extensao}}',
       explica: 'Génère un QR code que Linphone lit pour configurer seul le poste {{extensao}} : personne ne saisit le mot de passe SIP. Dans Linphone : Assistant → Configuration à distance → scanner le QR code.',

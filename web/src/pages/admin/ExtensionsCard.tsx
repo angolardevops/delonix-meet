@@ -474,7 +474,7 @@ function AutoAssign({
     setBusy(true)
     try {
       if (s !== saved.range_start || f !== saved.range_end) {
-        await putExtensionRange(orgId, { range_start: s, range_end: f, auto_assign_on_join: saved.auto_assign_on_join })
+        await putExtensionRange(orgId, { range_start: s, range_end: f })
         range.reload()
       }
       const total: AssignOutcome = { created: 0, remaining: 0, exhausted: false }

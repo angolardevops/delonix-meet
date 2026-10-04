@@ -6,6 +6,11 @@
  * configuração e fica com uma password NOVA. Por isso o diálogo avisa ANTES
  * de emitir — ler o QR troca a password, e o aparelho antigo deixa de
  * registar. O QR reutiliza o gerador que o MFA já usa (`qrcode`).
+ *
+ * O URL do bilhete é a credencial e o resgate é um GET com efeito: abri-lo num
+ * browser, numa pré-visualização de link ou num leitor de QR genérico gasta o
+ * bilhete e troca a password. Por isso NÃO se mostra em texto copiável — só
+ * quando o QR não se conseguiu desenhar, que é o único caso em que faz falta.
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -72,15 +77,18 @@ export function LinphoneQrBody({
                 dangerouslySetInnerHTML={{ __html: step.qr }}
               />
             ) : (
-              <Alert tone="warning">{t('consola.ramais.qr.semImagem')}</Alert>
+              <>
+                <Alert tone="warning">{t('consola.ramais.qr.semImagem')}</Alert>
+                <p className="linphone-qr__url dx-muted">{step.ticket.provisioning_url}</p>
+              </>
             )}
             <p className="linphone-qr__left" role="timer" aria-live="off">
               {t('consola.ramais.qr.validade', { tempo: remainingText(left) })}
             </p>
-            <p className="linphone-qr__url dx-muted">{step.ticket.provisioning_url}</p>
           </>
         )}
         <Alert tone="warning">{t('consola.ramais.qr.trocaPassword')}</Alert>
+        {!expired && <p className="dx-muted" style={{ margin: 0 }}>{t('consola.ramais.qr.soLinphone')}</p>}
         {expired && (
           <Button variant="secondary" onClick={onIssue}>
             {t('consola.ramais.qr.outro')}
