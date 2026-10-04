@@ -613,8 +613,11 @@ PY
   v=$(docker exec "${TAG}-fs" grep -ac "\"pin\":\"$PIN_DIALIN\"" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-1}" -eq 0 ]; then ok "o PIN marcado não aparece no freeswitch.log"
   else bad "o PIN marcado aparece $v vez(es) no freeswitch.log"; fi
-  v=$(docker exec "${TAG}-fs" sh -c "grep -ac '$segredo' /usr/local/freeswitch/var/log/freeswitch/freeswitch.xml.fsxml 2>/dev/null")
-  [ "${v:-0}" -gt 0 ] && aviso "o freeswitch.xml.fsxml do directório de logs traz a configuração expandida, com o segredo ($v vez(es)): trata esse directório como o da configuração (R227)"
+  # O freeswitch.xml.fsxml (a configuração expandida, com o segredo) não pode
+  # estar no directório de logs: o arranque manda-o para um directório privado.
+  v=$(docker exec "${TAG}-fs" sh -c "grep -rl -a '$segredo' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")
+  if [ "${v:-1}" -eq 0 ]; then ok "nenhum ficheiro do directório de logs traz o segredo de voz"
+  else bad "$v ficheiro(s) do directório de logs trazem o segredo de voz: $(docker exec "${TAG}-fs" sh -c "grep -rl -a '$segredo' /usr/local/freeswitch/var/log" | tr '\n' ' ')"; fi
   rm -f "$d/pedidos"
 }
 

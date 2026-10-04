@@ -55,6 +55,7 @@ do que o softphone ouviu fica em `.softphone-prova/ultima-chamada-ouvido.wav`.
 | `srtp-real` e `srtp-cluster` sem nenhuma das duas globais (entrypoint e `internal.xml`) | **falha**: o ramal em claro leva `404` em vez de `488` |
 | `srtp-real` e `srtp-cluster`: os pedidos ao servidor (R227) | nenhum leva o segredo no URL; o do `mod_xml_curl` leva-o em `Authorization: Basic`, os dos dois Lua em `X-Voice-Secret`, com o corpo JSON certo |
 | `srtp-real` e `srtp-cluster`: o segredo de voz e o PIN marcado no `freeswitch.log` | 0 ocorrências |
+| `srtp-real` e `srtp-cluster`: ficheiros do directório de logs com o segredo de voz | nenhum (com o arranque anterior: o `freeswitch.xml.fsxml`) |
 | `srtp-real` e `srtp-cluster` com os Lua de antes, ou com o DEBUG ligado no log | **falha**: o segredo aparece 2 vezes e o PIN 1 |
 | `srtp-real` e `srtp-cluster` com o `xml_curl.conf.xml` de antes | **falha**: segredo no URL e 5 vezes no log |
 

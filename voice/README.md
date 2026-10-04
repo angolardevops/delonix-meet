@@ -40,12 +40,39 @@ Telefone → SIP Trunk → Kamailio (ACL trunk + TLS + dispatcher)
   Portão: `bash scripts/softphone-prova.sh srtp-real`.
 - **SIP-TLS** (5061) no Kamailio; certificado montado por volume (`/etc/ssl/delonix`),
   nunca comitado. Em dev usar self-signed; nunca desativar a camada.
+- **Sem excepção por tronco**: um tronco declarado `srtp=off` só faz chamadas de **saída**
+  em claro. À entrada, uma chamada em claro leva `488` venha de onde vier — uma operadora
+  sem SRTP não nos consegue ligar. É de propósito.
 - **Anti-toll-fraud**: só se aceita inbound dos **IPs do trunk** (`ao_trunk.txt`,
   fornecido pelo provedor 5.1). Sem outbound não autenticado.
 - **Segredos do ambiente**: `VOICE_INTERNAL_SECRET` (== do backend) e URLs vêm de env,
   nunca hardcoded no repo. O backend recusa (503) um segredo vazio, com menos de 32
   caracteres ou que já tenha estado publicado no repositório (R154); gera-o com
   `openssl rand -hex 32`.
+
+## Rodar o segredo de voz
+
+O `VOICE_INTERNAL_SECRET` autentica o FreeSWITCH perante o servidor: IVR, directório dos
+ramais (o HA1 de cada ramal) e CDR. Roda-o sempre que possa ter sido lido por quem não
+devia — em particular, uma instalação que tenha corrido com a configuração de antes da R227
+escreveu-o no log do FreeSWITCH.
+
+```bash
+make voice-secret-rotate        # troca-o no .env; não mostra o valor
+make compose-up                 # compose: recria o servidor e o FreeSWITCH com o valor novo
+make cluster                    # cluster: reaplica o Secret delonix-voice e reinicia os dois
+make compose-voice-check        # o FreeSWITCH volta a falar com o servidor
+```
+
+O servidor e o FreeSWITCH têm de mudar no mesmo passo: com valores diferentes, o servidor
+responde `401` a cada registo de ramal e a cada PIN. Em produção (chart Helm) o Secret é
+teu (`secrets.existingSecret`): troca-lhe a chave `VOICE_INTERNAL_SECRET` e reinicia os dois.
+No fim, apaga os logs antigos do FreeSWITCH que possam ter o valor anterior.
+
+O directório de logs do FreeSWITCH não leva o segredo: o arranque tira o nível DEBUG do
+log e manda a configuração expandida (`freeswitch.xml.fsxml`) para um directório privado
+ao lado da configuração. `DELONIX_FS_LOG_DEBUG=1` volta a ligar o DEBUG — e, com ele, o
+segredo e os PIN no log.
 
 ## Testar sem trunk (com softphone SIP)
 A camada de media valida-se **sem** o SIP trunk, usando um softphone (Linphone/Zoiper):
