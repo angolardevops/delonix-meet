@@ -16,7 +16,13 @@
       <param name="comfort-noise" value="true"/>
       <!-- Codecs de telefonia; Opus opcional se o trunk suportar. -->
       <param name="conference-flags" value="video-mute-exit"/>
-      <param name="caller-controls" value="default"/>
+      <!-- Sem controlos por DTMF dentro da conferência. O valor tem de ser
+           "none" ou o nome de um grupo definido NESTE ficheiro, numa secção
+           caller-controls: pedia-se "default", que só existe no ficheiro da
+           vanilla que este substitui, e cada entrada na conferência registava
+           «Can't find caller-controls in conference.conf» e ficava sem controlos
+           na mesma (R228). "none" é o que já acontecia, sem o erro. -->
+      <param name="caller-controls" value="none"/>
       <!-- Sem PIN aqui: o PIN é validado no IVR contra o control plane. -->
       <param name="max-members" value="0"/>
     </profile>
