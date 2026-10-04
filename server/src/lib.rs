@@ -68,6 +68,7 @@ mod telephony_service;
 mod telephony_sip;
 mod telephony_trunks;
 mod transcription;
+mod tv_channels;
 mod ui;
 mod usage;
 mod users;
@@ -783,6 +784,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/stream-destinations/{dest_id}/rotate-key",
             post(stream_destinations::rotate_key),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/channels",
+            get(tv_channels::list).post(tv_channels::create),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/channels/{channel_id}",
+            get(tv_channels::get_one)
+                .patch(tv_channels::update)
+                .delete(tv_channels::delete),
         )
         .route(
             "/api/orgs/{org_id}/integrations/odoo",

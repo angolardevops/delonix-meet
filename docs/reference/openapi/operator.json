@@ -2004,6 +2004,48 @@
         ],
         "type": "object"
       },
+      "CreateTvChannelReq": {
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "recording_retention_days": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "slug": {
+            "type": "string"
+          },
+          "timezone": {
+            "description": "Omissão `Africa/Luanda`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "description": "Omissão `private`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "type": "object"
+      },
       "CreateVoiceRoomReq": {
         "properties": {
           "did_id": {
@@ -9558,6 +9600,100 @@
         ],
         "type": "object"
       },
+      "TvChannel": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recording_retention_days": {
+            "description": "Dias de retenção das gravações do canal; ausente = a política da organização.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "slug": {
+            "description": "Endereço público (único na organização).",
+            "type": "string"
+          },
+          "status": {
+            "description": "Só leitura: `draft` até haver motor de emissão.",
+            "type": "string"
+          },
+          "timezone": {
+            "description": "Nome IANA, p. ex. `Africa/Luanda`.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "description": "Sobe a cada alteração; o PATCH tem de a trazer (concorrência optimista).",
+            "format": "int32",
+            "type": "integer"
+          },
+          "visibility": {
+            "description": "`public` | `private` | `restricted`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "slug",
+          "name",
+          "description",
+          "timezone",
+          "visibility",
+          "status",
+          "version",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "TvChannelPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TvChannel"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "UpdateEmployeeReq": {
         "properties": {
           "branch_id": {
@@ -9852,6 +9988,51 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "UpdateTvChannelReq": {
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_retention_days": {
+            "description": "Um número define; `null` limpa (volta à política da organização).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "description": "A versão que o cliente viu. Se já não for a actual, `409`.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "visibility": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
         "type": "object"
       },
       "Usage": {
