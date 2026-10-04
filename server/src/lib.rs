@@ -192,7 +192,7 @@ pub struct AppState {
     /// Chaves de acesso (ADR-0011). `None` sem `WEBAUTHN_RP_ID`/`_ORIGIN`.
     pub webauthn: Option<Arc<webauthn_rs::prelude::Webauthn>>,
     /// Vagas de composição de gravação (`FFMPEG_MAX_CONCURRENT`): o `ffmpeg`
-    /// de uma gravação só arranca com uma vaga. Ver `recorder::acquire_compose_slot`.
+    /// de uma gravação só arranca com uma vaga. Ver `recorder::wait_for_slot`.
     pub compose_slots: Arc<tokio::sync::Semaphore>,
 }
 
