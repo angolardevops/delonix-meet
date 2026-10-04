@@ -2677,4 +2677,4 @@ Vinha assinalado desde o PR #68 (2026-09-16), que nunca foi integrado; o código
 - Um bilhete não reverifica, ao ser trocado, se a pessoa foi arquivada nos dois minutos desde que foi emitido.
 - `ramal_dial.lua`, o gRPC `IvrService` e a web não mudaram: o gRPC `ValidatePin` não devolve `org_sip_domain`.
 
-**Ficheiros.** `server/migrations/0090_ivr_pin_origem_e_identidade.sql`, `server/crates/delonix-meet-domain/src/telephony/extension_pin.rs`, `server/src/{extension_pin,voice,voice_caller,lib}.rs`, `server/src/phone_bridge/sip.rs`, `server/tests/{ramal_pin,ramal_pin_origem,ivr_identifica_quem_liga}.rs`, `voice/freeswitch/scripts/dialin_ivr.lua`, `voice/freeswitch/image/Containerfile`.
+**Ficheiros.** `server/migrations/0090_ivr_pin_origem_e_identidade.sql`, `server/crates/delonix-meet-domain/src/telephony/extension_pin.rs`, `server/src/{extension_pin,voice,voice_caller,lib}.rs`, `server/src/phone_bridge/sip.rs`, `server/tests/{ramal_pin,ramal_pin_origem,ivr_identifica_quem_liga,ramal_entra_na_sala}.rs`, `voice/freeswitch/scripts/dialin_ivr.lua`, `voice/freeswitch/image/Containerfile`.

@@ -127,7 +127,18 @@ async fn ramal_com_o_pin_da_sua_org_recebe_a_ponte(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(did.status, 200);
-    assert_eq!(did.json()["room_bridge"], body["room_bridge"]);
+    // A única diferença é o bilhete de identidade de quem liga (R277): o
+    // ramal já vem identificado, o dial-in ainda não.
+    const TICKET: &str = "sip_h_X-Delonix-Caller-Ticket";
+    let mut do_ramal = body["room_bridge"].clone();
+    let bilhete = do_ramal["channel_vars"]
+        .as_object_mut()
+        .unwrap()
+        .remove(TICKET);
+    assert!(bilhete.is_some(), "o ramal não trouxe bilhete: {body}");
+    let do_did = did.json()["room_bridge"].clone();
+    assert!(do_did["channel_vars"].get(TICKET).is_none(), "{do_did}");
+    assert_eq!(do_did, do_ramal);
 
     // PIN errado: recusado.
     let wrong = if pin == "000000" { "000001" } else { "000000" };
