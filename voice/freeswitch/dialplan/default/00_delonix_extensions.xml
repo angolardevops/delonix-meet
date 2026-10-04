@@ -23,6 +23,10 @@
   <context name="delonix_ramais">
     <extension name="delonix_ramal_a_ramal">
       <condition field="destination_number" expression="^\d{3,5}$">
+        <!-- Um ramal que marca o número de acesso passa ao IVR e dá o PIN por DTMF, e o FreeSWITCH escreve cada dígito recebido
+             no log ("RECV DTMF 3:1600"): quem lê o log reconstrói o PIN. Esta
+             variável cala essa linha para a chamada inteira (R227). -->
+        <action application="set" data="sensitive_dtmf=true"/>
         <action application="set" data="rtp_secure_media=mandatory"/>
         <action application="set" data="hangup_after_bridge=true"/>
         <!-- A tradução (número curto → AOR registado) e o bridge acontecem
