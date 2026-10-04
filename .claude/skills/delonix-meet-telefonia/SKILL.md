@@ -172,23 +172,33 @@ vivo por ramal) — a pessoa para o seu ramal (`POST …/my-extension/provisioni
 administrador para qualquer um da organização (`POST …/extensions/{id}/provisioning-ticket`).
 O URL sai da primeira origem de `CORS_ORIGINS`, só se for `https` e pública; sem ela ou sem
 `VOICE_RAMAIS_PUBLIC_HOST` a emissão é `422`. O resgate é a rota PÚBLICA
-`GET /api/public/extension-provisioning/{token}`: gasta o bilhete num só `UPDATE`, gera uma
-password SIP **nova** (`ramais::new_sip_secret`, o mesmo helper da regeneração) e devolve o
-`lpconfig` do Linphone (regras e XML em
+`GET /api/public/extension-provisioning/{token}`: gasta o bilhete num só `UPDATE`, grava uma
+password SIP **nova** (`ramais::SipSecret`, o mesmo da regeneração — o Argon2 calcula-se antes
+da transacção) e devolve o `lpconfig` do Linphone (regras e XML em
 `crates/delonix-meet-domain/src/telephony/extension_provisioning.rs`). Toda a recusa é o
-mesmo `404 ramais.provisioning_invalid`; o token não entra na auditoria nem no span HTTP.
-**Ler o QR troca a password: o aparelho antigo deixa de registar.**
+mesmo `404 ramais.provisioning_invalid`. O bilhete de um ramal inactivo gasta-se na tentativa,
+e regenerar a password apaga os bilhetes do ramal. O que protege a rota são os 256 bits e o
+uso único — o limite por IP contorna-se (R278 §Aberto). O token não entra na auditoria (que
+guarda o IP de quem resgatou) nem no span HTTP; nos nginx do repositório a rota tem
+`access_log off`. **Ler o QR troca a password: o aparelho antigo deixa de registar.**
 
 **Quem entra recebe ramal** se a organização tiver `auto_assign_on_join` ligado (desligado por
-omissão; vive na linha e na rota do `extension-range`). O ÚNICO ponto é
-`ramais::assign_on_join`, chamado depois do commit de cada caminho que cria uma pertença;
-nunca devolve erro — intervalo esgotado fica na auditoria e o membro entra sem ramal. Recebe
-quem ocupa lugar (`org::seat_holder_username`): convidados externos e o utilizador de serviço
-não. Um caminho novo que insira em `org_members` **chama esta função**, não copia a regra.
+omissão; vive na linha e na rota do `extension-range`; num `PUT`, ausente = manter). O ÚNICO
+ponto é `ramais::assign_on_join`, chamado depois do commit; nunca devolve erro — intervalo
+esgotado fica na auditoria e o membro entra sem ramal. Recebe quem ocupa lugar
+(`org::seat_holder_username`): convidados externos e o utilizador de serviço não.
+
+**Só o chama um caminho em que houve um acto de um administrador ou de um IdP:** juntar um
+colaborador, convite aceite, reactivação, SSO OIDC, Odoo. **O auto-registo (`auth::register`)
+e o convidado de reunião da API v1 NÃO o chamam, de propósito:** o registo não verifica o
+email, e numa instalação `single` + `open` um desconhecido ficava com uma conta SIP. Um
+caminho novo que insira em `org_members` faz esta pergunta antes de chamar a função — e
+chama-a, não copia a regra.
 
 **Por medir, e não o dês por feito:** nenhum Linphone leu um destes QR, e o formato do XML não
-foi verificado contra um aparelho real; o diálogo não foi visto num browser. A lista completa
-está na R278.
+foi verificado contra um aparelho real; o diálogo não foi visto num browser. **Aberto:** quem
+sai da organização continua a registar com a password antiga (arquivar não desactiva o
+ramal). A lista completa está na R278.
 
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 
@@ -213,7 +223,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
 | O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
 | O PIN do ramal, os ramais da empresa e a atribuição em massa | `cargo test --release --test ramal_pin` contra Postgres real (R276 — 9 casos, dois de concorrência) + `telephony::extension_pin::tests` |
-| O QR de provisionamento do Linphone e o ramal automático a quem entra | `cargo test --release --test ramal_provisionamento --test ramal_ao_entrar` contra Postgres real (R278 — 5 + 4 casos, um de concorrência) + `telephony::extension_provisioning::tests` |
+| O QR de provisionamento do Linphone e o ramal automático a quem entra | `cargo test --release --test ramal_provisionamento --test ramal_ao_entrar` contra Postgres real (R278 — 7 + 5 casos, um de concorrência) + `telephony::extension_provisioning::tests` |
 | Os `*.lua` do FreeSWITCH | `bash scripts/check-lua-sintaxe.sh` (R223 — só sintaxe, com o `luac5.2`) |
 | Os `*.xml` e `*.xml.inc` do FreeSWITCH | `bash scripts/check-fs-xml.sh` (R226 — bem formado, sem directivas `X-PRE-PROCESS` em comentários, sem `$${AMBIENTE}`); o comportamento é do `scripts/softphone-prova.sh srtp-real`, fora do CI |
 | A imagem (`voice/freeswitch/image/`) | `make freeswitch-image` — build + prova de fumo; depois a R222 com `FS_IMAGE` |

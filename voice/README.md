@@ -173,6 +173,16 @@ Assistente → Configuração remota → ler o QR. O aparelho descarrega de
 - **Ler o QR troca a password SIP do ramal.** O aparelho que estava registado
   com a anterior deixa de registar. O bilhete serve uma vez; um segundo pedido
   ao mesmo URL recebe `404`.
+- **Lê-se só com o Linphone.** O resgate é um `GET`: a câmara do telemóvel, um
+  leitor de QR genérico ou uma pré-visualização de link abrem o endereço,
+  gastam o bilhete e trocam a password na mesma. Por isso a consola não mostra
+  o URL em texto (só se não conseguir desenhar o QR).
+- **O bilhete vai no caminho do URL.** Os três nginx do repositório não o
+  registam (`access_log off` em `/api/public/extension-provisioning/`); um
+  proxy ou ingress à frente que não seja nosso regista, se ninguém lho disser.
+- **A password vai em claro no XML**, sobre `https`. E com o transporte por
+  omissão (`udp`) as chaves SRTP (SDES) seguem em claro na sinalização SIP:
+  `VOICE_RAMAIS_PUBLIC_TRANSPORT=tls` é o que fecha isso.
 - **Precisa de duas coisas da instalação:** `VOICE_RAMAIS_PUBLIC_HOST` (onde o
   aparelho regista) e a primeira origem de `CORS_ORIGINS` em `https` e pública
   (de onde descarrega). Sem uma delas a emissão é recusada com `422` — o
@@ -186,9 +196,15 @@ Assistente → Configuração remota → ler o QR. O aparelho descarrega de
 
 **Ramal automático a quem entra.** Com «Atribuir ramal automaticamente a quem
 entra» ligado na consola (ao lado do intervalo; desligado por omissão), cada
-pessoa que entra na organização recebe o primeiro número livre do intervalo.
-Convidados externos não recebem. Se o intervalo se esgotar, a pessoa entra sem
-ramal e fica um registo na auditoria.
+pessoa que entra na organização **por um acto de um administrador ou de um
+IdP** (colaborador junto pelo administrador, convite aceite, SSO, Odoo,
+reactivação) recebe o primeiro número livre do intervalo. Convidados externos
+não recebem; quem se regista sozinho e o convidado de uma reunião criada pela
+API v1 também não — o registo não verifica o email. Se o intervalo se esgotar,
+a pessoa entra sem ramal e fica um registo na auditoria.
+
+**Aberto:** quem sai da organização continua a registar com a password antiga —
+arquivar um membro não desactiva o ramal dele (R278).
 
 ## Ramal alcançável do PSTN — DID dedicado (Fase 2, `server/src/ramais.rs`)
 
