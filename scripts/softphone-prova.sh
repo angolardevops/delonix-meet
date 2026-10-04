@@ -613,6 +613,11 @@ PY
   v=$(docker exec "${TAG}-fs" grep -ac "\"pin\":\"$PIN_DIALIN\"" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-1}" -eq 0 ]; then ok "o PIN marcado não aparece no freeswitch.log"
   else bad "o PIN marcado aparece $v vez(es) no freeswitch.log"; fi
+  # Nem dígito a dígito: sem `sensitive_dtmf` o FreeSWITCH escreve uma linha
+  # «RECV DTMF <dígito>» por tecla, e o PIN lê-se de cima para baixo.
+  v=$(docker exec "${TAG}-fs" grep -ac 'RECV DTMF' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  if [ "${v:-1}" -eq 0 ]; then ok "os dígitos marcados não aparecem no freeswitch.log (nenhuma linha «RECV DTMF»)"
+  else bad "o freeswitch.log tem $v linha(s) «RECV DTMF»: o PIN lê-se dígito a dígito"; fi
   # O freeswitch.xml.fsxml (a configuração expandida, com o segredo) não pode
   # estar no directório de logs: o arranque manda-o para um directório privado.
   v=$(docker exec "${TAG}-fs" sh -c "grep -rl -a '$segredo' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")
