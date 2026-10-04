@@ -37,6 +37,7 @@ registado com mais de uma variante de nome.
 | «Sem limitador no directo» | Há limitador **por canal** (`mesaDeSom.ts:407-412`). Não há no mestre. |
 | «Sem legendas no directo» | Há legendas **queimadas** na imagem (`useLegendas.ts` → `compositor.ts:254,574`). Não há legendas fechadas. |
 | «DLP é roadmap» | `dlp.rs` está ligado em nove sítios. É estreito: três expressões fixas e máscara de palavrões, sem política por organização nem registo. |
+| «Sem retoma de sessão» (o grep procurou `reconnect_token`) | Existe desde a R91 com outro nome: `reconnect_secret` e `SignalingHub::reclaim` (`signaling.rs:1918`) devolvem o lugar e o papel a quem cai e volta dentro de `RECONNECT_GRACE_SECS`, sem passar outra vez pela sala de espera. O que falta é o lugar sobreviver à morte do pod. **Corrigido a 2026-10-04, depois de outra sessão o apontar.** |
 | «Ramos por unificar» | Unificados em conteúdo pelo #174. Migrações `0001`–`0091` sem buracos nem repetidos. |
 | «Sem chart Helm» | Existe (`deploy/helm/delonix-meet`, #156) e recusa produção sem Secret. Só foi instalado no perfil local. |
 
@@ -49,7 +50,9 @@ registado com mais de uma variante de nome.
 | #186 `integra/tv-d3-gpl-develop` | D3: ffmpeg GPL só no Channel Engine, servidor LGPL (ADR-0015) | fecha a decisão D3; a #170 contra a `main` fica obsoleta |
 | #187 `integra/central-autenticada` | a central de uma organização autentica-se no bordo (ADR-0016) | T10, e parte do T9 (falhas de digest) |
 | #188 `integra/carga-reavaliacao` | reavaliação dos defeitos do SFU sob carga | X2 (documenta; não repete em hardware dedicado) |
-| ramo local `voz/qr-linphone-e-ramal-ao-entrar` | QR do Linphone e ramal automático, sem PR | item 3.8 do plano de produção |
+| #191 `voz/qr-linphone-e-ramal-ao-entrar` | QR do Linphone e ramal automático | item 3.8 do plano de produção |
+| ramo local `delonix-meet-backend/lugar-em-redis` | o lugar reservado sobrevive à morte do pod (cópia no Redis) | X1 |
+| ramo local `meet-arch/tv-canal-live-sessions` | liga as `live_sessions` a um canal de TV (migração e ADR-0015) | D3, TV4 |
 
 ## 2. Decisões que só o dono toma
 
@@ -215,7 +218,7 @@ marcadores de publicidade, timecode, atraso de emissão, câmara virtual.
 
 | # | Item | Evidência | Prova | Tam. |
 |---|---|---|---|---|
-| X1 | Retoma de sessão depois de uma queda de rede | grep `reconnect_token\|resume_token` = 0 | reentrada sem voltar pela sala de espera | M |
+| X1 | O lugar reservado sobrevive à morte do pod. A retoma no MESMO nó já existe (R91: `reconnect_secret`, `SignalingHub::reclaim`, `RECONNECT_GRACE_SECS`); o lugar vive em memória do nó (**em curso no ramo `delonix-meet-backend/lugar-em-redis`**) | `signaling.rs:1918`; `config.rs:618` | reentrada sem voltar pela sala de espera depois de o pod da sala morrer | M |
 | X2 | Carga em hardware dedicado, com browsers reais, TURN e simulcast (**o #188 reavalia e documenta; não repete nestas condições**) | `docs/ops/teste-de-carga-2026-09-17.md` | SLO da maior sala cumprido e publicado, com o commit | G |
 | X3 | Sincronismo e codecs no SFU: RTCP SR com NTP; preferência de codec no cliente | `sfu.rs:48-50`; grep `setCodecPreferences` = 0 | desvio áudio-vídeo medido numa gravação | M |
 | X4 | Mais de uma região: hoje só desenho | `docs/multi-region-scaling.md`; grep `cascad` só dá `ON DELETE CASCADE` | ADR antes de código | G |
