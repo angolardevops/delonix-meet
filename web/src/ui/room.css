@@ -1725,6 +1725,17 @@ div.rm-only-narrow,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* gravação sem acção: a compor, falhada, ou que quem vê não pode descarregar */
+.rm-rec--inert {
+  cursor: default;
+}
+.rm-rec--processing .rm-rec__state {
+  color: var(--warning);
+}
+.rm-rec--failed > svg,
+.rm-rec--failed .rm-rec__state {
+  color: var(--record-text);
+}
 /* salas paralelas (cartão partilhado pela sala e pela moderação) */
 .rm-bocard {
   display: flex;

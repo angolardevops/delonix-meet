@@ -1,9 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { downloadRecording, listRecordings, Recording, uploadRecording } from '../api'
+import { downloadRecording, listRecordings, type RecordingLibraryItem, uploadRecording } from '../api'
 import { participanteLocal } from '../convidado'
 import { MeetingRecorder } from '../media'
+import { useProcessingUpdates } from '../pages/recordings/useProcessingUpdates'
 import type { RoomCore } from './useRoomCore'
+
+/**
+ * A gravação do servidor parou: quanto esperar pela segunda leitura da lista.
+ * A linha nasce numa tarefa que o servidor lança ao parar
+ * (`recorder::finalize`), sem ordem garantida face ao aviso que chega à sala —
+ * a leitura feita ao aviso pode ainda não a trazer.
+ */
+export const SERVER_STOP_REREAD_MS = 2000
 
 /**
  * Gravação local (grelha composta no browser, carregada no fim) e gravação no
@@ -18,12 +27,19 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
   /** Aviso transitório de início — o indicador persistente continua. */
   const [recNotice, setRecNotice] = useState('')
   const [serverRec, setServerRec] = useState<{ by: string } | null>(null)
-  const [recordings, setRecordings] = useState<Recording[]>([])
+  const [recordings, setRecordings] = useState<RecordingLibraryItem[]>([])
   const recorderRef = useRef<MeetingRecorder | null>(null)
   const hooksRef = useRef(hooks)
   hooksRef.current = hooks
 
+  const rereadRef = useRef(0)
+
+  // Uma leitura que falha não muda nada: fica a lista que estava.
   const refresh = () => void listRecordings(code).then(setRecordings).catch(() => {})
+  // As que o servidor ainda está a compor relêem-se sozinhas, uma a uma, até
+  // terem ficheiro — a mesma releitura da biblioteca, não um segundo ciclo.
+  const fresh = useProcessingUpdates(recordings)
+  const shown = useMemo(() => recordings.map(fresh), [recordings, fresh])
 
   useEffect(() => {
     const offs = [
@@ -36,10 +52,20 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
       signal.on('server-recording', (m) => {
         setServerRec(m.active ? { by: m.by } : null)
         if (m.active) setRecNotice(t('room.gravacao.comecouAGravarNoServidor', { nome: m.by }))
-        else hooksRef.current.onServerStopped()
+        else {
+          hooksRef.current.onServerStopped()
+          // É agora que a gravação entra na lista, a compor. Sem isto só
+          // aparecia a quem voltasse a entrar na sala.
+          refresh()
+          window.clearTimeout(rereadRef.current)
+          rereadRef.current = window.setTimeout(refresh, SERVER_STOP_REREAD_MS)
+        }
       }),
     ]
-    return () => offs.forEach((off) => off())
+    return () => {
+      offs.forEach((off) => off())
+      window.clearTimeout(rereadRef.current)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal, code])
 
@@ -109,7 +135,7 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
     signal.send(active ? { type: 'server-record', active: true, e2ee_key: e2eeKey } : { type: 'server-record', active: false })
   }
 
-  function download(r: Recording) {
+  function download(r: RecordingLibraryItem) {
     void downloadRecording(r).catch(() => setStatus(t('room.estado.descargaFalhou')))
   }
 
@@ -120,7 +146,7 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
     anyoneRecording: recording || !!remoteRecorder,
     recNotice,
     serverRec,
-    recordings,
+    recordings: shown,
     toggleLocal,
     setServerRecording,
     download,

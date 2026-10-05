@@ -274,6 +274,296 @@ async fn a_recording_being_composed_is_processing_not_failed(db: sqlx::PgPool) {
     assert_eq!(e["error"], "sem espaço", "{e}");
 }
 
+/// Insere uma gravação da sala no estado pedido, como o gravador a deixa.
+async fn insert_in_state(f: &Fixture, name: &str, status: &str, reason: Option<&str>) -> String {
+    let (id,): (uuid::Uuid,) = sqlx::query_as(
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status,
+                                 failure_reason, progress_pct, progress_at, kind)
+         VALUES ($1::uuid, $2::uuid, $3, 0, $4, $5,
+                 CASE WHEN $4 = 'processing' THEN 0 END,
+                 CASE WHEN $4 = 'processing' THEN now() END, 'meeting')
+         RETURNING id",
+    )
+    .bind(&f.room_id)
+    .bind(&f.a.user_id)
+    .bind(name)
+    .bind(status)
+    .bind(reason)
+    .fetch_one(&f.app.db)
+    .await
+    .unwrap();
+    id.to_string()
+}
+
+async fn room_code(f: &Fixture) -> String {
+    sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1::uuid")
+        .bind(&f.room_id)
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap()
+}
+
+/// A lista de gravações DA SALA (`GET /api/rooms/{code}/recordings`, o painel
+/// dentro da reunião) é mais uma vista do mesmo recurso, e diz o que as outras
+/// dizem: o estado do ficheiro, a causa da falha, o progresso da composição e
+/// se quem pede pode descarregar.
+///
+/// Antes devolvia seis campos sem estado nenhum: uma gravação a compor ou
+/// falhada lia-se como qualquer outra, com 0 bytes, e o painel oferecia
+/// «descarregar» — a todos os participantes, quando o `?dl=1` só aceita o dono
+/// ou um administrador (R59).
+#[sqlx::test(migrations = "./migrations")]
+async fn room_listing_tells_state_and_what_the_viewer_may_do(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    let path = format!("/api/rooms/{}/recordings", room_code(&f).await);
+    let composing = insert_in_state(&f, "a compor.webm", "processing", None).await;
+    let failed = insert_in_state(&f, "falhada.webm", "failed", Some("sem espaço")).await;
+    let row = |list: &Value, id: &str| -> Value {
+        list.as_array()
+            .unwrap_or_else(|| panic!("a lista da sala não é uma lista: {list}"))
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap_or_else(|| panic!("a gravação {id} não está na lista da sala: {list}"))
+            .clone()
+    };
+
+    // A dona e uma participante que não é dona lêem o MESMO estado.
+    for (quem, conta, pode_descarregar) in [("dona", &f.a, true), ("participante", &f.carla, false)]
+    {
+        let (st, list) = app.get(&path, Some(&conta.token)).await;
+        assert_eq!(st, 200, "{quem}: {list}");
+        assert_eq!(list.as_array().unwrap().len(), 3, "{quem}: {list}");
+
+        let r = row(&list, &composing);
+        assert_eq!(r["status"], "processing", "{quem}: {r}");
+        assert_eq!(r["progress_pct"], 0, "{quem}: {r}");
+        assert!(r["failure_reason"].is_null(), "{quem}: {r}");
+
+        let r = row(&list, &failed);
+        assert_eq!(r["status"], "failed", "{quem}: {r}");
+        assert_eq!(r["failure_reason"], "sem espaço", "{quem}: {r}");
+        assert!(r["progress_pct"].is_null(), "{quem}: {r}");
+
+        let r = row(&list, &f.rec);
+        assert_eq!(r["status"], "ready", "{quem}: {r}");
+        assert!(r["failure_reason"].is_null(), "{quem}: {r}");
+        assert_eq!(r["can_download"], pode_descarregar, "{quem}: {r}");
+
+        // Uma só representação: a linha da sala é a do `/details`, campo a
+        // campo — o estado não é uma segunda derivação que possa divergir.
+        for id in [&composing, &failed, &f.rec] {
+            let (st, d) = app
+                .get(&format!("/api/recordings/{id}/details"), Some(&conta.token))
+                .await;
+            assert_eq!(st, 200, "{quem}: {d}");
+            assert_eq!(row(&list, id), d, "{quem}: a sala e o /details divergem");
+        }
+
+        // O que a lista diz é o que o servidor faz ao clique.
+        let dl = |id: &str| format!("/api/recordings/{id}/content?dl=1");
+        let (st, e) = app.get(&dl(&composing), Some(&conta.token)).await;
+        assert_eq!(st, 409, "{quem}: {e}");
+        let (st, e) = app.get(&dl(&failed), Some(&conta.token)).await;
+        assert_eq!(st, 400, "{quem}: {e}");
+        let (st, e) = app.get(&dl(&f.rec), Some(&conta.token)).await;
+        // Com permissão chega à leitura do ficheiro (que o teste não tem).
+        assert_eq!(st, if pode_descarregar { 404 } else { 403 }, "{quem}: {e}");
+    }
+
+    // Mais recentes primeiro, como antes.
+    let (_, list) = app.get(&path, Some(&f.a.token)).await;
+    let ids: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [failed.as_str(), composing.as_str(), f.rec.as_str()]);
+
+    // O progresso que o gravador vai escrevendo chega à sala, e a passagem a
+    // «a transcrever» também (reserva activa, sem resultado).
+    sql(
+        app,
+        "UPDATE recordings SET progress_pct = 42, progress_at = now() WHERE id = $1::uuid",
+        &composing,
+    )
+    .await;
+    sql(
+        app,
+        "UPDATE recordings SET transcription_lease_token = 't',
+                transcription_lease_expires_at = now() + interval '1 hour' WHERE id = $1::uuid",
+        &f.rec,
+    )
+    .await;
+    let (_, list) = app.get(&path, Some(&f.carla.token)).await;
+    assert_eq!(row(&list, &composing)["progress_pct"], 42);
+    assert_eq!(row(&list, &f.rec)["status"], "transcribing");
+
+    // A porta não mudou: quem não participou não lê a lista, e não fica a
+    // saber de gravação nenhuma — nem um colega da mesma organização.
+    for (quem, conta) in [
+        ("outra organização", &f.b),
+        ("colega que não esteve", &f.duarte),
+    ] {
+        let (st, e) = app.get(&path, Some(&conta.token)).await;
+        assert_eq!(st, 403, "{quem}: {e}");
+        assert_eq!(e["code"], "room.not_participant", "{quem}: {e}");
+        for vaza in [
+            composing.as_str(),
+            failed.as_str(),
+            "sem espaço",
+            "falhada.webm",
+        ] {
+            assert!(
+                !e.to_string().contains(vaza),
+                "{quem}: a recusa traz «{vaza}»: {e}"
+            );
+        }
+    }
+
+    // S3: quem saiu da organização esteve na sala, mas já não chega a nenhuma
+    // destas gravações (o `/details` responde 404) — a lista não as anuncia.
+    app.archive_member(f.a.org(), &f.carla.user_id).await;
+    let (st, list) = app.get(&path, Some(&f.carla.token)).await;
+    assert_eq!(st, 200, "{list}");
+    assert_eq!(
+        list,
+        json!([]),
+        "a sala lista o que as rotas por id recusam"
+    );
+}
+
+/// Partilhar com uma pessoa e criar o link público pedem uma gravação COM
+/// ficheiro. Antes o servidor aceitava os dois sobre uma gravação a compor ou
+/// falhada: a pessoa recebia na biblioteca uma entrada sem nada para abrir, e
+/// o link público respondia `size_bytes: 0` e um `download_url` que dava `404`.
+///
+/// Desfazer continua sempre possível — retirar uma partilha ou revogar um
+/// link não depende do estado do ficheiro.
+#[sqlx::test(migrations = "./migrations")]
+async fn sharing_and_public_link_need_a_file(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let (app, a) = (&f.app, &f.a);
+    let composing = insert_in_state(&f, "a compor.webm", "processing", None).await;
+    let failed = insert_in_state(&f, "falhada.webm", "failed", Some("sem espaço")).await;
+    let count = |table: &'static str| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+
+    for (id, code) in [
+        (&composing, "recording.processing"),
+        (&failed, "recording.no_file"),
+    ] {
+        let base = format!("/api/recordings/{id}");
+        let (st, e) = app
+            .post(
+                &format!("{base}/shares"),
+                Some(&a.token),
+                json!({"user_id": f.duarte.user_id}),
+            )
+            .await;
+        assert_eq!(st, 409, "{code}: {e}");
+        assert_eq!(e["code"], code, "{e}");
+        let (st, e) = app
+            .put(&format!("{base}/public-link"), Some(&a.token), json!({}))
+            .await;
+        assert_eq!(st, 409, "{code}: {e}");
+        assert_eq!(e["code"], code, "{e}");
+
+        // O estado só se diz a quem chega à gravação: outra organização e um
+        // colega sem relação recebem o `404` de «não existe», como antes.
+        for (quem, conta) in [
+            ("outra organização", &f.b),
+            ("colega sem relação", &f.duarte),
+        ] {
+            let (st, e) = app
+                .post(
+                    &format!("{base}/shares"),
+                    Some(&conta.token),
+                    json!({"user_id": f.eva.user_id}),
+                )
+                .await;
+            assert_eq!(st, 404, "{quem}: {e}");
+            let (st, e) = app
+                .put(
+                    &format!("{base}/public-link"),
+                    Some(&conta.token),
+                    json!({}),
+                )
+                .await;
+            assert_eq!(st, 404, "{quem}: {e}");
+        }
+    }
+    assert_eq!(
+        count("recording_shares").await,
+        0,
+        "ficou uma partilha escrita"
+    );
+    assert_eq!(
+        count("recording_share_links").await,
+        0,
+        "ficou um link escrito"
+    );
+
+    // Controlo: com ficheiro, os dois continuam a aceitar-se — também enquanto
+    // a gravação está a ser transcrita, que tem ficheiro.
+    let base = format!("/api/recordings/{}", f.rec);
+    sql(
+        app,
+        "UPDATE recordings SET transcription_lease_token = 't',
+                transcription_lease_expires_at = now() + interval '1 hour' WHERE id = $1::uuid",
+        &f.rec,
+    )
+    .await;
+    let (st, e) = app
+        .post(
+            &format!("{base}/shares"),
+            Some(&a.token),
+            json!({"user_id": f.duarte.user_id}),
+        )
+        .await;
+    assert_eq!(st, 201, "{e}");
+    let (st, link) = app
+        .put(&format!("{base}/public-link"), Some(&a.token), json!({}))
+        .await;
+    assert_eq!(st, 200, "{link}");
+
+    // Desfazer não depende do ficheiro: a gravação passa a falhada e a
+    // partilha e o link continuam a ler-se e a retirar-se.
+    sql(
+        app,
+        "UPDATE recordings SET status = 'failed', failure_reason = 'disco' WHERE id = $1::uuid",
+        &f.rec,
+    )
+    .await;
+    let (st, who) = app.get(&format!("{base}/shares"), Some(&a.token)).await;
+    assert_eq!(st, 200, "{who}");
+    assert_eq!(who.as_array().unwrap().len(), 1, "{who}");
+    let (st, l) = app
+        .get(&format!("{base}/public-link"), Some(&a.token))
+        .await;
+    assert_eq!(st, 200, "{l}");
+    assert_eq!(l["token"], link["token"], "{l}");
+    let (st, e) = app
+        .delete(
+            &format!("{base}/shares/{}", f.duarte.user_id),
+            Some(&a.token),
+        )
+        .await;
+    assert_eq!(st, 204, "{e}");
+    let (st, e) = app
+        .delete(&format!("{base}/public-link"), Some(&a.token))
+        .await;
+    assert_eq!(st, 204, "{e}");
+}
+
 /// O `state` da UI é o do ficheiro, com `published` quando está pronta E
 /// publicada. Publicar uma gravação FALHADA não a promove: não há o que ver.
 #[sqlx::test(migrations = "./migrations")]
