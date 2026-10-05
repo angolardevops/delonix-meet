@@ -1550,7 +1550,7 @@
       "CreateDialOutReq": {
         "properties": {
           "extension_id": {
-            "description": "O ramal a fazer tocar (um ramal activo de uma organização do anfitrião).",
+            "description": "O ramal a fazer tocar (um ramal activo de uma organização do anfitrião, com `sessions.dial_out`).",
             "format": "uuid",
             "type": "string"
           }

@@ -128,6 +128,16 @@ fn script(cmd: &str) -> Vec<(u64, String)> {
             return out;
         }
     }
+    if rest.contains("user/ramal_lento@") {
+        // O canal só aparece 400 ms depois: dá tempo ao anfitrião de cancelar.
+        out.clear();
+        out.push((0, reply(&format!("+OK Job-UUID: {job}"))));
+        out.push((400, ev("CHANNEL_CREATE", &[], None)));
+        out.push((20, ev("CHANNEL_PROGRESS", &[], None)));
+        out.push((50, ev("CHANNEL_ANSWER", &[], None)));
+        out.push((0, job_end(&format!("+OK {chan}\n"))));
+        return out;
+    }
     out.push((20, ev("CHANNEL_PROGRESS", &[], None)));
     if rest.contains("user/ramal_mudo@") {
         // Toca até ao tempo esgotado do cliente ESL; nunca atende.
@@ -408,6 +418,59 @@ async fn desligar_enquanto_toca_cancela_e_e_idempotente(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 404);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancelar_antes_de_o_canal_existir_nao_deixa_a_perna_a_tocar(db: sqlx::PgPool) {
+    let esl = spawn_esl().await;
+    let app = app_com_ponte(db, &esl).await;
+    let a = app.new_org("dialout-g.ao").await;
+    let code = codigo(&app.new_room(&a, "Sala").await);
+    let lento = ramal(&app, a.org(), "209", "ramal_lento", true).await;
+    let (st, v) = app
+        .post(
+            &d(&code, ""),
+            Some(&a.token),
+            json!({"extension_id": lento}),
+        )
+        .await;
+    assert_eq!(st, 202, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    // Cancela já, antes de o FreeSWITCH criar o canal.
+    let (st, h) = app
+        .post(
+            &d(&code, &format!("/{id}/hangup")),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!((st, h["status"].as_str()), (200, Some("cancelled")), "{h}");
+    // Ou nunca se origina, ou, se se originou, o sinal de vida que chega depois
+    // volta a mandar desligar: tem de haver um `hupall` DEPOIS do `originate`.
+    let mut ok = false;
+    for _ in 0..60 {
+        {
+            let log = esl.log.lock().unwrap();
+            let origem = log.iter().position(|c| c.starts_with("bgapi originate "));
+            ok = match origem {
+                None => true,
+                Some(i) => log[i..].iter().any(|c| c.starts_with("hupall ")),
+            };
+        }
+        if ok {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        ok,
+        "a perna cancelada ficou a tocar: {:?}",
+        esl.log.lock().unwrap()
+    );
+    // E o estado continua `cancelled`: a chamada tardia não o reescreve.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let (_, lista) = app.get(&d(&code, ""), Some(&a.token)).await;
+    assert_eq!(lista["items"][0]["status"], "cancelled", "{lista}");
 }
 
 #[sqlx::test(migrations = "./migrations")]

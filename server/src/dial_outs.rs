@@ -9,7 +9,7 @@
 //!
 //! Quem pode: o anfitrião ou co-anfitrião da sala (a mesma regra da sala de espera)
 //! E quem tem `sessions.dial_out` na organização do ramal — um ramal de outra
-//! organização responde como se não existisse. Salas E2EE recusam (a ponte não
+//! organização (aquela onde o anfitrião não é membro) responde como se não existisse. Salas E2EE recusam (a ponte não
 //! decifra). O estado escreve-o este serviço a partir dos eventos do `originate`
 //! (`DialOutStatus::can_go` ignora o que chega fora de ordem); nunca o navegador.
 //!
@@ -30,7 +30,7 @@ use delonix_meet_core::{DomainError, ErrorKind};
 use delonix_meet_domain::conferencing::channels::{status_from_hangup_cause, DialOutStatus};
 use delonix_meet_domain::identity::authorization::{Capability, ResourceScope};
 use delonix_meet_domain::telephony::ports::{
-    AfterAnswer, CallEvent, CallEventSink, InternalLeg, OriginateRequest,
+    AfterAnswer, CallEvent, CallEventSink, CallOriginator, InternalLeg, OriginateRequest,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -55,7 +55,7 @@ pub struct ApiDoc;
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateDialOutReq {
-    /// O ramal a fazer tocar (um ramal activo de uma organização do anfitrião).
+    /// O ramal a fazer tocar (um ramal activo de uma organização do anfitrião, com `sessions.dial_out`).
     pub extension_id: Uuid,
 }
 
@@ -191,12 +191,27 @@ impl CallEventSink for Sink {
     }
 }
 
-async fn apply_event(db: &sqlx::PgPool, id: Uuid, ev: &CallEvent) -> Result<(), sqlx::Error> {
-    match ev {
-        CallEvent::Dialing { .. } => transition(db, id, DialOutStatus::Dialing, None, None).await,
-        CallEvent::Ringing { .. } => transition(db, id, DialOutStatus::Ringing, None, None).await,
-        CallEvent::Answered { .. } => transition(db, id, DialOutStatus::InCall, None, None).await,
-        CallEvent::AttemptFailed { .. } => Ok(false),
+async fn apply_event(
+    db: &sqlx::PgPool,
+    originator: &Arc<dyn CallOriginator>,
+    id: Uuid,
+    call_id: Uuid,
+    ev: &CallEvent,
+) -> Result<(), sqlx::Error> {
+    let (changed, vivo) = match ev {
+        CallEvent::Dialing { .. } => (
+            transition(db, id, DialOutStatus::Dialing, None, None).await?,
+            true,
+        ),
+        CallEvent::Ringing { .. } => (
+            transition(db, id, DialOutStatus::Ringing, None, None).await?,
+            true,
+        ),
+        CallEvent::Answered { .. } => (
+            transition(db, id, DialOutStatus::InCall, None, None).await?,
+            true,
+        ),
+        CallEvent::AttemptFailed { .. } => (false, false),
         CallEvent::Ended {
             answered,
             cause,
@@ -205,10 +220,26 @@ async fn apply_event(db: &sqlx::PgPool, id: Uuid, ev: &CallEvent) -> Result<(), 
             let to = status_from_hangup_cause(cause, *answered);
             // A causa só interessa a quem não chegou a atender e falhou.
             let code = (to == DialOutStatus::Failed).then_some(cause.as_str());
-            transition(db, id, to, code, *billsec).await
+            (transition(db, id, to, code, *billsec).await?, false)
+        }
+    };
+    // O anfitrião cancelou antes de o canal existir: o `hupall` do cancelamento não
+    // apanhou nada e o ramal tocou na mesma. Um sinal de vida de uma linha já
+    // `cancelled` desliga-o agora (e, se atendeu, a perna sai da sala).
+    if vivo && !changed {
+        let cancelado: bool =
+            sqlx::query_scalar("SELECT status = 'cancelled' FROM room_dial_outs WHERE id = $1")
+                .bind(id)
+                .fetch_optional(db)
+                .await?
+                .unwrap_or(false);
+        if cancelado {
+            if let Err(e) = originator.hangup(call_id).await {
+                tracing::warn!(dial_out = %id, "não consegui desligar uma perna cancelada: {e}");
+            }
         }
     }
-    .map(|_| ())
+    Ok(())
 }
 
 /// `host:porta` da ponte como endereço de socket (o `AfterAnswer::RoomBridge`
@@ -235,7 +266,7 @@ fn bridge_target(state: &AppState) -> Option<std::net::SocketAddr> {
         (status = 403, body = crate::openapi::ErrorBody, description = "Não gere a sala, ou falta `sessions.dial_out`."),
         (status = 404, body = crate::openapi::ErrorBody, description = "Sala ou ramal inexistente (ou de outra organização)."),
         (status = 409, body = crate::openapi::ErrorBody, description = "`dial_out.already_active`: este ramal já está a ser chamado nesta sala."),
-        (status = 422, body = crate::openapi::ErrorBody, description = "`dial_out.room_e2ee`, `dial_out.extension_inactive`, `dial_out.not_configured`, `dial_out.bridge_not_configured`."),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`dial_out.room_e2ee`, `dial_out.room_recording`, `dial_out.extension_inactive`, `dial_out.not_configured`, `dial_out.bridge_not_configured`."),
         (status = 429, body = crate::openapi::ErrorBody, description = "`dial_out.too_many`, `dial_out.rate_limited`."),
     )
 )]
@@ -250,6 +281,14 @@ pub async fn create(
         return Err(refuse(
             "dial_out.room_e2ee",
             "uma sala cifrada de ponta a ponta não aceita um telefone: a ponte não decifra",
+        ));
+    }
+    // Quem atende entra na sala com o microfone aberto, sem aviso: numa sala a gravar
+    // seria uma gravação sem consentimento. Até haver o aviso ao chamado (D3), recusa-se.
+    if state.sfu.recording_by(room.id).await.is_some() {
+        return Err(refuse(
+            "dial_out.room_recording",
+            "a sala está a gravar e o chamado não seria avisado: pára a gravação para ligar a um ramal",
         ));
     }
     let originator = state.telephony.originator.clone().ok_or_else(|| {
@@ -383,19 +422,33 @@ pub async fn create(
     };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CallEvent>();
     let db = state.db.clone();
+    let listener = originator.clone();
     tokio::spawn(async move {
+        let mut terminou = false;
         while let Some(ev) = rx.recv().await {
-            if let Err(e) = apply_event(&db, id, &ev).await {
+            if let Err(e) = apply_event(&db, &listener, id, call_id, &ev).await {
                 tracing::error!(dial_out = %id, "não consegui gravar o evento da chamada: {e}");
             }
             if matches!(ev, CallEvent::Ended { .. }) {
+                terminou = true;
                 break;
             }
+        }
+        // O ESL fechou sem um fim (a ligação caiu, passaram 6 h): a linha não
+        // fica `in_call` para sempre, a bloquear o ramal e a contar para o limite.
+        if !terminou {
+            let _ = transition(&db, id, DialOutStatus::Failed, Some("esl_lost"), None).await;
         }
     });
     let db = state.db.clone();
     tokio::spawn(async move {
-        let _ = transition(&db, id, DialOutStatus::Dialing, None, None).await;
+        // Cancelado antes de arrancar (`queued` → `cancelled`): nem se origina.
+        if !transition(&db, id, DialOutStatus::Dialing, None, None)
+            .await
+            .unwrap_or(false)
+        {
+            return;
+        }
         if let Err(e) = originator.originate(&origin, Arc::new(Sink(tx))).await {
             // O ESL em baixo, a ponte inacessível: a pessoa nunca fica «a tocar».
             tracing::warn!(dial_out = %id, "originate falhou: {e}");
