@@ -13,6 +13,20 @@
 // som e imagem do mesmo sítio. A câmara e o microfone falsos do Chromium não
 // servem: arrancam cada um por si, a uma distância que muda a cada entrada.
 //
+// Lê-se de duas maneiras. Pelos CLARÕES, que é o que se vê — mas só há um de
+// dois em dois segundos, e com a máquina carregada o browser pinta-os tarde.
+// E pela FASE: um traço atravessa a imagem na posição que o relógio do som
+// diz, e cada quadro passa a dizer a que instante do som pertence (centenas de
+// medições por gravação). É a fase que decide.
+//
+// E compara-se com o quê. A imagem que sai de um browser carregado já vem
+// atrasada em relação ao som (a captura da tela entrega quadros com 30 a
+// 150 ms, medido com o host a carga 25 a 50), e isso não é da gravação. Por
+// isso cada publicador grava também a sua própria media com o `MediaRecorder`
+// do browser, ao mesmo tempo: o que se exige é que a gravação do SERVIDOR
+// tenha o som e a imagem à mesma distância que essa — a distância com que
+// saíram do browser.
+//
 // Cenários (`CENARIOS=…`), um por caminho do `finalize_inner` e por causa:
 //   calibra    a régua gravada pelo `MediaRecorder` do próprio browser — quanto
 //              vale o zero da medição;
@@ -32,7 +46,8 @@
 //     [TOLERANCIA_MS=60] [VERBOSE=1] node e2e/gravacao-sincronismo.mjs
 import { chromium } from '@playwright/test'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -51,6 +66,7 @@ const TOLERANCIA = Number(process.env.TOLERANCIA_MS ?? 60)
 // As esperas esticam com a máquina (R118); o que se mede não.
 const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
 const PERIODO = 2
+const MARCA = 0.1 // s de clarão e de toque
 const PW = 'UmaPasswordForte123!'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let falhas = 0
@@ -138,6 +154,16 @@ async function guardaPistas(dir, destino) {
   return copiou
 }
 
+/** Põe o browser de `x` a gravar a sua própria media durante `segundos`, e
+ *  devolve a promessa do ficheiro (ver o cabeçalho: é a referência). */
+function gravaLocal(x, nome, pasta, segundos) {
+  mkdirSync(pasta, { recursive: true })
+  const f = join(pasta, `local-${nome}.webm`)
+  return x.p.evaluate((ms) => window.__dlx.gravarLocal(ms), segundos * 1000)
+    .then((b64) => { writeFileSync(f, Buffer.from(b64, 'base64')); return f })
+    .catch(() => null)
+}
+
 /** A gravação da sala, quando deixar de estar a compor. */
 async function espera(code) {
   const ate = Date.now() + 240_000 * FATOR
@@ -192,7 +218,12 @@ function claroes(quadros) {
 
 /** Instantes em que começa um toque a `hz`. O áudio é descodificado a honrar
  *  os PTS do contentor (o silêncio que ele declara conta), que é o que um
- *  leitor faz quando acerta o som pela imagem. Energia em janelas de 5 ms. */
+ *  leitor faz quando acerta o som pela imagem. Energia em janelas de 5 ms.
+ *
+ *  O início lê-se pelo FIM do toque menos os 100 ms que ele dura: com DTX, os
+ *  primeiros 20 ms de cada toque ficam colados ao pacote anterior, antes do
+ *  silêncio (R295, por fechar), e um início lido à letra apanhava esse
+ *  fragmento. Um troço com menos de 40 ms não é um toque. */
 function toques(ficheiro, hz) {
   const raw = execFileSync(FFMPEG, ['-nostdin', '-loglevel', 'error', '-i', ficheiro, '-map', '0:a:0', '-af', 'aresample=async=1:first_pts=0', '-ac', '1', '-ar', '48000', '-f', 's16le', '-'], { maxBuffer: 1 << 30 })
   const s = new Int16Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + (raw.byteLength & ~1)))
@@ -206,11 +237,67 @@ function toques(ficheiro, hz) {
   }
   const limiar = e.reduce((x, v) => Math.max(x, v), 0) * 0.3
   const o = []
-  let calado = 0
-  for (let i = 0; i < e.length; i++) {
-    if (e[i] > limiar) { if (calado >= 20) o.push((i * J) / 48000); calado = 0 } else calado++
+  let de = -1
+  for (let i = 0; i <= e.length; i++) {
+    const alto = i < e.length && e[i] > limiar
+    if (alto && de < 0) de = i
+    if (!alto && de >= 0) {
+      // O toque apanhado a meio, no início do ficheiro, não tem início.
+      if (i - de >= 8 && de > 0) o.push((i * J) / 48000 - MARCA)
+      de = -1
+    }
   }
   return o
+}
+
+/** A FASE de cada quadro: a régua pinta um traço que atravessa a imagem em
+ *  `PERIODO` segundos, na posição que o relógio do SOM diz no instante em que
+ *  o quadro é pintado. Cada quadro diz assim a que instante do som pertence,
+ *  mesmo que o browser o pinte atrasado (com a máquina carregada os clarões
+ *  saem até 150 ms tarde, e só há um de dois em dois segundos; quadros há
+ *  trinta por segundo). Devolve, por quadro, o instante DO FICHEIRO em que a
+ *  régua passou pelo zero — onde o toque tem de estar. */
+function zeros(ficheiro, rect) {
+  const L = 320
+  const alto = Math.max(2, Math.round(rect.h * 0.02))
+  const vf = `crop=${rect.w}:${alto}:${rect.x}:${rect.y + rect.h - alto - 2},scale=${L}:1:flags=area,format=gray,showinfo`
+  const r = spawnSync(FFMPEG, ['-nostdin', '-loglevel', 'info', '-i', ficheiro, '-map', '0:v:0', '-vf', vf, '-fps_mode', 'passthrough', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 })
+  const pts = [...r.stderr.toString().matchAll(/pts_time:([0-9.]+)/g)].map((x) => parseFloat(x[1]))
+  const o = []
+  for (let k = 0; k < pts.length && (k + 1) * L <= r.stdout.length; k++) {
+    const linha = r.stdout.subarray(k * L, (k + 1) * L)
+    // O traço é cinzento médio sobre fundo escuro; num clarão a linha é toda clara.
+    let n = 0, soma = 0, claros = 0
+    for (let x = 0; x < L; x++) {
+      if (linha[x] > 200) claros++
+      else if (linha[x] > 75) { n++; soma += x }
+    }
+    if (claros > L / 4 || n < 3 || n > 12) continue
+    // Centro do traço → a borda esquerda dele, que é o que a régua pinta.
+    const fase = (((soma / n + 0.5) / L) * 640 - 8) / 624 * PERIODO
+    if (fase < MARCA + 0.05 || fase > PERIODO - 0.05) continue
+    o.push(pts[k] - fase)
+  }
+  return o
+}
+
+/** Para cada zero da régua (ver `zeros`), o toque mais próximo: `imagem −
+ *  som`, em ms, módulo o período. */
+function desvioDeFase(zs, tq) {
+  if (tq.length === 0) return { n: 0, mediana: null, min: null, max: null }
+  const d = []
+  for (const z of zs) {
+    // O zero mais próximo de um toque, andando de período em período.
+    let melhor = null
+    for (const t of tq) {
+      const x = z - t - Math.round((z - t) / PERIODO) * PERIODO
+      if (melhor === null || Math.abs(x) < Math.abs(melhor)) melhor = x
+    }
+    d.push(melhor * 1000)
+  }
+  const o = [...d].sort((a, b) => a - b)
+  const q = (f) => (o.length ? o[Math.min(o.length - 1, Math.floor(o.length * f))] : null)
+  return { n: d.length, mediana: q(0.5), min: q(0.05), max: q(0.95) }
 }
 
 /** Para cada clarão, o toque mais próximo: `imagem − som`, em ms. Negativo: a
@@ -256,9 +343,76 @@ function mede(ficheiro, celulas, publicadores) {
     const tq = toques(ficheiro, quem.tom)
     // O primeiro quadro com imagem a sério (antes dele a célula é preta).
     const comeca = baixo.find((q) => q.luz > 20)?.t ?? null
-    o.push({ quem: quem.nome, celula: k, comeca, claroes: cl.length, toques: tq.length, ...desvio(cl, tq) })
+    const zs = zeros(ficheiro, { w: Math.round(cw), h: z.h, x: Math.round(z.x + k * cw), y: z.y })
+    o.push({ quem: quem.nome, celula: k, comeca, toques: tq.length, quadros: zs.length, ...desvioDeFase(zs, tq), claroes: desvio(cl, tq) })
   }
   return o
+}
+
+/** Toca o ficheiro no Chromium e mede lá o mesmo: o instante DO MEDIA em que
+ *  cada clarão aparece (`requestVideoFrameCallback`) e em que cada toque a `hz`
+ *  se ouve — o que uma pessoa vê e ouve na biblioteca. É mais grosso do que a
+ *  medição pelo ffmpeg (o analisador tem uma janela de 11 ms e é lido de 5 em
+ *  5), e serve para outra coisa: saber se um leitor a sério respeita um vídeo
+ *  que começa depois do zero do ficheiro. Só o quadro inteiro (um publicador). */
+async function veNoChromium(ficheiro, hz) {
+  const srv = createServer((req, res) => {
+    if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); return res.end('<video id=v src="/f.webm" preload="auto"></video>') }
+    const size = statSync(ficheiro).size
+    const r = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? '')
+    const a = r ? Number(r[1]) : 0
+    const b = r && r[2] ? Number(r[2]) : size - 1
+    res.writeHead(r ? 206 : 200, { 'Content-Type': 'video/webm', 'Accept-Ranges': 'bytes', 'Content-Length': b - a + 1, ...(r ? { 'Content-Range': `bytes ${a}-${b}/${size}` } : {}) })
+    createReadStream(ficheiro, { start: a, end: b }).pipe(res)
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  try {
+    const p = await b.newPage()
+    await p.goto(`http://127.0.0.1:${srv.address().port}/`)
+    const r = await p.evaluate(async (hz) => {
+      const v = document.getElementById('v')
+      const ctx = new AudioContext()
+      const an = ctx.createAnalyser()
+      an.fftSize = 512
+      an.smoothingTimeConstant = 0
+      ctx.createMediaElementSource(v).connect(an)
+      an.connect(ctx.destination)
+      const bin = Math.round(hz / (ctx.sampleRate / an.fftSize))
+      const buf = new Float32Array(an.frequencyBinCount)
+      const tela = document.createElement('canvas')
+      tela.width = tela.height = 8
+      const c = tela.getContext('2d', { willReadFrequently: true })
+      const cl = [], tq = []
+      let claro = true, calado = 0
+      const quadro = (_agora, md) => {
+        // O meio de baixo da imagem, como na medição pelo ffmpeg.
+        c.drawImage(v, v.videoWidth * 0.4, v.videoHeight * 0.55, v.videoWidth * 0.2, v.videoHeight * 0.2, 0, 0, 8, 8)
+        const d = c.getImageData(0, 0, 8, 8).data
+        let luz = 0
+        for (let i = 0; i < d.length; i += 4) luz += d[i]
+        const e = luz / 64 > 150
+        if (e && !claro) cl.push(md.mediaTime)
+        claro = e
+        v.requestVideoFrameCallback(quadro)
+      }
+      v.requestVideoFrameCallback(quadro)
+      await v.play()
+      const t0 = performance.now()
+      await new Promise((fim) => {
+        const id = setInterval(() => {
+          an.getFloatFrequencyData(buf)
+          if (Math.max(buf[bin - 1], buf[bin], buf[bin + 1]) > -45) { if (calado >= 40) tq.push(v.currentTime); calado = 0 } else calado++
+          if (v.ended || performance.now() - t0 > 120000) { clearInterval(id); fim() }
+        }, 5)
+      })
+      return { cl, tq }
+    }, hz)
+    return desvio(r.cl, r.tq)
+  } finally {
+    await b.close()
+    srv.close()
+  }
 }
 
 // --- cenários ------------------------------------------------------------
@@ -273,8 +427,8 @@ async function calibra() {
     const f = join(SAIDA, `calibra-${fundo ? 'fundo' : 'silencio'}.webm`)
     writeFileSync(f, Buffer.from(b64, 'base64'))
     const r = mede(f, 1, [{ nome: 'A', tom: 2500, faixa: false }])[0]
-    nota(`a régua gravada pelo MediaRecorder do browser: imagem − som = ${ms(r?.mediana ?? null)} (${r?.n} clarões, de ${ms(r?.min ?? null)} a ${ms(r?.max ?? null)})`)
-    chk(!!r && r.n >= 4 && Math.abs(r.mediana) <= TOLERANCIA, `a régua sai do browser com som e imagem a menos de ${TOLERANCIA} ms`)
+    nota(`a régua gravada pelo MediaRecorder do browser: imagem − som = ${ms(r?.mediana ?? null)} (${r?.n} quadros; 90 % entre ${ms(r?.min ?? null)} e ${ms(r?.max ?? null)}); pelos clarões, ${ms(r?.claroes.mediana ?? null)} (${r?.claroes.n})`)
+    chk(!!r && r.n >= 100 && Math.abs(r.mediana) <= TOLERANCIA, `a régua sai do browser com som e imagem a menos de ${TOLERANCIA} ms`)
     resumo.push({ cenario: 'calibra', ...r })
   }
   await a.b.close()
@@ -318,9 +472,10 @@ async function copia(nome, { fundo = true, travado = false } = {}) {
       chk(!SERVER_LOG || esperou >= ESPERA_MIN, `a pista de vídeo esperou pelo keyframe (${SERVER_LOG ? `${esperou} ms` : 'sem SERVER_LOG não se sabe quanto'})`)
     }
     chk(true, 'a gravação arrancou à mão, com a chamada a decorrer')
+    const locais = { A: gravaLocal(a, 'A', join(SAIDA, nome), SEGUNDOS - 1) }
     await sleep(SEGUNDOS * 1000)
     await a.p.evaluate(() => window.__dlx.gravar(false))
-    await fecha(nome, code, viva, [a, b], 1, [{ nome: 'A', tom: 2500, faixa: false }], log0)
+    await fecha(nome, code, viva, [a, b], 1, [{ nome: 'A', tom: 2500, faixa: false }], log0, locais)
     return
   }
 }
@@ -347,6 +502,8 @@ async function grelha(nome, { tarde = false } = {}) {
   for (let k = 0; k < 40 * FATOR && !viva; k++) { await sleep(250); viva = sessoes().find((d) => !antes.has(d)) ?? null }
   chk(!!viva, 'a gravação arrancou à mão, com a chamada a decorrer')
   if (!viva) { await a.b.close(); if (b) await b.b.close(); return }
+  const pasta = join(SAIDA, nome)
+  const locais = { A: gravaLocal(a, 'A', pasta, SEGUNDOS - 1 + (tarde ? TARDE : 0)) }
   if (tarde) {
     await sleep(TARDE * 1000)
     // A pista de vídeo de B tem de chegar a existir: sem ela não há célula.
@@ -357,15 +514,22 @@ async function grelha(nome, { tarde = false } = {}) {
       await b.b.close()
     }
   }
+  locais.B = gravaLocal(b, 'B', pasta, SEGUNDOS - 1)
   await sleep(SEGUNDOS * 1000)
   await a.p.evaluate(() => window.__dlx.gravar(false))
-  await fecha(nome, code, viva, [a, b], 2, [{ nome: 'A', tom: 2500, faixa: false }, { nome: 'B', tom: 1500, faixa: true }], log0)
+  await fecha(nome, code, viva, [a, b], 2, [{ nome: 'A', tom: 2500, faixa: false }, { nome: 'B', tom: 1500, faixa: true }], log0, locais)
 }
 
-async function fecha(nome, code, viva, browsers, celulas, publicadores, log0) {
+async function fecha(nome, code, viva, browsers, celulas, publicadores, log0, locais) {
   const pasta = join(SAIDA, nome)
   const copiou = await guardaPistas(viva, join(pasta, 'pistas'))
   const item = await espera(code)
+  // A referência de cada publicador: a sua media gravada pelo próprio browser.
+  const ref = {}
+  for (const pub of publicadores) {
+    const f = await locais[pub.nome]
+    ref[pub.nome] = f ? mede(f, 1, [pub])[0] ?? null : null
+  }
   for (const x of browsers) if (x) await x.b.close()
   const pistas = copiou ? readdirSync(join(pasta, 'pistas')).filter((f) => /\.(ivf|ogg)$/.test(f)).sort() : []
   nota(`pistas cruas: ${pistas.join(', ') || '(nenhuma)'}`)
@@ -381,10 +545,23 @@ async function fecha(nome, code, viva, browsers, celulas, publicadores, log0) {
   const medidas = mede(webm, celulas, publicadores)
   chk(new Set(medidas.map((x) => x.quem)).size === celulas, `cada célula é de um publicador diferente (${medidas.map((x) => x.quem).join(', ')})`)
   for (const r of medidas) {
-    nota(`${r.quem}: a imagem começa aos ${r.comeca?.toFixed(3)} s; ${r.claroes} clarões, ${r.toques} toques; imagem − som = ${ms(r.mediana)} (de ${ms(r.min)} a ${ms(r.max)})`)
-    chk(r.n >= 4, `${r.quem}: a gravação tem clarões e toques que cheguem para medir (${r.n} pares)`)
-    chk(r.mediana !== null && Math.abs(r.mediana) <= TOLERANCIA, `${r.quem}: o som e a imagem estão a menos de ${TOLERANCIA} ms um do outro (${ms(r.mediana)})`)
-    resumo.push({ cenario: nome, esperas, ...r })
+    const l = ref[r.quem]
+    nota(`${r.quem}: a imagem começa aos ${r.comeca?.toFixed(3)} s; ${r.toques} toques, ${r.quadros} quadros com a fase lida`)
+    nota(`${r.quem}: imagem − som na gravação do servidor = ${ms(r.mediana)} (90 % entre ${ms(r.min)} e ${ms(r.max)}); pelos clarões, ${ms(r.claroes.mediana)} (${r.claroes.n} pares)`)
+    nota(`${r.quem}: imagem − som à saída do browser      = ${ms(l?.mediana ?? null)} (90 % entre ${ms(l?.min ?? null)} e ${ms(l?.max ?? null)}); pelos clarões, ${ms(l?.claroes.mediana ?? null)} (${l?.claroes.n ?? 0} pares)`)
+    chk(r.n >= 100 && r.toques >= 4, `${r.quem}: a gravação tem quadros e toques que cheguem para medir (${r.n} quadros, ${r.toques} toques)`)
+    chk(!!l && l.n >= 100, `${r.quem}: a referência do browser tem quadros que cheguem (${l?.n ?? 0})`)
+    const erro = r.mediana !== null && l?.mediana != null ? r.mediana - l.mediana : null
+    chk(erro !== null && Math.abs(erro) <= TOLERANCIA, `${r.quem}: a gravação tem o som e a imagem como saíram do browser, a menos de ${TOLERANCIA} ms (erro da gravação: ${ms(erro)})`)
+    resumo.push({ cenario: nome, esperas, ...r, browser: l?.mediana ?? null, erro })
+  }
+  if (celulas === 1) {
+    const c = await veNoChromium(webm, publicadores[0].tom)
+    const l = ref[publicadores[0].nome]
+    const erro = c.mediana !== null && l?.claroes.mediana != null ? c.mediana - l.claroes.mediana : null
+    nota(`tocada no Chromium (pelos clarões): imagem − som = ${ms(c.mediana)} (${c.n} pares, de ${ms(c.min)} a ${ms(c.max)}); à saída do browser, ${ms(l?.claroes.mediana ?? null)}`)
+    chk(c.n >= 4 && erro !== null && Math.abs(erro) <= TOLERANCIA + 40, `no Chromium o som e a imagem também ficam como saíram (erro: ${ms(erro)}; medição mais grossa, folga de ${TOLERANCIA + 40} ms)`)
+    resumo.push({ cenario: `${nome} (Chromium, clarões)`, quem: 'A', ...c, browser: l?.claroes.mediana ?? null, erro })
   }
 }
 
@@ -397,8 +574,8 @@ if (quais.includes('grelha')) await grelha('grelha')
 if (quais.includes('tarde')) await grelha('tarde', { tarde: true })
 
 writeFileSync(join(SAIDA, 'resumo.json'), JSON.stringify(resumo, null, 2))
-console.log('\ncenário · quem · imagem − som (mediana, mínimo, máximo) · pares')
-for (const r of resumo) console.log(`  ${r.cenario} · ${r.quem ?? 'A'} · ${ms(r.mediana ?? null)} (${ms(r.min ?? null)} … ${ms(r.max ?? null)}) · ${r.n ?? 0}`)
+console.log('\ncenário · quem · imagem − som na gravação (mediana, 5 % … 95 %) · à saída do browser · ERRO DA GRAVAÇÃO · medições')
+for (const r of resumo) console.log(`  ${r.cenario} · ${r.quem ?? 'A'} · ${ms(r.mediana ?? null)} (${ms(r.min ?? null)} … ${ms(r.max ?? null)}) · ${r.browser === undefined ? '' : ms(r.browser)} · ${r.erro === undefined ? '' : ms(r.erro)} · ${r.n ?? 0}`)
 console.log(`\nficheiros em ${SAIDA}`)
 console.log(falhas === 0 ? '\n=== TODOS PASSARAM ===' : `\n=== ${falhas} FALHARAM ===`)
 process.exit(falhas === 0 ? 0 : 1)
