@@ -149,6 +149,18 @@ chamada_longa() {
   done
   SOFT=; return 1
 }
+# confere_ip <serviço> <endereço> — depois de o motor reiniciar um contentor,
+# ele ainda tem o endereço fixo? Uma corrida falhou, com o host a carga 30,
+# com este padrão: depois do reinício do FreeSWITCH nada ENTRAVA nele (a
+# chamada do softphone, o ESL do servidor) e o que SAÍA funcionava (o tronco
+# registava-se). A repetição passou e a causa não ficou apurada; isto é para a
+# próxima se saber se é o motor ou o Meet. Sem shell no contentor, não diz nada.
+confere_ip() {
+  local v; v=$(cx "$1" sh -c 'hostname -I 2>/dev/null' 2>/dev/null | tr -d '\r')
+  [ -z "$v" ] && return 0
+  case " $v " in *" $2 "*) return 0 ;; esac
+  bad "o motor devolveu o contentor $1 com o endereço «$v» em vez de $2 — o que se segue mede o motor, não o Meet"
+}
 espera_perfil() {
   local i
   for i in $(seq 1 90); do fs_cli "sofia status" | grep -Eq 'external[[:space:]]+profile.*RUNNING' && return 0; sleep 2; done
@@ -406,7 +418,7 @@ mede() {
   else bad "chamada ao IVR: o IVR correu $r vez(es), ficaram $v registo(s) em disco e $(( $(registos) - antes )) guardado(s) — esperava ≥1, 0 e 0"; fi
 
   echo "8) reiniciar o FreeSWITCH não deixa a instalação sem troncos"
-  m_restart "$P-freeswitch" >/dev/null 2>&1; espera_perfil
+  m_restart "$P-freeswitch" >/dev/null 2>&1; espera_perfil; confere_ip freeswitch "$FS_IP"
   if e=$(espera_gw "$gw" REGED $(( RESCAN * 3 + 30 ))); then ok "depois de reiniciar: $gw REGED"
   else bad "depois de reiniciar o gateway não voltou (estado: $e)"; fi
   # O servidor MORRE a meio de uma chamada de um ramal: o registo da perna do
@@ -451,11 +463,11 @@ mede() {
   # Com o servidor EM BAIXO no arranque o perfil não consegue perguntar pelos
   # troncos: fica sem nenhum. É o ciclo de releitura que os traz quando o
   # servidor volta — sem ele, só reiniciando outra vez.
-  m_restart "$P-freeswitch" >/dev/null 2>&1; espera_perfil; sleep $(( RESCAN + 3 ))
+  m_restart "$P-freeswitch" >/dev/null 2>&1; espera_perfil; confere_ip freeswitch "$FS_IP"; sleep $(( RESCAN + 3 ))
   e=$(estado_gw "$gw")
   [ -z "$e" ] && ok "controlo: com o servidor em baixo o FreeSWITCH arranca SEM o tronco" ||
     bad "com o servidor em baixo o gateway existe na mesma (estado $e) — o controlo não prova nada"
-  m_start "$P-server" >/dev/null 2>&1
+  m_start "$P-server" >/dev/null 2>&1; sleep 2; confere_ip server "$SERVER_IP"
   if e=$(espera_gw "$gw" REGED $(( RESCAN * 4 + 40 ))); then ok "o servidor volta, e o tronco regista-se sozinho"
   else bad "o servidor voltou e o tronco não apareceu (estado: $e)"; fi
   r=$(marca 923000222)
