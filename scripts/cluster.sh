@@ -39,7 +39,10 @@ ok() { printf "  %s✓%s %s\n" "$g" "$z" "$1"; }
 avisa() { printf "  %s!%s %s\n" "$y" "$z" "$1"; }
 morre() { printf "%s✗ %s%s\n" "$r" "$1" "$z" >&2; exit 1; }
 
-existe() { delonix cluster ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$CLUSTER_NAME"; }
+existe() {
+  local nomes
+  nomes=$(delonix cluster ls 2>/dev/null | awk 'NR>1 {print $1}') && grep -qx "$CLUSTER_NAME" <<<"$nomes"
+}
 kubeconfig() {
   (umask 077 && delonix cluster kubeconfig "$CLUSTER_NAME" >"$KUBECONFIG" 2>/dev/null) && [ -s "$KUBECONFIG" ] && chmod 600 "$KUBECONFIG"
 }
@@ -47,9 +50,10 @@ node_ip() { kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=
 
 # Publica uma porta do nó em 127.0.0.1. Idempotente: se já está, não repete.
 publica() {
-  local spec=$1
+  local spec=$1 publicadas
   # A listagem mostra a especificação inteira («13478:3478/udp»).
-  delonix net ingress ls "$NODE" 2>/dev/null | grep -q "publish[[:space:]]\+${spec}[[:space:]]" && return 0
+  publicadas=$(delonix net ingress ls "$NODE" 2>/dev/null) &&
+    grep -q "publish[[:space:]]\+${spec}[[:space:]]" <<<"$publicadas" && return 0
   delonix net ingress publish "$NODE" "$spec" >/dev/null 2>&1
 }
 
@@ -87,8 +91,9 @@ up)
     TELEPHONY_ESL_PASSWORD VOICE_CENTRAL_PASSWORD DATA_ENCRYPTION_KEYS; do
     [ -n "${!v:-}" ] || morre "o .env não tem ${v} — corre «make bootstrap»"
   done
+  no_motor=$(delonix image ls 2>/dev/null) || no_motor=
   for img in "delonix-server:${IMAGE_TAG}" "delonix-web:${IMAGE_TAG}"; do
-    delonix image ls 2>/dev/null | grep -q "${img%%:*}[[:space:]:].*${IMAGE_TAG}\|${img}" ||
+    grep -q "${img%%:*}[[:space:]:].*${IMAGE_TAG}\|${img}" <<<"$no_motor" ||
       morre "falta a imagem ${img} — corre «make build»"
   done
 
@@ -126,7 +131,8 @@ up)
   # browser onde ele está. A 3478 do host costuma estar ocupada pelo coturn
   # de desenvolvimento (`make infra`); nesse caso publica-se noutra.
   # Se uma corrida anterior já o publicou na porta alternativa, é essa que vale.
-  if delonix net ingress ls "$NODE" 2>/dev/null | grep -q "publish[[:space:]]\+13478:3478/udp[[:space:]]"; then
+  if publicadas=$(delonix net ingress ls "$NODE" 2>/dev/null) &&
+    grep -q "publish[[:space:]]\+13478:3478/udp[[:space:]]" <<<"$publicadas"; then
     TURN_PORT=13478
   else
     TURN_PORT=3478
