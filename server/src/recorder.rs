@@ -2620,10 +2620,11 @@ mod tests {
 
     #[test]
     fn um_recuo_de_um_segundo_ja_e_um_relogio_novo() {
-        // 49 pacotes atrás do mais novo: os primeiros `OPUS_RESYNC_AFTER` ficam
-        // atrás do último escrito, e chega. Nada se perde.
-        let recuo = (OPUS_RESYNC_AFTER + OPUS_REORDER_WINDOW) as u32 - 1;
-        let (escritos, total) = pela_pista(com_recuo_curto(recuo, 60));
+        // 49 pacotes atrás do mais novo (0,98 s): os primeiros
+        // `OPUS_RESYNC_AFTER` ficam atrás do último escrito, e chega. Nada se
+        // perde. O número é literal de propósito: é o que a R294 já lia como
+        // relógio novo, e subir o limiar ou a janela não o pode tirar daqui.
+        let (escritos, total) = pela_pista(com_recuo_curto(49, 60));
         let seguidos: Vec<(u16, u32)> = (0..160).map(|i| (i, u32::from(i) * 960)).collect();
         assert_eq!(escritos, seguidos);
         assert_eq!(
@@ -2641,7 +2642,7 @@ mod tests {
         // alcança o último escrito antes disso. Perde-se tudo até ele passar o
         // mais novo do relógio antigo — é o que acontecia antes da janela, e
         // não se distingue de uma rajada de atrasados.
-        let recuo = (OPUS_RESYNC_AFTER + OPUS_REORDER_WINDOW) as u32 - 2;
+        let recuo = 48;
         let (escritos, total) = pela_pista(com_recuo_curto(recuo, 60));
         assert_eq!(
             total,
@@ -2657,6 +2658,26 @@ mod tests {
         esperados
             .extend((primeiro_novo..160).map(|s| (s, u32::from(s - primeiro_novo + 100) * 960)));
         assert_eq!(escritos, esperados);
+    }
+
+    #[test]
+    fn o_que_nao_se_escreve_quando_o_relogio_novo_entra_tambem_se_conta() {
+        // Um repetido ainda à espera na janela quando o relógio novo entra: a
+        // janela sai toda, ele é recusado — e tem de aparecer na conta (R18).
+        let n = OPUS_RESYNC_AFTER as u16;
+        let mut chegada = falados(100, 28_800_000);
+        chegada.push(chegada[99].clone());
+        chegada.extend((0..n).map(|j| pacote_opus(100 + j, u32::from(j) * 960)));
+        let (escritos, total) = pela_pista(chegada);
+        let seguidos: Vec<(u16, u32)> = (0..100 + n).map(|i| (i, u32::from(i) * 960)).collect();
+        assert_eq!(escritos, seguidos);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 1,
+                resynced: true
+            }
+        );
     }
 
     #[test]
