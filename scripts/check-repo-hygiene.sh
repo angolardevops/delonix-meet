@@ -280,32 +280,47 @@ if [ -n "$marcadores" ]; then
   fail=1
 fi
 
-# R298 — nenhum portão decide pelo estado de um `… | grep -q`.
+# R298, R301 — nenhum script decide pelo estado de um `… | grep -q`.
 #
-# Todos os `scripts/check-*.sh` correm com `pipefail`. Um `grep -q` sai à
-# primeira correspondência; se o produtor ainda estiver a escrever, morre com
-# SIGPIPE, o pipeline dá erro, e o `||` ou o `&&` a seguir lê «não encontrado»
-# quando a resposta era «encontrado». Este ficheiro acusou assim referências a
-# regressões que existiam, em 4 corridas de 50, sem nada ter mudado na árvore.
+# Os `scripts/*.sh` correm com `pipefail` (o `motor.sh` por via de quem o
+# inclui). Um `grep -q` sai à primeira correspondência; se o produtor ainda
+# estiver a escrever, morre com SIGPIPE, o pipeline dá erro, e o `||` ou o `&&`
+# a seguir lê «não encontrado» quando a resposta era «encontrado». Este
+# ficheiro acusou assim referências a regressões que existiam, em 4 corridas
+# de 50 (R298); o `make cluster` disse «falta a imagem» com a imagem lá, em
+# mais de um terço das voltas com o host carregado (R301).
 # A forma segura não tem produtor que possa morrer: `grep -q … <<<"$variavel"`
-# ou `grep -q … ficheiro`.
+# ou `grep -q … ficheiro`. Onde o estado do produtor contava, continua a
+# contar: `v=$(produtor) && grep -q … <<<"$v"`.
+#
+# Vale para todos os scripts, e não só para os portões: a regex não distingue
+# um veredicto de um ciclo de espera, e um «às vezes falha» numa prova de voz
+# custa o mesmo hábito de correr outra vez até dar verde.
 #
 # Vê o `grep`, o `egrep` e o `fgrep`, com caminho, com `command`/`xargs` ou
-# uma variável à frente, e o `-q` em qualquer posição entre as opções.
+# uma variável à frente, e o `-q` em qualquer posição entre as opções — na
+# mesma linha da barra, ou na linha seguinte quando a anterior acaba na barra.
 #
-# Limite honesto: só vê o `-q` (ou `--quiet`) na MESMA linha da barra, e não
-# distingue uma barra dentro de uma cadeia de texto nem um comentário no fim
-# de uma linha de código (falha fechado). Um `| head -1` cujo estado decida
+# Limite honesto: não distingue uma barra dentro de uma cadeia de texto nem um
+# comentário no fim de uma linha de código (falha fechado), e não segue um
+# pipe partido em três linhas ou mais. Um `| head -1` cujo estado decida
 # alguma coisa, ou outro consumidor que saia cedo (`grep -m`, `awk … exit`),
 # é revisão.
-pipes_q=$(grep -nHE '(^|[^|])\|&?[[:space:]]*([A-Za-z_]+=[^[:space:]]*[[:space:]]+)*((command|xargs)[[:space:]]+)?([^[:space:]|]*/)?[ef]?grep[[:space:]]([^|;&)]*[[:space:]])?(-[A-Za-z0-9]*q[A-Za-z0-9]*|--quiet|--silent)([[:space:];)|&]|$)' scripts/check-*.sh \
+grep_q='([A-Za-z_]+=[^[:space:]]*[[:space:]]+)*((command|xargs)[[:space:]]+)?([^[:space:]|]*/)?[ef]?grep[[:space:]]([^|;&)]*[[:space:]])?(-[A-Za-z0-9]*q[A-Za-z0-9]*|--quiet|--silent)([[:space:];)|&]|$)'
+pipes_q=$(grep -nHE "(^|[^|])\\|&?[[:space:]]*$grep_q" scripts/*.sh \
           | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+# A barra no fim de uma linha e o `grep -q` no princípio da seguinte.
+pipes_q2=$(awk -v cmd="^[[:space:]]*$grep_q" '
+  FNR == 1 { barra = 0 }
+  barra && $0 ~ cmd { print FILENAME ":" FNR ":" $0 }
+  { barra = ($0 !~ /^[[:space:]]*#/ && $0 ~ /[^|]\|&?[[:space:]]*\\?$/) }' scripts/*.sh)
+pipes_q=$(printf '%s\n%s\n' "$pipes_q" "$pipes_q2" | sed '/^$/d')
 if [ -n "$pipes_q" ]; then
-  echo "✗ higiene: um portão decide pelo estado de um pipe para \`grep -q\`, com pipefail (SIGPIPE dá falso «não encontrado»):"
+  echo "✗ higiene: um script decide pelo estado de um pipe para \`grep -q\`, com pipefail (SIGPIPE dá falso «não encontrado»):"
   echo "$pipes_q" | sed 's/^/     /'
-  echo '     Lê para uma variável e usa `grep -q … <<<"$variavel"`.'
+  echo '     Lê para uma variável e usa `grep -q … <<<"$variavel"` (com `v=$(produtor) && …` se o estado do produtor contar).'
   fail=1
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; nenhum portão a decidir por um pipe para «grep -q»; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros"
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; nenhum script a decidir por um pipe para «grep -q»; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros"
 exit $fail
