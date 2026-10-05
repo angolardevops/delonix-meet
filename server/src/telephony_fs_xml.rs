@@ -111,6 +111,18 @@ pub fn dialplan_extension(
     // que ela origina DEPOIS de aplicar as variáveis da dial string
     // (switch_core_session.c). Sem isto a chamada de um ramal saía pelo
     // tronco e não deixava registo: não se cobrava (R292, medido).
+    //
+    // Mais três coisas na perna do tronco, todas medidas ou lidas no fonte:
+    // - `unset switch_m_sdp`: ao originar, o FreeSWITCH copia para ela o SDP
+    //   que quem marcou ofereceu — com a chave SRTP dele —, e o registo leva
+    //   todas as variáveis. Só o modo proxy lê essa cópia.
+    // - `outbound_redirect_fatal`: um 3xx da operadora não é seguido. Segui-lo
+    //   era ligar a um destino que a operadora escolhe (e que não passou pela
+    //   guarda de saída, R213), ou a outro número por conta da organização.
+    // - na perna de quem marca, `sip_copy_custom_headers=false`: os
+    //   cabeçalhos `X-…`/`P-…` do INVITE do ramal iam para a operadora — um
+    //   `P-Asserted-Identity` escrito pelo telefone, por exemplo.
+    act("set", "sip_copy_custom_headers=false".into());
     act("set", "delonix_cdr_skip=true".into());
     act("export", format!("delonix_org_id={org_id}"));
     act("export", "delonix_direction=outbound".into());
@@ -139,7 +151,7 @@ pub fn dialplan_extension(
                     act(
                         "bridge",
                         format!(
-                            "[delonix_trunk_id={},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/{gw}/{wire_number}",
+                            "[delonix_trunk_id={},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/{gw}/{wire_number}",
                             leg.trunk_id
                         ),
                     );
@@ -147,7 +159,7 @@ pub fn dialplan_extension(
                     act(
                         "limit_execute",
                         format!(
-                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/{gw}/{wire_number}",
+                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/{gw}/{wire_number}",
                             leg.trunk_id, leg.max_channels, leg.trunk_id
                         ),
                     );
@@ -316,28 +328,15 @@ async fn dialplan(state: &AppState, form: &HashMap<String, String>) -> Result<Re
     if form.get("Caller-Context").map(String::as_str) != Some(OUTBOUND_CONTEXT) {
         return Ok(xml(not_found()));
     }
-    // A org: a variável que nós pusemos, ou o domínio SIP de quem liga.
-    let org_id = match form
+    // A organização que paga é a variável que NÓS pusemos no canal — o Lua
+    // dos ramais (com a identidade que o digest autenticou), a chamada de
+    // teste pelo ESL — e mais nada. Havia um recuo para o host do Request-URI
+    // (`sip_req_host`): um dado que quem liga escreve. Sem a variável, não há
+    // rota (R292).
+    let Some(org_id) = form
         .get("variable_delonix_org_id")
         .and_then(|v| Uuid::parse_str(v).ok())
-    {
-        Some(o) => Some(o),
-        None => match form
-            .get("variable_sip_req_host")
-            .or_else(|| form.get("variable_domain_name"))
-        {
-            Some(host) => {
-                sqlx::query_scalar(
-                    "SELECT org_id FROM telephony_sip_settings WHERE lower(domain) = lower($1)",
-                )
-                .bind(host)
-                .fetch_optional(&state.db)
-                .await?
-            }
-            None => None,
-        },
-    };
-    let Some(org_id) = org_id else {
+    else {
         return Ok(xml(not_found()));
     };
     let destination = form
@@ -510,12 +509,12 @@ mod tests {
         assert!(x.contains(r#"expression="^923447108$""#));
         let ia = x
             .find(&format!(
-                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/dlx-{a}/244923447108"
+                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{a}/244923447108"
             ))
             .unwrap();
         let ib = x
             .find(&format!(
-                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/dlx-{b}/244923447108"
+                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{b}/244923447108"
             ))
             .unwrap();
         assert!(ia < ib, "a ordem de failover é a da resolução");
@@ -544,7 +543,7 @@ mod tests {
         assert!(x.contains("delonix_record=false"));
         assert!(!x.contains("limit_execute"));
         assert!(x.contains(&format!(
-            r#"application="bridge" data="[delonix_trunk_id={a},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/dlx-{a}/112""#
+            r#"application="bridge" data="[delonix_trunk_id={a},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{a}/112""#
         )));
     }
 

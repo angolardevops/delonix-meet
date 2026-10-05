@@ -95,6 +95,13 @@ sed -i 's#<domain name="all" alias="false" parse="true"/>#<domain name="delonix-
   "$CONF/sip_profiles/external.xml"
 grep -q '<domain name="delonix-trunks" alias="false" parse="true"/>' "$CONF/sip_profiles/external.xml" ||
   { echo "não consegui pôr o domínio dos troncos no perfil external" >&2; exit 1; }
+#     Sem transferências (REFER) no perfil dos troncos: um REFER vindo do
+#     lado da operadora punha a perna de quem marcou a passar outra vez pelo
+#     plano de marcação, com a organização dela e para onde a operadora
+#     mandasse (R292). O dos ramais tem a mesma regra, em internal.xml.
+sed -i 's#<settings>#&\n    <param name="disable-transfer" value="true"/>#' "$CONF/sip_profiles/external.xml"
+grep -q '<param name="disable-transfer" value="true"/>' "$CONF/sip_profiles/external.xml" ||
+  { echo "não consegui desligar as transferências no perfil external" >&2; exit 1; }
 
 # 8. Um só endereço do servidor: tudo o que o FreeSWITCH lhe pede — o IVR do
 #    dial-in, o directório e o dialplan dos ramais (mod_xml_curl) e o

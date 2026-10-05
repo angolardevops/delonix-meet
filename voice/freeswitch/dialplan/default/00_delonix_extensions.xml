@@ -24,7 +24,7 @@
 <include>
   <context name="delonix_ramais">
     <extension name="delonix_ramal_a_ramal">
-      <condition field="destination_number" expression="^\+?\d{3,15}$">
+      <condition field="destination_number" expression="^\+?\d{2,15}$">
         <!-- Um ramal que marca o número de acesso passa ao IVR e dá o PIN por DTMF, e o FreeSWITCH escreve cada dígito recebido
              no log ("RECV DTMF 3:1600"): quem lê o log reconstrói o PIN. Esta
              variável cala essa linha para a chamada inteira (R227). -->

@@ -17,6 +17,15 @@
         <action application="respond" data="503 Service Unavailable"/>
       </condition>
     </extension>
+    <!-- Termina em 888: uma chamada LONGA, para a prova fazer coisas a meio
+         (pedir uma transferência, deitar o servidor abaixo). -->
+    <extension name="longa">
+      <condition field="destination_number" expression="888$">
+        <action application="answer"/>
+        <action application="playback" data="tone_stream://%(25000,0,440)"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
     <extension name="atende">
       <condition field="destination_number" expression="^\+?\d+$">
         <action application="ring_ready"/>

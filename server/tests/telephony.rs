@@ -805,6 +805,27 @@ async fn cdr_ingestion_idempotent_priced_at_time_of_call_listed_and_summed(db: s
         (st, e["code"].as_str()),
         (422, Some("telephony.cdr_org_unresolved"))
     );
+    // A marca de «ignorar» não vale para uma perna que saiu por um tronco: é
+    // uma variável de canal, e uma perna de tronco transferida fica com ela.
+    let mut transferida = cdr(
+        "call-transferida",
+        a.org(),
+        &uni,
+        sep15,
+        30,
+        "NORMAL_CLEARING",
+    );
+    transferida["variables"]["delonix_cdr_skip"] = json!("true");
+    let (st, _) = ingest(&app, Some(&auth), &transferida).await;
+    assert_eq!(
+        st, 201,
+        "uma perna de tronco marcada para ignorar ficou sem registo"
+    );
+    // Fora das somas que este teste confere mais abaixo.
+    sqlx::query("DELETE FROM telephony_call_records WHERE source_call_id = 'call-transferida'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let guardadas: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM telephony_call_records WHERE source_call_id IN ('call-x', 'call-interna')",
     )
@@ -1294,7 +1315,7 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
     assert_eq!(st, 200);
     assert!(
         x.contains(&format!(
-            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/dlx-{uni}/244923447108"
+            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{uni}/244923447108"
         )),
         "{x}"
     );
@@ -1314,6 +1335,32 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
         x.contains("404 Not Found"),
         "número inválido nunca cai no plano por omissão: {x}"
     );
+    // Sem a organização que NÓS pomos no canal não há rota: o domínio SIP que
+    // vem no pedido (o host do Request-URI) é escrito por quem liga, e não
+    // escolhe quem paga.
+    // A pré-condição do recuo antigo: a organização TEM um domínio SIP, e era
+    // por ele que o servidor a ia buscar.
+    let dominio = "sip.alfa-saida.ao";
+    let (st, sip) = app
+        .put(
+            &t(a.org(), "/sip-settings"),
+            Some(&a.token),
+            json!({"domain": dominio, "transport": "tls", "srtp": "mandatory",
+                   "codecs": ["opus"], "username": "alfa", "password": "sip-secreta-123"}),
+        )
+        .await;
+    assert_eq!((st, sip["domain"].as_str()), (200, Some(dominio)), "{sip}");
+    for campo in ["variable_sip_req_host", "variable_domain_name"] {
+        let (_, x) = post(
+            format!("section=dialplan&Caller-Context=delonix-outbound&Hunt-Destination-Number=923447108&{campo}={dominio}"),
+            Some(basic(SECRET)),
+        )
+        .await;
+        assert!(
+            x.contains(r#"status="not found""#) && !x.contains("sofia/gateway"),
+            "{campo} escolheu a organização que paga: {x}"
+        );
+    }
     // Outra secção ou contexto: «not found» (o FreeSWITCH usa o seu).
     let (_, x) = post(
         "section=dialplan&Caller-Context=public&Hunt-Destination-Number=1".into(),

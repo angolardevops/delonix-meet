@@ -114,6 +114,21 @@ espera_registos() { local i; for i in $(seq 1 "$2"); do [ "$(registos)" -ge "$1"
 marca() {
   fs_cli "originate {origination_caller_id_number=244222000000,delonix_org_id=$ORG,delonix_cdr_skip=true,originate_timeout=20,absolute_codec_string=PCMA,export_vars=absolute_codec_string}loopback/$1/delonix-outbound &park()" | tr -d '\r' | grep -a -E '^[+-](OK|ERR)' | tail -1
 }
+# chamada_longa <password> <utilizador> <domínio> <ficheiro de saída> — um
+# softphone a ligar para 923000888 (a operadora atende 25 s), em fundo. Devolve
+# em $SOFT o contentor dele quando a chamada está estabelecida (vazio se não).
+chamada_longa() {
+  local i
+  SOFT=
+  ( SOFTPHONE_PASSWORD=$1 bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+      --utilizador "$2" --dominio "$3" --destino 923000888 --segundos 14 > "$4" 2>&1 ) &
+  for i in $(seq 1 90); do
+    SOFT=$(docker ps --format '{{.Names}}' | grep -E '^sp[0-9]+-a$' | head -1)
+    [ -n "$SOFT" ] && docker logs "$SOFT" 2>&1 | grep -q 'Call established' && return 0
+    sleep 0.5
+  done
+  SOFT=; return 1
+}
 espera_perfil() {
   local i
   for i in $(seq 1 90); do fs_cli "sofia status" | grep -Eq 'external[[:space:]]+profile.*RUNNING' && return 0; sleep 2; done
@@ -167,7 +182,7 @@ up() {
 
 # ------------------------------------------------------------ mede
 mede() {
-  local r st corpo senha op trunk gw e antes v pendentes=0
+  local r st corpo senha op trunk gw e antes v pendentes=0 SOFT=
   senha=$(env_ ADMIN_PASSWORD); op=$(env_ OPERADORA_PASSWORD)
 
   echo "1) o administrador cria a organização, o tronco e o plano de marcação — pela API"
@@ -272,6 +287,24 @@ mede() {
   grep -q 'a: chamada estabelecida' <<<"$saida" && [ "$v" = "1 t f" ] && ok "ramal 1001 → 112: sai, marcada como emergência, não gravada" ||
     bad "o 112 marcado pelo ramal: registo «$v», softphone: $(grep -E '✗' <<<"$saida" | head -1)"
 
+  # Uma transferência cega pedida pelo ramal a meio da chamada. Aceite, a
+  # perna do TRONCO voltava a passar pelo plano de marcação: saía uma segunda
+  # chamada para onde o ramal mandasse, e a primeira ficava marcada para o
+  # servidor ignorar — cobrável e sem registo.
+  antes=$(registos)
+  if chamada_longa "$pw_a" "$ramal" "$dom_a" "$ESTADO/transferencia.out"; then
+    sleep 2
+    docker exec "$SOFT" sh -c "printf '/transfer sip:923000999@$dom_a\n' | nc -u -w1 127.0.0.1 55551" >/dev/null 2>&1
+    wait; sleep 8
+    v=$(psql_ -c "SELECT count(*) FROM telephony_call_records WHERE to_number LIKE '%923000999'")
+    r=$("${COMPOSE[@]}" exec -T operadora sh -c "grep -a -c '923000999' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
+    [ "$v" = 0 ] && [ "${r:-1}" = 0 ] && ok "transferência cega pedida pelo ramal: recusada — nenhuma chamada saiu para o número pedido" ||
+      bad "a transferência cega pedida pelo ramal fez sair uma chamada ($v registo(s); $r linha(s) no log da operadora)"
+    espera_registos $(( antes + 1 )) 20
+    v=$(psql_ -c "SELECT count(*) FROM telephony_call_records WHERE org_id='$ORG' AND to_number LIKE '%923000888' AND outcome='answered'")
+    [ "$v" = 1 ] && ok "e a chamada em que foi pedida deixou o seu registo" || bad "a chamada em que a transferência foi pedida ficou SEM registo ($v)"
+  else wait; bad "a chamada longa do ramal não se estabeleceu — a transferência não foi medida"; grep -E '✗' "$ESTADO/transferencia.out" | head -2 | sed 's/^/       /'; fi
+
   # Controlos negativos: o que NÃO pode sair.
   antes=$(registos)
   saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
@@ -315,29 +348,36 @@ mede() {
   "${COMPOSE[@]}" restart freeswitch >/dev/null 2>&1; espera_perfil
   if e=$(espera_gw "$gw" REGED $(( RESCAN * 3 + 30 ))); then ok "depois de reiniciar: $gw REGED"
   else bad "depois de reiniciar o gateway não voltou (estado: $e)"; fi
-  # Com o servidor EM BAIXO no arranque o perfil não consegue perguntar pelos
-  # troncos: fica sem nenhum. É o ciclo de releitura que os traz quando o
-  # servidor volta — sem ele, só reiniciando outra vez.
-  "${COMPOSE[@]}" stop server >/dev/null 2>&1
-  "${COMPOSE[@]}" restart freeswitch >/dev/null 2>&1; espera_perfil; sleep $(( RESCAN + 3 ))
-  e=$(estado_gw "$gw")
-  [ -z "$e" ] && ok "controlo: com o servidor em baixo o FreeSWITCH arranca SEM o tronco" ||
-    bad "com o servidor em baixo o gateway existe na mesma (estado $e) — o controlo não prova nada"
-  # E um registo que o servidor não recebe fica em disco, num directório só
-  # do FreeSWITCH — é o controlo do «nada por entregar» do passo 10.
-  # O módulo tenta três vezes, com cinco segundos de espera cada: conta-se
-  # quando o número de ficheiros deixa de mexer.
-  marca 923000333 >/dev/null
+  # O servidor MORRE a meio de uma chamada de um ramal: o registo da perna do
+  # tronco não tem a quem ser entregue e fica em disco. É o controlo do «nada
+  # por entregar» do passo 10 — e a única maneira de LER um registo destes: a
+  # perna do tronco recebe do FreeSWITCH uma cópia do SDP que o ramal ofereceu,
+  # com a chave SRTP dele (`switch_m_sdp`), e o registo leva todas as variáveis.
+  if chamada_longa "$pw_a" "$ramal" "$dom_a" "$ESTADO/a-meio.out"; then
+    sleep 1; "${COMPOSE[@]}" kill server >/dev/null 2>&1
+    wait
+  else wait; bad "a chamada longa do ramal não se estabeleceu — o registo em disco não foi medido"; "${COMPOSE[@]}" kill server >/dev/null 2>&1; fi
   local i anterior=-1
-  for i in $(seq 1 15); do
+  for i in $(seq 1 20); do
     sleep 4
     pendentes=$("${COMPOSE[@]}" exec -T freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
     [ "${pendentes:-0}" -ge 1 ] && [ "$pendentes" = "$anterior" ] && break
     anterior=$pendentes
   done
   v=$("${COMPOSE[@]}" exec -T freeswitch stat -c %a /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | tr -d '[:space:]')
-  [ "${pendentes:-0}" -ge 1 ] && [ "$v" = 700 ] && ok "controlo: sem servidor, o registo da chamada fica em disco ($pendentes ficheiro(s), directório 700)" ||
-    bad "sem servidor ficaram ${pendentes:-0} registo(s) em disco, num directório com permissões «$v» — esperava pelo menos 1, em 700"
+  r=$("${COMPOSE[@]}" exec -T freeswitch sh -c "grep -l -a 'sip_gateway_name' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes/* 2>/dev/null | wc -l" | tr -d '[:space:]')
+  [ "${pendentes:-0}" -ge 1 ] && [ "${r:-0}" -ge 1 ] && [ "$v" = 700 ] && ok "controlo: sem servidor, o registo da perna do tronco fica em disco ($pendentes ficheiro(s), directório 700)" ||
+    bad "sem servidor ficaram ${pendentes:-0} registo(s) em disco ($r de uma perna de tronco), directório «$v» — esperava a perna do tronco, em 700"
+  r=$("${COMPOSE[@]}" exec -T freeswitch sh -c "grep -l -a -i -e 'inline%3A' -e 'inline:' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes/* 2>/dev/null | wc -l" | tr -d '[:space:]')
+  [ "${pendentes:-0}" -ge 1 ] && [ "${r:-1}" = 0 ] && ok "o registo da perna do tronco não leva a chave SRTP do ramal" ||
+    bad "$r registo(s) em disco levam uma chave SRTP (a=crypto … inline:) — a do ramal vai na perna do tronco"
+  # Com o servidor EM BAIXO no arranque o perfil não consegue perguntar pelos
+  # troncos: fica sem nenhum. É o ciclo de releitura que os traz quando o
+  # servidor volta — sem ele, só reiniciando outra vez.
+  "${COMPOSE[@]}" restart freeswitch >/dev/null 2>&1; espera_perfil; sleep $(( RESCAN + 3 ))
+  e=$(estado_gw "$gw")
+  [ -z "$e" ] && ok "controlo: com o servidor em baixo o FreeSWITCH arranca SEM o tronco" ||
+    bad "com o servidor em baixo o gateway existe na mesma (estado $e) — o controlo não prova nada"
   "${COMPOSE[@]}" start server >/dev/null 2>&1
   if e=$(espera_gw "$gw" REGED $(( RESCAN * 4 + 40 ))); then ok "o servidor volta, e o tronco regista-se sozinho"
   else bad "o servidor voltou e o tronco não apareceu (estado: $e)"; fi
@@ -372,10 +412,11 @@ mede() {
   v=$("${COMPOSE[@]}" exec -T freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
   [ "${v:-99}" = "${pendentes:-0}" ] && ok "com o servidor de pé nenhum registo ficou por entregar (em disco só os $pendentes do controlo)" ||
     bad "ficaram $v registo(s) em disco, e o controlo só explica ${pendentes:-0}: o servidor recusou os outros"
-  # Seis chamadas saíram por um tronco (duas delas marcadas pelo ramal); as
-  # pernas de quem marcou e as que não passaram por tronco nenhum não contam.
+  # Oito chamadas saíram por um tronco (quatro delas marcadas pelo ramal); a
+  # que apanhou o servidor em baixo ficou em disco, as outras sete chegaram.
+  # As pernas de quem marcou e as que não passaram por tronco nenhum não contam.
   v=$(registos)
-  [ "$v" = 6 ] && ok "seis chamadas por tronco, seis registos — nem um a mais" || bad "a organização tem $v registos de chamada, e saíram 6 chamadas por tronco"
+  [ "$v" = 7 ] && ok "sete chamadas por tronco entregues, sete registos — nem um a mais" || bad "a organização tem $v registos de chamada, e chegaram ao servidor 7 chamadas por tronco"
   v=$(fs_log | grep -ac "$(env_ VOICE_INTERNAL_SECRET)")
   [ "${v:-1}" -eq 0 ] && ok "o segredo de voz não aparece no freeswitch.log" || bad "o segredo de voz aparece $v vez(es) no freeswitch.log"
   # O que ficou em disco (os registos do controlo) não leva segredos nem chaves.

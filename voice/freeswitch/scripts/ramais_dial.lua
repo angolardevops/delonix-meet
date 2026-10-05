@@ -47,8 +47,10 @@ local function http_post(path, body)
   -- antiga (`post content-type=… '<corpo>' '<cabeçalho>'`) o módulo tomava
   -- «content-type=application/json» pelo corpo e mandava o pedido sem
   -- Content-Type nem segredo: o servidor respondia 415 e todo o PIN era «errado».
+  -- Com tempo-limite: sem ele uma chamada — o 112 incluído — ficava pendurada
+  -- o tempo que o control plane demorasse a não responder.
   local args = string.format(
-    "%s%s content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
+    "%s%s connect-timeout 3 timeout 6 content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
     control_url, path, secret, body)
   -- Pela API do mod_curl, e não pela aplicação de dialplan (R227): os
   -- argumentos de uma aplicação — o segredo e, no IVR, o PIN — ficam escritos
@@ -83,7 +85,8 @@ local auth_realm = session:getVariable("sip_auth_realm") or ""
 
 -- Nada do que vai para o JSON pode fechar a cadeia de caracteres: o destino
 -- vem do padrão do dialplan (dígitos e «+»); o resto, por via das dúvidas.
-local function limpo(s) return (s:gsub('[%c"\\]', "")) end
+-- Nem a plica, que delimita o corpo no argumento do mod_curl.
+local function limpo(s) return (s:gsub("[%c\"'\\]", "")) end
 
 local body = string.format('{"domain":"%s","extension":"%s","auth_user":"%s","auth_realm":"%s"}',
   limpo(domain), limpo(destination), limpo(auth_user), limpo(auth_realm))
