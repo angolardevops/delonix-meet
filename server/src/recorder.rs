@@ -53,6 +53,35 @@ fn decrypt_e2ee(key: &Aes256Gcm, data: &[u8], offset: usize) -> Option<Vec<u8>> 
     Some(out)
 }
 
+/// Este pacote é o INÍCIO de um quadro VP8 — o primeiro pacote da primeira
+/// partição (bit S do descritor e PID a zero, RFC 7741 §4.2)?
+///
+/// Só nesse pacote o primeiro byte do payload é o cabeçalho do quadro. Em
+/// todos os outros é dado comprimido, e lê-lo como cabeçalho é ler ruído.
+fn vp8_frame_start(depack: &Vp8Packet) -> bool {
+    depack.s == 1 && depack.pid == 0
+}
+
+/// Este pacote abre um KEYFRAME VP8? `vp8` é o payload já sem o descritor.
+///
+/// O bit de keyframe é o bit 0 do cabeçalho do quadro, a zero (RFC 6386 §9.1),
+/// e só existe no pacote que inicia o quadro. A guarda antiga lia-o em
+/// qualquer pacote: uma continuação de um quadro delta com o primeiro byte par
+/// passava por keyframe, e a pista abria a meio de um quadro que nenhum
+/// descodificador aceita (R297).
+fn vp8_starts_keyframe(depack: &Vp8Packet, vp8: &[u8]) -> bool {
+    vp8_frame_start(depack) && vp8.first().is_some_and(|b| b & 0x01 == 0)
+}
+
+/// O mesmo, a partir do pacote RTP inteiro — é o que o `RecWriter` usa para
+/// saber, do lado de quem entrega, se a pista já tem o keyframe que a abre.
+fn rtp_starts_vp8_keyframe(pkt: &webrtc::rtp::packet::Packet) -> bool {
+    let mut depack = Vp8Packet::default();
+    depack
+        .depacketize(&pkt.payload)
+        .is_ok_and(|vp8| vp8_starts_keyframe(&depack, &vp8))
+}
+
 /// IVF (VP8) com PTS em milissegundos derivados do timestamp RTP (90 kHz) —
 /// o writer da lib usa um contador de frames, o que acelera/atrasa o vídeo
 /// quando o fps varia; este mantém o tempo real.
@@ -111,17 +140,15 @@ impl Vp8IvfWriter {
         if payload.is_empty() {
             return Ok(());
         }
-        let is_key = payload[0] & 0x01 == 0;
-        // Espera pelo primeiro keyframe; frames a meio sem início são descartados.
+        // A pista só abre num keyframe verdadeiro: tudo o que chega antes —
+        // quadros delta inteiros e os seus pacotes de continuação — fica de fora.
         if !self.seen_key {
-            if !(is_key && self.frame.is_empty() && depack.is_partition_head(&pkt.payload))
-                && !is_key
-            {
+            if !vp8_starts_keyframe(&depack, &payload) {
                 return Ok(());
             }
             self.seen_key = true;
         }
-        if self.frame.is_empty() && !depack.is_partition_head(&pkt.payload) {
+        if self.frame.is_empty() && !vp8_frame_start(&depack) {
             return Ok(()); // meio de um frame que não começámos
         }
         self.frame.extend_from_slice(&payload);
@@ -184,6 +211,10 @@ enum RecSink {
 }
 
 impl RecSink {
+    fn is_video(&self) -> bool {
+        matches!(self, RecSink::Video(_))
+    }
+
     fn write_rtp(&mut self, pkt: &webrtc::rtp::packet::Packet) {
         match self {
             RecSink::Video(w) => {
@@ -233,6 +264,11 @@ pub struct RecWriter {
     tx: Option<std::sync::mpsc::SyncSender<Box<webrtc::rtp::packet::Packet>>>,
     join: Option<std::thread::JoinHandle<()>>,
     dropped: Arc<std::sync::atomic::AtomicU64>,
+    /// Aceso enquanto a pista de VÍDEO não tiver recebido o keyframe que a
+    /// abre (ver `wants_keyframe`). Numa pista de áudio nasce apagado.
+    awaiting_key: std::sync::atomic::AtomicBool,
+    /// Quando o writer foi ligado — para dizer quanto a pista esperou pelo keyframe.
+    opened: Instant,
     metrics: Arc<crate::metrics::Metrics>,
     label: String,
 }
@@ -244,6 +280,7 @@ impl RecWriter {
         metrics: Arc<crate::metrics::Metrics>,
         label: String,
     ) -> Self {
+        let awaiting_key = std::sync::atomic::AtomicBool::new(sink.is_video());
         let (tx, rx) = std::sync::mpsc::sync_channel::<Box<webrtc::rtp::packet::Packet>>(cap);
         let join = std::thread::Builder::new()
             .name(format!("dlx-rec-{label}"))
@@ -263,6 +300,8 @@ impl RecWriter {
             tx: Some(tx),
             join: Some(join),
             dropped: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            awaiting_key,
+            opened: Instant::now(),
             metrics,
             label,
         }
@@ -271,7 +310,22 @@ impl RecWriter {
     /// Entrega um pacote à thread de escrita. NUNCA bloqueia o executor.
     pub fn write_rtp(&self, pkt: &webrtc::rtp::packet::Packet) {
         let Some(tx) = &self.tx else { return };
-        if tx.try_send(Box::new(pkt.clone())).is_err() {
+        use std::sync::atomic::Ordering::Relaxed;
+        // Decidido AQUI, com o mesmo predicado que o `Vp8IvfWriter` aplica na
+        // thread de escrita, e só dado por certo se o pacote entrar na fila:
+        // assim quem entrega sabe na hora se a pista já abriu, sem esperar
+        // que a thread lá chegue — e não pede um keyframe que já tem em mão.
+        let opens = self.awaiting_key.load(Relaxed) && rtp_starts_vp8_keyframe(pkt);
+        if tx.try_send(Box::new(pkt.clone())).is_ok() {
+            if opens {
+                self.awaiting_key.store(false, Relaxed);
+                tracing::debug!(
+                    track = %self.label,
+                    espera_ms = self.opened.elapsed().as_millis() as u64,
+                    "gravação: a pista de vídeo abriu no seu keyframe"
+                );
+            }
+        } else {
             // Fila cheia (o disco não acompanha) ou thread morta. Perde-se o
             // pacote — a alternativa era bloquear o executor, que é pior. Conta-se
             // SEMPRE: é isto que transforma «a gravação saiu estranha» num número.
@@ -289,6 +343,19 @@ impl RecWriter {
                 );
             }
         }
+    }
+
+    /// A pista de vídeo ainda espera pelo keyframe que a abre?
+    ///
+    /// O gravador é um consumidor de vídeo como outro qualquer: só começa num
+    /// keyframe, e o codificador do browser só manda um quando lho pedem. Um
+    /// subscritor pede-o sozinho (PLI) enquanto não descodifica; o gravador não
+    /// tem essa via de volta, por isso é o SFU que pergunta aqui e pede por ele
+    /// — ao ligar o writer e, na bomba de RTP, enquanto a resposta for `true`
+    /// (o pedido pode ter sido travado pelo intervalo mínimo entre PLI, ou
+    /// ter-se perdido na rede, que é UDP).
+    pub fn wants_keyframe(&self) -> bool {
+        self.awaiting_key.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Pacotes perdidos por fila cheia nesta track. `> 0` = gravação degradada.
@@ -1511,6 +1578,149 @@ mod tests {
         assert_eq!((w_px, h_px), (320, 240));
         // E é isso que a biblioteca recebe (G4).
         assert_eq!(ivf_dims(&path).await, Some((320, 240)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    //  A pista de vídeo só abre num keyframe verdadeiro (R297)
+    // ------------------------------------------------------------------
+    //
+    // Uma gravação arrancada a meio da chamada liga o writer a um fluxo que já
+    // vai em quadros delta. O bit de keyframe só existe no pacote que INICIA o
+    // quadro; a guarda antiga lia-o em qualquer pacote, e uma continuação com o
+    // primeiro byte par (metade delas) abria a pista a meio de um quadro delta
+    // — três pistas em três que o ffmpeg não descodificava.
+
+    /// Um pacote VP8 qualquer: `descritor` é o byte do descritor do payload
+    /// (`0x10` = S, início de partição; os 3 bits baixos são o PID) e
+    /// `primeiro` o primeiro byte do que vem a seguir.
+    fn vp8_pacote(
+        seq: u16,
+        ts: u32,
+        descritor: u8,
+        primeiro: u8,
+        marker: bool,
+    ) -> webrtc::rtp::packet::Packet {
+        let header = webrtc::rtp::header::Header {
+            sequence_number: seq,
+            timestamp: ts,
+            marker,
+            payload_type: 96,
+            ..Default::default()
+        };
+        webrtc::rtp::packet::Packet {
+            header,
+            payload: vec![descritor, primeiro, 0x00, 0x00, 0xaa, 0xbb, 0xcc, 0xdd].into(),
+        }
+    }
+
+    /// Um quadro DELTA em três pacotes, como o Chromium os manda: o início
+    /// (S=1, cabeçalho com o bit 0 aceso) e duas continuações cujo primeiro
+    /// byte é PAR — dado comprimido que a guarda antiga lia como «keyframe».
+    fn vp8_quadro_delta(seq: &mut u16, ts: u32) -> Vec<webrtc::rtp::packet::Packet> {
+        let mut pacotes = Vec::new();
+        for (descritor, primeiro, marker) in
+            [(0x10, 0x11, false), (0x00, 0x00, false), (0x00, 0x42, true)]
+        {
+            pacotes.push(vp8_pacote(*seq, ts, descritor, primeiro, marker));
+            *seq = seq.wrapping_add(1);
+        }
+        pacotes
+    }
+
+    /// Os quadros de um IVF, cada um com os seus bytes.
+    fn ivf_quadros(path: &std::path::Path) -> Vec<Vec<u8>> {
+        let b = std::fs::read(path).expect("ficheiro de gravação");
+        let mut quadros = Vec::new();
+        let mut i = 32;
+        while i + 12 <= b.len() {
+            let n = u32::from_le_bytes(b[i..i + 4].try_into().unwrap()) as usize;
+            quadros.push(b[i + 12..i + 12 + n].to_vec());
+            i += 12 + n;
+        }
+        quadros
+    }
+
+    fn e_keyframe(quadro: &[u8]) -> bool {
+        quadro.len() >= 10 && quadro[0] & 0x01 == 0 && quadro[3..6] == [0x9d, 0x01, 0x2a]
+    }
+
+    #[tokio::test]
+    async fn continuacoes_com_byte_par_nao_abrem_a_pista() {
+        let dir = std::env::temp_dir().join(format!("dlx-rec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (w, path) = writer_de_teste(&dir, 4096);
+        assert!(w.wants_keyframe(), "uma pista de vídeo nasce à espera");
+
+        // A chamada já decorre: só chegam quadros delta.
+        let mut seq = 0u16;
+        for q in 0..30u32 {
+            for p in vp8_quadro_delta(&mut seq, q * 3000) {
+                w.write_rtp(&p);
+            }
+        }
+        // E uma cabeça de partição que NÃO é o início do quadro (S=1, PID=1),
+        // com byte par: também não é um keyframe.
+        w.write_rtp(&vp8_pacote(seq, 30 * 3000, 0x11, 0x00, true));
+        seq += 1;
+        assert!(
+            w.wants_keyframe(),
+            "sem keyframe a pista continua à espera — é isto que faz o SFU pedi-lo"
+        );
+
+        // O keyframe pedido chega, e a chamada continua em deltas.
+        w.write_rtp(&vp8_keyframe(seq, 31 * 3000));
+        seq += 1;
+        assert!(
+            !w.wants_keyframe(),
+            "com o keyframe na fila já não se pede outro"
+        );
+        for q in 32..37u32 {
+            for p in vp8_quadro_delta(&mut seq, q * 3000) {
+                w.write_rtp(&p);
+            }
+        }
+        w.close().await;
+
+        let quadros = ivf_quadros(&path);
+        assert_eq!(
+            quadros.len(),
+            6,
+            "o keyframe e os cinco quadros depois dele — nada do que veio antes"
+        );
+        assert!(
+            e_keyframe(&quadros[0]),
+            "o primeiro quadro da pista tem de ser o keyframe: {:02x?}",
+            &quadros[0][..quadros[0].len().min(10)]
+        );
+        assert!(
+            quadros[1..]
+                .iter()
+                .all(|q| q[0] & 0x01 == 1 && q.len() == 21),
+            "e depois dele os quadros delta, inteiros (3 pacotes de 7 bytes)"
+        );
+        // O cabeçalho deixou de levar as dimensões nominais (1280×720), que
+        // eram a marca de uma pista que nunca viu um keyframe.
+        assert_eq!(ivf_dims(&path).await, Some((320, 240)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn so_o_video_espera_por_keyframe() {
+        let dir = std::env::temp_dir().join(format!("dlx-rec-{}", uuid::Uuid::new_v4()));
+        let mut session = RecordingSession::new(uuid::Uuid::new_v4(), "teste".into(), None, &dir)
+            .await
+            .unwrap();
+        let metrics = Arc::new(crate::metrics::Metrics::default());
+        let audio = session.open_track("audio", 64, metrics.clone()).unwrap();
+        let video = session.open_track("video", 64, metrics.clone()).unwrap();
+        let ecra = session.open_track("screen", 64, metrics).unwrap();
+        assert!(!audio.wants_keyframe(), "o áudio não tem keyframes");
+        assert!(video.wants_keyframe());
+        assert!(ecra.wants_keyframe(), "a partilha de ecrã é vídeo");
+        for w in [audio, video, ecra] {
+            w.close().await;
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

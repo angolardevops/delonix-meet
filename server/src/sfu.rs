@@ -1465,8 +1465,9 @@ impl SfuState {
         // cada 3 s para sempre — desperdício enorme de bitrate e "pumping"
         // visível — e que continuava vivo depois de a track terminar. Os
         // keyframes são agora pedidos SÓ quando fazem falta: subscrição nova,
-        // troca de camada, ou PLI/FIR reencaminhado de um subscritor
-        // (ver `subscribe_layer` → drenagem de RTCP).
+        // troca de camada, PLI/FIR reencaminhado de um subscritor
+        // (ver `subscribe_layer` → drenagem de RTCP), ou uma pista de gravação
+        // que ainda não abriu (ver `RecWriter::wants_keyframe`).
 
         // Bomba de RTP: remota -> todas as tracks locais subscritas
         // (+ tee para o writer de gravação, se ativo).
@@ -1497,8 +1498,18 @@ impl SfuState {
                         // tudo: a seleção de oradores é uma decisão de entrega
                         // ao vivo, não pode apagar ninguém da ata nem da mistura
                         // que o telefone ouve.
-                        if let Some(w) = publication.rec.lock().await.as_mut() {
-                            w.write_rtp(&packet);
+                        let rec_wants_keyframe = match publication.rec.lock().await.as_ref() {
+                            Some(w) => {
+                                w.write_rtp(&packet);
+                                w.wants_keyframe()
+                            }
+                            None => false,
+                        };
+                        // A pista em gravação ainda não abriu: pede-se o
+                        // keyframe por ela, ao ritmo do `pli_allowed` (um por
+                        // segundo), até ele chegar. Ver `RecWriter::wants_keyframe`.
+                        if rec_wants_keyframe {
+                            request_keyframe(&publication, &this.metrics).await;
                         }
                         if is_audio {
                             this.feed_bridges(room_id, publisher, &packet);
@@ -1856,6 +1867,12 @@ impl SfuState {
 
     /// Inicia a gravação da sala: writers para as tracks já publicadas;
     /// as futuras anexam-se no handle_publish. Falha se já estiver a gravar.
+    ///
+    /// Uma publicação de vídeo que já existe está a MEIO do fluxo: o writer
+    /// só abre a pista num keyframe, e o browser só manda um quando lho pedem.
+    /// Por isso cada vídeo a que aqui se liga um writer recebe um pedido de
+    /// keyframe — sem ele a pista ficava sem um quadro que se descodifique
+    /// (R297). A bomba de RTP repete o pedido enquanto a pista esperar.
     pub async fn start_recording(
         &self,
         room_id: Uuid,
@@ -1917,14 +1934,21 @@ impl SfuState {
                 }
             }
         }
+        let mut need_keyframe: Vec<Arc<Publication>> = Vec::new();
         for ((_, kind), p) in &best_video {
             if let Some(w) = session.open_track(kind, self.rec_cap(), self.metrics.clone()) {
                 *p.rec.lock().await = Some(w);
+                need_keyframe.push(Arc::clone(p));
             }
         }
         drop(pubs);
         tracing::info!(%room_id, %by_user, "server recording started");
         *rec = Some(session);
+        drop(rec);
+        // Fora dos locks da sala: o pedido escreve RTCP na PC do publicador.
+        for p in &need_keyframe {
+            request_keyframe(p, &self.metrics).await;
+        }
         true
     }
 
