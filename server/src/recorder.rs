@@ -70,7 +70,7 @@ fn vp8_frame_start(depack: &Vp8Packet) -> bool {
 /// isto só existe no pacote que inicia o quadro. A guarda antiga lia o bit em
 /// qualquer pacote: uma continuação de um quadro delta com o primeiro byte par
 /// passava por keyframe, e a pista abria a meio de um quadro que nenhum
-/// descodificador aceita (R297).
+/// descodificador aceita (R299).
 fn vp8_starts_keyframe(depack: &Vp8Packet, vp8: &[u8]) -> bool {
     vp8_frame_start(depack)
         && vp8.len() >= 6
@@ -1677,7 +1677,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    //  A pista de vídeo só abre num keyframe verdadeiro (R297)
+    //  A pista de vídeo só abre num keyframe verdadeiro (R299)
     // ------------------------------------------------------------------
     //
     // Uma gravação arrancada a meio da chamada liga o writer a um fluxo que já

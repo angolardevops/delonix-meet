@@ -1872,7 +1872,7 @@ impl SfuState {
     /// só abre a pista num keyframe, e o browser só manda um quando lho pedem.
     /// Por isso cada vídeo a que aqui se liga um writer recebe um pedido de
     /// keyframe — sem ele a pista ficava sem um quadro que se descodifique
-    /// (R297). A bomba de RTP repete o pedido enquanto a pista esperar.
+    /// (R299). A bomba de RTP repete o pedido enquanto a pista esperar.
     pub async fn start_recording(
         &self,
         room_id: Uuid,

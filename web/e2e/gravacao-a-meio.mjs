@@ -1,5 +1,5 @@
 // UMA GRAVAÇÃO ARRANCADA À MÃO A MEIO DA CHAMADA tem vídeo que se vê? — medido
-// numa gravação a sério do servidor, com o VP8 do Chromium (R297).
+// numa gravação a sério do servidor, com o VP8 do Chromium (R299).
 //
 // Quem carrega em «gravar» com a chamada já a decorrer liga um writer a
 // publicações que estão a meio do fluxo: o codificador do browser só manda um

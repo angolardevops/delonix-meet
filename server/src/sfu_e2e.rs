@@ -1598,7 +1598,7 @@ async fn churn_de_subscricoes_nao_deixa_nada_vivo() {
 }
 
 // ===================================================================
-//  Gravação arrancada a meio da chamada (R297)
+//  Gravação arrancada a meio da chamada (R299)
 // ===================================================================
 //
 // Quem carrega em «gravar» com a chamada a decorrer liga um writer a um vídeo
