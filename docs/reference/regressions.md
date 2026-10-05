@@ -3272,3 +3272,29 @@ No CI: `tests/telephony.rs` (contra um ESL falso) — a ordem `killgw` → `gwli
 - A prova só correu no delonix; o caminho do docker dela continua por exercitar (R292).
 
 **Ficheiros.** `server/src/telephony_trunks.rs`, `server/src/telephony_service.rs`, `server/src/telephony_esl.rs`, `server/tests/telephony.rs`, `voice/cluster/freeswitch-entrypoint.sh`, `deploy/helm/delonix-meet/templates/voice.yaml`, `deploy/helm/delonix-meet/templates/_helpers.tpl`, `deploy/helm/delonix-meet/values.yaml`, `deploy/helm/delonix-meet/README.md`, `scripts/check-helm.sh`, `scripts/motor.sh`, `scripts/troncos-prova.sh`.
+
+### R301 — A doc mandava definir `WEBHOOK_ALLOW_HOSTS`, que o servidor deixou de ler há 18 dias
+
+**Sintoma.** Medido a 2026-10-05 na `origin/develop`: `grep -rn WEBHOOK_ALLOW_HOSTS server/src server/crates deploy` não devolve nada, e cinco sítios continuavam a mandar usá-la — a tabela de variáveis do `docs/deployment.md` («necessário para um Odoo on-prem em rede privada»), os cabeçalhos do `web/e2e/gravacao-servidor-meta.mjs` e do `web/e2e/directo-destinos.mjs` (duas vezes) e o `scripts/e2e-fora-do-ci.txt`. Um servidor arrancado com `WEBHOOK_ALLOW_HOSTS=127.0.0.1` recusa o webhook do receptor local com `400 o URL aponta para um endereço interno/privado` (o `gravacao-servidor-meta.mjs` falha quatro verificações); com `OUTBOUND_ALLOW_HOSTS=127.0.0.1` passa 20/20. Não há aviso nenhum: o servidor ignora em silêncio uma variável que não conhece.
+
+**Causa raiz.** A S4 (`fc8593f9`, 2026-09-17) alargou a guarda de saída dos webhooks a todos os pedidos do servidor e mudou o nome de propósito — «`WEBHOOK_ALLOW_HOSTS` passa a `OUTBOUND_ALLOW_HOSTS` (sem alias; não há produção)». O commit corrigiu a tabela do `docs/deployment.md`; dois dias depois, o merge `f221f3a9` (o ramo do frontend na `main`) devolveu-lhe a linha antiga: um dos pais já não a tinha, o outro ainda a tinha, e o resultado ficou com as duas, a duas linhas uma da outra. Os dois e2e e o `e2e-fora-do-ci.txt` são de 2026-09-16, a véspera da mudança, e o commit da S4 não lhes tocou. Nenhum dos dois e2e corre no CI (é o que o `e2e-fora-do-ci.txt` regista), por isso nada ficou vermelho.
+
+**Regra.**
+- **O nome é `OUTBOUND_ALLOW_HOSTS`, e não há alias.** A decisão está no commit da S4 e não mudou: a variável isenta mais do que webhooks (`odoo_url` da organização, emissor OIDC, host de um tronco), e um alias com o nome antigo voltava a dizer que só isenta webhooks.
+- **Mudar o nome de uma variável de ambiente é mudar todos os sítios que a mandam definir**, incluindo os cabeçalhos dos testes que não correm no CI — são instruções para uma pessoa, e uma instrução errada num teste manual só se descobre quando alguém perde uma tarde.
+- **Um merge com conflito numa tabela de documentação relê-se linha a linha.** As duas linhas eram ambas plausíveis lado a lado.
+
+**Portão.** `scripts/check-docs-drift.sh` (`make fitness` e CI), verificação 6: cada nome na primeira coluna das tabelas do `docs/deployment.md` tem de existir como literal em `server/src` ou em `server/crates/*/src`; e cada `` `NOME=valor` `` citado em `web/e2e/**` e no `scripts/e2e-fora-do-ci.txt` tem de ser isso ou uma variável que um e2e lê de `process.env`.
+
+**Prova corrida a 2026-10-05.**
+- o portão novo sobre os quatro ficheiros como estavam na `origin/develop`: cinco linhas de drift, as cinco referências e mais nenhuma, estado 1;
+- depois da correcção: verde, estado 0; `scripts/check-repo-hygiene.sh` verde;
+- sem falsos positivos na árvore de hoje: os outros 30 nomes da primeira coluna das tabelas do `docs/deployment.md` são todos lidos pelo servidor, e não há mais nenhum `` `NOME=valor` `` nos 43 e2e que não seja do servidor ou de um e2e;
+- `deploy/` (compose, chart Helm, `k8s/`, overlays), o `Makefile` e os workflows não citam o nome antigo; o único sítio que define a isenção é o `deploy/demo-kaeso.sh`, com o nome certo.
+
+**O que NÃO está provado.**
+- **Os dois e2e não foram corridos depois da correcção.** Só mudaram comentários; a falha com o nome antigo e o 20/20 com o novo foram medidos antes, no `gravacao-servidor-meta.mjs`. O `directo-destinos.mjs` com `OUTBOUND_ALLOW_HOSTS=localhost` não foi corrido.
+- **O portão só vê num sentido e só nestes sítios.** «O servidor lê» mede-se por um literal em maiúsculas no código, não por uma chamada a `Source::var`: um nome que sobreviva numa mensagem de erro ou noutra cadeia de texto passa. Não vê variáveis que o servidor lê e a doc não documenta, nem nomes em prosa (o `acrescentar o host a …` do §7 do `docs/deployment.md`), nem os outros `.md`, nem os manifestos de `deploy/` — aí, hoje, o nome antigo não aparece, mas nada o impede de voltar.
+- **Uma tabela nova no `docs/deployment.md` com variáveis que não são do servidor** (coturn, nginx, vite) vai dar vermelho até o nome entrar em `FORA_DO_SERVIDOR`, no portão. Hoje a lista está vazia.
+
+**Ficheiros.** `docs/deployment.md`, `web/e2e/gravacao-servidor-meta.mjs`, `web/e2e/directo-destinos.mjs`, `scripts/e2e-fora-do-ci.txt`, `scripts/check-docs-drift.sh`.

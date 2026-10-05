@@ -139,7 +139,58 @@ then
   fail=1
 fi
 
+# 6) Uma variável de ambiente que a doc manda definir tem de ser uma que o
+#    servidor LÊ. Foi drift a sério: a S4 (fc8593f9) passou `WEBHOOK_ALLOW_HOSTS`
+#    a `OUTBOUND_ALLOW_HOSTS` sem alias, um merge devolveu a linha antiga à
+#    tabela do `docs/deployment.md`, e os cabeçalhos de dois e2e nunca mudaram.
+#    Quem a seguia ficava com os webhooks recusados com 400 e nenhum aviso — o
+#    servidor ignora em silêncio uma variável que não conhece.
+#    Verifica: (a) a primeira coluna das tabelas do `docs/deployment.md`;
+#    (b) cada `NOME=valor` citado nos e2e e em `scripts/e2e-fora-do-ci.txt`,
+#    que também pode ser uma variável que um e2e lê de `process.env`.
+#    Só num sentido: «o servidor lê» mede-se pelo literal no código, por isso
+#    apanha um nome que deixou de existir, não uma variável por documentar.
+if ! python3 - <<'PYEOF'
+import glob, re, sys
+NOME = r'[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+'
+# Variáveis que a tabela do deployment documente e que NÃO sejam do servidor
+# (coturn, nginx, vite): acrescentar aqui, com a razão ao lado.
+FORA_DO_SERVIDOR = set()
+
+def ler(p):
+    return open(p, encoding='utf-8').read()
+
+servidor = set()
+for p in glob.glob('server/src/**/*.rs', recursive=True) + glob.glob('server/crates/*/src/**/*.rs', recursive=True):
+    servidor |= set(re.findall(r'"(' + NOME + r')"', ler(p)))
+
+falha = False
+for n, linha in enumerate(ler('docs/deployment.md').splitlines(), 1):
+    if not linha.startswith('| `'):
+        continue
+    for nome in re.findall(r'`(' + NOME + r')(?:=[^`]*)?`', linha.split('|')[1]):
+        if nome not in servidor and nome not in FORA_DO_SERVIDOR:
+            print(f"✗ drift: docs/deployment.md:{n} documenta '{nome}', que o servidor não lê (nenhum literal em server/src nem em server/crates)")
+            falha = True
+
+e2e = sorted(glob.glob('web/e2e/**/*.mjs', recursive=True) + glob.glob('web/e2e/**/*.ts', recursive=True))
+do_teste = set()
+for p in e2e:
+    do_teste |= set(re.findall(r'process\.env\.([A-Z][A-Z0-9_]*)', ler(p)))
+    do_teste |= set(re.findall(r'process\.env\[\s*[\'"]([A-Z][A-Z0-9_]*)', ler(p)))
+for p in e2e + ['scripts/e2e-fora-do-ci.txt']:
+    for n, linha in enumerate(ler(p).splitlines(), 1):
+        for nome in re.findall(r'`(' + NOME + r')=[^`]*`', linha):
+            if nome not in servidor and nome not in do_teste:
+                print(f"✗ drift: {p}:{n} manda definir '{nome}', que nem o servidor nem um e2e leem")
+                falha = True
+sys.exit(1 if falha else 0)
+PYEOF
+then
+  fail=1
+fi
+
 if [ "$fail" = 0 ]; then
-  echo "✓ docs em sincronia com o código (módulos + migrações + versões + SQL + revisores e skills)"
+  echo "✓ docs em sincronia com o código (módulos + migrações + versões + SQL + revisores e skills + variáveis de ambiente)"
 fi
 exit $fail
