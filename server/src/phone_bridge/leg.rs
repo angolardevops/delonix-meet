@@ -542,6 +542,7 @@ async fn run(mut r: Run) {
         Media::G711 { .. } => (0, 0),
     };
     let decode_errors = r.media.mixer().decode_errors;
+    let mix_unsupported = r.media.mixer().unsupported;
     tracing::info!(
         room = %r.cfg.room_id,
         leg = %r.cfg.leg_id,
@@ -550,6 +551,7 @@ async fn run(mut r: Run) {
         rejected = r.stats.packets_rejected.load(Relaxed),
         srtp_failed = r.stats.packets_srtp_failed.load(Relaxed),
         decode_errors,
+        mix_unsupported,
         opus_rejected,
         opus_late,
         "ponte: perna fechada"

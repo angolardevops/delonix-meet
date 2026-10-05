@@ -1136,7 +1136,13 @@ async fn room_bridge_for(
         );
         return None;
     };
-    if state.config.phone_bridge_freeswitch_ips.is_empty() {
+    // A lista pode vir por IP ou por NOME (o compose e o chart usam o nome do
+    // serviço). Olhar só para os IPs deixava uma instalação configurada por
+    // nome com o UA à escuta e a ponte nunca entregue ao IVR: toda a chamada
+    // caía na conferência local (medido no laboratório a 2026-10-05).
+    if state.config.phone_bridge_freeswitch_ips.is_empty()
+        && state.config.phone_bridge_freeswitch_names.is_empty()
+    {
         tracing::warn!(
             "PHONE_BRIDGE_FREESWITCH_IPS vazio — a ponte recusaria o INVITE (fail-closed); dial-in cai na conferência local"
         );

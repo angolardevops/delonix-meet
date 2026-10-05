@@ -155,6 +155,83 @@ async fn ramal_com_o_pin_da_sua_org_recebe_a_ponte(db: sqlx::PgPool) {
 
 /// O isolamento: um ramal da org A não entra numa sala da org B, mesmo
 /// sabendo o PIN. Controlo positivo: o MESMO PIN abre a sala a um ramal de B.
+/// O que o IVR recebe para a perna da ponte, com a configuração dada.
+async fn ponte_com(db: sqlx::PgPool, extra: &[(&str, &str)]) -> Value {
+    let app = spawn(db, extra).await;
+    let a = app.new_org("alfa-ramal.ao").await;
+    let (_code, pin) = sala_com_pin(&app, &a, "+244222300001").await;
+    let ramal = novo_ramal(&app, &a, &a, "101").await;
+    let (st, body) = ivr(
+        &app,
+        Some(VOICE_SECRET),
+        &ramal.sip_username,
+        &ramal.sip_domain,
+        &pin,
+    )
+    .await;
+    assert_eq!(st, 200, "{body}");
+    body["room_bridge"].clone()
+}
+
+/// ADR-0017 — por omissão a perna oferece Opus à frente de PCMA: é a ordem que
+/// o UA da ponte segue.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_perna_da_ponte_oferece_opus_a_frente_de_pcma(db: sqlx::PgPool) {
+    let ponte = ponte_com(db, &[]).await;
+    assert_eq!(
+        ponte["channel_vars"]["absolute_codec_string"], "OPUS,PCMA",
+        "{ponte}"
+    );
+}
+
+/// `PHONE_BRIDGE_WIDEBAND=0` repõe o caminho G.711, sem reconstruir nada.
+#[sqlx::test(migrations = "./migrations")]
+async fn com_a_banda_larga_desligada_a_perna_oferece_so_pcma(db: sqlx::PgPool) {
+    let ponte = ponte_com(db, &[("PHONE_BRIDGE_WIDEBAND", "0")]).await;
+    assert_eq!(
+        ponte["channel_vars"]["absolute_codec_string"], "PCMA",
+        "{ponte}"
+    );
+}
+
+/// Quem escreve um valor que não se percebe queria mexer no interruptor: fica
+/// DESLIGADO, não no «ligado» por omissão.
+#[sqlx::test(migrations = "./migrations")]
+async fn um_valor_que_nao_se_percebe_desliga_a_banda_larga(db: sqlx::PgPool) {
+    let ponte = ponte_com(db, &[("PHONE_BRIDGE_WIDEBAND", "talvez")]).await;
+    assert_eq!(
+        ponte["channel_vars"]["absolute_codec_string"], "PCMA",
+        "{ponte}"
+    );
+}
+
+/// **A ponte é entregue quando o FreeSWITCH vem por NOME.** O compose e o chart
+/// configuram `PHONE_BRIDGE_FREESWITCH_IPS` com o nome do serviço; a entrega
+/// da ponte ao IVR só olhava para os IPs literais, e com a lista por nome
+/// devolvia `room_bridge: null` — o UA à escuta e todas as chamadas a caírem na
+/// conferência local (medido no laboratório a 2026-10-05).
+#[sqlx::test(migrations = "./migrations")]
+async fn a_ponte_e_entregue_com_o_freeswitch_por_nome(db: sqlx::PgPool) {
+    let ponte = ponte_com(db, &[("PHONE_BRIDGE_FREESWITCH_IPS", "freeswitch.interno")]).await;
+    assert!(
+        ponte["sip_uri"]
+            .as_str()
+            .is_some_and(|u| u.starts_with("sip:room-")),
+        "sem ponte com a lista por nome: {ponte}"
+    );
+}
+
+/// E o controlo negativo: sem lista nenhuma continua a não haver ponte
+/// (fail-closed) — a correcção de cima não a abriu a toda a gente.
+#[sqlx::test(migrations = "./migrations")]
+async fn sem_lista_de_origens_nao_ha_ponte(db: sqlx::PgPool) {
+    let ponte = ponte_com(db, &[("PHONE_BRIDGE_FREESWITCH_IPS", "")]).await;
+    assert!(
+        ponte.is_null(),
+        "ponte entregue sem origens autorizadas: {ponte}"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn ramal_de_outra_org_nao_entra_mesmo_com_o_pin(db: sqlx::PgPool) {
     let app = spawn(db, &[]).await;

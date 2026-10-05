@@ -445,6 +445,9 @@ pub struct Mixer {
     down: Option<(Decimator, Vec<i32>)>,
     /// Pacotes que o descodificador recusou (corrompidos ou de outro codec).
     pub decode_errors: u64,
+    /// Pacotes de banda média, que este descodificador não sabe ler: ficam de
+    /// fora da mistura.
+    pub unsupported: u64,
 }
 
 impl Mixer {
@@ -473,6 +476,7 @@ impl Mixer {
             mixed: vec![0; MIX_FRAME],
             down: to_8k.then(|| (Decimator::new(), Vec::with_capacity(FRAME_8K))),
             decode_errors: 0,
+            unsupported: 0,
         }
     }
 
@@ -497,6 +501,16 @@ impl Mixer {
         }
         src.last_seq = Some(seq);
         src.idle_ticks = 0;
+        // SILK de banda média (12 kHz): o `opus-rs` (0.1.33 e 0.1.34) lê-a MAL
+        // a qualquer taxa de saída — medido contra a libopus a 2026-10-05, um
+        // tom sai 8 dB abaixo e fala sai 15 dB ACIMA, distorcida. Um bloco de
+        // silêncio é melhor do que isso no ouvido de quem está ao telefone. A
+        // libopus só a escolhe quando lhe limitam a banda; o FreeSWITCH
+        // fazia-o com o FEC ligado, e é por isso que a ponte o não pede.
+        if is_mediumband(payload[0]) {
+            self.unsupported += 1;
+            return;
+        }
         // Bit «s» do TOC: 1 = estéreo (RFC 6716 §3.1).
         let stereo = payload[0] & 0x04 != 0;
         let decoder = if stereo {
@@ -568,6 +582,11 @@ impl Mixer {
             None => &self.mixed,
         }
     }
+}
+
+/// O TOC diz SILK de banda média (configurações 4 a 7, RFC 6716 §3.1)?
+fn is_mediumband(toc: u8) -> bool {
+    (4..=7).contains(&(toc >> 3))
 }
 
 /// Desce a mistura de 16 para 8 kHz com um passa-baixo antes de deitar fora
@@ -1195,6 +1214,34 @@ pub(crate) mod tests {
         );
         assert_eq!(pass.rejected, 0);
         assert_eq!(mix.decode_errors, 0, "o misturador leu os seis");
+    }
+
+    /// Um pacote REAL de SILK de banda média (libopus, fala a 12 kHz). O
+    /// `opus-rs` descodifica-o sem erro e com o som errado, por isso o
+    /// misturador deixa-o de fora; a passagem deixa-o seguir para a sala, onde
+    /// quem o toca é a libopus do browser.
+    #[test]
+    fn banda_media_fica_fora_da_mistura_e_passa_para_a_sala() {
+        let hex = "281ddf5a25bb88f7f27567f12857b8a69d48";
+        let mb: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|k| u8::from_str_radix(&hex[k..k + 2], 16).unwrap())
+            .collect();
+        assert_eq!(mb[0] >> 3, 5, "configuração 5: SILK de banda média, 20 ms");
+        let who = Uuid::new_v4();
+        for mut mix in [Mixer::new(Uuid::new_v4()), Mixer::wideband(Uuid::new_v4())] {
+            for i in 0..10u16 {
+                mix.push(who, i, &mb);
+                assert!(
+                    mix.tick().iter().all(|&v| v == 0),
+                    "banda média entrou na mistura"
+                );
+            }
+            assert_eq!(mix.unsupported, 10);
+            assert_eq!(mix.decode_errors, 0);
+        }
+        let mut pass = Passthrough::new();
+        assert!(pass.push(1, 960, SSRC, &mb).is_some(), "para a sala, passa");
     }
 
     /// Entrada hostil nos dois sítios onde a ponte descodifica Opus que não

@@ -292,10 +292,20 @@ pub fn sdp_answer(
     session: u64,
     answer_crypto: Option<&SdesCrypto>,
 ) -> String {
-    // Em Opus responde-se com o PT que a oferta escolheu. O `fmtp` declara o
-    // que a ponte manda (`sprop-*`: mono, banda larga) e o que lhe serve
-    // receber (mono, com FEC). Sem `maxplaybackrate`: não se limita a banda do
-    // que vem do telefone — passa para a sala tal como chegar.
+    // Em Opus responde-se com o PT que a oferta escolheu. Três escolhas no
+    // `fmtp`, todas medidas contra o FreeSWITCH 1.11 do laboratório (2026-10-05):
+    //
+    // - `useinbandfec=0`. Com `1`, a libopus do FreeSWITCH ESTREITA a banda
+    //   para o FEC caber (codificava em banda média, 6 kHz), e o descodificador
+    //   do `opus-rs` lê mal a banda média — um tom de 1 kHz de um telefone
+    //   chegava ao outro 8,6 dB abaixo. E o FEC não servia a ninguém: o SFU
+    //   renumera a sequência do áudio, e sem buraco na sequência o browser não
+    //   o usa. Entre o FreeSWITCH e a ponte a rede é a da própria instalação.
+    // - sem `sprop-maxcapturerate`. Com 16000, o FreeSWITCH abria o codec a
+    //   16 kHz nos DOIS sentidos: recodificava o que vinha do softphone e
+    //   limitava-o a 8 kHz de banda. A mistura que a ponte manda é de banda
+    //   larga na mesma — o descodificador dele lê qualquer banda.
+    // - sem `maxplaybackrate`: não se limita a banda do que vem do telefone.
     let (pt, rtpmap) = match codec {
         LegCodec::G711(Law::A) => (8, "a=rtpmap:8 PCMA/8000\r\n".to_string()),
         LegCodec::G711(Law::Mu) => (0, "a=rtpmap:0 PCMU/8000\r\n".to_string()),
@@ -303,7 +313,7 @@ pub fn sdp_answer(
             pt,
             format!(
                 "a=rtpmap:{pt} opus/48000/2\r\n\
-                 a=fmtp:{pt} useinbandfec=1; stereo=0; sprop-stereo=0; sprop-maxcapturerate=16000\r\n"
+                 a=fmtp:{pt} useinbandfec=0; stereo=0; sprop-stereo=0\r\n"
             ),
         ),
     };
@@ -1043,11 +1053,13 @@ a=sendrecv\r\n";
         assert!(sdp.contains("m=audio 20210 RTP/AVP 116\r\n"), "{sdp}");
         assert!(sdp.contains("a=rtpmap:116 opus/48000/2\r\n"), "{sdp}");
         assert!(
-            sdp.contains("a=fmtp:116 ")
-                && sdp.contains("stereo=0")
-                && sdp.contains("useinbandfec=1"),
+            sdp.contains("a=fmtp:116 useinbandfec=0; stereo=0; sprop-stereo=0\r\n"),
             "{sdp}"
         );
+        // Com FEC pedido, o FreeSWITCH estreita a banda para ele caber; e com
+        // `sprop-maxcapturerate` abre o codec a 16 kHz nos dois sentidos.
+        assert!(!sdp.contains("useinbandfec=1"), "{sdp}");
+        assert!(!sdp.contains("maxcapturerate"), "{sdp}");
         assert!(!sdp.contains("PCMA"), "responde UM codec: {sdp}");
         assert!(
             !sdp.contains("maxplaybackrate"),
