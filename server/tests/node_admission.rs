@@ -116,7 +116,7 @@ async fn a_full_node_refuses_new_rooms_but_not_the_ones_it_has(db: sqlx::PgPool)
     // Esvaziado o nó (os lugares em graça expiram), a sala B volta a ser aceite.
     drop(sockets);
     tokio::time::sleep(Duration::from_millis(500)).await;
-    app.state.hub.expire_disconnected_seats(Duration::ZERO);
+    app.state.hub.expire_disconnected(Duration::ZERO);
     assert_eq!(app.state.hub.peers_ligados(), 0);
     let _b = connect(&app, &tok_b)
         .await
