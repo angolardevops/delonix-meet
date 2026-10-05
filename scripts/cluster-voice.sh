@@ -134,11 +134,13 @@ else
 fi
 
 fs_log=/usr/local/freeswitch/var/log/freeswitch/freeswitch.log
-antes=$(kubectl -n "$NS" exec deploy/freeswitch -- sh -c "grep -ac 'lua(dialin_ivr.lua)' $fs_log || true" 2>/dev/null | tail -1)
+# `|| true`: um `exec` que falha matava o script aqui, calado (`set -e` e
+# `pipefail`), antes do aviso «NÃO chegou ao IVR»; quem as lê já usa `${antes:-0}`.
+antes=$(kubectl -n "$NS" exec deploy/freeswitch -- sh -c "grep -ac 'lua(dialin_ivr.lua)' $fs_log || true" 2>/dev/null | tail -1) || true
 kubectl -n "$NS" exec deploy/pbx-cliente -- asterisk -rx \
   "channel originate PJSIP/+244222000001@meet application Wait 4" >/dev/null 2>&1 || true
 sleep 6
-depois=$(kubectl -n "$NS" exec deploy/freeswitch -- sh -c "grep -ac 'lua(dialin_ivr.lua)' $fs_log || true" 2>/dev/null | tail -1)
+depois=$(kubectl -n "$NS" exec deploy/freeswitch -- sh -c "grep -ac 'lua(dialin_ivr.lua)' $fs_log || true" 2>/dev/null | tail -1) || true
 if [ "${depois:-0}" -gt "${antes:-0}" ]; then
   ok "chamada de prova: PBX → bordo → FreeSWITCH → IVR do Meet (dialin_ivr.lua correu)"
 else
