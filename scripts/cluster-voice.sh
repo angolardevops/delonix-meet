@@ -193,10 +193,12 @@ sala_txt=deploy/compose/generated/sala-telefone-cluster.txt
 if [ -n "${MEET_HOST:-}" ]; then
   SALA_TXT="$sala_txt" bash scripts/seed.sh "https://${MEET_HOST}" || true
 fi
-sala=$(sed -n 's/^sala=//p' "$sala_txt" 2>/dev/null | head -1)
-pin=$(sed -n 's/^pin=//p' "$sala_txt" 2>/dev/null | head -1)
-autenticadas() { kubectl -n "$NS" exec deploy/kamailio -- kamcmd cnt.get script centrais_autenticadas 2>/dev/null | grep -oE '[0-9]+' | head -1; }
-entradas() { kubectl -n "$NS" exec deploy/freeswitch -- sh -c "grep -acE 'conference\($1@|\[delonix ponte\] sala=$1 ' $fs_log || true" 2>/dev/null | tail -1; }
+# `|| true`: com `set -e` e `pipefail`, um ficheiro que falta ou um `exec` que
+# falha matava o script aqui, calado, antes do aviso que está mais abaixo.
+sala=$(sed -n 's/^sala=//p' "$sala_txt" 2>/dev/null | head -1) || true
+pin=$(sed -n 's/^pin=//p' "$sala_txt" 2>/dev/null | head -1) || true
+autenticadas() { kubectl -n "$NS" exec deploy/kamailio -- kamcmd cnt.get script centrais_autenticadas 2>/dev/null | grep -oE '[0-9]+' | head -1 || true; }
+entradas() { kubectl -n "$NS" exec deploy/freeswitch -- sh -c "grep -acE 'conference\($1@|\[delonix ponte\] sala=$1 ' $fs_log || true" 2>/dev/null | tail -1 || true; }
 liga() { kubectl -n "$NS" exec deploy/pbx-cliente -- asterisk -rx "channel originate PJSIP/+244222000001@meet-central extension $1@prova-pin" >/dev/null 2>&1 || true; }
 if [ -z "$sala" ] || [ -z "$pin" ]; then
   avisa "central: sem $sala_txt — a chamada da central fica por medir"
