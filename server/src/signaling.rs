@@ -2496,14 +2496,15 @@ impl SignalingHub {
     }
 
     /// Sockets de pessoas que esta conta tem ligados a este nó, em todas as
-    /// salas. Não conta lugares em graça (o socket já caiu), bots nem a ponte
+    /// salas, incluindo a sala de espera. Não conta lugares em graça (o socket já caiu), bots nem a ponte
     /// telefónica: o tecto é contra uma conta que acumula ligações, e esses são
     /// identidades de serviço emitidas pela organização.
     pub fn user_sockets(&self, user_id: Uuid) -> usize {
         self.rooms
             .iter()
             .map(|r| {
-                r.peers
+                let na_sala = r
+                    .peers
                     .values()
                     .filter(|p| {
                         p.user_id == user_id
@@ -2511,7 +2512,14 @@ impl SignalingHub {
                             && !p.is_bot
                             && !p.is_pstn
                     })
-                    .count()
+                    .count();
+                // À espera de ser admitido também é um socket aberto.
+                let a_espera = r
+                    .waiting
+                    .values()
+                    .filter(|w| w.subject == Some(user_id))
+                    .count();
+                na_sala + a_espera
             })
             .sum()
     }

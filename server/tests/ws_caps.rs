@@ -54,7 +54,9 @@ async fn connect_with(
             .expect("erro no socket");
         if let Message::Text(t) = msg {
             let v: Value = serde_json::from_str(&t).unwrap();
-            if v["type"] == "joined" {
+            // Um membro que não é o anfitrião pode ficar na sala de espera: o
+            // socket foi aceite, que é o que estes testes querem saber.
+            if v["type"] == "joined" || v["type"] == "waiting" {
                 return Ok((ws, v));
             }
         }
@@ -115,6 +117,10 @@ async fn an_account_at_its_socket_cap_is_refused_and_nobody_else_is(db: sqlx::Pg
     let _colega = connect(&app, &tok_a2)
         .await
         .expect("outra conta da mesma org não é afectada");
+    // O colega ficou na sala de espera (não é anfitrião): esse socket também
+    // conta para o tecto, senão bastava abrir salas para o contornar.
+    let colega_id: uuid::Uuid = a2.user_id.parse().unwrap();
+    assert_eq!(app.state.hub.user_sockets(colega_id), 1);
     let _b = connect(&app, &tok_b)
         .await
         .expect("outra organização não é afectada");
@@ -233,7 +239,7 @@ async fn an_org_over_its_quota_is_refused_and_another_org_is_not(db: sqlx::PgPoo
         )
         .await;
     assert_eq!(st, 200);
-    let _quarto = connect(&app, &tok_a2)
+    let _quarto = connect(&app, &tok_a)
         .await
         .expect("com o tecto subido o quarto entra");
 }
@@ -245,10 +251,8 @@ async fn an_org_over_its_quota_is_refused_and_another_org_is_not(db: sqlx::PgPoo
 async fn a_returning_seat_is_not_a_new_entry_but_a_made_up_secret_is(db: sqlx::PgPool) {
     let (app, op) = operator(db).await;
     let a = app.new_org("alfa.test").await;
-    let a2 = app.add_member(&a, "colega", "member").await;
     let sala = app.new_room(&a, "A").await;
     let tok = room_token(&app, sala["code"].as_str().unwrap(), &a).await;
-    let tok2 = room_token(&app, sala["code"].as_str().unwrap(), &a2).await;
     let (st, body) = app
         .put(
             &format!("/api/operator/v1/organizations/{}/concurrency", a.org()),
@@ -259,7 +263,7 @@ async fn a_returning_seat_is_not_a_new_entry_but_a_made_up_secret_is(db: sqlx::P
     assert_eq!(st, 200, "{body}");
 
     let (ws1, joined1) = connect_with(&app, &tok, None).await.unwrap();
-    let _ws2 = connect(&app, &tok2).await.unwrap();
+    let _ws2 = connect(&app, &tok).await.unwrap();
     let secret = joined1["reconnect"].as_str().expect("segredo do lugar");
     let peer1 = joined1["peer_id"].clone();
 
