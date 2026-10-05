@@ -141,6 +141,12 @@ pub struct Metrics {
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
     /// pior, e porque uma gravação corrompida em silêncio é a R18.
     pub recording_packets_dropped_total: AtomicU64,
+    /// Pacotes de áudio que a gravação descartou por chegarem com o timestamp
+    /// atrás do último escrito (a rede reordenou-os ou repetiu-os). Escritos,
+    /// somavam 24 h 51 min à pista — ver `recorder::OpusClock`. Sobe às
+    /// dezenas de cada vez que o relógio de uma origem recua de vez: é o
+    /// segundo que a pista perde até se re-ancorar.
+    pub recording_audio_late_dropped_total: AtomicU64,
     /// Composições de gravação à espera de vaga (`FFMPEG_MAX_CONCURRENT`). Um
     /// valor que não desce é o sinal de que o nó compõe mais do que aguenta.
     pub recording_compose_queued: AtomicI64,
@@ -269,6 +275,9 @@ impl Metrics {
              # HELP delonix_recording_packets_dropped_total Pacotes perdidos por fila de gravação cheia.\n\
              # TYPE delonix_recording_packets_dropped_total counter\n\
              delonix_recording_packets_dropped_total {}\n\
+             # HELP delonix_recording_audio_late_dropped_total Pacotes de áudio atrasados ou repetidos que a gravação não escreveu.\n\
+             # TYPE delonix_recording_audio_late_dropped_total counter\n\
+             delonix_recording_audio_late_dropped_total {}\n\
              # HELP delonix_recording_compose_queued Composições de gravação à espera de vaga.\n\
              # TYPE delonix_recording_compose_queued gauge\n\
              delonix_recording_compose_queued {}\n\
@@ -326,6 +335,7 @@ impl Metrics {
             self.qos_turn_relay_total.load(Relaxed),
             self.qos_cpu_limited_total.load(Relaxed),
             self.recording_packets_dropped_total.load(Relaxed),
+            self.recording_audio_late_dropped_total.load(Relaxed),
             g(self.recording_compose_queued.load(Relaxed)),
             g(self.recording_compose_running.load(Relaxed)),
             self.audit_write_failures_total.load(Relaxed),

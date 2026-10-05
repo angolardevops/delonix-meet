@@ -3079,6 +3079,49 @@ No CI: `tests/telephony.rs` — a decisão do servidor caso a caso (sai com a id
 
 **Ficheiros.** `web/e2e/telefone-na-sala.mjs`, `web/e2e/harness.ts` (`som=cru`), `web/vite.config.ts` (`API_HOST`), `scripts/pbx-tronco-prova.sh` (modo `browser`), `voice/pbx-tronco-prova/compose.yaml`, `scripts/check-replicas-compose.sh`, `Makefile` e `.github/workflows/ci.yml` (o portão), `scripts/e2e-fora-do-ci.txt`.
 
+### R294 — Um pacote de áudio atrasado somava 24 h 51 min à pista gravada, e em debug matava a thread de escrita
+
+**Sintoma.** O gravador entrega os pacotes RTP Opus ao `OggWriter` do `webrtc-media 0.17.2`, que avança a posição do grânulo com `timestamp - anterior` — uma subtracção de `u32` sem `wrapping` (`ogg_writer/mod.rs:181`). A bomba do SFU escreve pela ordem de chegada. Medido a 2026-10-05, com três pacotes de 20 ms e os timestamps 0, 1920, 960 (o terceiro atrasado pela rede):
+- **em release** (o perfil do CI e da imagem): os grânulos ficam `1, 1921, 4294968257`, e o `ffprobe` dá à pista de 60 ms **89 478,5 s**. A pista não recupera — todos os pacotes seguintes ficam 2^32 amostras à frente. Um pacote repetido escrevia-se duas vezes;
+- **em debug**: `attempt to subtract with overflow`, a thread de escrita morre, o OGG fica sem página de fecho e o resto da pista não se grava. Sem erro para quem chama: o `try_send` passa a falhar e conta como «disco lento»;
+- **a volta legítima do relógio de 32 bits** (os browsers começam o timestamp num valor ao acaso; a 48 kHz dá a volta a cada 24 h 51 min) dá o resultado certo em release, por acaso da aritmética, e é o mesmo pânico em debug.
+
+**O que isto NÃO fazia, medido.** O ficheiro composto não saía com 24 h. Com áudio real (10 s de tom, um pacote por página, os grânulos que o `OggWriter` produz) e o ffmpeg 6.1.1, os três caminhos da composição — remux `-c copy`, só áudio com `adelay`, e `adelay`+`amix` de duas pistas — dão 10,04 s: o ffmpeg vê um salto de mais de 10 s num OGG e desconta-o (`timestamp discontinuity … new offset= -89478465333`). O que ficava era o frame atrasado fora do sítio: no remux, dois pacotes com o mesmo instante e nenhum 20 ms antes. O revisor mediu o mesmo salto por conta própria, com outro ficheiro (6 s), no remux com vídeo e no `adelay`+`amix`: 6,0 s nos dois. A gravação dependia de uma tolerância do ffmpeg que ninguém tinha pedido.
+
+**Regra.**
+- **O que não está à frente do último escrito não se escreve.** `recorder::OpusClock` guarda o último timestamp aceite; a comparação é a distância com sinal em 32 bits (`wrapping_sub` lido como `i32`), para a volta do relógio não ser um recuo. Atrasado ou repetido, descarta-se — para a pista é uma perda de pacote, que o gravador já tinha.
+- **O timestamp entregue ao `OggWriter` conta a partir do primeiro pacote da pista.** Ele só usa diferenças, e assim a subtracção dele não vê a volta. Não «simplificar» entregando o timestamp tal como chega: os testes de ficheiro passam em release na mesma, e é em debug que rebenta.
+- **Um recuo que não passa é um relógio novo.** 50 atrasados SEGUIDOS que avançam entre si (`OPUS_CLOCK_RESYNC_AFTER`: 1 s de Opus contínuo em pacotes de 20 ms, que é o caso da ponte; com DTX são os mesmos 50 pacotes e mais tempo) re-ancoram a pista: o primeiro da série fica no instante do último escrito, e a pista continua daí com o tempo que o relógio novo mediu. Sem isto, uma origem que recomeçasse o timestamp para trás ficava muda na gravação até 12 h 25 min — pior do que antes da correcção, em que se gravava tudo. **Foi o revisor que o apontou, e bloqueava.** Um pacote em dia pelo meio desfaz a contagem; atrasados que não avançam entre si também.
+- **Um salto para a FRENTE aceita-se tal como vem**: é tempo que passou (DTX, um telefone calado pelo anfitrião). Não lhe pôr tecto.
+- **Um payload vazio não avança o relógio**: o `OggWriter` ignora-o sem mexer no dele.
+- **O descarte é contado**, como a fila cheia (R40): `delonix_recording_audio_late_dropped_total`, um aviso ao primeiro e a cada 500, e um aviso próprio quando a pista re-ancora.
+- **Não se mexe no crate externo.** A correcção vive em `RecSink::Audio`.
+
+**Portão.** `recorder.rs`, dez testes, verdes em debug e em release:
+- `pacote_de_audio_atrasado_nao_avanca_a_pista_um_dia` (0, 1920, 960: grânulos `1, 1921`, fecho escrito, um descartado contado), `depois_de_um_atrasado_ou_repetido_a_pista_continua`, `um_atrasado_do_outro_lado_da_volta_tambem_se_descarta`, `a_volta_do_relogio_de_32_bits_nao_e_um_recuo`;
+- `o_relogio_conta_a_partir_do_primeiro_pacote_e_atravessa_a_volta` — é este que guarda a segunda regra no CI, que corre em release;
+- `um_recuo_que_nao_passa_e_um_relogio_novo`, `uma_rajada_de_reordenacao_nao_e_um_relogio_novo`, `depois_de_o_relogio_recuar_de_vez_a_pista_volta_a_gravar`;
+- `um_payload_vazio_nao_avanca_o_relogio_da_pista`, `o_audio_cifrado_passa_pelo_mesmo_relogio_e_sai_decifrado` (com cifra ponta-a-ponta: o atrasado e o frame que não autentica ficam de fora).
+
+**Controlo negativo.** Os quatro primeiros, escritos ANTES da correcção e corridos contra o código antigo: em debug falham os quatro, com o pânico em `ogg_writer/mod.rs:181`; em release falham três, com os grânulos acima, e passa o da volta — que por isso guarda contra corrigir de mais, não contra o defeito. E quatro mutantes da correcção, corridos em release (o perfil do CI): com o ramo em dia a entregar o timestamp tal como chega falham 5 testes; sem re-ancorar, 2; com a comparação sem sinal, 3; sem o pacote em dia desfazer a contagem, 1 (o da rajada).
+
+**Revisão.** `delonix-meet-webrtc`, por leitura e com medições próprias no ffmpeg 6.1.1. Bloqueou a primeira versão, que só descartava: é dela a re-ancoragem, e são dela os ramos que estavam sem teste (a contagem a partir do primeiro pacote no perfil do CI, o payload vazio, o frame que não autentica, o salto para a frente). Confirmou por leitura que a R40 fica intacta (a escrita, o contador e o aviso correm na thread dedicada; `try_send` e `close` não mudaram), que o vídeo só mudou na forma de receber o pacote, e que uma `TrackRemote` nova dá uma publicação, um `RecWriter` e um relógio novos. Uma segunda passagem, só à re-ancoragem e também por leitura, não bloqueou: deu a aritmética como certa com a volta pelo meio e o timestamp entregue como estritamente crescente depois de re-ancorar; apontou que nenhum teste falhava sem o pacote em dia desfazer a contagem (o teste da rajada foi corrigido, e o quarto mutante é a prova) e acertou seis frases desta entrada.
+
+**O que NÃO está provado.**
+- **Nenhuma gravação com um browser ou um telefone a sério.** Os pacotes são 20 ms de silêncio fabricados; a reordenação é a ordem em que o teste os escreve.
+- **O ffmpeg da imagem (9.0.2).** As medições da composição são do 6.1.1 desta máquina, sobre ficheiros com os grânulos do `OggWriter` mas montados à mão, não escritos por ele.
+- **Que uma perna de telefone recomeça o relógio a meio** (re-INVITE, retenção, transferência). A re-ancoragem responde a essa hipótese; ninguém a viu acontecer.
+- **Uma re-ancoragem errada.** 50 pacotes atrasados, por ordem, depois de UM que lhes passou à frente, são lidos como relógio novo, e o resto da pista fica deslocado a distância a que esse pacote passou — 1 s no mínimo, sem tecto (190 frames à frente dão 3,8 s, para sempre). Não se conhece rede que o faça; fica escrito.
+- **Um relógio novo em que cada pacote chegue repetido** nunca re-ancora: um atrasado que não avança sobre o anterior recomeça a contagem, e a pista fica muda. A alternativa (ignorá-lo) deixava muda a origem que recuasse duas vezes seguidas. Repetidos não chegam de um browser (o SRTP deita-os fora — não verificado) nem da ponte.
+- **Se o `webrtc-rs` entrega uma `TrackRemote` nova quando o SSRC muda no mesmo `mid`.** Se não entregar, o relógio da pista é o mesmo para os dois fluxos, e é a re-ancoragem que os separa.
+- **Um timestamp muito à frente** (até 2^31) é aceite, estica a pista esse tempo e deixa os pacotes seguintes atrasados durante 1 s, até re-ancorar. Só o próprio publicador o faz a si mesmo; acima de 10 s, o ffmpeg 6.1.1 desconta o salto.
+- **Quem ficou sem áudio não se sabe pelo log.** O aviso leva o nome da pista (`03-audio`), sem sala nem publicador, e o «gravação DEGRADADA» do fecho só conta a fila cheia. Uma falha de decifra continua sem contador (já era assim).
+- **Em debug, uma pista cujo relógio avance mais de 2^32 amostras** do primeiro pacote ao último volta ao pânico do `OggWriter`. Em release dá certo.
+- **Um buraco de menos de 10 s numa pista é fechado pela mistura** (`adelay`/`amix`, sem `aresample=async`): medido pelo revisor com ficheiros sintéticos, já era assim, e é o que acontece a cada pacote descartado ou perdido — 20 ms de cada vez. Com DTX pode ser muito mais. Não é desta entrada; fica por confirmar com uma gravação real.
+- A bomba do SFU renumera a sequência do áudio depois de gravar (`next_seq`): um pacote atrasado segue para quem ouve com sequência contígua e timestamp para trás. Não foi mexido nem medido.
+
+**Ficheiros.** `server/src/recorder.rs` (`OpusClock`, `RecSink::Audio`, `RecWriter::spawn`), `server/src/metrics.rs`.
+
 ### R296 — A voz de um softphone chegava à sala a 8 kHz, e a prova real da perna em Opus encontrou três defeitos que já lá estavam
 
 **Sintoma.** Um softphone falava Opus a 48 kHz com o FreeSWITCH e a perna para a ponte era forçada a PCMA: tudo acima de ~3,4 kHz ficava pelo caminho («baixo e sem qualidade», 2026-10-05). Medido antes de mexer: a voz chegava à ponte a −20 dBFS e a ponte era transparente em nível e em espectro nos dois sentidos — o estrangulamento era a perna a 8 kHz, não os codecs. Decisão no [ADR-0018](../adr/0018-a-perna-da-ponte-negoceia-opus.md).
@@ -3119,6 +3162,37 @@ Fora do CI, medido a 2026-10-05 no compose do laboratório (FreeSWITCH 1.11.3, l
 - **CPU em release**: os números dos testes são de um binário de debug, numa máquina carregada.
 - **O cluster e o chart**: tudo isto foi medido no compose.
 - **O defeito do `opus-rs` com a banda média não foi reportado aos autores.**
+
+### R298 — O portão de higiene acusava regressões que existem: o `grep -q` matava o `echo`, e o `pipefail` lia isso como «não encontrado»
+
+**Sintoma.** Medido a 2026-10-05 com o host a carga 20–44: `bash scripts/check-repo-hygiene.sh` falhou em 2 corridas de 4 na mesma árvore, sem nada ter mudado entre elas, com «referência a R99 sem entrada no catálogo» e «referência a R211 sem entrada no catálogo» — e as duas entradas existem. Os números acusados mudam de corrida para corrida (31 diferentes em 50 corridas). Um portão que falha sem razão ensina a correr outra vez até dar verde, e é esse hábito que deixa passar a falha verdadeira.
+
+**Causa raiz.** A secção das referências fazia `echo "$rnums" | grep -qx "$r" || { … fail=1; }`, uma vez por referência (mais de duzentos pipelines por corrida), num ficheiro com `set -o pipefail`. O `echo` do bash escreve para um pipe **uma linha de cada vez** (medido com `strace`: seis linhas, seis `write`); o `grep -q` sai à primeira correspondência; se o `echo` ainda vai a meio da lista, morre com SIGPIPE (estado 141). Com `pipefail` o pipeline dá 141 embora o `grep` tenha dado 0, e o `||` trata isso como «não está no catálogo». Não era uma hipótese lida no código: uma cópia instrumentada que regista o `PIPESTATUS` deu 34 linhas falsas em 50 corridas, e as 34 com `(141, 0)` — o `echo` morto, o `grep` a encontrar o número.
+
+**Regra.**
+- **Num script com `pipefail`, um veredicto nunca sai do estado de um pipe cujo último comando pode sair antes de ler tudo** (`grep -q`, `head -n`, `grep -m`). Lê-se para uma variável e dá-se por `<<<`, ou dá-se o ficheiro ao `grep`: `grep -qx "$r" <<<"$rnums"`. Não há produtor para morrer.
+- **O erro tem dois sentidos.** Com `||` é um vermelho falso (este). Com `&&` é um **verde falso**: `code | grep -q -- "$forbid" && bad`, no `check-ffmpeg-licenca.sh`, deixava passar uma opção proibida quando o `grep -v` a montante morria. Medido fora da árvore, sob carga, com um Dockerfile de 10 kB e `--enable-gpl` na primeira linha: a forma antiga não o viu em 86 de 500 voltas; a nova, em nenhuma. Com um de 2,5 kB, zero em 500 — abaixo dos 4096 bytes do buffer do stdio o `grep -v` escreve tudo de uma vez. O `Dockerfile.server` tem hoje 2782 bytes fora dos comentários: o portão da licença estava certo por o ficheiro ser pequeno, e deixava de estar quando crescesse.
+- **Tirar o `pipefail` não é a correcção**: esconde também o produtor que falha a sério.
+- O padrão saiu de quatro portões: `check-repo-hygiene.sh` (as referências, o cabeçalho `MÓDULO DE APOIO` dos e2e e o livro das chaves aceites), `check-ffmpeg-licenca.sh` (cinco sítios), `check-isolamento-cobertura.sh` (um) e `check-bordo-central.sh` (o `linha()`, onde um `head -1` a sair cedo acrescentava um `0` ao número da linha por via do `|| echo 0`).
+- **O estado do produtor que interessa lê-se à parte, não se perde.** No `check-ffmpeg-licenca.sh`, com um binário em `FFMPEG_BIN`: um `ffmpeg -L` que falha continua a ser vermelho (a primeira versão desta correcção deixava de olhar para ele — achado da revisão), e um `ffmpeg -version` que escreve `--enable-gpl` e sai com erro passa a ser vermelho — com `… | grep -E … && bad` e `pipefail` era verde, sem SIGPIPE nenhum.
+
+**Portão.** O próprio `scripts/check-repo-hygiene.sh` (`make fitness` e CI) recusa, em qualquer `scripts/check-*.sh`, um `grep -q` (ou `--quiet`) à saída de um pipe **na mesma linha**, fora de comentários — `grep`, `egrep` e `fgrep`, com caminho, com `command`, `xargs` ou uma variável à frente, e o `-q` em qualquer posição entre as opções. O que ele não vê está no «não provado».
+
+**Prova corrida a 2026-10-05**, num host de 32 núcleos partilhado com outras sessões:
+- antes, sem carga acrescentada (host a 18–27): **4 falhas em 50 corridas**, sete linhas falsas, sete números diferentes;
+- antes, com um `yes` por núcleo (host a 32–72), na cópia instrumentada: **23 corridas de 50** com pelo menos uma linha falsa, 34 linhas, todas com `PIPESTATUS` `(141, 0)`;
+- depois, com a mesma carga (host a 56–65): **0 falhas em 50**;
+- os controlos negativos do portão continuam a falhar: uma referência a um número sem entrada num `.md`; um `### R59` repetido; um e2e novo sem CI nem razão escrita; `MÓDULO DE APOIO` só depois da linha 20; um caminho tirado do livro das chaves, e o mesmo caminho deixado só em comentário; um `echo x | grep -q x` e um `cat f | grep -E -iq x` num `check-*.sh`. E o que tem de passar, passa: um módulo de apoio declarado no cabeçalho; um comentário, um `<<<` e um `|| grep -q` não disparam o portão novo;
+- o portão novo acusa também `grep -m1 -q`, `egrep -q`, `LC_ALL=C grep -q`, `/usr/bin/grep -q`, `grep -e p -q`, `grep x --quiet`, `|& grep -q`, `command grep -q` e `xargs grep -q`; e cala-se com `grep -c`, `grep -oE … | sort -u` e `grep -v … | wc -l`;
+- os outros três portões dão a mesma saída e o mesmo estado que a versão anterior, na árvore como está e em nove mutações (`--enable-gpl`, o SHA-256 a zeros e curto, um `ffmpeg` GPL, um LGPL e um que escreve «Lesser» e sai com erro em `FFMPEG_BIN`, o `isolamento.mjs` sem as linhas de um recurso, o `kamailio.cfg` sem `allow_source_address` e sem o digest). A única diferença é a pretendida: o binário GPL cujo `-version` sai com erro era verde e é vermelho.
+
+**O que NÃO está provado.**
+- **Só no portão de higiene a falha foi reproduzida na árvore real**, e só na linha das referências. Nas outras duas linhas dele (cabeçalho dos e2e, livro das chaves) o `PIPESTATUS` deu zero nas 50 corridas instrumentadas — o produtor é um `head` ou um `grep` com menos de 4096 bytes para escrever. Os outros três portões foram corrigidos por leitura; o que se mediu neles foi a equivalência com a versão anterior.
+- **O portão novo só vê `grep -q` na mesma linha da barra**, e não distingue uma barra dentro de uma cadeia de texto nem um comentário no fim de uma linha de código (falha fechado). Um `| head -1` cujo estado decida alguma coisa, um `grep -m`, um `awk … exit` são revisão. A revisão procurou-os nos 22 portões e não encontrou nenhum cujo estado decida um veredicto; os `| head` que restam ou estão dentro de um `$(…)` sem estado lido, ou só apresentam uma falha já marcada.
+- **Os scripts que não são portões não foram tocados.** Há 37 pipes para `grep -q` com `pipefail` em dez deles (`cluster-voice.sh` e `pbx-tronco-prova.sh` com oito cada, `compose-voice-check.sh` com seis, `cluster.sh` e `softphone-prova.sh` com quatro, e outros), quase todos com um `kubectl exec` ou um `docker exec` a montante. Uma prova de voz que falha «às vezes» numa máquina carregada pode ser isto.
+- **Não correu no runner do CI**, só nesta máquina (bash 5.2.21, grep do GNU). A carga foi de CPU (um `yes` por núcleo); não se mediu com o disco ou a memória em pressão.
+
+**Ficheiros.** `scripts/check-repo-hygiene.sh`, `scripts/check-ffmpeg-licenca.sh`, `scripts/check-isolamento-cobertura.sh`, `scripts/check-bordo-central.sh`.
 
 ### R297 — Um tronco alterado ou apagado ficava no FreeSWITCH até alguém o reiniciar
 
