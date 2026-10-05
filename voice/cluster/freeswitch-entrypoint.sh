@@ -84,6 +84,11 @@ done
 CDR_PENDENTES=/usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes
 mkdir -p "$CDR_PENDENTES"
 chmod 700 "$CDR_PENDENTES"
+# `outbound_redirect_fatal`, global: nenhuma perna que o FreeSWITCH origina
+# segue um 3xx — nem a do tronco, nem a da chamada de teste pelo ESL, nem a
+# que toca num ramal. Segui-lo era ligar ao Contact que o outro lado escolhe,
+# sem passar pela guarda de saída (R213). Uma variável de canal que não exista
+# lê-se das globais (switch_channel.c).
 cat >"$CONF/vars-meet.xml" <<XML
 <include>
   <X-PRE-PROCESS cmd="set" data="delonix_control_url=${DELONIX_CONTROL_URL}"/>
@@ -91,6 +96,7 @@ cat >"$CONF/vars-meet.xml" <<XML
   <X-PRE-PROCESS cmd="set" data="delonix_ramais_sip_port=${DELONIX_RAMAIS_SIP_PORT:-5070}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_cdr_dir=${CDR_PENDENTES}"/>
   <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
+  <X-PRE-PROCESS cmd="set" data="outbound_redirect_fatal=true"/>
 </include>
 XML
 chmod 600 "$CONF/vars-meet.xml"

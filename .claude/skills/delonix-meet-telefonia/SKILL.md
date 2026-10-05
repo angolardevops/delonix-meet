@@ -319,7 +319,7 @@ digest autenticou (`sip_auth_username`, `sip_auth_realm`), e o `resolve-extensio
 por esta ordem: número de acesso às reuniões → emergência (sai sempre, basta o ramal
 activo) → outro ramal → o plano de marcação da organização do ramal AUTENTICADO, só se a
 regra for de saída. Tudo o resto é «não existe». O Lua põe `delonix_org_id` no canal e
-transfere para `delonix-outbound`. Seis coisas que custaram, e não se reabrem:
+transfere para `delonix-outbound`. Sete coisas que custaram, e não se reabrem:
 - a organização que paga vem da identidade autenticada (`voice::authenticated_extension`),
   nunca do `From` nem do `domain` do pedido;
 - a perna de quem marca tem `process_cdr=false`, e o FreeSWITCH **copia esse valor para a
@@ -331,8 +331,13 @@ transfere para `delonix-outbound`. Seis coisas que custaram, e não se reabrem:
 - os dois perfis recusam `REFER` e a perna do tronco não segue um 3xx: uma transferência
   pedida pelo ramal punha a perna do TRONCO outra vez no plano de marcação — segunda
   chamada por conta da organização, e a primeira sem registo (medido);
-- a perna do tronco perde a cópia do SDP do ramal (`unset switch_m_sdp`), senão o registo
-  dela levava a chave SRTP dele (medido); e a ingestão nunca ignora um registo com gateway;
+- a perna do tronco perde a cópia do SDP do ramal (`unset switch_m_sdp`) DUAS vezes — ao
+  nascer e quando a ponte acaba —, porque o FreeSWITCH volta a escrevê-la a cada SDP novo
+  do ramal (espera/retoma), e o registo dela levava a chave SRTP dele (medido). Um
+  `api_hangup_hook=uuid_setvar …` NÃO serve: `${uuid}` expande-se na perna de quem marca, e
+  uma sessão desligada não se localiza (medido, duas vezes). A ingestão nunca ignora um
+  registo com gateway;
+- nenhuma perna originada segue um 3xx (`outbound_redirect_fatal` global, no arranque);
 - a organização que paga é só a variável que nós pomos no canal — nunca o host do pedido.
 
 **Não o dês por feito além disto:** só o RAMAL chega ao `delonix-outbound` — uma central

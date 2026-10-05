@@ -231,7 +231,7 @@ up() {
 
 # ------------------------------------------------------------ mede
 mede() {
-  local r st corpo senha op trunk gw e antes v pendentes=0 SOFT=
+  local r st corpo senha op trunk gw e antes v pendentes=0 SOFT= b
   senha=$(env_ ADMIN_PASSWORD); op=$(env_ OPERADORA_PASSWORD)
 
   echo "1) o administrador cria a organização, o tronco e o plano de marcação — pela API"
@@ -403,6 +403,17 @@ mede() {
   # perna do tronco recebe do FreeSWITCH uma cópia do SDP que o ramal ofereceu,
   # com a chave SRTP dele (`switch_m_sdp`), e o registo leva todas as variáveis.
   if chamada_longa "$pw_a" "$ramal" "$dom_a" "$ESTADO/a-meio.out"; then
+    # Espera e retoma. O ramal manda um SDP novo a meio da chamada, e o
+    # FreeSWITCH volta a copiá-lo para a perna do tronco (sofia_glue_pass_sdp)
+    # — DEPOIS de a dial string o ter tirado na origem. A verificação que se
+    # segue é o controlo: se a cópia não voltou, o registo em disco não prova
+    # nada sobre a renegociação.
+    b=$(fs_cli "show channels" | grep -a 'sofia/external/' | head -1 | cut -d, -f1)
+    m_exec "$SOFT" sh -c "printf '/hold\n' | nc -u -w1 127.0.0.1 55551" >/dev/null 2>&1; sleep 2
+    m_exec "$SOFT" sh -c "printf '/resume\n' | nc -u -w1 127.0.0.1 55551" >/dev/null 2>&1; sleep 2
+    v=$(fs_cli "uuid_getvar ${b:-nenhuma} switch_m_sdp" | grep -ac 'inline')
+    [ -n "$b" ] && [ "${v:-0}" -ge 1 ] && ok "controlo: com a espera e a retoma do ramal, a perna do tronco voltou a receber o SDP dele, com a chave" ||
+      bad "a espera/retoma não levou um SDP novo à perna do tronco (perna «${b:-?}», $v linha(s) com chave) — o registo em disco não mede a renegociação"
     sleep 1; m_derruba "$P-server" >/dev/null 2>&1
     wait
   else wait; bad "a chamada longa do ramal não se estabeleceu — o registo em disco não foi medido"; m_derruba "$P-server" >/dev/null 2>&1; fi

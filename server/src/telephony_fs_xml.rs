@@ -116,6 +116,10 @@ pub fn dialplan_extension(
     // - `unset switch_m_sdp`: ao originar, o FreeSWITCH copia para ela o SDP
     //   que quem marcou ofereceu — com a chave SRTP dele —, e o registo leva
     //   todas as variáveis. Só o modo proxy lê essa cópia.
+    // - `execute_on_post_bridge=unset switch_m_sdp`: a cópia VOLTA a ser escrita
+    //   sempre que quem marcou manda um SDP novo a meio da chamada — pôr em
+    //   espera e retomar chega (sofia_glue_pass_sdp, sem condição). Tira-se
+    //   outra vez quando a ponte acaba, na própria perna (`trunk_leg_vars`).
     // - `outbound_redirect_fatal`: um 3xx da operadora não é seguido. Segui-lo
     //   era ligar a um destino que a operadora escolhe (e que não passou pela
     //   guarda de saída, R213), ou a outro número por conta da organização.
@@ -123,6 +127,9 @@ pub fn dialplan_extension(
     //   cabeçalhos `X-…`/`P-…` do INVITE do ramal iam para a operadora — um
     //   `P-Asserted-Identity` escrito pelo telefone, por exemplo.
     act("set", "sip_copy_custom_headers=false".into());
+    // E as partes de um INVITE multipart (a de SDP incluída) também não:
+    // ficavam no registo da perna do tronco e seguiam no corpo para a operadora.
+    act("set", "sip_copy_multipart=false".into());
     act("set", "delonix_cdr_skip=true".into());
     act("export", format!("delonix_org_id={org_id}"));
     act("export", "delonix_direction=outbound".into());
@@ -151,16 +158,18 @@ pub fn dialplan_extension(
                     act(
                         "bridge",
                         format!(
-                            "[delonix_trunk_id={},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/{gw}/{wire_number}",
-                            leg.trunk_id
+                            "[{}]sofia/gateway/{gw}/{wire_number}",
+                            trunk_leg_vars(leg.trunk_id)
                         ),
                     );
                 } else {
                     act(
                         "limit_execute",
                         format!(
-                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/{gw}/{wire_number}",
-                            leg.trunk_id, leg.max_channels, leg.trunk_id
+                            "hash delonix_trunk {} {} bridge [{}]sofia/gateway/{gw}/{wire_number}",
+                            leg.trunk_id,
+                            leg.max_channels,
+                            trunk_leg_vars(leg.trunk_id)
                         ),
                     );
                 }
@@ -322,6 +331,24 @@ pub async fn handler(
         }
         _ => Ok(xml(not_found())),
     }
+}
+
+/// As variáveis da perna de um TRONCO (o que vai dentro de `[...]`).
+///
+/// A cópia do SDP de quem marcou (`switch_m_sdp`, com a chave SRTP dele) é
+/// tirada DUAS vezes: quando a perna nasce (`execute_on_originate_2`) e quando
+/// a ponte acaba (`execute_on_post_bridge`) — porque o FreeSWITCH volta a
+/// escrevê-la sempre que quem marcou manda um SDP novo a meio da chamada.
+///
+/// O que NÃO serve, medido (R292): um `api_hangup_hook=uuid_setvar …`. O texto
+/// do plano é expandido na perna de quem marca (duas vezes, com o
+/// `limit_execute`), e `${uuid}` saía com o identificador dela; e mesmo com o
+/// identificador certo (`origination_uuid`) o `uuid_setvar` não encontra uma
+/// sessão que já desligou (`switch_core_session_perform_read_lock`).
+fn trunk_leg_vars(trunk_id: Uuid) -> String {
+    format!(
+        "delonix_trunk_id={trunk_id},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true"
+    )
 }
 
 async fn dialplan(state: &AppState, form: &HashMap<String, String>) -> Result<Response, ApiError> {
@@ -509,15 +536,18 @@ mod tests {
         assert!(x.contains(r#"expression="^923447108$""#));
         let ia = x
             .find(&format!(
-                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{a}/244923447108"
+                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{a}/244923447108"
             ))
             .unwrap();
         let ib = x
             .find(&format!(
-                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{b}/244923447108"
+                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{b}/244923447108"
             ))
             .unwrap();
         assert!(ia < ib, "a ordem de failover é a da resolução");
+        // Nada na dial string depende de uma expansão: o texto é expandido
+        // na perna de quem marca, e um `${uuid}` saía com o identificador dela.
+        assert!(!x.contains("uuid_setvar") && !x.contains("origination_uuid"));
         assert!(x.contains("record_session"));
         assert!(x.contains("delonix_record=true"));
     }
@@ -543,7 +573,7 @@ mod tests {
         assert!(x.contains("delonix_record=false"));
         assert!(!x.contains("limit_execute"));
         assert!(x.contains(&format!(
-            r#"application="bridge" data="[delonix_trunk_id={a},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{a}/112""#
+            r#"application="bridge" data="[delonix_trunk_id={a},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{a}/112""#
         )));
     }
 

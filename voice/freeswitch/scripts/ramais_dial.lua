@@ -85,8 +85,9 @@ local auth_realm = session:getVariable("sip_auth_realm") or ""
 
 -- Nada do que vai para o JSON pode fechar a cadeia de caracteres: o destino
 -- vem do padrão do dialplan (dígitos e «+»); o resto, por via das dúvidas.
--- Nem a plica, que delimita o corpo no argumento do mod_curl.
-local function limpo(s) return (s:gsub("[%c\"'\\]", "")) end
+-- Nem a plica, que delimita o corpo no argumento do mod_curl, nem o `%`: o
+-- mod_curl descodifica `%XX` no corpo DEPOIS desta limpeza.
+local function limpo(s) return (s:gsub("[%c\"'\\%%]", "")) end
 
 local body = string.format('{"domain":"%s","extension":"%s","auth_user":"%s","auth_realm":"%s"}',
   limpo(domain), limpo(destination), limpo(auth_user), limpo(auth_realm))

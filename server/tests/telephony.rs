@@ -1315,7 +1315,7 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
     assert_eq!(st, 200);
     assert!(
         x.contains(&format!(
-            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{uni}/244923447108"
+            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{uni}/244923447108"
         )),
         "{x}"
     );
