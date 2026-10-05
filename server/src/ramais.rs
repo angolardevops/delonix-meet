@@ -365,6 +365,20 @@ pub async fn create_extension(
         )
         .into());
     }
+    // E os de emergência: quem marca o 112 sai para a rede pública antes de
+    // se procurar um ramal — um ramal com esse número nunca tocava.
+    if state
+        .config
+        .telephony_emergency_numbers
+        .iter()
+        .any(|n| n == extension)
+    {
+        return Err(DomainError::conflict(
+            "ramais.extension_reserved",
+            format!("o número {extension} é um número de emergência"),
+        )
+        .into());
+    }
 
     // Erro claro em vez de deixar a FK composta rebentar com algo opaco. A
     // pertença decide-se SEMPRE em org.rs (regra 1, ADR-0004 §5) — não se
@@ -950,7 +964,9 @@ async fn try_assign_on_join(
     if existing.iter().any(|(_, m)| *m == Some(user_id)) {
         return Ok(JoinAssignment::Skipped);
     }
-    let taken: HashSet<String> = existing.into_iter().map(|(e, _)| e).collect();
+    let mut taken: HashSet<String> = existing.into_iter().map(|(e, _)| e).collect();
+    // Um número de emergência nunca se atribui a um ramal: conta como ocupado.
+    taken.extend(state.config.telephony_emergency_numbers.iter().cloned());
     let sip_domain = sip_domain_for_org(state, org_id).await?;
     let mut free = pin_rules::free_numbers(
         range.range_start,
@@ -1053,7 +1069,9 @@ pub async fn assign_missing_extensions(
             .fetch_all(&state.db)
             .await?;
     let has_one: HashSet<Uuid> = existing.iter().filter_map(|(_, m)| *m).collect();
-    let taken: HashSet<String> = existing.into_iter().map(|(e, _)| e).collect();
+    let mut taken: HashSet<String> = existing.into_iter().map(|(e, _)| e).collect();
+    // Um número de emergência nunca se atribui a um ramal: conta como ocupado.
+    taken.extend(state.config.telephony_emergency_numbers.iter().cloned());
 
     let people_total = people.len();
     let missing: Vec<(Uuid, String)> = people
@@ -1270,12 +1288,21 @@ pub async fn ivr_directory(
 pub struct ResolveExtensionReq {
     pub domain: String,
     pub extension: String,
+    /// O que o FreeSWITCH AUTENTICOU por digest nesta chamada
+    /// (`sip_auth_username`, `sip_auth_realm`). Só com os dois é que um número
+    /// pode sair para a rede pública: é deles que se tira a organização que
+    /// paga a chamada — nunca do `From`, nem de `domain`.
+    #[serde(default)]
+    pub auth_user: String,
+    #[serde(default)]
+    pub auth_realm: String,
 }
 
-/// Um dos dois: `sip_username` (o número é de um ramal desta org) ou
-/// `meeting_access` (o número é o de acesso às reuniões). O contrato é com
+/// Um dos três: `sip_username` (o número é de um ramal desta org),
+/// `meeting_access` (o número é o de acesso às reuniões) ou `outbound` (o
+/// número sai pelo plano de marcação da organização). O contrato é com
 /// `voice/freeswitch/scripts/ramais_dial.lua`.
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct ResolveExtensionResp {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sip_username: Option<String>,
@@ -1283,6 +1310,19 @@ pub struct ResolveExtensionResp {
     /// ramal. Ausente em todos os outros casos.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub meeting_access: bool,
+    /// `true` => o Lua passa a chamada ao contexto de saída
+    /// (`telephony_fs_xml::OUTBOUND_CONTEXT`), com `org_id` no canal: é o
+    /// plano de marcação dessa organização que decide por que tronco sai.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub outbound: bool,
+    /// A organização do ramal que marcou. Só com `outbound`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<Uuid>,
+    /// O número curto de quem marca, para apresentar à operadora em vez do
+    /// utilizador SIP do ramal, que é metade da credencial dele. Só com
+    /// `outbound`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caller_extension: Option<String>,
 }
 
 /// `POST /internal/v1/voice/ivr/resolve-extension` — chamado pelo dialplan interno
@@ -1305,9 +1345,26 @@ pub async fn ivr_resolve_extension(
         &state.config.voice_meeting_access_number,
     ) {
         return Ok(Json(ResolveExtensionResp {
-            sip_username: None,
             meeting_access: true,
+            ..Default::default()
         }));
+    }
+    // A EMERGÊNCIA vem antes de procurar um ramal (R210): o 112 nunca toca
+    // num colega. Basta o ramal estar activo — nem a pessoa arquivada fica
+    // sem o 112.
+    let dialed = req.extension.trim();
+    let caller =
+        crate::voice::authenticated_extension(&state, &req.auth_user, &req.auth_realm).await?;
+    if state
+        .config
+        .telephony_emergency_numbers
+        .iter()
+        .any(|n| n == dialed)
+    {
+        return match caller {
+            Some(c) => Ok(Json(outbound_for(&c))),
+            None => Err(ApiError::NotFound),
+        };
     }
     let Some(org_id) = org_id_by_sip_domain(&state, req.domain.trim()).await else {
         return Err(ApiError::NotFound);
@@ -1320,12 +1377,47 @@ pub async fn ivr_resolve_extension(
     .bind(req.extension.trim())
     .fetch_optional(&state.db)
     .await?;
-    match sip_username {
-        Some(sip_username) => Ok(Json(ResolveExtensionResp {
+    if let Some(sip_username) = sip_username {
+        return Ok(Json(ResolveExtensionResp {
             sip_username: Some(sip_username),
-            meeting_access: false,
-        })),
-        None => Err(ApiError::NotFound),
+            ..Default::default()
+        }));
+    }
+    // Não é um ramal: sai para a rede pública SE o plano de marcação da
+    // organização de quem marca o mandar por um tronco. A organização é a do
+    // ramal autenticado, e a pessoa tem de continuar nela. Tudo o resto —
+    // sem regra, bloqueado, uma regra interna — responde como um número que
+    // não existe: o plano de marcação é uma lista do que se PODE marcar.
+    let Some(caller) = caller else {
+        return Err(ApiError::NotFound);
+    };
+    if !caller.owner_is_active(&state).await? {
+        return Err(ApiError::NotFound);
+    }
+    let Ok(resolved) =
+        crate::telephony_service::resolve_number(&state, caller.org_id, dialed).await
+    else {
+        return Err(ApiError::NotFound);
+    };
+    use delonix_meet_domain::telephony::dial_plan::{ResolutionOutcome, RuleAction};
+    let leaves = resolved.resolution.action == Some(RuleAction::External)
+        && matches!(
+            resolved.resolution.outcome,
+            ResolutionOutcome::Route | ResolutionOutcome::NoAvailableTrunk
+        );
+    if leaves {
+        Ok(Json(outbound_for(&caller)))
+    } else {
+        Err(ApiError::NotFound)
+    }
+}
+
+fn outbound_for(caller: &crate::voice::AuthenticatedExtension) -> ResolveExtensionResp {
+    ResolveExtensionResp {
+        outbound: true,
+        org_id: Some(caller.org_id),
+        caller_extension: Some(caller.extension.clone()),
+        ..Default::default()
     }
 }
 
@@ -1599,6 +1691,15 @@ pub async fn ivr_dialplan_did(
     // O mesmo segredo que `ivr_directory`, pelo cabeçalho ou por HTTP Basic;
     // nunca no URL (R227).
     check_media_secret(&state, &headers)?;
+
+    // Só as chamadas que ENTRAM (contexto `public`). O FreeSWITCH faz esta
+    // pergunta em todos os contextos, e a resposta abaixo só tem o `public`:
+    // dada a uma chamada de ramal ou a uma de saída, ele ficava sem contexto e
+    // a chamada sem rota — um ramal não conseguia marcar um número que fosse
+    // o DID de outro. «Not found» passa a pergunta ao binding seguinte.
+    if fields.get("Caller-Context").map(String::as_str) != Some("public") {
+        return Ok(xml_response(XML_NOT_FOUND.into()));
+    }
 
     let Some(raw_number) = first_present(&fields, DIALPLAN_DESTINATION_KEYS) else {
         return Ok(xml_response(XML_NOT_FOUND.into()));
