@@ -628,6 +628,13 @@ async fn a_perna_de_um_dial_out_entra_com_o_nome_do_ramal_e_a_pessoa(db: sqlx::P
         app.state.hub.phone_legs_of(room_id, colega_id),
         vec![(leg, Some(call_id))]
     );
+    // Um `call_id` que não é de um dial-out desta sala (vem de um cabeçalho que ninguém assina)
+    // nunca se guarda: senão decidia o alvo do `hupall`.
+    let solta = uuid::Uuid::new_v4();
+    let leg2 = uuid::Uuid::new_v4();
+    delonix_server::seat_phone_caller(&app.state, room_id, &code, leg2, None, Some(solta)).await;
+    let seat2 = app.state.hub.seat_of(room_id, leg2).unwrap();
+    assert_eq!((seat2.call_id, seat2.anonymous), (None, true));
     // Outra sala com o mesmo call_id não identifica ninguém.
     let outra = codigo(&app.new_room(&a, "Outra").await);
     assert!(
@@ -714,11 +721,51 @@ async fn a_mesma_pessoa_no_browser_e_ao_telefone_escolhe_onde_continuar(db: sqlx
     assert_eq!(aviso["phone_id"], leg.to_string());
     assert_eq!(aviso["can_hangup"], true);
 
+    // Outra conta da mesma organização, na mesma sala, com o id VERDADEIRO da perna: recusado.
+    let colega = app.add_member(&a, "intruso", "member").await;
+    let (st, j2) = app
+        .post(
+            &format!("/api/rooms/{code}/join"),
+            Some(&colega.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{j2}");
+    let url2 = format!(
+        "{}/ws?token={}",
+        app.base.replacen("http", "ws", 1),
+        j2["room_token"].as_str().unwrap()
+    );
+    let (mut ws2, _) = tokio_tungstenite::connect_async(url2)
+        .await
+        .expect("/ws do colega");
+    ws2.send(Message::Text(
+        json!({"type": "device-choice", "phone_id": leg, "keep": "meet"})
+            .to_string(),
+    ))
+    .await
+    .unwrap();
+    // Quem está na sala de espera nem chega ao tratamento; quem chegasse receberia «gone».
+    // Em qualquer caso, nunca se actua na perna de outra pessoa.
+    if let Some(r2) = esperar_msg(&mut ws2, "duplicate-resolved", 1_500).await {
+        assert_eq!(
+            r2["outcome"], "gone",
+            "a perna de outra pessoa nunca se toca: {r2}"
+        );
+    }
+    assert!(
+        !esl.log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.starts_with("hupall ")),
+        "o hupall de outra pessoa nunca sai"
+    );
+
     // Uma perna que não é dela não faz nada.
     ws.send(Message::Text(
         json!({"type": "device-choice", "phone_id": uuid::Uuid::new_v4(), "keep": "meet"})
-            .to_string()
-            .into(),
+            .to_string(),
     ))
     .await
     .unwrap();
@@ -738,8 +785,7 @@ async fn a_mesma_pessoa_no_browser_e_ao_telefone_escolhe_onde_continuar(db: sqlx
     // «Continuar só no Meet»: a chamada que a sala fez tocar desliga-se.
     ws.send(Message::Text(
         json!({"type": "device-choice", "phone_id": leg, "keep": "meet"})
-            .to_string()
-            .into(),
+            .to_string(),
     ))
     .await
     .unwrap();
@@ -763,8 +809,7 @@ async fn a_mesma_pessoa_no_browser_e_ao_telefone_escolhe_onde_continuar(db: sqlx
     // «Nos dois»: nada se desliga.
     ws.send(Message::Text(
         json!({"type": "device-choice", "phone_id": leg, "keep": "both"})
-            .to_string()
-            .into(),
+            .to_string(),
     ))
     .await
     .unwrap();

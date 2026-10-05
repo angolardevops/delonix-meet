@@ -1288,9 +1288,15 @@ pub async fn seat_phone_caller(
     };
     // Uma chamada que a SALA fez tocar (um dial-out) sabe quem é: o ramal que o
     // anfitrião escolheu. Sem isto entrava como «Telefone», sem nome nem pessoa.
+    // O `call_id` só se guarda (e com ele o poder de o desligar) quando é de um dial-out
+    // DESTA sala: vem de um cabeçalho SIP que ninguém assina, e decide o alvo do `hupall`.
+    let mut call_id_validado = None;
     if who.is_none() {
         if let Some(c) = call_id {
-            who = crate::dial_outs::caller_of_call(&state.db, c, room_code).await;
+            if let Some(w) = crate::dial_outs::caller_of_call(&state.db, c, room_code).await {
+                who = Some(w);
+                call_id_validado = Some(c);
+            }
         }
     }
     let member_id = who.as_ref().and_then(|w| w.member_id);
@@ -1308,7 +1314,7 @@ pub async fn seat_phone_caller(
             channel: delonix_meet_domain::conferencing::channels::Channel::Phone,
             anonymous,
             video_unavailable: true,
-            call_id,
+            call_id: call_id_validado,
             member_id,
             ..Default::default()
         },

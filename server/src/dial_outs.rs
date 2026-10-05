@@ -594,11 +594,11 @@ pub async fn caller_of_call(
     room_code: &str,
 ) -> Option<crate::voice_caller::CallerIdentity> {
     let row: Option<(String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT COALESCE(NULLIF(e.label, ''), u.username, e.extension), e.member_id
+        "SELECT COALESCE(NULLIF(e.label, ''), u.display_name, u.username, e.extension), e.member_id
            FROM room_dial_outs d
            JOIN voice_extensions e ON e.id = d.extension_id
            LEFT JOIN users u ON u.id = e.member_id
-          WHERE d.telephony_call_id = $1 AND d.room_code = $2",
+          WHERE d.telephony_call_id = $1 AND d.room_code = $2 AND e.active",
     )
     .bind(call_id)
     .bind(room_code)

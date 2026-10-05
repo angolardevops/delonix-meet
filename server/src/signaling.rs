@@ -1090,7 +1090,8 @@ pub struct Seat {
     pub on_stage: bool,
     /// A chamada da ponte (o `dial-out`/perna) — é por este id que o anfitrião
     /// age sobre a pessoa pela REST.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Nunca sai do servidor: é o alvo do `hupall`, e quem o sabe sabe qual chamada derrubar.
+    #[serde(skip)]
     pub call_id: Option<Uuid>,
     /// A PESSOA de quem esta chamada é (o bilhete de identidade, ou o ramal que o
     /// anfitrião chamou). Nunca sai do servidor: serve para saber que a mesma
@@ -4878,6 +4879,14 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                     let outcome = match keep {
                         DeviceKeep::Both => "both",
                         DeviceKeep::Meet => {
+                            // Cala-se SEMPRE primeiro: o `hupall` responde `+OK` mesmo quando não
+                            // apanha nenhum canal, e a perna não pode ficar na sala de microfone aberto.
+                            if let Some(p) = state.hub.phone.get() {
+                                p.set_muted(phone_id, true);
+                            }
+                            state
+                                .hub
+                                .update_external(room_id, phone_id, |_, _, mic| *mic = false);
                             let desligou = match (call_id, state.telephony.originator.clone()) {
                                 (Some(c), Some(o)) => o.hangup(c).await.is_ok(),
                                 _ => false,
@@ -4887,12 +4896,6 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                             } else {
                                 // Sem como desligar (uma chamada que entrou por ramal+PIN): fica
                                 // sem som e a pessoa desliga-a no aparelho.
-                                if let Some(p) = state.hub.phone.get() {
-                                    p.set_muted(phone_id, true);
-                                }
-                                state
-                                    .hub
-                                    .update_external(room_id, phone_id, |_, _, mic| *mic = false);
                                 "muted"
                             }
                         }
@@ -6671,7 +6674,7 @@ mod tests {
             video_unavailable: true,
             weak_link: false,
             on_stage: false,
-            call_id: Some(Uuid::nil()),
+            call_id: None,
             member_id: None,
         }
     }
