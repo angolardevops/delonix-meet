@@ -103,8 +103,11 @@ if [ -f "$CAT" ]; then
            --include='*.mjs' --include='*.md' --include='*.sql' --include='*.sh' \
            --exclude-dir=node_modules --exclude-dir=target . 2>/dev/null \
          | grep -oE '[0-9]+' | sort -n -u)
+  # `<<<` e não `echo "$rnums" | grep -q` (R298): o `grep -q` sai à primeira
+  # correspondência, o `echo` do bash escreve uma linha de cada vez e morre com
+  # SIGPIPE a meio, e com `pipefail` isso lia-se como «não encontrado».
   for r in $refs; do
-    echo "$rnums" | grep -qx "$r" || {
+    grep -qx "$r" <<<"$rnums" || {
       echo "✗ higiene: referência a R$r sem entrada no catálogo (renumeração perdida?)"
       fail=1
     }
@@ -129,7 +132,8 @@ if [ -f "$WF" ] && [ -d web/e2e ]; then
     n=$(basename "$f")
     # Módulos de apoio, não testes — declarados no próprio cabeçalho.
     case "$n" in pg.mjs|harness*.mjs) continue;; esac
-    head -20 "$f" | grep -q "MÓDULO DE APOIO" && continue
+    cabecalho=$(head -20 "$f")
+    grep -q "MÓDULO DE APOIO" <<<"$cabecalho" && continue
     grep -q "web/e2e/$n" "$WF" && continue
     grep -qE "^$n . .+" "$EXC" 2>/dev/null && continue
     echo "✗ higiene: $n não corre no CI nem tem razão em $EXC"
@@ -158,11 +162,12 @@ hist_keys=$(git rev-list --objects --all 2>/dev/null \
             | sed 's/^[0-9a-f]\{40,\} //' \
             | grep -iE '(^|/)(id_rsa|id_ed25519|id_ecdsa)[^/]*$|\.(key|pem|p12|pfx|jks)$' \
             | sort -u || true)
+aceites=$(grep -v '^#' "$LEDGER" 2>/dev/null || true)
 for p in $hist_keys; do
   # `-F -x` porque o ledger guarda caminhos literais, um por linha; sem isto um
   # `.` do caminho passava a curinga e um caminho novo podia casar com a linha
   # de outro.
-  if ! grep -v '^#' "$LEDGER" 2>/dev/null | grep -qFx "$p"; then
+  if ! grep -qFx "$p" <<<"$aceites"; then
     echo "✗ higiene: CHAVE PRIVADA no histórico do git, sem decisão escrita: $p"
     echo '     Um "git rm" NÃO a remove do histórico. Trata-a como comprometida:'
     echo "     roda-a, e depois ou reescreves o histórico (force-push, parte todos"
@@ -275,5 +280,28 @@ if [ -n "$marcadores" ]; then
   fail=1
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros"
+# R298 — nenhum portão decide pelo estado de um `… | grep -q`.
+#
+# Todos os `scripts/check-*.sh` correm com `pipefail`. Um `grep -q` sai à
+# primeira correspondência; se o produtor ainda estiver a escrever, morre com
+# SIGPIPE, o pipeline dá erro, e o `||` ou o `&&` a seguir lê «não encontrado»
+# quando a resposta era «encontrado». Este ficheiro acusou assim referências a
+# regressões que existiam, em 4 corridas de 50, sem nada ter mudado na árvore.
+# A forma segura não tem produtor que possa morrer: `grep -q … <<<"$variavel"`
+# ou `grep -q … ficheiro`.
+#
+# Limite honesto: só vê o `grep -q` (ou `--quiet`) na MESMA linha da barra, e
+# não distingue uma barra dentro de uma cadeia de texto. Um
+# `| head -1` cujo estado decida alguma coisa, ou outro consumidor que saia
+# cedo, é revisão.
+pipes_q=$(grep -nE '(^|[^|])\|[[:space:]]*grep([[:space:]]+-[A-Za-z]+)*[[:space:]]+(-[A-Za-z]*q|--quiet|--silent)' scripts/check-*.sh \
+          | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+if [ -n "$pipes_q" ]; then
+  echo "✗ higiene: um portão decide pelo estado de um pipe para \`grep -q\`, com pipefail (SIGPIPE dá falso «não encontrado»):"
+  echo "$pipes_q" | sed 's/^/     /'
+  echo '     Lê para uma variável e usa `grep -q … <<<"$variavel"`.'
+  fail=1
+fi
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; nenhum portão a decidir por um pipe para «grep -q»; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros"
 exit $fail
