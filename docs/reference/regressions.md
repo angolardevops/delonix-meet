@@ -3009,3 +3009,34 @@ No CI: `tests/telephony.rs` (o `204` e que nada fica guardado; o `422` com um ga
 - A custo: 5 s de chamada custam o minuto inteiro (9,40 AOA). É a regra que já lá estava (`cost.rs`), não foi mexida; o incremento configurável é o T12.
 
 **Ficheiros.** `voice/freeswitch/dialplan/public/00_delonix_dialin.xml`, `voice/freeswitch/dialplan/default/00_delonix_extensions.xml`, `server/crates/delonix-meet-domain/src/telephony/trunk.rs`, `docs/reference/openapi/bff.json`, `server/src/ramais.rs`, `server/src/telephony_trunks.rs`, `scripts/check-helm.sh`, `deploy/helm/delonix-meet/values.yaml`, `voice/cluster/freeswitch-entrypoint.sh`, `voice/freeswitch/autoload_configs/xml_curl.conf.xml`, `voice/freeswitch/autoload_configs/json_cdr.conf.xml`, `compose.yaml`, `scripts/cluster-voice.sh`, `deploy/helm/delonix-meet/templates/voice.yaml`, `deploy/helm/delonix-meet/files/voice/freeswitch/json_cdr.conf.xml`, `voice/pbx-tronco-prova/compose.yaml`, `server/src/telephony_cdr.rs`, `server/src/telephony_fs_xml.rs`, `server/tests/telephony.rs`, `scripts/troncos-prova.sh`, `voice/troncos-prova/`, `scripts/softphone-prova.sh`.
+
+### R292 — Um ramal não conseguia ligar para fora: nem para a rede pública, nem para o 112
+
+**Sintoma.** Com os troncos ligados (R291) uma chamada já saía pelo plano de marcação — mas só nascendo dentro do FreeSWITCH. Um ramal não chegava lá: o contexto `delonix_ramais` só aceitava números de 3 a 5 dígitos e entregava-os a `ramais_dial.lua`, que só conhecia ramais e o número de acesso às reuniões. Um número de nove dígitos nem batia no padrão; **o 112 batia, era procurado como ramal, não existia, e a chamada desligava**. O cliente que comprava telefonia não ligava para ninguém de fora (plano de lacunas, T2).
+
+**Regra.**
+- **O servidor decide, por esta ordem** (`ramais::ivr_resolve_extension`): o número de acesso às reuniões; a **emergência** — sai sempre, antes de se procurar um ramal, e basta o ramal estar activo (nem a pessoa arquivada fica sem o 112); outro ramal da organização; e por fim o plano de marcação. Só sai o que uma regra de SAÍDA do plano manda por um tronco: sem regra, bloqueado ou uma regra interna respondem «não existe» — o plano de marcação é uma lista do que se pode marcar.
+- **A organização que paga é a do ramal AUTENTICADO.** O Lua manda o que o digest autenticou (`sip_auth_username`, `sip_auth_realm`) e o servidor confere-o (`voice::authenticated_extension`, a mesma regra do R273, agora num só sítio): utilizador activo, e o realm é o domínio da organização dele. Nunca o `From`, nem o `domain` do pedido. A resposta leva a organização; o Lua põe-na no canal e transfere para `delonix-outbound`.
+- **À operadora apresenta-se o número curto do ramal**, não o utilizador SIP — que é metade da credencial dele, e era o que o directório punha como identificador.
+- **Um número de emergência nunca é de um ramal** (`409 ramais.extension_reserved`), nem a numeração automática o atribui.
+- **A perna do tronco volta a ligar o seu próprio registo.** A perna do ramal tem `process_cdr=false` (R291), e o FreeSWITCH copia esse valor para a perna que ela origina DEPOIS de aplicar as variáveis da dial string (`switch_core_session.c`): a chamada saía pelo tronco e **não deixava registo — não se cobrava**. A dial string do tronco leva `execute_on_originate=set process_cdr=true`. Foi a prova com um telefone a sério que o mostrou; a da R291 marcava de dentro do FreeSWITCH e não o via.
+- **O DID de um ramal só responde a uma chamada que entra.** O FreeSWITCH pergunta pelo plano em todos os contextos, e a resposta do `dialplan-did` só tem o `public`: dada a uma chamada de ramal ficava sem contexto e sem rota. Com o padrão alargado a 15 dígitos, um ramal que marcasse o DID de outro batia aí.
+
+**Portão.** `bash scripts/troncos-prova.sh`, passo 6 — fora do CI; 41 verificações no total, medidas a 2026-10-05 com o host a carga 4 a 13. Um softphone (baresip) autentica-se por digest no perfil dos ramais com um ramal criado pela API, com SRTP:
+- liga para um número de ensaio: atendida; **o ramal ouve os 440 Hz da operadora e a operadora grava os 1000 Hz do ramal (amplitude 0,25)** — áudio nos dois sentidos; o registo chega atendido, de «1001», com custo e MOS; a operadora nunca vê o utilizador SIP do ramal;
+- liga para o 112: sai, marcada como emergência, não gravada;
+- **controlos negativos:** um número sem regra leva `404`; a password errada leva `403`; o ramal de OUTRA organização, sem plano, não sai pelos troncos desta; nenhuma das três deixa registo;
+- seis chamadas por tronco, seis registos.
+
+No CI: `tests/telephony.rs` — a decisão do servidor caso a caso (sai com a identidade certa e a organização do ramal; não sai sem identidade, com o realm de outra organização, com o `domain` de outra, sem regra, bloqueado, por regra interna, ou com a pessoa arquivada; o 112 sai nesses casos em que o ramal está activo; `112` não se cria como ramal) e o DID só no contexto `public`. `ramal_entra_na_sala`, `ramal_pin` e `security_voice_odoo` continuam verdes com a regra do ramal autenticado extraída. `softphone-prova.sh srtp-real` e `srtp-cluster` passam com o dialplan novo.
+
+**O que NÃO está provado.**
+- **Antifraude não existe** (T8): não há tecto de gasto, nem tranca de internacional, nem alarme. Um ramal com a password roubada liga para tudo o que o plano de marcação deixar, até ao limite de canais do tronco. O plano é a única barreira — e é o administrador que o escreve.
+- **A identidade apresentada à operadora é o número curto do ramal** («1001»), não um número que a organização possua, e não há `P-Asserted-Identity` nem pedido de privacidade (T6). Uma operadora a sério rejeita-o ou troca-o.
+- **A emergência não leva localização**, e nada foi conferido com o que o regulador exige de uma chamada para o 112 a partir de um softphone.
+- **Uma central (ADR-0016) não marca para fora**: só o ramal chega ao plano de marcação.
+- **Ramal para ramal e o número de acesso às reuniões** não foram medidos aqui com dois telefones; o caminho deles no Lua não mudou, e o `srtp-real` só o leva até ao `404`.
+- **Uma transferência (`REFER`) feita por um ramal** não foi exercitada: por leitura, a perna transferida corre o mesmo Lua e só sai se ELA tiver identidade autenticada, mas nenhuma chamada o mediu.
+- O que a R291 já deixava aberto continua: um tronco alterado só se actualiza reiniciando o FreeSWITCH, o host do tronco só é verificado ao gravar, e nada correu num cluster.
+
+**Ficheiros.** `server/src/ramais.rs`, `server/src/voice.rs`, `server/src/telephony_fs_xml.rs`, `server/tests/telephony.rs`, `voice/freeswitch/scripts/ramais_dial.lua`, `voice/freeswitch/dialplan/default/00_delonix_extensions.xml`, `scripts/troncos-prova.sh`, `scripts/softphone-prova.sh`, `voice/troncos-prova/operadora-dialplan.xml`.

@@ -1,8 +1,9 @@
 <!--
   Plano de marcação da operadora de ENSAIO (voice/troncos-prova/). Uma conta
   registada cai no contexto "default": termina em 000 dá ocupado, termina em
-  503 recusa, 112 e o resto atendem com um tom durante uns segundos, para a
-  perna do tronco receber áudio e o registo de chamada trazer a qualidade.
+  503 recusa, 112 e o resto atendem com um tom de 440 Hz durante uns segundos,
+  para a perna do tronco receber áudio e o registo de chamada trazer a
+  qualidade — e gravam o que ouvem, para se medir o sentido contrário.
 -->
 <include>
   <context name="default">
@@ -21,6 +22,9 @@
         <action application="ring_ready"/>
         <action application="sleep" data="300"/>
         <action application="answer"/>
+        <!-- O que a operadora OUVE fica gravado: é por aqui que a prova mede
+             que o áudio de quem marcou chegou ao outro lado. -->
+        <action application="record_session" data="/tmp/operadora-ouviu-${destination_number}.wav"/>
         <action application="playback" data="tone_stream://%(5000,0,440)"/>
         <action application="hangup"/>
       </condition>

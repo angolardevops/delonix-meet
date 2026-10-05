@@ -105,7 +105,12 @@ pub fn dialplan_extension(
     // para a ingestão a ignorar; o resto EXPORTA-se para as pernas B.
     // O `mod_json_cdr` distribuído NÃO regista pernas B (um registo leva as
     // chaves SRTP da perna): a do tronco pede-o na dial string, com
-    // `force_process_cdr=true` (R291).
+    // `force_process_cdr=true` (R291). E volta a ligar o registo NA PRÓPRIA
+    // perna (`execute_on_originate`): a perna de quem marca — um ramal —
+    // tem `process_cdr=false`, e o FreeSWITCH copia esse valor para a perna
+    // que ela origina DEPOIS de aplicar as variáveis da dial string
+    // (switch_core_session.c). Sem isto a chamada de um ramal saía pelo
+    // tronco e não deixava registo: não se cobrava (R292, medido).
     act("set", "delonix_cdr_skip=true".into());
     act("export", format!("delonix_org_id={org_id}"));
     act("export", "delonix_direction=outbound".into());
@@ -134,7 +139,7 @@ pub fn dialplan_extension(
                     act(
                         "bridge",
                         format!(
-                            "[delonix_trunk_id={},force_process_cdr=true]sofia/gateway/{gw}/{wire_number}",
+                            "[delonix_trunk_id={},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/{gw}/{wire_number}",
                             leg.trunk_id
                         ),
                     );
@@ -142,7 +147,7 @@ pub fn dialplan_extension(
                     act(
                         "limit_execute",
                         format!(
-                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={},force_process_cdr=true]sofia/gateway/{gw}/{wire_number}",
+                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/{gw}/{wire_number}",
                             leg.trunk_id, leg.max_channels, leg.trunk_id
                         ),
                     );
@@ -505,12 +510,12 @@ mod tests {
         assert!(x.contains(r#"expression="^923447108$""#));
         let ia = x
             .find(&format!(
-                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a},force_process_cdr=true]sofia/gateway/dlx-{a}/244923447108"
+                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/dlx-{a}/244923447108"
             ))
             .unwrap();
         let ib = x
             .find(&format!(
-                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b},force_process_cdr=true]sofia/gateway/dlx-{b}/244923447108"
+                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/dlx-{b}/244923447108"
             ))
             .unwrap();
         assert!(ia < ib, "a ordem de failover é a da resolução");
@@ -539,7 +544,7 @@ mod tests {
         assert!(x.contains("delonix_record=false"));
         assert!(!x.contains("limit_execute"));
         assert!(x.contains(&format!(
-            r#"application="bridge" data="[delonix_trunk_id={a},force_process_cdr=true]sofia/gateway/dlx-{a}/112""#
+            r#"application="bridge" data="[delonix_trunk_id={a},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/dlx-{a}/112""#
         )));
     }
 

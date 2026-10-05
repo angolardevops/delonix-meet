@@ -15,6 +15,10 @@
 #    2. uma chamada pelo plano de marcação sai por esse tronco, e o registo
 #       dela chega ao servidor com duração, custo e qualidade (MOS);
 #    3. ocupado e emergência (112: nunca gravada, sem limite de canais);
+#       e um RAMAL a sério — um softphone autenticado, com SRTP — marca para a
+#       rede pública e para o 112, com áudio medido nos dois sentidos; um
+#       número sem regra, uma password errada e o ramal de outra organização
+#       não saem;
 #    4. um número sem regra não sai, e não deixa registo;
 #    5. uma chamada que não é de tronco (o IVR do dial-in) não deixa registo
 #       nem fica em disco à espera;
@@ -39,9 +43,9 @@
 #    FS_IMAGE=<imagem>       o FreeSWITCH (por omissão delonix-meet/freeswitch:1.11.3).
 #
 #  O que NÃO mede:
-#    - quem MARCA. A chamada nasce dentro do FreeSWITCH, já com a organização
-#      (`originate loopback/…/delonix-outbound`): na configuração distribuída
-#      nenhum perfil leva ainda um ramal ou uma central a este contexto (T2).
+#    - uma CENTRAL a marcar para fora: só o ramal chega ao plano de marcação.
+#    - ramal para ramal, e o número de acesso às reuniões: precisam de dois
+#      telefones registados (o `softphone-prova.sh par` mede-o contra a sala).
 #    - uma operadora de verdade: SRTP, TLS, NAT, DTMF, identidade do chamador.
 #    - um tronco ALTERADO ou APAGADO: precisa de `killgw`, que o servidor manda
 #      pelo ESL, fechado nesta configuração (T11).
@@ -58,7 +62,7 @@ RESCAN=10
 fail=0
 ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
-uso() { sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+uso() { sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 export ESTADO
 
 segredo() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
@@ -229,7 +233,73 @@ mede() {
   case "$r" in +OK*) bad "um número sem regra foi ATENDIDO ($r)" ;; *) ok "número sem regra: recusado (${r#-ERR })" ;; esac
   [ "$(registos)" = "$antes" ] && ok "e não ficou registo de chamada" || bad "ficou um registo de uma chamada que não saiu"
 
-  echo "6) uma chamada que NÃO é de tronco — o IVR do dial-in — é entregue, aceite e ignorada"
+  echo "6) um ramal marca para a rede pública — um softphone a sério, autenticado, com SRTP"
+  # Até aqui as chamadas nasceram dentro do FreeSWITCH. Agora marca um
+  # telefone: um ramal criado pela API, que se autentica por digest no perfil
+  # dos ramais. Quem decide que o número sai é o servidor, pelo plano de
+  # marcação da organização do ramal AUTENTICADO (R292).
+  local ramal dom_a pw_a ramal_b dom_b pw_b saida TOKEN_A=$TOKEN ORG_A=$ORG ORG_B
+  r=$(api POST "/api/orgs/$ORG/extensions" '{"extension":"1001","label":"Recepção"}')
+  ramal=$(campo "${r#* }" sip_username); dom_a=$(campo "${r#* }" sip_domain); pw_a=$(campo "${r#* }" sip_password)
+  [ -n "$ramal" ] && [ -n "$pw_a" ] || { bad "a API não criou o ramal (${r%% *})"; return; }
+  antes=$(registos)
+  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+            --utilizador "$ramal" --dominio "$dom_a" --destino 923000444 --espera-tom 440 --tom 1000 --segundos 4 2>&1)
+  grep -q 'a: chamada estabelecida' <<<"$saida" && grep -q 'media cifrada' <<<"$saida" &&
+    ok "ramal 1001 → 923000444: atendida, com a media do ramal cifrada" ||
+    { bad "a chamada do ramal para 923000444 não se estabeleceu"; grep -E '✗|session closed' <<<"$saida" | head -4 | sed 's/^/       /'; }
+  grep -q 'ouviu os 440 Hz' <<<"$saida" && ok "o ramal ouviu o tom da operadora (440 Hz)" ||
+    bad "o ramal NÃO ouviu o tom da operadora: $(grep -E 'Hz' <<<"$saida" | head -2 | tr '\n' ' ')"
+  # O sentido contrário: o que a operadora gravou tem o tom do ramal (1000 Hz).
+  sleep 3; rm -f "$ESTADO/operadora-ouviu.wav"
+  docker cp "$("${COMPOSE[@]}" ps -q operadora)":/tmp/operadora-ouviu-244923000444.wav "$ESTADO/operadora-ouviu.wav" >/dev/null 2>&1
+  v=$(bash scripts/softphone-prova.sh medir "$ESTADO/operadora-ouviu.wav" 1000 2>/dev/null | tail -1)
+  python3 -c "import sys; sys.exit(0 if float(sys.argv[1] or 0) >= 0.03 else 1)" "${v:-0}" 2>/dev/null &&
+    ok "a operadora ouviu o tom do ramal (1000 Hz, amplitude $v): áudio nos dois sentidos" ||
+    bad "a operadora NÃO ouviu o tom do ramal (amplitude «${v:-sem gravação}»)"
+  espera_registos $(( antes + 1 )) 25
+  v=$(psql_ -F' ' -c "SELECT outcome, from_number, (cost_e4 > 0), coalesce(round(mos::numeric,1)::text,'-') FROM telephony_call_records WHERE org_id='$ORG' AND to_number LIKE '%923000444'")
+  case "$v" in "answered 1001 t "*) ok "registo: atendida, de «1001» (o número curto, não o utilizador SIP), com custo e MOS ${v##* }" ;;
+    *) bad "o registo da chamada do ramal ficou «$v» — esperava «answered 1001 t <MOS>»" ;; esac
+  v=$("${COMPOSE[@]}" exec -T operadora sh -c "grep -a -c -F '$ramal' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
+  [ "${v:-1}" = 0 ] && ok "a operadora nunca viu o utilizador SIP do ramal" || bad "o utilizador SIP do ramal chegou à operadora ($v linha(s) do log dela)"
+
+  antes=$(registos)
+  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+            --utilizador "$ramal" --dominio "$dom_a" --destino 112 --espera-tom 440 --segundos 3 2>&1)
+  espera_registos $(( antes + 1 )) 25
+  v=$(psql_ -F' ' -c "SELECT count(*), bool_and(emergency), bool_or(recorded) FROM telephony_call_records WHERE org_id='$ORG' AND to_number='112' AND from_number='1001'")
+  grep -q 'a: chamada estabelecida' <<<"$saida" && [ "$v" = "1 t f" ] && ok "ramal 1001 → 112: sai, marcada como emergência, não gravada" ||
+    bad "o 112 marcado pelo ramal: registo «$v», softphone: $(grep -E '✗' <<<"$saida" | head -1)"
+
+  # Controlos negativos: o que NÃO pode sair.
+  antes=$(registos)
+  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+            --utilizador "$ramal" --dominio "$dom_a" --destino 0044123456 --segundos 2 2>&1)
+  grep -q 'NÃO se estabeleceu' <<<"$saida" && ok "número sem regra no plano: o ramal não sai ($(grep -o 'session closed: .*' <<<"$saida" | head -1 | sed 's/session closed: //'))" ||
+    bad "um número SEM regra no plano de marcação saiu a pedido de um ramal"
+  saida=$(SOFTPHONE_PASSWORD=errada-de-proposito bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+            --utilizador "$ramal" --dominio "$dom_a" --destino 923000555 --segundos 2 2>&1)
+  grep -q 'NÃO se estabeleceu' <<<"$saida" && ok "password errada: o ramal não sai ($(grep -o 'session closed: .*' <<<"$saida" | head -1 | sed 's/session closed: //'))" ||
+    bad "um ramal com a password ERRADA fez uma chamada para fora"
+  # Outra organização, sem troncos nem plano: o ramal dela não sai pelos de A.
+  r=$(api POST /api/auth/register "{\"org_name\":\"Vizinha\",\"email\":\"admin@vizinha.invalid\",\"username\":\"admin-vizinha\",\"password\":\"$senha\"}")
+  r=$(api POST /api/auth/login "{\"email\":\"admin@vizinha.invalid\",\"password\":\"$senha\"}")
+  TOKEN=$(campo "${r#* }" access_token)
+  r=$(api GET /api/orgs); ORG_B=$(campo "${r#* }" 0.id)
+  r=$(api POST "/api/orgs/$ORG_B/extensions" '{"extension":"1001","label":"Recepção"}')
+  ramal_b=$(campo "${r#* }" sip_username); dom_b=$(campo "${r#* }" sip_domain); pw_b=$(campo "${r#* }" sip_password)
+  TOKEN=$TOKEN_A
+  if [ -n "$ORG_B" ] && [ "$ORG_B" != "$ORG_A" ] && [ -n "$pw_b" ]; then
+    saida=$(SOFTPHONE_PASSWORD=$pw_b bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+              --utilizador "$ramal_b" --dominio "$dom_b" --destino 923000666 --segundos 2 2>&1)
+    v=$(psql_ -c "SELECT count(*) FROM telephony_call_records WHERE to_number LIKE '%923000666'")
+    grep -q 'NÃO se estabeleceu' <<<"$saida" && [ "$v" = 0 ] && ok "o ramal de OUTRA organização, sem plano, não sai pelos troncos desta" ||
+      bad "o ramal de outra organização saiu pelos troncos desta ($v registo(s))"
+  else bad "não consegui criar a segunda organização e o ramal dela — o isolamento não foi medido"; fi
+  [ "$(registos)" = "$antes" ] && ok "e nenhuma das três recusas deixou registo de chamada" || bad "uma chamada recusada deixou registo"
+
+  echo "7) uma chamada que NÃO é de tronco — o IVR do dial-in — é entregue, aceite e ignorada"
   # Só a perna de um tronco pede registo; a do IVR desliga-o. Sobra a perna
   # que nasce dentro do FreeSWITCH, sem organização nem tronco: um servidor que
   # a recusasse (422) fazia o módulo tentar outra vez e guardá-la em disco.
@@ -241,7 +311,7 @@ mede() {
   if [ "${r:-0}" -ge 1 ] && [ "${v:-1}" = 0 ] && [ "$(registos)" = "$antes" ]; then ok "o IVR correu, o registo foi aceite (nada em disco) e não ficou guardado"
   else bad "chamada ao IVR: o IVR correu $r vez(es), ficaram $v registo(s) em disco e $(( $(registos) - antes )) guardado(s) — esperava ≥1, 0 e 0"; fi
 
-  echo "7) reiniciar o FreeSWITCH não deixa a instalação sem troncos"
+  echo "8) reiniciar o FreeSWITCH não deixa a instalação sem troncos"
   "${COMPOSE[@]}" restart freeswitch >/dev/null 2>&1; espera_perfil
   if e=$(espera_gw "$gw" REGED $(( RESCAN * 3 + 30 ))); then ok "depois de reiniciar: $gw REGED"
   else bad "depois de reiniciar o gateway não voltou (estado: $e)"; fi
@@ -254,7 +324,7 @@ mede() {
   [ -z "$e" ] && ok "controlo: com o servidor em baixo o FreeSWITCH arranca SEM o tronco" ||
     bad "com o servidor em baixo o gateway existe na mesma (estado $e) — o controlo não prova nada"
   # E um registo que o servidor não recebe fica em disco, num directório só
-  # do FreeSWITCH — é o controlo do «nada por entregar» do passo 9.
+  # do FreeSWITCH — é o controlo do «nada por entregar» do passo 10.
   # O módulo tenta três vezes, com cinco segundos de espera cada: conta-se
   # quando o número de ficheiros deixa de mexer.
   marca 923000333 >/dev/null
@@ -275,7 +345,7 @@ mede() {
   case "$r" in +OK*) ok "e a chamada seguinte sai por ele" ;; *) bad "depois de tudo isto a chamada não saiu ($r)" ;; esac
   sleep 8
 
-  echo "8) um tronco não consegue ler as variáveis do FreeSWITCH"
+  echo "9) um tronco não consegue ler as variáveis do FreeSWITCH"
   # O FreeSWITCH passa a resposta do mod_xml_curl pelo pré-processador, que
   # troca \$\${nome} pelo valor da variável global — e o segredo de voz é uma.
   # Um administrador de QUALQUER organização escreve o utilizador do seu
@@ -298,14 +368,14 @@ mede() {
   elif [ "$st" = 400 ] || [ "$st" = 422 ]; then ok "a API recusa um utilizador de tronco com uma referência a variável ($st)"
   else bad "a API respondeu $st ao tronco-armadilha"; fi
 
-  echo "9) nada por entregar, e nenhum segredo no log"
+  echo "10) nada por entregar, e nenhum segredo no log"
   v=$("${COMPOSE[@]}" exec -T freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
   [ "${v:-99}" = "${pendentes:-0}" ] && ok "com o servidor de pé nenhum registo ficou por entregar (em disco só os $pendentes do controlo)" ||
     bad "ficaram $v registo(s) em disco, e o controlo só explica ${pendentes:-0}: o servidor recusou os outros"
-  # Quatro chamadas saíram por um tronco; as pernas de quem marcou e as que não
-  # passaram por tronco nenhum são entregues, aceites e ignoradas.
+  # Seis chamadas saíram por um tronco (duas delas marcadas pelo ramal); as
+  # pernas de quem marcou e as que não passaram por tronco nenhum não contam.
   v=$(registos)
-  [ "$v" = 4 ] && ok "quatro chamadas por tronco, quatro registos — nem um a mais" || bad "a organização tem $v registos de chamada, e saíram 4 chamadas por tronco"
+  [ "$v" = 6 ] && ok "seis chamadas por tronco, seis registos — nem um a mais" || bad "a organização tem $v registos de chamada, e saíram 6 chamadas por tronco"
   v=$(fs_log | grep -ac "$(env_ VOICE_INTERNAL_SECRET)")
   [ "${v:-1}" -eq 0 ] && ok "o segredo de voz não aparece no freeswitch.log" || bad "o segredo de voz aparece $v vez(es) no freeswitch.log"
   # O que ficou em disco (os registos do controlo) não leva segredos nem chaves.

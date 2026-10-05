@@ -1294,7 +1294,7 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
     assert_eq!(st, 200);
     assert!(
         x.contains(&format!(
-            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni},force_process_cdr=true]sofia/gateway/dlx-{uni}/244923447108"
+            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni},force_process_cdr=true,execute_on_originate=set process_cdr=true]sofia/gateway/dlx-{uni}/244923447108"
         )),
         "{x}"
     );
@@ -1579,4 +1579,191 @@ async fn sms_overview_reports_only_what_the_agent_reports(db: sqlx::PgPool) {
         )
         .await;
     assert!(st == 403 || st == 404);
+}
+
+// ============================================================
+//  Um ramal sai para a rede pública (R292)
+// ============================================================
+
+/// O que o `ramais_dial.lua` pergunta ao servidor quando um ramal marca.
+async fn resolve_ext(app: &TestApp, body: Value) -> (u16, Value) {
+    let r = app
+        .raw(
+            reqwest::Method::POST,
+            "/internal/v1/voice/ivr/resolve-extension",
+            &[("x-voice-secret", SECRET)],
+            Some(body),
+        )
+        .await;
+    (r.status, r.json())
+}
+
+async fn create_extension(app: &TestApp, token: &str, org: &str, body: Value) -> Value {
+    let (st, v) = app
+        .post(&format!("/api/orgs/{org}/extensions"), Some(token), body)
+        .await;
+    assert_eq!(st, 200, "criar ramal: {v}");
+    v
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn an_extension_reaches_the_pstn_only_through_its_own_orgs_dial_plan(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("VOICE_INTERNAL_SECRET", SECRET)]).await;
+    let a = app.new_org("alfa-sai.ao").await;
+    let b = app.new_org("beta-sai.ao").await;
+    let colega = app.add_member(&a, "colega", "member").await;
+    let uni = create_trunk(&app, &a.token, a.org(), unitel()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let afr = create_trunk(&app, &a.token, a.org(), africell()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    screen_plan(&app, &a.token, a.org(), &uni, &afr).await;
+
+    let ra = create_extension(
+        &app,
+        &a.token,
+        a.org(),
+        json!({"member_id": colega.user_id, "extension": "101"}),
+    )
+    .await;
+    let rb = create_extension(
+        &app,
+        &b.token,
+        b.org(),
+        json!({"member_id": b.user_id, "extension": "101"}),
+    )
+    .await;
+    let (ua, da) = (
+        ra["sip_username"].as_str().unwrap(),
+        ra["sip_domain"].as_str().unwrap(),
+    );
+    let (ub, dom_b) = (
+        rb["sip_username"].as_str().unwrap(),
+        rb["sip_domain"].as_str().unwrap(),
+    );
+    let ask = |ext: &str, user: &str, realm: &str, domain: &str| json!({"domain": domain, "extension": ext, "auth_user": user, "auth_realm": realm});
+
+    // Sai: o plano de A manda os 9XXXXXXXX por um tronco. A organização que a
+    // resposta leva é a do ramal AUTENTICADO, e apresenta-se o número curto.
+    let (st, v) = resolve_ext(&app, ask("923447108", ua, da, da)).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(
+        (
+            v["outbound"].as_bool(),
+            v["org_id"].as_str(),
+            v["caller_extension"].as_str()
+        ),
+        (Some(true), Some(a.org()), Some("101")),
+        "{v}"
+    );
+    assert!(v.get("sip_username").is_none(), "{v}");
+
+    // Sem identidade autenticada não sai nada — nem com o domínio certo.
+    let (st, _) = resolve_ext(&app, json!({"domain": da, "extension": "923447108"})).await;
+    assert_eq!(st, 404);
+    // O utilizador de A com o realm de B não é um INVITE autenticado.
+    let (st, _) = resolve_ext(&app, ask("923447108", ua, dom_b, da)).await;
+    assert_eq!(st, 404);
+    // O ramal de B não tem plano: não sai, e muito menos pelos troncos de A —
+    // nem dizendo que o domínio é o de A.
+    let (st, _) = resolve_ext(&app, ask("923447108", ub, dom_b, dom_b)).await;
+    assert_eq!(st, 404);
+    let (st, v) = resolve_ext(&app, ask("923447108", ub, dom_b, da)).await;
+    assert_eq!(st, 404, "{v}");
+
+    // O plano é uma lista do que se PODE marcar: sem regra, bloqueado, ou uma
+    // regra que não é de saída — tudo «não existe».
+    for n in ["0044123456", "08001234", "84209", "150"] {
+        let (st, v) = resolve_ext(&app, ask(n, ua, da, da)).await;
+        assert_eq!(st, 404, "{n}: {v}");
+    }
+    // Um ramal que existe continua a ser um ramal, com ou sem identidade.
+    let (st, v) = resolve_ext(&app, ask("101", ua, da, da)).await;
+    assert_eq!((st, v["sip_username"].as_str()), (200, Some(ua)), "{v}");
+    assert!(v.get("outbound").is_none(), "{v}");
+
+    // A emergência sai SEMPRE que o ramal está activo — antes de se procurar
+    // um ramal, e mesmo com a pessoa arquivada. Sem identidade, não.
+    let (st, v) = resolve_ext(&app, ask("112", ua, da, da)).await;
+    assert_eq!(
+        (st, v["outbound"].as_bool(), v["org_id"].as_str()),
+        (200, Some(true), Some(a.org())),
+        "{v}"
+    );
+    let (st, _) = resolve_ext(&app, json!({"domain": da, "extension": "112"})).await;
+    assert_eq!(st, 404);
+    app.archive_member(a.org(), &colega.user_id).await;
+    let (st, v) = resolve_ext(&app, ask("112", ua, da, da)).await;
+    assert_eq!((st, v["outbound"].as_bool()), (200, Some(true)), "{v}");
+    let (st, _) = resolve_ext(&app, ask("923447108", ua, da, da)).await;
+    assert_eq!(st, 404, "a pessoa arquivada continuou a ligar para fora");
+
+    // Um número de emergência nunca é de um ramal.
+    let (st, e) = app
+        .post(
+            &format!("/api/orgs/{}/extensions", a.org()),
+            Some(&a.token),
+            json!({"member_id": a.user_id, "extension": "112"}),
+        )
+        .await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (409, Some("ramais.extension_reserved")),
+        "{e}"
+    );
+}
+
+/// O DID de um ramal só responde a uma chamada que ENTRA. O FreeSWITCH faz a
+/// pergunta em todos os contextos, e a resposta só tem o `public`: dada a uma
+/// chamada de saída, ela ficava sem contexto e sem rota.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_extension_did_only_answers_inbound_calls(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("VOICE_INTERNAL_SECRET", SECRET)]).await;
+    let a = app.new_org("alfa-did.ao").await;
+    let r = create_extension(
+        &app,
+        &a.token,
+        a.org(),
+        json!({"member_id": a.user_id, "extension": "101"}),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO voice_did (org_id, e164, extension_id)
+         VALUES ($1::uuid, '+244222000777', $2::uuid)",
+    )
+    .bind(a.org())
+    .bind(r["id"].as_str().unwrap())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let ask = |context: &'static str| {
+        let app = &app;
+        async move {
+            app.http
+                .post(app.url("/internal/v1/voice/ivr/dialplan-did"))
+                .header("authorization", basic(SECRET))
+                .form(&[
+                    ("Caller-Context", context),
+                    ("Caller-Destination-Number", "244222000777"),
+                ])
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    let entra = ask("public").await;
+    assert!(
+        entra.contains(&format!("user/{}@", r["sip_username"].as_str().unwrap())),
+        "{entra}"
+    );
+    for context in ["delonix-outbound", "delonix_ramais"] {
+        let x = ask(context).await;
+        assert!(x.contains(r#"status="not found""#), "{context}: {x}");
+    }
 }

@@ -27,6 +27,8 @@
 #    chamada    um softphone contra um servidor teu (ramal no FreeSWITCH, ou
 #               um ramal do PBX): marca --destino, envia --pin, toca --tom e
 #               mede --espera-tom no que ouviu.
+#    medir F HZ a amplitude do tom de HZ no ficheiro F (WAV), e mais nada: para
+#               outra prova medir uma gravação sua.
 #    par        dois softphones (contas A e B) no MESMO destino — a mesma sala.
 #               A toca 1000 Hz e B 440 Hz; cada um tem de ouvir o tom do outro
 #               e NÃO o próprio (mix-minus). É a prova de dois sentidos sem
@@ -741,6 +743,13 @@ par() {
 [ $# -ge 1 ] || uso 2
 modo=$1; shift
 case "$modo" in -h|--help|ajuda) uso 0 ;; esac
+# `medir <ficheiro.wav> <Hz>` — só a medição, para outra prova a usar com uma
+# gravação sua (scripts/troncos-prova.sh mede o que a operadora de ensaio ouviu).
+if [ "$modo" = medir ]; then
+  trap - EXIT
+  [ $# -eq 2 ] && [ -f "$1" ] || { echo "✗ uso: medir <ficheiro.wav> <Hz>"; exit 2; }
+  medir "$1" "$2"; exit 0
+fi
 command -v docker >/dev/null 2>&1 || { echo "✗ precisa de docker (o softphone e o FreeSWITCH do selftest correm em contentores)"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "✗ precisa de python3 (gera e mede os tons)"; exit 1; }
 mkdir -p "$WORK/$TAG"
