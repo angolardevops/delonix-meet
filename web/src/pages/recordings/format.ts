@@ -51,6 +51,15 @@ export function recordingName(r: Pick<RecordingItem, 'filename'>): string {
 
 export const isFailed = (r: Pick<RecordingItem, 'status'>) => r.status === 'failed'
 
+/** O servidor ainda está a compor o ficheiro (a linha nasce antes de o ffmpeg correr). */
+export const isProcessing = (r: Pick<RecordingItem, 'status'>) => r.status === 'processing'
+
+/** De quanto em quanto se relê a lista enquanto houver uma gravação a compor. */
+export const PROCESSING_POLL_MS = 4000
+
+/** Há ficheiro para abrir: nem falhada, nem ainda a compor. */
+export const hasFile = (r: Pick<RecordingItem, 'status'>) => !isFailed(r) && !isProcessing(r)
+
 /** Miniatura duotone estável por nome, com o tom da paleta do kit. */
 export function thumbBackground(seed: string): string {
   return ['linear-gradient(140deg, ', avatarTone(seed), ', var(--stage))'].join('')

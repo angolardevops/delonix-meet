@@ -57,6 +57,8 @@ export default {
     biblioteca: 'Biblioteca',
     vazio: 'Ainda sem gravações',
     vazioDica: 'As gravações das reuniões e do estúdio aparecem aqui quando estiverem prontas.',
+    aProcessar: 'A processar',
+    aCompor: 'o servidor está a compor o ficheiro',
     falhou: 'Falhou',
     semMedia: 'sem media gravada',
   },

@@ -63,6 +63,12 @@ describe('«A seguir» e «Da mesma série»', () => {
     expect(nextUp(lib, 'zzz').map((r) => r.id)).toEqual(['a', 'c', 'd', 'e'])
   })
 
+  it('uma gravação que o servidor ainda está a compor não entra em «A seguir»', () => {
+    const comUmaACompor = [rec('p', 'sala-p-um', 'processing'), ...lib]
+    expect(nextUp(comUmaACompor, 'c').map((r) => r.id)).toEqual(['d', 'e', 'a'])
+    expect(nextUp(comUmaACompor, 'zzz').map((r) => r.id)).toEqual(['a', 'c', 'd', 'e'])
+  })
+
   it('mesma série: pela reunião-mãe da recorrência, casada pela sala', () => {
     const meetings = [
       meeting('mae', 'sala-a-um', null, 'weekly'),

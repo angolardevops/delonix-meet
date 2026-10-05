@@ -14,6 +14,7 @@ export type LibraryFilter = 'all' | 'mine' | 'shared' | 'training' | 'broadcast'
 /** Estado visível de uma gravação, pela ordem em que manda. */
 export type VisibleState =
   | { kind: 'failed' }
+  | { kind: 'processing'; pct: number | null }
   | { kind: 'transcribing'; pct: number | null }
   | { kind: 'published' }
   | { kind: 'retained'; days: number }
@@ -31,6 +32,7 @@ type StateInput = Pick<RecordingView, 'pipeline' | 'progressPct' | 'transcriptRu
  */
 export function visibleState(r: StateInput, retentionDays = 0, now = Date.now()): VisibleState {
   if (r.pipeline === 'failed') return { kind: 'failed' }
+  if (r.pipeline === 'processing') return { kind: 'processing', pct: r.progressPct }
   if (r.pipeline === 'transcribing') return { kind: 'transcribing', pct: r.progressPct }
   if (r.pipeline === 'ready' && r.transcriptRunning) return { kind: 'transcribing', pct: null }
   if (r.pipeline === 'published') return { kind: 'published' }

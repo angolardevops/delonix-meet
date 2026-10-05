@@ -3069,3 +3069,32 @@ Fora do CI, medido a 2026-10-05 no compose do laboratório (FreeSWITCH 1.11.3, l
 - **CPU em release**: os números dos testes são de um binário de debug, numa máquina carregada.
 - **O cluster e o chart**: tudo isto foi medido no compose.
 - **O defeito do `opus-rs` com a banda média não foi reportado aos autores.**
+
+### R297 — Uma gravação que o servidor ainda estava a compor lia-se «falhada», sem causa
+
+**Sintoma.** Observado a 2026-10-05, ao medir gravações: enquanto o servidor compõe uma gravação, `GET /api/recordings` devolvia-a com `"status":"failed","state":"failed","failure_reason":null,"progress_pct":0,"size_bytes":0`. Na base a linha estava em `processing`, e 130 ms a 1 s depois passava a `ready` — numa gravação curta; numa longa são minutos. Quem parava uma gravação via-a «Falhada» na biblioteca até a composição acabar, e o `GET …/content` respondia `400` «Esta gravação falhou e não tem ficheiro.» sem falha nenhuma no registo do servidor.
+
+**Causa raiz.** Duas mudanças correctas que nunca se encontraram. O `recorder::insert_processing` (2026-09-16) passou a criar a linha quando a gravação pára, ANTES de o ffmpeg correr, com `progress_pct = 0` — para a biblioteca a mostrar a compor. A regra de domínio que deriva o estado do ficheiro (`content/recording.rs`, 2026-09-29) foi escrita com o comentário «o `recorder` só insere a linha DEPOIS de o ffmpeg acabar»: `has_file()` só aceitava `ready | transcribing` e `file_status()` devolvia `Failed` para tudo o resto. O cliente conhecia o estado (`RecordingFileStatus` tem `processing`), mas as vistas tinham deixado de ter ramo para ele.
+
+**Regra.**
+- **Sem ficheiro há dois casos, e só um é falha.** `file_status()` devolve `Processing` para `status = processing` e `Failed` para `failed` e para um `status` desconhecido (falha fechado). `display_state()` não promove uma gravação a compor a `published`.
+- **Uma falha a sério lê-se como antes:** `status = failed` com a `failure_reason`, e o `400` do ficheiro com a causa. Uma linha `failed` sem causa é sinal de defeito na regra, não um estado legítimo — o `recorder` grava sempre a causa.
+- **O ficheiro de uma gravação a compor responde `409 recording.processing`**, não o `400` de «falhou». Publicar e contar uma visualização continuam a responder `409` (não há ficheiro).
+- **As vistas tratam «sem ficheiro», não «falhada» (R59).** O `RecordingView` tem `hasFile`; lista, grelha, cartão do início e leitor ficam inertes sem ele — sem botão, sem clique, sem `<video>` — e mostram «A processar N%» em vez da causa. «A seguir» e «Da mesma série» não propõem uma gravação a compor.
+- **A biblioteca e o início relêem-se enquanto houver uma a compor** (`PROCESSING_POLL_MS`), para a linha passar a «pronta» sem a pessoa recarregar a página.
+- **Um comentário que diz «este estado nunca se observa» é uma afirmação sobre OUTRO módulo**, e deixa de ser verdade sem que ninguém toque no ficheiro onde está escrito. Quem acrescenta um estado a uma coluna (`CHECK` da migração 0057) procura quem deriva dela.
+
+**Portão.** `content::recording::tests::a_compor_nao_e_falhada` e `falhada_e_desconhecida_continuam_falhadas` (regra); `server/tests/recordings_metadata.rs::a_recording_being_composed_is_processing_not_failed` (a linha como o gravador a insere, lida pelo recurso, pelo `/details` e pela biblioteca; o `409` do ficheiro; a falha a sério inalterada); `web/src/pages/recordings/libraryData.test.ts` e `player.test.ts` (o mapeamento e «A seguir»); `web/e2e/gravacao-a-compor.mjs`, no CI ao lado do `gravacao-falhada.mjs` — 25 verificações num Chromium contra o servidor a sério: API, início, lista e grelha, zero acções, e a passagem a «pronta» sem recarregar.
+
+**Prova corrida a 2026-10-05.** Antes da correcção, os dois testes de servidor falham com o JSON do sintoma (`left: "failed"`, `right: "processing"`). Depois: os dois passam; o `gravacao-a-compor.mjs` passa 25/25 contra o servidor e o vite desta árvore; e o `gravacao-servidor-meta.mjs` (fora do CI, com ffmpeg e o gravador a sério) vê `processing → progresso → ready` numa gravação real e passa 20/20.
+
+**O que NÃO está provado.**
+- **O painel de gravações DENTRO da sala** (`PeoplePanel`, `GET /api/rooms/{code}/recordings`) não sabe o estado: o `Recording` que essa rota devolve não tem `status`. Uma gravação a compor (ou falhada) aparece lá com o botão de descarregar, e o clique dá «a descarga falhou». Já era assim para as falhadas; fica por fazer.
+- **Partilhar e criar link público** de uma gravação sem ficheiro continuam a ser aceites pelo servidor (`share`, `create_link`), como já eram para uma falhada. A consola não os oferece; a API aceita-os.
+- **O leitor em página inteira** (`#/recordings/<id>`) de uma gravação a compor mostra o aviso em vez do vídeo — está no código, e nenhum teste o abriu num browser.
+- **A linha inserida por SQL** no teste de ecrã: a janela real é curta demais para um teste a apanhar parado. O gravador a sério foi visto a passar por `processing` pela API, não pelo ecrã.
+- **Uma composição que demora minutos**, e a sondagem de 4 s com muitas gravações na página: só foi medido com uma.
+- **Leitor de ecrã e ecrã estreito** para o estado novo; as quatro línguas têm o texto, e só o português foi visto.
+- O `ProcessingState`/`processing_state` do domínio continua sem `processing` e sem quem o chame; o comentário diz agora isso mesmo.
+
+**Ficheiros.** `server/crates/delonix-meet-domain/src/content/recording.rs`, `server/src/recordings.rs` (`download`, a documentação do `status`), `server/tests/recordings_metadata.rs`, `docs/reference/openapi/*.json`, `web/src/pages/recordings/recordingView.ts`, `libraryData.ts`, `RecordingState.tsx`, `RecordingTable.tsx`, `RecordingGrid.tsx`, `format.ts`, `playerData.ts`, `recordingLoaders.ts`, `recordingMedia.ts`, `RecordingThumb.tsx`, `web/src/pages/Recordings.tsx`, `web/src/pages/RecordingPlayer.tsx`, `web/src/pages/home/RecentRecordings.tsx`, `web/src/locales/*/{recordings,home}.ts`, `web/src/ui/recordings.css`, `web/e2e/gravacao-a-compor.mjs`, `web/e2e/pg.mjs` (`PG_EXEC`), `.github/workflows/ci.yml`.

@@ -392,6 +392,11 @@ jobs:
           # Uma gravação que falha tem de ser VISTA — e as três vistas da
           # biblioteca não podem oferecer acções sobre ela (R59).
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # E uma que o servidor ainda está a COMPOR não é uma falhada: lê-se
+          # «a processar», com o progresso, nas mesmas vistas e sem acções. A
+          # linha entra por SQL, como o gravador a insere, porque a janela real
+          # é curta demais para um teste a apanhar.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/gravacao-a-compor.mjs
           # A REENTRADA volta ao CI (R98). Esteve fora seis rondas por falhar só
           # no runner — e a causa era o PRODUTO: duas renovações de sessão
           # concorrentes revogavam-se uma à outra e punham o utilizador na

@@ -18,7 +18,7 @@
  * nunca abre o leitor e nunca oferece acções — em NENHUMA das vistas. O e2e
  * `gravacao-falhada.mjs` verifica as duas.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RecordingLibraryItem } from '../api'
 import PageBar from '../components/PageBar'
@@ -27,7 +27,7 @@ import { cx, Segmented, Skeleton } from '../ui/kit'
 import { SearchBar, SearchResults } from '../ui/search/SearchResults'
 import { useResourceSearch } from '../ui/search/useResourceSearch'
 import '../ui/recordings.css'
-import { formatBytes } from './recordings/format'
+import { formatBytes, PROCESSING_POLL_MS } from './recordings/format'
 import { formatClock } from './recordings/libraryData'
 import RecordingGrid from './recordings/RecordingGrid'
 import RecordingPanel from './recordings/RecordingPanel'
@@ -87,20 +87,21 @@ export default function Recordings() {
     }
   }
 
-  // Selecção por omissão: a primeira PRONTA da página. Uma falhada nunca é seleccionada.
+  // Selecção por omissão: a primeira COM FICHEIRO da página. Uma falhada ou
+  // uma que ainda está a compor nunca é seleccionada.
   useEffect(() => {
     if (!ready) return
     const current = items.find((r) => r.id === selectedId)
-    if (current && !current.failed) return
-    const first = items.find((r) => !r.failed)
+    if (current?.hasFile) return
+    const first = items.find((r) => r.hasFile)
     setSelectedId(first?.id ?? null)
     setPicked(false)
   }, [ready, items, selectedId])
 
-  const selected = items.find((r) => r.id === selectedId && !r.failed) ?? null
+  const selected = items.find((r) => r.id === selectedId && r.hasFile) ?? null
 
   const open = useCallback((r: RecordingView) => {
-    if (r.failed) return
+    if (!r.hasFile) return
     setSelectedId(r.id)
     setPicked(true)
     setPanelOpen(true)
@@ -112,6 +113,17 @@ export default function Recordings() {
     setShareTarget(null)
     reload()
   }, [reload])
+
+  // Enquanto houver uma gravação a compor, a lista relê-se: o progresso anda e
+  // a linha passa a «pronta» sem a pessoa recarregar a página.
+  const composing = items.some((r) => r.processing)
+  const reloadRef = useRef(reload)
+  reloadRef.current = reload
+  useEffect(() => {
+    if (!composing) return
+    const id = window.setInterval(() => reloadRef.current(), PROCESSING_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [composing])
 
   // Em ecrã estreito o painel é uma camada: Esc fecha-o.
   useEffect(() => {

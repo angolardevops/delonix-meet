@@ -61,6 +61,43 @@ export const libItem = (over: Partial<RecordingLibraryItem> = {}): RecordingLibr
 
 const item = (over: Partial<RecordingView> = {}): RecordingView => ({ ...fromRecordingItem(libItem()), ...over })
 
+describe('a compor (o servidor ainda não tem ficheiro)', () => {
+  // A linha nasce em `processing` antes de o ffmpeg correr: é uma gravação a
+  // compor, com progresso — não uma falha, e ainda sem nada para abrir (R59).
+  const aCompor = fromRecordingItem(libItem({ status: 'processing', state: 'processing', progress_pct: 40, size_bytes: 0 }))
+  it('não é falhada, e não tem ficheiro', () => {
+    expect(aCompor.failed).toBe(false)
+    expect(aCompor.processing).toBe(true)
+    expect(aCompor.hasFile).toBe(false)
+    expect(aCompor.pipeline).toBe('processing')
+    expect(aCompor.sizeBytes).toBeNull()
+  })
+  it('lê-se «a processar» com a percentagem do servidor, mesmo com retenção', () => {
+    expect(visibleState(aCompor, 90)).toEqual({ kind: 'processing', pct: 40 })
+  })
+  it('publicada à pressa continua a compor', () => {
+    const r = fromRecordingItem(libItem({ status: 'processing', state: 'processing', visibility: 'org' }))
+    expect(r.published).toBe(false)
+    expect(visibleState(r).kind).toBe('processing')
+  })
+  it('não conta como falhada nem como «a transcrever»', () => {
+    expect(matchesFilter(aCompor, 'failed')).toBe(false)
+    expect(matchesFilter(aCompor, 'transcribing')).toBe(false)
+  })
+  it('pronta, a transcrever e falhada continuam como eram', () => {
+    expect(fromRecordingItem(libItem())).toMatchObject({ failed: false, processing: false, hasFile: true, pipeline: 'ready', sizeBytes: 10 })
+    expect(fromRecordingItem(libItem({ status: 'transcribing' }))).toMatchObject({ processing: false, hasFile: true, pipeline: 'transcribing' })
+    expect(fromRecordingItem(libItem({ status: 'failed', state: 'failed', failure_reason: 'sem espaço' }))).toMatchObject({
+      failed: true,
+      processing: false,
+      hasFile: false,
+      pipeline: 'failed',
+      failureReason: 'sem espaço',
+      sizeBytes: null,
+    })
+  })
+})
+
 describe('visibleState', () => {
   it('falhada manda sobre tudo', () => {
     expect(visibleState(item({ pipeline: 'failed', failed: true })).kind).toBe('failed')

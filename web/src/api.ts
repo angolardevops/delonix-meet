@@ -327,7 +327,10 @@ export interface RecordingItem extends Recording {
   share_count: number
   /** RBAC: só dono + admins da org podem descarregar (os restantes só reproduzem). */
   can_download: boolean
-  /** `ready` = há ficheiro. `failed` = houve tentativa e não há nada. */
+  /**
+   * `ready` = há ficheiro. `failed` = houve tentativa e não há nada.
+   * `processing` = o servidor ainda está a compor o ficheiro (não é falha).
+   */
   status: 'ready' | 'failed' | string
   /** Causa em linguagem de utilizador, quando falhou. */
   failure_reason: string | null
