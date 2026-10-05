@@ -47,7 +47,9 @@ origem** — a do tronco UDP. O tronco TLS sai de uma porta efémera, não está
 desafiado. O `make seed` cria também uma sala com PIN
 (`deploy/compose/generated/sala-telefone.txt`), e o `make compose-voice-check` liga por cada
 tronco: pelo da central, com o PIN certo (entra) e com um errado (autenticada, e recusada
-pelo IVR).
+pelo IVR). Com o PIN certo, diz também **para onde a chamada foi** — a ponte telefone↔sala
+do SFU, ou a conferência local do FreeSWITCH —, lendo-o no registo do IVR em vez de o
+presumir pelo ambiente.
 
 ```bash
 make bootstrap     # gera VOICE_CENTRAL_PASSWORD, DATA_ENCRYPTION_KEYS e o tronco da central
@@ -338,6 +340,16 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 > DNS interno de confiança; prefere o nome absoluto com ponto final, que não passa pelos
 > domínios de pesquisa). **Limite conhecido:** na rede do compose, um contentor com `NET_RAW`
 > (o `pbx` não confiado é um) pode forjar a origem do FreeSWITCH; vale também para IPs literais.
+> **Event Socket:** com `TELEPHONY_ESL_PASSWORD` no ambiente do FreeSWITCH, o ESL escuta em
+> todas as interfaces com a ACL `delonix_esl` (só redes privadas, `default=deny`) e essa password; sem
+> ela fica em loopback com password aleatória. O servidor liga-se com `TELEPHONY_ESL_ADDR`. O ESL
+> origina chamadas: nunca se publica no host, e a password vem do segredo (`.env` / Secret
+> `delonix-voice`; `make esl-secret-rotate` troca-a). **A ACL não separa nada nestes laboratórios:**
+> o compose e a rede de pods são redes privadas, e o `pbx` não confiado (compose) e qualquer pod
+> (cluster) passam por ela — a password é a única barreira, em claro (o ESL não tem TLS) e visível no
+> argv do `fs_cli`. O ESL dá `originate` e `api system`. Por fechar antes de produção: NetworkPolicy
+> só do servidor para `:8021`, Kamailio sem o `.env` inteiro, `fs_cli` sem `-p`, e o chart do Helm
+> (que não passa a password ao FreeSWITCH).
 > A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
 
 Quem entra por telefone é um **participante da sala**: fala e ouve os

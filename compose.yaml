@@ -101,6 +101,8 @@ services:
       PHONE_BRIDGE_FREESWITCH_IPS: delonix-freeswitch
       PHONE_BRIDGE_RTP_MIN: "20200"
       PHONE_BRIDGE_RTP_MAX: "20400"
+      # O Event Socket do FreeSWITCH (a password vem do .env, TELEPHONY_ESL_PASSWORD).
+      TELEPHONY_ESL_ADDR: delonix-freeswitch:8021
     volumes:
       - recordings:/var/lib/delonix/recordings
     networks: [meet]

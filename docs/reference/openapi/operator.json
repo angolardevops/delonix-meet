@@ -13488,9 +13488,22 @@
             "description": "Evento entregue (ver `KNOWN_EVENTS`).",
             "type": "string"
           },
+          "event_id": {
+            "description": "Identifica o EVENTO, não a tentativa: igual em todas as repetições e\nreenvios do mesmo evento, e enviado no cabeçalho `X-Delonix-Event-Id`.\nÉ o que um receptor usa para deduplicar (a entrega é «pelo menos uma vez»).",
+            "format": "uuid",
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
+          },
+          "next_retry_at": {
+            "description": "Quando o servidor vai repetir esta entrega, se falhou de forma repetível\ne ainda tem tentativas. Nulo se não há repetição agendada.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "org_id": {
             "format": "uuid",
@@ -13534,6 +13547,7 @@
           "org_id",
           "webhook_id",
           "event",
+          "event_id",
           "attempt",
           "status",
           "created_at"

@@ -16,7 +16,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 /// Versão do catálogo. Sobe quando entra ou sai uma capacidade.
-pub const CATALOG_VERSION: u32 = 3;
+pub const CATALOG_VERSION: u32 = 4;
 
 /// Profundidade máxima da cadeia de herança (o papel e 4 antepassados).
 pub const MAX_INHERITANCE_DEPTH: usize = 5;
@@ -27,6 +27,7 @@ pub enum Capability {
     SessionsAdmitWaitingRoom,
     SessionsMuteRemove,
     SessionsBreakoutRooms,
+    SessionsDialOut,
     RecordingsRecord4k,
     RecordingsViewOthers,
     RecordingsPublish,
@@ -65,11 +66,12 @@ pub struct CapabilityInfo {
 }
 
 impl Capability {
-    pub const ALL: [Capability; 21] = [
+    pub const ALL: [Capability; 22] = [
         Capability::SessionsCreate,
         Capability::SessionsAdmitWaitingRoom,
         Capability::SessionsMuteRemove,
         Capability::SessionsBreakoutRooms,
+        Capability::SessionsDialOut,
         Capability::RecordingsRecord4k,
         Capability::RecordingsViewOthers,
         Capability::RecordingsPublish,
@@ -160,6 +162,13 @@ impl Capability {
                 S,
                 "Abrir salas paralelas",
                 "",
+                &[],
+            ),
+            SessionsDialOut => mk(
+                "sessions.dial_out",
+                S,
+                "Ligar a um ramal ou número a partir da sala",
+                "faz tocar um ramal da organização e põe a perna na sala (sem a imposição, a matriz só aceita o valor por omissão)",
                 &[],
             ),
             RecordingsRecord4k => mk("recordings.record_4k", R, "Gravar em 4K", "", &[]),

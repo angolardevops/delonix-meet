@@ -26,8 +26,9 @@ Relaciona-se com o [ADR-0009](adr/0009-telefonia-troncos-encaminhamento-e-custo.
 2. **O `originate` só monta pernas de tronco** (`sofia/gateway/<gateway>/<número>`). Para um **ramal interno** não
    há perna (`user/<ramal>@<domínio>`), e o plano de marcação devolve **zero pernas** para um destino interno
    (`RuleAction::Extension → ResolutionOutcome::Internal`).
-3. **O Event Socket não está ligado no compose** (`TELEPHONY_ESL_ADDR`/`PASSWORD` ausentes) e a **ponte exige IPs
-   exactos** que o motor `delonix` muda a cada arranque (medido a 2026-10-04). Sem as duas, nada disto corre no laboratório.
+3. **O Event Socket** estava ligado só em loopback e a **ponte exigia IPs exactos** (medido a 2026-10-04). A ponte por
+   nome fechou-se na #212; o ESL passa a estar ligado no compose e no cluster local com password do `.env`
+   (`TELEPHONY_ESL_PASSWORD`) e ACL só para redes privadas (esta PR). Sem password, o ESL continua em loopback.
 4. **A tabela `room_dial_outs` não tem `extension_id`** (só `number_e164`, `NOT NULL`): para ligar a um ramal interno a F1
    precisa de uma migração (coluna opcional `extension_id` e `number_e164` a poder ser nulo, ou o número curto do ramal
    guardado como texto). Decide-se com a F1; não está feito.

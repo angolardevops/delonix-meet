@@ -725,9 +725,11 @@ bootstrap: ## Prepara a máquina: ferramentas, dependências, .env com segredos 
 
 # O compose.yaml corre as imagens de `make build` atrás de uma borda com TLS.
 # Não constrói nada: sem imagens, falha a dizer isso — não as vai buscar a lado nenhum.
-.PHONY: compose-up compose-down compose-ps compose-logs compose-voice-check seed voice-secret-rotate
+.PHONY: compose-up compose-down compose-ps compose-logs compose-voice-check seed voice-secret-rotate esl-secret-rotate
 voice-secret-rotate: ## Troca o VOICE_INTERNAL_SECRET do .env (depois: make compose-up e/ou make cluster)
 	@bash scripts/rotate-voice-secret.sh
+esl-secret-rotate: ## Troca a TELEPHONY_ESL_PASSWORD (Event Socket do FreeSWITCH) do .env (depois: make compose-down/up e/ou make cluster)
+	@bash scripts/rotate-voice-secret.sh .env TELEPHONY_ESL_PASSWORD
 seed: ## Cria a organização «ngolacloud» e o administrador de validação (BASE=https://…)
 	@bash scripts/seed.sh $(or $(BASE),https://$(MEET_HOST):8443)
 compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do PBX e chamada de prova ao IVR
@@ -738,6 +740,7 @@ compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do
 compose-up: ## Simulação de produção (compose.yaml); LAN_IP=<ip> expõe os ramais à rede local
 	@[ -f .env ] && [ -f deploy/compose/generated/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou deploy/compose/generated/ — corre «make bootstrap»$(Z)\n"; exit 1; }
 	@grep -qE '^DATA_ENCRYPTION_KEYS=.+' .env || { printf "$(Y)  ✗ o .env não tem DATA_ENCRYPTION_KEYS (o servidor já não arranca sem ela) — corre «make bootstrap»: acrescenta-a sem mexer no resto$(Z)\n"; exit 1; }
+	@grep -qE '^TELEPHONY_ESL_PASSWORD=.+' .env || { printf "$(Y)  ✗ o .env não tem TELEPHONY_ESL_PASSWORD (o servidor liga-se ao Event Socket com ela) — corre «make bootstrap»: acrescenta-a sem mexer no resto$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "delonix-server" || { printf "$(Y)  ✗ faltam as imagens — corre «make build»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "pbx-cliente" || { printf "$(Y)  ✗ faltam as imagens de voz — corre «make voice-images»$(Z)\n"; exit 1; }
 	@# A central da organização (ADR-0016) precisa de dois ficheiros que um
