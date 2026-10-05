@@ -13,6 +13,7 @@
 pub mod audio;
 pub mod g711;
 pub mod leg;
+pub mod origens;
 pub mod quality;
 pub mod sip;
 pub mod srtp;

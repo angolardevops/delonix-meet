@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser, downloadRecording, listRecordings, Recording, uploadRecording } from '../api'
+import { downloadRecording, listRecordings, Recording, uploadRecording } from '../api'
+import { participanteLocal } from '../convidado'
 import { MeetingRecorder } from '../media'
 import type { RoomCore } from './useRoomCore'
 
@@ -51,7 +52,7 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
   // A gravação segue as entradas, saídas e streams.
   useEffect(() => {
     recorderRef.current?.setSources([
-      { id: 'me', label: currentUser()?.username ?? '', stream: core.localStreamRef.current },
+      { id: 'me', label: participanteLocal().username, stream: core.localStreamRef.current },
       ...core.peers.map((p) => ({ id: p.peerId, label: p.username, stream: p.stream })),
     ])
   }, [core.peers, recording, core.localStreamRef])
@@ -71,7 +72,7 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
       core.levelsRef.current?.resume()
       recorderRef.current = new MeetingRecorder()
       recorderRef.current.setSources([
-        { id: 'me', label: currentUser()?.username ?? '', stream: core.localStreamRef.current },
+        { id: 'me', label: participanteLocal().username, stream: core.localStreamRef.current },
         ...core.peersRef.current.map((p) => ({ id: p.peerId, label: p.username, stream: p.stream })),
       ])
       setRecording(true)

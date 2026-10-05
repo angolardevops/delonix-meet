@@ -48,7 +48,7 @@ metadata:
   labels:
     {{- include "dm.labels" . | nindent 4 }}
 data:
-  {{- range $nome := list "00_delonix_dialin.xml" "00_delonix_extensions.xml" "conference.conf.xml" "xml_curl.conf.xml" "internal.xml" "dialin_ivr.lua" "ramais_dial.lua" }}
+  {{- range $nome := list "00_delonix_dialin.xml" "00_delonix_extensions.xml" "conference.conf.xml" "xml_curl.conf.xml" "json_cdr.conf.xml" "internal.xml" "dialin_ivr.lua" "ramais_dial.lua" }}
   {{ $nome }}: |
     {{- $.Files.Get (printf "files/voice/freeswitch/%s" $nome) | nindent 4 }}
   {{- end }}
@@ -120,6 +120,7 @@ spec:
             # INTERNO (/internal/v1/voice/ivr/*, R286).
             - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.{{ $ns }}.svc.cluster.local:8181" }
             - { name: DELONIX_RAMAIS_SIP_PORT, value: {{ $vo.freeswitch.ramaisSipPort | quote }} }
+            - { name: DELONIX_TRUNKS_RESCAN_SECS, value: {{ $vo.freeswitch.trunksRescanSecs | quote }} }
             - name: VOICE_INTERNAL_SECRET
               valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: VOICE_INTERNAL_SECRET } }
             {{- with $vo.freeswitch.ivrVoice }}

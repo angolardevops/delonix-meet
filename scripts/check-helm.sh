@@ -263,6 +263,21 @@ for nome in ("production", "production-voz", "local"):
     if not um(docs, "Service", "delonix-server-ws"):
         erros.append(f"[{nome}] falta o Service delonix-server-ws (ADR-0001)")
 
+    # 5b. o resgate do QR do Linphone não fica no registo de acessos (R278): o
+    #    caminho leva o bilhete, e só o Ingress dedicado, com o registo
+    #    desligado, o pode servir.
+    qr_ok = False
+    for ing in (d for d in docs if d.get("kind") == "Ingress"):
+        ann = (ing["metadata"].get("annotations") or {})
+        for path, b in backends(ing):
+            if path == "/api/public/extension-provisioning":
+                svc, _ = svc_ref(b)
+                qr_ok = (svc == "delonix-server"
+                         and ann.get("nginx.ingress.kubernetes.io/enable-access-log") == "false")
+    if not qr_ok:
+        erros.append(f"[{nome}] /api/public/extension-provisioning não tem Ingress próprio com "
+                     "enable-access-log:false — o bilhete do QR ficava no registo do ingress (R278)")
+
     # 5. nunca o modo inseguro; media relay-only
     if "DELONIX_ALLOW_INSECURE" in bruto:
         erros.append(f"[{nome}] o render menciona DELONIX_ALLOW_INSECURE")
@@ -366,6 +381,18 @@ for nome in ("production", "production-voz", "local"):
         fsd = um(docs, "Deployment", "freeswitch")["spec"]["template"]["spec"]["containers"][0]
         if fsd.get("command") != ["/bin/sh", "/entrypoint/freeswitch-entrypoint.sh"]:
             erros.append("[production-voz] o FreeSWITCH tem de arrancar pelo entrypoint que endurece a vanilla")
+        # O arranque copia ficheiros de /meet com `set -e`: um que o ConfigMap
+        # não traga deixa o pod em CrashLoop, e só se via no cluster (R291). O
+        # compose e o cluster local têm a prova com chamadas; o chart tem esta.
+        with open("voice/cluster/freeswitch-entrypoint.sh") as f:
+            copiados = set(re.findall(r'"\$MEET/([^"]+)"', f.read()))
+        meet = um(docs, "ConfigMap", "freeswitch-meet")
+        em_falta = sorted(copiados - set((meet or {}).get("data") or {}))
+        if not copiados:
+            erros.append("[production-voz] não encontrei no freeswitch-entrypoint.sh os ficheiros que ele copia de /meet")
+        elif em_falta:
+            erros.append("[production-voz] o arranque copia de /meet ficheiros que o ConfigMap freeswitch-meet não traz: "
+                         + ", ".join(em_falta))
 
 # 7. laboratório: aleatórios a sério
 def dados(nome):

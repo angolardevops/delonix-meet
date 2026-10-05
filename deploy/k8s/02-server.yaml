@@ -63,6 +63,12 @@ spec:
             - name: VOICE_INTERNAL_SECRET
               valueFrom:
                 secretKeyRef: { name: delonix-voice, key: VOICE_INTERNAL_SECRET, optional: true }
+            # A password do Event Socket do FreeSWITCH (o endereço, TELEPHONY_ESL_ADDR, vem do
+            # delonix-config de quem liga o ESL). Sem a password o servidor recusa arrancar
+            # com o endereço; sem os dois, a telefonia de troncos fica `not_configured`.
+            - name: TELEPHONY_ESL_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: delonix-voice, key: TELEPHONY_ESL_PASSWORD, optional: true }
           # READINESS aponta para /ready, NÃO para /health.
           #
           # Apontava para o /health, que devolve `ok` enquanto o processo

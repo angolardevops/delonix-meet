@@ -100,3 +100,6 @@ deploy/compose/generated/
 
 # Prova do tronco FreePBX (scripts/pbx-tronco-prova.sh): segredos, CA e discos da réplica.
 .pbx-tronco-prova/
+
+# Prova dos troncos (scripts/troncos-prova.sh): segredos e a configuração da réplica.
+.troncos-prova/

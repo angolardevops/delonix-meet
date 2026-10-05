@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser } from '../api'
+import { participanteLocal } from '../convidado'
 import { Icon } from '../ui/icons'
 import { Button, IconButton, Spinner } from '../ui/kit'
 import type { QaView } from '../signaling'
@@ -111,7 +111,7 @@ export function ReadyCard({
         <Icon name="shield" size={12} />
         {waitingRoomOn ? t('room.pronta.pedeAutorizacao') : t('room.pronta.entraDirecto')}
       </p>
-      <p className="dx-muted">{t('room.pronta.aParticiparComo', { nome: currentUser()?.username ?? '' })}</p>
+      <p className="dx-muted">{t('room.pronta.aParticiparComo', { nome: participanteLocal().username })}</p>
     </section>
   )
 }

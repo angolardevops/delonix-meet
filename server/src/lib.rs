@@ -1617,7 +1617,14 @@ pub async fn run() {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 ticker.tick().await;
-                let n = state.hub.expire_disconnected(janela);
+                let expirados = state.hub.expire_disconnected_seats(janela);
+                let n = expirados.len();
+                // O lugar expirou: a cópia fora do pod já não serve a ninguém.
+                if let Some(bus) = &state.redis_bus {
+                    for (room_id, secret) in &expirados {
+                        redis_state::seat_drop(bus.conn.clone(), *room_id, secret).await;
+                    }
+                }
                 if n > 0 {
                     state
                         .metrics

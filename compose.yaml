@@ -93,6 +93,16 @@ services:
       VOICE_RAMAIS_PUBLIC_HOST: meet.ngolacloud.local
       VOICE_RAMAIS_PUBLIC_PORT: "5070"
       VOICE_RAMAIS_PUBLIC_TRANSPORT: udp
+      # A ponte telefone↔sala (ADR-0010). O FreeSWITCH vai por NOME: o motor do compose dá
+      # IPs novos a cada arranque, e o servidor resolve o nome (só endereços privados) e volta
+      # a resolvê-lo de tempos a tempos. O IP que vai no SDP é o local, detectado. Sem isto o
+      # dial-in cai numa conferência só de telefones e o ramal não aparece na sala.
+      PHONE_BRIDGE_SIP_BIND: 0.0.0.0:5090
+      PHONE_BRIDGE_FREESWITCH_IPS: delonix-freeswitch
+      PHONE_BRIDGE_RTP_MIN: "20200"
+      PHONE_BRIDGE_RTP_MAX: "20400"
+      # O Event Socket do FreeSWITCH (a password vem do .env, TELEPHONY_ESL_PASSWORD).
+      TELEPHONY_ESL_ADDR: delonix-freeswitch:8021
     volumes:
       - recordings:/var/lib/delonix/recordings
     networks: [meet]
@@ -170,6 +180,9 @@ services:
     environment:
       DELONIX_CONTROL_URL: http://delonix-server:8181
       DELONIX_RAMAIS_SIP_PORT: "5070"
+      # De quanto em quanto tempo o FreeSWITCH volta a ler os troncos do
+      # servidor (um tronco novo regista-se sozinho). "0" desliga.
+      DELONIX_TRUNKS_RESCAN_SECS: "60"
       # De onde fala o bordo: o IVR só acredita em «esta chamada é da central
       # de X» vindo daqui. As redes privadas, como na allowlist do bordo — a
       # sub-rede do compose muda de motor para motor. É um laboratório: em
@@ -181,6 +194,7 @@ services:
       - ./voice/freeswitch/dialplan/default/00_delonix_extensions.xml:/meet/00_delonix_extensions.xml:ro
       - ./voice/freeswitch/autoload_configs/conference.conf.xml:/meet/conference.conf.xml:ro
       - ./voice/freeswitch/autoload_configs/xml_curl.conf.xml:/meet/xml_curl.conf.xml:ro
+      - ./voice/freeswitch/autoload_configs/json_cdr.conf.xml:/meet/json_cdr.conf.xml:ro
       - ./voice/freeswitch/sip_profiles/internal.xml:/meet/internal.xml:ro
       - ./voice/freeswitch/scripts/dialin_ivr.lua:/meet/dialin_ivr.lua:ro
       - ./voice/freeswitch/scripts/ramais_dial.lua:/meet/ramais_dial.lua:ro

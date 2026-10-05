@@ -47,7 +47,9 @@ origem** — a do tronco UDP. O tronco TLS sai de uma porta efémera, não está
 desafiado. O `make seed` cria também uma sala com PIN
 (`deploy/compose/generated/sala-telefone.txt`), e o `make compose-voice-check` liga por cada
 tronco: pelo da central, com o PIN certo (entra) e com um errado (autenticada, e recusada
-pelo IVR).
+pelo IVR). Com o PIN certo, diz também **para onde a chamada foi** — a ponte telefone↔sala
+do SFU, ou a conferência local do FreeSWITCH —, lendo-o no registo do IVR em vez de o
+presumir pelo ambiente.
 
 ```bash
 make bootstrap     # gera VOICE_CENTRAL_PASSWORD, DATA_ENCRYPTION_KEYS e o tronco da central
@@ -152,7 +154,8 @@ registrar/auth_db/DB), e dar-lhe isso era maior risco do que esta fase pede.
 | Caminho | Papel |
 |---|---|
 | `freeswitch/sip_profiles/internal.xml` | Perfil Sofia dos ramais — porta própria, realm por org (`challenge-realm=auto_from`) |
-| `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático |
+| `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático. O terceiro binding (`delonix_telefonia`) é o dos troncos: gateways e o plano de marcação do contexto `delonix-outbound` (ADR-0009, R291) |
+| `freeswitch/autoload_configs/json_cdr.conf.xml` | Registos de chamada (`mod_json_cdr`) entregues ao servidor — custo, duração e qualidade de cada chamada por tronco (R291) |
 | `freeswitch/dialplan/default/00_delonix_extensions.xml` | Contexto `delonix_ramais`: números de 3–5 dígitos → `ramais_dial.lua` |
 | `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge; o número de acesso às reuniões segue para o IVR (Fase 3) |
 
@@ -326,12 +329,27 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 
 ## Ponte telefone↔sala (ADR-0010) — ligada
 
-> **No compose e no cluster locais a ponte está DESLIGADA** (medido a 2026-10-04): o servidor
-> regista «`PHONE_BRIDGE_SIP_BIND` não configurado» e o dial-in cai na conferência local, por isso
-> um ramal que marca `8000` + PIN **não aparece na sala do browser**. Ligá-la exige `PHONE_BRIDGE_FREESWITCH_IPS`
-> com **IPs exactos** e `PHONE_BRIDGE_RTP_IP` com o IP do próprio servidor, e o `delonix compose`
-> recusa sub-redes fixas (`ipam:`) e dá um IP novo a cada recriação (4 amostras seguidas, nunca o
-> mesmo); o chart do Helm também não o resolve (ver o «Achado» em `deploy/helm/delonix-meet/README.md`).
+> **No compose a ponte está LIGADA**; no cluster local e no Helm continua desligada (o chart
+> pede IPs exactos, ver o «Achado» em `deploy/helm/delonix-meet/README.md`). `PHONE_BRIDGE_FREESWITCH_IPS`
+> aceita IPs **e nomes**: o servidor resolve os nomes (só endereços privados, nunca loopback) a
+> cada `PHONE_BRIDGE_RESOLVE_SECS` e, se o nome deixar de resolver durante 3 ciclos seguidos, a
+> lista cai para os IPs literais — um IP que ficou livre não herda o acesso. O IP de RTP, se não
+> for configurado, deduz-se da rota para o FreeSWITCH.
+> **Modelo de confiança:** a lista de origens é a única autenticação do socket SIP da ponte;
+> por nome, a âncora de confiança passa a ser o DNS (em produção, IPs literais ou um nome de um
+> DNS interno de confiança; prefere o nome absoluto com ponto final, que não passa pelos
+> domínios de pesquisa). **Limite conhecido:** na rede do compose, um contentor com `NET_RAW`
+> (o `pbx` não confiado é um) pode forjar a origem do FreeSWITCH; vale também para IPs literais.
+> **Event Socket:** com `TELEPHONY_ESL_PASSWORD` no ambiente do FreeSWITCH, o ESL escuta em
+> todas as interfaces com a ACL `delonix_esl` (só redes privadas, `default=deny`) e essa password; sem
+> ela fica em loopback com password aleatória. O servidor liga-se com `TELEPHONY_ESL_ADDR`. O ESL
+> origina chamadas: nunca se publica no host, e a password vem do segredo (`.env` / Secret
+> `delonix-voice`; `make esl-secret-rotate` troca-a). **A ACL não separa nada nestes laboratórios:**
+> o compose e a rede de pods são redes privadas, e o `pbx` não confiado (compose) e qualquer pod
+> (cluster) passam por ela — a password é a única barreira, em claro (o ESL não tem TLS) e visível no
+> argv do `fs_cli`. O ESL dá `originate` e `api system`. Por fechar antes de produção: NetworkPolicy
+> só do servidor para `:8021`, Kamailio sem o `.env` inteiro, `fs_cli` sem `-p`, e o chart do Helm
+> (que não passa a password ao FreeSWITCH).
 > A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
 
 Quem entra por telefone é um **participante da sala**: fala e ouve os

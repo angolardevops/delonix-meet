@@ -307,6 +307,11 @@ voice:
     hostNetwork: false
     ivrVoice: ""          # DELONIX_IVR_VOICE; vazio = pt/BR/karina
     ramaisSipPort: 5070
+    # DELONIX_TRUNKS_RESCAN_SECS — de quanto em quanto tempo o FreeSWITCH volta
+    # a ler os troncos do servidor (ADR-0009): um tronco criado na consola
+    # regista-se sozinho, e um arranque com o servidor em baixo recupera.
+    # 0 desliga; um tronco alterado ou apagado pede sempre um reinício.
+    trunksRescanSecs: 60
     # DELONIX_EXTERNAL_IP — o endereço que o perfil dos ramais anuncia no SIP
     # e no SDP — e a gama RTP que se publica com ele.
     externalIP: ""

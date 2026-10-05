@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../i18n'
-import { currentUser } from '../api'
+import { participanteLocal, souConvidado } from '../convidado'
 import { Icon } from '../ui/icons'
 import { usePresence } from '../components/PresenceProvider'
 import { Button, Dialog, IconButton, Tabs } from '../ui/kit'
@@ -68,6 +68,9 @@ export default function Room({
   const { t, i18n } = useTranslation()
   const locale = intlLocale(i18n.language)
   const [initial] = useState(() => (entradaDirecta(code, voiceOnly) ? 'connecting' : 'prejoin') as 'connecting' | 'prejoin')
+
+  /** Entrou sem conta: fica sem o que é da conta (gravar para a biblioteca, convidar colegas). */
+  const [convidado] = useState(souConvidado)
 
   const core = useRoomCore(code, initial)
   const media = useLocalMedia(core)
@@ -179,7 +182,7 @@ export default function Room({
   // `joined`) — contá-la punha o cronómetro a correr e, ao sair da lista,
   // «a chamada terminou» antes de alguém atender. Outra sessão da mesma conta
   // (companion) também não é o outro lado.
-  const myName = currentUser()?.username
+  const myName = participanteLocal().username
   const otherSide = peers.filter((p) => p.peerId !== core.meuPeerIdRef.current && p.username !== myName)
 
   /** Liga a câmara nesta sessão; só muda de vista se a câmara ligou mesmo. */
@@ -269,7 +272,7 @@ export default function Room({
       ? t('room.topo.aPartilhar', {
           nome:
             core.presentation.peerId === 'me'
-              ? currentUser()?.username ?? ''
+              ? participanteLocal().username
               : peers.find((p) => p.peerId === core.presentation!.peerId)?.username ?? '',
         })
       : null
@@ -323,6 +326,7 @@ export default function Room({
         recording={recording.recording}
         recBusy={recording.recBusy}
         onToggleRecording={() => void recording.toggleLocal()}
+        podeGravar={!convidado}
         wbOpen={whiteboard.open}
         onToggleWhiteboard={whiteboard.toggle}
         transcribing={transcription.transcribing}
@@ -429,7 +433,7 @@ export default function Room({
             {whiteboard.open && (
               <Whiteboard
                 wb={whiteboard}
-                me={currentUser()?.username ?? ''}
+                me={participanteLocal().username}
                 myPeerId={core.meuPeerIdRef.current}
                 isHost={isHost}
                 controls={controlos}
@@ -551,7 +555,7 @@ export default function Room({
                   breakouts={breakouts}
                   recordings={recording.recordings}
                   onDownload={recording.download}
-                  onInvite={invite.show}
+                  onInvite={convidado ? undefined : invite.show}
                   onPrivateMessage={(peer) => {
                     chat.setTarget({ peerId: peer.peerId, username: peer.username })
                     chrome.setPanel('chat')
@@ -647,7 +651,7 @@ export default function Room({
           }
         >
           <p>{t('room.confirmar.gravarE2eeTexto')}</p>
-          <p className="dx-muted">{t('room.confirmar.gravarE2eeNota', { nome: currentUser()?.username ?? '' })}</p>
+          <p className="dx-muted">{t('room.confirmar.gravarE2eeNota', { nome: participanteLocal().username })}</p>
         </Dialog>
       )}
     </div>

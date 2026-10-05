@@ -571,12 +571,15 @@ SH
   else bad "o FreeSWITCH registou «Crypto not negotiated but required» ${v:-0} vez(es), não duas"; fi
 
   echo "6) o segredo de voz chega ao servidor em cabeçalhos, e não fica no log (R227)"
+  # Os registos de chamada (mod_json_cdr) saem quando a chamada ACABA: os
+  # softphones foram removidos sem desligar, por isso desliga-se tudo aqui.
+  fs_cli_cluster "hupall" >/dev/null; sleep 4
   docker exec "${TAG}-dir" sh -c 'cat /pedidos-8180 /pedidos-8181 2>/dev/null' | tr -d '\r' > "$d/pedidos"
   while IFS='|' read -r veredicto texto; do
     if [ "$veredicto" = ok ]; then ok "$texto"; else bad "$texto"; fi
-  done < <(python3 - "$d/pedidos" "$segredo" "$PIN_DIALIN" <<'PY'
+  done < <(python3 - "$d/pedidos" "$segredo" "$PIN_DIALIN" "$DESTINO_DIALIN" <<'PY'
 import base64, re, sys
-pedidos, segredo, pin = open(sys.argv[1], errors="replace").read(), sys.argv[2], sys.argv[3]
+pedidos, segredo, pin, dialin = open(sys.argv[1], errors="replace").read(), sys.argv[2], sys.argv[3], sys.argv[4]
 # Cada pedido começa numa linha «POST <caminho> HTTP/1.1».
 blocos = re.split(r"(?m)^(?=POST \S+ HTTP/1\.[01]$)", pedidos)
 def pedido(caminho):
@@ -612,6 +615,42 @@ for caminho, quem, corpo in (("/internal/v1/voice/ivr/resolve-extension", "ramai
     certo = bool(tem) and tem.group(1) == segredo and json_ok and (corpo is None or ('"pin":"%s"' % corpo) in b)
     sai(certo, "%s: o pedido chega com X-Voice-Secret e o corpo JSON%s" % (quem, " com o PIN marcado" if corpo else "")
         if certo else "%s: o pedido a %s não chegou como devia (X-Voice-Secret, Content-Type ou corpo)" % (quem, caminho))
+
+# Os registos de chamada (mod_json_cdr). Um registo leva TODAS as variáveis do
+# canal — o SDP com as linhas a=crypto e as chaves SRTP da perna incluídas — e
+# vai em HTTP para o servidor, ou fica em disco se ele não responder. Por isso
+# só a perna de um TRONCO deixa registo (R291): nos contextos dos ramais e do
+# dial-in o plano de marcação desliga-o (`process_cdr=false`). O que ainda
+# chega daqui são as chamadas recusadas ANTES do plano de marcação, que não
+# negociaram chave nenhuma — e é por elas que se sabe que o módulo entrega.
+# O módulo acrescenta «?uuid=<a chamada>» ao endereço.
+cdrs = [b for b in blocos if re.match(r"POST /internal/v1/telephony/call-records[? ]", b)]
+corpo = lambda b: b.split("\n\n", 1)[-1]
+def basic_certo(b):
+    m = re.search(r"(?mi)^Authorization: Basic (\S+)$", b)
+    try:
+        return bool(m) and base64.b64decode(m.group(1)).decode().split(":", 1)[1] == segredo
+    except Exception:
+        return False
+sai(bool(cdrs) and all(basic_certo(b) for b in cdrs),
+    "registos de chamada (mod_json_cdr): %d entregues, todos com o segredo em Authorization: Basic" % len(cdrs)
+    if cdrs and all(basic_certo(b) for b in cdrs)
+    else "registos de chamada (mod_json_cdr): %d entregues; nem todos (ou nenhum) com o segredo em Authorization: Basic" % len(cdrs))
+atendidas = [b for b in cdrs if re.search(r'"answer_epoch":"[1-9]', corpo(b))]
+sai(bool(cdrs) and not atendidas,
+    "nenhuma chamada atendida de ramal ou de dial-in deixa registo" if cdrs and not atendidas
+    else "%d chamada(s) atendida(s) de ramal ou de dial-in deixaram registo" % len(atendidas))
+# Os valores vão codificados em URL: «inline:» é «inline%3A».
+com_chave = [b for b in cdrs if re.search(r"inline(:|%3A)", corpo(b), re.I)]
+sai(bool(cdrs) and not com_chave,
+    "nenhum dos %d registos de chamada leva uma chave SRTP" % len(cdrs) if cdrs and not com_chave
+    else "%d dos %d registos de chamada levam chaves SRTP (a=crypto … inline:)" % (len(com_chave), len(cdrs)))
+# O PIN como número inteiro, não como parte de um mais comprido (um registo
+# traz dezenas de tempos e contadores).
+com_pin = [b for b in cdrs if re.search(r"(?<!\d)%s(?!\d)" % re.escape(pin), corpo(b))]
+sai(bool(cdrs) and not com_pin,
+    "nenhum dos %d registos de chamada leva o PIN marcado" % len(cdrs) if cdrs and not com_pin
+    else "%d dos %d registos de chamada levam o PIN marcado" % (len(com_pin), len(cdrs)))
 PY
   )
   v=$(docker exec "${TAG}-fs" grep -ac "$segredo" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)

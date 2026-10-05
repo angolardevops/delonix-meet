@@ -178,7 +178,7 @@ Objectivo: passar um questionário de segurança e um RFP de banco, governo ou o
 
 | # | Item | Evidência | Prova | Tam. |
 |---|---|---|---|---|
-| E1 | **Ecrã de convidado sem conta**: link, nome, sala de espera, sala | `guestJoin` sem chamador; `App.tsx:128-137` | e2e sem conta, do link à sala, em menos de 60 s | M |
+| E1 | **Ecrã de convidado sem conta**: link, nome, sala de espera, sala — **FEITO a 2026-10-05 (R290)** | `web/src/pages/PortaDeConvidado.tsx`, `web/src/convidado.ts` | `web/e2e/convidado-ecra.mjs` no CI: do link à sala sem conta, com F5, saída e os dois controlos negativos | M |
 | E2 | Correio (D7): entrega dos convites, lembretes e alteração de hora | grep `smtp\|lettre` em `server/` = só um comentário (`directory.rs:479`) | convite recebido numa caixa de ensaio; SSRF do relay guardado | M |
 | E3 | Reposição de password (pela própria pessoa e pelo administrador) e política de password além do comprimento | únicos `UPDATE … password_hash`: `users.rs:140`, `auth.rs:731`, `odoo_sso.rs:879` | fluxo completo com token de uso único e auditoria | M |
 | E4 | SAML 2.0 (D6) | grep `saml` = 0 | entrada por um IdP de ensaio, com asserção assinada e a recusa da não assinada | G |
@@ -206,7 +206,7 @@ facturar sem trabalho à medida.
 
 | # | Item | Evidência | Prova | ≙ | Tam. |
 |---|---|---|---|---|---|
-| T1 | **Ligar a telefonia de troncos na configuração distribuída**: binding `freeswitch-config`, perfil de tronco e `json_cdr` no arranque do compose, do cluster e do chart | só em `voice/freeswitch/telefonia-prova/`; `freeswitch-entrypoint.sh:67-71` não os copia | gateway registado e CDR com MOS e custo entregue, no compose e no cluster | — | G |
+| T1 | **Ligar a telefonia de troncos na configuração distribuída**: binding `freeswitch-config`, perfil de tronco e `json_cdr` no arranque do compose, do cluster e do chart — **FEITO a 2026-10-05 (R291)**, com o que fica para T2 e T11 escrito na entrada | `voice/cluster/freeswitch-entrypoint.sh` (passos 5, 6, 7b e 13), `voice/freeswitch/autoload_configs/{xml_curl,json_cdr}.conf.xml` | `scripts/troncos-prova.sh`: gateway registado e CDR com MOS e custo entregue, numa réplica do compose. **No cluster não foi medido** | — | G |
 | T2 | Um ramal sai para a PSTN pelo plano de marcação, e o 112 tem caminho | `00_delonix_extensions.xml:6-9,25`; `ramais_dial.lua:71-88` | chamada de um ramal a um número de ensaio; 112 encaminhado, não gravado e não travado | — | M |
 | T3 | Perfil de tronco no repo, não o `external` vanilla da imagem: PCMA e PCMU fixados, RFC 2833 com payload 101, formato de número por tronco | `internal.xml:36,44-45`; grep `strip\|number_format` = 0 | DTMF de um tronco de ensaio aceite pelo IVR; número no formato pedido | — | M |
 | T4 | Decisão do SRTP à entrada por tronco (D4) | `internal.xml:26`; `telephony_fs_xml.rs:230` | tronco sem SRTP: aceite por rede privada ou recusado, conforme a decisão | — | P |

@@ -2619,7 +2619,8 @@ export const deleteSavedSearch = (id: string) =>
 // ---------- delonix-meet-backend/convidado-sem-conta ----------
 //
 // Convidado SEM conta. Estas funções são o contrato do ecrã de entrada de
-// convidado, que ainda NÃO existe: nenhuma página as chama.
+// convidado (`pages/PortaDeConvidado.tsx`); quem as chama é `convidado.ts`, que
+// guarda o bilhete e o entrega à sala.
 //
 // Fluxo: `guestJoin(código, nome)` → `room_token` + `ice_servers` → abrir
 // `/ws?token=…` → chega `waiting` → o anfitrião admite → chega `joined`. A partir

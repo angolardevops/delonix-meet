@@ -92,6 +92,8 @@ export interface ControlBarProps {
   recording: boolean
   recBusy: boolean
   onToggleRecording: () => void
+  /** `false` para um convidado sem conta: a gravação guarda-se na conta de quem grava, e ele não tem nenhuma. */
+  podeGravar?: boolean
   wbOpen: boolean
   onToggleWhiteboard: () => void
   transcribing: boolean
@@ -320,15 +322,17 @@ export function ControlBar(p: ControlBarProps) {
             caption={t('room.painel.chat')}
           />
           <Ctrl icon="hand" label={p.handRaised ? t('room.controlos.baixarMao') : t('room.controlos.levantarMao')} caption={t('room.controlos.rotuloMao')} active={p.handRaised} pressed={p.handRaised} onClick={p.onToggleHand} />
-          <Ctrl
-            icon={p.recording ? 'stop' : 'record'}
-            label={p.recording ? t('room.controlos.pararGravacao') : t('room.controlos.gravar')}
-            active={p.recording}
-            danger={p.recording}
-            pressed={p.recording}
-            onClick={p.onToggleRecording}
-            className="rm-hide-narrow"
-          />
+          {p.podeGravar !== false && (
+            <Ctrl
+              icon={p.recording ? 'stop' : 'record'}
+              label={p.recording ? t('room.controlos.pararGravacao') : t('room.controlos.gravar')}
+              active={p.recording}
+              danger={p.recording}
+              pressed={p.recording}
+              onClick={p.onToggleRecording}
+              className="rm-hide-narrow"
+            />
+          )}
           <div className="rm-split" ref={morePop.wrapRef}>
             <Ctrl icon="more" label={t('room.controlos.maisOpcoes')} caption={t('room.controlos.rotuloMais')} active={morePop.open} popup expanded={morePop.open} onClick={morePop.toggle} />
             {morePop.open && (
@@ -341,9 +345,11 @@ export function ControlBar(p: ControlBarProps) {
                   <MenuItem icon={<Icon name="screen" />} checked={p.sharing} onClick={fecharMais(p.onShare)}>
                     {shareLabel}
                   </MenuItem>
-                  <MenuItem icon={<Icon name={p.recording ? 'stop' : 'record'} />} checked={p.recording} disabled={p.recBusy} onClick={fecharMais(p.onToggleRecording)}>
-                    {t('room.controlos.gravar')}
-                  </MenuItem>
+                  {p.podeGravar !== false && (
+                    <MenuItem icon={<Icon name={p.recording ? 'stop' : 'record'} />} checked={p.recording} disabled={p.recBusy} onClick={fecharMais(p.onToggleRecording)}>
+                      {t('room.controlos.gravar')}
+                    </MenuItem>
+                  )}
                   <MenuItem icon={<Icon name="board" />} checked={p.wbOpen} onClick={fecharMais(p.onToggleWhiteboard)}>
                     {t('room.controlos.quadro')}
                   </MenuItem>

@@ -31,26 +31,65 @@ VOZ=${DELONIX_IVR_VOICE:-pt/BR/karina}
 test -d "/usr/local/freeswitch/share/freeswitch/sounds/$VOZ" ||
   { echo "voz do IVR sem sons na imagem: $VOZ" >&2; exit 1; }
 sed -i -E "s#(data=\"sound_prefix=)[^\"]*#\1\$\${sounds_dir}/${VOZ}#" "$CONF/vars.xml"
-# 4. ESL só em loopback, com password aleatória.
-ESL=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
-sed -i -E "s#(name=\"listen-ip\" value=)\"[^\"]*\"#\1\"127.0.0.1\"#; s#(name=\"password\" value=)\"[^\"]*\"#\1\"${ESL}\"#" \
-  "$CONF/autoload_configs/event_socket.conf.xml"
+# 4. ESL: em loopback com password aleatória, a menos que o ambiente traga
+#    TELEPHONY_ESL_PASSWORD — então o servidor do Meet liga-se por rede (originar
+#    chamadas, estado do registo) e o ESL escuta em todas as interfaces, MAS com
+#    ACL: só as redes privadas entram, e mesmo assim só com a password. O ESL
+#    manda originar chamadas — quem o alcança com a password gasta dinheiro de
+#    operadora; por isso nunca se publica no host e a password vem do segredo.
+if [ -n "${TELEPHONY_ESL_PASSWORD:-}" ]; then
+  ESL=$TELEPHONY_ESL_PASSWORD
+  [ ${#ESL} -ge 32 ] || { echo "TELEPHONY_ESL_PASSWORD com menos de 32 caracteres" >&2; exit 1; }
+  case $ESL in *[!A-Za-z0-9._-]*) echo "TELEPHONY_ESL_PASSWORD com caracteres que o XML não aceita" >&2; exit 1;; esac
+  ESL_LISTEN=0.0.0.0
+  sed -i 's#</network-lists>#  <list name="delonix_esl" default="deny">\n      <node type="allow" cidr="10.0.0.0/8"/>\n      <node type="allow" cidr="172.16.0.0/12"/>\n      <node type="allow" cidr="192.168.0.0/16"/>\n      <node type="allow" cidr="127.0.0.0/8"/>\n    </list>\n  </network-lists>#' \
+    "$CONF/autoload_configs/acl.conf.xml"
+  grep -q 'name="delonix_esl"' "$CONF/autoload_configs/acl.conf.xml" ||
+    { echo "a ACL do ESL não ficou escrita" >&2; exit 1; }
+  ESL_ACL='<param name="apply-inbound-acl" value="delonix_esl"/>'
+else
+  ESL=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  ESL_LISTEN=127.0.0.1
+  ESL_ACL=
+fi
+cat >"$CONF/autoload_configs/event_socket.conf.xml" <<XML
+<configuration name="event_socket.conf" description="Socket Client">
+  <settings>
+    <param name="nat-map" value="false"/>
+    <param name="listen-ip" value="${ESL_LISTEN}"/>
+    <param name="listen-port" value="8021"/>
+    <param name="password" value="${ESL}"/>
+    ${ESL_ACL}
+  </settings>
+</configuration>
+XML
 # 5. Os módulos de que o IVR e os ramais precisam (a vanilla não carrega o mod_curl).
 #    Na vanilla estão comentados: descomenta-se a linha, não se acrescenta outra.
 for m in mod_curl mod_xml_curl; do
   sed -i "s#<!-- <load module=\"$m\"/> -->#<load module=\"$m\"/>#" "$CONF/autoload_configs/modules.conf.xml"
 done
-for m in mod_curl mod_lua mod_xml_curl; do
+#    O mod_json_cdr (os registos de chamada da telefonia, passo 7b) nem
+#    comentado lá está: acrescenta-se.
+sed -i 's#</modules>#  <load module="mod_json_cdr"/>\n  </modules>#' "$CONF/autoload_configs/modules.conf.xml"
+for m in mod_curl mod_lua mod_xml_curl mod_json_cdr mod_hash; do
   grep -q "^[[:space:]]*<load module=\"$m\"/>" "$CONF/autoload_configs/modules.conf.xml" ||
     { echo "o módulo $m não ficou carregado" >&2; exit 1; }
 done
 
 # 6. As variáveis do Meet vêm do ambiente do pod (Secret e ConfigMap).
+#    Os registos de chamada que o servidor não aceitou ficam FORA de /conf,
+#    que é esvaziado a cada arranque. Sobrevivem a reiniciar o contentor
+#    (compose); num pod, um reinício pelo kubelet é um contentor NOVO e
+#    leva-os — não há volume para eles.
+CDR_PENDENTES=/usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes
+mkdir -p "$CDR_PENDENTES"
+chmod 700 "$CDR_PENDENTES"
 cat >"$CONF/vars-meet.xml" <<XML
 <include>
   <X-PRE-PROCESS cmd="set" data="delonix_control_url=${DELONIX_CONTROL_URL}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_voice_secret=${VOICE_INTERNAL_SECRET}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_ramais_sip_port=${DELONIX_RAMAIS_SIP_PORT:-5070}"/>
+  <X-PRE-PROCESS cmd="set" data="delonix_cdr_dir=${CDR_PENDENTES}"/>
   <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
 </include>
 XML
@@ -66,10 +105,24 @@ sed -i 's#</include>#  <X-PRE-PROCESS cmd="include" data="vars-meet.xml"/>\n</in
 rm -rf "$CONF"/dialplan/*.xml "$CONF"/dialplan/public "$CONF"/dialplan/default "$CONF"/dialplan/skinny-patterns
 cp "$MEET/00_delonix_dialin.xml" "$CONF/dialplan/public.xml"
 cp "$MEET/00_delonix_extensions.xml" "$CONF/dialplan/delonix_ramais.xml"
-cp "$MEET/conference.conf.xml" "$MEET/xml_curl.conf.xml" "$CONF/autoload_configs/"
+cp "$MEET/conference.conf.xml" "$MEET/xml_curl.conf.xml" "$MEET/json_cdr.conf.xml" "$CONF/autoload_configs/"
 cp "$MEET/internal.xml" "$CONF/sip_profiles/"
 mkdir -p /scripts
 cp "$MEET/dialin_ivr.lua" "$MEET/ramais_dial.lua" /scripts/
+
+# 7b. A telefonia de troncos (ADR-0009). Os troncos que as organizações criam
+#     na consola são gateways do perfil `external` — o mesmo por onde o bordo
+#     entrega as chamadas (5080) e o que o servidor nomeia por omissão
+#     (TELEPHONY_SOFIA_PROFILE). Na vanilla o perfil procura gateways em
+#     TODOS os domínios do directório (`<domain name="all" parse="true"/>`);
+#     passa a procurá-los num só, `delonix-trunks`, que é o que o servidor
+#     serve pelo mod_xml_curl (xml_curl.conf.xml, binding `delonix_telefonia`).
+#     Troca-se, não se acrescenta: com os dois a lista era lida duas vezes.
+#     Sem troncos na base a resposta é um domínio vazio, e nada muda.
+sed -i 's#<domain name="all" alias="false" parse="true"/>#<domain name="delonix-trunks" alias="false" parse="true"/>#' \
+  "$CONF/sip_profiles/external.xml"
+grep -q '<domain name="delonix-trunks" alias="false" parse="true"/>' "$CONF/sip_profiles/external.xml" ||
+  { echo "não consegui pôr o domínio dos troncos no perfil external" >&2; exit 1; }
 
 # 8. Um só endereço do servidor: tudo o que o FreeSWITCH lhe pede — o IVR do
 #    dial-in, o directório e o dialplan dos ramais (mod_xml_curl) e o
@@ -142,6 +195,25 @@ sed -i "s#<!--<param name=\"logfile\" value=\"[^\"]*\"/>-->#<param name=\"logfil
   "$CONF/autoload_configs/logfile.conf.xml"
 grep -q "<param name=\"logfile\" value=\"$LOGS/freeswitch.log\"/>" "$CONF/autoload_configs/logfile.conf.xml" ||
   { echo "não consegui fixar o caminho do freeswitch.log" >&2; exit 1; }
+
+# 13. Os troncos voltam a ler-se sozinhos. O FreeSWITCH só pergunta pelos
+#     gateways quando o perfil arranca: se o servidor ainda não respondia
+#     nesse instante ficava sem tronco nenhum, e um tronco criado depois na
+#     consola só aparecia reiniciando-o. O `rescan` volta a perguntar e
+#     ACRESCENTA os gateways que faltam; não mexe nos que já existem nem nas
+#     chamadas em curso. Não é de graça: volta a aplicar as definições ao
+#     perfil vivo e zera os contadores de chamadas dele (sofia.c), por isso o
+#     `sofia status profile external` passa a contar desde o último ciclo.
+#     Um tronco ALTERADO ou APAGADO não é com ele: precisa de `killgw`, que
+#     hoje só o servidor sabe mandar pelo ESL — com TELEPHONY_ESL_PASSWORD o
+#     servidor chega-lhe (passo 4); sem ela o ESL fica em loopback. DELONIX_TRUNKS_RESCAN_SECS=0 desliga o ciclo.
+RESCAN=${DELONIX_TRUNKS_RESCAN_SECS:-60}
+case "$RESCAN" in ''|*[!0-9]*) echo "DELONIX_TRUNKS_RESCAN_SECS não é um número de segundos: $RESCAN" >&2; exit 1 ;; esac
+if [ "$RESCAN" -gt 0 ]; then
+  ( while sleep "$RESCAN"; do
+      /usr/local/freeswitch/bin/fs_cli -T 3000 -t 10000 -p "$ESL" -x "sofia profile external rescan" >/dev/null 2>&1 || true
+    done ) &
+fi
 
 # -conf, -log e -db vão os três ou nenhum.
 exec /usr/local/freeswitch/bin/freeswitch -conf "$CONF" \

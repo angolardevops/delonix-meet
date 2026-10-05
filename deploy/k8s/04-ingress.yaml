@@ -81,3 +81,31 @@ spec:
                 name: delonix-server-ws  # Service dedicado → backend próprio → hash aplica-se
                 port:
                   number: 8180
+---
+# Ingress DEDICADO ao resgate do QR do Linphone (R278): o caminho leva o
+# bilhete de uso único — a credencial. Sem isto o ingress-nginx escrevia-o no
+# registo de acessos do controlador. O prefixo mais longo ganha ao /api.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-provisioning
+  namespace: delonix-meet
+  annotations:
+    nginx.ingress.kubernetes.io/enable-access-log: "false"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - meet.delonix.local
+      secretName: delonix-tls-secret
+  rules:
+    - host: meet.delonix.local
+      http:
+        paths:
+          - path: /api/public/extension-provisioning
+            pathType: Prefix
+            backend:
+              service:
+                name: delonix-server
+                port:
+                  number: 8180

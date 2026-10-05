@@ -28400,7 +28400,7 @@
                 }
               }
             },
-            "description": "`secrets.encryption_unconfigured`: sem chaves não se guarda a password."
+            "description": "`secrets.encryption_unconfigured`: sem chaves não se guarda a password. `telephony.trunk_limit_reached`: a organização já tem o máximo de troncos."
           }
         },
         "security": [

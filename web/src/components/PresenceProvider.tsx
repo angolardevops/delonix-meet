@@ -35,6 +35,25 @@ interface PresenceCtx {
 
 const Ctx = createContext<PresenceCtx | null>(null)
 
+/**
+ * A presença de quem NÃO tem conta: ninguém em linha, nenhuma chamada. A sala
+ * pergunta à presença se está numa chamada directa; um convidado sem conta
+ * nunca está, e não tem com que abrir o `/rtc` (que pede a sessão).
+ */
+const AUSENTE: PresenceCtx = {
+  online: new Set(),
+  isOnline: () => false,
+  startCall: () => {},
+  directCall: () => null,
+  missed: [],
+  ackMissed: () => {},
+  callBack: () => {},
+}
+
+export function PresencaAusente({ children }: { children: ReactNode }) {
+  return <Ctx.Provider value={AUSENTE}>{children}</Ctx.Provider>
+}
+
 export const usePresence = () => {
   const c = useContext(Ctx)
   if (!c) throw new Error('usePresence fora do PresenceProvider')
