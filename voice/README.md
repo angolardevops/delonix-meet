@@ -47,7 +47,9 @@ origem** — a do tronco UDP. O tronco TLS sai de uma porta efémera, não está
 desafiado. O `make seed` cria também uma sala com PIN
 (`deploy/compose/generated/sala-telefone.txt`), e o `make compose-voice-check` liga por cada
 tronco: pelo da central, com o PIN certo (entra) e com um errado (autenticada, e recusada
-pelo IVR).
+pelo IVR). Com o PIN certo, diz também **para onde a chamada foi** — a ponte telefone↔sala
+do SFU, ou a conferência local do FreeSWITCH —, lendo-o no registo do IVR em vez de o
+presumir pelo ambiente.
 
 ```bash
 make bootstrap     # gera VOICE_CENTRAL_PASSWORD, DATA_ENCRYPTION_KEYS e o tronco da central
