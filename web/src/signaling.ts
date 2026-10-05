@@ -83,6 +83,9 @@ export type ServerMsg =
   | { type: 'muted-all'; by: string; allow_unmute: boolean }
   | { type: 'host-changed'; from: string; to: string }
   | { type: 'kicked' }
+  /** A mesma pessoa está também ao telefone nesta sala: pergunta onde continuar. */
+  | { type: 'duplicate-device'; phone_id: string; can_hangup: boolean }
+  | { type: 'duplicate-resolved'; phone_id: string; outcome: 'hung_up' | 'muted' | 'both' }
   | { type: 'room-settings'; locked: boolean; host_share_only: boolean; chat_on?: boolean; allow_unmute?: boolean }
   | { type: 'share-granted'; allowed: boolean }
   | { type: 'share-request'; from: string; username: string }
@@ -105,6 +108,8 @@ export type ServerMsg =
   | { type: 'remote-control'; from: string; action: string; payload: any }
 
 export type ClientMsg =
+  /** `meet`: continuar só aqui (o telefone desliga ou fica sem som); `both`: nos dois. Só actua nas pernas desta pessoa. */
+  | { type: 'device-choice'; phone_id: string; keep: 'meet' | 'both' }
   | { type: 'offer'; to: string; sdp: string }
   | { type: 'answer'; to: string; sdp: string }
   | { type: 'ice'; to: string; candidate: RTCIceCandidateInit }

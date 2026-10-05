@@ -9,6 +9,7 @@ import '../ui/room.css'
 import { AudioSink } from '../room/AudioSink'
 import { ChatPanel } from '../room/ChatPanel'
 import { ControlBar } from '../room/ControlBar'
+import { DuplicateDeviceDialog, DuplicateDeviceResult } from '../room/DuplicateDeviceDialog'
 import { InviteDialog } from '../room/InviteDialog'
 import { MulticamPanel } from '../room/MulticamPanel'
 import { Notices } from '../room/Notices'
@@ -27,6 +28,7 @@ import { Whiteboard } from '../room/Whiteboard'
 import { useBreakouts } from '../room/useBreakouts'
 import { entradaDirecta, useCallSession } from '../room/useCallSession'
 import { useChat } from '../room/useChat'
+import { useDuplicateDevice } from '../room/useDuplicateDevice'
 import { useInvite } from '../room/useInvite'
 import { useLayout } from '../room/useLayout'
 import { destinosNoAr, useLive } from '../room/useLive'
@@ -174,6 +176,7 @@ export default function Room({
   function leave() {
     void session.leave(transcription.saveOnLeave)
   }
+  const dispositivos = useDuplicateDevice(core, leave)
 
   // «O outro lado» de uma chamada de voz. Ao entrar, a lista chega a trazer um
   // instante a PRÓPRIA sessão (medido no e2e: o próprio peer_id/nome antes do
@@ -449,6 +452,7 @@ export default function Room({
             )}
 
             <div className="rm-float">
+              <DuplicateDeviceResult dup={dispositivos} />
               {chrome.readyOpen && isHost && inRoom && (
                 <ReadyCard
                   code={code}
@@ -577,6 +581,7 @@ export default function Room({
         <AudioSink peers={peers} sinkId={speakerId} mudo={companion} volume={media.outputVolume} />
 
         {invite.open && <InviteDialog invite={invite} />}
+        <DuplicateDeviceDialog dup={dispositivos} />
       </div>
     )
   }
