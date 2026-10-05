@@ -2153,16 +2153,14 @@ async fn force_mute_cala_o_telefone_na_perna() {
 /// é também a prova de que um silêncio a sério cabe no tecto do gravador. O
 /// telefone é o `TelefoneFalso` (G.711 por UDP, sem FreeSWITCH nem operadora).
 /// Mede-se a pista do telefone composta pelo ffmpeg com os argumentos de
-/// produção, amostra a amostra. **Sem ffmpeg não mede nada** — e o CI não o tem.
+/// produção, amostra a amostra. **Sem ffmpeg, que o CI não tem**, fica o que
+/// se vê na pista crua: o gravador escreveu silêncio dentro do tempo calado, e
+/// nenhum salto ficou por encher.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn um_telefone_calado_pelo_anfitriao_nao_recua_na_gravacao() {
     use crate::phone_bridge::{g711::Law, leg};
     use crate::recorder::tests as gravador;
     use std::sync::atomic::Ordering::SeqCst;
-    if gravador::ffmpeg_de_teste().is_none() {
-        eprintln!("{}", gravador::SEM_FFMPEG);
-        return;
-    }
     let (sfu, metrics) = new_sfu();
     let (room, leg_id) = (Uuid::new_v4(), Uuid::new_v4());
     let (ev_tx, _ev_rx) = mpsc::channel(16);
@@ -2216,40 +2214,65 @@ async fn um_telefone_calado_pelo_anfitriao_nao_recua_na_gravacao() {
         .filter(|t| t.kind == "audio")
         .collect();
     assert_eq!(pistas.len(), 1, "a pista do telefone: {:?}", session.tracks);
-    let pcm = gravador::compor(
-        &session.dir,
-        &[pistas[0].path.clone()],
-        &gravador::args_da_mistura(&[0]),
-    )
-    .expect("ffmpeg");
+    let pista = pistas[0].path.clone();
+
+    // (1) Na pista crua, sem ffmpeg. Com a perna calada não chega pacote
+    // nenhum: as páginas com o grânulo a mais de 1 s das duas pontas do tempo
+    // calado só podem ser o silêncio do gravador — aos 5 e aos 10 s.
+    let no_meio = gravador::ogg_paginas(&pista)
+        .iter()
+        .map(|(_, granulo)| (*granulo / 48) as usize)
+        .filter(|ms| (calado + 1000..volta - 1000).contains(ms))
+        .count();
+    assert_eq!(
+        no_meio, 2,
+        "o gravador não escreveu o silêncio dos 12 s calados"
+    );
+    assert_eq!(
+        metrics
+            .recording_audio_gap_unfilled_total
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "um silêncio a sério não coube no tecto do gravador"
+    );
+
+    // (2) Na composição.
+    let pcm = gravador::compor(&session.dir, &[pista], &gravador::args_da_mistura(&[0]));
     let _ = std::fs::remove_dir_all(&dir);
+    let Some(pcm) = pcm else {
+        eprintln!("{}", gravador::SEM_FFMPEG);
+        return;
+    };
     let (som, dur) = (gravador::onde_ha_som(&pcm), pcm.len() / 48);
     eprintln!(
         "telefone calado pelo anfitrião: falou aos {fala} ms, calado dos {calado} aos {volta} ms, \
          parou aos {fim} ms · na gravação: {dur} ms, som em {som:?}"
     );
     // O relógio é o de parede, com a máquina como estiver: meio segundo de
-    // folga. O defeito que isto guarda são 12 s.
+    // folga. O defeito que isto guarda são 12 s. Um quadro que a máquina
+    // carregada perca a meio de uma fala parte-a em duas — por isso mede-se o
+    // primeiro som, o silêncio do meio e o som que volta, e não a contagem.
     let perto = |medido: usize, esperado: usize| medido.abs_diff(esperado) <= 500;
-    assert_eq!(som.len(), 2, "duas falas, e saíram {som:?}");
+    let primeiro = som.first().expect("som na gravação");
     assert!(
-        perto(som[0].0, fala) && perto(som[0].1, calado),
-        "a primeira fala ({fala}–{calado} ms) ficou em {:?}",
-        som[0]
+        perto(primeiro.0, fala),
+        "a fala dos {fala} ms começa aos {} — {som:?}",
+        primeiro.0
     );
+    let no_silencio: Vec<_> = som
+        .iter()
+        .filter(|(de, ate)| *ate > calado + 500 && *de < volta - 500)
+        .collect();
     assert!(
-        perto(som[1].0, volta) && perto(som[1].1, fim),
-        "a fala depois de calado ({volta}–{fim} ms) ficou em {:?} — recuou",
-        som[1]
+        no_silencio.is_empty(),
+        "som dentro do tempo calado ({calado}–{volta} ms): {no_silencio:?} — a fala seguinte recuou"
+    );
+    let regresso = som.iter().find(|(de, _)| *de >= volta - 500);
+    assert!(
+        regresso.is_some_and(|(de, _)| perto(*de, volta)),
+        "a fala depois de calado ({volta} ms) ficou em {regresso:?} — {som:?}"
     );
     assert!(perto(dur, fim), "a gravação tem {dur} ms e durou {fim}");
-    assert_eq!(
-        metrics
-            .recording_audio_gap_unfilled_total
-            .load(std::sync::atomic::Ordering::Relaxed),
-        0,
-        "um silêncio a sério ficou por encher"
-    );
 }
 
 /// **R221 — a ponte telefone↔sala, com media a sério nos dois sentidos.**
