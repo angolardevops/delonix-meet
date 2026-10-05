@@ -141,11 +141,9 @@ pub struct Metrics {
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
     /// pior, e porque uma gravação corrompida em silêncio é a R18.
     pub recording_packets_dropped_total: AtomicU64,
-    /// Pacotes de áudio que a gravação descartou por chegarem com o timestamp
-    /// atrás do último escrito (a rede reordenou-os ou repetiu-os). Escritos,
-    /// somavam 24 h 51 min à pista — ver `recorder::OpusClock`. Sobe às
-    /// dezenas de cada vez que o relógio de uma origem recua de vez: é o
-    /// segundo que a pista perde até se re-ancorar.
+    /// Pacotes de áudio que a gravação não escreveu: chegaram atrasados para lá
+    /// da janela de reordenação, ou repetidos — ver `recorder::OpusTrack`. Um
+    /// atrasado dentro da janela escreve-se no sítio e não conta aqui.
     pub recording_audio_late_dropped_total: AtomicU64,
     /// Composições de gravação à espera de vaga (`FFMPEG_MAX_CONCURRENT`). Um
     /// valor que não desce é o sinal de que o nó compõe mais do que aguenta.
