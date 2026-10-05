@@ -4866,6 +4866,10 @@
       },
       "MediaNode": {
         "properties": {
+          "accepting_new_rooms": {
+            "description": "Este nó aceita salas NOVAS de QUALQUER inquilino agora: está a servir (nem\na drenar nem sem batimento) e abaixo do limite de ocupação\n(`NEW_ROOM_LOAD_PERCENT`). Acima dele só aceita as de quem ainda está\nabaixo da sua parte justa, e isso decide-se por pedido, não aqui.\nCalculado do último batimento, por isso pode atrasar até um intervalo\n(15 s) face ao que o nó decide à entrada.",
+            "type": "boolean"
+          },
           "edition": {
             "type": "string"
           },
@@ -4935,7 +4939,8 @@
           "rooms",
           "peers",
           "ws_connections",
-          "live_broadcasts"
+          "live_broadcasts",
+          "accepting_new_rooms"
         ],
         "type": "object"
       },
