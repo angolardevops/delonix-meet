@@ -3029,7 +3029,7 @@ No CI: `tests/telephony.rs` (o `204` e que nada fica guardado; o `422` com um ga
 
 **Ficheiros.** `web/e2e/telefone-na-sala.mjs`, `web/e2e/harness.ts` (`som=cru`), `web/vite.config.ts` (`API_HOST`), `scripts/pbx-tronco-prova.sh` (modo `browser`), `voice/pbx-tronco-prova/compose.yaml`, `scripts/check-replicas-compose.sh`, `Makefile` e `.github/workflows/ci.yml` (o portão), `scripts/e2e-fora-do-ci.txt`.
 
-### R29X — A voz de um softphone chegava à sala a 8 kHz, e a prova real da perna em Opus encontrou três defeitos que já lá estavam
+### R296 — A voz de um softphone chegava à sala a 8 kHz, e a prova real da perna em Opus encontrou três defeitos que já lá estavam
 
 **Sintoma.** Um softphone falava Opus a 48 kHz com o FreeSWITCH e a perna para a ponte era forçada a PCMA: tudo acima de ~3,4 kHz ficava pelo caminho («baixo e sem qualidade», 2026-10-05). Medido antes de mexer: a voz chegava à ponte a −20 dBFS e a ponte era transparente em nível e em espectro nos dois sentidos — o estrangulamento era a perna a 8 kHz, não os codecs. Decisão no [ADR-0018](../adr/0018-a-perna-da-ponte-negoceia-opus.md).
 

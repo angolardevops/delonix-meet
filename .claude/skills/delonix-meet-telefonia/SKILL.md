@@ -80,7 +80,7 @@ leva `488` (`phone_bridge/sip.rs:547`). Em qualquer falha o IVR **cai na confer�
 local** — um chamador nunca fica de fora por causa da ponte. As chaves SRTP são por
 chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em log.
 
-### A perna em Opus (ADR-0018, R29X) — medida contra o FreeSWITCH real
+### A perna em Opus (ADR-0018, R296) — medida contra o FreeSWITCH real
 
 O servidor manda `absolute_codec_string=OPUS,PCMA` na dial string, e o UA responde com o
 primeiro que souber. `PHONE_BRIDGE_WIDEBAND=0` repõe `PCMA` sem reconstruir nada (e um
