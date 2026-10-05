@@ -52,6 +52,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 ESTADO=$PWD/.pbx-tronco-prova
 COMPOSE=(docker compose --env-file "$ESTADO/.env" -f voice/pbx-tronco-prova/compose.yaml)
+# A réplica desta prova vive no docker (compose). Os softphones que ela lança
+# (scripts/softphone-prova.sh --rede …) têm de correr no MESMO motor, e não no
+# que o scripts/motor.sh escolheria sozinho — o delonix, onde existir.
+export MOTOR=docker
 IMG_FREEPBX=${FREEPBX_IMAGE:-$HOME/.local/share/delonix/vm-images/freepbx_17-asterisk22-r1.qcow2}
 IMG_BS=${SOFTPHONE_IMAGE:-delonix-meet/baresip:1.0.0}
 NUMERO=+244222000001

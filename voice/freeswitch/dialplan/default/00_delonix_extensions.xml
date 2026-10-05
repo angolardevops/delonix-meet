@@ -3,10 +3,12 @@
   Drop-in em /etc/freeswitch/dialplan/default/. Contexto 'delonix_ramais'
   (ver sip_profiles/internal.xml) — nunca o 'public' do dial-in PSTN.
 
-  Só números curtos (3–5 dígitos): um ramal nunca disca directamente para o
-  exterior por aqui — não há gateway/trunk configurado neste contexto, então
-  qualquer outra coisa simplesmente não bate em nenhuma extensão (FreeSWITCH
-  rejeita com "no route"). Isso não é um acidente: é a fronteira desta fase.
+  Um ramal marca um número curto (outro ramal, ou o número de acesso às
+  reuniões) ou um número da rede pública. Este ficheiro NÃO decide qual é
+  qual, nem tem tronco nenhum: entrega tudo ao ramais_dial.lua, que pergunta
+  ao control plane. Um número só sai para fora se o plano de marcação da
+  organização do ramal o mandar por um tronco (R292) — e os de emergência
+  saem sempre. Para tudo o resto a resposta é «não existe».
 
   Um desses números curtos é RESERVADO: o número de acesso às reuniões (R273,
   VOICE_MEETING_ACCESS_NUMBER no servidor, 8000 por omissão). Não aparece aqui
@@ -22,7 +24,7 @@
 <include>
   <context name="delonix_ramais">
     <extension name="delonix_ramal_a_ramal">
-      <condition field="destination_number" expression="^\d{3,5}$">
+      <condition field="destination_number" expression="^\+?\d{2,15}$">
         <!-- Um ramal que marca o número de acesso passa ao IVR e dá o PIN por DTMF, e o FreeSWITCH escreve cada dígito recebido
              no log ("RECV DTMF 3:1600"): quem lê o log reconstrói o PIN. Esta
              variável cala essa linha para a chamada inteira (R227). -->
@@ -33,9 +35,10 @@
         <action application="set" data="process_cdr=false"/>
         <action application="set" data="rtp_secure_media=mandatory"/>
         <action application="set" data="hangup_after_bridge=true"/>
-        <!-- A tradução (número curto → AOR registado) e o bridge acontecem
-             no Lua: precisam de escopar a busca à ORG do chamador (o número
-             curto não é único fora dela) antes de discar. -->
+        <!-- A tradução (número curto → AOR registado), o bridge e a saída
+             para a rede pública decidem-se no Lua, com o control plane: a
+             busca fica na ORG do chamador (o número curto não é único fora
+             dela), e é ela que paga uma chamada para fora. -->
         <action application="lua" data="ramais_dial.lua"/>
         <action application="hangup"/>
       </condition>

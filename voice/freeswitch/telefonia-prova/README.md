@@ -17,7 +17,7 @@ falsas, sem TLS.
 |---|---|
 | `autoload_configs/xml_curl.conf.xml` | plano de marcação (`dialplan`) e gateways (`directory`, `purpose=gateways`) servidos por `/internal/v1/telephony/freeswitch-config` |
 | `autoload_configs/json_cdr.conf.xml` | CDRs para `/internal/v1/telephony/call-records`; `log-b-leg=true` (o CDR que conta é o da perna do gateway) |
-| `sip_profiles/pbx.xml` (5160) | por onde ENTRA uma chamada de um PBX; contexto `delonix-outbound` (xml_curl) |
+| `sip_profiles/pbx.xml` (5160) | por onde ENTRAVA uma chamada de um PBX; contexto `delonix-outbound` (xml_curl). Desde a R292 uma chamada que entre por aqui NÃO tem rota: o servidor já não vai buscar a organização ao domínio do pedido, só à variável `delonix_org_id` que a plataforma põe no canal. Uma central a marcar para fora precisa de um caminho autenticado, que ainda não existe |
 | `sip_profiles/external.xml` (5180) | onde vivem os gateways `dlx-<trunk_id>`; `<domain name="delonix-trunks" parse="true"/>` |
 | `sip_profiles/carrier.xml` (5190), `carrier-down.xml` (5191) + `dialplan/zz_carriers.xml` | operadoras FALSAS: uma atende (`…000` ocupado, `…777` chamada longa), a outra responde 503 |
 
