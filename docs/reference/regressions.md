@@ -3089,6 +3089,24 @@ No CI: `tests/telephony.rs` — a decisão do servidor caso a caso (sai com a id
 
 **O que isto NÃO fazia, medido.** O ficheiro composto não saía com 24 h. Com áudio real (10 s de tom, um pacote por página, os grânulos que o `OggWriter` produz) e o ffmpeg 6.1.1, os três caminhos da composição — remux `-c copy`, só áudio com `adelay`, e `adelay`+`amix` de duas pistas — dão 10,04 s: o ffmpeg vê um salto de mais de 10 s num OGG e desconta-o (`timestamp discontinuity … new offset= -89478465333`). O que ficava era o frame atrasado fora do sítio: no remux, dois pacotes com o mesmo instante e nenhum 20 ms antes. O revisor mediu o mesmo salto por conta própria, com outro ficheiro (6 s), no remux com vídeo e no `adelay`+`amix`: 6,0 s nos dois. A gravação dependia de uma tolerância do ffmpeg que ninguém tinha pedido.
 
+**Medido com o ffmpeg da imagem (9.0.2), a 2026-10-05, já com a correcção fundida.** O binário é o do estágio `ffmpeg` do `Dockerfile.server` (a mesma versão e o mesmo SHA-256 do código), compilado nesta máquina. As pistas são 6 s de tom codificado em Opus (440 Hz até aos 3 s, 880 Hz depois) e escritas pelo gravador: «depois» pelo caminho de produção (`open_track`), «antes» com o pacote entregue ao `OggWriter` tal como chega, em release — o que o `RecSink` fazia. Mede-se o áudio composto amostra a amostra (R295), nas três composições de hoje e nas três que havia até à R295. O 6.1.1 deu os mesmos números em todas as linhas; das 72 composições nenhuma falhou nem passou de 0,3 s.
+
+| Pista | Duração que a pista declara (`ffprobe`) | Áudio composto (só áudio, composição de hoje) |
+|---|---|---|
+| em ordem | 5,98 s | 5920 ms; passa a 880 Hz aos 2930 ms |
+| cinco pacotes atrasados, **antes** | 447 398 s | 5920 ms, igual à pista em ordem; o ffmpeg regista cinco `timestamp discontinuity` |
+| cinco pacotes atrasados, **depois** | 5,98 s | 5820 ms: faltam os cinco frames, e o que vem a seguir a cada um recua 20 ms |
+| o relógio recua 10 min aos 3 s, **antes** | 88 881 s | 5920 ms, igual à pista em ordem |
+| o relógio recua 10 min aos 3 s, **depois** | 5,96 s | 5900 ms: 0,96 s de silêncio (dos 2940 aos 3900 ms), e o resto no sítio |
+
+Na mistura de duas pistas e no caminho de um publicador os desvios são os mesmos (na mistura, a duração é a da outra pista). Nas composições de até à R295, as pistas de «antes» dão igual, e o silêncio do recuo fechava-se (4940 ms).
+
+**O que esta medição diz, sem enfeite.**
+- **O ffmpeg da imagem desconta o salto de 2^32 como o 6.1.1.** Em release, uma gravação composta nunca saiu com 24 h, em nenhuma das seis composições: o defeito ficava na pista e não chegava ao ficheiro que o cliente vê.
+- **No ficheiro composto, a correcção custa áudio que antes não se perdia.** Um pacote atrasado são 20 ms a menos (antes, os dois frames ficavam trocados e nenhum se perdia). Um relógio que recue de vez é quase 1 s de silêncio (antes, nada — enquanto o ffmpeg descontasse o salto).
+- **O que a correcção dá não aparece nesta tabela:** o fim do pânico em debug, uma pista com a duração verdadeira, os repetidos fora, e uma gravação que não depende de o ffmpeg tratar como descontinuidade um salto de mais de 10 s (`-dts_delta_threshold`).
+- **Fechar o custo fica por fazer:** escrever o atrasado no sítio (uma janela curta de reordenação antes do `OggWriter`) em vez de o descartar, e re-ancorar logo num recuo grande em vez de esperar 50 pacotes.
+
 **Regra.**
 - **O que não está à frente do último escrito não se escreve.** `recorder::OpusClock` guarda o último timestamp aceite; a comparação é a distância com sinal em 32 bits (`wrapping_sub` lido como `i32`), para a volta do relógio não ser um recuo. Atrasado ou repetido, descarta-se — para a pista é uma perda de pacote, que o gravador já tinha.
 - **O timestamp entregue ao `OggWriter` conta a partir do primeiro pacote da pista.** Ele só usa diferenças, e assim a subtracção dele não vê a volta. Não «simplificar» entregando o timestamp tal como chega: os testes de ficheiro passam em release na mesma, e é em debug que rebenta.
@@ -3110,12 +3128,12 @@ No CI: `tests/telephony.rs` — a decisão do servidor caso a caso (sai com a id
 
 **O que NÃO está provado.**
 - **Nenhuma gravação com um browser ou um telefone a sério.** Os pacotes são 20 ms de silêncio fabricados; a reordenação é a ordem em que o teste os escreve.
-- **O ffmpeg da imagem (9.0.2).** As medições da composição são do 6.1.1 desta máquina, sobre ficheiros com os grânulos do `OggWriter` mas montados à mão, não escritos por ele.
+- **A imagem publicada, tal como corre.** O 9.0.2 medido foi compilado nesta máquina a partir do mesmo estágio do `Dockerfile.server`; não se tirou o binário de uma imagem do registo, nem se compôs dentro de um contentor do servidor. O arnês da medição não foi fundido: no CI não há ffmpeg nesse job, e nenhum teste compõe uma pista com atrasados.
 - **Que uma perna de telefone recomeça o relógio a meio** (re-INVITE, retenção, transferência). A re-ancoragem responde a essa hipótese; ninguém a viu acontecer.
 - **Uma re-ancoragem errada.** 50 pacotes atrasados, por ordem, depois de UM que lhes passou à frente, são lidos como relógio novo, e o resto da pista fica deslocado a distância a que esse pacote passou — 1 s no mínimo, sem tecto (190 frames à frente dão 3,8 s, para sempre). Não se conhece rede que o faça; fica escrito.
 - **Um relógio novo em que cada pacote chegue repetido** nunca re-ancora: um atrasado que não avança sobre o anterior recomeça a contagem, e a pista fica muda. A alternativa (ignorá-lo) deixava muda a origem que recuasse duas vezes seguidas. Repetidos não chegam de um browser (o SRTP deita-os fora — não verificado) nem da ponte.
 - **Se o `webrtc-rs` entrega uma `TrackRemote` nova quando o SSRC muda no mesmo `mid`.** Se não entregar, o relógio da pista é o mesmo para os dois fluxos, e é a re-ancoragem que os separa.
-- **Um timestamp muito à frente** (até 2^31) é aceite, estica a pista esse tempo e deixa os pacotes seguintes atrasados durante 1 s, até re-ancorar. Só o próprio publicador o faz a si mesmo; acima de 10 s, o ffmpeg 6.1.1 desconta o salto.
+- **Um timestamp muito à frente** (até 2^31) é aceite, estica a pista esse tempo e deixa os pacotes seguintes atrasados durante 1 s, até re-ancorar. Só o próprio publicador o faz a si mesmo; acima de 10 s, o ffmpeg (6.1.1 e 9.0.2) desconta o salto.
 - **Quem ficou sem áudio não se sabe pelo log.** O aviso leva o nome da pista (`03-audio`), sem sala nem publicador, e o «gravação DEGRADADA» do fecho só conta a fila cheia. Uma falha de decifra continua sem contador (já era assim).
 - **Em debug, uma pista cujo relógio avance mais de 2^32 amostras** do primeiro pacote ao último volta ao pânico do `OggWriter`. Em release dá certo.
 - **Um buraco de menos de 10 s numa pista era fechado pela mistura** (`adelay`/`amix`, sem `aresample=async`): medido pelo revisor com ficheiros sintéticos, e era o que acontecia a cada pacote descartado ou perdido — 20 ms de cada vez. Com DTX era muito mais. **Confirmado com gravações reais e corrigido na R295**: a composição passou a encher esses buracos com silêncio.
