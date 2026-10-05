@@ -306,7 +306,8 @@ pub fn originate_command(
 ) -> Result<String, PortError> {
     if req.legs.is_empty() == req.internal.is_none() {
         return Err(PortError::Protocol(
-            "originate precisa de troncos OU de um ramal interno, não de nenhum nem dos dois".into(),
+            "originate precisa de troncos OU de um ramal interno, não de nenhum nem dos dois"
+                .into(),
         ));
     }
     // `origination_uuid` NÃO vai nas variáveis globais: com failover (`|`) a
@@ -1008,9 +1009,17 @@ mod tests {
         assert!(cmd.contains("}[origination_uuid=00000000-0000-0000-0000-000000000000,delonix_dial_out=extension]user/ramal_ab12@acme.meet.local &bridge("), "{cmd}");
         assert!(!cmd.contains("sofia/gateway"), "nunca por um tronco: {cmd}");
         // Valores com ESL embutido são recusados.
-        for (u, d) in [("a b", "x.y"), ("a;b", "x.y"), ("ramal", "x.y\nhangup"), ("ramal", "x y")] {
+        for (u, d) in [
+            ("a b", "x.y"),
+            ("a;b", "x.y"),
+            ("ramal", "x.y\nhangup"),
+            ("ramal", "x y"),
+        ] {
             let mut bad = r.clone();
-            bad.internal = Some(InternalLeg { sip_username: u.into(), domain: d.into() });
+            bad.internal = Some(InternalLeg {
+                sip_username: u.into(),
+                domain: d.into(),
+            });
             assert!(originate_command(&bad, "external").is_err(), "{u:?} {d:?}");
         }
         // Os dois ou nenhum: recusado.

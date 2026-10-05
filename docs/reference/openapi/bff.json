@@ -1547,6 +1547,19 @@
         ],
         "type": "object"
       },
+      "CreateDialOutReq": {
+        "properties": {
+          "extension_id": {
+            "description": "O ramal a fazer tocar (um ramal activo de uma organização do anfitrião).",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "extension_id"
+        ],
+        "type": "object"
+      },
       "CreateDidReq": {
         "properties": {
           "e164": {
@@ -2777,6 +2790,100 @@
         "required": [
           "number",
           "pin"
+        ],
+        "type": "object"
+      },
+      "DialOutPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DialOutView"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "DialOutView": {
+        "properties": {
+          "answered_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "billsec": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ended_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "extension": {
+            "description": "O número curto do ramal, quando ainda existe.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "extension_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_code": {
+            "description": "Causa estável quando falhou (`USER_NOT_REGISTERED`, `stale`…).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "status": {
+            "description": "`queued` | `dialing` | `ringing` | `in_call` | `ended` | `declined` |\n`no_answer` | `failed` | `cancelled`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "room_code",
+          "status",
+          "created_at"
         ],
         "type": "object"
       },
@@ -34595,6 +34702,329 @@
         "summary": "Liga ou desliga a entrada de convidados sem conta. Só o DONO da sala: um\ncolega ou um co-anfitrião não muda a política de convidados — é a decisão\nde quem a criou.",
         "tags": [
           "rooms"
+        ]
+      }
+    },
+    "/api/rooms/{room_code}/dial-outs": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "Código da sala.",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "O mesmo código: chave de afinidade do balanceador.",
+            "in": "query",
+            "name": "room",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1-100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DialOutPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Os pedidos da sala, do mais recente para o mais antigo.",
+        "tags": [
+          "dial-outs"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "parameters": [
+          {
+            "description": "Código da sala.",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "O mesmo código: chave de afinidade do balanceador.",
+            "in": "query",
+            "name": "room",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDialOutReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DialOutView"
+                }
+              }
+            },
+            "description": "A tocar; acompanhar por `GET`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não gere a sala, ou falta `sessions.dial_out`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sala ou ramal inexistente (ou de outra organização)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`dial_out.already_active`: este ramal já está a ser chamado nesta sala."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`dial_out.room_e2ee`, `dial_out.extension_inactive`, `dial_out.not_configured`, `dial_out.bridge_not_configured`."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`dial_out.too_many`, `dial_out.rate_limited`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Faz tocar um ramal e põe a perna na sala.",
+        "tags": [
+          "dial-outs"
+        ]
+      }
+    },
+    "/api/rooms/{room_code}/dial-outs/{dial_out_id}/hangup": {
+      "post": {
+        "operationId": "hangup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dial_out_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "O mesmo código: chave de afinidade do balanceador.",
+            "in": "query",
+            "name": "room",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DialOutView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`dial_out.not_configured`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O servidor de media não respondeu ao desligar."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Cancela enquanto toca, ou desliga em chamada. Idempotente: um pedido já\nterminado devolve-se como está.",
+        "tags": [
+          "dial-outs"
         ]
       }
     },
