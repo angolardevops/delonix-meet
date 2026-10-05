@@ -9575,6 +9575,27 @@
         ],
         "type": "object"
       },
+      "RoomPage": {
+        "description": "Uma página de salas, no formato de listagem do ADR-0004 §4.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Room"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "RotateKeyReq": {
         "properties": {
           "stream_key": {

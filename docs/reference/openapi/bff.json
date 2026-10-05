@@ -9575,6 +9575,27 @@
         ],
         "type": "object"
       },
+      "RoomPage": {
+        "description": "Uma página de salas, no formato de listagem do ADR-0004 §4.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Room"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "RotateKeyReq": {
         "properties": {
           "stream_key": {
@@ -34401,6 +34422,72 @@
       }
     },
     "/api/rooms": {
+      "get": {
+        "description": "Não é «as salas da organização»: a tabela `rooms` não tem `org_id` — a dona\nde uma sala é uma pessoa (`owner_id`). Uma vista de organização precisa\nprimeiro dessa decisão de modelo (a quem pertence a sala de quem está em\nduas organizações), e não se inventa aqui.",
+        "operationId": "list_my_rooms",
+        "parameters": [
+          {
+            "description": "1–100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`page_token` corrompido."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "As salas de que a pessoa autenticada é DONA, da mais recente para a mais\nantiga.",
+        "tags": [
+          "rooms"
+        ]
+      },
       "post": {
         "operationId": "create_room",
         "requestBody": {
@@ -34457,6 +34544,75 @@
       }
     },
     "/api/rooms/{room_code}": {
+      "delete": {
+        "description": "A tabela `rooms` é a raiz de oito `ON DELETE CASCADE` — gravações, chat,\nparticipações, amostras de qualidade, tempos de chamada, sessões de\ndirecto, estúdios e canais. Por isso o apagar RECUSA em vez de arrastar:\n\n- **gravações** — é o artefacto que a pessoa quis guardar, e o ficheiro em\n  disco nem sequer desaparecia com a linha: ficava órfão. É também o que o\n  `DELETE /api/v1/meetings/{id}` já faz (`meetings_v1.rs`), com a diferença\n  de que lá a recusa é silenciosa (`room_deleted: false`) e aqui tem código;\n- **reunião futura na agenda** — `meetings.room_code` é texto SEM chave\n  estrangeira: apagar a sala deixava a entrada do calendário a apontar para\n  um código morto, e quem a abrisse dava de caras com «sala indisponível»;\n- **sala pessoal** — é criada pelo sistema e o endereço dela está em\n  assinaturas e convites antigos.",
+        "operationId": "delete_room",
+        "parameters": [
+          {
+            "description": "Código da sala (`abc-defg-hij`).",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Apagada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Quem pede não é o dono da sala."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Tem gravações, tem reunião futura na agenda, ou é a sala pessoal."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Apaga uma sala. Só o DONO, e só quando não leva nada por à frente.",
+        "tags": [
+          "rooms"
+        ]
+      },
       "get": {
         "operationId": "get_room",
         "parameters": [

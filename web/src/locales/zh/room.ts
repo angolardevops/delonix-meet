@@ -154,7 +154,8 @@ export default {
     sondagensTitulo: '投票',
   },
   tile: {
-    duploCliqueFixa: '双击固定到舞台',
+    duploCliqueFixa: '双击固定到舞台；右键打开操作',
+    accoes: '{{nome}} 的操作',
     mao: '举手',
     ligacaoFraca: '信号弱',
     aVoltar: '正在返回',

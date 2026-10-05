@@ -126,10 +126,15 @@
   width: 26px;
   height: 26px;
 }
+/* A pele do `Segmented` no topo do editor: sem a caixa do `dx-seg`, e o
+   activo com o contorno do template em vez do bloco cheio. */
 .ed-top__tabs {
   display: flex;
   gap: 4px;
   flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 .ed-top__tabs button {
   height: 24px;
@@ -141,7 +146,7 @@
   font: 600 11.5px var(--font-ui);
   cursor: pointer;
 }
-.ed-top__tabs button[aria-current='page'] {
+.dx-seg.ed-top__tabs button[aria-pressed='true'] {
   border-color: var(--accent);
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);

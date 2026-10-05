@@ -16,6 +16,7 @@ export default {
     rotulo: 'Navigation principale',
     inicio: 'Accueil',
     agenda: 'Agenda',
+    salas: 'Salles',
     estudio: 'Studio',
     gravacoes: 'Enregistrements',
     quadros: 'Tableaux',

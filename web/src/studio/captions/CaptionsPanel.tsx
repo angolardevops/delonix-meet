@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, isAbort, recordingTranscript, translateCaption } from '../../api'
 import { useShell } from '../../components/shellContext'
 import { Alert, cx, IconButton, Select, TextArea } from '../../ui/kit'
+import { BotaoEd, CartaoEd, TituloEd } from '../pecasDoEditor'
 import { misturar } from '../edit/mistura'
 import Preview from '../edit/Preview'
 import type { TranscriptSegment } from '../../api'
@@ -425,9 +426,9 @@ export default function CaptionsPanel({
           <h2 className="ed-h">{t('editor.legendas.transcricao')}</h2>
           <span className="dx-num ed-src__sub">{t('editor.legendas.cortaVideo')}</span>
           <span className="dx-spacer" />
-          <button type="button" className={cx('ed-btn ed-btn--sm', mostrarSilencios && 'ed-btn--on')} aria-pressed={mostrarSilencios} disabled={!eOrigem} onClick={() => setMostrarSilencios(!mostrarSilencios)}>
+          <BotaoEd sm variante={mostrarSilencios && 'on'} aria-pressed={mostrarSilencios} disabled={!eOrigem} onClick={() => setMostrarSilencios(!mostrarSilencios)}>
             {t('editor.legendas.mostrarSilencios')}
-          </button>
+          </BotaoEd>
           {leg && (
             <Select className="ed-lang-pick" aria-label={t('editor.legendas.linguaVista')} value={vista ?? ''} onChange={(e) => setLinguaVista(e.target.value)}>
               <option value={leg.lingua}>{leg.lingua}</option>
@@ -447,9 +448,9 @@ export default function CaptionsPanel({
               {doServidor && (
                 <>
                   <p className="st-note">{t('editor.legendas.servidorDisponivel', { count: doServidor.segmentos.length })}</p>
-                  <button type="button" className="ed-btn ed-btn--primary" onClick={usarTranscricaoDoServidor} data-studio="usar-transcricao-servidor">
+                  <BotaoEd variante="primary" onClick={usarTranscricaoDoServidor} data-studio="usar-transcricao-servidor">
                     {t('editor.legendas.usarServidor')}
-                  </button>
+                  </BotaoEd>
                 </>
               )}
             </div>
@@ -470,9 +471,7 @@ export default function CaptionsPanel({
                           <span className="ed-line__edit">
                             <TextArea value={aEditar.texto} rows={2} aria-label={t('editor.legendas.editarLinha')} onChange={(e) => setAEditar({ i: ci, texto: e.target.value })} />
                             <span className="ed-row">
-                              <button
-                                type="button"
-                                className="ed-btn ed-btn--primary ed-btn--sm"
+                              <BotaoEd variante="primary" sm
                                 onClick={() => {
                                   const nova = editarTextoDaCue(c, aEditar.texto)
                                   const lista = cues.map((x, k) => (k === ci ? nova : x))
@@ -484,10 +483,10 @@ export default function CaptionsPanel({
                                 }}
                               >
                                 {t('editor.legendas.guardarLinha')}
-                              </button>
-                              <button type="button" className="ed-btn ed-btn--sm" onClick={() => setAEditar(null)}>
+                              </BotaoEd>
+                              <BotaoEd sm onClick={() => setAEditar(null)}>
                                 {t('editor.legendas.cancelar')}
-                              </button>
+                              </BotaoEd>
                             </span>
                           </span>
                         ) : eOrigem ? (
@@ -560,45 +559,45 @@ export default function CaptionsPanel({
               </span>
               <span className="dx-spacer" />
               {resumo.length > 0 && !selMostrada && (
-                <button type="button" className="ed-btn ed-btn--sm" onClick={() => setSeleccao(new Set(indicesEnchimento))}>
+                <BotaoEd sm onClick={() => setSeleccao(new Set(indicesEnchimento))}>
                   {t('editor.legendas.seleccionarEnchimento')}
-                </button>
+                </BotaoEd>
               )}
               {selMostrada > 0 && (
-                <button type="button" className="ed-btn ed-btn--sm" onClick={() => (setSeleccao(new Set()), setBuracos(new Set()))}>
+                <BotaoEd sm onClick={() => (setSeleccao(new Set()), setBuracos(new Set()))}>
                   {t('editor.legendas.limpar')}
-                </button>
+                </BotaoEd>
               )}
-              <button type="button" className="ed-btn ed-btn--primary ed-btn--sm" disabled={!selMostrada} onClick={cortarSeleccao} data-studio="apagar-corte">
+              <BotaoEd sm variante="primary" disabled={!selMostrada} onClick={cortarSeleccao} data-studio="apagar-corte">
                 {t('editor.legendas.apagarECortar')}
-              </button>
+              </BotaoEd>
             </div>
           )}
         </div>
       </section>
 
       <aside className="ed-col ed-col--right ed-caps__tools" aria-label={t('editor.legendas.ferramentas')}>
-        <section className="ed-card ed-card--accent">
-          <div className="ed-card__title ed-row">
+        <CartaoEd como="section" variante="accent">
+          <TituloEd className="ed-row">
             <span>{t('editor.assistente.titulo')}</span>
             <span className="ed-pill dx-num">{t('editor.assistente.local')}</span>
-          </div>
+          </TituloEd>
           {trechos === null ? (
             <>
               <p className="ed-text">{t('editor.assistente.explica')}</p>
               <div className="ed-grid2">
-                <button type="button" className="ed-btn ed-btn--primary" disabled={aAnalisar || !p.clips.length} onClick={() => void analisarMicrofone()} data-studio="analisar-microfone">
+                <BotaoEd variante="primary" disabled={aAnalisar || !p.clips.length} onClick={() => void analisarMicrofone()} data-studio="analisar-microfone">
                   {aAnalisar ? t('editor.assistente.aAnalisar') : t('editor.assistente.analisar')}
-                </button>
+                </BotaoEd>
               </div>
             </>
           ) : trechos.length === 0 ? (
             <>
               <p className="ed-text">{t('editor.assistente.nada')}</p>
               <div className="ed-grid2">
-                <button type="button" className="ed-btn" onClick={() => setTrechos(null)}>
+                <BotaoEd onClick={() => setTrechos(null)}>
                   {t('editor.assistente.ignorar')}
-                </button>
+                </BotaoEd>
               </div>
             </>
           ) : (
@@ -607,26 +606,24 @@ export default function CaptionsPanel({
                 {t('editor.assistente.encontrou', { count: trechos.length, de: relogio(trechos[0].inicio), ate: relogio(trechos[trechos.length - 1].fim) })}
               </p>
               <div className="ed-grid2">
-                <button
-                  type="button"
-                  className="ed-btn ed-btn--primary"
+                <BotaoEd variante="primary"
                   onClick={() => {
                     for (const tr of trechos) aplicar({ tipo: 'ganho-intervalo', faixa: 'A1', inicio: tr.inicio, fim: tr.fim, ganhoDb: tr.ganhoDb })
                     setTrechos(null)
                   }}
                 >
                   {t('editor.assistente.aplicar')}
-                </button>
-                <button type="button" className="ed-btn" onClick={() => setTrechos(null)}>
+                </BotaoEd>
+                <BotaoEd onClick={() => setTrechos(null)}>
                   {t('editor.assistente.ignorar')}
-                </button>
+                </BotaoEd>
               </div>
             </>
           )}
-        </section>
+        </CartaoEd>
 
-        <section className="ed-card">
-          <div className="ed-card__title">{t('editor.motor.titulo')}</div>
+        <CartaoEd como="section">
+          <TituloEd>{t('editor.motor.titulo')}</TituloEd>
           <div className="ed-engine ed-engine--on">
             <span className="ed-radio" aria-hidden="true" />
             <span className="ed-engine__txt">
@@ -647,28 +644,28 @@ export default function CaptionsPanel({
           )}
           <div className="ed-grid2">
             {aTranscrever ? (
-              <button type="button" className="ed-btn" onClick={() => pedidos.current.get('transcricao')?.abort()}>
+              <BotaoEd onClick={() => pedidos.current.get('transcricao')?.abort()}>
                 {t('editor.legendas.cancelar')}
-              </button>
+              </BotaoEd>
             ) : (
-              <button type="button" className="ed-btn ed-btn--primary" disabled={modelo === false || !p.clips.length} onClick={() => void transcreverAgora()} data-studio="transcrever">
+              <BotaoEd variante="primary" disabled={modelo === false || !p.clips.length} onClick={() => void transcreverAgora()} data-studio="transcrever">
                 {leg ? t('editor.motor.retranscrever') : t('editor.motor.transcrever')}
-              </button>
+              </BotaoEd>
             )}
-            <button type="button" className="ed-btn" disabled={!espaco?.modelo} onClick={() => void apagarCacheDoModelo().then(() => espacoDoModelo().then(setEspaco))}>
+            <BotaoEd disabled={!espaco?.modelo} onClick={() => void apagarCacheDoModelo().then(() => espacoDoModelo().then(setEspaco))}>
               {t('editor.motor.limparCache')}
-            </button>
+            </BotaoEd>
           </div>
           {leg && Object.keys(leg.traducoes).length > 0 && <p className="ed-src__sub">{t('editor.motor.perdeTraducoes')}</p>}
-        </section>
+        </CartaoEd>
 
-        <section className="ed-card">
-          <div className="ed-card__title">{t('editor.estilo.titulo')}</div>
+        <CartaoEd como="section">
+          <TituloEd>{t('editor.estilo.titulo')}</TituloEd>
           <div className="ed-grid2" role="group" aria-label={t('editor.estilo.titulo')}>
             {(['caixa', 'contorno', 'faixa', 'karaoke'] as ModoDeLegenda[]).map((m) => (
-              <button key={m} type="button" className={cx('ed-btn', p.estilo.modo === m && 'ed-btn--sel')} aria-pressed={p.estilo.modo === m} onClick={() => aplicar({ tipo: 'estilo', patch: { modo: m } })}>
+              <BotaoEd key={m} variante={p.estilo.modo === m && 'sel'} aria-pressed={p.estilo.modo === m} onClick={() => aplicar({ tipo: 'estilo', patch: { modo: m } })}>
                 {t(`editor.estilo.${m}`)}
-              </button>
+              </BotaoEd>
             ))}
           </div>
           <div className="ed-slider">
@@ -689,19 +686,19 @@ export default function CaptionsPanel({
             <span className="dx-num ed-slider__val">{p.estilo.tamanho} px</span>
           </div>
           <div className="ed-grid2">
-            <button type="button" className="ed-btn" disabled={!cues.length} onClick={() => exportar('srt')} data-studio="srt">
+            <BotaoEd disabled={!cues.length} onClick={() => exportar('srt')} data-studio="srt">
               {t('editor.estilo.srt')}
-            </button>
-            <button type="button" className="ed-btn" disabled={!cues.length} onClick={() => exportar('vtt')} data-studio="vtt">
+            </BotaoEd>
+            <BotaoEd disabled={!cues.length} onClick={() => exportar('vtt')} data-studio="vtt">
               {t('editor.estilo.vtt')}
-            </button>
+            </BotaoEd>
           </div>
-        </section>
+        </CartaoEd>
 
-        <section className="ed-card ed-card--end">
-          <div className="ed-card__title">{t('editor.residencia.titulo')}</div>
+        <CartaoEd como="section" variante="end">
+          <TituloEd>{t('editor.residencia.titulo')}</TituloEd>
           <p className="dx-num ed-mono">{t('editor.residencia.texto')}</p>
-        </section>
+        </CartaoEd>
       </aside>
     </div>
   )
