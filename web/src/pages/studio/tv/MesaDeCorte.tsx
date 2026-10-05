@@ -12,7 +12,7 @@ import { fontePrincipal, planoDe, TRANSICOES, type TipoDeTransicao } from '../..
 import { alturaDoMedidor } from '../../../studio/tv/som'
 import { cx } from '../../../ui/kit'
 import { CartaoDoBarramento, LugarVazio, type PropsDoEcra, SelosDoAr, useNomeDaFonte } from './comum'
-import { BarrasDeNivel, Desde, Deslizador, Espaco, Interruptor, MonitorDePlano, MonitorDoPrograma, TopoTv, useTique } from './pecas'
+import { BarrasDeNivel, BotaoTv, Cabeca, Cartao, Desde, Deslizador, Espaco, Interruptor, MonitorDePlano, MonitorDoPrograma, TopoTv, useTique } from './pecas'
 
 const TECLA_DA_TRANSICAO: Record<TipoDeTransicao, string> = { cortar: 'espaco', misturar: 'enter', limpar: 'W', stinger: 'S' }
 
@@ -41,21 +41,21 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
             {t('tv.topo.bitrate', { mbps: (c.kbps / 1000).toLocaleString(i18n.language, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) })}
           </span>
         )}
-        <button type="button" className="tv-botao" onClick={() => c.onNavegar('mesa-de-som')}>
+        <BotaoTv onClick={() => c.onNavegar('mesa-de-som')}>
           {t('tv.nav.mesaDeSom')}
-        </button>
-        <button type="button" className="tv-botao" onClick={() => c.onNavegar('iluminacao')}>
+        </BotaoTv>
+        <BotaoTv onClick={() => c.onNavegar('iluminacao')}>
           {t('tv.nav.iluminacao')}
-        </button>
+        </BotaoTv>
         {/* As Fontes só se alcançavam por um lugar VAZIO do barramento, e a
             Cena completa por nada: com seis fontes ligadas não havia caminho
             nenhum para elas. A mesa é o centro, e é daqui que se vai. */}
-        <button type="button" className="tv-botao" onClick={() => c.onNavegar('fontes')}>
+        <BotaoTv onClick={() => c.onNavegar('fontes')}>
           {t('tv.nav.fontes')}
-        </button>
-        <button type="button" className="tv-botao" onClick={() => c.onNavegar('cena')}>
+        </BotaoTv>
+        <BotaoTv onClick={() => c.onNavegar('cena')}>
           {t('tv.nav.cena')}
-        </button>
+        </BotaoTv>
       </TopoTv>
 
       <div className="tv-corpo tv-corte">
@@ -117,13 +117,13 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
           </ul>
 
           <div className="tv-baixo">
-            <section className="tv-cartao tv-cartao--painel" aria-labelledby="tv-trans-h">
-              <div className="tv-cabeca">
+            <Cartao como="section" variante="painel" aria-labelledby="tv-trans-h">
+              <Cabeca>
                 <h2 id="tv-trans-h" className="tv-t1">
                   {t('tv.corte.transicao')}
                 </h2>
                 <span className="tv-mono-9">{t('tv.corte.dicaTransicao')}</span>
-              </div>
+              </Cabeca>
               <div className="tv-trans" role="group" aria-label={t('tv.corte.transicao')}>
                 {TRANSICOES.map((tipo) => (
                   <button
@@ -152,10 +152,10 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
                 data-tv="duracao"
               />
               <div className="tv-divisor" />
-              <div className="tv-cabeca">
+              <Cabeca>
                 <h2 className="tv-t1">{t('tv.corte.sobreposicoes')}</h2>
                 <span className="tv-mono-9">{t('tv.corte.chavesAJusante')}</span>
-              </div>
+              </Cabeca>
               <div className="tv-keys">
                 {SOBREPOSICOES_DA_MESA.map((q, i) => {
                   const semSondagem = q === 'sondagem' && !c.haSondagem
@@ -177,17 +177,17 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
                   )
                 })}
               </div>
-            </section>
+            </Cartao>
 
             <TBar s={s} />
           </div>
         </section>
 
         <aside className="tv-col tv-col--dir" aria-label={t('tv.corte.macros')}>
-          <div className="tv-cabeca">
+          <Cabeca>
             <h2 className="tv-t1">{t('tv.corte.macros')}</h2>
             <span className="tv-dir tv-mono-85">{t('tv.corte.macrosTeclas')}</span>
-          </div>
+          </Cabeca>
           <div className="tv-rolar" style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
             {s.macros.map((macro) => {
               const p = s.progressoMacro?.tecla === macro.tecla ? s.progressoMacro : null
@@ -200,10 +200,10 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
                   data-tv={`macro-f${macro.tecla}`}
                   onClick={() => s.correrMacroDaTecla(macro.tecla)}
                 >
-                  <span className="tv-cabeca">
+                  <Cabeca como="span">
                     <span className="tv-macro__nome">{t(`tv.macros.${macro.id}.nome`)}</span>
                     <span className="tv-dir tv-mono-85">{`F${macro.tecla}`}</span>
-                  </span>
+                  </Cabeca>
                   <span className="tv-nota" style={{ fontSize: 9 }}>
                     {t(`tv.macros.${macro.id}.nota`)}
                   </span>
@@ -234,9 +234,9 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
             })}
           </div>
 
-          <div className="tv-cartao" style={{ background: 'var(--raised)', padding: 9, gap: 6 }}>
+          <Cartao style={{ background: 'var(--raised)', padding: 9, gap: 6 }}>
             <h2 className="tv-t3">{t('tv.corte.vozTitulo')}</h2>
-            <div className="tv-cabeca">
+            <Cabeca>
               <Interruptor
                 ligado={s.vozLigada}
                 rotulo={t('tv.corte.vozTitulo')}
@@ -252,10 +252,10 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
                       ? t('tv.corte.vozLigado', { count: s.canaisComFonte })
                       : t('tv.corte.vozDesligado')}
               </span>
-            </div>
-          </div>
+            </Cabeca>
+          </Cartao>
 
-          <div className="tv-cartao tv-cartao--nota" style={{ marginTop: 'auto', padding: 9 }}>
+          <Cartao variante="nota" style={{ marginTop: 'auto', padding: 9 }}>
             <p className="tv-eyebrow">{t('tv.corte.atalhos')}</p>
             <dl className="tv-atalhos">
               <div>
@@ -279,7 +279,7 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
                 <dd>{t('tv.atalhos.sobreposicoes')}</dd>
               </div>
             </dl>
-          </div>
+          </Cartao>
         </aside>
       </div>
     </div>
