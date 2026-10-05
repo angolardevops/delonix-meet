@@ -7,7 +7,7 @@
 //! SIP — e esta é a outra ponta dessa perna.
 //!
 //! **Só o que a perna precisa**, e nada mais: UDP, um diálogo por chamada,
-//! `INVITE` → `100`/`200` com SDP (G.711 lei A ou μ), retransmissão do `200`
+//! `INVITE` → `100`/`200` com SDP (Opus, ou G.711 lei A ou μ — ADR-0018), retransmissão do `200`
 //! até ao `ACK` (RFC 3261 §13.3.1.4), `BYE`, `CANCEL`, `OPTIONS`, e re-INVITE
 //! respondido com o mesmo SDP. Sem registo, sem autenticação SIP, sem TCP/TLS:
 //! a ponte só fala com os FreeSWITCH da plataforma, na rede interna, e ignora
@@ -32,7 +32,7 @@ use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 
 use super::g711::Law;
-use super::leg::{self, LegConfig, LegEvent, LegHandle};
+use super::leg::{self, LegCodec, LegConfig, LegEvent, LegHandle};
 use super::srtp::{SdesCrypto, SrtpKeyPair, SrtpSession};
 use crate::sfu::SfuState;
 
@@ -207,19 +207,24 @@ fn response(
 //  SDP
 // ============================================================
 
-/// O que interessa de uma oferta SDP: onde mandar o RTP, que G.711 usar e com
+/// O que interessa de uma oferta SDP: onde mandar o RTP, que codec falar e com
 /// que chave SRTP o FreeSWITCH vai cifrar o que nos manda.
 #[derive(Debug, Clone)]
 pub struct AudioOffer {
     pub remote: Option<SocketAddr>,
-    pub law: Law,
+    pub codec: LegCodec,
     /// `None` = a oferta não traz SDES utilizável. Quem chama responde `488`:
     /// media em claro não entra numa sala.
     pub crypto: Option<SdesCrypto>,
 }
 
-/// Lê a oferta. `None` se não houver G.711 (PCMA/PCMU) na linha de áudio —
-/// a ponte não transcodifica mais nada, e responde `488`.
+/// Lê a oferta. `None` se a linha de áudio não trouxer Opus nem G.711
+/// (PCMA/PCMU) — a ponte não fala mais nada, e responde `488`.
+///
+/// **Escolhe-se o primeiro que se saiba falar, pela ordem da oferta** (RFC
+/// 3264 §6.1: a ordem é a preferência de quem oferece). É assim que o servidor
+/// liga e desliga a banda larga sem tocar aqui: manda `OPUS,PCMA` ou só `PCMA`
+/// na dial string (ADR-0018).
 pub fn parse_sdp_offer(sdp: &str) -> Option<AudioOffer> {
     let mut session_ip: Option<IpAddr> = None;
     let mut media_ip: Option<IpAddr> = None;
@@ -253,11 +258,16 @@ pub fn parse_sdp_offer(sdp: &str) -> Option<AudioOffer> {
             }
         }
     }
-    let law = pts.iter().find_map(|pt| match (*pt, rtpmap.get(pt)) {
-        (_, Some(enc)) if enc.starts_with("PCMA/") => Some(Law::A),
-        (_, Some(enc)) if enc.starts_with("PCMU/") => Some(Law::Mu),
-        (8, None) => Some(Law::A),
-        (0, None) => Some(Law::Mu),
+    let codec = pts.iter().find_map(|pt| match (*pt, rtpmap.get(pt)) {
+        // Só o Opus do RFC 7587: relógio de 48 kHz, e num PT dinâmico — o
+        // mesmo número num PT estático seria outra coisa.
+        (96..=127, Some(enc)) if enc == "OPUS/48000/2" || enc == "OPUS/48000" => {
+            Some(LegCodec::Opus { payload_type: *pt })
+        }
+        (_, Some(enc)) if enc.starts_with("PCMA/") => Some(LegCodec::G711(Law::A)),
+        (_, Some(enc)) if enc.starts_with("PCMU/") => Some(LegCodec::G711(Law::Mu)),
+        (8, None) => Some(LegCodec::G711(Law::A)),
+        (0, None) => Some(LegCodec::G711(Law::Mu)),
         _ => None,
     })?;
     let ip = media_ip.or(session_ip);
@@ -267,7 +277,7 @@ pub fn parse_sdp_offer(sdp: &str) -> Option<AudioOffer> {
     };
     Some(AudioOffer {
         remote,
-        law,
+        codec,
         crypto: SdesCrypto::from_sdp(sdp),
     })
 }
@@ -278,13 +288,34 @@ pub fn parse_sdp_offer(sdp: &str) -> Option<AudioOffer> {
 /// RTP usam (o `invite` nunca chega aqui sem cifra).
 pub fn sdp_answer(
     local: SocketAddr,
-    law: Law,
+    codec: LegCodec,
     session: u64,
     answer_crypto: Option<&SdesCrypto>,
 ) -> String {
-    let (name, pt) = match law {
-        Law::A => ("PCMA", 8),
-        Law::Mu => ("PCMU", 0),
+    // Em Opus responde-se com o PT que a oferta escolheu. Três escolhas no
+    // `fmtp`, todas medidas contra o FreeSWITCH 1.11 do laboratório (2026-10-05):
+    //
+    // - `useinbandfec=0`. Com `1`, a libopus do FreeSWITCH ESTREITA a banda
+    //   para o FEC caber (codificava em banda média, 6 kHz), e o descodificador
+    //   do `opus-rs` lê mal a banda média — um tom de 1 kHz de um telefone
+    //   chegava ao outro 8,6 dB abaixo. E o FEC não servia a ninguém: o SFU
+    //   renumera a sequência do áudio, e sem buraco na sequência o browser não
+    //   o usa. Entre o FreeSWITCH e a ponte a rede é a da própria instalação.
+    // - sem `sprop-maxcapturerate`. Com 16000, o FreeSWITCH abria o codec a
+    //   16 kHz nos DOIS sentidos: recodificava o que vinha do softphone e
+    //   limitava-o a 8 kHz de banda. A mistura que a ponte manda é de banda
+    //   larga na mesma — o descodificador dele lê qualquer banda.
+    // - sem `maxplaybackrate`: não se limita a banda do que vem do telefone.
+    let (pt, rtpmap) = match codec {
+        LegCodec::G711(Law::A) => (8, "a=rtpmap:8 PCMA/8000\r\n".to_string()),
+        LegCodec::G711(Law::Mu) => (0, "a=rtpmap:0 PCMU/8000\r\n".to_string()),
+        LegCodec::Opus { payload_type: pt } => (
+            pt,
+            format!(
+                "a=rtpmap:{pt} opus/48000/2\r\n\
+                 a=fmtp:{pt} useinbandfec=0; stereo=0; sprop-stereo=0\r\n"
+            ),
+        ),
     };
     let family = if local.is_ipv4() { "IP4" } else { "IP6" };
     let ip = local.ip();
@@ -295,7 +326,7 @@ pub fn sdp_answer(
     format!(
         "v=0\r\no=delonix {session} {session} IN {family} {ip}\r\ns=delonix-bridge\r\n\
          c=IN {family} {ip}\r\nt=0 0\r\nm=audio {port} {proto} {pt}\r\n\
-         a=rtpmap:{pt} {name}/8000\r\n{crypto}a=ptime:20\r\na=sendrecv\r\n",
+         {rtpmap}{crypto}a=ptime:20\r\na=sendrecv\r\n",
         port = local.port()
     )
 }
@@ -303,6 +334,26 @@ pub fn sdp_answer(
 // ============================================================
 //  O UA
 // ============================================================
+
+/// O `Contact` das respostas: para onde o FreeSWITCH manda o `ACK` e o `BYE`
+/// do diálogo (RFC 3261 §12.1.1).
+///
+/// **Nunca o endereço de escuta quando ele é `0.0.0.0`** — que é como o UA
+/// escuta no compose e no cluster. Com `<sip:bridge@0.0.0.0:5090>` o `BYE` do
+/// FreeSWITCH não chegava a lado nenhum: quem desligava o telefone continuava
+/// na sala, e a perna, o socket de RTP e a publicação ficavam vivos até o
+/// servidor reiniciar (medido no laboratório a 2026-10-05: dois softphones
+/// desligaram e as duas pernas continuaram abertas). Vai o IP onde as pernas
+/// abrem o RTP — o deste processo, que o FreeSWITCH já alcança para a media —
+/// e não o do Service: o diálogo vive nesta réplica.
+fn contact_uri(local_sip: SocketAddr, rtp_ip: IpAddr) -> String {
+    let ip = if local_sip.ip().is_unspecified() {
+        rtp_ip
+    } else {
+        local_sip.ip()
+    };
+    format!("<sip:bridge@{}>", SocketAddr::new(ip, local_sip.port()))
+}
 
 /// Quem decide se uma chamada entra, e em que sala. Implementado pelos canais
 /// da sala (`room_channels`); nos testes, por um mapa.
@@ -643,7 +694,7 @@ impl SipBridge {
         let to_tag = format!("{:x}", rand::random::<u64>());
         let sdp = sdp_answer(
             leg.local_addr,
-            offer.law,
+            offer.codec,
             rand::random::<u32>() as u64,
             Some(&resposta_crypto),
         );
@@ -734,7 +785,7 @@ impl SipBridge {
     }
 
     fn contact(&self) -> String {
-        format!("<sip:bridge@{}>", self.local_sip)
+        contact_uri(self.local_sip, self.cfg.rtp_ip)
     }
 
     async fn open_leg(
@@ -787,7 +838,7 @@ impl SipBridge {
                     }
                     v
                 },
-                default_law: offer.law,
+                codec: offer.codec,
                 initial_remote: offer.remote,
             };
             leg::start(sfu.clone(), cfg, socket, srtp, events).await
@@ -856,7 +907,7 @@ a=sendrecv\r\n";
             Some("7a0ad0a0-5c55-4b2e-9d3e-1d7c9c2b5e11")
         );
         let offer = parse_sdp_offer(&m.body).unwrap();
-        assert_eq!(offer.law, Law::A);
+        assert_eq!(offer.codec, LegCodec::G711(Law::A));
         assert_eq!(offer.remote, Some("127.0.0.1:32810".parse().unwrap()));
         let c = offer.crypto.expect("o INVITE do FreeSWITCH traz SDES");
         assert_eq!(c.tag, 1);
@@ -876,7 +927,11 @@ a=sendrecv\r\n";
             );
         let m = SipMessage::parse(&claro).unwrap();
         let offer = parse_sdp_offer(&m.body).unwrap();
-        assert_eq!(offer.law, Law::A, "o G.711 continua legível");
+        assert_eq!(
+            offer.codec,
+            LegCodec::G711(Law::A),
+            "o G.711 continua legível"
+        );
         assert!(
             offer.crypto.is_none(),
             "uma oferta sem a=crypto não pode trazer cifra"
@@ -894,7 +949,7 @@ a=sendrecv\r\n";
         };
         let sdp = sdp_answer(
             "127.0.0.1:32900".parse().unwrap(),
-            Law::A,
+            LegCodec::G711(Law::A),
             7,
             Some(&resposta),
         );
@@ -917,7 +972,12 @@ a=sendrecv\r\n";
     /// caminho que só os testes de media usam.
     #[test]
     fn resposta_sem_cifra_e_avp_e_nao_inventa_crypto() {
-        let sdp = sdp_answer("127.0.0.1:32900".parse().unwrap(), Law::A, 7, None);
+        let sdp = sdp_answer(
+            "127.0.0.1:32900".parse().unwrap(),
+            LegCodec::G711(Law::A),
+            7,
+            None,
+        );
         assert!(sdp.contains("RTP/AVP 8"));
         assert!(!sdp.contains("a=crypto"));
     }
@@ -947,19 +1007,23 @@ a=sendrecv\r\n";
     }
 
     #[test]
-    fn sem_g711_nao_ha_oferta() {
-        let sdp =
-            "v=0\r\nc=IN IP4 1.2.3.4\r\nm=audio 4000 RTP/AVP 111\r\na=rtpmap:111 opus/48000/2\r\n";
+    fn sem_codec_que_a_ponte_fale_nao_ha_oferta() {
+        let sdp = "v=0\r\nc=IN IP4 1.2.3.4\r\nm=audio 4000 RTP/AVP 18\r\na=rtpmap:18 G729/8000\r\n";
         assert!(parse_sdp_offer(sdp).is_none());
         // PT estático sem rtpmap conta; prefere-se a ordem da oferta.
         let sdp = "v=0\r\nc=IN IP4 1.2.3.4\r\nm=audio 4000 RTP/AVP 0 8\r\n";
-        assert_eq!(parse_sdp_offer(sdp).unwrap().law, Law::Mu);
+        assert_eq!(parse_sdp_offer(sdp).unwrap().codec, LegCodec::G711(Law::Mu));
     }
 
     #[test]
     fn resposta_200_mantem_o_dialogo_e_leva_o_sdp() {
         let m = SipMessage::parse(INVITE_FS).unwrap();
-        let sdp = sdp_answer("127.0.0.1:32900".parse().unwrap(), Law::A, 7, None);
+        let sdp = sdp_answer(
+            "127.0.0.1:32900".parse().unwrap(),
+            LegCodec::G711(Law::A),
+            7,
+            None,
+        );
         let r = response(
             &m,
             "200 OK",
@@ -984,6 +1048,99 @@ a=sendrecv\r\n";
         );
         let answer = parse_sdp_offer(&back.body).unwrap();
         assert_eq!(answer.remote, Some("127.0.0.1:32900".parse().unwrap()));
-        assert_eq!(answer.law, Law::A);
+        assert_eq!(answer.codec, LegCodec::G711(Law::A));
+    }
+
+    /// O `Contact` é para onde o `BYE` vem: com o UA à escuta em `0.0.0.0`
+    /// tem de levar um endereço a que o FreeSWITCH chegue.
+    #[test]
+    fn o_contact_nunca_leva_o_endereco_de_escuta_indefinido() {
+        let rtp: IpAddr = "10.225.0.50".parse().unwrap();
+        assert_eq!(
+            contact_uri("0.0.0.0:5090".parse().unwrap(), rtp),
+            "<sip:bridge@10.225.0.50:5090>"
+        );
+        assert_eq!(
+            contact_uri("[::]:5090".parse().unwrap(), "fd00::50".parse().unwrap()),
+            "<sip:bridge@[fd00::50]:5090>"
+        );
+        // Com um endereço de escuta concreto, é ele: é onde o UA está.
+        assert_eq!(
+            contact_uri("127.0.0.1:5290".parse().unwrap(), rtp),
+            "<sip:bridge@127.0.0.1:5290>"
+        );
+    }
+
+    // ------------------------------------------------------------
+    //  ADR-0018: a perna negoceia Opus
+    // ------------------------------------------------------------
+
+    /// A linha de áudio que o FreeSWITCH manda com `absolute_codec_string=OPUS,PCMA`.
+    const OFERTA_OPUS_PCMA: &str = "v=0\r\nc=IN IP4 10.0.0.9\r\nt=0 0\r\n\
+        m=audio 30000 RTP/SAVP 116 8 101 102\r\n\
+        a=rtpmap:116 opus/48000/2\r\n\
+        a=fmtp:116 useinbandfec=1; maxaveragebitrate=30000\r\n\
+        a=rtpmap:8 PCMA/8000\r\n\
+        a=rtpmap:101 telephone-event/48000\r\n\
+        a=rtpmap:102 telephone-event/8000\r\n\
+        a=ptime:20\r\n";
+
+    #[test]
+    fn opus_a_frente_na_oferta_e_o_que_a_ponte_responde() {
+        let offer = parse_sdp_offer(OFERTA_OPUS_PCMA).unwrap();
+        assert_eq!(offer.codec, LegCodec::Opus { payload_type: 116 });
+        let sdp = sdp_answer("10.0.0.5:20210".parse().unwrap(), offer.codec, 7, None);
+        assert!(sdp.contains("m=audio 20210 RTP/AVP 116\r\n"), "{sdp}");
+        assert!(sdp.contains("a=rtpmap:116 opus/48000/2\r\n"), "{sdp}");
+        assert!(
+            sdp.contains("a=fmtp:116 useinbandfec=0; stereo=0; sprop-stereo=0\r\n"),
+            "{sdp}"
+        );
+        // Com FEC pedido, o FreeSWITCH estreita a banda para ele caber; e com
+        // `sprop-maxcapturerate` abre o codec a 16 kHz nos dois sentidos.
+        assert!(!sdp.contains("useinbandfec=1"), "{sdp}");
+        assert!(!sdp.contains("maxcapturerate"), "{sdp}");
+        assert!(!sdp.contains("PCMA"), "responde UM codec: {sdp}");
+        assert!(
+            !sdp.contains("maxplaybackrate"),
+            "a ponte não limita o que recebe: {sdp}"
+        );
+        // A resposta lê-se de volta como a mesma escolha.
+        assert_eq!(parse_sdp_offer(&sdp).unwrap().codec, offer.codec);
+    }
+
+    /// É a ordem de quem oferece que manda — é assim que o servidor liga e
+    /// desliga a banda larga sem tocar no UA.
+    #[test]
+    fn a_ordem_da_oferta_decide_entre_opus_e_g711() {
+        let pcma_primeiro = OFERTA_OPUS_PCMA.replace("RTP/SAVP 116 8", "RTP/SAVP 8 116");
+        assert_eq!(
+            parse_sdp_offer(&pcma_primeiro).unwrap().codec,
+            LegCodec::G711(Law::A)
+        );
+        let so_opus =
+            "v=0\r\nc=IN IP4 1.2.3.4\r\nm=audio 4000 RTP/AVP 111\r\na=rtpmap:111 opus/48000/2\r\n";
+        assert_eq!(
+            parse_sdp_offer(so_opus).unwrap().codec,
+            LegCodec::Opus { payload_type: 111 }
+        );
+    }
+
+    /// O que NÃO é o Opus do RFC 7587 não passa por ele: outro relógio, um PT
+    /// estático com esse nome, ou um codec que a ponte não fala.
+    #[test]
+    fn so_o_opus_de_48_khz_num_pt_dinamico_conta() {
+        for linha in [
+            "m=audio 4000 RTP/AVP 111\r\na=rtpmap:111 opus/16000/1\r\n",
+            "m=audio 4000 RTP/AVP 9\r\na=rtpmap:9 opus/48000/2\r\n",
+            "m=audio 4000 RTP/AVP 9\r\na=rtpmap:9 G722/8000\r\n",
+            "m=audio 4000 RTP/AVP 111\r\n",
+        ] {
+            let sdp = format!("v=0\r\nc=IN IP4 1.2.3.4\r\n{linha}");
+            assert!(parse_sdp_offer(&sdp).is_none(), "devia dar 488: {linha}");
+        }
+        // Com G.711 atrás de um codec que não se fala, cai-se no G.711.
+        let sdp = "v=0\r\nc=IN IP4 1.2.3.4\r\nm=audio 4000 RTP/AVP 9 0\r\na=rtpmap:9 G722/8000\r\n";
+        assert_eq!(parse_sdp_offer(sdp).unwrap().codec, LegCodec::G711(Law::Mu));
     }
 }

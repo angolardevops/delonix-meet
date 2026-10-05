@@ -1193,7 +1193,13 @@ async fn room_bridge_for(
         );
         return None;
     };
-    if state.config.phone_bridge_freeswitch_ips.is_empty() {
+    // A lista pode vir por IP ou por NOME (o compose e o chart usam o nome do
+    // serviço). Olhar só para os IPs deixava uma instalação configurada por
+    // nome com o UA à escuta e a ponte nunca entregue ao IVR: toda a chamada
+    // caía na conferência local (medido no laboratório a 2026-10-05).
+    if state.config.phone_bridge_freeswitch_ips.is_empty()
+        && state.config.phone_bridge_freeswitch_names.is_empty()
+    {
         tracing::warn!(
             "PHONE_BRIDGE_FREESWITCH_IPS vazio — a ponte recusaria o INVITE (fail-closed); dial-in cai na conferência local"
         );
@@ -1219,16 +1225,32 @@ async fn room_bridge_for(
                 "rtp_secure_media".to_string(),
                 format!("mandatory:{}", crate::phone_bridge::srtp::SRTP_PROFILE_NAME),
             ),
-            // A ponte só transcodifica G.711: uma oferta sem PCMA/PCMU leva
-            // `488`. É também o que a perna levava na prova contra o
-            // FreeSWITCH real — o caminho do cliente não é uma variante por
-            // medir do que foi medido.
-            ("absolute_codec_string".to_string(), "PCMA".to_string()),
+            // A ordem é a preferência: o UA da ponte responde com o primeiro
+            // que souber falar (ADR-0018). Com Opus à frente, a voz de um
+            // softphone chega à sala sem passar por 8 kHz; `PCMA` sozinho é o
+            // caminho que a prova contra o FreeSWITCH real mediu (R222), e
+            // fica atrás como recurso. Uma oferta sem nenhum dos dois leva `488`.
+            // O valor tem uma VÍRGULA: quem monta a lista `[k=v,…]` da dial
+            // string tem de a escapar (`dialin_ivr.lua`), senão o FreeSWITCH
+            // fica só com o primeiro codec e o recurso deixa de existir.
+            (
+                "absolute_codec_string".to_string(),
+                bridge_codec_string(state.config.phone_bridge_wideband).to_string(),
+            ),
         ]
         .into_iter()
         .collect(),
         srtp_profile: crate::phone_bridge::srtp::SRTP_PROFILE_NAME.to_string(),
     })
+}
+
+/// Os codecs que o FreeSWITCH oferece à ponte, por ordem de preferência.
+fn bridge_codec_string(wideband: bool) -> &'static str {
+    if wideband {
+        "OPUS,PCMA"
+    } else {
+        "PCMA"
+    }
 }
 
 /// Emite o bilhete de identidade de quem liga e junta-o às variáveis de canal

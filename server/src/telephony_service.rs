@@ -549,6 +549,7 @@ pub(crate) async fn place_call(
         call_id,
         org_id,
         legs,
+        internal: None,
         caller_id: None,
         record: r.resolution.record,
         emergency: false,

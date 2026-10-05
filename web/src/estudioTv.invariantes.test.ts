@@ -151,8 +151,21 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
   })
 
   it('há um botão para a vista `tv` no selector de vistas', () => {
-    expect(pagina()).toContain('data-studio-vista="tv"')
-    expect(pagina()).toContain("t('studio.vistas.tv')")
+    // O selector é o `Segmented` do kit, que escreve um `data-<chave>` por
+    // opção: mede-se a opção AQUI e o atributo no kit, para que o e2e continue
+    // a poder agarrar `[data-studio-vista="tv"]` sem depender da língua.
+    expect(pagina()).toContain('dataKey="studio-vista"')
+    expect(pagina()).toMatch(/value: 'tv', label: t\('studio\.vistas\.tv'\)/)
+    expect(read('web/src/ui/kit.tsx')).toContain('[`data-${dataKey}`]: o.value')
+  })
+
+  it('e as cinco vistas têm atalho de teclado, com a mesa a ignorá-lo', () => {
+    // O que faltava: as legendas e as exportações só se alcançavam de dentro
+    // do editor. O portão das combinações vive em `ui/atalhos.test.ts`.
+    expect(pagina()).toContain("useAtalhos('estudio', {")
+    for (const id of ['vistaEmissao', 'vistaEdicao', 'vistaLegendas', 'vistaExportacoes', 'vistaTv']) {
+      expect(read('web/src/ui/atalhos.ts')).toContain(`id: '${id}'`)
+    }
   })
 
   it('e a vista lê-se do endereço, com o ecrã dentro dela', () => {

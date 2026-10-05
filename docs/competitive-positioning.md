@@ -110,6 +110,49 @@ Exportar dados do Zoom/Teams/Meet para outro sistema é difícil por design.
 
 ---
 
+## O que o Zoom e o Teams ainda fazem melhor — medido a 2026-10-05
+
+Esta secção responde a uma pergunta directa: **o que é que eles têm e nós não temos.**
+Cada linha foi medida na árvore (`develop`, mais a PR das salas), não recordada. A ordem
+é a do estrago: começa no que faz perder um negócio e acaba no que é acabamento.
+
+### Bloqueia um negócio
+
+| # | O que falta | Zoom | Teams | O que existe hoje, medido |
+|---|---|---|---|---|
+| 1 | **Aplicação móvel nativa** | ✅ | ✅ | **Zero projectos nativos no repositório.** Há PWA, e a PWA não recebe uma chamada com a aplicação fechada — é o que mata a adopção de quem vive no telemóvel, que é o caso do nosso mercado |
+| 2 | **Convidar por correio** | ✅ | ✅ | O servidor **não envia correio**: não há SMTP em `server/src`. Um convite é um token que alguém tem de entregar à mão. O Teams manda o convite do Outlook sem a pessoa pensar nisso |
+| 3 | **Calendário externo (Outlook, Google)** | ✅ | ✅ (nativo) | Nenhum: `grep` por `graph.microsoft`, `googleapis` e `caldav` em `server/src` não dá nada. Há agenda própria e ICS, e a integração com o **Odoo**. Quem vive no Outlook tem de copiar o link à mão |
+| 4 | **SAML e SCIM** | ✅ | ✅ | Há **OIDC** a sério (`auth.rs`, `org_sso_configs`). SAML não existe, e sem SCIM a entrada e a saída de pessoas é manual — é a primeira pergunta de qualquer empresa com mais de 200 colaboradores |
+
+### Limita a venda a uma organização grande
+
+| # | O que falta | Zoom | Teams | O que existe hoje, medido |
+|---|---|---|---|---|
+| 5 | **Modo webinar** (anfitrião + painel contra audiência que só assiste) | ✅ | ✅ | Não existe código nenhum: `webinar` só aparece em documentos. Há sala de espera, sondagens, perguntas e directo RTMP — as peças, não o modo |
+| 6 | **Canais persistentes com histórico** | ⚠️ | ✅ (é o produto) | O chat é **por sala**, e morre com o contexto da sala. A migração `0086_room_channels.sql` existe e **não tem consumidor**: nenhum código em `server/src` lê ou escreve essas tabelas (está escrito no topo da própria migração). O Teams vende-se por isto |
+| 7 | **Central telefónica a sério** (filas, atendedor automático, correio de voz) | ✅ Zoom Phone | ✅ Teams Phone | `grep` por `call_queue`, `voicemail` e `auto_attendant` não dá nada. Existe: entrada por telefone com PIN e IVR, ramais, troncos, plano de marcação e CDR (#130/#136). Falta a camada que transforma isso num PBX |
+| 8 | **Retenção legal e eDiscovery** | ⚠️ | ✅ | Existe retenção por dias com varredura, auditoria imutável e DLP estreito (`dlp.rs`: três expressões e palavrões). Não existe *legal hold*, nem pesquisa transversal para um regulador, nem política de DLP por organização |
+| 9 | **Salas de hardware e sistemas SIP de sala** | ✅ | ✅ | Nenhum: nem H.323 nem perfil de endpoint de sala. Um telefone entra; uma Poly da sala de reuniões não |
+| 10 | **Marketplace e SDK de aplicações** | ✅ | ✅ | Há API pública v1 com chaves e escopos, webhooks com HMAC e OpenAPI gerado — a matéria-prima. Não há SDK publicado, nem apps dentro da reunião |
+
+### Diferença de qualidade, não de funcionalidade
+
+| # | Onde eles ganham | Porquê |
+|---|---|---|
+| 11 | **Rede má** | O Zoom não usa WebRTC puro: o protocolo próprio dá-lhe FEC e recuperação que o browser não deixa fazer. Nós temos simulcast e escolha de camada; num 3G instável a diferença nota-se, e não se fecha com código nosso enquanto formos browser-first |
+| 12 | **Escala de uma sala** | Nenhum dos dois tem o nosso problema: o tecto de participantes por sala **não está medido nem documentado** neste repositório. Até estar, «quantas pessoas aguenta?» não tem resposta honesta |
+| 13 | **IA na reunião** | O Copilot e o AI Companion resumem, procuram e respondem durante a chamada. Nós geramos acta e tarefas com o Ollama local — melhor em privacidade, atrás em capacidade |
+| 14 | **Polimento do que já temos** | Enquadramento automático por software, galeria de reacções completa, *live components* do Teams. Nada disto bloqueia nada; é a distância que se sente ao usar |
+
+**O que não falta, e às vezes é dito que falta:** entrada de convidado sem conta (R290),
+entrada por telefone (#130), gravação com transcrição e pesquisa, quadro branco que
+sobrevive à sessão, sondagens, perguntas, salas de grupo, supressão de ruído, fundos,
+legendas e tradução locais, directo para RTMP, companion mode e E2EE em grupo com código
+de verificação. Estas estão feitas e medidas.
+
+---
+
 ## Funcionalidades que o Delonix ainda não tem (honestidade)
 
 | Funcionalidade | Zoom | Teams | Meet | Status Delonix |

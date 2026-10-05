@@ -16,6 +16,7 @@ mod broadcast;
 pub mod config;
 mod crypto;
 pub mod data_exports;
+mod dial_outs;
 mod directory;
 mod dlp;
 mod error;
@@ -570,10 +571,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(presence::ack_missed_calls),
         )
         // ---- Salas ----
-        .route("/api/rooms", post(rooms::create_room))
+        .route(
+            "/api/rooms",
+            get(rooms::list_my_rooms).post(rooms::create_room),
+        )
         .route(
             "/api/rooms/{room_code}",
-            get(rooms::get_room).patch(rooms::patch_room),
+            get(rooms::get_room)
+                .patch(rooms::patch_room)
+                .delete(rooms::delete_room),
         )
         // Convidado SEM conta (público por desenho — ver guests.rs e
         // scripts/rotas-publicas.txt): só produz um token de sala que passa
@@ -593,6 +599,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // (`?room={code}` é a chave de afinidade do balanceador).
         .route("/api/rooms/{room_code}/waiting", get(rooms::room_waiting))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
+        // «Ligar a…» um ramal a partir da sala (`?room={code}` é a chave de
+        // afinidade do balanceador: a sala e a ponte vivem no pod que a serve).
+        .route(
+            "/api/rooms/{room_code}/dial-outs",
+            get(dial_outs::list).post(dial_outs::create),
+        )
+        .route(
+            "/api/rooms/{room_code}/dial-outs/{dial_out_id}/hangup",
+            post(dial_outs::hangup),
+        )
         .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
         .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.

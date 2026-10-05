@@ -1,0 +1,69 @@
+/* Salas — a lista das salas de que sou dono. A tabela é a `dx-table` do kit;
+   aqui só vive o que é desta página. */
+.sl-row__nome {
+  display: block;
+}
+.sl-row__sub {
+  display: block;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+
+/* O código é um botão: clicar copia o endereço completo da sala. */
+.sl-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--text);
+  font-size: var(--t-md);
+  /* Um código de sala nunca parte em duas linhas: lê-se e dita-se ao telefone. */
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sl-code:hover {
+  border-color: var(--muted);
+}
+.sl-code.is-copiada {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.sl-politica {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sl-accoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.sl-hint {
+  margin: -6px 0 0 26px;
+  font-size: var(--t-sm);
+}
+
+.sl-mais {
+  display: flex;
+  justify-content: center;
+  padding: 14px;
+}
+
+/* A 375 px a tabela não cabe: as colunas de política e de data saem, e a
+   linha fica com o nome, o código e as acções. */
+@media (max-width: 720px) {
+  .sl-table th:nth-child(3),
+  .sl-table td:nth-child(3),
+  .sl-table th:nth-child(4),
+  .sl-table td:nth-child(4) {
+    display: none;
+  }
+}

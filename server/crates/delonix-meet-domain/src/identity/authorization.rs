@@ -168,8 +168,8 @@ impl Capability {
                 "sessions.dial_out",
                 S,
                 "Ligar a um ramal ou número a partir da sala",
-                "faz tocar um ramal da organização e põe a perna na sala (sem a imposição, a matriz só aceita o valor por omissão)",
-                &[],
+                "faz tocar um ramal da organização e põe a perna na sala (além de ser anfitrião ou co-anfitrião da sala)",
+                &["POST /api/rooms/{room_code}/dial-outs"],
             ),
             RecordingsRecord4k => mk("recordings.record_4k", R, "Gravar em 4K", "", &[]),
             RecordingsViewOthers => CapabilityInfo {

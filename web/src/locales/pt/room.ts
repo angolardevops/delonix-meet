@@ -154,7 +154,8 @@ export default {
     sondagensTitulo: 'Sondagens',
   },
   tile: {
-    duploCliqueFixa: 'Duplo clique para fixar no palco',
+    duploCliqueFixa: 'Duplo clique fixa no palco; botão direito abre as acções',
+    accoes: 'Acções de {{nome}}',
     mao: 'Mão',
     ligacaoFraca: 'Fraca',
     aVoltar: 'A voltar',
