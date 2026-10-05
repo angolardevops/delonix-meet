@@ -2061,6 +2061,12 @@ div.rm-only-narrow,
   text-align: left;
   cursor: pointer;
 }
+.rm-invite__title {
+  margin: 8px 0 4px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted, var(--text));
+}
 .rm-invite__item--static {
   cursor: default;
 }

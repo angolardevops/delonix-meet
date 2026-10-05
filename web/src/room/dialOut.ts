@@ -7,7 +7,7 @@ export function estaVivo(s: DialOutStatus): boolean {
   return VIVO.includes(s)
 }
 
-/** O tom do crachá: em chamada é sucesso, a tocar é aviso, o que falhou é aviso, o resto é neutro. */
+/** O tom do crachá: em chamada é sucesso, a tocar é «ao vivo», o que falhou é aviso, o resto é neutro. */
 export function tomDoEstado(s: DialOutStatus): 'success' | 'warning' | 'neutral' | 'live' {
   switch (s) {
     case 'in_call':
@@ -33,7 +33,8 @@ export function tomDoEstado(s: DialOutStatus): 'success' | 'warning' | 'neutral'
 export function chaveDoErro(e: unknown): string | null {
   if (!(e instanceof ApiError)) return null
   const code = (e.body as { code?: string } | null)?.code
-  if (!code) return null
+  // Um 404 sem código (a sala, o ramal ou o pedido já não existem para ti).
+  if (!code) return e.status === 404 ? 'room.ligar.erro.naoEncontrado' : null
   const conhecidos = [
     'dial_out.room_e2ee',
     'dial_out.room_recording',
@@ -44,6 +45,7 @@ export function chaveDoErro(e: unknown): string | null {
     'dial_out.too_many',
     'dial_out.rate_limited',
     'authz.missing_capability',
+    'authz.approval_required',
   ]
   return conhecidos.includes(code) ? `room.ligar.erro.${code.replace('.', '_')}` : null
 }
@@ -56,7 +58,24 @@ export function chaveDaFalha(d: Pick<DialOut, 'status' | 'failure_code'>): strin
   return 'room.ligar.falha.outra'
 }
 
-/** Mais recente primeiro, sem repetidos, e só os `n` primeiros. */
+/** Mais recente primeiro e só os `n` primeiros. */
 export function maisRecentes(items: DialOut[], n: number): DialOut[] {
   return [...items].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, n)
+}
+
+/**
+ * Junta o que o servidor devolveu ao que já se sabe, por `id`, sem nunca recuar
+ * um pedido para um estado menos avançado nem apagar um acabado de criar: uma
+ * resposta de `GET` lançada antes de um `POST` chega depois dele.
+ */
+export function fundir(actual: DialOut[], recebidos: DialOut[]): DialOut[] {
+  const ordem: Record<DialOutStatus, number> = {
+    queued: 0, dialing: 1, ringing: 2, in_call: 3, ended: 4, declined: 4, no_answer: 4, failed: 4, cancelled: 4,
+  }
+  const por = new Map(actual.map((d) => [d.id, d]))
+  for (const r of recebidos) {
+    const a = por.get(r.id)
+    por.set(r.id, a && ordem[a.status] > ordem[r.status] ? a : r)
+  }
+  return [...por.values()]
 }

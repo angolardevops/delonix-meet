@@ -569,6 +569,8 @@ export default {
       lista: 'Impossible d’actualiser les appels.',
       ligar: 'Impossible d’appeler le poste.',
       desligar: 'Impossible de raccrocher.',
+      naoEncontrado: 'Cette demande, salle ou ce poste n’existe plus (ou vous n’y avez pas accès).',
+      authz_approval_required: 'Cet appel nécessite une approbation : la demande a été envoyée à un administrateur.',
       dial_out_room_e2ee: 'Une salle chiffrée de bout en bout n’accepte pas de téléphone.',
       dial_out_room_recording: 'La salle enregistre : arrêtez l’enregistrement pour appeler un poste.',
       dial_out_extension_inactive: 'Ce poste est désactivé.',

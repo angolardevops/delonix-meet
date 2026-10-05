@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  apiErrorMessage, createDialOut, currentUser, DialOut, Extension, hangupDialOut, isAbort, listDialOuts,
+  createDialOut, currentUser, DialOut, Extension, hangupDialOut, isAbort, listDialOuts,
   listExtensions, myOrgs,
 } from '../api'
-import { chaveDoErro, estaVivo, maisRecentes } from './dialOut'
+import { chaveDoErro, estaVivo, fundir, maisRecentes } from './dialOut'
 
 /** Um ramal que se pode chamar, com o nome da organização (só aparece se houver mais de uma). */
 export interface Chamavel {
@@ -28,13 +28,17 @@ export function useDialOut(code: string) {
   const [items, setItems] = useState<DialOut[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [status, setStatus] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null)
+  const [erroLista, setErroLista] = useState<string | null>(null)
   const vivo = useRef(false)
   vivo.current = items.some((i) => estaVivo(i.status))
+  // Um GET de cada vez, e o mais recente ganha: com a rede lenta os pedidos não se sobrepõem.
+  const emVoo = useRef(false)
 
   const erro = useCallback(
     (e: unknown, fallbackKey: string) => {
+      // Nunca o texto do servidor (está numa só língua): a chave conhecida ou a genérica.
       const chave = chaveDoErro(e)
-      return chave ? t(chave) : apiErrorMessage(e, t(fallbackKey))
+      return t(chave ?? fallbackKey)
     },
     [t],
   )
@@ -65,11 +69,16 @@ export function useDialOut(code: string) {
 
   const recarregar = useCallback(
     async (signal?: AbortSignal) => {
+      if (emVoo.current) return
+      emVoo.current = true
       try {
         const r = await listDialOuts(code, signal)
-        setItems(maisRecentes(r.items, 10))
+        setItems((prev) => maisRecentes(fundir(prev, r.items), 10))
+        setErroLista(null)
       } catch (e) {
-        if (!isAbort(e)) setStatus({ tone: 'danger', text: erro(e, 'room.ligar.erro.lista') })
+        if (!isAbort(e)) setErroLista(erro(e, 'room.ligar.erro.lista'))
+      } finally {
+        emVoo.current = false
       }
     },
     [code, erro],
@@ -106,6 +115,7 @@ export function useDialOut(code: string) {
   async function desligar(d: DialOut) {
     if (busyId) return
     setBusyId(d.id)
+    setStatus(null)
     try {
       const r = await hangupDialOut(code, d.id)
       setItems((prev) => prev.map((p) => (p.id === r.id ? r : p)))
@@ -139,6 +149,7 @@ export function useDialOut(code: string) {
     ocupados: new Set(items.filter((i) => estaVivo(i.status) && i.extension_id).map((i) => i.extension_id as string)),
     busyId,
     status,
+    erroLista,
     ligar,
     desligar,
   }

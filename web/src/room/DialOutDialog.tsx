@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../ui/icons'
 import { Alert, Button, Dialog, Field, IconButton, StatusBadge, TextInput } from '../ui/kit'
@@ -7,6 +8,10 @@ import type { DialOutCtl } from './useDialOut'
 /** «Ligar a…»: faz tocar um ramal da organização; quem atende entra na sala. */
 export function DialOutDialog({ ctl }: { ctl: DialOutCtl }) {
   const { t } = useTranslation()
+  // O `Dialog` foca o 1.º botão ao abrir (o «Fechar»); quando os ramais chegam, o foco vai para a pesquisa.
+  useEffect(() => {
+    if (ctl.carga === 'pronta') document.getElementById('rm-dial-q')?.focus()
+  }, [ctl.carga])
   return (
     <Dialog
       title={t('room.ligar.titulo')}
@@ -66,8 +71,10 @@ export function DialOutDialog({ ctl }: { ctl: DialOutCtl }) {
 
       {ctl.items.length > 0 && (
         <section aria-label={t('room.ligar.chamadas')}>
-          <h3 className="dx-h4">{t('room.ligar.chamadas')}</h3>
-          <ul className="rm-invite__list" role="status" aria-live="polite">
+          <h3 className="rm-invite__title">{t('room.ligar.chamadas')}</h3>
+          {/* A região viva é o contentor: a lista continua a ser uma lista para o leitor de ecrã. */}
+          <div role="status" aria-live="polite" aria-atomic="false">
+            <ul className="rm-invite__list">
             {ctl.items.map((d) => {
               const falha = chaveDaFalha(d)
               return (
@@ -89,10 +96,12 @@ export function DialOutDialog({ ctl }: { ctl: DialOutCtl }) {
                 </li>
               )
             })}
-          </ul>
+            </ul>
+          </div>
         </section>
       )}
       {ctl.status && <Alert tone={ctl.status.tone}>{ctl.status.text}</Alert>}
+      {ctl.erroLista && !ctl.status && <Alert tone="danger">{ctl.erroLista}</Alert>}
     </Dialog>
   )
 }

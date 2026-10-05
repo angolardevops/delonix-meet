@@ -569,6 +569,8 @@ export default {
       lista: '无法刷新呼叫。',
       ligar: '无法呼叫该分机。',
       desligar: '无法挂断呼叫。',
+      naoEncontrado: '该请求、会议室或分机已不存在（或你无权访问）。',
+      authz_approval_required: '此呼叫需要批准：请求已发送给管理员。',
       dial_out_room_e2ee: '端到端加密的会议室不接受电话。',
       dial_out_room_recording: '会议室正在录制：请先停止录制再呼叫分机。',
       dial_out_extension_inactive: '该分机已停用。',

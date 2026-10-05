@@ -569,6 +569,8 @@ export default {
       lista: 'Could not refresh the calls.',
       ligar: 'Could not call the extension.',
       desligar: 'Could not hang up the call.',
+      naoEncontrado: 'This request, room or extension no longer exists (or you have no access to it).',
+      authz_approval_required: 'This call needs approval: the request was sent to an administrator.',
       dial_out_room_e2ee: 'An end-to-end encrypted room does not accept a phone.',
       dial_out_room_recording: 'The room is recording: stop the recording to call an extension.',
       dial_out_extension_inactive: 'This extension is disabled.',

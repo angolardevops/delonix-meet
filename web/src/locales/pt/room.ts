@@ -569,6 +569,8 @@ export default {
       lista: 'Não foi possível actualizar as chamadas.',
       ligar: 'Não foi possível ligar ao ramal.',
       desligar: 'Não foi possível desligar a chamada.',
+      naoEncontrado: 'Já não existe (ou não tens acesso a) este pedido, sala ou ramal.',
+      authz_approval_required: 'Esta chamada precisa de aprovação: o pedido foi enviado a um administrador.',
       dial_out_room_e2ee: 'Uma sala cifrada de ponta a ponta não aceita um telefone.',
       dial_out_room_recording: 'A sala está a gravar: pára a gravação para ligar a um ramal.',
       dial_out_extension_inactive: 'Este ramal está desactivado.',

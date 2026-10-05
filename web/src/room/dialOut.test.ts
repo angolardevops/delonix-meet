@@ -4,7 +4,7 @@ import type { DialOut } from '../api'
 // `api.ts` lê o localStorage ao ser importado: sem DOM, simula-se antes.
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
 const { ApiError } = await import('../api')
-const { chaveDaFalha, chaveDoErro, estaVivo, maisRecentes, tomDoEstado } = await import('./dialOut')
+const { chaveDaFalha, chaveDoErro, estaVivo, fundir, maisRecentes, tomDoEstado } = await import('./dialOut')
 
 const d = (over: Partial<DialOut>): DialOut => ({
   id: 'x', room_code: 'r', extension_id: 'e', extension: '201', display_name: 'Recepção', status: 'queued',
@@ -30,6 +30,8 @@ describe('dial-out · erros e causas', () => {
     expect(chaveDoErro(new ApiError(403, { code: 'authz.missing_capability' }, 'x'))).toBe('room.ligar.erro.authz_missing_capability')
     expect(chaveDoErro(new ApiError(500, { code: 'qualquer.coisa' }, 'x'))).toBeNull()
     expect(chaveDoErro(new ApiError(500, null, 'x'))).toBeNull()
+    expect(chaveDoErro(new ApiError(404, { error: 'not found' }, 'x'))).toBe('room.ligar.erro.naoEncontrado')
+    expect(chaveDoErro(new ApiError(403, { code: 'authz.approval_required' }, 'x'))).toBe('room.ligar.erro.authz_approval_required')
     expect(chaveDoErro(new Error('rede'))).toBeNull()
   })
   it('só um pedido falhado tem causa a mostrar', () => {
@@ -41,5 +43,20 @@ describe('dial-out · erros e causas', () => {
   it('ordena do mais recente e limita', () => {
     const l = [d({ id: 'a', created_at: '2026-10-05T10:00:00Z' }), d({ id: 'b', created_at: '2026-10-05T11:00:00Z' }), d({ id: 'c', created_at: '2026-10-05T09:00:00Z' })]
     expect(maisRecentes(l, 2).map((x) => x.id)).toEqual(['b', 'a'])
+  })
+})
+
+describe('dial-out · fundir respostas do GET', () => {
+  it('um GET atrasado não apaga um pedido acabado de criar nem o faz recuar', () => {
+    const novo = d({ id: 'novo', status: 'queued' })
+    const antigo = d({ id: 'velho', status: 'ringing' })
+    // O GET foi lançado antes do POST: não conhece o `novo` e ainda vê o `velho` a `queued`.
+    const r = fundir([novo, antigo], [d({ id: 'velho', status: 'queued' })])
+    expect(r.find((x) => x.id === 'novo')).toBeTruthy()
+    expect(r.find((x) => x.id === 'velho')?.status).toBe('ringing')
+  })
+  it('um estado mais avançado do servidor ganha', () => {
+    const r = fundir([d({ id: 'a', status: 'ringing' })], [d({ id: 'a', status: 'in_call' })])
+    expect(r[0].status).toBe('in_call')
   })
 })
