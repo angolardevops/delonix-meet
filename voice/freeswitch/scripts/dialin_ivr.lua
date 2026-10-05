@@ -331,11 +331,15 @@ if room_bridge then
   -- `session:setVariable`: essas ficariam na perna A (o chamador), e o que
   -- precisa delas é a perna B. É o `rtp_secure_media=mandatory:<perfil>` que
   -- obriga ESTA perna a oferecer SRTP — sem `a=crypto` a ponte responde 488.
-  -- (Um valor com vírgula partiria a lista; hoje nenhum tem, e o backend é
-  -- quem os escolhe — ver voice.rs::room_bridge_for.)
+  -- Uma vírgula crua num valor PARTE a lista: o FreeSWITCH separa-a por
+  -- vírgulas e deita fora o bocado que fica sem `=`. Desde o ADR-0018 há um
+  -- valor com vírgula (`absolute_codec_string=OPUS,PCMA`): sem a escapar, a
+  -- perna oferecia só Opus e o G.711 de recurso não existia. A barra invertida
+  -- escapa-a (e escapa-se a si própria primeiro).
   local vars = {}
   for k, v in pairs(room_bridge.channel_vars) do
-    vars[#vars + 1] = string.format("%s=%s", k, v)
+    local escapado = tostring(v):gsub("\\", "\\\\"):gsub(",", "\\,")
+    vars[#vars + 1] = string.format("%s=%s", k, escapado)
   end
   local prefixo = ""
   if #vars > 0 then prefixo = "[" .. table.concat(vars, ",") .. "]" end

@@ -1902,7 +1902,7 @@ async fn palco_impede_o_selector_de_calar_quem_esta_destacado() {
                 room_id: room,
                 leg_id,
                 allowed_sources: vec!["127.0.0.1".parse().unwrap()],
-                default_law: Law::A,
+                codec: leg::LegCodec::G711(Law::A),
                 initial_remote: None,
             },
             socket,
@@ -2045,7 +2045,7 @@ async fn force_mute_cala_o_telefone_na_perna() {
             room_id: room,
             leg_id,
             allowed_sources: vec!["127.0.0.1".parse().unwrap()],
-            default_law: Law::A,
+            codec: leg::LegCodec::G711(Law::A),
             initial_remote: None,
         },
         socket,
@@ -2196,7 +2196,7 @@ async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
             room_id: room,
             leg_id,
             allowed_sources: vec!["127.0.0.1".parse().unwrap()],
-            default_law: Law::A,
+            codec: leg::LegCodec::G711(Law::A),
             initial_remote: None,
         },
         socket,
@@ -2390,6 +2390,328 @@ async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
     assert!(sfu.is_room_empty(room).await);
     // Nada da ponte fica vivo: publicação, bomba e sala saem com a chamada.
     esperar_censo_vazio(&sfu, "depois da chamada e da Ana saírem", prazo(20)).await;
+}
+
+/// «Softphone» falso com a perna em Opus (ADR-0018): o papel do FreeSWITCH
+/// quando a dial string leva `OPUS` à frente. Manda Opus a 48 kHz (silêncio e
+/// depois um tom), guarda cada payload que mandou, e descodifica a 16 kHz o
+/// que a ponte lhe devolve.
+struct TelefoneOpus {
+    /// PCM (16 kHz) de cada pacote da mistura.
+    recebido: Arc<std::sync::Mutex<Vec<Vec<f32>>>>,
+    /// Todos os payloads que saíram deste telefone, tal como saíram.
+    enviados: Arc<std::sync::Mutex<std::collections::HashSet<Vec<u8>>>>,
+    tocar: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TelefoneOpus {
+    async fn ligar(ponte: std::net::SocketAddr, payload_type: u8, freq: f32) -> Self {
+        use webrtc::util::{Marshal, Unmarshal};
+        let socket = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let recebido: Arc<std::sync::Mutex<Vec<Vec<f32>>>> = Default::default();
+        let enviados: Arc<std::sync::Mutex<std::collections::HashSet<Vec<u8>>>> =
+            Default::default();
+        let tocar = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let socket = socket.clone();
+            let recebido = recebido.clone();
+            tokio::spawn(async move {
+                let mut dec = opus_rs::OpusDecoder::new(16_000, 1).unwrap();
+                let mut pcm = vec![0f32; 320 * 6];
+                let mut buf = vec![0u8; 1500];
+                while let Ok((n, _)) = socket.recv_from(&mut buf).await {
+                    let mut raw: &[u8] = &buf[..n];
+                    let Ok(p) = webrtc::rtp::packet::Packet::unmarshal(&mut raw) else {
+                        continue;
+                    };
+                    if p.header.payload_type != payload_type {
+                        continue;
+                    }
+                    if let Ok(k) = dec.decode(&p.payload, 320 * 6, &mut pcm) {
+                        recebido.lock().unwrap().push(pcm[..k].to_vec());
+                    }
+                }
+            });
+        }
+        {
+            let socket = socket.clone();
+            let enviados = enviados.clone();
+            let tocar = tocar.clone();
+            tokio::spawn(async move {
+                let mut enc =
+                    opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
+                enc.bitrate_bps = 32_000;
+                let mut out = vec![0u8; 1500];
+                let mut tick = tokio::time::interval(Duration::from_millis(20));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+                let (mut seq, mut ts, mut fase) = (64_000u16, 4_294_000_000u32, 0usize);
+                loop {
+                    tick.tick().await;
+                    let on = tocar.load(std::sync::atomic::Ordering::SeqCst);
+                    let pcm: Vec<f32> = (0..960)
+                        .map(|i| {
+                            if on {
+                                0.5 * (2.0 * std::f32::consts::PI * freq * (fase + i) as f32
+                                    / 48_000.0)
+                                    .sin()
+                            } else {
+                                0.0
+                            }
+                        })
+                        .collect();
+                    fase += 960;
+                    let len = enc.encode(&pcm, 960, &mut out).unwrap();
+                    enviados.lock().unwrap().insert(out[..len].to_vec());
+                    let pkt = webrtc::rtp::packet::Packet {
+                        header: webrtc::rtp::header::Header {
+                            version: 2,
+                            payload_type,
+                            sequence_number: seq,
+                            timestamp: ts,
+                            ssrc: 0x0b05_f0e0,
+                            ..Default::default()
+                        },
+                        payload: out[..len].to_vec().into(),
+                    };
+                    // Os dois contadores dão a volta durante o teste, de propósito.
+                    seq = seq.wrapping_add(1);
+                    ts = ts.wrapping_add(960);
+                    if socket
+                        .send_to(&pkt.marshal().unwrap(), ponte)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        Self {
+            recebido,
+            enviados,
+            tocar,
+        }
+    }
+}
+
+/// **ADR-0018 — com a perna em Opus, a banda larga passa nos dois sentidos e
+/// o telefone entra na sala sem ser recodificado.**
+///
+/// A perna G.711 deitava fora tudo acima de ~3,4 kHz: um softphone que falava
+/// Opus a 48 kHz chegava à sala com qualidade de telefone fixo. Aqui os tons
+/// estão ACIMA dessa banda de propósito — num caminho a 8 kHz nenhum dos dois
+/// existe:
+///
+/// 1. a Ana ouve os **5 kHz** do softphone;
+/// 2. cada payload que a Ana recebe dessa perna é, byte a byte, um dos que o
+///    softphone mandou — a ponte não recodificou;
+/// 3. o softphone ouve os **6 kHz** da Ana, em Opus;
+/// 4. e não se ouve a si próprio (mix-minus);
+/// 5. silenciada na ponte, a perna deixa de entrar na sala, e volta ao desfazer.
+///
+/// **Âmbito:** como na R221, sem FreeSWITCH e sem SRTP — o caminho de media. O
+/// controlo negativo da banda (os mesmos 6 kHz a NÃO chegarem em G.711) está em
+/// `phone_bridge::audio::tests::banda_larga_leva_6_khz_ao_telefone_e_o_g711_nao`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ponte_em_opus_leva_banda_larga_nos_dois_sentidos() {
+    use crate::phone_bridge::leg;
+    const PT: u8 = 116;
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+    let leg_id = Uuid::new_v4();
+    let chave = leg_id.to_string();
+
+    let ana = TestClient::join(&sfu, room).await;
+    let (ana_fala, _) = ana.publish_opus_tone("ana-mic", 6000.0).await;
+    eventually_com_diagnostico(
+        "a Ana está ligada ao SFU",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.pc.connection_state()
+                    == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+                    && ana.pc.signaling_state()
+                        == webrtc::peer_connection::signaling_state::RTCSignalingState::Stable
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+
+    let (ev_tx, mut ev_rx) = mpsc::channel(16);
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let perna = leg::start(
+        sfu.clone(),
+        leg::LegConfig {
+            room_id: room,
+            leg_id,
+            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            codec: leg::LegCodec::Opus { payload_type: PT },
+            initial_remote: None,
+        },
+        socket,
+        None,
+        ev_tx,
+    )
+    .await
+    .expect("perna da ponte em Opus");
+    let telefone = TelefoneOpus::ligar(perna.local_addr, PT, 5000.0).await;
+
+    eventually_com_diagnostico(
+        "a Ana recebe o áudio da chamada",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            let chave = chave.clone();
+            async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) > 10 }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+    assert_eq!(ev_rx.try_recv().ok(), Some(leg::LegEvent::FirstMedia));
+
+    telefone
+        .tocar
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    ana_fala.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // 1. A sala ouve os 5 kHz do softphone.
+    eventually("a Ana ouve os 5 kHz do softphone", prazo(20), || {
+        let ana = ana.clone();
+        let chave = chave.clone();
+        async move {
+            ana.tom_recebido(&chave, 5000.0)
+                .iter()
+                .rev()
+                .take(25)
+                .filter(|(_, m)| *m > 0.15)
+                .count()
+                >= 20
+        }
+    })
+    .await;
+    // 3. O softphone ouve os 6 kHz da Ana.
+    eventually("o softphone ouve os 6 kHz da Ana", prazo(20), || {
+        let r = telefone.recebido.clone();
+        async move {
+            let v = r.lock().unwrap();
+            v.iter()
+                .rev()
+                .take(25)
+                .filter(|pcm| tom(pcm, 16_000.0, 6000.0) > 0.05)
+                .count()
+                >= 20
+        }
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // 2. Sem recodificação: o que a Ana recebeu é o que o softphone mandou.
+    let recebidos: Vec<RxAudio> = ana
+        .audio_rx
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| p.stream_id == chave)
+        .cloned()
+        .collect();
+    let alheios = {
+        let enviados = telefone.enviados.lock().unwrap();
+        recebidos
+            .iter()
+            .filter(|p| !enviados.contains(&p.payload))
+            .count()
+    };
+    assert!(
+        recebidos.len() > 50,
+        "amostra curta de mais para provar a passagem: {}",
+        recebidos.len()
+    );
+    assert_eq!(
+        alheios, 0,
+        "a ponte publicou payloads que o softphone não mandou — recodificou"
+    );
+
+    // 4. Mix-minus, e o nível do que chega.
+    let (proprio_max, alheio_min) = {
+        let v = telefone.recebido.lock().unwrap();
+        let ultimos: Vec<&Vec<f32>> = v.iter().rev().take(40).collect();
+        (
+            ultimos
+                .iter()
+                .map(|f| tom(f, 16_000.0, 5000.0))
+                .fold(0.0, f32::max),
+            ultimos
+                .iter()
+                .map(|f| tom(f, 16_000.0, 6000.0))
+                .fold(1.0, f32::min),
+        )
+    };
+    assert!(
+        proprio_max < 0.02,
+        "o softphone ouve-se a si próprio: {proprio_max}"
+    );
+    assert!(
+        alheio_min > 0.03,
+        "os 6 kHz da Ana falham no softphone: {alheio_min}"
+    );
+    // 5. Calar na ponte cala também em Opus, e desfazer devolve o áudio — a
+    //    R224 só estava guardada no codec antigo.
+    let visto = {
+        let ana = ana.clone();
+        let chave = chave.clone();
+        move || {
+            let ana = ana.clone();
+            let chave = chave.clone();
+            async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) }
+        }
+    };
+    let calar = perna.mute_flag();
+    calar.store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let calado_a = visto().await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let calado_b = visto().await;
+    assert_eq!(
+        calado_a, calado_b,
+        "silenciada na ponte, a perna em Opus continuou a entrar na sala"
+    );
+    calar.store(false, std::sync::atomic::Ordering::SeqCst);
+    eventually(
+        "desfeito o silêncio, o softphone volta à sala",
+        prazo(15),
+        {
+            let visto = visto.clone();
+            move || {
+                let visto = visto.clone();
+                async move { visto().await > calado_b + 20 }
+            }
+        },
+    )
+    .await;
+
+    let rejeitados = perna
+        .stats
+        .packets_rejected
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(rejeitados, 0, "Opus válido não é recusado");
+    eprintln!(
+        "ADR-0018 ponte em Opus: {} pacotes na sala, todos intactos · softphone ouve 6 kHz a {:.3} \
+         (próprio {:.4}) · pacotes in={} out={}",
+        recebidos.len(),
+        alheio_min,
+        proprio_max,
+        perna.stats.packets_in.load(std::sync::atomic::Ordering::Relaxed),
+        perna.stats.packets_out.load(std::sync::atomic::Ordering::Relaxed),
+    );
+
+    perna.stop().await;
+    drop(telefone);
+    sfu.remove_peer(room, ana.id).await;
+    ana.pc.close().await.unwrap();
+    assert!(sfu.is_room_empty(room).await);
+    esperar_censo_vazio(&sfu, "depois da chamada em Opus e da Ana saírem", prazo(20)).await;
 }
 
 /// **R172 — entradas concorrentes: toda a gente recebe toda a gente.**
