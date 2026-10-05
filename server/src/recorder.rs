@@ -210,7 +210,8 @@ struct OpusClock {
     late_run: Option<(u32, u32, u32)>,
 }
 
-/// Quantos atrasados seguidos fazem um relógio novo: 1 s de pacotes de 20 ms.
+/// Quantos atrasados seguidos fazem um relógio novo: 1 s de Opus contínuo em
+/// pacotes de 20 ms (com DTX são os mesmos 50 pacotes, e mais tempo).
 const OPUS_CLOCK_RESYNC_AFTER: u32 = 50;
 
 /// O que o `OpusClock` decide sobre um pacote.
@@ -1908,11 +1909,13 @@ mod tests {
         let mut clock = OpusClock::default();
         assert_eq!(clock.accept(0), OpusTick::Write(0));
         assert_eq!(clock.accept(1_000_000), OpusTick::Write(1_000_000));
-        // Atrasados que avançam, mas com um pacote em dia pelo meio: a contagem
-        // recomeça, e nunca chega ao fim.
+        // Atrasados que avançam SEMPRE, de volta para volta, mas com um pacote
+        // em dia pelo meio: é ele que desfaz a contagem, e ela nunca chega ao
+        // fim. Sem isso, 50 reordenações soltas ao longo de uma reunião davam um
+        // relógio novo e esticavam a pista o tempo entre a primeira e a última.
         for volta in 0..4u32 {
             for i in 1..n {
-                assert_eq!(clock.accept(i * 960), OpusTick::Late);
+                assert_eq!(clock.accept((volta * n + i) * 960), OpusTick::Late);
             }
             let em_dia = 1_000_000 + (volta + 1) * 960;
             assert_eq!(clock.accept(em_dia), OpusTick::Write(em_dia));
@@ -1971,7 +1974,8 @@ mod tests {
             })
             .collect();
         // Um frame que não autentica (outra chave), em dia: não se escreve, não
-        // conta como atrasado, e o seguinte cobre o tempo dele como uma perda.
+        // conta como atrasado, e o seguinte cobre o tempo dele como uma perda —
+        // são os grânulos que o mostram: escrito, havia uma página em 3841.
         let claro = frame(5);
         let mut alheio = opus_silencio(5, 3840);
         alheio.payload =
@@ -1987,7 +1991,6 @@ mod tests {
             "os frames saem decifrados"
         );
         assert!(!tem(3), "o atrasado não entra");
-        assert!(!tem(5), "o que não autentica não entra");
     }
 
     #[test]
