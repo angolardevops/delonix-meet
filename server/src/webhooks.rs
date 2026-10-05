@@ -928,6 +928,7 @@ pub async fn redeliver(
         attempt(&bg, &hook, &event, &payload, Some(ids), attempt_no).await;
     });
 
+    let new_id = ids.delivery;
     let location = format!("/api/orgs/{org_id}/webhooks/{hook_id}/deliveries/{new_id}");
     Ok((StatusCode::ACCEPTED, [(LOCATION, location)], Json(delivery)).into_response())
 }
