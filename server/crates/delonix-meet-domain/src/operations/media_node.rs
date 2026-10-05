@@ -43,9 +43,51 @@ pub fn load_ratio(peers: i64, capacity: Option<i64>) -> Option<f64> {
     }
 }
 
+/// Ocupação, em % da capacidade declarada, a partir da qual o nó deixa de
+/// aceitar salas NOVAS. Os 15% que sobram são para as salas que já cá estão e
+/// continuam a crescer: uma sala existente não pode mudar de nó (ADR-0001), por
+/// isso não se lhe recusa gente, e recusar as novas cedo é o que lhe dá margem.
+///
+/// É uma ESCOLHA, não uma medida: o teste de carga de 2026-09-17 mediu o
+/// colapso (perda de 13–48%) entre ~120 e ~200 pessoas por nó, sem marcar onde
+/// começa a degradação. O operador declara a capacidade (`NODE_PEER_CAPACITY`) a
+/// partir dos seus testes; esta fracção decide a margem.
+pub const NEW_ROOM_LOAD_PERCENT: i64 = 85;
+
+/// Um nó aceita uma sala NOVA? Sem capacidade declarada, sim: não se inventa um
+/// limite que o operador não deu (a mesma regra de `load_ratio`).
+///
+/// Salas que já existem no nó não passam por aqui — entram sempre.
+pub fn accepts_new_rooms(peers: i64, capacity: Option<i64>) -> bool {
+    match capacity {
+        Some(c) if c > 0 => peers.max(0) * 100 < c * NEW_ROOM_LOAD_PERCENT,
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_node_stops_taking_new_rooms_at_the_load_limit() {
+        // Capacidade 10, limite 85%: aceita até 8 participantes, recusa a partir de 9.
+        assert!(accepts_new_rooms(0, Some(10)));
+        assert!(accepts_new_rooms(8, Some(10)));
+        assert!(!accepts_new_rooms(9, Some(10)));
+        assert!(!accepts_new_rooms(10, Some(10)));
+        assert!(!accepts_new_rooms(500, Some(10)), "acima da capacidade, recusa");
+        // Capacidade grande: 85% de 200 = 170.
+        assert!(accepts_new_rooms(169, Some(200)));
+        assert!(!accepts_new_rooms(170, Some(200)));
+    }
+
+    #[test]
+    fn without_a_declared_capacity_nothing_is_refused() {
+        assert!(accepts_new_rooms(10_000, None));
+        assert!(accepts_new_rooms(10_000, Some(0)));
+        assert!(accepts_new_rooms(-5, Some(10)), "contagem negativa não recusa");
+    }
 
     #[test]
     fn status_is_derived_from_age_and_drain() {

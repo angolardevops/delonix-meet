@@ -51,6 +51,11 @@ pub struct MediaNode {
     pub peer_capacity: Option<i32>,
     /// Ocupação 0–1 face à capacidade declarada; ausente sem capacidade.
     pub load: Option<f64>,
+    /// Este nó aceita salas NOVAS agora: está a servir (nem a drenar nem sem
+    /// batimento) e abaixo do limite de ocupação (`NEW_ROOM_LOAD_PERCENT`).
+    /// Calculado do último batimento, por isso pode atrasar até um intervalo
+    /// (15 s) face ao que o nó decide à entrada.
+    pub accepting_new_rooms: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -155,6 +160,8 @@ pub async fn list(
         .map(|r| {
             let status = rules::status(r.last_seen_at, r.draining, now);
             MediaNode {
+                accepting_new_rooms: status == rules::NodeStatus::Serving
+                    && rules::accepts_new_rooms(r.peers as i64, r.peer_capacity.map(i64::from)),
                 load: rules::load_ratio(r.peers as i64, r.peer_capacity.map(i64::from)),
                 node_id: r.node_id,
                 hostname: r.hostname,

@@ -77,6 +77,10 @@ pub struct Metrics {
     /// Lugares reclamados a partir da cópia no Redis (o pod que os guardava
     /// morreu ou a sala mudou de pod). Dentro de `seats_reclaimed_total`.
     pub seats_reclaimed_redis_total: AtomicU64,
+    /// Salas NOVAS recusadas porque o nó estava no limite da capacidade
+    /// declarada (`NODE_PEER_CAPACITY`). Um valor a subir é o sinal para
+    /// acrescentar nós; a zero com capacidade declarada, a regra nunca actuou.
+    pub node_new_rooms_refused_total: AtomicU64,
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
@@ -219,6 +223,9 @@ impl Metrics {
              # HELP delonix_seats_reclaimed_redis_total Lugares reclamados a partir do Redis (pod anterior perdido).\n\
              # TYPE delonix_seats_reclaimed_redis_total counter\n\
              delonix_seats_reclaimed_redis_total {}\n\
+             # HELP delonix_node_new_rooms_refused_total Salas novas recusadas por o nó estar no limite da capacidade.\n\
+             # TYPE delonix_node_new_rooms_refused_total counter\n\
+             delonix_node_new_rooms_refused_total {}\n\
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
@@ -298,6 +305,7 @@ impl Metrics {
             self.seats_reclaimed_total.load(Relaxed),
             self.seats_expired_total.load(Relaxed),
             self.seats_reclaimed_redis_total.load(Relaxed),
+            self.node_new_rooms_refused_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
             g(self.ws_queue_high_water.load(Relaxed)),
             self.ws_queue_dropped_total.load(Relaxed),
