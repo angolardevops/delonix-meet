@@ -168,7 +168,10 @@ Não há controlo de ganho nem supressão de ruído no caminho do telefone.
     (enviado a 0,25), estável — rms por bloco de 20 ms entre 0,168 e 0,178 para
     0,177 de um seno puro, nenhum bloco mudo em 1 276;
   - nessa corrida o FreeSWITCH estava autorizado só por NOME, e as duas pernas
-    abriram — o que antes não acontecia (R29X).
+    abriram — o que antes não acontecia (R29X);
+  - e fecham quando os softphones desligam, com zero pacotes recusados, zero de
+    banda média e zero atrasados em ~2 000 por sentido — antes ficavam abertas
+    para sempre, porque o `Contact` levava `0.0.0.0` (R29X).
 - **Por medir, e é o que fecha isto:** uma chamada real de um softphone que
   fale Opus (os da prova falam G.711: provam a negociação, o nível e o
   mix-minus, não a banda larga), e a mesma chamada ouvida num browser. A prova contra o FreeSWITCH

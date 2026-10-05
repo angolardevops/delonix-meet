@@ -117,8 +117,8 @@ pernas sem serem recodificados por nós; o validador não é uma fronteira (ADR-
 negociado.
 
 **Por medir, e não o dês por feito:** uma chamada de um softphone que fale Opus (os da prova
-falam G.711: provam a negociação, o nível, o mix-minus e o fecho da perna — não a banda
-larga), e a mesma chamada ouvida num browser; a gravação de uma perna em Opus; o palco
+falam G.711: provam a negociação, o nível, o mix-minus e o fecho da perna, tudo medido a
+2026-10-05 — não a banda larga), e a mesma chamada ouvida num browser; a gravação de uma perna em Opus; o palco
 (R225) nesse codec.
 
 ### O telefone no censo da sala (#135, R224)

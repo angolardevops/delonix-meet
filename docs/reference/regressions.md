@@ -3057,13 +3057,13 @@ Fora do CI, medido a 2026-10-05 no compose do laboratório (FreeSWITCH 1.11.3, l
 - cada softphone ouve o tom do outro a 0,2487 e 0,2452 (enviado a 0,25), estável, e o próprio a 0,001;
 - **controlo negativo da banda média:** com a primeira resposta SDP (`useinbandfec=1`) o 1 kHz chegava a 0,092, em quatro corridas, e o registo de depuração do `mod_opus` mostrava 2 583 blocos em `MEDIUMBAND`;
 - com `PHONE_BRIDGE_WIDEBAND=0` a perna volta a PCMA e os tons chegam a 0,2504 e 0,2506;
-- com o FreeSWITCH só por nome as duas pernas abrem — **controlo negativo:** com a imagem anterior, o mesmo compose registava «lista vazia» e nenhuma perna abria.
+- com o FreeSWITCH só por nome as duas pernas abrem — **controlo negativo:** com a imagem anterior, o mesmo compose registava «lista vazia» e nenhuma perna abria;
+- quando os softphones desligam, as duas pernas FECHAM: «ponte: perna fechada» com `rejected=0 srtp_failed=0 decode_errors=0 mix_unsupported=0 opus_rejected=0 opus_late=0` em ~2 000 pacotes por sentido, e o servidor fica só com o socket do UA — **controlo negativo:** com o `Contact` antigo, a mesma corrida deixava as duas pernas e os dois sockets de RTP abertos, sem uma linha no log.
 
 **Revisão.** Três revisões independentes do primeiro commit (media, segurança, Rust), antes de qualquer chamada. Encontraram o que os testes não viam: a vírgula da dial string (bloqueava), a âncora da passagem que voltava a ancorar de dez em dez segundos e apagava a perda nessa fronteira, a frase do ADR sobre a sequência (o SFU renumera-a), a mudança de confiança por nomear, o tecto de payload em falta, e a sala que ficava presa se a tarefa da perna rebentasse. A chamada real encontrou o resto: a ponte por nome, a banda média, e o `Contact`.
 
 **O que NÃO está provado.**
 - **A banda larga com um softphone que fale Opus.** Os da prova falam G.711: provam a negociação, o nível, o mix-minus e o fecho — a banda, só os testes com tons de 5 e 6 kHz contra o SFU. Falta um Linphone real e a mesma chamada ouvida num browser.
-- **O fecho da perna com o `Contact` novo**, no laboratório — ver a nota no fim desta entrada.
 - **A gravação de uma perna em Opus**, e o palco (R225) nesse codec.
 - **A robustez do `opus-rs` é uma amostra, não uma auditoria**: 20 000 pacotes no repo, 300 000 fora dele, zero pânicos. O crate tem `unsafe` e não lê banda média.
 - **CPU em release**: os números dos testes são de um binário de debug, numa máquina carregada.
