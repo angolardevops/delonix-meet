@@ -50,10 +50,13 @@ grep -qE '=0{64}$' <<<"$sha" \
   && bad "FFMPEG_SHA256 é o marcador de zeros — falta fixar o SHA-256 depois de verificar a assinatura"
 
 if [ -n "${FFMPEG_BIN:-}" ] && [ -x "$FFMPEG_BIN" ]; then
-  licenca=$("$FFMPEG_BIN" -L 2>/dev/null | head -3)
-  grep -q 'Lesser' <<<"$licenca" \
+  # O estado do binário conta à parte do que ele escreve: um `ffmpeg -L` que
+  # falha não declara licença nenhuma, e um `-version` que falha depois de
+  # escrever `--enable-gpl` continua a ser GPL (com o pipe e `&&`, dava verde).
+  licenca=$("$FFMPEG_BIN" -L 2>/dev/null) && grep -q 'Lesser' <<<"$(head -3 <<<"$licenca")" \
     || bad "$FFMPEG_BIN não declara a licença LGPL (ffmpeg -L)"
-  "$FFMPEG_BIN" -version 2>/dev/null | grep -E 'enable-(gpl|nonfree|version3)' \
+  cfg=$("$FFMPEG_BIN" -version 2>/dev/null)
+  grep -E 'enable-(gpl|nonfree|version3)' <<<"$cfg" \
     && bad "$FFMPEG_BIN foi configurado com GPL, nonfree ou version3"
 fi
 

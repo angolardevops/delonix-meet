@@ -290,11 +290,15 @@ fi
 # A forma segura não tem produtor que possa morrer: `grep -q … <<<"$variavel"`
 # ou `grep -q … ficheiro`.
 #
-# Limite honesto: só vê o `grep -q` (ou `--quiet`) na MESMA linha da barra, e
-# não distingue uma barra dentro de uma cadeia de texto. Um
-# `| head -1` cujo estado decida alguma coisa, ou outro consumidor que saia
-# cedo, é revisão.
-pipes_q=$(grep -nE '(^|[^|])\|[[:space:]]*grep([[:space:]]+-[A-Za-z]+)*[[:space:]]+(-[A-Za-z]*q|--quiet|--silent)' scripts/check-*.sh \
+# Vê o `grep`, o `egrep` e o `fgrep`, com caminho, com `command`/`xargs` ou
+# uma variável à frente, e o `-q` em qualquer posição entre as opções.
+#
+# Limite honesto: só vê o `-q` (ou `--quiet`) na MESMA linha da barra, e não
+# distingue uma barra dentro de uma cadeia de texto nem um comentário no fim
+# de uma linha de código (falha fechado). Um `| head -1` cujo estado decida
+# alguma coisa, ou outro consumidor que saia cedo (`grep -m`, `awk … exit`),
+# é revisão.
+pipes_q=$(grep -nHE '(^|[^|])\|&?[[:space:]]*([A-Za-z_]+=[^[:space:]]*[[:space:]]+)*((command|xargs)[[:space:]]+)?([^[:space:]|]*/)?[ef]?grep[[:space:]]([^|;&)]*[[:space:]])?(-[A-Za-z0-9]*q[A-Za-z0-9]*|--quiet|--silent)([[:space:];)|&]|$)' scripts/check-*.sh \
           | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
 if [ -n "$pipes_q" ]; then
   echo "✗ higiene: um portão decide pelo estado de um pipe para \`grep -q\`, com pipefail (SIGPIPE dá falso «não encontrado»):"
