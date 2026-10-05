@@ -81,6 +81,10 @@ pub struct Metrics {
     /// declarada (`NODE_PEER_CAPACITY`). Um valor a subir é o sinal para
     /// acrescentar nós; a zero com capacidade declarada, a regra nunca actuou.
     pub node_new_rooms_refused_total: AtomicU64,
+    /// Dentro das anteriores: as recusadas porque o inquilino já usava a sua parte
+    /// justa do nó (zona de margem). A diferença para o total são as recusadas
+    /// por o nó estar na capacidade, que não é de ninguém em particular.
+    pub node_new_rooms_refused_fair_share_total: AtomicU64,
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
@@ -226,6 +230,9 @@ impl Metrics {
              # HELP delonix_node_new_rooms_refused_total Salas novas recusadas por o nó estar no limite da capacidade.\n\
              # TYPE delonix_node_new_rooms_refused_total counter\n\
              delonix_node_new_rooms_refused_total {}\n\
+             # HELP delonix_node_new_rooms_refused_fair_share_total Salas novas recusadas por o inquilino já usar a sua parte justa do nó.\n\
+             # TYPE delonix_node_new_rooms_refused_fair_share_total counter\n\
+             delonix_node_new_rooms_refused_fair_share_total {}\n\
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
@@ -306,6 +313,7 @@ impl Metrics {
             self.seats_expired_total.load(Relaxed),
             self.seats_reclaimed_redis_total.load(Relaxed),
             self.node_new_rooms_refused_total.load(Relaxed),
+            self.node_new_rooms_refused_fair_share_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
             g(self.ws_queue_high_water.load(Relaxed)),
             self.ws_queue_dropped_total.load(Relaxed),
