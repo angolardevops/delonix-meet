@@ -74,6 +74,9 @@ pub struct Metrics {
     /// os dois diz se a janela está bem dimensionada: muitos a expirar e ou a
     /// janela é curta, ou as pessoas estão mesmo a sair.
     pub seats_expired_total: AtomicU64,
+    /// Lugares reclamados a partir da cópia no Redis (o pod que os guardava
+    /// morreu ou a sala mudou de pod). Dentro de `seats_reclaimed_total`.
+    pub seats_reclaimed_redis_total: AtomicU64,
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
@@ -213,6 +216,9 @@ impl Metrics {
              # HELP delonix_seats_expired_total Lugares reservados que expiraram sem reclamação.\n\
              # TYPE delonix_seats_expired_total counter\n\
              delonix_seats_expired_total {}\n\
+             # HELP delonix_seats_reclaimed_redis_total Lugares reclamados a partir do Redis (pod anterior perdido).\n\
+             # TYPE delonix_seats_reclaimed_redis_total counter\n\
+             delonix_seats_reclaimed_redis_total {}\n\
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
@@ -291,6 +297,7 @@ impl Metrics {
             self.sfu_recordings_orphaned_total.load(Relaxed),
             self.seats_reclaimed_total.load(Relaxed),
             self.seats_expired_total.load(Relaxed),
+            self.seats_reclaimed_redis_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
             g(self.ws_queue_high_water.load(Relaxed)),
             self.ws_queue_dropped_total.load(Relaxed),

@@ -1,4 +1,4 @@
-use crate::signaling::{PollState, QaState, WbStrokeData};
+use crate::signaling::{PollState, QaState, Role, WbStrokeData};
 use redis::AsyncCommands;
 use uuid::Uuid;
 
@@ -184,4 +184,95 @@ pub async fn qa_answered(
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Lugar reservado (R91) copiado para fora do pod.
+//
+// O lugar que `SignalingHub::reclaim` devolve vive na memória do pod. Se o pod
+// morrer (OOM, queda do nó), o segredo que o cliente guardou deixa de bater em
+// qualquer coisa e um convidado admitido volta à sala de espera — o sintoma que
+// o R91 corrigiu para o F5. Esta cópia permite que OUTRO pod o reconheça.
+//
+// Só se guarda o que o lugar herda (identidade e papel), nunca media. A chave
+// leva o SHA-256 do segredo, não o segredo: quem lê o Redis não o consegue
+// usar. O registo é de uma só utilização (`GETDEL`).
+//
+// Limite conhecido: o uso único vale entre os pods que consultam o Redis. Um pod
+// que continua VIVO e ainda guarda o lugar na memória (janela de graça de 45 s)
+// honra o segredo mesmo depois de outro pod o ter gasto. Quem usa o segredo duas
+// vezes nessa janela fica com o lugar em dois pods; o do pod antigo expira sozinho.
+// ---------------------------------------------------------------------------
+
+/// O que um lugar herda ao ser reclamado (igual a `signaling::ReclaimedSeat`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SeatRecord {
+    pub peer_id: Uuid,
+    pub username: String,
+    pub user_id: Uuid,
+    pub is_host: bool,
+    pub can_admit: bool,
+    pub role: Role,
+    pub is_guest: bool,
+}
+
+/// Quanto tempo um registo sobrevive sem ser apagado: o tecto de uma sessão. O
+/// registo é gravado à entrada e não se sabe quando o pod morre, por isso o
+/// prazo não pode ser a janela de graça (45 s) — acabaria antes de ser preciso.
+/// Quem sai, ou cujo lugar expira, apaga-o (`seat_drop`); isto só limpa o que
+/// ficou para trás de um pod que morreu.
+pub const SEAT_TTL_SECS: u64 = 12 * 3600;
+
+fn seat_key(room_id: Uuid, secret: &str) -> String {
+    format!(
+        "room:{room_id}:seat:{}",
+        delonix_meet_core::crypto::sha256_hex(secret)
+    )
+}
+
+pub async fn seat_put(
+    mut c: redis::aio::ConnectionManager,
+    room_id: Uuid,
+    secret: &str,
+    rec: &SeatRecord,
+) {
+    let Ok(json) = serde_json::to_string(rec) else {
+        return;
+    };
+    let r: redis::RedisResult<()> = c
+        .set_ex(seat_key(room_id, secret), json, SEAT_TTL_SECS)
+        .await;
+    if let Err(e) = r {
+        tracing::warn!(%room_id, error = %e, "lugar não copiado para o Redis");
+    }
+}
+
+/// Lê SEM consumir: quem decide se o lugar pode ser reclamado precisa de ver de
+/// quem é antes de o gastar.
+pub async fn seat_peek(
+    mut c: redis::aio::ConnectionManager,
+    room_id: Uuid,
+    secret: &str,
+) -> Option<SeatRecord> {
+    let raw: Option<String> = c.get(seat_key(room_id, secret)).await.unwrap_or(None);
+    serde_json::from_str(&raw?).ok()
+}
+
+/// Consome o registo (`GETDEL`): dois pods a reclamar o mesmo segredo ao mesmo
+/// tempo não ficam ambos com o lugar.
+pub async fn seat_take(
+    mut c: redis::aio::ConnectionManager,
+    room_id: Uuid,
+    secret: &str,
+) -> Option<SeatRecord> {
+    let raw: Option<String> = redis::cmd("GETDEL")
+        .arg(seat_key(room_id, secret))
+        .query_async(&mut c)
+        .await
+        .unwrap_or(None);
+    serde_json::from_str(&raw?).ok()
+}
+
+pub async fn seat_drop(mut c: redis::aio::ConnectionManager, room_id: Uuid, secret: &str) {
+    let _: redis::RedisResult<()> = c.del(seat_key(room_id, secret)).await;
 }

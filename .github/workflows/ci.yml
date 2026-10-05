@@ -58,6 +58,14 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U delonix -d delonix_meet"
           --health-interval 5s --health-timeout 3s --health-retries 20
+      # Só para `server/tests/seat_redis.rs` (o lugar reservado partilhado entre
+      # pods). Os outros testes não usam Redis: `TEST_REDIS_URL` é lida só ali.
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -86,6 +94,7 @@ jobs:
           # migra a sua própria base neste servidor. Sem a variável falham —
           # não passam a verde por não terem corrido.
           DATABASE_URL: postgres://delonix:delonix_dev@localhost:5435/delonix_meet
+          TEST_REDIS_URL: redis://localhost:6379
         # --test-threads=4: cada binário de testes partilha uma pool de ligações;
         # sem tecto, os testes esperam ligações e falham por PoolTimedOut num
         # runner de 2 vCPU, não por o produto estar partido.
