@@ -144,8 +144,11 @@ A regra do servidor tem portão no CI (`server/tests/central_entra_na_sala.rs`, 
 casos contra Postgres real), e a ordem das três garantias do cabeçalho tem um portão
 estático (`scripts/check-bordo-central.sh`, com quatro controlos negativos corridos).
 
-**Não medido:** um browser na sala — quem ouve a central é outro telefone, pela mesma
-ponte, e a media entre a ponte e um participante WebRTC é da R221/R222; o chart Helm
+**Com um browser na sala** (2026-10-05, modo `browser` da mesma réplica, R293): um Chromium
+com a pilha real do cliente e a central autenticada — a central ouve o tom do browser, e o
+browser descodifica o tom da central.
+
+**Não medido:** o chart Helm
 (`voice.centrais`), que só foi lido; (o `compose.yaml` e o cluster local mediram-se
 depois, com o PBX de laboratório como central — R280); o bordo atrás de NAT; uma central que não seja FreePBX.
 
