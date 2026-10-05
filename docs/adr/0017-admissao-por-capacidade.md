@@ -17,20 +17,36 @@ graciosa: o nó continuou a aceitar salas novas até colapsar.
 
 ## Decisão
 
-Com `NODE_PEER_CAPACITY` declarada, o `/ws` recusa com **503** as salas que **ainda não
-existem no nó** quando a ocupação chega a **85%** da capacidade (`NEW_ROOM_LOAD_PERCENT`;
-regra pura em `domain::operations::media_node::accepts_new_rooms`).
+Com `NODE_PEER_CAPACITY` declarada, o `/ws` decide as salas que **ainda não existem no nó**
+(`domain::operations::media_node::admit_new_room`), **por inquilino**:
+
+- **Abaixo de 85% da capacidade** (`NEW_ROOM_LOAD_PERCENT`): aceita.
+- **Na zona de margem (85% até à capacidade): recusa só o inquilino que já usa a sua parte
+  justa**, `capacidade ÷ inquilinos activos`, com **503**. Um inquilino sozinho no nó tem a
+  capacidade toda e não é penalizado; com dois, cada um tem metade, e quem tem menos continua a
+  poder abrir salas.
+- **Na capacidade**: recusa toda a gente.
+
+**O inquilino** de uma sala é a organização do dono (a primeira, de forma estável, se o dono
+pertencer a várias) ou o próprio dono se não tiver organização (um utilizador individual). Deriva-se
+**no servidor** de `rooms.owner_id`, nunca do pedido, e não passa pelos claims do token. Marca-se na
+sala depois do `join`. Se a base não responder, a justiça falha **aberta** (a sala entra como
+inquilino desconhecido); a recusa por capacidade total continua a valer.
+
+Porquê por inquilino (achado de uma revisão de isolamento, 2026-10-05): a primeira versão contava
+os participantes de **todos** os inquilinos, e uma conta com muitas ligações levava o nó aos 85% e
+fazia com que as salas novas das outras organizações fossem recusadas. O Meet é um SaaS: um
+inquilino não pode degradar a disponibilidade dos outros.
 
 - **Só salas novas.** Uma sala que já está no nó admite sempre: não pode mudar de nó
-  (ADR-0001) e expulsá-la dava o mesmo colapso que isto evita. É exactamente o molde da
-  recusa por *drain*, que já distingue «sala nova» de «sala existente».
-- **Os 15% que sobram** são a margem para as salas existentes continuarem a crescer.
-- **Sem capacidade declarada, nada se recusa.** Não se inventa um limite que o operador não
-  deu (a mesma regra de `load_ratio`).
-- **Observável:** `delonix_node_new_rooms_refused_total` e `accepting_new_rooms` no inventário
-  do operador. Um contador a subir é o sinal para acrescentar nós.
-- **A ocupação conta os lugares em graça** (R91, 45 s): quem acabou de cair ainda ocupa
-  capacidade. É conservador de propósito.
+  (ADR-0001) e expulsá-la dava o mesmo colapso que isto evita. É o molde da recusa por *drain*.
+- **Sem capacidade declarada, nada se recusa.** Não se inventa um limite que o operador não deu.
+- **Observável:** `delonix_node_new_rooms_refused_total` (todas) e
+  `delonix_node_new_rooms_refused_fair_share_total` (as recusadas por parte justa; a diferença são as
+  recusadas por o nó estar na capacidade). `accepting_new_rooms` no inventário do operador diz se o
+  nó aceita salas novas de **qualquer** inquilino (abaixo do limite mole).
+- **A ocupação conta os lugares em graça** (R91, 45 s): conservador de propósito.
+- **A mensagem de recusa não diz quanto ocupam os outros inquilinos.**
 
 ## O que esta decisão NÃO resolve
 
@@ -55,6 +71,15 @@ Pré-requisitos antes de o fazer, e porque não entrou agora:
    consegue provar no processo é a decisão do servidor, não o encaminhamento.
 3. Corrida: dois pods a recusar a mesma sala ao mesmo tempo têm de acabar na mesma época.
 
+### O que a justiça por inquilino também não resolve
+
+**Não impede que as salas que um inquilino já tem cresçam até à capacidade**, e quando o nó lá
+chega ninguém abre salas novas. Isso pede um tecto por inquilino (uma quota de participantes
+concorrentes por organização em `org_quotas`, e um tecto de ligações `/ws` por conta, que hoje não
+existem): é uma decisão de produto (números por plano, por nó ou global) e fica por fazer. A
+justiça só garante que, **enquanto o nó está na zona de margem**, um inquilino não fecha o nó às
+salas novas dos outros.
+
 ## Alternativas consideradas
 
 - **Recusar também participantes de salas existentes acima de um tecto duro.** Rejeitada
@@ -66,12 +91,18 @@ Pré-requisitos antes de o fazer, e porque não entrou agora:
 
 ## Prova e limites
 
-- 4 testes de domínio (limites com capacidade 10 e 200, sem capacidade, capacidade 0,
-  contagem negativa) e 2 de integração por `/ws` a sério (capacidade 4): sala nova recusada
-  com 503 e contada; sala existente continua a admitir; com o nó vazio a sala nova entra;
-  sem capacidade nada é recusado. **Controlo negativo:** com a recusa desligada falha
-  `a_full_node_refuses_new_rooms…` e o outro teste passa.
+- **Domínio** (10 testes): limites com capacidade 100, 10, 7 e 200, parte justa exacta
+  (49 passa, 50 não), inquilino sozinho, capacidade total, sem capacidade.
+- **Integração por `/ws` a sério** (4 testes), incluindo **duas organizações**: capacidade 7, a
+  organização A usa 5 e a B usa 1 (nó a 6, na margem): a sala nova da A é recusada por parte justa
+  e a da B é aceite; uma sala existente continua a admitir. E uma organização sozinha só é recusada
+  na capacidade total.
+- **Controlos negativos:** (1) com a zona de margem a recusar toda a gente (a regra global) falham
+  os dois testes de margem; (2) com todas as salas a contar como o mesmo inquilino falha o teste das
+  duas organizações. As mutações foram revertidas.
 - **Os 85% são uma escolha, não uma medida.** O teste de 17/09 mediu o colapso mas não onde
   começa a degradação.
-- **Não está provado que isto evita o colapso medido.** Isso pede o `loadgen` no mesmo nó, com
-  e sem a regra, num host livre (as corridas em que se tentou tinham a carga a 56–65).
+- **Não está provado que isto evita o colapso medido.** Isso pede o `loadgen` no mesmo nó, com e
+  sem a regra, num host livre.
+- **Não testado:** o utilizador individual (sem organização) como inquilino, e um dono em várias
+  organizações; está no código mas não num teste.
