@@ -1019,6 +1019,15 @@ async fn usage_in_usd_needs_an_exchange_rate(db: sqlx::PgPool) {
 //  ESL falso: estado, reiniciar, teste rápido
 // ============================================================
 
+/// Espera (até 8 s) que um contador chegue a `n`; devolve o valor final.
+async fn wait_count(f: &dyn Fn() -> usize, n: usize) -> usize {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while f() < n && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    f()
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
     let esl = spawn_esl("ClueCon-teste", healthy_fs()).await;
@@ -1081,7 +1090,74 @@ async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
             "{log:?}"
         );
         assert!(log.iter().any(|c| c == "sofia profile external rescan"));
+        // Entre o `killgw` e o `rescan` espera-se que o gateway antigo saia do
+        // perfil, olhando às DUAS listas (`gwlist` só traz os que estão UP).
+        let pos = |needle: &str| log.iter().position(|c| c == needle);
+        let kill = pos(&format!("sofia profile external killgw dlx-{uni}")).unwrap();
+        let up = pos("sofia profile external gwlist").expect("não olhou à lista dos UP");
+        let down = pos("sofia profile external gwlist down").expect("não olhou à dos DOWN");
+        let rescan = pos("sofia profile external rescan").unwrap();
+        assert!(kill < up && up < down && down < rescan, "{log:?}");
     }
+
+    // Um tronco alterado ou apagado chega ao FreeSWITCH sem ninguém reiniciar
+    // nada (R300): o servidor manda tirar o gateway e reler. Mudar só o nome
+    // não deita o registo abaixo.
+    let kills = |gw: String| {
+        let log = esl.log.clone();
+        move || {
+            log.lock()
+                .unwrap()
+                .iter()
+                .filter(|c| **c == format!("sofia profile external killgw {gw}"))
+                .count()
+        }
+    };
+    let uni_kills = kills(format!("dlx-{uni}"));
+    let before = wait_count(&uni_kills, 0).await;
+    let (st, _) = app
+        .patch(
+            &t(a.org(), &format!("/trunks/{uni}")),
+            Some(&a.token),
+            json!({"name": "Unitel (principal)"}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert_eq!(uni_kills(), before, "mudar o nome mexeu no registo");
+    let (st, _) = app
+        .patch(
+            &t(a.org(), &format!("/trunks/{uni}")),
+            Some(&a.token),
+            json!({"password": "senha-nova-da-operadora"}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    assert_eq!(
+        wait_count(&uni_kills, before + 1).await,
+        before + 1,
+        "mudar a password não chegou ao FreeSWITCH"
+    );
+    let mut extra = africell();
+    extra["name"] = json!("A apagar");
+    extra["short_code"] = json!("APG");
+    let apagar = create_trunk(&app, &a.token, a.org(), extra).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let apg_kills = kills(format!("dlx-{apagar}"));
+    // A criação já avisa (o gateway novo aparece sem esperar pelo ciclo).
+    let created = wait_count(&apg_kills, 1).await;
+    assert_eq!(created, 1, "criar o tronco não avisou o FreeSWITCH");
+    let (st, _) = app
+        .delete(&t(a.org(), &format!("/trunks/{apagar}")), Some(&a.token))
+        .await;
+    assert_eq!(st, 204);
+    assert_eq!(
+        wait_count(&apg_kills, 2).await,
+        2,
+        "apagar o tronco não chegou ao FreeSWITCH"
+    );
 
     // Teste rápido: resultado real (latência medida no ESL).
     let (st, call) = app
