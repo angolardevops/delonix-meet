@@ -1598,6 +1598,388 @@ async fn churn_de_subscricoes_nao_deixa_nada_vivo() {
 }
 
 // ===================================================================
+//  Gravação arrancada a meio da chamada (R299)
+// ===================================================================
+//
+// Quem carrega em «gravar» com a chamada a decorrer liga um writer a um vídeo
+// que já vai em quadros delta. A pista só serve se abrir num keyframe, e o
+// codificador só manda um quando lho pedem: a gravação é mais um consumidor de
+// vídeo, e tem de o pedir. Não pedia — três pistas em três não descodificavam,
+// a grelha de dois publicadores acabava em `failed` e a de um ficava «pronta»
+// sem imagem.
+//
+// O CI não tem ffmpeg, por isso estes testes olham para a PISTA: o que o
+// gravador escreveu tem de começar num keyframe. A gravação a sério, com o VP8
+// do Chromium e a composição, mede-se com `web/e2e/gravacao-a-meio.mjs`.
+
+/// Uma câmara VP8 que se porta como o codificador de um browser: abre com um
+/// keyframe, segue em quadros delta, e só volta a mandar um keyframe quando
+/// recebe um PLI.
+///
+/// Os quadros não são descodificáveis; têm a forma que o gravador lê. O delta
+/// não cabe num pacote e é zeros a seguir ao cabeçalho: as continuações começam
+/// por um byte PAR, que a guarda antiga do `Vp8IvfWriter` lia como «keyframe».
+struct CamaraVp8 {
+    plis: Arc<std::sync::atomic::AtomicUsize>,
+    keyframes: Arc<std::sync::atomic::AtomicUsize>,
+    quadros: Arc<std::sync::atomic::AtomicUsize>,
+    /// `false` = o codificador deixou de produzir quadros (um ecrã parado).
+    /// Um PLI continua a ter resposta: é o que um browser faz.
+    a_emitir: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CamaraVp8 {
+    const LARGURA: u16 = 640;
+    const ALTURA: u16 = 360;
+
+    async fn publicar(cliente: &TestClient) -> Self {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+        use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+
+        let id = format!("{}-video", cliente.id);
+        let track = cliente.adicionar_track(VP8, &id).await;
+        cliente.offer().await;
+        let mut sender = None;
+        for s in cliente.pc.get_senders().await {
+            if s.track().await.is_some_and(|t| t.id() == id) {
+                sender = Some(s);
+            }
+        }
+        let sender = sender.expect("o sender da câmara");
+
+        let camara = CamaraVp8 {
+            plis: Arc::new(AtomicUsize::new(0)),
+            keyframes: Arc::new(AtomicUsize::new(0)),
+            quadros: Arc::new(AtomicUsize::new(0)),
+            a_emitir: Arc::new(AtomicBool::new(true)),
+        };
+        // O primeiro quadro de um codificador é sempre um keyframe.
+        let pedido = Arc::new(AtomicBool::new(true));
+
+        {
+            let (plis, pedido) = (camara.plis.clone(), pedido.clone());
+            tokio::spawn(async move {
+                while let Ok((pacotes, _)) = sender.read_rtcp().await {
+                    for p in pacotes {
+                        if p.as_any().downcast_ref::<PictureLossIndication>().is_some() {
+                            plis.fetch_add(1, SeqCst);
+                            pedido.store(true, SeqCst);
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let (keyframes, quadros, a_emitir) = (
+                camara.keyframes.clone(),
+                camara.quadros.clone(),
+                camara.a_emitir.clone(),
+            );
+            tokio::spawn(async move {
+                loop {
+                    let chave = pedido.swap(false, SeqCst);
+                    if chave || a_emitir.load(SeqCst) {
+                        let data = if chave {
+                            let [l0, l1] = Self::LARGURA.to_le_bytes();
+                            let [a0, a1] = Self::ALTURA.to_le_bytes();
+                            let mut q = vec![0x10, 0x00, 0x00, 0x9d, 0x01, 0x2a, l0, l1, a0, a1];
+                            q.resize(400, 0x00);
+                            q
+                        } else {
+                            let mut q = vec![0x11];
+                            q.resize(3000, 0x00);
+                            q
+                        };
+                        let sample = Sample {
+                            data: data.into(),
+                            duration: Duration::from_millis(33),
+                            ..Default::default()
+                        };
+                        if track.write_sample(&sample).await.is_err() {
+                            break;
+                        }
+                        if chave {
+                            keyframes.fetch_add(1, SeqCst);
+                        }
+                        quadros.fetch_add(1, SeqCst);
+                    }
+                    tokio::time::sleep(Duration::from_millis(33)).await;
+                }
+            });
+        }
+        camara
+    }
+
+    fn keyframes(&self) -> usize {
+        self.keyframes.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn quadros(&self) -> usize {
+        self.quadros.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn plis(&self) -> usize {
+        self.plis.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Espera que a câmara produza mais `n` quadros.
+    async fn mais_quadros(&self, n: usize, label: &str) {
+        let alvo = self.quadros() + n;
+        eventually(label, prazo(30), || {
+            let q = self.quadros.clone();
+            async move { q.load(std::sync::atomic::Ordering::SeqCst) >= alvo }
+        })
+        .await;
+    }
+}
+
+/// Pára a gravação e confirma que a pista de vídeo ABRE num keyframe: o
+/// primeiro quadro tem o bit de keyframe e o código de início, e o cabeçalho
+/// IVF leva as dimensões dele em vez das nominais (1280×720), que eram a marca
+/// de uma pista que nunca viu um keyframe.
+async fn parar_e_verificar_a_pista(sfu: &Arc<SfuState>, room: Uuid, dir: &std::path::Path) {
+    let sessao = sfu
+        .stop_recording(room)
+        .await
+        .expect("a gravação estava a decorrer");
+    let pista = sessao
+        .tracks
+        .iter()
+        .find(|t| t.kind == "video")
+        .expect("a gravação tem uma pista de vídeo");
+    let b = std::fs::read(&pista.path).expect("a pista IVF");
+    let mut quadros: Vec<&[u8]> = Vec::new();
+    let mut i = 32;
+    while i + 12 <= b.len() {
+        let n = u32::from_le_bytes(b[i..i + 4].try_into().unwrap()) as usize;
+        quadros.push(&b[i + 12..i + 12 + n]);
+        i += 12 + n;
+    }
+    assert!(
+        quadros.len() >= 10,
+        "a pista tem de ter o keyframe e os quadros que vieram depois dele: {} quadros",
+        quadros.len()
+    );
+    let primeiro = quadros[0];
+    assert!(
+        primeiro.len() >= 10 && primeiro[0] & 0x01 == 0 && primeiro[3..6] == [0x9d, 0x01, 0x2a],
+        "o primeiro quadro da pista tem de ser um keyframe; começa por {:02x?} ({} bytes)",
+        &primeiro[..primeiro.len().min(10)],
+        primeiro.len()
+    );
+    assert!(
+        quadros[1..]
+            .iter()
+            .all(|q| q.len() == 3000 || q.len() == 400),
+        "depois dele, quadros inteiros — nenhum remontado a partir do meio"
+    );
+    let dims = (
+        u16::from_le_bytes([b[12], b[13]]),
+        u16::from_le_bytes([b[14], b[15]]),
+    );
+    assert_eq!(
+        dims,
+        (CamaraVp8::LARGURA, CamaraVp8::ALTURA),
+        "o cabeçalho IVF leva as dimensões do keyframe"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Aberta a pista, o SFU deixa de pedir keyframes: durante mais de duas vezes
+/// o intervalo mínimo entre PLI a câmara não recebe nenhum. Uma bandeira que
+/// nunca apagasse era um keyframe por segundo e por câmara gravada — o ticker
+/// que a R14 tirou.
+async fn os_pedidos_pararam(camara: &CamaraVp8) {
+    let antes = (camara.plis(), camara.keyframes());
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        (camara.plis(), camara.keyframes()),
+        antes,
+        "com a pista aberta, a câmara não pode continuar a receber pedidos de keyframe (PLI, keyframes)"
+    );
+}
+
+/// A gravação arranca com a câmara a meio do fluxo, e LOGO A SEGUIR a um
+/// keyframe pedido por outro (um participante que entrou): o pedido que o
+/// `start_recording` faz cai no intervalo mínimo entre PLI e não sai. Sem
+/// repetição, a pista ficava à espera de um keyframe que ninguém voltava a
+/// pedir — é a bomba de RTP que insiste até ele chegar.
+///
+/// O pedido só é travado se o arranque correr a menos de um segundo do PLI
+/// anterior, e isso depende da máquina. Por isso o teste MEDE se foi (o
+/// contador de pedidos do SFU não mexe durante o `start_recording`) e, se não
+/// foi, repete o cenário com outro participante a entrar: passar sem nunca ter
+/// exercitado a repetição não provava nada sobre ela.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gravacao_arrancada_a_meio_abre_a_pista_num_keyframe() {
+    use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+    let (sfu, metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let a = TestClient::join(&sfu, room).await;
+    let camara = CamaraVp8::publicar(&a).await;
+    eventually_com_diagnostico(
+        "o SFU recebe a câmara de A",
+        prazo(30),
+        || {
+            let m = metrics.clone();
+            async move { m.sfu_publications_total.load(Relaxed) >= 1 }
+        },
+        || format!("A[{}]", a.retrato()),
+    )
+    .await;
+    camara
+        .mais_quadros(10, "a câmara de A segue em quadros delta")
+        .await;
+    assert_eq!(
+        camara.keyframes(),
+        1,
+        "sem subscritores ninguém pediu keyframe: só o de abertura"
+    );
+
+    let mut outros = Vec::new();
+    let mut travado = false;
+    for tentativa in 1..=5 {
+        // Alguém entra e é subscrito à câmara de A: o SFU pede um keyframe por ele.
+        let keyframes_antes = camara.keyframes();
+        let b = TestClient::join(&sfu, room).await;
+        b.publish(OPUS, &format!("b{tentativa}-audio")).await;
+        eventually_com_diagnostico(
+            "a entrada de outro participante fez a câmara de A mandar um keyframe",
+            prazo(30),
+            || {
+                let k = camara.keyframes.clone();
+                async move { k.load(SeqCst) > keyframes_antes }
+            },
+            || {
+                format!(
+                    "A[{}] · B[{}] · PLI={}",
+                    a.retrato(),
+                    b.retrato(),
+                    camara.plis()
+                )
+            },
+        )
+        .await;
+        outros.push(b);
+        // Esse keyframe já passou: quando a gravação arrancar, só há deltas.
+        camara
+            .mais_quadros(4, "a câmara voltou aos quadros delta")
+            .await;
+
+        let dir = std::env::temp_dir().join(format!("dlx-rec-e2e-{}", Uuid::new_v4()));
+        let keyframes_antes = camara.keyframes();
+        let pedidos_antes = metrics.sfu_keyframes_requested_total.load(Relaxed);
+        assert!(
+            sfu.start_recording(room, Uuid::new_v4(), "anfitrião", None, &dir)
+                .await,
+            "a gravação arranca"
+        );
+        let pedido_travado = metrics.sfu_keyframes_requested_total.load(Relaxed) == pedidos_antes;
+        eventually_com_diagnostico(
+            "a gravação pediu um keyframe à câmara de A e ela mandou-o",
+            prazo(30),
+            || {
+                let k = camara.keyframes.clone();
+                async move { k.load(SeqCst) > keyframes_antes }
+            },
+            || {
+                format!(
+                    "A[{}] · pedido do arranque travado={pedido_travado} · PLI recebidos={} · keyframes={} · pedidos do SFU={}",
+                    a.retrato(),
+                    camara.plis(),
+                    camara.keyframes(),
+                    metrics.sfu_keyframes_requested_total.load(Relaxed),
+                )
+            },
+        )
+        .await;
+        camara
+            .mais_quadros(45, "a chamada continua depois do keyframe")
+            .await;
+        os_pedidos_pararam(&camara).await;
+        parar_e_verificar_a_pista(&sfu, room, &dir).await;
+        if pedido_travado {
+            travado = true;
+            break;
+        }
+    }
+    assert!(
+        travado,
+        "em cinco tentativas o pedido do arranque nunca caiu no intervalo mínimo entre PLI: \
+         a repetição na bomba de RTP não foi exercitada (máquina demasiado lenta para este cenário?)"
+    );
+}
+
+/// O publicador não está a mandar quadros quando a gravação arranca (um ecrã
+/// partilhado e parado): não há pacote nenhum a passar na bomba de RTP que
+/// faça alguém lembrar-se do keyframe. Tem de ser o `start_recording` a
+/// pedi-lo, no momento em que liga o writer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gravacao_arrancada_com_o_video_parado_pede_o_keyframe_ao_ligar_o_writer() {
+    use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+    let (sfu, metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let a = TestClient::join(&sfu, room).await;
+    let camara = CamaraVp8::publicar(&a).await;
+    eventually_com_diagnostico(
+        "o SFU recebe a câmara de A",
+        prazo(30),
+        || {
+            let m = metrics.clone();
+            async move { m.sfu_publications_total.load(Relaxed) >= 1 }
+        },
+        || format!("A[{}]", a.retrato()),
+    )
+    .await;
+    camara
+        .mais_quadros(10, "a câmara de A segue em quadros delta")
+        .await;
+
+    // O codificador cala-se, e o que ia a caminho acaba de chegar.
+    camara.a_emitir.store(false, SeqCst);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(camara.plis(), 0, "até aqui ninguém pediu keyframe");
+
+    let dir = std::env::temp_dir().join(format!("dlx-rec-e2e-{}", Uuid::new_v4()));
+    let pedidos_antes = metrics.sfu_keyframes_requested_total.load(Relaxed);
+    assert!(
+        sfu.start_recording(room, Uuid::new_v4(), "anfitrião", None, &dir)
+            .await,
+        "a gravação arranca"
+    );
+    assert_eq!(
+        metrics.sfu_keyframes_requested_total.load(Relaxed),
+        pedidos_antes + 1,
+        "o pedido sai do próprio start_recording, sem esperar por pacote nenhum"
+    );
+    eventually_com_diagnostico(
+        "a câmara parada recebe o pedido de keyframe da gravação e responde",
+        prazo(30),
+        || {
+            let k = camara.keyframes.clone();
+            async move { k.load(SeqCst) >= 2 }
+        },
+        || {
+            format!(
+                "A[{}] · PLI recebidos={} · pedidos do SFU={}",
+                a.retrato(),
+                camara.plis(),
+                metrics.sfu_keyframes_requested_total.load(Relaxed),
+            )
+        },
+    )
+    .await;
+    camara.a_emitir.store(true, SeqCst);
+    camara
+        .mais_quadros(45, "a câmara volta a produzir quadros")
+        .await;
+    os_pedidos_pararam(&camara).await;
+    parar_e_verificar_a_pista(&sfu, room, &dir).await;
+}
+
+// ===================================================================
 //  Ponte telefone↔sala (ADR-0010, R221)
 // ===================================================================
 

@@ -10,6 +10,7 @@ import { AudioSink } from '../room/AudioSink'
 import { ChatPanel } from '../room/ChatPanel'
 import { ControlBar } from '../room/ControlBar'
 import { DuplicateDeviceDialog, DuplicateDeviceResult } from '../room/DuplicateDeviceDialog'
+import { DialOutDialog } from '../room/DialOutDialog'
 import { InviteDialog } from '../room/InviteDialog'
 import { MulticamPanel } from '../room/MulticamPanel'
 import { Notices } from '../room/Notices'
@@ -29,6 +30,7 @@ import { useBreakouts } from '../room/useBreakouts'
 import { entradaDirecta, useCallSession } from '../room/useCallSession'
 import { useChat } from '../room/useChat'
 import { useDuplicateDevice } from '../room/useDuplicateDevice'
+import { useDialOut } from '../room/useDialOut'
 import { useInvite } from '../room/useInvite'
 import { useLayout } from '../room/useLayout'
 import { destinosNoAr, useLive } from '../room/useLive'
@@ -97,6 +99,7 @@ export default function Room({
   const breakouts = useBreakouts(core, onSwitch)
   const remote = useRemoteControl(core)
   const invite = useInvite(code)
+  const dialOut = useDialOut(code)
   const multicam = useMulticam(core)
   const live = useLive(core)
   const enhancements = useStageEnhancements(core, media, layout, participants.conditions)
@@ -558,6 +561,7 @@ export default function Room({
                   recordings={recording.recordings}
                   onDownload={recording.download}
                   onInvite={convidado ? undefined : invite.show}
+                  onDialOut={convidado ? undefined : dialOut.show}
                   onPrivateMessage={(peer) => {
                     chat.setTarget({ peerId: peer.peerId, username: peer.username })
                     chrome.setPanel('chat')
@@ -582,6 +586,7 @@ export default function Room({
 
         {invite.open && <InviteDialog invite={invite} />}
         <DuplicateDeviceDialog dup={dispositivos} />
+        {dialOut.open && <DialOutDialog ctl={dialOut} />}
       </div>
     )
   }
