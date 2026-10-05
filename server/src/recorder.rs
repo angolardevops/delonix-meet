@@ -7,7 +7,9 @@
 //!
 //! O áudio passa SEMPRE por `AUDIO_GAP_FILL` antes de mais nada: uma pista
 //! gravada tem buracos de PTS onde o participante se calou (DTX) ou onde se
-//! perdeu um pacote, e sem os encher a fala seguinte recua (R295).
+//! perdeu um pacote, e sem os encher a fala seguinte recua (R295). O que esse
+//! filtro não consegue — o primeiro pacote depois de um buraco, e os buracos
+//! de mais de 10 s — escreve-o o gravador na própria pista (`OpusGapFill`).
 //!
 //! A gravação entra na biblioteca LOGO ao parar, em `processing`, com o
 //! progresso da composição lido do `-progress` do ffmpeg; passa a `ready`
@@ -1666,16 +1668,15 @@ async fn finalize_inner(
 /// omissão): um pacote perdido isolado desloca 20 ms e só é reposto quando a
 /// soma passa disso. `first_pts=0` fixa o início da pista no zero dela.
 ///
-/// O que NÃO enche: mais de 10 s sem um único pacote. O ffmpeg trata esse
-/// salto como descontinuidade (`-dts_delta_threshold`, 10 s) e tira-o antes de
-/// o filtro o ver. Subir o limiar não é saída: o `aresample` guarda o silêncio
-/// inteiro em memória antes de o entregar (medido: 440 MB para 6 min, 3,2 GB
-/// para 1 h). Esse caso só se fecha a escrever o silêncio na própria pista.
-///
-/// E o que deixa torto: o PRIMEIRO pacote depois de um buraco fica antes do
-/// silêncio, não depois. O demuxer OGG do ffmpeg dá a cada pacote o grânulo
-/// da página anterior, e o filtro enche a seguir a ele: 20 ms do início da
-/// fala tocam colados ao último pacote que chegou (até 380 ms antes, com DTX).
+/// O que NÃO enche sozinho: mais de 10 s sem um único pacote. O ffmpeg trata
+/// esse salto como descontinuidade (`-dts_delta_threshold`, 10 s) e tira-o
+/// antes de o filtro o ver. Subir o limiar não é saída: o `aresample` guarda o
+/// silêncio inteiro em memória antes de o entregar (medido: 440 MB para 6 min,
+/// 3,2 GB para 1 h). E o que deixava torto: o PRIMEIRO pacote depois de um
+/// buraco, que o demuxer OGG cola ao último que chegou. As duas coisas
+/// fecham-se ao gravar, com silêncio escrito na pista — ver `OpusGapFill`. O
+/// filtro continua a ser preciso: entre esses pacotes de silêncio a pista
+/// continua com buracos, e em `-c:a copy` iam para o contentor.
 const AUDIO_GAP_FILL: &str = "aresample=async=1:first_pts=0";
 
 /// O Opus de qualquer áudio que saia do ffmpeg recodificado.
@@ -3523,7 +3524,7 @@ pub(crate) mod tests {
     /// fora do sítio; a média de uma janela larga esconde-o.
     pub(crate) fn onde_ha_som(pcm: &[i16]) -> Vec<(usize, usize)> {
         let mut som: Vec<(usize, usize)> = Vec::new();
-        for (i, janela) in pcm.chunks_exact(240).enumerate() {
+        for (i, janela) in pcm.as_chunks::<240>().0.iter().enumerate() {
             let energia: f64 = janela
                 .iter()
                 .map(|s| (*s as f64 / 32768.0).powi(2))
