@@ -358,10 +358,14 @@ const OPUS_SILENCE_SAMPLES: u32 = 960;
 /// o silêncio que o `aresample` da composição chega a guardar de uma vez.
 const OPUS_GAP_MARK_EVERY: u32 = 5 * 48_000;
 
+/// O salto a partir do qual o ffmpeg tira o buraco em vez de o deixar ao
+/// filtro (`-dts_delta_threshold`, 10 s). Até aqui, o silêncio que o gravador
+/// escreve não muda quanto silêncio a composição tem — muda só onde fica.
+const OPUS_GAP_DISCONTINUITY: u32 = 2 * OPUS_GAP_MARK_EVERY;
+
 /// Quanto pode o relógio de uma pista andar à frente do tempo que passou sem
-/// um salto deixar de ser enchido. Cobre o atraso de rede do primeiro pacote
-/// e a deriva do relógio de quem envia; e não dá nada a quem queira esticar a
-/// gravação, porque até 10 s a composição já enchia o salto sozinha.
+/// um salto de mais de `OPUS_GAP_DISCONTINUITY` deixar de ser enchido. Cobre o
+/// atraso de rede do primeiro pacote e a deriva do relógio de quem envia.
 const OPUS_GAP_SLACK: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// As amostras (a 48 kHz) que um pacote Opus ocupa, lidas do TOC (RFC 6716
@@ -407,11 +411,13 @@ fn opus_packet_samples(payload: &[u8]) -> Option<u32> {
 /// **O tecto é o tempo que passou.** Um timestamp pode saltar sem ter havido
 /// silêncio: corrompido, de uma origem que recomeçou o relógio lá à frente, ou
 /// de quem queira esticar a gravação dos outros. Um silêncio de N segundos
-/// demora N segundos a chegar — por isso a pista não anda mais do que o tempo
-/// decorrido desde o seu primeiro pacote, mais `OPUS_GAP_SLACK`. O salto que
-/// passa disso não se enche (fica como sempre ficou: acima de 10 s o ffmpeg
-/// tira-o), é contado, e não conta como caminho andado: o silêncio que o
-/// gravador escreve numa pista nunca soma mais do que o tempo que ela durou.
+/// demora N segundos a chegar — por isso um salto de mais de
+/// `OPUS_GAP_DISCONTINUITY` só se enche se a pista, com ele, não andar mais do
+/// que o tempo decorrido desde o seu primeiro pacote, mais `OPUS_GAP_SLACK`.
+/// O salto que passa disso fica como sempre ficou (o ffmpeg tira-o), é
+/// contado, e não conta como caminho andado: os silêncios de mais de 10 s que
+/// o gravador escreve numa pista nunca somam mais do que o tempo que ela
+/// durou. Os saltos até 10 s enchem-se sempre: a composição já os enchia.
 #[derive(Default)]
 struct OpusGapFill(Option<OpusGapTrack>);
 
@@ -468,7 +474,7 @@ impl OpusGapFill {
             return OpusGap::None;
         }
         let passed = arrived.saturating_duration_since(track.anchored) + OPUS_GAP_SLACK;
-        if u128::from(walked) > passed.as_millis() * 48 {
+        if step > OPUS_GAP_DISCONTINUITY && u128::from(walked) > passed.as_millis() * 48 {
             return OpusGap::Refused(hole as u32);
         }
         track.walked = walked;
@@ -486,11 +492,12 @@ impl OpusGap {
             OpusGap::Fill { after, last } => (after, Some(last)),
             _ => (0, None),
         };
+        // Os de 5 em 5 s que caibam antes do último, contados à partida: o
+        // número de voltas não depende de nenhuma soma chegar ao fim.
         let room = last.map_or(0, |last| last.wrapping_sub(after));
-        (1u32..)
-            .map(|k| k.saturating_mul(OPUS_GAP_MARK_EVERY))
-            .take_while(move |off| off.saturating_add(OPUS_SILENCE_SAMPLES) <= room)
-            .map(move |off| after.wrapping_add(off))
+        let marks = room.saturating_sub(OPUS_SILENCE_SAMPLES) / OPUS_GAP_MARK_EVERY;
+        (1..=marks)
+            .map(move |k| after.wrapping_add(k * OPUS_GAP_MARK_EVERY))
             .chain(last)
     }
 }
@@ -722,7 +729,7 @@ impl RecWriter {
                         if unfilled.is_multiple_of(500) {
                             tracing::warn!(
                                 track = %thread_label,
-                                salto_s = samples / 48_000,
+                                salto_ms = samples / 48,
                                 por_encher = unfilled + 1,
                                 "gravação: o relógio do áudio saltou mais do que o tempo que passou — o salto não se enche de silêncio"
                             );
@@ -2586,7 +2593,7 @@ pub(crate) mod tests {
 
     /// `(tipo de cabeçalho, posição do grânulo)` de cada página do OGG.
     /// Tipo `2` = início do fluxo, `4` = fim do fluxo.
-    fn ogg_paginas(path: &std::path::Path) -> Vec<(u8, u64)> {
+    pub(crate) fn ogg_paginas(path: &std::path::Path) -> Vec<(u8, u64)> {
         let b = std::fs::read(path).expect("ficheiro de gravação");
         let mut paginas = Vec::new();
         let mut i = 0;
@@ -3038,11 +3045,35 @@ pub(crate) mod tests {
         assert_eq!(calado[1].1.len(), 72);
         let falso = planos(&[(0, 960, 0), (seis_min, 960, 20)]);
         assert_eq!(falso[1].0, OpusGap::Refused(seis_min - 960));
-        // A folga: até 10 s à frente do tempo que passou ainda se enche — e a
-        // composição já enchia esses sozinha.
-        let folga = planos(&[(0, 960, 0), (480_000, 960, 20), (480_000 + 9600, 960, 40)]);
-        assert_eq!(folga[1].1.len(), 2);
-        assert_eq!(folga[2].0, OpusGap::Refused(9600 - 960));
+        // A folga: 11 s de salto enchem-se se tiver passado 1,2 s, e não se
+        // tiverem passado 20 ms.
+        let folga = planos(&[(0, 960, 0), (528_000, 960, 1200)]);
+        assert_eq!(folga[1].1.len(), 3);
+        let sem_folga = planos(&[(0, 960, 0), (528_000, 960, 20)]);
+        assert_eq!(sem_folga[1].0, OpusGap::Refused(528_000 - 960));
+    }
+
+    #[test]
+    fn ate_10_s_o_salto_enche_se_sempre() {
+        // Até aos 10 s a composição já enchia o salto sozinha: o silêncio do
+        // gravador só muda onde fica o primeiro pacote, e o tecto não se
+        // aplica. Aqui a pista vai 20 s à frente do relógio (mil pacotes
+        // seguidos que chegam no mesmo instante — uma origem com o relógio
+        // adiantado chega lá em horas) e um buraco de DTX enche-se na mesma.
+        let mut pacotes: Vec<(u32, u32, u64)> = (0..1000u32).map(|i| (i * 960, 960, 0)).collect();
+        let ultimo = 999 * 960;
+        pacotes.push((ultimo + 19_200, 960, 400));
+        pacotes.push((ultimo + 19_200 + 480_000, 960, 10_400));
+        // Acima dos 10 s o tecto vale, e esta pista já o gastou.
+        pacotes.push((ultimo + 19_200 + 480_000 + 576_000, 960, 22_400));
+        let planos_todos = planos(&pacotes);
+        assert_eq!(planos_todos[1000].1, vec![ultimo + 19_200 - 960]);
+        assert_eq!(
+            planos_todos[1001].1.len(),
+            2,
+            "10 s certos: aos 5 s e antes"
+        );
+        assert_eq!(planos_todos[1002].0, OpusGap::Refused(576_000 - 960));
     }
 
     #[test]
