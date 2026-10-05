@@ -3118,7 +3118,7 @@ No CI: `tests/telephony.rs` — a decisão do servidor caso a caso (sai com a id
 - **Um timestamp muito à frente** (até 2^31) é aceite, estica a pista esse tempo e deixa os pacotes seguintes atrasados durante 1 s, até re-ancorar. Só o próprio publicador o faz a si mesmo; acima de 10 s, o ffmpeg 6.1.1 desconta o salto.
 - **Quem ficou sem áudio não se sabe pelo log.** O aviso leva o nome da pista (`03-audio`), sem sala nem publicador, e o «gravação DEGRADADA» do fecho só conta a fila cheia. Uma falha de decifra continua sem contador (já era assim).
 - **Em debug, uma pista cujo relógio avance mais de 2^32 amostras** do primeiro pacote ao último volta ao pânico do `OggWriter`. Em release dá certo.
-- **Um buraco de menos de 10 s numa pista é fechado pela mistura** (`adelay`/`amix`, sem `aresample=async`): medido pelo revisor com ficheiros sintéticos, já era assim, e é o que acontece a cada pacote descartado ou perdido — 20 ms de cada vez. Com DTX pode ser muito mais. Não é desta entrada; fica por confirmar com uma gravação real.
+- **Um buraco de menos de 10 s numa pista era fechado pela mistura** (`adelay`/`amix`, sem `aresample=async`): medido pelo revisor com ficheiros sintéticos, e era o que acontecia a cada pacote descartado ou perdido — 20 ms de cada vez. Com DTX era muito mais. **Confirmado com gravações reais e corrigido na R295**: a composição passou a encher esses buracos com silêncio.
 - A bomba do SFU renumera a sequência do áudio depois de gravar (`next_seq`): um pacote atrasado segue para quem ouve com sequência contígua e timestamp para trás. Não foi mexido nem medido.
 
 **Ficheiros.** `server/src/recorder.rs` (`OpusClock`, `RecSink::Audio`, `RecWriter::spawn`), `server/src/metrics.rs`.
