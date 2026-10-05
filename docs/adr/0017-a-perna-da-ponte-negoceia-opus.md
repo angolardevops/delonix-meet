@@ -63,11 +63,26 @@ sim.
    tem uma vírgula, e o `dialin_ivr.lua` passa a escapá-la: sem isso o
    FreeSWITCH partia a lista de variáveis, oferecia só Opus, e o G.711 de
    recurso não existia (apanhado na revisão, antes de qualquer chamada).
-5. **O misturador descodifica sempre a 16 kHz**, e é a ponte que desce a soma
+5. **A ponte não pede FEC e não anuncia a taxa a que captura.** A resposta SDP
+   leva `useinbandfec=0; stereo=0; sprop-stereo=0`, e mais nada. Medido contra
+   o FreeSWITCH 1.11.3 (libopus 1.3.1): com `useinbandfec=1` ele codificava para
+   a ponte em **banda média** (6 kHz) para o FEC caber — e o FEC não servia a
+   ninguém, porque o SFU renumera a sequência; com `sprop-maxcapturerate=16000`
+   abria o codec a 16 kHz nos dois sentidos, recodificando e limitando a 8 kHz
+   o que vinha do softphone.
+6. **O misturador não toca banda média.** O `opus-rs` (0.1.33 e 0.1.34)
+   descodifica mal o SILK de banda média a qualquer taxa de saída: contra a
+   libopus, um tom sai 8 dB abaixo e fala sai 15 dB acima, distorcida. Esses
+   pacotes ficam de fora da mistura (silêncio, e um contador no fecho da perna)
+   em vez de chegarem assim ao telefone. Para a sala passam: quem os toca é a
+   libopus do browser. A libopus só escolhe banda média quando lhe limitam a
+   banda, por isso o caso deixa de acontecer com o ponto 5 — a guarda fica para
+   quando acontecer por outra via.
+7. **O misturador descodifica sempre a 16 kHz**, e é a ponte que desce a soma
    para 8 kHz numa perna G.711, com um passa-baixo antes (FIR de 47 coeficientes,
    plano até 3,4 kHz, 48 dB ou mais abaixo a partir de 4,6 kHz; 1,4 ms de
    atraso). Um filtro por perna, sobre a soma, e não um por microfone.
-6. **No resto, o caminho G.711 fica como estava.** Um tronco ou uma prova que
+8. **No resto, o caminho G.711 fica como estava.** Um tronco ou uma prova que
    ofereça só PCMA/PCMU percorre o código que a R221 e a R222 mediram, com a
    mesma negociação, o mesmo `Ingress` e o mesmo nível.
 
@@ -135,6 +150,19 @@ Não há controlo de ganho nem supressão de ruído no caminho do telefone.
   `opus-rs` e descodificada pela libopus: nível igual (−19,6 dB), banda de
   5–7,5 kHz a −45,0 dB contra −44,5 dB do codificador da libopus à mesma taxa;
   0,2 ms de CPU por bloco de 20 ms.
+- **Contra o FreeSWITCH real** (laboratório compose, 2026-10-05, dois softphones
+  de linha de comandos — `scripts/softphone-prova.sh par` — em dois ramais,
+  na mesma sala, com SRTP obrigatório):
+  - a oferta do FreeSWITCH à ponte traz `opus/48000/2` e `PCMA`, por essa ordem
+    (`absolute_codec_string=OPUS\,PCMA` no log dele: a vírgula chega inteira), e
+    a ponte responde Opus;
+  - com `PHONE_BRIDGE_WIDEBAND=0` a perna volta a PCMA e cada softphone ouve o
+    tom do outro a 0,2504 e 0,2506 (enviado a 0,25) e o próprio a 0,001 — o
+    caminho G.711, com o filtro novo, é exacto;
+  - com a perna em Opus e a primeira resposta SDP (`useinbandfec=1`), o tom de
+    1 kHz chegava ao outro telefone a 0,092 (−8,6 dB), em quatro corridas; o
+    registo de depuração do `mod_opus` mostrou porquê: 2 583 blocos codificados
+    em `MEDIUMBAND` para a ponte. É o que os pontos 5 e 6 corrigem.
 - **Por medir, e é o que fecha isto:** uma chamada real de softphone com a perna
   em Opus — a oferta do FreeSWITCH com os DOIS codecs, a gravação das duas
   pernas — e a mesma chamada ouvida num browser. A prova contra o FreeSWITCH
