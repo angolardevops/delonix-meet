@@ -164,13 +164,15 @@ const viu80 = await p.waitForFunction(
 chk(viu80, 'o progresso actualiza-se sozinho (40% → 80%)')
 sql(`UPDATE recordings SET status = 'ready', size_bytes = 4, progress_pct = NULL, progress_at = NULL WHERE id = '${id}'`)
 const pronta = await p.waitForFunction(
-  () => !document.querySelector('.rec-card[data-status="processing"]') && !!document.querySelector('.rec-card[data-status="ready"] button'),
+  // Dois cartões prontos, cada um com a sua miniatura-botão: o de controlo e
+  // ESTE. Só «há um botão» passava com o de controlo sozinho.
+  () => !document.querySelector('.rec-card[data-status="processing"]') && document.querySelectorAll('.rec-card[data-status="ready"] button.rec-card__thumb').length === 2,
   null, { timeout: 20000 },
 ).then(() => true, () => false)
 chk(pronta, 'quando a composição acaba, o cartão passa a pronto e a miniatura a botão, sem recarregar')
 // Controlo do menu: sobre a MESMA gravação, já pronta, o botão direito abre-o —
 // sem isto, «não abre» acima passava também com um selector errado.
-await p.locator('.rec-card[data-status="ready"]').first().click({ button: 'right' })
+await p.locator('.rec-card[data-status="ready"]', { hasText: nome }).first().click({ button: 'right' })
 const abriu = await p.locator('[role=menu]').first().waitFor({ timeout: 5000 }).then(() => true, () => false)
 chk(abriu, 'e, já pronta, o botão direito abre o menu de acções (controlo)')
 await foto('pronta')

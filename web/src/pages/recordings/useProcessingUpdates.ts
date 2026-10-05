@@ -21,6 +21,9 @@ import { isProcessing, withFresh, type FreshRecordings } from './format'
 /** Intervalo entre o fim de uma leitura e o início da seguinte. */
 export const PROCESSING_POLL_MS = 4000
 
+const sameReading = (a: RecordingItem | undefined, b: RecordingItem) =>
+  !!a && a.status === b.status && a.size_bytes === b.size_bytes && a.failure_reason === b.failure_reason && JSON.stringify(a) === JSON.stringify(b)
+
 /** Devolve a função que troca cada linha a compor pela sua leitura mais recente. */
 export function useProcessingUpdates<T extends RecordingItem>(rows: readonly T[]): (row: T) => T {
   const [fresh, setFresh] = useState<FreshRecordings>({})
@@ -44,7 +47,8 @@ export function useProcessingUpdates<T extends RecordingItem>(rows: readonly T[]
           try {
             const latest = await recordingDetails(id, ctrl.signal)
             if (ctrl.signal.aborted) return
-            setFresh((prev) => ({ ...prev, [id]: latest }))
+            // Sem mudança não se escreve: cada escrita redesenha a página inteira.
+            setFresh((prev) => (sameReading(prev[id], latest) ? prev : { ...prev, [id]: latest }))
             if (!isProcessing(latest)) pending.delete(id)
           } catch (e) {
             if (ctrl.signal.aborted) return

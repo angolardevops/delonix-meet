@@ -51,7 +51,6 @@ export default {
     aProcessar: 'Processing',
     aProcessarPct: 'Processing {{pct}}%',
     aProcessarAviso: 'The server is still composing this recording. It will be available when it finishes.',
-    aProcessarAvisoPct: 'The server is still composing this recording ({{pct}}%). It will be available when it finishes.',
     aTranscrever: 'Transcribing',
     aTranscreverPct: 'Transcribing {{pct}}%',
     publicada: 'Published',

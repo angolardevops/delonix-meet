@@ -51,7 +51,6 @@ export default {
     aProcessar: 'A processar',
     aProcessarPct: 'A processar {{pct}}%',
     aProcessarAviso: 'O servidor ainda está a compor esta gravação. Fica disponível quando acabar.',
-    aProcessarAvisoPct: 'O servidor ainda está a compor esta gravação ({{pct}}%). Fica disponível quando acabar.',
     aTranscrever: 'A transcrever',
     aTranscreverPct: 'A transcrever {{pct}}%',
     publicada: 'Publicada',

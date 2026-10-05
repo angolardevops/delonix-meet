@@ -81,9 +81,10 @@ describe('a compor (o servidor ainda não tem ficheiro)', () => {
     expect(r.published).toBe(false)
     expect(visibleState(r).kind).toBe('processing')
   })
-  it('um estado que a consola não conhece fica sem ficheiro — não se lê «pronta» com acções', () => {
+  it('um estado que a consola não conhece falha fechado, como no servidor — não se lê «pronta»', () => {
     const r = fromRecordingItem(libItem({ status: 'archiving' as RecordingLibraryItem['status'] }))
-    expect(r.hasFile).toBe(false)
+    expect(r).toMatchObject({ hasFile: false, failed: true, processing: false, pipeline: 'failed', sizeBytes: null })
+    expect(visibleState(r, 90).kind).toBe('failed')
     expect(hasFile({ status: 'archiving' })).toBe(false)
     expect(hasFile({ status: 'ready' }) && hasFile({ status: 'transcribing' })).toBe(true)
     expect(hasFile({ status: 'processing' }) || hasFile({ status: 'failed' })).toBe(false)

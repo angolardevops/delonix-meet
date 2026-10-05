@@ -319,7 +319,12 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
             {rec.failureReason || t('recordings.estado.semCausa')}
           </Alert>
         ) : rec.processing ? (
-          <Alert icon="hourglass">{rec.progressPct === null ? t('recordings.estado.aProcessarAviso') : t('recordings.estado.aProcessarAvisoPct', { pct: Math.round(rec.progressPct) })}</Alert>
+          <>
+            <Alert icon="hourglass">{t('recordings.estado.aProcessarAviso')}</Alert>
+            {/* O progresso fica FORA do aviso (`role="status"`): dentro, um
+                leitor de ecrã relia a frase inteira a cada percentagem. */}
+            <RecordingState state={visibleState(rec)} />
+          </>
         ) : (
           <div className="pl-video" ref={stageRef}>
             {src ? (

@@ -49,8 +49,6 @@ export function recordingName(r: Pick<RecordingItem, 'filename'>): string {
   return r.filename.replace(/\.(webm|mp4|mkv)$/i, '')
 }
 
-export const isFailed = (r: Pick<RecordingItem, 'status'>) => r.status === 'failed'
-
 /** O servidor ainda está a compor o ficheiro (a linha nasce antes de o ffmpeg correr). */
 export const isProcessing = (r: Pick<RecordingItem, 'status'>) => r.status === 'processing'
 
