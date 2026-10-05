@@ -292,9 +292,10 @@ pub fn sdp_answer(
     session: u64,
     answer_crypto: Option<&SdesCrypto>,
 ) -> String {
-    // Em Opus responde-se com o PT que a oferta escolheu. O `fmtp` diz o que
-    // a ponte MANDA (mono, banda larga); não limita o que recebe — o que vier
-    // do telefone passa para a sala tal como chegar.
+    // Em Opus responde-se com o PT que a oferta escolheu. O `fmtp` declara o
+    // que a ponte manda (`sprop-*`: mono, banda larga) e o que lhe serve
+    // receber (mono, com FEC). Sem `maxplaybackrate`: não se limita a banda do
+    // que vem do telefone — passa para a sala tal como chegar.
     let (pt, rtpmap) = match codec {
         LegCodec::G711(Law::A) => (8, "a=rtpmap:8 PCMA/8000\r\n".to_string()),
         LegCodec::G711(Law::Mu) => (0, "a=rtpmap:0 PCMU/8000\r\n".to_string()),

@@ -177,10 +177,9 @@ pub async fn start(
     let stats = Arc::new(LegStats::default());
     let muted = Arc::new(AtomicBool::new(false));
     let (stop, stop_rx) = oneshot::channel();
-    let publish = sfu.publish_bridge_audio(cfg.room_id, cfg.leg_id).await;
-    let taps = sfu.tap_room_audio(cfg.room_id, cfg.leg_id);
-    // Os codificadores abrem-se ANTES de a tarefa arrancar: uma perna que não
-    // consegue codificar não chega a responder `200`.
+    // Os codificadores abrem-se ANTES de a perna se registar na sala: se um
+    // falhar, sai-se daqui sem publicação nem tap para desfazer, e a chamada
+    // não chega a responder `200`.
     let media = match cfg.codec {
         LegCodec::G711(law) => Media::G711 {
             ingress: Ingress::new().map_err(std::io::Error::other)?,
@@ -192,23 +191,31 @@ pub async fn start(
             mixer: Mixer::wideband(cfg.leg_id),
             encoder: MixEncoder::new().map_err(std::io::Error::other)?,
             payload_type,
-            was_muted: false,
         },
     };
+    let publish = sfu.publish_bridge_audio(cfg.room_id, cfg.leg_id).await;
+    let taps = sfu.tap_room_audio(cfg.room_id, cfg.leg_id);
     tracing::info!(room = %cfg.room_id, leg = %cfg.leg_id, %local_addr, codec = ?cfg.codec, "ponte: perna aberta");
-    let task = tokio::spawn(run(Run {
-        sfu,
-        cfg,
-        socket,
-        srtp,
-        publish,
-        taps,
-        media,
-        stats: stats.clone(),
-        muted: muted.clone(),
-        stop: stop_rx,
-        events,
-    }));
+    let (cleanup_sfu, room_id, leg_id) = (sfu.clone(), cfg.room_id, cfg.leg_id);
+    let task = tokio::spawn(supervised(
+        run(Run {
+            sfu,
+            cfg,
+            socket,
+            srtp,
+            publish,
+            taps,
+            media,
+            stats: stats.clone(),
+            muted: muted.clone(),
+            stop: stop_rx,
+            events,
+        }),
+        async move {
+            tracing::error!(room = %room_id, leg = %leg_id, "ponte: a tarefa da perna rebentou — a sala é largada na mesma");
+            cleanup_sfu.end_bridge(room_id, leg_id).await;
+        },
+    ));
     Ok(LegHandle {
         local_addr,
         muted,
@@ -216,6 +223,27 @@ pub async fn start(
         stop,
         task,
     })
+}
+
+/// Corre `body` e, se ele rebentar, `on_panic`.
+///
+/// O laço da perna larga a sala no fim (`end_bridge`). Um pânico a meio — o
+/// descodificador Opus lê bytes que vêm da rede — saltava esse fim: a
+/// publicação ficava na sala e a sala nunca era libertada, uma fuga por
+/// chamada. O pânico continua a acabar com a perna; deixa é de levar a sala.
+async fn supervised<B, P>(body: B, on_panic: P)
+where
+    B: std::future::Future<Output = ()>,
+    P: std::future::Future<Output = ()>,
+{
+    use futures_util::FutureExt;
+    if std::panic::AssertUnwindSafe(body)
+        .catch_unwind()
+        .await
+        .is_err()
+    {
+        on_panic.await;
+    }
 }
 
 struct Run {
@@ -245,8 +273,6 @@ enum Media {
         mixer: Mixer,
         encoder: MixEncoder,
         payload_type: u8,
-        /// O pacote anterior foi retido por a perna estar silenciada.
-        was_muted: bool,
     },
 }
 
@@ -318,21 +344,19 @@ async fn run(mut r: Run) {
                 // DTMF (RFC 4733, PT dinâmico) e conforto de ruído chegam pelo
                 // mesmo socket: não são voz, ignoram-se sem contar como erro.
                 // Uma perna só aceita o codec que negociou.
-                let pkt_law = match &mut r.media {
+                match &mut r.media {
                     Media::G711 { law, .. } => {
                         let Some(l) = Law::from_payload_type(pkt.header.payload_type) else {
                             continue;
                         };
                         *law = l;
-                        Some(l)
                     }
                     Media::Opus { payload_type, .. } => {
                         if pkt.header.payload_type != *payload_type {
                             continue;
                         }
-                        None
                     }
-                };
+                }
                 // RTP simétrico: a mistura volta para onde veio o áudio. Se
                 // o FreeSWITCH mudar de porta (re-INVITE), segue-se.
                 remote = Some(from);
@@ -345,22 +369,22 @@ async fn run(mut r: Run) {
                 // Silenciado: o pacote CONTA (chegou, mede-se a qualidade e o
                 // RTP simétrico segue-o) mas não entra na sala. Descartar antes
                 // da estatística faria a perna parecer morta a quem a observa.
-                let muted = r.muted.load(Relaxed);
-                if let Media::Opus { pass, was_muted, .. } = &mut r.media {
-                    // O que se reteve não é perda: ao voltar, a saída continua
-                    // de onde ficou em vez de abrir um buraco na sequência.
-                    if *was_muted && !muted {
-                        pass.discontinuity();
+                if r.muted.load(Relaxed) {
+                    // Em Opus o relógio de saída segue o da origem: a passagem
+                    // tem de saber que este pacote existiu, mesmo sem o ler.
+                    if let Media::Opus { pass, .. } = &mut r.media {
+                        pass.skipped(
+                            pkt.header.sequence_number,
+                            pkt.header.timestamp,
+                            pkt.header.ssrc,
+                        );
                     }
-                    *was_muted = muted;
-                }
-                if muted {
                     continue;
                 }
                 let t = Instant::now();
-                match (&mut r.media, pkt_law) {
-                    (Media::G711 { ingress, .. }, Some(pkt_law)) => {
-                        let frames = ingress.push(pkt_law, &pkt.payload, pkt.header.timestamp);
+                match &mut r.media {
+                    Media::G711 { ingress, law, .. } => {
+                        let frames = ingress.push(*law, &pkt.payload, pkt.header.timestamp);
                         r.stats.codec_nanos.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
                         for f in frames {
                             let packet = Packet {
@@ -381,36 +405,53 @@ async fn run(mut r: Run) {
                             }
                         }
                     }
-                    (Media::Opus { pass, .. }, _) => {
+                    Media::Opus { pass, .. } => {
                         // O payload sai como entrou; só o cabeçalho é nosso.
+                        let rejected_before = pass.rejected;
                         let passed = pass.push(
                             pkt.header.sequence_number,
                             pkt.header.timestamp,
+                            pkt.header.ssrc,
                             &pkt.payload,
                         );
                         r.stats.codec_nanos.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
                         let Some(f) = passed else {
+                            // Um atrasado ou repetido não saiu, e não é erro.
+                            if pass.rejected == rejected_before {
+                                continue;
+                            }
                             r.stats.packets_rejected.fetch_add(1, Relaxed);
+                            // Sem isto, um softphone a mandar uma forma de
+                            // Opus que o descodificador não lê era voz picada
+                            // na sala com o log calado até a chamada acabar.
+                            if pass.rejected == 1 || pass.rejected % 500 == 0 {
+                                tracing::warn!(
+                                    leg = %r.cfg.leg_id,
+                                    rejected = pass.rejected,
+                                    bytes = pkt.payload.len(),
+                                    toc = pkt.payload.first().copied().unwrap_or(0),
+                                    "ponte: pacote Opus do telefone recusado — não entra na sala"
+                                );
+                            }
                             continue;
                         };
                         let packet = Packet {
                             header: Header {
                                 version: 2,
-                                marker: f.seq == 0,
+                                // O início de um período de fala é a origem que o sabe.
+                                marker: pkt.header.marker,
                                 payload_type: OPUS_PT,
                                 sequence_number: out_seq_base.wrapping_add(f.seq),
                                 timestamp: out_ts_base.wrapping_add(f.timestamp),
                                 ssrc: out_ssrc,
                                 ..Default::default()
                             },
-                            payload: pkt.payload.clone(),
+                            payload: pkt.payload,
                         };
                         if r.publish.try_send(BridgePacket { packet, level: f.level }).is_ok() {
                             r.stats.frames_published.fetch_add(1, Relaxed);
                         }
                     }
-                    // Uma perna G.711 sem lei no pacote não chega aqui.
-                    (Media::G711 { .. }, None) => {}
                 }
                 let us = arrived.elapsed().as_micros() as u64;
                 r.stats.ingress_max_micros.fetch_max(us, Relaxed);
@@ -496,9 +537,9 @@ async fn run(mut r: Run) {
     }
     drop(r.publish);
     r.sfu.end_bridge(r.cfg.room_id, r.cfg.leg_id).await;
-    let opus_rejected = match &r.media {
-        Media::Opus { pass, .. } => pass.rejected,
-        Media::G711 { .. } => 0,
+    let (opus_rejected, opus_late) = match &r.media {
+        Media::Opus { pass, .. } => (pass.rejected, pass.late),
+        Media::G711 { .. } => (0, 0),
     };
     let decode_errors = r.media.mixer().decode_errors;
     tracing::info!(
@@ -510,6 +551,35 @@ async fn run(mut r: Run) {
         srtp_failed = r.stats.packets_srtp_failed.load(Relaxed),
         decode_errors,
         opus_rejected,
+        opus_late,
         "ponte: perna fechada"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A limpeza corre quando a tarefa rebenta, e SÓ então: num fim normal é o
+    /// próprio laço que larga a sala, e largá-la duas vezes descontava uma
+    /// perna que não era esta.
+    #[tokio::test]
+    async fn um_panico_na_perna_corre_a_limpeza_e_um_fim_normal_nao() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let r = ran.clone();
+        supervised(
+            async { panic!("o descodificador rebentou (teste)") },
+            async move { r.store(true, Relaxed) },
+        )
+        .await;
+        assert!(ran.load(Relaxed), "com pânico, a sala tem de ser largada");
+
+        let ran = Arc::new(AtomicBool::new(false));
+        let r = ran.clone();
+        supervised(async {}, async move { r.store(true, Relaxed) }).await;
+        assert!(
+            !ran.load(Relaxed),
+            "sem pânico, a limpeza não é desta função"
+        );
+    }
 }

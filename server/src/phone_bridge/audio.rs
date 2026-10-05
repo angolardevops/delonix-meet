@@ -8,10 +8,10 @@
 //!   browser o descodificar como um participante normal. Um só codificador por
 //!   chamada.
 //! - **Sala → telefone** ([`Mixer`]): cada microfone da sala chega em Opus e é
-//!   descodificado a 8 kHz (o descodificador Opus faz a reamostragem), e o
-//!   misturador soma todos MENOS a própria chamada (mix-minus — sem isto quem
-//!   liga ouve-se a si próprio com atraso) num só fluxo G.711. O telefone só
-//!   tem um canal de áudio: a mistura TEM de ser feita aqui.
+//!   descodificado a 16 kHz, e o misturador soma todos MENOS a própria chamada
+//!   (mix-minus — sem isto quem liga ouve-se a si próprio com atraso) num só
+//!   fluxo, que desce para 8 kHz com um passa-baixo e sai em G.711. O telefone
+//!   só tem um canal de áudio: a mistura TEM de ser feita aqui.
 //!
 //! O Opus é o `opus-rs` (Rust puro). A interoperabilidade com a libopus de
 //! referência foi medida nos dois sentidos antes de o escolher (ADR-0010).
@@ -32,8 +32,6 @@ use super::g711::Law;
 
 /// 20 ms a 8 kHz.
 pub const FRAME_8K: usize = 160;
-/// Maior pacote que se aceita do lado Opus: 120 ms a 8 kHz.
-const MAX_DECODED_8K: usize = 960;
 /// Taxa a que a sala é descodificada e somada, e a que a mistura segue para
 /// uma perna em Opus (ADR-0017): banda larga. A 48 kHz o custo por microfone
 /// triplicava para dar ao telefone uma banda que o auscultador dele não
@@ -190,37 +188,66 @@ pub struct PassedFrame {
     pub level: u8,
 }
 
-/// De onde se conta: um pacote de entrada e a posição de saída que lhe coube.
+/// O último pacote da origem que chegou em ordem: é contra ELE que se decide
+/// se o seguinte é o mesmo fluxo.
 #[derive(Clone, Copy)]
-struct Anchor {
-    in_seq: u16,
-    in_ts: u32,
-    out_seq: u16,
-    out_ts: u32,
+struct Seen {
+    seq: u16,
+    ts: u32,
+    ssrc: u32,
 }
 
-/// Um salto maior do que isto na numeração é outro fluxo (re-INVITE, o
-/// FreeSWITCH a recomeçar o RTP), não perda: volta-se a ancorar em vez de
-/// publicar um buraco de minutos.
+/// Um salto maior do que isto na numeração, de um pacote para o seguinte, é
+/// outro fluxo (o FreeSWITCH a recomeçar o RTP), não perda: mil pacotes são
+/// vinte segundos de perda contínua, e uma chamada assim já caiu.
 const MAX_SEQ_JUMP: i32 = 1_000;
-/// O mesmo, no relógio: dez segundos a 48 kHz.
-const MAX_TS_JUMP: i64 = 480_000;
+/// Relógio a andar para TRÁS mais do que dez segundos (a 48 kHz) também é
+/// outro fluxo. Para a frente não há limite: é tempo que passou em silêncio.
+const MAX_TS_REWIND: i64 = 480_000;
+/// Maior payload que passa. Voz em Opus são dezenas de bytes por bloco; o
+/// tecto do codec são 1275 por frame. Acima disto é enchimento — e iria,
+/// intacto, para cada browser da sala e para a gravação.
+const MAX_PASSTHROUGH_PAYLOAD: usize = 600;
+/// 120 ms, o maior pacote Opus, à taxa a que a passagem o lê.
+const MAX_DECODED_16K: usize = 1_920;
 
 /// Passagem de Opus de UMA chamada: não recodifica, só valida e mede.
 ///
-/// **A numeração e o relógio seguem os da origem.** Um pacote perdido entre o
-/// FreeSWITCH e a ponte chega ao browser como um buraco na sequência — é o que
-/// faz o FEC e o PLC dele trabalharem. Renumerar de um em um esconderia a
-/// perda atrás de um salto de relógio, que o browser lê como silêncio.
+/// **O relógio de saída segue o da origem**, enquanto o fluxo for o mesmo: um
+/// pacote perdido, um silêncio suprimido ou um intervalo em que a perna esteve
+/// calada avançam-no na mesma medida. É o que o browser e a gravação usam para
+/// pôr cada pacote no seu instante — o SFU renumera a sequência do áudio que
+/// entrega aos browsers, por isso para eles o relógio é a única marca do tempo.
+///
+/// **A sequência segue a da origem com os buracos da perda**, que é o que os
+/// misturadores das outras pernas e a gravação vêem, e NÃO abre buraco pelo
+/// que a ponte reteve de propósito ([`Passthrough::skipped`]).
+///
+/// **Um pacote atrasado ou repetido não sai** — a mesma regra do [`Mixer`]: num
+/// fluxo de voz a 20 ms já passou o instante em que devia tocar. E a saída
+/// nunca anda para trás no relógio, que é o que o escritor da gravação exige
+/// (subtrai relógios consecutivos sem contar com recuos).
+///
+/// **Isto não é uma fronteira de segurança.** O que passa é estruturalmente
+/// Opus e cabe no tecto; o conteúdo é o que a origem mandou (ADR-0017
+/// §Segurança).
 pub struct Passthrough {
-    mono: Option<opus_rs::OpusDecoder>,
-    stereo: Option<opus_rs::OpusDecoder>,
+    mono: Option<Box<opus_rs::OpusDecoder>>,
+    stereo: Option<Box<opus_rs::OpusDecoder>>,
     decoded: Vec<f32>,
-    anchor: Option<Anchor>,
+    last: Option<Seen>,
+    /// (sequência de entrada, sequência de saída) de onde se conta.
+    seq_anchor: Option<(u16, u16)>,
+    /// (relógio de entrada, relógio de saída) de onde se conta.
+    ts_anchor: Option<(u32, u32)>,
     /// A posição a seguir ao pacote mais avançado que já saiu.
     next: (u16, u32),
-    /// Pacotes que o descodificador recusou — e que por isso não entraram.
+    /// Pacotes que não entraram: vazios, acima do tecto, ou que o
+    /// descodificador recusou.
     pub rejected: u64,
+    /// Pacotes que chegaram depois de outro mais recente (ou repetidos) e por
+    /// isso não saíram.
+    pub late: u64,
 }
 
 impl Default for Passthrough {
@@ -234,40 +261,92 @@ impl Passthrough {
         Self {
             mono: None,
             stereo: None,
-            decoded: vec![0.0; MAX_DECODED_8K * 2],
-            anchor: None,
+            decoded: vec![0.0; MAX_DECODED_16K * 2],
+            last: None,
+            seq_anchor: None,
+            ts_anchor: None,
             next: (0, 0),
             rejected: 0,
+            late: 0,
         }
     }
 
-    /// Houve um intervalo em que nada foi publicado de propósito (a perna
-    /// esteve silenciada). O pacote seguinte continua de onde a saída ficou,
-    /// em vez de aparecer na sala como segundos de perda.
-    pub fn discontinuity(&mut self) {
-        self.anchor = None;
+    /// É outro fluxo? Decide-se contra o último pacote em ordem, não contra o
+    /// primeiro: num fluxo contínuo a distância ao primeiro cresce sempre.
+    fn is_new_stream(&self, seq: u16, rtp_ts: u32, ssrc: u32) -> bool {
+        let Some(last) = self.last else { return true };
+        let dseq = seq.wrapping_sub(last.seq) as i16 as i32;
+        let dts = rtp_ts.wrapping_sub(last.ts) as i32 as i64;
+        ssrc != last.ssrc || dseq.abs() > MAX_SEQ_JUMP || dts < -MAX_TS_REWIND
     }
 
-    /// Entra um pacote Opus do telefone. `None` se o descodificador o recusar:
-    /// o que a ponte não consegue ler não é publicado numa sala.
-    pub fn push(&mut self, seq: u16, rtp_ts: u32, payload: &[u8]) -> Option<PassedFrame> {
-        if payload.is_empty() {
+    /// Avança a referência da origem se este pacote for o mais recente.
+    fn note(&mut self, seq: u16, rtp_ts: u32, ssrc: u32) {
+        let ahead = match self.last {
+            Some(last) => seq.wrapping_sub(last.seq) as i16 > 0,
+            None => true,
+        };
+        if ahead {
+            self.last = Some(Seen {
+                seq,
+                ts: rtp_ts,
+                ssrc,
+            });
+        }
+    }
+
+    /// Um pacote que a ponte reteve de propósito (a perna está silenciada).
+    /// Não é descodificado nem publicado, mas CONTA: o relógio continua a
+    /// seguir a origem, e o pacote que vier a seguir sai com o número seguinte
+    /// — sem um buraco de sequência do tamanho do silêncio.
+    pub fn skipped(&mut self, seq: u16, rtp_ts: u32, ssrc: u32) {
+        if self.is_new_stream(seq, rtp_ts, ssrc) {
+            self.ts_anchor = None;
+            self.last = None;
+        }
+        self.seq_anchor = None;
+        self.note(seq, rtp_ts, ssrc);
+    }
+
+    /// Entra um pacote Opus do telefone. `None` se não puder passar: o que a
+    /// ponte não consegue ler não é publicado numa sala.
+    pub fn push(
+        &mut self,
+        seq: u16,
+        rtp_ts: u32,
+        ssrc: u32,
+        payload: &[u8],
+    ) -> Option<PassedFrame> {
+        if payload.is_empty() || payload.len() > MAX_PASSTHROUGH_PAYLOAD {
             self.rejected += 1;
             return None;
         }
+        let new_stream = self.is_new_stream(seq, rtp_ts, ssrc);
+        if let (false, Some(last)) = (new_stream, self.last) {
+            if seq.wrapping_sub(last.seq) as i16 <= 0 {
+                self.late += 1;
+                return None;
+            }
+        }
         // Bit «s» do TOC: 1 = estéreo (RFC 6716 §3.1).
         let stereo = payload[0] & 0x04 != 0;
+        let channels = if stereo { 2 } else { 1 };
         let decoder = if stereo {
             &mut self.stereo
         } else {
             &mut self.mono
         };
         if decoder.is_none() {
-            *decoder = opus_rs::OpusDecoder::new(8000, if stereo { 2 } else { 1 }).ok();
+            // A 16 kHz, e não a 8: o nível tem de ver o que a sala vai ouvir
+            // até aos 8 kHz, senão um sinal só de agudos passava por silêncio
+            // ao selector de oradores.
+            *decoder = opus_rs::OpusDecoder::new(WIDEBAND_RATE as i32, channels)
+                .ok()
+                .map(Box::new);
         }
         let n = match decoder
             .as_mut()
-            .map(|d| d.decode(payload, MAX_DECODED_8K, &mut self.decoded))
+            .map(|d| d.decode(payload, MAX_DECODED_16K, &mut self.decoded))
         {
             Some(Ok(n)) if n > 0 => n,
             _ => {
@@ -275,38 +354,25 @@ impl Passthrough {
                 return None;
             }
         };
-        let channels = if stereo { 2 } else { 1 };
         let level = audio_level_dbov_f32(&self.decoded[..n * channels]);
-        // O pacote dura `n` amostras a 8 kHz: ×6 no relógio de 48 kHz.
-        let duration = (n as u32).wrapping_mul(6);
+        // O pacote dura `n` amostras a 16 kHz: ×3 no relógio de 48 kHz.
+        let duration = (n as u32).wrapping_mul(3);
 
-        let anchor = match self.anchor {
-            Some(a) => {
-                let dseq = seq.wrapping_sub(a.in_seq) as i16 as i32;
-                let dts = rtp_ts.wrapping_sub(a.in_ts) as i32 as i64;
-                if dseq.abs() > MAX_SEQ_JUMP || dts.abs() > MAX_TS_JUMP {
-                    None
-                } else {
-                    Some(a)
-                }
-            }
-            None => None,
-        };
-        let anchor = *self.anchor.insert(anchor.unwrap_or(Anchor {
-            in_seq: seq,
-            in_ts: rtp_ts,
-            out_seq: self.next.0,
-            out_ts: self.next.1,
-        }));
-        let out_seq = anchor.out_seq.wrapping_add(seq.wrapping_sub(anchor.in_seq));
-        let out_ts = anchor
-            .out_ts
-            .wrapping_add(rtp_ts.wrapping_sub(anchor.in_ts));
-        // Só um pacote mais avançado move a posição seguinte: um atrasado
-        // (reordenação) sai com o seu número e não puxa a saída para trás.
-        if out_seq.wrapping_sub(self.next.0) as i16 >= 0 {
-            self.next = (out_seq.wrapping_add(1), out_ts.wrapping_add(duration));
+        // Só um pacote que se leu mexe nas âncoras: lixo não gasta números.
+        if new_stream {
+            self.seq_anchor = None;
+            self.ts_anchor = None;
         }
+        let (in_seq, base_seq) = *self.seq_anchor.get_or_insert((seq, self.next.0));
+        let (in_ts, base_ts) = *self.ts_anchor.get_or_insert((rtp_ts, self.next.1));
+        let out_seq = base_seq.wrapping_add(seq.wrapping_sub(in_seq));
+        let out_ts = base_ts.wrapping_add(rtp_ts.wrapping_sub(in_ts));
+        self.next = (out_seq.wrapping_add(1), out_ts.wrapping_add(duration));
+        self.last = Some(Seen {
+            seq,
+            ts: rtp_ts,
+            ssrc,
+        });
         Some(PassedFrame {
             seq: out_seq,
             timestamp: out_ts,
@@ -931,13 +997,15 @@ pub(crate) mod tests {
         );
     }
 
+    const SSRC: u32 = 0x0b05_f0e0;
+
     /// Telefone → sala com a perna em Opus: a numeração e o relógio da origem
     /// passam, com os buracos da perda no sítio.
     #[test]
     fn passagem_de_opus_preserva_a_sequencia_e_o_relogio_da_origem() {
         let packets = wideband_packets(1_000.0, 12);
         let mut pass = Passthrough::new();
-        let (seq0, ts0) = (65_530u16, 4_000_000_000u32); // dá a volta nos dois
+        let (seq0, ts0) = (65_530u16, 4_294_960_000u32); // dá a volta nos dois
         let mut out = Vec::new();
         for (i, p) in packets.iter().enumerate() {
             if i == 4 || i == 5 {
@@ -945,7 +1013,7 @@ pub(crate) mod tests {
             }
             let seq = seq0.wrapping_add(i as u16);
             let ts = ts0.wrapping_add(i as u32 * OPUS_TS_PER_FRAME);
-            out.push((i, pass.push(seq, ts, p).expect("Opus válido passa")));
+            out.push((i, pass.push(seq, ts, SSRC, p).expect("Opus válido passa")));
         }
         for (i, f) in &out {
             assert_eq!(
@@ -959,45 +1027,238 @@ pub(crate) mod tests {
         assert_eq!(pass.rejected, 0);
     }
 
+    /// Um fluxo LONGO. A primeira versão media o salto contra o primeiro
+    /// pacote e voltava a ancorar de 10 em 10 segundos: uma perda que calhasse
+    /// nessa fronteira era apagada da sequência e do relógio. Os testes de 12
+    /// pacotes não o viam; este atravessa a fronteira três vezes, com perda,
+    /// troca de ordem e um silêncio de seis segundos.
     #[test]
-    fn passagem_de_opus_recusa_o_que_nao_descodifica() {
+    fn passagem_de_opus_aguenta_um_minuto_com_perda_na_fronteira_dos_dez_segundos() {
+        let p = wideband_packets(700.0, 1).remove(0);
         let mut pass = Passthrough::new();
-        assert!(pass.push(1, 960, &[]).is_none(), "vazio");
+        let ts = |i: u32| 1_000u32.wrapping_add(i * OPUS_TS_PER_FRAME);
+        let mut i = 0u32;
+        while i < 3_000 {
+            match i {
+                // Perda mesmo antes dos 10 s, e outra em cima dos 20 s.
+                498..=500 | 1_001 | 1_002 => {}
+                // Troca de ordem na fronteira: 1502 chega antes de 1501. O
+                // atrasado não sai — e o que vem depois não muda de sítio.
+                1_501 => {
+                    let b = pass.push(1_502, ts(1_502), SSRC, &p).unwrap();
+                    assert_eq!((b.seq, b.timestamp), (1_502, 1_502 * 960));
+                    assert!(pass.push(1_501, ts(1_501), SSRC, &p).is_none(), "atrasado");
+                    assert!(pass.push(1_502, ts(1_502), SSRC, &p).is_none(), "repetido");
+                    i += 1;
+                }
+                // Seis segundos sem pacote nenhum (silêncio suprimido): a
+                // sequência não anda, o relógio sim.
+                2_000 => {
+                    let f = pass.push(2_000, ts(2_300), SSRC, &p).unwrap();
+                    assert_eq!((f.seq, f.timestamp), (2_000, 2_300 * 960));
+                }
+                n if n > 2_000 => {
+                    let f = pass.push(n as u16, ts(n + 300), SSRC, &p).unwrap();
+                    assert_eq!(
+                        (f.seq, f.timestamp),
+                        (n as u16, (n + 300) * 960),
+                        "pacote {n}"
+                    );
+                }
+                n => {
+                    let f = pass.push(n as u16, ts(n), SSRC, &p).unwrap();
+                    assert_eq!((f.seq, f.timestamp), (n as u16, n * 960), "pacote {n}");
+                }
+            }
+            i += 1;
+        }
+        assert_eq!(pass.rejected, 0, "atrasado não é lixo");
+        assert_eq!(pass.late, 2);
+    }
+
+    #[test]
+    fn passagem_de_opus_recusa_o_que_nao_descodifica_e_o_que_passa_do_tecto() {
+        let mut pass = Passthrough::new();
+        assert!(pass.push(1, 960, SSRC, &[]).is_none(), "vazio");
         // TOC de CELT em banda cheia com código 3 e contagem de blocos impossível.
         assert!(
-            pass.push(2, 1920, &[0xFF, 0xFF, 0xFF, 0xFF]).is_none(),
+            pass.push(2, 1920, SSRC, &[0xFF, 0xFF, 0xFF, 0xFF])
+                .is_none(),
             "lixo"
         );
-        assert_eq!(pass.rejected, 2);
+        // Um pacote com enchimento (código 3, padding) até passar do tecto: é
+        // o tamanho que o trava, antes de chegar ao descodificador.
+        let ok = wideband_packets(700.0, 1).remove(0);
+        let mut fat = vec![(ok[0] & 0xFC) | 0x03, 0x41, 0xFF, 0xFF, 0xFF, 0x00];
+        fat.extend_from_slice(&ok[1..]);
+        fat.resize(fat.len() + 765, 0);
+        assert!(fat.len() > MAX_PASSTHROUGH_PAYLOAD);
+        assert!(
+            pass.push(3, 2880, SSRC, &fat).is_none(),
+            "{} bytes de enchimento",
+            fat.len()
+        );
+        assert_eq!(pass.rejected, 3);
         // E o que vem a seguir entra como primeiro pacote: o lixo não gastou números.
-        let ok = wideband_packets(700.0, 1);
-        let f = pass.push(3, 2880, &ok[0]).unwrap();
+        let f = pass.push(4, 3840, SSRC, &ok).unwrap();
         assert_eq!((f.seq, f.timestamp), (0, 0));
     }
 
-    /// Depois de um silêncio imposto (ForceMute) a saída continua de onde
-    /// ficou — e um salto de fluxo (re-INVITE) também não abre um buraco.
+    /// Depois de um silêncio IMPOSTO (ForceMute) o relógio continua a seguir a
+    /// origem — a sala e a gravação ficam com o intervalo calado no sítio — e a
+    /// sequência não abre um buraco do tamanho dele.
     #[test]
-    fn passagem_de_opus_volta_a_ancorar_depois_de_silencio_e_de_salto() {
+    fn passagem_de_opus_depois_de_um_silencio_imposto_o_relogio_anda_e_a_sequencia_nao() {
         let p = wideband_packets(700.0, 1).remove(0);
         let mut pass = Passthrough::new();
-        assert_eq!(pass.push(100, 96_000, &p).unwrap().seq, 0);
-        assert_eq!(pass.push(101, 96_960, &p).unwrap().seq, 1);
-        // 500 pacotes silenciados na ponte: não foram publicados.
-        pass.discontinuity();
-        let f = pass.push(602, 96_000 + 502 * 960, &p).unwrap();
-        assert_eq!(
-            (f.seq, f.timestamp),
-            (2, 1_920),
-            "continua, sem 500 pacotes de «perda»"
+        assert_eq!(pass.push(100, 96_000, SSRC, &p).unwrap().seq, 0);
+        assert_eq!(pass.push(101, 96_960, SSRC, &p).unwrap().seq, 1);
+        // 30 segundos silenciado: 1500 pacotes retidos na ponte.
+        for k in 0..1_500u32 {
+            pass.skipped(102 + k as u16, 96_000 + (2 + k) * 960, SSRC);
+        }
+        let f = pass.push(1_602, 96_000 + 1_502 * 960, SSRC, &p).unwrap();
+        assert_eq!(f.seq, 2, "sem 1500 pacotes de «perda»");
+        assert_eq!(f.timestamp, 1_502 * 960, "os 30 s calados ficam no relógio");
+        let g = pass.push(1_603, 96_000 + 1_503 * 960, SSRC, &p).unwrap();
+        assert_eq!((g.seq, g.timestamp), (3, 1_503 * 960));
+    }
+
+    /// Outro fluxo — o FreeSWITCH recomeça o RTP com outro SSRC, ou o relógio
+    /// salta para trás — continua de onde a saída ficou, sem buraco nem recuo.
+    #[test]
+    fn passagem_de_opus_volta_a_ancorar_quando_o_fluxo_e_outro() {
+        let p = wideband_packets(700.0, 1).remove(0);
+        let mut pass = Passthrough::new();
+        assert_eq!(pass.push(100, 96_000, SSRC, &p).unwrap().seq, 0);
+        assert_eq!(pass.push(101, 96_960, SSRC, &p).unwrap().seq, 1);
+        // Outro SSRC, com numeração e relógio sem relação com os anteriores.
+        let g = pass.push(40_000, 7, SSRC + 1, &p).unwrap();
+        assert_eq!((g.seq, g.timestamp), (2, 1_920));
+        // Um atrasado do fluxo novo não sai, e não puxa a saída para trás.
+        assert!(pass
+            .push(39_999, 7u32.wrapping_sub(960), SSRC + 1, &p)
+            .is_none());
+        assert_eq!(pass.push(40_001, 967, SSRC + 1, &p).unwrap().seq, 3);
+        // O mesmo SSRC com o relógio um minuto para trás: também é outro fluxo.
+        let h = pass
+            .push(40_002, 967u32.wrapping_sub(48_000 * 60), SSRC + 1, &p)
+            .unwrap();
+        assert_eq!((h.seq, h.timestamp), (4, 3_840));
+    }
+
+    /// Pacotes REAIS da libopus (ffmpeg 6, 2026-10-05), um de cada forma que um
+    /// softphone ou um browser manda: os testes acima codificam e validam com
+    /// o mesmo `opus-rs`, e isso não prova que ele leia o que os outros escrevem.
+    #[test]
+    fn a_passagem_e_o_misturador_leem_pacotes_da_libopus() {
+        let fixtures: [(&str, &str); 6] = [
+            ("SILK banda estreita, mono", "08b5b93133a02f4570539221a867f73caac5d69e34"),
+            ("SILK banda larga, mono", "48b505dec193edd2aa1321e6d6dd5e964b2ebbcfd10066a0"),
+            (
+                "SILK banda larga, estéreo",
+                "4c080202dbe3d050aee91a06fac3c63b22fc1a4d08fc3398691ec4a06edacfb70017dbb9b14c362f8ae366220c1cf252e5528a025666b38b21a528bb8827a85fc380",
+            ),
+            (
+                "híbrido banda cheia, mono",
+                "783f7a24cea14785f4dcac6cb3045fee16c4be204d3c31f04690555a772965a24d",
+            ),
+            (
+                "CELT banda cheia, mono",
+                "f8003466cd7b08fd004c78c8b578476f9cfaf028c6fd67bf4e4d8fd3ea0cfa0037d75bf707d5bda0ff82b4233487eada4666",
+            ),
+            (
+                "híbrido banda cheia, estéreo",
+                "7c080368c7ea56369ebc54cf51ce42fd92b652ef22f1d1f0257d7c8d77393bd0eb4ffb24ec7fdbb1201729c32d65964fb9779d4767a4c1ece37443a0",
+            ),
+        ];
+        let mut pass = Passthrough::new();
+        let mut mix = Mixer::wideband(Uuid::new_v4());
+        let who = Uuid::new_v4();
+        for (i, (nome, hex)) in fixtures.iter().enumerate() {
+            let bytes: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|k| u8::from_str_radix(&hex[k..k + 2], 16).unwrap())
+                .collect();
+            let f = pass.push(i as u16, i as u32 * 960, SSRC, &bytes);
+            assert!(
+                f.is_some(),
+                "a passagem recusou um pacote da libopus: {nome}"
+            );
+            assert_eq!(f.unwrap().timestamp, i as u32 * 960, "{nome}: 20 ms cada");
+            mix.push(who, i as u16, &bytes);
+        }
+        // E o DTX do RFC 6716 §3: um pacote só com o TOC.
+        assert!(
+            pass.push(6, 6 * 960, SSRC, &[0x48]).is_some(),
+            "TOC sozinho (DTX)"
         );
-        // O FreeSWITCH recomeça o RTP noutro ponto.
-        let g = pass.push(40_000, 7, &p).unwrap();
-        assert_eq!((g.seq, g.timestamp), (3, 2_880));
-        // Um atrasado do fluxo novo sai com o seu número e não puxa a saída para trás.
-        let late = pass.push(39_999, 7u32.wrapping_sub(960), &p).unwrap();
-        assert_eq!(late.seq, 2);
-        assert_eq!(pass.push(40_001, 967, &p).unwrap().seq, 4);
+        assert_eq!(pass.rejected, 0);
+        assert_eq!(mix.decode_errors, 0, "o misturador leu os seis");
+    }
+
+    /// Entrada hostil nos dois sítios onde a ponte descodifica Opus que não
+    /// gerou: bytes ao acaso e pacotes válidos mutados. O que se exige é que
+    /// NADA rebente — recusar é o resultado certo. (Fora do repo correram-se
+    /// 300 000 sem um pânico; aqui fica uma amostra determinista.)
+    #[test]
+    fn pacotes_hostis_nao_derrubam_a_passagem_nem_o_misturador() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut rnd = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut base = wideband_packets(900.0, 8);
+        let mut enc = opus_rs::OpusEncoder::new(48_000, 2, opus_rs::Application::Audio).unwrap();
+        let mut out = vec![0u8; 1500];
+        for b in 0..8 {
+            let pcm = tone(48_000.0, 440.0, 960 * 2, 0.4, b * 960);
+            let n = enc.encode(&pcm, 960, &mut out).unwrap();
+            base.push(out[..n].to_vec());
+        }
+        let mut pass = Passthrough::new();
+        let mut narrow = Mixer::new(Uuid::new_v4());
+        let mut wide = Mixer::wideband(Uuid::new_v4());
+        let who = Uuid::new_v4();
+        for i in 0..20_000u32 {
+            let mut p: Vec<u8> = if rnd() % 4 == 0 {
+                (0..1 + rnd() % 300).map(|_| rnd() as u8).collect()
+            } else {
+                base[(rnd() % base.len() as u64) as usize].clone()
+            };
+            match rnd() % 6 {
+                0 => {
+                    let k = (rnd() % p.len() as u64) as usize;
+                    p[k] ^= 1 << (rnd() % 8);
+                }
+                1 => {
+                    for _ in 0..1 + rnd() % 8 {
+                        let k = (rnd() % p.len() as u64) as usize;
+                        p[k] = rnd() as u8;
+                    }
+                }
+                2 => p.truncate(1 + (rnd() % p.len() as u64) as usize),
+                3 => p[0] = rnd() as u8,
+                4 => {
+                    let extra = rnd() % 40;
+                    p.extend((0..extra).map(|_| rnd() as u8));
+                }
+                _ => {}
+            }
+            let _ = pass.push(i as u16, i.wrapping_mul(960), SSRC, &p);
+            narrow.push(who, i as u16, &p);
+            wide.push(who, i as u16, &p);
+            if i % 3 == 0 {
+                assert_eq!(narrow.tick().len(), FRAME_8K);
+                assert_eq!(wide.tick().len(), MIX_FRAME);
+            }
+        }
+        assert!(
+            pass.rejected > 0,
+            "a amostra tem de conter lixo que é recusado"
+        );
     }
 
     #[test]

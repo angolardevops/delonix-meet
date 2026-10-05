@@ -2506,7 +2506,8 @@ impl TelefoneOpus {
 /// 2. cada payload que a Ana recebe dessa perna é, byte a byte, um dos que o
 ///    softphone mandou — a ponte não recodificou;
 /// 3. o softphone ouve os **6 kHz** da Ana, em Opus;
-/// 4. e não se ouve a si próprio (mix-minus).
+/// 4. e não se ouve a si próprio (mix-minus);
+/// 5. silenciada na ponte, a perna deixa de entrar na sala, e volta ao desfazer.
 ///
 /// **Âmbito:** como na R221, sem FreeSWITCH e sem SRTP — o caminho de media. O
 /// controlo negativo da banda (os mesmos 6 kHz a NÃO chegarem em G.711) está em
@@ -2655,6 +2656,41 @@ async fn ponte_em_opus_leva_banda_larga_nos_dois_sentidos() {
         alheio_min > 0.03,
         "os 6 kHz da Ana falham no softphone: {alheio_min}"
     );
+    // 5. Calar na ponte cala também em Opus, e desfazer devolve o áudio — a
+    //    R224 só estava guardada no codec antigo.
+    let visto = {
+        let ana = ana.clone();
+        let chave = chave.clone();
+        move || {
+            let ana = ana.clone();
+            let chave = chave.clone();
+            async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) }
+        }
+    };
+    let calar = perna.mute_flag();
+    calar.store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let calado_a = visto().await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let calado_b = visto().await;
+    assert_eq!(
+        calado_a, calado_b,
+        "silenciada na ponte, a perna em Opus continuou a entrar na sala"
+    );
+    calar.store(false, std::sync::atomic::Ordering::SeqCst);
+    eventually(
+        "desfeito o silêncio, o softphone volta à sala",
+        prazo(15),
+        {
+            let visto = visto.clone();
+            move || {
+                let visto = visto.clone();
+                async move { visto().await > calado_b + 20 }
+            }
+        },
+    )
+    .await;
+
     let rejeitados = perna
         .stats
         .packets_rejected

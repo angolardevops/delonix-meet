@@ -1167,6 +1167,9 @@ async fn room_bridge_for(
             // softphone chega à sala sem passar por 8 kHz; `PCMA` sozinho é o
             // caminho que a prova contra o FreeSWITCH real mediu (R222), e
             // fica atrás como recurso. Uma oferta sem nenhum dos dois leva `488`.
+            // O valor tem uma VÍRGULA: quem monta a lista `[k=v,…]` da dial
+            // string tem de a escapar (`dialin_ivr.lua`), senão o FreeSWITCH
+            // fica só com o primeiro codec e o recurso deixa de existir.
             (
                 "absolute_codec_string".to_string(),
                 bridge_codec_string(state.config.phone_bridge_wideband).to_string(),

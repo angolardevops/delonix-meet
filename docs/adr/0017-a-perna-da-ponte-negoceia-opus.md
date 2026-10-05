@@ -44,11 +44,14 @@ sim.
    responde com o primeiro codec da oferta que souber falar — a ordem é a de
    quem oferece. Uma oferta sem nenhum dos três continua a levar `488`.
 2. **Telefone → sala, em Opus: sem recodificação.** O pacote que o FreeSWITCH
-   manda já é Opus; a ponte decifra o SRTP, valida-o com o seu descodificador
-   (o que ele recusa não entra na sala), mede-lhe o nível para o selector de
-   oradores, e publica o MESMO payload. A numeração e o relógio seguem os do
-   FreeSWITCH, para a perda chegar ao browser como perda (e o FEC e o PLC dele
-   servirem para alguma coisa).
+   manda já é Opus; a ponte decifra o SRTP, só deixa passar o que cabe num tecto
+   de 600 bytes e o seu descodificador consegue ler, mede-lhe o nível para o
+   selector de oradores, e publica o MESMO payload. **O relógio de saída segue
+   o da origem**: perda, silêncio suprimido e um intervalo em que a perna esteve
+   calada ficam no relógio com o tamanho que tiveram. É o relógio, e só ele,
+   que chega aos browsers como marca do tempo — o SFU renumera a sequência de
+   todo o áudio que lhes entrega. A sequência da origem (com os buracos da
+   perda) chega à gravação e aos misturadores das outras pernas.
 3. **Sala → telefone, em Opus: mistura a 16 kHz.** O misturador descodifica cada
    microfone a 16 kHz em vez de 8, soma todos menos a própria chamada, limita, e
    codifica **um** fluxo Opus de banda larga (mono, taxa constante de 32 kbps).
@@ -56,7 +59,10 @@ sim.
    84 kbps com 32 pedidos; a 8 kHz, 50 com 16 pedidos).
 4. **Quem liga a banda larga é o servidor**, na dial string que devolve ao IVR:
    `absolute_codec_string=OPUS,PCMA` em vez de `PCMA`. `PHONE_BRIDGE_WIDEBAND=0`
-   repõe `PCMA` e, com ele, o caminho de sempre — sem reconstruir nada.
+   repõe `PCMA` e, com ele, o caminho de sempre — sem reconstruir nada. O valor
+   tem uma vírgula, e o `dialin_ivr.lua` passa a escapá-la: sem isso o
+   FreeSWITCH partia a lista de variáveis, oferecia só Opus, e o G.711 de
+   recurso não existia (apanhado na revisão, antes de qualquer chamada).
 5. **O misturador descodifica sempre a 16 kHz**, e é a ponte que desce a soma
    para 8 kHz numa perna G.711, com um passa-baixo antes (FIR de 47 coeficientes,
    plano até 3,4 kHz, 48 dB ou mais abaixo a partir de 4,6 kHz; 1,4 ms de
@@ -64,6 +70,35 @@ sim.
 6. **No resto, o caminho G.711 fica como estava.** Um tronco ou uma prova que
    ofereça só PCMA/PCMU percorre o código que a R221 e a R222 mediram, com a
    mesma negociação, o mesmo `Ingress` e o mesmo nível.
+
+## Segurança: o que muda em quem controla os bytes
+
+**Antes desta decisão nenhum byte de quem liga chegava a um browser.** Tudo o
+que entrava pela perna era G.711, descodificado e recodificado pela ponte. Com a
+perna em Opus, o payload passa intacto para três sítios: os browsers da sala, o
+ficheiro de gravação, e os misturadores das outras pernas de telefone da sala.
+
+**Quem escolhe esses bytes.** O FreeSWITCH só transcodifica quando os codecs das
+duas pernas diferem. Um ramal (softphone), a central de uma organização ou
+qualquer par SIP que negoceie Opus com o FreeSWITCH pode, por isso, pôr na sala
+bytes que ele escolhe. Um chamador da rede pública não: aí quem gera o Opus é a
+libopus do FreeSWITCH.
+
+**O que isto alarga.** Esses três consumidores já recebiam Opus arbitrário de
+qualquer participante de browser. A população passa a incluir quem só tem um
+ramal ou o PIN da sala. O isolamento entre organizações não muda: a autoridade
+continua a ser o PIN ou a organização do ramal.
+
+**O validador não é uma fronteira de segurança.** Garante que o pacote é
+estruturalmente Opus e que cabe no tecto; não garante o que ele contém. As três
+barras de sempre continuam à frente dele e não foram tocadas: a allowlist de
+IP, o SRTP por chamada (`488` sem `a=crypto`), e só o tipo de payload negociado.
+
+**O descodificador lê bytes da rede.** O `opus-rs` tem código `unsafe` e já
+corrigiu fora-de-limites. O que este repo tem: uma amostra determinista de
+20 000 pacotes aleatórios e mutados sem um pânico (300 000 fora do repo), e a
+perna passa a largar a sala mesmo que a sua tarefa rebente — antes, um pânico
+deixava a publicação na sala para sempre. Não é uma auditoria do crate.
 
 ## O que se ganha, e o que se perde
 
@@ -85,8 +120,11 @@ Não há controlo de ganho nem supressão de ruído no caminho do telefone.
 ## Prova
 
 - `phone_bridge::` — a negociação (Opus à frente, só Opus, só G.711, ordem da
-  oferta), a numeração e o relógio da origem a passarem com os buracos da perda
-  no sítio, o pacote corrompido que não entra, a resposta do filtro da descida,
+  oferta); o relógio e a numeração da origem ao longo de um minuto com perda e
+  troca de ordem nas fronteiras dos dez segundos (onde a primeira versão as
+  apagava); o silêncio imposto que fica no relógio e não na sequência; o pacote
+  corrompido e o que passa do tecto, que não entram; seis pacotes reais da
+  libopus, um de cada forma, que entram; a resposta do filtro da descida,
   e um tom de 6 kHz da sala que **chega** ao telefone em Opus e **não chega nem
   dobra** em G.711 — o controlo negativo da banda, que antes do filtro falhava
   com o tom dobrado a 0,25 (a amplitude toda).
@@ -98,4 +136,16 @@ Não há controlo de ganho nem supressão de ruído no caminho do telefone.
   5–7,5 kHz a −45,0 dB contra −44,5 dB do codificador da libopus à mesma taxa;
   0,2 ms de CPU por bloco de 20 ms.
 - **Por medir, e é o que fecha isto:** uma chamada real de softphone com a perna
-  em Opus, gravada nas duas pernas, e a mesma chamada ouvida num browser.
+  em Opus — a oferta do FreeSWITCH com os DOIS codecs, a gravação das duas
+  pernas — e a mesma chamada ouvida num browser. A prova contra o FreeSWITCH
+  real (R222) continua a marcar `PCMA`: o caminho que passa a ser o por omissão
+  é uma variante por medir do que ela mediu. Também sem prova: a gravação de
+  uma perna em Opus, e o palco (R225) nesse codec.
+
+## Para quem actualiza
+
+A banda larga vem **ligada**. Numa instalação existente, sem ninguém mexer na
+configuração: a perna para a ponte passa a oferecer Opus antes de PCMA (o
+FreeSWITCH tem de ter o `mod_opus`, ou cai-se no PCMA); os bytes de um softphone
+chegam à sala e à gravação sem recodificação; e cada perna passa a descodificar
+a sala a 16 kHz. `PHONE_BRIDGE_WIDEBAND=0` repõe o que havia nos dois primeiros.
