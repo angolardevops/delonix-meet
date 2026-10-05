@@ -1,4 +1,4 @@
-//! «Ligar a…» a partir da sala, esquema (docs/ligar-a-partir-da-sala.md, F1; migração 0095).
+//! «Ligar a…» a partir da sala, esquema (docs/ligar-a-partir-da-sala.md, F1; migração 0096).
 //! Contra Postgres real. Ainda não há rota: mede só o que a migração promete.
 mod common;
 
