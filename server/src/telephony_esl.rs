@@ -49,6 +49,9 @@ use crate::net_guard::Outbound;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(4);
+/// Quanto se espera que um gateway morto saia do perfil antes do `rescan`.
+const KILLGW_WAIT_STEP: Duration = Duration::from_millis(500);
+const KILLGW_WAIT_STEPS: usize = 10;
 /// Um corpo ESL maior do que isto é tratado como protocolo avariado.
 const MAX_BODY: usize = 1024 * 1024;
 
@@ -628,6 +631,39 @@ impl SipControl for FreeswitchSipControl {
                     COMMAND_TIMEOUT,
                 )
                 .await?;
+        }
+        // Espera-se que o gateway antigo SAIA antes do `rescan` que cria o novo.
+        //
+        // Não é o `rescan` que precisa: um gateway marcado pelo `killgw` deixa
+        // logo de ser visto (`sofia_reg_find_gateway`), e o `rescan` recria-o
+        // de imediato. É a operadora: o antigo ainda tem de mandar o seu
+        // desregisto, e o novo regista-se com o MESMO contacto. Com o `rescan`
+        // imediato o FreeSWITCH manda primeiro o registo novo e só depois o
+        // desregisto do antigo (medido: «Added gateway» antes de «Deleted
+        // gateway») — e um registrar que apague por contacto fica sem registo
+        // nenhum, com o FreeSWITCH a dizer REGED.
+        //
+        // O antigo só sai da lista do perfil depois de mandar o desregisto
+        // (`sofia_reg_check_gateway`). Olha-se às DUAS listas: `gwlist` sem
+        // argumento só traz os gateways UP, e um em baixo passava por «já saiu».
+        for _ in 0..KILLGW_WAIT_STEPS {
+            let up = c
+                .api(&format!("sofia profile {profile} gwlist"), COMMAND_TIMEOUT)
+                .await?;
+            let down = c
+                .api(
+                    &format!("sofia profile {profile} gwlist down"),
+                    COMMAND_TIMEOUT,
+                )
+                .await?;
+            let present: std::collections::HashSet<&str> = up
+                .split_whitespace()
+                .chain(down.split_whitespace())
+                .collect();
+            if !gateway_names.iter().any(|g| present.contains(g.as_str())) {
+                break;
+            }
+            tokio::time::sleep(KILLGW_WAIT_STEP).await;
         }
         let body = c
             .api(&format!("sofia profile {profile} rescan"), COMMAND_TIMEOUT)

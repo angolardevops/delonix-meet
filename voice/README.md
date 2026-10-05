@@ -347,9 +347,14 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 > `delonix-voice`; `make esl-secret-rotate` troca-a). **A ACL não separa nada nestes laboratórios:**
 > o compose e a rede de pods são redes privadas, e o `pbx` não confiado (compose) e qualquer pod
 > (cluster) passam por ela — a password é a única barreira, em claro (o ESL não tem TLS) e visível no
-> argv do `fs_cli`. O ESL dá `originate` e `api system`. Por fechar antes de produção: NetworkPolicy
-> só do servidor para `:8021`, Kamailio sem o `.env` inteiro, `fs_cli` sem `-p`, e o chart do Helm
-> (que não passa a password ao FreeSWITCH).
+> argv do `fs_cli`. O ESL dá `originate` e `api system`. **`DELONIX_ESL_CIDRS`** (opcional) estreita a
+> lista às redes de onde o servidor fala — com ela, quem não é o servidor nem com a password certa
+> entra (medido, R297; a máscara tem de ser válida e diferente de zero); o compose e o `make cluster` não a usam, porque os contentores não têm
+> endereço fixo. **No chart do Helm** o FreeSWITCH recebe a password do Secret com
+> `server.telephony.eslAddr`, aceita `voice.freeswitch.eslCidrs`, e com `networkPolicy.enabled` o
+> `:8021` fica só para os pods do servidor — conferido no render, por aplicar num cluster; em `hostNetwork` a política não se aplica e o chart exige `eslCidrs`. É pelo
+> ESL que um tronco criado, alterado ou apagado chega ao FreeSWITCH na hora (R297). Por fechar antes
+> de produção: Kamailio sem o `.env` inteiro, e `fs_cli` sem `-p`.
 > A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
 
 Quem entra por telefone é um **participante da sala**: fala e ouve os

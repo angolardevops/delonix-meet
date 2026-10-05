@@ -641,6 +641,7 @@ pub async fn create(
         &format!("{id} name={name} host={host}:{port} transport={transport} srtp={srtp} max_channels={max_channels}"),
     )
     .await;
+    refresh_gateway(&state, id);
     let trunk = fetch_one(&state, org_id, id, 24).await?;
     Ok((
         StatusCode::CREATED,
@@ -860,7 +861,63 @@ pub async fn update(
         &format!("{trunk_id} {}", diff.join("; ")),
     )
     .await;
+    // Só o que MUDOU, e só o que muda a LIGAÇÃO à operadora: mudar o nome ou os
+    // prefixos não deita abaixo um registo, e um PATCH que repete o valor que
+    // já lá estava também não. A password conta sempre que vem: não se compara.
+    const CONNECTION: [&str; 8] = [
+        "host: ",
+        "port: ",
+        "transport: ",
+        "srtp: ",
+        "register: ",
+        "username: ",
+        "enabled: ",
+        "password: ",
+    ];
+    if diff
+        .iter()
+        .any(|d| CONNECTION.iter().any(|f| d.starts_with(f)))
+    {
+        refresh_gateway(&state, trunk_id);
+    }
     Ok(Json(fetch_one(&state, org_id, trunk_id, 24).await?))
+}
+
+/// Diz ao FreeSWITCH que este tronco mudou: tira o gateway que ele tem e
+/// manda-o reler os troncos (`killgw` + `rescan`, pelo ESL). Sem isto um
+/// tronco alterado continuava a registar-se com os dados antigos, e um
+/// apagado continuava registado na operadora, até alguém reiniciar o
+/// FreeSWITCH (R297).
+///
+/// Não espera pela resposta nem falha o pedido: a base é a verdade, e o
+/// FreeSWITCH volta a ler os troncos sozinho de minuto a minuto. Sem ESL
+/// configurado não faz nada — fica só esse ciclo, que não tira gateways.
+///
+/// Os avisos vão para uma fila com UM trabalhador (`GatewayRefresh`): uma
+/// ligação ao ESL de cada vez e um `rescan` por intervalo, por muitos pedidos
+/// que cheguem.
+fn refresh_gateway(state: &AppState, trunk_id: Uuid) {
+    use crate::telephony_service::GatewayRefresh;
+    use delonix_meet_domain::telephony::ports::PortError;
+    let Some(sip) = state.telephony.sip.clone() else {
+        return;
+    };
+    let queue = state.telephony.gateway_refresh.clone();
+    if !queue.enqueue(gateway_name(trunk_id)) {
+        return; // já há um trabalhador: leva este no lote seguinte
+    }
+    tokio::spawn(async move {
+        while let Some(batch) = queue.next_batch() {
+            match sip.restart_registration(&batch).await {
+                Ok(()) | Err(PortError::NotConfigured(_)) => {}
+                Err(e) => tracing::warn!(
+                    gateways = batch.len(), error = %e,
+                    "o FreeSWITCH não foi avisado da alteração de troncos — ficam com os dados antigos até reler ou reiniciar"
+                ),
+            }
+            tokio::time::sleep(GatewayRefresh::MIN_INTERVAL).await;
+        }
+    });
 }
 
 /// Apaga uma operadora. `409 telephony.trunk_in_use` se o plano de marcação a usa.
@@ -907,6 +964,7 @@ pub async fn delete(
         &trunk_id.to_string(),
     )
     .await;
+    refresh_gateway(&state, trunk_id);
     Ok(StatusCode::NO_CONTENT)
 }
 

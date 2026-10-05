@@ -30,6 +30,47 @@ use crate::{error::ApiError, AppState};
 pub struct Adapters {
     pub sip: Option<Arc<dyn SipControl>>,
     pub originator: Option<Arc<dyn CallOriginator>>,
+    /// Os gateways que o FreeSWITCH tem de reler, e se já há quem os leve.
+    pub gateway_refresh: Arc<GatewayRefresh>,
+}
+
+/// A fila dos avisos «este tronco mudou» (R297). Um só trabalhador de cada
+/// vez: sem ela cada pedido de um administrador abria a sua ligação ao ESL e
+/// mandava o seu `rescan` — que relê o XML inteiro, aloca um gateway novo e
+/// escreve uma linha por gateway de TODAS as organizações. Com ela, mil
+/// alterações seguidas dão um `rescan` por intervalo, com os gateways juntos.
+#[derive(Default)]
+pub struct GatewayRefresh {
+    /// (gateways à espera, há um trabalhador vivo)
+    inner: std::sync::Mutex<(std::collections::HashSet<String>, bool)>,
+}
+
+impl GatewayRefresh {
+    /// O intervalo mínimo entre dois `rescan` pedidos por alterações de troncos.
+    pub const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, (std::collections::HashSet<String>, bool)> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Põe um gateway na fila. `true` = não havia trabalhador: quem chama
+    /// tem de lançar um.
+    pub fn enqueue(&self, gateway: String) -> bool {
+        let mut g = self.lock();
+        g.0.insert(gateway);
+        !std::mem::replace(&mut g.1, true)
+    }
+
+    /// O lote seguinte; `None` = fila vazia, e o trabalhador dá-se por
+    /// terminado no mesmo instante (quem enfileirar a seguir lança outro).
+    pub fn next_batch(&self) -> Option<Vec<String>> {
+        let mut g = self.lock();
+        if g.0.is_empty() {
+            g.1 = false;
+            return None;
+        }
+        Some(g.0.drain().collect())
+    }
 }
 
 impl Adapters {
@@ -62,7 +103,11 @@ impl Adapters {
         };
         let originator: Option<Arc<dyn CallOriginator>> =
             esl.map(|esl| Arc::new(FreeswitchOriginator { esl }) as Arc<dyn CallOriginator>);
-        Self { sip, originator }
+        Self {
+            sip,
+            originator,
+            gateway_refresh: Arc::default(),
+        }
     }
 }
 

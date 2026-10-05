@@ -30,8 +30,12 @@
 #       deixa a instalação sem troncos;
 #    7. o utilizador de um tronco não consegue ler as variáveis do FreeSWITCH
 #       (o segredo de voz) e mandá-las para o seu servidor SIP;
-#    8. nenhum registo ficou por entregar, e nem o segredo de voz nem a
-#       password do tronco ficam no log.
+#    8. o servidor fala com o Event Socket do FreeSWITCH (ESL): a API vê o
+#       registo do tronco; um tronco ALTERADO ou APAGADO chega ao FreeSWITCH
+#       sem ninguém reiniciar nada; e o ESL recusa quem não é o servidor,
+#       mesmo com a password certa;
+#    9. nenhum registo ficou por entregar, e nem o segredo de voz, nem a
+#       password do tronco, nem a do ESL ficam no log.
 #
 #  Uso:
 #    bash scripts/troncos-prova.sh            ergue, mede, desmonta
@@ -46,6 +50,9 @@
 #                            numa imagem descartável (base SERVER_BIN_BASE,
 #                            por omissão ubuntu:24.04);
 #    FS_IMAGE=<imagem>       o FreeSWITCH (por omissão delonix-meet/freeswitch:1.11.3);
+#    SEM_ESL=1               o CONTROLO do passo 10: a mesma réplica com o ESL
+#                            fechado. O passo passa a esperar o contrário — o
+#                            tronco alterado e o apagado ficam como estavam;
 #    TRONCOS_PREFIXO=<a.b.c> o /24 da réplica (por omissão 10.251.51 — o
 #                            delonix só publica portas de 10.200–254.x).
 #
@@ -54,9 +61,8 @@
 #    - ramal para ramal, e o número de acesso às reuniões: precisam de dois
 #      telefones registados (o `softphone-prova.sh par` mede-o contra a sala).
 #    - uma operadora de verdade: SRTP, TLS, NAT, DTMF, identidade do chamador.
-#    - um tronco ALTERADO ou APAGADO: precisa de `killgw`, que o servidor manda
-#      pelo ESL, fechado nesta configuração (T11).
-#    - o estado do registo na consola e a «chamada de teste», pela mesma razão.
+#    - a «chamada de teste» da consola (o `originate` pelo ESL).
+#    - mais de um FreeSWITCH, ou mais de uma réplica do servidor.
 #    - o chart e o cluster: a lista de ficheiros é a do compose.yaml.
 # ============================================================
 set -uo pipefail
@@ -74,7 +80,7 @@ RESCAN=10
 fail=0
 ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
-uso() { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+uso() { sed -n '2,66p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 export ESTADO
 
 segredo() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
@@ -174,7 +180,7 @@ up() {
       "$(segredo)" "$(segredo)" "$(segredo)" "$(segredo)" "$(segredo)" "$(segredo)" "$(segredo)" > "$ESTADO/.env"
     printf 'DATA_ENCRYPTION_KEYS=prova:%s\nESTADO=%s\nSERVER_IMAGE=%s\nRESCAN_SECS=%s\n' \
       "$(head -c 32 /dev/urandom | base64 -w0)" "$ESTADO" "$img" "$RESCAN" >> "$ESTADO/.env"
-    printf 'API_PORT=%s\n' "$porta" >> "$ESTADO/.env"
+    printf 'API_PORT=%s\nTELEPHONY_ESL_PASSWORD=%s\n' "$porta" "$(segredo)" >> "$ESTADO/.env"
     # O ambiente de cada contentor, em ficheiros (nunca na linha de comandos).
     printf 'POSTGRES_USER=delonix\nPOSTGRES_DB=delonix\nPOSTGRES_PASSWORD=%s\n' "$(env_ POSTGRES_PASSWORD)" > "$ESTADO/postgres.env"
     { printf 'DATABASE_URL=postgres://delonix:%s@%s:5432/delonix\nREDIS_URL=redis://%s:6379\n' "$(env_ POSTGRES_PASSWORD)" "$PG_IP" "$REDIS_IP"
@@ -183,9 +189,14 @@ up() {
       printf 'RECORDINGS_DIR=/tmp/recordings\nREGISTRATION_MODE=open\n'
       # A API recusa — e bem — um tronco para um endereço interno (R213). A
       # operadora de ensaio vive nesta rede: é a excepção que o operador declara.
-      printf 'OUTBOUND_ALLOW_HOSTS=%s\n' "$OPERADORA"; } > "$ESTADO/server.env"
+      printf 'OUTBOUND_ALLOW_HOSTS=%s\n' "$OPERADORA"
+      # O Event Socket do FreeSWITCH. SEM_ESL=1 (o controlo) é a instalação
+      # de antes: o servidor não avisa o FreeSWITCH de nada.
+      [ -n "${SEM_ESL:-}" ] || printf 'TELEPHONY_ESL_ADDR=%s:8021\nTELEPHONY_ESL_PASSWORD=%s\n' "$FS_IP" "$(env_ TELEPHONY_ESL_PASSWORD)"; } > "$ESTADO/server.env"
     { grep -E '^VOICE_INTERNAL_SECRET=' "$ESTADO/.env"
-      printf 'DELONIX_CONTROL_URL=http://%s:8181\nDELONIX_RAMAIS_SIP_PORT=5070\nDELONIX_TRUNKS_RESCAN_SECS=%s\n' "$SERVER_IP" "$RESCAN"; } > "$ESTADO/freeswitch.env"
+      printf 'DELONIX_CONTROL_URL=http://%s:8181\nDELONIX_RAMAIS_SIP_PORT=5070\nDELONIX_TRUNKS_RESCAN_SECS=%s\n' "$SERVER_IP" "$RESCAN"
+      # Aberto SÓ ao endereço do servidor: nem a operadora, na mesma rede, entra.
+      [ -n "${SEM_ESL:-}" ] || printf 'TELEPHONY_ESL_PASSWORD=%s\nDELONIX_ESL_CIDRS=%s/32\n' "$(env_ TELEPHONY_ESL_PASSWORD)" "$SERVER_IP"; } > "$ESTADO/freeswitch.env"
     grep -E '^OPERADORA_PASSWORD=' "$ESTADO/.env" > "$ESTADO/operadora.env" )
   API=http://127.0.0.1:$porta
   # Os ficheiros de /meet: os que o compose.yaml da raiz monta, e mais nenhum.
@@ -199,7 +210,8 @@ up() {
   chmod -R a+rX "$ESTADO/meet" "$ESTADO/entrypoint"
   echo "configuração: a que o voice/cluster/freeswitch-entrypoint.sh monta, com os $n ficheiros que o compose.yaml põe em /meet"
   echo "servidor: $img"
-  echo "motor: $MOTOR; rede $PREFIXO.0/24; API em $API"
+  if [ -n "${SEM_ESL:-}" ]; then f="FECHADO (controlo)"; else f="aberto só ao servidor ($SERVER_IP)"; fi
+  echo "motor: $MOTOR; rede $PREFIXO.0/24; API em $API; ESL $f"
   # Não é uma rede sem saída de propósito: sem rota por omissão o FreeSWITCH
   # escolhe 127.0.0.1 para escutar, e os dois deixavam de se ver.
   m_rede_cria "$P-net" "$PREFIXO.0/24" || { echo "✗ não consegui criar a rede $PREFIXO.0/24 (TRONCOS_PREFIXO para outra)"; exit 1; }
@@ -231,7 +243,7 @@ up() {
 
 # ------------------------------------------------------------ mede
 mede() {
-  local r st corpo senha op trunk gw e antes v pendentes=0 SOFT= b
+  local r st corpo senha op trunk gw e antes v pendentes=0 SOFT= b entregues=7 i
   senha=$(env_ ADMIN_PASSWORD); op=$(env_ OPERADORA_PASSWORD)
 
   echo "1) o administrador cria a organização, o tronco e o plano de marcação — pela API"
@@ -399,7 +411,7 @@ mede() {
   else bad "depois de reiniciar o gateway não voltou (estado: $e)"; fi
   # O servidor MORRE a meio de uma chamada de um ramal: o registo da perna do
   # tronco não tem a quem ser entregue e fica em disco. É o controlo do «nada
-  # por entregar» do passo 10 — e a única maneira de LER um registo destes: a
+  # por entregar» do passo 11 — e a única maneira de LER um registo destes: a
   # perna do tronco recebe do FreeSWITCH uma cópia do SDP que o ramal ofereceu,
   # com a chave SRTP dele (`switch_m_sdp`), e o registo leva todas as variáveis.
   if chamada_longa "$pw_a" "$ramal" "$dom_a" "$ESTADO/a-meio.out"; then
@@ -408,7 +420,12 @@ mede() {
     # — DEPOIS de a dial string o ter tirado na origem. A verificação que se
     # segue é o controlo: se a cópia não voltou, o registo em disco não prova
     # nada sobre a renegociação.
-    b=$(fs_cli "show channels" | grep -a 'sofia/external/' | head -1 | cut -d, -f1)
+    # Até cinco tentativas: num host carregado a perna do tronco demorou a
+    # aparecer na lista (medido uma vez, com a carga a 26).
+    b=; for i in 1 2 3 4 5; do
+      b=$(fs_cli "show channels" | grep -a 'sofia/external/' | head -1 | cut -d, -f1)
+      [ -n "$b" ] && break; sleep 1
+    done
     m_exec "$SOFT" sh -c "printf '/hold\n' | nc -u -w1 127.0.0.1 55551" >/dev/null 2>&1; sleep 2
     m_exec "$SOFT" sh -c "printf '/resume\n' | nc -u -w1 127.0.0.1 55551" >/dev/null 2>&1; sleep 2
     v=$(fs_cli "uuid_getvar ${b:-nenhuma} switch_m_sdp" | grep -ac 'inline')
@@ -468,15 +485,109 @@ mede() {
   elif [ "$st" = 400 ] || [ "$st" = 422 ]; then ok "a API recusa um utilizador de tronco com uma referência a variável ($st)"
   else bad "a API respondeu $st ao tronco-armadilha"; fi
 
-  echo "10) nada por entregar, e nenhum segredo no log"
+  echo "10) o servidor fala com o FreeSWITCH: um tronco alterado ou apagado chega lá sem reiniciar nada"
+  # Até aqui um tronco alterado ou apagado ficava como estava até alguém
+  # reiniciar o FreeSWITCH: o ciclo de releitura só ACRESCENTA gateways, e
+  # tirar um pede `killgw`, que o servidor manda pelo Event Socket (ESL).
+  # SEM_ESL=1 corre este passo com ele fechado e espera o contrário: é o
+  # controlo que diz que o que aqui se mede vem do ESL e não do ciclo.
+  local esl gw2 trunk2 espera=$(( RESCAN * 2 + 12 ))
+  esl=$(env_ TELEPHONY_ESL_PASSWORD)
+  espera_gw "$gw" REGED $(( RESCAN * 3 + 20 )) >/dev/null || bad "o tronco não estava registado à entrada do passo 10 — o que se segue não mede nada"
+  r=$(api GET "/api/orgs/$ORG/telephony/trunks/$trunk"); v=$(campo "${r#* }" status.registration)
+  # op_tem <conta> — quantos registos dessa conta tem a operadora
+  op_tem() { cx operadora fs_cli -x "show registrations" 2>/dev/null | grep -c "^$1,"; }
+  # some_gw <gateway> <segundos> — espera que o gateway deixe de existir. Pelo
+  # gateway e não pela lista: `gwlist` só traz os que estão UP.
+  some_gw() { local k; for k in $(seq 1 "$2"); do fs_cli "sofia status gateway $1" | grep -q 'Invalid Gateway' && return 0; sleep 1; done; return 1; }
+  # esl_da_operadora <password> — a operadora (outro contentor da mesma rede)
+  # a pedir `status` ao ESL do Meet: quantas linhas «UP …» recebeu
+  esl_da_operadora() { m_exec -e ESLPW="$1" "$P-operadora" sh -c 'timeout 10 fs_cli -H '"$FS_IP"' -P 8021 -p "$ESLPW" -x status 2>&1' | grep -ac '^UP '; }
+  if [ -z "${SEM_ESL:-}" ]; then
+    [ "$v" = registered ] && ok "a API vê no FreeSWITCH o registo do tronco (registration=registered)" ||
+      bad "a API não vê o registo do tronco no FreeSWITCH (registration=«$v») — o servidor não chega ao ESL"
+    # Alterado: uma password errada tem de chegar à operadora.
+    r=$(api PATCH "/api/orgs/$ORG/telephony/trunks/$trunk" '{"password":"errada-de-proposito-0123456789"}')
+    [ "${r%% *}" = 200 ] || bad "a API não aceitou a alteração do tronco ($r)"
+    e=REGED; for i in $(seq 1 40); do e=$(estado_gw "$gw"); [ "$e" != REGED ] && [ "$(op_tem 1000)" = 0 ] && break; sleep 1; done
+    [ "$e" != REGED ] && [ "$(op_tem 1000)" = 0 ] && ok "tronco alterado (password errada): o registo caiu na operadora em ${i} s, sem reiniciar nada (estado: ${e:-a recriar})" ||
+      bad "alterei a password do tronco e o FreeSWITCH continua registado com a antiga (estado $e, $(op_tem 1000) registo(s) na operadora)"
+    r=$(api PATCH "/api/orgs/$ORG/telephony/trunks/$trunk" "{\"password\":\"$op\"}")
+    [ "${r%% *}" = 200 ] || bad "a API não aceitou repor a password do tronco ($r)"
+    if e=$(espera_gw "$gw" REGED 60); then ok "password reposta: o tronco volta a registar-se sozinho"
+    else bad "repus a password e o tronco não voltou a registar-se em 60 s (estado: $e)"; fi
+    # Rodar a password de um tronco que ESTÁ registado. O gateway antigo
+    # desregista-se e o novo regista-se, os dois com o mesmo contacto: se o
+    # desregisto chegasse à operadora depois do registo novo, o FreeSWITCH
+    # ficava a dizer REGED e a operadora sem registo — até o registo expirar.
+    for i in $(seq 1 15); do [ "$(op_tem 1000)" -ge 1 ] && break; sleep 1; done
+    r=$(api PATCH "/api/orgs/$ORG/telephony/trunks/$trunk" "{\"password\":\"$op\"}")
+    [ "${r%% *}" = 200 ] || bad "a API não aceitou rodar a password do tronco ($r)"
+    sleep 3; e=$(espera_gw "$gw" REGED 40) || true; sleep 6
+    v=$(op_tem 1000); e=$(estado_gw "$gw")
+    [ "$e" = REGED ] && [ "${v:-0}" -ge 1 ] && ok "rodar a password de um tronco registado: REGED no FreeSWITCH e registado na operadora (9 s depois)" ||
+      bad "rodei a password de um tronco registado: o FreeSWITCH diz «$e» e a operadora tem $v registo(s) da conta"
+    # E pela ordem certa. A operadora de ensaio é um FreeSWITCH, que apaga um
+    # registo pelo Call-ID: outra, que o apague pelo contacto, ficava sem
+    # registo se o desregisto do gateway antigo chegasse depois do registo do
+    # novo. O antigo só sai do perfil depois de mandar o desregisto.
+    v=$(fs_log | grep -a -o -F -e "Deleted gateway $gw" -e "Added gateway '$gw'" | tail -2 | cut -d' ' -f1 | tr '\n' ' ')
+    [ "$v" = "Deleted Added " ] && ok "e pela ordem certa: o gateway antigo saiu (desregisto enviado) antes de o novo entrar" ||
+      bad "o gateway novo entrou antes de o antigo sair (últimas linhas do log: «$v») — o desregisto do antigo segue depois do registo do novo"
+    antes=$(registos); r=$(marca 923000111)
+    case "$r" in +OK*) espera_registos $(( antes + 1 )) 25 && { ok "e o tronco alterado leva uma chamada, com registo"; entregues=$(( entregues + 1 )); } || bad "a chamada pelo tronco alterado saiu e não deixou registo" ;;
+      *) bad "a chamada pelo tronco alterado não foi atendida ($r)" ;; esac
+  else
+    [ "$v" != registered ] && ok "controlo: sem ESL a API não sabe do registo (registration=«$v»)" ||
+      bad "controlo: sem ESL a API diz «registered» — de onde?"
+    r=$(api PATCH "/api/orgs/$ORG/telephony/trunks/$trunk" '{"password":"errada-de-proposito-0123456789"}')
+    [ "${r%% *}" = 200 ] || bad "a API não aceitou a alteração do tronco ($r)"
+    sleep "$espera"; e=$(estado_gw "$gw")
+    [ "$e" = REGED ] && [ "$(op_tem 1000)" -ge 1 ] && ok "controlo: sem ESL, ${espera} s depois o tronco alterado continua registado com a password ANTIGA" ||
+      bad "controlo: sem ESL o tronco alterado mudou (estado $e) — o passo 10 não distingue o ESL do ciclo de releitura"
+    r=$(api PATCH "/api/orgs/$ORG/telephony/trunks/$trunk" "{\"password\":\"$op\"}")
+  fi
+  # Apagado: um segundo tronco, com outra conta na operadora, criado e apagado.
+  r=$(api POST "/api/orgs/$ORG/telephony/trunks" "{\"name\":\"A apagar\",\"short_code\":\"APG\",\"host\":\"$OPERADORA\",\"port\":5060,\"transport\":\"udp\",\"srtp\":\"off\",\"register\":true,\"username\":\"1001\",\"password\":\"$op\",\"prefixes\":[],\"max_channels\":2}")
+  st=${r%% *}; trunk2=$(campo "${r#* }" id); gw2="dlx-$trunk2"
+  if [ "$st" = 201 ] && [ -n "$trunk2" ] && e=$(espera_gw "$gw2" REGED $(( RESCAN * 3 + 20 ))) && [ "$(op_tem 1001)" -ge 1 ]; then
+    r=$(api DELETE "/api/orgs/$ORG/telephony/trunks/$trunk2")
+    [ "${r%% *}" = 204 ] || bad "a API não apagou o tronco ($r)"
+    if [ -z "${SEM_ESL:-}" ]; then
+      some_gw "$gw2" 40 && ok "tronco apagado: o gateway saiu do FreeSWITCH sem reiniciar nada" ||
+        bad "apaguei o tronco e o gateway $gw2 continua no FreeSWITCH (estado $(estado_gw "$gw2"))"
+      for i in $(seq 1 20); do [ "$(op_tem 1001)" = 0 ] && break; sleep 1; done
+      [ "$(op_tem 1001)" = 0 ] && ok "e desregistou-se da operadora" || bad "o tronco apagado continua registado na operadora"
+    else
+      sleep "$espera"
+      [ "$(estado_gw "$gw2")" = REGED ] && [ "$(op_tem 1001)" -ge 1 ] && ok "controlo: sem ESL, ${espera} s depois o tronco APAGADO continua registado na operadora" ||
+        bad "controlo: sem ESL o tronco apagado saiu (estado «$(estado_gw "$gw2")») — o passo 10 não distingue o ESL do ciclo de releitura"
+    fi
+  else bad "o segundo tronco não se criou ou não se registou ($st $(cut -c1-120 <<<"${r#* }"), estado ${e:-?}) — o apagar não foi medido"; fi
+  # Quem entra no ESL manda em tudo (origina chamadas por qualquer tronco).
+  v=$(esl_da_operadora "$esl"); r=$(cx operadora sh -c 'timeout 10 fs_cli -x status 2>&1' | grep -ac '^UP ')
+  if [ -z "${SEM_ESL:-}" ]; then
+    [ "${v:-1}" = 0 ] && [ "${r:-0}" -ge 1 ] && ok "outro contentor da mesma rede, com a password CERTA, não entra no ESL (e o mesmo comando, contra o seu próprio FreeSWITCH, entra)" ||
+      bad "outro contentor entrou no ESL do Meet com a password ($v linha(s)), ou o comando de controlo não funciona ($r)"
+    v=$(cx freeswitch sh -c 'timeout 10 /usr/local/freeswitch/bin/fs_cli -p ClueCon -x status 2>&1' | grep -ac '^UP ')
+    r=$(fs_cli status | grep -ac '^UP ')
+    [ "${v:-1}" = 0 ] && [ "${r:-0}" -ge 1 ] && ok "a password de fábrica (ClueCon) não entra, nem em loopback" ||
+      bad "a password de fábrica entra no ESL ($v), ou o comando de controlo não funciona ($r)"
+  else
+    [ "${v:-1}" = 0 ] && [ "${r:-0}" -ge 1 ] && ok "controlo: sem ESL declarado, o 8021 não responde a outro contentor (só loopback)" ||
+      bad "controlo: sem ESL declarado outro contentor falou com o 8021 ($v), ou o comando de controlo não funciona ($r)"
+  fi
+
+  echo "11) nada por entregar, e nenhum segredo no log"
   v=$(cx freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
   [ "${v:-99}" = "${pendentes:-0}" ] && ok "com o servidor de pé nenhum registo ficou por entregar (em disco só os $pendentes do controlo)" ||
     bad "ficaram $v registo(s) em disco, e o controlo só explica ${pendentes:-0}: o servidor recusou os outros"
-  # Oito chamadas saíram por um tronco (quatro delas marcadas pelo ramal); a
-  # que apanhou o servidor em baixo ficou em disco, as outras sete chegaram.
+  # Oito chamadas saíram por um tronco até ao passo 9 (quatro delas marcadas
+  # pelo ramal); a que apanhou o servidor em baixo ficou em disco, as outras
+  # sete chegaram. O passo 10, com o ESL, junta-lhes a do tronco alterado.
   # As pernas de quem marcou e as que não passaram por tronco nenhum não contam.
   v=$(registos)
-  [ "$v" = 7 ] && ok "sete chamadas por tronco entregues, sete registos — nem um a mais" || bad "a organização tem $v registos de chamada, e chegaram ao servidor 7 chamadas por tronco"
+  [ "$v" = "$entregues" ] && ok "$entregues chamadas por tronco entregues, $entregues registos — nem um a mais" || bad "a organização tem $v registos de chamada, e chegaram ao servidor $entregues chamadas por tronco"
   v=$(fs_log | grep -ac "$(env_ VOICE_INTERNAL_SECRET)")
   [ "${v:-1}" -eq 0 ] && ok "o segredo de voz não aparece no freeswitch.log" || bad "o segredo de voz aparece $v vez(es) no freeswitch.log"
   # O que ficou em disco (os registos do controlo) não leva segredos nem chaves.
@@ -487,6 +598,9 @@ mede() {
   [ "${v:-1}" -eq 0 ] && ok "a password do tronco não aparece no freeswitch.log" || bad "a password do tronco aparece $v vez(es) no freeswitch.log"
   v=$(cx freeswitch sh -c "grep -rl -a '$op' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")
   [ "${v:-1}" -eq 0 ] && ok "nenhum ficheiro do directório de logs traz a password do tronco" || bad "$v ficheiro(s) do directório de logs trazem a password do tronco"
+  v=$(fs_log | grep -ac "$esl"); r=$(m_logs "$P-server" 2>&1 | grep -ac "$esl")
+  [ "${v:-1}" -eq 0 ] && [ "${r:-1}" -eq 0 ] && ok "a password do ESL não aparece no freeswitch.log nem no log do servidor" ||
+    bad "a password do ESL aparece no freeswitch.log ($v) ou no log do servidor ($r)"
   v=$(fs_log | grep -ac 'Ignoring duplicate gateway')
   echo "       ruído do ciclo de releitura: $v linha(s) «Ignoring duplicate gateway» no log desde o último arranque"
 }

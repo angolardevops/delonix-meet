@@ -139,8 +139,12 @@ server:
     freeswitchIPs: []
     rtp: { min: 20200, max: 20400 }
 
-  # Telefonia de troncos (ADR-0009). `eslAddr` exige a chave
-  # TELEPHONY_ESL_PASSWORD no Secret (o servidor recusa arrancar sem ela).
+  # Telefonia de troncos (ADR-0009). `eslAddr` (ex.:
+  # freeswitch.<namespace>.svc.cluster.local:8021) exige a chave
+  # TELEPHONY_ESL_PASSWORD no Secret (o servidor recusa arrancar sem ela); com
+  # a voz do chart o FreeSWITCH abre-lhe o ESL com a mesma chave. É por aqui
+  # que um tronco alterado ou apagado chega ao FreeSWITCH e que a consola vê o
+  # registo.
   telephony:
     eslAddr: ""
     kamailioRpcUrl: ""
@@ -310,8 +314,20 @@ voice:
     # DELONIX_TRUNKS_RESCAN_SECS — de quanto em quanto tempo o FreeSWITCH volta
     # a ler os troncos do servidor (ADR-0009): um tronco criado na consola
     # regista-se sozinho, e um arranque com o servidor em baixo recupera.
-    # 0 desliga; um tronco alterado ou apagado pede sempre um reinício.
+    # 0 desliga. Sem `server.telephony.eslAddr` é o ÚNICO caminho, e só
+    # acrescenta: um tronco alterado ou apagado fica como estava até um
+    # reinício. Com ele, o servidor avisa o FreeSWITCH na hora (R297).
     trunksRescanSecs: 60
+    # DELONIX_ESL_CIDRS — de onde o SERVIDOR fala para o Event Socket do
+    # FreeSWITCH (8021). Só conta com `server.telephony.eslAddr`. Vazia, entram
+    # todas as redes privadas (com a TELEPHONY_ESL_PASSWORD do Secret); com
+    # redes, só essas. Quem lá entra manda em tudo (origina chamadas por
+    # qualquer tronco): o mais estreito que a rede dos pods do servidor
+    # permitir. Com `networkPolicy.enabled`, o 8021 fica além disso só para
+    # esses pods — EXCEPTO em `hostNetwork`, onde a política não se aplica e o
+    # ESL escuta nas interfaces do nó: aí o chart exige esta lista. Em
+    # produção exige uma das duas (a política ou a lista).
+    eslCidrs: []
     # DELONIX_EXTERNAL_IP — o endereço que o perfil dos ramais anuncia no SIP
     # e no SDP — e a gama RTP que se publica com ele.
     externalIP: ""
