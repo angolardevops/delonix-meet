@@ -14,7 +14,7 @@ mod common;
 use std::{net::SocketAddr, sync::atomic::Ordering, time::Duration};
 
 use common::{Account, TestApp};
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -233,5 +233,65 @@ async fn without_redis_a_pod_switch_is_a_new_person(db: sqlx::PgPool) {
     drop_socket(ws).await;
     let (_ws, back) = join(&c.pod_b, &c.token, Some(&s1)).await;
     assert_ne!(peer(&back), id);
+    drop(c.app);
+}
+
+/// Espera por uma mensagem do tipo `tipo` no socket (ignora as outras).
+async fn esperar(ws: &mut Ws, tipo: &str) {
+    for _ in 0..100 {
+        let msg = tokio::time::timeout(Duration::from_secs(10), ws.next())
+            .await
+            .unwrap_or_else(|_| panic!("sem «{tipo}» em 10 s"));
+        match msg {
+            Some(Ok(Message::Text(t))) => {
+                let v: Value = serde_json::from_str(&t).unwrap();
+                if v["type"] == tipo {
+                    return;
+                }
+            }
+            Some(Ok(_)) => {}
+            _ => panic!("o socket fechou antes de «{tipo}»"),
+        }
+    }
+    panic!("«{tipo}» não chegou");
+}
+
+/// Quem é expulso não pode voltar com o segredo que tinha: o lugar fica no Redis
+/// 12 h, e sem este teste `reclaim_from_redis` devolvia-o (sem sala de espera e
+/// com o papel que tinha) porque o `Kick` só limpava a memória do pod.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_kicked_participant_cannot_reclaim_the_seat(db: sqlx::PgPool) {
+    let c = cena(db, Some(redis_url())).await;
+    // O anfitrião e um segundo dispositivo da mesma conta, ambos no pod A.
+    let (mut host, _) = join(&c.pod_a, &c.token, None).await;
+    let (mut alvo, joined) = join(&c.pod_a, &c.token, None).await;
+    let (id, segredo) = (peer(&joined), secret(&joined));
+
+    host.send(Message::Text(
+        json!({"type": "kick", "to": id}).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    esperar(&mut alvo, "kicked").await;
+    drop(alvo);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Tenta voltar com o segredo, por outro pod e pelo mesmo: é uma pessoa nova.
+    for pod in [&c.pod_b, &c.pod_a] {
+        let (_w, back) = join(pod, &c.token, Some(&segredo)).await;
+        assert_ne!(
+            peer(&back),
+            id,
+            "um participante expulso voltou ao lugar com o segredo antigo"
+        );
+    }
+    assert_eq!(
+        c.pod_b
+            .state
+            .metrics
+            .seats_reclaimed_redis_total
+            .load(Ordering::Relaxed),
+        0
+    );
     drop(c.app);
 }

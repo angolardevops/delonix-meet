@@ -1972,35 +1972,22 @@ impl SignalingHub {
     /// Varre os lugares reservados que passaram da janela e transforma-os em
     /// saídas a sério. Chamado periodicamente; devolve quantos expiraram.
     pub fn expire_disconnected(&self, janela: std::time::Duration) -> usize {
-        self.expire_disconnected_seats(janela).len()
-    }
-
-    /// Como `expire_disconnected`, mas devolve `(sala, segredo)` de cada lugar
-    /// que expirou: quem guarda uma cópia do lugar fora do pod (`redis_state`)
-    /// precisa do segredo para a apagar, e depois de o `leave` já não o tem.
-    pub fn expire_disconnected_seats(&self, janela: std::time::Duration) -> Vec<(Uuid, String)> {
         let agora = std::time::Instant::now();
-        let mut expirados: Vec<(Uuid, Uuid, String)> = Vec::new();
+        let mut expirados: Vec<(Uuid, Uuid)> = Vec::new();
         for room in self.rooms.iter() {
             for (peer_id, p) in room.peers.iter() {
                 if let Some(caiu) = p.disconnected_at {
                     if agora.duration_since(caiu) > janela {
-                        expirados.push((
-                            *room.key(),
-                            *peer_id,
-                            p.reconnect_secret.expose().to_string(),
-                        ));
+                        expirados.push((*room.key(), *peer_id));
                     }
                 }
             }
         }
-        for (room_id, peer_id, _) in &expirados {
+        // `leave` apaga também a cópia do lugar no Redis.
+        for (room_id, peer_id) in &expirados {
             self.leave(*room_id, *peer_id);
         }
-        expirados
-            .into_iter()
-            .map(|(room_id, _, secret)| (room_id, secret))
-            .collect()
+        expirados.len()
     }
 
     /// Há neste nó um peer com este id na sala — vivo ou com o lugar reservado?
@@ -2181,6 +2168,7 @@ impl SignalingHub {
         let mut orfaos: Vec<Uuid> = Vec::new();
         let mut spotlight_cleared = false;
         let mut era_de_fora = false;
+        let mut segredo_do_lugar: Option<String> = None;
         let removed = self
             .rooms
             .get_mut(&room_id)
@@ -2196,6 +2184,7 @@ impl SignalingHub {
                 }
                 let saiu = r.peers.remove(&peer_id);
                 if let Some(p) = &saiu {
+                    segredo_do_lugar = Some(p.reconnect_secret.expose().to_string());
                     era_de_fora = p.seat.outside_app();
                     let conta = p.user_id;
                     let restantes: Vec<Uuid> = r
@@ -2215,6 +2204,18 @@ impl SignalingHub {
             .unwrap_or(false);
         for id in orfaos {
             self.send_to(room_id, id, ServerMsg::CompanionEnded);
+        }
+        // Quem sai, é expulso ou vê o lugar expirar NÃO pode voltar a reclamá-lo:
+        // a cópia do lugar no Redis (`redis_state::seat_*`) apaga-se aqui, em
+        // TODOS os caminhos, porque todos passam por `leave`. Sem isto, um
+        // convidado expulso (`Kick`) voltava com o segredo que tinha, sem passar
+        // pela sala de espera e com o papel que tinha: o lugar ficava 12 h no
+        // Redis e `reclaim_from_redis` não olha à janela nem à identidade.
+        if let (Some(segredo), Some(bus)) = (segredo_do_lugar, &self.bus) {
+            let conn = bus.conn.clone();
+            tokio::spawn(async move {
+                crate::redis_state::seat_drop(conn, room_id, &segredo).await;
+            });
         }
         let empty = self
             .rooms
