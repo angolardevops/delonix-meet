@@ -434,6 +434,118 @@ async fn room_listing_tells_state_and_what_the_viewer_may_do(db: sqlx::PgPool) {
     );
 }
 
+/// DUAS organizações na mesma sala: alguém da organização B que ESTEVE na sala
+/// da A lê a lista — e lê exactamente o que o `/details` já lhe dava, nada
+/// mais, sem poder fazer nada às gravações. Um colega dele que não esteve não
+/// lê nada.
+#[sqlx::test(migrations = "./migrations")]
+async fn room_listing_for_a_participant_of_another_organization(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let (app, a, b) = (&f.app, &f.a, &f.b);
+    let path = format!("/api/rooms/{}/recordings", room_code(&f).await);
+    let failed = insert_in_state(&f, "falhada.webm", "failed", Some("sem espaço")).await;
+    let (st, e) = app
+        .post(
+            &format!("/api/recordings/{}/shares", f.rec),
+            Some(&a.token),
+            json!({"user_id": f.duarte.user_id}),
+        )
+        .await;
+    assert_eq!(st, 201, "{e}");
+    let colega_de_b = app.add_member(b, "bruno", "member").await;
+
+    // Antes de entrar na sala, a B não lê nada.
+    let (st, e) = app.get(&path, Some(&b.token)).await;
+    assert_eq!(st, 403, "{e}");
+    participate(app, &f.room_id, &b.user_id).await;
+
+    let (st, list) = app.get(&path, Some(&b.token)).await;
+    assert_eq!(st, 200, "{list}");
+    let rows = list.as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{list}");
+    for r in rows {
+        let id = r["id"].as_str().unwrap();
+        // Nenhum campo que o `/details` não lhe desse já.
+        let (st, d) = app
+            .get(&format!("/api/recordings/{id}/details"), Some(&b.token))
+            .await;
+        assert_eq!(st, 200, "{d}");
+        assert_eq!(r, &d, "a sala e o /details divergem para a organização B");
+        // Vê; não descarrega nem gere.
+        assert_eq!(r["can_download"], false, "{r}");
+        assert_eq!(r["can_manage"], false, "{r}");
+
+        // E o servidor recusa-lhe cada acção, com o estado que for.
+        let base = format!("/api/recordings/{id}");
+        let (st, e) = app
+            .get(&format!("{base}/content?dl=1"), Some(&b.token))
+            .await;
+        assert!(st == 403 || st == 400, "download: {st} {e}");
+        for (o_que, (st, e)) in [
+            (
+                "partilhar",
+                app.post(
+                    &format!("{base}/shares"),
+                    Some(&b.token),
+                    json!({"user_id": colega_de_b.user_id}),
+                )
+                .await,
+            ),
+            (
+                "link público",
+                app.put(&format!("{base}/public-link"), Some(&b.token), json!({}))
+                    .await,
+            ),
+            (
+                "publicar",
+                app.post(
+                    &format!("{base}/publish"),
+                    Some(&b.token),
+                    json!({"visibility": "org"}),
+                )
+                .await,
+            ),
+            (
+                "renomear",
+                app.patch(&base, Some(&b.token), json!({"filename": "minha.webm"}))
+                    .await,
+            ),
+        ] {
+            assert_eq!(st, 403, "{o_que}: {e}");
+        }
+    }
+    let ready = rows.iter().find(|r| r["id"] == f.rec.as_str()).unwrap();
+    let falhada = rows.iter().find(|r| r["id"] == failed.as_str()).unwrap();
+    assert_eq!(ready["status"], "ready");
+    assert_eq!(falhada["status"], "failed");
+
+    // O que a B fica a saber da organização A por esta lista, escrito para
+    // que mudar seja uma decisão e não um acaso. É o que o `/details` lhe diz
+    // desde antes deste teste — a organização de quem gravou, a causa da
+    // falha, e quantas partilhas a gravação tem — e nenhum destes é segredo
+    // de quem esteve na mesma reunião; fica aqui para se ver.
+    assert_eq!(ready["uploader_org_id"], a.org(), "{ready}");
+    assert_eq!(ready["share_count"], 1, "{ready}");
+    assert_eq!(falhada["failure_reason"], "sem espaço", "{falhada}");
+    // …e NÃO fica a saber com quem está partilhada.
+    let (st, e) = app
+        .get(&format!("/api/recordings/{}/shares", f.rec), Some(&b.token))
+        .await;
+    assert_eq!(st, 403, "{e}");
+    assert!(!e.to_string().contains(f.duarte.user_id.as_str()), "{e}");
+
+    // Um colega da B que não esteve na sala não lê a lista nem as gravações.
+    let (st, e) = app.get(&path, Some(&colega_de_b.token)).await;
+    assert_eq!(st, 403, "{e}");
+    let (st, e) = app
+        .get(
+            &format!("/api/recordings/{}/details", f.rec),
+            Some(&colega_de_b.token),
+        )
+        .await;
+    assert_eq!(st, 404, "{e}");
+}
+
 /// Mostrar uma gravação a outra pessoa — partilhar, criar o link público,
 /// publicar, contar uma visualização — pede uma gravação COM ficheiro, e a
 /// recusa é a mesma nas quatro: `409 recording.processing` a compor,

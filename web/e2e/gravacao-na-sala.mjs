@@ -94,6 +94,11 @@ await p.waitForTimeout(1500)
 await p.locator('[data-testid=auth-submit]').click()
 await p.waitForFunction(() => !document.querySelector('[data-testid=auth-email]'), null, { timeout: 60000 })
 
+// Quantas vezes o browser pede a LISTA das gravações da sala. Conta-se desde
+// antes de entrar: com o painel fechado tem de ficar a zero.
+let listas = 0
+p.on('request', (r) => { if (r.method() === 'GET' && new RegExp(`/api/rooms/${sala.code}/recordings$`).test(r.url())) listas++ })
+
 // A rota é `#/r/<código>`, e a sala abre numa PRÉ-ENTRADA: o sinal de entrada
 // é ela desaparecer (as armadilhas estão escritas no `reuniao.mjs`).
 await p.goto(`${APP}/#/r/${sala.code}`, { waitUntil: 'domcontentloaded' })
@@ -114,9 +119,11 @@ let releituras = 0
 p.on('request', (r) => { if (/\/api\/recordings\/[^/]+\/details/.test(r.url())) releituras++ })
 await p.waitForTimeout(7000)
 chk(releituras === 0, `painel fechado: nenhuma releitura de fundo da gravação a compor → ${releituras}`)
+chk(listas === 0, `painel fechado: entrar na sala não pede a lista das gravações → ${listas} pedidos`)
 
 await p.getByRole('button', { name: /^participantes/i }).first().click({ timeout: 30000 })
 await p.locator('.rm-rec').first().waitFor({ timeout: 30000 }).catch(() => {})
+chk(listas >= 1, `abrir o painel lê a lista (controlo) → ${listas}`)
 // A API, lida só DEPOIS de o painel ter linhas: é a prova de que a entrada na
 // sala já ficou registada (antes disso a rota responde `403` a quem a criou).
 const resposta = await j(`/api/rooms/${sala.code}/recordings`, { token: eu.tok })

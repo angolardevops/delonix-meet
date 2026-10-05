@@ -71,11 +71,17 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
 
   useEffect(() => {
     const offs = [
-      signal.on('joined', () => refresh()),
+      // Nenhum aviso da sala faz pedir a lista a quem não a está a ver: o
+      // `recording` é difundido a pedido de qualquer participante, e sem esta
+      // condição um só punha os browsers de todos a pedi-la em ciclo. Quem tem
+      // o painel fechado lê-a quando o abrir.
+      signal.on('joined', () => {
+        if (watchingRef.current) refresh()
+      }),
       signal.on('recording', (m) => {
         setRemoteRecorder(m.active ? m.username : '')
         if (m.active) setRecNotice(t('room.gravacao.comecouAGravar', { nome: m.username }))
-        else refresh()
+        else if (watchingRef.current) refresh()
       }),
       signal.on('server-recording', (m) => {
         setServerRec(m.active ? { by: m.by } : null)
