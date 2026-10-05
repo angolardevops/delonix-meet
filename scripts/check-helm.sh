@@ -263,6 +263,21 @@ for nome in ("production", "production-voz", "local"):
     if not um(docs, "Service", "delonix-server-ws"):
         erros.append(f"[{nome}] falta o Service delonix-server-ws (ADR-0001)")
 
+    # 5b. o resgate do QR do Linphone não fica no registo de acessos (R278): o
+    #    caminho leva o bilhete, e só o Ingress dedicado, com o registo
+    #    desligado, o pode servir.
+    qr_ok = False
+    for ing in (d for d in docs if d.get("kind") == "Ingress"):
+        ann = (ing["metadata"].get("annotations") or {})
+        for path, b in backends(ing):
+            if path == "/api/public/extension-provisioning":
+                svc, _ = svc_ref(b)
+                qr_ok = (svc == "delonix-server"
+                         and ann.get("nginx.ingress.kubernetes.io/enable-access-log") == "false")
+    if not qr_ok:
+        erros.append(f"[{nome}] /api/public/extension-provisioning não tem Ingress próprio com "
+                     "enable-access-log:false — o bilhete do QR ficava no registo do ingress (R278)")
+
     # 5. nunca o modo inseguro; media relay-only
     if "DELONIX_ALLOW_INSECURE" in bruto:
         erros.append(f"[{nome}] o render menciona DELONIX_ALLOW_INSECURE")
