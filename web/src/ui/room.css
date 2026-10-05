@@ -2061,6 +2061,9 @@ div.rm-only-narrow,
   text-align: left;
   cursor: pointer;
 }
+.rm-invite__item--static {
+  cursor: default;
+}
 .rm-invite__who {
   flex: 1;
   min-width: 0;
