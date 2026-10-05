@@ -4,6 +4,7 @@
  */
 import { useTranslation } from 'react-i18next'
 import { cx } from '../ui/kit'
+import { Grupo } from './Grupo'
 import { LAYOUTS, type LayoutDoPalco } from './palco'
 
 /** O desenho de cada layout em miniatura: quantas caixas e como se arrumam. */
@@ -50,10 +51,7 @@ export default function LayoutsPanel({
 }) {
   const { t } = useTranslation()
   return (
-    <section className="st-group" data-studio-grupo="layouts" aria-labelledby="st-lay-h">
-      <h2 id="st-lay-h" className="st-group__title">
-        {t('studio.layouts.titulo')}
-      </h2>
+    <Grupo grupo="layouts" titulo={t('studio.layouts.titulo')}>
       <div className="st-lay" role="group" aria-label={t('studio.layouts.titulo')}>
         {LAYOUTS.map((l) => (
           <button
@@ -71,6 +69,6 @@ export default function LayoutsPanel({
         ))}
       </div>
 
-    </section>
+    </Grupo>
   )
 }

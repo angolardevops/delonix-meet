@@ -7,6 +7,7 @@
  */
 import { useTranslation } from 'react-i18next'
 import { Button, cx, Segmented, Select } from '../ui/kit'
+import { Grupo } from './Grupo'
 import type { Camara } from './usePalco'
 import type { CantoDoAvatar, EstadoDaImagem, EstadoDoAvatar, FormaDoAvatar, Recorte } from './compositor'
 import { IMAGEM_INICIAL } from './compositor'
@@ -59,10 +60,7 @@ export default function SourcesPanel({
 
   return (
     <>
-      <section className="st-group" data-studio-grupo="fonte" aria-labelledby="st-fonte-h">
-        <h2 id="st-fonte-h" className="st-group__title">
-          {t('studio.fonte.titulo')}
-        </h2>
+      <Grupo grupo="fonte" titulo={t('studio.fonte.titulo')}>
         <Button
           variant={temEcra ? 'secondary' : 'primary'}
           icon="screen"
@@ -98,12 +96,9 @@ export default function SourcesPanel({
             )}
           </>
         )}
-      </section>
+      </Grupo>
 
-      <section className="st-group" data-studio-grupo="imagem" aria-labelledby="st-imagem-h">
-        <h2 id="st-imagem-h" className="st-group__title">
-          {t('studio.imagem.titulo')}
-        </h2>
+      <Grupo grupo="imagem" titulo={t('studio.imagem.titulo')}>
         <Button
           variant={temCamara ? 'secondary' : 'primary'}
           icon={temCamara ? 'videoOff' : 'video'}
@@ -213,15 +208,13 @@ export default function SourcesPanel({
             />
           </>
         )}
-      </section>
+      </Grupo>
 
       {temCamara && (
-        <section className="st-group" data-studio-grupo="iluminacao" aria-labelledby="st-iluminacao-h">
-          <header className="st-group__head">
-            <h2 id="st-iluminacao-h" className="st-group__title">
-              {t('studio.iluminacao.titulo')}
-            </h2>
-            <span className="dx-spacer" />
+        <Grupo
+          grupo="iluminacao"
+          titulo={t('studio.iluminacao.titulo')}
+          accao={
             <Button
               size="sm"
               variant="ghost"
@@ -231,7 +224,8 @@ export default function SourcesPanel({
             >
               {t('studio.iluminacao.repor')}
             </Button>
-          </header>
+          }
+        >
           {(
             [
               ['brilho', t('studio.iluminacao.brilho')],
@@ -257,7 +251,7 @@ export default function SourcesPanel({
             </div>
           ))}
           <p className="st-note">{t('studio.iluminacao.nota')}</p>
-        </section>
+        </Grupo>
       )}
     </>
   )

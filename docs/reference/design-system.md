@@ -46,19 +46,66 @@ entrar.**
 
 ## 2. Kit — `web/src/ui/kit.tsx`
 
-Tudo o que ele exporta, medido a 2026-09-30:
+Tudo o que ele exporta, medido a 2026-10-05:
 
 `Button` · `IconButton` · `Card` · `SectionHead` · `Tag` · `StatusBadge` · `Field` ·
 `TextInput` · `TextArea` · `Select` · `Checkbox` · `Toggle` · `Segmented` · `Tabs` ·
 `Avatar` · `AvatarStack` (+ `avatarTone`, `initials`) · `Meter` · `Empty` · `Alert` ·
 `Spinner` · `Skeleton` · `Dialog` · `cx`.
 
+O `Segmented` é o selector de VISTAS da app (o do Estúdio, o do editor, o das fontes):
+leva `className` para a pele de cada área, `dataKey` (escreve `data-<chave>="<valor>"` em
+cada segmento, que é por onde o e2e agarra uma vista sem depender da língua), `title` e
+`disabled` por opção, e **as setas andam pelos segmentos** — num grupo de botões o Tab
+salta para fora, e quem navega por teclado não tinha como percorrer as vistas.
+
+**Menu de contexto — `web/src/ui/Menu.tsx`:** `useMenuDeContexto()` e `<Menu>`, mais a
+função pura `posicaoDoMenu` (dobra junto às bordas, encosta quando nem dobrado cabe).
+O botão direito do rato é a única forma de chegar às acções de uma linha num ecrã táctil,
+onde não há `hover`. Está ligado nos retratos da sala, nas duas vistas da biblioteca e na
+lista de contactos; o portão vive em `ui/Menu.test.ts`.
+
 Ícones em `web/src/ui/icons.tsx`: `<Icon name=… />` e `<DelonixSymbol />`. Um ícone novo
 entra **imediatamente antes do `}` que fecha o mapa `P`**, debaixo de uma linha `// <área>`
 — os conflitos resolvem-se na integração.
 
 Classes utilitárias em `ui/base.css`: `dx-num` (mono tabular), `dx-eyebrow`, `dx-kv`,
-`dx-chips`/`dx-chip`, `dx-toasts`/`dx-toast`, `dx-table`/`dx-table-wrap`.
+`dx-chips`/`dx-chip`, `dx-toasts`/`dx-toast`, `dx-table`/`dx-table-wrap`,
+`dx-kbd`/`dx-keys` (folha de atalhos), `dx-menu` (menu de contexto).
+
+## 2.1 Atalhos de teclado — `web/src/ui/atalhos.ts`
+
+**Um atalho novo declara-se no CATÁLOGO, nunca num `addEventListener` de uma página.**
+Antes havia quinze ouvintes de `keydown` espalhados e nenhum ecrã sabia dizer que teclas
+tinha: as cinco vistas do Estúdio só se alcançavam com o rato, e duas delas só de dentro
+do editor.
+
+- `CATALOGO_DE_ATALHOS` — `id`, escopo (`global`, `sala`, `estudio`, `mesa`, `quadro`),
+  combinação (`mod+shift+2`, onde `mod` é o Ctrl ou o ⌘) e a chave i18n do rótulo. Onde já
+  existe um rótulo neutro do botão que o atalho aciona, aponta-se ESSA chave.
+- `combina(spec, evento)` e `escreverAtalho(spec)` são puras: os dígitos lêem-se do `code`
+  (`Digit1`), nunca da `key`, porque com ⇧ a `key` de «1» é «!» ou «+» segundo o teclado.
+- `useAtalhos(escopo, accoes)` liga-os num ecrã (um ouvinte por escopo, acções por `id`) e
+  `useDicaDeAtalho()` dá a dica do `title` — «Edição · ⌘⇧2».
+- A folha do «?» (`components/AtalhosDialog.tsx`) LÊ o catálogo e não tem lista própria.
+- O portão (`ui/atalhos.test.ts`) prova que a gramática fecha, que ninguém pisa ninguém
+  dentro de um escopo nem rouba um atalho global, que cada rótulo existe nas quatro
+  línguas, e que **a mesa de corte ignora as vistas do Estúdio** — é por isso que se pode
+  mudar de vista com a mesa no ar.
+
+## 2.2 As peças por área — não voltes a escrever a caixa à mão
+
+Três famílias de marcação estavam copiadas em cento e vinte sítios. As classes são as
+mesmas; o que mudou é que a caixa agora é um componente.
+
+| Peças | Onde | O que substituem |
+|---|---|---|
+| `room/Bloco.tsx` | painéis da sala | 13 × `<section className="rm-block" aria-labelledby="rm-xx-h">` + `<h3 id=…>` escrito à mão (o `useId` acaba com dois `id` iguais quando dois painéis estão montados) |
+| `pages/studio/tv/pecas.tsx` | os cinco ecrãs de TV | `Cartao` (25), `Cabeca` (22) e `BotaoTv` (22), com as variantes do template em propriedades |
+| `studio/pecasDoEditor.tsx` | linha de tempo, legendas, exportações | `BotaoEd` (22), `CartaoEd` (13), `TituloEd`, `LigacaoEd` — o estado é `variante={ligado && 'on'}`, não um `cx()` na página |
+
+O editor não usa o `dx-btn` do kit de propósito: é denso (26 px de altura contra 32) e
+vive sobre a coluna `raised` do template.
 
 ## 3. Fundação — usa, não dupliques
 

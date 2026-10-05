@@ -5,6 +5,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, cx, IconButton, Select, TextInput } from '../ui/kit'
+import { Grupo } from './Grupo'
 import type { CenaGuardada } from './cenas'
 import type { ConteudoDoPalco } from './palco'
 
@@ -58,10 +59,7 @@ export default function CenasPanel({
   }
 
   return (
-    <section className="st-group" data-studio-grupo="cenas" aria-labelledby="st-cenas-h">
-      <h2 id="st-cenas-h" className="st-group__title">
-        {t('studio.cenas.titulo')}
-      </h2>
+    <Grupo grupo="cenas" titulo={t('studio.cenas.titulo')}>
       {indisponivel && <p className="st-note st-note--warn">{t('studio.cenas.indisponivel')}</p>}
       <ul className="st-scenes">
         {cenas.map((c) => (
@@ -122,6 +120,6 @@ export default function CenasPanel({
           </span>
         </button>
       )}
-    </section>
+    </Grupo>
   )
 }
