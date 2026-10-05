@@ -97,6 +97,11 @@
       <param name="auth-scheme" value="basic"/>
       <param name="method" value="POST"/>
       <param name="timeout" value="5"/>
+      <!-- Os troncos de TODAS as organizações vêm numa só resposta, e acima
+           deste tamanho o módulo deita-a fora INTEIRA: o FreeSWITCH ficava sem
+           tronco nenhum. 16 MiB são uns milhares de troncos; o servidor põe um
+           tecto por organização (MAX_TRUNKS_PER_ORG). -->
+      <param name="response-max-bytes" value="16777216"/>
       <param name="debug" value="false"/>
     </binding>
   </bindings>

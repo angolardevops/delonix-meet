@@ -43,10 +43,6 @@ use crate::{error::ApiError, AppState};
 
 pub const OUTBOUND_CONTEXT: &str = "delonix-outbound";
 
-/// Quanto se espera pelo DNS de um tronco ao servir os gateways. Abaixo do
-/// tempo-limite do `mod_xml_curl` (5 s, `xml_curl.conf.xml`).
-const HOST_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-
 /// Escapa um valor para dentro de um atributo XML que o FreeSWITCH vai ler.
 ///
 /// O `$` também, e não é por causa do XML: o FreeSWITCH passa a resposta do
@@ -107,6 +103,9 @@ pub fn dialplan_extension(
     // O CDR que conta é o de cada perna B (uma por tentativa de tronco: é o
     // que dá o ASR por operadora). A perna A — o PBX que marcou — marca-se
     // para a ingestão a ignorar; o resto EXPORTA-se para as pernas B.
+    // O `mod_json_cdr` distribuído NÃO regista pernas B (um registo leva as
+    // chaves SRTP da perna): a do tronco pede-o na dial string, com
+    // `force_process_cdr=true` (R291).
     act("set", "delonix_cdr_skip=true".into());
     act("export", format!("delonix_org_id={org_id}"));
     act("export", "delonix_direction=outbound".into());
@@ -135,7 +134,7 @@ pub fn dialplan_extension(
                     act(
                         "bridge",
                         format!(
-                            "[delonix_trunk_id={}]sofia/gateway/{gw}/{wire_number}",
+                            "[delonix_trunk_id={},force_process_cdr=true]sofia/gateway/{gw}/{wire_number}",
                             leg.trunk_id
                         ),
                     );
@@ -143,7 +142,7 @@ pub fn dialplan_extension(
                     act(
                         "limit_execute",
                         format!(
-                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={}]sofia/gateway/{gw}/{wire_number}",
+                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={},force_process_cdr=true]sofia/gateway/{gw}/{wire_number}",
                             leg.trunk_id, leg.max_channels, leg.trunk_id
                         ),
                     );
@@ -409,41 +408,25 @@ async fn gateways(state: &AppState) -> Result<Response, ApiError> {
         password_sealed: String,
     }
     let rows: Vec<Row> = sqlx::query_as(
+        // Os troncos de TODAS as organizações vão num só documento, e o
+        // mod_xml_curl deita fora a resposta inteira acima do seu limite: o
+        // tecto por organização vale também aqui, para as linhas que já lá
+        // estavam antes de ele existir.
         "SELECT id, org_id, host, port, transport, srtp, register, username, password_sealed
-           FROM telephony_trunks WHERE enabled ORDER BY org_id, position, id",
+           FROM (SELECT t.*, row_number() OVER (PARTITION BY org_id ORDER BY position, id) AS n
+                   FROM telephony_trunks t WHERE enabled) t
+          WHERE n <= $1 ORDER BY org_id, position, id",
     )
+    .bind(delonix_meet_domain::telephony::trunk::MAX_TRUNKS_PER_ORG)
     .fetch_all(&state.db)
     .await?;
-    // O host foi validado quando o tronco se gravou — e um nome que ainda não
-    // resolvia foi aceite. É AQUI que o FreeSWITCH passa a ligar-se a ele, por
-    // isso volta a perguntar-se: um nome que entretanto aponta para dentro não
-    // é servido. Todos ao mesmo tempo e com um tempo-limite: o DNS de um
-    // inquilino não pode atrasar os troncos dos outros além do que o
-    // mod_xml_curl espera. Não fecha a troca de DNS entre esta resposta e a
-    // do FreeSWITCH, que resolve por conta própria — ver a R291.
-    let allowed = futures_util::future::join_all(rows.iter().map(|r| async {
-        match tokio::time::timeout(
-            HOST_CHECK_TIMEOUT,
-            crate::telephony_trunks::check_host(state, &r.host, r.port),
-        )
-        .await
-        {
-            Ok(Ok(())) => true,
-            // Sem resposta do DNS a tempo: é como um nome que não resolve —
-            // serve-se, e o FreeSWITCH é que não o consegue alcançar.
-            Err(_) => true,
-            Ok(Err(_)) => {
-                tracing::warn!(org = %r.org_id, trunk = %r.id, "tronco não servido ao FreeSWITCH: o host aponta para um destino interno");
-                false
-            }
-        }
-    }))
-    .await;
+    // O host só é verificado quando o tronco se GRAVA (`telephony_trunks`):
+    // um nome que então não resolvia foi aceite, e o FreeSWITCH resolve-o por
+    // conta própria a cada registo. Voltar a perguntar ao DNS aqui punha o DNS
+    // de uma organização a atrasar os troncos de todas, e não fechava nada —
+    // um gateway já carregado nunca volta a ser verificado. Ver a R291.
     let mut specs = Vec::with_capacity(rows.len());
-    for (r, ok) in rows.into_iter().zip(allowed) {
-        if !ok {
-            continue;
-        }
+    for r in rows {
         // Um segredo que não abre não derruba os gateways das outras orgs.
         let password = match crate::secrets_at_rest::open(
             &state.config,
@@ -522,12 +505,12 @@ mod tests {
         assert!(x.contains(r#"expression="^923447108$""#));
         let ia = x
             .find(&format!(
-                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a}]sofia/gateway/dlx-{a}/244923447108"
+                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a},force_process_cdr=true]sofia/gateway/dlx-{a}/244923447108"
             ))
             .unwrap();
         let ib = x
             .find(&format!(
-                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b}]sofia/gateway/dlx-{b}/244923447108"
+                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b},force_process_cdr=true]sofia/gateway/dlx-{b}/244923447108"
             ))
             .unwrap();
         assert!(ia < ib, "a ordem de failover é a da resolução");
@@ -556,7 +539,7 @@ mod tests {
         assert!(x.contains("delonix_record=false"));
         assert!(!x.contains("limit_execute"));
         assert!(x.contains(&format!(
-            r#"application="bridge" data="[delonix_trunk_id={a}]sofia/gateway/dlx-{a}/112""#
+            r#"application="bridge" data="[delonix_trunk_id={a},force_process_cdr=true]sofia/gateway/dlx-{a}/112""#
         )));
     }
 

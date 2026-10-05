@@ -281,8 +281,14 @@ Agora o `voice/cluster/freeswitch-entrypoint.sh` liga-a no compose, no cluster e
   `delonix-outbound`), depois dos dois dos ramais;
 - os troncos como gateways do perfil `external`, pelo domínio `delonix-trunks` — que
   SUBSTITUI o `all` da vanilla (com os dois a lista lia-se duas vezes);
-- o `mod_json_cdr` (`json_cdr.conf.xml`): o FreeSWITCH entrega o registo de TODAS as
-  chamadas, e o servidor aceita e ignora (`204`) as que não têm organização nem tronco;
+- o `mod_json_cdr` (`json_cdr.conf.xml`): **só a perna de um tronco deixa registo** — um
+  registo leva todas as variáveis do canal, chaves SRTP incluídas. `log-b-leg` desligado,
+  `force_process_cdr=true` na perna do tronco (`telephony_fs_xml.rs`), `process_cdr=false`
+  nos contextos `public` e `delonix_ramais`; o que sobra o servidor aceita e ignora (`204`);
+- **texto de inquilino nunca chega ao FreeSWITCH com um `$`** (`esc`, `xml_escape` →
+  `&#36;`): o FreeSWITCH pré-processa a resposta do `mod_xml_curl` e `$${nome}` lia uma
+  variável global — o segredo de voz. E nunca em `data` de acção nem em dial string;
+- no máximo 20 troncos por organização (`MAX_TRUNKS_PER_ORG`): vão todos num só documento;
 - um ciclo de `sofia profile external rescan` (`DELONIX_TRUNKS_RESCAN_SECS`, 60 s): um
   tronco novo regista-se sozinho, e um arranque com o servidor em baixo recupera.
 
@@ -291,7 +297,8 @@ Agora o `voice/cluster/freeswitch-entrypoint.sh` liga-a no compose, no cluster e
 tronco alterado ou apagado só se actualiza reiniciando o FreeSWITCH, porque o `killgw` vai
 pelo ESL, fechado em loopback (T11) — e por isso a consola não mostra o estado do registo
 nem faz a «chamada de teste»; nenhuma operadora de verdade, e nenhuma chamada por tronco
-num cluster.
+num cluster. O host de um tronco só é verificado ao gravar: um nome que depois aponte para
+dentro leva o FreeSWITCH a um endereço interno, e não há política de rede que o trave.
 
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz
 

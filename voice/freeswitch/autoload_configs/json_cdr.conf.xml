@@ -4,17 +4,27 @@
   ADR-0009 §6). É daqui que saem o custo, a duração e a qualidade (MOS,
   jitter, perda) de cada chamada que passa por um tronco.
 
-  O FreeSWITCH entrega o registo de TODAS as chamadas, não só as de tronco. O
-  servidor é que escolhe: a perna de quem marcou (`delonix_cdr_skip`) e as
-  chamadas que não passaram por um tronco são aceites e ignoradas; só a perna
-  do tronco — uma por tentativa — fica guardada. Por isso `log-b-leg`.
+  SÓ A PERNA DE UM TRONCO DEIXA REGISTO. Um registo leva TODAS as variáveis
+  do canal, sem filtro: o SDP com as linhas a=crypto e as chaves SRTP da
+  perna, por exemplo. Por isso:
+    - `log-b-leg` desligado: uma perna B só é registada se o plano de
+      marcação o pedir (`force_process_cdr=true`), e o servidor só o pede na
+      perna que sai por um tronco (server/src/telephony_fs_xml.rs);
+    - os contextos dos ramais e do dial-in desligam o registo da perna de
+      quem liga (`process_cdr=false`, nos dois dialplans).
+  O que sobra são pernas A que nunca chegaram a um plano de marcação (uma
+  chamada recusada à entrada) ou nascidas dentro do FreeSWITCH: o servidor
+  aceita-as e ignora-as.
+
+  O RESÍDUO: a perna de um tronco COM SRTP leva as chaves dessa chamada no
+  registo. Vão em HTTP para o listener interno do servidor, que não as guarda.
 
   O segredo vai por HTTP Basic (`cred`), como no mod_xml_curl, nunca no URL.
 
-  Nada em disco enquanto o servidor responde (`log-http-and-disk` desligado):
-  um registo traz todas as variáveis do canal. O que o servidor não aceitar
-  ao fim das tentativas fica em `err-log-dir`, um directório privado que o
-  arranque cria — e que NÃO sobrevive ao contentor: ninguém o reenvia sozinho.
+  Nada em disco enquanto o servidor responde (`log-http-and-disk` desligado).
+  O que o servidor não aceitar ao fim das tentativas fica em `err-log-dir`,
+  um directório privado que o arranque cria — e que NÃO sobrevive ao pod:
+  ninguém o reenvia sozinho.
 -->
 <configuration name="json_cdr.conf" description="Delonix — registos de chamada para o servidor">
   <settings>
@@ -23,7 +33,7 @@
     <param name="auth-scheme" value="basic"/>
     <!-- JSON cru no corpo; os valores vão codificados em URL (o servidor descodifica-os). -->
     <param name="encode" value="false"/>
-    <param name="log-b-leg" value="true"/>
+    <param name="log-b-leg" value="false"/>
     <param name="log-http-and-disk" value="false"/>
     <param name="log-dir" value="$${delonix_cdr_dir}"/>
     <param name="err-log-dir" value="$${delonix_cdr_dir}"/>

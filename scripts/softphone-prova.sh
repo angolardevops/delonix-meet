@@ -617,10 +617,15 @@ for caminho, quem, corpo in (("/internal/v1/voice/ivr/resolve-extension", "ramai
         if certo else "%s: o pedido a %s não chegou como devia (X-Voice-Secret, Content-Type ou corpo)" % (quem, caminho))
 
 # Os registos de chamada (mod_json_cdr). Um registo leva TODAS as variáveis do
-# canal: o segredo vai em Basic como no directório, e o PIN que alguém marcou
-# não pode ir lá dentro — nem como `digits_dialed`, nem de outra maneira.
+# canal — o SDP com as linhas a=crypto e as chaves SRTP da perna incluídas — e
+# vai em HTTP para o servidor, ou fica em disco se ele não responder. Por isso
+# só a perna de um TRONCO deixa registo (R291): nos contextos dos ramais e do
+# dial-in o plano de marcação desliga-o (`process_cdr=false`). O que ainda
+# chega daqui são as chamadas recusadas ANTES do plano de marcação, que não
+# negociaram chave nenhuma — e é por elas que se sabe que o módulo entrega.
 # O módulo acrescenta «?uuid=<a chamada>» ao endereço.
 cdrs = [b for b in blocos if re.match(r"POST /internal/v1/telephony/call-records[? ]", b)]
+corpo = lambda b: b.split("\n\n", 1)[-1]
 def basic_certo(b):
     m = re.search(r"(?mi)^Authorization: Basic (\S+)$", b)
     try:
@@ -631,18 +636,20 @@ sai(bool(cdrs) and all(basic_certo(b) for b in cdrs),
     "registos de chamada (mod_json_cdr): %d entregues, todos com o segredo em Authorization: Basic" % len(cdrs)
     if cdrs and all(basic_certo(b) for b in cdrs)
     else "registos de chamada (mod_json_cdr): %d entregues; nem todos (ou nenhum) com o segredo em Authorization: Basic" % len(cdrs))
-# Só conta se o registo da chamada em que o PIN FOI marcado chegou: a do
-# dial-in, atendida. Os das chamadas recusadas nunca tiveram PIN, e sem esta
-# condição um registo atrasado dava «nenhum leva o PIN» sem ter medido nada.
-corpo = lambda b: b.split("\n\n", 1)[-1]
-do_pin = [b for b in cdrs if dialin in corpo(b) and re.search(r'"answer_epoch":"[1-9]', corpo(b))]
-sai(bool(do_pin), "o registo da chamada em que o PIN foi marcado chegou ao servidor" if do_pin
-    else "o registo da chamada em que o PIN foi marcado NÃO chegou — a verificação seguinte não mede nada")
+atendidas = [b for b in cdrs if re.search(r'"answer_epoch":"[1-9]', corpo(b))]
+sai(bool(cdrs) and not atendidas,
+    "nenhuma chamada atendida de ramal ou de dial-in deixa registo" if cdrs and not atendidas
+    else "%d chamada(s) atendida(s) de ramal ou de dial-in deixaram registo" % len(atendidas))
+# Os valores vão codificados em URL: «inline:» é «inline%3A».
+com_chave = [b for b in cdrs if re.search(r"inline(:|%3A)", corpo(b), re.I)]
+sai(bool(cdrs) and not com_chave,
+    "nenhum dos %d registos de chamada leva uma chave SRTP" % len(cdrs) if cdrs and not com_chave
+    else "%d dos %d registos de chamada levam chaves SRTP (a=crypto … inline:)" % (len(com_chave), len(cdrs)))
 # O PIN como número inteiro, não como parte de um mais comprido (um registo
 # traz dezenas de tempos e contadores).
 com_pin = [b for b in cdrs if re.search(r"(?<!\d)%s(?!\d)" % re.escape(pin), corpo(b))]
-sai(bool(do_pin) and not com_pin,
-    "nenhum dos %d registos de chamada leva o PIN marcado" % len(cdrs) if do_pin and not com_pin
+sai(bool(cdrs) and not com_pin,
+    "nenhum dos %d registos de chamada leva o PIN marcado" % len(cdrs) if cdrs and not com_pin
     else "%d dos %d registos de chamada levam o PIN marcado" % (len(com_pin), len(cdrs)))
 PY
   )

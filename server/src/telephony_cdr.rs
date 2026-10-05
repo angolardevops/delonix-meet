@@ -399,13 +399,21 @@ pub async fn ingest_handler(
     }
     // Uma chamada que não passou por um tronco nem pelo plano de marcação —
     // ramal para ramal, o IVR do dial-in, a perna para a ponte da sala — não
-    // é da telefonia: não tem organização a quem a atribuir, nem custo. Com o
-    // `mod_json_cdr` carregado, o FreeSWITCH entrega o CDR de TODAS as
-    // chamadas; recusar estas fazia-o tentar outra vez e guardar cada uma em
-    // disco, para sempre. Aceita-se e ignora-se, como a perna A. Um CDR COM
+    // é da telefonia: não tem organização a quem a atribuir, nem custo. A
+    // configuração distribuída já só regista a perna de um tronco (R291), mas
+    // sobram pernas que nunca chegaram a um plano de marcação, e uma
+    // configuração mais antiga entrega todas; recusar estas fazia o módulo
+    // tentar outra vez e guardar cada uma em disco, para sempre. Aceita-se e
+    // ignora-se, como a perna A. Um CDR COM
     // tronco e sem organização continua a ser recusado: é uma chamada de
-    // operadora que não se consegue atribuir, e tem de ficar à vista.
-    if detail.org_id.is_none() && detail.trunk_id.is_none() {
+    // operadora que não se consegue atribuir, e tem de ficar à vista. «Sem
+    // tronco» lê-se no nome do gateway EM BRUTO: um gateway que não seja nosso
+    // (`dlx-<id>`) não dá `trunk_id`, e é uma saída para a rede pública na mesma.
+    let by_gateway = serde_json::from_slice::<Value>(&raw)
+        .ok()
+        .and_then(|v| var(&v["variables"], "sip_gateway_name"))
+        .is_some();
+    if detail.org_id.is_none() && detail.trunk_id.is_none() && !by_gateway {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let res = ingest(&state, detail).await?;

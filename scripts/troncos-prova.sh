@@ -230,9 +230,9 @@ mede() {
   [ "$(registos)" = "$antes" ] && ok "e não ficou registo de chamada" || bad "ficou um registo de uma chamada que não saiu"
 
   echo "6) uma chamada que NÃO é de tronco — o IVR do dial-in — é entregue, aceite e ignorada"
-  # O FreeSWITCH entrega o registo de TODAS as chamadas. Esta não tem
-  # organização nem tronco: um servidor que a recusasse (422) fazia o módulo
-  # tentar outra vez e guardá-la em disco, a cada chamada, para sempre.
+  # Só a perna de um tronco pede registo; a do IVR desliga-o. Sobra a perna
+  # que nasce dentro do FreeSWITCH, sem organização nem tronco: um servidor que
+  # a recusasse (422) fazia o módulo tentar outra vez e guardá-la em disco.
   antes=$(registos)
   fs_cli "originate {originate_timeout=10,absolute_codec_string=PCMA}loopback/244923000000/public &park()" >/dev/null
   sleep 2; fs_cli "hupall" >/dev/null; sleep 10
@@ -308,6 +308,10 @@ mede() {
   [ "$v" = 4 ] && ok "quatro chamadas por tronco, quatro registos — nem um a mais" || bad "a organização tem $v registos de chamada, e saíram 4 chamadas por tronco"
   v=$(fs_log | grep -ac "$(env_ VOICE_INTERNAL_SECRET)")
   [ "${v:-1}" -eq 0 ] && ok "o segredo de voz não aparece no freeswitch.log" || bad "o segredo de voz aparece $v vez(es) no freeswitch.log"
+  # O que ficou em disco (os registos do controlo) não leva segredos nem chaves.
+  v=$("${COMPOSE[@]}" exec -T freeswitch sh -c "grep -rl -a -e '$voz' -e '$op' -e 'inline%3A' -e 'inline:' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l" | tr -d '[:space:]')
+  [ "${v:-1}" = 0 ] && ok "os registos em disco não levam o segredo de voz, a password do tronco nem chaves SRTP" ||
+    bad "$v registo(s) em disco levam o segredo de voz, a password do tronco ou uma chave SRTP"
   v=$(fs_log | grep -ac "$op")
   [ "${v:-1}" -eq 0 ] && ok "a password do tronco não aparece no freeswitch.log" || bad "a password do tronco aparece $v vez(es) no freeswitch.log"
   v=$("${COMPOSE[@]}" exec -T freeswitch sh -c "grep -rl -a '$op' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")

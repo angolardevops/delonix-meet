@@ -488,7 +488,7 @@ pub async fn list(
     }))
 }
 
-pub(crate) async fn check_host(state: &AppState, host: &str, port: i32) -> Result<(), ApiError> {
+async fn check_host(state: &AppState, host: &str, port: i32) -> Result<(), ApiError> {
     // O FreeSWITCH vai ligar a este host em nome do inquilino: a mesma guarda
     // de um URL escrito pelo cliente (sem destinos internos, salvo
     // OUTBOUND_ALLOW_HOSTS). Um nome que ainda não resolve é aceite.
@@ -547,7 +547,7 @@ fn unique_name(e: sqlx::Error) -> ApiError {
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
         (status = 409, body = crate::openapi::ErrorBody, description = "`telephony.trunk_name_taken`"),
-        (status = 422, body = crate::openapi::ErrorBody, description = "`secrets.encryption_unconfigured`: sem chaves não se guarda a password."),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`secrets.encryption_unconfigured`: sem chaves não se guarda a password. `telephony.trunk_limit_reached`: a organização já tem o máximo de troncos."),
     )
 )]
 pub async fn create(
@@ -579,6 +579,24 @@ pub async fn create(
         .bind(org_id)
         .execute(&mut *tx)
         .await?;
+    // Os troncos de todas as organizações são servidos ao FreeSWITCH num só
+    // documento com limite de tamanho: sem tecto, uma organização deixava as
+    // outras sem troncos. Dentro do cadeado, para duas criações não passarem.
+    let existing: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM telephony_trunks WHERE org_id = $1")
+            .bind(org_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if existing >= rules::MAX_TRUNKS_PER_ORG {
+        return Err(DomainError::precondition(
+            "telephony.trunk_limit_reached",
+            format!(
+                "uma organização tem no máximo {} troncos",
+                rules::MAX_TRUNKS_PER_ORG
+            ),
+        )
+        .into());
+    }
     let next: i32 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(position) + 1, 0) FROM telephony_trunks WHERE org_id = $1",
     )
