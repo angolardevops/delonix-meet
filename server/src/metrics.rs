@@ -147,6 +147,11 @@ pub struct Metrics {
     /// dezenas de cada vez que o relógio de uma origem recua de vez: é o
     /// segundo que a pista perde até se re-ancorar.
     pub recording_audio_late_dropped_total: AtomicU64,
+    /// Saltos do relógio de uma pista de áudio que a gravação NÃO encheu de
+    /// silêncio, por serem maiores do que o tempo que passou (um timestamp
+    /// corrompido, uma origem que recomeçou o relógio lá à frente) — ver
+    /// `recorder::OpusGapFill`. A fala a seguir fica adiantada na gravação.
+    pub recording_audio_gap_unfilled_total: AtomicU64,
     /// Composições de gravação à espera de vaga (`FFMPEG_MAX_CONCURRENT`). Um
     /// valor que não desce é o sinal de que o nó compõe mais do que aguenta.
     pub recording_compose_queued: AtomicI64,
@@ -278,6 +283,9 @@ impl Metrics {
              # HELP delonix_recording_audio_late_dropped_total Pacotes de áudio atrasados ou repetidos que a gravação não escreveu.\n\
              # TYPE delonix_recording_audio_late_dropped_total counter\n\
              delonix_recording_audio_late_dropped_total {}\n\
+             # HELP delonix_recording_audio_gap_unfilled_total Saltos do relógio do áudio que a gravação não encheu de silêncio.\n\
+             # TYPE delonix_recording_audio_gap_unfilled_total counter\n\
+             delonix_recording_audio_gap_unfilled_total {}\n\
              # HELP delonix_recording_compose_queued Composições de gravação à espera de vaga.\n\
              # TYPE delonix_recording_compose_queued gauge\n\
              delonix_recording_compose_queued {}\n\
@@ -336,6 +344,7 @@ impl Metrics {
             self.qos_cpu_limited_total.load(Relaxed),
             self.recording_packets_dropped_total.load(Relaxed),
             self.recording_audio_late_dropped_total.load(Relaxed),
+            self.recording_audio_gap_unfilled_total.load(Relaxed),
             g(self.recording_compose_queued.load(Relaxed)),
             g(self.recording_compose_running.load(Relaxed)),
             self.audit_write_failures_total.load(Relaxed),
