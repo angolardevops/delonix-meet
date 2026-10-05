@@ -7,7 +7,7 @@
 //! SIP — e esta é a outra ponta dessa perna.
 //!
 //! **Só o que a perna precisa**, e nada mais: UDP, um diálogo por chamada,
-//! `INVITE` → `100`/`200` com SDP (Opus, ou G.711 lei A ou μ — ADR-0017), retransmissão do `200`
+//! `INVITE` → `100`/`200` com SDP (Opus, ou G.711 lei A ou μ — ADR-0018), retransmissão do `200`
 //! até ao `ACK` (RFC 3261 §13.3.1.4), `BYE`, `CANCEL`, `OPTIONS`, e re-INVITE
 //! respondido com o mesmo SDP. Sem registo, sem autenticação SIP, sem TCP/TLS:
 //! a ponte só fala com os FreeSWITCH da plataforma, na rede interna, e ignora
@@ -224,7 +224,7 @@ pub struct AudioOffer {
 /// **Escolhe-se o primeiro que se saiba falar, pela ordem da oferta** (RFC
 /// 3264 §6.1: a ordem é a preferência de quem oferece). É assim que o servidor
 /// liga e desliga a banda larga sem tocar aqui: manda `OPUS,PCMA` ou só `PCMA`
-/// na dial string (ADR-0017).
+/// na dial string (ADR-0018).
 pub fn parse_sdp_offer(sdp: &str) -> Option<AudioOffer> {
     let mut session_ip: Option<IpAddr> = None;
     let mut media_ip: Option<IpAddr> = None;
@@ -1072,7 +1072,7 @@ a=sendrecv\r\n";
     }
 
     // ------------------------------------------------------------
-    //  ADR-0017: a perna negoceia Opus
+    //  ADR-0018: a perna negoceia Opus
     // ------------------------------------------------------------
 
     /// A linha de áudio que o FreeSWITCH manda com `absolute_codec_string=OPUS,PCMA`.

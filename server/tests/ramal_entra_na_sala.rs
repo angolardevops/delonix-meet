@@ -173,7 +173,7 @@ async fn ponte_com(db: sqlx::PgPool, extra: &[(&str, &str)]) -> Value {
     body["room_bridge"].clone()
 }
 
-/// ADR-0017 — por omissão a perna oferece Opus à frente de PCMA: é a ordem que
+/// ADR-0018 — por omissão a perna oferece Opus à frente de PCMA: é a ordem que
 /// o UA da ponte segue.
 #[sqlx::test(migrations = "./migrations")]
 async fn a_perna_da_ponte_oferece_opus_a_frente_de_pcma(db: sqlx::PgPool) {

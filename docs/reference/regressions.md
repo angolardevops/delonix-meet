@@ -3028,3 +3028,44 @@ No CI: `tests/telephony.rs` (o `204` e que nada fica guardado; o `422` com um ga
 **Por medir, e não o dês por feito.** A qualidade do áudio (só a presença do tom); mais do que um browser na sala; vídeo; a mesma medição no `compose.yaml`, no cluster ou com um Chrome a sério em vez do Chromium de testes; um telefone a entrar por dial-in de operadora ou por ramal com um browser na sala (o caminho da ponte é o mesmo, mas quem aqui entrou foi a central).
 
 **Ficheiros.** `web/e2e/telefone-na-sala.mjs`, `web/e2e/harness.ts` (`som=cru`), `web/vite.config.ts` (`API_HOST`), `scripts/pbx-tronco-prova.sh` (modo `browser`), `voice/pbx-tronco-prova/compose.yaml`, `scripts/check-replicas-compose.sh`, `Makefile` e `.github/workflows/ci.yml` (o portão), `scripts/e2e-fora-do-ci.txt`.
+
+### R29X — A voz de um softphone chegava à sala a 8 kHz, e a prova real da perna em Opus encontrou três defeitos que já lá estavam
+
+**Sintoma.** Um softphone falava Opus a 48 kHz com o FreeSWITCH e a perna para a ponte era forçada a PCMA: tudo acima de ~3,4 kHz ficava pelo caminho («baixo e sem qualidade», 2026-10-05). Medido antes de mexer: a voz chegava à ponte a −20 dBFS e a ponte era transparente em nível e em espectro nos dois sentidos — o estrangulamento era a perna a 8 kHz, não os codecs. Decisão no [ADR-0018](../adr/0018-a-perna-da-ponte-negoceia-opus.md).
+
+Pôr a perna em Opus e medi-la contra um FreeSWITCH real mostrou mais do que a banda:
+
+1. **Com o FreeSWITCH autorizado por NOME a ponte nunca era entregue ao IVR.** `voice::room_bridge_for` só olhava para os IPs literais de `PHONE_BRIDGE_FREESWITCH_IPS`; o compose e o chart usam o nome do serviço. O UA arrancava («origens=1») e todas as chamadas caíam na conferência local, com um aviso de «lista vazia» no log.
+2. **Quem desligava o telefone continuava na sala.** Com o UA à escuta em `0.0.0.0`, o `200` levava `Contact: <sip:bridge@0.0.0.0:5090>`; o `BYE` do FreeSWITCH ia para lá. A perna, o socket de RTP e a publicação ficavam vivos até o servidor reiniciar.
+3. **A sala chegava ao telefone com os agudos dobrados.** O misturador pedia 8 kHz ao descodificador do `opus-rs`, que desce um pacote SILK de banda larga sem filtro: um tom de 6 kHz saía inteiro (−27 dB onde a libopus com filtro dá −72).
+
+**Regra.**
+- **A perna da ponte fala o primeiro codec da oferta que souber** — Opus (RFC 7587, PT dinâmico) ou PCMA/PCMU; sem nenhum, `488`. O servidor manda `OPUS,PCMA`; `PHONE_BRIDGE_WIDEBAND=0` repõe `PCMA`, e um valor que não se perceba DESLIGA.
+- **Em Opus, telefone → sala não se recodifica.** O payload passa intacto; a ponte valida-o (tecto de 600 bytes, tem de descodificar), mede-lhe o nível, não deixa sair atrasados nem repetidos, e o relógio de saída segue o da origem — também através de um silêncio imposto. A sequência não abre buraco pelo que a ponte reteve.
+- **Sala → telefone em Opus é uma mistura a 16 kHz** num só fluxo de banda larga, a taxa constante (em taxa variável o `opus-rs` ignora o alvo).
+- **A resposta SDP não pede FEC nem anuncia taxa de captura.** Com `useinbandfec=1` a libopus do FreeSWITCH codifica em banda média para o FEC caber, e o `opus-rs` (0.1.33 e 0.1.34) lê mal a banda média a qualquer taxa — um tom sai 8 dB abaixo, fala sai 15 dB acima e distorcida. O misturador deixa esses pacotes de fora.
+- **O misturador descodifica sempre a 16 kHz** e desce a soma para 8 kHz com um passa-baixo, uma vez por perna.
+- **Um valor com vírgula na dial string é escapado** no `dialin_ivr.lua`. Sem isso o FreeSWITCH parte a lista e fica só com o primeiro codec.
+- **O `Contact` leva o IP onde as pernas abrem o RTP** quando o de escuta é indefinido — o deste processo, não o do Service: o diálogo vive nesta réplica.
+- **A ponte é entregue com a lista por IP OU por nome**; sem nenhum dos dois continua a não haver ponte.
+- **A perna larga a sala mesmo que a sua tarefa rebente**: o descodificador lê bytes da rede.
+
+**Portão.** No CI: `cargo test --lib phone_bridge::` (61, 23 novos — a negociação, o `Contact`, um minuto de fluxo com perda e troca de ordem nas fronteiras dos dez segundos, o silêncio imposto, o tecto, seis pacotes reais da libopus, banda média fora da mistura, 20 000 pacotes hostis sem um pânico, a resposta do filtro, e os 6 kHz que chegam em Opus e não chegam nem dobram em G.711); `cargo test --lib ponte_em_opus` contra o SFU (5 e 6 kHz nos dois sentidos, payloads byte a byte iguais aos enviados, silenciar e voltar); `cargo test --test ramal_entra_na_sala` contra Postgres (a ordem dos codecs, o interruptor, a ponte por nome, e o controlo negativo da lista vazia).
+
+Fora do CI, medido a 2026-10-05 no compose do laboratório (FreeSWITCH 1.11.3, libopus 1.3.1), com `scripts/softphone-prova.sh par` — dois softphones em dois ramais, na mesma sala, SRTP obrigatório:
+- a oferta do FreeSWITCH à ponte traz `opus/48000/2` e `PCMA` (`absolute_codec_string=OPUS\,PCMA` no log dele) e a ponte responde Opus;
+- cada softphone ouve o tom do outro a 0,2487 e 0,2452 (enviado a 0,25), estável, e o próprio a 0,001;
+- **controlo negativo da banda média:** com a primeira resposta SDP (`useinbandfec=1`) o 1 kHz chegava a 0,092, em quatro corridas, e o registo de depuração do `mod_opus` mostrava 2 583 blocos em `MEDIUMBAND`;
+- com `PHONE_BRIDGE_WIDEBAND=0` a perna volta a PCMA e os tons chegam a 0,2504 e 0,2506;
+- com o FreeSWITCH só por nome as duas pernas abrem — **controlo negativo:** com a imagem anterior, o mesmo compose registava «lista vazia» e nenhuma perna abria.
+
+**Revisão.** Três revisões independentes do primeiro commit (media, segurança, Rust), antes de qualquer chamada. Encontraram o que os testes não viam: a vírgula da dial string (bloqueava), a âncora da passagem que voltava a ancorar de dez em dez segundos e apagava a perda nessa fronteira, a frase do ADR sobre a sequência (o SFU renumera-a), a mudança de confiança por nomear, o tecto de payload em falta, e a sala que ficava presa se a tarefa da perna rebentasse. A chamada real encontrou o resto: a ponte por nome, a banda média, e o `Contact`.
+
+**O que NÃO está provado.**
+- **A banda larga com um softphone que fale Opus.** Os da prova falam G.711: provam a negociação, o nível, o mix-minus e o fecho — a banda, só os testes com tons de 5 e 6 kHz contra o SFU. Falta um Linphone real e a mesma chamada ouvida num browser.
+- **O fecho da perna com o `Contact` novo**, no laboratório — ver a nota no fim desta entrada.
+- **A gravação de uma perna em Opus**, e o palco (R225) nesse codec.
+- **A robustez do `opus-rs` é uma amostra, não uma auditoria**: 20 000 pacotes no repo, 300 000 fora dele, zero pânicos. O crate tem `unsafe` e não lê banda média.
+- **CPU em release**: os números dos testes são de um binário de debug, numa máquina carregada.
+- **O cluster e o chart**: tudo isto foi medido no compose.
+- **O defeito do `opus-rs` com a banda média não foi reportado aos autores.**

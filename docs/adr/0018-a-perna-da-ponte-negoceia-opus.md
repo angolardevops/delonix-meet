@@ -1,4 +1,4 @@
-# ADR-0017 — A perna da ponte negoceia Opus: banda larga entre o FreeSWITCH e a sala
+# ADR-0018 — A perna da ponte negoceia Opus: banda larga entre o FreeSWITCH e a sala
 
 **Estado:** Aceite (decisão do dono a 2026-10-05) · **Data:** 2026-10-05 ·
 **Contexto:** o áudio de um softphone chegava à sala «baixo e sem qualidade».
@@ -162,10 +162,16 @@ Não há controlo de ganho nem supressão de ruído no caminho do telefone.
   - com a perna em Opus e a primeira resposta SDP (`useinbandfec=1`), o tom de
     1 kHz chegava ao outro telefone a 0,092 (−8,6 dB), em quatro corridas; o
     registo de depuração do `mod_opus` mostrou porquê: 2 583 blocos codificados
-    em `MEDIUMBAND` para a ponte. É o que os pontos 5 e 6 corrigem.
-- **Por medir, e é o que fecha isto:** uma chamada real de softphone com a perna
-  em Opus — a oferta do FreeSWITCH com os DOIS codecs, a gravação das duas
-  pernas — e a mesma chamada ouvida num browser. A prova contra o FreeSWITCH
+    em `MEDIUMBAND` para a ponte. É o que os pontos 5 e 6 corrigem;
+  - com a resposta SDP do ponto 5, o FreeSWITCH abre o codec da perna a 48 kHz
+    e o que a ponte devolve a cada telefone é o tom do outro a 0,2487 e 0,2452
+    (enviado a 0,25), estável — rms por bloco de 20 ms entre 0,168 e 0,178 para
+    0,177 de um seno puro, nenhum bloco mudo em 1 276;
+  - nessa corrida o FreeSWITCH estava autorizado só por NOME, e as duas pernas
+    abriram — o que antes não acontecia (R29X).
+- **Por medir, e é o que fecha isto:** uma chamada real de um softphone que
+  fale Opus (os da prova falam G.711: provam a negociação, o nível e o
+  mix-minus, não a banda larga), e a mesma chamada ouvida num browser. A prova contra o FreeSWITCH
   real (R222) continua a marcar `PCMA`: o caminho que passa a ser o por omissão
   é uma variante por medir do que ela mediu. Também sem prova: a gravação de
   uma perna em Opus, e o palco (R225) nesse codec.

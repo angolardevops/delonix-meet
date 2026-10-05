@@ -1169,7 +1169,7 @@ async fn room_bridge_for(
                 format!("mandatory:{}", crate::phone_bridge::srtp::SRTP_PROFILE_NAME),
             ),
             // A ordem é a preferência: o UA da ponte responde com o primeiro
-            // que souber falar (ADR-0017). Com Opus à frente, a voz de um
+            // que souber falar (ADR-0018). Com Opus à frente, a voz de um
             // softphone chega à sala sem passar por 8 kHz; `PCMA` sozinho é o
             // caminho que a prova contra o FreeSWITCH real mediu (R222), e
             // fica atrás como recurso. Uma oferta sem nenhum dos dois leva `488`.

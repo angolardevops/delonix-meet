@@ -371,7 +371,7 @@ pub struct Config {
     /// se pode expor no K8s.
     pub phone_bridge_rtp_ports: Option<(u16, u16)>,
     /// A perna da ponte negoceia Opus (`PHONE_BRIDGE_WIDEBAND`, por omissão
-    /// ligado — ADR-0017): o servidor manda `OPUS,PCMA` na dial string e a voz
+    /// ligado — ADR-0018): o servidor manda `OPUS,PCMA` na dial string e a voz
     /// de um softphone chega à sala sem passar por 8 kHz. `0` (ou `false`,
     /// `off`, `no`, ou qualquer valor que não se perceba) repõe `PCMA`, o
     /// caminho G.711 de sempre, sem reconstruir nada.

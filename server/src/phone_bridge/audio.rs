@@ -16,7 +16,7 @@
 //! O Opus é o `opus-rs` (Rust puro). A interoperabilidade com a libopus de
 //! referência foi medida nos dois sentidos antes de o escolher (ADR-0010).
 //!
-//! **Quando a perna negoceia Opus** (ADR-0017) os dois sentidos mudam de forma,
+//! **Quando a perna negoceia Opus** (ADR-0018) os dois sentidos mudam de forma,
 //! e continuam assimétricos:
 //!
 //! - **Telefone → sala** ([`Passthrough`]): o pacote já é Opus e passa INTACTO.
@@ -33,7 +33,7 @@ use super::g711::Law;
 /// 20 ms a 8 kHz.
 pub const FRAME_8K: usize = 160;
 /// Taxa a que a sala é descodificada e somada, e a que a mistura segue para
-/// uma perna em Opus (ADR-0017): banda larga. A 48 kHz o custo por microfone
+/// uma perna em Opus (ADR-0018): banda larga. A 48 kHz o custo por microfone
 /// triplicava para dar ao telefone uma banda que o auscultador dele não
 /// reproduz.
 pub const WIDEBAND_RATE: u32 = 16_000;
@@ -174,7 +174,7 @@ impl Ingress {
 }
 
 // ============================================================
-//  Telefone → sala, quando a perna já fala Opus (ADR-0017)
+//  Telefone → sala, quando a perna já fala Opus (ADR-0018)
 // ============================================================
 
 /// Um pacote Opus do telefone, pronto a entrar na sala tal como chegou.
@@ -229,7 +229,7 @@ const MAX_DECODED_16K: usize = 1_920;
 /// (subtrai relógios consecutivos sem contar com recuos).
 ///
 /// **Isto não é uma fronteira de segurança.** O que passa é estruturalmente
-/// Opus e cabe no tecto; o conteúdo é o que a origem mandou (ADR-0017
+/// Opus e cabe no tecto; o conteúdo é o que a origem mandou (ADR-0018
 /// §Segurança).
 pub struct Passthrough {
     mono: Option<Box<opus_rs::OpusDecoder>>,
@@ -456,7 +456,7 @@ impl Mixer {
         Self::build(own, true)
     }
 
-    /// Misturador que entrega a 16 kHz: o de uma perna em Opus (ADR-0017).
+    /// Misturador que entrega a 16 kHz: o de uma perna em Opus (ADR-0018).
     pub fn wideband(own: Uuid) -> Self {
         Self::build(own, false)
     }
@@ -679,7 +679,7 @@ pub fn encode_mix(law: Law, mixed: &[i32], out: &mut Vec<u8>) {
     law.encode(&pcm, out);
 }
 
-/// Codificador da mistura para uma perna em Opus (ADR-0017): banda larga,
+/// Codificador da mistura para uma perna em Opus (ADR-0018): banda larga,
 /// mono, um bloco de 20 ms de cada vez.
 pub struct MixEncoder {
     encoder: opus_rs::OpusEncoder,
@@ -870,7 +870,7 @@ pub(crate) mod tests {
     }
 
     // ------------------------------------------------------------
-    //  ADR-0017: a perna em Opus
+    //  ADR-0018: a perna em Opus
     // ------------------------------------------------------------
 
     fn tone(rate: f32, freq: f32, n: usize, amp: f32, phase0: usize) -> Vec<f32> {

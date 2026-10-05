@@ -2392,7 +2392,7 @@ async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
     esperar_censo_vazio(&sfu, "depois da chamada e da Ana saírem", prazo(20)).await;
 }
 
-/// «Softphone» falso com a perna em Opus (ADR-0017): o papel do FreeSWITCH
+/// «Softphone» falso com a perna em Opus (ADR-0018): o papel do FreeSWITCH
 /// quando a dial string leva `OPUS` à frente. Manda Opus a 48 kHz (silêncio e
 /// depois um tom), guarda cada payload que mandou, e descodifica a 16 kHz o
 /// que a ponte lhe devolve.
@@ -2494,7 +2494,7 @@ impl TelefoneOpus {
     }
 }
 
-/// **ADR-0017 — com a perna em Opus, a banda larga passa nos dois sentidos e
+/// **ADR-0018 — com a perna em Opus, a banda larga passa nos dois sentidos e
 /// o telefone entra na sala sem ser recodificado.**
 ///
 /// A perna G.711 deitava fora tudo acima de ~3,4 kHz: um softphone que falava
@@ -2697,7 +2697,7 @@ async fn ponte_em_opus_leva_banda_larga_nos_dois_sentidos() {
         .load(std::sync::atomic::Ordering::Relaxed);
     assert_eq!(rejeitados, 0, "Opus válido não é recusado");
     eprintln!(
-        "ADR-0017 ponte em Opus: {} pacotes na sala, todos intactos · softphone ouve 6 kHz a {:.3} \
+        "ADR-0018 ponte em Opus: {} pacotes na sala, todos intactos · softphone ouve 6 kHz a {:.3} \
          (próprio {:.4}) · pacotes in={} out={}",
         recebidos.len(),
         alheio_min,

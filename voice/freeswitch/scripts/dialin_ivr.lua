@@ -332,7 +332,7 @@ if room_bridge then
   -- precisa delas é a perna B. É o `rtp_secure_media=mandatory:<perfil>` que
   -- obriga ESTA perna a oferecer SRTP — sem `a=crypto` a ponte responde 488.
   -- Uma vírgula crua num valor PARTE a lista: o FreeSWITCH separa-a por
-  -- vírgulas e deita fora o bocado que fica sem `=`. Desde o ADR-0017 há um
+  -- vírgulas e deita fora o bocado que fica sem `=`. Desde o ADR-0018 há um
   -- valor com vírgula (`absolute_codec_string=OPUS,PCMA`): sem a escapar, a
   -- perna oferecia só Opus e o G.711 de recurso não existia. A barra invertida
   -- escapa-a (e escapa-se a si própria primeiro).

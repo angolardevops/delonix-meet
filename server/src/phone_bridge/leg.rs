@@ -5,7 +5,7 @@
 //!   FreeSWITCH ◀─RTP G.711── socket UDP ◀─ Mixer (mix-minus)     ◀─ SFU: microfones da sala
 //! ```
 //!
-//! Quando o diálogo SIP negoceia Opus (ADR-0017) a perna é a mesma e os dois
+//! Quando o diálogo SIP negoceia Opus (ADR-0018) a perna é a mesma e os dois
 //! sentidos mudam de forma — nenhum pacote é recodificado à entrada:
 //!
 //! ```text
@@ -77,7 +77,7 @@ pub struct LegStats {
     pub loss_ppm: AtomicU64,
 }
 
-/// O codec que o diálogo SIP negociou para a perna (ADR-0017).
+/// O codec que o diálogo SIP negociou para a perna (ADR-0018).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegCodec {
     /// G.711 a 8 kHz: a perna transcodifica nos dois sentidos (ADR-0010).
