@@ -215,7 +215,7 @@ contexto de dialplan e por domínio SIP, não por processo.
 |---|---|
 | As regras de um tronco (transporte, SRTP, host, prefixos, canais) | os unitários de `telephony/trunk.rs` e `cargo test --release --test telephony` (precisa de `DATABASE_URL`) |
 | `voice/kamailio/kamailio.cfg` (os `listen=`) | `bash scripts/check-bordo-anuncia.sh` (R277, `make fitness` e CI) — estático: nenhum `listen=` em `0.0.0.0` sem `advertise`. Com chamada: `bash scripts/pbx-tronco-prova.sh longa`, fora do CI |
-| O tronco de uma central (FreePBX) até ao bordo | `bash scripts/pbx-tronco-prova.sh up` · `freepbx --seed … [--central]` · `negativos` · `longa` · `central` · `down` — uma réplica isolada do bordo e a appliance real em QEMU (`voice/pbx-tronco-prova/README.md`). **Fora do CI** |
+| O tronco de uma central (FreePBX) até ao bordo | `bash scripts/pbx-tronco-prova.sh up` · `freepbx --seed … [--central]` · `negativos` · `longa` · `central` · `browser` · `down` — uma réplica isolada do bordo e a appliance real em QEMU (`voice/pbx-tronco-prova/README.md`). **Fora do CI** |
 | A rota da central (`route[CENTRAL]`, o `X-Delonix-Central`), o modo `central` do `dialin_ivr.lua`, a lista `delonix_bordo` do arranque | `bash scripts/check-bordo-central.sh` (ADR-0016, `make fitness` e CI) — estático: o bordo tira os `X-Delonix-*` antes de decidir quem liga, só escreve o cabeçalho depois do digest e por TLS, e o IVR só acredita nele vindo do bordo. Com chamadas: `bash scripts/pbx-tronco-prova.sh central`, fora do CI |
 | Que conta o bordo verifica e em que salas a central entra (`telephony_sip::ha1_for_edge`, `voice::validate_pin_for_central`) | `cargo test --release --test central_entra_na_sala` contra Postgres real (6 casos; o isolamento por organização tem controlo positivo) |
 | `voice/kamailio/` (o resto) | **não há portão no CI**; o `make cluster` carrega o `kamailio.cfg` num Kamailio 5.8.6 a sério e mede o dispatcher e o tronco do PBX de laboratório (`scripts/cluster-voice.sh`) |
@@ -249,8 +249,10 @@ contexto de dialplan e por domínio SIP, não por processo.
   SDES, o PIN certo aceite por DTMF e o errado recusado, a voz do IVR ouvida pela central, e
   as recusas. **Com a conta SIP da organização e a allowlist vazia** (ADR-0016), entra
   autenticada e a chamada do PIN certo vai para a sala da organização **pela ponte do SFU**.
-  **Não provado:** um Issabel; um browser na sala (com dois telefones como central, cada um
-  ouve o outro pela ponte — a media entre a ponte e um participante WebRTC é da R221/R222);
+  **Com um browser na sala** (2026-10-05, modo `browser`, R293): a central ouve o tom do
+  browser e o browser descodifica o tom da central — a pilha real do cliente num Chromium,
+  medido nas amostras. **Não provado:** um Issabel; essa mesma medição fora da réplica
+  (compose, cluster, um Chrome a sério);
   o bordo atrás de NAT; e as centrais ligadas no `compose.yaml`, no cluster local ou pelo
   chart (`voice.centrais`), que só foram lidos.
 - O `softphone-prova.sh` **nunca correu contra o Meet a funcionar**: os modos `chamada` e
