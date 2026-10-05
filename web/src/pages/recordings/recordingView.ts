@@ -12,6 +12,7 @@
  * nunca um número inventado.
  */
 import type { RecordingLibraryItem } from '../../api'
+import { hasFile as fileExists, isFailed, isProcessing } from './format'
 
 export type SessionCategory = 'training' | 'hybrid' | 'broadcast' | 'meeting'
 
@@ -89,9 +90,9 @@ export function displayName(filename: string): string {
 const CATEGORIES: SessionCategory[] = ['training', 'hybrid', 'broadcast', 'meeting']
 
 export function fromRecordingItem(r: RecordingLibraryItem): RecordingView {
-  const failed = r.status === 'failed'
-  const processing = r.status === 'processing'
-  const hasFile = !failed && !processing
+  const failed = isFailed(r)
+  const processing = isProcessing(r)
+  const hasFile = fileExists(r)
   const published = hasFile && (r.state === 'published' || r.visibility === 'org')
   return {
     source: r,

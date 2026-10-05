@@ -63,6 +63,7 @@ import { ChapterView, fromRecordingItem, RecordingView } from './recordings/reco
 import ShareDialog from './recordings/ShareDialog'
 import { playerHash, studioEditHash } from './recordings/studioLink'
 import Transcript from './recordings/Transcript'
+import { useProcessingUpdates } from './recordings/useProcessingUpdates'
 
 type InfoTab = 'description' | 'transcript' | 'comments' | 'participants' | 'captions' | 'attachments'
 type SideTab = 'next' | 'series'
@@ -146,11 +147,23 @@ export default function RecordingPlayer({ id }: { id: string }) {
               </div>
             )
           }
-          return <Player key={rec.id} rec={rec} library={library} meetings={meetings} onChanged={reload} />
+          return <LivePlayer key={rec.id} rec={rec} library={library} meetings={meetings} onChanged={reload} />
         }}
       </AsyncSection>
     </div>
   )
+}
+
+/**
+ * Enquanto o servidor compõe a gravação, o leitor relê-a: o aviso mostra o
+ * progresso a andar e dá lugar ao vídeo quando o ficheiro existe.
+ */
+function LivePlayer(props: { rec: RecordingView; library: RecordingView[]; meetings: Meeting[]; onChanged: () => void }) {
+  const source = props.rec.source
+  const rows = useMemo(() => [source], [source])
+  const live = useProcessingUpdates(rows)
+  const rec = useMemo(() => fromRecordingItem(live(source)), [live, source])
+  return <Player {...props} rec={rec} />
 }
 
 function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; library: RecordingView[]; meetings: Meeting[]; onChanged: () => void }) {

@@ -15,6 +15,7 @@ import {
   visibleState,
 } from './libraryData'
 import type { RecordingLibraryItem } from '../../api'
+import { hasFile, withFresh } from './format'
 import { fromRecordingItem, RecordingView } from './recordingView'
 
 export const libItem = (over: Partial<RecordingLibraryItem> = {}): RecordingLibraryItem => ({
@@ -80,9 +81,12 @@ describe('a compor (o servidor ainda não tem ficheiro)', () => {
     expect(r.published).toBe(false)
     expect(visibleState(r).kind).toBe('processing')
   })
-  it('não conta como falhada nem como «a transcrever»', () => {
-    expect(matchesFilter(aCompor, 'failed')).toBe(false)
-    expect(matchesFilter(aCompor, 'transcribing')).toBe(false)
+  it('um estado que a consola não conhece fica sem ficheiro — não se lê «pronta» com acções', () => {
+    const r = fromRecordingItem(libItem({ status: 'archiving' as RecordingLibraryItem['status'] }))
+    expect(r.hasFile).toBe(false)
+    expect(hasFile({ status: 'archiving' })).toBe(false)
+    expect(hasFile({ status: 'ready' }) && hasFile({ status: 'transcribing' })).toBe(true)
+    expect(hasFile({ status: 'processing' }) || hasFile({ status: 'failed' })).toBe(false)
   })
   it('pronta, a transcrever e falhada continuam como eram', () => {
     expect(fromRecordingItem(libItem())).toMatchObject({ failed: false, processing: false, hasFile: true, pipeline: 'ready', sizeBytes: 10 })
@@ -95,6 +99,25 @@ describe('a compor (o servidor ainda não tem ficheiro)', () => {
       failureReason: 'sem espaço',
       sizeBytes: null,
     })
+  })
+})
+
+describe('a leitura mais recente de uma gravação a compor', () => {
+  const naLista = libItem({ id: 'g', status: 'processing', state: 'processing', progress_pct: 10, snippet: '«termo»' })
+  it('troca a linha enquanto a lista a tem como «a compor», e guarda o que só a lista traz', () => {
+    const lida = libItem({ id: 'g', status: 'ready', state: 'ready', progress_pct: null, size_bytes: 4 })
+    delete lida.snippet
+    const r = withFresh(naLista, { g: lida })
+    expect(r).toMatchObject({ status: 'ready', progress_pct: null, size_bytes: 4, snippet: '«termo»' })
+    expect(fromRecordingItem(r).hasFile).toBe(true)
+  })
+  it('sem leitura, ou de outra gravação, a linha fica como estava', () => {
+    expect(withFresh(naLista, {})).toBe(naLista)
+    expect(withFresh(naLista, { outra: libItem({ id: 'outra' }) })).toBe(naLista)
+  })
+  it('depois de a lista se reler manda a lista: uma leitura antiga não tapa um nome acabado de mudar', () => {
+    const relida = libItem({ id: 'g', filename: 'nome novo.webm' })
+    expect(withFresh(relida, { g: libItem({ id: 'g', filename: 'nome velho.webm' }) })).toBe(relida)
   })
 })
 

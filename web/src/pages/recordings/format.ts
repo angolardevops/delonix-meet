@@ -54,11 +54,12 @@ export const isFailed = (r: Pick<RecordingItem, 'status'>) => r.status === 'fail
 /** O servidor ainda está a compor o ficheiro (a linha nasce antes de o ffmpeg correr). */
 export const isProcessing = (r: Pick<RecordingItem, 'status'>) => r.status === 'processing'
 
-/** De quanto em quanto se relê a lista enquanto houver uma gravação a compor. */
-export const PROCESSING_POLL_MS = 4000
-
-/** Há ficheiro para abrir: nem falhada, nem ainda a compor. */
-export const hasFile = (r: Pick<RecordingItem, 'status'>) => !isFailed(r) && !isProcessing(r)
+/**
+ * Há ficheiro para abrir. Lista de PERMISSÃO, como a do servidor
+ * (`ProcessingFacts::has_file`): um estado que esta consola ainda não conheça
+ * fica sem acções, em vez de se ler «pronta».
+ */
+export const hasFile = (r: Pick<RecordingItem, 'status'>) => r.status === 'ready' || r.status === 'transcribing'
 
 /** Miniatura duotone estável por nome, com o tom da paleta do kit. */
 export function thumbBackground(seed: string): string {
@@ -70,4 +71,17 @@ export function formatDayMonth(iso: string, lang: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   return d.toLocaleDateString(lang, { day: '2-digit', month: 'short' })
+}
+
+/** A leitura mais recente de cada gravação a compor, por id (`useProcessingUpdates`). */
+export type FreshRecordings = Record<string, RecordingItem>
+
+/**
+ * A linha com o que a última leitura trouxe. Só enquanto a LISTA ainda a tem
+ * como «a compor»: depois de a lista se reler, manda a lista — senão uma
+ * leitura antiga tapava um nome acabado de mudar.
+ */
+export function withFresh<T extends RecordingItem>(row: T, fresh: FreshRecordings): T {
+  const latest = fresh[row.id]
+  return latest && isProcessing(row) ? { ...row, ...latest } : row
 }

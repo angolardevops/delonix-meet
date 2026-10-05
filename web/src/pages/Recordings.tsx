@@ -18,7 +18,7 @@
  * nunca abre o leitor e nunca oferece acções — em NENHUMA das vistas. O e2e
  * `gravacao-falhada.mjs` verifica as duas.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RecordingLibraryItem } from '../api'
 import PageBar from '../components/PageBar'
@@ -27,7 +27,7 @@ import { cx, Segmented, Skeleton } from '../ui/kit'
 import { SearchBar, SearchResults } from '../ui/search/SearchResults'
 import { useResourceSearch } from '../ui/search/useResourceSearch'
 import '../ui/recordings.css'
-import { formatBytes, PROCESSING_POLL_MS } from './recordings/format'
+import { formatBytes } from './recordings/format'
 import { formatClock } from './recordings/libraryData'
 import RecordingGrid from './recordings/RecordingGrid'
 import RecordingPanel from './recordings/RecordingPanel'
@@ -35,8 +35,10 @@ import RecordingTable from './recordings/RecordingTable'
 import { fromRecordingItem, RecordingView } from './recordings/recordingView'
 import { recordingsFallbackFor } from './recordings/search'
 import ShareDialog from './recordings/ShareDialog'
+import { useProcessingUpdates } from './recordings/useProcessingUpdates'
 
 type View = 'list' | 'grid'
+const NO_ITEMS: RecordingLibraryItem[] = []
 
 const VIEW_KEY = 'dx_rec_view'
 
@@ -75,7 +77,10 @@ export default function Recordings() {
   const [shareTarget, setShareTarget] = useState<RecordingView | null>(null)
 
   const page = rs.list.state.s === 'ready' ? rs.list.state.d : null
-  const items = useMemo(() => (page ? page.items.map(fromRecordingItem) : []), [page])
+  // As que o servidor ainda está a compor relêem-se à parte (progresso, e a
+  // passagem a «pronta»), sem voltar a pedir a lista.
+  const live = useProcessingUpdates(page?.items ?? NO_ITEMS)
+  const items = useMemo(() => (page ? page.items.map(live).map(fromRecordingItem) : []), [page, live])
   const ready = page !== null
 
   function changeView(v: View) {
@@ -114,17 +119,6 @@ export default function Recordings() {
     reload()
   }, [reload])
 
-  // Enquanto houver uma gravação a compor, a lista relê-se: o progresso anda e
-  // a linha passa a «pronta» sem a pessoa recarregar a página.
-  const composing = items.some((r) => r.processing)
-  const reloadRef = useRef(reload)
-  reloadRef.current = reload
-  useEffect(() => {
-    if (!composing) return
-    const id = window.setInterval(() => reloadRef.current(), PROCESSING_POLL_MS)
-    return () => window.clearInterval(id)
-  }, [composing])
-
   // Em ecrã estreito o painel é uma camada: Esc fecha-o.
   useEffect(() => {
     if (!panelOpen || shareTarget) return
@@ -136,7 +130,7 @@ export default function Recordings() {
   }, [panelOpen, shareTarget])
 
   const renderItems = (rows: RecordingLibraryItem[]) => {
-    const views = rows.map(fromRecordingItem)
+    const views = rows.map(live).map(fromRecordingItem)
     return view === 'list' ? (
       <RecordingTable items={views} selectedId={selected?.id ?? null} retentionDays={retentionDays} onOpen={open} onShare={setShareTarget} />
     ) : (

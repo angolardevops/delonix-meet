@@ -218,6 +218,20 @@ async fn a_recording_being_composed_is_processing_not_failed(db: sqlx::PgPool) {
         !e["error"].as_str().unwrap_or_default().contains("falhou"),
         "{e}"
     );
+    // O `409` é só para quem chega à gravação. Quem não chega — outra
+    // organização, ou um colega sem relação com ela — recebe o `404` de «não
+    // existe», como antes: o estado não confirma que o id existe.
+    for (quem, conta) in [
+        ("outra organização", &f.b),
+        ("colega sem relação", &f.duarte),
+    ] {
+        let (st, e) = app
+            .get(&format!("{meta}/content"), Some(&conta.token))
+            .await;
+        assert_eq!(st, 404, "{quem}: {e}");
+        let (st, e) = app.get(&meta, Some(&conta.token)).await;
+        assert_eq!(st, 404, "{quem}: {e}");
+    }
     let (st, e) = app
         .post(
             &format!("{meta}/publish"),

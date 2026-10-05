@@ -69,6 +69,12 @@ describe('«A seguir» e «Da mesma série»', () => {
     expect(nextUp(comUmaACompor, 'zzz').map((r) => r.id)).toEqual(['a', 'c', 'd', 'e'])
   })
 
+  it('nem em «Da mesma série»', () => {
+    const meetings = [meeting('mae', 'sala-a-um', null, 'weekly'), meeting('f1', 'sala-p-um', 'mae'), meeting('f2', 'sala-c-um', 'mae')]
+    const comUmaACompor = [rec('p', 'sala-p-um', 'processing'), ...lib]
+    expect(sameSeries(comUmaACompor, meetings, lib[0]).map((r) => r.id)).toEqual(['c'])
+  })
+
   it('mesma série: pela reunião-mãe da recorrência, casada pela sala', () => {
     const meetings = [
       meeting('mae', 'sala-a-um', null, 'weekly'),

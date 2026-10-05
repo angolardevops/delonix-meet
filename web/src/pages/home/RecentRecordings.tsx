@@ -2,7 +2,7 @@
  * Gravações recentes em cartões. Uma gravação falhada NÃO é clicável (R59):
  * não há nada para abrir, e o cartão diz porquê em vez de fingir um vídeo.
  * Uma que o servidor ainda está a compor também não — e não é uma falha: o
- * cartão diz «A processar», e a lista relê-se até ela ficar pronta.
+ * cartão diz «A processar», e relê-se até ela ficar pronta.
  *
  * «Importar gravação» usa o mesmo caminho do Estúdio: uma gravação pertence a
  * uma sala e só quem participou nela a pode carregar (recordings.rs), por isso
@@ -10,17 +10,19 @@
  * O tecto é o do servidor, 512 MiB (MAX_RECORDING_BYTES) — não os 12 GB do
  * template, que precisam de upload resumível.
  */
-import { ChangeEvent, useEffect, useRef, useState } from 'react'
+import { ChangeEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, createRoom, joinRoom, MAX_RECORDING_UPLOAD_BYTES, recordingsLibrary, RecordingItem, uploadRecording } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Icon } from '../../ui/icons'
 import { Alert, Skeleton, StatusBadge } from '../../ui/kit'
 import { fmtBytes, localeOf } from '../calendar/dates'
-import { hasFile, isProcessing, PROCESSING_POLL_MS } from '../recordings/format'
+import { hasFile, isProcessing } from '../recordings/format'
+import { useProcessingUpdates } from '../recordings/useProcessingUpdates'
 
 /** Três gravações e o cartão de importar: a fila de quatro do template. */
 const MAX = 3
+const NONE: RecordingItem[] = []
 
 export default function RecentRecordings() {
   const { t, i18n } = useTranslation()
@@ -32,14 +34,9 @@ export default function RecentRecordings() {
     const all = await recordingsLibrary(signal)
     return [...all].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, MAX)
   }, [])
-  // Enquanto houver uma a compor, relê: senão ficava «A processar» até a
-  // pessoa recarregar a página.
-  const composing = state.s === 'ready' && state.d.some(isProcessing)
-  useEffect(() => {
-    if (!composing) return
-    const id = window.setInterval(reload, PROCESSING_POLL_MS)
-    return () => window.clearInterval(id)
-  }, [composing, reload])
+  // As que o servidor ainda está a compor relêem-se à parte: senão ficavam
+  // «A processar» até a pessoa recarregar a página.
+  const live = useProcessingUpdates(state.s === 'ready' ? state.d : NONE)
 
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -151,14 +148,14 @@ export default function RecentRecordings() {
       <AsyncSection state={state} onRetry={reload} skeleton={skeleton}>
         {(rs) => (
           <ul className="home-recs" role="list">
-            {rs.map((r) => (
+            {rs.map(live).map((r) => (
               <li key={r.id}>
                 {hasFile(r) ? (
                   <button type="button" className="home-rec" onClick={() => (location.hash = `/recordings?id=${r.id}`)}>
                     {body(r)}
                   </button>
                 ) : (
-                  <div className="home-rec home-rec--failed" data-status={isProcessing(r) ? 'processing' : 'failed'}>
+                  <div className={isProcessing(r) ? 'home-rec home-rec--processing' : 'home-rec home-rec--failed'} data-status={isProcessing(r) ? 'processing' : 'failed'}>
                     {body(r)}
                   </div>
                 )}

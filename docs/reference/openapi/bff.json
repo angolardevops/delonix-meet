@@ -8595,7 +8595,7 @@
             "type": "integer"
           },
           "progress_pct": {
-            "description": "Progresso do passo em curso (a compor ou a transcrever), 0–100. `null`\nfora dele.",
+            "description": "Progresso da composição, 0–100, enquanto o `status` é `processing`.\n`null` fora dela (a transcrição não escreve progresso aqui).",
             "format": "int32",
             "type": [
               "integer",
@@ -34021,6 +34021,16 @@
               }
             },
             "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação não tem ficheiro: falhou, ou o servidor ainda a está a compor (`status = processing`). Código genérico `conflict`."
           }
         },
         "security": [
@@ -34525,6 +34535,16 @@
               }
             },
             "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação não tem ficheiro: falhou, ou o servidor ainda a está a compor (`status = processing`). Código genérico `conflict`."
           }
         },
         "security": [

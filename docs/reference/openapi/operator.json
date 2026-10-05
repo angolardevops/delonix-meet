@@ -8595,7 +8595,7 @@
             "type": "integer"
           },
           "progress_pct": {
-            "description": "Progresso do passo em curso (a compor ou a transcrever), 0–100. `null`\nfora dele.",
+            "description": "Progresso da composição, 0–100, enquanto o `status` é `processing`.\n`null` fora dela (a transcrição não escreve progresso aqui).",
             "format": "int32",
             "type": [
               "integer",

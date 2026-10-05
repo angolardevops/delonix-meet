@@ -165,8 +165,8 @@ pub struct RecordingItem {
     pub failure_reason: Option<String>,
     /// O `status`, com `published` quando está pronta e publicada.
     pub state: String,
-    /// Progresso do passo em curso (a compor ou a transcrever), 0–100. `null`
-    /// fora dele.
+    /// Progresso da composição, 0–100, enquanto o `status` é `processing`.
+    /// `null` fora dela (a transcrição não escreve progresso aqui).
     pub progress_pct: Option<i16>,
     /// `meeting` | `training` | `broadcast` | `hybrid`.
     pub kind: String,
