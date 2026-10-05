@@ -188,7 +188,8 @@ CONF
 # Certificado self-signed do bordo SIP (Kamailio) no compose. O nome vai também
 # no SAN: é por ele que a central confere o certificado. Um certificado de um
 # bootstrap anterior, sem SAN, é substituído (é de laboratório e self-signed).
-if ! openssl x509 -in "$GEN/voice-tls/tls.crt" -noout -ext subjectAltName 2>/dev/null | grep -q "DNS:delonix-kamailio"; then
+san=$(openssl x509 -in "$GEN/voice-tls/tls.crt" -noout -ext subjectAltName 2>/dev/null) || san=
+if ! grep -q "DNS:delonix-kamailio" <<<"$san"; then
   openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=delonix-kamailio" \
     -addext "subjectAltName=DNS:delonix-kamailio" \
     -keyout "$GEN/voice-tls/tls.key" -out "$GEN/voice-tls/tls.crt" 2>/dev/null

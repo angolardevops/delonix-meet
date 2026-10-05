@@ -29,7 +29,9 @@ CFG="${DEMO_CFG:-/tmp/claude-1000/-home-walter-workspace-ngolacloud/5641d811-fea
 up() {
   delonix volumes create dlxmeet-pgdata >/dev/null 2>&1 || true
 
-  if ! delonix container ps 2>/dev/null | grep -q dlxmeet-db; then
+  local a_correr
+  a_correr=$(delonix container ps 2>/dev/null) || a_correr=
+  if ! grep -q dlxmeet-db <<<"$a_correr"; then
     delonix container run -d --name dlxmeet-db --net $NET \
       -e POSTGRES_USER=delonix -e POSTGRES_PASSWORD=delonix_dev \
       -e POSTGRES_DB=delonix_meet \
@@ -40,7 +42,8 @@ up() {
 
   # ubuntu:24.04, não debian:12 — o binário é compilado no host contra
   # GLIBC 2.39 e o bookworm só tem 2.36 ("version GLIBC_2.39 not found").
-  if ! delonix container ps 2>/dev/null | grep -q dlxmeet-server; then
+  a_correr=$(delonix container ps 2>/dev/null) || a_correr=
+  if ! grep -q dlxmeet-server <<<"$a_correr"; then
     delonix container run -d --name dlxmeet-server --net $NET --knows dlxmeet-db \
       -p 8180:8180 \
       -e DELONIX_ALLOW_INSECURE=1 \
@@ -71,7 +74,8 @@ if new != s:
     print('  upstream do nginx actualizado ->', ip)
 PY
 
-  if ! delonix container ps 2>/dev/null | grep -q dlxmeet-web; then
+  a_correr=$(delonix container ps 2>/dev/null) || a_correr=
+  if ! grep -q dlxmeet-web <<<"$a_correr"; then
     delonix container run -d --name dlxmeet-web --net $NET -p 8081:80 -p 8443:443 \
       -v "$REPO/web/dist:/usr/share/nginx/html:ro" \
       -v "$CFG/default.conf:/etc/nginx/conf.d/default.conf:ro" \

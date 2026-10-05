@@ -159,9 +159,9 @@ menor() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.
 logs() { m_logs "$1" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r'; }
 # esperar <contentor> <padrão> <segundos> — 0 se apareceu
 esperar() {
-  local i
+  local i registo
   for i in $(seq 1 $(( $3 * 2 ))); do
-    logs "$1" | grep -Eq "$2" && return 0
+    registo=$(logs "$1") && grep -Eq "$2" <<<"$registo" && return 0
     sleep 0.5
   done
   return 1
@@ -262,7 +262,7 @@ verificar_tons() {
 }
 
 estabelecida() {  # estabelecida <nome> <segundos> — e com SRTP
-  local nome=$1
+  local nome=$1 registo
   if esperar "${TAG}-$nome" 'Call established' "$2"; then
     ok "$nome: chamada estabelecida"
   else
@@ -270,8 +270,8 @@ estabelecida() {  # estabelecida <nome> <segundos> — e com SRTP
     logs "${TAG}-$nome" | grep -vE '^\s*$|audio=' | tail -6 | sed 's/^/       /'
     return 1
   fi
-  if logs "${TAG}-$nome" | grep -q 'SRTP is Enabled'; then
-    ok "$nome: media cifrada ($(logs "${TAG}-$nome" | sed -n 's/.*SRTP is Enabled (\(.*\)).*/\1/p' | head -1))"
+  if registo=$(logs "${TAG}-$nome") && grep -q 'SRTP is Enabled' <<<"$registo"; then
+    ok "$nome: media cifrada ($(sed -n 's/.*SRTP is Enabled (\(.*\)).*/\1/p' <<<"$registo" | head -1))"
   else
     bad "$nome: a media NÃO está cifrada (sem «SRTP is Enabled»)"
   fi
@@ -352,9 +352,9 @@ EOF
     mkdir -p /tmp/rec; exec freeswitch -nonat -nf -nc'
   m_cp "$d" "${TAG}-fs:/prova" >/dev/null
   m_arranca "${TAG}-fs" >/dev/null
-  local i pronto=0
+  local i pronto=0 estado
   for i in $(seq 1 60); do
-    m_exec "${TAG}-fs" fs_cli -x "sofia status" 2>/dev/null | grep -Eq 'prova.*RUNNING' && { pronto=1; break; }
+    estado=$(m_exec "${TAG}-fs" fs_cli -x "sofia status" 2>/dev/null) && grep -Eq 'prova.*RUNNING' <<<"$estado" && { pronto=1; break; }
     sleep 1
   done
   [ "$pronto" -eq 1 ] || { echo "✗ o FreeSWITCH do selftest não ficou pronto"; m_logs --tail 20 "${TAG}-fs"; exit 1; }
@@ -421,7 +421,8 @@ ficheiros_cluster() {
 # fim_da_chamada <nome> <segundos> — «estabelecida», ou a resposta SIP que a fechou
 fim_da_chamada() {
   esperar "${TAG}-$1" 'Call established|session closed: ' "$2" || { echo "sem resposta em $2 s"; return; }
-  if logs "${TAG}-$1" | grep -q 'Call established'; then echo estabelecida
+  local registo
+  if registo=$(logs "${TAG}-$1") && grep -q 'Call established' <<<"$registo"; then echo estabelecida
   else logs "${TAG}-$1" | sed -n 's/.*session closed: //p' | head -1; fi
 }
 # fs_cli_cluster <comando> — o entrypoint dá ao ESL uma password aleatória

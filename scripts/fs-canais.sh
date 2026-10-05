@@ -30,7 +30,7 @@ case "${1:-}" in
       -v "$PWD/$DIR/recordings:/usr/local/freeswitch/recordings" \
       "$IMAGE" freeswitch -nonat -nf -nc >/dev/null
     for _ in $(seq 1 60); do
-      if docker exec "$NAME" fs_cli -P 8221 -p "$PW" -x "sofia status" 2>/dev/null | grep -q "carrier"; then
+      if estado=$(docker exec "$NAME" fs_cli -P 8221 -p "$PW" -x "sofia status" 2>/dev/null) && grep -q "carrier" <<<"$estado"; then
         echo "fs-canais pronto (ESL 127.0.0.1:8221)"; exit 0
       fi
       sleep 1

@@ -98,11 +98,11 @@ up() {
   printf '# Prova do tronco FreePBX: a única origem é o anfitrião na rede da réplica.\n1 172.30.50.1 32 0 central-freepbx\n' > "$ESTADO/address"
   printf '1 sip:172.30.50.13:5080 0 0 weight=100\n' > "$ESTADO/dispatcher.list"
   "${COMPOSE[@]}" up -d >/dev/null 2>&1 || { echo "✗ a réplica não arrancou"; "${COMPOSE[@]}" up -d; exit 1; }
-  local i
-  for i in $(seq 1 90); do fs_cli "sofia status" | grep -Eq 'external[[:space:]]+profile.*RUNNING' && break; sleep 2; done
-  fs_cli "sofia status" | grep -Eq 'external[[:space:]]+profile.*RUNNING' && ok "FreeSWITCH do Meet: perfil external (5080) a correr" || { bad "o FreeSWITCH não ficou pronto"; "${COMPOSE[@]}" logs --tail 30 freeswitch; }
-  for i in $(seq 1 45); do "${COMPOSE[@]}" exec -T kamailio kamcmd dispatcher.list 2>/dev/null | grep -q 'FLAGS: AP' && break; sleep 2; done
-  "${COMPOSE[@]}" exec -T kamailio kamcmd dispatcher.list 2>/dev/null | grep -q 'FLAGS: AP' && ok "bordo → FreeSWITCH: activo no dispatcher" || bad "o bordo não vê o FreeSWITCH activo"
+  local i estado
+  for i in $(seq 1 90); do estado=$(fs_cli "sofia status") && grep -Eq 'external[[:space:]]+profile.*RUNNING' <<<"$estado" && break; sleep 2; done
+  estado=$(fs_cli "sofia status") && grep -Eq 'external[[:space:]]+profile.*RUNNING' <<<"$estado" && ok "FreeSWITCH do Meet: perfil external (5080) a correr" || { bad "o FreeSWITCH não ficou pronto"; "${COMPOSE[@]}" logs --tail 30 freeswitch; }
+  for i in $(seq 1 45); do estado=$("${COMPOSE[@]}" exec -T kamailio kamcmd dispatcher.list 2>/dev/null) && grep -q 'FLAGS: AP' <<<"$estado" && break; sleep 2; done
+  estado=$("${COMPOSE[@]}" exec -T kamailio kamcmd dispatcher.list 2>/dev/null) && grep -q 'FLAGS: AP' <<<"$estado" && ok "bordo → FreeSWITCH: activo no dispatcher" || bad "o bordo não vê o FreeSWITCH activo"
   for i in $(seq 1 60); do psql_ -c "SELECT 1 FROM organizations LIMIT 0" >/dev/null 2>&1 && break; sleep 2; done
   # A sala de prova, direito na base: um número de acesso e uma sala com PIN.
   psql_ <<SQL >/dev/null || bad "não consegui semear a sala de prova"
@@ -159,7 +159,7 @@ run = f"""say(){{ echo "PBXPROVA $1" > /dev/console; }}
 for i in $(seq 1 240); do grep -q '^exit=' /var/log/ngolacloud-pbx.log 2>/dev/null && break; sleep 3; done
 say "setup: $(tail -1 /var/log/ngolacloud-pbx.log 2>/dev/null)"
 grep -vE '^\\s*$' /var/log/ngolacloud-pbx.log | tail -4 | while read l; do say "  | $l"; done
-for i in $(seq 1 30); do asterisk -rx 'pjsip show contacts' | grep -q 'meet/.*Avail' && break; sleep 2; done
+for i in $(seq 1 30); do asterisk -rx 'pjsip show contacts' | grep 'meet/.*Avail' >/dev/null && break; sleep 2; done
 say "contacto: $(asterisk -rx 'pjsip show contacts' | grep -E 'meet/' | tr -s ' ' | head -1)"
 say "transporte: $(asterisk -rx 'pjsip show endpoint meet' | grep -E '^ *transport +:' | tr -s ' ' | head -1)"
 cat /root/prova-pin.conf >> /etc/asterisk/extensions_custom.conf
@@ -189,7 +189,7 @@ PY
     cp "$ESTADO/address" "$ESTADO/address.antes"
     printf '# Prova da central autenticada: a allowlist está VAZIA.\n' > "$ESTADO/address"
     "${COMPOSE[@]}" restart kamailio >/dev/null 2>&1
-    local j; for j in $(seq 1 45); do "${COMPOSE[@]}" exec -T kamailio kamcmd dispatcher.list 2>/dev/null | grep -q 'FLAGS: AP' && break; sleep 2; done
+    local j lista; for j in $(seq 1 45); do lista=$("${COMPOSE[@]}" exec -T kamailio kamcmd dispatcher.list 2>/dev/null) && grep -q 'FLAGS: AP' <<<"$lista" && break; sleep 2; done
     antes_aut=$(autenticadas)
   fi
   antes_kam=$(kam_encaminhadas)
@@ -354,18 +354,19 @@ module_tmp		account.so
 module_app		menu.so
 EOF
   echo "<sip:prova@$BORDO:5061;transport=tls>;regint=0;mediaenc=srtp-mand;audio_codecs=PCMA/8000/1" > "$d/conf/accounts"
-  local antes saida log
+  local antes saida log desligadas
   antes=$(fs_log | wc -l)
   echo "▶ uma chamada de 40 s pelo bordo (o FreeSWITCH desiste aos 32 s se o ACK não chegar)"
   saida=$(docker run --rm --network host -v "$d/conf:/conf:ro" --entrypoint baresip "$IMG_BS" -4 -s -f /conf -t 40 \
     -e "/dial sip:${NUMERO#+}@$BORDO:5061;transport=tls" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
   log=$(fs_log | tail -n +$(( antes + 1 )))
   grep -q 'Call established' <<<"$saida" || { bad "a chamada não se estabeleceu"; return; }
-  grep -aE '^Record-Route:' <<<"$saida" | grep -q '0\.0\.0\.0' &&
+  grep -aqE '^Record-Route:.*0\.0\.0\.0' <<<"$saida" &&
     bad "o bordo anuncia 0.0.0.0 no Record-Route: $(grep -am1 '^Record-Route:' <<<"$saida")" ||
     ok "o bordo anuncia o seu endereço no Record-Route ($(grep -am1 '^Record-Route:' <<<"$saida" | sed 's/.*<sip:\([^;>]*\).*/\1/'))"
   grep -aq '^ACK sip:' <<<"$saida" && ok "o softphone enviou o ACK" || bad "o softphone nunca enviou o ACK"
-  grep -a 'Hangup sofia/external' <<<"$log" | grep -aq 'NORMAL_UNSPECIFIED' &&
+  desligadas=$(grep -a 'Hangup sofia/external' <<<"$log")
+  grep -aq 'NORMAL_UNSPECIFIED' <<<"$desligadas" &&
     bad "o FreeSWITCH desligou a chamada por falta de ACK (NORMAL_UNSPECIFIED)" ||
     ok "a chamada passou dos 32 s: durou $(sed -n 's/.*terminated (duration: \([0-9]*\) secs).*/\1/p' <<<"$saida" | head -1) s e não foi cortada pelo FreeSWITCH"
 }

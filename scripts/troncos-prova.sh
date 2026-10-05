@@ -138,13 +138,13 @@ marca() {
 # softphone a ligar para 923000888 (a operadora atende 25 s), em fundo. Devolve
 # em $SOFT o contentor dele quando a chamada está estabelecida (vazio se não).
 chamada_longa() {
-  local i
+  local i registo
   SOFT=
   ( SOFTPHONE_PASSWORD=$1 bash scripts/softphone-prova.sh chamada --servidor "$FS_IP:5070" --rede "$P-net" \
       --utilizador "$2" --dominio "$3" --destino 923000888 --segundos 14 > "$4" 2>&1 ) &
   for i in $(seq 1 90); do
     SOFT=$(m_nomes | grep -E '^sp[0-9]+-a$' | head -1)
-    [ -n "$SOFT" ] && m_logs "$SOFT" 2>&1 | grep -q 'Call established' && return 0
+    [ -n "$SOFT" ] && registo=$(m_logs "$SOFT" 2>&1) && grep -q 'Call established' <<<"$registo" && return 0
     sleep 0.5
   done
   SOFT=; return 1
@@ -162,14 +162,14 @@ confere_ip() {
   bad "o motor devolveu o contentor $1 com o endereço «$v» em vez de $2 — o que se segue mede o motor, não o Meet"
 }
 espera_perfil() {
-  local i
-  for i in $(seq 1 90); do fs_cli "sofia status" | grep -Eq 'external[[:space:]]+profile.*RUNNING' && return 0; sleep 2; done
+  local i estado
+  for i in $(seq 1 90); do estado=$(fs_cli "sofia status") && grep -Eq 'external[[:space:]]+profile.*RUNNING' <<<"$estado" && return 0; sleep 2; done
   return 1
 }
 
 # ------------------------------------------------------------ up
 up() {
-  local img=${SERVER_IMAGE:-delonix-server:latest} f nome n=0 i porta
+  local img=${SERVER_IMAGE:-delonix-server:latest} f nome n=0 i porta pong carregado
   mkdir -p "$ESTADO"; chmod 700 "$ESTADO"
   if [ -n "${SERVER_BIN:-}" ]; then
     [ -x "$SERVER_BIN" ] || { echo "✗ SERVER_BIN=$SERVER_BIN não é um executável"; exit 1; }
@@ -230,7 +230,7 @@ up() {
   sobe() { local svc=$1 e; shift; e=$(m_run -d --name "$P-$svc" "$M_NET" "$P-net" "$@" 2>&1) || { echo "✗ a réplica não arrancou ($svc): $(tail -2 <<<"$e" | tr '\n' ' ')"; exit 1; }; }
   sobe postgres --ip "$PG_IP" --env-file "$ESTADO/postgres.env" postgres:17-alpine
   sobe redis --ip "$REDIS_IP" redis:7-alpine
-  for i in $(seq 1 60); do cx postgres pg_isready -q -U delonix >/dev/null 2>&1 && cx redis redis-cli ping 2>/dev/null | grep -q PONG && break; sleep 1; done
+  for i in $(seq 1 60); do cx postgres pg_isready -q -U delonix >/dev/null 2>&1 && pong=$(cx redis redis-cli ping 2>/dev/null) && grep -q PONG <<<"$pong" && break; sleep 1; done
   cx postgres pg_isready -q -U delonix >/dev/null 2>&1 || { echo "✗ a base da réplica não ficou pronta"; m_logs --tail 10 "$P-postgres"; exit 1; }
   sobe server --ip "$SERVER_IP" -p "127.0.0.1:$porta:8180" --env-file "$ESTADO/server.env" "$img"
   # O FreeSWITCH do Meet. Os ficheiros de /meet são os da lista do
@@ -248,7 +248,7 @@ up() {
   espera_perfil && ok "FreeSWITCH do Meet: perfil external a correr" ||
     { bad "o FreeSWITCH não ficou pronto"; m_logs --tail 30 "$P-freeswitch"; return; }
   for m in mod_json_cdr mod_xml_curl mod_hash; do
-    fs_cli "module_exists $m" | grep -q true || bad "o módulo $m não está carregado"
+    carregado=$(fs_cli "module_exists $m") && grep -q true <<<"$carregado" || bad "o módulo $m não está carregado"
   done
   [ "$fail" = 0 ] && ok "mod_json_cdr, mod_xml_curl e mod_hash carregados"
 }
@@ -511,7 +511,7 @@ mede() {
   op_tem() { cx operadora fs_cli -x "show registrations" 2>/dev/null | grep -c "^$1,"; }
   # some_gw <gateway> <segundos> — espera que o gateway deixe de existir. Pelo
   # gateway e não pela lista: `gwlist` só traz os que estão UP.
-  some_gw() { local k; for k in $(seq 1 "$2"); do fs_cli "sofia status gateway $1" | grep -q 'Invalid Gateway' && return 0; sleep 1; done; return 1; }
+  some_gw() { local k visto; for k in $(seq 1 "$2"); do visto=$(fs_cli "sofia status gateway $1") && grep -q 'Invalid Gateway' <<<"$visto" && return 0; sleep 1; done; return 1; }
   # esl_da_operadora <password> — a operadora (outro contentor da mesma rede)
   # a pedir `status` ao ESL do Meet: quantas linhas «UP …» recebeu
   esl_da_operadora() { m_exec -e ESLPW="$1" "$P-operadora" sh -c 'timeout 10 fs_cli -H '"$FS_IP"' -P 8021 -p "$ESLPW" -x status 2>&1' | grep -ac '^UP '; }
@@ -619,12 +619,12 @@ mede() {
 
 # Pelos nomes, e não pelo estado: desmonta mesmo sem o .env.
 down() {
-  local c
+  local c nomes
   for c in operadora freeswitch server redis postgres; do m_rm "$P-$c" >/dev/null 2>&1; done
   m_rede_apaga "$P-net"
   m_imagem_apaga delonix-server:troncos-prova
   rm -rf "$ESTADO"
-  if m_nomes | grep -q "^$P-"; then echo "✗ ficaram contentores da réplica"; return 1; fi
+  if nomes=$(m_nomes) && grep -q "^$P-" <<<"$nomes"; then echo "✗ ficaram contentores da réplica"; return 1; fi
   echo "réplica desmontada"
 }
 

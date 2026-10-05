@@ -793,3 +793,89 @@ async fn next_retry_at_is_exposed_while_a_retry_is_scheduled(db: sqlx::PgPool) {
     let definitiva = items.iter().find(|d| d["response_status"] == 404).unwrap();
     assert!(definitiva["next_retry_at"].is_null(), "{definitiva}");
 }
+
+/// DUAS organizações: a B não reenvia, não lista nem lê as entregas da A, nem
+/// pelo caminho da A nem pelo da B com os ids da A — e nada chega ao destino da
+/// A por causa disso. A própria A continua a poder reenviar (é o controlo de que
+/// as recusas são por organização e não a rota partida).
+#[sqlx::test(migrations = "./migrations")]
+async fn another_organization_cannot_redeliver_list_or_read_my_deliveries(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(204, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let b = app.new_org("beta.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r", &[]).await;
+    let items = wait_final(&app, &a, &hook, 1).await;
+    let delivery = items[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(rx.received().len(), 1);
+
+    let a_path = format!("{}/{hook}/deliveries", hooks(a.org()));
+    let b_path_com_ids_da_a = format!("{}/{hook}/deliveries", hooks(b.org()));
+
+    // 1. Pelo caminho da A, com a sessão da B: B não é admin da A.
+    let (st, v) = app
+        .post(
+            &format!("{a_path}/{delivery}/redeliver"),
+            Some(&b.token),
+            json!({}),
+        )
+        .await;
+    assert!([403, 404].contains(&st), "B reenviou na org da A: {st} {v}");
+    // 2. Pelo caminho da B, com o webhook e a entrega da A: não existem aí.
+    let (st, v) = app
+        .post(
+            &format!("{b_path_com_ids_da_a}/{delivery}/redeliver"),
+            Some(&b.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 404, "B reenviou uma entrega da A pelo seu caminho: {v}");
+    // 3. Listar e ler: igual.
+    for (path, quem, esperado) in [
+        (a_path.clone(), &b.token, vec![403, 404]),
+        (b_path_com_ids_da_a.clone(), &b.token, vec![404]),
+        (format!("{a_path}/{delivery}"), &b.token, vec![403, 404]),
+        (
+            format!("{b_path_com_ids_da_a}/{delivery}"),
+            &b.token,
+            vec![404],
+        ),
+    ] {
+        let (st, v) = app.get(&path, Some(quem)).await;
+        assert!(
+            esperado.contains(&st),
+            "GET {path} com a sessão da B: {st} {v}"
+        );
+        assert!(
+            !v.to_string().contains(&delivery),
+            "a resposta à B menciona a entrega da A: {v}"
+        );
+    }
+
+    // Nada foi enviado nem criado por causa das tentativas da B.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        rx.received().len(),
+        1,
+        "o destino da A recebeu um reenvio pedido pela B"
+    );
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM webhook_deliveries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(total, 1, "as tentativas da B criaram entregas");
+
+    // Controlo: a A reenvia pelo mesmo caminho.
+    let (st, v) = app
+        .post(
+            &format!("{a_path}/{delivery}/redeliver"),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 202, "{v}");
+    wait_final(&app, &a, &hook, 2).await;
+    assert_eq!(rx.received().len(), 2);
+}

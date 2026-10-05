@@ -43,11 +43,11 @@ m_cp()      { "${M_CT[@]}" cp "$@"; }
 # porta publicada), que sai à segunda: a rede dele ficava de pé, e a prova
 # seguinte não conseguia criar a mesma sub-rede.
 m_rm() {
-  local t c resta
+  local t c resta nomes
   "${M_CT[@]}" rm -f "$@"
   for t in 1 2 3; do
-    resta=()
-    for c in "$@"; do m_nomes | grep -qxF -- "$c" && resta+=("$c"); done
+    resta=(); nomes=$(m_nomes) || nomes=
+    for c in "$@"; do grep -qxF -- "$c" <<<"$nomes" && resta+=("$c"); done
     [ "${#resta[@]}" -eq 0 ] && return 0
     sleep 1; "${M_CT[@]}" rm -f "${resta[@]}" >/dev/null 2>&1
   done
@@ -84,10 +84,11 @@ m_rede_apaga() { "$MOTOR" network rm "$1" >/dev/null 2>&1; }
 
 # m_imagem_existe <repositório:etiqueta>
 m_imagem_existe() {
+  local imagens
   case "$MOTOR" in
     docker)  docker image inspect "$1" >/dev/null 2>&1 ;;
-    delonix) delonix image ls 2>/dev/null | awk 'NR>1{print $1}' |
-               grep -qxF -e "$1" -e "docker.io/library/$1" -e "docker.io/$1" ;;
+    delonix) imagens=$(delonix image ls 2>/dev/null | awk 'NR>1{print $1}') &&
+               grep -qxF -e "$1" -e "docker.io/library/$1" -e "docker.io/$1" <<<"$imagens" ;;
   esac
 }
 # m_constroi <etiqueta> <contexto> [ficheiro]
