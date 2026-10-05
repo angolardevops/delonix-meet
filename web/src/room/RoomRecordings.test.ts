@@ -120,18 +120,22 @@ describe('gravações da sala — o que o painel oferece por estado', () => {
     expect(html).toContain('A gravação falhou e não ficou ficheiro.')
   })
 
-  it('um estado que a consola não conhece falha fechado: sem botão, lê-se «Falhada»', async () => {
+  it('um estado que a consola não conhece falha fechado: sem botão, lê-se como falhada', async () => {
     await usar('pt-AO')
     const html = render([rec({ status: 'archiving' as RecordingLibraryItem['status'] })])
     expect(botoes(html)).toBe(0)
-    expect(html).toContain('Falhada')
+    expect(html).toContain('A gravação falhou e não ficou ficheiro.')
+    expect(html).not.toContain('MB')
   })
 
   it('pronta e com permissão: o botão de descarregar, com o tamanho', async () => {
     await usar('pt-AO')
     const html = render([rec()])
     expect(botoes(html)).toBe(1)
-    expect(html).toContain('3.0 MB')
+    expect(html).toMatch(/3\sMB/)
+    // O nome acessível do botão diz o que ele faz, não só o nome do ficheiro.
+    expect(html).toMatch(/<button[^>]*>.*Descarregar.*Reunião abc\.webm/)
+    expect(html).not.toContain('Só quem gravou')
   })
 
   it('a transcrever tem ficheiro: descarrega-se como uma pronta', async () => {
@@ -144,13 +148,29 @@ describe('gravações da sala — o que o painel oferece por estado', () => {
     const html = render([rec({ can_download: false, owned: true })])
     expect(botoes(html)).toBe(0)
     expect(html).toContain('Reunião abc.webm')
-    expect(html).toContain('3.0 MB')
+    expect(html).toMatch(/3\sMB/)
+    // …e diz porquê: sem isto era um cartão igual ao botão, que não respondia.
+    expect(html).toContain('Só quem gravou, ou um administrador da organização, a pode descarregar.')
+    expect(html).not.toContain('Descarregar')
   })
 
   it('numa lista misturada, só as descarregáveis têm botão', async () => {
     await usar('pt-AO')
     const html = render([aCompor(), falhada(), rec({ id: 'a' }), rec({ id: 'b', can_download: false }), rec({ id: 'd', status: 'transcribing' })])
     expect(botoes(html)).toBe(2)
+  })
+
+  it('é uma lista, com uma região de estado para anunciar o fim da composição', async () => {
+    await usar('pt-AO')
+    const html = render([aCompor(), falhada(), rec({ id: 'a' })])
+    expect((html.match(/<ul/g) ?? []).length).toBe(1)
+    expect((html.match(/<li/g) ?? []).length).toBe(3)
+    expect(html).toContain('role="status"')
+  })
+
+  it('falhada sem causa não repete «Falhada»: a frase de recurso já o diz', async () => {
+    await usar('pt-AO')
+    expect(render([falhada(null)])).not.toContain('Falhada ·')
   })
 
   it('sem gravações: diz que não há', async () => {
@@ -164,6 +184,11 @@ describe('gravações da sala — o que o painel oferece por estado', () => {
       const html = render([aCompor(42), aCompor(null), falhada(), falhada(null), rec(), rec({ can_download: false })])
       semChavesCruas(html)
       expect(botoes(html)).toBe(1)
+      // Uma chave em falta cai no português sem erro nenhum (`fallbackLng`):
+      // «sem chave crua» não chega para dizer que está traduzido.
+      if (lng !== 'pt-AO') {
+        for (const pt of ['A processar', 'Falhada', 'A gravação falhou', 'Só quem gravou', 'Descarregar']) expect(html, `${lng}: «${pt}»`).not.toContain(pt)
+      }
     }
     await usar('pt-AO')
   })

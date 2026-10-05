@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { downloadRecording, listRecordings, type RecordingLibraryItem, uploadRecording } from '../api'
-import { participanteLocal } from '../convidado'
+import { participanteLocal, souConvidado } from '../convidado'
 import { MeetingRecorder } from '../media'
 import { useProcessingUpdates } from '../pages/recordings/useProcessingUpdates'
 import type { RoomCore } from './useRoomCore'
@@ -43,8 +43,20 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
   const watchingRef = useRef(watching)
   watchingRef.current = watching
 
+  const readSeq = useRef(0)
+
+  // Ganha a ÚLTIMA leitura pedida, não a última a chegar: ao parar uma
+  // gravação há duas seguidas, e numa rede lenta a primeira (ainda sem a
+  // linha nova) podia assentar depois da segunda e apagá-la do ecrã.
+  // Um convidado sem conta não lê gravações (a rota é de sessão): não se pede.
+  const read = async () => {
+    if (souConvidado()) return
+    const seq = ++readSeq.current
+    const list = await listRecordings(code)
+    if (seq === readSeq.current) setRecordings(list)
+  }
   // Uma leitura que falha não muda nada: fica a lista que estava.
-  const refresh = () => void listRecordings(code).then(setRecordings).catch(() => {})
+  const refresh = () => void read().catch(() => {})
   // As que o servidor ainda está a compor relêem-se sozinhas, uma a uma, até
   // terem ficheiro — a mesma releitura da biblioteca, não um segundo ciclo.
   const fresh = useProcessingUpdates(watching ? recordings : NONE)
@@ -137,7 +149,7 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
       const stamp = `${now.toLocaleDateString(locale)} ${now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
       await uploadRecording(code, blob, t('room.gravacao.nomeFicheiro', { code, stamp }))
       setStatus('')
-      setRecordings(await listRecordings(code))
+      await read()
       hooksRef.current.onUploaded()
     } catch {
       setStatus(t('room.estado.gravacaoNaoGuardada'))

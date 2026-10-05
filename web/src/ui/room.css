@@ -1725,9 +1725,26 @@ div.rm-only-narrow,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* gravação sem acção: a compor, falhada, ou que quem vê não pode descarregar */
+.rm-recs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* gravação sem acção: a compor, falhada, ou que quem vê não pode descarregar.
+   Não é o cartão do botão: sem fundo, e o ícone ao cimo de um texto que pode
+   ter várias linhas (a causa de uma falha). */
 .rm-rec--inert {
+  align-items: flex-start;
+  background: transparent;
   cursor: default;
+}
+.rm-rec--inert > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
 }
 .rm-rec--processing .rm-rec__state {
   color: var(--warning);
