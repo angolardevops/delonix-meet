@@ -20,7 +20,9 @@
 #      arrancar no delonix («did not restart inside the network»); com `stop`
 #      volta. Daí o m_derruba;
 #    - não há `create`: o que se copiava para dentro antes de arrancar passa a
-#      ser um contentor que espera pela ordem (m_cria, m_cp, m_arranca).
+#      ser um contentor que espera pela ordem (m_cria, m_cp, m_arranca);
+#    - o `rm -f` falha de vez em quando e deixa o contentor em «Dead»: o m_rm
+#      confere e repete.
 # ============================================================
 if [ -z "${MOTOR:-}" ]; then
   if command -v delonix >/dev/null 2>&1; then MOTOR=delonix; else MOTOR=docker; fi
@@ -36,7 +38,21 @@ m_run()     { "${M_CT[@]}" run "$@"; }
 m_exec()    { "${M_CT[@]}" exec "$@"; }
 m_logs()    { "${M_CT[@]}" logs "$@"; }
 m_cp()      { "${M_CT[@]}" cp "$@"; }
-m_rm()      { "${M_CT[@]}" rm -f "$@"; }
+# m_rm <contentor…> — tira-os, e confere. O `rm -f` do delonix 4.5.0 deixa de
+# vez em quando um contentor em «Dead» (medido duas vezes num dia, com e sem
+# porta publicada), que sai à segunda: a rede dele ficava de pé, e a prova
+# seguinte não conseguia criar a mesma sub-rede.
+m_rm() {
+  local t c resta
+  "${M_CT[@]}" rm -f "$@"
+  for t in 1 2 3; do
+    resta=()
+    for c in "$@"; do m_nomes | grep -qxF -- "$c" && resta+=("$c"); done
+    [ "${#resta[@]}" -eq 0 ] && return 0
+    sleep 1; "${M_CT[@]}" rm -f "${resta[@]}" >/dev/null 2>&1
+  done
+  return 0
+}
 m_start()   { "${M_CT[@]}" start "$@"; }
 m_restart() { "${M_CT[@]}" restart "$@"; }
 # m_derruba <contentor…> — SIGTERM, um segundo, SIGKILL.

@@ -387,10 +387,14 @@ transfere para `delonix-outbound`. Sete coisas que custaram, e não se reabrem:
 transferência ser desenhada); o 112 depende de o servidor responder; à operadora apresenta-se o número curto do ramal, não
 um número que a organização possua (T6); não há tecto de gasto nem alarme (T8): um ramal
 com a password roubada liga para tudo o que o plano de marcação deixar. Um
-tronco alterado ou apagado só se actualiza reiniciando o FreeSWITCH, porque o `killgw` vai
-pelo ESL, fechado em loopback (T11) — e por isso a consola não mostra o estado do registo
-nem faz a «chamada de teste»; nenhuma operadora de verdade, e nenhuma chamada por tronco
-num cluster. O host de um tronco só é verificado ao gravar: um nome que depois aponte para
+tronco criado, alterado ou apagado chega ao FreeSWITCH na hora, porque o servidor o avisa
+pelo ESL (R300), por uma fila com um só trabalhador: `killgw`, espera que o gateway antigo
+SAIA do perfil (`gwlist` e `gwlist down` — sem argumento só traz os UP), e `rescan`. A
+espera não é para o `rescan`, que recria logo: é para o desregisto do antigo seguir antes
+do registo do novo, que têm o mesmo contacto (medido no log). Sem ESL fica só o ciclo de
+releitura, que só acrescenta. O servidor fala com UM ESL: com dois FreeSWITCH só um é
+avisado (o resto do T11). A «chamada de teste» não foi medida aqui; nenhuma operadora de
+verdade, e nenhuma chamada por tronco num cluster. O host de um tronco só é verificado ao gravar: um nome que depois aponte para
 dentro leva o FreeSWITCH a um endereço interno, e não há política de rede que o trave.
 
 ### O que o FreeSWITCH 1.11.3 de stock NÃO faz

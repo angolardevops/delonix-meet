@@ -34,7 +34,8 @@ sed -i -E "s#(data=\"sound_prefix=)[^\"]*#\1\$\${sounds_dir}/${VOZ}#" "$CONF/var
 # 4. ESL: em loopback com password aleatória, a menos que o ambiente traga
 #    TELEPHONY_ESL_PASSWORD — então o servidor do Meet liga-se por rede (originar
 #    chamadas, estado do registo) e o ESL escuta em todas as interfaces, MAS com
-#    ACL: só as redes privadas entram, e mesmo assim só com a password. O ESL
+#    ACL: só as redes privadas entram — ou só as de DELONIX_ESL_CIDRS, se vier
+#    — e mesmo assim só com a password. O ESL
 #    manda originar chamadas — quem o alcança com a password gasta dinheiro de
 #    operadora; por isso nunca se publica no host e a password vem do segredo.
 if [ -n "${TELEPHONY_ESL_PASSWORD:-}" ]; then
@@ -42,7 +43,33 @@ if [ -n "${TELEPHONY_ESL_PASSWORD:-}" ]; then
   [ ${#ESL} -ge 32 ] || { echo "TELEPHONY_ESL_PASSWORD com menos de 32 caracteres" >&2; exit 1; }
   case $ESL in *[!A-Za-z0-9._-]*) echo "TELEPHONY_ESL_PASSWORD com caracteres que o XML não aceita" >&2; exit 1;; esac
   ESL_LISTEN=0.0.0.0
-  sed -i 's#</network-lists>#  <list name="delonix_esl" default="deny">\n      <node type="allow" cidr="10.0.0.0/8"/>\n      <node type="allow" cidr="172.16.0.0/12"/>\n      <node type="allow" cidr="192.168.0.0/16"/>\n      <node type="allow" cidr="127.0.0.0/8"/>\n    </list>\n  </network-lists>#' \
+  # DELONIX_ESL_CIDRS (opcional, separadas por vírgula): de onde o SERVIDOR
+  # fala. Sem ela entram todas as redes privadas — num compose ou num cluster
+  # isso é toda a gente, e a password é a única barreira. Com ela, só essas
+  # redes (e loopback, para o `fs_cli` deste contentor): quem não é o servidor
+  # nem com a password certa entra (R300).
+  ESL_NODES='      <node type="allow" cidr="10.0.0.0/8"/>\n      <node type="allow" cidr="172.16.0.0/12"/>\n      <node type="allow" cidr="192.168.0.0/16"/>\n'
+  if [ -n "${DELONIX_ESL_CIDRS:-}" ]; then
+    ESL_NODES=
+    set -f   # a lista parte-se por espaços; um `*` nela não é para expandir em nomes de ficheiros
+    for cidr in $(echo "$DELONIX_ESL_CIDRS" | tr ',' ' '); do
+      case "$cidr" in
+        */*/*|*[!0-9a-fA-F.:/]*) echo "DELONIX_ESL_CIDRS: $cidr não é um endereço" >&2; exit 1 ;;
+      esac
+      # A máscara: só dígitos, sem zero à esquerda, e nunca vazia. O FreeSWITCH
+      # lê-a com `atoi` (switch_parse_cidr): vazia, `00` ou com letras dá 0
+      # bits, que casa com TUDO — a lista «estreita» ficava aberta a toda a
+      # gente. Um valor sem `/` é ignorado por ele: aqui recusa-se.
+      case "$cidr" in */*) m=${cidr##*/} ;; *) m= ;; esac
+      case "$m" in
+        ''|0*|*[!0-9]*) echo "DELONIX_ESL_CIDRS: $cidr não tem uma máscara válida (ou abre o ESL a toda a gente)" >&2; exit 1 ;;
+      esac
+      ESL_NODES="$ESL_NODES      <node type=\"allow\" cidr=\"$cidr\"/>\n"
+    done
+    set +f
+    [ -n "$ESL_NODES" ] || { echo "DELONIX_ESL_CIDRS sem nenhuma rede" >&2; exit 1; }
+  fi
+  sed -i "s#</network-lists>#  <list name=\"delonix_esl\" default=\"deny\">\n${ESL_NODES}      <node type=\"allow\" cidr=\"127.0.0.0/8\"/>\n    </list>\n  </network-lists>#" \
     "$CONF/autoload_configs/acl.conf.xml"
   grep -q 'name="delonix_esl"' "$CONF/autoload_configs/acl.conf.xml" ||
     { echo "a ACL do ESL não ficou escrita" >&2; exit 1; }

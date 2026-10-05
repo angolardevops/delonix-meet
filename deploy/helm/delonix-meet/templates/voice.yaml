@@ -129,6 +129,16 @@ spec:
             {{- with $vo.ramais.acl }}
             - { name: DELONIX_RAMAIS_ACL, value: {{ join "," . | quote }} }
             {{- end }}
+            {{- if $v.server.telephony.eslAddr }}
+            # O Event Socket (ESL) aberto ao servidor: a password é a mesma
+            # chave que o servidor lê. Sem `eslCidrs` entram todas as redes
+            # privadas com ela; com `eslCidrs`, só essas.
+            - name: TELEPHONY_ESL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: TELEPHONY_ESL_PASSWORD } }
+            {{- with $vo.freeswitch.eslCidrs }}
+            - { name: DELONIX_ESL_CIDRS, value: {{ join "," . | quote }} }
+            {{- end }}
+            {{- end }}
             {{- if $vo.centrais.enabled }}
             # Só o bordo pode dizer «esta chamada é da central de X» (ADR-0016).
             - { name: DELONIX_EDGE_CIDRS, value: {{ join "," $vo.centrais.edgeCidrs | quote }} }
@@ -163,6 +173,39 @@ spec:
       volumes:
         - { name: meet, configMap: { name: freeswitch-meet } }
         - { name: entrypoint, configMap: { name: freeswitch-entrypoint } }
+{{- if and $v.server.telephony.eslAddr $v.networkPolicy.enabled (not $vo.freeswitch.hostNetwork) }}
+---
+# O Event Socket do FreeSWITCH (8021) só para os pods do servidor. Uma
+# NetworkPolicy que selecciona um pod FECHA tudo o que não listar: a regra 2
+# deixa o resto como estava (SIP, RTP, o que o operador juntar) — o que esta
+# política muda é só o 8021.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: freeswitch-esl
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: freeswitch
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    # 1. O ESL: só o servidor.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: delonix-server
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - { protocol: TCP, port: 8021 }
+    # 2. Tudo o resto, como antes desta política.
+    - ports:
+        - { protocol: TCP, port: 1, endPort: 8020 }
+        - { protocol: TCP, port: 8022, endPort: 65535 }
+        - { protocol: UDP, port: 1, endPort: 65535 }
+{{- end }}
 ---
 # Headless: o Kamailio tem de falar com o IP do POD (SIP sobre UDP não
 # sobrevive a um ClusterIP à frente). `publishNotReadyAddresses`: o nome tem
