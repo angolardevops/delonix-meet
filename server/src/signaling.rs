@@ -2490,6 +2490,58 @@ impl SignalingHub {
     /// inquilinos com gente)`, contando o inquilino que pede mesmo sem gente.
     /// Salas sem marca contam como UM inquilino à parte: nunca se somam ao de
     /// ninguém.
+    /// O inquilino já marcado numa sala deste nó, se a sala existe e foi marcada.
+    pub fn room_tenant(&self, room_id: Uuid) -> Option<Uuid> {
+        self.rooms.get(&room_id).and_then(|r| r.tenant)
+    }
+
+    /// Sockets de pessoas que esta conta tem ligados a este nó, em todas as
+    /// salas. Não conta lugares em graça (o socket já caiu), bots nem a ponte
+    /// telefónica: o tecto é contra uma conta que acumula ligações, e esses são
+    /// identidades de serviço emitidas pela organização.
+    pub fn user_sockets(&self, user_id: Uuid) -> usize {
+        self.rooms
+            .iter()
+            .map(|r| {
+                r.peers
+                    .values()
+                    .filter(|p| {
+                        p.user_id == user_id
+                            && p.disconnected_at.is_none()
+                            && !p.is_bot
+                            && !p.is_pstn
+                    })
+                    .count()
+            })
+            .sum()
+    }
+
+    /// Há nesta sala um lugar em graça que `segredo` reclamaria? Não o consome:
+    /// só serve para não contar como ENTRADA NOVA, nas quotas, quem volta.
+    pub fn seat_reclaimable(
+        &self,
+        room_id: Uuid,
+        segredo: &str,
+        janela: std::time::Duration,
+    ) -> bool {
+        if segredo.is_empty() {
+            return false;
+        }
+        let Some(room) = self.rooms.get(&room_id) else {
+            return false;
+        };
+        let agora = std::time::Instant::now();
+        room.peers.values().any(|p| {
+            p.disconnected_at.is_some_and(|caiu| {
+                agora.duration_since(caiu) <= janela
+                    && delonix_meet_core::crypto::ct_eq(
+                        p.reconnect_secret.expose().as_bytes(),
+                        segredo.as_bytes(),
+                    )
+            })
+        })
+    }
+
     pub fn tenant_load(&self, tenant: Uuid) -> (i64, i64) {
         let mut por_inquilino: HashMap<Option<Uuid>, i64> = HashMap::new();
         for r in self.rooms.iter() {
@@ -3860,13 +3912,52 @@ pub async fn ws_handler(
     // A mensagem NÃO promete «tentar noutro nó»: com a afinidade por hash da sala
     // um novo pedido cai neste mesmo nó. Realojar uma sala recusada noutro pod
     // não está feito, e a mensagem também não diz quanto ocupam os outros.
-    let mut tenant: Option<Uuid> = None;
+    // Tecto de ligações por conta: barato (memória do nó) e feito primeiro.
+    // Quem volta a um lugar em graça não conta como ligação nova.
+    let grace = std::time::Duration::from_secs(state.config.reconnect_grace_secs);
+    let regressa = query
+        .reconnect
+        .as_deref()
+        .is_some_and(|s| state.hub.seat_reclaimable(room_id, s, grace));
+    if let (Some(max), None, false, false) = (
+        state.config.max_ws_per_user,
+        source.as_ref(),
+        claims.is_bot,
+        regressa,
+    ) {
+        if state.hub.user_sockets(claims.sub) >= max as usize {
+            state
+                .metrics
+                .ws_refused_user_cap_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(ApiError::TooManyRequests);
+        }
+    }
+    // O inquilino sai da marca da sala (já resolvido na primeira entrada neste
+    // nó) ou deriva-se de `rooms.owner_id`. Fica `None` se a base falhar: as
+    // regras por inquilino falham ABERTAS, e o tecto do nó continua a valer.
+    let tenant: Option<Uuid> = match state.hub.room_tenant(room_id) {
+        Some(t) => Some(t),
+        None => resolve_tenant(&state, room_id).await,
+    };
+    // Quota de participantes da organização, neste nó. Não conta entradas de
+    // quem reclama o seu lugar nem identidades de serviço.
+    if let (Some(t), None, false, false) = (tenant, source.as_ref(), claims.is_bot, regressa) {
+        if let Some(limit) = org_participant_limit(&state, t).await {
+            if state.hub.tenant_load(t).0 >= limit {
+                state
+                    .metrics
+                    .ws_refused_org_quota_total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Err(ApiError::TooManyRequests);
+            }
+        }
+    }
     if let Some(capacity) = state.config.node_peer_capacity.map(i64::from) {
         if !state.hub.tem_sala(room_id) {
             use delonix_meet_domain::operations::media_node::{
                 admit_new_room, NewRoomAdmission, NodeOccupancy,
             };
-            tenant = resolve_tenant(&state, room_id).await;
             let (tenant_peers, active_tenants) = match tenant {
                 Some(t) => state.hub.tenant_load(t),
                 None => (0, 1),
@@ -3950,6 +4041,23 @@ pub async fn ws_handler(
             },
         )
     }))
+}
+
+/// O tecto de participantes concorrentes da organização `org_id` neste nó: o
+/// que o operador lhe fixou, ou o valor por omissão do nó. `None` = sem tecto.
+/// Falha ABERTA se a base não responder, como o resto das regras por inquilino.
+async fn org_participant_limit(state: &AppState, org_id: Uuid) -> Option<i64> {
+    let fixado: Option<i32> =
+        sqlx::query_scalar("SELECT max_concurrent_participants FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    fixado
+        .map(i64::from)
+        .or(state.config.org_max_participants.map(i64::from))
 }
 
 /// O inquilino de uma sala: a organização do DONO (a primeira, de forma estável,

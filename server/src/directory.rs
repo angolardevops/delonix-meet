@@ -2313,6 +2313,67 @@ pub struct SeatLimitReq {
     pub max_seats: Option<i64>,
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct ConcurrencyLimitReq {
+    /// Participantes concorrentes que a organização pode ter em cada nó de
+    /// media. `null` = o valor por omissão do nó (`ORG_MAX_PARTICIPANTS`).
+    pub max_concurrent_participants: Option<i32>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct ConcurrencyLimit {
+    pub max_concurrent_participants: Option<i32>,
+}
+
+/// Tecto de participantes concorrentes de uma organização, por nó — só o
+/// operador da plataforma. É um limite do plano: a própria organização não o
+/// altera. A contagem é por nó, não global: com N nós a organização pode chegar
+/// a N vezes este valor.
+#[utoipa::path(
+    put, path = "/api/operator/v1/organizations/{org_id}/concurrency", tag = "platform",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = ConcurrencyLimitReq,
+    responses((status = 200, body = ConcurrencyLimit), (status = 400, body = crate::openapi::ErrorBody),
+              (status = 401, body = crate::openapi::ErrorBody),
+              (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador da plataforma"),
+              (status = 404, body = crate::openapi::ErrorBody), (status = 429, body = crate::openapi::ErrorBody))
+)]
+pub async fn operator_set_concurrency(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<ConcurrencyLimitReq>,
+) -> Result<Json<ConcurrencyLimit>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    if req.max_concurrent_participants.is_some_and(|n| n <= 0) {
+        return Err(ApiError::BadRequest(
+            "max_concurrent_participants tem de ser maior que zero (ou null)".into(),
+        ));
+    }
+    let n = sqlx::query("UPDATE organizations SET max_concurrent_participants = $2 WHERE id = $1")
+        .bind(org_id)
+        .bind(req.max_concurrent_participants)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "org.concurrency_limit_set",
+        &serde_json::json!({"max_concurrent_participants": req.max_concurrent_participants})
+            .to_string(),
+    )
+    .await;
+    Ok(Json(ConcurrencyLimit {
+        max_concurrent_participants: req.max_concurrent_participants,
+    }))
+}
+
 /// Tecto de lugares de uma organização — só o operador da plataforma.
 #[utoipa::path(
     put, path = "/api/operator/v1/organizations/{org_id}/seats", tag = "platform",
@@ -2598,6 +2659,7 @@ pub async fn provisioning(
         seats,
         release_seats,
         operator_set_seats,
+        operator_set_concurrency,
         get_entry_rules,
         put_entry_rules,
         provisioning,
@@ -2625,6 +2687,8 @@ pub async fn provisioning(
         ReleaseSeatsReq,
         ReleaseSeatsResult,
         SeatLimitReq,
+        ConcurrencyLimitReq,
+        ConcurrencyLimit,
         AttendanceLog,
         EntryRules,
         EntryRulesReq,
