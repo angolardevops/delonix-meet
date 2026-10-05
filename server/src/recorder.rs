@@ -1115,7 +1115,7 @@ async fn finalize_inner(
 /// Quem se cala deixa de enviar (o cliente pede `usedtx=1`: um pacote a cada
 /// 400 ms), e um pacote perdido também não chega. O `OggWriter` avança o
 /// grânulo pelo timestamp RTP, por isso a pista fica com as amostras que
-/// chegaram e os PTS certos — e mais nada no meio. O `adelay` e o `amix`
+/// chegaram e o salto nos PTS — e mais nada no meio. O `adelay` e o `amix`
 /// contam amostras, não PTS, e um codificador ou um `-c copy` levam o buraco
 /// para o contentor, onde o Chromium o ignora: toca as amostras seguidas e a
 /// fala depois de cada silêncio recua. Este filtro vai SEMPRE antes de
@@ -1130,6 +1130,11 @@ async fn finalize_inner(
 /// o filtro o ver. Subir o limiar não é saída: o `aresample` guarda o silêncio
 /// inteiro em memória antes de o entregar (medido: 440 MB para 6 min, 3,2 GB
 /// para 1 h). Esse caso só se fecha a escrever o silêncio na própria pista.
+///
+/// E o que deixa torto: o PRIMEIRO pacote depois de um buraco fica antes do
+/// silêncio, não depois. O demuxer OGG do ffmpeg dá a cada pacote o grânulo
+/// da página anterior, e o filtro enche a seguir a ele: 20 ms do início da
+/// fala tocam colados ao último pacote que chegou (até 380 ms antes, com DTX).
 const AUDIO_GAP_FILL: &str = "aresample=async=1:first_pts=0";
 
 /// O Opus de qualquer áudio que saia do ffmpeg recodificado.
@@ -1987,7 +1992,7 @@ mod tests {
     /// de áudio, antes do `adelay`, e nenhum caminho leva o áudio em cópia.
     #[test]
     fn o_audio_e_enchido_antes_de_qualquer_outro_filtro() {
-        assert!(AUDIO_GAP_FILL.starts_with("aresample=async=1"));
+        assert_eq!(AUDIO_GAP_FILL, "aresample=async=1:first_pts=0");
         let (fc, aout) = audio_mix_graph(2, &[500, 0]);
         assert_eq!(
             fc,

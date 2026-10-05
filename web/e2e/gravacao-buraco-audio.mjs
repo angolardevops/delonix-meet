@@ -38,6 +38,8 @@ const FFMPEG = process.env.FFMPEG ?? 'ffmpeg'
 const FFPROBE = process.env.FFPROBE ?? 'ffprobe'
 const SAIDA = process.env.SAIDA ?? mkdtempSync(join(tmpdir(), 'dlx-buraco-'))
 const SEGUNDOS = Number(process.env.SEGUNDOS ?? 36)
+// As esperas esticam com a máquina (R118); o que se mede não.
+const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
 const PW = 'UmaPasswordForte123!'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let falhas = 0
@@ -97,7 +99,7 @@ async function entra(code, wav) {
   await p.goto(`${APP}/e2e/harness.html?token=${encodeURIComponent(jr.j.room_token)}&code=${code}&access=${encodeURIComponent(tok)}`, { waitUntil: 'domcontentloaded', timeout: 120000 })
   // `ready` é só «o arnês criou a chamada»; a media só existe com o PC ligado.
   let ligou = false
-  for (let k = 0; k < 40 && !ligou; k++) { await sleep(500); ligou = await p.evaluate(() => window.__dlx.state === 'connected') }
+  for (let k = 0; k < 40 * FATOR && !ligou; k++) { await sleep(500); ligou = await p.evaluate(() => window.__dlx.state === 'connected') }
   return { b, p, ligou }
 }
 
@@ -116,7 +118,7 @@ async function guardaPistas(dir, destino) {
 
 /** A gravação da sala, quando deixar de estar a compor. */
 async function espera(code) {
-  const ate = Date.now() + 240_000
+  const ate = Date.now() + 240_000 * FATOR
   let ultimo = null
   while (Date.now() < ate) {
     const itens = ((await j('/api/recordings', { token: tok })).j ?? []).filter((r) => r.room_code === code)
@@ -232,20 +234,20 @@ async function cenario(nome, opcoes, comB) {
     code = await reuniao(opcoes)
     a = await entra(code, wavA)
     if (a.ligou || t === 4) break
-    nota(`o PC de A não ligou em 20 s (tentativa ${t}) — sala nova`)
+    nota(`o PC de A não ligou a tempo (tentativa ${t}) — sala nova`)
     await a.b.close()
   }
   for (let t = 1; comB; t++) {
     b = await entra(code, wavB)
     if (b.ligou || t === 4) break
-    nota(`o PC de B não ligou em 20 s (tentativa ${t}) — nova entrada`)
+    nota(`o PC de B não ligou a tempo (tentativa ${t}) — nova entrada`)
     await b.b.close()
     await sleep(3000)
   }
   chk(a.ligou, 'A ligou com media')
   if (b) {
     chk(b.ligou, 'B ligou com media')
-    for (let k = 0; k < 40 && (await a.p.evaluate(() => window.__dlx.publicadores().length)) < 1; k++) await sleep(500)
+    for (let k = 0; k < 40 * FATOR && (await a.p.evaluate(() => window.__dlx.publicadores().length)) < 1; k++) await sleep(500)
     chk((await a.p.evaluate(() => window.__dlx.publicadores().length)) === 1, 'A recebe a media de B')
   }
   await sleep(SEGUNDOS * 1000)
