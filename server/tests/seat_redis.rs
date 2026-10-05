@@ -267,11 +267,9 @@ async fn a_kicked_participant_cannot_reclaim_the_seat(db: sqlx::PgPool) {
     let (mut alvo, joined) = join(&c.pod_a, &c.token, None).await;
     let (id, segredo) = (peer(&joined), secret(&joined));
 
-    host.send(Message::Text(
-        json!({"type": "kick", "to": id}).to_string().into(),
-    ))
-    .await
-    .unwrap();
+    host.send(Message::Text(json!({"type": "kick", "to": id}).to_string()))
+        .await
+        .unwrap();
     esperar(&mut alvo, "kicked").await;
     drop(alvo);
     tokio::time::sleep(Duration::from_millis(500)).await;
