@@ -16,6 +16,7 @@ mod broadcast;
 pub mod config;
 mod crypto;
 pub mod data_exports;
+mod dial_outs;
 mod directory;
 mod dlp;
 mod error;
@@ -598,6 +599,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // (`?room={code}` é a chave de afinidade do balanceador).
         .route("/api/rooms/{room_code}/waiting", get(rooms::room_waiting))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
+        // «Ligar a…» um ramal a partir da sala (`?room={code}` é a chave de
+        // afinidade do balanceador: a sala e a ponte vivem no pod que a serve).
+        .route(
+            "/api/rooms/{room_code}/dial-outs",
+            get(dial_outs::list).post(dial_outs::create),
+        )
+        .route(
+            "/api/rooms/{room_code}/dial-outs/{dial_out_id}/hangup",
+            post(dial_outs::hangup),
+        )
         .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
         .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
