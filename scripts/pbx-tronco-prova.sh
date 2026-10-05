@@ -32,13 +32,18 @@
 #                        (ADR-0010) com áudio nos dois sentidos, e as recusas — sem
 #                        credenciais, password errada, sem TLS, o PIN de outra
 #                        organização, o travão por origem e um cabeçalho forjado.
+#    browser             um BROWSER na sala e a central a entrar nela: um Chromium com a
+#                        pilha real do cliente toca 440 Hz, a central (um softphone,
+#                        autenticado como no modo `central`) toca 1000 Hz, e cada um
+#                        mede o tom do outro. Precisa de `npm ci` em web/.
 #    down                desmonta a réplica.
 #
 #  O que mede: o tronco sobre TLS com SDES, o IVR do Meet alcançado, o PIN a
 #  chegar por DTMF e a ser aceite (e o errado recusado), o áudio do IVR a chegar à
 #  central, e as recusas. No modo `central`, a organização de quem liga e a
-#  entrada na sala do SFU. O que NÃO mede: um browser na sala (quem ouve a
-#  central no modo `central` é outro telefone, pela mesma ponte), nem uma operadora.
+#  entrada na sala do SFU. No modo `browser`, os dois sentidos do áudio entre
+#  a central e um browser na sala. O que NÃO mede: uma operadora, nem a
+#  qualidade do áudio (só a presença do tom).
 #
 #  SERVER_IMAGE=<imagem> corre a réplica com o servidor de outra árvore, sem
 #  tocar na delonix-server:latest.
@@ -56,7 +61,7 @@ BORDO=172.30.50.14
 fail=0
 ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
-uso() { sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+uso() { sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 export ESTADO
 
 segredo() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
@@ -401,7 +406,7 @@ for letra, did in (("A", "+244222000101"), ("B", "+244222000102")):
          {"domain": f"pbx.central-{l}.example", "transport": "tls", "srtp": "mandatory",
           "username": f"central-{l}", "password": sip_pw}, tok)
     print(f"{letra}_DOMINIO=pbx.central-{l}.example\n{letra}_UTIL=central-{l}\n{letra}_PASS={sip_pw}\n"
-          f"{letra}_SALA={code}\n{letra}_PIN={pin}\n{letra}_DID={did}")
+          f"{letra}_SALA={code}\n{letra}_PIN={pin}\n{letra}_DID={did}\n{letra}_ADMIN={email}\n{letra}_ADMIN_PW={pw}")
 PY
   ) || { rm -f "$ESTADO/central.env"; return 1; }
 }
@@ -564,6 +569,71 @@ central() {
     bad "o travão apanhou outra origem (estados: $(estado_sip "$saida"))"
 }
 
+# ------------------------------------------------------------ browser
+# Um browser na sala, e a central a entrar nela pela ponte. Os dois sentidos:
+# o softphone mede os 440 Hz do browser; o browser mede os 1000 Hz da central
+# (web/e2e/telefone-na-sala.mjs).
+PORTO_VITE=${PBX_PROVA_VITE_PORT:-5199}
+# Controlo negativo do sentido central → browser: PBX_PROVA_TOM_CENTRAL=700 põe a
+# central a tocar OUTRO tom; o browser, que procura os 1000 Hz, tem de falhar.
+browser() {
+  command -v node >/dev/null 2>&1 && [ -d web/node_modules/@playwright ] ||
+    { echo "✗ precisa de node e das dependências do frontend: (cd web && npm ci)"; exit 1; }
+  mkdir -p "$ESTADO/central"
+  docker image inspect "$IMG_BS" >/dev/null 2>&1 || docker build -q -t "$IMG_BS" -f voice/softphone/Containerfile voice/softphone >/dev/null
+  semear_centrais || { bad "não consegui semear as duas organizações pela API ($API)"; return; }
+  # shellcheck disable=SC1091
+  . "$ESTADO/central.env"
+  [ -n "${A_ADMIN:-}" ] || { bad "a réplica foi semeada antes de existir este modo: desce-a (down) e volta a subi-la (up)"; return; }
+
+  echo "▶ o arnês do cliente (Vite, com a API da réplica por trás) e o browser na sala $A_SALA"
+  ( cd web && API_HOST=172.30.50.12 API_PORT=8180 NO_HTTPS=1 PORT=$PORTO_VITE exec node node_modules/vite/bin/vite.js --strictPort ) \
+    > "$ESTADO/vite.log" 2>&1 &
+  local vite=$! nav i
+  for i in $(seq 1 60); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://localhost:$PORTO_VITE/e2e/harness.html")" = 200 ] && break
+    kill -0 "$vite" 2>/dev/null || break
+    sleep 2
+  done
+  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://localhost:$PORTO_VITE/e2e/harness.html")" = 200 ] ||
+    { bad "o Vite não serviu o arnês em localhost:$PORTO_VITE"; tail -5 "$ESTADO/vite.log" | sed 's/^/       /'; kill "$vite" 2>/dev/null; return; }
+  ( cd web && API="$API" APP="http://localhost:$PORTO_VITE" EMAIL="$A_ADMIN" PASSWORD="$A_ADMIN_PW" SALA="$A_SALA" \
+      node e2e/telefone-na-sala.mjs ) > "$ESTADO/browser.log" 2>&1 &
+  nav=$!
+  for i in $(seq 1 150); do
+    grep -q '^BROWSER-NA-SALA' "$ESTADO/browser.log" 2>/dev/null && break
+    kill -0 "$nav" 2>/dev/null || break
+    sleep 2
+  done
+  if ! grep -q '^BROWSER-NA-SALA' "$ESTADO/browser.log" 2>/dev/null; then
+    bad "o browser não chegou a entrar na sala"
+    tail -8 "$ESTADO/browser.log" | sed 's/^/       /'
+    kill "$nav" "$vite" 2>/dev/null; return
+  fi
+  ok "o browser está na sala $A_SALA, a tocar 440 Hz"
+
+  echo "▶ a central liga, autentica-se no bordo, marca o PIN e toca 1000 Hz"
+  local antes log sp nv
+  antes=$(fs_log | wc -l)
+  SOFTPHONE_PASSWORD=$A_PASS bash scripts/softphone-prova.sh chamada \
+    --servidor "$BORDO:5061" --transporte tls --rede "$REDE" --dominio "$A_DOMINIO" \
+    --utilizador "$A_UTIL" --destino "${NUMERO#+}" --pin "$A_PIN" \
+    --espera-pin 6 --segundos 30 --tom "${PBX_PROVA_TOM_CENTRAL:-1000}" --espera-tom 440 | sed 's/^/    /'
+  sp=${PIPESTATUS[0]}
+  wait "$nav"; nv=$?
+  kill "$vite" 2>/dev/null
+  grep -v '^BROWSER-NA-SALA' "$ESTADO/browser.log" | sed 's/^/    /'
+
+  log=$(fs_log | tail -n +$(( antes + 1 )))
+  [ "$(grep -ac "\[delonix ponte\] sala=$A_SALA -> " <<<"$log")" -eq 1 ] && [ "$(grep -ac 'cai na conferencia local' <<<"$log")" -eq 0 ] &&
+    ok "a central entrou na sala $A_SALA pela ponte do SFU (ADR-0010), sem recuo para a conferência local" ||
+    bad "a chamada da central não foi para a ponte da sala $A_SALA, ou a ponte recusou-a"
+  [ "$sp" -eq 0 ] && ok "browser → central: a central ouviu os 440 Hz do browser, e não o seu próprio tom" ||
+    bad "browser → central: a central não ouviu o tom do browser (acima)"
+  [ "$nv" -eq 0 ] && ok "central → browser: o browser descodificou o áudio da central, e é o tom dela (1000 Hz)" ||
+    bad "central → browser: o browser não ouviu a central (acima)"
+}
+
 down() { "${COMPOSE[@]}" down -v >/dev/null 2>&1; rm -f "$ESTADO/central.env"; rm -rf "$ESTADO/central"; echo "réplica desmontada"; }
 
 [ $# -ge 1 ] || uso 2
@@ -574,6 +644,7 @@ case "$modo" in
   negativos) negativos ;;
   longa) longa ;;
   central) central ;;
+  browser) browser ;;
   down) down ;;
   -h|--help) uso 0 ;;
   *) echo "✗ modo: $modo"; uso 2 ;;

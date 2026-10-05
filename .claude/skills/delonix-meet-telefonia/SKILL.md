@@ -372,6 +372,7 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 | Troncos, plano de marcação, CDR, custo, credenciais | `cargo test --release --test telephony -- --test-threads=4` contra Postgres real (14 casos; precisa de `DATABASE_URL`) + os unitários do domínio |
 | Uma rota `/telephony` | os portões de `delonix-meet-api`, com o caso negativo em `web/e2e/isolamento.mjs` |
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
+| Um BROWSER na sala e um telefone a entrar pela ponte (o cliente real, não o `webrtc-rs`) | `bash scripts/pbx-tronco-prova.sh up` e `… browser` (R293) — um Chromium com o `SfuCall` do produto e um softphone; cada lado mede o tom do outro, com controlo negativo (`PBX_PROVA_TOM_CENTRAL=700`). **Fora do CI** |
 | Originar e controlar SIP (`telephony_esl.rs`) | `cargo test --release --test telephony_freeswitch` + `node web/e2e/telefonia-freeswitch.mjs` contra um FreeSWITCH real — **fora do CI** |
 | O ramal a entrar na sala (`validate_pin_for_extension`, número reservado) | `cargo test --test ramal_entra_na_sala` contra Postgres real (R273 — 7 casos; o isolamento por org tem controlo negativo) |
 | A central de uma organização a entrar na sala (`validate_pin_for_central`, `ha1_for_edge`) | `cargo test --release --test central_entra_na_sala` contra Postgres real (ADR-0016 — 6 casos) + `bash scripts/check-bordo-central.sh`; a cadeia toda é `bash scripts/pbx-tronco-prova.sh central`, **fora do CI** |
