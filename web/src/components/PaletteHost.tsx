@@ -10,11 +10,17 @@
  *   NOVO: navegar no mesmo separador desmontava a sala e cortava a chamada.
  *
  * O Shell regista aqui o que só ele sabe (papel de admin, definições, tema).
+ *
+ * O «?» vive aqui pela mesma razão: a folha de atalhos (`AtalhosDialog`) tem
+ * de abrir na consola, no Estúdio e dentro da reunião, e é aqui que se sabe
+ * qual deles está à frente.
  */
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { User } from '../api'
 import { applyTheme, storedTheme } from '../theme'
+import { combina, type EscopoDeAtalho } from '../ui/atalhos'
 import { isPaletteShortcut } from '../ui/hotkeys'
+import AtalhosDialog from './AtalhosDialog'
 import CommandPalette from './CommandPalette'
 import type { NavKey } from './shellContext'
 
@@ -28,6 +34,8 @@ interface PaletteHostApi {
   open: () => void
   close: () => void
   isOpen: boolean
+  /** Abre a folha de atalhos — o mesmo que carregar «?». */
+  abrirAtalhos: () => void
   /** O Shell diz quem é admin e como abrir as definições; a sala não diz nada. */
   register: (extras: PaletteExtras | null) => void
 }
@@ -36,6 +44,19 @@ const PaletteCtx = createContext<PaletteHostApi | null>(null)
 
 export function usePaletteHost(): PaletteHostApi | null {
   return useContext(PaletteCtx)
+}
+
+/**
+ * Os escopos que valem no ecrã à frente. O endereço é a única pista fiável:
+ * a sala e o Estúdio são rotas, não estado deste anfitrião.
+ */
+function escoposDoEcra(inRoom: boolean): EscopoDeAtalho[] {
+  const hash = typeof location === 'undefined' ? '' : location.hash
+  const escopos: EscopoDeAtalho[] = ['global']
+  if (inRoom) escopos.push('sala')
+  if (hash.startsWith('#/studio')) escopos.push('estudio', 'mesa')
+  if (inRoom || /^#\/(whiteboards|diagram)/.test(hash)) escopos.push('quadro')
+  return escopos
 }
 
 export default function PaletteHost({
@@ -52,6 +73,7 @@ export default function PaletteHost({
   children: ReactNode
 }) {
   const [isOpen, setOpen] = useState(false)
+  const [atalhos, setAtalhos] = useState(false)
   const [extras, setExtras] = useState<PaletteExtras | null>(null)
   const openRef = useRef(isOpen)
   openRef.current = isOpen
@@ -65,6 +87,11 @@ export default function PaletteHost({
         setOpen(false)
         return
       }
+      if (combina('?', e)) {
+        e.preventDefault()
+        setAtalhos((v) => !v)
+        return
+      }
       if (!isPaletteShortcut(e)) return
       e.preventDefault()
       setOpen(true)
@@ -75,7 +102,11 @@ export default function PaletteHost({
 
   const open = useCallback(() => setOpen(true), [])
   const close = useCallback(() => setOpen(false), [])
-  const api = useMemo<PaletteHostApi>(() => ({ open, close, isOpen, register: setExtras }), [open, close, isOpen])
+  const abrirAtalhos = useCallback(() => setAtalhos(true), [])
+  const api = useMemo<PaletteHostApi>(
+    () => ({ open, close, isOpen, abrirAtalhos, register: setExtras }),
+    [open, close, isOpen, abrirAtalhos],
+  )
 
   const openHash = useCallback(
     (hash: string) => {
@@ -94,6 +125,7 @@ export default function PaletteHost({
   return (
     <PaletteCtx.Provider value={api}>
       {children}
+      {atalhos && <AtalhosDialog escopos={escoposDoEcra(inRoom)} onClose={() => setAtalhos(false)} />}
       {isOpen && (
         <CommandPalette
           onClose={close}
@@ -103,6 +135,10 @@ export default function PaletteHost({
           onLogout={onLogout}
           onSettings={inRoom ? undefined : extras?.onSettings}
           onToggleTheme={extras?.onToggleTheme ?? toggleThemeFallback}
+          onAtalhos={() => {
+            close()
+            setAtalhos(true)
+          }}
           user={user}
           isAdmin={extras?.isAdmin ?? false}
           inRoom={inRoom}

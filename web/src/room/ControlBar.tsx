@@ -1,8 +1,10 @@
 import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { CallState } from '../callRecovery'
+import type { IdDeAtalho } from '../ui/atalhos'
 import { Icon, IconName } from '../ui/icons'
 import { Button, Segmented, Select, Toggle, cx } from '../ui/kit'
+import { useDicaDeAtalho } from '../ui/useAtalhos'
 import { Countdown } from './Clocks'
 import { MenuItem, PopoverPanel, usePopover } from './Popover'
 import type { LocalMedia } from './useLocalMedia'
@@ -10,10 +12,17 @@ import type { Layout } from './useLayout'
 import type { Panel } from './useRoomChrome'
 import { REACTION_EMOJIS } from './useReactions'
 
-/** Um botão da barra: ícone + rótulo visível no telemóvel, dica no desktop. */
+/**
+ * Um botão da barra: ícone + rótulo visível no telemóvel, dica no desktop.
+ *
+ * Com `atalho`, a dica passa a dizer a tecla («Chat · ⌥C») e o nome acessível
+ * fica o rótulo limpo — um leitor de ecrã não precisa de ouvir a combinação a
+ * cada passagem.
+ */
 export function Ctrl({
   icon,
   label,
+  atalho,
   onClick,
   active,
   off,
@@ -28,6 +37,8 @@ export function Ctrl({
 }: {
   icon: IconName
   label: string
+  /** O atalho que faz o mesmo que este botão, para a dica. */
+  atalho?: IdDeAtalho
   /** Rótulo curto visível por baixo do ícone no telemóvel («Som», «Vídeo»). */
   caption?: string
   onClick: () => void
@@ -41,13 +52,14 @@ export function Ctrl({
   expanded?: boolean
   children?: ReactNode
 }) {
+  const dica = useDicaDeAtalho()
   return (
     <button
       type="button"
       className={cx('rm-ctrl', active && 'is-active', off && 'is-off', danger && 'is-danger', className)}
       onClick={onClick}
       aria-label={label}
-      title={label}
+      title={atalho ? dica(atalho, label) : label}
       aria-pressed={pressed}
       aria-haspopup={popup || undefined}
       aria-expanded={popup ? expanded : undefined}
@@ -195,7 +207,7 @@ export function ControlBar(p: ControlBarProps) {
       <div className="rm-controls__center">
         <div className="rm-controls__group">
           <div className="rm-split" ref={micPop.wrapRef}>
-            <Ctrl icon={media.micOn ? 'mic' : 'micOff'} label={micLabel} caption={t('room.controlos.rotuloSom')} off={!media.micOn} onClick={() => void media.toggleMic()} pressed={!media.micOn} />
+            <Ctrl icon={media.micOn ? 'mic' : 'micOff'} label={micLabel} atalho="micro" caption={t('room.controlos.rotuloSom')} off={!media.micOn} onClick={() => void media.toggleMic()} pressed={!media.micOn} />
             <button
               type="button"
               className="rm-split__chevron"
@@ -246,7 +258,7 @@ export function ControlBar(p: ControlBarProps) {
             )}
           </div>
           <div className="rm-split" ref={camPop.wrapRef}>
-            <Ctrl icon={media.camOn && media.hasLocalVideo ? 'video' : 'videoOff'} label={camLabel} caption={t('room.controlos.rotuloVideo')} off={!media.camOn || !media.hasLocalVideo} onClick={() => void media.toggleCam()} pressed={!media.camOn} />
+            <Ctrl icon={media.camOn && media.hasLocalVideo ? 'video' : 'videoOff'} label={camLabel} atalho="camara" caption={t('room.controlos.rotuloVideo')} off={!media.camOn || !media.hasLocalVideo} onClick={() => void media.toggleCam()} pressed={!media.camOn} />
             <button
               type="button"
               className="rm-split__chevron"
@@ -314,6 +326,7 @@ export function ControlBar(p: ControlBarProps) {
           <Ctrl
             icon="chat"
             label={t('room.painel.chat')}
+            atalho="chat"
             active={p.panel === 'chat'}
             pressed={p.panel === 'chat'}
             onClick={() => p.onTogglePanel('chat')}
@@ -428,15 +441,16 @@ export function ControlBar(p: ControlBarProps) {
         </div>
         <div className="rm-controls__group rm-controls__group--panels">
           <Ctrl icon="board" label={t('room.controlos.quadro')} active={p.wbOpen} pressed={p.wbOpen} onClick={p.onToggleWhiteboard} />
-          <Ctrl icon="notes" label={t('room.controlos.notas')} active={p.panel === 'notes'} pressed={p.panel === 'notes'} onClick={() => p.onTogglePanel('notes')}>
+          <Ctrl icon="notes" label={t('room.controlos.notas')} atalho="notas" active={p.panel === 'notes'} pressed={p.panel === 'notes'} onClick={() => p.onTogglePanel('notes')}>
             {p.transcribing && <span className="rm-ctrl__live" aria-hidden="true" />}
           </Ctrl>
-          <Ctrl icon="question" label={t('room.painel.perguntas')} active={p.panel === 'qa'} pressed={p.panel === 'qa'} onClick={() => p.onTogglePanel('qa')} badge={p.openQuestions || undefined} />
-          <Ctrl icon="poll" label={t('room.painel.sondagens')} active={p.panel === 'polls'} pressed={p.panel === 'polls'} onClick={() => p.onTogglePanel('polls')} badge={p.openPolls || undefined} />
-          <Ctrl icon="people" label={t('room.painel.participantes')} active={p.panel === 'people'} pressed={p.panel === 'people'} onClick={() => p.onTogglePanel('people')} badge={p.total} />
+          <Ctrl icon="question" label={t('room.painel.perguntas')} atalho="perguntas" active={p.panel === 'qa'} pressed={p.panel === 'qa'} onClick={() => p.onTogglePanel('qa')} badge={p.openQuestions || undefined} />
+          <Ctrl icon="poll" label={t('room.painel.sondagens')} atalho="sondagens" active={p.panel === 'polls'} pressed={p.panel === 'polls'} onClick={() => p.onTogglePanel('polls')} badge={p.openPolls || undefined} />
+          <Ctrl icon="people" label={t('room.painel.participantes')} atalho="participantes" active={p.panel === 'people'} pressed={p.panel === 'people'} onClick={() => p.onTogglePanel('people')} badge={p.total} />
           <Ctrl
             icon="chat"
             label={t('room.painel.chat')}
+            atalho="chat"
             active={p.panel === 'chat'}
             pressed={p.panel === 'chat'}
             onClick={() => p.onTogglePanel('chat')}

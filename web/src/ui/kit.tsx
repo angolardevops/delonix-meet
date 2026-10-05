@@ -7,6 +7,7 @@ import {
   ButtonHTMLAttributes,
   forwardRef,
   InputHTMLAttributes,
+  type KeyboardEvent as EventoDeTeclaReact,
   ReactNode,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
@@ -219,21 +220,87 @@ export function Toggle({
   )
 }
 
+export interface SegmentedOption<T extends string> {
+  value: T
+  label: ReactNode
+  /** Dica do rato e do leitor de ecrã — é aqui que vai a tecla do atalho. */
+  title?: string
+  disabled?: boolean
+}
+
+/**
+ * Grupo de segmentos — o selector de vistas da app. Um só botão carregado
+ * (`aria-pressed`), e as setas andam por ele: num grupo de botões o Tab passa
+ * ao seguinte da PÁGINA, e quem navega por teclado não tinha como percorrer as
+ * vistas sem sair do grupo.
+ *
+ * `dataKey` escreve `data-<chave>="<valor>"` em cada segmento: é por aí que o
+ * e2e agarra uma vista («data-studio-vista»), sem depender do rótulo, que muda
+ * com a língua.
+ */
 export function Segmented<T extends string>({
   value,
   options,
   onChange,
   label,
+  className,
+  dataKey,
 }: {
   value: T
-  options: { value: T; label: ReactNode }[]
+  options: SegmentedOption<T>[]
   onChange: (v: T) => void
   label: string
+  className?: string
+  dataKey?: string
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const idx = options.findIndex((o) => o.value === value)
+
+  /** O segmento activável a `delta` passos daqui, dando a volta e saltando os desactivados. */
+  function seguinte(delta: number): number | null {
+    const n = options.length
+    if (!n) return null
+    const base = idx < 0 ? 0 : idx
+    for (let k = 1; k <= n; k++) {
+      const j = (base + delta * k + n * n) % n
+      if (!options[j].disabled) return j
+    }
+    return null
+  }
+
+  function aoTeclar(e: EventoDeTeclaReact<HTMLDivElement>) {
+    const extremo = (de: number, passo: number) => {
+      for (let j = de; j >= 0 && j < options.length; j += passo) if (!options[j].disabled) return j
+      return null
+    }
+    const j =
+      e.key === 'ArrowRight' || e.key === 'ArrowDown'
+        ? seguinte(1)
+        : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+          ? seguinte(-1)
+          : e.key === 'Home'
+            ? extremo(0, 1)
+            : e.key === 'End'
+              ? extremo(options.length - 1, -1)
+              : null
+    if (j === null) return
+    e.preventDefault()
+    onChange(options[j].value)
+    ref.current?.querySelectorAll<HTMLButtonElement>('button')[j]?.focus()
+  }
+
   return (
-    <div className="dx-seg" role="group" aria-label={label}>
+    <div ref={ref} className={cx('dx-seg', className)} role="group" aria-label={label} onKeyDown={aoTeclar}>
       {options.map((o) => (
-        <button key={o.value} type="button" aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={o.value === value}
+          title={o.title}
+          disabled={o.disabled}
+          onClick={() => onChange(o.value)}
+          {...(dataKey ? { [`data-${dataKey}`]: o.value } : {})}
+        >
           {o.label}
         </button>
       ))}

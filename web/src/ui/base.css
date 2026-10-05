@@ -841,3 +841,48 @@ textarea {
 .dx-route-wait {
   min-height: 40vh;
 }
+
+/* ------------------------------------------------- folha de atalhos («?») */
+.dx-kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--r-2);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  line-height: 1.4;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.dx-keys {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 18px 24px;
+}
+.dx-keys__lista {
+  margin: 6px 0 0;
+  display: grid;
+  gap: 0;
+}
+.dx-keys__linha {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dx-keys__linha:last-child {
+  border-bottom: 0;
+}
+.dx-keys__linha dt {
+  font-size: var(--t-md);
+}
+.dx-keys__linha dd {
+  margin: 0;
+}
