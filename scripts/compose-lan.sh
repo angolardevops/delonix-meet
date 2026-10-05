@@ -30,7 +30,8 @@ if [ ! -s "$TLS/ca.crt" ] || [ ! -s "$TLS/ca.key" ]; then
     -keyout "$TLS/ca.key" -out "$TLS/ca.crt" 2>/dev/null
   rm -f "$TLS/tls.crt"
 fi
-if ! openssl x509 -in "$TLS/tls.crt" -noout -checkip "$LAN_IP" 2>/dev/null | grep -q 'does match'; then
+cobre=$(openssl x509 -in "$TLS/tls.crt" -noout -checkip "$LAN_IP" 2>/dev/null) || cobre=
+if ! grep -q 'does match' <<<"$cobre"; then
   openssl req -newkey rsa:2048 -nodes -subj "/CN=${MEET_HOST}" \
     -keyout "$TLS/tls.key" -out "$TLS/tls.csr" 2>/dev/null
   printf 'subjectAltName=DNS:%s,IP:%s\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' \
