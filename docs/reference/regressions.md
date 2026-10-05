@@ -3194,7 +3194,7 @@ Fora do CI, medido a 2026-10-05 no compose do laboratório (FreeSWITCH 1.11.3, l
 
 **Ficheiros.** `scripts/check-repo-hygiene.sh`, `scripts/check-ffmpeg-licenca.sh`, `scripts/check-isolamento-cobertura.sh`, `scripts/check-bordo-central.sh`.
 
-### R297 — Um tronco alterado ou apagado ficava no FreeSWITCH até alguém o reiniciar
+### R300 — Um tronco alterado ou apagado ficava no FreeSWITCH até alguém o reiniciar
 
 **Sintoma.** Os troncos chegam ao FreeSWITCH por um ciclo que volta a ler a lista do servidor (R291) — e esse ciclo só ACRESCENTA. Mudar a password de um tronco, o host, ou desactivá-lo não tinha efeito: o FreeSWITCH continuava registado na operadora com os dados antigos. **Um tronco apagado na consola continuava registado na operadora**, até alguém reiniciar o FreeSWITCH. Tirar um gateway pede `killgw`, que o servidor manda pelo Event Socket (ESL); o ESL passou a estar aberto ao servidor no compose e no cluster local (#218), mas o servidor só o usava no botão «reiniciar registo», e o chart do Helm nem passava a password ao FreeSWITCH.
 

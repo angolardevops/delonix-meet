@@ -1101,7 +1101,7 @@ async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
     }
 
     // Um tronco alterado ou apagado chega ao FreeSWITCH sem ninguém reiniciar
-    // nada (R297): o servidor manda tirar o gateway e reler. Mudar só o nome
+    // nada (R300): o servidor manda tirar o gateway e reler. Mudar só o nome
     // não deita o registo abaixo.
     let kills = |gw: String| {
         let log = esl.log.clone();

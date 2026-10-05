@@ -34,7 +34,7 @@ pub struct Adapters {
     pub gateway_refresh: Arc<GatewayRefresh>,
 }
 
-/// A fila dos avisos «este tronco mudou» (R297). Um só trabalhador de cada
+/// A fila dos avisos «este tronco mudou» (R300). Um só trabalhador de cada
 /// vez: sem ela cada pedido de um administrador abria a sua ligação ao ESL e
 /// mandava o seu `rescan` — que relê o XML inteiro, aloca um gateway novo e
 /// escreve uma linha por gateway de TODAS as organizações. Com ela, mil

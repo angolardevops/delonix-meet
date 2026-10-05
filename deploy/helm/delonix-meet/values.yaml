@@ -316,7 +316,7 @@ voice:
     # regista-se sozinho, e um arranque com o servidor em baixo recupera.
     # 0 desliga. Sem `server.telephony.eslAddr` é o ÚNICO caminho, e só
     # acrescenta: um tronco alterado ou apagado fica como estava até um
-    # reinício. Com ele, o servidor avisa o FreeSWITCH na hora (R297).
+    # reinício. Com ele, o servidor avisa o FreeSWITCH na hora (R300).
     trunksRescanSecs: 60
     # DELONIX_ESL_CIDRS — de onde o SERVIDOR fala para o Event Socket do
     # FreeSWITCH (8021). Só conta com `server.telephony.eslAddr`. Vazia, entram

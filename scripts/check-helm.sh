@@ -401,7 +401,7 @@ for nome in ("production", "production-voz", "local"):
             erros.append("[production-voz] o arranque copia de /meet ficheiros que o ConfigMap freeswitch-meet não traz: "
                          + ", ".join(em_falta))
 
-# 6b. o ESL (R297): fechado por omissão; aberto, com a password do Secret e só aos pods do servidor
+# 6b. o ESL (R300): fechado por omissão; aberto, com a password do Secret e só aos pods do servidor
 def env_do_fs(nome):
     c = um(carregar(nome), "Deployment", "freeswitch")["spec"]["template"]["spec"]["containers"][0]
     return {e["name"]: e for e in c.get("env") or []}

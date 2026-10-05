@@ -47,7 +47,7 @@ if [ -n "${TELEPHONY_ESL_PASSWORD:-}" ]; then
   # fala. Sem ela entram todas as redes privadas — num compose ou num cluster
   # isso é toda a gente, e a password é a única barreira. Com ela, só essas
   # redes (e loopback, para o `fs_cli` deste contentor): quem não é o servidor
-  # nem com a password certa entra (R297).
+  # nem com a password certa entra (R300).
   ESL_NODES='      <node type="allow" cidr="10.0.0.0/8"/>\n      <node type="allow" cidr="172.16.0.0/12"/>\n      <node type="allow" cidr="192.168.0.0/16"/>\n'
   if [ -n "${DELONIX_ESL_CIDRS:-}" ]; then
     ESL_NODES=

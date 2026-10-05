@@ -887,7 +887,7 @@ pub async fn update(
 /// manda-o reler os troncos (`killgw` + `rescan`, pelo ESL). Sem isto um
 /// tronco alterado continuava a registar-se com os dados antigos, e um
 /// apagado continuava registado na operadora, até alguém reiniciar o
-/// FreeSWITCH (R297).
+/// FreeSWITCH (R300).
 ///
 /// Não espera pela resposta nem falha o pedido: a base é a verdade, e o
 /// FreeSWITCH volta a ler os troncos sozinho de minuto a minuto. Sem ESL

@@ -388,7 +388,7 @@ transferência ser desenhada); o 112 depende de o servidor responder; à operado
 um número que a organização possua (T6); não há tecto de gasto nem alarme (T8): um ramal
 com a password roubada liga para tudo o que o plano de marcação deixar. Um
 tronco criado, alterado ou apagado chega ao FreeSWITCH na hora, porque o servidor o avisa
-pelo ESL (R297), por uma fila com um só trabalhador: `killgw`, espera que o gateway antigo
+pelo ESL (R300), por uma fila com um só trabalhador: `killgw`, espera que o gateway antigo
 SAIA do perfil (`gwlist` e `gwlist down` — sem argumento só traz os UP), e `rescan`. A
 espera não é para o `rescan`, que recria logo: é para o desregisto do antigo seguir antes
 do registo do novo, que têm o mesmo contacto (medido no log). Sem ESL fica só o ciclo de
