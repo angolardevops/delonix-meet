@@ -531,6 +531,23 @@ export default {
     erroPesquisa: 'Impossible de rechercher des membres.',
     erroConvidar: "Impossible d'envoyer les invitations.",
   },
+  dispositivos: {
+    titulo: 'Vous êtes aussi au téléphone',
+    texto: 'Votre compte est dans cette salle par le navigateur et par un téléphone. Où voulez-vous continuer ?',
+    soMeet: 'Seulement sur Meet (raccrocher le téléphone)',
+    soMeetSemSom: 'Seulement sur Meet (le téléphone reste connecté, sans son)',
+    soTelefone: 'Seulement au téléphone (quitter ici)',
+    nosDois: 'Sur les deux',
+    eco: 'Sur les deux, chaque micro capte l’autre : utilisez un casque ou coupez l’un des deux pour éviter l’écho.',
+    ok: 'Compris',
+    aTratar: 'En cours…',
+    resultado: {
+      hung_up: 'Le téléphone a été raccroché. Vous continuez seulement sur Meet.',
+      muted: 'Le téléphone est sans son mais toujours connecté : raccrochez l’appel sur l’appareil.',
+      both: 'Vous continuez sur les deux. Utilisez un casque pour éviter l’écho.',
+      gone: 'Le téléphone a déjà quitté la salle.',
+    },
+  },
   definicoes: {
     fundos: 'Arrière-plans et effets',
     aAplicar: 'application…',

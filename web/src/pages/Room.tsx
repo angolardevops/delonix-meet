@@ -176,7 +176,7 @@ export default function Room({
   function leave() {
     void session.leave(transcription.saveOnLeave)
   }
-  const dispositivos = useDuplicateDevice(core, leave)
+  const dispositivos = useDuplicateDevice(core, code, leave)
 
   // «O outro lado» de uma chamada de voz. Ao entrar, a lista chega a trazer um
   // instante a PRÓPRIA sessão (medido no e2e: o próprio peer_id/nome antes do

@@ -662,7 +662,8 @@ pub enum ServerMsg {
         phone_id: Uuid,
         can_hangup: bool,
     },
-    /// O que o servidor fez com a escolha: `hung_up` | `muted` | `both`.
+    /// O que o servidor fez com a escolha: `hung_up` | `muted` | `both` | `gone`
+    /// (a perna já não está cá, ou não é desta pessoa).
     DuplicateResolved {
         phone_id: Uuid,
         outcome: String,
@@ -4866,6 +4867,12 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                         .into_iter()
                         .find(|(leg, _)| *leg == phone_id)
                     else {
+                        // Já não está cá (desligou entretanto) ou não é desta pessoa: a
+                        // resposta é a mesma, sem dizer qual — e o diálogo não fica preso.
+                        let _ = tx.send(ServerMsg::DuplicateResolved {
+                            phone_id,
+                            outcome: "gone".into(),
+                        });
                         continue;
                     };
                     let outcome = match keep {

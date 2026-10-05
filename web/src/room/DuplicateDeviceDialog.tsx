@@ -10,13 +10,13 @@ export function DuplicateDeviceDialog({ dup }: { dup: DuplicateDevice }) {
     <Dialog title={t('room.dispositivos.titulo')} onClose={dup.dispensar}>
       <p>{t('room.dispositivos.texto')}</p>
       <div className="rm-block__row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-        <Button variant="primary" icon="video" onClick={() => dup.escolher('meet')}>
+        <Button variant="primary" icon="video" busy={dup.aTratar} disabled={dup.aTratar} onClick={() => dup.escolher('meet')}>
           {dup.aviso.canHangup ? t('room.dispositivos.soMeet') : t('room.dispositivos.soMeetSemSom')}
         </Button>
-        <Button variant="outline" icon="phone" onClick={() => dup.escolher('phone')}>
+        <Button variant="outline" icon="phone" disabled={dup.aTratar} onClick={() => dup.escolher('phone')}>
           {t('room.dispositivos.soTelefone')}
         </Button>
-        <Button variant="ghost" onClick={() => dup.escolher('both')}>
+        <Button variant="ghost" disabled={dup.aTratar} onClick={() => dup.escolher('both')}>
           {t('room.dispositivos.nosDois')}
         </Button>
       </div>

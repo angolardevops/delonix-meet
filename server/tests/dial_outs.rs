@@ -722,9 +722,10 @@ async fn a_mesma_pessoa_no_browser_e_ao_telefone_escolhe_onde_continuar(db: sqlx
     ))
     .await
     .unwrap();
-    assert!(esperar_msg(&mut ws, "duplicate-resolved", 700)
+    let r = esperar_msg(&mut ws, "duplicate-resolved", 5_000)
         .await
-        .is_none());
+        .expect("responde, para o diálogo não ficar preso");
+    assert_eq!(r["outcome"], "gone", "{r}");
     assert!(
         !esl.log
             .lock()

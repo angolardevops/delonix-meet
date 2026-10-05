@@ -85,7 +85,7 @@ export type ServerMsg =
   | { type: 'kicked' }
   /** A mesma pessoa está também ao telefone nesta sala: pergunta onde continuar. */
   | { type: 'duplicate-device'; phone_id: string; can_hangup: boolean }
-  | { type: 'duplicate-resolved'; phone_id: string; outcome: 'hung_up' | 'muted' | 'both' }
+  | { type: 'duplicate-resolved'; phone_id: string; outcome: 'hung_up' | 'muted' | 'both' | 'gone' }
   | { type: 'room-settings'; locked: boolean; host_share_only: boolean; chat_on?: boolean; allow_unmute?: boolean }
   | { type: 'share-granted'; allowed: boolean }
   | { type: 'share-request'; from: string; username: string }
