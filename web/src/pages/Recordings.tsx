@@ -126,9 +126,9 @@ export default function Recordings() {
   const renderItems = (rows: RecordingLibraryItem[]) => {
     const views = rows.map(fromRecordingItem)
     return view === 'list' ? (
-      <RecordingTable items={views} selectedId={selected?.id ?? null} retentionDays={retentionDays} onOpen={open} />
+      <RecordingTable items={views} selectedId={selected?.id ?? null} retentionDays={retentionDays} onOpen={open} onShare={setShareTarget} />
     ) : (
-      <RecordingGrid items={views} selectedId={selected?.id ?? null} retentionDays={retentionDays} onOpen={open} />
+      <RecordingGrid items={views} selectedId={selected?.id ?? null} retentionDays={retentionDays} onOpen={open} onShare={setShareTarget} />
     )
   }
 

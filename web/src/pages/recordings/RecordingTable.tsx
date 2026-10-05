@@ -15,6 +15,7 @@ import { formatClock, resolutionLabel, visibleState } from './libraryData'
 import RecordingState from './RecordingState'
 import { thumbStyle, useThumbnail } from './RecordingThumb'
 import type { RecordingView } from './recordingView'
+import { useMenuDaGravacao } from './useMenuDaGravacao'
 
 export function NoValue() {
   const { t } = useTranslation()
@@ -53,16 +54,20 @@ export default function RecordingTable({
   selectedId,
   retentionDays,
   onOpen,
+  onShare,
 }: {
   items: RecordingView[]
   selectedId: string | null
   retentionDays: number
   onOpen: (r: RecordingView) => void
+  onShare?: (r: RecordingView) => void
 }) {
   const { t, i18n } = useTranslation()
   const metaLine = useMetaLine()
+  const menu = useMenuDaGravacao({ onOpen, onShare })
   return (
     <div className="dx-table-wrap rec-table-wrap">
+      {menu.elemento}
       <table className="rec-table">
         <colgroup>
           <col />
@@ -93,6 +98,7 @@ export default function RecordingTable({
                 data-status={failed ? 'failed' : 'ready'}
                 data-selected={selectedId === r.id || undefined}
                 onClick={failed ? undefined : () => onOpen(r)}
+                onContextMenu={menu.aoContexto(r)}
               >
                 <td>
                   <div className="rec-row__session">
