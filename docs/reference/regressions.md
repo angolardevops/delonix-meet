@@ -3009,3 +3009,44 @@ No CI: `tests/telephony.rs` (o `204` e que nada fica guardado; o `422` com um ga
 - A custo: 5 s de chamada custam o minuto inteiro (9,40 AOA). É a regra que já lá estava (`cost.rs`), não foi mexida; o incremento configurável é o T12.
 
 **Ficheiros.** `voice/freeswitch/dialplan/public/00_delonix_dialin.xml`, `voice/freeswitch/dialplan/default/00_delonix_extensions.xml`, `server/crates/delonix-meet-domain/src/telephony/trunk.rs`, `docs/reference/openapi/bff.json`, `server/src/ramais.rs`, `server/src/telephony_trunks.rs`, `scripts/check-helm.sh`, `deploy/helm/delonix-meet/values.yaml`, `voice/cluster/freeswitch-entrypoint.sh`, `voice/freeswitch/autoload_configs/xml_curl.conf.xml`, `voice/freeswitch/autoload_configs/json_cdr.conf.xml`, `compose.yaml`, `scripts/cluster-voice.sh`, `deploy/helm/delonix-meet/templates/voice.yaml`, `deploy/helm/delonix-meet/files/voice/freeswitch/json_cdr.conf.xml`, `voice/pbx-tronco-prova/compose.yaml`, `server/src/telephony_cdr.rs`, `server/src/telephony_fs_xml.rs`, `server/tests/telephony.rs`, `scripts/troncos-prova.sh`, `voice/troncos-prova/`, `scripts/softphone-prova.sh`.
+
+### R294 — Um pacote de áudio atrasado somava 24 h 51 min à pista gravada, e em debug matava a thread de escrita
+
+**Sintoma.** O gravador entrega os pacotes RTP Opus ao `OggWriter` do `webrtc-media 0.17.2`, que avança a posição do grânulo com `timestamp - anterior` — uma subtracção de `u32` sem `wrapping` (`ogg_writer/mod.rs:181`). A bomba do SFU escreve pela ordem de chegada. Medido a 2026-10-05, com três pacotes de 20 ms e os timestamps 0, 1920, 960 (o terceiro atrasado pela rede):
+- **em release** (o perfil do CI e da imagem): os grânulos ficam `1, 1921, 4294968257`, e o `ffprobe` dá à pista de 60 ms **89 478,5 s**. A pista não recupera — todos os pacotes seguintes ficam 2^32 amostras à frente. Um pacote repetido escrevia-se duas vezes;
+- **em debug**: `attempt to subtract with overflow`, a thread de escrita morre, o OGG fica sem página de fecho e o resto da pista não se grava. Sem erro para quem chama: o `try_send` passa a falhar e conta como «disco lento»;
+- **a volta legítima do relógio de 32 bits** (os browsers começam o timestamp num valor ao acaso; a 48 kHz dá a volta a cada 24 h 51 min) dá o resultado certo em release, por acaso da aritmética, e é o mesmo pânico em debug.
+
+**O que isto NÃO fazia, medido.** O ficheiro composto não saía com 24 h. Com áudio real (10 s de tom, um pacote por página, os grânulos que o `OggWriter` produz) e o ffmpeg 6.1.1, os três caminhos da composição — remux `-c copy`, só áudio com `adelay`, e `adelay`+`amix` de duas pistas — dão 10,04 s: o ffmpeg vê um salto de mais de 10 s num OGG e desconta-o (`timestamp discontinuity … new offset= -89478465333`). O que ficava era o frame atrasado fora do sítio, 20 ms. O revisor chegou ao mesmo por medição própria. A gravação dependia de uma tolerância do ffmpeg que ninguém tinha pedido.
+
+**Regra.**
+- **O que não está à frente do último escrito não se escreve.** `recorder::OpusClock` guarda o último timestamp aceite; a comparação é a distância com sinal em 32 bits (`wrapping_sub` lido como `i32`), para a volta do relógio não ser um recuo. Atrasado ou repetido, descarta-se — para a pista é uma perda de pacote, que o gravador já tinha.
+- **O timestamp entregue ao `OggWriter` conta a partir do primeiro pacote da pista.** Ele só usa diferenças, e assim a subtracção dele não vê a volta. Não «simplificar» entregando o timestamp tal como chega: os testes de ficheiro passam em release na mesma, e é em debug que rebenta.
+- **Um recuo que não passa é um relógio novo.** 50 atrasados SEGUIDOS que avançam entre si (`OPUS_CLOCK_RESYNC_AFTER`, 1 s) re-ancoram a pista: o primeiro da série fica no instante do último escrito, e a pista continua daí com o tempo que o relógio novo mediu. Sem isto, uma origem que recomeçasse o timestamp para trás ficava muda na gravação até 12 h 25 min — pior do que antes da correcção, em que se gravava tudo. **Foi o revisor que o apontou, e bloqueava.** Um pacote em dia pelo meio desfaz a contagem; atrasados que não avançam entre si também.
+- **Um salto para a FRENTE aceita-se tal como vem**: é tempo que passou (DTX, um telefone calado pelo anfitrião). Não lhe pôr tecto.
+- **Um payload vazio não avança o relógio**: o `OggWriter` ignora-o sem mexer no dele.
+- **O descarte é contado**, como a fila cheia (R40): `delonix_recording_audio_late_dropped_total`, um aviso ao primeiro e a cada 500, e um aviso próprio quando a pista re-ancora.
+- **Não se mexe no crate externo.** A correcção vive em `RecSink::Audio`.
+
+**Portão.** `recorder.rs`, dez testes, verdes em debug e em release:
+- `pacote_de_audio_atrasado_nao_avanca_a_pista_um_dia` (0, 1920, 960: grânulos `1, 1921`, fecho escrito, um descartado contado), `depois_de_um_atrasado_ou_repetido_a_pista_continua`, `um_atrasado_do_outro_lado_da_volta_tambem_se_descarta`, `a_volta_do_relogio_de_32_bits_nao_e_um_recuo`;
+- `o_relogio_conta_a_partir_do_primeiro_pacote_e_atravessa_a_volta` — é este que guarda a segunda regra no CI, que corre em release;
+- `um_recuo_que_nao_passa_e_um_relogio_novo`, `uma_rajada_de_reordenacao_nao_e_um_relogio_novo`, `depois_de_o_relogio_recuar_de_vez_a_pista_volta_a_gravar`;
+- `um_payload_vazio_nao_avanca_o_relogio_da_pista`, `o_audio_cifrado_passa_pelo_mesmo_relogio_e_sai_decifrado` (com cifra ponta-a-ponta: o atrasado e o frame que não autentica ficam de fora).
+
+**Controlo negativo.** Os quatro primeiros, escritos ANTES da correcção e corridos contra o código antigo: em debug falham os quatro, com o pânico em `ogg_writer/mod.rs:181`; em release falham três, com os grânulos acima, e passa o da volta — que por isso guarda contra corrigir de mais, não contra o defeito. E três mutantes da correcção, em release (o perfil do CI): sem contar do primeiro pacote falham 5 testes; sem re-ancorar, 2; com a comparação sem sinal, 3.
+
+**Revisão.** `delonix-meet-webrtc`, por leitura e com medições próprias no ffmpeg 6.1.1. Bloqueou a primeira versão, que só descartava: é dela a re-ancoragem, e são dela os ramos que estavam sem teste (a contagem a partir do primeiro pacote no perfil do CI, o payload vazio, o frame que não autentica, o salto para a frente). Confirmou por leitura que a R40 fica intacta (a escrita, o contador e o aviso correm na thread dedicada; `try_send` e `close` não mudaram), que o vídeo só mudou na forma de receber o pacote, e que uma mudança de SSRC dá uma pista e um relógio novos. A versão com a re-ancoragem não voltou a ser revista.
+
+**O que NÃO está provado.**
+- **Nenhuma gravação com um browser ou um telefone a sério.** Os pacotes são 20 ms de silêncio fabricados; a reordenação é a ordem em que o teste os escreve.
+- **O ffmpeg da imagem (9.0.2).** As medições da composição são do 6.1.1 desta máquina, sobre ficheiros com os grânulos do `OggWriter` mas montados à mão, não escritos por ele.
+- **Que uma perna de telefone recomeça o relógio a meio** (re-INVITE, retenção, transferência). A re-ancoragem responde a essa hipótese; ninguém a viu acontecer.
+- **Uma re-ancoragem errada.** Um segundo inteiro de pacotes atrasados, por ordem, depois de UM que passou à frente, é lido como relógio novo e desloca o resto da pista até 1 s. Não se conhece rede que o faça; fica escrito.
+- **Um timestamp muito à frente** (até 2^31) é aceite, estica a pista esse tempo e deixa os pacotes seguintes atrasados durante 1 s, até re-ancorar. Só o próprio publicador o faz a si mesmo; acima de 10 s, o ffmpeg 6.1.1 desconta o salto.
+- **Quem ficou sem áudio não se sabe pelo log.** O aviso leva o nome da pista (`03-audio`), sem sala nem publicador, e o «gravação DEGRADADA» do fecho só conta a fila cheia. Uma falha de decifra continua sem contador (já era assim).
+- **Em debug, uma pista cujo relógio avance mais de 2^32 amostras** do primeiro pacote ao último volta ao pânico do `OggWriter`. Em release dá certo.
+- **Um buraco de menos de 10 s numa pista é fechado pela mistura** (`adelay`/`amix`, sem `aresample=async`): medido pelo revisor com ficheiros sintéticos, já era assim, e é o que acontece a cada pacote descartado ou perdido — 20 ms de cada vez. Com DTX pode ser muito mais. Não é desta entrada; fica por confirmar com uma gravação real.
+- A bomba do SFU renumera a sequência do áudio depois de gravar (`next_seq`): um pacote atrasado segue para quem ouve com sequência contígua e timestamp para trás. Não foi mexido nem medido.
+
+**Ficheiros.** `server/src/recorder.rs` (`OpusClock`, `RecSink::Audio`, `RecWriter::spawn`), `server/src/metrics.rs`.
