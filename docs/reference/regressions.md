@@ -293,6 +293,7 @@ O SFU só reencaminha os `MAX_ACTIVE_SPEAKERS` microfones mais ativos (downlink 
 - **Fila cheia = perda CONTADA, nunca silenciosa:** `delonix_recording_packets_dropped_total` e um aviso a cada 500. Uma gravação degradada tem de ser visível; a alternativa (bloquear até o disco alcançar) é pior, e perder em silêncio é o pior de todos.
 - **Validado com gravações REAIS** (2026-08-25, três execuções): 12 s gravados ⇒ artefactos de **12,000000 s** e **12,020000 s**, VP8 1280×720 + Opus 48 kHz estéreo, `recording_packets_dropped_total = 0`. Uma fila por esvaziar teria dado um ficheiro mais curto — é essa a prova.
 - **Por validar:** só o caminho de REMUX (`-c copy`, um publicador) foi exercitado. O de RECOMPOSIÇÃO (vários publicadores → reencode VP9+Opus) não: não se conseguiu pôr dois publicadores em simultâneo neste arnês. É o caminho com mais risco e continua sem prova.
+- **Exercitado a 2026-10-05 (R295):** dois publicadores em simultâneo, grelha e mistura, numa gravação a sério — e foi aí que apareceu o áudio a recuar. O que a R295 deixa por provar está nela.
 - **Ficheiros:** `server/src/recorder.rs` (`RecWriter`, `RecSink`), `server/src/sfu.rs` (os três fechos), `server/src/config.rs`.
 
 ## Criptografia / E2EE
@@ -3117,10 +3118,46 @@ No CI: `tests/telephony.rs` — a decisão do servidor caso a caso (sai com a id
 - **Um timestamp muito à frente** (até 2^31) é aceite, estica a pista esse tempo e deixa os pacotes seguintes atrasados durante 1 s, até re-ancorar. Só o próprio publicador o faz a si mesmo; acima de 10 s, o ffmpeg 6.1.1 desconta o salto.
 - **Quem ficou sem áudio não se sabe pelo log.** O aviso leva o nome da pista (`03-audio`), sem sala nem publicador, e o «gravação DEGRADADA» do fecho só conta a fila cheia. Uma falha de decifra continua sem contador (já era assim).
 - **Em debug, uma pista cujo relógio avance mais de 2^32 amostras** do primeiro pacote ao último volta ao pânico do `OggWriter`. Em release dá certo.
-- **Um buraco de menos de 10 s numa pista é fechado pela mistura** (`adelay`/`amix`, sem `aresample=async`): medido pelo revisor com ficheiros sintéticos, já era assim, e é o que acontece a cada pacote descartado ou perdido — 20 ms de cada vez. Com DTX pode ser muito mais. Não é desta entrada; fica por confirmar com uma gravação real.
+- **Um buraco de menos de 10 s numa pista era fechado pela mistura** (`adelay`/`amix`, sem `aresample=async`): medido pelo revisor com ficheiros sintéticos, e era o que acontecia a cada pacote descartado ou perdido — 20 ms de cada vez. Com DTX era muito mais. **Confirmado com gravações reais e corrigido na R295**: a composição passou a encher esses buracos com silêncio.
 - A bomba do SFU renumera a sequência do áudio depois de gravar (`next_seq`): um pacote atrasado segue para quem ouve com sequência contígua e timestamp para trás. Não foi mexido nem medido.
 
 **Ficheiros.** `server/src/recorder.rs` (`OpusClock`, `RecSink::Audio`, `RecWriter::spawn`), `server/src/metrics.rs`.
+
+### R295 — A fala depois de um silêncio recuava na gravação: os buracos de PTS do DTX iam para o ficheiro final
+
+**Sintoma.** Numa gravação do servidor, o que um participante diz depois de se calar ouve-se antes do tempo. O áudio adianta-se ao vídeo e aos outros participantes, e cada silêncio soma ao anterior. Medido a 2026-10-05 em gravações a sério de 36 s (dois Chromium com `usedtx=1`; um microfone fala 2 s em cada 8, o outro dá um toque por segundo), com o ffmpeg 9.0.2 da imagem do servidor:
+- a pista crua de quem se cala tinha 60 a 63 buracos de PTS de 0,40 s — 21,6 a 22,8 s no total;
+- o ficheiro final tinha 14,4 s de amostras de áudio para 36 s de gravação (23,6 s para 46,4 s na grelha), com os mesmos buracos nos PTS do contentor;
+- o Chromium, a tocá-lo, punha a fala aos 2,8 / 5,8 / 8,8 / 11,8 s do media em vez de 7,7 / 15,7 / 23,7 / 31,7 s — de 3 em 3 s o que foi dito de 8 em 8;
+- na grelha, os toques do segundo participante saíam a 0,62 s uns dos outros em vez de 1 s.
+
+Nos TRÊS caminhos do `finalize_inner`: grelha com mistura, só áudio, e um publicador (`-c copy`) — que é a gravação mais comum.
+
+**Causa raiz.** O cliente pede `usedtx=1` (`web/src/webrtc.ts`): em silêncio o Opus manda um pacote a cada 400 ms e o timestamp RTP continua a andar. O `OggWriter` avança o grânulo pelo timestamp, por isso a pista gravada guarda o salto nos PTS e nenhuma amostra no meio. O `adelay` e o `amix` contam amostras, não PTS; o codificador e o `-c copy` levam os PTS com buracos para o webm; e o Chromium ignora esses buracos e toca as amostras seguidas. Um pacote perdido faz o mesmo, 20 ms de cada vez.
+
+**Regra.**
+- **Toda a pista de áudio passa por `AUDIO_GAP_FILL` (`aresample=async=1:first_pts=0`) antes de qualquer outro filtro**, em todos os caminhos. O grafo de áudio da composição constrói-se em `audio_mix_graph` e os argumentos de um publicador em `single_publisher_args`; não se escrevem à mão no `finalize_inner`.
+- **No caminho de um publicador o vídeo vai em cópia e o áudio NÃO.** `-c copy` (ou `-c:a copy`) no áudio repõe o defeito. O custo de o recodificar, medido numa gravação de 36 s: 0,13 s em vez de 0,01 s, e um ficheiro 3,6 % maior.
+- **O áudio de uma gravação mede-se a contar amostras, ou a ouvi-la no Chromium.** A duração do contentor dizia 36 s com 14 s de áudio lá dentro, e descodificar com um filtro que honre os PTS repõe o silêncio que o browser não repõe. A primeira versão do `gravacao-buraco-audio.mjs` media assim e deu os três caminhos por bons com o servidor por corrigir.
+- **Não subir o `-dts_delta_threshold` para apanhar buracos maiores.** O `aresample` guarda o silêncio inteiro em memória antes de o entregar — medido: 440 MB para um buraco de 6 min, 3,2 GB para 1 h.
+
+**Portão.** `cargo test --lib recorder`:
+- `o_audio_e_enchido_antes_de_qualquer_outro_filtro` — corre no CI: o enchimento está em todas as cadeias, antes do `adelay`, e nenhum caminho leva o áudio em cópia;
+- `a_fala_depois_de_um_buraco_nao_recua_na_mistura`, `…_numa_pista_so`, `…_com_um_publicador` — pistas escritas pelo `open_track` de produção, com perda e com o padrão do DTX, compostas pelo ffmpeg com os argumentos de produção, e o resultado medido amostra a amostra. **Precisam de ffmpeg, que o CI não tem: lá dão `ok` sem medir nada** — o aviso é um `eprintln!` que o `cargo test` engole num teste que passa. No CI só o teste de cima guarda esta regra. Correm em local com `FFMPEG_BIN`; passaram com o 6.1.1 da máquina e com o 9.0.2 da imagem.
+- Controlo negativo corrido: com o filtro trocado por `anull` falham os quatro (a pista de 6 s sai com 4,0 s).
+
+Fora do CI: `web/e2e/gravacao-buraco-audio.mjs`, a gravação a sério com os três caminhos, ouvida no Chromium. Com o servidor corrigido: zero buracos de PTS, as amostras cobrem a gravação inteira, a fala de 8 em 8 s (7,94 / 8,00 / 8,00), os toques entre 0,98 e 1,00 s, e no Chromium a fala aos 7,8 / 15,9 / 23,9 / 31,9 s. Com o servidor por corrigir falham 15 das suas verificações.
+
+**O que NÃO está provado.**
+- **Mais de 10 s sem um único pacote continua a recuar.** O ffmpeg trata esse salto como descontinuidade e tira-o antes de o filtro o ver (medido: um buraco de 9,9 s é enchido, um de 10,5 s desaparece). Com o DTX do browser não acontece, que há um pacote a cada 400 ms. Acontece a quem fica sem rede ou com o browser suspenso mais de 10 s — e, sem avaria nenhuma, a **um telefone calado pelo anfitrião** (R224): com `ForceMute` a perna da ponte não publica nada (`phone_bridge/leg.rs`), e quando volta a falar fica adiantada o tempo todo em que esteve calada. O mesmo para um tronco com supressão de silêncio. Lido no código pelo revisor; não foi gravado um telefone. Só se fecha a escrever o silêncio na própria pista, ao gravar.
+- **Os primeiros 20 ms de cada fala ficam ANTES do silêncio.** O demuxer OGG do ffmpeg dá a cada pacote o grânulo da página anterior, por isso o primeiro pacote depois de um buraco cola-se ao último que chegou e o filtro enche a seguir a ele. Medido nas três gravações corrigidas: um fragmento de 10 ms aos 7,785 s e a fala a começar aos 7,930 s (achado do revisor, repetido por mim). Com DTX são até 380 ms de adianto, num pedaço de 20 ms; antes da correcção colava a fala inteira. Não foi ouvido com voz. Fecha-se no mesmo sítio que o ponto de cima: um pacote de silêncio escrito na pista antes do primeiro pacote depois de um salto (simulado pelo revisor sobre as páginas OGG: o fragmento desaparece, e com um marcador a cada 5 s um buraco de 6 min fica inteiro com 18 MB de memória).
+- **Perdas isoladas ficam com até 100 ms de desvio.** O `async=1` só repõe quando a soma dos buracos passa de 100 ms (medido: 12 pacotes perdidos, um a cada 500 ms, dão dois silêncios de 120 ms em vez de doze de 20).
+- **Só o Chromium foi ouvido.** Firefox, Safari e os leitores de ficheiros não foram medidos, nem antes nem depois.
+- **Cada pista de áudio entra 80 ms adiantada**: o `OggWriter` declara 3840 amostras de `pre-skip` e o ffmpeg desconta-as ao início. É constante, já era assim, e não foi corrigido aqui.
+- **Perda e atraso de rede a sério** não foram exercitados numa gravação real — só em pistas sintéticas. Nem uma gravação E2EE, nem a pista de um telefone da ponte.
+- **O áudio da grelha de uma gravação arrancada À MÃO a meio da chamada** não foi medido, porque essa gravação falha antes: a pista de vídeo começa sem keyframe (o `start_recording` não pede nenhum, e a guarda do `Vp8IvfWriter` lê o bit de keyframe também nos pacotes de continuação e deixa passar quadros delta). Medido: três pistas de vídeo em três que o ffmpeg não descodifica, e a grelha a acabar em `ffmpeg exited with exit status: 69`. O teste usa `auto_record` por isso. Defeito à parte, por corrigir.
+
+**Ficheiros.** `server/src/recorder.rs` (`AUDIO_GAP_FILL`, `audio_mix_graph`, `single_publisher_args`), `web/e2e/gravacao-buraco-audio.mjs`.
 
 ### R296 — A voz de um softphone chegava à sala a 8 kHz, e a prova real da perna em Opus encontrou três defeitos que já lá estavam
 
