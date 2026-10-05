@@ -277,7 +277,9 @@ impl Vp8IvfWriter {
 ///   deitar fora, guardam-se: `OPUS_RESYNC_AFTER` seguidos que avançam entre si
 ///   são o relógio novo, e escrevem-se todos, a seguir ao último escrito. Um
 ///   pacote em dia pelo meio mostra que eram só atrasados, e saem. A rede não
-///   reordena um segundo inteiro por ordem.
+///   reordena um segundo inteiro por ordem. Um recuo mais curto do que isso
+///   não chega a ser relógio novo: perde-se até o relógio alcançar o ponto
+///   onde ia, como uma rajada de atrasados.
 /// - **As comparações são distâncias com sinal em 32 bits**, para a volta
 ///   legítima do relógio (os browsers começam o timestamp num valor ao acaso)
 ///   não ser um recuo. E o timestamp entregue conta a partir do primeiro
@@ -300,9 +302,13 @@ struct OpusTrack {
 /// 20 ms. Um receptor ao vivo já teria desistido de um pacote mais atrasado.
 const OPUS_REORDER_WINDOW: usize = 10;
 
-/// Quantos atrasados seguidos fazem um relógio novo: 1 s de Opus contínuo em
-/// pacotes de 20 ms (com DTX são os mesmos 50 pacotes, e mais tempo).
-const OPUS_RESYNC_AFTER: usize = 50;
+/// Quantos pacotes seguidos atrás do último escrito fazem um relógio novo. O
+/// último escrito anda `OPUS_REORDER_WINDOW` pacotes atrás do mais novo que
+/// chegou, por isso são 50 atrás do mais novo: 1 s de Opus contínuo em
+/// pacotes de 20 ms (com DTX são os mesmos pacotes, e mais tempo).
+const OPUS_RESYNC_AFTER: usize = 50 - OPUS_REORDER_WINDOW;
+// O passo do relógio novo mede-se entre vizinhos da série.
+const _: () = assert!(OPUS_RESYNC_AFTER >= 2);
 
 /// O que aconteceu na pista ao receber um pacote (ou ao fechar).
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -337,7 +343,7 @@ impl OpusTrack {
             }
             self.stale.push(pkt);
             if self.stale.len() >= OPUS_RESYNC_AFTER {
-                self.resync(out);
+                did.late += self.resync(out);
                 did.resynced = true;
             }
             return did;
@@ -346,17 +352,11 @@ impl OpusTrack {
         // atrasados.
         did.late += self.stale.len() as u32;
         self.stale.clear();
+        // Depois dos que não estão à frente dele: um repetido fica a seguir ao
+        // original, e é o original que se escreve (o `emit` recusa o segundo).
         let at = self
             .window
-            .partition_point(|p| Self::ahead(ts, p.header.timestamp));
-        if self
-            .window
-            .get(at)
-            .is_some_and(|p| p.header.timestamp == ts)
-        {
-            did.late += 1;
-            return did;
-        }
+            .partition_point(|p| !Self::ahead(p.header.timestamp, ts));
         self.window.insert(at, pkt);
         if self.window.len() > OPUS_REORDER_WINDOW {
             let oldest = self.window.remove(0);
@@ -378,9 +378,10 @@ impl OpusTrack {
     }
 
     /// Entrega um pacote com o timestamp contado do primeiro escrito. Devolve
-    /// 1 se não o entregou: só acontece se os primeiros pacotes da pista
-    /// vierem a mais de meio relógio uns dos outros, e a janela não os souber
-    /// ordenar — nunca se entrega o que não avança.
+    /// 1 se não o entregou, porque não avança sobre o último escrito: é um
+    /// repetido, ou os primeiros pacotes da pista vieram a meio relógio uns
+    /// dos outros e a janela não os soube ordenar. O `OggWriter` nunca vê um
+    /// timestamp que não cresce.
     fn emit(
         &mut self,
         mut pkt: webrtc::rtp::packet::Packet,
@@ -407,23 +408,30 @@ impl OpusTrack {
 
     /// O relógio novo entra na pista: primeiro sai o que o antigo ainda tinha
     /// à espera, e depois os pacotes guardados, com o primeiro um passo depois
-    /// do último escrito — o passo que o relógio novo mostra entre os seus
-    /// dois primeiros pacotes.
-    fn resync(&mut self, out: &mut Vec<webrtc::rtp::packet::Packet>) {
+    /// do último escrito. O passo é o MENOR entre vizinhos da série: um
+    /// silêncio logo a seguir ao primeiro pacote (DTX) não pode empurrar o
+    /// resto da pista. Devolve os que não se escreveram.
+    fn resync(&mut self, out: &mut Vec<webrtc::rtp::packet::Packet>) -> u32 {
+        let mut late = 0;
         for pkt in std::mem::take(&mut self.window) {
-            self.emit(pkt, out);
+            late += self.emit(pkt, out);
         }
         let stale = std::mem::take(&mut self.stale);
-        let (t0, t1) = (stale[0].header.timestamp, stale[1].header.timestamp);
+        let t0 = stale[0].header.timestamp;
+        let step = stale
+            .windows(2)
+            .map(|w| w[1].header.timestamp.wrapping_sub(w[0].header.timestamp))
+            .min()
+            .unwrap_or(960);
         if let Some((first, last)) = &mut self.written {
-            let step = t1.wrapping_sub(t0);
             let written = last.wrapping_sub(*first);
             *first = t0.wrapping_sub(written.wrapping_add(step));
             *last = t0.wrapping_sub(step);
         }
         for pkt in stale {
-            self.emit(pkt, out);
+            late += self.emit(pkt, out);
         }
+        late
     }
 }
 
@@ -2561,6 +2569,110 @@ mod tests {
         assert_eq!(pista.granulos(), granulos_seguidos(100 + u64::from(n)));
         assert_eq!(pista.seqs(), (0..100 + n).collect::<Vec<u16>>());
         assert_eq!(pista.atrasados, 0);
+    }
+
+    #[test]
+    fn o_relogio_novo_entra_ao_ultimo_pacote_da_serie_e_nao_antes() {
+        // Exactamente `OPUS_RESYNC_AFTER`, e a pista fecha: já são um relógio
+        // novo, e escrevem-se todos.
+        let n = OPUS_RESYNC_AFTER as u16;
+        let (escritos, total) = pela_pista(com_recuo(n));
+        let seguidos: Vec<(u16, u32)> = (0..100 + n).map(|i| (i, u32::from(i) * 960)).collect();
+        assert_eq!(escritos, seguidos);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 0,
+                resynced: true
+            }
+        );
+    }
+
+    #[test]
+    fn um_silencio_no_inicio_do_relogio_novo_nao_empurra_a_pista() {
+        // O relógio novo começa com um pacote, 400 ms de DTX, e depois fala.
+        // O primeiro fica um passo de 20 ms depois do último escrito — o passo
+        // da fala, não o do silêncio.
+        let n = OPUS_RESYNC_AFTER as u16;
+        let mut chegada = falados(100, 28_800_000);
+        chegada.push(pacote_opus(100, 0));
+        chegada.extend((0..n).map(|j| pacote_opus(101 + j, 19_200 + u32::from(j) * 960)));
+        let (escritos, total) = pela_pista(chegada);
+        assert!(total.resynced && total.late == 0, "{total:?}");
+        assert_eq!(escritos[99], (99, 99 * 960));
+        assert_eq!(escritos[100], (100, 100 * 960), "um passo de fala depois");
+        assert_eq!(
+            escritos[101],
+            (101, 100 * 960 + 19_200),
+            "e o silêncio dele"
+        );
+        assert_eq!(escritos[102], (102, 100 * 960 + 19_200 + 960));
+    }
+
+    /// 100 pacotes, e a origem recomeça o relógio `recuo` pacotes atrás do
+    /// último, de vez; chegam `depois` pacotes do relógio novo.
+    fn com_recuo_curto(recuo: u32, depois: u16) -> Vec<Pacote> {
+        let base = 28_800_000 + (99 - recuo) * 960;
+        let mut chegada = falados(100, 28_800_000);
+        chegada.extend((0..depois).map(|j| pacote_opus(100 + j, base + u32::from(j) * 960)));
+        chegada
+    }
+
+    #[test]
+    fn um_recuo_de_um_segundo_ja_e_um_relogio_novo() {
+        // 49 pacotes atrás do mais novo: os primeiros `OPUS_RESYNC_AFTER` ficam
+        // atrás do último escrito, e chega. Nada se perde.
+        let recuo = (OPUS_RESYNC_AFTER + OPUS_REORDER_WINDOW) as u32 - 1;
+        let (escritos, total) = pela_pista(com_recuo_curto(recuo, 60));
+        let seguidos: Vec<(u16, u32)> = (0..160).map(|i| (i, u32::from(i) * 960)).collect();
+        assert_eq!(escritos, seguidos);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 0,
+                resynced: true
+            }
+        );
+    }
+
+    #[test]
+    fn um_recuo_mais_curto_perde_se_ate_o_relogio_alcancar_o_ponto_onde_ia() {
+        // Um pacote menos de recuo, e a série não chega ao fim: o relógio novo
+        // alcança o último escrito antes disso. Perde-se tudo até ele passar o
+        // mais novo do relógio antigo — é o que acontecia antes da janela, e
+        // não se distingue de uma rajada de atrasados.
+        let recuo = (OPUS_RESYNC_AFTER + OPUS_REORDER_WINDOW) as u32 - 2;
+        let (escritos, total) = pela_pista(com_recuo_curto(recuo, 60));
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: recuo + 1,
+                resynced: false
+            }
+        );
+        // Os 100 do relógio antigo, e os do novo a partir do primeiro que
+        // passa à frente — seguidos, sem um passo fora do sítio.
+        let primeiro_novo = 100 + recuo as u16 + 1;
+        let mut esperados: Vec<(u16, u32)> = (0..100).map(|i| (i, u32::from(i) * 960)).collect();
+        esperados
+            .extend((primeiro_novo..160).map(|s| (s, u32::from(s - primeiro_novo + 100) * 960)));
+        assert_eq!(escritos, esperados);
+    }
+
+    #[test]
+    fn dois_pacotes_a_meio_relogio_um_do_outro_nao_rebentam_a_escrita() {
+        // A exactamente 2^31 nenhum está «à frente» do outro, e a janela não
+        // tem como os ordenar. O que não avança sobre o último escrito não se
+        // entrega (em debug, o `OggWriter` rebentava) — e conta-se.
+        let (escritos, total) = pela_pista(vec![pacote_opus(0, 0), pacote_opus(1, 0x8000_0000)]);
+        assert_eq!(escritos, vec![(0, 0)]);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 1,
+                resynced: false
+            }
+        );
     }
 
     #[test]
