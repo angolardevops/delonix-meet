@@ -31,6 +31,12 @@
       <domain name="all" alias="false" parse="false"/>
     </domains>
     <settings>
+      <!-- Sem transferências (REFER). Um ramal a transferir a outra perna de
+           uma chamada para fora punha uma perna de TRONCO a passar outra vez
+           pelo plano de marcação: saía uma segunda chamada para onde o ramal
+           mandasse, por conta da organização, e a primeira ficava sem registo
+           (R292, medido). Volta quando a transferência for desenhada. -->
+      <param name="disable-transfer" value="true"/>
       <param name="debug" value="0"/>
       <param name="sip-trace" value="no"/>
       <param name="rfc2833-pt" value="101"/>

@@ -61,6 +61,7 @@ export default {
   dir: {
     titulo: 'Contacts',
     lista: 'Liste des contacts',
+    accoesDe: 'Actions de {{nome}}',
     detalhe: 'Détail du contact',
     separadores: 'Type de contact',
     pesquisar: 'Rechercher des personnes',

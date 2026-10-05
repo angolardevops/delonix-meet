@@ -10,14 +10,14 @@
 #
 #  Modos:
 #    selftest   prova o PRÓPRIO script contra o FreeSWITCH da imagem, numa
-#               rede docker interna (sem saída): SRTP negociado, o PIN a
+#               rede só sua (no docker, sem saída): SRTP negociado, o PIN a
 #               chegar, os tons medidos nos dois sentidos, o par de softphones
 #               numa conferência, e o controlo negativo (sem SRTP → recusada).
 #               Não toca no Meet nem em nada da tua rede.
 #    srtp-real  o controlo negativo com a configuração que CORRE (R226): a
 #               que o voice/cluster/freeswitch-entrypoint.sh monta com os
-#               ficheiros que o compose.yaml põe em /meet, numa rede docker sem
-#               saída. Mede o perfil dos ramais (um ramal autentica-se, com um
+#               ficheiros que o compose.yaml põe em /meet, numa rede só sua
+#               (motor.sh). Mede o perfil dos ramais (um ramal autentica-se, com um
 #               servidor de directório de andaime a responder) e o do dial-in:
 #               sem SRTP, os dois têm de dar 488. E o segredo de voz: chega ao
 #               servidor em cabeçalhos, nunca no URL, e não fica — nem ele nem
@@ -27,6 +27,8 @@
 #    chamada    um softphone contra um servidor teu (ramal no FreeSWITCH, ou
 #               um ramal do PBX): marca --destino, envia --pin, toca --tom e
 #               mede --espera-tom no que ouviu.
+#    medir F HZ a amplitude do tom de HZ no ficheiro F (WAV), e mais nada: para
+#               outra prova medir uma gravação sua.
 #    par        dois softphones (contas A e B) no MESMO destino — a mesma sala.
 #               A toca 1000 Hz e B 440 Hz; cada um tem de ouvir o tom do outro
 #               e NÃO o próprio (mix-minus). É a prova de dois sentidos sem
@@ -35,7 +37,7 @@
 #               Nos dois: --dominio D põe D no endereço da conta (o `From`),
 #               para um servidor que decide por domínio — o bordo desafia a
 #               central com o realm do `From` (ADR-0016); --rede R corre os
-#               softphones numa rede docker em vez de na do anfitrião.
+#               softphones numa rede do motor em vez de na do anfitrião.
 #
 #  As passwords vêm do AMBIENTE, nunca da linha de comandos:
 #    SOFTPHONE_PASSWORD (chamada) · SOFTPHONE_PASSWORD_A / _B (par)
@@ -56,6 +58,7 @@
 # ============================================================
 set -uo pipefail
 cd "$(dirname "$0")/.."
+. scripts/motor.sh
 
 IMG_BS=${SOFTPHONE_IMAGE:-delonix-meet/baresip:1.0.0}
 IMG_FS=${FS_IMAGE:-delonix-meet/freeswitch:1.11.3}
@@ -63,7 +66,17 @@ WORK=$PWD/.softphone-prova
 TAG=sp$$                       # prefixo dos contentores desta corrida
 PRESENTE=${SOFTPHONE_LIMIAR_PRESENTE:-0.03}   # amplitude a partir da qual um tom «está lá»
 AUSENTE=${SOFTPHONE_LIMIAR_AUSENTE:-0.01}     # e abaixo da qual «não está»
-SELFTEST_SUBNET=${SOFTPHONE_SELFTEST_SUBNET:-172.31.250.0/29}
+# Os modos que montam o seu próprio FreeSWITCH (selftest, srtp-real,
+# srtp-cluster) dependem de onde os softphones e o andaime ficam:
+#   docker   no ESPAÇO DE REDE do FreeSWITCH (`--network container:…`), numa
+#            rede sem saída (`--internal`) — ele escuta em loopback;
+#   delonix  não tem nenhuma das duas (só partilha o espaço de rede de um pod
+#            criado por manifesto, as redes dele têm saída e não aceita /29):
+#            cada um fica com o seu endereço na rede da prova, e o que no
+#            docker é loopback passa a ser essa rede.
+PARTILHA=1; [ "$MOTOR" = docker ] || PARTILHA=0
+if [ "$PARTILHA" = 1 ]; then SELFTEST_SUBNET=${SOFTPHONE_SELFTEST_SUBNET:-172.31.250.0/29}
+else SELFTEST_SUBNET=${SOFTPHONE_SELFTEST_SUBNET:-172.31.250.0/28}; fi
 PORTO_RAMAIS=5070              # o DELONIX_RAMAIS_SIP_PORT do compose.yaml e do cluster
 DESTINO_REAL=101               # um número curto: o que o contexto dos ramais aceita
 DESTINO_DIALIN=244923000000    # um número qualquer: o contexto `public` aceita 6 a 15 dígitos
@@ -73,21 +86,29 @@ ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
 aviso() { printf '  ! %s\n' "$*"; }   # medido e fora do que esta prova julga
 
+# rede_da_prova — cria ${TAG}-net · onde_ligam — a rede a dar ao `perna`
+# escuta <ip do FreeSWITCH> — o endereço em que o softphone escuta
+rede_da_prova() {
+  if [ "$PARTILHA" = 1 ]; then docker network create --internal --subnet "$SELFTEST_SUBNET" "${TAG}-net" >/dev/null
+  else m_rede_cria "${TAG}-net" "$SELFTEST_SUBNET"; fi
+}
+onde_ligam() { if [ "$PARTILHA" = 1 ]; then echo "container:${TAG}-fs"; else echo "${TAG}-net"; fi; }
+escuta() { if [ "$PARTILHA" = 1 ]; then echo "$1"; else echo 0.0.0.0; fi; }
 uso() { sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 
 limpar() {
   local c
-  for c in $(docker ps -aq --filter "name=^${TAG}-" 2>/dev/null); do docker rm -f "$c" >/dev/null 2>&1; done
-  docker network rm "${TAG}-net" >/dev/null 2>&1 || true
+  for c in $(m_nomes | grep "^${TAG}-"); do m_rm "$c" >/dev/null 2>&1; done
+  m_rede_apaga "${TAG}-net" || true
   rm -rf "$WORK/$TAG"
   rmdir "$WORK" 2>/dev/null || true
 }
 trap limpar EXIT
 
 imagem_baresip() {
-  docker image inspect "$IMG_BS" >/dev/null 2>&1 && return 0
-  echo "▶ a construir $IMG_BS (voice/softphone/Containerfile)"
-  docker build -q -t "$IMG_BS" -f voice/softphone/Containerfile voice/softphone >/dev/null \
+  m_imagem_existe "$IMG_BS" && return 0
+  echo "▶ a construir $IMG_BS (voice/softphone/Containerfile, $MOTOR)"
+  m_constroi "$IMG_BS" voice/softphone voice/softphone/Containerfile \
     || { echo "✗ não consegui construir $IMG_BS"; exit 1; }
 }
 
@@ -135,7 +156,7 @@ PY
 maior() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)" "$1" "$2"; }
 menor() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)" "$1" "$2"; }
 
-logs() { docker logs "$1" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r'; }
+logs() { m_logs "$1" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r'; }
 # esperar <contentor> <padrão> <segundos> — 0 se apareceu
 esperar() {
   local i
@@ -146,7 +167,7 @@ esperar() {
   return 1
 }
 
-# perna <nome> <rede docker> <servidor host:porto> <utilizador> <var da password|-> <destino>
+# perna <nome> <rede> <servidor host:porto> <utilizador> <var da password|-> <destino>
 #       <tom Hz> <transporte> <mediaenc> <porto SIP local> <porto da consola> <base RTP> <ip de escuta> <segundos máx>
 perna() {
   local nome=$1 rede=$2 srv=$3 user=$4 pwvar=$5 dest=$6 hz=$7 transp=$8 menc=$9
@@ -186,13 +207,17 @@ EOF
     acc="$acc;auth_user=$user;auth_pass=${!pwvar}"
   fi
   ( umask 077; printf '%s\n' "$acc" > "$d/conf/accounts" )
+  # A rede: o nome de uma do motor, `host`, ou `container:<nome>` — o espaço
+  # de rede de outro contentor, que só o docker sabe partilhar.
+  local onde=("$M_NET" "$rede")
+  case "$rede" in container:*) onde=(--network "$rede") ;; esac
   # O transporte não vai no URI marcado: o baresip acrescenta o da conta.
-  docker create --name "${TAG}-$nome" --network "$rede" --user 0 --entrypoint sh "$IMG_BS" \
-    -c "mkdir -p /rec; exec baresip -4 -f /conf -t $tmax -e '/dial sip:$dest@$host${srv#"$host"}'" >/dev/null \
+  m_cria "${TAG}-$nome" "${onde[@]}" --user 0 -- "$IMG_BS" \
+    "mkdir -p /rec; exec baresip -4 -f /conf -t $tmax -e '/dial sip:$dest@$host${srv#"$host"}'" \
     || { echo "✗ não consegui criar o contentor do softphone $nome"; exit 1; }
-  docker cp "$d/conf" "${TAG}-$nome:/conf" >/dev/null
+  m_cp "$d/conf" "${TAG}-$nome:/conf" >/dev/null
   rm -f "$d/conf/accounts"                # a password não fica no disco do host
-  docker start "${TAG}-$nome" >/dev/null
+  m_arranca "${TAG}-$nome" >/dev/null
 }
 
 # dtmf <nome> <porto da consola> <dígitos> — um a um, cada um seguido de «tecla
@@ -203,7 +228,7 @@ dtmf() {
   local i c
   for (( i = 0; i < ${#3}; i++ )); do
     c=${3:i:1}
-    docker exec "${TAG}-$1" sh -c "printf '%s' '$c' | nc -u -w1 127.0.0.1 $2; sleep 0.25; printf '\\004' | nc -u -w1 127.0.0.1 $2" >/dev/null 2>&1
+    m_exec "${TAG}-$1" sh -c "printf '%s' '$c' | nc -u -w1 127.0.0.1 $2; sleep 0.25; printf '\\004' | nc -u -w1 127.0.0.1 $2" >/dev/null 2>&1
     sleep 0.35
   done
 }
@@ -213,9 +238,9 @@ dtmf() {
 recolher() {
   local nome=$1 tmax=$2 d="$WORK/$TAG/$1"
   esperar "${TAG}-$nome" 'terminated \(duration|session closed|ua: stop all' "$tmax" || true
-  docker exec "${TAG}-$nome" sh -c "printf '/quit\n' | nc -u -w1 127.0.0.1 \$(sed -n 's/^cons_listen.*://p' /conf/config)" >/dev/null 2>&1
+  m_exec "${TAG}-$nome" sh -c "printf '/quit\n' | nc -u -w1 127.0.0.1 \$(sed -n 's/^cons_listen.*://p' /conf/config)" >/dev/null 2>&1
   sleep 1
-  docker cp "${TAG}-$nome:/rec" "$d/rec" >/dev/null 2>&1
+  m_cp "${TAG}-$nome:/rec" "$d/rec" >/dev/null 2>&1
   ls "$d"/rec/*-dec.wav 2>/dev/null | head -1 > "$d/ouvido"
   logs "${TAG}-$nome" > "$d/baresip.log"
 }
@@ -254,7 +279,7 @@ estabelecida() {  # estabelecida <nome> <segundos> — e com SRTP
 
 # ------------------------------------------------------------ selftest
 selftest() {
-  docker image inspect "$IMG_FS" >/dev/null 2>&1 \
+  m_imagem_existe "$IMG_FS" \
     || { echo "✗ falta a imagem $IMG_FS (make freeswitch-image, ou FS_IMAGE=<a publicada>)"; exit 1; }
   local ip d="$WORK/$TAG/fs" pin=4711 visto a
   ip=$(python3 -c "import ipaddress,sys; print(list(ipaddress.ip_network(sys.argv[1]).hosts())[1])" "$SELFTEST_SUBNET")
@@ -315,58 +340,59 @@ EOF
   </context>
 </include>
 EOF
-  docker network create --internal --subnet "$SELFTEST_SUBNET" "${TAG}-net" >/dev/null \
-    || { echo "✗ não consegui criar a rede interna $SELFTEST_SUBNET (SOFTPHONE_SELFTEST_SUBNET para outra)"; exit 1; }
+  rede_da_prova \
+    || { echo "✗ não consegui criar a rede $SELFTEST_SUBNET (SOFTPHONE_SELFTEST_SUBNET para outra)"; exit 1; }
   # O ESL da vanilla escuta em todas as interfaces com a password por omissão:
-  # fica só em loopback, dentro de uma rede sem saída.
-  docker create --name "${TAG}-fs" --network "${TAG}-net" --ip "$ip" --entrypoint sh "$IMG_FS" -c '
+  # fica só em loopback (e, no docker, dentro de uma rede sem saída).
+  m_cria "${TAG}-fs" "$M_NET" "${TAG}-net" --ip "$ip" -- "$IMG_FS" '
     C=/usr/local/freeswitch/etc/freeswitch
     rm -rf $C/sip_profiles/*; cp /prova/prova.xml $C/sip_profiles/; cp /prova/zz.xml $C/dialplan/zz_softphone_prova.xml
     sed -i "s#name=\"listen-ip\" value=\"[^\"]*\"#name=\"listen-ip\" value=\"127.0.0.1\"#" $C/autoload_configs/event_socket.conf.xml
     sed -i "s#</include>#  <X-PRE-PROCESS cmd=\"set\" data=\"rtp_secure_media=mandatory\"/>\n</include>#" $C/vars.xml
-    mkdir -p /tmp/rec; exec freeswitch -nonat -nf -nc' >/dev/null
-  docker cp "$d" "${TAG}-fs:/prova" >/dev/null
-  docker start "${TAG}-fs" >/dev/null
+    mkdir -p /tmp/rec; exec freeswitch -nonat -nf -nc'
+  m_cp "$d" "${TAG}-fs:/prova" >/dev/null
+  m_arranca "${TAG}-fs" >/dev/null
   local i pronto=0
   for i in $(seq 1 60); do
-    docker exec "${TAG}-fs" fs_cli -x "sofia status" 2>/dev/null | grep -Eq 'prova.*RUNNING' && { pronto=1; break; }
+    m_exec "${TAG}-fs" fs_cli -x "sofia status" 2>/dev/null | grep -Eq 'prova.*RUNNING' && { pronto=1; break; }
     sleep 1
   done
-  [ "$pronto" -eq 1 ] || { echo "✗ o FreeSWITCH do selftest não ficou pronto"; docker logs --tail 20 "${TAG}-fs"; exit 1; }
-  local rede="container:${TAG}-fs" srv="$ip:5099"
+  [ "$pronto" -eq 1 ] || { echo "✗ o FreeSWITCH do selftest não ficou pronto"; m_logs --tail 20 "${TAG}-fs"; exit 1; }
+  local rede srv="$ip:5099" esc
+  rede=$(onde_ligam); esc=$(escuta "$ip")
 
   echo "1) PIN por DTMF e tons nos dois sentidos, com SRTP obrigatório"
-  perna a "$rede" "$srv" prova - 9999 1000 udp srtp-mand 5080 5555 42000 "$ip" 40
+  perna a "$rede" "$srv" prova - 9999 1000 udp srtp-mand 5080 5555 42000 "$esc" 40
   if estabelecida a 20; then
     sleep 1.5; dtmf a 5555 "$pin"
     recolher a 30
-    visto=$(docker exec "${TAG}-fs" sh -c "grep -a 'SOFTPHONE-PROVA-PIN=' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log | grep -v 'Action log' | tail -1 | sed 's/.*PIN=//'" | tr -d '[:space:]')
+    visto=$(m_exec "${TAG}-fs" sh -c "grep -a 'SOFTPHONE-PROVA-PIN=' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log | grep -v 'Action log' | tail -1 | sed 's/.*PIN=//'" | tr -d '[:space:]')
     if [ "$visto" = "$pin" ]; then ok "o FreeSWITCH recebeu o PIN por DTMF ($visto)"
     else bad "o FreeSWITCH recebeu o PIN «$visto», não «$pin»"; fi
     verificar_tons a 440 1000
-    docker cp "${TAG}-fs:/tmp/rec/prova.wav" "$d/fs-prova.wav" >/dev/null 2>&1
+    m_cp "${TAG}-fs:/tmp/rec/prova.wav" "$d/fs-prova.wav" >/dev/null 2>&1
     a=$(medir "$d/fs-prova.wav" 1000)
     if maior "$a" "$PRESENTE"; then ok "o FreeSWITCH gravou os 1000 Hz do softphone (amplitude $a)"
     else bad "o FreeSWITCH NÃO gravou os 1000 Hz do softphone (amplitude $a)"; fi
   fi
-  docker rm -f "${TAG}-a" >/dev/null 2>&1
+  m_rm "${TAG}-a" >/dev/null 2>&1
 
   echo "2) controlo negativo: sem SRTP a chamada tem de ser recusada"
-  perna n "$rede" "$srv" prova - 9999 1000 udp nenhum 5080 5555 42000 "$ip" 15
+  perna n "$rede" "$srv" prova - 9999 1000 udp nenhum 5080 5555 42000 "$esc" 15
   if esperar "${TAG}-n" 'Call established' 8; then
     bad "uma chamada SEM SRTP foi aceite — a variável global rtp_secure_media não está a valer"
   else
     ok "chamada sem SRTP recusada ($(logs "${TAG}-n" | sed -n 's/.*session closed: //p' | head -1))"
   fi
-  docker rm -f "${TAG}-n" >/dev/null 2>&1
+  m_rm "${TAG}-n" >/dev/null 2>&1
 
   echo "3) par de softphones na mesma conferência: cada um ouve o outro, não a si"
-  perna a "$rede" "$srv" prova-a - 8000 1000 udp srtp-mand 5080 5555 42000 "$ip" 25
-  perna b "$rede" "$srv" prova-b - 8000 440  udp srtp-mand 5084 5556 42200 "$ip" 25
+  perna a "$rede" "$srv" prova-a - 8000 1000 udp srtp-mand 5080 5555 42000 "$esc" 25
+  perna b "$rede" "$srv" prova-b - 8000 440  udp srtp-mand 5084 5556 42200 "$esc" 25
   if estabelecida a 20 && estabelecida b 20; then
     sleep 8
-    docker exec "${TAG}-a" sh -c "printf '/hangup\n' | nc -u -w1 127.0.0.1 5555" >/dev/null 2>&1
-    docker exec "${TAG}-b" sh -c "printf '/hangup\n' | nc -u -w1 127.0.0.1 5556" >/dev/null 2>&1
+    m_exec "${TAG}-a" sh -c "printf '/hangup\n' | nc -u -w1 127.0.0.1 5555" >/dev/null 2>&1
+    m_exec "${TAG}-b" sh -c "printf '/hangup\n' | nc -u -w1 127.0.0.1 5556" >/dev/null 2>&1
     recolher a 10; recolher b 10
     verificar_tons a 440 1000
     verificar_tons b 1000 440
@@ -400,7 +426,7 @@ fim_da_chamada() {
 }
 # fs_cli_cluster <comando> — o entrypoint dá ao ESL uma password aleatória
 fs_cli_cluster() {
-  docker exec "${TAG}-fs" sh -c 'fs_cli -p "$(sed -n "s/.*name=\"password\" value=\"\([^\"]*\)\".*/\1/p" /conf/autoload_configs/event_socket.conf.xml)" -x "$0"' "$1" 2>/dev/null
+  m_exec "${TAG}-fs" sh -c 'fs_cli -p "$(sed -n "s/.*name=\"password\" value=\"\([^\"]*\)\".*/\1/p" /conf/autoload_configs/event_socket.conf.xml)" -x "$0"' "$1" 2>/dev/null
 }
 # perfil_cluster <nome do perfil> — «ip:porto» onde escuta, vazio se não está RUNNING
 perfil_cluster() {
@@ -416,10 +442,18 @@ srtp_arranque() {
                || { echo "✗ o compose.yaml já não arranca o FreeSWITCH pelo voice/cluster/freeswitch-entrypoint.sh"; exit 1; } ;;
     cluster) quem="o ConfigMap freeswitch-meet (scripts/cluster-voice.sh)" ;;
   esac
-  docker image inspect "$IMG_FS" >/dev/null 2>&1 \
+  m_imagem_existe "$IMG_FS" \
     || { echo "✗ falta a imagem $IMG_FS (make freeswitch-image, ou FS_IMAGE=<a publicada>)"; exit 1; }
   local d="$WORK/$TAG/fs" ip senha errada=senha-errada segredo f nome n=0 i ram="" ext="" resp v lip
+  local ip_dir ctl=http://127.0.0.1:8181 acl=127.0.0.0/8 esc onde_dir
   ip=$(python3 -c "import ipaddress,sys; print(list(ipaddress.ip_network(sys.argv[1]).hosts())[1])" "$SELFTEST_SUBNET")
+  # Sem espaço de rede partilhado, o andaime tem o seu endereço, e é dele —
+  # e não de loopback — que o FreeSWITCH fala com «o servidor» e que os
+  # softphones chegam ao perfil dos ramais.
+  if [ "$PARTILHA" = 0 ]; then
+    ip_dir=$(python3 -c "import ipaddress,sys; print(list(ipaddress.ip_network(sys.argv[1]).hosts())[2])" "$SELFTEST_SUBNET")
+    ctl=http://$ip_dir:8181; acl=$SELFTEST_SUBNET
+  fi
   senha=$(python3 -c "import secrets; print(secrets.token_hex(12))")
   segredo=$(python3 -c "import secrets; print(secrets.token_hex(32))")
   mkdir -p "$d/meet" "$d/entrypoint"
@@ -429,27 +463,28 @@ srtp_arranque() {
   done < <("ficheiros_$origem")
   [ "$n" -gt 0 ] || { echo "✗ não encontrei os ficheiros que $quem monta em /meet"; exit 1; }
   cp voice/cluster/freeswitch-entrypoint.sh "$d/entrypoint/"
-  docker network create --internal --subnet "$SELFTEST_SUBNET" "${TAG}-net" >/dev/null \
-    || { echo "✗ não consegui criar a rede interna $SELFTEST_SUBNET (SOFTPHONE_SELFTEST_SUBNET para outra)"; exit 1; }
+  rede_da_prova \
+    || { echo "✗ não consegui criar a rede $SELFTEST_SUBNET (SOFTPHONE_SELFTEST_SUBNET para outra)"; exit 1; }
   # O ambiente é o do contentor do FreeSWITCH (compose.yaml e
   # deploy/k8s/cluster/voice.yaml dão-lhe o mesmo), com os endereços do
-  # servidor trocados por loopback. Numa rede sem saída o FreeSWITCH fica em
-  # 127.0.0.1, e por isso a lista de acesso dos ramais é a de loopback.
-  docker create --name "${TAG}-fs" --network "${TAG}-net" --ip "$ip" \
-    -e DELONIX_CONTROL_URL=http://127.0.0.1:8181 \
-    -e DELONIX_RAMAIS_SIP_PORT="$PORTO_RAMAIS" -e VOICE_INTERNAL_SECRET="$segredo" -e DELONIX_RAMAIS_ACL=127.0.0.0/8 \
-    --entrypoint sh "$IMG_FS" /entrypoint/freeswitch-entrypoint.sh >/dev/null
-  docker cp "$d/meet" "${TAG}-fs:/meet" >/dev/null
-  docker cp "$d/entrypoint" "${TAG}-fs:/entrypoint" >/dev/null
-  docker start "${TAG}-fs" >/dev/null
+  # servidor trocados pelos do andaime. No docker, numa rede sem saída, o
+  # FreeSWITCH fica em 127.0.0.1, e por isso a lista de acesso dos ramais é a
+  # de loopback; no delonix fica no seu endereço, e a lista é a rede da prova.
+  m_cria "${TAG}-fs" "$M_NET" "${TAG}-net" --ip "$ip" \
+    -e DELONIX_CONTROL_URL="$ctl" \
+    -e DELONIX_RAMAIS_SIP_PORT="$PORTO_RAMAIS" -e VOICE_INTERNAL_SECRET="$segredo" -e DELONIX_RAMAIS_ACL="$acl" \
+    -- "$IMG_FS" 'exec sh /entrypoint/freeswitch-entrypoint.sh'
+  m_cp "$d/meet" "${TAG}-fs:/meet" >/dev/null
+  m_cp "$d/entrypoint" "${TAG}-fs:/entrypoint" >/dev/null
+  m_arranca "${TAG}-fs" >/dev/null
   for i in $(seq 1 60); do
-    [ "$(docker inspect -f '{{.State.Running}}' "${TAG}-fs" 2>/dev/null)" = true ] || break
+    m_a_correr "${TAG}-fs" || break
     ram=$(perfil_cluster internal); ext=$(perfil_cluster external)
     [ -n "$ram" ] && [ -n "$ext" ] && break
     sleep 1
   done
   echo "configuração: a que o voice/cluster/freeswitch-entrypoint.sh monta, com os $n ficheiros que $quem põe em /meet, em $IMG_FS"
-  echo "andaime: um servidor que responde a tudo com o directório de um só ramal (como o ramais.rs) e guarda os pedidos; lista de acesso dos ramais em loopback"
+  echo "andaime: um servidor que responde a tudo com o directório de um só ramal (como o ramais.rs) e guarda os pedidos; lista de acesso dos ramais: $acl ($MOTOR)"
   if [ -z "$ram" ] || [ -z "$ext" ]; then
     bad "o FreeSWITCH do entrypoint não pôs os dois perfis a correr (internal=«$ram» external=«$ext»)"
     logs "${TAG}-fs" | tail -8 | sed 's/^/       /'
@@ -510,63 +545,65 @@ nc -l -k -p "$p" <&3 | while :; do
   cat /resposta >&3
 done
 SH
-  docker create --name "${TAG}-dir" --network "container:${TAG}-fs" --user 0 --entrypoint sh "$IMG_BS" \
-    -c 'sh /servidor.sh 8180 & sh /servidor.sh 8181 & wait' >/dev/null
-  docker cp "$d/resposta" "${TAG}-dir:/resposta" >/dev/null
-  docker cp "$d/servidor.sh" "${TAG}-dir:/servidor.sh" >/dev/null
+  onde_dir=(--network "container:${TAG}-fs")
+  [ "$PARTILHA" = 1 ] || onde_dir=("$M_NET" "${TAG}-net" --ip "$ip_dir")
+  m_cria "${TAG}-dir" "${onde_dir[@]}" --user 0 -- "$IMG_BS" \
+    'sh /servidor.sh 8180 & sh /servidor.sh 8181 & wait'
+  m_cp "$d/resposta" "${TAG}-dir:/resposta" >/dev/null
+  m_cp "$d/servidor.sh" "${TAG}-dir:/servidor.sh" >/dev/null
   rm -f "$d/resposta"
-  docker start "${TAG}-dir" >/dev/null
-  local rede="container:${TAG}-fs"
+  m_arranca "${TAG}-dir" >/dev/null
+  local rede; rede=$(onde_ligam); esc=$(escuta "$lip")
 
   echo "1) ramais: com SRTP e a password ERRADA a chamada não entra"
-  perna e "$rede" "$ram" prova errada "$DESTINO_REAL" 1000 udp srtp-mand 5082 5555 42000 "$lip" 20
+  perna e "$rede" "$ram" prova errada "$DESTINO_REAL" 1000 udp srtp-mand 5082 5555 42000 "$esc" 20
   resp=$(fim_da_chamada e 15)
   case "$resp" in
     401*|403*|407*) ok "password errada: recusada ($resp)" ;;
     *) bad "com a password errada a chamada não foi recusada pela autenticação ($resp)" ;;
   esac
-  docker rm -f "${TAG}-e" >/dev/null 2>&1
+  m_rm "${TAG}-e" >/dev/null 2>&1
 
   echo "2) ramais, controlo positivo: com a password certa e COM SRTP, a chamada passa a negociação"
-  perna p "$rede" "$ram" prova senha "$DESTINO_REAL" 1000 udp srtp-mand 5082 5555 42000 "$lip" 25
+  perna p "$rede" "$ram" prova senha "$DESTINO_REAL" 1000 udp srtp-mand 5082 5555 42000 "$esc" 25
   resp=$(fim_da_chamada p 20)
   case "$resp" in
     estabelecida) ok "com SRTP: chamada estabelecida" ;;
     488*|401*|403*|407*|"sem resposta"*) bad "com SRTP a chamada não passou a autenticação e a negociação ($resp) — o controlo negativo abaixo não prova nada" ;;
     *) ok "com SRTP: autenticada e negociada; quem a fechou foi o plano de marcação ($resp)" ;;
   esac
-  docker rm -f "${TAG}-p" >/dev/null 2>&1
+  m_rm "${TAG}-p" >/dev/null 2>&1
 
   echo "3) ramais, controlo negativo: a MESMA chamada sem SRTP tem de levar 488"
-  perna n "$rede" "$ram" prova senha "$DESTINO_REAL" 1000 udp nenhum 5082 5555 42000 "$lip" 25
+  perna n "$rede" "$ram" prova senha "$DESTINO_REAL" 1000 udp nenhum 5082 5555 42000 "$esc" 25
   resp=$(fim_da_chamada n 20)
   case "$resp" in
     488*) ok "sem SRTP: recusada ($resp)" ;;
     estabelecida) bad "uma chamada SEM SRTP ao perfil dos ramais foi ACEITE" ;;
     *) bad "sem SRTP: a chamada não levou 488, levou «$resp»" ;;
   esac
-  docker rm -f "${TAG}-n" >/dev/null 2>&1
+  m_rm "${TAG}-n" >/dev/null 2>&1
 
   echo "4) dial-in, controlo positivo: COM SRTP a chamada é atendida pelo IVR"
-  perna q "$rede" "$ext" tronco - "$DESTINO_DIALIN" 1000 udp srtp-mand 5082 5555 42000 "$lip" 25
+  perna q "$rede" "$ext" tronco - "$DESTINO_DIALIN" 1000 udp srtp-mand 5082 5555 42000 "$esc" 25
   resp=$(fim_da_chamada q 20)
   case "$resp" in
     estabelecida) ok "com SRTP: chamada estabelecida"
                   sleep 2; dtmf q 5555 "$PIN_DIALIN"; sleep 4 ;;   # o IVR valida o PIN no servidor
     *) bad "com SRTP a chamada ao dial-in não foi atendida ($resp) — o controlo negativo abaixo não prova nada" ;;
   esac
-  docker rm -f "${TAG}-q" >/dev/null 2>&1
+  m_rm "${TAG}-q" >/dev/null 2>&1
 
   echo "5) dial-in, controlo negativo: a MESMA chamada sem SRTP tem de levar 488"
-  perna m "$rede" "$ext" tronco - "$DESTINO_DIALIN" 1000 udp nenhum 5082 5555 42000 "$lip" 25
+  perna m "$rede" "$ext" tronco - "$DESTINO_DIALIN" 1000 udp nenhum 5082 5555 42000 "$esc" 25
   resp=$(fim_da_chamada m 20)
   case "$resp" in
     488*) ok "sem SRTP: recusada ($resp)" ;;
     estabelecida) bad "uma chamada SEM SRTP ao dial-in foi ACEITE" ;;
     *) bad "sem SRTP: a chamada não levou 488, levou «$resp»" ;;
   esac
-  docker rm -f "${TAG}-m" >/dev/null 2>&1
-  v=$(docker exec "${TAG}-fs" grep -ac 'Crypto not negotiated but required' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  m_rm "${TAG}-m" >/dev/null 2>&1
+  v=$(m_exec "${TAG}-fs" grep -ac 'Crypto not negotiated but required' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-0}" -ge 2 ]; then ok "o FreeSWITCH registou a razão das duas recusas: «Crypto not negotiated but required»"
   else bad "o FreeSWITCH registou «Crypto not negotiated but required» ${v:-0} vez(es), não duas"; fi
 
@@ -574,7 +611,7 @@ SH
   # Os registos de chamada (mod_json_cdr) saem quando a chamada ACABA: os
   # softphones foram removidos sem desligar, por isso desliga-se tudo aqui.
   fs_cli_cluster "hupall" >/dev/null; sleep 4
-  docker exec "${TAG}-dir" sh -c 'cat /pedidos-8180 /pedidos-8181 2>/dev/null' | tr -d '\r' > "$d/pedidos"
+  m_exec "${TAG}-dir" sh -c 'cat /pedidos-8180 /pedidos-8181 2>/dev/null' | tr -d '\r' > "$d/pedidos"
   while IFS='|' read -r veredicto texto; do
     if [ "$veredicto" = ok ]; then ok "$texto"; else bad "$texto"; fi
   done < <(python3 - "$d/pedidos" "$segredo" "$PIN_DIALIN" "$DESTINO_DIALIN" <<'PY'
@@ -653,22 +690,22 @@ sai(bool(cdrs) and not com_pin,
     else "%d dos %d registos de chamada levam o PIN marcado" % (len(com_pin), len(cdrs)))
 PY
   )
-  v=$(docker exec "${TAG}-fs" grep -ac "$segredo" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  v=$(m_exec "${TAG}-fs" grep -ac "$segredo" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-1}" -eq 0 ]; then ok "o segredo de voz não aparece no freeswitch.log"
   else bad "o segredo de voz aparece $v vez(es) no freeswitch.log"; fi
-  v=$(docker exec "${TAG}-fs" grep -ac "\"pin\":\"$PIN_DIALIN\"" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  v=$(m_exec "${TAG}-fs" grep -ac "\"pin\":\"$PIN_DIALIN\"" /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-1}" -eq 0 ]; then ok "o PIN marcado não aparece no freeswitch.log"
   else bad "o PIN marcado aparece $v vez(es) no freeswitch.log"; fi
   # Nem dígito a dígito: sem `sensitive_dtmf` o FreeSWITCH escreve uma linha
   # «RECV DTMF <dígito>» por tecla, e o PIN lê-se de cima para baixo.
-  v=$(docker exec "${TAG}-fs" grep -ac 'RECV DTMF' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
+  v=$(m_exec "${TAG}-fs" grep -ac 'RECV DTMF' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log)
   if [ "${v:-1}" -eq 0 ]; then ok "os dígitos marcados não aparecem no freeswitch.log (nenhuma linha «RECV DTMF»)"
   else bad "o freeswitch.log tem $v linha(s) «RECV DTMF»: o PIN lê-se dígito a dígito"; fi
   # O freeswitch.xml.fsxml (a configuração expandida, com o segredo) não pode
   # estar no directório de logs: o arranque manda-o para um directório privado.
-  v=$(docker exec "${TAG}-fs" sh -c "grep -rl -a '$segredo' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")
+  v=$(m_exec "${TAG}-fs" sh -c "grep -rl -a '$segredo' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")
   if [ "${v:-1}" -eq 0 ]; then ok "nenhum ficheiro do directório de logs traz o segredo de voz"
-  else bad "$v ficheiro(s) do directório de logs trazem o segredo de voz: $(docker exec "${TAG}-fs" sh -c "grep -rl -a '$segredo' /usr/local/freeswitch/var/log" | tr '\n' ' ')"; fi
+  else bad "$v ficheiro(s) do directório de logs trazem o segredo de voz: $(m_exec "${TAG}-fs" sh -c "grep -rl -a '$segredo' /usr/local/freeswitch/var/log" | tr '\n' ' ')"; fi
   rm -f "$d/pedidos"
 }
 
@@ -704,7 +741,7 @@ enviar_pin() {  # enviar_pin <nome> <porto da consola>
   [ -n "$PIN" ] || return 0
   sleep "$ESPERA_PIN"; dtmf "$1" "$2" "$PIN#"
 }
-desligar() { docker exec "${TAG}-$1" sh -c "printf '/hangup\n' | nc -u -w1 127.0.0.1 $2" >/dev/null 2>&1; }
+desligar() { m_exec "${TAG}-$1" sh -c "printf '/hangup\n' | nc -u -w1 127.0.0.1 $2" >/dev/null 2>&1; }
 
 chamada() {
   argumentos "$@"
@@ -741,7 +778,13 @@ par() {
 [ $# -ge 1 ] || uso 2
 modo=$1; shift
 case "$modo" in -h|--help|ajuda) uso 0 ;; esac
-command -v docker >/dev/null 2>&1 || { echo "✗ precisa de docker (o softphone e o FreeSWITCH do selftest correm em contentores)"; exit 1; }
+# `medir <ficheiro.wav> <Hz>` — só a medição, para outra prova a usar com uma
+# gravação sua (scripts/troncos-prova.sh mede o que a operadora de ensaio ouviu).
+if [ "$modo" = medir ]; then
+  trap - EXIT
+  [ $# -eq 2 ] && [ -f "$1" ] || { echo "✗ uso: medir <ficheiro.wav> <Hz>"; exit 2; }
+  medir "$1" "$2"; exit 0
+fi
 command -v python3 >/dev/null 2>&1 || { echo "✗ precisa de python3 (gera e mede os tons)"; exit 1; }
 mkdir -p "$WORK/$TAG"
 imagem_baresip

@@ -69,7 +69,8 @@ WebRTC. O caminho, de ponta a ponta:
 3. o Lua faz `bridge` para esse URI, com as variáveis no **prefixo `[k=v,…]` da dial
    string** — no canal A elas não chegam à perna B;
 4. o UA SIP da ponte atende (`phone_bridge::sip`), negoceia SDES-SRTP **no SDP, por
-   chamada**, e transcodifica G.711↔Opus;
+   chamada**, e fala o primeiro codec da oferta que souber: Opus ou G.711 (ver «A perna
+   em Opus», abaixo);
 5. a perna publica no SFU (`sfu::PubSource::Bridge`) e recebe a mistura **menos a
    própria voz**.
 
@@ -78,6 +79,47 @@ arranca; com `PHONE_BRIDGE_FREESWITCH_IPS` vazio também não; uma oferta sem `a
 leva `488` (`phone_bridge/sip.rs:547`). Em qualquer falha o IVR **cai na conferência
 local** — um chamador nunca fica de fora por causa da ponte. As chaves SRTP são por
 chamada e negoceiam-se no SDP: **nunca** em JSON, em variáveis de canal ou em log.
+
+### A perna em Opus (ADR-0018, R296) — medida contra o FreeSWITCH real
+
+O servidor manda `absolute_codec_string=OPUS,PCMA` na dial string, e o UA responde com o
+primeiro que souber. `PHONE_BRIDGE_WIDEBAND=0` repõe `PCMA` sem reconstruir nada (e um
+valor que não se perceba também desliga).
+
+- **Telefone → sala:** o pacote Opus do FreeSWITCH passa INTACTO para a sala
+  (`audio::Passthrough`). A ponte só o valida (tecto de 600 bytes, tem de descodificar),
+  mede-lhe o nível, e não deixa sair atrasados nem repetidos. O relógio de saída segue o
+  da origem — é a única marca do tempo que chega aos browsers, porque o SFU renumera a
+  sequência do áudio.
+- **Sala → telefone:** `Mixer::wideband` (16 kHz) e um `MixEncoder` (Opus de banda larga,
+  taxa CONSTANTE de 32 kbps — em taxa variável o `opus-rs` ignora o alvo).
+- **O misturador descodifica sempre a 16 kHz**, e desce a soma para 8 kHz com um
+  passa-baixo numa perna G.711. Pedir 8 kHz ao `opus-rs` dobrava os agudos de um pacote
+  SILK de banda larga para dentro da banda do telefone.
+
+**Quatro coisas que a chamada real ensinou, e que não se reabrem sem medir outra vez:**
+
+1. **A resposta SDP não pede FEC** (`useinbandfec=0`) **nem anuncia taxa de captura.** Com
+   FEC, a libopus do FreeSWITCH codifica em banda média para ele caber, e o `opus-rs`
+   (0.1.33 e 0.1.34) lê mal a banda média a qualquer taxa: um tom chegava de um telefone
+   ao outro 8,6 dB abaixo. O misturador deixa esses pacotes de fora (`unsupported` no
+   fecho da perna) em vez de os tocar.
+2. **Um valor com vírgula na dial string tem de ser escapado** — o `dialin_ivr.lua` fá-lo.
+   Sem isso o FreeSWITCH ficava só com `OPUS`.
+3. **O `Contact` não leva `0.0.0.0`.** Com o UA à escuta em todas as interfaces, o `BYE`
+   não chegava: quem desligava continuava na sala e a perna nunca fechava.
+4. **A ponte é entregue ao IVR também com o FreeSWITCH por NOME.** `room_bridge_for` só
+   olhava para os IPs literais.
+
+**Segurança:** em Opus, os bytes de um softphone chegam aos browsers, à gravação e às outras
+pernas sem serem recodificados por nós; o validador não é uma fronteira (ADR-0018
+§Segurança). As três barras continuam à frente dele: allowlist, SRTP, e o tipo de payload
+negociado.
+
+**Por medir, e não o dês por feito:** uma chamada de um softphone que fale Opus (os da prova
+falam G.711: provam a negociação, o nível, o mix-minus e o fecho da perna, tudo medido a
+2026-10-05 — não a banda larga), e a mesma chamada ouvida num browser; a gravação de uma perna em Opus; o palco
+(R225) nesse codec.
 
 ### O telefone no censo da sala (#135, R224)
 
@@ -314,8 +356,37 @@ Agora o `voice/cluster/freeswitch-entrypoint.sh` liga-a no compose, no cluster e
 - um ciclo de `sofia profile external rescan` (`DELONIX_TRUNKS_RESCAN_SECS`, 60 s): um
   tronco novo regista-se sozinho, e um arranque com o servidor em baixo recupera.
 
-**Não o dês por feito além disto:** nenhum perfil leva um ramal ou uma central ao
-`delonix-outbound` — um cliente ainda não faz uma chamada para a rede pública (T2); um
+**Um ramal sai para a rede pública (R292).** O `ramais_dial.lua` manda ao servidor o que o
+digest autenticou (`sip_auth_username`, `sip_auth_realm`), e o `resolve-extension` decide,
+por esta ordem: número de acesso às reuniões → emergência (sai sempre, basta o ramal
+activo) → outro ramal → o plano de marcação da organização do ramal AUTENTICADO, só se a
+regra for de saída. Tudo o resto é «não existe». O Lua põe `delonix_org_id` no canal e
+transfere para `delonix-outbound`. Sete coisas que custaram, e não se reabrem:
+- a organização que paga vem da identidade autenticada (`voice::authenticated_extension`),
+  nunca do `From` nem do `domain` do pedido;
+- a perna de quem marca tem `process_cdr=false`, e o FreeSWITCH **copia esse valor para a
+  perna que ela origina, depois das variáveis da dial string**: a perna do tronco volta a
+  ligá-lo em si própria (`execute_on_originate=set process_cdr=true`), senão a chamada sai
+  e não se cobra;
+- o `dialplan-did` só responde ao contexto `public`: a pergunta é feita em todos os
+  contextos e a resposta só tem aquele;
+- os dois perfis recusam `REFER` e a perna do tronco não segue um 3xx: uma transferência
+  pedida pelo ramal punha a perna do TRONCO outra vez no plano de marcação — segunda
+  chamada por conta da organização, e a primeira sem registo (medido);
+- a perna do tronco perde a cópia do SDP do ramal (`unset switch_m_sdp`) DUAS vezes — ao
+  nascer e quando a ponte acaba —, porque o FreeSWITCH volta a escrevê-la a cada SDP novo
+  do ramal (espera/retoma), e o registo dela levava a chave SRTP dele (medido). Um
+  `api_hangup_hook=uuid_setvar …` NÃO serve: `${uuid}` expande-se na perna de quem marca, e
+  uma sessão desligada não se localiza (medido, duas vezes). A ingestão nunca ignora um
+  registo com gateway;
+- nenhuma perna originada segue um 3xx (`outbound_redirect_fatal` global, no arranque);
+- a organização que paga é só a variável que nós pomos no canal — nunca o host do pedido.
+
+**Não o dês por feito além disto:** só o RAMAL chega ao `delonix-outbound` — uma central
+(ADR-0016) ainda não marca para fora; um ramal não transfere (de propósito, até a
+transferência ser desenhada); o 112 depende de o servidor responder; à operadora apresenta-se o número curto do ramal, não
+um número que a organização possua (T6); não há tecto de gasto nem alarme (T8): um ramal
+com a password roubada liga para tudo o que o plano de marcação deixar. Um
 tronco alterado ou apagado só se actualiza reiniciando o FreeSWITCH, porque o `killgw` vai
 pelo ESL, fechado em loopback (T11) — e por isso a consola não mostra o estado do registo
 nem faz a «chamada de teste»; nenhuma operadora de verdade, e nenhuma chamada por tronco
@@ -335,11 +406,13 @@ segunda perna SIP** — e é por isso que o shim vive do nosso lado.
 
 | O que mexeste | Portão |
 |---|---|
-| Qualquer coisa em `phone_bridge/` | `cargo test --lib phone_bridge::` (38 unitários: G.711, SRTP, SDP, mistura, jitter, qualidade) |
+| Qualquer coisa em `phone_bridge/` | `cargo test --lib phone_bridge::` (61 unitários: G.711, SRTP, SDP e negociação de codec, mistura, descida para 8 kHz, passagem de Opus, pacotes hostis, jitter, qualidade) |
+| A perna em Opus | `cargo test --lib ponte_em_opus -- --nocapture` (ADR-0018 — 5 e 6 kHz nos dois sentidos, payloads intactos, silenciar e voltar) e `cargo test --test ramal_entra_na_sala` contra Postgres (a ordem dos codecs, o interruptor, a ponte por nome) |
+| A perna em Opus contra o FreeSWITCH real | `bash scripts/softphone-prova.sh par` contra o compose, com dois ramais — **fora do CI**: cada softphone ouve o tom do outro a ~0,25 e as duas pernas FECHAM quando desligam («ponte: perna fechada» no log do servidor) |
 | O caminho da media | `cargo test --lib ponte_telefone_sala -- --nocapture` (R221 — imprime atraso por sentido, mix-minus e CPU por chamada) |
 | O censo e o `ForceMute` | `cargo test --lib force_mute_cala_o_telefone_na_perna` (R224 — o tom desaparece e **volta**) |
 | O palco (`Spotlight`, `StageControl`, `pinned`) | `cargo test --lib destacar_fixa_o_audio_no_sfu` e `cargo test --lib palco_impede_o_selector -- --nocapture` (R225 — suprimido, e fixado **volta**) |
-| Os troncos no arranque do FreeSWITCH (`freeswitch-entrypoint.sh`, `xml_curl.conf.xml`, `json_cdr.conf.xml`, a ingestão de CDR) | `bash scripts/troncos-prova.sh` — **fora do CI** (R291: tronco registado numa operadora de ensaio, chamada com custo e MOS, reinícios, e o controlo do `204`); mais `softphone-prova.sh srtp-real` |
+| Os troncos no arranque do FreeSWITCH (`freeswitch-entrypoint.sh`, `xml_curl.conf.xml`, `json_cdr.conf.xml`, a ingestão de CDR), e o caminho de um ramal para fora (`ramais_dial.lua`, `00_delonix_extensions.xml`, `ivr_resolve_extension`, a dial string do tronco) | `bash scripts/troncos-prova.sh` — **fora do CI** (R291: tronco registado numa operadora de ensaio, chamada com custo e MOS, reinícios, e o controlo do `204`; R292: um softphone autenticado liga para fora e para o 112, áudio nos dois sentidos, e as recusas); mais `softphone-prova.sh srtp-real`. A regra do servidor: `cargo test --release --test telephony` |
 | Troncos, plano de marcação, CDR, custo, credenciais | `cargo test --release --test telephony -- --test-threads=4` contra Postgres real (14 casos; precisa de `DATABASE_URL`) + os unitários do domínio |
 | Uma rota `/telephony` | os portões de `delonix-meet-api`, com o caso negativo em `web/e2e/isolamento.mjs` |
 | A cadeia toda da ponte | a prova real da R222, abaixo — **fora do CI** |
@@ -373,7 +446,9 @@ bash scripts/fs-canais.sh down
 
 **Os troncos na configuração distribuída (R291):** `bash scripts/troncos-prova.sh`, com
 `SERVER_IMAGE` (a do `make image`) ou `SERVER_BIN=<binário da árvore>`. Ergue uma réplica
-própria, mede e desmonta; não toca no laboratório.
+própria, mede e desmonta; não toca no laboratório. Corre no delonix se existir, senão no
+docker (`MOTOR=`); o que os dois motores têm de diferente está em `scripts/motor.sh`, e é
+por ele que as provas falam com contentores — nunca `docker …` directo.
 
 **A telefonia com o ESL (ADR-0009):** o comando está em
 [`voice/freeswitch/telefonia-prova/README.md`](../../../voice/freeswitch/telefonia-prova/README.md)

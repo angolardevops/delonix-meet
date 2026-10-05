@@ -2,6 +2,7 @@ import { CSSProperties, memo, ReactNode, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../ui/icons'
 import { avatarTone, cx, initials } from '../ui/kit'
+import { Menu, useMenuDeContexto, type AccaoDeMenu, type EventoDePonteiro } from '../ui/Menu'
 import type { Role } from '../signaling'
 import type { RemotePeer } from './useRoomCore'
 
@@ -68,6 +69,7 @@ export function TileFrame({
   width,
   height,
   onDoubleClick,
+  onContextMenu,
   children,
 }: {
   kind: 'local' | 'remoto'
@@ -79,6 +81,8 @@ export function TileFrame({
   width?: number
   height?: number
   onDoubleClick: () => void
+  /** Botão direito (e a tecla ☰): abre o menu de acções deste retrato. */
+  onContextMenu?: (e: EventoDePonteiro) => void
   children: ReactNode
 }) {
   const { t } = useTranslation()
@@ -92,6 +96,7 @@ export function TileFrame({
       data-peer-id={peerId}
       style={style}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       title={t('room.tile.duploCliqueFixa')}
     >
       {children}
@@ -155,6 +160,37 @@ export function ParticipantTileBase({
   const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
   const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
   const role = rotuloPapel(t, peer.host ? 'host' : peer.role)
+
+  // As mesmas acções dos botões que aparecem com o rato por cima — num menu
+  // que também se abre com a tecla ☰, e que no telemóvel é o único caminho
+  // (não há `hover` num ecrã táctil).
+  const menu = useMenuDeContexto()
+  const nome = peer.username
+  const accoes: AccaoDeMenu[] = [
+    {
+      id: 'fixar',
+      label: pinned ? t('room.tile.desafixar', { nome }) : t('room.tile.fixar', { nome }),
+      icon: 'pin',
+      marcado: pinned,
+      onPick: () => onPin(peer.peerId),
+    },
+  ]
+  if (isHost && onSpotlight) {
+    accoes.push({
+      id: 'destaque',
+      label: spotlit ? t('room.tile.desafixarParaTodos', { nome }) : t('room.tile.fixarParaTodos', { nome }),
+      icon: 'people',
+      marcado: !!spotlit,
+      onPick: () => onSpotlight(spotlit ? null : peer.peerId),
+    })
+  }
+  if (isHost && !peer.host) {
+    accoes.push(
+      { id: 'silenciar', label: t('room.tile.silenciar', { nome }), icon: 'micOff', onPick: () => onMute(peer.peerId) },
+      { id: 'remover', label: t('room.tile.remover', { nome }), icon: 'x', perigo: true, onPick: () => onKick(peer.peerId) },
+    )
+  }
+
   return (
     <TileFrame
       kind="remoto"
@@ -166,7 +202,11 @@ export function ParticipantTileBase({
       width={width}
       height={height}
       onDoubleClick={() => onPin(peer.peerId)}
+      onContextMenu={menu.abrir}
     >
+      <Menu ponto={menu.ponto} accoes={accoes} label={t('room.tile.accoes', { nome })} onFechar={menu.fechar}>
+        {nome}
+      </Menu>
       {/* O <video> nunca desmonta: esconde-se, para não perder o srcObject. */}
       <video ref={ref} autoPlay playsInline muted className={cx('rm-tile__video', !hasVideo && 'is-hidden')} />
       {!hasVideo && <TileAvatar name={peer.username} />}

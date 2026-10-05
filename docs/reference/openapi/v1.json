@@ -1547,6 +1547,19 @@
         ],
         "type": "object"
       },
+      "CreateDialOutReq": {
+        "properties": {
+          "extension_id": {
+            "description": "O ramal a fazer tocar (um ramal activo de uma organização do anfitrião, com `sessions.dial_out`).",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "extension_id"
+        ],
+        "type": "object"
+      },
       "CreateDidReq": {
         "properties": {
           "e164": {
@@ -2777,6 +2790,100 @@
         "required": [
           "number",
           "pin"
+        ],
+        "type": "object"
+      },
+      "DialOutPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DialOutView"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "DialOutView": {
+        "properties": {
+          "answered_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "billsec": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ended_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "extension": {
+            "description": "O número curto do ramal, quando ainda existe.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "extension_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_code": {
+            "description": "Causa estável quando falhou (`USER_NOT_REGISTERED`, `stale`…).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "status": {
+            "description": "`queued` | `dialing` | `ringing` | `in_call` | `ended` | `declined` |\n`no_answer` | `failed` | `cancelled`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "room_code",
+          "status",
+          "created_at"
         ],
         "type": "object"
       },
@@ -4759,6 +4866,10 @@
       },
       "MediaNode": {
         "properties": {
+          "accepting_new_rooms": {
+            "description": "Este nó aceita salas NOVAS de QUALQUER inquilino agora: está a servir (nem\na drenar nem sem batimento) e abaixo do limite de ocupação\n(`NEW_ROOM_LOAD_PERCENT`). Acima dele só aceita as de quem ainda está\nabaixo da sua parte justa, e isso decide-se por pedido, não aqui.\nCalculado do último batimento, por isso pode atrasar até um intervalo\n(15 s) face ao que o nó decide à entrada.",
+            "type": "boolean"
+          },
           "edition": {
             "type": "string"
           },
@@ -4828,7 +4939,8 @@
           "rooms",
           "peers",
           "ws_connections",
-          "live_broadcasts"
+          "live_broadcasts",
+          "accepting_new_rooms"
         ],
         "type": "object"
       },
@@ -9572,6 +9684,27 @@
           "title",
           "minutes",
           "transcript"
+        ],
+        "type": "object"
+      },
+      "RoomPage": {
+        "description": "Uma página de salas, no formato de listagem do ADR-0004 §4.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Room"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },

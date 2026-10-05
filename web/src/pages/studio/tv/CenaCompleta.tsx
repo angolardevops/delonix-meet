@@ -18,7 +18,7 @@ import { alturaDoMedidor, formatarDb } from '../../../studio/tv/som'
 import { cx } from '../../../ui/kit'
 import { CartaoDoBarramento, LugarVazio, type PropsDoEcra, SelosDoAr, useNomeDaFonte } from './comum'
 import { ALVO_LUFS } from './MesaDeSomEcra'
-import { BarrasDeNivel, Desde, duracao, Espaco, Fader, Medidor, MonitorDePlano, MonitorDoPrograma, TopoTv, useTique } from './pecas'
+import { BarrasDeNivel, BotaoTv, Cabeca, Cartao, Desde, duracao, Espaco, Fader, Medidor, MonitorDePlano, MonitorDoPrograma, TopoTv, useTique } from './pecas'
 
 interface ItemDoAlinhamento {
   titulo: string
@@ -100,17 +100,16 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
           <span ref={custo} />
           {pressao && <span>{` · ${t('tv.cena.cpu', { estado: t(`tv.cena.pressao.${pressao}`) })}`}</span>}
         </span>
-        <button type="button" className="tv-botao" onClick={() => c.onNavegar(null)}>
+        <BotaoTv onClick={() => c.onNavegar(null)}>
           {t('tv.nav.cenas')}
-        </button>
+        </BotaoTv>
         {confirmar ? (
           <>
-            <button type="button" className="tv-botao" onClick={() => setConfirmar(false)}>
+            <BotaoTv onClick={() => setConfirmar(false)}>
               {t('tv.cena.cancelar')}
-            </button>
-            <button
-              type="button"
-              className="tv-botao tv-botao--rec"
+            </BotaoTv>
+            <BotaoTv
+              variante="rec"
               data-tv="confirmar-terminar"
               disabled={aTerminar}
               onClick={async () => {
@@ -124,12 +123,12 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
               }}
             >
               {t('tv.cena.confirmarTerminar')}
-            </button>
+            </BotaoTv>
           </>
         ) : (
-          <button type="button" className="tv-botao tv-botao--rec" data-tv="terminar" disabled={!noAr} title={noAr ? undefined : t('tv.cena.naoNoAr')} onClick={() => setConfirmar(true)}>
+          <BotaoTv variante="rec" data-tv="terminar" disabled={!noAr} title={noAr ? undefined : t('tv.cena.naoNoAr')} onClick={() => setConfirmar(true)}>
             {t('tv.cena.terminar')}
-          </button>
+          </BotaoTv>
         )}
       </TopoTv>
 
@@ -150,14 +149,14 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
               )
             })}
           </ul>
-          <div className="tv-cartao tv-cartao--nota" style={{ marginTop: 'auto', padding: 8, gap: 4 }}>
+          <Cartao variante="nota" style={{ marginTop: 'auto', padding: 8, gap: 4 }}>
             <span className="tv-t3" style={{ fontSize: 9.5 }}>
               {t('tv.cena.resumoFontes', { camaras: nCamaras, pessoas: nPessoas })}
             </span>
             <span className="tv-nota" style={{ fontSize: 8.5 }}>
               {t('tv.cena.resumoFontesNota')}
             </span>
-          </div>
+          </Cartao>
         </aside>
 
         <section className="tv-centro" aria-label={t('tv.cena.rotulo')}>
@@ -195,7 +194,7 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
                   <MonitorDePlano fontes={s.registo} plano={m.previa} />
                 </div>
               </div>
-              <section className="tv-cartao tv-cartao--painel" style={{ flex: 1, minHeight: 0, padding: 10, gap: 7 }} aria-label={t('tv.corte.transicao')}>
+              <Cartao como="section" variante="painel" style={{ flex: 1, minHeight: 0, padding: 10, gap: 7 }} aria-label={t('tv.corte.transicao')}>
                 <h2 className="tv-t3">{t('tv.corte.transicao')}</h2>
                 <div className="tv-cortar-auto">
                   <button type="button" className="tv-tbar__botao" disabled={!m.previa} onClick={s.accoes.cortar} data-tv="cena-cortar">
@@ -221,22 +220,22 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
                     </button>
                   ))}
                 </div>
-              </section>
+              </Cartao>
             </div>
           </div>
 
           <div className="tv-cena__baixo">
             <SomResumo s={s} onAbrir={() => c.onNavegar('mesa-de-som')} />
-            <section className="tv-cartao tv-cartao--painel" style={{ padding: 11, gap: 9 }} aria-labelledby="tv-cena-luz-h">
-              <div className="tv-cabeca">
+            <Cartao como="section" variante="painel" style={{ padding: 11, gap: 9 }} aria-labelledby="tv-cena-luz-h">
+              <Cabeca>
                 <h2 id="tv-cena-luz-h" className="tv-t2">
                   {t('tv.cena.luz')}
                 </h2>
                 <span className="tv-mono-85">{t('tv.luz.semAgente')}</span>
-                <button type="button" className="tv-dir tv-botao tv-botao--mini" onClick={() => c.onNavegar('iluminacao')}>
+                <BotaoTv aDireita mini onClick={() => c.onNavegar('iluminacao')}>
                   {t('tv.nav.iluminacao')}
-                </button>
-              </div>
+                </BotaoTv>
+              </Cabeca>
               <div className="tv-rolar" style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
                 {s.registo.lista().length === 0 && <p className="tv-nota">{t('tv.luz.semFontes')}</p>}
                 {s.registo.lista().map((f) => {
@@ -250,19 +249,19 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
                   )
                 })}
               </div>
-              <div className="tv-cabeca tv-mono-85" style={{ marginTop: 'auto' }}>
+              <Cabeca className="tv-mono-85" style={{ marginTop: 'auto' }}>
                 <span>{t('tv.cena.correccaoPorSoftware')}</span>
                 {s.registo.lista().some((f) => s.registo.correccao(f.id).equilibrio.some((x) => x !== 1)) && (
                   <span className="tv-dir tv-ok">{t('tv.cena.brancosAlinhados')}</span>
                 )}
-              </div>
-            </section>
+              </Cabeca>
+            </Cartao>
           </div>
         </section>
 
         <aside className="tv-col tv-col--dir" style={{ gap: 10 }} aria-label={t('tv.cena.alinhamento')}>
           <Alinhamento />
-          <div className="tv-cartao tv-cartao--live" style={{ padding: 9, gap: 4 }} data-tv="destinos">
+          <Cartao variante="live" style={{ padding: 9, gap: 4 }} data-tv="destinos">
             <h2 className="tv-t3" style={{ fontSize: 10, color: 'var(--live-text)' }}>
               {t('tv.cena.destinos')}
             </h2>
@@ -278,15 +277,15 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
                 ))}
               </ul>
             )}
-          </div>
-          <div className="tv-cartao tv-cartao--nota" style={{ marginTop: 'auto', padding: 9, gap: 5 }}>
+          </Cartao>
+          <Cartao variante="nota" style={{ marginTop: 'auto', padding: 9, gap: 5 }}>
             <h3 className="tv-t3" style={{ fontSize: 10 }}>
               {t('tv.cena.tudoNumPc')}
             </h3>
             <p className="tv-nota" style={{ fontSize: 9, lineHeight: 1.5 }}>
               {t('tv.cena.tudoNumPcNota')}
             </p>
-          </div>
+          </Cartao>
         </aside>
       </div>
     </div>
@@ -346,16 +345,16 @@ function SomResumo({ s, onAbrir }: { s: PropsDoEcra['s']; onAbrir: () => void })
   })
   const canais = som?.lista().slice(0, 5) ?? []
   return (
-    <section className="tv-cartao tv-cartao--painel" style={{ padding: 11, gap: 9 }} aria-labelledby="tv-cena-som-h" data-tv="cena-som">
-      <div className="tv-cabeca">
+    <Cartao como="section" variante="painel" style={{ padding: 11, gap: 9 }} aria-labelledby="tv-cena-som-h" data-tv="cena-som">
+      <Cabeca>
         <h2 id="tv-cena-som-h" className="tv-t2">
           {t('tv.cena.som')}
         </h2>
         <span ref={lufs} className="tv-mono-85" />
-        <button type="button" className="tv-dir tv-botao tv-botao--mini" onClick={onAbrir}>
+        <BotaoTv aDireita mini onClick={onAbrir}>
           {t('tv.som.contagem', { count: som?.lista().length ?? 0 })}
-        </button>
-      </div>
+        </BotaoTv>
+      </Cabeca>
       {!som ? (
         <div className="tv-vazio">{s.erroSom || t('tv.som.aLigar')}</div>
       ) : (
@@ -378,7 +377,7 @@ function SomResumo({ s, onAbrir }: { s: PropsDoEcra['s']; onAbrir: () => void })
           </div>
         </div>
       )}
-    </section>
+    </Cartao>
   )
 }
 
@@ -411,20 +410,20 @@ function Alinhamento() {
   const total = estado.itens.reduce((a, b) => a + b.duracaoS, 0)
   return (
     <>
-      <div className="tv-cabeca">
+      <Cabeca>
         <h2 className="tv-t1">{t('tv.cena.alinhamento')}</h2>
         {estado.itens.length > 0 && <span className="tv-mono-85">{duracao(total)}</span>}
-        <button type="button" className="tv-dir tv-botao tv-botao--mini" onClick={() => setAEscrever((v) => !v)}>
+        <BotaoTv aDireita mini onClick={() => setAEscrever((v) => !v)}>
           {t('tv.cena.adicionar')}
-        </button>
-      </div>
+        </BotaoTv>
+      </Cabeca>
       {aEscrever && (
         <form className="tv-form-item" onSubmit={adicionar} data-typing>
           <input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder={t('tv.cena.itemTitulo')} aria-label={t('tv.cena.itemTitulo')} maxLength={80} />
           <input value={minutos} onChange={(e) => setMinutos(e.target.value)} placeholder={t('tv.cena.itemMinutos')} aria-label={t('tv.cena.itemMinutos')} inputMode="decimal" />
-          <button type="submit" className="tv-botao tv-botao--mini tv-botao--accent" disabled={!titulo.trim()}>
+          <BotaoTv mini variante="accent" type="submit" disabled={!titulo.trim()}>
             {t('tv.cena.guardarItem')}
-          </button>
+          </BotaoTv>
         </form>
       )}
       {estado.itens.length === 0 ? (
@@ -448,10 +447,10 @@ function Alinhamento() {
         </ol>
       )}
       {estado.itens.length > 0 && (
-        <div className="tv-cabeca">
-          <button
-            type="button"
-            className="tv-botao tv-botao--mini tv-botao--accent"
+        <Cabeca>
+          <BotaoTv
+            mini
+            variante="accent"
             disabled={estado.actual >= estado.itens.length - 1}
             onClick={() => {
               guardar({ ...estado, actual: estado.actual + 1 })
@@ -459,14 +458,14 @@ function Alinhamento() {
             }}
           >
             {estado.actual < 0 ? t('tv.cena.comecar') : t('tv.cena.seguinte')}
-          </button>
+          </BotaoTv>
           {estado.actual >= 0 && (
-            <button type="button" className="tv-botao tv-botao--mini" onClick={() => (guardar({ ...estado, actual: -1 }), setDesde(0))}>
+            <BotaoTv mini onClick={() => (guardar({ ...estado, actual: -1 }), setDesde(0))}>
               {t('tv.cena.reiniciar')}
-            </button>
+            </BotaoTv>
           )}
           <span className="tv-dir tv-mono-85">{t('tv.cena.noDispositivo')}</span>
-        </div>
+        </Cabeca>
       )}
     </>
   )
