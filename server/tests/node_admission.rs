@@ -2,8 +2,10 @@
 //! NOVAS e continua a admitir quem entra numa sala que já tem, contra Postgres
 //! real e `/ws` a sério.
 //!
-//! Capacidade 10 e limite de 85% (`NEW_ROOM_LOAD_PERCENT`): o nó aceita salas
-//! novas até 8 participantes e deixa de as aceitar a partir de 9.
+//! Capacidade 4 e limite de 85% (`NEW_ROOM_LOAD_PERCENT`): o nó aceita salas
+//! novas até 3 participantes e deixa de as aceitar a partir de 4. Os limites
+//! finos (capacidade 10, 200, sem capacidade) estão no teste de domínio; aqui
+//! pouco chega, e cada ligação `/ws` é real e custa tempo sob carga.
 mod common;
 
 use std::{sync::atomic::Ordering, time::Duration};
@@ -74,24 +76,24 @@ fn refused(app: &TestApp) -> u64 {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn a_full_node_refuses_new_rooms_but_not_the_ones_it_has(db: sqlx::PgPool) {
-    let app = app_with_capacity(db, Some("10")).await;
+    let app = app_with_capacity(db, Some("4")).await;
     let owner = app.new_org("alfa.test").await;
     let sala_a = app.new_room(&owner, "A").await;
     let sala_b = app.new_room(&owner, "B").await;
     let tok_a = room_token(&app, sala_a["code"].as_str().unwrap(), &owner).await;
     let tok_b = room_token(&app, sala_b["code"].as_str().unwrap(), &owner).await;
 
-    // 9 participantes na sala A (a mesma conta em 9 dispositivos): o nó chega ao
-    // limite de 85% de 10.
+    // 4 participantes na sala A (a mesma conta em 4 dispositivos): o nó chega ao
+    // limite de 85% de 4.
     let mut sockets: Vec<Ws> = Vec::new();
-    for i in 0..9 {
+    for i in 0..4 {
         sockets.push(
             connect(&app, &tok_a)
                 .await
                 .unwrap_or_else(|st| panic!("a entrada {i} na sala A foi recusada ({st})")),
         );
     }
-    assert_eq!(app.state.hub.peers_ligados(), 9);
+    assert_eq!(app.state.hub.peers_ligados(), 4);
 
     // Uma sala NOVA é recusada com 503, e conta-se.
     assert_eq!(connect(&app, &tok_b).await.err(), Some(503));
@@ -104,7 +106,7 @@ async fn a_full_node_refuses_new_rooms_but_not_the_ones_it_has(db: sqlx::PgPool)
             .await
             .expect("a sala A tem de admitir"),
     );
-    assert_eq!(app.state.hub.peers_ligados(), 10);
+    assert_eq!(app.state.hub.peers_ligados(), 5);
     assert_eq!(
         refused(&app),
         1,
@@ -132,7 +134,7 @@ async fn without_a_declared_capacity_no_room_is_refused(db: sqlx::PgPool) {
     let tok_b = room_token(&app, sala_b["code"].as_str().unwrap(), &owner).await;
 
     let mut sockets: Vec<Ws> = Vec::new();
-    for _ in 0..12 {
+    for _ in 0..6 {
         sockets.push(
             connect(&app, &tok_a)
                 .await
