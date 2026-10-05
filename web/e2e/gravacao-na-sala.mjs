@@ -12,7 +12,8 @@
 // painel) e verifica:
 //   1. as quatro linhas — a compor, falhada, pronta minha, pronta de outra
 //      pessoa — e que só a pronta minha é um botão;
-//   2. que o progresso e a passagem a «pronta» chegam sem recarregar;
+//   2. que o progresso e a passagem a «pronta» chegam sem recarregar — e que
+//      só quem tem o painel aberto relê;
 //   3. que uma gravação do servidor PARADA NA SALA entra na lista sozinha.
 //      Antes só aparecia a quem voltasse a entrar. Sem ffmpeg (o CI) acaba
 //      falhada, com a causa; com ffmpeg acaba pronta — o teste aceita as
@@ -106,6 +107,14 @@ if (!entrou) {
   process.exit(1)
 }
 
+// Com o painel FECHADO não há releitura de fundo: o hook vive em todos os
+// participantes, e uma sala cheia não pode multiplicar os pedidos de uma
+// gravação a compor. Espera-se mais do que um intervalo de releitura (4 s).
+let releituras = 0
+p.on('request', (r) => { if (/\/api\/recordings\/[^/]+\/details/.test(r.url())) releituras++ })
+await p.waitForTimeout(7000)
+chk(releituras === 0, `painel fechado: nenhuma releitura de fundo da gravação a compor → ${releituras}`)
+
 await p.getByRole('button', { name: /^participantes/i }).first().click({ timeout: 30000 })
 await p.locator('.rm-rec').first().waitFor({ timeout: 30000 }).catch(() => {})
 // A API, lida só DEPOIS de o painel ter linhas: é a prova de que a entrada na
@@ -157,6 +166,7 @@ const viu80 = await p.waitForFunction(
   nomes.compor, { timeout: 20000 },
 ).then(() => true, () => false)
 chk(viu80, 'o progresso actualiza-se sozinho (40% → 80%)')
+chk(releituras >= 1, `e foi a releitura de fundo que o trouxe, agora com o painel aberto (controlo) → ${releituras}`)
 sql(`UPDATE recordings SET status = 'ready', size_bytes = 3145728, progress_pct = NULL, progress_at = NULL WHERE id = '${idCompor}'`)
 const pronta = await p.waitForFunction(
   (n) => [...document.querySelectorAll('button.rm-rec')].some((e) => e.textContent.includes(n)),

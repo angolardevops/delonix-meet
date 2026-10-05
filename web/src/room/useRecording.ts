@@ -14,11 +14,18 @@ import type { RoomCore } from './useRoomCore'
  */
 export const SERVER_STOP_REREAD_MS = 2000
 
+const NONE: RecordingLibraryItem[] = []
+
 /**
  * Gravação local (grelha composta no browser, carregada no fim) e gravação no
  * servidor (SFU). O aviso a TODOS é obrigatório nos dois casos.
+ *
+ * `watching` = o painel com a lista das gravações está à vista. Este hook vive
+ * em TODOS os participantes: as releituras de fundo só correm em quem está a
+ * olhar para a lista, senão uma sala de cem pessoas fazia cem vezes os pedidos
+ * de uma gravação a compor — durante os minutos que ela demorar.
  */
-export function useRecording(core: RoomCore, hooks: { onServerStopped: () => void; onUploaded: () => void }) {
+export function useRecording(core: RoomCore, hooks: { onServerStopped: () => void; onUploaded: () => void }, watching: boolean) {
   const { t, i18n } = useTranslation()
   const { signal, code, setStatus } = core
   const [recording, setRecording] = useState(false)
@@ -33,13 +40,22 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
   hooksRef.current = hooks
 
   const rereadRef = useRef(0)
+  const watchingRef = useRef(watching)
+  watchingRef.current = watching
 
   // Uma leitura que falha não muda nada: fica a lista que estava.
   const refresh = () => void listRecordings(code).then(setRecordings).catch(() => {})
   // As que o servidor ainda está a compor relêem-se sozinhas, uma a uma, até
   // terem ficheiro — a mesma releitura da biblioteca, não um segundo ciclo.
-  const fresh = useProcessingUpdates(recordings)
+  const fresh = useProcessingUpdates(watching ? recordings : NONE)
   const shown = useMemo(() => recordings.map(fresh), [recordings, fresh])
+
+  // Abrir o painel lê a lista: o que ficou por reler enquanto esteve fechado
+  // (uma gravação do servidor que parou entretanto) aparece agora.
+  useEffect(() => {
+    if (watching) refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watching, code])
 
   useEffect(() => {
     const offs = [
@@ -55,10 +71,13 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
         else {
           hooksRef.current.onServerStopped()
           // É agora que a gravação entra na lista, a compor. Sem isto só
-          // aparecia a quem voltasse a entrar na sala.
-          refresh()
-          window.clearTimeout(rereadRef.current)
-          rereadRef.current = window.setTimeout(refresh, SERVER_STOP_REREAD_MS)
+          // aparecia a quem voltasse a entrar na sala. Quem tem o painel
+          // fechado lê-a quando o abrir.
+          if (watchingRef.current) {
+            refresh()
+            window.clearTimeout(rereadRef.current)
+            rereadRef.current = window.setTimeout(refresh, SERVER_STOP_REREAD_MS)
+          }
         }
       }),
     ]
