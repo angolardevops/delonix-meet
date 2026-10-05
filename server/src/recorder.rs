@@ -1,9 +1,13 @@
 //! Gravação server-side: o SFU alimenta estes writers com os pacotes RTP de
 //! cada publicador (VP8 → IVF com PTS reais; Opus → OGG), e ao parar o
 //! ffmpeg compõe tudo num único `.webm`:
-//!  - 1 publicador  → remux `-c copy` (zero reencode, zero perda);
+//!  - 1 publicador  → o vídeo em cópia (zero reencode), o áudio recodificado;
 //!  - N publicadores → grelha xstack em VP9 CRF 30 + Opus 128k (melhor
 //!    rácio qualidade/tamanho sem perda percetível).
+//!
+//! O áudio passa SEMPRE por `AUDIO_GAP_FILL` antes de mais nada: uma pista
+//! gravada tem buracos de PTS onde o participante se calou (DTX) ou onde se
+//! perdeu um pacote, e sem os encher a fala seguinte recua (R295).
 //!
 //! A gravação entra na biblioteca LOGO ao parar, em `processing`, com o
 //! progresso da composição lido do `-progress` do ffmpeg; passa a `ready`
@@ -892,22 +896,12 @@ async fn finalize_inner(
     };
 
     if videos.len() == 1 && audios.len() <= 1 {
-        // Caso simples: remux sem reencode — zero perda de qualidade.
+        // Caso simples: o vídeo vai em cópia, sem reencode; o áudio não (R295).
         cmd.arg("-i").arg(&videos[0].path);
         if let Some(a) = audios.first() {
             cmd.arg("-i").arg(&a.path);
         }
-        cmd.args(["-map", "0:v:0"]);
-        if !audios.is_empty() {
-            cmd.args(["-map", "1:a:0"]);
-        }
-        if let Some(h) = downscale_to {
-            cmd.args(["-vf", &format!("scale=-2:{h}")]);
-            cmd.args(VP9_ARGS);
-            cmd.args(["-c:a", "copy"]);
-        } else {
-            cmd.args(["-c", "copy"]);
-        }
+        cmd.args(single_publisher_args(!audios.is_empty(), downscale_to));
     } else {
         // Composição em grelha + mistura de áudio (VP9 CRF 30 + Opus 128k).
         for v in &videos {
@@ -941,28 +935,9 @@ async fn finalize_inner(
         } else {
             ""
         };
-        let mut aout = String::new();
-        if !audios.is_empty() {
-            for (j, a) in audios.iter().enumerate() {
-                let idx = n + j;
-                fc.push_str(&format!(
-                    "[{idx}:a]adelay={ms}:all=1[a{j}];",
-                    ms = a.offset_ms
-                ));
-            }
-            if audios.len() > 1 {
-                let ins = (0..audios.len())
-                    .map(|j| format!("[a{j}]"))
-                    .collect::<String>();
-                fc.push_str(&format!(
-                    "{ins}amix=inputs={}:normalize=0[aout];",
-                    audios.len()
-                ));
-                aout = "[aout]".into();
-            } else {
-                aout = "[a0]".into();
-            }
-        }
+        let offsets: Vec<u64> = audios.iter().map(|a| a.offset_ms).collect();
+        let (afc, aout) = audio_mix_graph(n, &offsets);
+        fc.push_str(&afc);
         let fc = fc.trim_end_matches(';').to_string();
         cmd.arg("-filter_complex").arg(&fc);
         if !vout.is_empty() {
@@ -971,7 +946,7 @@ async fn finalize_inner(
         }
         if !aout.is_empty() {
             cmd.args(["-map", &aout]);
-            cmd.args(["-c:a", "libopus", "-b:a", "128k", "-ar", "48000"]);
+            cmd.args(OPUS_ARGS);
         }
     }
     cmd.arg(&out);
@@ -1133,6 +1108,77 @@ async fn finalize_inner(
     )
     .await;
     Ok(())
+}
+
+/// Preenche com silêncio os buracos de PTS de uma pista de áudio (R295).
+///
+/// Quem se cala deixa de enviar (o cliente pede `usedtx=1`: um pacote a cada
+/// 400 ms), e um pacote perdido também não chega. O `OggWriter` avança o
+/// grânulo pelo timestamp RTP, por isso a pista fica com as amostras que
+/// chegaram e os PTS certos — e mais nada no meio. O `adelay` e o `amix`
+/// contam amostras, não PTS, e um codificador ou um `-c copy` levam o buraco
+/// para o contentor, onde o Chromium o ignora: toca as amostras seguidas e a
+/// fala depois de cada silêncio recua. Este filtro vai SEMPRE antes de
+/// qualquer outro, em todos os caminhos.
+///
+/// `async=1` só enche a partir de 100 ms (`min_hard_comp`, o valor por
+/// omissão): um pacote perdido isolado desloca 20 ms e só é reposto quando a
+/// soma passa disso. `first_pts=0` fixa o início da pista no zero dela.
+const AUDIO_GAP_FILL: &str = "aresample=async=1:first_pts=0";
+
+/// O Opus de qualquer áudio que saia do ffmpeg recodificado.
+const OPUS_ARGS: [&str; 6] = ["-c:a", "libopus", "-b:a", "128k", "-ar", "48000"];
+
+/// Os argumentos de saída do caminho de um publicador (entrada 0 é o vídeo, a
+/// 1 o áudio, se houver). O vídeo vai em cópia, ou reduzido a `downscale_to`
+/// linhas; o áudio é SEMPRE recodificado depois do `AUDIO_GAP_FILL` — em
+/// cópia, os silêncios ficavam como buracos no contentor.
+fn single_publisher_args(has_audio: bool, downscale_to: Option<u32>) -> Vec<String> {
+    let mut args: Vec<String> = vec!["-map".into(), "0:v:0".into()];
+    if has_audio {
+        args.extend(["-map".into(), "1:a:0".into()]);
+    }
+    match downscale_to {
+        Some(h) => {
+            args.extend(["-vf".into(), format!("scale=-2:{h}")]);
+            args.extend(VP9_ARGS.iter().map(|a| a.to_string()));
+        }
+        None => args.extend(["-c:v".into(), "copy".into()]),
+    }
+    if has_audio {
+        args.extend(["-af".into(), AUDIO_GAP_FILL.into()]);
+        args.extend(OPUS_ARGS.iter().map(|a| a.to_string()));
+    }
+    args
+}
+
+/// A parte de áudio do `-filter_complex` da composição: cada pista é enchida
+/// (`AUDIO_GAP_FILL`), atrasada pelo instante em que abriu (`offset_ms`) e,
+/// havendo mais de uma, misturam-se. `first_input` é o índice da primeira
+/// entrada de áudio do ffmpeg (as de vídeo vêm antes). Devolve o grafo (cada
+/// cadeia acabada em `;`) e o rótulo a mapear — vazios sem áudio.
+fn audio_mix_graph(first_input: usize, offsets_ms: &[u64]) -> (String, String) {
+    let mut fc = String::new();
+    if offsets_ms.is_empty() {
+        return (fc, String::new());
+    }
+    for (j, ms) in offsets_ms.iter().enumerate() {
+        let idx = first_input + j;
+        fc.push_str(&format!(
+            "[{idx}:a]{AUDIO_GAP_FILL},adelay={ms}:all=1[a{j}];"
+        ));
+    }
+    if offsets_ms.len() == 1 {
+        return (fc, "[a0]".into());
+    }
+    let ins = (0..offsets_ms.len())
+        .map(|j| format!("[a{j}]"))
+        .collect::<String>();
+    fc.push_str(&format!(
+        "{ins}amix=inputs={}:normalize=0[aout];",
+        offsets_ms.len()
+    ));
+    (fc, "[aout]".into())
 }
 
 /// Dimensões da grelha que o `xstack` compõe: células de 640×360, `ceil(√n)`
@@ -1710,6 +1756,258 @@ mod tests {
         );
         drop(permit);
         assert_eq!(slots.available_permits(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    //  Buraco na pista de áudio (DTX, perda): a fala seguinte não recua
+    // ------------------------------------------------------------------
+
+    /// Escreve uma pista OGG pelo `RecSink` de PRODUÇÃO. Dentro de `fala`
+    /// (intervalos em ms) há um tom a `freq`; fora deles não sai pacote e o
+    /// timestamp RTP salta, que é o que a perda faz. Com `dtx`, o silêncio
+    /// leva um pacote de 20 ms a cada 400 ms, como o Opus do Chrome com
+    /// `usedtx=1`.
+    fn pista_com_buraco(path: &Path, freq: f32, total_ms: u32, fala: &[(u32, u32)], dtx: bool) {
+        let file = std::fs::File::create(path).unwrap();
+        let w = OggWriter::new(std::io::BufWriter::new(file), 48000, 2).unwrap();
+        let mut sink = RecSink::Audio { w, key: None };
+        let mut enc = opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
+        enc.bitrate_bps = 32_000;
+        let mut out = vec![0u8; 1500];
+        let (mut seq, mut calado) = (0u16, 0u32);
+        for i in 0..total_ms / 20 {
+            let t = i * 20;
+            let fala_agora = fala.iter().any(|(a, b)| (*a..*b).contains(&t));
+            let pcm: Vec<f32> = (0..960u32)
+                .map(|k| {
+                    if !fala_agora {
+                        return 0.0;
+                    }
+                    let n = (i * 960 + k) as f32;
+                    0.5 * (2.0 * std::f32::consts::PI * freq * n / 48_000.0).sin()
+                })
+                .collect();
+            // O codificador vê todos os quadros; só alguns chegam ao gravador.
+            let len = enc.encode(&pcm, 960, &mut out).unwrap();
+            calado = if fala_agora { 0 } else { calado + 1 };
+            if !fala_agora && !(dtx && calado % 20 == 0) {
+                continue;
+            }
+            seq = seq.wrapping_add(1);
+            sink.write_rtp(&webrtc::rtp::packet::Packet {
+                header: webrtc::rtp::header::Header {
+                    sequence_number: seq,
+                    timestamp: 90_000 + i * 960,
+                    payload_type: 111,
+                    ..Default::default()
+                },
+                payload: out[..len].to_vec().into(),
+            });
+        }
+        sink.close();
+    }
+
+    /// Corre o ffmpeg do servidor (`FFMPEG_BIN`) sobre `entradas` com os
+    /// argumentos de saída `args`, para um webm, e devolve o áudio do
+    /// resultado em PCM mono a 48 kHz, amostra atrás de amostra — sem olhar
+    /// aos PTS, que é como o Chromium o toca. `None` se a máquina não tem ffmpeg.
+    fn compor(dir: &Path, entradas: &[PathBuf], args: &[String]) -> Option<Vec<i16>> {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        if std::process::Command::new(&bin)
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return None;
+        }
+        let corre = |cmd: &mut std::process::Command| {
+            let res = cmd.output().unwrap();
+            assert!(
+                res.status.success(),
+                "ffmpeg falhou: {}",
+                String::from_utf8_lossy(&res.stderr)
+            );
+        };
+        let (webm, pcm) = (dir.join("out.webm"), dir.join("out.pcm"));
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.args(["-y", "-loglevel", "error", "-nostdin"]);
+        for p in entradas {
+            cmd.arg("-i").arg(p);
+        }
+        corre(cmd.args(args).arg(&webm));
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.args(["-y", "-loglevel", "error", "-nostdin", "-i"]);
+        cmd.arg(&webm);
+        cmd.args(["-map", "0:a:0", "-ac", "1", "-ar", "48000", "-f", "s16le"]);
+        corre(cmd.arg(&pcm));
+        let bytes = std::fs::read(&pcm).unwrap();
+        Some(
+            bytes
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                .collect(),
+        )
+    }
+
+    /// Os argumentos de saída da composição só de áudio de `offsets_ms`.
+    fn args_da_mistura(offsets_ms: &[u64]) -> Vec<String> {
+        let (fc, aout) = audio_mix_graph(0, offsets_ms);
+        let mut args: Vec<String> = vec![
+            "-filter_complex".into(),
+            fc.trim_end_matches(';').into(),
+            "-map".into(),
+            aout,
+        ];
+        args.extend(OPUS_ARGS.iter().map(|a| a.to_string()));
+        args
+    }
+
+    /// Amplitude (0 a 1) do tom a `freq` entre `de_ms` e `ate_ms` do PCM.
+    fn nivel(pcm: &[i16], freq: f32, de_ms: usize, ate_ms: usize) -> f64 {
+        let (a, b) = (de_ms * 48, (ate_ms * 48).min(pcm.len()));
+        if a >= b {
+            return 0.0;
+        }
+        let w = 2.0 * std::f64::consts::PI * freq as f64 / 48_000.0;
+        let (mut re, mut im) = (0f64, 0f64);
+        for (i, s) in pcm[a..b].iter().enumerate() {
+            let x = *s as f64 / 32768.0;
+            re += x * (w * i as f64).cos();
+            im += x * (w * i as f64).sin();
+        }
+        2.0 * (re * re + im * im).sqrt() / (b - a) as f64
+    }
+
+    /// O que a pista de 440 Hz (fala de 0 a 2 s e de 4 a 6 s) tem de dar depois
+    /// de composta com `atraso_ms`: tom, dois segundos de silêncio, tom — e a
+    /// duração inteira. As margens cobrem os 80 ms de `pre-skip` que o
+    /// `OggWriter` declara e o ffmpeg desconta ao início de cada pista.
+    fn exige_tom_silencio_tom(pcm: &[i16], atraso_ms: usize, caso: &str) {
+        let (dur_ms, fim) = (pcm.len() / 48, atraso_ms + 6000);
+        assert!(
+            (fim - 150..=fim + 100).contains(&dur_ms),
+            "{caso}: a composição tem {dur_ms} ms e a pista acaba aos {fim}"
+        );
+        let antes = nivel(pcm, 440.0, atraso_ms + 200, atraso_ms + 1800);
+        let buraco = nivel(pcm, 440.0, atraso_ms + 2300, atraso_ms + 3700);
+        let depois = nivel(pcm, 440.0, atraso_ms + 4200, atraso_ms + 5800);
+        assert!(antes > 0.2, "{caso}: sem tom antes do buraco ({antes:.3})");
+        assert!(
+            buraco < 0.02,
+            "{caso}: o buraco não ficou em silêncio ({buraco:.3}) — a fala seguinte recuou"
+        );
+        assert!(
+            depois > 0.2,
+            "{caso}: a fala depois do buraco não está onde foi dita ({depois:.3})"
+        );
+    }
+
+    const SEM_FFMPEG: &str = "ffmpeg indisponível — o buraco de áudio NÃO foi verificado";
+
+    fn pasta_de_teste() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dlx-buraco-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_fala_depois_de_um_buraco_nao_recua_na_mistura() {
+        for dtx in [false, true] {
+            let dir = pasta_de_teste();
+            let (a, b) = (dir.join("00-audio.ogg"), dir.join("01-audio.ogg"));
+            pista_com_buraco(&a, 440.0, 6000, &[(0, 2000), (4000, 6000)], dtx);
+            pista_com_buraco(&b, 1000.0, 6000, &[(0, 6000)], false);
+            let pcm = compor(&dir, &[a, b], &args_da_mistura(&[500, 0]));
+            let _ = std::fs::remove_dir_all(&dir);
+            let Some(pcm) = pcm else {
+                eprintln!("{SEM_FFMPEG}");
+                return;
+            };
+            let caso = if dtx {
+                "mistura com DTX"
+            } else {
+                "mistura com perda"
+            };
+            exige_tom_silencio_tom(&pcm, 500, caso);
+            let outro = nivel(&pcm, 1000.0, 200, 5800);
+            assert!(outro > 0.2, "{caso}: a outra pista perdeu-se ({outro:.3})");
+        }
+    }
+
+    #[test]
+    fn a_fala_depois_de_um_buraco_nao_recua_numa_pista_so() {
+        let dir = pasta_de_teste();
+        let a = dir.join("00-audio.ogg");
+        pista_com_buraco(&a, 440.0, 6000, &[(0, 2000), (4000, 6000)], true);
+        let pcm = compor(&dir, &[a], &args_da_mistura(&[500]));
+        let _ = std::fs::remove_dir_all(&dir);
+        let Some(pcm) = pcm else {
+            eprintln!("{SEM_FFMPEG}");
+            return;
+        };
+        exige_tom_silencio_tom(&pcm, 500, "só áudio, uma pista");
+    }
+
+    /// O caminho de um publicador com os argumentos de produção: o vídeo é um
+    /// IVF do `Vp8IvfWriter` (vai em cópia, ninguém o descodifica).
+    #[test]
+    fn a_fala_depois_de_um_buraco_nao_recua_com_um_publicador() {
+        let dir = pasta_de_teste();
+        let (v, a) = (dir.join("00-video.ivf"), dir.join("01-audio.ogg"));
+        let mut ivf = Vp8IvfWriter::new(std::fs::File::create(&v).unwrap()).unwrap();
+        for i in 0..60u32 {
+            ivf.write_rtp(&vp8_keyframe(i as u16, i * 9000)).unwrap();
+        }
+        ivf.close().unwrap();
+        pista_com_buraco(&a, 440.0, 6000, &[(0, 2000), (4000, 6000)], true);
+        let pcm = compor(&dir, &[v, a], &single_publisher_args(true, None));
+        let _ = std::fs::remove_dir_all(&dir);
+        let Some(pcm) = pcm else {
+            eprintln!("{SEM_FFMPEG}");
+            return;
+        };
+        exige_tom_silencio_tom(&pcm, 0, "um publicador");
+    }
+
+    /// O que o CI vê (não tem ffmpeg): o enchimento está em TODAS as cadeias
+    /// de áudio, antes do `adelay`, e nenhum caminho leva o áudio em cópia.
+    #[test]
+    fn o_audio_e_enchido_antes_de_qualquer_outro_filtro() {
+        assert!(AUDIO_GAP_FILL.starts_with("aresample=async=1"));
+        let (fc, aout) = audio_mix_graph(2, &[500, 0]);
+        assert_eq!(
+            fc,
+            format!(
+                "[2:a]{AUDIO_GAP_FILL},adelay=500:all=1[a0];\
+                 [3:a]{AUDIO_GAP_FILL},adelay=0:all=1[a1];\
+                 [a0][a1]amix=inputs=2:normalize=0[aout];"
+            )
+        );
+        assert_eq!(aout, "[aout]");
+        assert_eq!(
+            audio_mix_graph(0, &[7]),
+            (
+                format!("[0:a]{AUDIO_GAP_FILL},adelay=7:all=1[a0];"),
+                "[a0]".to_string()
+            )
+        );
+        assert_eq!(audio_mix_graph(1, &[]), (String::new(), String::new()));
+
+        for reduz in [None, Some(720)] {
+            let args = single_publisher_args(true, reduz);
+            let par = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
+            assert!(par("-af", AUDIO_GAP_FILL), "{args:?}");
+            assert!(par("-c:a", "libopus"), "{args:?}");
+            assert!(
+                !par("-c", "copy") && !par("-c:a", "copy"),
+                "áudio em cópia leva o buraco para o contentor: {args:?}"
+            );
+            assert_eq!(par("-c:v", "copy"), reduz.is_none(), "{args:?}");
+        }
+        assert_eq!(
+            single_publisher_args(false, None),
+            ["-map", "0:v:0", "-c:v", "copy"]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
