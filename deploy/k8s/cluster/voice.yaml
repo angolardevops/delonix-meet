@@ -38,6 +38,9 @@ spec:
             - { name: DELONIX_RAMAIS_SIP_PORT, value: "5070" }
             - name: VOICE_INTERNAL_SECRET
               valueFrom: { secretKeyRef: { name: delonix-voice, key: VOICE_INTERNAL_SECRET } }
+            # O ESL escuta na rede de pods (ACL só privadas) com esta password.
+            - name: TELEPHONY_ESL_PASSWORD
+              valueFrom: { secretKeyRef: { name: delonix-voice, key: TELEPHONY_ESL_PASSWORD, optional: true } }
             # De onde fala o bordo (ADR-0016): o IVR só acredita em «esta chamada
             # é da central de X» vindo daqui. O bordo é um pod sem IP fixo, por
             # isso é a rede de pods do laboratório.
@@ -77,6 +80,7 @@ spec:
   ports:
     - { name: sip-dialin, port: 5080, protocol: UDP }
     - { name: sip-ramais, port: 5070, protocol: UDP }
+    - { name: esl, port: 8021, protocol: TCP }
 ---
 apiVersion: apps/v1
 kind: Deployment

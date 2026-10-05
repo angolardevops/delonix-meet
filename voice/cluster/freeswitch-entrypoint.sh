@@ -31,10 +31,37 @@ VOZ=${DELONIX_IVR_VOICE:-pt/BR/karina}
 test -d "/usr/local/freeswitch/share/freeswitch/sounds/$VOZ" ||
   { echo "voz do IVR sem sons na imagem: $VOZ" >&2; exit 1; }
 sed -i -E "s#(data=\"sound_prefix=)[^\"]*#\1\$\${sounds_dir}/${VOZ}#" "$CONF/vars.xml"
-# 4. ESL só em loopback, com password aleatória.
-ESL=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
-sed -i -E "s#(name=\"listen-ip\" value=)\"[^\"]*\"#\1\"127.0.0.1\"#; s#(name=\"password\" value=)\"[^\"]*\"#\1\"${ESL}\"#" \
-  "$CONF/autoload_configs/event_socket.conf.xml"
+# 4. ESL: em loopback com password aleatória, a menos que o ambiente traga
+#    TELEPHONY_ESL_PASSWORD — então o servidor do Meet liga-se por rede (originar
+#    chamadas, estado do registo) e o ESL escuta em todas as interfaces, MAS com
+#    ACL: só as redes privadas entram, e mesmo assim só com a password. O ESL
+#    manda originar chamadas — quem o alcança com a password gasta dinheiro de
+#    operadora; por isso nunca se publica no host e a password vem do segredo.
+if [ -n "${TELEPHONY_ESL_PASSWORD:-}" ]; then
+  ESL=$TELEPHONY_ESL_PASSWORD
+  case $ESL in *[!A-Za-z0-9._-]*) echo "TELEPHONY_ESL_PASSWORD com caracteres que o XML não aceita" >&2; exit 1;; esac
+  ESL_LISTEN=0.0.0.0
+  sed -i 's#</network-lists>#  <list name="delonix_esl" default="deny">\n      <node type="allow" cidr="10.0.0.0/8"/>\n      <node type="allow" cidr="172.16.0.0/12"/>\n      <node type="allow" cidr="192.168.0.0/16"/>\n      <node type="allow" cidr="127.0.0.0/8"/>\n    </list>\n  </network-lists>#' \
+    "$CONF/autoload_configs/acl.conf.xml"
+  grep -q 'name="delonix_esl"' "$CONF/autoload_configs/acl.conf.xml" ||
+    { echo "a ACL do ESL não ficou escrita" >&2; exit 1; }
+  ESL_ACL='<param name="apply-inbound-acl" value="delonix_esl"/>'
+else
+  ESL=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  ESL_LISTEN=127.0.0.1
+  ESL_ACL=
+fi
+cat >"$CONF/autoload_configs/event_socket.conf.xml" <<XML
+<configuration name="event_socket.conf" description="Socket Client">
+  <settings>
+    <param name="nat-map" value="false"/>
+    <param name="listen-ip" value="${ESL_LISTEN}"/>
+    <param name="listen-port" value="8021"/>
+    <param name="password" value="${ESL}"/>
+    ${ESL_ACL}
+  </settings>
+</configuration>
+XML
 # 5. Os módulos de que o IVR e os ramais precisam (a vanilla não carrega o mod_curl).
 #    Na vanilla estão comentados: descomenta-se a linha, não se acrescenta outra.
 for m in mod_curl mod_xml_curl; do

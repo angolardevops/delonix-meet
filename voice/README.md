@@ -338,6 +338,11 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 > DNS interno de confiança; prefere o nome absoluto com ponto final, que não passa pelos
 > domínios de pesquisa). **Limite conhecido:** na rede do compose, um contentor com `NET_RAW`
 > (o `pbx` não confiado é um) pode forjar a origem do FreeSWITCH; vale também para IPs literais.
+> **Event Socket:** com `TELEPHONY_ESL_PASSWORD` no ambiente do FreeSWITCH, o ESL escuta em
+> todas as interfaces com a ACL `delonix_esl` (só redes privadas, `default=deny`) e essa password; sem
+> ela fica em loopback com password aleatória. O servidor liga-se com `TELEPHONY_ESL_ADDR`. O ESL
+> origina chamadas: nunca se publica no host, e a password vem do segredo (`.env` / Secret
+> `delonix-voice`). Mesmo limite do `NET_RAW` acima: a ACL é por IP de origem.
 > A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
 
 Quem entra por telefone é um **participante da sala**: fala e ouve os
