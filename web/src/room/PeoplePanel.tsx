@@ -34,6 +34,7 @@ export function PeoplePanel({
   recordings,
   onDownload,
   onInvite,
+  onDialOut,
   onPrivateMessage,
   spotlightId,
   onSpotlight,
@@ -59,6 +60,8 @@ export function PeoplePanel({
   onDownload: (r: Recording) => void
   /** Ausente para um convidado sem conta: convidar é pesquisar pessoas da organização, e ele não tem nenhuma. */
   onInvite?: () => void
+  /** «Ligar a…» um ramal da organização (só anfitrião; ausente para um convidado sem conta). */
+  onDialOut?: () => void
   /** «Mensagem privada»: abre o chat com o «Para» nessa pessoa. */
   onPrivateMessage?: (peer: RemotePeer) => void
   /** Destaque para todos (só anfitrião). */
@@ -78,6 +81,11 @@ export function PeoplePanel({
         {onInvite && (
           <Button size="sm" variant="primary" icon="userPlus" onClick={onInvite}>
             {t('room.pessoas.convidar')}
+          </Button>
+        )}
+        {isHost && onDialOut && (
+          <Button size="sm" variant="outline" icon="phone" onClick={onDialOut}>
+            {t('room.pessoas.ligarA')}
           </Button>
         )}
         {isHost && (

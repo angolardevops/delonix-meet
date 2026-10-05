@@ -562,6 +562,41 @@ export const inviteToRoom = (code: string, targets: string[], kind: 'video' | 'v
     body: JSON.stringify({ targets, kind }),
   })
 
+/** «Ligar a…» a partir da sala: um ramal da organização que toca e entra na sala. */
+export type DialOutStatus =
+  | 'queued' | 'dialing' | 'ringing' | 'in_call' | 'ended' | 'declined' | 'no_answer' | 'failed' | 'cancelled'
+export interface DialOut {
+  id: string
+  room_code: string
+  extension_id: string | null
+  /** Número curto do ramal, enquanto ele existir. */
+  extension: string | null
+  display_name: string | null
+  status: DialOutStatus
+  /** Causa estável quando falhou (`USER_NOT_REGISTERED`, `stale`, `esl_lost`…). */
+  failure_code: string | null
+  created_at: string
+  answered_at: string | null
+  ended_at: string | null
+  billsec: number | null
+}
+// `?room=` é a chave de afinidade do balanceador: a sala e a ponte vivem no pod que a serve.
+export const createDialOut = (code: string, extensionId: string) =>
+  request<DialOut>(`/api/rooms/${code}/dial-outs?room=${encodeURIComponent(code)}`, {
+    method: 'POST',
+    body: JSON.stringify({ extension_id: extensionId }),
+  })
+export const listDialOuts = (code: string, signal?: AbortSignal) =>
+  request<{ items: DialOut[]; next_page_token: string | null }>(
+    `/api/rooms/${code}/dial-outs?room=${encodeURIComponent(code)}&page_size=20`,
+    { signal },
+  )
+export const hangupDialOut = (code: string, id: string) =>
+  request<DialOut>(`/api/rooms/${code}/dial-outs/${id}/hangup?room=${encodeURIComponent(code)}`, {
+    method: 'POST',
+    body: '{}',
+  })
+
 export const listMeetings = (signal?: AbortSignal) => request<Meeting[]>('/api/meetings', { signal })
 
 export const createMeeting = (m: {

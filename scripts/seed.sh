@@ -19,7 +19,9 @@ cd "$(dirname "$0")/.."
 BASE=${1:?uso: $0 <url-base>}
 ORG=${MEET_ORG:-ngolacloud}
 EMAIL=${MEET_ADMIN_EMAIL:-admin@ngolacloud.local}
-PW=$(sed -n 's/^MEET_ADMIN_PASSWORD=//p' .env 2>/dev/null | head -1)
+# `|| true`: com `set -e` e `pipefail`, sem `.env` o `sed` sai com 2 e o script
+# morria aqui, calado, antes da mensagem da linha seguinte (R303).
+PW=$(sed -n 's/^MEET_ADMIN_PASSWORD=//p' .env 2>/dev/null | head -1) || true
 [ -n "$PW" ] || { echo "✗ o .env não tem MEET_ADMIN_PASSWORD — corre «make bootstrap»" >&2; exit 1; }
 
 g=$'\033[1;32m'; y=$'\033[1;33m'; z=$'\033[0m'
@@ -51,7 +53,7 @@ fi
 
 # ---- a voz da organização: a conta SIP da central e uma sala com PIN ----
 # Falhar aqui não desfaz a conta de validação: avisa-se e segue-se.
-CENTRAL_PW=$(sed -n 's/^VOICE_CENTRAL_PASSWORD=//p' .env 2>/dev/null | head -1)
+CENTRAL_PW=$(sed -n 's/^VOICE_CENTRAL_PASSWORD=//p' .env 2>/dev/null | head -1) || true
 SALA_TXT=${SALA_TXT:-deploy/compose/generated/sala-telefone.txt}
 if [ -z "$CENTRAL_PW" ]; then
   printf "  %s!%s o .env não tem VOICE_CENTRAL_PASSWORD — corre «make bootstrap»; a central fica sem conta SIP\n" "$y" "$z"

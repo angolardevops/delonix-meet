@@ -161,6 +161,6 @@ ok "delonix-server ativo (health 200)"
 c "6/6  Smoke tests"
 H="$(curl -s -D - -o /dev/null "$BASE_URL/health")"
 for want in "x-frame-options" "x-content-type-options" "referrer-policy"; do
-  echo "$H" | grep -qi "$want" && ok "cabeçalho $want presente" || die "falta cabeçalho $want"
+  grep -qi "$want" <<<"$H" && ok "cabeçalho $want presente" || die "falta cabeçalho $want"
 done
 printf '\033[1;32m\n✔ Deploy concluído.\033[0m Recarrega o browser. Valida TLS/nginx em deploy/DEPLOYMENT.md.\n'
