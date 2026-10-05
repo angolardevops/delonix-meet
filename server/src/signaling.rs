@@ -3815,6 +3815,29 @@ pub async fn ws_handler(
             "Este nó está a encerrar. A tentar noutro…".into(),
         ));
     }
+    // Nó no limite da capacidade declarada (`NODE_PEER_CAPACITY`): recusa salas
+    // NOVAS, e só essas. Uma sala que já cá está tem de poder continuar a crescer
+    // e a reconectar-se — não pode mudar de nó (ADR-0001), e expulsá-la daria o
+    // mesmo colapso que isto evita. O que protege o nó é não abrir mais salas
+    // quando já só sobra a margem das que existem.
+    //
+    // A mensagem NÃO promete «tentar noutro nó»: com a afinidade por hash da sala
+    // um novo pedido cai neste mesmo nó. Realojar uma sala recusada noutro pod
+    // não está feito (ver o ADR de admissão por capacidade).
+    if !state.hub.tem_sala(room_id)
+        && !delonix_meet_domain::operations::media_node::accepts_new_rooms(
+            state.hub.peers_ligados() as i64,
+            state.config.node_peer_capacity.map(i64::from),
+        )
+    {
+        state
+            .metrics
+            .node_new_rooms_refused_total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return Err(ApiError::ServiceUnavailable(
+            "Este nó está no limite da capacidade e não aceita salas novas agora.".into(),
+        ));
+    }
     // O lugar (papel, origem, espera) decide-se num sítio só, testável sem
     // socket: ver `seat_policy`.
     let SeatPolicy {
