@@ -247,7 +247,11 @@ mesmo `404 ramais.provisioning_invalid`. O bilhete de um ramal inactivo gasta-se
 e regenerar a password apaga os bilhetes do ramal. O que protege a rota são os 256 bits e o
 uso único — o limite por IP contorna-se (R278 §Aberto). O token não entra na auditoria (que
 guarda o IP de quem resgatou) nem no span HTTP; nos nginx do repositório a rota tem
-`access_log off`. **Ler o QR troca a password: o aparelho antigo deixa de registar.**
+`access_log off`; no cluster, onde o `/api` vai do ingress directo ao servidor, a rota tem um
+`Ingress` próprio (`delonix-provisioning`, `enable-access-log: "false"`) no chart e em
+`deploy/k8s/04-ingress.yaml`, guardado pelos dois portões de render e medido no cluster local (0 linhas no registo do
+controlador; só vale para o ingress-nginx).
+**Ler o QR troca a password: o aparelho antigo deixa de registar.**
 
 **Quem entra recebe ramal** se a organização tiver `auto_assign_on_join` ligado (desligado por
 omissão; vive na linha e na rota do `extension-range`; num `PUT`, ausente = manter). O ÚNICO
