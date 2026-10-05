@@ -3325,6 +3325,30 @@ No CI: `tests/telephony.rs` (contra um ESL falso) — a ordem `killgw` → `gwli
 
 **Ficheiros.** `server/src/telephony_trunks.rs`, `server/src/telephony_service.rs`, `server/src/telephony_esl.rs`, `server/tests/telephony.rs`, `voice/cluster/freeswitch-entrypoint.sh`, `deploy/helm/delonix-meet/templates/voice.yaml`, `deploy/helm/delonix-meet/templates/_helpers.tpl`, `deploy/helm/delonix-meet/values.yaml`, `deploy/helm/delonix-meet/README.md`, `scripts/check-helm.sh`, `scripts/motor.sh`, `scripts/troncos-prova.sh`.
 
+### R302 — O `make seed` dizia «sala com PIN» de uma sala que a base não tinha
+
+**Sintoma.** Depois de um reinício da máquina o cluster local foi criado de novo, com a base vazia, e a medição de voz passou a dizer «central: a chamada NÃO entrou na sala»: a central marcava o PIN certo e o IVR recusava. O `seed` tinha dito «✓ sala com PIN: a de deploy/compose/generated/sala-telefone-cluster.txt» — o ficheiro, de dois dias antes, sobreviveu ao reinício, e o `seed` só olhava para ele: existe, logo a sala existe. A sala não estava na base (`GET /api/rooms/<código>` → `404`).
+
+**Regra.**
+- **O ficheiro da sala não é a verdade; a base é.** Se o ficheiro já existe, o `seed` confere NESSA base que a sala que ele descreve existe e é a mesma — a sala de voz pelo identificador, activa, com aquele código e aquele PIN. Se não for, diz porquê, cria outra e reescreve o ficheiro.
+- **O ficheiro passa a guardar o identificador da sala de voz** (`voz=`), que é por onde se confere. Um ficheiro de antes, sem ele, só deixa conferir que a sala existe (a API não procura uma sala de voz pelo código) — e o `seed` di-lo na linha que escreve.
+- **Um `429` no login é dito como `429`.** O servidor aceita oito logins por conta em cada cinco minutos, e o `seed` gasta dois; ao esgotá-los seguia para o registo e dizia «o registo devolveu 409 — a conta NÃO foi criada».
+
+**Portão.** Não há — o `seed` não corre no CI. Medido à mão a 2026-10-05, contra um servidor descartável (a imagem `v1.2.0-1222`, com base própria, no delonix), treze corridas:
+- **o defeito, com o `seed` de antes:** base nova e ficheiro antigo → «✓ sala com PIN: a de …», com a sala a devolver `404`;
+- **o mesmo, com o `seed` novo:** «descreve uma sala de voz que não existe nesta base (404): cria-se outra sala» — e a sala nova existe (`200`);
+- sem ficheiro cria e escreve-o (modo `600`, com `voz=`); outra vez, mantém;
+- ficheiro de formato antigo com uma sala que existe: mantém, e diz que não conferiu o PIN; com uma que não existe: cria outra;
+- PIN adulterado no ficheiro, sala de voz fechada na base, ficheiro sem sala nem PIN: cria outra, nos três;
+- logins a mais: «o login devolveu 429».
+
+**O que NÃO está provado.**
+- Não correu contra o cluster nem contra o compose do laboratório depois da correcção: reproduzir o defeito lá era deitar a base fora.
+- Um ficheiro de formato antigo cuja sala existe mas cujo PIN já não é o da base passa: não há como o conferir sem o identificador.
+- O `make compose-info` e as medições de voz continuam a ler o ficheiro sem conferir nada — só o `seed` o corrige, e só quando corre.
+
+**Ficheiros.** `scripts/seed.sh`, `voice/README.md`.
+
 ### R303 — O `make cluster` dizia «falta a imagem» com a imagem lá: a mesma classe da R298, nos scripts que não são portões
 
 **Sintoma.** Medido a 2026-10-05, com as formas exactas da árvore contra o motor real: `delonix image ls 2>/dev/null | grep -q "…" || morre "falta a imagem ${img} — corre «make build»"` (`scripts/cluster.sh`) deu «falta» com a imagem presente em **115 de 300 voltas** para `delonix-server:latest` e em **126 de 300** para `delonix-web:latest`; a pergunta equivalente do `scripts/cluster-voice.sh` (que responde «a voz fica por subir» e sai com 0) em **27 de 300**. O host estava a carga 15–49, só com o trabalho de outras sessões. A taxa não é uma constante: horas antes, a carga 19–34, as mesmas linhas tinham dado 2 e 8 em 200, e o revisor, a carga 17–25 e com as imagens nas linhas 3 e 5 da lista, obteve 1 em 500 (com `PIPESTATUS` `141 0`). O mecanismo repetiu-se nas três medições; a magnitude das 300 voltas, não. Quem corre o `make cluster` logo a seguir a um `make build` — que é quando se corre — apanha o pior caso.

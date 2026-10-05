@@ -11,6 +11,10 @@
 #  ADR-0016), um número de acesso e uma sala com PIN para entrar por telefone
 #  — escrita em deploy/compose/generated/sala-telefone.txt.
 #
+#  O ficheiro da sala não é a verdade: a base é. Se ele já existe, confere-se
+#  NESTA base que a sala que descreve existe e é a mesma; se não for — uma base
+#  nova com um ficheiro de antes, por exemplo —, cria-se outra e reescreve-se.
+#
 #  uso: scripts/seed.sh <url-base>      ex.: https://meet.ngolacloud.local:8443
 # ============================================================
 set -euo pipefail
@@ -38,8 +42,14 @@ pede() { # método caminho corpo → imprime o código HTTP
 }
 corpo_login=$(printf '{"email":"%s","password":"%s"}' "$EMAIL" "$PW")
 
-if [ "$(pede POST /api/auth/login "$corpo_login")" = 200 ]; then
+entrada=$(pede POST /api/auth/login "$corpo_login")
+if [ "$entrada" = 200 ]; then
   printf "  %s✓%s a conta %s já existe na organização «%s»\n" "$g" "$z" "$EMAIL" "$ORG"
+elif [ "$entrada" = 429 ]; then
+  # O servidor aceita poucos logins por conta em cada cinco minutos. Seguir
+  # para o registo dava um 409 e a mensagem errada («a conta NÃO foi criada»).
+  printf "  %s!%s o login devolveu 429 — demasiadas entradas nesta conta em pouco tempo; espera uns minutos e repete\n" "$y" "$z"
+  exit 1
 else
   corpo=$(printf '{"org_name":"%s","email":"%s","username":"admin","password":"%s"}' "$ORG" "$EMAIL" "$PW")
   codigo=$(pede POST /api/auth/register "$corpo")
@@ -97,6 +107,10 @@ def ok(msg):
     print("  \033[1;32m✓\033[0m " + msg)
 
 
+def avisa(msg):
+    print("  \033[1;33m!\033[0m " + msg)
+
+
 st, login = call("POST", "/api/auth/login", {"email": os.environ["EMAIL"], "password": os.environ["PW"]})
 if st != 200:
     sys.exit(f"  login devolveu {st}")
@@ -115,10 +129,37 @@ if st != 200:
     sys.exit(f"  o «Registo SIP» devolveu {st}: {(r or {}).get('code')}")
 ok(f"«Registo SIP» da organização: {dominio}, utilizador central")
 
-# Uma sala com PIN para entrar por telefone. Se o ficheiro já a descreve, fica.
+# Uma sala com PIN para entrar por telefone. Se o ficheiro já a descreve, fica
+# — MAS só depois de se conferir nesta base que ela existe. O ficheiro vive no
+# disco e a base não: um cluster criado de novo nasce vazio com o ficheiro de
+# antes ao lado, e quem confiasse nele dizia «sala com PIN» de uma sala que não
+# existe (medido a 2026-10-05: a central marcava o PIN e o IVR recusava).
 if os.path.exists(sala_txt):
-    ok("sala com PIN: a de " + sala_txt)
-    sys.exit(0)
+    with open(sala_txt) as f:
+        desc = dict(l.strip().split("=", 1) for l in f if "=" in l)
+    motivo, nota = None, ""
+    if not desc.get("sala") or not desc.get("pin"):
+        motivo = "não tem sala e PIN"
+    elif desc.get("voz"):
+        # A sala de voz pelo identificador: tem de existir, estar activa, e ser
+        # a deste código com este PIN.
+        st, v = call("GET", f"/api/orgs/{org}/voice/rooms/{desc['voz']}", token=tok)
+        if st != 200:
+            motivo = f"descreve uma sala de voz que não existe nesta base ({st})"
+        elif (v.get("room_code"), v.get("pin"), v.get("status")) != (desc["sala"], desc["pin"], "active"):
+            motivo = "descreve uma sala de voz que nesta base já não é essa (código, PIN ou estado)"
+    else:
+        # Um ficheiro de antes de se guardar o identificador: a API não deixa
+        # procurar uma sala de voz pelo código, por isso só se confere a sala.
+        st, _ = call("GET", f"/api/rooms/{desc['sala']}", token=tok)
+        if st != 200:
+            motivo = f"descreve a sala {desc['sala']}, que não existe nesta base ({st})"
+        else:
+            nota = " — ficheiro antigo, sem o identificador da sala de voz: conferiu-se que a sala existe, não o PIN"
+    if motivo is None:
+        ok("sala com PIN: a de " + sala_txt + nota)
+        sys.exit(0)
+    avisa(f"{sala_txt} {motivo}: cria-se outra sala, e o ficheiro é reescrito")
 did = os.environ["DID"]
 st, r = call("POST", f"/api/orgs/{org}/voice/dids", {"e164": did, "org_scoped": True}, tok)
 if st not in (200, 201, 409):
@@ -131,6 +172,8 @@ if st != 200:
     sys.exit(f"  criar a sala de voz devolveu {st}: {(voz or {}).get('code')}")
 fd = os.open(sala_txt, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w") as f:
-    f.write(f"sala={sala['code']}\npin={voz['pin']}\nnumero={did}\n")
+    # `voz` é o identificador da sala de voz: é por ele que a próxima corrida
+    # confere, na base, que este ficheiro ainda diz a verdade.
+    f.write(f"sala={sala['code']}\npin={voz['pin']}\nnumero={did}\nvoz={voz['id']}\n")
 ok(f"sala com PIN: {sala['code']} (em {sala_txt})")
 PY
