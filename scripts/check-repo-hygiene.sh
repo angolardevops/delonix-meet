@@ -280,7 +280,7 @@ if [ -n "$marcadores" ]; then
   fail=1
 fi
 
-# R298, R301 — nenhum script decide pelo estado de um `… | grep -q`.
+# R298, R303 — nenhum script decide pelo estado de um `… | grep -q`.
 #
 # Os scripts de bash do repo correm com `pipefail` (o `motor.sh` por via de
 # quem o inclui). Um `grep -q` sai à primeira correspondência; se o produtor ainda
@@ -288,7 +288,7 @@ fi
 # a seguir lê «não encontrado» quando a resposta era «encontrado». Este
 # ficheiro acusou assim referências a regressões que existiam, em 4 corridas
 # de 50 (R298); o `make cluster` disse «falta a imagem» com a imagem lá, nas
-# condições e com as contagens que a R301 regista.
+# condições e com as contagens que a R303 regista.
 # A forma segura não tem produtor que possa morrer: `grep -q … <<<"$variavel"`
 # ou `grep -q … ficheiro`. Onde o estado do produtor contava, continua a
 # contar: `v=$(produtor) && grep -q … <<<"$v"`.
