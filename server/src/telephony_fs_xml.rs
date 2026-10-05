@@ -43,12 +43,28 @@ use crate::{error::ApiError, AppState};
 
 pub const OUTBOUND_CONTEXT: &str = "delonix-outbound";
 
+/// Quanto se espera pelo DNS de um tronco ao servir os gateways. Abaixo do
+/// tempo-limite do `mod_xml_curl` (5 s, `xml_curl.conf.xml`).
+const HOST_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Escapa um valor para dentro de um atributo XML que o FreeSWITCH vai ler.
+///
+/// O `$` também, e não é por causa do XML: o FreeSWITCH passa a resposta do
+/// `mod_xml_curl` pelo PRÉ-PROCESSADOR antes de a ler, e esse troca
+/// `$${nome}` pelo valor da variável global `nome`. O segredo de voz é uma
+/// (`delonix_voice_secret`). O utilizador e a password de um tronco são texto
+/// que o administrador de QUALQUER organização escreve: cru, um utilizador
+/// `$${delonix_voice_secret}` punha o FreeSWITCH a registar-se no servidor
+/// SIP dele com o segredo da plataforma no `From` (R291, medido). Como
+/// referência numérica o pré-processador não o vê, e o leitor de XML
+/// devolve-o como o `$` que era.
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+        .replace('$', "&#36;")
 }
 
 pub fn not_found() -> String {
@@ -398,8 +414,36 @@ async fn gateways(state: &AppState) -> Result<Response, ApiError> {
     )
     .fetch_all(&state.db)
     .await?;
+    // O host foi validado quando o tronco se gravou — e um nome que ainda não
+    // resolvia foi aceite. É AQUI que o FreeSWITCH passa a ligar-se a ele, por
+    // isso volta a perguntar-se: um nome que entretanto aponta para dentro não
+    // é servido. Todos ao mesmo tempo e com um tempo-limite: o DNS de um
+    // inquilino não pode atrasar os troncos dos outros além do que o
+    // mod_xml_curl espera. Não fecha a troca de DNS entre esta resposta e a
+    // do FreeSWITCH, que resolve por conta própria — ver a R291.
+    let allowed = futures_util::future::join_all(rows.iter().map(|r| async {
+        match tokio::time::timeout(
+            HOST_CHECK_TIMEOUT,
+            crate::telephony_trunks::check_host(state, &r.host, r.port),
+        )
+        .await
+        {
+            Ok(Ok(())) => true,
+            // Sem resposta do DNS a tempo: é como um nome que não resolve —
+            // serve-se, e o FreeSWITCH é que não o consegue alcançar.
+            Err(_) => true,
+            Ok(Err(_)) => {
+                tracing::warn!(org = %r.org_id, trunk = %r.id, "tronco não servido ao FreeSWITCH: o host aponta para um destino interno");
+                false
+            }
+        }
+    }))
+    .await;
     let mut specs = Vec::with_capacity(rows.len());
-    for r in rows {
+    for (r, ok) in rows.into_iter().zip(allowed) {
+        if !ok {
+            continue;
+        }
         // Um segredo que não abre não derruba os gateways das outras orgs.
         let password = match crate::secrets_at_rest::open(
             &state.config,
@@ -427,6 +471,29 @@ async fn gateways(state: &AppState) -> Result<Response, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tenant_text_cannot_reference_a_freeswitch_global() {
+        let g = gateways_directory(&[GatewaySpec {
+            trunk_id: Uuid::from_u128(7),
+            org_id: Uuid::nil(),
+            host: "sip.exemplo.ao".into(),
+            port: 5060,
+            transport: "udp".into(),
+            srtp: "off".into(),
+            register: true,
+            username: "$${delonix_voice_secret}".into(),
+            password: "pa$$${delonix_voice_secret}".into(),
+        }]);
+        // O pré-processador do FreeSWITCH procura `$${`: não pode lá estar.
+        assert!(!g.contains("$${"), "{g}");
+        assert!(!g.contains('$'), "{g}");
+        // E o valor continua a ser o que o inquilino escreveu, depois de lido.
+        assert!(
+            g.contains(r#"name="username" value="&#36;&#36;{delonix_voice_secret}""#),
+            "{g}"
+        );
+    }
 
     #[test]
     fn route_extension_has_limits_failover_and_recording() {

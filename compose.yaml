@@ -170,6 +170,9 @@ services:
     environment:
       DELONIX_CONTROL_URL: http://delonix-server:8181
       DELONIX_RAMAIS_SIP_PORT: "5070"
+      # De quanto em quanto tempo o FreeSWITCH volta a ler os troncos do
+      # servidor (um tronco novo regista-se sozinho). "0" desliga.
+      DELONIX_TRUNKS_RESCAN_SECS: "60"
       # De onde fala o bordo: o IVR só acredita em «esta chamada é da central
       # de X» vindo daqui. As redes privadas, como na allowlist do bordo — a
       # sub-rede do compose muda de motor para motor. É um laboratório: em

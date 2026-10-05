@@ -577,9 +577,9 @@ SH
   docker exec "${TAG}-dir" sh -c 'cat /pedidos-8180 /pedidos-8181 2>/dev/null' | tr -d '\r' > "$d/pedidos"
   while IFS='|' read -r veredicto texto; do
     if [ "$veredicto" = ok ]; then ok "$texto"; else bad "$texto"; fi
-  done < <(python3 - "$d/pedidos" "$segredo" "$PIN_DIALIN" <<'PY'
+  done < <(python3 - "$d/pedidos" "$segredo" "$PIN_DIALIN" "$DESTINO_DIALIN" <<'PY'
 import base64, re, sys
-pedidos, segredo, pin = open(sys.argv[1], errors="replace").read(), sys.argv[2], sys.argv[3]
+pedidos, segredo, pin, dialin = open(sys.argv[1], errors="replace").read(), sys.argv[2], sys.argv[3], sys.argv[4]
 # Cada pedido começa numa linha «POST <caminho> HTTP/1.1».
 blocos = re.split(r"(?m)^(?=POST \S+ HTTP/1\.[01]$)", pedidos)
 def pedido(caminho):
@@ -631,9 +631,18 @@ sai(bool(cdrs) and all(basic_certo(b) for b in cdrs),
     "registos de chamada (mod_json_cdr): %d entregues, todos com o segredo em Authorization: Basic" % len(cdrs)
     if cdrs and all(basic_certo(b) for b in cdrs)
     else "registos de chamada (mod_json_cdr): %d entregues; nem todos (ou nenhum) com o segredo em Authorization: Basic" % len(cdrs))
-com_pin = [b for b in cdrs if pin in b.split("\n\n", 1)[-1]]
-sai(bool(cdrs) and not com_pin,
-    "nenhum dos %d registos de chamada leva o PIN marcado" % len(cdrs) if cdrs and not com_pin
+# Só conta se o registo da chamada em que o PIN FOI marcado chegou: a do
+# dial-in, atendida. Os das chamadas recusadas nunca tiveram PIN, e sem esta
+# condição um registo atrasado dava «nenhum leva o PIN» sem ter medido nada.
+corpo = lambda b: b.split("\n\n", 1)[-1]
+do_pin = [b for b in cdrs if dialin in corpo(b) and re.search(r'"answer_epoch":"[1-9]', corpo(b))]
+sai(bool(do_pin), "o registo da chamada em que o PIN foi marcado chegou ao servidor" if do_pin
+    else "o registo da chamada em que o PIN foi marcado NÃO chegou — a verificação seguinte não mede nada")
+# O PIN como número inteiro, não como parte de um mais comprido (um registo
+# traz dezenas de tempos e contadores).
+com_pin = [b for b in cdrs if re.search(r"(?<!\d)%s(?!\d)" % re.escape(pin), corpo(b))]
+sai(bool(do_pin) and not com_pin,
+    "nenhum dos %d registos de chamada leva o PIN marcado" % len(cdrs) if do_pin and not com_pin
     else "%d dos %d registos de chamada levam o PIN marcado" % (len(com_pin), len(cdrs)))
 PY
   )

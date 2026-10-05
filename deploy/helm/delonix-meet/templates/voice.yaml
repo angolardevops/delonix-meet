@@ -120,6 +120,7 @@ spec:
             # INTERNO (/internal/v1/voice/ivr/*, R286).
             - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.{{ $ns }}.svc.cluster.local:8181" }
             - { name: DELONIX_RAMAIS_SIP_PORT, value: {{ $vo.freeswitch.ramaisSipPort | quote }} }
+            - { name: DELONIX_TRUNKS_RESCAN_SECS, value: {{ $vo.freeswitch.trunksRescanSecs | quote }} }
             - name: VOICE_INTERNAL_SECRET
               valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: VOICE_INTERNAL_SECRET } }
             {{- with $vo.freeswitch.ivrVoice }}

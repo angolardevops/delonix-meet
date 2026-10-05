@@ -1323,6 +1323,25 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
         "o FreeSWITCH precisa da password decifrada"
     );
     assert!(g.contains(r#"value="sip.unitel.ao:5061;transport=tls""#));
+
+    // O utilizador de um tronco é texto do inquilino, e o FreeSWITCH
+    // pré-processa esta resposta: `$${nome}` lia uma variável global dele — o
+    // segredo de voz, por exemplo — e mandava-a para o servidor SIP do tronco.
+    let mut armadilha = africell();
+    armadilha["name"] = json!("Armadilha");
+    armadilha["short_code"] = json!("ARM");
+    armadilha["username"] = json!("$${delonix_voice_secret}");
+    armadilha["password"] = json!("$${delonix_voice_secret}");
+    create_trunk(&app, &a.token, a.org(), armadilha).await;
+    let (_, g) = post(
+        "section=directory&purpose=gateways".into(),
+        Some(basic(SECRET)),
+    )
+    .await;
+    assert!(
+        g.contains("&#36;&#36;{delonix_voice_secret}") && !g.contains('$'),
+        "{g}"
+    );
 }
 
 // ============================================================

@@ -50,7 +50,9 @@ done
 
 # 6. As variáveis do Meet vêm do ambiente do pod (Secret e ConfigMap).
 #    Os registos de chamada que o servidor não aceitou ficam FORA de /conf,
-#    que é esvaziado a cada arranque: um reinício não os pode levar.
+#    que é esvaziado a cada arranque. Sobrevivem a reiniciar o contentor
+#    (compose); num pod, um reinício pelo kubelet é um contentor NOVO e
+#    leva-os — não há volume para eles.
 CDR_PENDENTES=/usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes
 mkdir -p "$CDR_PENDENTES"
 chmod 700 "$CDR_PENDENTES"
@@ -170,15 +172,18 @@ grep -q "<param name=\"logfile\" value=\"$LOGS/freeswitch.log\"/>" "$CONF/autolo
 #     gateways quando o perfil arranca: se o servidor ainda não respondia
 #     nesse instante ficava sem tronco nenhum, e um tronco criado depois na
 #     consola só aparecia reiniciando-o. O `rescan` volta a perguntar e
-#     ACRESCENTA os que faltam; não mexe nos que já existem nem nas chamadas
-#     em curso. Um tronco ALTERADO ou APAGADO não é com ele: precisa de
-#     `killgw`, que hoje só o servidor sabe mandar pelo ESL — fechado nesta
-#     configuração (passo 4). DELONIX_TRUNKS_RESCAN_SECS=0 desliga o ciclo.
+#     ACRESCENTA os gateways que faltam; não mexe nos que já existem nem nas
+#     chamadas em curso. Não é de graça: volta a aplicar as definições ao
+#     perfil vivo e zera os contadores de chamadas dele (sofia.c), por isso o
+#     `sofia status profile external` passa a contar desde o último ciclo.
+#     Um tronco ALTERADO ou APAGADO não é com ele: precisa de `killgw`, que
+#     hoje só o servidor sabe mandar pelo ESL — fechado nesta configuração
+#     (passo 4). DELONIX_TRUNKS_RESCAN_SECS=0 desliga o ciclo.
 RESCAN=${DELONIX_TRUNKS_RESCAN_SECS:-60}
 case "$RESCAN" in ''|*[!0-9]*) echo "DELONIX_TRUNKS_RESCAN_SECS não é um número de segundos: $RESCAN" >&2; exit 1 ;; esac
 if [ "$RESCAN" -gt 0 ]; then
   ( while sleep "$RESCAN"; do
-      /usr/local/freeswitch/bin/fs_cli -p "$ESL" -x "sofia profile external rescan" >/dev/null 2>&1 || true
+      /usr/local/freeswitch/bin/fs_cli -T 3000 -t 10000 -p "$ESL" -x "sofia profile external rescan" >/dev/null 2>&1 || true
     done ) &
 fi
 

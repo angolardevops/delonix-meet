@@ -20,7 +20,9 @@
 #       nem fica em disco à espera;
 #    6. reiniciar o FreeSWITCH — e reiniciá-lo com o servidor EM BAIXO — não
 #       deixa a instalação sem troncos;
-#    7. nenhum registo ficou por entregar, e nem o segredo de voz nem a
+#    7. o utilizador de um tronco não consegue ler as variáveis do FreeSWITCH
+#       (o segredo de voz) e mandá-las para o seu servidor SIP;
+#    8. nenhum registo ficou por entregar, e nem o segredo de voz nem a
 #       password do tronco ficam no log.
 #
 #  Uso:
@@ -28,7 +30,9 @@
 #    bash scripts/troncos-prova.sh up|mede|down   um passo de cada vez
 #
 #    SERVER_IMAGE=<imagem>   o servidor (por omissão delonix-server:latest, a
-#                            do `make image`);
+#                            do `make image BUILDER=docker` — com o delonix
+#                            instalado, o `make image` constrói para o store
+#                            dele e o docker não a vê);
 #    SERVER_BIN=<binário>    em vez da imagem: embrulha o binário da tua árvore
 #                            numa imagem descartável (base SERVER_BIN_BASE,
 #                            por omissão ubuntu:24.04);
@@ -54,7 +58,7 @@ RESCAN=10
 fail=0
 ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
-uso() { sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+uso() { sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 export ESTADO
 
 segredo() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
@@ -126,7 +130,7 @@ up() {
     docker build -q -t "$img" "$ESTADO/imagem" >/dev/null || { echo "✗ não consegui embrulhar $SERVER_BIN numa imagem"; exit 1; }
     rm -rf "$ESTADO/imagem"
   fi
-  docker image inspect "$img" >/dev/null 2>&1 || { echo "✗ falta a imagem do servidor $img (make image, SERVER_IMAGE=… ou SERVER_BIN=…)"; exit 1; }
+  docker image inspect "$img" >/dev/null 2>&1 || { echo "✗ o docker não tem a imagem do servidor $img (make image BUILDER=docker, SERVER_IMAGE=… ou SERVER_BIN=…)"; exit 1; }
   docker image inspect "${FS_IMAGE:-delonix-meet/freeswitch:1.11.3}" >/dev/null 2>&1 ||
     { echo "✗ falta a imagem do FreeSWITCH (make freeswitch-image, ou FS_IMAGE=…)"; exit 1; }
   ( umask 077
@@ -250,7 +254,7 @@ mede() {
   [ -z "$e" ] && ok "controlo: com o servidor em baixo o FreeSWITCH arranca SEM o tronco" ||
     bad "com o servidor em baixo o gateway existe na mesma (estado $e) — o controlo não prova nada"
   # E um registo que o servidor não recebe fica em disco, num directório só
-  # do FreeSWITCH — é o controlo do «nada por entregar» do passo 8.
+  # do FreeSWITCH — é o controlo do «nada por entregar» do passo 9.
   # O módulo tenta três vezes, com cinco segundos de espera cada: conta-se
   # quando o número de ficheiros deixa de mexer.
   marca 923000333 >/dev/null
@@ -271,7 +275,30 @@ mede() {
   case "$r" in +OK*) ok "e a chamada seguinte sai por ele" ;; *) bad "depois de tudo isto a chamada não saiu ($r)" ;; esac
   sleep 8
 
-  echo "8) nada por entregar, e nenhum segredo no log"
+  echo "8) um tronco não consegue ler as variáveis do FreeSWITCH"
+  # O FreeSWITCH passa a resposta do mod_xml_curl pelo pré-processador, que
+  # troca \$\${nome} pelo valor da variável global — e o segredo de voz é uma.
+  # Um administrador de QUALQUER organização escreve o utilizador do seu
+  # tronco: se o texto chegasse cru, o FreeSWITCH registava-se no servidor
+  # SIP dele com o segredo de voz da plataforma no `From`.
+  local armadilha='$''${delonix_voice_secret}' gwa voz
+  voz=$(env_ VOICE_INTERNAL_SECRET)
+  r=$(api POST "/api/orgs/$ORG/telephony/trunks" "{\"name\":\"Armadilha\",\"short_code\":\"ARM\",\"host\":\"$OPERADORA\",\"port\":5060,\"transport\":\"udp\",\"srtp\":\"off\",\"register\":true,\"username\":\"$armadilha\",\"password\":\"$armadilha\",\"max_channels\":1}")
+  st=${r%% *}; gwa="dlx-$(campo "${r#* }" id)"
+  if [ "$st" = 201 ]; then
+    for i in $(seq 1 $(( RESCAN * 3 + 20 ))); do [ -n "$(estado_gw "$gwa")" ] && break; sleep 1; done
+    sleep 6   # o tempo de o FreeSWITCH tentar registar-se
+    v=$(fs_cli "sofia status gateway $gwa")
+    if [ -z "$v" ]; then bad "o tronco-armadilha não chegou ao FreeSWITCH — a verificação não mede nada"
+    elif grep -qF "$voz" <<<"$v"; then bad "o FreeSWITCH EXPANDIU a variável: o gateway tem o segredo de voz como utilizador"
+    elif grep -qF "$armadilha" <<<"$v"; then ok "o utilizador do tronco chega ao FreeSWITCH como texto, sem ser expandido"
+    else bad "o utilizador do tronco-armadilha não é o segredo, mas também não é o texto que a API recebeu: $(sed -n 's/^Username[[:space:]]*//p' <<<"$v" | head -1)"; fi
+    v=$("${COMPOSE[@]}" exec -T operadora sh -c "grep -a -c -F '$voz' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
+    [ "${v:-1}" = 0 ] && ok "a operadora não recebeu o segredo de voz em nenhum pedido" || bad "a operadora recebeu o segredo de voz em $v linha(s) do seu log (o REGISTER leva-o)"
+  elif [ "$st" = 400 ] || [ "$st" = 422 ]; then ok "a API recusa um utilizador de tronco com uma referência a variável ($st)"
+  else bad "a API respondeu $st ao tronco-armadilha"; fi
+
+  echo "9) nada por entregar, e nenhum segredo no log"
   v=$("${COMPOSE[@]}" exec -T freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
   [ "${v:-99}" = "${pendentes:-0}" ] && ok "com o servidor de pé nenhum registo ficou por entregar (em disco só os $pendentes do controlo)" ||
     bad "ficaram $v registo(s) em disco, e o controlo só explica ${pendentes:-0}: o servidor recusou os outros"
@@ -289,13 +316,20 @@ mede() {
   echo "       ruído do ciclo de releitura: $v linha(s) «Ignoring duplicate gateway» no log desde o último arranque"
 }
 
-down() { "${COMPOSE[@]}" down -v >/dev/null 2>&1; rm -rf "$ESTADO"; echo "réplica desmontada"; }
+# Pelo nome do projecto, e não pelo ficheiro: desmonta mesmo sem o .env.
+down() {
+  docker compose -p troncosprova down -v >/dev/null 2>&1
+  docker image rm delonix-server:troncos-prova >/dev/null 2>&1
+  rm -rf "$ESTADO"
+  if [ -n "$(docker ps -aq --filter label=com.docker.compose.project=troncosprova)" ]; then echo "✗ ficaram contentores da réplica"; return 1; fi
+  echo "réplica desmontada"
+}
 
 case "${1:-tudo}" in
   up) up ;;
   mede) [ -f "$ESTADO/.env" ] || { echo "✗ a réplica não está erguida (bash scripts/troncos-prova.sh up)"; exit 1; }; mede ;;
   down) down; exit 0 ;;
-  tudo) up; [ "$fail" = 0 ] && mede; down ;;
+  tudo) trap down EXIT; up; [ "$fail" = 0 ] && mede ;;
   -h|--help|ajuda) uso 0 ;;
   *) uso ;;
 esac

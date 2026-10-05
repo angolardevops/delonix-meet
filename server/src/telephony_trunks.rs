@@ -488,7 +488,7 @@ pub async fn list(
     }))
 }
 
-async fn check_host(state: &AppState, host: &str, port: i32) -> Result<(), ApiError> {
+pub(crate) async fn check_host(state: &AppState, host: &str, port: i32) -> Result<(), ApiError> {
     // O FreeSWITCH vai ligar a este host em nome do inquilino: a mesma guarda
     // de um URL escrito pelo cliente (sem destinos internos, salvo
     // OUTBOUND_ALLOW_HOSTS). Um nome que ainda não resolve é aceite.
