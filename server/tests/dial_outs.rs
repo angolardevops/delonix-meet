@@ -740,8 +740,7 @@ async fn a_mesma_pessoa_no_browser_e_ao_telefone_escolhe_onde_continuar(db: sqlx
         .await
         .expect("/ws do colega");
     ws2.send(Message::Text(
-        json!({"type": "device-choice", "phone_id": leg, "keep": "meet"})
-            .to_string(),
+        json!({"type": "device-choice", "phone_id": leg, "keep": "meet"}).to_string(),
     ))
     .await
     .unwrap();
@@ -784,8 +783,7 @@ async fn a_mesma_pessoa_no_browser_e_ao_telefone_escolhe_onde_continuar(db: sqlx
 
     // «Continuar só no Meet»: a chamada que a sala fez tocar desliga-se.
     ws.send(Message::Text(
-        json!({"type": "device-choice", "phone_id": leg, "keep": "meet"})
-            .to_string(),
+        json!({"type": "device-choice", "phone_id": leg, "keep": "meet"}).to_string(),
     ))
     .await
     .unwrap();
@@ -808,8 +806,7 @@ async fn a_mesma_pessoa_no_browser_e_ao_telefone_escolhe_onde_continuar(db: sqlx
 
     // «Nos dois»: nada se desliga.
     ws.send(Message::Text(
-        json!({"type": "device-choice", "phone_id": leg, "keep": "both"})
-            .to_string(),
+        json!({"type": "device-choice", "phone_id": leg, "keep": "both"}).to_string(),
     ))
     .await
     .unwrap();
