@@ -5,6 +5,7 @@ import type { Async } from './AsyncSection'
 export type NavKey =
   | 'home'
   | 'calendar'
+  | 'rooms'
   | 'studio'
   | 'recordings'
   | 'whiteboards'

@@ -1,9 +1,14 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
+    http::StatusCode,
     Json,
 };
 use base64::Engine;
 use chrono::{DateTime, Utc};
+use delonix_meet_core::{
+    page::{Page, PageRequest},
+    DomainError,
+};
 use hmac::{Hmac, Mac};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -53,8 +58,10 @@ pub const ROOM_COLUMNS: &str =
 #[openapi(
     paths(
         room_waiting,
+        list_my_rooms,
         create_room,
         get_room,
+        delete_room,
         patch_room,
         join_room,
         ice_servers,
@@ -65,6 +72,7 @@ pub const ROOM_COLUMNS: &str =
     ),
     components(schemas(
         Room,
+        RoomPage,
         CreateRoomReq,
         PatchRoomReq,
         JoinRoomResp,
@@ -300,6 +308,186 @@ pub(crate) async fn rotate_personal_room_code(
         }
     }
     Err(ApiError::internal("could not allocate room code"))
+}
+
+/// Uma página de salas, no formato de listagem do ADR-0004 §4.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct RoomPage {
+    pub items: Vec<Room>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListRoomsQuery {
+    /// 1–100, omissão 50.
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+}
+
+/// O cursor é `(created_at, id)` — a ordem é descendente, por isso compara-se
+/// com `<`. O `id` desempata duas salas criadas no mesmo instante, que é o que
+/// acontece quando se importam várias de uma vez.
+#[derive(Serialize, Deserialize)]
+struct RoomCursor {
+    at: DateTime<Utc>,
+    id: Uuid,
+}
+
+/// As salas de que a pessoa autenticada é DONA, da mais recente para a mais
+/// antiga.
+///
+/// Não é «as salas da organização»: a tabela `rooms` não tem `org_id` — a dona
+/// de uma sala é uma pessoa (`owner_id`). Uma vista de organização precisa
+/// primeiro dessa decisão de modelo (a quem pertence a sala de quem está em
+/// duas organizações), e não se inventa aqui.
+#[utoipa::path(
+    get, path = "/api/rooms", tag = "rooms",
+    security(("session" = [])),
+    params(ListRoomsQuery),
+    responses(
+        (status = 200, body = RoomPage),
+        (status = 400, description = "`page_token` corrompido.", body = crate::openapi::ErrorBody),
+        (status = 401, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn list_my_rooms(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(q): Query<ListRoomsQuery>,
+) -> Result<Json<RoomPage>, ApiError> {
+    let page = PageRequest {
+        page_size: q.page_size,
+        page_token: q.page_token,
+    };
+    let size = page.size();
+    let cursor: Option<RoomCursor> = page.cursor()?;
+    let rows: Vec<Room> = sqlx::query_as(&format!(
+        "SELECT {ROOM_COLUMNS} FROM rooms
+          WHERE owner_id = $1
+            AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
+          ORDER BY created_at DESC, id DESC
+          LIMIT $4"
+    ))
+    .bind(auth.user_id)
+    .bind(cursor.as_ref().map(|c| c.at))
+    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
+    .bind(size as i64 + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let p = Page::from_overfetch(rows, size, |r: &Room| RoomCursor {
+        at: r.created_at,
+        id: r.id,
+    });
+    Ok(Json(RoomPage {
+        items: p.items,
+        next_page_token: p.next_page_token,
+    }))
+}
+
+/// Apaga uma sala. Só o DONO, e só quando não leva nada por à frente.
+///
+/// A tabela `rooms` é a raiz de oito `ON DELETE CASCADE` — gravações, chat,
+/// participações, amostras de qualidade, tempos de chamada, sessões de
+/// directo, estúdios e canais. Por isso o apagar RECUSA em vez de arrastar:
+///
+/// - **gravações** — é o artefacto que a pessoa quis guardar, e o ficheiro em
+///   disco nem sequer desaparecia com a linha: ficava órfão. É também o que o
+///   `DELETE /api/v1/meetings/{id}` já faz (`meetings_v1.rs`), com a diferença
+///   de que lá a recusa é silenciosa (`room_deleted: false`) e aqui tem código;
+/// - **reunião futura na agenda** — `meetings.room_code` é texto SEM chave
+///   estrangeira: apagar a sala deixava a entrada do calendário a apontar para
+///   um código morto, e quem a abrisse dava de caras com «sala indisponível»;
+/// - **sala pessoal** — é criada pelo sistema e o endereço dela está em
+///   assinaturas e convites antigos.
+#[utoipa::path(
+    delete, path = "/api/rooms/{room_code}", tag = "rooms",
+    security(("session" = [])),
+    params(("room_code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
+    responses(
+        (status = 204, description = "Apagada."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, description = "Quem pede não é o dono da sala.", body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, description = "Tem gravações, tem reunião futura na agenda, ou é a sala pessoal.", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn delete_room(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(code): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let code = code.to_lowercase();
+    let room = find_room(&state.db, &code)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    // `403`, não `404`: o código da sala é a credencial e qualquer sessão que o
+    // conheça já lê os metadados em `get_room` — esconder a existência aqui não
+    // esconderia nada. É a mesma escolha do `patch_room`.
+    if room.owner_id != auth.user_id {
+        return Err(ApiError::Forbidden);
+    }
+    if e_pessoal(&state.db, room.id).await? {
+        return Err(DomainError::conflict(
+            "room.personal_cannot_be_deleted",
+            "a sala pessoal é do sistema e não se apaga",
+        )
+        .into());
+    }
+    if tem_gravacoes(&state.db, room.id).await? {
+        return Err(DomainError::conflict(
+            "room.has_recordings",
+            "a sala tem gravações: apaga-as primeiro, ou o ficheiro fica sem dono",
+        )
+        .into());
+    }
+    if tem_reuniao_futura(&state.db, &code).await? {
+        return Err(DomainError::conflict(
+            "room.has_scheduled_meeting",
+            "a sala está marcada numa reunião que ainda não aconteceu",
+        )
+        .into());
+    }
+    sqlx::query("DELETE FROM rooms WHERE id = $1")
+        .bind(room.id)
+        .execute(&state.db)
+        .await?;
+    crate::audit::log(&state.db, None, auth.user_id, "room.deleted", &code).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `is_personal` não está em `ROOM_COLUMNS` (a sala pessoal é um detalhe do
+/// servidor, não do contrato), por isso pergunta-se à coluna.
+async fn e_pessoal(db: &sqlx::PgPool, room_id: Uuid) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query_scalar::<_, bool>("SELECT is_personal FROM rooms WHERE id = $1")
+            .bind(room_id)
+            .fetch_one(db)
+            .await?,
+    )
+}
+
+async fn tem_gravacoes(db: &sqlx::PgPool, room_id: Uuid) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM recordings WHERE room_id = $1)",
+        )
+        .bind(room_id)
+        .fetch_one(db)
+        .await?,
+    )
+}
+
+/// `meetings.room_code` é TEXTO sem chave estrangeira — a agenda não impede o
+/// apagar por si, por isso pergunta-se.
+async fn tem_reuniao_futura(db: &sqlx::PgPool, code: &str) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM meetings WHERE room_code = $1 AND starts_at > now())",
+    )
+    .bind(code)
+    .fetch_one(db)
+    .await?)
 }
 
 /// Cria uma sala; o autenticado fica dono.

@@ -167,6 +167,7 @@ export default function CommandPalette({
       ),
       nav('home', t('shell.nav.inicio'), 'home'),
       nav('calendar', t('shell.nav.agenda'), 'calendar'),
+      nav('rooms', t('shell.nav.salas'), 'door'),
       nav('studio', t('shell.nav.estudio'), 'live'),
       nav('recordings', t('shell.nav.gravacoes'), 'film'),
       nav('whiteboards', t('shell.nav.quadros'), 'board'),

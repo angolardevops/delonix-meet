@@ -570,10 +570,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(presence::ack_missed_calls),
         )
         // ---- Salas ----
-        .route("/api/rooms", post(rooms::create_room))
+        .route(
+            "/api/rooms",
+            get(rooms::list_my_rooms).post(rooms::create_room),
+        )
         .route(
             "/api/rooms/{room_code}",
-            get(rooms::get_room).patch(rooms::patch_room),
+            get(rooms::get_room)
+                .patch(rooms::patch_room)
+                .delete(rooms::delete_room),
         )
         // Convidado SEM conta (público por desenho — ver guests.rs e
         // scripts/rotas-publicas.txt): só produz um token de sala que passa
