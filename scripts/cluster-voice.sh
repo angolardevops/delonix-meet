@@ -26,8 +26,9 @@ avisa() { printf "  %s!%s %s\n" "$y" "$z" "$1"; }
 
 FS_IMAGE=delonix-meet/freeswitch:1.11.3
 PBX_IMAGE=delonix-meet/pbx-cliente:lab
+imagens=$(delonix image ls 2>/dev/null) || imagens=
 for img in "$FS_IMAGE" "$PBX_IMAGE"; do
-  if ! delonix image ls 2>/dev/null | grep -q "^${img%%:*}:\?[[:space:]]*${img##*:}\|^${img}[[:space:]]"; then
+  if ! grep -q "^${img%%:*}:\?[[:space:]]*${img##*:}\|^${img}[[:space:]]" <<<"$imagens"; then
     avisa "falta a imagem ${img} — corre «make voice-images». A voz fica por subir."
     exit 0
   fi
@@ -65,7 +66,8 @@ cm pbx-cliente-cfg \
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 kubectl -n "$NS" get secret kamailio-tls -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d >"$tmp/tls.crt" 2>/dev/null || true
-if ! openssl x509 -in "$tmp/tls.crt" -noout -ext subjectAltName 2>/dev/null | grep -q "DNS:${BORDO}"; then
+san=$(openssl x509 -in "$tmp/tls.crt" -noout -ext subjectAltName 2>/dev/null) || san=
+if ! grep -q "DNS:${BORDO}" <<<"$san"; then
   openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=${BORDO}" \
     -addext "subjectAltName=DNS:${BORDO},DNS:kamailio.${NS}.svc,DNS:kamailio" \
     -keyout "$tmp/tls.key" -out "$tmp/tls.crt" 2>/dev/null
@@ -110,7 +112,7 @@ done
 [ "$falhou" = 0 ] || exit 0
 
 # ---- integração de sinalização, medida ----
-if kubectl -n "$NS" exec deploy/kamailio -- kamcmd dispatcher.list 2>/dev/null | grep -q "FLAGS: AP"; then
+if lista=$(kubectl -n "$NS" exec deploy/kamailio -- kamcmd dispatcher.list 2>/dev/null) && grep -q "FLAGS: AP" <<<"$lista"; then
   ok "bordo → FreeSWITCH: activo no dispatcher (OPTIONS respondido)"
 else
   avisa "bordo → FreeSWITCH: o dispatcher NÃO vê o FreeSWITCH activo"
@@ -118,7 +120,8 @@ fi
 # O Asterisk só qualifica o tronco de 15 em 15 s: dá-se-lhe tempo.
 tronco=0
 for _ in 1 2 3 4 5 6 7 8; do
-  if kubectl -n "$NS" exec deploy/pbx-cliente -- asterisk -rx "pjsip show contacts" 2>/dev/null | grep -q "Avail"; then
+  if contactos=$(kubectl -n "$NS" exec deploy/pbx-cliente -- asterisk -rx "pjsip show contacts" 2>/dev/null) &&
+    grep -q "Avail" <<<"$contactos"; then
     tronco=1
     break
   fi
@@ -148,18 +151,21 @@ sonda() {
   kubectl -n "$NS" exec deploy/freeswitch -- sh -c \
     'P=$(sed -n "s/.*name=\"password\" value=\"\([^\"]*\)\".*/\1/p" /conf/autoload_configs/event_socket.conf.xml); /usr/local/freeswitch/bin/fs_cli -p "$P" -x "curl '"$1"' post {}"' 2>/dev/null
 }
-if sonda "http://delonix-server-internal.${NS}.svc.cluster.local:8181/internal/v1/voice/ivr/validate" | grep -q '"code":"unsupported_media_type"\|"code":"auth'; then
+if resp=$(sonda "http://delonix-server-internal.${NS}.svc.cluster.local:8181/internal/v1/voice/ivr/validate") &&
+  grep -q '"code":"unsupported_media_type"\|"code":"auth' <<<"$resp"; then
   ok "FreeSWITCH → servidor (listener interno, /internal/v1/voice/ivr/validate): responde"
 else
   avisa "FreeSWITCH → servidor (listener interno): NÃO responde"
 fi
-if sonda "http://delonix-server-internal.${NS}.svc.cluster.local:8181/internal/v1/voice/ivr/dialplan-did" | grep -q '"code":"auth'; then
+if resp=$(sonda "http://delonix-server-internal.${NS}.svc.cluster.local:8181/internal/v1/voice/ivr/dialplan-did") &&
+  grep -q '"code":"auth' <<<"$resp"; then
   ok "FreeSWITCH → servidor (ramais, listener interno): responde e exige o segredo"
 else
   avisa "FreeSWITCH → servidor (ramais, listener interno): NÃO responde"
 fi
 # R286: as rotas dos ramais saíram do listener público — lá têm de dar 404.
-if sonda "http://delonix-server.${NS}.svc.cluster.local:8180/api/voice/ivr/directory" | grep -q '"code":"auth'; then
+if resp=$(sonda "http://delonix-server.${NS}.svc.cluster.local:8180/api/voice/ivr/directory") &&
+  grep -q '"code":"auth' <<<"$resp"; then
   avisa "o directório dos ramais AINDA responde no listener público (/api/voice/ivr/directory)"
 else
   ok "o directório dos ramais não responde no listener público"
@@ -169,7 +175,8 @@ fi
 # a porta 5060 de origem), autenticado com a conta SIP da organização.
 central=0
 for _ in 1 2 3 4 5 6 7 8; do
-  if kubectl -n "$NS" exec deploy/pbx-cliente -- asterisk -rx "pjsip show contacts" 2>/dev/null | grep -q "meet-central/sip:.*Avail"; then
+  if contactos=$(kubectl -n "$NS" exec deploy/pbx-cliente -- asterisk -rx "pjsip show contacts" 2>/dev/null) &&
+    grep -q "meet-central/sip:.*Avail" <<<"$contactos"; then
     central=1
     break
   fi

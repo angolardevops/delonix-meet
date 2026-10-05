@@ -69,7 +69,7 @@ docker run -d --name "$NAME" --network none -v "$tmp/smoke.lua:/smoke.lua:ro" \
 cli() { docker exec "$NAME" fs_cli -x "$1" 2>/dev/null; }
 up=0
 for _ in $(seq 1 60); do
-  if cli status | grep -q "UP"; then up=1; break; fi
+  if estado=$(cli status) && grep -q "UP" <<<"$estado"; then up=1; break; fi
   sleep 1
 done
 if [ "$up" -ne 1 ]; then
@@ -83,7 +83,7 @@ for m in mod_sofia mod_event_socket mod_conference mod_dptools mod_commands mod_
 done
 running=0
 for _ in $(seq 1 20); do
-  if cli "sofia status" | grep -Eq "^ *smoke[[:space:]]+profile.*RUNNING"; then running=1; break; fi
+  if estado=$(cli "sofia status") && grep -Eq "^ *smoke[[:space:]]+profile.*RUNNING" <<<"$estado"; then running=1; break; fi
   sleep 1
 done
 [ "$running" -eq 1 ] || bad "o perfil SIP de loopback não ficou RUNNING (sofia status)"

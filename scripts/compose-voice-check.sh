@@ -24,7 +24,7 @@ ok() { printf "  %s✓%s %s\n" "$g" "$z" "$1"; }
 avisa() { printf "  %s!%s %s\n" "$y" "$z" "$1"; }
 fs() { $EXEC delonix-freeswitch sh -c 'P=$(sed -n "s/.*name=\"password\" value=\"\([^\"]*\)\".*/\1/p" /conf/autoload_configs/event_socket.conf.xml); /usr/local/freeswitch/bin/fs_cli -p "$P" -x "'"$1"'"' 2>/dev/null; }
 
-if $EXEC delonix-kamailio kamcmd dispatcher.list 2>/dev/null | grep -q "FLAGS: AP"; then
+if lista=$($EXEC delonix-kamailio kamcmd dispatcher.list 2>/dev/null) && grep -q "FLAGS: AP" <<<"$lista"; then
   ok "bordo → FreeSWITCH: activo no dispatcher (OPTIONS respondido)"
 else
   avisa "bordo → FreeSWITCH: o dispatcher NÃO vê o FreeSWITCH activo"
@@ -32,7 +32,8 @@ fi
 
 tronco=0
 for _ in 1 2 3 4 5 6 7 8; do
-  $EXEC delonix-pbx asterisk -rx "pjsip show contacts" 2>/dev/null | grep -q "meet/sip:.*Avail" && { tronco=1; break; }
+  contactos=$($EXEC delonix-pbx asterisk -rx "pjsip show contacts" 2>/dev/null) &&
+    grep -q "meet/sip:.*Avail" <<<"$contactos" && { tronco=1; break; }
   sleep 5
 done
 [ "$tronco" = 1 ] && ok "PBX de cliente → bordo: tronco alcançável (OPTIONS respondido)" ||
@@ -48,14 +49,17 @@ depois=$(conta)
   ok "chamada de prova: PBX → bordo → FreeSWITCH → IVR do Meet (dialin_ivr.lua correu)" ||
   avisa "chamada de prova: NÃO chegou ao IVR do Meet"
 
-fs "curl http://delonix-server:8181/internal/v1/voice/ivr/validate post {}" | grep -q '"code":"unsupported_media_type"\|"code":"auth' &&
+resp=$(fs "curl http://delonix-server:8181/internal/v1/voice/ivr/validate post {}") &&
+  grep -q '"code":"unsupported_media_type"\|"code":"auth' <<<"$resp" &&
   ok "FreeSWITCH → servidor (listener interno): responde" ||
   avisa "FreeSWITCH → servidor (listener interno): NÃO responde"
-fs "curl http://delonix-server:8181/internal/v1/voice/ivr/dialplan-did post {}" | grep -q '"code":"auth' &&
+resp=$(fs "curl http://delonix-server:8181/internal/v1/voice/ivr/dialplan-did post {}") &&
+  grep -q '"code":"auth' <<<"$resp" &&
   ok "FreeSWITCH → servidor (ramais, listener interno): responde e exige o segredo" ||
   avisa "FreeSWITCH → servidor (ramais, listener interno): NÃO responde"
 # R286: as rotas dos ramais saíram do listener público — lá têm de dar 404.
-fs "curl http://delonix-server:8180/api/voice/ivr/directory post {}" | grep -q '"code":"auth' &&
+resp=$(fs "curl http://delonix-server:8180/api/voice/ivr/directory post {}") &&
+  grep -q '"code":"auth' <<<"$resp" &&
   avisa "o directório dos ramais AINDA responde no listener público (/api/voice/ivr/directory)" ||
   ok "o directório dos ramais não responde no listener público"
 # ---- a central da organização (ADR-0016) ----
@@ -63,7 +67,8 @@ fs "curl http://delonix-server:8180/api/voice/ivr/directory post {}" | grep -q '
 # a porta 5060 de origem), autenticado com a conta SIP da organização.
 central=0
 for _ in 1 2 3 4 5 6 7 8; do
-  $EXEC delonix-pbx asterisk -rx "pjsip show contacts" 2>/dev/null | grep -q "meet-central/sip:.*Avail" && { central=1; break; }
+  contactos=$($EXEC delonix-pbx asterisk -rx "pjsip show contacts" 2>/dev/null) &&
+    grep -q "meet-central/sip:.*Avail" <<<"$contactos" && { central=1; break; }
   sleep 5
 done
 [ "$central" = 1 ] && ok "central → bordo: tronco por TLS alcançável, com o certificado do bordo conferido" ||
