@@ -3069,3 +3069,42 @@ Fora do CI, medido a 2026-10-05 no compose do laboratório (FreeSWITCH 1.11.3, l
 - **CPU em release**: os números dos testes são de um binário de debug, numa máquina carregada.
 - **O cluster e o chart**: tudo isto foi medido no compose.
 - **O defeito do `opus-rs` com a banda média não foi reportado aos autores.**
+
+### R297 — Uma gravação arrancada à mão a meio da chamada saía sem imagem: a pista de vídeo começava sem keyframe
+
+**Sintoma.** O anfitrião carrega em «gravar» com a chamada já a decorrer (`server-record {active:true}` depois de os publicadores estarem a publicar). Cada pista de vídeo da gravação (`NN-video.ivf`) começa por quadros delta e nenhum descodificador a aceita: `ffmpeg -i pista.ivf -f null -` dá «Invalid data found when processing input» em todos os quadros, e o cabeçalho IVF fica com as dimensões nominais, 1280×720 — a marca de uma pista que nunca viu um keyframe. Com dois publicadores a composição em grelha falha (`ffmpeg exited with exit status: 69`) e a gravação fica `failed`. Com um publicador o vídeo vai em cópia e é pior: a gravação fica **`ready`**, com um ficheiro de que nenhum leitor mostra um quadro. Medido a 2026-10-05, ao medir o áudio das gravações (PR #227): três pistas em três. Com `auto_record` não acontece — a gravação arranca antes de as pistas serem publicadas, e cada uma abre pelo keyframe com que o codificador começa.
+
+**Causa raiz.** Duas, e cada uma sozinha chegava.
+1. O `start_recording` ligava writers a publicações que já iam a meio do fluxo e **não pedia keyframe**. O codificador de um browser só manda um quando lho pedem (R15 tirou o PLI periódico, e bem). Um subscritor pede-o sozinho enquanto não descodifica; a gravação é um consumidor de vídeo sem essa via de volta, e ninguém pedia por ela.
+2. A guarda do `Vp8IvfWriter` que devia esperar pelo primeiro keyframe lia o bit de keyframe (`payload[0] & 0x01 == 0`) em **qualquer** pacote. Esse bit só existe no primeiro byte do quadro, que só viaja no pacote que o inicia; num pacote de continuação o mesmo byte é dado comprimido, par metade das vezes. E a condição `!(is_key && frame.is_empty() && is_partition_head) && !is_key` reduz-se a `!is_key`. A pista dava-se por aberta à primeira continuação com byte par e começava a escrever quadros delta. Por isso é que a pista «tinha quadros» e ninguém desconfiava: não ficava vazia, ficava ilegível.
+
+**Regra.**
+- **O bit de keyframe lê-se só no pacote que inicia o quadro**: o da primeira partição, com o bit S do descritor e PID a zero (RFC 7741 §4.2; RFC 6386 §9.1). Há um predicado para isso (`vp8_starts_keyframe`) e é o único sítio onde o bit se lê. Tudo o que chega antes do primeiro keyframe verdadeiro — quadros delta inteiros e as suas continuações — fica fora da pista.
+- **Quem liga um writer de vídeo a meio do fluxo pede o keyframe.** O `start_recording` pede-o a cada publicação de vídeo a que liga um writer, depois de largar os locks da sala.
+- **E o pedido repete-se até a pista abrir.** O `RecWriter` sabe se a sua pista já tem o keyframe (`wants_keyframe`), e a bomba de RTP pede-o por ela a cada pacote enquanto a resposta for sim — ao ritmo do `pli_allowed`, um por segundo e por publicação, que é o travão da R15. Sem a repetição, um pedido que caísse no intervalo mínimo (alguém entrou na sala no segundo anterior) ou que se perdesse na rede deixava a pista vazia para sempre. Isto **não é** um PLI periódico: só existe enquanto houver uma pista de gravação por abrir, e acaba no primeiro keyframe.
+- **O `RecWriter` decide do lado de quem entrega**, com o mesmo predicado que a thread de escrita aplica, e só dá a pista por aberta se o pacote entrou na fila. É o que evita pedir um keyframe que já se tem em mão: na gravação automática a pista abre pelo keyframe de entrada e o SFU não pede nenhum (medido: 0 pedidos).
+
+**Portão.** No CI (sem ffmpeg), sobre a pista:
+- `recorder::tests::continuacoes_com_byte_par_nao_abrem_a_pista` — trinta quadros delta em três pacotes, com continuações de byte par, e uma cabeça de partição que não inicia o quadro: a pista continua à espera; chega o keyframe e a pista tem-no como primeiro quadro, os deltas seguintes inteiros, e as dimensões dele no cabeçalho.
+- `recorder::tests::so_o_video_espera_por_keyframe` — áudio não espera; câmara e partilha de ecrã esperam.
+- `sfu_e2e::gravacao_arrancada_a_meio_abre_a_pista_num_keyframe` — clientes WebRTC a sério, uma câmara que só manda keyframe quando recebe um PLI; a gravação arranca logo a seguir a um keyframe pedido por outro participante, com o pedido do arranque travado pelo intervalo mínimo.
+- `sfu_e2e::gravacao_arrancada_com_o_video_parado_pede_o_keyframe_ao_ligar_o_writer` — o publicador não está a mandar quadros (um ecrã parado): não passa pacote nenhum na bomba, e é o pedido do `start_recording` que traz o keyframe.
+
+Controlos negativos corridos, um por parte da correcção: com o bit lido em qualquer pacote falham o teste do writer e o primeiro `sfu_e2e`; sem o pedido do `start_recording` falha só o do vídeo parado; sem a repetição na bomba falha só o do meio do fluxo.
+
+Fora do CI (`scripts/e2e-fora-do-ci.txt`): `web/e2e/gravacao-a-meio.mjs`, a gravação a sério até ao ficheiro composto.
+
+**Prova corrida a 2026-10-05**, com o VP8 do Chromium (câmara falsa, pilha real do cliente), a gravação arrancada à mão 2 s depois de a media circular, 20 s gravados, host partilhado a carga 8 a 44:
+- **antes** (o binário da `develop`): 3 pistas em 3 começam sem keyframe, cabeçalho 1280×720, 0 quadros descodificados em ≈ 430 (ffmpeg 6.1.1, saída 69); dois publicadores → `failed`; um publicador → `ready` com 0 quadros de vídeo descodificáveis; 0 pedidos de keyframe ao arrancar.
+- **depois**: 3 pistas em 3 abrem num keyframe, com as dimensões dele no cabeçalho (320×240, a camada `h` da câmara falsa), e descodificam do primeiro ao último quadro (435 de 435), sem uma linha de erro; dois publicadores → `ready`, grelha com imagem desde os 0,000 s; um publicador → `ready`, idem; o SFU pediu um keyframe por câmara. Repetido com o ffmpeg 9.0.2 da imagem no servidor e na medição: igual. A pista esperou pelo keyframe entre 6 e 45 ms (o servidor escreve-o em `debug`: «a pista de vídeo abriu no seu keyframe»).
+- **controlo**: com `auto_record` e um publicador, antes e depois dão o mesmo — a pista abre pelo keyframe de entrada, e depois da correcção o SFU continua a não pedir keyframe nenhum.
+
+**O que NÃO está provado, e não o dês por feito.**
+- **O tempo de espera pelo keyframe não entra na linha do tempo da pista.** O primeiro quadro escrito fica no instante em que o writer foi ligado, e chegou depois: a imagem dessa pista fica adiantada ao som pelo tempo que esperou. Em loopback foram 6 a 45 ms; numa rede a sério é uma ida e volta mais um quadro, e quando o pedido do arranque cai no intervalo mínimo entre PLI pode chegar a 1 s. Não foi medido numa gravação com som e imagem de referência (a câmara falsa do Chromium não a dá), nem corrigido. É da mesma família do que o PR #227 deixa aberto sobre o início das pistas de áudio.
+- **Um browser a sério numa rede a sério**: perda do PLI ou do keyframe, atraso. A repetição do pedido só foi exercitada contra o intervalo mínimo, não contra perda.
+- **A camada `f`.** A câmara falsa (640×480) só publica `q` e `h`; gravou-se a `h`. O writer liga-se à melhor camada **publicada**, mesmo que o browser a tenha em pausa por falta de banda — e de uma camada em pausa não vem keyframe, peça-se o que se pedir. Já era assim; continua por medir.
+- **Partilha de ecrã** numa gravação a sério (no CI a publicação parada é uma câmara), **salas E2EE** (o cabeçalho do quadro vai em claro, por isso a guarda vale por construção; não foi corrida), e mais de dois publicadores.
+- **Perda a meio de um quadro.** O writer não segue os números de sequência: um keyframe a que falte um pacote abre a pista na mesma e é escrito incompleto, e um `marker` perdido cola dois quadros. Já era assim e não foi tocado; ninguém pede um keyframe novo por isso.
+- **A API responde `failed` enquanto o ffmpeg compõe** (sem causa). O teste contorna-o à espera de uma causa; o defeito está por tratar.
+
+**Ficheiros.** `server/src/recorder.rs` (`vp8_starts_keyframe`, `Vp8IvfWriter::write_rtp`, `RecWriter::wants_keyframe`), `server/src/sfu.rs` (`start_recording`, a bomba de RTP em `handle_publish`), `server/src/sfu_e2e.rs`, `web/e2e/gravacao-a-meio.mjs`, `scripts/e2e-fora-do-ci.txt`.
