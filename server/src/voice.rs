@@ -1289,9 +1289,26 @@ pub async fn seat_phone_caller(
 pub(crate) fn bridge_advertise(state: &AppState, bind: std::net::SocketAddr) -> String {
     match &state.config.phone_bridge_sip_advertise {
         Some(a) if !a.trim().is_empty() => a.trim().to_string(),
-        _ => format!("{}:{}", state.config.pstn_bridge_host, bind.port()),
+        _ => {
+            // Sem morada configurada (`PHONE_BRIDGE_SIP_ADVERTISE`, `PSTN_BRIDGE_HOST`,
+            // `SFU_EXTERNAL_IP`), a que o FreeSWITCH pode marcar é o IP local que a ponte
+            // detectou; o `127.0.0.1` de omissão só serve quando tudo corre na mesma máquina.
+            let host = if state.config.pstn_bridge_host_explicit {
+                state.config.pstn_bridge_host.clone()
+            } else {
+                match BRIDGE_LOCAL_IP.get() {
+                    Some(std::net::IpAddr::V6(v6)) => format!("[{v6}]"),
+                    Some(ip) => ip.to_string(),
+                    None => state.config.pstn_bridge_host.clone(),
+                }
+            };
+            format!("{host}:{}", bind.port())
+        }
     }
 }
+
+/// O IP local que a ponte usa no SDP, posto no arranque (`start_phone_bridge`).
+static BRIDGE_LOCAL_IP: std::sync::OnceLock<std::net::IpAddr> = std::sync::OnceLock::new();
 
 /// Quem entra na ponte: `room-<code>` → a sala do SFU com esse `rooms.code`.
 ///
@@ -1337,18 +1354,54 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
     let Some(sip_bind) = state.config.phone_bridge_sip_bind else {
         return;
     };
-    if state.config.phone_bridge_freeswitch_ips.is_empty() {
+    let literais = state.config.phone_bridge_freeswitch_ips.clone();
+    let nomes = state.config.phone_bridge_freeswitch_names.clone();
+    if literais.is_empty() && nomes.is_empty() {
         tracing::warn!(
             "PHONE_BRIDGE_SIP_BIND definido mas PHONE_BRIDGE_FREESWITCH_IPS vazio — ponte telefone↔sala NÃO arranca (fail-closed)"
         );
         return;
     }
+    // A lista inicial: os IPs literais mais o que cada nome resolve agora. Com nomes que
+    // ainda não resolvem (o FreeSWITCH pode arrancar depois do servidor) a ponte arranca com
+    // o que houver — se for nada, recusa tudo, que é o fail-closed — e a tarefa de refresco
+    // preenche a lista quando o nome aparecer.
+    let allowed = crate::phone_bridge::origens::SourceAllowlist::new(
+        crate::phone_bridge::origens::resolve_all(&literais, &nomes)
+            .await
+            .unwrap_or_else(|| literais.clone()),
+    );
+    // O IP onde as pernas abrem RTP e que vai no SDP: o configurado; senão o do bind, se for
+    // um endereço; senão o IP local por onde se alcança o FreeSWITCH (`0.0.0.0` não é um
+    // endereço onde alguém possa mandar RTP).
+    let rtp_ip = match state.config.phone_bridge_rtp_ip {
+        Some(ip) => ip,
+        None if !sip_bind.ip().is_unspecified() => sip_bind.ip(),
+        None => match crate::phone_bridge::origens::local_ip_towards(
+            allowed.snapshot().into_iter().find(|ip| !ip.is_loopback()),
+        ) {
+            Some(ip) => ip,
+            None => {
+                tracing::warn!(
+                    "ponte: não consegui detectar o IP local e PHONE_BRIDGE_RTP_IP não está definido — ponte telefone↔sala NÃO arranca"
+                );
+                return;
+            }
+        },
+    };
+    let _ = BRIDGE_LOCAL_IP.set(rtp_ip);
     let cfg = crate::phone_bridge::sip::SipBridgeConfig {
         sip_bind,
-        rtp_ip: state.config.phone_bridge_rtp_ip.unwrap_or(sip_bind.ip()),
+        rtp_ip,
         rtp_ports: state.config.phone_bridge_rtp_ports,
-        allowed_sources: state.config.phone_bridge_freeswitch_ips.clone(),
+        allowed_sources: allowed.clone(),
     };
+    crate::phone_bridge::origens::spawn_refresh(
+        allowed.clone(),
+        literais,
+        nomes,
+        std::time::Duration::from_secs(state.config.phone_bridge_resolve_secs),
+    );
     // A fila dos eventos é limitada: um pico de chamadas não pode crescer
     // memória sem tecto. O UA larga eventos quando ela enche — são
     // observabilidade, não o caminho da media.
@@ -1367,7 +1420,7 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
             tracing::info!(
                 sip = %b.local_sip,
                 anuncia = %bridge_advertise(state, sip_bind),
-                origens = state.config.phone_bridge_freeswitch_ips.len(),
+                origens = allowed.snapshot().len(),
                 "ponte telefone↔sala à escuta"
             );
             // A ponte é quem impõe o `ForceMute` a quem não tem cliente (R224).

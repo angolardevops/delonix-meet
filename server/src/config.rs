@@ -343,6 +343,17 @@ pub struct Config {
     /// Passou de um IP a uma lista porque o `dispatcher.list` do Kamailio
     /// cresce em produção e o SBC pode reenviar de mais que um nó (ADR-0009).
     pub phone_bridge_freeswitch_ips: Vec<std::net::IpAddr>,
+    /// Os **nomes** de `PHONE_BRIDGE_FREESWITCH_IPS` (a mesma variável aceita IPs e nomes
+    /// de máquina, separados por vírgulas). Resolvem-se ao arrancar e de tempos a tempos,
+    /// e só valem os endereços **privados** a que resolvem (`phone_bridge::origens`): um
+    /// orquestrador que dá um IP novo a cada arranque deixa de pedir um IP fixo.
+    pub phone_bridge_freeswitch_names: Vec<String>,
+    /// De quantos em quantos segundos se voltam a resolver os nomes
+    /// (`PHONE_BRIDGE_RESOLVE_SECS`, 5–300, por omissão 15).
+    pub phone_bridge_resolve_secs: u64,
+    /// `PSTN_BRIDGE_HOST`/`SFU_EXTERNAL_IP` foi mesmo definido? Se não, a morada que a
+    /// ponte dá ao FreeSWITCH é o IP local detectado, e não o `127.0.0.1` de omissão.
+    pub pstn_bridge_host_explicit: bool,
     /// Onde o UA SIP da ponte escuta (`PHONE_BRIDGE_SIP_BIND`, p.ex.
     /// `0.0.0.0:5090`). Ausente => a ponte NÃO arranca e as rotas de canais
     /// respondem `channels.bridge_not_configured` — nunca um estado inventado.
@@ -664,7 +675,7 @@ impl Config {
             ffmpeg_bin: src.var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
             ffprobe_bin: src.var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
             phone_bridge_freeswitch_ips: {
-                let mut v = ips_env(src, "PHONE_BRIDGE_FREESWITCH_IPS");
+                let mut v = origens_env(src, "PHONE_BRIDGE_FREESWITCH_IPS").0;
                 if let Some(um) = ip_env(src, "PSTN_BRIDGE_FREESWITCH_IP") {
                     if !v.contains(&um) {
                         v.push(um);
@@ -672,6 +683,12 @@ impl Config {
                 }
                 v
             },
+            phone_bridge_freeswitch_names: origens_env(src, "PHONE_BRIDGE_FREESWITCH_IPS").1,
+            phone_bridge_resolve_secs: bounded_env(src, "PHONE_BRIDGE_RESOLVE_SECS", 15, 5, 300)
+                as u64,
+            pstn_bridge_host_explicit: opt("PSTN_BRIDGE_HOST")
+                .or_else(|| opt("SFU_EXTERNAL_IP"))
+                .is_some(),
             phone_bridge_sip_bind: match src.var("PHONE_BRIDGE_SIP_BIND") {
                 Ok(v) if !v.trim().is_empty() => match v.trim().parse() {
                     Ok(a) => Some(a),
@@ -742,21 +759,22 @@ fn uuid_list(src: &Source, var: &str) -> Vec<uuid::Uuid> {
 /// Vazia => a ponte recusa tudo. Entradas ilegíveis avisam e saem — nunca um
 /// panic por configuração de uma funcionalidade opcional, nunca um valor
 /// absurdo aceite em silêncio.
-fn ips_env(src: &Source, var: &str) -> Vec<std::net::IpAddr> {
+/// Uma lista de origens (`a,b,c`): IPs e nomes de máquina. Uma entrada que não é nem uma
+/// coisa nem outra avisa e cai — nunca vira «aceitar tudo».
+fn origens_env(src: &Source, var: &str) -> (Vec<std::net::IpAddr>, Vec<String>) {
+    use crate::phone_bridge::origens::{parse_origem, Origem};
     let Ok(raw) = src.var(var) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    raw.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| match s.parse() {
-            Ok(ip) => Some(ip),
-            Err(_) => {
-                tracing::warn!("{var}: «{s}» não é um IP — ignorado");
-                None
-            }
-        })
-        .collect()
+    let (mut ips, mut nomes) = (Vec::new(), Vec::new());
+    for s in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        match parse_origem(s) {
+            Some(Origem::Ip(ip)) => ips.push(ip),
+            Some(Origem::Nome(n)) => nomes.push(n),
+            None => tracing::warn!("{var}: «{s}» não é um IP nem um nome de máquina — ignorado"),
+        }
+    }
+    (ips, nomes)
 }
 
 fn ip_env(src: &Source, var: &str) -> Option<std::net::IpAddr> {

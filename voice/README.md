@@ -327,12 +327,17 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 
 ## Ponte telefone↔sala (ADR-0010) — ligada
 
-> **No compose e no cluster locais a ponte está DESLIGADA** (medido a 2026-10-04): o servidor
-> regista «`PHONE_BRIDGE_SIP_BIND` não configurado» e o dial-in cai na conferência local, por isso
-> um ramal que marca `8000` + PIN **não aparece na sala do browser**. Ligá-la exige `PHONE_BRIDGE_FREESWITCH_IPS`
-> com **IPs exactos** e `PHONE_BRIDGE_RTP_IP` com o IP do próprio servidor, e o `delonix compose`
-> recusa sub-redes fixas (`ipam:`) e dá um IP novo a cada recriação (4 amostras seguidas, nunca o
-> mesmo); o chart do Helm também não o resolve (ver o «Achado» em `deploy/helm/delonix-meet/README.md`).
+> **No compose a ponte está LIGADA**; no cluster local e no Helm continua desligada (o chart
+> pede IPs exactos, ver o «Achado» em `deploy/helm/delonix-meet/README.md`). `PHONE_BRIDGE_FREESWITCH_IPS`
+> aceita IPs **e nomes**: o servidor resolve os nomes (só endereços privados, nunca loopback) a
+> cada `PHONE_BRIDGE_RESOLVE_SECS` e, se o nome deixar de resolver durante 3 ciclos seguidos, a
+> lista cai para os IPs literais — um IP que ficou livre não herda o acesso. O IP de RTP, se não
+> for configurado, deduz-se da rota para o FreeSWITCH.
+> **Modelo de confiança:** a lista de origens é a única autenticação do socket SIP da ponte;
+> por nome, a âncora de confiança passa a ser o DNS (em produção, IPs literais ou um nome de um
+> DNS interno de confiança; prefere o nome absoluto com ponto final, que não passa pelos
+> domínios de pesquisa). **Limite conhecido:** na rede do compose, um contentor com `NET_RAW`
+> (o `pbx` não confiado é um) pode forjar a origem do FreeSWITCH; vale também para IPs literais.
 > A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
 
 Quem entra por telefone é um **participante da sala**: fala e ouve os
