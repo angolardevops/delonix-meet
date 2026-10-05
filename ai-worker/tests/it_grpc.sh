@@ -130,7 +130,10 @@ curl -fs -X POST "http://127.0.0.1:$HTTP_PORT/api/rooms" -H 'content-type: appli
   -H "authorization: Bearer $TOKEN" -d '{"name":"x"}' >/dev/null || die "criar sala falhou"
 ok "org, conta e sala criadas pela API"
 
-REC=$(seed_recording "$EMAIL"); [ -n "$REC" ] || die "INSERT da gravação falhou"
+# `|| true`: com `set -e` e `pipefail`, um `psql` que falha matava o script na
+# atribuição, antes do `die` (que é quem mostra o fim do registo do servidor).
+REC=$(seed_recording "$EMAIL") || true
+[ -n "$REC" ] || die "INSERT da gravação falhou"
 printf '\x1a\x45\xdf\xa3' >"$REC_DIR/$REC.webm"
 
 rc=$(run_worker GRPC_INSECURE=1)
