@@ -1867,12 +1867,8 @@ mod tests {
         cmd.args(["-map", "0:a:0", "-ac", "1", "-ar", "48000", "-f", "s16le"]);
         corre(cmd.arg(&pcm));
         let bytes = std::fs::read(&pcm).unwrap();
-        Some(
-            bytes
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]))
-                .collect(),
-        )
+        let (pares, _) = bytes.as_chunks::<2>();
+        Some(pares.iter().map(|b| i16::from_le_bytes(*b)).collect())
     }
 
     /// Os argumentos de saída da composição só de áudio de `offsets_ms`.
