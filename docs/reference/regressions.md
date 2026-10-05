@@ -3284,17 +3284,19 @@ No CI: `tests/telephony.rs` (contra um ESL falso) — a ordem `killgw` → `gwli
 - **Mudar o nome de uma variável de ambiente é mudar todos os sítios que a mandam definir**, incluindo os cabeçalhos dos testes que não correm no CI — são instruções para uma pessoa, e uma instrução errada num teste manual só se descobre quando alguém perde uma tarde.
 - **Um merge com conflito numa tabela de documentação relê-se linha a linha.** As duas linhas eram ambas plausíveis lado a lado.
 
-**Portão.** `scripts/check-docs-drift.sh` (`make fitness` e CI), verificação 6: cada nome na primeira coluna das tabelas do `docs/deployment.md` tem de existir como literal em `server/src` ou em `server/crates/*/src`; e cada `` `NOME=valor` `` citado em `web/e2e/**` e no `scripts/e2e-fora-do-ci.txt` tem de ser isso ou uma variável que um e2e lê de `process.env`.
+**Portão.** `scripts/check-docs-drift.sh` (`make fitness` e CI), verificação 6: cada nome na primeira coluna das tabelas do `docs/deployment.md` tem de existir como literal em `server/src` ou em `server/crates/*/src`; e cada `` `NOME=valor` `` citado em `web/e2e/**` e no `scripts/e2e-fora-do-ci.txt` tem de ser isso, uma variável que um e2e lê de `process.env`, ou uma que um `scripts/*.sh` lê (`$NOME`, `${NOME…}`) — a lista de excepções também regista provas em shell.
 
 **Prova corrida a 2026-10-05.**
 - o portão novo sobre os quatro ficheiros como estavam na `origin/develop`: cinco linhas de drift, as cinco referências e mais nenhuma, estado 1;
 - depois da correcção: verde, estado 0; `scripts/check-repo-hygiene.sh` verde;
-- sem falsos positivos na árvore de hoje: os outros 30 nomes da primeira coluna das tabelas do `docs/deployment.md` são todos lidos pelo servidor, e não há mais nenhum `` `NOME=valor` `` nos 43 e2e que não seja do servidor ou de um e2e;
+- sem falsos positivos na árvore de hoje: os outros 30 nomes da primeira coluna das tabelas do `docs/deployment.md` são todos lidos pelo servidor, e não há mais nenhum `` `NOME=valor` `` nos 44 e2e nem no `scripts/e2e-fora-do-ci.txt` que não seja do servidor, de um e2e ou de uma prova em shell;
+- **a primeira versão do portão dava um vermelho falso, e foi a integração que o apanhou**: medida sobre a `develop` em `bc41805a` estava verde; sobre a `16ab2e5b` acusava o `SEM_ESL=1` do `troncos-prova.sh`, que a R300 tinha acabado de acrescentar à lista de excepções. É uma variável do próprio script, lida com `${SEM_ESL:-}`. O portão passou a aceitá-las, e o controlo negativo continua a dar as mesmas cinco linhas;
 - `deploy/` (compose, chart Helm, `k8s/`, overlays), o `Makefile` e os workflows não citam o nome antigo; o único sítio que define a isenção é o `deploy/demo-kaeso.sh`, com o nome certo.
 
 **O que NÃO está provado.**
 - **Os dois e2e não foram corridos depois da correcção.** Só mudaram comentários; a falha com o nome antigo e o 20/20 com o novo foram medidos antes, no `gravacao-servidor-meta.mjs`. O `directo-destinos.mjs` com `OUTBOUND_ALLOW_HOSTS=localhost` não foi corrido.
 - **O portão só vê num sentido e só nestes sítios.** «O servidor lê» mede-se por um literal em maiúsculas no código, não por uma chamada a `Source::var`: um nome que sobreviva numa mensagem de erro ou noutra cadeia de texto passa. Não vê variáveis que o servidor lê e a doc não documenta, nem nomes em prosa (o `acrescentar o host a …` do §7 do `docs/deployment.md`), nem os outros `.md`, nem os manifestos de `deploy/` — aí, hoje, o nome antigo não aparece, mas nada o impede de voltar.
+- **Aceitar o que um `scripts/*.sh` lê alarga a malha**: um nome que o servidor deixe de ler mas que sobreviva como `$NOME` num script de prova passa nos e2e e na lista de excepções (não na tabela do `docs/deployment.md`, que só aceita o que o servidor lê).
 - **Uma tabela nova no `docs/deployment.md` com variáveis que não são do servidor** (coturn, nginx, vite) vai dar vermelho até o nome entrar em `FORA_DO_SERVIDOR`, no portão. Hoje a lista está vazia.
 
 **Ficheiros.** `docs/deployment.md`, `web/e2e/gravacao-servidor-meta.mjs`, `web/e2e/directo-destinos.mjs`, `scripts/e2e-fora-do-ci.txt`, `scripts/check-docs-drift.sh`.

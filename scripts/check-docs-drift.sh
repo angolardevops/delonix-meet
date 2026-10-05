@@ -147,7 +147,9 @@ fi
 #    servidor ignora em silêncio uma variável que não conhece.
 #    Verifica: (a) a primeira coluna das tabelas do `docs/deployment.md`;
 #    (b) cada `NOME=valor` citado nos e2e e em `scripts/e2e-fora-do-ci.txt`,
-#    que também pode ser uma variável que um e2e lê de `process.env`.
+#    que também pode ser uma variável que um e2e lê de `process.env` ou que
+#    uma prova em shell lê (`$NOME`, `${NOME…}`) — a lista de excepções também
+#    regista provas que não são `.mjs`, como o `troncos-prova.sh`.
 #    Só num sentido: «o servidor lê» mede-se pelo literal no código, por isso
 #    apanha um nome que deixou de existir, não uma variável por documentar.
 if ! python3 - <<'PYEOF'
@@ -178,11 +180,13 @@ do_teste = set()
 for p in e2e:
     do_teste |= set(re.findall(r'process\.env\.([A-Z][A-Z0-9_]*)', ler(p)))
     do_teste |= set(re.findall(r'process\.env\[\s*[\'"]([A-Z][A-Z0-9_]*)', ler(p)))
+for p in sorted(glob.glob('scripts/*.sh')):
+    do_teste |= set(re.findall(r'\$\{?(' + NOME + r')', ler(p)))
 for p in e2e + ['scripts/e2e-fora-do-ci.txt']:
     for n, linha in enumerate(ler(p).splitlines(), 1):
         for nome in re.findall(r'`(' + NOME + r')=[^`]*`', linha):
             if nome not in servidor and nome not in do_teste:
-                print(f"✗ drift: {p}:{n} manda definir '{nome}', que nem o servidor nem um e2e leem")
+                print(f"✗ drift: {p}:{n} manda definir '{nome}', que nem o servidor, nem um e2e, nem um scripts/*.sh leem")
                 falha = True
 sys.exit(1 if falha else 0)
 PYEOF
