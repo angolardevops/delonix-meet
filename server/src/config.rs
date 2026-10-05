@@ -370,6 +370,11 @@ pub struct Config {
     /// (`PHONE_BRIDGE_RTP_MIN`/`MAX`). Ausente => porta efémera do SO, que não
     /// se pode expor no K8s.
     pub phone_bridge_rtp_ports: Option<(u16, u16)>,
+    /// A perna da ponte negoceia Opus (`PHONE_BRIDGE_WIDEBAND`, por omissão
+    /// ligado — ADR-0017): o servidor manda `OPUS,PCMA` na dial string e a voz
+    /// de um softphone chega à sala sem passar por 8 kHz. `0` repõe `PCMA`, o
+    /// caminho G.711 de sempre, sem reconstruir nada.
+    pub phone_bridge_wideband: bool,
     /// Host que o control plane devolve ao IVR (`PSTN_BRIDGE_HOST`). Por
     /// omissão o mesmo `SFU_EXTERNAL_IP`; "127.0.0.1" se nenhum dos dois
     /// estiver definido (dev local, tudo na mesma máquina).
@@ -708,6 +713,7 @@ impl Config {
                 let max = bounded_env(src, "PHONE_BRIDGE_RTP_MAX", 0, 0, 65_535) as u16;
                 (min > 0 && max >= min).then_some((min, max))
             },
+            phone_bridge_wideband: bounded_env(src, "PHONE_BRIDGE_WIDEBAND", 1, 0, 1) == 1,
             pstn_bridge_host: opt("PSTN_BRIDGE_HOST")
                 .or_else(|| opt("SFU_EXTERNAL_IP"))
                 .unwrap_or_else(|| "127.0.0.1".into()),
