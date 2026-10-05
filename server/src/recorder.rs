@@ -1124,6 +1124,12 @@ async fn finalize_inner(
 /// `async=1` só enche a partir de 100 ms (`min_hard_comp`, o valor por
 /// omissão): um pacote perdido isolado desloca 20 ms e só é reposto quando a
 /// soma passa disso. `first_pts=0` fixa o início da pista no zero dela.
+///
+/// O que NÃO enche: mais de 10 s sem um único pacote. O ffmpeg trata esse
+/// salto como descontinuidade (`-dts_delta_threshold`, 10 s) e tira-o antes de
+/// o filtro o ver. Subir o limiar não é saída: o `aresample` guarda o silêncio
+/// inteiro em memória antes de o entregar (medido: 440 MB para 6 min, 3,2 GB
+/// para 1 h). Esse caso só se fecha a escrever o silêncio na própria pista.
 const AUDIO_GAP_FILL: &str = "aresample=async=1:first_pts=0";
 
 /// O Opus de qualquer áudio que saia do ffmpeg recodificado.
@@ -1762,15 +1768,34 @@ mod tests {
     //  Buraco na pista de áudio (DTX, perda): a fala seguinte não recua
     // ------------------------------------------------------------------
 
-    /// Escreve uma pista OGG pelo `RecSink` de PRODUÇÃO. Dentro de `fala`
-    /// (intervalos em ms) há um tom a `freq`; fora deles não sai pacote e o
-    /// timestamp RTP salta, que é o que a perda faz. Com `dtx`, o silêncio
-    /// leva um pacote de 20 ms a cada 400 ms, como o Opus do Chrome com
-    /// `usedtx=1`.
-    fn pista_com_buraco(path: &Path, freq: f32, total_ms: u32, fala: &[(u32, u32)], dtx: bool) {
-        let file = std::fs::File::create(path).unwrap();
-        let w = OggWriter::new(std::io::BufWriter::new(file), 48000, 2).unwrap();
-        let mut sink = RecSink::Audio { w, key: None };
+    /// Uma sessão de gravação como a de produção, numa pasta de teste.
+    async fn sessao_de_teste() -> RecordingSession {
+        let dir = std::env::temp_dir().join(format!("dlx-buraco-{}", Uuid::new_v4()));
+        RecordingSession::new(Uuid::new_v4(), "teste".into(), None, &dir)
+            .await
+            .unwrap()
+    }
+
+    /// Abre uma pista em `session` pelo caminho de PRODUÇÃO (`open_track`, a
+    /// thread do `RecWriter`, o `RecSink`) e devolve o writer e o ficheiro.
+    fn abre_pista(session: &mut RecordingSession, kind: &str) -> (RecWriter, PathBuf) {
+        let metrics = Arc::new(crate::metrics::Metrics::default());
+        let w = session.open_track(kind, 4096, metrics).unwrap();
+        (w, session.tracks.last().unwrap().path.clone())
+    }
+
+    /// Grava uma pista de áudio. Dentro de `fala` (intervalos em ms) há um tom
+    /// a `freq`; fora deles não sai pacote e o timestamp RTP salta, que é o
+    /// que a perda faz. Com `dtx`, o silêncio leva um pacote de 20 ms a cada
+    /// 400 ms, como o Opus do Chrome com `usedtx=1`.
+    async fn pista_com_buraco(
+        session: &mut RecordingSession,
+        freq: f32,
+        total_ms: u32,
+        fala: &[(u32, u32)],
+        dtx: bool,
+    ) -> PathBuf {
+        let (w, path) = abre_pista(session, "audio");
         let mut enc = opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
         enc.bitrate_bps = 32_000;
         let mut out = vec![0u8; 1500];
@@ -1794,7 +1819,7 @@ mod tests {
                 continue;
             }
             seq = seq.wrapping_add(1);
-            sink.write_rtp(&webrtc::rtp::packet::Packet {
+            w.write_rtp(&webrtc::rtp::packet::Packet {
                 header: webrtc::rtp::header::Header {
                     sequence_number: seq,
                     timestamp: 90_000 + i * 960,
@@ -1804,7 +1829,8 @@ mod tests {
                 payload: out[..len].to_vec().into(),
             });
         }
-        sink.close();
+        assert_eq!(w.close().await, 0, "a fila de escrita perdeu pacotes");
+        path
     }
 
     /// Corre o ffmpeg do servidor (`FFMPEG_BIN`) sobre `entradas` com os
@@ -1903,22 +1929,16 @@ mod tests {
     }
 
     const SEM_FFMPEG: &str = "ffmpeg indisponível — o buraco de áudio NÃO foi verificado";
+    const FALA: [(u32, u32); 2] = [(0, 2000), (4000, 6000)];
 
-    fn pasta_de_teste() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("dlx-buraco-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn a_fala_depois_de_um_buraco_nao_recua_na_mistura() {
+    #[tokio::test]
+    async fn a_fala_depois_de_um_buraco_nao_recua_na_mistura() {
         for dtx in [false, true] {
-            let dir = pasta_de_teste();
-            let (a, b) = (dir.join("00-audio.ogg"), dir.join("01-audio.ogg"));
-            pista_com_buraco(&a, 440.0, 6000, &[(0, 2000), (4000, 6000)], dtx);
-            pista_com_buraco(&b, 1000.0, 6000, &[(0, 6000)], false);
-            let pcm = compor(&dir, &[a, b], &args_da_mistura(&[500, 0]));
-            let _ = std::fs::remove_dir_all(&dir);
+            let mut s = sessao_de_teste().await;
+            let a = pista_com_buraco(&mut s, 440.0, 6000, &FALA, dtx).await;
+            let b = pista_com_buraco(&mut s, 1000.0, 6000, &[(0, 6000)], false).await;
+            let pcm = compor(&s.dir, &[a, b], &args_da_mistura(&[500, 0]));
+            let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
             let Some(pcm) = pcm else {
                 eprintln!("{SEM_FFMPEG}");
                 return;
@@ -1934,13 +1954,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_fala_depois_de_um_buraco_nao_recua_numa_pista_so() {
-        let dir = pasta_de_teste();
-        let a = dir.join("00-audio.ogg");
-        pista_com_buraco(&a, 440.0, 6000, &[(0, 2000), (4000, 6000)], true);
-        let pcm = compor(&dir, &[a], &args_da_mistura(&[500]));
-        let _ = std::fs::remove_dir_all(&dir);
+    #[tokio::test]
+    async fn a_fala_depois_de_um_buraco_nao_recua_numa_pista_so() {
+        let mut s = sessao_de_teste().await;
+        let a = pista_com_buraco(&mut s, 440.0, 6000, &FALA, true).await;
+        let pcm = compor(&s.dir, &[a], &args_da_mistura(&[500]));
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
         let Some(pcm) = pcm else {
             eprintln!("{SEM_FFMPEG}");
             return;
@@ -1948,20 +1967,19 @@ mod tests {
         exige_tom_silencio_tom(&pcm, 500, "só áudio, uma pista");
     }
 
-    /// O caminho de um publicador com os argumentos de produção: o vídeo é um
-    /// IVF do `Vp8IvfWriter` (vai em cópia, ninguém o descodifica).
-    #[test]
-    fn a_fala_depois_de_um_buraco_nao_recua_com_um_publicador() {
-        let dir = pasta_de_teste();
-        let (v, a) = (dir.join("00-video.ivf"), dir.join("01-audio.ogg"));
-        let mut ivf = Vp8IvfWriter::new(std::fs::File::create(&v).unwrap()).unwrap();
+    /// O caminho de um publicador com os argumentos de produção. O vídeo vai
+    /// em cópia e ninguém o descodifica: bastam-lhe quadros com cara de VP8.
+    #[tokio::test]
+    async fn a_fala_depois_de_um_buraco_nao_recua_com_um_publicador() {
+        let mut s = sessao_de_teste().await;
+        let (w, v) = abre_pista(&mut s, "video");
         for i in 0..60u32 {
-            ivf.write_rtp(&vp8_keyframe(i as u16, i * 9000)).unwrap();
+            w.write_rtp(&vp8_keyframe(i as u16, i * 9000));
         }
-        ivf.close().unwrap();
-        pista_com_buraco(&a, 440.0, 6000, &[(0, 2000), (4000, 6000)], true);
-        let pcm = compor(&dir, &[v, a], &single_publisher_args(true, None));
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(w.close().await, 0);
+        let a = pista_com_buraco(&mut s, 440.0, 6000, &FALA, true).await;
+        let pcm = compor(&s.dir, &[v, a], &single_publisher_args(true, None));
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
         let Some(pcm) = pcm else {
             eprintln!("{SEM_FFMPEG}");
             return;
