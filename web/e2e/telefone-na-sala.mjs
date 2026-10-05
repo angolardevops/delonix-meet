@@ -30,7 +30,10 @@ import { join } from 'node:path'
 const API = process.env.API ?? 'http://127.0.0.1:8180'
 const APP = process.env.APP ?? 'http://localhost:5173'
 const { EMAIL, PASSWORD, SALA } = process.env
-const ESPERA = Number(process.env.ESPERA ?? 90) // quanto se espera pelo telefone
+// Um runner lento declara-o (R118): as ESPERAS esticam com o factor; a janela
+// de medição não, que essa é do que se mede.
+const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
+const ESPERA = Number(process.env.ESPERA ?? 90) * FATOR // quanto se espera pelo telefone
 const SEGUNDOS = Number(process.env.SEGUNDOS ?? 12) // quanto se mede depois de ele entrar
 const TOM_DO_TELEFONE = Number(process.env.TOM_DO_TELEFONE ?? 1000)
 const TOM_DO_BROWSER = 440
@@ -103,9 +106,9 @@ await ctx.addInitScript(() => {
 })
 const p = await ctx.newPage()
 const url = `${APP}/e2e/harness.html?token=${encodeURIComponent(jr.room_token)}&code=${SALA}&access=${encodeURIComponent(tok)}&som=cru`
-await p.goto(url, { waitUntil: 'domcontentloaded', timeout: 180000 })
+await p.goto(url, { waitUntil: 'domcontentloaded', timeout: 180000 * FATOR })
 let pronto = false
-for (let k = 0; k < 120 && !pronto; k++) {
+for (let k = 0; k < 120 * FATOR && !pronto; k++) {
   await sleep(1000)
   pronto = await p.evaluate(() => window.__dlx?.ready === true && window.__dlx.state === 'connected').catch(() => false)
 }
@@ -249,7 +252,7 @@ if (!ouviu) {
 }
 
 // O browser fica na sala até o telefone desligar: é ele que mede o outro sentido.
-for (let k = 0; k < 120; k++) {
+for (let k = 0; k < 120 * FATOR; k++) {
   if ((await p.evaluate(() => window.__dlx.publicadores().length)) === 0) break
   await sleep(1000)
 }
