@@ -61,6 +61,19 @@ describe('o menu de contexto está ligado onde foi prometido', () => {
     }
   })
 
+  it('o foco entra no menu DEPOIS de ele ter posição — nunca no efeito que o mede', () => {
+    // Medido no browser, não deduzido: enquanto não há `pos` o menu está
+    // `visibility: hidden` para não piscar no canto, e um `focus()` num
+    // elemento invisível não faz nada. O menu abria com o foco no `body` e as
+    // setas não andavam. A bateria não tem DOM — este portão lê a forma.
+    const menu = src('ui/Menu.tsx')
+    const efeitoDoFoco = /useEffect\(\(\) => \{\s*if \(!pos\) return\s*ref\.current\?\.querySelector<HTMLButtonElement>\('button:not\(:disabled\)'\)\?\.focus\(\)\s*\}, \[pos\]\)/
+    expect(menu).toMatch(efeitoDoFoco)
+    // E o efeito que MEDE não foca.
+    const medir = menu.slice(menu.indexOf('useLayoutEffect'), menu.indexOf('/**\n   * O foco vai'))
+    expect(medir).not.toContain('.focus()')
+  })
+
   it('e o menu devolve o foco a quem o abriu, e fecha com Esc, com o scroll e com um clique fora', () => {
     const menu = src('ui/Menu.tsx')
     expect(menu).toContain('focoAnterior.current?.focus?.()')

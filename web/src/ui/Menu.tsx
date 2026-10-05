@@ -130,8 +130,22 @@ export function Menu({
         { largura: window.innerWidth, altura: window.innerHeight },
       ),
     )
-    el.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
   }, [ponto])
+
+  /**
+   * O foco vai para a primeira linha DEPOIS de o menu ter posição — nunca no
+   * mesmo efeito que o mede.
+   *
+   * Medido no browser: enquanto não há `pos` o menu está `visibility: hidden`
+   * (para não piscar no canto antes de dobrar), e **um `focus()` num elemento
+   * invisível não faz nada**. O menu abria com o foco no `body`: as setas, o
+   * Home e o End não andavam, e o Esc fechava-o só porque o ouvinte é da
+   * janela. Nenhum teste via isto — não há DOM na bateria.
+   */
+  useEffect(() => {
+    if (!pos) return
+    ref.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+  }, [pos])
 
   useEffect(() => {
     if (!ponto) return

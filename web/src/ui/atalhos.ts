@@ -185,16 +185,19 @@ export const CATALOGO_DE_ATALHOS = [
   { id: 'vistaTv', escopo: 'estudio', combinacao: 'mod+shift+5', rotulo: 'studio.vistas.tv' },
 
   // -------------------------------------------------------------- mesa de corte
-  // Tratados em `studio/tv/atalhos.ts`; aqui só se documentam. O portão de
+  // Tratados em `studio/tv/atalhos.ts`; aqui só se documentam. Os rótulos são
+  // próprios (`ui.atalhos.mesa*`) e não os da mesa (`tv.atalhos.*`): esses são
+  // fragmentos minúsculos para a linha de dica do ecrã («1–6 fonte em pré») e
+  // na folha ficavam a meio de uma lista de nomes em maiúscula. O portão de
   // `atalhos.test.ts` compara cada um com o que `accaoDaTecla` devolve, para
   // que a folha nunca prometa uma tecla que a mesa não tem.
-  { id: 'mesaPrevia', escopo: 'mesa', combinacao: '1', ate: '6', rotulo: 'tv.atalhos.previa', documental: true },
-  { id: 'mesaAr', escopo: 'mesa', combinacao: 'shift+1', ate: '6', rotulo: 'tv.atalhos.ar', documental: true },
-  { id: 'mesaCortar', escopo: 'mesa', combinacao: 'space', rotulo: 'tv.atalhos.cortar', documental: true },
-  { id: 'mesaMisturar', escopo: 'mesa', combinacao: 'enter', rotulo: 'tv.atalhos.misturar', documental: true },
+  { id: 'mesaPrevia', escopo: 'mesa', combinacao: '1', ate: '6', rotulo: 'ui.atalhos.mesaPrevia', documental: true },
+  { id: 'mesaAr', escopo: 'mesa', combinacao: 'shift+1', ate: '6', rotulo: 'ui.atalhos.mesaAr', documental: true },
+  { id: 'mesaCortar', escopo: 'mesa', combinacao: 'space', rotulo: 'ui.atalhos.mesaCortar', documental: true },
+  { id: 'mesaMisturar', escopo: 'mesa', combinacao: 'enter', rotulo: 'ui.atalhos.mesaMisturar', documental: true },
   { id: 'mesaLimpar', escopo: 'mesa', combinacao: 'w', rotulo: 'ui.atalhos.mesaLimpar', documental: true },
   { id: 'mesaStinger', escopo: 'mesa', combinacao: 's', rotulo: 'ui.atalhos.mesaStinger', documental: true },
-  { id: 'mesaSobreposicao', escopo: 'mesa', combinacao: 'alt+1', ate: '4', rotulo: 'tv.atalhos.sobreposicoes', documental: true },
+  { id: 'mesaSobreposicao', escopo: 'mesa', combinacao: 'alt+1', ate: '4', rotulo: 'ui.atalhos.mesaSobreposicao', documental: true },
   { id: 'mesaMacro', escopo: 'mesa', combinacao: 'f1', ate: 'f6', rotulo: 'ui.atalhos.mesaMacro', documental: true },
 
   // -------------------------------------------------------------- quadro e diagramas
