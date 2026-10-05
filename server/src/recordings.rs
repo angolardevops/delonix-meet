@@ -115,7 +115,7 @@ pub struct ApiDoc;
 
 /// A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`).
 /// As LEITURAS — a biblioteca, o recurso e a lista da sala — devolvem
-/// [`RecordingItem`], que traz o estado.
+/// `RecordingLibraryItem`, que traz o estado.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Recording {
     pub id: Uuid,
@@ -845,14 +845,14 @@ pub async fn upload(
 /// Gravações de uma sala específica (painel dentro da reunião).
 /// Só para participantes da sala — senão `403 room.not_participant`.
 ///
-/// É mais uma vista da gravação, e por isso devolve a MESMA representação da
-/// biblioteca e do recurso (`RecordingLibraryItem`), lida pela mesma consulta e
-/// pela mesma regra: o `status` diz se há ficheiro (`processing` e `failed`
-/// não têm), e o `can_download` se quem pede o pode descarregar. Antes
-/// devolvia seis campos sem estado, e o painel oferecia «descarregar» sobre
-/// uma gravação a compor, falhada, ou que o `?dl=1` ia recusar (R59).
+/// Devolve a MESMA representação da biblioteca e do recurso
+/// (`RecordingLibraryItem`): o `status` diz se há ficheiro (`processing` e
+/// `failed` não têm), e o `can_download` se quem pede o pode descarregar.
 ///
 /// Sem paginação (dívida herdada: a lista de uma sala inteira).
+// É mais uma VISTA da gravação, lida pela consulta e pela regra das outras.
+// Antes devolvia seis campos sem estado, e o painel oferecia «descarregar»
+// sobre uma gravação a compor, falhada, ou que o `?dl=1` ia recusar (R59).
 #[utoipa::path(
     get, path = "/api/rooms/{room_code}/recordings", tag = "recordings",
     security(("session" = [])),

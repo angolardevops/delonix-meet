@@ -8225,6 +8225,7 @@
         "type": "object"
       },
       "Recording": {
+        "description": "A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`).\nAs LEITURAS — a biblioteca, o recurso e a lista da sala — devolvem\n`RecordingLibraryItem`, que traz o estado.",
         "properties": {
           "created_at": {
             "format": "date-time",

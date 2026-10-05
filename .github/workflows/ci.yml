@@ -422,6 +422,13 @@ jobs:
           # admitir → retrato remoto. É a promessa central do produto e não
           # havia teste nenhum a cobri-la ponta a ponta.
           APP=http://localhost:5174 node web/e2e/reuniao.mjs
+          # O painel de gravações DENTRO da sala é mais uma vista da gravação
+          # (R59): nenhum botão sobre uma a compor, falhada, ou que quem vê não
+          # pode descarregar; e uma gravação do servidor parada na sala entra na
+          # lista sozinha. Sem ffmpeg, essa acaba falhada com a causa — é a
+          # falha de operação que o runner dá de graça. Depois do `reuniao.mjs`,
+          # que prova que se entra numa sala pela interface.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/gravacao-na-sala.mjs
           # Um CONVIDADO SEM CONTA entra pela interface: o link, um nome, a
           # sala de espera, o anfitrião admite. É o caminho que decide a
           # adopção, e durante meses o servidor teve a rota e nenhum ecrã a
