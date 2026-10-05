@@ -89,6 +89,7 @@ mod voice_caller;
 mod webhooks;
 mod whiteboards;
 
+pub use dial_outs::caller_of_call as dial_outs_caller_of_call;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};

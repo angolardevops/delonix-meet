@@ -585,3 +585,32 @@ pub async fn hangup(
     .await;
     Ok(Json(one(&state, room.id, id).await?))
 }
+
+/// Quem é a chamada `call_id` que a sala fez tocar: o nome do ramal (a etiqueta, ou o
+/// nome da pessoa) e a pessoa. `None` se não há dial-out desta sala com esse id.
+pub async fn caller_of_call(
+    db: &sqlx::PgPool,
+    call_id: Uuid,
+    room_code: &str,
+) -> Option<crate::voice_caller::CallerIdentity> {
+    let row: Option<(String, Option<Uuid>)> = sqlx::query_as(
+        "SELECT COALESCE(NULLIF(e.label, ''), u.username, e.extension), e.member_id
+           FROM room_dial_outs d
+           JOIN voice_extensions e ON e.id = d.extension_id
+           LEFT JOIN users u ON u.id = e.member_id
+          WHERE d.telephony_call_id = $1 AND d.room_code = $2",
+    )
+    .bind(call_id)
+    .bind(room_code)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| tracing::warn!(error = %e, "dial-out: não consegui saber quem é a chamada"))
+    .ok()
+    .flatten();
+    row.map(
+        |(display_name, member_id)| crate::voice_caller::CallerIdentity {
+            display_name,
+            member_id,
+        },
+    )
+}
