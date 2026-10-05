@@ -335,6 +335,26 @@ pub fn sdp_answer(
 //  O UA
 // ============================================================
 
+/// O `Contact` das respostas: para onde o FreeSWITCH manda o `ACK` e o `BYE`
+/// do diálogo (RFC 3261 §12.1.1).
+///
+/// **Nunca o endereço de escuta quando ele é `0.0.0.0`** — que é como o UA
+/// escuta no compose e no cluster. Com `<sip:bridge@0.0.0.0:5090>` o `BYE` do
+/// FreeSWITCH não chegava a lado nenhum: quem desligava o telefone continuava
+/// na sala, e a perna, o socket de RTP e a publicação ficavam vivos até o
+/// servidor reiniciar (medido no laboratório a 2026-10-05: dois softphones
+/// desligaram e as duas pernas continuaram abertas). Vai o IP onde as pernas
+/// abrem o RTP — o deste processo, que o FreeSWITCH já alcança para a media —
+/// e não o do Service: o diálogo vive nesta réplica.
+fn contact_uri(local_sip: SocketAddr, rtp_ip: IpAddr) -> String {
+    let ip = if local_sip.ip().is_unspecified() {
+        rtp_ip
+    } else {
+        local_sip.ip()
+    };
+    format!("<sip:bridge@{}>", SocketAddr::new(ip, local_sip.port()))
+}
+
 /// Quem decide se uma chamada entra, e em que sala. Implementado pelos canais
 /// da sala (`room_channels`); nos testes, por um mapa.
 #[async_trait]
@@ -765,7 +785,7 @@ impl SipBridge {
     }
 
     fn contact(&self) -> String {
-        format!("<sip:bridge@{}>", self.local_sip)
+        contact_uri(self.local_sip, self.cfg.rtp_ip)
     }
 
     async fn open_leg(
@@ -1029,6 +1049,26 @@ a=sendrecv\r\n";
         let answer = parse_sdp_offer(&back.body).unwrap();
         assert_eq!(answer.remote, Some("127.0.0.1:32900".parse().unwrap()));
         assert_eq!(answer.codec, LegCodec::G711(Law::A));
+    }
+
+    /// O `Contact` é para onde o `BYE` vem: com o UA à escuta em `0.0.0.0`
+    /// tem de levar um endereço a que o FreeSWITCH chegue.
+    #[test]
+    fn o_contact_nunca_leva_o_endereco_de_escuta_indefinido() {
+        let rtp: IpAddr = "10.225.0.50".parse().unwrap();
+        assert_eq!(
+            contact_uri("0.0.0.0:5090".parse().unwrap(), rtp),
+            "<sip:bridge@10.225.0.50:5090>"
+        );
+        assert_eq!(
+            contact_uri("[::]:5090".parse().unwrap(), "fd00::50".parse().unwrap()),
+            "<sip:bridge@[fd00::50]:5090>"
+        );
+        // Com um endereço de escuta concreto, é ele: é onde o UA está.
+        assert_eq!(
+            contact_uri("127.0.0.1:5290".parse().unwrap(), rtp),
+            "<sip:bridge@127.0.0.1:5290>"
+        );
     }
 
     // ------------------------------------------------------------
