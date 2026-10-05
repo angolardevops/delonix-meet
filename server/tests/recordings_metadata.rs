@@ -434,15 +434,18 @@ async fn room_listing_tells_state_and_what_the_viewer_may_do(db: sqlx::PgPool) {
     );
 }
 
-/// Partilhar com uma pessoa e criar o link público pedem uma gravação COM
-/// ficheiro. Antes o servidor aceitava os dois sobre uma gravação a compor ou
-/// falhada: a pessoa recebia na biblioteca uma entrada sem nada para abrir, e
-/// o link público respondia `size_bytes: 0` e um `download_url` que dava `404`.
+/// Mostrar uma gravação a outra pessoa — partilhar, criar o link público,
+/// publicar, contar uma visualização — pede uma gravação COM ficheiro, e a
+/// recusa é a mesma nas quatro: `409 recording.processing` a compor,
+/// `409 recording.no_file` falhada. Antes o servidor aceitava partilhar e
+/// criar o link: a pessoa recebia na biblioteca uma entrada sem nada para
+/// abrir, e o link público respondia `size_bytes: 0` e um `download_url` que
+/// dava `404`.
 ///
 /// Desfazer continua sempre possível — retirar uma partilha ou revogar um
 /// link não depende do estado do ficheiro.
 #[sqlx::test(migrations = "./migrations")]
-async fn sharing_and_public_link_need_a_file(db: sqlx::PgPool) {
+async fn showing_a_recording_to_others_needs_a_file(db: sqlx::PgPool) {
     let f = fixture(db).await;
     let (app, a) = (&f.app, &f.a);
     let composing = insert_in_state(&f, "a compor.webm", "processing", None).await;
@@ -476,6 +479,71 @@ async fn sharing_and_public_link_need_a_file(db: sqlx::PgPool) {
             .await;
         assert_eq!(st, 409, "{code}: {e}");
         assert_eq!(e["code"], code, "{e}");
+        // Publicar e contar uma visualização: a mesma regra, o mesmo código.
+        let (st, e) = app
+            .post(
+                &format!("{base}/publish"),
+                Some(&a.token),
+                json!({"visibility": "org"}),
+            )
+            .await;
+        assert_eq!(st, 409, "{code}: {e}");
+        assert_eq!(e["code"], code, "{e}");
+        let (st, e) = app
+            .post(&format!("{base}/views"), Some(&a.token), json!({}))
+            .await;
+        assert_eq!(st, 409, "{code}: {e}");
+        assert_eq!(e["code"], code, "{e}");
+        // Uma administradora com `recordings.publish` sobre as gravações de
+        // colegas recebe a mesma recusa que a dona.
+        let (st, e) = app
+            .post(
+                &format!("{base}/shares"),
+                Some(&f.eva.token),
+                json!({"user_id": f.duarte.user_id}),
+            )
+            .await;
+        assert_eq!(st, 409, "{code}: {e}");
+        assert_eq!(e["code"], code, "{e}");
+
+        // A forma do pedido e o destino vêm antes do estado.
+        let (st, e) = app
+            .post(
+                &format!("{base}/shares"),
+                Some(&a.token),
+                json!({"user_id": a.user_id}),
+            )
+            .await;
+        assert_eq!(st, 400, "partilhar consigo próprio: {e}");
+        let (st, e) = app
+            .post(
+                &format!("{base}/shares"),
+                Some(&a.token),
+                json!({"user_id": INVENTED_ID}),
+            )
+            .await;
+        assert_eq!(st, 404, "destino que não existe: {e}");
+
+        // Quem VÊ a gravação mas não a pode partilhar recebe o `403` de
+        // sempre, não o estado: o `409` é só para quem a podia partilhar.
+        let (st, e) = app
+            .post(
+                &format!("{base}/shares"),
+                Some(&f.carla.token),
+                json!({"user_id": f.duarte.user_id}),
+            )
+            .await;
+        assert_eq!(st, 403, "{e}");
+        assert_eq!(e["code"], "authz.missing_capability", "{e}");
+        let (st, e) = app
+            .put(
+                &format!("{base}/public-link"),
+                Some(&f.carla.token),
+                json!({}),
+            )
+            .await;
+        assert_eq!(st, 403, "{e}");
+        assert_eq!(e["code"], "authz.missing_capability", "{e}");
 
         // O estado só se diz a quem chega à gravação: outra organização e um
         // colega sem relação recebem o `404` de «não existe», como antes.
@@ -546,11 +614,56 @@ async fn sharing_and_public_link_need_a_file(db: sqlx::PgPool) {
     let (st, who) = app.get(&format!("{base}/shares"), Some(&a.token)).await;
     assert_eq!(st, 200, "{who}");
     assert_eq!(who.as_array().unwrap().len(), 1, "{who}");
+    // Substituir o link é criar: recusado, e o que existia fica como estava.
+    let (st, e) = app
+        .put(&format!("{base}/public-link"), Some(&a.token), json!({}))
+        .await;
+    assert_eq!(st, 409, "{e}");
+    assert_eq!(e["code"], "recording.no_file", "{e}");
     let (st, l) = app
         .get(&format!("{base}/public-link"), Some(&a.token))
         .await;
     assert_eq!(st, 200, "{l}");
     assert_eq!(l["token"], link["token"], "{l}");
+
+    // Quem ABRE um link cuja gravação deixou de ter ficheiro — ou que ainda
+    // está a compor — recebe o `404` de «não existe», nos três caminhos: nem
+    // metadados com `size_bytes: 0`, nem um `download_url` que não abre, nem a
+    // causa da falha. Com ficheiro, o link volta a responder.
+    let token = link["token"].as_str().unwrap();
+    let public = format!("/api/public/recordings/{token}");
+    for status in ["failed", "processing"] {
+        sqlx::query("UPDATE recordings SET status = $2 WHERE id = $1::uuid")
+            .bind(&f.rec)
+            .bind(status)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let (st, e) = app.get(&public, None).await;
+        assert_eq!(st, 404, "{status}: {e}");
+        assert!(!e.to_string().contains("disco"), "{status}: {e}");
+        let (st, e) = app.get(&format!("{public}/content"), None).await;
+        assert_eq!(st, 404, "{status}: {e}");
+        let (st, e) = app
+            .post(&format!("{public}/access"), None, json!({"password": "x"}))
+            .await;
+        assert_eq!(st, 404, "{status}: {e}");
+    }
+    sql(
+        app,
+        "UPDATE recordings SET status = 'ready' WHERE id = $1::uuid",
+        &f.rec,
+    )
+    .await;
+    let (st, m) = app.get(&public, None).await;
+    assert_eq!(st, 200, "{m}");
+    assert_eq!(m["recording_id"], f.rec.as_str(), "{m}");
+    sql(
+        app,
+        "UPDATE recordings SET status = 'failed' WHERE id = $1::uuid",
+        &f.rec,
+    )
+    .await;
     let (st, e) = app
         .delete(
             &format!("{base}/shares/{}", f.duarte.user_id),

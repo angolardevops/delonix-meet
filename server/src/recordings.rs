@@ -113,9 +113,10 @@ pub struct WebmBytes(Vec<u8>);
 )]
 pub struct ApiDoc;
 
-/// A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`).
-/// As LEITURAS — a biblioteca, o recurso e a lista da sala — devolvem
-/// `RecordingLibraryItem`, que traz o estado.
+/// A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`);
+/// a resposta do upload junta-lhe `kind`, `status`, a media medida e
+/// `has_thumbnail`. As LEITURAS — a biblioteca, o recurso e a lista da sala —
+/// devolvem `RecordingLibraryItem`.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Recording {
     pub id: Uuid,
@@ -615,9 +616,20 @@ impl Access {
             .into())
     }
 
-    /// Há ficheiro para ler (pronta, ou pronta e a ser transcrita).
-    pub fn has_file(&self) -> bool {
-        matches!(self.status.as_str(), "ready" | "transcribing")
+    /// Recusa (`409`) o que só faz sentido sobre uma gravação com ficheiro:
+    /// `recording.processing` a compor, `recording.no_file` falhada. A mesma
+    /// regra e os mesmos códigos de partilhar e do link público.
+    pub fn require_file(&self) -> Result<(), ApiError> {
+        Ok(rules::require_file(self.processing_facts())?)
+    }
+
+    /// Só o `status`: é o que decide se há ficheiro. As marcas da transcrição
+    /// distinguem `ready` de `transcribing`, e os dois têm ficheiro.
+    fn processing_facts(&self) -> rules::ProcessingFacts<'_> {
+        rules::ProcessingFacts {
+            status: &self.status,
+            ..Default::default()
+        }
     }
 }
 
@@ -849,7 +861,8 @@ pub async fn upload(
 /// (`RecordingLibraryItem`): o `status` diz se há ficheiro (`processing` e
 /// `failed` não têm), e o `can_download` se quem pede o pode descarregar.
 ///
-/// Sem paginação (dívida herdada: a lista de uma sala inteira).
+/// Sem paginação: devolve a lista de uma sala inteira (dívida — a rota já
+/// não paginava, e cada linha custa agora o que custa na biblioteca).
 // É mais uma VISTA da gravação, lida pela consulta e pela regra das outras.
 // Antes devolvia seis campos sem estado, e o painel oferecia «descarregar»
 // sobre uma gravação a compor, falhada, ou que o `?dl=1` ia recusar (R59).
@@ -886,6 +899,8 @@ pub async fn list(
     // Ter estado na sala não chega: a lista só anuncia o que as rotas por id
     // servem a quem pede (S3 — quem saiu da organização do dono já não chega
     // à gravação, e passaria a ler aqui a descrição e as etiquetas dela).
+    // Filtra-se em Rust porque não há página; quem paginar esta rota passa o
+    // filtro para SQL, como `LIBRARY_VISIBLE_*`, senão as páginas encolhem.
     Ok(Json(
         rows.into_iter()
             .filter(|row| row.facts().can_see())
@@ -1309,7 +1324,6 @@ pub async fn share(
     Json(req): Json<ShareReq>,
 ) -> Result<Response, ApiError> {
     let rec = owned_item(&state, id, auth.user_id).await?;
-    rules::require_file(rec.processing_facts())?;
     if req.user_id == auth.user_id {
         return Err(ApiError::BadRequest("cannot share with yourself".into()));
     }
@@ -1317,6 +1331,9 @@ pub async fn share(
     let target = crate::users::fetch_public(&state.db, req.user_id)
         .await
         .map_err(|_| ApiError::NotFound)?;
+    // O estado por último, como em `publish`: primeiro o pedido tem de estar
+    // bem formado e o destino existir.
+    rules::require_file(rec.processing_facts())?;
     let res = sqlx::query(
         "INSERT INTO recording_shares (recording_id, user_id, shared_by) VALUES ($1, $2, $3)
          ON CONFLICT (recording_id, user_id) DO NOTHING",
@@ -1593,8 +1610,9 @@ fn share_grant_is_valid(state: &AppState, token: &str, password_hash: &str, gran
         )
 }
 
-/// O link, se existir e não tiver expirado: `(gravação, hash da password,
-/// nome, tamanho, criada em)`. Expirado responde como inexistente.
+/// O link, se existir, não tiver expirado e a gravação tiver ficheiro:
+/// `(gravação, hash da password, nome, tamanho, criada em)`. Expirado ou sem
+/// ficheiro responde como inexistente.
 type ShareLinkRow = (Uuid, Option<String>, String, i64, DateTime<Utc>);
 
 /// A linha tal como vem da base, ainda com a validade por verificar.
@@ -1605,12 +1623,13 @@ type ShareLinkDbRow = (
     String,
     i64,
     DateTime<Utc>,
+    String,
 );
 
 async fn live_share_link(state: &AppState, token: &str) -> Result<ShareLinkRow, ApiError> {
     let row: Option<ShareLinkDbRow> = sqlx::query_as(
         r#"SELECT l.recording_id, l.password_hash, l.expires_at,
-                      r.filename, r.size_bytes, r.created_at
+                      r.filename, r.size_bytes, r.created_at, r.status
                FROM recording_share_links l
                JOIN recordings r ON r.id = l.recording_id
                WHERE l.token = $1"#,
@@ -1618,9 +1637,21 @@ async fn live_share_link(state: &AppState, token: &str) -> Result<ShareLinkRow, 
     .bind(token)
     .fetch_optional(&state.db)
     .await?;
-    let (rec_id, password_hash, expires_at, filename, size_bytes, created_at) =
+    let (rec_id, password_hash, expires_at, filename, size_bytes, created_at, status) =
         row.ok_or(ApiError::NotFound)?;
     if expires_at.is_some_and(|exp| Utc::now() > exp) {
+        return Err(ApiError::NotFound);
+    }
+    // Um link já não se cria sem ficheiro, mas os que existiam antes dessa
+    // regra continuam na base. Sem isto respondiam `200` com `size_bytes: 0` e
+    // um `download_url` que dava `404` — e, sobre uma gravação ainda a compor,
+    // o conteúdo lia um ficheiro que o gravador ainda não deu por pronto. A
+    // quem abre um link não se diz o estado: não existe.
+    let facts = rules::ProcessingFacts {
+        status: &status,
+        ..Default::default()
+    };
+    if !facts.has_file() {
         return Err(ApiError::NotFound);
     }
     Ok((rec_id, password_hash, filename, size_bytes, created_at))
@@ -1636,7 +1667,7 @@ async fn live_share_link(state: &AppState, token: &str) -> Result<ShareLinkRow, 
     responses(
         (status = 200, body = PublicShareResp),
         (status = 401, description = "O link tem password: use `POST /api/public/recordings/{token}/access`.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente ou expirado; ou a gravação não tem ficheiro (falhou, ou o servidor ainda a está a compor).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn public_share(
@@ -1670,7 +1701,7 @@ pub async fn public_share(
     responses(
         (status = 200, body = PublicShareResp),
         (status = 401, description = "A password não confere.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente ou expirado; ou a gravação não tem ficheiro (falhou, ou o servidor ainda a está a compor).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Cinco passwords erradas em 5 minutos neste link.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -1720,7 +1751,7 @@ pub async fn public_share_access(
     responses(
         (status = 200, body = inline(WebmBytes), content_type = "video/webm", description = "Sempre `Content-Disposition: attachment`."),
         (status = 401, description = "O link tem password e o passe de leitura falta, expirou ou não é deste link.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Token inexistente, expirado, ou sem ficheiro (gravação falhada).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente, expirado, ou sem ficheiro (a gravação falhou, ou o servidor ainda a está a compor).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn public_share_download(

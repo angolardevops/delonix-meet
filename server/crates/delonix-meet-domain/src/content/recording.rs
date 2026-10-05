@@ -159,10 +159,10 @@ pub fn processing_conflict() -> DomainError {
     )
 }
 
-/// Uma acção que entrega a gravação a OUTRA pessoa — partilhar com um
-/// utilizador, criar o link público — pede uma gravação com ficheiro. Sem
-/// ele, quem recebe fica com uma entrada sem nada para abrir, e o link
-/// público com um ficheiro que não existe.
+/// Uma acção que mostra a gravação a OUTRA pessoa — partilhar com um
+/// utilizador, criar o link público, publicar, contar uma visualização — pede
+/// uma gravação com ficheiro. Sem ele, quem recebe fica com uma entrada sem
+/// nada para abrir, e o link público com um ficheiro que não existe.
 ///
 /// Os dois casos sem ficheiro têm códigos diferentes porque pedem coisas
 /// diferentes a quem chama: `recording.processing` é esperar; em
@@ -173,7 +173,7 @@ pub fn require_file(f: ProcessingFacts<'_>) -> Result<(), DomainError> {
         FileStatus::Processing => Err(processing_conflict()),
         FileStatus::Failed => Err(DomainError::conflict(
             "recording.no_file",
-            "A gravação falhou e não tem ficheiro: não há nada para partilhar.",
+            "A gravação falhou e não tem ficheiro.",
         )),
     }
 }
