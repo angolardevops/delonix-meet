@@ -2,11 +2,15 @@
 # ============================================================
 #  Prova dos TRONCOS na configuração que corre (ADR-0009, plano de lacunas T1).
 #
-#  Ergue uma réplica (voice/troncos-prova/compose.yaml — projecto, rede e
-#  endereços próprios, sem portas publicadas): o servidor, o FreeSWITCH do
-#  Meet arrancado pelo voice/cluster/freeswitch-entrypoint.sh com os ficheiros
-#  que o compose.yaml da raiz põe em /meet, e uma operadora de ENSAIO (o
-#  FreeSWITCH vanilla, com contas e um plano que atende, dá ocupado ou recusa).
+#  Ergue uma réplica — contentores, rede e endereços próprios, nunca o
+#  laboratório; só a API do servidor é publicada, e em loopback: o servidor, o
+#  FreeSWITCH do Meet arrancado pelo voice/cluster/freeswitch-entrypoint.sh
+#  com os ficheiros que o compose.yaml da raiz põe em /meet, e uma operadora
+#  de ENSAIO (o FreeSWITCH vanilla, com contas e um plano que atende, dá
+#  ocupado ou recusa), que só se alcança da rede da réplica.
+#
+#  Corre no delonix (daemonless, sem root) se existir, senão no docker —
+#  MOTOR=docker|delonix escolhe-o; as diferenças estão em scripts/motor.sh.
 #
 #  Depois faz o caminho de um administrador, pela API, e mede o FreeSWITCH:
 #
@@ -34,13 +38,16 @@
 #    bash scripts/troncos-prova.sh up|mede|down   um passo de cada vez
 #
 #    SERVER_IMAGE=<imagem>   o servidor (por omissão delonix-server:latest, a
-#                            do `make image BUILDER=docker` — com o delonix
-#                            instalado, o `make image` constrói para o store
-#                            dele e o docker não a vê);
+#                            do `make image` — cada motor tem o seu store:
+#                            com o delonix instalado o `make image` constrói
+#                            para o dele, e o docker só a vê com
+#                            `make image BUILDER=docker`);
 #    SERVER_BIN=<binário>    em vez da imagem: embrulha o binário da tua árvore
 #                            numa imagem descartável (base SERVER_BIN_BASE,
 #                            por omissão ubuntu:24.04);
-#    FS_IMAGE=<imagem>       o FreeSWITCH (por omissão delonix-meet/freeswitch:1.11.3).
+#    FS_IMAGE=<imagem>       o FreeSWITCH (por omissão delonix-meet/freeswitch:1.11.3);
+#    TRONCOS_PREFIXO=<a.b.c> o /24 da réplica (por omissão 10.251.51 — o
+#                            delonix só publica portas de 10.200–254.x).
 #
 #  O que NÃO mede:
 #    - uma CENTRAL a marcar para fora: só o ramal chega ao plano de marcação.
@@ -55,20 +62,27 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ESTADO=$PWD/.troncos-prova
-COMPOSE=(docker compose --env-file "$ESTADO/.env" -f voice/troncos-prova/compose.yaml)
-API=http://172.30.51.12:8180
-OPERADORA=172.30.51.20
+. scripts/motor.sh
+export MOTOR                      # o softphone-prova.sh corre no mesmo motor
+P=troncosprova                    # prefixo dos contentores e da rede desta réplica
+PREFIXO=${TRONCOS_PREFIXO:-10.251.51}
+PG_IP=$PREFIXO.10; REDIS_IP=$PREFIXO.11; SERVER_IP=$PREFIXO.12; FS_IP=$PREFIXO.13
+OPERADORA=$PREFIXO.20
+FS_IMG=${FS_IMAGE:-delonix-meet/freeswitch:1.11.3}
+API=    # http://127.0.0.1:<porta publicada>, escolhida no `up` (env_ API_PORT)
 RESCAN=10
 fail=0
 ok()  { printf '  ✓ %s\n' "$*"; }
 bad() { printf '  ✗ %s\n' "$*"; fail=1; }
-uso() { sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+uso() { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 export ESTADO
 
 segredo() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
-psql_() { "${COMPOSE[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U delonix -d delonix -qAt "$@"; }
-fs_cli() { "${COMPOSE[@]}" exec -T freeswitch sh -c 'P=$(sed -n "s/.*name=\"password\" value=\"\([^\"]*\)\".*/\1/p" /conf/autoload_configs/event_socket.conf.xml); /usr/local/freeswitch/bin/fs_cli -p "$P" -x "$0"' "$1" 2>/dev/null; }
-fs_log() { "${COMPOSE[@]}" exec -T freeswitch cat /usr/local/freeswitch/var/log/freeswitch/freeswitch.log 2>/dev/null; }
+# cx <serviço> <comando…> — corre dentro de um contentor da réplica
+cx() { local svc=$1; shift; m_exec "$P-$svc" "$@"; }
+psql_() { cx postgres psql -v ON_ERROR_STOP=1 -U delonix -d delonix -qAt "$@"; }
+fs_cli() { cx freeswitch sh -c 'P=$(sed -n "s/.*name=\"password\" value=\"\([^\"]*\)\".*/\1/p" /conf/autoload_configs/event_socket.conf.xml); /usr/local/freeswitch/bin/fs_cli -p "$P" -x "$0"' "$1" 2>/dev/null; }
+fs_log() { cx freeswitch cat /usr/local/freeswitch/var/log/freeswitch/freeswitch.log 2>/dev/null; }
 env_() { sed -n "s/^$1=//p" "$ESTADO/.env"; }
 
 # api <método> <caminho> [corpo JSON] — imprime «<estado> <corpo>»; o token vem de $TOKEN
@@ -120,11 +134,11 @@ marca() {
 chamada_longa() {
   local i
   SOFT=
-  ( SOFTPHONE_PASSWORD=$1 bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+  ( SOFTPHONE_PASSWORD=$1 bash scripts/softphone-prova.sh chamada --servidor "$FS_IP:5070" --rede "$P-net" \
       --utilizador "$2" --dominio "$3" --destino 923000888 --segundos 14 > "$4" 2>&1 ) &
   for i in $(seq 1 90); do
-    SOFT=$(docker ps --format '{{.Names}}' | grep -E '^sp[0-9]+-a$' | head -1)
-    [ -n "$SOFT" ] && docker logs "$SOFT" 2>&1 | grep -q 'Call established' && return 0
+    SOFT=$(m_nomes | grep -E '^sp[0-9]+-a$' | head -1)
+    [ -n "$SOFT" ] && m_logs "$SOFT" 2>&1 | grep -q 'Call established' && return 0
     sleep 0.5
   done
   SOFT=; return 1
@@ -137,7 +151,7 @@ espera_perfil() {
 
 # ------------------------------------------------------------ up
 up() {
-  local img=${SERVER_IMAGE:-delonix-server:latest} f nome n=0 i
+  local img=${SERVER_IMAGE:-delonix-server:latest} f nome n=0 i porta
   mkdir -p "$ESTADO"; chmod 700 "$ESTADO"
   if [ -n "${SERVER_BIN:-}" ]; then
     [ -x "$SERVER_BIN" ] || { echo "✗ SERVER_BIN=$SERVER_BIN não é um executável"; exit 1; }
@@ -146,17 +160,34 @@ up() {
     cp "$SERVER_BIN" "$ESTADO/imagem/delonix-server"
     printf 'FROM %s\nCOPY delonix-server /app/delonix-server\nUSER 65532:65532\nENTRYPOINT ["/app/delonix-server"]\n' \
       "${SERVER_BIN_BASE:-ubuntu:24.04}" > "$ESTADO/imagem/Dockerfile"
-    docker build -q -t "$img" "$ESTADO/imagem" >/dev/null || { echo "✗ não consegui embrulhar $SERVER_BIN numa imagem"; exit 1; }
+    m_constroi "$img" "$ESTADO/imagem" || { echo "✗ não consegui embrulhar $SERVER_BIN numa imagem ($MOTOR)"; exit 1; }
     rm -rf "$ESTADO/imagem"
   fi
-  docker image inspect "$img" >/dev/null 2>&1 || { echo "✗ o docker não tem a imagem do servidor $img (make image BUILDER=docker, SERVER_IMAGE=… ou SERVER_BIN=…)"; exit 1; }
-  docker image inspect "${FS_IMAGE:-delonix-meet/freeswitch:1.11.3}" >/dev/null 2>&1 ||
-    { echo "✗ falta a imagem do FreeSWITCH (make freeswitch-image, ou FS_IMAGE=…)"; exit 1; }
+  m_imagem_existe "$img" || { echo "✗ o $MOTOR não tem a imagem do servidor $img (make image, SERVER_IMAGE=… ou SERVER_BIN=…)"; exit 1; }
+  m_imagem_existe "$FS_IMG" || { echo "✗ o $MOTOR não tem a imagem do FreeSWITCH $FS_IMG (make freeswitch-image, ou FS_IMAGE=…)"; exit 1; }
+  for f in postgres:17-alpine redis:7-alpine; do
+    m_imagem_existe "$f" || echo "  ! o $MOTOR ainda não tem $f — vai buscá-la ao registo"
+  done
+  porta=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
   ( umask 077
     printf 'POSTGRES_PASSWORD=%s\nJWT_SECRET=%s\nTURN_SECRET=%s\nPROVISIONING_SECRET=%s\nVOICE_INTERNAL_SECRET=%s\nOPERADORA_PASSWORD=%s\nADMIN_PASSWORD=Pr0va-%s\n' \
       "$(segredo)" "$(segredo)" "$(segredo)" "$(segredo)" "$(segredo)" "$(segredo)" "$(segredo)" > "$ESTADO/.env"
     printf 'DATA_ENCRYPTION_KEYS=prova:%s\nESTADO=%s\nSERVER_IMAGE=%s\nRESCAN_SECS=%s\n' \
-      "$(head -c 32 /dev/urandom | base64 -w0)" "$ESTADO" "$img" "$RESCAN" >> "$ESTADO/.env" )
+      "$(head -c 32 /dev/urandom | base64 -w0)" "$ESTADO" "$img" "$RESCAN" >> "$ESTADO/.env"
+    printf 'API_PORT=%s\n' "$porta" >> "$ESTADO/.env"
+    # O ambiente de cada contentor, em ficheiros (nunca na linha de comandos).
+    printf 'POSTGRES_USER=delonix\nPOSTGRES_DB=delonix\nPOSTGRES_PASSWORD=%s\n' "$(env_ POSTGRES_PASSWORD)" > "$ESTADO/postgres.env"
+    { printf 'DATABASE_URL=postgres://delonix:%s@%s:5432/delonix\nREDIS_URL=redis://%s:6379\n' "$(env_ POSTGRES_PASSWORD)" "$PG_IP" "$REDIS_IP"
+      grep -E '^(JWT_SECRET|TURN_SECRET|DATA_ENCRYPTION_KEYS|PROVISIONING_SECRET|VOICE_INTERNAL_SECRET)=' "$ESTADO/.env"
+      printf 'BIND_ADDR=0.0.0.0:8180\nINTERNAL_BIND_ADDR=0.0.0.0:8181\nTURN_HOST=prova.invalid:3478\nCORS_ORIGINS=https://prova.invalid\n'
+      printf 'RECORDINGS_DIR=/tmp/recordings\nREGISTRATION_MODE=open\n'
+      # A API recusa — e bem — um tronco para um endereço interno (R213). A
+      # operadora de ensaio vive nesta rede: é a excepção que o operador declara.
+      printf 'OUTBOUND_ALLOW_HOSTS=%s\n' "$OPERADORA"; } > "$ESTADO/server.env"
+    { grep -E '^VOICE_INTERNAL_SECRET=' "$ESTADO/.env"
+      printf 'DELONIX_CONTROL_URL=http://%s:8181\nDELONIX_RAMAIS_SIP_PORT=5070\nDELONIX_TRUNKS_RESCAN_SECS=%s\n' "$SERVER_IP" "$RESCAN"; } > "$ESTADO/freeswitch.env"
+    grep -E '^OPERADORA_PASSWORD=' "$ESTADO/.env" > "$ESTADO/operadora.env" )
+  API=http://127.0.0.1:$porta
   # Os ficheiros de /meet: os que o compose.yaml da raiz monta, e mais nenhum.
   rm -rf "$ESTADO/meet" "$ESTADO/entrypoint"; mkdir -p "$ESTADO/meet" "$ESTADO/entrypoint"
   while read -r f nome; do
@@ -168,12 +199,30 @@ up() {
   chmod -R a+rX "$ESTADO/meet" "$ESTADO/entrypoint"
   echo "configuração: a que o voice/cluster/freeswitch-entrypoint.sh monta, com os $n ficheiros que o compose.yaml põe em /meet"
   echo "servidor: $img"
-  "${COMPOSE[@]}" up -d >/dev/null 2>&1 || { echo "✗ a réplica não arrancou"; "${COMPOSE[@]}" up -d; exit 1; }
+  echo "motor: $MOTOR; rede $PREFIXO.0/24; API em $API"
+  # Não é uma rede sem saída de propósito: sem rota por omissão o FreeSWITCH
+  # escolhe 127.0.0.1 para escutar, e os dois deixavam de se ver.
+  m_rede_cria "$P-net" "$PREFIXO.0/24" || { echo "✗ não consegui criar a rede $PREFIXO.0/24 (TRONCOS_PREFIXO para outra)"; exit 1; }
+  sobe() { local svc=$1 e; shift; e=$(m_run -d --name "$P-$svc" "$M_NET" "$P-net" "$@" 2>&1) || { echo "✗ a réplica não arrancou ($svc): $(tail -2 <<<"$e" | tr '\n' ' ')"; exit 1; }; }
+  sobe postgres --ip "$PG_IP" --env-file "$ESTADO/postgres.env" postgres:17-alpine
+  sobe redis --ip "$REDIS_IP" redis:7-alpine
+  for i in $(seq 1 60); do cx postgres pg_isready -q -U delonix >/dev/null 2>&1 && cx redis redis-cli ping 2>/dev/null | grep -q PONG && break; sleep 1; done
+  cx postgres pg_isready -q -U delonix >/dev/null 2>&1 || { echo "✗ a base da réplica não ficou pronta"; m_logs --tail 10 "$P-postgres"; exit 1; }
+  sobe server --ip "$SERVER_IP" -p "127.0.0.1:$porta:8180" --env-file "$ESTADO/server.env" "$img"
+  # O FreeSWITCH do Meet. Os ficheiros de /meet são os da lista do
+  # compose.yaml da raiz (acima): a prova corre com o que a instalação corre.
+  sobe freeswitch --ip "$FS_IP" --env-file "$ESTADO/freeswitch.env" \
+    -v "$ESTADO/entrypoint:/entrypoint:ro" -v "$ESTADO/meet:/meet:ro" \
+    --entrypoint /bin/sh "$FS_IMG" /entrypoint/freeswitch-entrypoint.sh
+  sobe operadora --ip "$OPERADORA" --env-file "$ESTADO/operadora.env" \
+    -v "$PWD/voice/troncos-prova/operadora-entrypoint.sh:/operadora/operadora-entrypoint.sh:ro" \
+    -v "$PWD/voice/troncos-prova/operadora-dialplan.xml:/operadora/operadora-dialplan.xml:ro" \
+    --entrypoint /bin/sh "$FS_IMG" /operadora/operadora-entrypoint.sh
   for i in $(seq 1 60); do [ "$(api GET /api/status | cut -d' ' -f1)" = 200 ] && break; sleep 2; done
   [ "$(api GET /api/status | cut -d' ' -f1)" = 200 ] && ok "servidor a responder" ||
-    { bad "o servidor não respondeu em $API"; "${COMPOSE[@]}" logs --tail 20 server; return; }
+    { bad "o servidor não respondeu em $API"; m_logs --tail 20 "$P-server"; return; }
   espera_perfil && ok "FreeSWITCH do Meet: perfil external a correr" ||
-    { bad "o FreeSWITCH não ficou pronto"; "${COMPOSE[@]}" logs --tail 30 freeswitch; return; }
+    { bad "o FreeSWITCH não ficou pronto"; m_logs --tail 30 "$P-freeswitch"; return; }
   for m in mod_json_cdr mod_xml_curl mod_hash; do
     fs_cli "module_exists $m" | grep -q true || bad "o módulo $m não está carregado"
   done
@@ -205,7 +254,7 @@ mede() {
   echo "2) o tronco aparece no FreeSWITCH e regista-se na operadora, sem ninguém reiniciar nada"
   if e=$(espera_gw "$gw" REGED $(( RESCAN * 3 + 20 ))); then ok "gateway $gw: REGED (o ciclo volta a ler os troncos de $RESCAN em $RESCAN s)"
   else bad "gateway $gw não ficou registado em $(( RESCAN * 3 + 20 )) s (estado: $e)"; fs_log | grep -a "$gw" | tail -5 | sed 's/^/       /'; return; fi
-  v=$("${COMPOSE[@]}" exec -T operadora fs_cli -x "show registrations" 2>/dev/null | grep -c '^1000,')
+  v=$(cx operadora fs_cli -x "show registrations" 2>/dev/null | grep -c '^1000,')
   [ "${v:-0}" -ge 1 ] && ok "a operadora de ensaio tem o registo da conta 1000" || bad "a operadora não tem o registo do tronco"
 
   echo "3) uma chamada pelo plano de marcação sai pelo tronco, e o registo chega com duração, custo e qualidade"
@@ -258,7 +307,7 @@ mede() {
   ramal=$(campo "${r#* }" sip_username); dom_a=$(campo "${r#* }" sip_domain); pw_a=$(campo "${r#* }" sip_password)
   [ -n "$ramal" ] && [ -n "$pw_a" ] || { bad "a API não criou o ramal (${r%% *})"; return; }
   antes=$(registos)
-  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor "$FS_IP:5070" --rede "$P-net" \
             --utilizador "$ramal" --dominio "$dom_a" --destino 923000444 --espera-tom 440 --tom 1000 --segundos 4 2>&1)
   grep -q 'a: chamada estabelecida' <<<"$saida" && grep -q 'media cifrada' <<<"$saida" &&
     ok "ramal 1001 → 923000444: atendida, com a media do ramal cifrada" ||
@@ -267,7 +316,7 @@ mede() {
     bad "o ramal NÃO ouviu o tom da operadora: $(grep -E 'Hz' <<<"$saida" | head -2 | tr '\n' ' ')"
   # O sentido contrário: o que a operadora gravou tem o tom do ramal (1000 Hz).
   sleep 3; rm -f "$ESTADO/operadora-ouviu.wav"
-  docker cp "$("${COMPOSE[@]}" ps -q operadora)":/tmp/operadora-ouviu-244923000444.wav "$ESTADO/operadora-ouviu.wav" >/dev/null 2>&1
+  m_cp "$P-operadora:/tmp/operadora-ouviu-244923000444.wav" "$ESTADO/operadora-ouviu.wav" >/dev/null 2>&1
   v=$(bash scripts/softphone-prova.sh medir "$ESTADO/operadora-ouviu.wav" 1000 2>/dev/null | tail -1)
   python3 -c "import sys; sys.exit(0 if float(sys.argv[1] or 0) >= 0.03 else 1)" "${v:-0}" 2>/dev/null &&
     ok "a operadora ouviu o tom do ramal (1000 Hz, amplitude $v): áudio nos dois sentidos" ||
@@ -276,11 +325,11 @@ mede() {
   v=$(psql_ -F' ' -c "SELECT outcome, from_number, (cost_e4 > 0), coalesce(round(mos::numeric,1)::text,'-') FROM telephony_call_records WHERE org_id='$ORG' AND to_number LIKE '%923000444'")
   case "$v" in "answered 1001 t "*) ok "registo: atendida, de «1001» (o número curto, não o utilizador SIP), com custo e MOS ${v##* }" ;;
     *) bad "o registo da chamada do ramal ficou «$v» — esperava «answered 1001 t <MOS>»" ;; esac
-  v=$("${COMPOSE[@]}" exec -T operadora sh -c "grep -a -c -F '$ramal' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
+  v=$(cx operadora sh -c "grep -a -c -F '$ramal' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
   [ "${v:-1}" = 0 ] && ok "a operadora nunca viu o utilizador SIP do ramal" || bad "o utilizador SIP do ramal chegou à operadora ($v linha(s) do log dela)"
 
   antes=$(registos)
-  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor "$FS_IP:5070" --rede "$P-net" \
             --utilizador "$ramal" --dominio "$dom_a" --destino 112 --espera-tom 440 --segundos 3 2>&1)
   espera_registos $(( antes + 1 )) 25
   v=$(psql_ -F' ' -c "SELECT count(*), bool_and(emergency), bool_or(recorded) FROM telephony_call_records WHERE org_id='$ORG' AND to_number='112' AND from_number='1001'")
@@ -294,10 +343,10 @@ mede() {
   antes=$(registos)
   if chamada_longa "$pw_a" "$ramal" "$dom_a" "$ESTADO/transferencia.out"; then
     sleep 2
-    docker exec "$SOFT" sh -c "printf '/transfer sip:923000999@$dom_a\n' | nc -u -w1 127.0.0.1 55551" >/dev/null 2>&1
+    m_exec "$SOFT" sh -c "printf '/transfer sip:923000999@$dom_a\n' | nc -u -w1 127.0.0.1 55551" >/dev/null 2>&1
     wait; sleep 8
     v=$(psql_ -c "SELECT count(*) FROM telephony_call_records WHERE to_number LIKE '%923000999'")
-    r=$("${COMPOSE[@]}" exec -T operadora sh -c "grep -a -c '923000999' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
+    r=$(cx operadora sh -c "grep -a -c '923000999' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
     [ "$v" = 0 ] && [ "${r:-1}" = 0 ] && ok "transferência cega pedida pelo ramal: recusada — nenhuma chamada saiu para o número pedido" ||
       bad "a transferência cega pedida pelo ramal fez sair uma chamada ($v registo(s); $r linha(s) no log da operadora)"
     espera_registos $(( antes + 1 )) 20
@@ -307,11 +356,11 @@ mede() {
 
   # Controlos negativos: o que NÃO pode sair.
   antes=$(registos)
-  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+  saida=$(SOFTPHONE_PASSWORD=$pw_a bash scripts/softphone-prova.sh chamada --servidor "$FS_IP:5070" --rede "$P-net" \
             --utilizador "$ramal" --dominio "$dom_a" --destino 0044123456 --segundos 2 2>&1)
   grep -q 'NÃO se estabeleceu' <<<"$saida" && ok "número sem regra no plano: o ramal não sai ($(grep -o 'session closed: .*' <<<"$saida" | head -1 | sed 's/session closed: //'))" ||
     bad "um número SEM regra no plano de marcação saiu a pedido de um ramal"
-  saida=$(SOFTPHONE_PASSWORD=errada-de-proposito bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+  saida=$(SOFTPHONE_PASSWORD=errada-de-proposito bash scripts/softphone-prova.sh chamada --servidor "$FS_IP:5070" --rede "$P-net" \
             --utilizador "$ramal" --dominio "$dom_a" --destino 923000555 --segundos 2 2>&1)
   grep -q 'NÃO se estabeleceu' <<<"$saida" && ok "password errada: o ramal não sai ($(grep -o 'session closed: .*' <<<"$saida" | head -1 | sed 's/session closed: //'))" ||
     bad "um ramal com a password ERRADA fez uma chamada para fora"
@@ -324,7 +373,7 @@ mede() {
   ramal_b=$(campo "${r#* }" sip_username); dom_b=$(campo "${r#* }" sip_domain); pw_b=$(campo "${r#* }" sip_password)
   TOKEN=$TOKEN_A
   if [ -n "$ORG_B" ] && [ "$ORG_B" != "$ORG_A" ] && [ -n "$pw_b" ]; then
-    saida=$(SOFTPHONE_PASSWORD=$pw_b bash scripts/softphone-prova.sh chamada --servidor 172.30.51.13:5070 --rede troncosprova_troncos \
+    saida=$(SOFTPHONE_PASSWORD=$pw_b bash scripts/softphone-prova.sh chamada --servidor "$FS_IP:5070" --rede "$P-net" \
               --utilizador "$ramal_b" --dominio "$dom_b" --destino 923000666 --segundos 2 2>&1)
     v=$(psql_ -c "SELECT count(*) FROM telephony_call_records WHERE to_number LIKE '%923000666'")
     grep -q 'NÃO se estabeleceu' <<<"$saida" && [ "$v" = 0 ] && ok "o ramal de OUTRA organização, sem plano, não sai pelos troncos desta" ||
@@ -339,13 +388,13 @@ mede() {
   antes=$(registos)
   fs_cli "originate {originate_timeout=10,absolute_codec_string=PCMA}loopback/244923000000/public &park()" >/dev/null
   sleep 2; fs_cli "hupall" >/dev/null; sleep 10
-  v=$("${COMPOSE[@]}" exec -T freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
+  v=$(cx freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
   r=$(fs_log | grep -ac 'lua(dialin_ivr.lua)')
   if [ "${r:-0}" -ge 1 ] && [ "${v:-1}" = 0 ] && [ "$(registos)" = "$antes" ]; then ok "o IVR correu, o registo foi aceite (nada em disco) e não ficou guardado"
   else bad "chamada ao IVR: o IVR correu $r vez(es), ficaram $v registo(s) em disco e $(( $(registos) - antes )) guardado(s) — esperava ≥1, 0 e 0"; fi
 
   echo "8) reiniciar o FreeSWITCH não deixa a instalação sem troncos"
-  "${COMPOSE[@]}" restart freeswitch >/dev/null 2>&1; espera_perfil
+  m_restart "$P-freeswitch" >/dev/null 2>&1; espera_perfil
   if e=$(espera_gw "$gw" REGED $(( RESCAN * 3 + 30 ))); then ok "depois de reiniciar: $gw REGED"
   else bad "depois de reiniciar o gateway não voltou (estado: $e)"; fi
   # O servidor MORRE a meio de uma chamada de um ramal: o registo da perna do
@@ -354,31 +403,31 @@ mede() {
   # perna do tronco recebe do FreeSWITCH uma cópia do SDP que o ramal ofereceu,
   # com a chave SRTP dele (`switch_m_sdp`), e o registo leva todas as variáveis.
   if chamada_longa "$pw_a" "$ramal" "$dom_a" "$ESTADO/a-meio.out"; then
-    sleep 1; "${COMPOSE[@]}" kill server >/dev/null 2>&1
+    sleep 1; m_derruba "$P-server" >/dev/null 2>&1
     wait
-  else wait; bad "a chamada longa do ramal não se estabeleceu — o registo em disco não foi medido"; "${COMPOSE[@]}" kill server >/dev/null 2>&1; fi
+  else wait; bad "a chamada longa do ramal não se estabeleceu — o registo em disco não foi medido"; m_derruba "$P-server" >/dev/null 2>&1; fi
   local i anterior=-1
   for i in $(seq 1 20); do
     sleep 4
-    pendentes=$("${COMPOSE[@]}" exec -T freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
+    pendentes=$(cx freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
     [ "${pendentes:-0}" -ge 1 ] && [ "$pendentes" = "$anterior" ] && break
     anterior=$pendentes
   done
-  v=$("${COMPOSE[@]}" exec -T freeswitch stat -c %a /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | tr -d '[:space:]')
-  r=$("${COMPOSE[@]}" exec -T freeswitch sh -c "grep -l -a 'sip_gateway_name' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes/* 2>/dev/null | wc -l" | tr -d '[:space:]')
+  v=$(cx freeswitch stat -c %a /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | tr -d '[:space:]')
+  r=$(cx freeswitch sh -c "grep -l -a 'sip_gateway_name' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes/* 2>/dev/null | wc -l" | tr -d '[:space:]')
   [ "${pendentes:-0}" -ge 1 ] && [ "${r:-0}" -ge 1 ] && [ "$v" = 700 ] && ok "controlo: sem servidor, o registo da perna do tronco fica em disco ($pendentes ficheiro(s), directório 700)" ||
     bad "sem servidor ficaram ${pendentes:-0} registo(s) em disco ($r de uma perna de tronco), directório «$v» — esperava a perna do tronco, em 700"
-  r=$("${COMPOSE[@]}" exec -T freeswitch sh -c "grep -l -a -i -e 'inline%3A' -e 'inline:' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes/* 2>/dev/null | wc -l" | tr -d '[:space:]')
+  r=$(cx freeswitch sh -c "grep -l -a -i -e 'inline%3A' -e 'inline:' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes/* 2>/dev/null | wc -l" | tr -d '[:space:]')
   [ "${pendentes:-0}" -ge 1 ] && [ "${r:-1}" = 0 ] && ok "o registo da perna do tronco não leva a chave SRTP do ramal" ||
     bad "$r registo(s) em disco levam uma chave SRTP (a=crypto … inline:) — a do ramal vai na perna do tronco"
   # Com o servidor EM BAIXO no arranque o perfil não consegue perguntar pelos
   # troncos: fica sem nenhum. É o ciclo de releitura que os traz quando o
   # servidor volta — sem ele, só reiniciando outra vez.
-  "${COMPOSE[@]}" restart freeswitch >/dev/null 2>&1; espera_perfil; sleep $(( RESCAN + 3 ))
+  m_restart "$P-freeswitch" >/dev/null 2>&1; espera_perfil; sleep $(( RESCAN + 3 ))
   e=$(estado_gw "$gw")
   [ -z "$e" ] && ok "controlo: com o servidor em baixo o FreeSWITCH arranca SEM o tronco" ||
     bad "com o servidor em baixo o gateway existe na mesma (estado $e) — o controlo não prova nada"
-  "${COMPOSE[@]}" start server >/dev/null 2>&1
+  m_start "$P-server" >/dev/null 2>&1
   if e=$(espera_gw "$gw" REGED $(( RESCAN * 4 + 40 ))); then ok "o servidor volta, e o tronco regista-se sozinho"
   else bad "o servidor voltou e o tronco não apareceu (estado: $e)"; fi
   r=$(marca 923000222)
@@ -403,13 +452,13 @@ mede() {
     elif grep -qF "$voz" <<<"$v"; then bad "o FreeSWITCH EXPANDIU a variável: o gateway tem o segredo de voz como utilizador"
     elif grep -qF "$armadilha" <<<"$v"; then ok "o utilizador do tronco chega ao FreeSWITCH como texto, sem ser expandido"
     else bad "o utilizador do tronco-armadilha não é o segredo, mas também não é o texto que a API recebeu: $(sed -n 's/^Username[[:space:]]*//p' <<<"$v" | head -1)"; fi
-    v=$("${COMPOSE[@]}" exec -T operadora sh -c "grep -a -c -F '$voz' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
+    v=$(cx operadora sh -c "grep -a -c -F '$voz' /usr/local/freeswitch/var/log/freeswitch/freeswitch.log" 2>/dev/null | tr -d '[:space:]')
     [ "${v:-1}" = 0 ] && ok "a operadora não recebeu o segredo de voz em nenhum pedido" || bad "a operadora recebeu o segredo de voz em $v linha(s) do seu log (o REGISTER leva-o)"
   elif [ "$st" = 400 ] || [ "$st" = 422 ]; then ok "a API recusa um utilizador de tronco com uma referência a variável ($st)"
   else bad "a API respondeu $st ao tronco-armadilha"; fi
 
   echo "10) nada por entregar, e nenhum segredo no log"
-  v=$("${COMPOSE[@]}" exec -T freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
+  v=$(cx freeswitch sh -c 'ls /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l' | tr -d '[:space:]')
   [ "${v:-99}" = "${pendentes:-0}" ] && ok "com o servidor de pé nenhum registo ficou por entregar (em disco só os $pendentes do controlo)" ||
     bad "ficaram $v registo(s) em disco, e o controlo só explica ${pendentes:-0}: o servidor recusou os outros"
   # Oito chamadas saíram por um tronco (quatro delas marcadas pelo ramal); a
@@ -420,29 +469,32 @@ mede() {
   v=$(fs_log | grep -ac "$(env_ VOICE_INTERNAL_SECRET)")
   [ "${v:-1}" -eq 0 ] && ok "o segredo de voz não aparece no freeswitch.log" || bad "o segredo de voz aparece $v vez(es) no freeswitch.log"
   # O que ficou em disco (os registos do controlo) não leva segredos nem chaves.
-  v=$("${COMPOSE[@]}" exec -T freeswitch sh -c "grep -rl -a -e '$voz' -e '$op' -e 'inline%3A' -e 'inline:' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l" | tr -d '[:space:]')
+  v=$(cx freeswitch sh -c "grep -rl -a -e '$voz' -e '$op' -e 'inline%3A' -e 'inline:' /usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes 2>/dev/null | wc -l" | tr -d '[:space:]')
   [ "${v:-1}" = 0 ] && ok "os registos em disco não levam o segredo de voz, a password do tronco nem chaves SRTP" ||
     bad "$v registo(s) em disco levam o segredo de voz, a password do tronco ou uma chave SRTP"
   v=$(fs_log | grep -ac "$op")
   [ "${v:-1}" -eq 0 ] && ok "a password do tronco não aparece no freeswitch.log" || bad "a password do tronco aparece $v vez(es) no freeswitch.log"
-  v=$("${COMPOSE[@]}" exec -T freeswitch sh -c "grep -rl -a '$op' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")
+  v=$(cx freeswitch sh -c "grep -rl -a '$op' /usr/local/freeswitch/var/log 2>/dev/null | wc -l")
   [ "${v:-1}" -eq 0 ] && ok "nenhum ficheiro do directório de logs traz a password do tronco" || bad "$v ficheiro(s) do directório de logs trazem a password do tronco"
   v=$(fs_log | grep -ac 'Ignoring duplicate gateway')
   echo "       ruído do ciclo de releitura: $v linha(s) «Ignoring duplicate gateway» no log desde o último arranque"
 }
 
-# Pelo nome do projecto, e não pelo ficheiro: desmonta mesmo sem o .env.
+# Pelos nomes, e não pelo estado: desmonta mesmo sem o .env.
 down() {
-  docker compose -p troncosprova down -v >/dev/null 2>&1
-  docker image rm delonix-server:troncos-prova >/dev/null 2>&1
+  local c
+  for c in operadora freeswitch server redis postgres; do m_rm "$P-$c" >/dev/null 2>&1; done
+  m_rede_apaga "$P-net"
+  m_imagem_apaga delonix-server:troncos-prova
   rm -rf "$ESTADO"
-  if [ -n "$(docker ps -aq --filter label=com.docker.compose.project=troncosprova)" ]; then echo "✗ ficaram contentores da réplica"; return 1; fi
+  if m_nomes | grep -q "^$P-"; then echo "✗ ficaram contentores da réplica"; return 1; fi
   echo "réplica desmontada"
 }
 
 case "${1:-tudo}" in
   up) up ;;
-  mede) [ -f "$ESTADO/.env" ] || { echo "✗ a réplica não está erguida (bash scripts/troncos-prova.sh up)"; exit 1; }; mede ;;
+  mede) [ -f "$ESTADO/.env" ] || { echo "✗ a réplica não está erguida (bash scripts/troncos-prova.sh up)"; exit 1; }
+        API=http://127.0.0.1:$(env_ API_PORT); mede ;;
   down) down; exit 0 ;;
   tudo) trap down EXIT; up; [ "$fail" = 0 ] && mede ;;
   -h|--help|ajuda) uso 0 ;;
