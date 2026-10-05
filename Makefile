@@ -725,9 +725,11 @@ bootstrap: ## Prepara a máquina: ferramentas, dependências, .env com segredos 
 
 # O compose.yaml corre as imagens de `make build` atrás de uma borda com TLS.
 # Não constrói nada: sem imagens, falha a dizer isso — não as vai buscar a lado nenhum.
-.PHONY: compose-up compose-down compose-ps compose-logs compose-voice-check seed voice-secret-rotate
+.PHONY: compose-up compose-down compose-ps compose-logs compose-voice-check seed voice-secret-rotate esl-secret-rotate
 voice-secret-rotate: ## Troca o VOICE_INTERNAL_SECRET do .env (depois: make compose-up e/ou make cluster)
 	@bash scripts/rotate-voice-secret.sh
+esl-secret-rotate: ## Troca a TELEPHONY_ESL_PASSWORD (Event Socket do FreeSWITCH) do .env (depois: make compose-down/up e/ou make cluster)
+	@bash scripts/rotate-voice-secret.sh .env TELEPHONY_ESL_PASSWORD
 seed: ## Cria a organização «ngolacloud» e o administrador de validação (BASE=https://…)
 	@bash scripts/seed.sh $(or $(BASE),https://$(MEET_HOST):8443)
 compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do PBX e chamada de prova ao IVR

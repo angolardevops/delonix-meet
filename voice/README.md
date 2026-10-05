@@ -342,7 +342,12 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 > todas as interfaces com a ACL `delonix_esl` (só redes privadas, `default=deny`) e essa password; sem
 > ela fica em loopback com password aleatória. O servidor liga-se com `TELEPHONY_ESL_ADDR`. O ESL
 > origina chamadas: nunca se publica no host, e a password vem do segredo (`.env` / Secret
-> `delonix-voice`). Mesmo limite do `NET_RAW` acima: a ACL é por IP de origem.
+> `delonix-voice`; `make esl-secret-rotate` troca-a). **A ACL não separa nada nestes laboratórios:**
+> o compose e a rede de pods são redes privadas, e o `pbx` não confiado (compose) e qualquer pod
+> (cluster) passam por ela — a password é a única barreira, em claro (o ESL não tem TLS) e visível no
+> argv do `fs_cli`. O ESL dá `originate` e `api system`. Por fechar antes de produção: NetworkPolicy
+> só do servidor para `:8021`, Kamailio sem o `.env` inteiro, `fs_cli` sem `-p`, e o chart do Helm
+> (que não passa a password ao FreeSWITCH).
 > A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
 
 Quem entra por telefone é um **participante da sala**: fala e ouve os

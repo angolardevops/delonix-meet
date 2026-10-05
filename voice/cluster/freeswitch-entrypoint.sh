@@ -39,6 +39,7 @@ sed -i -E "s#(data=\"sound_prefix=)[^\"]*#\1\$\${sounds_dir}/${VOZ}#" "$CONF/var
 #    operadora; por isso nunca se publica no host e a password vem do segredo.
 if [ -n "${TELEPHONY_ESL_PASSWORD:-}" ]; then
   ESL=$TELEPHONY_ESL_PASSWORD
+  [ ${#ESL} -ge 32 ] || { echo "TELEPHONY_ESL_PASSWORD com menos de 32 caracteres" >&2; exit 1; }
   case $ESL in *[!A-Za-z0-9._-]*) echo "TELEPHONY_ESL_PASSWORD com caracteres que o XML não aceita" >&2; exit 1;; esac
   ESL_LISTEN=0.0.0.0
   sed -i 's#</network-lists>#  <list name="delonix_esl" default="deny">\n      <node type="allow" cidr="10.0.0.0/8"/>\n      <node type="allow" cidr="172.16.0.0/12"/>\n      <node type="allow" cidr="192.168.0.0/16"/>\n      <node type="allow" cidr="127.0.0.0/8"/>\n    </list>\n  </network-lists>#' \
@@ -204,8 +205,8 @@ grep -q "<param name=\"logfile\" value=\"$LOGS/freeswitch.log\"/>" "$CONF/autolo
 #     perfil vivo e zera os contadores de chamadas dele (sofia.c), por isso o
 #     `sofia status profile external` passa a contar desde o último ciclo.
 #     Um tronco ALTERADO ou APAGADO não é com ele: precisa de `killgw`, que
-#     hoje só o servidor sabe mandar pelo ESL — fechado nesta configuração
-#     (passo 4). DELONIX_TRUNKS_RESCAN_SECS=0 desliga o ciclo.
+#     hoje só o servidor sabe mandar pelo ESL — com TELEPHONY_ESL_PASSWORD o
+#     servidor chega-lhe (passo 4); sem ela o ESL fica em loopback. DELONIX_TRUNKS_RESCAN_SECS=0 desliga o ciclo.
 RESCAN=${DELONIX_TRUNKS_RESCAN_SECS:-60}
 case "$RESCAN" in ''|*[!0-9]*) echo "DELONIX_TRUNKS_RESCAN_SECS não é um número de segundos: $RESCAN" >&2; exit 1 ;; esac
 if [ "$RESCAN" -gt 0 ]; then
