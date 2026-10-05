@@ -84,7 +84,7 @@ up)
   [ -f "deploy/certs/${MEET_HOST}.crt" ] || morre "falta o certificado de ${MEET_HOST} — corre «make bootstrap»"
   set -a; . ./.env; set +a
   for v in POSTGRES_PASSWORD JWT_SECRET TURN_SECRET PROVISIONING_SECRET VOICE_INTERNAL_SECRET \
-    VOICE_CENTRAL_PASSWORD DATA_ENCRYPTION_KEYS; do
+    TELEPHONY_ESL_PASSWORD VOICE_CENTRAL_PASSWORD DATA_ENCRYPTION_KEYS; do
     [ -n "${!v:-}" ] || morre "o .env não tem ${v} — corre «make bootstrap»"
   done
   for img in "delonix-server:${IMAGE_TAG}" "delonix-web:${IMAGE_TAG}"; do
@@ -152,12 +152,14 @@ up)
     --from-literal=VOICE_RAMAIS_PUBLIC_HOST="${MEET_HOST}" \
     --from-literal=VOICE_RAMAIS_PUBLIC_PORT=5070 \
     --from-literal=VOICE_RAMAIS_PUBLIC_TRANSPORT=udp \
+    --from-literal=TELEPHONY_ESL_ADDR="freeswitch.${NS}.svc.cluster.local:8021" \
     --from-literal=REDIS_URL="redis://delonix-redis-master.${NS}.svc.cluster.local:6379" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   # A regra de «o que entra no delonix-secrets» vive num só sítio.
   bash scripts/k8s-app-secrets.sh "delonix-postgres-postgresql.${NS}.svc.cluster.local" "$NS" >/dev/null
   kubectl -n "$NS" create secret generic delonix-voice \
     --from-literal=VOICE_INTERNAL_SECRET="$VOICE_INTERNAL_SECRET" \
+    --from-literal=TELEPHONY_ESL_PASSWORD="$TELEPHONY_ESL_PASSWORD" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   ok "delonix-config, delonix-secrets, delonix-voice, delonix-tls-secret"
 
