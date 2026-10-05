@@ -152,7 +152,8 @@ registrar/auth_db/DB), e dar-lhe isso era maior risco do que esta fase pede.
 | Caminho | Papel |
 |---|---|
 | `freeswitch/sip_profiles/internal.xml` | Perfil Sofia dos ramais — porta própria, realm por org (`challenge-realm=auto_from`) |
-| `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático |
+| `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático. O terceiro binding (`delonix_telefonia`) é o dos troncos: gateways e o plano de marcação do contexto `delonix-outbound` (ADR-0009, R291) |
+| `freeswitch/autoload_configs/json_cdr.conf.xml` | Registos de chamada (`mod_json_cdr`) entregues ao servidor — custo, duração e qualidade de cada chamada por tronco (R291) |
 | `freeswitch/dialplan/default/00_delonix_extensions.xml` | Contexto `delonix_ramais`: números de 3–5 dígitos → `ramais_dial.lua` |
 | `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge; o número de acesso às reuniões segue para o IVR (Fase 3) |
 

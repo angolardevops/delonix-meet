@@ -1164,11 +1164,16 @@ fn xml_response(body: String) -> Response {
 /// Escapa os quatro caracteres que partiriam o XML — não há atributos com
 /// aspas nos valores que produzimos (extensão, AOR, HA1 são sempre
 /// alfanuméricos), mas o `label`/nomes de utilizador são texto livre.
+///
+/// E o `$`: o FreeSWITCH passa a resposta do `mod_xml_curl` pelo
+/// pré-processador, que troca `$${nome}` pelo valor de uma variável global —
+/// o segredo de voz é uma. Ver `telephony_fs_xml::esc` (R291).
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+        .replace('$', "&#36;")
 }
 
 /// Campos do POST do `mod_xml_curl` (secção "directory") que este código lê.
@@ -1722,6 +1727,11 @@ mod tests {
     #[test]
     fn xml_escape_covers_the_five_special_characters() {
         assert_eq!(xml_escape(r#"<a&b>"c""#), "&lt;a&amp;b&gt;&quot;c&quot;");
+        // O pré-processador do FreeSWITCH não pode ver `$${`.
+        assert_eq!(
+            xml_escape("$${delonix_voice_secret}"),
+            "&#36;&#36;{delonix_voice_secret}"
+        );
     }
 
     #[test]

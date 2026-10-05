@@ -1,5 +1,13 @@
 # FreeSWITCH da prova de telefonia (ADR-0009)
 
+> **Desde a R291 a configuração que CORRE já tem isto ligado** — o binding dos
+> troncos, o `mod_json_cdr` e os gateways no perfil `external` entram pelo
+> `voice/cluster/freeswitch-entrypoint.sh`, no compose, no cluster e no chart,
+> e provam-se com `bash scripts/troncos-prova.sh`. Esta pasta fica para o
+> `web/e2e/telefonia-freeswitch.mjs` e o `tests/telephony_freeswitch.rs`, que
+> precisam do que a distribuída ainda não tem: o ESL aberto ao servidor e um
+> perfil por onde um PBX entra no plano de marcação.
+
 Os ficheiros que a frente C juntou à configuração segura de
 `.worktrees/freeswitch-build/conf/` (imagem `delonix-dev/freeswitch:1.11.3`) para provar a
 telefonia contra um FreeSWITCH real. **Só desenvolvimento**: tudo em 127.0.0.1, operadoras

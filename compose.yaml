@@ -170,6 +170,9 @@ services:
     environment:
       DELONIX_CONTROL_URL: http://delonix-server:8181
       DELONIX_RAMAIS_SIP_PORT: "5070"
+      # De quanto em quanto tempo o FreeSWITCH volta a ler os troncos do
+      # servidor (um tronco novo regista-se sozinho). "0" desliga.
+      DELONIX_TRUNKS_RESCAN_SECS: "60"
       # De onde fala o bordo: o IVR só acredita em «esta chamada é da central
       # de X» vindo daqui. As redes privadas, como na allowlist do bordo — a
       # sub-rede do compose muda de motor para motor. É um laboratório: em
@@ -181,6 +184,7 @@ services:
       - ./voice/freeswitch/dialplan/default/00_delonix_extensions.xml:/meet/00_delonix_extensions.xml:ro
       - ./voice/freeswitch/autoload_configs/conference.conf.xml:/meet/conference.conf.xml:ro
       - ./voice/freeswitch/autoload_configs/xml_curl.conf.xml:/meet/xml_curl.conf.xml:ro
+      - ./voice/freeswitch/autoload_configs/json_cdr.conf.xml:/meet/json_cdr.conf.xml:ro
       - ./voice/freeswitch/sip_profiles/internal.xml:/meet/internal.xml:ro
       - ./voice/freeswitch/scripts/dialin_ivr.lua:/meet/dialin_ivr.lua:ro
       - ./voice/freeswitch/scripts/ramais_dial.lua:/meet/ramais_dial.lua:ro

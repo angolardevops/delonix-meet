@@ -784,6 +784,34 @@ async fn cdr_ingestion_idempotent_priced_at_time_of_call_listed_and_summed(db: s
         (st, e["code"].as_str()),
         (422, Some("telephony.cdr_org_unresolved"))
     );
+    // Sem organização E sem tronco não é uma chamada da telefonia (ramal para
+    // ramal, o IVR do dial-in): aceita-se, para o FreeSWITCH não a reenviar
+    // nem a guardar em disco, e não se regista nada.
+    let mut interna = orphan.clone();
+    interna["variables"]["uuid"] = json!("call-interna");
+    interna["variables"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sip_gateway_name");
+    let (st, _) = ingest(&app, Some(&auth), &interna).await;
+    assert_eq!(st, 204);
+    // Um gateway que não é nosso (sem `dlx-<id>`) não dá tronco, mas é uma
+    // saída para a rede pública: continua recusado, à vista.
+    let mut alheio = orphan.clone();
+    alheio["variables"]["uuid"] = json!("call-alheia");
+    alheio["variables"]["sip_gateway_name"] = json!("operadora-do-operador");
+    let (st, e) = ingest(&app, Some(&auth), &alheio).await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (422, Some("telephony.cdr_org_unresolved"))
+    );
+    let guardadas: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM telephony_call_records WHERE source_call_id IN ('call-x', 'call-interna')",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(guardadas, 0);
     // Um tronco de B num CDR de A não é atribuído a A.
     let (st, _) = ingest(
         &app,
@@ -1266,7 +1294,7 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
     assert_eq!(st, 200);
     assert!(
         x.contains(&format!(
-            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni}]sofia/gateway/dlx-{uni}/244923447108"
+            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni},force_process_cdr=true]sofia/gateway/dlx-{uni}/244923447108"
         )),
         "{x}"
     );
@@ -1305,6 +1333,64 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
         "o FreeSWITCH precisa da password decifrada"
     );
     assert!(g.contains(r#"value="sip.unitel.ao:5061;transport=tls""#));
+
+    // O utilizador de um tronco é texto do inquilino, e o FreeSWITCH
+    // pré-processa esta resposta: `$${nome}` lia uma variável global dele — o
+    // segredo de voz, por exemplo — e mandava-a para o servidor SIP do tronco.
+    let mut armadilha = africell();
+    armadilha["name"] = json!("Armadilha");
+    armadilha["short_code"] = json!("ARM");
+    armadilha["username"] = json!("$${delonix_voice_secret}");
+    armadilha["password"] = json!("$${delonix_voice_secret}");
+    create_trunk(&app, &a.token, a.org(), armadilha).await;
+    let (_, g) = post(
+        "section=directory&purpose=gateways".into(),
+        Some(basic(SECRET)),
+    )
+    .await;
+    assert!(
+        g.contains("&#36;&#36;{delonix_voice_secret}") && !g.contains('$'),
+        "{g}"
+    );
+
+    // Os troncos de todas as organizações vão ao FreeSWITCH num só documento
+    // com limite de tamanho: uma organização tem um tecto, ao criar e ao servir.
+    let max = delonix_meet_domain::telephony::trunk::MAX_TRUNKS_PER_ORG as usize;
+    for i in 3..max {
+        let mut mais = africell();
+        mais["name"] = json!(format!("Tronco {i}"));
+        mais["short_code"] = json!(format!("T{i}"));
+        create_trunk(&app, &a.token, a.org(), mais).await;
+    }
+    let mut a_mais = africell();
+    a_mais["name"] = json!("Um a mais");
+    a_mais["short_code"] = json!("MAIS");
+    let (st, e) = app
+        .post(&t(a.org(), "/trunks"), Some(&a.token), a_mais)
+        .await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (422, Some("telephony.trunk_limit_reached")),
+        "{e}"
+    );
+    // E uma linha a mais que já estivesse na base não é servida.
+    sqlx::query(
+        "INSERT INTO telephony_trunks (id, org_id, name, short_code, scope, host, port, transport, srtp,
+                register, username, password_sealed, prefixes, max_channels, position, enabled, created_by)
+         SELECT gen_random_uuid(), org_id, 'Herdado', 'HER', scope, host, port, transport, srtp,
+                register, username, password_sealed, prefixes, max_channels, 999, TRUE, created_by
+           FROM telephony_trunks WHERE id = $1",
+    )
+    .bind(uuid::Uuid::parse_str(&uni).unwrap())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (_, g) = post(
+        "section=directory&purpose=gateways".into(),
+        Some(basic(SECRET)),
+    )
+    .await;
+    assert_eq!(g.matches("<gateway name=").count(), max, "{g}");
 }
 
 // ============================================================

@@ -7,6 +7,9 @@ use uuid::Uuid;
 pub const MAX_NAME: usize = 80;
 pub const MAX_PREFIXES: usize = 20;
 pub const MAX_CHANNELS: i32 = 10_000;
+/// Troncos por organização. Os de TODAS as organizações são servidos ao
+/// FreeSWITCH num só documento (`mod_xml_curl`), com limite de tamanho.
+pub const MAX_TRUNKS_PER_ORG: i64 = 20;
 
 fn bad(code: &'static str, field: &str, msg: impl Into<String>) -> DomainError {
     DomainError::invalid(code, msg).with_field(field, code)

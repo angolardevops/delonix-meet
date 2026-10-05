@@ -366,6 +366,18 @@ for nome in ("production", "production-voz", "local"):
         fsd = um(docs, "Deployment", "freeswitch")["spec"]["template"]["spec"]["containers"][0]
         if fsd.get("command") != ["/bin/sh", "/entrypoint/freeswitch-entrypoint.sh"]:
             erros.append("[production-voz] o FreeSWITCH tem de arrancar pelo entrypoint que endurece a vanilla")
+        # O arranque copia ficheiros de /meet com `set -e`: um que o ConfigMap
+        # não traga deixa o pod em CrashLoop, e só se via no cluster (R291). O
+        # compose e o cluster local têm a prova com chamadas; o chart tem esta.
+        with open("voice/cluster/freeswitch-entrypoint.sh") as f:
+            copiados = set(re.findall(r'"\$MEET/([^"]+)"', f.read()))
+        meet = um(docs, "ConfigMap", "freeswitch-meet")
+        em_falta = sorted(copiados - set((meet or {}).get("data") or {}))
+        if not copiados:
+            erros.append("[production-voz] não encontrei no freeswitch-entrypoint.sh os ficheiros que ele copia de /meet")
+        elif em_falta:
+            erros.append("[production-voz] o arranque copia de /meet ficheiros que o ConfigMap freeswitch-meet não traz: "
+                         + ", ".join(em_falta))
 
 # 7. laboratório: aleatórios a sério
 def dados(nome):

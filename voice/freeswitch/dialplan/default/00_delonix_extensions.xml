@@ -27,6 +27,10 @@
              no log ("RECV DTMF 3:1600"): quem lê o log reconstrói o PIN. Esta
              variável cala essa linha para a chamada inteira (R227). -->
         <action application="set" data="sensitive_dtmf=true"/>
+        <!-- Esta perna não deixa registo de chamada (R291): um registo leva todas
+             as variáveis do canal, e as desta perna incluem as chaves SRTP. Só
+             a perna que sai por um tronco é registada. -->
+        <action application="set" data="process_cdr=false"/>
         <action application="set" data="rtp_secure_media=mandatory"/>
         <action application="set" data="hangup_after_bridge=true"/>
         <!-- A tradução (número curto → AOR registado) e o bridge acontecem
