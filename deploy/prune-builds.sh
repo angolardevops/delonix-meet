@@ -17,7 +17,7 @@ docker image prune -af | tail -1
 
 # 3) Tags delonix antigas no nó kind: mantém a tag PINADA nos Deployments + latest.
 NODE=delonix-stage-control-plane
-if docker ps --format '{{.Names}}' | grep -qx "$NODE"; then
+if nos=$(docker ps --format '{{.Names}}') && grep -qx "$NODE" <<<"$nos"; then
   PINNED=$(kubectl --context kind-delonix-stage -n delonix-meet get deploy delonix-server \
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | cut -d: -f2)
   echo "[prune-builds] tag pinada: ${PINNED:-?}"
