@@ -135,9 +135,9 @@ pub struct Metrics {
     pub recording_packets_dropped_total: AtomicU64,
     /// Pacotes de áudio que a gravação descartou por chegarem com o timestamp
     /// atrás do último escrito (a rede reordenou-os ou repetiu-os). Escritos,
-    /// somavam 24 h 51 min à pista — ver `recorder::OpusClock`. Um valor que
-    /// sobe sem parar é uma origem cujo relógio recuou de vez: essa pista fica
-    /// muda na gravação até o relógio alcançar o ponto onde ia.
+    /// somavam 24 h 51 min à pista — ver `recorder::OpusClock`. Sobe às
+    /// dezenas de cada vez que o relógio de uma origem recua de vez: é o
+    /// segundo que a pista perde até se re-ancorar.
     pub recording_audio_late_dropped_total: AtomicU64,
     /// Composições de gravação à espera de vaga (`FFMPEG_MAX_CONCURRENT`). Um
     /// valor que não desce é o sinal de que o nó compõe mais do que aguenta.
