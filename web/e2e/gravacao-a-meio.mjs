@@ -208,6 +208,7 @@ async function cenario(nome, { comB = false, auto = false } = {}) {
   await sleep(2000)
   const novas = () => sessoes().filter((d) => !antes.has(d))
   let viva = null
+  let pedidosComAPistaAberta = null
   if (auto) {
     viva = novas().sort((x, y) => statSync(join(REC_DIR, y)).mtimeMs - statSync(join(REC_DIR, x)).mtimeMs)[0] ?? null
     chk(!!viva, 'a gravação arrancou sozinha, com a entrada do anfitrião')
@@ -220,12 +221,19 @@ async function cenario(nome, { comB = false, auto = false } = {}) {
     await sleep(1500)
     const pediu = (await pedidosDeKeyframe()) - pedidos
     chk(pedidos !== null && pediu >= (comB ? 2 : 1), `ao arrancar, o SFU pediu um keyframe a cada câmara (${pediu} pedidos)`)
+    pedidosComAPistaAberta = await pedidosDeKeyframe()
   }
   if (!viva) { await a.b.close(); if (b) await b.b.close(); return }
   await sleep(SEGUNDOS * 1000)
   if (auto) {
     const pediu = (await pedidosDeKeyframe()) - pedidosAoEntrar
-    chk(pedidosAoEntrar !== null && pediu === 0, `a gravação automática não pediu keyframe nenhum (${pediu} pedidos)`)
+    chk(pedidosAoEntrar !== null && pediu === 0, `a gravação automática de um publicador sozinho não pediu keyframe nenhum (${pediu} pedidos)`)
+  } else {
+    // Aberta a pista, a gravação deixa de pedir. Uma bandeira que nunca
+    // apagasse dava um pedido por segundo e por câmara (R14): ~20 por câmara
+    // nesta janela. Fica folga para um PLI que um browser mande por conta própria.
+    const pediu = (await pedidosDeKeyframe()) - pedidosComAPistaAberta
+    chk(pedidosComAPistaAberta !== null && pediu <= 2, `com as pistas abertas, a gravação deixou de pedir keyframes (${pediu} pedidos em ${SEGUNDOS} s)`)
   }
   await a.p.evaluate(() => window.__dlx.gravar(false))
   const pasta = join(SAIDA, nome)

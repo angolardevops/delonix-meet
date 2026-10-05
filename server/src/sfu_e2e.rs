@@ -1785,14 +1785,34 @@ async fn parar_e_verificar_a_pista(sfu: &Arc<SfuState>, room: Uuid, dir: &std::p
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Aberta a pista, o SFU deixa de pedir keyframes: durante mais de duas vezes
+/// o intervalo mínimo entre PLI a câmara não recebe nenhum. Uma bandeira que
+/// nunca apagasse era um keyframe por segundo e por câmara gravada — o ticker
+/// que a R14 tirou.
+async fn os_pedidos_pararam(camara: &CamaraVp8) {
+    let antes = (camara.plis(), camara.keyframes());
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        (camara.plis(), camara.keyframes()),
+        antes,
+        "com a pista aberta, a câmara não pode continuar a receber pedidos de keyframe (PLI, keyframes)"
+    );
+}
+
 /// A gravação arranca com a câmara a meio do fluxo, e LOGO A SEGUIR a um
 /// keyframe pedido por outro (um participante que entrou): o pedido que o
 /// `start_recording` faz cai no intervalo mínimo entre PLI e não sai. Sem
 /// repetição, a pista ficava à espera de um keyframe que ninguém voltava a
 /// pedir — é a bomba de RTP que insiste até ele chegar.
+///
+/// O pedido só é travado se o arranque correr a menos de um segundo do PLI
+/// anterior, e isso depende da máquina. Por isso o teste MEDE se foi (o
+/// contador de pedidos do SFU não mexe durante o `start_recording`) e, se não
+/// foi, repete o cenário com outro participante a entrar: passar sem nunca ter
+/// exercitado a repetição não provava nada sobre ela.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gravacao_arrancada_a_meio_abre_a_pista_num_keyframe() {
-    use std::sync::atomic::Ordering::Relaxed;
+    use std::sync::atomic::Ordering::{Relaxed, SeqCst};
     let (sfu, metrics) = new_sfu();
     let room = Uuid::new_v4();
 
@@ -1817,60 +1837,78 @@ async fn gravacao_arrancada_a_meio_abre_a_pista_num_keyframe() {
         "sem subscritores ninguém pediu keyframe: só o de abertura"
     );
 
-    // B entra e é subscrito à câmara de A: o SFU pede um keyframe por ele.
-    let b = TestClient::join(&sfu, room).await;
-    b.publish(OPUS, "b-audio").await;
-    eventually_com_diagnostico(
-        "a entrada de B fez a câmara de A mandar um keyframe",
-        prazo(30),
-        || {
-            let k = camara.keyframes.clone();
-            async move { k.load(std::sync::atomic::Ordering::SeqCst) >= 2 }
-        },
-        || {
-            format!(
-                "A[{}] · B[{}] · PLI={}",
-                a.retrato(),
-                b.retrato(),
-                camara.plis()
-            )
-        },
-    )
-    .await;
-    // Esse keyframe já passou: quando a gravação arrancar, só há deltas.
-    camara
-        .mais_quadros(4, "a câmara voltou aos quadros delta")
+    let mut outros = Vec::new();
+    let mut travado = false;
+    for tentativa in 1..=5 {
+        // Alguém entra e é subscrito à câmara de A: o SFU pede um keyframe por ele.
+        let keyframes_antes = camara.keyframes();
+        let b = TestClient::join(&sfu, room).await;
+        b.publish(OPUS, &format!("b{tentativa}-audio")).await;
+        eventually_com_diagnostico(
+            "a entrada de outro participante fez a câmara de A mandar um keyframe",
+            prazo(30),
+            || {
+                let k = camara.keyframes.clone();
+                async move { k.load(SeqCst) > keyframes_antes }
+            },
+            || {
+                format!(
+                    "A[{}] · B[{}] · PLI={}",
+                    a.retrato(),
+                    b.retrato(),
+                    camara.plis()
+                )
+            },
+        )
         .await;
+        outros.push(b);
+        // Esse keyframe já passou: quando a gravação arrancar, só há deltas.
+        camara
+            .mais_quadros(4, "a câmara voltou aos quadros delta")
+            .await;
 
-    let dir = std::env::temp_dir().join(format!("dlx-rec-e2e-{}", Uuid::new_v4()));
-    let keyframes_antes = camara.keyframes();
-    assert!(
-        sfu.start_recording(room, Uuid::new_v4(), "anfitrião", None, &dir)
-            .await,
-        "a gravação arranca"
-    );
-    eventually_com_diagnostico(
-        "a gravação pediu um keyframe à câmara de A e ela mandou-o",
-        prazo(30),
-        || {
-            let k = camara.keyframes.clone();
-            async move { k.load(std::sync::atomic::Ordering::SeqCst) > keyframes_antes }
-        },
-        || {
-            format!(
-                "A[{}] · PLI recebidos={} · keyframes={} · pedidos do SFU={}",
-                a.retrato(),
-                camara.plis(),
-                camara.keyframes(),
-                metrics.sfu_keyframes_requested_total.load(Relaxed),
-            )
-        },
-    )
-    .await;
-    camara
-        .mais_quadros(15, "a chamada continua depois do keyframe")
+        let dir = std::env::temp_dir().join(format!("dlx-rec-e2e-{}", Uuid::new_v4()));
+        let keyframes_antes = camara.keyframes();
+        let pedidos_antes = metrics.sfu_keyframes_requested_total.load(Relaxed);
+        assert!(
+            sfu.start_recording(room, Uuid::new_v4(), "anfitrião", None, &dir)
+                .await,
+            "a gravação arranca"
+        );
+        let pedido_travado = metrics.sfu_keyframes_requested_total.load(Relaxed) == pedidos_antes;
+        eventually_com_diagnostico(
+            "a gravação pediu um keyframe à câmara de A e ela mandou-o",
+            prazo(30),
+            || {
+                let k = camara.keyframes.clone();
+                async move { k.load(SeqCst) > keyframes_antes }
+            },
+            || {
+                format!(
+                    "A[{}] · pedido do arranque travado={pedido_travado} · PLI recebidos={} · keyframes={} · pedidos do SFU={}",
+                    a.retrato(),
+                    camara.plis(),
+                    camara.keyframes(),
+                    metrics.sfu_keyframes_requested_total.load(Relaxed),
+                )
+            },
+        )
         .await;
-    parar_e_verificar_a_pista(&sfu, room, &dir).await;
+        camara
+            .mais_quadros(45, "a chamada continua depois do keyframe")
+            .await;
+        os_pedidos_pararam(&camara).await;
+        parar_e_verificar_a_pista(&sfu, room, &dir).await;
+        if pedido_travado {
+            travado = true;
+            break;
+        }
+    }
+    assert!(
+        travado,
+        "em cinco tentativas o pedido do arranque nunca caiu no intervalo mínimo entre PLI: \
+         a repetição na bomba de RTP não foi exercitada (máquina demasiado lenta para este cenário?)"
+    );
 }
 
 /// O publicador não está a mandar quadros quando a gravação arranca (um ecrã
@@ -1905,10 +1943,16 @@ async fn gravacao_arrancada_com_o_video_parado_pede_o_keyframe_ao_ligar_o_writer
     assert_eq!(camara.plis(), 0, "até aqui ninguém pediu keyframe");
 
     let dir = std::env::temp_dir().join(format!("dlx-rec-e2e-{}", Uuid::new_v4()));
+    let pedidos_antes = metrics.sfu_keyframes_requested_total.load(Relaxed);
     assert!(
         sfu.start_recording(room, Uuid::new_v4(), "anfitrião", None, &dir)
             .await,
         "a gravação arranca"
+    );
+    assert_eq!(
+        metrics.sfu_keyframes_requested_total.load(Relaxed),
+        pedidos_antes + 1,
+        "o pedido sai do próprio start_recording, sem esperar por pacote nenhum"
     );
     eventually_com_diagnostico(
         "a câmara parada recebe o pedido de keyframe da gravação e responde",
@@ -1929,8 +1973,9 @@ async fn gravacao_arrancada_com_o_video_parado_pede_o_keyframe_ao_ligar_o_writer
     .await;
     camara.a_emitir.store(true, SeqCst);
     camara
-        .mais_quadros(15, "a câmara volta a produzir quadros")
+        .mais_quadros(45, "a câmara volta a produzir quadros")
         .await;
+    os_pedidos_pararam(&camara).await;
     parar_e_verificar_a_pista(&sfu, room, &dir).await;
 }
 

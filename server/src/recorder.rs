@@ -64,13 +64,18 @@ fn vp8_frame_start(depack: &Vp8Packet) -> bool {
 
 /// Este pacote abre um KEYFRAME VP8? `vp8` é o payload já sem o descritor.
 ///
-/// O bit de keyframe é o bit 0 do cabeçalho do quadro, a zero (RFC 6386 §9.1),
-/// e só existe no pacote que inicia o quadro. A guarda antiga lia-o em
+/// O bit de keyframe é o bit 0 do cabeçalho do quadro, a zero, e um keyframe
+/// traz logo a seguir o código de início `9d 01 2a` (RFC 6386 §9.1) — em claro
+/// também numa sala E2EE, que deixa os 10 bytes do cabeçalho por cifrar. Tudo
+/// isto só existe no pacote que inicia o quadro. A guarda antiga lia o bit em
 /// qualquer pacote: uma continuação de um quadro delta com o primeiro byte par
 /// passava por keyframe, e a pista abria a meio de um quadro que nenhum
 /// descodificador aceita (R297).
 fn vp8_starts_keyframe(depack: &Vp8Packet, vp8: &[u8]) -> bool {
-    vp8_frame_start(depack) && vp8.first().is_some_and(|b| b & 0x01 == 0)
+    vp8_frame_start(depack)
+        && vp8.len() >= 6
+        && vp8[0] & 0x01 == 0
+        && vp8[3..6] == [0x9d, 0x01, 0x2a]
 }
 
 /// O mesmo, a partir do pacote RTP inteiro — é o que o `RecWriter` usa para
@@ -98,6 +103,13 @@ pub struct Vp8IvfWriter {
     first_ts: Option<u32>,
     frame: Vec<u8>,
     seen_key: bool,
+    /// Aceso enquanto a pista não tiver o seu primeiro quadro ESCRITO. É a
+    /// mesma bandeira que o `RecWriter` lê em `wants_keyframe`: quem entrega
+    /// apaga-a quando põe um início de keyframe na fila, e esta thread volta a
+    /// acendê-la se esse keyframe afinal não serviu (ver `reopen`).
+    awaiting_key: Arc<std::sync::atomic::AtomicBool>,
+    /// Número de sequência do último pacote junto ao quadro de ABERTURA.
+    open_seq: Option<u16>,
     /// Dimensões reais lidas do primeiro keyframe (corrigidas no close).
     dims: Option<(u16, u16)>,
     /// Chave E2EE da sala (cedida pelo anfitrião) — desencripta cada frame.
@@ -124,6 +136,8 @@ impl Vp8IvfWriter {
             first_ts: None,
             frame: Vec::new(),
             seen_key: false,
+            awaiting_key: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            open_seq: None,
             dims: None,
             key: None,
         })
@@ -140,6 +154,19 @@ impl Vp8IvfWriter {
         if payload.is_empty() {
             return Ok(());
         }
+        // O quadro de abertura tem de chegar INTEIRO e seguido. Se lhe faltar
+        // um pacote, ou se o seu primeiro pacote for uma retransmissão que
+        // chegou a meio de outro quadro, o que se escrevia tinha cara de
+        // keyframe (bit, código de início, dimensões) e era lixo — e ninguém
+        // voltava a pedir outro. Um salto na sequência deita-o fora e a pista
+        // volta a esperar.
+        if self.count == 0 && !self.frame.is_empty() {
+            if let Some(prev) = self.open_seq {
+                if pkt.header.sequence_number != prev.wrapping_add(1) {
+                    self.reopen();
+                }
+            }
+        }
         // A pista só abre num keyframe verdadeiro: tudo o que chega antes —
         // quadros delta inteiros e os seus pacotes de continuação — fica de fora.
         if !self.seen_key {
@@ -152,6 +179,9 @@ impl Vp8IvfWriter {
             return Ok(()); // meio de um frame que não começámos
         }
         self.frame.extend_from_slice(&payload);
+        if self.count == 0 {
+            self.open_seq = Some(pkt.header.sequence_number);
+        }
         if !pkt.header.marker {
             return Ok(());
         }
@@ -163,6 +193,10 @@ impl Vp8IvfWriter {
                 Some(clear) => self.frame = clear,
                 None => {
                     self.frame.clear();
+                    // O keyframe de abertura não autenticou: a pista não abriu.
+                    if self.count == 0 {
+                        self.reopen();
+                    }
                     return Ok(());
                 }
             }
@@ -185,8 +219,23 @@ impl Vp8IvfWriter {
         self.w.write_all(&pts_ms.to_le_bytes())?;
         self.w.write_all(&self.frame)?;
         self.frame.clear();
+        if self.count == 0 {
+            // Agora sim, a pista abriu.
+            self.awaiting_key
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+        }
         self.count += 1;
         Ok(())
+    }
+
+    /// O keyframe de abertura não serviu: deita-se fora o que dele houver e a
+    /// pista volta a esperar — e o SFU volta a pedir (`RecWriter::wants_keyframe`).
+    fn reopen(&mut self) {
+        self.frame.clear();
+        self.open_seq = None;
+        self.seen_key = false;
+        self.awaiting_key
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn close(&mut self) -> std::io::Result<()> {
@@ -211,8 +260,13 @@ enum RecSink {
 }
 
 impl RecSink {
-    fn is_video(&self) -> bool {
-        matches!(self, RecSink::Video(_))
+    /// A bandeira «à espera do keyframe de abertura» desta pista. Numa pista
+    /// de áudio nasce apagada e ninguém lhe toca.
+    fn awaiting_key(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        match self {
+            RecSink::Video(w) => w.awaiting_key.clone(),
+            RecSink::Audio { .. } => Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
     }
 
     fn write_rtp(&mut self, pkt: &webrtc::rtp::packet::Packet) {
@@ -247,6 +301,11 @@ impl RecSink {
     }
 }
 
+/// Durante quanto tempo se pede keyframe por uma pista de vídeo que ainda não
+/// abriu (ver `RecWriter::wants_keyframe`). Ao ritmo do `pli_allowed` do SFU
+/// são no máximo trinta pedidos por pista.
+const KEYFRAME_ASK_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Writer de uma track em gravação — um **handle** para uma thread de escrita.
 ///
 /// Porquê uma thread e não escrita directa: o `write_rtp` era chamado de dentro
@@ -264,11 +323,16 @@ pub struct RecWriter {
     tx: Option<std::sync::mpsc::SyncSender<Box<webrtc::rtp::packet::Packet>>>,
     join: Option<std::thread::JoinHandle<()>>,
     dropped: Arc<std::sync::atomic::AtomicU64>,
-    /// Aceso enquanto a pista de VÍDEO não tiver recebido o keyframe que a
-    /// abre (ver `wants_keyframe`). Numa pista de áudio nasce apagado.
-    awaiting_key: std::sync::atomic::AtomicBool,
+    /// Aceso enquanto a pista de VÍDEO não tiver o keyframe que a abre (ver
+    /// `wants_keyframe`). Partilhado com a thread de escrita, que o volta a
+    /// acender se o keyframe não serviu. Numa pista de áudio nasce apagado.
+    awaiting_key: Arc<std::sync::atomic::AtomicBool>,
     /// Quando o writer foi ligado — para dizer quanto a pista esperou pelo keyframe.
     opened: Instant,
+    /// Até quando se pede keyframe por esta pista (`KEYFRAME_ASK_FOR`).
+    ask_until: Instant,
+    /// Já se avisou de que se desistiu de pedir.
+    gave_up: std::sync::atomic::AtomicBool,
     metrics: Arc<crate::metrics::Metrics>,
     label: String,
 }
@@ -280,7 +344,7 @@ impl RecWriter {
         metrics: Arc<crate::metrics::Metrics>,
         label: String,
     ) -> Self {
-        let awaiting_key = std::sync::atomic::AtomicBool::new(sink.is_video());
+        let awaiting_key = sink.awaiting_key();
         let (tx, rx) = std::sync::mpsc::sync_channel::<Box<webrtc::rtp::packet::Packet>>(cap);
         let join = std::thread::Builder::new()
             .name(format!("dlx-rec-{label}"))
@@ -302,6 +366,8 @@ impl RecWriter {
             dropped: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             awaiting_key,
             opened: Instant::now(),
+            ask_until: Instant::now() + KEYFRAME_ASK_FOR,
+            gave_up: std::sync::atomic::AtomicBool::new(false),
             metrics,
             label,
         }
@@ -354,8 +420,27 @@ impl RecWriter {
     /// — ao ligar o writer e, na bomba de RTP, enquanto a resposta for `true`
     /// (o pedido pode ter sido travado pelo intervalo mínimo entre PLI, ou
     /// ter-se perdido na rede, que é UDP).
+    ///
+    /// Pede-se durante `KEYFRAME_ASK_FOR` e não mais: um publicador que não
+    /// responde em meio minuto não vai responder ao pedido seguinte, e um PLI
+    /// por segundo para sempre é o ticker que a R14 tirou. A pista continua a
+    /// poder abrir — com um keyframe que outro consumidor peça.
     pub fn wants_keyframe(&self) -> bool {
-        self.awaiting_key.load(std::sync::atomic::Ordering::Relaxed)
+        use std::sync::atomic::Ordering::Relaxed;
+        if !self.awaiting_key.load(Relaxed) {
+            return false;
+        }
+        if Instant::now() < self.ask_until {
+            return true;
+        }
+        if !self.gave_up.swap(true, Relaxed) {
+            tracing::warn!(
+                track = %self.label,
+                segundos = KEYFRAME_ASK_FOR.as_secs(),
+                "gravação: a pista de vídeo continua sem keyframe — deixa-se de o pedir"
+            );
+        }
+        false
     }
 
     /// Pacotes perdidos por fila cheia nesta track. `> 0` = gravação degradada.
@@ -375,6 +460,16 @@ impl RecWriter {
         drop(self.tx.take()); // fecha o canal → o laço da thread termina
         if let Some(h) = self.join.take() {
             let _ = tokio::task::spawn_blocking(move || h.join()).await;
+        }
+        // Uma pista de vídeo que nunca abriu não tem um quadro: a composição
+        // deixa-a de fora, e esse participante fica sem imagem na gravação.
+        // Nunca em silêncio (R18).
+        if self.awaiting_key.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(
+                track = %self.label,
+                esperou_ms = self.opened.elapsed().as_millis() as u64,
+                "gravação: a pista de vídeo fechou sem ter recebido um keyframe — fica SEM imagem na gravação"
+            );
         }
         perdidos
     }
@@ -1663,6 +1758,16 @@ mod tests {
         // com byte par: também não é um keyframe.
         w.write_rtp(&vp8_pacote(seq, 30 * 3000, 0x11, 0x00, true));
         seq += 1;
+        // E uma continuação cujos bytes imitam o cabeçalho de um keyframe
+        // (bit 0 a zero e `9d 01 2a`), mas sem o bit S: é dado, não cabeçalho.
+        let mut imitacao = vp8_keyframe(seq, 30 * 3000);
+        imitacao.payload = {
+            let mut p = imitacao.payload.to_vec();
+            p[0] = 0x00;
+            p.into()
+        };
+        w.write_rtp(&imitacao);
+        seq += 1;
         assert!(
             w.wants_keyframe(),
             "sem keyframe a pista continua à espera — é isto que faz o SFU pedi-lo"
@@ -1702,6 +1807,86 @@ mod tests {
         // O cabeçalho deixou de levar as dimensões nominais (1280×720), que
         // eram a marca de uma pista que nunca viu um keyframe.
         assert_eq!(ivf_dims(&path).await, Some((320, 240)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Espera que a thread de escrita chegue ao que já lhe foi entregue.
+    async fn ate_que(label: &str, mut cond: impl FnMut() -> bool) {
+        for _ in 0..500 {
+            if cond() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("ao fim de 5 s: {label}");
+    }
+
+    #[tokio::test]
+    async fn um_keyframe_de_abertura_incompleto_nao_abre_a_pista() {
+        // O primeiro pacote do keyframe perdeu-se e foi retransmitido: chega
+        // sozinho, a meio de um quadro delta. Tem o bit, o código de início e
+        // as dimensões — e o que se lhe segue não é dele. Escrito, era um
+        // primeiro quadro com cara de keyframe e conteúdo de lixo, e ninguém
+        // voltava a pedir outro.
+        let dir = std::env::temp_dir().join(format!("dlx-rec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (w, path) = writer_de_teste(&dir, 4096);
+
+        let mut inicio = vp8_keyframe(100, 3000);
+        inicio.header.marker = false; // o keyframe tem mais pacotes
+        w.write_rtp(&inicio);
+        assert!(
+            !w.wants_keyframe(),
+            "com o início do keyframe na fila, quem entrega dá-o por recebido"
+        );
+        // …mas o pacote seguinte não é a continuação dele (salto na sequência).
+        w.write_rtp(&vp8_pacote(140, 6000, 0x00, 0x42, true));
+        ate_que("a pista volta a esperar pelo keyframe", || {
+            w.wants_keyframe()
+        })
+        .await;
+
+        // O keyframe pedido outra vez chega inteiro, em dois pacotes seguidos.
+        let mut inicio = vp8_keyframe(200, 9000);
+        inicio.header.marker = false;
+        w.write_rtp(&inicio);
+        w.write_rtp(&vp8_pacote(201, 9000, 0x00, 0x42, true));
+        let mut seq = 202u16;
+        for q in 4..7u32 {
+            for p in vp8_quadro_delta(&mut seq, q * 3000) {
+                w.write_rtp(&p);
+            }
+        }
+        ate_que("a pista abriu", || !w.wants_keyframe()).await;
+        w.close().await;
+
+        let quadros = ivf_quadros(&path);
+        assert_eq!(quadros.len(), 4, "o keyframe inteiro e três deltas");
+        assert!(e_keyframe(&quadros[0]));
+        assert_eq!(
+            quadros[0].len(),
+            14 + 7,
+            "o keyframe de abertura são os seus dois pacotes, e só eles"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn os_pedidos_de_keyframe_tem_fim() {
+        // Um publicador que nunca responde não leva um PLI por segundo para
+        // sempre (R14): passado o prazo deixa-se de pedir. A pista continua a
+        // abrir se o keyframe vier por outra via.
+        let dir = std::env::temp_dir().join(format!("dlx-rec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut w, path) = writer_de_teste(&dir, 4096);
+        assert!(w.wants_keyframe());
+        w.ask_until = Instant::now(); // o prazo (`KEYFRAME_ASK_FOR`) passou
+        assert!(!w.wants_keyframe(), "passado o prazo já não se pede");
+        assert!(!w.wants_keyframe(), "nem na pergunta seguinte");
+
+        w.write_rtp(&vp8_keyframe(1, 3000));
+        w.close().await;
+        assert_eq!(ivf_quadros(&path).len(), 1, "e a pista abre na mesma");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
