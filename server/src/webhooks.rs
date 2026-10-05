@@ -132,15 +132,15 @@ pub fn fire(state: Arc<AppState>, org_id: Uuid, event: Event) {
             let body = body_for(&hook, &event);
             // O registo não é condição do envio: se a base falhar aqui, a
             // entrega segue sem linha (e fica o aviso no log).
-            let (delivery_id, body) =
+            let (ids, body) =
                 match record_pending(&state.db, &hook, event.name, &body, 1, None).await {
-                    Ok(d) => (Some(d.id), d.payload),
+                    Ok(d) => (Some(d.ids), d.payload),
                     Err(e) => {
                         tracing::warn!(hook = %hook.id, error = %e, "registo da entrega falhou");
                         (None, body)
                     }
                 };
-            attempt(&state, &hook, event.name, &body, delivery_id, 1).await;
+            attempt(&state, &hook, event.name, &body, ids, 1).await;
         }
     });
 }
@@ -169,9 +169,18 @@ fn body_for(hook: &Webhook, event: &Event) -> serde_json::Value {
     }
 }
 
-/// Linha acabada de inserir: o id e o payload TAL COMO FICOU GUARDADO.
+/// Os dois ids de uma tentativa. `delivery` é novo por tentativa; `event` nasce
+/// na primeira e passa igual a todas as repetições e reenvios do mesmo evento:
+/// é o que o receptor usa para deduplicar uma entrega «pelo menos uma vez».
+#[derive(Clone, Copy)]
+struct DeliveryIds {
+    delivery: Uuid,
+    event: Uuid,
+}
+
+/// Linha acabada de inserir: os ids e o payload TAL COMO FICOU GUARDADO.
 struct PendingDelivery {
-    id: Uuid,
+    ids: DeliveryIds,
     payload: serde_json::Value,
 }
 
@@ -187,10 +196,10 @@ async fn record_pending(
     attempt: i32,
     redelivery_of: Option<Uuid>,
 ) -> Result<PendingDelivery, sqlx::Error> {
-    let (id, payload): (Uuid, String) = sqlx::query_as(
+    let (id, event_id, payload): (Uuid, Uuid, String) = sqlx::query_as(
         "INSERT INTO webhook_deliveries (org_id, webhook_id, event, payload, attempt, redelivery_of)
          VALUES ($1, $2, $3, $4::jsonb, $5, $6)
-         RETURNING id, payload::text",
+         RETURNING id, event_id, payload::text",
     )
     .bind(hook.org_id)
     .bind(hook.id)
@@ -201,7 +210,10 @@ async fn record_pending(
     .fetch_one(db)
     .await?;
     Ok(PendingDelivery {
-        id,
+        ids: DeliveryIds {
+            delivery: id,
+            event: event_id,
+        },
         payload: serde_json::from_str(&payload).unwrap_or_else(|_| body.clone()),
     })
 }
@@ -226,7 +238,7 @@ async fn attempt(
     hook: &Webhook,
     event: &str,
     body: &serde_json::Value,
-    delivery_id: Option<Uuid>,
+    ids: Option<DeliveryIds>,
     attempt_no: i32,
 ) {
     let started = std::time::Instant::now();
@@ -242,20 +254,13 @@ async fn attempt(
                 Err(_) => {
                     Outcome::Permanent("o segredo do webhook não abre neste servidor".to_string())
                 }
-                Ok(secret) => match send(
-                    state.outbound.tenant(),
-                    hook,
-                    &secret,
-                    event,
-                    body,
-                    delivery_id,
-                )
-                .await
-                {
-                    Ok(code) => Outcome::Http(code),
-                    // `without_url`: o URL de um webhook do Slack/Teams é a credencial.
-                    Err(e) => Outcome::Transport(e.without_url().to_string()),
-                },
+                Ok(secret) => {
+                    match send(state.outbound.tenant(), hook, &secret, event, body, ids).await {
+                        Ok(code) => Outcome::Http(code),
+                        // `without_url`: o URL de um webhook do Slack/Teams é a credencial.
+                        Err(e) => Outcome::Transport(e.without_url().to_string()),
+                    }
+                }
             }
         }
     };
@@ -296,7 +301,8 @@ async fn attempt(
             )
         }
     };
-    let Some(id) = delivery_id else { return };
+    let Some(ids) = ids else { return };
+    let id = ids.delivery;
     debug_assert!(rules::DeliveryStatus::Pending.can_transition_to(status));
     // Espera até à repetição, ou NULL. Só uma falha repetível agenda.
     let retry_in: Option<f64> = (status == rules::DeliveryStatus::Failed && retryable)
@@ -335,7 +341,7 @@ async fn send(
     secret: &str,
     event: &str,
     body: &serde_json::Value,
-    delivery_id: Option<Uuid>,
+    ids: Option<DeliveryIds>,
 ) -> Result<u16, reqwest::Error> {
     let raw = serde_json::to_vec(body).unwrap_or_default();
     let mut rb = client
@@ -345,8 +351,11 @@ async fn send(
         rb = rb.header("X-Delonix-Event", event);
         // O id da entrega deixa o receptor reconhecer um reenvio (cada
         // tentativa tem o seu) sem comparar corpos.
-        if let Some(id) = delivery_id {
-            rb = rb.header("X-Delonix-Delivery", id.to_string());
+        if let Some(ids) = ids {
+            rb = rb.header("X-Delonix-Delivery", ids.delivery.to_string());
+            // O id do EVENTO é o mesmo em todas as tentativas (repetições e
+            // reenvios): quem recebe «pelo menos uma vez» deduplica por ele.
+            rb = rb.header("X-Delonix-Event-Id", ids.event.to_string());
         }
         // Assinatura HMAC opcional, sempre sobre os bytes que seguem — com o
         // segredo ACTUAL do webhook, já decifrado (nunca guardada no registo).
@@ -413,11 +422,11 @@ const RETRY_BATCH: i64 = 50;
 ///
 /// A entrega é «pelo menos uma vez» e sem ordem: uma repetição pode chegar
 /// depois de eventos mais recentes. O corpo é o mesmo bit a bit; o
-/// `X-Delonix-Delivery` é novo por tentativa.
+/// `X-Delonix-Delivery` é novo por tentativa e o `X-Delonix-Event-Id` é o mesmo.
 pub async fn retry_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
     let mut tx = state.db.begin().await?;
-    let due: Vec<(Uuid, Uuid, String, String, i32)> = sqlx::query_as(
-        "SELECT id, webhook_id, event, payload::text, attempt
+    let due: Vec<(Uuid, Uuid, String, String, i32, Uuid)> = sqlx::query_as(
+        "SELECT id, webhook_id, event, payload::text, attempt, event_id
            FROM webhook_deliveries
           WHERE status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now()
           ORDER BY retry_at
@@ -429,7 +438,7 @@ pub async fn retry_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
     .await?;
 
     let mut sends = Vec::with_capacity(due.len());
-    for (id, hook_id, event, payload, previous) in due {
+    for (id, hook_id, event, payload, previous, event_id) in due {
         sqlx::query("UPDATE webhook_deliveries SET retry_at = NULL WHERE id = $1")
             .bind(id)
             .execute(&mut *tx)
@@ -446,8 +455,8 @@ pub async fn retry_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
         };
         let attempt_no = rules::next_attempt(previous);
         let new_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO webhook_deliveries (org_id, webhook_id, event, payload, attempt, redelivery_of)
-             SELECT org_id, webhook_id, event, payload, $2, id
+            "INSERT INTO webhook_deliveries (org_id, webhook_id, event, payload, attempt, redelivery_of, event_id)
+             SELECT org_id, webhook_id, event, payload, $2, id, event_id
                FROM webhook_deliveries WHERE id = $1
              RETURNING id",
         )
@@ -455,13 +464,17 @@ pub async fn retry_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
         .bind(attempt_no)
         .fetch_one(&mut *tx)
         .await?;
-        sends.push((hook, event, body, new_id, attempt_no));
+        let ids = DeliveryIds {
+            delivery: new_id,
+            event: event_id,
+        };
+        sends.push((hook, event, body, ids, attempt_no));
     }
     tx.commit().await?;
 
     let n = sends.len();
-    futures_util::future::join_all(sends.iter().map(|(hook, event, body, new_id, attempt_no)| {
-        attempt(state, hook, event, body, Some(*new_id), *attempt_no)
+    futures_util::future::join_all(sends.iter().map(|(hook, event, body, ids, attempt_no)| {
+        attempt(state, hook, event, body, Some(*ids), *attempt_no)
     }))
     .await;
     Ok(n)
@@ -648,6 +661,10 @@ pub struct WebhookDelivery {
     pub webhook_id: Uuid,
     /// Evento entregue (ver `KNOWN_EVENTS`).
     pub event: String,
+    /// Identifica o EVENTO, não a tentativa: igual em todas as repetições e
+    /// reenvios do mesmo evento, e enviado no cabeçalho `X-Delonix-Event-Id`.
+    /// É o que um receptor usa para deduplicar (a entrega é «pelo menos uma vez»).
+    pub event_id: Uuid,
     /// 1 no disparo original; um reenvio é a tentativa seguinte à reenviada.
     pub attempt: i32,
     /// `pending` | `succeeded` | `failed`.
@@ -663,10 +680,14 @@ pub struct WebhookDelivery {
     pub delivered_at: Option<DateTime<Utc>>,
     /// A entrega de que esta é um reenvio.
     pub redelivery_of: Option<Uuid>,
+    /// Quando o servidor vai repetir esta entrega, se falhou de forma repetível
+    /// e ainda tem tentativas. Nulo se não há repetição agendada.
+    pub next_retry_at: Option<DateTime<Utc>>,
 }
 
-const DELIVERY_COLUMNS: &str = "id, org_id, webhook_id, event, attempt, status, response_status, \
-                                response_ms, error, created_at, delivered_at, redelivery_of";
+const DELIVERY_COLUMNS: &str = "id, org_id, webhook_id, event, event_id, attempt, status, \
+                                response_status, response_ms, error, created_at, delivered_at, \
+                                redelivery_of, retry_at AS next_retry_at";
 
 #[derive(sqlx::FromRow)]
 struct DeliveryDetailRow {
@@ -870,8 +891,8 @@ pub async fn redeliver(
     rules::check_redelivery_rate(recent)?;
     let attempt_no = rules::next_attempt(original.delivery.attempt);
     let delivery: WebhookDelivery = sqlx::query_as(&format!(
-        "INSERT INTO webhook_deliveries (org_id, webhook_id, event, payload, attempt, redelivery_of)
-         SELECT org_id, webhook_id, event, payload, $2, id
+        "INSERT INTO webhook_deliveries (org_id, webhook_id, event, payload, attempt, redelivery_of, event_id)
+         SELECT org_id, webhook_id, event, payload, $2, id, event_id
            FROM webhook_deliveries WHERE id = $1
          RETURNING {DELIVERY_COLUMNS}"
     ))
@@ -896,12 +917,15 @@ pub async fn redeliver(
     )
     .await;
 
-    let new_id = delivery.id;
+    let ids = DeliveryIds {
+        delivery: delivery.id,
+        event: delivery.event_id,
+    };
     let event = original.delivery.event;
     let payload = original.payload;
     let bg = state.clone();
     tokio::spawn(async move {
-        attempt(&bg, &hook, &event, &payload, Some(new_id), attempt_no).await;
+        attempt(&bg, &hook, &event, &payload, Some(ids), attempt_no).await;
     });
 
     let location = format!("/api/orgs/{org_id}/webhooks/{hook_id}/deliveries/{new_id}");
