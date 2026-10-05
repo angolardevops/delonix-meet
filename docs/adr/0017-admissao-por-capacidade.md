@@ -48,6 +48,39 @@ inquilino não pode degradar a disponibilidade dos outros.
 - **A ocupação conta os lugares em graça** (R91, 45 s): conservador de propósito.
 - **A mensagem de recusa não diz quanto ocupam os outros inquilinos.**
 
+## Tectos por conta e por organização (acrescentado a 2026-10-05)
+
+A admissão por capacidade só decide salas **novas**; nada impedia uma conta, ou uma organização, de
+encher uma sala que já existia. Dois tectos, ambos **por nó**, ambos com **429** (e não 503: a
+recusa não é «este nó não serve», é «tu já tens o teu»):
+
+- **Por conta** — `MAX_WS_PER_USER` (por omissão 16; `0` desliga): sockets `/ws` que uma conta pode
+  ter ligados, em todas as salas do nó, **incluindo a sala de espera**. Não conta lugares em graça,
+  bots, a ponte telefónica nem fontes de estúdio (identidades de serviço emitidas pela organização).
+- **Por organização** — `organizations.max_concurrent_participants` (migração 0097), ou
+  `ORG_MAX_PARTICIPANTS` por omissão (sem ele, uma org sem tecto próprio é ilimitada). **Só o operador
+  o fixa** (`PUT /api/operator/v1/organizations/{org_id}/concurrency`): é um limite do plano, e uma org
+  que o pudesse subir não estaria limitada. Conta os participantes das salas da organização
+  (inquilino, como acima), incluindo lugares em graça.
+
+**Quem volta ao seu lugar não é uma entrada nova.** Uma entrada com `?reconnect=` só fica isenta se o
+segredo reclama de facto um lugar em graça desta sala (`Hub::seat_reclaimable`, comparação em tempo
+constante); um segredo inventado não isenta. Sem isto, uma quebra de rede com a org no tecto custava o
+lugar a quem já estava.
+
+**Cada recusa conta-se** (`delonix_ws_refused_user_cap_total`, `delonix_ws_refused_org_quota_total`) e
+ambos os tectos falham **abertos** se a base não responder, como o resto das regras por inquilino.
+
+**Limites conhecidos, ditos de propósito:**
+
+- A contagem é **por nó**: com N nós uma organização pode chegar a N vezes o seu tecto. Um tecto
+  global exige um contador partilhado (Redis) que ainda não existe.
+- A verificação é feita **antes** do upgrade e a entrada acontece depois: um rebentamento de ligações
+  simultâneas pode ultrapassar o tecto por tantas quantas as que estavam em curso. O tecto é mole por
+  esse número, não por mais.
+- Um utilizador individual sem organização só existe como caminho defensivo: toda a conta pertence a
+  uma organização (a edição pessoal cria uma de tipo `personal`).
+
 ## O que esta decisão NÃO resolve
 
 **A sala recusada não é realojada noutro pod.** Com a afinidade por hash, um novo pedido para
