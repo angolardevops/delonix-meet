@@ -6,6 +6,7 @@ import { Alert, Button, IconButton, Toggle } from '../../ui/kit'
 import '../../ui/enhance.css'
 import type { StageEnhancements } from './useStageEnhancements'
 import type { Store } from './target'
+import { Bloco } from '../Bloco'
 
 function useStore<T>(store: Store<T>): T {
   return useSyncExternalStore(store.subscribe, store.get, store.get)
@@ -39,11 +40,7 @@ export function EnhancementSettings({
     <>
       <SendSection enh={enh} />
       <ReceiveSection enh={enh} />
-      <section className="rm-block" aria-labelledby="enh-imm-h" data-enh="imersivo">
-        <h3 id="enh-imm-h" className="rm-block__title">
-          <Icon name="cube" size={13} />
-          {t('nitidez.imersivo.titulo')}
-        </h3>
+      <Bloco icon="cube" titulo={t('nitidez.imersivo.titulo')} data-enh="imersivo">
         <Toggle
           label={t('nitidez.imersivo.interruptor')}
           hint={t('nitidez.imersivo.dica')}
@@ -63,7 +60,7 @@ export function EnhancementSettings({
             />
           </>
         )}
-      </section>
+      </Bloco>
     </>
   )
 }
@@ -79,11 +76,7 @@ function SendSection({ enh }: { enh: StageEnhancements }) {
   const antes = bestLayer(view.before)
   const agora = bestLayer(view.now)
   return (
-    <section className="rm-block" aria-labelledby="enh-send-h" data-enh="envio" data-perfil={send.active}>
-      <h3 id="enh-send-h" className="rm-block__title">
-        <Icon name="video" size={13} />
-        {t('nitidez.envio.titulo')}
-      </h3>
+    <Bloco icon="video" titulo={t('nitidez.envio.titulo')} data-enh="envio" data-perfil={send.active}>
       <Toggle label={t('nitidez.envio.interruptor')} hint={t('nitidez.envio.dica')} checked={send.wanted} onChange={send.toggle} data-enh-toggle="envio" />
       {send.wanted && (
         <>
@@ -124,7 +117,7 @@ function SendSection({ enh }: { enh: StageEnhancements }) {
           <p className="dx-muted">{t('nitidez.envio.nota')}</p>
         </>
       )}
-    </section>
+    </Bloco>
   )
 }
 
@@ -139,11 +132,7 @@ function ReceiveSection({ enh }: { enh: StageEnhancements }) {
   else if (receive.off?.why === 'unsupported') offMsg = t('nitidez.rececao.offUnsupported')
   const pausedByImmersive = receive.wanted && !receive.running && !receive.off && !!tgt && immersive.running
   return (
-    <section className="rm-block" aria-labelledby="enh-rx-h" data-enh="realce">
-      <h3 id="enh-rx-h" className="rm-block__title">
-        <Icon name="eye" size={13} />
-        {t('nitidez.rececao.titulo')}
-      </h3>
+    <Bloco icon="eye" titulo={t('nitidez.rececao.titulo')} data-enh="realce">
       <Toggle label={t('nitidez.rececao.interruptor')} hint={t('nitidez.rececao.dica')} checked={receive.wanted} onChange={receive.toggle} data-enh-toggle="realce" />
       <div className="enh-strength">
         <label htmlFor="enh-rx-strength" className="dx-muted">
@@ -179,7 +168,7 @@ function ReceiveSection({ enh }: { enh: StageEnhancements }) {
         </>
       )}
       <p className="dx-muted">{t('nitidez.rececao.soEcra')}</p>
-    </section>
+    </Bloco>
   )
 }
 

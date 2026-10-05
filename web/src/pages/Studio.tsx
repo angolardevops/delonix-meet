@@ -18,7 +18,8 @@ import type { Fonte } from '../room/compositor'
 import { BrandMark } from '../components/BrandMark'
 import { useShell } from '../components/shellContext'
 import { BackgroundEffect } from '../media'
-import { Alert, Button, cx, IconButton, Spinner, StatusBadge } from '../ui/kit'
+import { useAtalhos, useDicaDeAtalho } from '../ui/useAtalhos'
+import { Alert, Button, cx, IconButton, Segmented, Spinner, StatusBadge } from '../ui/kit'
 import * as arquivo from '../studio/arquivo'
 import AudioPanel from '../studio/AudioPanel'
 import CenasPanel from '../studio/CenasPanel'
@@ -130,6 +131,18 @@ export default function Studio() {
     window.addEventListener('hashchange', seguir)
     return () => window.removeEventListener('hashchange', seguir)
   }, [])
+  // As cinco vistas por teclado (⌘⇧1–5). Só as três de cima têm botão; as
+  // legendas e as exportações viviam DENTRO do editor e não se alcançavam de
+  // outra vista sem passar pela linha de tempo. A mesa de corte ignora estas
+  // combinações — `atalhos.test.ts` guarda-o — por isso valem com a mesa ao ar.
+  const dica = useDicaDeAtalho()
+  useAtalhos('estudio', {
+    vistaEmissao: () => setVista('emissao'),
+    vistaEdicao: () => setVista('edicao'),
+    vistaLegendas: () => setVista('legendas'),
+    vistaExportacoes: () => setVista('exportacoes'),
+    vistaTv: () => irPara('tv', ecraTv),
+  })
   const [pronto, setPronto] = useState(false)
   const [temEcra, setTemEcra] = useState(false)
   const [temCamara, setTemCamara] = useState(false)
@@ -623,30 +636,21 @@ export default function Studio() {
           </StatusBadge>
         )}
 
-        <div className="dx-seg st-views" role="group" aria-label={t('studio.vistas.rotulo')}>
-          <button type="button" aria-pressed={vista === 'emissao'} data-studio-vista="emissao" onClick={() => setVista('emissao')}>
-            {t('studio.vistas.emissao')}
-          </button>
-          <button
-            type="button"
-            aria-pressed={vista === 'edicao'}
-            data-studio-vista="edicao"
-            onClick={() => setVista('edicao')}
-          >
-            {t('studio.vistas.edicao')}
-          </button>
-          {/* A mesa de corte, a mesa de som e os outros três ecrãs do estúdio
-              de TV — a vista abre na mesa de corte e navega-se lá dentro. */}
-          <button
-            type="button"
-            aria-pressed={vista === 'tv'}
-            data-studio-vista="tv"
-            title={t('studio.tv.dica')}
-            onClick={() => irPara('tv', ecraTv)}
-          >
-            {t('studio.vistas.tv')}
-          </button>
-        </div>
+        {/* As três vistas do topo. A `tv` abre na mesa de corte e navega-se lá
+            dentro; a `edicao` leva às outras duas do editor (legendas,
+            exportações), que têm atalho mas não botão aqui. */}
+        <Segmented
+          className="st-views"
+          label={t('studio.vistas.rotulo')}
+          dataKey="studio-vista"
+          value={vista === 'legendas' || vista === 'exportacoes' ? 'edicao' : vista}
+          onChange={(v) => (v === 'tv' ? irPara('tv', ecraTv) : setVista(v))}
+          options={[
+            { value: 'emissao', label: t('studio.vistas.emissao'), title: dica('vistaEmissao', t('studio.vistas.emissao')) },
+            { value: 'edicao', label: t('studio.vistas.edicao'), title: dica('vistaEdicao', t('studio.vistas.edicao')) },
+            { value: 'tv', label: t('studio.vistas.tv'), title: dica('vistaTv', t('studio.tv.dica')) },
+          ]}
+        />
 
         <span className="dx-spacer" />
 

@@ -15,6 +15,9 @@ export interface Room {
   e2ee: boolean
   /** 'normal' (por defeito) ou 'training' — só treino tem salas de grupo. */
   format?: string
+  /** A sala aceita convidados sem conta (passam sempre pela sala de espera). */
+  allow_guests?: boolean
+  created_at?: string
 }
 
 /** Resposta de auth: o refresh token NÃO vem aqui — vive num cookie HttpOnly. */
@@ -265,6 +268,31 @@ export const createRoom = (
   })
 
 export const getRoom = (code: string) => request<Room>(`/api/rooms/${code}`)
+
+export interface RoomPage {
+  items: Room[]
+  next_page_token?: string
+}
+
+/** As salas de que sou dono, da mais recente para a mais antiga. */
+export const listMyRooms = (signal?: AbortSignal, pageToken?: string, pageSize?: number) => {
+  const q = new URLSearchParams()
+  if (pageToken) q.set('page_token', pageToken)
+  if (pageSize) q.set('page_size', String(pageSize))
+  const qs = q.toString()
+  return request<RoomPage>(`/api/rooms${qs ? `?${qs}` : ''}`, { signal })
+}
+
+/** Liga ou desliga a entrada de convidados sem conta. Só o dono. */
+export const patchRoom = (code: string, allowGuests: boolean) =>
+  request<Room>(`/api/rooms/${code}`, { method: 'PATCH', body: JSON.stringify({ allow_guests: allowGuests }) })
+
+/**
+ * Apaga uma sala. O servidor RECUSA (409) se ela tiver gravações, se estiver
+ * marcada numa reunião futura, ou se for a sala pessoal — e diz qual é o caso
+ * no `code` do erro.
+ */
+export const deleteRoom = (code: string) => request<void>(`/api/rooms/${code}`, { method: 'DELETE' })
 
 export const joinRoom = (code: string) =>
   request<{ room: Room; room_token: string; scheduled?: boolean }>(`/api/rooms/${code}/join`, { method: 'POST' })

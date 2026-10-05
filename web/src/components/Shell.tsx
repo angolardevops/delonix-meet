@@ -158,6 +158,7 @@ export default function Shell({
   const primary: NavItem[] = [
     { key: 'home', label: t('shell.nav.inicio'), icon: 'home' },
     { key: 'calendar', label: t('shell.nav.agenda'), icon: 'calendar' },
+    { key: 'rooms', label: t('shell.nav.salas'), icon: 'door' },
     { key: 'studio', label: t('shell.nav.estudio'), icon: 'live' },
     { key: 'recordings', label: t('shell.nav.gravacoes'), icon: 'film' },
     { key: 'whiteboards', label: t('shell.nav.quadros'), icon: 'board' },

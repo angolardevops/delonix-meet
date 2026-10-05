@@ -7,6 +7,7 @@ import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Fonte } from '../room/compositor'
 import { Button, Select } from '../ui/kit'
+import { Grupo } from './Grupo'
 import NivelMestre from './NivelMestre'
 import type { Mistura } from './palco'
 import type { Microfone } from './usePalco'
@@ -47,10 +48,7 @@ export default function AudioPanel({
   const { t } = useTranslation()
   const ficheiro = useRef<HTMLInputElement>(null)
   return (
-    <section className="st-group" data-studio-grupo="audio" aria-labelledby="st-audio-h">
-      <h2 id="st-audio-h" className="st-group__title">
-        {t('studio.audio.titulo')}
-      </h2>
+    <Grupo grupo="audio" titulo={t('studio.audio.titulo')}>
 
       <NivelMestre ler={lerPicoMestre} />
 
@@ -147,6 +145,6 @@ export default function AudioPanel({
           {t('studio.audio.carregarMusica')}
         </Button>
       )}
-    </section>
+    </Grupo>
   )
 }
