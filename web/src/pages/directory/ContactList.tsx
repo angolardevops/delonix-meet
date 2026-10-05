@@ -8,12 +8,13 @@
  * chamadas de saída no servidor. No lugar do teclado ficam os grupos, que
  * existem e se ligam (a quem estiver online).
  */
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Employee, Group } from '../../api'
 import type { MissedCall } from '../../presence'
 import { DelonixSymbol, Icon } from '../../ui/icons'
 import { Avatar, cx, IconButton } from '../../ui/kit'
+import { Menu, useMenuDeContexto, type AccaoDeMenu, type EventoDePonteiro } from '../../ui/Menu'
 import CallHistory from './CallHistory'
 
 export type DirTab = 'people' | 'groups' | 'history'
@@ -67,6 +68,7 @@ export default function ContactList({
   pending: ReactNode
 }) {
   const { t } = useTranslation()
+  const linha = useMenuDaLinha()
   const tabs: { value: DirTab; label: string; count?: number }[] = [
     { value: 'people', label: t('consola.chamadas.contactos') },
     { value: 'groups', label: t('org.dir.grupos') },
@@ -75,6 +77,16 @@ export default function ContactList({
 
   return (
     <aside className="call-list" aria-label={t('org.dir.lista')}>
+      {/* Botão direito numa linha: as mesmas acções dos ícones, que num ecrã
+          táctil não têm `hover` e numa coluna de 296 px ficam apertados. */}
+      <Menu
+        ponto={linha.ponto}
+        accoes={linha.alvo?.accoes ?? []}
+        label={t('org.dir.accoesDe', { nome: linha.alvo?.nome ?? '' })}
+        onFechar={linha.fechar}
+      >
+        {linha.alvo?.nome}
+      </Menu>
       <div className="call-list__head">
         <div className="call-brand">
           <span className="call-brand__mark" aria-hidden="true">
@@ -124,7 +136,20 @@ export default function ContactList({
                 const active = focus?.kind === 'person' && focus.id === p.user_id
                 const sms = me ? undefined : smsFor(p)
                 return (
-                  <li key={p.user_id} className={cx('call-row', active && 'call-row--active')}>
+                  <li
+                    key={p.user_id}
+                    className={cx('call-row', active && 'call-row--active')}
+                    onContextMenu={linha.abrir(
+                      p.username,
+                      me
+                        ? []
+                        : [
+                            { id: 'voz', label: t('org.dir.ligarVozA', { nome: p.username }), icon: 'phone', onPick: () => onCallPerson(p, 'voice') },
+                            { id: 'video', label: t('org.dir.ligarVideoA', { nome: p.username }), icon: 'video', onPick: () => onCallPerson(p, 'video') },
+                            ...(sms ? [{ id: 'sms', label: t('org.sms.enviarA', { nome: p.username }), icon: 'sms' as const, onPick: sms }] : []),
+                          ],
+                    )}
+                  >
                     <button
                       type="button"
                       className="call-row__main"
@@ -167,7 +192,13 @@ export default function ContactList({
               {groups?.map((g) => {
                 const active = focus?.kind === 'group' && focus.id === g.id
                 return (
-                  <li key={g.id} className={cx('call-row', active && 'call-row--active')}>
+                  <li
+                    key={g.id}
+                    className={cx('call-row', active && 'call-row--active')}
+                    onContextMenu={linha.abrir(g.name, [
+                      { id: 'video', label: t('org.dir.ligarGrupoVideo', { nome: g.name }), icon: 'video', onPick: () => onCallGroup(g, 'video') },
+                    ])}
+                  >
                     <button
                       type="button"
                       className="call-row__main"
@@ -212,4 +243,27 @@ export default function ContactList({
       </div>
     </aside>
   )
+}
+
+interface AlvoDaLinha {
+  nome: string
+  accoes: AccaoDeMenu[]
+}
+
+/**
+ * Um menu para a lista inteira, com o alvo guardado no estado — em vez de um
+ * menu por linha, que montaria tantos quantos contactos a org tem.
+ *
+ * Uma linha SEM acções (a própria pessoa) não abre menu: um menu vazio é pior
+ * do que menu nenhum, porque aparece e não faz nada.
+ */
+function useMenuDaLinha() {
+  const menu = useMenuDeContexto()
+  const [alvo, setAlvo] = useState<AlvoDaLinha | null>(null)
+  const abrir = (nome: string, accoes: AccaoDeMenu[]) => (e: EventoDePonteiro) => {
+    if (!accoes.length) return
+    setAlvo({ nome, accoes })
+    menu.abrir(e)
+  }
+  return { abrir, alvo, ponto: menu.ponto, fechar: menu.fechar }
 }

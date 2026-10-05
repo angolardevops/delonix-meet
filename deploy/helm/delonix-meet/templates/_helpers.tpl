@@ -205,6 +205,14 @@ capabilities:
 {{- if and $v.server.telephony.eslAddr (not $v.secrets.existingSecret) -}}
 {{- $e = append $e "server.telephony.eslAddr exige a chave TELEPHONY_ESL_PASSWORD num secrets.existingSecret" -}}
 {{- end -}}
+{{- /* o ESL do FreeSWITCH do chart: quem lá entra origina chamadas (R300) */ -}}
+{{- if and $v.voice.enabled $v.server.telephony.eslAddr (not $v.voice.freeswitch.eslCidrs) -}}
+{{- if $v.voice.freeswitch.hostNetwork -}}
+{{- $e = append $e "voice.freeswitch.eslCidrs: com server.telephony.eslAddr e o FreeSWITCH em hostNetwork, o ESL (8021) escuta nas interfaces do NÓ e a política de rede do chart não se lhe aplica — declara de onde o servidor fala" -}}
+{{- else if and $prod (not $v.networkPolicy.enabled) -}}
+{{- $e = append $e "server.telephony.eslAddr em produção: sem networkPolicy.enabled nem voice.freeswitch.eslCidrs, o ESL (8021) fica aberto a toda a rede de pods, só com a password" -}}
+{{- end -}}
+{{- end -}}
 
 {{- if $e -}}
 {{- fail (printf "\n\ndelonix-meet: a configuração foi recusada (%d):\n  - %s\n" (len $e) (join "\n  - " $e)) -}}

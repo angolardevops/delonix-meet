@@ -7,7 +7,7 @@
  * a partir de um tique partilhado — um `setState` a 60 Hz por medidor punha a
  * árvore inteira a re-renderizar.
  */
-import { ChangeEvent, CSSProperties, MutableRefObject, ReactNode, useEffect, useRef } from 'react'
+import { ChangeEvent, CSSProperties, HTMLAttributes, MutableRefObject, ReactNode, useEffect, useRef, type ButtonHTMLAttributes } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShell } from '../../../components/shellContext'
 import type { CompositorDeAula } from '../../../studio/compositor'
@@ -38,6 +38,87 @@ export function useTique(fn: Assinante, activo = true): void {
       assinantes.delete(a)
     }
   }, [activo])
+}
+
+// ------------------------------------------------------------------ caixas
+
+/**
+ * O CARTÃO dos ecrãs de TV. Vinte e cinco sítios escreviam
+ * `className="tv-cartao tv-cartao--nota"` à mão, e um deles escrevia o fundo
+ * (`style={{ background: 'var(--raised)' }}`) numa página — o que a regra da
+ * casa proíbe, porque o cartão já sabe qual é o seu fundo em cada ecrã.
+ *
+ * As variantes são as do template: `painel` (a caixa grande de um ecrã),
+ * `nota` (texto sem fundo), `tracejado` (um lugar por preencher), `accent` e
+ * `live`. O `style` continua aberto para o POSICIONAMENTO de cada sítio
+ * (`flex`, `marginTop: auto`), que não é decoração.
+ */
+export function Cartao({
+  variante,
+  como: Tag = 'div',
+  className,
+  children,
+  ...rest
+}: {
+  variante?: 'painel' | 'nota' | 'tracejado' | 'accent' | 'live'
+  /** `section` quando a caixa tem título próprio e `aria-labelledby`. */
+  como?: 'div' | 'section'
+  children?: ReactNode
+} & Omit<HTMLAttributes<HTMLElement>, 'children'>) {
+  return (
+    <Tag className={cx('tv-cartao', variante && `tv-cartao--${variante}`, className)} {...rest}>
+      {children}
+    </Tag>
+  )
+}
+
+/** A CABEÇA de um cartão: título à esquerda, e o que levar `tv-dir` à direita. */
+export function Cabeca({
+  como: Tag = 'div',
+  className,
+  children,
+  ...rest
+}: {
+  como?: 'div' | 'span'
+  children?: ReactNode
+} & Omit<HTMLAttributes<HTMLElement>, 'children'>) {
+  return (
+    <Tag className={cx('tv-cabeca', className)} {...rest}>
+      {children}
+    </Tag>
+  )
+}
+
+/**
+ * O BOTÃO dos ecrãs de TV — vinte e um sítios com a mesma cadeia de classes.
+ * `forte` é a acção principal, `rec` a destrutiva do ar, `mini` o botão de
+ * canto em mono, e `aDireita` encosta-o à direita de uma `Cabeca` (o nome não
+ * é `dir` porque esse é um atributo do HTML, e sombreá-lo tirava-o a quem
+ * precisasse dele).
+ */
+export function BotaoTv({
+  variante,
+  mini,
+  aDireita,
+  className,
+  type,
+  children,
+  ...rest
+}: {
+  variante?: 'forte' | 'rec' | 'accent'
+  mini?: boolean
+  /** Encosta à direita dentro de uma `Cabeca` (`tv-dir`). */
+  aDireita?: boolean
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type={type ?? 'button'}
+      className={cx('tv-botao', variante && `tv-botao--${variante}`, mini && 'tv-botao--mini', aDireita && 'tv-dir', className)}
+      {...rest}
+    >
+      {children}
+    </button>
+  )
 }
 
 // ------------------------------------------------------------------ topo

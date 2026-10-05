@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, recordingObjectUrl } from '../../api'
 import type { RecordingLibraryItem } from '../../api'
 import { cx, Dialog, IconButton, Select, Spinner } from '../../ui/kit'
+import { BotaoEd, CartaoEd, TituloEd } from '../pecasDoEditor'
 import { recordingsFallback } from '../../pages/recordings/search'
 import { SearchBar, SearchResults } from '../../ui/search/SearchResults'
 import { useResourceSearch } from '../../ui/search/useResourceSearch'
@@ -195,12 +196,12 @@ export default function Bin({
             )
           })}
           <div className="ed-grid2">
-            <button type="button" className="ed-btn" disabled={aImportar} onClick={() => setBiblioteca(true)} data-studio="importar-biblioteca">
+            <BotaoEd disabled={aImportar} onClick={() => setBiblioteca(true)} data-studio="importar-biblioteca">
               {t('editor.bin.daBiblioteca')}
-            </button>
-            <button type="button" className="ed-btn" disabled={aImportar} onClick={() => ficheiro.current?.click()}>
+            </BotaoEd>
+            <BotaoEd disabled={aImportar} onClick={() => ficheiro.current?.click()}>
               {t('editor.bin.ficheiro')}
-            </button>
+            </BotaoEd>
           </div>
           <input
             ref={ficheiro}
@@ -221,14 +222,13 @@ export default function Bin({
       {aba === 'marca' && (
         <section className="ed-group">
           <h2 className="ed-label">{t('editor.marca.titulo')}</h2>
-          <button
-            type="button"
-            className={cx('ed-btn', p.marca.marcaDeAgua && 'ed-btn--on')}
+          <BotaoEd
+            variante={p.marca.marcaDeAgua && 'on'}
             aria-pressed={p.marca.marcaDeAgua}
             onClick={() => aplicar({ tipo: 'marca', patch: { marcaDeAgua: !p.marca.marcaDeAgua } })}
           >
             {t('editor.marca.marcaDeAgua')}
-          </button>
+          </BotaoEd>
           <span className="dx-num ed-src__sub">{marcaDeAgua}</span>
           <label className="ed-label" htmlFor="ed-marca-canto">
             {t('editor.marca.canto')}
@@ -261,9 +261,9 @@ export default function Bin({
       {aba === 'som' && (
         <section className="ed-group">
           <h2 className="ed-label">{t('editor.som.titulo')}</h2>
-          <button type="button" className="ed-btn" disabled={aImportar} onClick={() => musica.current?.click()}>
+          <BotaoEd disabled={aImportar} onClick={() => musica.current?.click()}>
             {t('editor.som.musica')}
-          </button>
+          </BotaoEd>
           <input
             ref={musica}
             type="file"
@@ -282,33 +282,33 @@ export default function Bin({
 
       <section className="ed-group ed-group--end" data-studio="ia">
         <h2 className="ed-label">{t('editor.ia.titulo')}</h2>
-        <div className={cx('ed-card', pausas && pausas.n > 0 && 'ed-card--accent')} data-studio="pausas">
-          <span className="ed-card__title">{t('editor.ia.silencios')}</span>
+        <CartaoEd variante={!!pausas && pausas.n > 0 && 'accent'} data-studio="pausas">
+          <TituloEd como="span">{t('editor.ia.silencios')}</TituloEd>
           {!temAudio ? (
             <span className="dx-num ed-src__sub">{t('studio.erros.semAudio')}</span>
           ) : !pausas ? (
             <>
               <span className="dx-num ed-src__sub">{t('editor.ia.silenciosNota')}</span>
-              <button type="button" className="ed-btn ed-btn--primary" disabled={aProcurarPausas} onClick={onProcurarPausas} data-studio="procurar-pausas">
+              <BotaoEd variante="primary" disabled={aProcurarPausas} onClick={onProcurarPausas} data-studio="procurar-pausas">
                 {aProcurarPausas ? t('studio.edicao.pausas.aAnalisar') : t('studio.edicao.pausas.procurar')}
-              </button>
+              </BotaoEd>
             </>
           ) : pausas.n === 0 ? (
             <span className="dx-num ed-src__sub st-note--ok">{t('studio.edicao.pausas.nenhuma')}</span>
           ) : (
             <>
               <span className="dx-num ed-src__sub">{t('editor.ia.cortes', { count: pausas.n, t: relogio(pausas.poupanca) })}</span>
-              <button type="button" className="ed-btn ed-btn--primary" onClick={onAplicarPausas} data-studio="aplicar-pausas">
+              <BotaoEd variante="primary" onClick={onAplicarPausas} data-studio="aplicar-pausas">
                 {t('editor.ia.aplicarCortes')}
-              </button>
+              </BotaoEd>
               <button type="button" className="ed-link" onClick={onCancelarPausas}>
                 {t('studio.edicao.pausas.cancelar')}
               </button>
             </>
           )}
-        </div>
-        <button type="button" className="ed-card ed-card--link" onClick={onIrParaLegendas}>
-          <span className="ed-card__title">{t('editor.ia.preenchimento')}</span>
+        </CartaoEd>
+        <CartaoEd como="button" variante="link" onClick={onIrParaLegendas}>
+          <TituloEd como="span">{t('editor.ia.preenchimento')}</TituloEd>
           <span className="dx-num ed-src__sub">
             {preenchimento === null
               ? t('editor.ia.transcreverPrimeiro')
@@ -319,7 +319,7 @@ export default function Bin({
                     .join(', ')
                 : t('editor.ia.semPreenchimento')}
           </span>
-        </button>
+        </CartaoEd>
       </section>
       {assistente}
 

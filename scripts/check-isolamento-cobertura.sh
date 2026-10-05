@@ -56,7 +56,7 @@ while read -r rota; do
   base=$(echo "$rota" | sed -E 's|^/api/([a-z-]+).*|\1|')
   sufixo=$(echo "$rota" | sed -E 's|^/api/[a-z-]+||; s|/\{[a-z_]+\}||g')
   # Rotas de colecção (sem parâmetro) não são recursos por id.
-  echo "$rota" | grep -q '{' || continue
+  grep -q '{' <<<"$rota" || continue
   # Uma rota com parâmetros A MEIO (`/captions/{lang}/vtt`) não tem sufixo
   # literal que um pedido real possa conter; aceita-se então a rota inteira com
   # cada parâmetro interpolado — que é uma prova mais forte, não mais fraca.

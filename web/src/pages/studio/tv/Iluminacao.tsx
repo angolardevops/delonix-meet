@@ -16,7 +16,7 @@ import { CORRECCAO_NEUTRA, type CorreccaoDeImagem, equilibrioCinzento, LIMITES, 
 import { desenharImagem } from '../../../studio/tv/desenhoDaMesa'
 import { formatarDb } from '../../../studio/tv/som'
 import { type PropsDoEcra, SelosDoAr } from './comum'
-import { Deslizador, Espaco, Interruptor, TopoTv, useTique } from './pecas'
+import { BotaoTv, Cabeca, Cartao, Deslizador, Espaco, Interruptor, TopoTv, useTique } from './pecas'
 
 const W = 480
 const H = 270
@@ -68,19 +68,19 @@ export default function Iluminacao({ s, c }: PropsDoEcra) {
         <span className="tv-selo tv-selo--espera" data-tv="agente-luz" title={t('tv.aguardarServidor')}>
           {t('tv.luz.semAgente')}
         </span>
-        <button type="button" className="tv-botao tv-botao--forte" onClick={() => c.onNavegar('mesa-de-corte')}>
+        <BotaoTv variante="forte" onClick={() => c.onNavegar('mesa-de-corte')}>
           {t('tv.nav.mesaDeCorte')}
-        </button>
+        </BotaoTv>
       </TopoTv>
 
       <div className="tv-corpo tv-luz">
         <aside className="tv-col tv-col--esq" aria-label={t('tv.luz.cenas')} style={{ gap: 10 }}>
           <p className="tv-eyebrow">{t('tv.luz.cenas')}</p>
-          <div className="tv-cartao tv-cartao--tracejado" data-tv="cenas-luz">
+          <Cartao variante="tracejado" data-tv="cenas-luz">
             <h2 className="tv-t3">{t('tv.luz.cenasSemAgente')}</h2>
             <p className="tv-nota">{t('tv.luz.cenasSemAgenteNota')}</p>
-          </div>
-          <div className="tv-cartao tv-cartao--nota" style={{ marginTop: 'auto' }}>
+          </Cartao>
+          <Cartao variante="nota" style={{ marginTop: 'auto' }}>
             <p className="tv-eyebrow">{t('tv.luz.fontes')}</p>
             {fontes.length === 0 ? (
               <p className="tv-nota">{t('tv.luz.semFontes')}</p>
@@ -104,7 +104,7 @@ export default function Iluminacao({ s, c }: PropsDoEcra) {
                 })}
               </div>
             )}
-          </div>
+          </Cartao>
         </aside>
 
         <section className="tv-centro" aria-label={t('tv.luz.imagem')}>
@@ -112,32 +112,32 @@ export default function Iluminacao({ s, c }: PropsDoEcra) {
             <Monitor s={s} id={fonte?.id ?? null} corrigido={false} />
             <Monitor s={s} id={fonte?.id ?? null} corrigido />
           </div>
-          <section className="tv-cartao tv-cartao--painel" style={{ flex: 1, minHeight: 0 }} aria-labelledby="tv-aparelhos-h">
-            <div className="tv-cabeca">
+          <Cartao como="section" variante="painel" style={{ flex: 1, minHeight: 0 }} aria-labelledby="tv-aparelhos-h">
+            <Cabeca>
               <h2 id="tv-aparelhos-h" className="tv-t1" style={{ fontSize: 12 }}>
                 {t('tv.luz.aparelhos')}
               </h2>
-            </div>
+            </Cabeca>
             <div className="tv-vazio" data-tv="aparelhos-vazio">
               <strong>{t('tv.luz.semAgente')}</strong>
               <span>{t('tv.luz.semAgenteNota')}</span>
             </div>
-          </section>
+          </Cartao>
         </section>
 
         <aside className="tv-col tv-col--dir" aria-label={t('tv.luz.correccao')}>
           <h2 className="tv-t1">{t('tv.luz.correccao')}</h2>
-          <section className="tv-cartao" style={{ gap: 9 }} data-tv="correccao">
-            <div className="tv-cabeca">
+          <Cartao como="section" style={{ gap: 9 }} data-tv="correccao">
+            <Cabeca>
               <span className="tv-mono-85" style={{ textTransform: 'uppercase' }}>
                 {fonte ? fonte.nome : t('tv.luz.semFonte')}
               </span>
               {fonte && (
-                <button type="button" className="tv-dir tv-botao tv-botao--mini" onClick={() => mudar({ ...CORRECCAO_NEUTRA, equilibrio: corr.equilibrio })}>
+                <BotaoTv aDireita mini onClick={() => mudar({ ...CORRECCAO_NEUTRA, equilibrio: corr.equilibrio })}>
                   {t('tv.luz.repor')}
-                </button>
+                </BotaoTv>
               )}
-            </div>
+            </Cabeca>
             <Deslizador
               rotulo={t('tv.luz.ganho')}
               valor={corr.exposicao}
@@ -201,11 +201,11 @@ export default function Iluminacao({ s, c }: PropsDoEcra) {
               larguraValor={50}
             />
             {!completa && <p className="tv-nota tv-aviso">{t('tv.luz.semWebgl')}</p>}
-          </section>
+          </Cartao>
 
-          <section className="tv-cartao" style={{ gap: 7 }}>
+          <Cartao como="section" style={{ gap: 7 }}>
             <h3 className="tv-t2">{t('tv.luz.tratamento')}</h3>
-            <div className="tv-cabeca" style={{ gap: 9 }}>
+            <Cabeca style={{ gap: 9 }}>
               <Interruptor
                 pequeno
                 ligado={equilibrioLigado}
@@ -215,14 +215,14 @@ export default function Iluminacao({ s, c }: PropsDoEcra) {
               />
               <span style={{ fontSize: 10 }}>{t('tv.luz.equilibrio')}</span>
               <span className="tv-dir tv-mono-85">{t('tv.luz.nFontes', { count: camaras.length })}</span>
-            </div>
+            </Cabeca>
             <p className="tv-nota">{t('tv.luz.equilibrioNota')}</p>
-          </section>
+          </Cartao>
 
-          <div className="tv-cartao tv-cartao--nota" style={{ marginTop: 'auto' }}>
+          <Cartao variante="nota" style={{ marginTop: 'auto' }}>
             <h3 className="tv-t3">{t('tv.luz.dicaTitulo')}</h3>
             <p className="tv-nota">{t('tv.luz.dica')}</p>
-          </div>
+          </Cartao>
         </aside>
       </div>
     </div>

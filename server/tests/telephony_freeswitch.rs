@@ -95,6 +95,7 @@ fn request(legs: Vec<DialLeg>, after: AfterAnswer) -> OriginateRequest {
         call_id: Uuid::new_v4(),
         org_id: Uuid::nil(),
         legs,
+        internal: None,
         caller_id: None,
         record: false,
         emergency: false,

@@ -17,54 +17,67 @@ import RecordingState from './RecordingState'
 import { thumbStyle, useThumbnail } from './RecordingThumb'
 import { useMetaLine } from './RecordingTable'
 import type { RecordingView } from './recordingView'
+import { useMenuDaGravacao } from './useMenuDaGravacao'
 
 export default function RecordingGrid({
   items,
   selectedId,
   retentionDays,
   onOpen,
+  onShare,
 }: {
   items: RecordingView[]
   selectedId: string | null
   retentionDays: number
   onOpen: (r: RecordingView) => void
+  onShare?: (r: RecordingView) => void
 }) {
   const { t, i18n } = useTranslation()
   const metaLine = useMetaLine()
+  const menu = useMenuDaGravacao({ onOpen, onShare })
   return (
-    <ul className="rec-grid">
-      {items.map((r) => {
-        const failed = r.failed
-        const res = resolutionLabel(r)
-        return (
-          <li key={r.id} className={cx('rec-card', selectedId === r.id && 'is-selected')} data-status={failed ? 'failed' : 'ready'}>
-            {failed ? (
-              <div className="rec-card__thumb is-failed" role="img" aria-label={t('recordings.estado.falhada')}>
-                <Icon name="alert" size={20} />
-              </div>
-            ) : (
-              <CardThumb r={r} res={res} onOpen={onOpen} />
-            )}
-            <div className="rec-card__body">
-              <strong className="rec-card__title" title={r.name}>
-                {r.name}
-              </strong>
-              <span className="rec-card__meta">{metaLine(r)}</span>
-              <span className="rec-card__tags">
-                {failed ? <RecordingState state={{ kind: 'failed' }} /> : <RecordingState state={visibleState(r, retentionDays)} />}
-                {r.sizeBytes !== null && <span className="rec-card__size dx-num">{formatBytes(r.sizeBytes, i18n.language)}</span>}
-                {!r.owned && <Tag plain>{t('recordings.partilhadaComigo')}</Tag>}
-              </span>
-              {failed && (
-                <p className="rec-failure__reason" role="note">
-                  {r.failureReason || t('recordings.estado.semCausa')}
-                </p>
+    <>
+      {/* Fora da `<ul>`: um `div` entre `li`s não é marcação válida. */}
+      {menu.elemento}
+      <ul className="rec-grid">
+        {items.map((r) => {
+          const failed = r.failed
+          const res = resolutionLabel(r)
+          return (
+            <li
+              key={r.id}
+              className={cx('rec-card', selectedId === r.id && 'is-selected')}
+              data-status={failed ? 'failed' : 'ready'}
+              onContextMenu={menu.aoContexto(r)}
+            >
+              {failed ? (
+                <div className="rec-card__thumb is-failed" role="img" aria-label={t('recordings.estado.falhada')}>
+                  <Icon name="alert" size={20} />
+                </div>
+              ) : (
+                <CardThumb r={r} res={res} onOpen={onOpen} />
               )}
-            </div>
-          </li>
-        )
-      })}
-    </ul>
+              <div className="rec-card__body">
+                <strong className="rec-card__title" title={r.name}>
+                  {r.name}
+                </strong>
+                <span className="rec-card__meta">{metaLine(r)}</span>
+                <span className="rec-card__tags">
+                  {failed ? <RecordingState state={{ kind: 'failed' }} /> : <RecordingState state={visibleState(r, retentionDays)} />}
+                  {r.sizeBytes !== null && <span className="rec-card__size dx-num">{formatBytes(r.sizeBytes, i18n.language)}</span>}
+                  {!r.owned && <Tag plain>{t('recordings.partilhadaComigo')}</Tag>}
+                </span>
+                {failed && (
+                  <p className="rec-failure__reason" role="note">
+                    {r.failureReason || t('recordings.estado.semCausa')}
+                  </p>
+                )}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+    </>
   )
 }
 

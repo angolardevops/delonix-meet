@@ -371,14 +371,18 @@ pub async fn ingest_handler(
         Some(rest) => pct_decode(&String::from_utf8_lossy(rest)).into_bytes(),
         None => body.to_vec(),
     };
-    // A perna A de uma chamada pelo plano (o PBX que marcou): o custo e o ASR
-    // estão nas pernas B. Aceita-se (o FreeSWITCH não volta a tentar) e ignora-se.
-    if serde_json::from_slice::<Value>(&raw)
+    // A perna A de uma chamada pelo plano (quem marcou): o custo e o ASR
+    // estão nas pernas B. Aceita-se (o FreeSWITCH não volta a tentar) e
+    // ignora-se — MAS nunca uma perna que saiu por um gateway. A marca é uma
+    // variável de canal, e uma perna de tronco que volte a passar pelo plano
+    // de marcação (uma transferência) fica com ela: ignorá-la era uma chamada
+    // cobrável sem registo (R292).
+    let raw_vars = serde_json::from_slice::<Value>(&raw)
         .ok()
-        .and_then(|v| var(&v["variables"], "delonix_cdr_skip"))
-        .as_deref()
-        == Some("true")
-    {
+        .map(|v| v["variables"].clone())
+        .unwrap_or(Value::Null);
+    let by_gateway = var(&raw_vars, "sip_gateway_name").is_some();
+    if !by_gateway && var(&raw_vars, "delonix_cdr_skip").as_deref() == Some("true") {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let mut detail = FreeswitchJsonCdr.parse(&raw).map_err(|e| {
@@ -409,10 +413,6 @@ pub async fn ingest_handler(
     // operadora que não se consegue atribuir, e tem de ficar à vista. «Sem
     // tronco» lê-se no nome do gateway EM BRUTO: um gateway que não seja nosso
     // (`dlx-<id>`) não dá `trunk_id`, e é uma saída para a rede pública na mesma.
-    let by_gateway = serde_json::from_slice::<Value>(&raw)
-        .ok()
-        .and_then(|v| var(&v["variables"], "sip_gateway_name"))
-        .is_some();
     if detail.org_id.is_none() && detail.trunk_id.is_none() && !by_gateway {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }

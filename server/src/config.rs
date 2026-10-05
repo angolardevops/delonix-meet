@@ -370,6 +370,12 @@ pub struct Config {
     /// (`PHONE_BRIDGE_RTP_MIN`/`MAX`). Ausente => porta efémera do SO, que não
     /// se pode expor no K8s.
     pub phone_bridge_rtp_ports: Option<(u16, u16)>,
+    /// A perna da ponte negoceia Opus (`PHONE_BRIDGE_WIDEBAND`, por omissão
+    /// ligado — ADR-0018): o servidor manda `OPUS,PCMA` na dial string e a voz
+    /// de um softphone chega à sala sem passar por 8 kHz. `0` (ou `false`,
+    /// `off`, `no`, ou qualquer valor que não se perceba) repõe `PCMA`, o
+    /// caminho G.711 de sempre, sem reconstruir nada.
+    pub phone_bridge_wideband: bool,
     /// Host que o control plane devolve ao IVR (`PSTN_BRIDGE_HOST`). Por
     /// omissão o mesmo `SFU_EXTERNAL_IP`; "127.0.0.1" se nenhum dos dois
     /// estiver definido (dev local, tudo na mesma máquina).
@@ -707,6 +713,21 @@ impl Config {
                 let min = bounded_env(src, "PHONE_BRIDGE_RTP_MIN", 0, 0, 65_535) as u16;
                 let max = bounded_env(src, "PHONE_BRIDGE_RTP_MAX", 0, 0, 65_535) as u16;
                 (min > 0 && max >= min).then_some((min, max))
+            },
+            // Quem escreve `false` ou `off` quer desligar: um valor que não se
+            // percebe NÃO pode cair no «ligado» por omissão.
+            phone_bridge_wideband: match opt("PHONE_BRIDGE_WIDEBAND") {
+                None => true,
+                Some(v) => match v.trim().to_ascii_lowercase().as_str() {
+                    "1" | "true" | "on" | "yes" => true,
+                    "0" | "false" | "off" | "no" => false,
+                    outro => {
+                        tracing::warn!(
+                            "PHONE_BRIDGE_WIDEBAND: «{outro}» não é 0 nem 1 — banda larga da ponte DESLIGADA"
+                        );
+                        false
+                    }
+                },
             },
             pstn_bridge_host: opt("PSTN_BRIDGE_HOST")
                 .or_else(|| opt("SFU_EXTERNAL_IP"))

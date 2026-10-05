@@ -11,7 +11,7 @@ import type { EstadoDoCanal } from '../../../studio/tv/mesaDeSom'
 import { Icon, type IconName } from '../../../ui/icons'
 import { cx } from '../../../ui/kit'
 import { type PropsDoEcra, SelosDoAr } from './comum'
-import { Deslizador, Espaco, Fader, Interruptor, Medidor, TopoTv, useTique } from './pecas'
+import { BotaoTv, Cabeca, Cartao, Deslizador, Espaco, Fader, Interruptor, Medidor, TopoTv, useTique } from './pecas'
 
 const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen' }
 export const ALVO_LUFS = -16
@@ -44,9 +44,7 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
         <SelosDoAr c={c} destinosNoSelo={false} />
         <Espaco />
         {som?.temSonoridade && <Sonoridade s={s} />}
-        <button
-          type="button"
-          className="tv-botao"
+        <BotaoTv
           disabled={!som || !canais.length}
           data-tv="guardar-cena-som"
           onClick={() => {
@@ -56,10 +54,10 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
           }}
         >
           {t('tv.som.guardarCena')}
-        </button>
-        <button type="button" className="tv-botao tv-botao--forte" onClick={() => c.onNavegar('mesa-de-corte')}>
+        </BotaoTv>
+        <BotaoTv variante="forte" onClick={() => c.onNavegar('mesa-de-corte')}>
           {t('tv.nav.mesaDeCorte')}
-        </button>
+        </BotaoTv>
       </TopoTv>
 
       <div className="tv-corpo tv-som">
@@ -307,13 +305,13 @@ function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal;
 
   return (
     <>
-      <div className="tv-cabeca">
+      <Cabeca>
         <span style={{ width: 8, height: 8, borderRadius: 'var(--r-2)', background: 'var(--accent)', flex: 'none' }} />
         <h2 className="tv-t1" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {t('tv.som.canalN', { n, nome: canal.nome })}
         </h2>
         <span className="tv-dir tv-tag tv-tag--forte">{t(`tv.som.tipos.${canal.tipo}`)}</span>
-      </div>
+      </Cabeca>
 
       <label className="tv-seleccao">
         <span>{t('tv.som.fonteDoCanal')}</span>
@@ -327,14 +325,14 @@ function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal;
         </select>
       </label>
 
-      <section className="tv-cartao" aria-label={t('tv.som.equalizador')}>
-        <div className="tv-cabeca">
+      <Cartao como="section" aria-label={t('tv.som.equalizador')}>
+        <Cabeca>
           <span className="tv-mono-85">{t('tv.som.equalizador')}</span>
-          <span className="tv-dir tv-cabeca" style={{ gap: 6 }}>
+          <Cabeca como="span" className="tv-dir" style={{ gap: 6 }}>
             <span className={cx('tv-mono-85', canal.eqLigado && 'tv-ok')}>{canal.eqLigado ? t('tv.estado.ligado') : t('tv.estado.desligado')}</span>
             <Interruptor pequeno ligado={canal.eqLigado} rotulo={t('tv.som.equalizador')} onChange={(v) => som.mudar(canal.id, { eqLigado: v })} />
-          </span>
-        </div>
+          </Cabeca>
+        </Cabeca>
         <Espectro s={s} canal={canal} />
         <div className="tv-bandas">
           {canal.eq.map((b, i) => (
@@ -354,13 +352,13 @@ function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal;
             </label>
           ))}
         </div>
-      </section>
+      </Cartao>
 
-      <section className="tv-cartao" style={{ gap: 9 }} aria-label={t('tv.som.dinamica')}>
-        <div className="tv-cabeca">
+      <Cartao como="section" style={{ gap: 9 }} aria-label={t('tv.som.dinamica')}>
+        <Cabeca>
           <span className="tv-mono-85">{t('tv.som.dinamica')}</span>
           <span ref={reducao} className="tv-dir tv-mono-85 tv-ok" data-tv="reducao" />
-        </div>
+        </Cabeca>
         <Deslizador
           rotulo={t('tv.som.porta')}
           valor={d.porta.ligada ? d.porta.limiarDb : -80}
@@ -411,9 +409,9 @@ function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal;
           onChange={(v) => mudarDin({ limitador: { ligado: v < 0, tectoDb: v } })}
           larguraRotulo={76}
         />
-      </section>
+      </Cartao>
 
-      <section className="tv-cartao" style={{ gap: 7 }} aria-label={t('tv.som.limpeza')}>
+      <Cartao como="section" style={{ gap: 7 }} aria-label={t('tv.som.limpeza')}>
         <h3 className="tv-t2">{t('tv.som.limpeza')}</h3>
         <button
           type="button"
@@ -449,12 +447,12 @@ function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal;
           <span>{t('tv.som.nivelamento')}</span>
           <span>{!eMic ? t('tv.som.soMicrofones') : canal.limpeza.nivelamento ? t('tv.estado.activo') : t('tv.estado.desligado')}</span>
         </button>
-      </section>
+      </Cartao>
 
-      <div className="tv-cartao tv-cartao--nota" style={{ marginTop: 'auto' }}>
+      <Cartao variante="nota" style={{ marginTop: 'auto' }}>
         <h3 className="tv-t3">{t('tv.som.faixasSeparadas')}</h3>
         <p className="tv-nota">{t('tv.som.faixasSeparadasNota')}</p>
-      </div>
+      </Cartao>
     </>
   )
 }

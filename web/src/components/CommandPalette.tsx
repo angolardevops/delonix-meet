@@ -20,6 +20,7 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, apiErrorMessage, createRoom, globalSearch, GlobalSearchResult, HighlightSegment, isAbort, SearchHit, SearchType, User } from '../api'
 import { parseRoomCode } from '../roomCode'
+import { escreverAtalho } from '../ui/atalhos'
 import { Icon, IconName } from '../ui/icons'
 import { cx } from '../ui/kit'
 import { clearRecent, hitHash, moreHash, pushRecent, readRecent } from './paletteRoutes'
@@ -87,6 +88,7 @@ export default function CommandPalette({
   onOpenHash,
   onSettings,
   onToggleTheme,
+  onAtalhos,
   user,
   isAdmin,
 }: {
@@ -98,6 +100,8 @@ export default function CommandPalette({
   onOpenHash: (hash: string) => void
   onSettings?: () => void
   onToggleTheme: () => void
+  /** Abre a folha de atalhos — o «?» também a abre, sem passar por aqui. */
+  onAtalhos?: () => void
   user: User
   isAdmin: boolean
   inRoom?: boolean
@@ -163,6 +167,7 @@ export default function CommandPalette({
       ),
       nav('home', t('shell.nav.inicio'), 'home'),
       nav('calendar', t('shell.nav.agenda'), 'calendar'),
+      nav('rooms', t('shell.nav.salas'), 'door'),
       nav('studio', t('shell.nav.estudio'), 'live'),
       nav('recordings', t('shell.nav.gravacoes'), 'film'),
       nav('whiteboards', t('shell.nav.quadros'), 'board'),
@@ -179,6 +184,9 @@ export default function CommandPalette({
     }
     if (onSettings) list.push(cmd('settings', t('shell.definicoes'), 'sliders', onSettings))
     list.push(cmd('theme', t('shell.paleta.alternarTema'), 'moon', onToggleTheme), cmd('logout', t('shell.terminarSessao'), 'logout', onLogout))
+    // A folha de atalhos tem de se poder alcançar com o rato: quem não sabe
+    // que existe um «?» também não o adivinha.
+    if (onAtalhos) list.push(cmd('atalhos', t('ui.atalhos.titulo'), 'keyboard', onAtalhos, escreverAtalho('?')))
 
     // Sem texto: as pesquisas recentes primeiro, depois os comandos.
     if (!needle) {
@@ -241,7 +249,7 @@ export default function CommandPalette({
       }
     }
     return out
-  }, [needle, code, t, isAdmin, user.username, user.id, onNavigate, onEnterRoom, onSettings, onToggleTheme, onLogout, onOpenHash, deep, recent, i18n.language])
+  }, [needle, code, t, isAdmin, user.username, user.id, onNavigate, onEnterRoom, onSettings, onToggleTheme, onAtalhos, onLogout, onOpenHash, deep, recent, i18n.language])
 
   useEffect(() => setSel(0), [needle, deep.s])
   useEffect(() => {

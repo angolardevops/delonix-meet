@@ -113,6 +113,17 @@ pub struct DialLeg {
     pub number: String,
 }
 
+/// Uma perna para um ramal da PRÓPRIA instalação (`user/<sip_username>@<domínio>`,
+/// resolvido pelo directório do FreeSWITCH). Não sai por nenhum tronco: não tem
+/// tarifa, e só toca se o ramal estiver registado.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InternalLeg {
+    /// A AOR do ramal (`voice_extensions.sip_username`), nunca o número curto.
+    pub sip_username: String,
+    /// O domínio SIP da organização (`<slug>.<sufixo>`).
+    pub domain: String,
+}
+
 /// O que acontece depois de a pessoa atender.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -187,6 +198,9 @@ pub struct OriginateRequest {
     pub call_id: Uuid,
     pub org_id: Uuid,
     pub legs: Vec<DialLeg>,
+    /// Um ramal interno em vez de troncos: exactamente um dos dois (`legs` ou
+    /// `internal`) tem de estar preenchido.
+    pub internal: Option<InternalLeg>,
     /// Número apresentado; `None` = o do tronco.
     pub caller_id: Option<String>,
     pub record: bool,

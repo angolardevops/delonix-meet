@@ -17,9 +17,11 @@ import { ApiError, apiErrorMessage, isAbort, recordingDetails, recordingObjectUr
 import type { RecordingItem } from '../api'
 import { getAppName } from '../branding'
 import { useShell } from '../components/shellContext'
+import type { IdDeAtalho } from '../ui/atalhos'
 import { DelonixSymbol, Icon } from '../ui/icons'
 import type { IconName } from '../ui/icons'
-import { Alert, Button, cx, Dialog, Empty, IconButton, TextInput } from '../ui/kit'
+import { Alert, Button, cx, Dialog, Empty, IconButton, Segmented, TextInput } from '../ui/kit'
+import { useDicaDeAtalho } from '../ui/useAtalhos'
 import '../ui/editor.css'
 import { analisarPausas } from './analise'
 import CaptionsPanel from './captions/CaptionsPanel'
@@ -48,6 +50,14 @@ export interface Gravado {
 }
 
 export type VistaDoEditor = 'edicao' | 'legendas' | 'exportacoes'
+
+/** A ordem das abas no topo — e a tecla de cada uma (ver `ui/atalhos.ts`). */
+const ABAS: readonly VistaDoEditor[] = ['edicao', 'legendas', 'exportacoes']
+const ATALHO_DA_ABA: Record<VistaDoEditor, IdDeAtalho> = {
+  edicao: 'vistaEdicao',
+  legendas: 'vistaLegendas',
+  exportacoes: 'vistaExportacoes',
+}
 
 const FERRAMENTAS: { id: Ferramenta; icone: IconName }[] = [
   { id: 'seleccionar', icone: 'arrow' },
@@ -111,6 +121,7 @@ export default function EditPanel({
   onGuardar: (blob: Blob, duracao: number, nome: string) => Promise<void>
 }) {
   const { t, i18n } = useTranslation()
+  const dica = useDicaDeAtalho()
   const { org } = useShell()
   const pr = useProjecto()
   const p = pr.projecto
@@ -304,14 +315,17 @@ export default function EditPanel({
     </button>
   )
 
+  // As três vistas do editor, no mesmo componente do selector do Estúdio (só
+  // com outra pele): as setas andam por elas e cada uma diz a sua tecla.
   const separadores = (
-    <nav className="ed-top__tabs" aria-label={t('editor.topo.vistas')}>
-      {(['edicao', 'legendas', 'exportacoes'] as const).map((v) => (
-        <button key={v} type="button" aria-current={vista === v ? 'page' : undefined} data-studio-vista={v} onClick={() => onVista(v)}>
-          {t(`editor.topo.${v}`)}
-        </button>
-      ))}
-    </nav>
+    <Segmented
+      className="ed-top__tabs"
+      label={t('editor.topo.vistas')}
+      dataKey="studio-vista"
+      value={vista}
+      onChange={onVista}
+      options={ABAS.map((v) => ({ value: v, label: t(`editor.topo.${v}`), title: dica(ATALHO_DA_ABA[v], t(`editor.topo.${v}`)) }))}
+    />
   )
 
   const dialogos = (

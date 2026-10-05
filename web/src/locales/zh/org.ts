@@ -61,6 +61,7 @@ export default {
   dir: {
     titulo: '通讯录',
     lista: '联系人列表',
+    accoesDe: '{{nome}} 的操作',
     detalhe: '联系人详情',
     separadores: '联系人类型',
     pesquisar: '搜索人员',

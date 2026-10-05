@@ -109,8 +109,17 @@ function esl(cmd) {
 const basic = 'Basic ' + Buffer.from(`freeswitch:${VOICE_SECRET}`).toString('base64')
 const marca = Math.random().toString(36).slice(2, 8)
 const DOMAIN = `pbx-${marca}.test`
-/** INVITE ao perfil do PBX (5160) com o domínio da org no Request-URI. */
-const viaPbx = (n) => `sofia/carrier/sip:${n}@${DOMAIN};fs_path=sip:127.0.0.1:5160`
+/**
+ * Uma chamada pelo plano de marcação da organização. Entrava pelo perfil do PBX
+ * (5160) com o domínio da org no Request-URI, e o servidor ia buscar a org a
+ * esse domínio; desde a R292 a organização que paga é só a variável que a
+ * plataforma põe no canal — o host do pedido é escrito por quem liga. Nasce
+ * num canal `loopback` com essa variável, como em scripts/troncos-prova.sh
+ * (sem fixar o codec, o loopback oferecia L16, que operadora nenhuma aceita).
+ * `org` só existe mais abaixo: a função é chamada depois.
+ */
+const viaPlano = (n) => `loopback/${n}/delonix-outbound`
+const VARS_PLANO = () => `delonix_org_id=${org},delonix_cdr_skip=true,absolute_codec_string=PCMA,export_vars=absolute_codec_string`
 console.log(`\n=== Telefonia contra FreeSWITCH real (marca ${marca}) ===\n`)
 
 // ---- org, troncos, plano ----
@@ -201,10 +210,10 @@ if (callFile) {
   check('o reenvio não duplica linhas', n === cdrs.length, { n, antes: cdrs.length })
 }
 
-// ---- 5. chamada que entra pelo PBX e segue o plano do xml_curl ----
+// ---- 5. chamada que segue o plano do xml_curl ----
 const before = (await req(`${T('/call-records')}?page_size=100`, { token })).json.items.length
-const pbxCall = await esl(`originate {delonix_cdr_skip=true,originate_timeout=15}${viaPbx('923447222')} &park()`)
-check('INVITE ao PBX é encaminhado pelo plano (xml_curl) e atendido', pbxCall.startsWith('+OK'), pbxCall)
+const pbxCall = await esl(`originate {${VARS_PLANO()},originate_timeout=15}${viaPlano('923447222')} &park()`)
+check('a chamada é encaminhada pelo plano (xml_curl) e atendida', pbxCall.startsWith('+OK'), pbxCall)
 await sleep(8000)
 const after = (await req(`${T('/call-records')}?page_size=100`, { token })).json.items
 const viaPlan = after.slice(0, after.length - before)
@@ -213,16 +222,16 @@ check('as pernas B do plano chegam como CDRs (A falha, B atende, gravado)', viaP
 await esl('hupall NORMAL_CLEARING')
 
 // ---- 6. limit_execute ----
-const long = esl(`originate {delonix_cdr_skip=true,originate_timeout=15}${viaPbx('923447777')} &park()`)
+const long = esl(`originate {${VARS_PLANO()},originate_timeout=15}${viaPlano('923447777')} &park()`)
 await sleep(2500)
 const usage = (await esl(`limit_usage hash delonix_trunk ${B}`)).trim()
 const trB = (await req(T(`/trunks/${B}`), { token })).json
 medidas.limit = { limit_usage: usage, api_channels_in_use: trB.status.channels_in_use, max: trB.max_channels }
 check('limit_usage conta o canal ocupado e a API mostra-o', usage === '1' && trB.status.channels_in_use === 1, medidas.limit)
-const second = await esl(`originate {delonix_cdr_skip=true,originate_timeout=10}${viaPbx('923447333')} &park()`)
+const second = await esl(`originate {${VARS_PLANO()},originate_timeout=10}${viaPlano('923447333')} &park()`)
 medidas.limit.second_call = second.trim()
 check('com o tronco B cheio (1/1) a segunda chamada é recusada', second.startsWith('-ERR'), second)
-const em = await esl(`originate {delonix_cdr_skip=true,originate_timeout=10}${viaPbx('112')} &park()`)
+const em = await esl(`originate {${VARS_PLANO()},originate_timeout=10}${viaPlano('112')} &park()`)
 medidas.limit.emergency = em.trim()
 check('a emergência passa com o tronco cheio (sem limit_execute)', em.startsWith('+OK'), em)
 await long

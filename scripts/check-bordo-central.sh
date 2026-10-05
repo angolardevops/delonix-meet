@@ -27,7 +27,14 @@ for f in "$CFG" "$LUA" "$ARRANQUE"; do
   [ -f "$f" ] || { echo "✗ ADR-0016: falta $f — o portão não está a olhar para onde devia"; exit 1; }
 done
 # A primeira linha (sem contar comentários) em que aparece o padrão; 0 se não aparece.
-linha() { grep -nE "$2" "$1" | grep -vE '^[0-9]+:[[:space:]]*(#|--)' | head -1 | cut -d: -f1 | grep . || echo 0; }
+# O número lê-se para uma variável e o `0` sai de ela estar vazia, não do estado
+# do pipeline (R298): com `pipefail`, o `head -1` a sair cedo pode matar
+# o `grep` anterior com SIGPIPE, e o `|| echo 0` acrescentava um `0` ao número.
+linha() {
+  local n
+  n=$(grep -nE "$2" "$1" | grep -vE '^[0-9]+:[[:space:]]*(#|--)' | head -1 | cut -d: -f1)
+  echo "${n:-0}"
+}
 
 # 1. Tira-se o que vem de fora ANTES de se olhar para quem liga.
 tira=$(linha "$CFG" 'remove_hf(_re)?\("\^?X-Delonix-')

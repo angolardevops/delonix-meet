@@ -7,6 +7,7 @@ import { Alert, Button, Field, IconButton, Segmented, StatusBadge, TextInput, cx
 import { Since } from './Clocks'
 import { MAX_MULTICAM_DESTINOS, type Multicam } from './useMulticam'
 import type { RemotePeer } from './useRoomCore'
+import { Bloco } from './Bloco'
 
 /** Multicâmara: compõe a sala num quadro e emite-o para plataformas RTMP. */
 export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multicam; peers: RemotePeer[]; roomTitle: string }) {
@@ -37,11 +38,7 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
         </p>
       )}
 
-      <section className="rm-block" aria-labelledby="rm-mc-cena">
-        <h3 id="rm-mc-cena" className="rm-block__title">
-          <Icon name="layers" size={13} />
-          {t('room.multicam.cena')}
-        </h3>
+      <Bloco icon="layers" titulo={t('room.multicam.cena')}>
         <Segmented<Cena>
           label={t('room.multicam.cena')}
           value={m.cena}
@@ -64,17 +61,17 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
             </div>
           </>
         )}
-      </section>
+      </Bloco>
 
-      <section className="rm-block" aria-labelledby="rm-mc-dest">
-        <h3 id="rm-mc-dest" className="rm-block__title">
-          <Icon name="live" size={13} />
-          {t('room.multicam.destinos')}
-          <span className="dx-spacer" />
+      <Bloco
+        icon="live"
+        titulo={t('room.multicam.destinos')}
+        meta={
           <span className="dx-num dx-muted">
             {m.destinos.length}/{MAX_MULTICAM_DESTINOS}
           </span>
-        </h3>
+        }
+      >
         {m.destinos.map((d, i) => (
           <fieldset key={i} className="rm-dest" disabled={noAr || m.estado.fase === 'a-ligar'}>
             <legend className="dx-field__label">
@@ -125,7 +122,7 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
         ) : (
           <p className="dx-muted">{t('room.multicam.limite', { n: MAX_MULTICAM_DESTINOS })}</p>
         )}
-      </section>
+      </Bloco>
 
       {m.estado.fase === 'erro' && <Alert tone="danger">{m.estado.motivo}</Alert>}
       {noAr ? (

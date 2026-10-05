@@ -159,6 +159,7 @@ openssl rand -hex 24   # → password do Postgres
 | `PHONE_BRIDGE_FREESWITCH_IPS` | IPs **ou nomes** (resolvidos a cada `PHONE_BRIDGE_RESOLVE_SECS`; só privados, nunca loopback) dos FreeSWITCH autorizados a mandar `INVITE` e RTP, separados por vírgulas. **Fail-closed: vazia, o UA nem arranca** — um UA que aceitasse qualquer origem é uma porta para dentro das salas. Aceita-se ainda o antigo `PSTN_BRIDGE_FREESWITCH_IP` (um só IP) |
 | `PHONE_BRIDGE_SIP_ADVERTISE` | O que o control plane devolve ao IVR no `sip_uri` (`host:porta`), quando o endereço alcançável de fora não é o do bind — NAT, `hostPort` em K8s. Por omissão, `PSTN_BRIDGE_HOST`/`SFU_EXTERNAL_IP` com a porta do bind |
 | `PHONE_BRIDGE_RTP_IP` / `PHONE_BRIDGE_RTP_MIN` / `PHONE_BRIDGE_RTP_MAX` | IP que vai no SDP e faixa de portas RTP das pernas. Sem a faixa, portas efémeras do SO — que uma firewall entre o FreeSWITCH e o servidor não consegue abrir |
+| `PHONE_BRIDGE_WIDEBAND` | `1` (por omissão) faz a perna da ponte negociar Opus: a voz de um softphone chega à sala sem passar por 8 kHz e a sala volta-lhe a 16 kHz (ADR-0018). `0` repõe G.711 nos dois sentidos. |
 
 ---
 

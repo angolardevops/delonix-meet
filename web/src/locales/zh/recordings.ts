@@ -5,6 +5,7 @@ export default {
   meta_one: '{{count}} 项 · {{size}}',
   meta_other: '{{count}} 项 · {{size}}',
   abrir: '打开 {{name}}',
+  menuDe: '{{name}} 的操作',
   salaCodigo: '会议室 {{code}}',
   partilhadaComigo: '分享给我的',
   semResultados: '没有与搜索匹配的录制内容',

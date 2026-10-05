@@ -949,6 +949,75 @@ pub async fn ivr_validate_extension_pin(
 /// do pedido. Todas as recusas dão o mesmo `404`: ramal inexistente ou
 /// inactivo, domínio que não é o da org dele, dono arquivado, PIN errado, PIN
 /// de outra org, PIN ambíguo.
+/// O ramal que o FreeSWITCH autenticou por digest — a única identidade em que
+/// uma chamada de ramal se pode apoiar para decidir alguma coisa (em que
+/// organização se procura uma sala, por que troncos sai uma chamada).
+pub(crate) struct AuthenticatedExtension {
+    pub org_id: Uuid,
+    pub member_id: Option<Uuid>,
+    pub extension_id: Uuid,
+    /// O número curto do ramal dentro da organização.
+    pub extension: String,
+    pub label: String,
+    pub person: Option<String>,
+}
+
+impl AuthenticatedExtension {
+    /// O ramal de uma pessoa arquivada deixa de valer; um ramal da empresa
+    /// (R276) não tem pessoa — vale enquanto estiver activo.
+    pub(crate) async fn owner_is_active(&self, state: &AppState) -> Result<bool, ApiError> {
+        match self.member_id {
+            Some(member_id) => Ok(role_in_org(state, self.org_id, member_id).await?.is_some()),
+            None => Ok(true),
+        }
+    }
+}
+
+/// O ramal ACTIVO com este utilizador SIP, se o realm com que o FreeSWITCH o
+/// autenticou (`sip_auth_username`, `sip_auth_realm`) for o domínio da
+/// organização dele — o HA1 só bate com esse. Um par (utilizador, domínio)
+/// que não existe não veio de um INVITE autenticado. Nunca o `From`.
+pub(crate) async fn authenticated_extension(
+    state: &AppState,
+    sip_username: &str,
+    domain: &str,
+) -> Result<Option<AuthenticatedExtension>, ApiError> {
+    #[allow(clippy::type_complexity)]
+    let ext: Option<(
+        Uuid,
+        Option<Uuid>,
+        String,
+        Uuid,
+        String,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT e.org_id, e.member_id, o.slug, e.id, e.label,
+                COALESCE(u.display_name, u.username), e.extension
+           FROM voice_extensions e JOIN organizations o ON o.id = e.org_id
+           LEFT JOIN users u ON u.id = e.member_id
+          WHERE e.sip_username = $1 AND e.active",
+    )
+    .bind(sip_username.trim())
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((org_id, member_id, slug, extension_id, label, person, extension)) = ext else {
+        return Ok(None);
+    };
+    let expected = format!("{slug}.{}", state.config.voice_ramais_domain_suffix);
+    if !domain.trim().eq_ignore_ascii_case(&expected) {
+        return Ok(None);
+    }
+    Ok(Some(AuthenticatedExtension {
+        org_id,
+        member_id,
+        extension_id,
+        extension,
+        label,
+        person,
+    }))
+}
+
 pub(crate) async fn validate_pin_for_extension(
     state: &AppState,
     sip_username: &str,
@@ -966,34 +1035,22 @@ pub(crate) async fn validate_pin_for_extension(
         ApiError::NotFound
     };
 
-    #[allow(clippy::type_complexity)]
-    let ext: Option<(Uuid, Option<Uuid>, String, Uuid, String, Option<String>)> = sqlx::query_as(
-        "SELECT e.org_id, e.member_id, o.slug, e.id, e.label,
-                COALESCE(u.display_name, u.username)
-           FROM voice_extensions e JOIN organizations o ON o.id = e.org_id
-           LEFT JOIN users u ON u.id = e.member_id
-          WHERE e.sip_username = $1 AND e.active",
-    )
-    .bind(sip_username)
-    .fetch_optional(&state.db)
-    .await?;
-    let Some((org_id, member_id, slug, extension_id, label, person)) = ext else {
+    let Some(ext) = authenticated_extension(state, sip_username, domain).await? else {
         return Err(refuse());
     };
-    // O realm com que o FreeSWITCH autenticou tem de ser o domínio da org do
-    // ramal — o HA1 só bate com esse. Um par (utilizador, domínio) que não
-    // existe não veio de um INVITE autenticado.
-    let expected = format!("{slug}.{}", state.config.voice_ramais_domain_suffix);
-    if !domain.trim().eq_ignore_ascii_case(&expected) {
-        return Err(refuse());
-    }
     // O ramal de uma pessoa: arquivada, o softphone não abre reuniões. Um
     // ramal da empresa (R276) não tem pessoa — vale enquanto estiver activo.
-    if let Some(member_id) = member_id {
-        if role_in_org(state, org_id, member_id).await?.is_none() {
-            return Err(refuse());
-        }
+    if !ext.owner_is_active(state).await? {
+        return Err(refuse());
     }
+    let AuthenticatedExtension {
+        org_id,
+        member_id,
+        extension_id,
+        label,
+        person,
+        ..
+    } = ext;
 
     let Some(mut resp) = room_by_pin_in_org(state, org_id, pin).await? else {
         return Err(refuse());
@@ -1136,7 +1193,13 @@ async fn room_bridge_for(
         );
         return None;
     };
-    if state.config.phone_bridge_freeswitch_ips.is_empty() {
+    // A lista pode vir por IP ou por NOME (o compose e o chart usam o nome do
+    // serviço). Olhar só para os IPs deixava uma instalação configurada por
+    // nome com o UA à escuta e a ponte nunca entregue ao IVR: toda a chamada
+    // caía na conferência local (medido no laboratório a 2026-10-05).
+    if state.config.phone_bridge_freeswitch_ips.is_empty()
+        && state.config.phone_bridge_freeswitch_names.is_empty()
+    {
         tracing::warn!(
             "PHONE_BRIDGE_FREESWITCH_IPS vazio — a ponte recusaria o INVITE (fail-closed); dial-in cai na conferência local"
         );
@@ -1162,16 +1225,32 @@ async fn room_bridge_for(
                 "rtp_secure_media".to_string(),
                 format!("mandatory:{}", crate::phone_bridge::srtp::SRTP_PROFILE_NAME),
             ),
-            // A ponte só transcodifica G.711: uma oferta sem PCMA/PCMU leva
-            // `488`. É também o que a perna levava na prova contra o
-            // FreeSWITCH real — o caminho do cliente não é uma variante por
-            // medir do que foi medido.
-            ("absolute_codec_string".to_string(), "PCMA".to_string()),
+            // A ordem é a preferência: o UA da ponte responde com o primeiro
+            // que souber falar (ADR-0018). Com Opus à frente, a voz de um
+            // softphone chega à sala sem passar por 8 kHz; `PCMA` sozinho é o
+            // caminho que a prova contra o FreeSWITCH real mediu (R222), e
+            // fica atrás como recurso. Uma oferta sem nenhum dos dois leva `488`.
+            // O valor tem uma VÍRGULA: quem monta a lista `[k=v,…]` da dial
+            // string tem de a escapar (`dialin_ivr.lua`), senão o FreeSWITCH
+            // fica só com o primeiro codec e o recurso deixa de existir.
+            (
+                "absolute_codec_string".to_string(),
+                bridge_codec_string(state.config.phone_bridge_wideband).to_string(),
+            ),
         ]
         .into_iter()
         .collect(),
         srtp_profile: crate::phone_bridge::srtp::SRTP_PROFILE_NAME.to_string(),
     })
+}
+
+/// Os codecs que o FreeSWITCH oferece à ponte, por ordem de preferência.
+fn bridge_codec_string(wideband: bool) -> &'static str {
+    if wideband {
+        "OPUS,PCMA"
+    } else {
+        "PCMA"
+    }
 }
 
 /// Emite o bilhete de identidade de quem liga e junta-o às variáveis de canal

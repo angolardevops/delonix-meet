@@ -958,6 +958,19 @@ await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/ap
   body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
 })
 
+console.log('\n--- «Ligar a…» a partir da sala da A (dial-outs) ---')
+// Fazer tocar um ramal custa atenção e, na F2, dinheiro: quem não gere a sala
+// não lista, não liga e não desliga. A B é de outra organização — a sala e o
+// pedido respondem como se não existissem (401/403/404, nunca 2xx).
+const semId = '00000000-0000-0000-0000-000000000000'
+await recusadoNaPorta('B lista os dial-outs da sala da A', `/api/rooms/${salaA.code}/dial-outs`, { token: B.token })
+await recusadoNaPorta('B liga a um ramal a partir da sala da A', `/api/rooms/${salaA.code}/dial-outs`, {
+  token: B.token, method: 'POST', body: { extension_id: semId },
+})
+await recusadoNaPorta('B desliga um dial-out da sala da A', `/api/rooms/${salaA.code}/dial-outs/${semId}/hangup`, {
+  token: B.token, method: 'POST', body: {},
+})
+
 // ---------------------------------------------------------------------------
 // Gateway de SMS (ADR-0005). Um SMS custa dinheiro a quem o envia: a pergunta
 // não é só «A lê o que é de B», é também «o gateway de A consegue gastar o

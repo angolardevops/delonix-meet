@@ -59,8 +59,6 @@ services:
       TURN_HOST: prova.invalid:3478
       CORS_ORIGINS: https://prova.invalid
       RECORDINGS_DIR: /tmp/recordings
-      # A conta SIP de uma organização guarda-se cifrada.
-      DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS:?}
       REGISTRATION_MODE: open
       # A ponte telefone↔sala (ADR-0010): o UA SIP do servidor, que só aceita o
       # FreeSWITCH desta réplica.

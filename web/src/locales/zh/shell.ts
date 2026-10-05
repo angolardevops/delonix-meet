@@ -16,6 +16,7 @@ export default {
     rotulo: '主导航',
     inicio: '首页',
     agenda: '日程',
+    salas: '会议室',
     estudio: '演播室',
     gravacoes: '录制内容',
     quadros: '白板',

@@ -16,6 +16,7 @@ export default {
     rotulo: 'Main navigation',
     inicio: 'Home',
     agenda: 'Schedule',
+    salas: 'Rooms',
     estudio: 'Studio',
     gravacoes: 'Recordings',
     quadros: 'Boards',

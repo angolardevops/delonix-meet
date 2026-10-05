@@ -5,6 +5,7 @@ export default {
   meta_one: '{{count}} item · {{size}}',
   meta_other: '{{count}} items · {{size}}',
   abrir: 'Open {{name}}',
+  menuDe: 'Actions for {{name}}',
   salaCodigo: 'Room {{code}}',
   partilhadaComigo: 'Shared with me',
   semResultados: 'No recording matches the search',

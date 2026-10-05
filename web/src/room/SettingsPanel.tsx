@@ -5,6 +5,7 @@ import { Alert, Button, Field, Select, Toggle, cx } from '../ui/kit'
 import { VolumeSlider } from './Prejoin'
 import type { LocalMedia } from './useLocalMedia'
 import type { Transcription } from './useTranscription'
+import { Bloco } from './Bloco'
 
 const CC_LANGS = ['', 'pt', 'en', 'fr', 'es', 'de'] as const
 
@@ -34,13 +35,11 @@ export function SettingsPanel({
   const busy = media.bgBusy || semCamara
   return (
     <div className="rm-scroll">
-      <section className="rm-block" aria-labelledby="rm-fx-h">
-        <h3 id="rm-fx-h" className="rm-block__title">
-          <Icon name="sparkles" size={13} />
-          {t('room.definicoes.fundos')}
-          <span className="dx-spacer" />
-          {media.bgBusy && <span className="dx-muted">{t('room.definicoes.aAplicar')}</span>}
-        </h3>
+      <Bloco
+        icon="sparkles"
+        titulo={t('room.definicoes.fundos')}
+        meta={media.bgBusy && <span className="dx-muted">{t('room.definicoes.aAplicar')}</span>}
+      >
         <div className="rm-fx__preview">
           <video ref={previewRef} autoPlay muted playsInline className={cx(media.bgMode === 'none' && 'is-mirror')} />
         </div>
@@ -109,13 +108,9 @@ export function SettingsPanel({
             e.target.value = ''
           }}
         />
-      </section>
+      </Bloco>
 
-      <section className="rm-block" aria-labelledby="rm-dev-h">
-        <h3 id="rm-dev-h" className="rm-block__title">
-          <Icon name="sliders" size={13} />
-          {t('room.definicoes.dispositivos')}
-        </h3>
+      <Bloco icon="sliders" titulo={t('room.definicoes.dispositivos')}>
         <Field label={t('room.definicoes.microfone')} htmlFor="rm-set-mic">
           <Select id="rm-set-mic" value={media.micId} onChange={(e) => void media.switchMic(e.target.value)}>
             {media.devices.mics.length === 0 && <option value="">{t('room.definicoes.semDispositivos')}</option>}
@@ -158,13 +153,9 @@ export function SettingsPanel({
           checked={media.noiseSuppression}
           onChange={() => void media.toggleNoiseSuppression()}
         />
-      </section>
+      </Bloco>
 
-      <section className="rm-block" aria-labelledby="rm-cc-h">
-        <h3 id="rm-cc-h" className="rm-block__title">
-          <Icon name="captions" size={13} />
-          {t('room.definicoes.legendas')}
-        </h3>
+      <Bloco icon="captions" titulo={t('room.definicoes.legendas')}>
         <Field label={t('room.definicoes.traduzirLegendas')} htmlFor="rm-set-cc" hint={t('room.definicoes.traduzirDica')}>
           <Select id="rm-set-cc" value={transcription.ccLang} onChange={(e) => transcription.setCcLang(e.target.value)}>
             {CC_LANGS.map((l) => (
@@ -180,7 +171,7 @@ export function SettingsPanel({
           checked={transcription.serverAsr}
           onChange={(e) => transcription.setServerAsr(e.target.checked)}
         />
-      </section>
+      </Bloco>
       {children}
     </div>
   )

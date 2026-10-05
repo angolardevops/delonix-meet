@@ -154,7 +154,8 @@ export default {
     sondagensTitulo: 'Polls',
   },
   tile: {
-    duploCliqueFixa: 'Double-click to pin to stage',
+    duploCliqueFixa: 'Double-click to pin to the stage; right-click for actions',
+    accoes: 'Actions for {{nome}}',
     mao: 'Hand',
     ligacaoFraca: 'Weak',
     aVoltar: 'Returning',

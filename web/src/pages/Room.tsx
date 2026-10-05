@@ -40,6 +40,7 @@ import { useReactions } from '../room/useReactions'
 import { useRecording } from '../room/useRecording'
 import { useRemoteControl } from '../room/useRemoteControl'
 import { useRoomChrome, type Panel } from '../room/useRoomChrome'
+import { useAtalhos } from '../ui/useAtalhos'
 import { useRoomCore, type RemotePeer } from '../room/useRoomCore'
 import { useScreenShare } from '../room/useScreenShare'
 import { useTranscription } from '../room/useTranscription'
@@ -131,27 +132,24 @@ export default function Room({
   const onTileMute = participants.mute
   const onTileKick = participants.kick
 
-  // Atalhos Ctrl+D (microfone) e Ctrl+E (câmara). Chamam a acção DIRECTAMENTE:
-  // procurar o botão pelo `aria-label` partia-se em inglês e em francês.
-  // Na pré-entrada os mesmos atalhos actuam sobre a pré-visualização.
-  const atalhosRef = useRef({ media, prejoin, prejoinAtivo: core.roomState === 'prejoin' })
-  atalhosRef.current = { media, prejoin, prejoinAtivo: core.roomState === 'prejoin' }
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      if (!(e.ctrlKey || e.metaKey)) return
-      const k = e.key.toLowerCase()
-      if (k !== 'd' && k !== 'e') return
-      e.preventDefault()
-      const { media: m, prejoin: pj, prejoinAtivo } = atalhosRef.current
-      if (prejoinAtivo) pj.toggle(k === 'd' ? 'mic' : 'cam')
-      else if (k === 'd') void m.toggleMic()
-      else void m.toggleCam()
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [])
+  // Os atalhos da sala, do catálogo (`ui/atalhos.ts`): microfone e câmara
+  // (⌘D/⌘E, os mesmos do Google Meet) e os cinco painéis laterais, que até
+  // aqui só se abriam com o rato — numa reunião com a barra de controlos
+  // escondida não havia como chegar ao chat sem ela.
+  //
+  // O microfone e a câmara chamam a acção DIRECTAMENTE: procurar o botão pelo
+  // `aria-label` partia-se em inglês e em francês. Na pré-entrada actuam sobre
+  // a pré-visualização, e os painéis ainda não existem.
+  const noPrejoin = core.roomState === 'prejoin'
+  useAtalhos('sala', {
+    micro: () => (noPrejoin ? prejoin.toggle('mic') : void media.toggleMic()),
+    camara: () => (noPrejoin ? prejoin.toggle('cam') : void media.toggleCam()),
+    chat: noPrejoin ? undefined : () => chrome.togglePanel('chat'),
+    participantes: noPrejoin ? undefined : () => chrome.togglePanel('people'),
+    perguntas: noPrejoin ? undefined : () => chrome.togglePanel('qa'),
+    sondagens: noPrejoin ? undefined : () => chrome.togglePanel('polls'),
+    notas: noPrejoin ? undefined : () => chrome.togglePanel('notes'),
+  })
 
   // A segunda fonte escolhida na pré-entrada entra como apresentação assim que
   // a media liga — pelo caminho da partilha, com as mesmas permissões.

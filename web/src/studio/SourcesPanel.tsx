@@ -5,9 +5,9 @@
  * Não tem estado próprio: o estado é da página, que é quem fala com o
  * compositor. Isto só desenha e devolve intenções.
  */
-import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button, cx, Select } from '../ui/kit'
+import { Button, cx, Segmented, Select } from '../ui/kit'
+import { Grupo } from './Grupo'
 import type { Camara } from './usePalco'
 import type { CantoDoAvatar, EstadoDaImagem, EstadoDoAvatar, FormaDoAvatar, Recorte } from './compositor'
 import { IMAGEM_INICIAL } from './compositor'
@@ -19,39 +19,6 @@ const CANTOS: { key: Exclude<CantoDoAvatar, 'livre'>; i18n: string }[] = [
   { key: 'inferior-esquerdo', i18n: 'inferiorEsquerdo' },
   { key: 'inferior-direito', i18n: 'inferiorDireito' },
 ]
-
-/** Escolha segmentada com `aria-pressed` e um atributo estável por opção. */
-function Escolha<T extends string>({
-  label,
-  value,
-  options,
-  onPick,
-  attr,
-}: {
-  label: string
-  value: T | null
-  options: { value: T; label: ReactNode; disabled?: boolean; title?: string }[]
-  onPick: (v: T) => void
-  attr: string
-}) {
-  return (
-    <div className="dx-seg st-seg" role="group" aria-label={label}>
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          aria-pressed={o.value === value}
-          disabled={o.disabled}
-          title={o.title}
-          {...{ [attr]: o.value }}
-          onClick={() => onPick(o.value)}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  )
-}
 
 export default function SourcesPanel({
   temEcra,
@@ -93,10 +60,7 @@ export default function SourcesPanel({
 
   return (
     <>
-      <section className="st-group" data-studio-grupo="fonte" aria-labelledby="st-fonte-h">
-        <h2 id="st-fonte-h" className="st-group__title">
-          {t('studio.fonte.titulo')}
-        </h2>
+      <Grupo grupo="fonte" titulo={t('studio.fonte.titulo')}>
         <Button
           variant={temEcra ? 'secondary' : 'primary'}
           icon="screen"
@@ -111,15 +75,16 @@ export default function SourcesPanel({
         ) : (
           <>
             <span className="st-label">{t('studio.fonte.enquadramento')}</span>
-            <Escolha
+            <Segmented
+              className="st-seg"
               label={t('studio.fonte.enquadramento')}
-              attr="data-studio-regiao"
+              dataKey="studio-regiao"
               value={parcial ? 'regiao' : 'tudo'}
               options={[
                 { value: 'tudo', label: t('studio.fonte.tudo') },
                 { value: 'regiao', label: t('studio.fonte.regiao') },
               ]}
-              onPick={(v) => (v === 'tudo' ? onEcraInteiro() : onAbrirRegiao())}
+              onChange={(v) => (v === 'tudo' ? onEcraInteiro() : onAbrirRegiao())}
             />
             {parcial && (
               <p className="st-note">
@@ -131,12 +96,9 @@ export default function SourcesPanel({
             )}
           </>
         )}
-      </section>
+      </Grupo>
 
-      <section className="st-group" data-studio-grupo="imagem" aria-labelledby="st-imagem-h">
-        <h2 id="st-imagem-h" className="st-group__title">
-          {t('studio.imagem.titulo')}
-        </h2>
+      <Grupo grupo="imagem" titulo={t('studio.imagem.titulo')}>
         <Button
           variant={temCamara ? 'secondary' : 'primary'}
           icon={temCamara ? 'videoOff' : 'video'}
@@ -209,9 +171,10 @@ export default function SourcesPanel({
             />
 
             <span className="st-label">{t('studio.imagem.fundo')}</span>
-            <Escolha
+            <Segmented
+              className="st-seg"
               label={t('studio.imagem.fundo')}
-              attr="data-studio-modo"
+              dataKey="studio-modo"
               value={avatar.modo}
               options={[
                 { value: 'bolha', label: t('studio.imagem.comFundo'), disabled: aPrepararRecorte },
@@ -221,7 +184,7 @@ export default function SourcesPanel({
                   disabled: aPrepararRecorte,
                 },
               ]}
-              onPick={(m) => onFundo(m === 'recorte')}
+              onChange={(m) => onFundo(m === 'recorte')}
             />
             {avatar.modo === 'recorte' && (
               <p className="st-note" data-studio="nota-recorte">
@@ -230,9 +193,10 @@ export default function SourcesPanel({
             )}
 
             <span className="st-label">{t('studio.imagem.forma')}</span>
-            <Escolha<FormaDoAvatar>
+            <Segmented<FormaDoAvatar>
+              className="st-seg"
               label={t('studio.imagem.forma')}
-              attr="data-studio-forma"
+              dataKey="studio-forma"
               value={avatar.forma}
               options={(['circulo', 'rectangulo'] as FormaDoAvatar[]).map((f) => ({
                 value: f,
@@ -240,19 +204,17 @@ export default function SourcesPanel({
                 disabled: avatar.modo === 'recorte',
                 title: avatar.modo === 'recorte' ? t('studio.imagem.formaIndisponivel') : undefined,
               }))}
-              onPick={(f) => onAvatar({ forma: f })}
+              onChange={(f) => onAvatar({ forma: f })}
             />
           </>
         )}
-      </section>
+      </Grupo>
 
       {temCamara && (
-        <section className="st-group" data-studio-grupo="iluminacao" aria-labelledby="st-iluminacao-h">
-          <header className="st-group__head">
-            <h2 id="st-iluminacao-h" className="st-group__title">
-              {t('studio.iluminacao.titulo')}
-            </h2>
-            <span className="dx-spacer" />
+        <Grupo
+          grupo="iluminacao"
+          titulo={t('studio.iluminacao.titulo')}
+          accao={
             <Button
               size="sm"
               variant="ghost"
@@ -262,7 +224,8 @@ export default function SourcesPanel({
             >
               {t('studio.iluminacao.repor')}
             </Button>
-          </header>
+          }
+        >
           {(
             [
               ['brilho', t('studio.iluminacao.brilho')],
@@ -288,7 +251,7 @@ export default function SourcesPanel({
             </div>
           ))}
           <p className="st-note">{t('studio.iluminacao.nota')}</p>
-        </section>
+        </Grupo>
       )}
     </>
   )

@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, cx, Select, TextInput } from '../../ui/kit'
+import { BotaoEd, CartaoEd, TituloEd } from '../pecasDoEditor'
 import { lerTimecode, relogio, timecode } from '../captions/legendas'
 import { tamanhoLegivel } from '../exports/predefinicoes'
 import { valorComSinal } from './cor'
@@ -124,9 +125,9 @@ function CartaoDoClip({
   const { t, i18n } = useTranslation()
   if (!c) {
     return (
-      <div className="ed-card" data-cartao="corte">
+      <CartaoEd data-cartao="corte">
         <p className="st-note">{t('editor.inspector.nada')}</p>
-      </div>
+      </CartaoEd>
     )
   }
   const indice = clipsDaFaixa(p, c.faixa).findIndex((x) => x.id === c.id)
@@ -135,13 +136,13 @@ function CartaoDoClip({
   const verTransicao = !!c.transicao || ferramenta === 'transicao'
   const verMascara = video && (!!c.mascara || ferramenta === 'mascara')
   return (
-    <div className="ed-card" data-cartao="corte">
-      <div className="ed-card__title">
+    <CartaoEd data-cartao="corte">
+      <TituloEd>
         <span className="ed-dot" aria-hidden="true" />
         <span className="ed-card__clip" title={t('editor.inspector.seleccionado', { faixa: c.faixa, n: indice + 1, nome: f?.nome ?? '' })}>
           {t('editor.inspector.seleccionado', { faixa: c.faixa, n: indice + 1, nome: f?.nome ?? '' })}
         </span>
-      </div>
+      </TituloEd>
       {estadoDaFaixa(p, c.faixa).bloqueada && <p className="st-note">{t('editor.inspector.bloqueada')}</p>}
       {c.congelado !== null ? (
         <p className="st-note">{t('editor.inspector.congeladoNota', { s: c.congelado.toFixed(1) })}</p>
@@ -186,12 +187,12 @@ function CartaoDoClip({
         </div>
       )}
       <div className="ed-grid2">
-        <button type="button" className="ed-btn" disabled={!c.grupo} onClick={() => aplicar({ tipo: 'separar-audio', clipId: c.id })}>
+        <BotaoEd disabled={!c.grupo} onClick={() => aplicar({ tipo: 'separar-audio', clipId: c.id })}>
           {t('editor.inspector.separarAudio')}
-        </button>
-        <button type="button" className="ed-btn" disabled={!video} onClick={() => aplicar({ tipo: 'congelar', t: leitor.tempoRef.current, duracao: 2 })}>
+        </BotaoEd>
+        <BotaoEd disabled={!video} onClick={() => aplicar({ tipo: 'congelar', t: leitor.tempoRef.current, duracao: 2 })}>
           {t('editor.inspector.congelar')}
-        </button>
+        </BotaoEd>
       </div>
       {verTransicao && (
         <div className="ed-row">
@@ -253,7 +254,7 @@ function CartaoDoClip({
             ))}
         </div>
       )}
-    </div>
+    </CartaoEd>
   )
 }
 
@@ -267,8 +268,8 @@ function CartaoDeCor({ c, aplicar }: { c: Clip | null; aplicar: (e: Edicao, chav
   ]
   const video = !!c && faixaDeVideo(c.faixa)
   return (
-    <div className="ed-card" data-cartao="cor">
-      <div className="ed-card__title">{t('editor.cor.titulo')}</div>
+    <CartaoEd data-cartao="cor">
+      <TituloEd>{t('editor.cor.titulo')}</TituloEd>
       {!video && <p className="st-note">{t('editor.inspector.corSoVideo')}</p>}
       {video &&
         linhas.map((l) => (
@@ -284,7 +285,7 @@ function CartaoDeCor({ c, aplicar }: { c: Clip | null; aplicar: (e: Edicao, chav
             onChange={(v) => aplicar({ tipo: 'cor', clipId: c!.id, cor: { [l.k]: v } }, `cor:${c!.id}:${l.k}`)}
           />
         ))}
-    </div>
+    </CartaoEd>
   )
 }
 
@@ -292,8 +293,8 @@ export function CartaoDeMistura({ p, c, aplicar }: { p: Projecto; c: Clip | null
   const { t } = useTranslation()
   const alvo = p.mistura.alvoLufs !== null
   return (
-    <div className="ed-card" data-cartao="audio">
-      <div className="ed-card__title ed-row--between">
+    <CartaoEd data-cartao="audio">
+      <TituloEd className="ed-row--between">
         {/* «aplica-se na exportação» vai no título: a nota por baixo empurrava
             o destino do projecto para fora do ecrã a 900 px. */}
         <span title={t('editor.audio.soNaExportacao')}>{t('editor.audio.mistura')}</span>
@@ -305,7 +306,7 @@ export function CartaoDeMistura({ p, c, aplicar }: { p: Projecto; c: Clip | null
         >
           {t('editor.audio.alvo')}
         </button>
-      </div>
+      </TituloEd>
       {(['A1', 'A2'] as const).map((f) => {
         const e = estadoDaFaixa(p, f)
         return (
@@ -337,26 +338,24 @@ export function CartaoDeMistura({ p, c, aplicar }: { p: Projecto; c: Clip | null
         />
       )}
       <div className="ed-grid2">
-        <button
-          type="button"
-          className={cx('ed-btn', p.mistura.reduzirRuido && 'ed-btn--on')}
+        <BotaoEd
+          variante={p.mistura.reduzirRuido && 'on'}
           aria-pressed={p.mistura.reduzirRuido}
           onClick={() => aplicar({ tipo: 'mistura', patch: { reduzirRuido: !p.mistura.reduzirRuido } })}
         >
           {t('editor.audio.reduzirRuido')}
-        </button>
-        <button
-          type="button"
-          className={cx('ed-btn', p.mistura.normalizar && 'ed-btn--on')}
+        </BotaoEd>
+        <BotaoEd
+          variante={p.mistura.normalizar && 'on'}
           aria-pressed={p.mistura.normalizar}
           disabled={alvo}
           title={alvo ? t('editor.audio.normalizarComAlvo') : undefined}
           onClick={() => aplicar({ tipo: 'mistura', patch: { normalizar: !p.mistura.normalizar } })}
         >
           {t('editor.audio.normalizar')}
-        </button>
+        </BotaoEd>
       </div>
-    </div>
+    </CartaoEd>
   )
 }
 
@@ -364,13 +363,13 @@ function CartaoDeTextos({ p, leitor, aplicar }: { p: Projecto; leitor: Leitor; a
   const { t } = useTranslation()
   const novo = (): Texto => ({ id: novoId('t'), inicio: leitor.tempoRef.current, duracao: 4, texto: t('editor.texto.omisso'), x: 0.5, y: 0.8, tamanho: 0.06 })
   return (
-    <div className="ed-card" data-cartao="texto">
-      <div className="ed-card__title ed-row--between">
+    <CartaoEd data-cartao="texto">
+      <TituloEd className="ed-row--between">
         <span>{t('editor.texto.titulo')}</span>
         <button type="button" className="ed-chip" onClick={() => aplicar({ tipo: 'texto', texto: novo() })}>
           {t('editor.texto.acrescentar')}
         </button>
-      </div>
+      </TituloEd>
       {!p.textos.length && <p className="st-note">{t('editor.texto.vazio')}</p>}
       {p.textos.map((x) => (
         <div key={x.id} className="ed-sub">
@@ -386,7 +385,7 @@ function CartaoDeTextos({ p, leitor, aplicar }: { p: Projecto; leitor: Leitor; a
           <Barra id={`ed-tx-s-${x.id}`} rotulo={t('editor.texto.tamanho')} valor={x.tamanho} min={0.02} max={0.2} passo={0.005} mostrar={`${Math.round(x.tamanho * 1080)} px`} onChange={(v) => aplicar({ tipo: 'texto', texto: { ...x, tamanho: v } }, `tx-s:${x.id}`)} />
         </div>
       ))}
-    </div>
+    </CartaoEd>
   )
 }
 
@@ -433,14 +432,14 @@ export default function Inspector({
       <CartaoDeCor c={c} aplicar={aplicar} />
       <CartaoDeMistura p={p} c={c} aplicar={aplicar} />
       {(aba === 'texto' || p.textos.length > 0) && <CartaoDeTextos p={p} leitor={leitor} aplicar={aplicar} />}
-      <div className="ed-card ed-card--end">
-        <div className="ed-card__title">{t('editor.destino.titulo')}</div>
+      <CartaoEd variante="end">
+        <TituloEd>{t('editor.destino.titulo')}</TituloEd>
         <span className="dx-num ed-mono">
           {t('editor.destino.local', { tamanho: tamanhoLegivel(p.fontes.reduce((n, f) => n + f.bytes, 0), i18n.language) })}
           <br />
           {t('editor.destino.ao')}
         </span>
-      </div>
+      </CartaoEd>
     </aside>
   )
 }

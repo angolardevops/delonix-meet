@@ -71,7 +71,14 @@ async function main() {
   const tempos = new LinhaDoTempo()
   tempos.marcar('intencao')
   window.__dlx.tempos = tempos
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+  // `som=cru` tira o cancelamento de eco, a supressão de ruído e o ganho
+  // automático: quem mede um TOM do outro lado precisa de que ele lá chegue, e
+  // a supressão de ruído trata um tom constante como ruído.
+  const audio: boolean | MediaTrackConstraints =
+    params.get('som') === 'cru'
+      ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      : true
+  const stream = await navigator.mediaDevices.getUserMedia({ audio, video: true })
   const rtcConfig: RTCConfiguration = await fetch('/api/ice-servers', {
     headers: { Authorization: `Bearer ${params.get('access') ?? ''}` },
   })

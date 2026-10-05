@@ -128,6 +128,10 @@ recusa "várias réplicas sem Redis" "REDIS_URL é obrigatório" \
   "${PROD[@]}" --set externalRedis.fromSecret=false
 recusa "ponte telefone↔sala sem IPs do FreeSWITCH" "server.phoneBridge.freeswitchIPs" \
   "${LOCAL[@]}" --set server.phoneBridge.enabled=true
+recusa "ESL com o FreeSWITCH em hostNetwork e sem redes declaradas" "voice.freeswitch.eslCidrs: com server.telephony.eslAddr e o FreeSWITCH em hostNetwork" \
+  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 --set voice.freeswitch.hostNetwork=true
+recusa "ESL em produção sem política de rede nem redes declaradas" "server.telephony.eslAddr em produção" \
+  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 --set networkPolicy.enabled=false
 
 # ---- 4. render --------------------------------------------------------
 render() { # nome, args…
@@ -140,6 +144,9 @@ render() { # nome, args…
 }
 render production "${PROD[@]}"
 render production-voz "${VOZ[@]}"
+render production-voz-esl "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021
+render production-voz-esl-cidrs "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 \
+  --set 'voice.freeswitch.eslCidrs={10.244.0.0/16}'
 render local "${LOCAL[@]}"
 render local-2 "${LOCAL[@]}"
 [ "$fail" = 0 ] || exit 1
@@ -393,6 +400,34 @@ for nome in ("production", "production-voz", "local"):
         elif em_falta:
             erros.append("[production-voz] o arranque copia de /meet ficheiros que o ConfigMap freeswitch-meet não traz: "
                          + ", ".join(em_falta))
+
+# 6b. o ESL (R300): fechado por omissão; aberto, com a password do Secret e só aos pods do servidor
+def env_do_fs(nome):
+    c = um(carregar(nome), "Deployment", "freeswitch")["spec"]["template"]["spec"]["containers"][0]
+    return {e["name"]: e for e in c.get("env") or []}
+fechado, aberto = env_do_fs("production-voz"), env_do_fs("production-voz-esl")
+if "TELEPHONY_ESL_PASSWORD" in fechado or "DELONIX_ESL_CIDRS" in fechado:
+    erros.append("[production-voz] o FreeSWITCH recebe a configuração do ESL sem o servidor a ter pedido")
+if um(carregar("production-voz"), "NetworkPolicy", "freeswitch-esl"):
+    erros.append("[production-voz] há uma política de rede do ESL sem ESL")
+if "DELONIX_ESL_CIDRS" in aberto:
+    erros.append("[production-voz-esl] o FreeSWITCH recebe DELONIX_ESL_CIDRS sem `voice.freeswitch.eslCidrs`")
+if env_do_fs("production-voz-esl-cidrs").get("DELONIX_ESL_CIDRS", {}).get("value") != "10.244.0.0/16":
+    erros.append("[production-voz-esl-cidrs] o FreeSWITCH não recebe as redes de onde o servidor fala (DELONIX_ESL_CIDRS)")
+if (aberto.get("TELEPHONY_ESL_PASSWORD", {}).get("valueFrom") or {}).get("secretKeyRef", {}).get("key") != "TELEPHONY_ESL_PASSWORD":
+    erros.append("[production-voz-esl] a password do ESL do FreeSWITCH não vem do Secret")
+pol = um(carregar("production-voz-esl"), "NetworkPolicy", "freeswitch-esl")
+if not pol:
+    erros.append("[production-voz-esl] falta a política de rede que fecha o 8021 ao servidor")
+else:
+    regras = pol["spec"]["ingress"]
+    do_esl = [r for r in regras if any(p.get("port") == 8021 for p in r.get("ports") or [])]
+    if len(do_esl) != 1 or not do_esl[0].get("from") or \
+       do_esl[0]["from"][0].get("podSelector", {}).get("matchLabels", {}).get("app") != "delonix-server":
+        erros.append("[production-voz-esl] o 8021 tem de estar aberto SÓ aos pods do servidor")
+    abertas = [(p.get("protocol"), p.get("port"), p.get("endPort")) for r in regras if not r.get("from") for p in r.get("ports") or []]
+    if any(a <= 8021 <= (b or a) for proto, a, b in abertas if proto == "TCP"):
+        erros.append("[production-voz-esl] uma regra sem origem cobre o 8021: a política não fecha nada")
 
 # 7. laboratório: aleatórios a sério
 def dados(nome):

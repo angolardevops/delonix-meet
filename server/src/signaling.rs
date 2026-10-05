@@ -1506,6 +1506,10 @@ fn verdadeiro() -> bool {
 #[derive(Default)]
 pub(crate) struct Room {
     pub(crate) peers: HashMap<Uuid, Peer>,
+    /// O inquilino da sala (a organização do dono, ou o dono se for um utilizador
+    /// individual), marcado à criação. Só serve a admissão por capacidade
+    /// (`admit_new_room`): saber quanto do nó cada inquilino ocupa.
+    tenant: Option<Uuid>,
     waiting: HashMap<Uuid, WaitingPeer>,
     /// Reunião bloqueada: ninguém entra sem ser admitido (mesmo com link).
     locked: bool,
@@ -1972,35 +1976,22 @@ impl SignalingHub {
     /// Varre os lugares reservados que passaram da janela e transforma-os em
     /// saídas a sério. Chamado periodicamente; devolve quantos expiraram.
     pub fn expire_disconnected(&self, janela: std::time::Duration) -> usize {
-        self.expire_disconnected_seats(janela).len()
-    }
-
-    /// Como `expire_disconnected`, mas devolve `(sala, segredo)` de cada lugar
-    /// que expirou: quem guarda uma cópia do lugar fora do pod (`redis_state`)
-    /// precisa do segredo para a apagar, e depois de o `leave` já não o tem.
-    pub fn expire_disconnected_seats(&self, janela: std::time::Duration) -> Vec<(Uuid, String)> {
         let agora = std::time::Instant::now();
-        let mut expirados: Vec<(Uuid, Uuid, String)> = Vec::new();
+        let mut expirados: Vec<(Uuid, Uuid)> = Vec::new();
         for room in self.rooms.iter() {
             for (peer_id, p) in room.peers.iter() {
                 if let Some(caiu) = p.disconnected_at {
                     if agora.duration_since(caiu) > janela {
-                        expirados.push((
-                            *room.key(),
-                            *peer_id,
-                            p.reconnect_secret.expose().to_string(),
-                        ));
+                        expirados.push((*room.key(), *peer_id));
                     }
                 }
             }
         }
-        for (room_id, peer_id, _) in &expirados {
+        // `leave` apaga também a cópia do lugar no Redis.
+        for (room_id, peer_id) in &expirados {
             self.leave(*room_id, *peer_id);
         }
-        expirados
-            .into_iter()
-            .map(|(room_id, _, secret)| (room_id, secret))
-            .collect()
+        expirados.len()
     }
 
     /// Há neste nó um peer com este id na sala — vivo ou com o lugar reservado?
@@ -2181,6 +2172,7 @@ impl SignalingHub {
         let mut orfaos: Vec<Uuid> = Vec::new();
         let mut spotlight_cleared = false;
         let mut era_de_fora = false;
+        let mut segredo_do_lugar: Option<String> = None;
         let removed = self
             .rooms
             .get_mut(&room_id)
@@ -2196,6 +2188,7 @@ impl SignalingHub {
                 }
                 let saiu = r.peers.remove(&peer_id);
                 if let Some(p) = &saiu {
+                    segredo_do_lugar = Some(p.reconnect_secret.expose().to_string());
                     era_de_fora = p.seat.outside_app();
                     let conta = p.user_id;
                     let restantes: Vec<Uuid> = r
@@ -2215,6 +2208,18 @@ impl SignalingHub {
             .unwrap_or(false);
         for id in orfaos {
             self.send_to(room_id, id, ServerMsg::CompanionEnded);
+        }
+        // Quem sai, é expulso ou vê o lugar expirar NÃO pode voltar a reclamá-lo:
+        // a cópia do lugar no Redis (`redis_state::seat_*`) apaga-se aqui, em
+        // TODOS os caminhos, porque todos passam por `leave`. Sem isto, um
+        // convidado expulso (`Kick`) voltava com o segredo que tinha, sem passar
+        // pela sala de espera e com o papel que tinha: o lugar ficava 12 h no
+        // Redis e `reclaim_from_redis` não olha à janela nem à identidade.
+        if let (Some(segredo), Some(bus)) = (segredo_do_lugar, &self.bus) {
+            let conn = bus.conn.clone();
+            tokio::spawn(async move {
+                crate::redis_state::seat_drop(conn, room_id, &segredo).await;
+            });
         }
         let empty = self
             .rooms
@@ -2469,6 +2474,33 @@ impl SignalingHub {
     /// Participantes ligados a este nó. É o que diz se o drain já pode fechar.
     pub fn peers_ligados(&self) -> usize {
         self.rooms.iter().map(|r| r.peers.len()).sum()
+    }
+
+    /// Marca a que inquilino pertence a sala. A primeira marca fica: uma sala
+    /// não muda de inquilino a meio.
+    pub fn set_room_tenant(&self, room_id: Uuid, tenant: Uuid) {
+        if let Some(mut r) = self.rooms.get_mut(&room_id) {
+            if r.tenant.is_none() {
+                r.tenant = Some(tenant);
+            }
+        }
+    }
+
+    /// A ocupação deste nó vista por inquilino: `(participantes do inquilino,
+    /// inquilinos com gente)`, contando o inquilino que pede mesmo sem gente.
+    /// Salas sem marca contam como UM inquilino à parte: nunca se somam ao de
+    /// ninguém.
+    pub fn tenant_load(&self, tenant: Uuid) -> (i64, i64) {
+        let mut por_inquilino: HashMap<Option<Uuid>, i64> = HashMap::new();
+        for r in self.rooms.iter() {
+            let n = r.peers.len() as i64;
+            if n > 0 {
+                *por_inquilino.entry(r.tenant).or_default() += n;
+            }
+        }
+        let meu = por_inquilino.get(&Some(tenant)).copied().unwrap_or(0);
+        let activos = por_inquilino.len() as i64 + i64::from(meu == 0);
+        (meu, activos)
     }
 
     pub fn broadcast_hosts(&self, room_id: Uuid, msg: ServerMsg) {
@@ -3815,6 +3847,60 @@ pub async fn ws_handler(
             "Este nó está a encerrar. A tentar noutro…".into(),
         ));
     }
+    // Admissão por capacidade (`NODE_PEER_CAPACITY`, ADR-0017): só decide SALAS
+    // NOVAS. Uma sala que já cá está tem de poder continuar a crescer e a
+    // reconectar-se — não pode mudar de nó (ADR-0001), e expulsá-la daria o
+    // mesmo colapso que isto evita.
+    //
+    // A decisão é por INQUILINO: na zona de margem só é recusado quem já usa a
+    // sua parte justa do nó; senão uma conta com muitas ligações fechava o nó às
+    // salas novas de todas as outras organizações. O inquilino deriva-se aqui,
+    // no servidor, de `rooms.owner_id` — nunca do pedido.
+    //
+    // A mensagem NÃO promete «tentar noutro nó»: com a afinidade por hash da sala
+    // um novo pedido cai neste mesmo nó. Realojar uma sala recusada noutro pod
+    // não está feito, e a mensagem também não diz quanto ocupam os outros.
+    let mut tenant: Option<Uuid> = None;
+    if let Some(capacity) = state.config.node_peer_capacity.map(i64::from) {
+        if !state.hub.tem_sala(room_id) {
+            use delonix_meet_domain::operations::media_node::{
+                admit_new_room, NewRoomAdmission, NodeOccupancy,
+            };
+            tenant = resolve_tenant(&state, room_id).await;
+            let (tenant_peers, active_tenants) = match tenant {
+                Some(t) => state.hub.tenant_load(t),
+                None => (0, 1),
+            };
+            let verdict = admit_new_room(
+                NodeOccupancy {
+                    node_peers: state.hub.peers_ligados() as i64,
+                    tenant_peers,
+                    active_tenants,
+                },
+                Some(capacity),
+            );
+            let motivo = match verdict {
+                NewRoomAdmission::Admit => None,
+                NewRoomAdmission::NodeFull => {
+                    Some("Este nó está no limite da capacidade e não aceita salas novas agora.")
+                }
+                NewRoomAdmission::OverFairShare => {
+                    state
+                        .metrics
+                        .node_new_rooms_refused_fair_share_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    Some("Este nó está ocupado e a tua organização já usa a sua parte dele. Tenta daqui a pouco.")
+                }
+            };
+            if let Some(m) = motivo {
+                state
+                    .metrics
+                    .node_new_rooms_refused_total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Err(ApiError::ServiceUnavailable(m.into()));
+            }
+        }
+    }
     // O lugar (papel, origem, espera) decide-se num sítio só, testável sem
     // socket: ver `seat_policy`.
     let SeatPolicy {
@@ -3860,9 +3946,29 @@ pub async fn ws_handler(
                 wait,
                 source,
                 session_id,
+                tenant,
             },
         )
     }))
+}
+
+/// O inquilino de uma sala: a organização do DONO (a primeira, de forma estável,
+/// se pertencer a várias) ou o próprio dono se não tiver nenhuma (um utilizador
+/// individual). Deriva-se no servidor a partir de `rooms.owner_id`.
+///
+/// Falha ABERTA: se a base não responder devolve `None` e a sala entra como
+/// inquilino desconhecido — a admissão por capacidade total (`NodeFull`) continua
+/// a valer, só se perde a justiça por inquilino durante a falha.
+async fn resolve_tenant(state: &AppState, room_id: Uuid) -> Option<Uuid> {
+    let owner: Uuid = sqlx::query_scalar("SELECT owner_id FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()?;
+    let mut orgs = crate::org::orgs_of_user(state, owner).await;
+    orgs.sort();
+    Some(orgs.first().copied().unwrap_or(owner))
 }
 
 fn parse_origin(s: &str) -> Option<Origin> {
@@ -3911,6 +4017,9 @@ struct SocketSession {
     source: Option<crate::studio_realtime::SourceSession>,
     /// A sessão da conta de onde se entrou: terminá-la fecha este /ws.
     session_id: Option<Uuid>,
+    /// O inquilino da sala, resolvido à entrada de uma sala NOVA (só com
+    /// capacidade declarada): marca-se na sala depois do `join`.
+    tenant: Option<Uuid>,
 }
 
 /// Cria uma sala-filha de grupo (herda topologia/E2EE da principal).
@@ -4332,6 +4441,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         wait,
         source,
         session_id,
+        tenant,
     } = session;
     // Só um participante que não é anfitrião pode ter de esperar; a sala de
     // espera de runtime (se o anfitrião a mudou) ganha à configurada. Uma fonte
@@ -4502,6 +4612,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         tx.clone(),
         extras,
     );
+    if let Some(t) = tenant {
+        state.hub.set_room_tenant(room_id, t);
+    }
     // O token do DONO traz a sala de espera da BD: é o valor inicial do
     // runtime, até o anfitrião o mudar.
     if is_host {

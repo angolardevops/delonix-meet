@@ -21,6 +21,7 @@ const Lobby = lazy(() => import('./pages/Lobby'))
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'))
 const PhoneCamera = lazy(() => import('./pages/PhoneCamera'))
 const Calendar = lazy(() => import('./pages/Calendar'))
+const Rooms = lazy(() => import('./pages/Rooms'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const Recordings = lazy(() => import('./pages/Recordings'))
 const Directory = lazy(() => import('./pages/Directory'))
@@ -55,7 +56,7 @@ type Route =
   | { kind: 'diagram'; id: string | null }
   | { kind: 'player'; id: string }
 
-const PAGES: NavKey[] = ['calendar', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'telecom', 'ai']
+const PAGES: NavKey[] = ['calendar', 'rooms', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'telecom', 'ai']
 
 function parseHash(): Route {
   const h = location.hash
@@ -207,6 +208,7 @@ export default function App() {
               {route.kind === 'calendar' && <Calendar />}
               {route.kind === 'studio' && <Studio />}
               {route.kind === 'recordings' && <Recordings />}
+              {route.kind === 'rooms' && <Rooms />}
               {route.kind === 'whiteboards' && <Whiteboards />}
               {route.kind === 'diagram' && <Diagram id={route.id} />}
               {route.kind === 'player' && <RecordingPlayer key={route.id} id={route.id} />}

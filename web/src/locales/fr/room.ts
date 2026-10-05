@@ -154,7 +154,8 @@ export default {
     sondagensTitulo: 'Sondages',
   },
   tile: {
-    duploCliqueFixa: 'Double-cliquez pour épingler sur la scène',
+    duploCliqueFixa: 'Double-clic pour épingler sur la scène ; clic droit pour les actions',
+    accoes: 'Actions de {{nome}}',
     mao: 'Main',
     ligacaoFraca: 'Faible',
     aVoltar: 'Retour',
