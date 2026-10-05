@@ -8225,7 +8225,7 @@
         "type": "object"
       },
       "Recording": {
-        "description": "A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`).\nAs LEITURAS — a biblioteca, o recurso e a lista da sala — devolvem\n`RecordingLibraryItem`, que traz o estado.",
+        "description": "A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`);\na resposta do upload junta-lhe `kind`, `status`, a media medida e\n`has_thumbnail`. As LEITURAS — a biblioteca, o recurso e a lista da sala —\ndevolvem `RecordingLibraryItem`.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -31452,7 +31452,7 @@
                 }
               }
             },
-            "description": "Token inexistente ou expirado."
+            "description": "Token inexistente ou expirado; ou a gravação não tem ficheiro (falhou, ou o servidor ainda a está a compor)."
           }
         },
         "summary": "Acesso público a uma gravação via token (sem autenticação).",
@@ -31515,7 +31515,7 @@
                 }
               }
             },
-            "description": "Token inexistente ou expirado."
+            "description": "Token inexistente ou expirado; ou a gravação não tem ficheiro (falhou, ou o servidor ainda a está a compor)."
           },
           "429": {
             "content": {
@@ -31588,7 +31588,7 @@
                 }
               }
             },
-            "description": "Token inexistente, expirado, ou sem ficheiro (gravação falhada)."
+            "description": "Token inexistente, expirado, ou sem ficheiro (a gravação falhou, ou o servidor ainda a está a compor)."
           }
         },
         "summary": "Download via link público (sem autenticação — token é a credencial; num\nlink com password, o passe de leitura que `POST …/access` devolveu).",
@@ -34047,7 +34047,7 @@
                 }
               }
             },
-            "description": "A gravação não tem ficheiro: falhou, ou o servidor ainda a está a compor (`status = processing`). Código genérico `conflict`."
+            "description": "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor. `recording.no_file`: falhou."
           }
         },
         "security": [
@@ -34572,7 +34572,7 @@
                 }
               }
             },
-            "description": "A gravação não tem ficheiro: falhou, ou o servidor ainda a está a compor (`status = processing`). Código genérico `conflict`."
+            "description": "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor. `recording.no_file`: falhou."
           }
         },
         "security": [
@@ -35940,7 +35940,7 @@
     },
     "/api/rooms/{room_code}/recordings": {
       "get": {
-        "description": "Devolve a MESMA representação da biblioteca e do recurso\n(`RecordingLibraryItem`): o `status` diz se há ficheiro (`processing` e\n`failed` não têm), e o `can_download` se quem pede o pode descarregar.\n\nSem paginação (dívida herdada: a lista de uma sala inteira).",
+        "description": "Devolve a MESMA representação da biblioteca e do recurso\n(`RecordingLibraryItem`): o `status` diz se há ficheiro (`processing` e\n`failed` não têm), e o `can_download` se quem pede o pode descarregar.\n\nSem paginação: devolve a lista de uma sala inteira (dívida — a rota já\nnão paginava, e cada linha custa agora o que custa na biblioteca).",
         "operationId": "list",
         "parameters": [
           {
