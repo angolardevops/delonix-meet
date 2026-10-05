@@ -23,6 +23,13 @@
 //! As regras puras (estados, limpeza do erro, ritmo de reenvio, retenção) estão
 //! em `delonix_meet_domain::integration::webhook_delivery`.
 //!
+//! **Cabeçalhos do alvo `generic`.** `X-Delonix-Delivery` é o id da TENTATIVA
+//! (novo em cada repetição e reenvio) e `X-Delonix-Event-Id` o do EVENTO (igual
+//! em todas as tentativas): é por este que um receptor deduplica uma entrega
+//! «pelo menos uma vez». Nenhum dos dois está coberto pela assinatura HMAC, que
+//! assina só o corpo. Se o registo da entrega falhar na base, o envio segue SEM
+//! os dois (ver `fire`): o receptor não pode contar com eles.
+//!
 //! Rotas novas (contrato do ADR-0004 §4, só administradores da org):
 //! - `GET  /api/orgs/{org_id}/webhooks/{hook_id}`                               um webhook
 //! - `GET  /api/orgs/{org_id}/webhooks/{hook_id}/deliveries`                    lista paginada, mais recentes primeiro, `?status=`
