@@ -1622,7 +1622,7 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::time::Duration;
 
@@ -2776,19 +2776,22 @@ mod tests {
         path
     }
 
+    /// O ffmpeg dos testes (`FFMPEG_BIN`), se a máquina o tiver.
+    pub(crate) fn ffmpeg_de_teste() -> Option<String> {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        std::process::Command::new(&bin)
+            .arg("-version")
+            .output()
+            .is_ok()
+            .then_some(bin)
+    }
+
     /// Corre o ffmpeg do servidor (`FFMPEG_BIN`) sobre `entradas` com os
     /// argumentos de saída `args`, para um webm, e devolve o áudio do
     /// resultado em PCM mono a 48 kHz, amostra atrás de amostra — sem olhar
     /// aos PTS, que é como o Chromium o toca. `None` se a máquina não tem ffmpeg.
-    fn compor(dir: &Path, entradas: &[PathBuf], args: &[String]) -> Option<Vec<i16>> {
-        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
-        if std::process::Command::new(&bin)
-            .arg("-version")
-            .output()
-            .is_err()
-        {
-            return None;
-        }
+    pub(crate) fn compor(dir: &Path, entradas: &[PathBuf], args: &[String]) -> Option<Vec<i16>> {
+        let bin = ffmpeg_de_teste()?;
         let corre = |cmd: &mut std::process::Command| {
             let res = cmd.output().unwrap();
             assert!(
@@ -2815,7 +2818,7 @@ mod tests {
     }
 
     /// Os argumentos de saída da composição só de áudio de `offsets_ms`.
-    fn args_da_mistura(offsets_ms: &[u64]) -> Vec<String> {
+    pub(crate) fn args_da_mistura(offsets_ms: &[u64]) -> Vec<String> {
         let (fc, aout) = audio_mix_graph(0, offsets_ms);
         let mut args: Vec<String> = vec![
             "-filter_complex".into(),
@@ -2867,7 +2870,8 @@ mod tests {
         );
     }
 
-    const SEM_FFMPEG: &str = "ffmpeg indisponível — o buraco de áudio NÃO foi verificado";
+    pub(crate) const SEM_FFMPEG: &str =
+        "ffmpeg indisponível — o buraco de áudio NÃO foi verificado";
     const FALA: [(u32, u32); 2] = [(0, 2000), (4000, 6000)];
 
     #[tokio::test]
@@ -2929,7 +2933,7 @@ mod tests {
     /// Onde há som no PCM: intervalos `[de, até)` em ms, medidos em janelas de
     /// 5 ms (RMS acima de 1 % da escala). É a medida que vê um pedaço de 20 ms
     /// fora do sítio; a média de uma janela larga esconde-o.
-    fn onde_ha_som(pcm: &[i16]) -> Vec<(usize, usize)> {
+    pub(crate) fn onde_ha_som(pcm: &[i16]) -> Vec<(usize, usize)> {
         let mut som: Vec<(usize, usize)> = Vec::new();
         for (i, janela) in pcm.chunks_exact(240).enumerate() {
             let energia: f64 = janela

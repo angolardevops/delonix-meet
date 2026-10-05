@@ -2140,6 +2140,118 @@ async fn force_mute_cala_o_telefone_na_perna() {
     ana.pc.close().await.unwrap();
 }
 
+/// **Um telefone calado pelo anfitrião fica no sítio, na gravação.**
+///
+/// Com `ForceMute` a perna da ponte não publica nada (R224): enquanto durar, a
+/// pista gravada do telefone não recebe um único pacote, e o timestamp salta
+/// quando ele volta. Acima de 10 s o ffmpeg tirava esse salto como
+/// descontinuidade, e o que o telefone dizia a seguir recuava na gravação o
+/// tempo todo em que esteve calado. O gravador escreve agora o silêncio na
+/// pista (`recorder::OpusGapFill`).
+///
+/// O SFU, a perna e o gravador são os de produção, e o relógio é o de parede:
+/// é também a prova de que um silêncio a sério cabe no tecto do gravador. O
+/// telefone é o `TelefoneFalso` (G.711 por UDP, sem FreeSWITCH nem operadora).
+/// Mede-se a pista do telefone composta pelo ffmpeg com os argumentos de
+/// produção, amostra a amostra. **Sem ffmpeg não mede nada** — e o CI não o tem.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn um_telefone_calado_pelo_anfitriao_nao_recua_na_gravacao() {
+    use crate::phone_bridge::{g711::Law, leg};
+    use crate::recorder::tests as gravador;
+    use std::sync::atomic::Ordering::SeqCst;
+    if gravador::ffmpeg_de_teste().is_none() {
+        eprintln!("{}", gravador::SEM_FFMPEG);
+        return;
+    }
+    let (sfu, metrics) = new_sfu();
+    let (room, leg_id) = (Uuid::new_v4(), Uuid::new_v4());
+    let (ev_tx, _ev_rx) = mpsc::channel(16);
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let perna = leg::start(
+        sfu.clone(),
+        leg::LegConfig {
+            room_id: room,
+            leg_id,
+            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            codec: leg::LegCodec::G711(Law::A),
+            initial_remote: None,
+        },
+        socket,
+        None,
+        ev_tx,
+    )
+    .await
+    .expect("perna da ponte");
+    let telefone = TelefoneFalso::ligar("127.0.0.1:0", perna.local_addr, Law::Mu, 1000.0).await;
+    let dir = std::env::temp_dir().join(format!("dlx-calado-{}", Uuid::new_v4()));
+    assert!(
+        sfu.start_recording(room, Uuid::new_v4(), "teste", None, &dir)
+            .await,
+        "a gravação não arrancou"
+    );
+    // 1 s calado por si, 3 s a falar, 12 s calado PELO ANFITRIÃO (o telefone
+    // continua a mandar o tom: é a perna que não o deixa entrar), 3 s a falar.
+    let inicio = std::time::Instant::now();
+    let agora = || inicio.elapsed().as_millis() as usize;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    telefone.tocar.store(true, SeqCst);
+    let fala = agora();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    perna.mute_flag().store(true, SeqCst);
+    let calado = agora();
+    tokio::time::sleep(Duration::from_secs(12)).await;
+    perna.mute_flag().store(false, SeqCst);
+    let volta = agora();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let fim = agora();
+    let session = sfu
+        .stop_recording(room)
+        .await
+        .expect("a sessão de gravação");
+    perna.stop().await;
+
+    let pistas: Vec<_> = session
+        .tracks
+        .iter()
+        .filter(|t| t.kind == "audio")
+        .collect();
+    assert_eq!(pistas.len(), 1, "a pista do telefone: {:?}", session.tracks);
+    let pcm = gravador::compor(
+        &session.dir,
+        &[pistas[0].path.clone()],
+        &gravador::args_da_mistura(&[0]),
+    )
+    .expect("ffmpeg");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (som, dur) = (gravador::onde_ha_som(&pcm), pcm.len() / 48);
+    eprintln!(
+        "telefone calado pelo anfitrião: falou aos {fala} ms, calado dos {calado} aos {volta} ms, \
+         parou aos {fim} ms · na gravação: {dur} ms, som em {som:?}"
+    );
+    // O relógio é o de parede, com a máquina como estiver: meio segundo de
+    // folga. O defeito que isto guarda são 12 s.
+    let perto = |medido: usize, esperado: usize| medido.abs_diff(esperado) <= 500;
+    assert_eq!(som.len(), 2, "duas falas, e saíram {som:?}");
+    assert!(
+        perto(som[0].0, fala) && perto(som[0].1, calado),
+        "a primeira fala ({fala}–{calado} ms) ficou em {:?}",
+        som[0]
+    );
+    assert!(
+        perto(som[1].0, volta) && perto(som[1].1, fim),
+        "a fala depois de calado ({volta}–{fim} ms) ficou em {:?} — recuou",
+        som[1]
+    );
+    assert!(perto(dur, fim), "a gravação tem {dur} ms e durou {fim}");
+    assert_eq!(
+        metrics
+            .recording_audio_gap_unfilled_total
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "um silêncio a sério ficou por encher"
+    );
+}
+
 /// **R221 — a ponte telefone↔sala, com media a sério nos dois sentidos.**
 ///
 /// Um «telefone» (socket UDP a mandar RTP G.711 lei μ com um tom de 1 kHz,
