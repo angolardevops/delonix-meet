@@ -12,6 +12,14 @@
 -- para o IVR da sala (`dialin_ivr.lua ramal`), que pede o PIN e a entrega à
 -- ponte telefone↔sala. NUNCA correu contra um FreeSWITCH real.
 --
+-- Segunda excepção (R292): a REDE PÚBLICA. Um número que não é de um ramal
+-- sai por um tronco se o plano de marcação da organização o mandar — e os
+-- números de emergência saem SEMPRE, antes de se procurar um ramal. Quem
+-- decide é o control plane, que responde `"outbound":true` com a organização
+-- do ramal que o FreeSWITCH AUTENTICOU (sip_auth_username / sip_auth_realm,
+-- nunca o From). A chamada passa ao contexto `delonix-outbound`, cujo plano
+-- o servidor serve número a número (mod_xml_curl, telephony_fs_xml.rs).
+--
 -- Porquê um passo de tradução em vez de discar `user/${destination_number}`
 -- directamente: o número curto (extensão) só é único DENTRO da org — o AOR
 -- registado (sip_username) é que é globalmente único. Ver o comentário no
@@ -39,8 +47,10 @@ local function http_post(path, body)
   -- antiga (`post content-type=… '<corpo>' '<cabeçalho>'`) o módulo tomava
   -- «content-type=application/json» pelo corpo e mandava o pedido sem
   -- Content-Type nem segredo: o servidor respondia 415 e todo o PIN era «errado».
+  -- Com tempo-limite: sem ele uma chamada — o 112 incluído — ficava pendurada
+  -- o tempo que o control plane demorasse a não responder.
   local args = string.format(
-    "%s%s content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
+    "%s%s connect-timeout 3 timeout 6 content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
     control_url, path, secret, body)
   -- Pela API do mod_curl, e não pela aplicação de dialplan (R227): os
   -- argumentos de uma aplicação — o segredo e, no IVR, o PIN — ficam escritos
@@ -68,13 +78,45 @@ if domain == "" or destination == "" then
   return
 end
 
-local body = string.format('{"domain":"%s","extension":"%s"}', domain, destination)
+-- O que o digest autenticou nesta chamada. É disto, e só disto, que o
+-- servidor tira a organização que paga uma chamada para fora.
+local auth_user = session:getVariable("sip_auth_username") or ""
+local auth_realm = session:getVariable("sip_auth_realm") or ""
+
+-- Nada do que vai para o JSON pode fechar a cadeia de caracteres: o destino
+-- vem do padrão do dialplan (dígitos e «+»); o resto, por via das dúvidas.
+-- Nem a plica, que delimita o corpo no argumento do mod_curl, nem o `%`: o
+-- mod_curl descodifica `%XX` no corpo DEPOIS desta limpeza.
+local function limpo(s) return (s:gsub("[%c\"'\\%%]", "")) end
+
+local body = string.format('{"domain":"%s","extension":"%s","auth_user":"%s","auth_realm":"%s"}',
+  limpo(domain), limpo(destination), limpo(auth_user), limpo(auth_realm))
 local resp = http_post("/internal/v1/voice/ivr/resolve-extension", body)
 
 if resp and resp:match('"meeting_access"%s*:%s*true') then
   -- O IVR atende, autentica o ramal pelo digest e fala com o listener INTERNO
   -- do control plane — por isso é outro script, com o seu próprio URL.
   session:execute("lua", "dialin_ivr.lua ramal")
+  return
+end
+
+if resp and resp:match('"outbound"%s*:%s*true') then
+  local org_id = json_str(resp, "org_id")
+  -- Só um UUID: é o que vai escolher os troncos de uma organização.
+  if not org_id or not org_id:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then
+    freeswitch.consoleLog("WARNING", "[delonix_ramais] saída sem organização válida — a rejeitar\n")
+    session:hangup("CALL_REJECTED")
+    return
+  end
+  session:setVariable("delonix_org_id", org_id)
+  -- À operadora apresenta-se o número curto de quem marca, não o utilizador
+  -- SIP do ramal — que é metade da credencial dele.
+  local caller = json_str(resp, "caller_extension")
+  if caller and caller:match("^%d+$") then
+    session:setVariable("effective_caller_id_number", caller)
+    session:setVariable("effective_caller_id_name", caller)
+  end
+  session:transfer(destination, "XML", "delonix-outbound")
   return
 end
 

@@ -84,6 +84,11 @@ done
 CDR_PENDENTES=/usr/local/freeswitch/var/lib/freeswitch/cdr-pendentes
 mkdir -p "$CDR_PENDENTES"
 chmod 700 "$CDR_PENDENTES"
+# `outbound_redirect_fatal`, global: nenhuma perna que o FreeSWITCH origina
+# segue um 3xx — nem a do tronco, nem a da chamada de teste pelo ESL, nem a
+# que toca num ramal. Segui-lo era ligar ao Contact que o outro lado escolhe,
+# sem passar pela guarda de saída (R213). Uma variável de canal que não exista
+# lê-se das globais (switch_channel.c).
 cat >"$CONF/vars-meet.xml" <<XML
 <include>
   <X-PRE-PROCESS cmd="set" data="delonix_control_url=${DELONIX_CONTROL_URL}"/>
@@ -91,6 +96,7 @@ cat >"$CONF/vars-meet.xml" <<XML
   <X-PRE-PROCESS cmd="set" data="delonix_ramais_sip_port=${DELONIX_RAMAIS_SIP_PORT:-5070}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_cdr_dir=${CDR_PENDENTES}"/>
   <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
+  <X-PRE-PROCESS cmd="set" data="outbound_redirect_fatal=true"/>
 </include>
 XML
 chmod 600 "$CONF/vars-meet.xml"
@@ -123,6 +129,13 @@ sed -i 's#<domain name="all" alias="false" parse="true"/>#<domain name="delonix-
   "$CONF/sip_profiles/external.xml"
 grep -q '<domain name="delonix-trunks" alias="false" parse="true"/>' "$CONF/sip_profiles/external.xml" ||
   { echo "não consegui pôr o domínio dos troncos no perfil external" >&2; exit 1; }
+#     Sem transferências (REFER) no perfil dos troncos: um REFER vindo do
+#     lado da operadora punha a perna de quem marcou a passar outra vez pelo
+#     plano de marcação, com a organização dela e para onde a operadora
+#     mandasse (R292). O dos ramais tem a mesma regra, em internal.xml.
+sed -i 's#<settings>#&\n    <param name="disable-transfer" value="true"/>#' "$CONF/sip_profiles/external.xml"
+grep -q '<param name="disable-transfer" value="true"/>' "$CONF/sip_profiles/external.xml" ||
+  { echo "não consegui desligar as transferências no perfil external" >&2; exit 1; }
 
 # 8. Um só endereço do servidor: tudo o que o FreeSWITCH lhe pede — o IVR do
 #    dial-in, o directório e o dialplan dos ramais (mod_xml_curl) e o
