@@ -22,6 +22,7 @@ mod dlp;
 mod error;
 mod extension_pin;
 mod extension_provisioning;
+mod fair_slots;
 pub mod grpc;
 mod guests;
 mod media_probe;
@@ -204,7 +205,7 @@ pub struct AppState {
     pub webauthn: Option<Arc<webauthn_rs::prelude::Webauthn>>,
     /// Vagas de composição de gravação (`FFMPEG_MAX_CONCURRENT`): o `ffmpeg`
     /// de uma gravação só arranca com uma vaga. Ver `recorder::wait_for_slot`.
-    pub compose_slots: Arc<tokio::sync::Semaphore>,
+    pub compose_slots: fair_slots::FairSlots,
 }
 
 impl AppState {
@@ -1486,7 +1487,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         provisioning_limiter: RateLimiter::new(20, Duration::from_secs(60)),
         telephony: telephony_service::Adapters::from_config(&config, &outbound),
         outbound,
-        compose_slots: Arc::new(tokio::sync::Semaphore::new(config.ffmpeg_max_concurrent)),
+        compose_slots: fair_slots::FairSlots::new(config.ffmpeg_max_concurrent),
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,
