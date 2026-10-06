@@ -7,7 +7,9 @@
 //!
 //! O áudio passa SEMPRE por `AUDIO_GAP_FILL` antes de mais nada: uma pista
 //! gravada tem buracos de PTS onde o participante se calou (DTX) ou onde se
-//! perdeu um pacote, e sem os encher a fala seguinte recua (R295).
+//! perdeu um pacote, e sem os encher a fala seguinte recua (R295). O que esse
+//! filtro não consegue — o primeiro pacote depois de um buraco, e os buracos
+//! de mais de 10 s — escreve-o o gravador na própria pista (`OpusGapFill`).
 //!
 //! A gravação entra na biblioteca LOGO ao parar, em `processing`, com o
 //! progresso da composição lido do `-progress` do ffmpeg; passa a `ready`
@@ -343,6 +345,163 @@ impl OpusClock {
     }
 }
 
+/// 20 ms de silêncio em Opus: o TOC `0xF8` (CELT, banda inteira, mono, um
+/// quadro de 20 ms) e o quadro que qualquer descodificador lê como silêncio.
+const OPUS_SILENCE: [u8; 3] = [0xf8, 0xff, 0xfe];
+
+/// As amostras (a 48 kHz) de um `OPUS_SILENCE`.
+const OPUS_SILENCE_SAMPLES: u32 = 960;
+
+/// De quanto em quanto se escreve um `OPUS_SILENCE` dentro de um buraco: 5 s,
+/// metade do salto a partir do qual o ffmpeg deixa de ver um buraco e passa a
+/// ver uma descontinuidade (`-dts_delta_threshold`, 10 s), que tira. É também
+/// o silêncio que o `aresample` da composição chega a guardar de uma vez.
+const OPUS_GAP_MARK_EVERY: u32 = 5 * 48_000;
+
+/// O salto a partir do qual o ffmpeg tira o buraco em vez de o deixar ao
+/// filtro (`-dts_delta_threshold`, 10 s). Até aqui, o silêncio que o gravador
+/// escreve não muda quanto silêncio a composição tem — muda só onde fica.
+const OPUS_GAP_DISCONTINUITY: u32 = 2 * OPUS_GAP_MARK_EVERY;
+
+/// Quanto pode o relógio de uma pista andar à frente do tempo que passou sem
+/// um salto de mais de `OPUS_GAP_DISCONTINUITY` deixar de ser enchido. Cobre o
+/// atraso de rede do primeiro pacote e a deriva do relógio de quem envia.
+const OPUS_GAP_SLACK: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// As amostras (a 48 kHz) que um pacote Opus ocupa, lidas do TOC (RFC 6716
+/// §3.1). `None` se o pacote não o diz: vazio, código 3 sem a contagem de
+/// quadros, zero quadros, ou mais do que os 120 ms que um pacote pode levar.
+fn opus_packet_samples(payload: &[u8]) -> Option<u32> {
+    let toc = *payload.first()?;
+    let frame = match toc >> 3 {
+        config @ 0..=11 => [480, 960, 1920, 2880][usize::from(config & 3)],
+        config @ 12..=15 => [480, 960][usize::from(config & 1)],
+        config => 120 << (config & 3),
+    };
+    let frames = match toc & 3 {
+        0 => 1,
+        1 | 2 => 2,
+        _ => u32::from(*payload.get(1)? & 0x3f),
+    };
+    Some(frame * frames).filter(|n| (1..=5760).contains(n))
+}
+
+/// O silêncio que falta numa pista Opus, decidido pacote a pacote.
+///
+/// Uma pista gravada só tem os pacotes que chegaram. Onde o participante se
+/// calou (DTX: um pacote a cada 400 ms), ficou sem rede, ou foi calado na
+/// origem (um telefone com `ForceMute` não publica nada), o timestamp salta e
+/// a pista guarda o salto nos grânulos, sem amostra nenhuma no meio. O
+/// `AUDIO_GAP_FILL` da composição enche esses saltos, com dois restos que só
+/// se fecham aqui, ao gravar:
+///
+///  - o demuxer OGG do ffmpeg dá a cada pacote o grânulo da página ANTERIOR,
+///    por isso o primeiro pacote depois de um salto cola-se ao último que
+///    chegou: 20 ms do início da fala tocavam antes do silêncio. Um pacote de
+///    silêncio escrito antes dele recebe esse grânulo em vez dele. Fica à
+///    distância de um pacote DELE, para o seguinte lhe ficar encostado;
+///  - um salto de mais de 10 s é uma descontinuidade para o ffmpeg, que o tira
+///    antes de o filtro o ver. Com um pacote de silêncio a cada
+///    `OPUS_GAP_MARK_EVERY`, nenhum salto lá chega.
+///
+/// Só há buraco onde cabe um `OPUS_SILENCE` inteiro, medido com a duração que
+/// cada pacote diz ter: uma pista em pacotes de 60 ms salta 2880 amostras de
+/// cada vez e não tem buraco nenhum.
+///
+/// **O tecto é o tempo que passou.** Um timestamp pode saltar sem ter havido
+/// silêncio: corrompido, de uma origem que recomeçou o relógio lá à frente, ou
+/// de quem queira esticar a gravação dos outros. Um silêncio de N segundos
+/// demora N segundos a chegar — por isso um salto de mais de
+/// `OPUS_GAP_DISCONTINUITY` só se enche se a pista, com ele, não andar mais do
+/// que o tempo decorrido desde o seu primeiro pacote, mais `OPUS_GAP_SLACK`.
+/// O salto que passa disso fica como sempre ficou (o ffmpeg tira-o), é
+/// contado, e não conta como caminho andado: os silêncios de mais de 10 s que
+/// o gravador escreve numa pista nunca somam mais do que o tempo que ela
+/// durou. Os saltos até 10 s enchem-se sempre: a composição já os enchia.
+#[derive(Default)]
+struct OpusGapFill(Option<OpusGapTrack>);
+
+struct OpusGapTrack {
+    /// O último pacote escrito, fala ou silêncio: timestamp e amostras.
+    last_ts: u32,
+    last_samples: u32,
+    /// De onde se conta o tecto: quando chegou o primeiro pacote, e quantas
+    /// amostras a pista andou desde ele (sem os saltos recusados).
+    anchored: Instant,
+    walked: u64,
+}
+
+/// O que o `OpusGapFill` decide antes de um pacote ser escrito.
+#[derive(Debug, PartialEq, Eq)]
+enum OpusGap {
+    /// Não há buraco onde caiba silêncio.
+    None,
+    /// Há: silêncio de `OPUS_GAP_MARK_EVERY` em `OPUS_GAP_MARK_EVERY` a contar
+    /// de `after` (o último pacote escrito), e um último em `last`.
+    Fill { after: u32, last: u32 },
+    /// Há um salto destas amostras e não passou tempo que o explique.
+    Refused(u32),
+}
+
+impl OpusGapFill {
+    /// `ts` é o timestamp com que o pacote vai ser escrito (o que o
+    /// `OpusClock` decidiu), `samples` o que ele dura e `arrived` o instante
+    /// em que chegou ao gravador.
+    fn before(&mut self, ts: u32, samples: Option<u32>, arrived: Instant) -> OpusGap {
+        // Um pacote que não diz quanto dura não se rodeia de silêncio; para o
+        // que vier a seguir conta como um quadro de 20 ms.
+        let dur = samples.unwrap_or(OPUS_SILENCE_SAMPLES);
+        let Some(track) = &mut self.0 else {
+            self.0 = Some(OpusGapTrack {
+                last_ts: ts,
+                last_samples: dur,
+                anchored: arrived,
+                walked: 0,
+            });
+            return OpusGap::None;
+        };
+        let (after, step) = (track.last_ts, ts.wrapping_sub(track.last_ts));
+        // O buraco vai do fim do último pacote ao início deste; o último
+        // silêncio fica um pacote DESTE antes dele, e tem de caber depois do
+        // último escrito.
+        let hole = i64::from(step) - i64::from(track.last_samples);
+        let room = i64::from(step) - i64::from(dur);
+        (track.last_ts, track.last_samples) = (ts, dur);
+        let walked = track.walked + u64::from(step);
+        let fits = i64::from(OPUS_SILENCE_SAMPLES);
+        if samples.is_none() || hole < fits || room < fits {
+            track.walked = walked;
+            return OpusGap::None;
+        }
+        let passed = arrived.saturating_duration_since(track.anchored) + OPUS_GAP_SLACK;
+        if step > OPUS_GAP_DISCONTINUITY && u128::from(walked) > passed.as_millis() * 48 {
+            return OpusGap::Refused(hole as u32);
+        }
+        track.walked = walked;
+        OpusGap::Fill {
+            after,
+            last: ts.wrapping_sub(dur),
+        }
+    }
+}
+
+impl OpusGap {
+    /// Os timestamps onde se escreve silêncio, por ordem.
+    fn silences(&self) -> impl Iterator<Item = u32> {
+        let (after, last) = match *self {
+            OpusGap::Fill { after, last } => (after, Some(last)),
+            _ => (0, None),
+        };
+        // Os de 5 em 5 s que caibam antes do último, contados à partida: o
+        // número de voltas não depende de nenhuma soma chegar ao fim.
+        let room = last.map_or(0, |last| last.wrapping_sub(after));
+        let marks = room.saturating_sub(OPUS_SILENCE_SAMPLES) / OPUS_GAP_MARK_EVERY;
+        (1..=marks)
+            .map(move |k| after.wrapping_add(k * OPUS_GAP_MARK_EVERY))
+            .chain(last)
+    }
+}
+
 /// O que escreve mesmo no disco. Vive numa thread dedicada — ver `RecWriter`.
 enum RecSink {
     Video(Vp8IvfWriter),
@@ -350,6 +509,7 @@ enum RecSink {
         w: OggWriter<std::io::BufWriter<std::fs::File>>,
         key: Option<Arc<Aes256Gcm>>,
         clock: OpusClock,
+        gap: OpusGapFill,
     },
 }
 
@@ -361,6 +521,12 @@ enum SinkWrite {
     Late,
     /// Áudio escrito depois de o relógio da origem ter recuado de vez.
     Resync,
+}
+
+/// Um pacote à espera da thread de escrita, com o instante em que chegou.
+struct Queued {
+    pkt: webrtc::rtp::packet::Packet,
+    arrived: Instant,
 }
 
 impl RecSink {
@@ -381,36 +547,55 @@ impl RecSink {
             w: OggWriter::new(std::io::BufWriter::with_capacity(64 * 1024, file), 48000, 2)?,
             key,
             clock: OpusClock::default(),
+            gap: OpusGapFill::default(),
         })
     }
 
-    fn write_rtp(&mut self, mut pkt: webrtc::rtp::packet::Packet) -> SinkWrite {
+    /// Escreve o pacote. O segundo valor são as amostras de um salto do
+    /// relógio do áudio que ficou por encher (`OpusGap::Refused`).
+    fn write_rtp(&mut self, queued: Queued) -> (SinkWrite, Option<u32>) {
+        let Queued { mut pkt, arrived } = queued;
         match self {
             RecSink::Video(w) => {
                 let _ = w.write_rtp(&pkt);
-                SinkWrite::Done
+                (SinkWrite::Done, None)
             }
-            RecSink::Audio { w, key, clock } => {
+            RecSink::Audio { w, key, clock, gap } => {
                 // Um payload vazio não chega a ser escrito pelo `OggWriter`:
                 // não pode avançar o relógio de uma pista em que não entrou.
                 if pkt.payload.is_empty() {
-                    return SinkWrite::Done;
+                    return (SinkWrite::Done, None);
                 }
                 let (ts, done) = match clock.accept(pkt.header.timestamp) {
                     OpusTick::Write(ts) => (ts, SinkWrite::Done),
                     OpusTick::Resync(ts) => (ts, SinkWrite::Resync),
-                    OpusTick::Late => return SinkWrite::Late,
+                    OpusTick::Late => return (SinkWrite::Late, None),
                 };
                 // Opus: 1 frame por pacote — desencripta o payload (offset 1).
                 if let Some(key) = key {
                     let Some(clear) = decrypt_e2ee(key, &pkt.payload, 1) else {
-                        return done;
+                        return (done, None);
                     };
                     pkt.payload = clear.into();
                 }
+                // O silêncio que falta antes deste pacote, sobre o timestamp
+                // que o relógio decidiu e a duração do payload já em claro.
+                // Escreve-se em claro também numa sala cifrada: não é media de
+                // ninguém, e o resto da pista já está decifrado ao lado dele.
+                let plan = gap.before(ts, opus_packet_samples(&pkt.payload), arrived);
+                for at in plan.silences() {
+                    let mut silence = webrtc::rtp::packet::Packet::default();
+                    silence.header.timestamp = at;
+                    silence.payload = bytes::Bytes::from_static(&OPUS_SILENCE);
+                    let _ = w.write_rtp(&silence);
+                }
+                let unfilled = match plan {
+                    OpusGap::Refused(samples) => Some(samples),
+                    _ => None,
+                };
                 pkt.header.timestamp = ts;
                 let _ = w.write_rtp(&pkt);
-                done
+                (done, unfilled)
             }
         }
     }
@@ -490,7 +675,7 @@ const KEYFRAME_ASK_FOR: std::time::Duration = std::time::Duration::from_secs(30)
 /// Cheia, PERDEM-SE pacotes — e isso é registado e contado, nunca silencioso:
 /// uma gravação corrompida em silêncio é a R18, e é o pior resultado possível.
 pub struct RecWriter {
-    tx: Option<std::sync::mpsc::SyncSender<Box<webrtc::rtp::packet::Packet>>>,
+    tx: Option<std::sync::mpsc::SyncSender<Box<Queued>>>,
     join: Option<std::thread::JoinHandle<()>>,
     dropped: Arc<std::sync::atomic::AtomicU64>,
     /// Aceso enquanto a pista de VÍDEO não tiver o keyframe que a abre (ver
@@ -522,19 +707,36 @@ impl RecWriter {
     ) -> Self {
         let awaiting_key = sink.awaiting_key();
         let video = matches!(sink, RecSink::Video(_));
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Box<webrtc::rtp::packet::Packet>>(cap);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Box<Queued>>(cap);
         let (thread_metrics, thread_label) = (metrics.clone(), label.clone());
         let join = std::thread::Builder::new()
             .name(format!("dlx-rec-{label}"))
             .spawn(move || {
                 let mut sink = sink;
-                let mut late: u64 = 0;
+                let (mut late, mut unfilled): (u64, u64) = (0, 0);
                 // O laço termina quando TODOS os emissores caem (o `close`
                 // larga o `tx`), e só então se fecha o ficheiro. É isto que
                 // garante que o que estava em fila chega ao disco antes de o
                 // ffmpeg abrir o ficheiro.
-                while let Ok(pkt) = rx.recv() {
-                    match sink.write_rtp(*pkt) {
+                while let Ok(queued) = rx.recv() {
+                    let (written, gap) = sink.write_rtp(*queued);
+                    if let Some(samples) = gap {
+                        // Também nunca em silêncio: a fala a seguir a este
+                        // salto fica adiantada na gravação o tempo dele.
+                        crate::metrics::Metrics::bump(
+                            &thread_metrics.recording_audio_gap_unfilled_total,
+                        );
+                        if unfilled.is_multiple_of(500) {
+                            tracing::warn!(
+                                track = %thread_label,
+                                salto_ms = samples / 48,
+                                por_encher = unfilled + 1,
+                                "gravação: o relógio do áudio saltou mais do que o tempo que passou — o salto não se enche de silêncio"
+                            );
+                        }
+                        unfilled += 1;
+                    }
+                    match written {
                         SinkWrite::Done => {}
                         SinkWrite::Late => {
                             // Contado e avisado como a fila cheia: um pacote
@@ -578,6 +780,12 @@ impl RecWriter {
 
     /// Entrega um pacote à thread de escrita. NUNCA bloqueia o executor.
     pub fn write_rtp(&self, pkt: &webrtc::rtp::packet::Packet) {
+        self.write_rtp_at(pkt, Instant::now());
+    }
+
+    /// O mesmo, com o instante em que o pacote chegou: é contra ele que o
+    /// gravador mede um salto do relógio do áudio (`OpusGapFill`).
+    fn write_rtp_at(&self, pkt: &webrtc::rtp::packet::Packet, arrived: Instant) {
         let Some(tx) = &self.tx else { return };
         use std::sync::atomic::Ordering::Relaxed;
         // Decidido AQUI, com o mesmo predicado que o `Vp8IvfWriter` aplica na
@@ -592,7 +800,11 @@ impl RecWriter {
         } else {
             self.first.get().is_none() && !pkt.payload.is_empty()
         };
-        if tx.try_send(Box::new(pkt.clone())).is_ok() {
+        let queued = Queued {
+            pkt: pkt.clone(),
+            arrived,
+        };
+        if tx.try_send(Box::new(queued)).is_ok() {
             if starts {
                 // É ESTE o instante em que a pista entra na linha do tempo da
                 // gravação, não o da ligação do writer (ver `FirstPacket`).
@@ -1463,16 +1675,15 @@ async fn finalize_inner(
 /// omissão): um pacote perdido isolado desloca 20 ms e só é reposto quando a
 /// soma passa disso. `first_pts=0` fixa o início da pista no zero dela.
 ///
-/// O que NÃO enche: mais de 10 s sem um único pacote. O ffmpeg trata esse
-/// salto como descontinuidade (`-dts_delta_threshold`, 10 s) e tira-o antes de
-/// o filtro o ver. Subir o limiar não é saída: o `aresample` guarda o silêncio
-/// inteiro em memória antes de o entregar (medido: 440 MB para 6 min, 3,2 GB
-/// para 1 h). Esse caso só se fecha a escrever o silêncio na própria pista.
-///
-/// E o que deixa torto: o PRIMEIRO pacote depois de um buraco fica antes do
-/// silêncio, não depois. O demuxer OGG do ffmpeg dá a cada pacote o grânulo
-/// da página anterior, e o filtro enche a seguir a ele: 20 ms do início da
-/// fala tocam colados ao último pacote que chegou (até 380 ms antes, com DTX).
+/// O que NÃO enche sozinho: mais de 10 s sem um único pacote. O ffmpeg trata
+/// esse salto como descontinuidade (`-dts_delta_threshold`, 10 s) e tira-o
+/// antes de o filtro o ver. Subir o limiar não é saída: o `aresample` guarda o
+/// silêncio inteiro em memória antes de o entregar (medido: 440 MB para 6 min,
+/// 3,2 GB para 1 h). E o que deixava torto: o PRIMEIRO pacote depois de um
+/// buraco, que o demuxer OGG cola ao último que chegou. As duas coisas
+/// fecham-se ao gravar, com silêncio escrito na pista — ver `OpusGapFill`. O
+/// filtro continua a ser preciso: entre esses pacotes de silêncio a pista
+/// continua com buracos, e em `-c:a copy` iam para o contentor.
 const AUDIO_GAP_FILL: &str = "aresample=async=1:first_pts=0";
 
 /// O Opus de qualquer áudio que saia do ffmpeg recodificado.
@@ -1767,7 +1978,7 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::time::Duration;
 
@@ -2382,7 +2593,7 @@ mod tests {
 
     /// `(tipo de cabeçalho, posição do grânulo)` de cada página do OGG.
     /// Tipo `2` = início do fluxo, `4` = fim do fluxo.
-    fn ogg_paginas(path: &std::path::Path) -> Vec<(u8, u64)> {
+    pub(crate) fn ogg_paginas(path: &std::path::Path) -> Vec<(u8, u64)> {
         let b = std::fs::read(path).expect("ficheiro de gravação");
         let mut paginas = Vec::new();
         let mut i = 0;
@@ -2405,6 +2616,11 @@ mod tests {
         fechada: bool,
         /// `recording_audio_late_dropped_total` no fim.
         atrasados: u64,
+        /// `recording_audio_gap_unfilled_total` no fim.
+        por_encher: u64,
+        /// Páginas com um `OPUS_SILENCE` e mais nada. Só distingue o silêncio
+        /// do gravador num teste cujos pacotes levem outro payload.
+        silencios: usize,
         /// O ficheiro tal como ficou em disco.
         bytes: Vec<u8>,
     }
@@ -2423,6 +2639,18 @@ mod tests {
         key: Option<Arc<Aes256Gcm>>,
         pacotes: Vec<webrtc::rtp::packet::Packet>,
     ) -> PistaGravada {
+        // Todos chegam no mesmo instante: é o que um teste faz, e o que um
+        // timestamp que salta sem ter passado tempo parece ao gravador.
+        let agora = Instant::now();
+        let chegadas = pacotes.into_iter().map(|p| (p, agora)).collect();
+        grava_pacotes_que_chegam(key, chegadas).await
+    }
+
+    /// Grava pacotes de áudio, cada um com o instante em que chegou.
+    async fn grava_pacotes_que_chegam(
+        key: Option<Arc<Aes256Gcm>>,
+        pacotes: Vec<(webrtc::rtp::packet::Packet, Instant)>,
+    ) -> PistaGravada {
         let dir = std::env::temp_dir().join(format!("dlx-rec-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("teste.ogg");
@@ -2435,12 +2663,18 @@ mod tests {
             "teste-audio".into(),
             FirstPacket::new(Instant::now()),
         );
-        for pkt in &pacotes {
-            w.write_rtp(pkt);
+        for (pkt, chegou) in &pacotes {
+            w.write_rtp_at(pkt, *chegou);
         }
         w.close().await;
         let paginas = ogg_paginas(&path);
         let bytes = std::fs::read(&path).unwrap();
+        // Uma página de um só segmento de 3 bytes, que é o `OPUS_SILENCE`.
+        let pagina_de_silencio: Vec<u8> = [1, 3].into_iter().chain(OPUS_SILENCE).collect();
+        let silencios = bytes
+            .windows(pagina_de_silencio.len())
+            .filter(|w| *w == &pagina_de_silencio[..])
+            .count();
         // Para olhar para o ficheiro com o `ffprobe`, fora do teste.
         if let Ok(guardar) = std::env::var("DLX_TESTE_GUARDA_OGG") {
             let _ = std::fs::copy(&path, guardar);
@@ -2458,6 +2692,10 @@ mod tests {
             atrasados: metrics
                 .recording_audio_late_dropped_total
                 .load(std::sync::atomic::Ordering::Relaxed),
+            por_encher: metrics
+                .recording_audio_gap_unfilled_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            silencios,
             bytes,
         }
     }
@@ -2474,7 +2712,9 @@ mod tests {
             pista.granulos
         );
         assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
-        assert_eq!(pista.granulos, vec![1, 1921], "o atrasado não se escreve");
+        // O atrasado não se escreve: quando o 1920 chegou, o lugar do 960 era
+        // um buraco, e foi enchido com silêncio.
+        assert_eq!(pista.granulos, vec![1, 961, 1921]);
         assert_eq!(pista.atrasados, 1, "descartado, mas contado");
     }
 
@@ -2583,12 +2823,14 @@ mod tests {
         let pista = grava_audio(&timestamps).await;
         assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
         assert_eq!(u64::from(n - 1), pista.atrasados);
-        // 10 antes do recuo, mais o que re-ancora e os 10 a seguir.
-        assert_eq!(pista.granulos.len(), 21);
+        // 10 antes do recuo, o silêncio no fim do buraco que os descartados
+        // deixaram, o que re-ancora e os 10 a seguir.
+        assert_eq!(pista.granulos.len(), 22);
         let ultimo_antes = 1 + 9 * 960;
         assert_eq!(pista.granulos[9], ultimo_antes);
-        assert_eq!(pista.granulos[10], ultimo_antes + u64::from(n - 1) * 960);
-        assert_eq!(pista.granulos[20], ultimo_antes + u64::from(n + 9) * 960);
+        assert_eq!(pista.granulos[10], ultimo_antes + u64::from(n - 2) * 960);
+        assert_eq!(pista.granulos[11], ultimo_antes + u64::from(n - 1) * 960);
+        assert_eq!(pista.granulos[21], ultimo_antes + u64::from(n + 9) * 960);
     }
 
     #[tokio::test]
@@ -2620,7 +2862,8 @@ mod tests {
             .collect();
         // Um frame que não autentica (outra chave), em dia: não se escreve, não
         // conta como atrasado, e o seguinte cobre o tempo dele como uma perda —
-        // são os grânulos que o mostram: escrito, havia uma página em 3841.
+        // a página em 3841 é o silêncio que encheu esse buraco, como a de 961
+        // encheu o do atrasado. O silêncio vai em claro: não é de ninguém.
         let claro = frame(5);
         let mut alheio = opus_silencio(5, 3840);
         alheio.payload =
@@ -2628,7 +2871,8 @@ mod tests {
         pacotes.insert(4, alheio);
         let pista = grava_pacotes_de_audio(Some(key), pacotes).await;
         assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
-        assert_eq!(pista.granulos, vec![1, 1921, 2881, 4801]);
+        assert_eq!(pista.granulos, vec![1, 961, 1921, 2881, 3841, 4801]);
+        assert_eq!(pista.silencios, 2);
         assert_eq!(pista.atrasados, 1);
         let tem = |n: u8| pista.bytes.windows(41).any(|w| w == &frame(n)[..]);
         assert!(
@@ -2636,6 +2880,310 @@ mod tests {
             "os frames saem decifrados"
         );
         assert!(!tem(3), "o atrasado não entra");
+        assert!(!tem(5), "o que não autentica não entra");
+    }
+
+    // ------------------------------------------------------------------
+    //  O silêncio que o gravador escreve nos buracos de uma pista de áudio
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn a_duracao_de_um_pacote_opus_le_se_do_toc() {
+        // Configuração (5 bits), estéreo (1), código de quadros (2).
+        assert_eq!(opus_packet_samples(&OPUS_SILENCE), Some(960));
+        assert_eq!(opus_packet_samples(&[0x18]), Some(2880), "SILK, 60 ms");
+        assert_eq!(opus_packet_samples(&[0x10]), Some(1920), "SILK, 40 ms");
+        assert_eq!(
+            opus_packet_samples(&[0x48]),
+            Some(960),
+            "SILK de banda larga"
+        );
+        assert_eq!(opus_packet_samples(&[0x60]), Some(480), "híbrido, 10 ms");
+        assert_eq!(opus_packet_samples(&[0x78, 9, 9]), Some(960), "híbrido");
+        assert_eq!(opus_packet_samples(&[0x80]), Some(120), "CELT, 2,5 ms");
+        assert_eq!(
+            opus_packet_samples(&[0xf9, 1, 1]),
+            Some(1920),
+            "dois quadros"
+        );
+        assert_eq!(
+            opus_packet_samples(&[0xfa, 1, 1]),
+            Some(1920),
+            "dois, desiguais"
+        );
+        assert_eq!(
+            opus_packet_samples(&[0xfb, 3]),
+            Some(2880),
+            "três, contados"
+        );
+        assert_eq!(
+            opus_packet_samples(&[0xfb, 0x83]),
+            Some(2880),
+            "com os bits de VBR"
+        );
+        assert_eq!(
+            opus_packet_samples(&[0xfb, 6]),
+            Some(5760),
+            "120 ms, o máximo"
+        );
+        assert_eq!(opus_packet_samples(&[0xfb, 7]), None, "mais de 120 ms");
+        assert_eq!(opus_packet_samples(&[0x1b, 3]), None, "três de 60 ms");
+        assert_eq!(opus_packet_samples(&[0xfb, 0]), None, "zero quadros");
+        assert_eq!(opus_packet_samples(&[0xfb]), None, "falta a contagem");
+        assert_eq!(opus_packet_samples(&[]), None);
+    }
+
+    /// O que o plano manda escrever antes de cada pacote de `pacotes`
+    /// (`(timestamp, amostras, ms a que chegou)`).
+    fn planos(pacotes: &[(u32, u32, u64)]) -> Vec<(OpusGap, Vec<u32>)> {
+        let (mut gap, inicio) = (OpusGapFill::default(), Instant::now());
+        pacotes
+            .iter()
+            .map(|(ts, amostras, ms)| {
+                let chegou = inicio + Duration::from_millis(*ms);
+                let plano = gap.before(*ts, Some(*amostras), chegou);
+                let silencios = plano.silences().collect();
+                (plano, silencios)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn so_ha_silencio_onde_falta_um_pacote_inteiro() {
+        // Pacotes de 20 ms seguidos, e de 60 ms seguidos: nenhum buraco. Sem
+        // ler a duração do pacote, uma pista em pacotes de 60 ms levava um
+        // silêncio por cima de cada um.
+        let seguidos = planos(&[(0, 960, 0), (960, 960, 20), (1920, 960, 40)]);
+        assert!(
+            seguidos.iter().all(|p| p.0 == OpusGap::None),
+            "{seguidos:?}"
+        );
+        let de_60 = planos(&[(0, 2880, 0), (2880, 2880, 60), (5760, 2880, 120)]);
+        assert!(de_60.iter().all(|p| p.0 == OpusGap::None), "{de_60:?}");
+        // A origem muda o tamanho do pacote a meio, sem buraco.
+        let muda = planos(&[
+            (0, 2880, 0),
+            (2880, 960, 60),
+            (3840, 2880, 80),
+            (6720, 960, 140),
+        ]);
+        assert!(muda.iter().all(|p| p.0 == OpusGap::None), "{muda:?}");
+        // Menos de 20 ms em falta: não cabe um pacote de silêncio.
+        let curto = planos(&[(0, 960, 0), (1440, 960, 30)]);
+        assert_eq!(curto[1].0, OpusGap::None);
+    }
+
+    #[test]
+    fn o_silencio_fica_um_pacote_antes_do_primeiro_depois_do_buraco() {
+        // Um pacote perdido: o silêncio ocupa exactamente o lugar dele.
+        let perda = planos(&[(0, 960, 0), (1920, 960, 40)]);
+        assert_eq!(perda[1].1, vec![960]);
+        // DTX: 380 ms sem nada, e o silêncio 20 ms antes do pacote seguinte.
+        let dtx = planos(&[(0, 960, 0), (19_200, 960, 400)]);
+        assert_eq!(dtx[1].1, vec![19_200 - 960]);
+        // Se o pacote seguinte é de 60 ms, é a 60 ms dele que o silêncio fica:
+        // o demuxer dá ao pacote o instante do silêncio, e o pacote a seguir
+        // tem de lhe ficar encostado.
+        let de_60 = planos(&[(0, 2880, 0), (48_000, 2880, 1000)]);
+        assert_eq!(de_60[1].1, vec![48_000 - 2880]);
+        // Falta um quadro de 20 ms antes de um pacote de 60 ms: o silêncio
+        // não cabe depois do último escrito, e não se escreve.
+        let nao_cabe = planos(&[(0, 960, 0), (1920, 2880, 40)]);
+        assert_eq!(nao_cabe[1].0, OpusGap::None);
+    }
+
+    #[test]
+    fn um_buraco_comprido_leva_um_silencio_a_cada_5_s() {
+        let passo = OPUS_GAP_MARK_EVERY;
+        // 12 s: aos 5 e aos 10 s do último pacote, e 20 ms antes do seguinte.
+        let doze = planos(&[(0, 960, 0), (576_000, 960, 12_000)]);
+        assert_eq!(doze[1].1, vec![passo, 2 * passo, 576_000 - 960]);
+        // O último dos 5 s não se escreve se ficar em cima do silêncio final.
+        let justo = planos(&[(0, 960, 0), (passo + 1440, 960, 5030)]);
+        assert_eq!(justo[1].1, vec![passo + 480]);
+        let cabe = planos(&[(0, 960, 0), (passo + 1920, 960, 5040)]);
+        assert_eq!(cabe[1].1, vec![passo, passo + 960]);
+        // Nenhum salto entre o que se escreve chega aos 10 s do ffmpeg.
+        let hora = planos(&[(0, 960, 0), (3600 * 48_000, 960, 3_600_000)]);
+        let escritos: Vec<u32> = std::iter::once(0)
+            .chain(hora[1].1.iter().copied())
+            .chain([3600 * 48_000])
+            .collect();
+        assert_eq!(hora[1].1.len(), 720);
+        assert!(
+            escritos
+                .windows(2)
+                .all(|w| w[1] > w[0] && w[1] - w[0] <= passo + 960),
+            "saltos entre silêncios acima de 5 s"
+        );
+        // E atravessa a volta dos 32 bits sem se perder.
+        let antes = u32::MAX - 959;
+        let volta = planos(&[
+            (antes, 960, 0),
+            (antes.wrapping_add(12 * 48_000), 960, 12_000),
+        ]);
+        assert_eq!(
+            volta[1].1,
+            vec![
+                antes.wrapping_add(passo),
+                antes.wrapping_add(2 * passo),
+                antes.wrapping_add(12 * 48_000 - 960)
+            ]
+        );
+    }
+
+    #[test]
+    fn um_salto_maior_do_que_o_tempo_que_passou_nao_se_enche() {
+        let hora = 3600 * 48_000u32;
+        // Seis horas de salto num pacote que chega 20 ms depois do anterior.
+        let corrompido = planos(&[(0, 960, 0), (960, 960, 20), (6 * hora, 960, 40)]);
+        assert_eq!(corrompido[2].0, OpusGap::Refused(6 * hora - 1920));
+        assert!(corrompido[2].1.is_empty());
+        // Os mesmos 6 min de silêncio, a chegar 6 min depois, e a chegar já.
+        let seis_min = 360 * 48_000;
+        let calado = planos(&[(0, 960, 0), (seis_min, 960, 360_000)]);
+        assert_eq!(calado[1].1.len(), 72);
+        let falso = planos(&[(0, 960, 0), (seis_min, 960, 20)]);
+        assert_eq!(falso[1].0, OpusGap::Refused(seis_min - 960));
+        // A folga: 11 s de salto enchem-se se tiver passado 1,2 s, e não se
+        // tiverem passado 20 ms.
+        let folga = planos(&[(0, 960, 0), (528_000, 960, 1200)]);
+        assert_eq!(folga[1].1.len(), 3);
+        let sem_folga = planos(&[(0, 960, 0), (528_000, 960, 20)]);
+        assert_eq!(sem_folga[1].0, OpusGap::Refused(528_000 - 960));
+    }
+
+    #[test]
+    fn ate_10_s_o_salto_enche_se_sempre() {
+        // Até aos 10 s a composição já enchia o salto sozinha: o silêncio do
+        // gravador só muda onde fica o primeiro pacote, e o tecto não se
+        // aplica. Aqui a pista vai 20 s à frente do relógio (mil pacotes
+        // seguidos que chegam no mesmo instante — uma origem com o relógio
+        // adiantado chega lá em horas) e um buraco de DTX enche-se na mesma.
+        let mut pacotes: Vec<(u32, u32, u64)> = (0..1000u32).map(|i| (i * 960, 960, 0)).collect();
+        let ultimo = 999 * 960;
+        pacotes.push((ultimo + 19_200, 960, 400));
+        pacotes.push((ultimo + 19_200 + 480_000, 960, 10_400));
+        // Acima dos 10 s o tecto vale, e esta pista já o gastou.
+        pacotes.push((ultimo + 19_200 + 480_000 + 576_000, 960, 22_400));
+        let planos_todos = planos(&pacotes);
+        assert_eq!(planos_todos[1000].1, vec![ultimo + 19_200 - 960]);
+        assert_eq!(
+            planos_todos[1001].1.len(),
+            2,
+            "10 s certos: aos 5 s e antes"
+        );
+        assert_eq!(planos_todos[1002].0, OpusGap::Refused(576_000 - 960));
+    }
+
+    #[test]
+    fn os_saltos_recusados_nao_dao_folga_nova() {
+        // Quem salte 12 s em cada pacote, a 50 pacotes por segundo: em 10 s
+        // de relógio cabem, com a folga, 20 s de pista — UM salto enchido em
+        // 499, e não um por cada recusa.
+        let pacotes: Vec<(u32, u32, u64)> = (0..500u32)
+            .map(|i| (i * 12 * 48_000, 960, u64::from(i) * 20))
+            .collect();
+        let planos_todos = planos(&pacotes);
+        let enchidos = planos_todos.iter().filter(|p| !p.1.is_empty()).count();
+        assert_eq!(enchidos, 1);
+        let recusados = planos_todos
+            .iter()
+            .filter(|p| matches!(p.0, OpusGap::Refused(_)))
+            .count();
+        assert_eq!(recusados, 498);
+        // Depois de um salto recusado, um silêncio a sério volta a ser enchido:
+        // o salto não ficou a contar como tempo da pista.
+        let hora = 3600 * 48_000u32;
+        let depois = planos(&[
+            (0, 960, 0),
+            (hora, 960, 20),
+            (hora + 960, 960, 40),
+            (hora + 960 + 30 * 48_000, 960, 30_040),
+        ]);
+        assert_eq!(depois[1].0, OpusGap::Refused(hora - 960));
+        assert_eq!(depois[3].1.len(), 6);
+    }
+
+    #[test]
+    fn um_pacote_que_nao_diz_quanto_dura_nao_se_rodeia_de_silencio() {
+        let (mut gap, t) = (OpusGapFill::default(), Instant::now());
+        assert_eq!(gap.before(0, Some(960), t), OpusGap::None);
+        assert_eq!(gap.before(48_000, None, t), OpusGap::None);
+        // Para o seguinte, o ilegível contou como 20 ms.
+        assert_eq!(gap.before(48_960, Some(960), t), OpusGap::None);
+        assert_eq!(
+            gap.before(50_880, Some(960), t),
+            OpusGap::Fill {
+                after: 48_960,
+                last: 49_920
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn um_timestamp_corrompido_nao_escreve_horas_de_silencio() {
+        // Pela thread de escrita: nem uma página a mais, e o salto contado.
+        let seis_horas = 6 * 3600 * 48_000;
+        let pista = grava_audio(&[0, 960, seis_horas, seis_horas + 960]).await;
+        assert!(pista.fechada);
+        assert_eq!(pista.granulos.len(), 4, "{:?}", pista.granulos);
+        assert_eq!(pista.por_encher, 1);
+        assert_eq!(pista.atrasados, 0);
+    }
+
+    #[tokio::test]
+    async fn uma_hora_calado_custa_720_paginas_de_silencio() {
+        // O pior caso que se enche é o tempo que a gravação durou. Uma hora sem
+        // um pacote (um telefone calado pelo anfitrião) são 720 páginas de 31
+        // bytes; medido aqui para o número não ser de cabeça.
+        let inicio = Instant::now();
+        let hora = Duration::from_secs(3600);
+        let frame = |n: u8| -> Vec<u8> { std::iter::once(0xf8).chain([n; 40]).collect() };
+        let pacotes = [(0u32, inicio), (3600 * 48_000, inicio + hora)]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (ts, chegou))| {
+                let mut pkt = opus_silencio(i as u16, ts);
+                pkt.payload = frame(i as u8).into();
+                (pkt, chegou)
+            })
+            .collect();
+        let a_escrever = Instant::now();
+        let pista = grava_pacotes_que_chegam(None, pacotes).await;
+        let demorou = a_escrever.elapsed();
+        assert!(pista.fechada);
+        assert_eq!(pista.silencios, 720);
+        assert_eq!(pista.granulos.len(), 722);
+        assert_eq!(pista.por_encher, 0);
+        let de_silencio = 720 * (27 + 1 + OPUS_SILENCE.len());
+        assert!(
+            pista.bytes.len() < de_silencio + 400,
+            "{}",
+            pista.bytes.len()
+        );
+        eprintln!(
+            "1 h de silêncio: {} páginas, {} bytes no ficheiro, escrito em {demorou:?}",
+            pista.silencios,
+            pista.bytes.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn uma_pista_em_pacotes_de_60_ms_nao_leva_silencio() {
+        let pacotes = (0..50u16)
+            .map(|i| {
+                let mut pkt = opus_silencio(i, u32::from(i) * 2880);
+                pkt.payload = std::iter::once(0x18)
+                    .chain([i as u8; 30])
+                    .collect::<Vec<u8>>()
+                    .into();
+                pkt
+            })
+            .collect();
+        let pista = grava_pacotes_de_audio(None, pacotes).await;
+        assert_eq!(pista.granulos.len(), 50);
+        assert_eq!(pista.silencios, 0);
     }
 
     #[test]
@@ -2797,7 +3345,10 @@ mod tests {
     /// Grava uma pista de áudio. Dentro de `fala` (intervalos em ms) há um tom
     /// a `freq`; fora deles não sai pacote e o timestamp RTP salta, que é o
     /// que a perda faz. Com `dtx`, o silêncio leva um pacote de 20 ms a cada
-    /// 400 ms, como o Opus do Chrome com `usedtx=1`.
+    /// 400 ms, como o Opus do Chrome com `usedtx=1` — depois de 200 ms em que
+    /// ainda envia tudo: é aí que o descodificador ouve o som morrer, e sem
+    /// eles os pacotes do silêncio saem dele com o volume da fala. Cada pacote
+    /// chega ao gravador no instante que o seu timestamp diz.
     async fn pista_com_buraco(
         session: &mut RecordingSession,
         freq: f32,
@@ -2810,6 +3361,7 @@ mod tests {
         enc.bitrate_bps = 32_000;
         let mut out = vec![0u8; 1500];
         let (mut seq, mut calado) = (0u16, 0u32);
+        let inicio = Instant::now();
         for i in 0..total_ms / 20 {
             let t = i * 20;
             let fala_agora = fala.iter().any(|(a, b)| (*a..*b).contains(&t));
@@ -2825,11 +3377,11 @@ mod tests {
             // O codificador vê todos os quadros; só alguns chegam ao gravador.
             let len = enc.encode(&pcm, 960, &mut out).unwrap();
             calado = if fala_agora { 0 } else { calado + 1 };
-            if !fala_agora && !(dtx && calado % 20 == 0) {
+            if !fala_agora && !(dtx && (calado <= 10 || calado % 20 == 0)) {
                 continue;
             }
             seq = seq.wrapping_add(1);
-            w.write_rtp(&webrtc::rtp::packet::Packet {
+            let pkt = webrtc::rtp::packet::Packet {
                 header: webrtc::rtp::header::Header {
                     sequence_number: seq,
                     timestamp: 90_000 + i * 960,
@@ -2837,25 +3389,29 @@ mod tests {
                     ..Default::default()
                 },
                 payload: out[..len].to_vec().into(),
-            });
+            };
+            w.write_rtp_at(&pkt, inicio + Duration::from_millis(t.into()));
         }
         assert_eq!(w.close().await, 0, "a fila de escrita perdeu pacotes");
         path
+    }
+
+    /// O ffmpeg dos testes (`FFMPEG_BIN`), se a máquina o tiver.
+    pub(crate) fn ffmpeg_de_teste() -> Option<String> {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        std::process::Command::new(&bin)
+            .arg("-version")
+            .output()
+            .is_ok()
+            .then_some(bin)
     }
 
     /// Corre o ffmpeg do servidor (`FFMPEG_BIN`) sobre `entradas` com os
     /// argumentos de saída `args`, para um webm, e devolve o áudio do
     /// resultado em PCM mono a 48 kHz, amostra atrás de amostra — sem olhar
     /// aos PTS, que é como o Chromium o toca. `None` se a máquina não tem ffmpeg.
-    fn compor(dir: &Path, entradas: &[PathBuf], args: &[String]) -> Option<Vec<i16>> {
-        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
-        if std::process::Command::new(&bin)
-            .arg("-version")
-            .output()
-            .is_err()
-        {
-            return None;
-        }
+    pub(crate) fn compor(dir: &Path, entradas: &[PathBuf], args: &[String]) -> Option<Vec<i16>> {
+        let bin = ffmpeg_de_teste()?;
         let corre = |cmd: &mut std::process::Command| {
             let res = cmd.output().unwrap();
             assert!(
@@ -2882,7 +3438,7 @@ mod tests {
     }
 
     /// Os argumentos de saída da composição só de áudio de `offsets_ms`.
-    fn args_da_mistura(offsets_ms: &[u64]) -> Vec<String> {
+    pub(crate) fn args_da_mistura(offsets_ms: &[u64]) -> Vec<String> {
         let (fc, aout) = audio_mix_graph(0, offsets_ms);
         let mut args: Vec<String> = vec![
             "-filter_complex".into(),
@@ -2934,7 +3490,8 @@ mod tests {
         );
     }
 
-    const SEM_FFMPEG: &str = "ffmpeg indisponível — o buraco de áudio NÃO foi verificado";
+    pub(crate) const SEM_FFMPEG: &str =
+        "ffmpeg indisponível — o buraco de áudio NÃO foi verificado";
     const FALA: [(u32, u32); 2] = [(0, 2000), (4000, 6000)];
 
     #[tokio::test]
@@ -2991,6 +3548,112 @@ mod tests {
             return;
         };
         exige_tom_silencio_tom(&pcm, 0, "um publicador");
+    }
+
+    /// Onde há som no PCM: intervalos `[de, até)` em ms, medidos em janelas de
+    /// 5 ms (RMS acima de 1 % da escala). É a medida que vê um pedaço de 20 ms
+    /// fora do sítio; a média de uma janela larga esconde-o.
+    pub(crate) fn onde_ha_som(pcm: &[i16]) -> Vec<(usize, usize)> {
+        let mut som: Vec<(usize, usize)> = Vec::new();
+        for (i, janela) in pcm.as_chunks::<240>().0.iter().enumerate() {
+            let energia: f64 = janela
+                .iter()
+                .map(|s| (*s as f64 / 32768.0).powi(2))
+                .sum::<f64>();
+            if (energia / 240.0).sqrt() < 0.01 {
+                continue;
+            }
+            match som.last_mut() {
+                Some((_, fim)) if *fim == i * 5 => *fim += 5,
+                _ => som.push((i * 5, i * 5 + 5)),
+            }
+        }
+        som
+    }
+
+    /// Compõe UMA pista pelo caminho só de áudio e diz onde ficou o som.
+    async fn som_da_pista(
+        fala: &[(u32, u32)],
+        total_ms: u32,
+        dtx: bool,
+    ) -> Option<(Vec<(usize, usize)>, usize)> {
+        let mut s = sessao_de_teste().await;
+        let a = pista_com_buraco(&mut s, 440.0, total_ms, fala, dtx).await;
+        if let Ok(guardar) = std::env::var("DLX_TESTE_GUARDA_PISTAS") {
+            let nome = format!("pista-{total_ms}-{}.ogg", if dtx { "dtx" } else { "perda" });
+            let _ = std::fs::copy(&a, Path::new(&guardar).join(nome));
+        }
+        let pcm = compor(&s.dir, &[a], &args_da_mistura(&[0]));
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+        let pcm = pcm?;
+        Some((onde_ha_som(&pcm), pcm.len() / 48))
+    }
+
+    /// Cada pista entra 80 ms adiantada na composição: o `pre-skip` que o
+    /// `OggWriter` declara e o ffmpeg desconta ao início.
+    const ADIANTO_MS: usize = 80;
+
+    /// `som` tem exactamente os intervalos de `fala`, cada um onde foi dito
+    /// (menos o `ADIANTO_MS`). O início tem 15 ms de folga — o defeito que
+    /// isto guarda são 20 —, o fim 40, que é a cauda do codificador.
+    fn exige_som_so_onde_se_falou(som: &[(usize, usize)], fala: &[(u32, u32)], caso: &str) {
+        assert_eq!(
+            som.len(),
+            fala.len(),
+            "{caso}: som fora do sítio — está em {som:?} e falou-se em {fala:?}"
+        );
+        for ((de, ate), (a, b)) in som.iter().zip(fala) {
+            let (a, b) = (
+                (*a as usize).saturating_sub(ADIANTO_MS),
+                *b as usize - ADIANTO_MS,
+            );
+            assert!(
+                de.abs_diff(a) <= 15 && ate.abs_diff(b) <= 40,
+                "{caso}: a fala de {a}–{b} ms ficou em {de}–{ate} ms (tudo: {som:?})"
+            );
+        }
+    }
+
+    /// O primeiro pacote depois de um silêncio não pode ficar ANTES dele. O
+    /// demuxer OGG dá a cada pacote o grânulo da página anterior: sem um pacote
+    /// de silêncio escrito 20 ms antes, o início da fala cola-se ao último
+    /// pacote que chegou (aqui 200 ms antes, com DTX; 2,2 s antes, com perda).
+    /// Precisa de ffmpeg, como os três de cima: no CI dá `ok` sem medir.
+    #[tokio::test]
+    async fn o_inicio_da_fala_nao_fica_antes_do_silencio() {
+        let fala = [(0, 2000), (4200, 6200)];
+        for dtx in [true, false] {
+            let Some((som, _)) = som_da_pista(&fala, 6200, dtx).await else {
+                eprintln!("{SEM_FFMPEG}");
+                return;
+            };
+            let caso = if dtx { "com DTX" } else { "com perda" };
+            eprintln!("{caso}: som em {som:?}");
+            exige_som_so_onde_se_falou(&som, &fala, caso);
+        }
+    }
+
+    /// Mais de 10 s sem um único pacote (quem fica sem rede, um telefone calado
+    /// pelo anfitrião): o ffmpeg trata o salto como descontinuidade e tira-o
+    /// antes do filtro. Com um pacote de silêncio a cada 5 s na pista, não há
+    /// salto que chegue aos 10 s. Precisa de ffmpeg.
+    #[tokio::test]
+    async fn um_buraco_de_mais_de_10_s_fica_inteiro() {
+        for buraco_ms in [9_900u32, 10_500, 60_000] {
+            let fala = [(0, 1000), (1000 + buraco_ms, 2000 + buraco_ms)];
+            let total = 2000 + buraco_ms;
+            let Some((som, dur_ms)) = som_da_pista(&fala, total, false).await else {
+                eprintln!("{SEM_FFMPEG}");
+                return;
+            };
+            let caso = format!("buraco de {buraco_ms} ms");
+            eprintln!("{caso}: {dur_ms} ms de áudio, som em {som:?}");
+            exige_som_so_onde_se_falou(&som, &fala, &caso);
+            assert!(
+                dur_ms.abs_diff(total as usize - ADIANTO_MS) <= 60,
+                "{caso}: a composição tem {dur_ms} ms e a pista {total}"
+            );
+        }
     }
 
     /// O que o CI vê (não tem ffmpeg): o enchimento está em TODAS as cadeias

@@ -18,12 +18,19 @@
 //   2. «só áudio», um publicador    → uma cadeia de áudio e mais nada;
 //   3. um publicador com vídeo      → o vídeo em cópia.
 //
+// E o INÍCIO de cada fala fica depois do silêncio, não antes? O demuxer OGG do
+// ffmpeg dá a cada pacote o grânulo da página anterior: sem um pacote de
+// silêncio escrito pelo gravador antes do primeiro pacote depois de um buraco,
+// 20 ms do início da fala tocam colados ao último pacote que chegou — até
+// 380 ms antes, com DTX. Mede-se em janelas de 5 ms, e ouve-se no Chromium.
+//
 // NÃO corre no CI (que não tem ffmpeg). Precisa do servidor com ffmpeg, do vite
 // a servir o arnês e de acesso ao `RECORDINGS_DIR` do servidor, de onde copia
 // as pistas cruas antes de o `finalize` as apagar. Uso:
 //   API=http://127.0.0.1:8180 APP=http://localhost:5174 RECORDINGS_DIR=… \
 //     [FFMPEG=ffmpeg] [FFPROBE=ffprobe] [SAIDA=<pasta>] [CENARIOS=1,2,3] [VERBOSE=1] \
 //     node e2e/gravacao-buraco-audio.mjs
+// Para medir uma gravação já feita, sem servidor: `MEDE=<gravacao.webm> [COM_B=1]`.
 import { chromium } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
@@ -38,6 +45,7 @@ const FFMPEG = process.env.FFMPEG ?? 'ffmpeg'
 const FFPROBE = process.env.FFPROBE ?? 'ffprobe'
 const SAIDA = process.env.SAIDA ?? mkdtempSync(join(tmpdir(), 'dlx-buraco-'))
 const SEGUNDOS = Number(process.env.SEGUNDOS ?? 36)
+const MEDE = process.env.MEDE
 // As esperas esticam com a máquina (R118); o que se mede não.
 const FATOR = Number(process.env.E2E_TIMEOUT_FACTOR) || 1
 const PW = 'UmaPasswordForte123!'
@@ -46,7 +54,7 @@ let falhas = 0
 const chk = (c, n) => { console.log(`  ${c ? '✓' : '✗'} ${n}`); if (!c) falhas++ }
 const nota = (n) => console.log(`    · ${n}`)
 
-if (!REC_DIR || !existsSync(REC_DIR)) {
+if (!MEDE && (!REC_DIR || !existsSync(REC_DIR))) {
   console.error('RECORDINGS_DIR tem de apontar para a pasta de gravações do servidor')
   process.exit(2)
 }
@@ -67,10 +75,13 @@ const j = (path, o = {}) =>
     ...(o.body ? { body: JSON.stringify(o.body) } : {}),
   }).then(async (r) => ({ s: r.status, j: await r.json().catch(() => null) }))
 
-const m = Math.random().toString(36).slice(2, 7)
-const email = `ba${m}@ba${m}.local`
-await j('/api/auth/register', { method: 'POST', body: { org_name: `BA ${m}`, email, username: `ba${m}`, password: PW } })
-const tok = (await j('/api/auth/login', { method: 'POST', body: { email, password: PW } })).j.access_token
+async function conta() {
+  const m = Math.random().toString(36).slice(2, 7)
+  const email = `ba${m}@ba${m}.local`
+  await j('/api/auth/register', { method: 'POST', body: { org_name: `BA ${m}`, email, username: `ba${m}`, password: PW } })
+  return (await j('/api/auth/login', { method: 'POST', body: { email, password: PW } })).j.access_token
+}
+const tok = MEDE ? null : await conta()
 
 async function reuniao(opcoes) {
   const r = await j('/api/meetings', {
@@ -174,8 +185,35 @@ function inicios(x, freq, calaMs, duraMs) {
   return tons.filter((o) => o.dura >= duraMs).map((o) => o.t)
 }
 
+/** Pedaços do tom a `freq` soltos antes de uma fala: janelas de 5 ms, limiar a
+ *  10 % do pico. Um pedaço é som que dura menos de 100 ms e vem depois de
+ *  300 ms calados — a cauda de um tom que acaba não conta, que vem colada. */
+function pedacos(x, freq) {
+  const N = 240
+  const w = (2 * Math.PI * freq) / 48000
+  const nivel = []
+  for (let a = 0; a + N <= x.length; a += N) {
+    let re = 0, im = 0
+    for (let i = 0; i < N; i++) { re += x[a + i] * Math.cos(w * i); im += x[a + i] * Math.sin(w * i) }
+    nivel.push((2 * Math.hypot(re, im)) / N / 32768)
+  }
+  const pico = Math.max(...nivel, 1e-9)
+  const sons = []
+  let calado = 60
+  nivel.forEach((v, k) => {
+    if (v > pico * 0.1) {
+      if (calado > 0) sons.push({ t: k * 5, dura: 0, antes: calado * 5 })
+      sons.at(-1).dura += 5
+      calado = 0
+    } else calado++
+  })
+  return sons.filter((o) => o.dura < 100 && o.antes >= 300)
+}
+
 /** Toca o ficheiro no Chromium e devolve o instante DO MEDIA (ms) em que cada
- *  tom a 440 Hz se ouve — o que uma pessoa vê e ouve na biblioteca. */
+ *  tom a 440 Hz se ouve — o que uma pessoa vê e ouve na biblioteca — e os
+ *  tons que começam por um pedaço solto (som, 50 ms ou mais calado, e só
+ *  depois o tom). */
 async function ouveNoChromium(ficheiro) {
   const srv = createServer((req, res) => {
     if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); return res.end('<video id=v src="/f.webm" preload="auto"></video>') }
@@ -203,21 +241,26 @@ async function ouveNoChromium(ficheiro) {
       const buf = new Float32Array(an.frequencyBinCount)
       const tons = []
       let calado = 0
+      let ouvido = 0
       await v.play()
       const t0 = performance.now()
       await new Promise((fim) => {
         const id = setInterval(() => {
           an.getFloatFrequencyData(buf)
           if (Math.max(buf[bin - 1], buf[bin], buf[bin + 1]) > -45) {
-            if (calado >= 50) tons.push({ t: Math.round(v.currentTime * 1000), ticks: 0 })
+            const agora = performance.now()
+            if (calado >= 50) tons.push({ t: Math.round(v.currentTime * 1000), ticks: 0, desde: agora, solto: 0 })
+            else if (tons.length > 0 && agora - tons.at(-1).desde < 600 && agora - ouvido >= 50) tons.at(-1).solto = Math.round(agora - ouvido)
             if (tons.length > 0) tons.at(-1).ticks++
             calado = 0
+            ouvido = agora
           } else calado++
           if (v.ended || performance.now() - t0 > 120000) { clearInterval(id); fim() }
         }, 10)
       })
       // Só os tons inteiros (2 s): o apanhado a meio no início não é um início.
-      return { inicios: tons.filter((o) => o.ticks >= 150).map((o) => o.t), relogio: (performance.now() - t0) / 1000, duracao: v.duration }
+      const inteiros = tons.filter((o) => o.ticks >= 150)
+      return { inicios: inteiros.map((o) => o.t), soltos: inteiros.filter((o) => o.solto > 0).map((o) => ({ t: o.t, ms: o.solto })), relogio: (performance.now() - t0) / 1000, duracao: v.duration }
     })
   } finally {
     await b.close()
@@ -278,7 +321,11 @@ async function cenario(nome, opcoes, comB) {
   const webm = join(pasta, 'gravacao.webm')
   mkdirSync(pasta, { recursive: true })
   writeFileSync(webm, Buffer.from(await dl.arrayBuffer()))
+  await mede(webm, comB)
+}
 
+/** O que se mede numa gravação: as amostras seguidas, e o Chromium a tocá-la. */
+async function mede(webm, comB) {
   const g = buracos(webm)
   const x = pcm(webm)
   const amostras = x.length / 48000
@@ -289,8 +336,13 @@ async function cenario(nome, opcoes, comB) {
   const pa = passos(inicios(x, 440, 500, 1500))
   nota(`A (440 Hz), amostras seguidas: passos de ${pa.join(', ')} ms (esperado 8000)`)
   chk(pa.length >= 2 && pa.every((p) => Math.abs(p - 8000) <= 200), 'a fala de A depois de cada silêncio está onde foi dita (8000 ± 200 ms)')
+  const ped = pedacos(x, 440)
+  nota(`A (440 Hz), janelas de 5 ms: ${ped.length} pedaços soltos${ped.length ? ' — ' + ped.map((o) => `${o.dura} ms aos ${(o.t / 1000).toFixed(3)} s`).join(', ') : ''}`)
+  chk(ped.length === 0, 'nenhum pedaço da fala de A ficou antes do silêncio')
   if (comB) {
-    const tb = inicios(x, 2500, 300, 0)
+    // Só os toques inteiros (150 ms): a pista de B pode abrir a meio de um, e
+    // esse resto não é um toque — dava um passo curto que não é defeito nenhum.
+    const tb = inicios(x, 2500, 300, 100)
     const pb = passos(tb)
     const fora = pb.filter((p) => Math.abs(p - 1000) > 100)
     nota(`B (2500 Hz): ${tb.length} toques; passo mínimo ${Math.min(...pb)} ms, máximo ${Math.max(...pb)} ms (esperado 1000)`)
@@ -302,13 +354,20 @@ async function cenario(nome, opcoes, comB) {
   const po = passos(o.inicios)
   nota(`no Chromium: A ouve-se aos ${o.inicios.map((t) => (t / 1000).toFixed(2)).join(', ')} s do media; tocou em ${o.relogio.toFixed(1)} s (duration ${o.duracao.toFixed(1)} s)`)
   chk(po.length >= 2 && po.every((p) => Math.abs(p - 8000) <= 300), 'no Chromium, a fala de A ouve-se de 8 em 8 s (± 300 ms)')
+  nota(`no Chromium: ${o.soltos.length} falas começam por um pedaço solto${o.soltos.length ? ' — ' + o.soltos.map((s) => `aos ${(s.t / 1000).toFixed(2)} s, ${s.ms} ms antes do resto`).join(', ') : ''}`)
+  chk(o.soltos.length === 0, 'no Chromium, nenhuma fala começa por um pedaço solto')
   chk(Math.abs(o.relogio - o.duracao) < 3, 'e o ficheiro toca no tempo que diz ter')
 }
 
 const quais = (process.env.CENARIOS ?? '1,2,3').split(',')
-if (quais.includes('1')) await cenario('1-grelha-dois-publicadores', {}, true)
-if (quais.includes('2')) await cenario('2-so-audio-um-publicador', { record_quality: 'audio' }, false)
-if (quais.includes('3')) await cenario('3-remux-um-publicador', {}, false)
+if (MEDE) {
+  console.log(`\n--- ${MEDE} ---`)
+  await mede(MEDE, process.env.COM_B === '1')
+} else {
+  if (quais.includes('1')) await cenario('1-grelha-dois-publicadores', {}, true)
+  if (quais.includes('2')) await cenario('2-so-audio-um-publicador', { record_quality: 'audio' }, false)
+  if (quais.includes('3')) await cenario('3-remux-um-publicador', {}, false)
+}
 
 console.log(`\nficheiros em ${SAIDA}`)
 console.log(falhas === 0 ? '\n=== TODOS PASSARAM ===' : `\n=== ${falhas} FALHARAM ===`)
