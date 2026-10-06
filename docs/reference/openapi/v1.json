@@ -5913,6 +5913,31 @@
         ],
         "type": "object"
       },
+      "ObjectStoreView": {
+        "description": "O armazenamento de objectos, como o operador o pode ver: endereço e bucket,\n**nunca** as chaves. Vem do ambiente (Secret do cluster), não da tabela.",
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "used_for_recordings": {
+            "description": "Hoje é sempre `false`: as gravações continuam a ser escritas em disco e\nservidas de lá. O ADR-0020 diz porquê — ligar o gravador sem um MinIO\nreal onde medir deixaria o produto num estado que ninguém exercitou.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "endpoint",
+          "bucket",
+          "region",
+          "used_for_recordings"
+        ],
+        "type": "object"
+      },
       "OdooConfig": {
         "properties": {
           "hide_org_creation": {
@@ -11122,6 +11147,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "object_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectStoreView",
+                "description": "Armazenamento de objectos visto pelo AMBIENTE do servidor, quando existe.\nNão é um `storage_type`: ver `ObjectStoreView`."
+              }
             ]
           },
           "storage_type": {

@@ -211,6 +211,20 @@ function StorageForm({ initial, onSaved, usedText }: { initial: StorageConfig; o
         </>
       )}
 
+      {initial.object_store && !initial.object_store.used_for_recordings && (
+        <div className="integ-desc">
+          <strong>{t('integrations.storage.objectosTitulo')}</strong>
+          <div className="dx-muted integ-small">{t('integrations.storage.objectosSub')}</div>
+          <div className="dx-num integ-small">
+            {t('integrations.storage.objectosEndpoint')}: {initial.object_store.endpoint} ·{' '}
+            {t('integrations.storage.objectosBucket')}: {initial.object_store.bucket}
+          </div>
+          {/* O aviso é o ponto todo deste bloco: sem ele, um operador que viu o
+              bucket configurado acreditaria que as gravações estavam lá. */}
+          <Alert tone="warning">{t('integrations.storage.objectosAindaNao')}</Alert>
+        </div>
+      )}
+
       {err && <Alert tone="danger">{err}</Alert>}
       {ok && <Alert tone="success">{t('integrations.guardado')}</Alert>}
       {test && (
