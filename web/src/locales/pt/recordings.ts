@@ -48,6 +48,9 @@ export default {
     estado: 'Estado',
   },
   estado: {
+    aProcessar: 'A processar',
+    aProcessarPct: 'A processar {{pct}}%',
+    aProcessarAviso: 'O servidor ainda está a compor esta gravação. Fica disponível quando acabar.',
     aTranscrever: 'A transcrever',
     aTranscreverPct: 'A transcrever {{pct}}%',
     publicada: 'Publicada',

@@ -381,6 +381,10 @@
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 8%, var(--surface));
 }
+/* A compor: ainda não há o que abrir, por isso não é um botão. */
+.rec-card__thumb.is-processing {
+  cursor: default;
+}
 .rec-card__play {
   display: grid;
   place-content: center;

@@ -8625,7 +8625,7 @@
             "type": "integer"
           },
           "progress_pct": {
-            "description": "Progresso do passo em curso, 0–100. `null` fora dele.",
+            "description": "Progresso da composição, 0–100, enquanto o `status` é `processing`.\n`null` fora dela (a transcrição não escreve progresso aqui).",
             "format": "int32",
             "type": [
               "integer",
@@ -8667,7 +8667,7 @@
             "type": "string"
           },
           "status": {
-            "description": "Estado do FICHEIRO: `transcribing` | `ready` | `failed`.\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
+            "description": "Estado do FICHEIRO: `processing` | `transcribing` | `ready` | `failed`.\n\n`processing` é o servidor a compor o ficheiro depois de a gravação\nparar: ainda não há nada para reproduzir, o `progress_pct` diz quanto\nfalta, e não é uma falha (`failure_reason` é `null`).\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
             "type": "string"
           },
           "tags": {
@@ -33610,6 +33610,16 @@
             },
             "description": "Gravação inexistente, sem acesso (inclui membro arquivado), ou ficheiro em falta no disco."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.processing`: o servidor ainda está a compor o ficheiro (`status = processing`). Não é uma falha: volta a pedir quando a gravação estiver `ready`. Só para quem chega à gravação."
+          },
           "416": {
             "description": "`Range` bem escrito mas fora do ficheiro. Traz `Content-Range: bytes */<total>`."
           }
@@ -34041,6 +34051,16 @@
               }
             },
             "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação não tem ficheiro: falhou, ou o servidor ainda a está a compor (`status = processing`). Código genérico `conflict`."
           }
         },
         "security": [
@@ -34545,6 +34565,16 @@
               }
             },
             "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação não tem ficheiro: falhou, ou o servidor ainda a está a compor (`status = processing`). Código genérico `conflict`."
           }
         },
         "security": [
