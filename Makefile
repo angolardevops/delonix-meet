@@ -280,6 +280,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@HELM=$(HELM) bash scripts/check-helm.sh
 	@HELM=$(HELM) bash scripts/check-observabilidade.sh
 	@bash scripts/check-ansible-producao.sh
+	@bash scripts/check-crypto-provider.sh
 	@bash scripts/check-arquitectura-catraca.sh
 	@bash scripts/check-crate-deps.sh
 	@bash scripts/check-proto.sh

@@ -212,6 +212,9 @@ jobs:
       - name: O Ansible da produção lê-se e os plays casam com o inventário do tofu (ADR-0020)
         run: bash scripts/check-ansible-producao.sh
 
+      - name: Uma só crypto provider do rustls (as duas fazem QUALQUER TLS do processo entrar em panic — R308)
+        run: bash scripts/check-crypto-provider.sh
+
       - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
         run: bash scripts/check-arquitectura-catraca.sh
 

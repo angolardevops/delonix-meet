@@ -3649,6 +3649,16 @@ Envio("dispatch failure")
 - **Um teste de recusa nomeia a recusa.** «Falhou» inclui «nem tentou».
 - **O erro mostrado ao operador leva o CÓDIGO do serviço** (`NoSuchBucket`, `InvalidAccessKeyId`, `AccessDenied`), que é uma palavra e não topologia. Antes era «service error», que não distingue um bucket inexistente de uma chave errada — e as duas coisas arranjam-se de maneiras opostas. Sem código do serviço, o erro não chegou a ser uma resposta: aí vale o texto do SDK (`dispatch failure`), que é o sinal mais importante dos dois.
 
+**E a correcção, à primeira, partiu dezassete testes que não têm nada a ver com S3.** Repor o transporte com a feature `default-https-client` do SDK arrasta o `aws-smithy-http-client/rustls-aws-lc` — e este binário está todo em **`ring`** (o `dtls` do `webrtc`, que é o SFU, e o `tls-rustls` do `sqlx`; o comentário do `rustls` no `server/Cargo.toml` já o dizia, porque **já tinha acontecido uma vez**, com o `rustls` directo do SMPP). Com as duas crypto providers compiladas, o rustls recusa-se a escolher:
+
+```
+Could not automatically determine the process-level CryptoProvider
+```
+
+e o panic é em **qualquer** ligação TLS do processo. O CI apanhou-o: 17 falhas em `sfu_e2e` (DTLS) e em `sms_smpp` (TLS), ao fim de 28 minutos de testes, **nenhuma delas em código de S3**.
+
+A resposta não foi outra feature: o `aws-smithy-http-client` passa a ser dependência **directa**, com `rustls-ring`, e o `objectos.rs` dá o cliente ao SDK à mão (`.http_client(...)`). A crypto provider fica **escrita no código**, que é onde a próxima pessoa a procura, em vez de sair de um grafo de features.
+
 **Portão.** `scripts/objectos-prova.sh` — ergue um MinIO em contentor (rede própria, API só em loopback), cria o bucket com o `mc`, corre `server/tests/objectos_minio.rs` e desmonta. O teste **declara-se não medido** quando falta o ambiente, em vez de passar em silêncio, e o script verifica esse aviso (um teste de integração que passa sem o serviço de pé não prova nada).
 
 **Prova corrida a 2026-10-06** contra `minio/minio:latest`:
@@ -3659,7 +3669,11 @@ Envio("dispatch failure")
 - depois de `apagar`, `tamanho` e `ler_intervalo` **falham** (é isso que deixa o servidor distinguir «não está lá» de «veio vazio»), e apagar outra vez **não** falha (no S3 é idempotente);
 - bucket inexistente → `NoSuchBucket`, sem a chave de acesso nem a secreta no texto.
 
-**Controlo negativo:** tirada a feature `default-https-client`, os dois testes falham, o segundo com «não cheguei a falar com o MinIO — isto não prova nada sobre o bucket: … dispatch failure». Reposta, passam.
+**Controlo negativo:** tirado o cliente HTTP, os dois testes falham, o segundo com «não cheguei a falar com o MinIO — isto não prova nada sobre o bucket: … dispatch failure». Reposto, passam.
+
+**E um segundo portão, para a segunda metade.** `scripts/check-crypto-provider.sh` lê as features do `rustls` na árvore real do binário e falha se aparecerem as duas providers, nomeando quem traz a segunda. Controlo negativo: posto o `rustls-aws-lc` de volta, o portão falha e aponta o `aws-smithy-http-client`; com `rustls-ring`, passa. Isto é a terceira vez que esta classe de erro aparece neste repo e a primeira em que fica fechada — antes vivia num comentário.
+
+**Medido depois da correcção:** os 18 testes de `sfu_e2e` e os 10 de `sms_smpp` passam na árvore local, e a prova do MinIO continua verde.
 
 **O que NÃO está provado.**
 - **Contra a AWS S3 a sério, nada.** Mediu-se MinIO em `http://`. O caminho HTTPS com SigV4 contra o serviço da Amazon não foi exercitado — e é esse que usa o TLS que esta feature traz.
