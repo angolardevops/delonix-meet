@@ -861,6 +861,21 @@ cluster-down: ## Destrói o cluster local (nós, rede e kubeconfig)
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh down
 
 # ============================================================
+#  PRODUÇÃO — meet.ngolacloud.com (ADR-0020)
+#
+#  Infra PRÓPRIA do Meet, num cluster só dele. NÃO é o `make cluster`, que é
+#  o laboratório local: o que as separa é o cluster e o kubeconfig.
+# ============================================================
+.PHONY: prod-vms prod-vms-plano prod-inventario
+prod-vms-plano: ## Produção: o que o OpenTofu faria às VMs do Proxmox (LÊ ANTES de aplicar)
+	@cd deploy/tofu && tofu init -input=false >/dev/null && tofu plan
+prod-vms: ## Produção: cria/actualiza as VMs do cluster no Proxmox (pede confirmação)
+	@cd deploy/tofu && tofu init -input=false >/dev/null && tofu apply
+prod-inventario: ## Produção: escreve o inventário do Ansible a partir do estado do OpenTofu
+	@cd deploy/tofu && tofu output -raw inventario_ansible > ../ansible/inventory-producao.ini
+	@printf "$(G)  ✓ deploy/ansible/inventory-producao.ini escrito do estado do OpenTofu$(Z)\n"
+
+# ============================================================
 #  MANUTENÇÃO
 # ============================================================
 .PHONY: clean
