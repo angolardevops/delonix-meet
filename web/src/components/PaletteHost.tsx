@@ -62,12 +62,19 @@ function escoposDoEcra(inRoom: boolean): EscopoDeAtalho[] {
 export default function PaletteHost({
   user,
   inRoom,
+  protegido,
   onLogout,
   onEnterRoom,
   children,
 }: {
   user: User
   inRoom: boolean
+  /**
+   * Há media a correr que navegar mataria — uma chamada OU uma emissão/gravação
+   * do Estúdio. O `inRoom` continua a decidir os ESCOPOS de atalho («sala»,
+   * «quadro»); isto decide só se se abre em nova aba.
+   */
+  protegido: boolean
   onLogout: () => void
   onEnterRoom: (code: string) => void
   children: ReactNode
@@ -111,10 +118,10 @@ export default function PaletteHost({
   const openHash = useCallback(
     (hash: string) => {
       const h = hash.startsWith('#') ? hash : `#${hash}`
-      if (inRoom) window.open(`${location.pathname}${location.search}${h}`, '_blank', 'noopener')
+      if (protegido) window.open(`${location.pathname}${location.search}${h}`, '_blank', 'noopener')
       else location.hash = h.slice(1)
     },
-    [inRoom],
+    [protegido],
   )
   const navigate = useCallback((k: NavKey) => openHash(k === 'home' ? '/' : `/${k}`), [openHash])
 
