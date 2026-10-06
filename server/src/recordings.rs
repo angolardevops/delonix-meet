@@ -151,7 +151,11 @@ pub struct RecordingItem {
     pub can_download: bool,
     /// Pode editar nome, descrição, etiquetas, capítulos, legendas e publicar.
     pub can_manage: bool,
-    /// Estado do FICHEIRO: `transcribing` | `ready` | `failed`.
+    /// Estado do FICHEIRO: `processing` | `transcribing` | `ready` | `failed`.
+    ///
+    /// `processing` é o servidor a compor o ficheiro depois de a gravação
+    /// parar: ainda não há nada para reproduzir, o `progress_pct` diz quanto
+    /// falta, e não é uma falha (`failure_reason` é `null`).
     ///
     /// A entrada falhada existe para ser VISTA: antes, uma gravação que não
     /// compunha desaparecia sem deixar rasto, e quem carregou em «gravar»
@@ -161,7 +165,8 @@ pub struct RecordingItem {
     pub failure_reason: Option<String>,
     /// O `status`, com `published` quando está pronta e publicada.
     pub state: String,
-    /// Progresso do passo em curso, 0–100. `null` fora dele.
+    /// Progresso da composição, 0–100, enquanto o `status` é `processing`.
+    /// `null` fora dela (a transcrição não escreve progresso aqui).
     pub progress_pct: Option<i16>,
     /// `meeting` | `training` | `broadcast` | `hybrid`.
     pub kind: String,
@@ -1062,6 +1067,7 @@ pub struct DownloadQuery {
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "`recording.download_forbidden`: chega à gravação mas não pode descarregar (`dl=1`).", body = crate::openapi::ErrorBody),
         (status = 404, description = "Gravação inexistente, sem acesso (inclui membro arquivado), ou ficheiro em falta no disco.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "`recording.processing`: o servidor ainda está a compor o ficheiro (`status = processing`). Não é uma falha: volta a pedir quando a gravação estiver `ready`. Só para quem chega à gravação.", body = crate::openapi::ErrorBody),
         (status = 416, description = "`Range` bem escrito mas fora do ficheiro. Traz `Content-Range: bytes */<total>`."),
     ),
     params(("Range" = Option<String>, Header, description = "`bytes=<início>-<fim>`, `bytes=<início>-` ou `bytes=-<sufixo>`. Uma só faixa: com várias, responde-se o ficheiro inteiro.")),
@@ -1081,6 +1087,15 @@ pub async fn download(
     // outra resposta: o `400` de gravação falhada levava o motivo da falha a
     // utilizadores de outra organização.
     let rec = seen_item(&state, id, auth.user_id).await?;
+    // A compor: ainda não há ficheiro, e não é uma falha. Sem este ramo a
+    // resposta era «esta gravação falhou», dita a quem acabou de a parar.
+    if rules::file_status(rec.processing_facts()) == rules::FileStatus::Processing {
+        return Err(DomainError::conflict(
+            "recording.processing",
+            "A gravação ainda está a ser composta. Fica disponível quando o processamento acabar.",
+        )
+        .into());
+    }
     // Uma gravação falhada não tem ficheiro. Sem esta guarda, o pedido descia
     // até ao `File::open` e voltava um 500 opaco — quando a resposta honesta é
     // dizer que não há nada para descarregar, e porquê.

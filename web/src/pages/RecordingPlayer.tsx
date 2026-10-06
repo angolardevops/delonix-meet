@@ -63,6 +63,7 @@ import { ChapterView, fromRecordingItem, RecordingView } from './recordings/reco
 import ShareDialog from './recordings/ShareDialog'
 import { playerHash, studioEditHash } from './recordings/studioLink'
 import Transcript from './recordings/Transcript'
+import { useProcessingUpdates } from './recordings/useProcessingUpdates'
 
 type InfoTab = 'description' | 'transcript' | 'comments' | 'participants' | 'captions' | 'attachments'
 type SideTab = 'next' | 'series'
@@ -146,18 +147,30 @@ export default function RecordingPlayer({ id }: { id: string }) {
               </div>
             )
           }
-          return <Player key={rec.id} rec={rec} library={library} meetings={meetings} onChanged={reload} />
+          return <LivePlayer key={rec.id} rec={rec} library={library} meetings={meetings} onChanged={reload} />
         }}
       </AsyncSection>
     </div>
   )
 }
 
+/**
+ * Enquanto o servidor compõe a gravação, o leitor relê-a: o aviso mostra o
+ * progresso a andar e dá lugar ao vídeo quando o ficheiro existe.
+ */
+function LivePlayer(props: { rec: RecordingView; library: RecordingView[]; meetings: Meeting[]; onChanged: () => void }) {
+  const source = props.rec.source
+  const rows = useMemo(() => [source], [source])
+  const live = useProcessingUpdates(rows)
+  const rec = useMemo(() => fromRecordingItem(live(source)), [live, source])
+  return <Player {...props} rec={rec} />
+}
+
 function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; library: RecordingView[]; meetings: Meeting[]; onChanged: () => void }) {
   const { t, i18n } = useTranslation()
   const videoRef = useRef<HTMLVideoElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
-  const [video, retry] = useRecordingVideo(rec, !rec.failed)
+  const [video, retry] = useRecordingVideo(rec, rec.hasFile)
   const src = video.s === 'ready' ? video.url : null
   const pb = usePlayback(videoRef, src)
   const [info, setInfo] = useState<InfoTab>('description')
@@ -293,9 +306,9 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
     { value: 'description', label: t('player.descricao') },
     { value: 'transcript', label: t('player.transcricao') },
   ]
-  if (!rec.failed) tabs.push({ value: 'comments', label: t('player.comentariosN', { count: rec.commentCount ?? 0 }) })
+  if (rec.hasFile) tabs.push({ value: 'comments', label: t('player.comentariosN', { count: rec.commentCount ?? 0 }) })
   if (rec.participantCount !== null) tabs.push({ value: 'participants', label: t('player.participantesN', { count: rec.participantCount }) })
-  if (!rec.failed) tabs.push({ value: 'captions', label: t('player.legendasN', { count: rec.captionLanguages.length }) })
+  if (rec.hasFile) tabs.push({ value: 'captions', label: t('player.legendasN', { count: rec.captionLanguages.length }) })
   tabs.push({ value: 'attachments', label: attachCount === null ? t('player.anexos') : t('player.anexosN', { count: attachCount }) })
 
   return (
@@ -305,6 +318,13 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
           <Alert tone="danger" icon="alert">
             {rec.failureReason || t('recordings.estado.semCausa')}
           </Alert>
+        ) : rec.processing ? (
+          <>
+            <Alert icon="hourglass">{t('recordings.estado.aProcessarAviso')}</Alert>
+            {/* O progresso fica FORA do aviso (`role="status"`): dentro, um
+                leitor de ecrã relia a frase inteira a cada percentagem. */}
+            <RecordingState state={visibleState(rec)} />
+          </>
         ) : (
           <div className="pl-video" ref={stageRef}>
             {src ? (
@@ -401,7 +421,7 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
               </div>
             </div>
             <div className="dx-spacer" />
-            {!rec.failed && (
+            {rec.hasFile && (
               <div className="pl-actions">
                 <Button variant="primary" size="sm" icon="scissors" onClick={() => (location.hash = studioEditHash(rec.id).slice(1))}>
                   {t('player.editarStudio')}
@@ -432,7 +452,7 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
           {actionErr && <Alert tone="danger">{actionErr}</Alert>}
         </div>
 
-        <div className={cx('pl-lower', rec.failed && 'is-single')}>
+        <div className={cx('pl-lower', !rec.hasFile && 'is-single')}>
           <section className="pl-card pl-info">
             <Tabs<InfoTab> label={t('player.separadores')} value={info} onChange={setInfo} tabs={tabs} />
             <div className="pl-info__body">
@@ -450,7 +470,7 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
             </div>
           </section>
 
-          {!rec.failed && (
+          {rec.hasFile && (
             <section className="pl-card pl-chapters" aria-labelledby="pl-chapters-title">
               <div className="pl-chapters__head">
                 <h3 id="pl-chapters-title">{chapters && chapters.length > 0 ? t('recordings.capitulos.titulo') : t('player.cenas')}</h3>
@@ -491,7 +511,7 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
           </button>
         </div>
         <RecList items={side === 'next' ? upNext : series} empty={side === 'next' ? t('player.semSeguintes') : meeting ? t('player.semSerie') : t('player.semReuniao')} />
-        {!rec.failed && (
+        {rec.hasFile && (
           <div className="pl-editable">
             <strong>{t('player.editavelTitulo')}</strong>
             <p>{t('player.editavelTexto')}</p>
@@ -572,7 +592,7 @@ function useCaptionTracks(rec: RecordingView): { lang: string; url: string }[] {
   const key = rec.captionLanguages.join(',')
   useEffect(() => {
     setTracks([])
-    if (rec.failed || rec.captionLanguages.length === 0) return
+    if (!rec.hasFile || rec.captionLanguages.length === 0) return
     let live = true
     const made: string[] = []
     void Promise.all(
@@ -593,7 +613,7 @@ function useCaptionTracks(rec: RecordingView): { lang: string; url: string }[] {
     }
     // `key` resume as línguas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rec.id, key, rec.failed])
+  }, [rec.id, key, rec.hasFile])
   return tracks
 }
 

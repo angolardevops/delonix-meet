@@ -2,7 +2,9 @@
  * Vista GRELHA: cartões com miniatura. A miniatura de uma gravação pronta é o
  * botão que a abre no leitor; a de uma FALHADA é uma imagem inerte com a causa
  * por baixo — sem ▶, sem botão, sem acções (R59). Oferecer «reproduzir» sobre
- * um ficheiro que não existe é prometer duas vezes à mesma pessoa.
+ * um ficheiro que não existe é prometer duas vezes à mesma pessoa. Uma gravação
+ * que o servidor ainda está a COMPOR é igualmente inerte, com o progresso em
+ * vez da causa.
  *
  * Duração e resolução aparecem sobre a miniatura quando o servidor as mediu;
  * sem medida não se desenha um selo vazio. A miniatura é a do servidor, ou o
@@ -47,12 +49,16 @@ export default function RecordingGrid({
             <li
               key={r.id}
               className={cx('rec-card', selectedId === r.id && 'is-selected')}
-              data-status={failed ? 'failed' : 'ready'}
+              data-status={failed ? 'failed' : r.processing ? 'processing' : 'ready'}
               onContextMenu={menu.aoContexto(r)}
             >
               {failed ? (
                 <div className="rec-card__thumb is-failed" role="img" aria-label={t('recordings.estado.falhada')}>
                   <Icon name="alert" size={20} />
+                </div>
+              ) : r.processing ? (
+                <div className="rec-card__thumb is-processing" style={thumbStyle(null, r.name)} role="img" aria-label={t('recordings.estado.aProcessar')}>
+                  <Icon name="hourglass" size={20} />
                 </div>
               ) : (
                 <CardThumb r={r} res={res} onOpen={onOpen} />
