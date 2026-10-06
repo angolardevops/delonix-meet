@@ -89,6 +89,7 @@ pub struct OrgSettingsReq {
     paths(
         update_settings,
         create_org,
+        upgrade_org,
         my_orgs,
         get_org,
         create_branch,
@@ -122,6 +123,7 @@ pub struct OrgSettingsReq {
         SsoConfigPublic,
         SsoConfigReq,
         CreateOrgReq,
+        UpgradeOrgReq,
         CreateBranchReq,
         AddEmployeeReq,
         UpdateEmployeeReq,
@@ -608,6 +610,120 @@ pub async fn my_orgs(
         .fetch_all(&state.db)
         .await?;
     Ok(Json(orgs))
+}
+
+/// Corpo de `POST /api/orgs/{org_id}/upgrade`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpgradeOrgReq {
+    /// Nome da empresa (2-80 caracteres).
+    pub name: String,
+}
+
+/// `POST /api/orgs/{org_id}/upgrade` — a conta PARTICULAR passa a EMPRESARIAL
+/// (ADR-0019).
+///
+/// Não é um registo novo nem uma organização nova: a conta, as salas, as
+/// gravações e os convites ficam onde estão. A organização muda de `kind` para
+/// `company`, ganha um nome de empresa e passa a ter o domínio do email de quem
+/// converte — que é o que a torna encontrável pelos colegas e o que o registo
+/// empresarial usa para os juntar.
+///
+/// Exige o mesmo que o registo empresarial, e recusa pelos mesmos códigos
+/// (`registration.invalid_org_name`, `registration.corporate_email_required`,
+/// `registration.domain_taken`), mais `organization.already_company` quando já
+/// é empresa — um pedido repetido não muda nada em silêncio.
+///
+/// Quem pode: o administrador da organização (`org.administer`). Numa conta
+/// particular é a própria pessoa, que é a administradora do seu espaço.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/upgrade", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização a converter.")),
+    request_body = UpgradeOrgReq,
+    responses(
+        (status = 200, description = "Convertida. Devolve a organização como o `GET` a devolve.", body = OrgSummary),
+        (status = 400, description = "Nome inválido, ou o email não serve de domínio (`registration.invalid_org_name`, `registration.corporate_email_required`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é administrador (`authz.missing_capability`).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro activo da organização.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "O domínio já tem organização (`registration.domain_taken`).", body = crate::openapi::ErrorBody),
+        (status = 422, description = "Já é empresarial (`organization.already_company`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn upgrade_org(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<UpgradeOrgReq>,
+) -> Result<Json<OrgSummary>, ApiError> {
+    use delonix_meet_domain::identity::registration::{
+        upgrade_to_company, OrgKind, UpgradeRequest,
+    };
+    require_admin(&state, org_id, auth.user_id).await?;
+
+    // O domínio sai do email de QUEM converte: é essa pessoa que afirma a
+    // empresa, e é com o domínio dela que os colegas se vão juntar.
+    let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&state.db)
+        .await?;
+    let kind: String = sqlx::query_scalar("SELECT kind FROM organizations WHERE id = $1")
+        .bind(org_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    // Tudo dentro de uma transacção com o mesmo trinco do registo: duas
+    // conversões para o mesmo domínio ao mesmo tempo não podem passar as duas.
+    let mut tx = state.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('delonix.registration'))")
+        .execute(&mut *tx)
+        .await?;
+    let domain_from_email = email.split('@').nth(1).unwrap_or("").to_string();
+    let domain_taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM organizations
+                         WHERE email_domain = $1 AND email_domain <> '' AND id <> $2)",
+    )
+    .bind(&domain_from_email)
+    .bind(org_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let plan = upgrade_to_company(&UpgradeRequest {
+        name: req.name.clone(),
+        email: email.clone(),
+        current_kind: if kind == "company" {
+            OrgKind::Company
+        } else {
+            OrgKind::Personal
+        },
+        domain_taken,
+    })?;
+
+    sqlx::query(
+        "UPDATE organizations SET name = $2, email_domain = $3, kind = 'company' WHERE id = $1",
+    )
+    .bind(org_id)
+    .bind(&plan.name)
+    .bind(&plan.email_domain)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "organization.upgraded_to_company",
+        &plan.email_domain,
+    )
+    .await;
+
+    let org: Option<OrgSummary> = sqlx::query_as(MY_ORGS_SQL)
+        .bind(auth.user_id)
+        .bind(Some(org_id))
+        .fetch_optional(&state.db)
+        .await?;
+    Ok(Json(org.ok_or(ApiError::NotFound)?))
 }
 
 /// Uma organização de que se é membro activo, com o papel.
