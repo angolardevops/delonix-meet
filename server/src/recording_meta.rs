@@ -168,6 +168,7 @@ fn default_visibility() -> String {
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor. `recording.no_file`: falhou."),
     )
 )]
 pub async fn publish(
@@ -181,11 +182,7 @@ pub async fn publish(
     if req.visibility != "org" {
         return Err(ApiError::BadRequest("visibility must be 'org'".into()));
     }
-    if !a.has_file() {
-        return Err(ApiError::Conflict(
-            "só se publica uma gravação que tem ficheiro".into(),
-        ));
-    }
+    a.require_file()?;
     sqlx::query(
         "UPDATE recordings SET visibility = $2, published_at = COALESCE(published_at, now())
          WHERE id = $1",
@@ -282,6 +279,7 @@ pub async fn thumbnail(
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor. `recording.no_file`: falhou."),
     )
 )]
 pub async fn record_view(
@@ -290,9 +288,7 @@ pub async fn record_view(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     let a = access(&state, id, auth.user_id).await?;
-    if !a.has_file() {
-        return Err(ApiError::Conflict("a gravação não tem ficheiro".into()));
-    }
+    a.require_file()?;
     sqlx::query(
         "INSERT INTO recording_views (recording_id, user_id) VALUES ($1, $2)
          ON CONFLICT (recording_id, user_id, viewed_on) DO UPDATE SET last_at = now()",

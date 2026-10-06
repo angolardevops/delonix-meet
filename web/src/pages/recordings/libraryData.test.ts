@@ -15,6 +15,7 @@ import {
   visibleState,
 } from './libraryData'
 import type { RecordingLibraryItem } from '../../api'
+import { hasFile, withFresh } from './format'
 import { fromRecordingItem, RecordingView } from './recordingView'
 
 export const libItem = (over: Partial<RecordingLibraryItem> = {}): RecordingLibraryItem => ({
@@ -60,6 +61,66 @@ export const libItem = (over: Partial<RecordingLibraryItem> = {}): RecordingLibr
 })
 
 const item = (over: Partial<RecordingView> = {}): RecordingView => ({ ...fromRecordingItem(libItem()), ...over })
+
+describe('a compor (o servidor ainda não tem ficheiro)', () => {
+  // A linha nasce em `processing` antes de o ffmpeg correr: é uma gravação a
+  // compor, com progresso — não uma falha, e ainda sem nada para abrir (R59).
+  const aCompor = fromRecordingItem(libItem({ status: 'processing', state: 'processing', progress_pct: 40, size_bytes: 0 }))
+  it('não é falhada, e não tem ficheiro', () => {
+    expect(aCompor.failed).toBe(false)
+    expect(aCompor.processing).toBe(true)
+    expect(aCompor.hasFile).toBe(false)
+    expect(aCompor.pipeline).toBe('processing')
+    expect(aCompor.sizeBytes).toBeNull()
+  })
+  it('lê-se «a processar» com a percentagem do servidor, mesmo com retenção', () => {
+    expect(visibleState(aCompor, 90)).toEqual({ kind: 'processing', pct: 40 })
+  })
+  it('publicada à pressa continua a compor', () => {
+    const r = fromRecordingItem(libItem({ status: 'processing', state: 'processing', visibility: 'org' }))
+    expect(r.published).toBe(false)
+    expect(visibleState(r).kind).toBe('processing')
+  })
+  it('um estado que a consola não conhece falha fechado, como no servidor — não se lê «pronta»', () => {
+    const r = fromRecordingItem(libItem({ status: 'archiving' as RecordingLibraryItem['status'] }))
+    expect(r).toMatchObject({ hasFile: false, failed: true, processing: false, pipeline: 'failed', sizeBytes: null })
+    expect(visibleState(r, 90).kind).toBe('failed')
+    expect(hasFile({ status: 'archiving' })).toBe(false)
+    expect(hasFile({ status: 'ready' }) && hasFile({ status: 'transcribing' })).toBe(true)
+    expect(hasFile({ status: 'processing' }) || hasFile({ status: 'failed' })).toBe(false)
+  })
+  it('pronta, a transcrever e falhada continuam como eram', () => {
+    expect(fromRecordingItem(libItem())).toMatchObject({ failed: false, processing: false, hasFile: true, pipeline: 'ready', sizeBytes: 10 })
+    expect(fromRecordingItem(libItem({ status: 'transcribing' }))).toMatchObject({ processing: false, hasFile: true, pipeline: 'transcribing' })
+    expect(fromRecordingItem(libItem({ status: 'failed', state: 'failed', failure_reason: 'sem espaço' }))).toMatchObject({
+      failed: true,
+      processing: false,
+      hasFile: false,
+      pipeline: 'failed',
+      failureReason: 'sem espaço',
+      sizeBytes: null,
+    })
+  })
+})
+
+describe('a leitura mais recente de uma gravação a compor', () => {
+  const naLista = libItem({ id: 'g', status: 'processing', state: 'processing', progress_pct: 10, snippet: '«termo»' })
+  it('troca a linha enquanto a lista a tem como «a compor», e guarda o que só a lista traz', () => {
+    const lida = libItem({ id: 'g', status: 'ready', state: 'ready', progress_pct: null, size_bytes: 4 })
+    delete lida.snippet
+    const r = withFresh(naLista, { g: lida })
+    expect(r).toMatchObject({ status: 'ready', progress_pct: null, size_bytes: 4, snippet: '«termo»' })
+    expect(fromRecordingItem(r).hasFile).toBe(true)
+  })
+  it('sem leitura, ou de outra gravação, a linha fica como estava', () => {
+    expect(withFresh(naLista, {})).toBe(naLista)
+    expect(withFresh(naLista, { outra: libItem({ id: 'outra' }) })).toBe(naLista)
+  })
+  it('depois de a lista se reler manda a lista: uma leitura antiga não tapa um nome acabado de mudar', () => {
+    const relida = libItem({ id: 'g', filename: 'nome novo.webm' })
+    expect(withFresh(relida, { g: libItem({ id: 'g', filename: 'nome velho.webm' }) })).toBe(relida)
+  })
+})
 
 describe('visibleState', () => {
   it('falhada manda sobre tudo', () => {

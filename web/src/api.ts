@@ -327,7 +327,10 @@ export interface RecordingItem extends Recording {
   share_count: number
   /** RBAC: só dono + admins da org podem descarregar (os restantes só reproduzem). */
   can_download: boolean
-  /** `ready` = há ficheiro. `failed` = houve tentativa e não há nada. */
+  /**
+   * `ready` = há ficheiro. `failed` = houve tentativa e não há nada.
+   * `processing` = o servidor ainda está a compor o ficheiro (não é falha).
+   */
   status: 'ready' | 'failed' | string
   /** Causa em linguagem de utilizador, quando falhou. */
   failure_reason: string | null
@@ -394,7 +397,12 @@ export interface QuarantineRow {
   count: number
 }
 
-export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms/${code}/recordings`)
+/**
+ * As gravações de uma sala (o painel dentro da reunião), na mesma forma da
+ * biblioteca: com `status`, `failure_reason`, `progress_pct` e `can_download`,
+ * para o painel não oferecer nada sobre uma gravação sem ficheiro (R59).
+ */
+export const listRecordings = (code: string) => request<RecordingLibraryItem[]>(`/api/rooms/${code}/recordings`)
 
 export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
 

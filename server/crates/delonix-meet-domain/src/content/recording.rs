@@ -38,12 +38,15 @@ const MAX_TERM_CHARS: usize = 64;
 //  Estado de processamento
 // ---------------------------------------------------------------------------
 
-/// Estado derivado que a UI mostra. Não é uma coluna: deriva de `status`
-/// (0036) e das marcas da fila de transcrição (0016, 0041).
+/// Estado derivado num só eixo. Não é uma coluna: deriva de `status` (0036) e
+/// das marcas da fila de transcrição (0016, 0041).
 ///
-/// Não há `processing` (ffmpeg a compor): o `recorder` só insere a linha
-/// DEPOIS de o ffmpeg acabar — ou a falha, com `status = failed`. Um estado
-/// que nunca pode ser observado não entra no contrato.
+/// **Já não é o que a API serve**: o contrato separou o ficheiro
+/// ([`FileStatus`]) da transcrição ([`TranscriptStatus`]), e nenhum handler
+/// chama [`processing_state`]. Não tem `processing` (ffmpeg a compor) — foi
+/// escrito quando o `recorder` só inseria a linha DEPOIS de o ffmpeg acabar,
+/// o que deixou de ser verdade (`recorder::insert_processing`). Quem o voltar
+/// a ligar a uma resposta tem de lhe dar esse estado primeiro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessingState {
     Ready,
@@ -76,7 +79,8 @@ impl ProcessingState {
 /// Os factos de onde o estado deriva, tal como a base os tem.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ProcessingFacts<'a> {
-    /// `recordings.status` (`ready` | `failed`).
+    /// `recordings.status` (`processing` | `transcribing` | `ready` | `failed`,
+    /// migração 0057).
     pub status: &'a str,
     /// `transcribed_at IS NOT NULL`.
     pub transcribed: bool,
@@ -93,25 +97,34 @@ impl ProcessingFacts<'_> {
     pub fn has_file(&self) -> bool {
         matches!(self.status, "ready" | "transcribing")
     }
+
+    /// O ffmpeg ainda está a compor. Ainda não há ficheiro, e não é uma falha.
+    pub fn composing(&self) -> bool {
+        self.status == "processing"
+    }
 }
 
 /// Estado do FICHEIRO que a UI mostra (`RecordingFileStatus`).
 ///
-/// A UI conhece também `processing`, e esta linha nunca o emite: o `recorder`
-/// só insere a linha DEPOIS de o ffmpeg acabar. Um estado que nunca pode ser
-/// observado não se inventa.
+/// `processing` observa-se: o `recorder::insert_processing` cria a linha
+/// quando a gravação pára, ANTES de o ffmpeg correr, com `progress_pct = 0`, e
+/// só no fim a passa a `ready` (ou a `failed`, com a causa). Enquanto esta
+/// regra não o conhecia, quem parava uma gravação via-a «falhada», sem causa,
+/// até a composição acabar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileStatus {
+    Processing,
     Transcribing,
     Ready,
     Failed,
 }
 
 impl FileStatus {
-    pub const ALL: [&'static str; 3] = ["transcribing", "ready", "failed"];
+    pub const ALL: [&'static str; 4] = ["processing", "transcribing", "ready", "failed"];
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Processing => "processing",
             Self::Transcribing => "transcribing",
             Self::Ready => "ready",
             Self::Failed => "failed",
@@ -121,7 +134,13 @@ impl FileStatus {
 
 /// Precedência: sem ficheiro nada mais importa; uma reserva que ficou por
 /// limpar não faz a gravação voltar a «a transcrever» depois de um resultado.
+///
+/// Sem ficheiro há dois casos, e só um é falha: a compor (`processing`) ou
+/// falhada. Um `status` desconhecido continua a falhar fechado.
 pub fn file_status(f: ProcessingFacts<'_>) -> FileStatus {
+    if f.composing() {
+        return FileStatus::Processing;
+    }
     if !f.has_file() {
         return FileStatus::Failed;
     }
@@ -131,8 +150,37 @@ pub fn file_status(f: ProcessingFacts<'_>) -> FileStatus {
     FileStatus::Ready
 }
 
+/// A recusa de quem pede o ficheiro de uma gravação que o servidor ainda está
+/// a compor. Não é uma falha: quem a recebe volta a pedir quando acabar.
+pub fn processing_conflict() -> DomainError {
+    DomainError::conflict(
+        "recording.processing",
+        "A gravação ainda está a ser composta. Fica disponível quando o processamento acabar.",
+    )
+}
+
+/// Uma acção que mostra a gravação a OUTRA pessoa — partilhar com um
+/// utilizador, criar o link público, publicar, contar uma visualização — pede
+/// uma gravação com ficheiro. Sem ele, quem recebe fica com uma entrada sem
+/// nada para abrir, e o link público com um ficheiro que não existe.
+///
+/// Os dois casos sem ficheiro têm códigos diferentes porque pedem coisas
+/// diferentes a quem chama: `recording.processing` é esperar; em
+/// `recording.no_file` não há o que esperar.
+pub fn require_file(f: ProcessingFacts<'_>) -> Result<(), DomainError> {
+    match file_status(f) {
+        FileStatus::Ready | FileStatus::Transcribing => Ok(()),
+        FileStatus::Processing => Err(processing_conflict()),
+        FileStatus::Failed => Err(DomainError::conflict(
+            "recording.no_file",
+            "A gravação falhou e não tem ficheiro.",
+        )),
+    }
+}
+
 /// O `state` da UI: o `status`, com `published` quando está pronta E publicada.
-/// Publicar uma gravação falhada não a promove — não há o que ver.
+/// Publicar uma gravação falhada, ou uma que ainda está a compor, não a
+/// promove — não há o que ver.
 pub fn display_state(file: FileStatus, published: bool) -> &'static str {
     match file {
         FileStatus::Ready if published => "published",
@@ -711,6 +759,74 @@ mod tests {
         ProcessingFacts {
             status,
             ..Default::default()
+        }
+    }
+
+    /// A linha nasce em `processing` antes de o ffmpeg correr
+    /// (`recorder::insert_processing`): é uma gravação a compor, não uma falha.
+    #[test]
+    fn a_compor_nao_e_falhada() {
+        let f = facts("processing");
+        assert_eq!(file_status(f), FileStatus::Processing);
+        assert_eq!(file_status(f).as_str(), "processing");
+        assert!(f.composing());
+        assert!(!f.has_file(), "a compor ainda não há ficheiro para ler");
+        assert_eq!(transcript_status(f), TranscriptStatus::None);
+        // Publicada ou não, o `state` é o do ficheiro enquanto ele não existe.
+        for published in [false, true] {
+            assert_eq!(display_state(file_status(f), published), "processing");
+        }
+        // Marcas de transcrição que tenham ficado na linha não a promovem.
+        let com_marcas = ProcessingFacts {
+            transcribed: true,
+            lease_active: true,
+            ..f
+        };
+        assert_eq!(file_status(com_marcas), FileStatus::Processing);
+        assert_eq!(transcript_status(com_marcas), TranscriptStatus::None);
+    }
+
+    /// O que `failed` e um `status` desconhecido mostram não mudou: falham
+    /// fechado, e publicar não os promove.
+    #[test]
+    fn falhada_e_desconhecida_continuam_falhadas() {
+        for status in ["failed", "zombie", ""] {
+            let f = facts(status);
+            assert_eq!(file_status(f), FileStatus::Failed, "{status:?}");
+            assert_eq!(display_state(file_status(f), true), "failed");
+            assert!(!f.has_file() && !f.composing());
+        }
+        assert_eq!(file_status(facts("ready")), FileStatus::Ready);
+        assert_eq!(file_status(facts("transcribing")), FileStatus::Ready);
+        assert_eq!(display_state(FileStatus::Ready, true), "published");
+    }
+
+    /// Entregar a gravação a outra pessoa pede ficheiro, e a recusa diz qual
+    /// dos dois casos é: esperar (`processing`) ou não há o que esperar.
+    #[test]
+    fn entregar_a_outrem_pede_ficheiro() {
+        use delonix_meet_core::ErrorKind;
+        assert!(require_file(facts("ready")).is_ok());
+        assert!(require_file(facts("transcribing")).is_ok());
+        // A ser transcrita (reserva activa) tem ficheiro.
+        let a_transcrever = ProcessingFacts {
+            lease_active: true,
+            ..facts("ready")
+        };
+        assert!(require_file(a_transcrever).is_ok());
+
+        let e = require_file(facts("processing")).unwrap_err();
+        assert_eq!((e.kind, e.code), (ErrorKind::Conflict, "recording.processing"));
+        assert_eq!(e.code, processing_conflict().code);
+        assert!(!e.message.contains("falhou"), "a compor não é falha: {e}");
+        // Falhada e um estado desconhecido falham fechado, com o mesmo código.
+        for status in ["failed", "zombie", ""] {
+            let e = require_file(facts(status)).unwrap_err();
+            assert_eq!(
+                (e.kind, e.code),
+                (ErrorKind::Conflict, "recording.no_file"),
+                "{status:?}"
+            );
         }
     }
 

@@ -14,7 +14,7 @@
 //      sozinho — o que obriga o ffmpeg novo a reentrar a meio do fluxo com o
 //      cabeçalho Matroska guardado (só com RTMP_CONTENTOR);
 //   5. os webhooks `stream.published` e `stream.ended` saem (só com o servidor
-//      arrancado com `WEBHOOK_ALLOW_HOSTS=localhost`);
+//      arrancado com `OUTBOUND_ALLOW_HOSTS=localhost`);
 //   6. a chave de emissão nunca aparece nas mensagens do WebSocket.
 //
 // A media é gerada aqui por um ffmpeg local em Matroska ao vivo (H.264 + Opus),
@@ -68,7 +68,7 @@ const token = login.json?.access_token
 const orgId = (await req('/api/orgs', { token })).json?.[0]?.id
 if (!token || !orgId) throw new Error(`sem sessão: ${JSON.stringify(login.json)}`)
 
-// Receptor de webhooks. Só recebe se o servidor tiver `WEBHOOK_ALLOW_HOSTS=localhost`.
+// Receptor de webhooks. Só recebe se o servidor tiver `OUTBOUND_ALLOW_HOSTS=localhost`.
 const hooks = []
 const receptor = createServer((q, s) => {
   let corpo = ''

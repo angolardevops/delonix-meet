@@ -48,6 +48,9 @@ export default {
     estado: 'État',
   },
   estado: {
+    aProcessar: 'Traitement',
+    aProcessarPct: 'Traitement {{pct}} %',
+    aProcessarAviso: "Le serveur compose encore cet enregistrement. Il sera disponible une fois terminé.",
     aTranscrever: 'Transcription',
     aTranscreverPct: 'Transcription {{pct}} %',
     publicada: 'Publié',

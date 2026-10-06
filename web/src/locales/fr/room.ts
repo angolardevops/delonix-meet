@@ -478,6 +478,7 @@ export default {
     gravacoes: 'Enregistrements de cette salle',
     semGravacoes: "Aucun enregistrement pour l'instant.",
     megabytes: '{{n}} MB',
+    semDescarga: "Seule la personne qui l'a enregistré, ou un administrateur de l'organisation, peut le télécharger.",
     mensagemPrivada: 'Message privé à {{nome}}',
     fixarParaTodos: 'Épingler {{nome}} pour tout le monde',
     desafixarParaTodos: 'Retirer {{nome}} de la une',

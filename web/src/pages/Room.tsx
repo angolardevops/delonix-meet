@@ -89,10 +89,14 @@ export default function Room({
   const chat = useChat(core, chrome.panel === 'chat')
   const reactions = useReactions(core)
   const transcription = useTranscription(core)
-  const recording = useRecording(core, {
-    onServerStopped: transcription.saveOnServerRecordingStop,
-    onUploaded: () => chrome.setPanel('people'),
-  })
+  const recording = useRecording(
+    core,
+    {
+      onServerStopped: transcription.saveOnServerRecordingStop,
+      onUploaded: () => chrome.setPanel('people'),
+    },
+    chrome.panel === 'people',
+  )
   const share = useScreenShare(core, media)
   const whiteboard = useWhiteboard(core)
   const tools = useMeetingTools(core)

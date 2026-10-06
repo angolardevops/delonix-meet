@@ -443,6 +443,10 @@ button.home-rec:hover {
   background: var(--surface);
   border-bottom: 1px dashed var(--border);
 }
+/* A compor: a miniatura de sempre, com o selo — não o tracejado da falha. */
+.home-rec--processing {
+  cursor: default;
+}
 .home-rec__chip {
   position: absolute;
   right: 8px;
