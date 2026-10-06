@@ -4,7 +4,7 @@
  * Início sem o dizer.
  */
 import { describe, expect, it } from 'vitest'
-import { parseHash } from './rota'
+import { chaveDoTitulo, destinoNoRail, NAV_I18N, parseHash, trilhoDe } from './rota'
 
 describe('parseHash', () => {
   it('a sala tolera maiúsculas e parâmetros a mais', () => {
@@ -88,6 +88,54 @@ describe('parseHash', () => {
     // ERA: tudo isto mostrava o Início com a barra a dizer outra coisa.
     for (const h of ['#/estudio', '#/settings', '#/qualquer-coisa', '#/r/', '#/lobby/']) {
       expect(parseHash(h)).toEqual({ kind: 'desconhecida', endereco: h })
+    }
+  })
+
+  it('o destino no rail é a hierarquia que estava num ternário', () => {
+    expect(destinoNoRail(parseHash('#/recordings/3f2b1c4d-5e6f-7a8b-9c0d-ddddeeeeffff'))).toBe('recordings')
+    expect(destinoNoRail(parseHash('#/whiteboards/diagram/x'))).toBe('whiteboards')
+    expect(destinoNoRail(parseHash('#/calendar'))).toBe('calendar')
+    // O que não tem destino não acende nada — e isso inclui o endereço errado.
+    for (const h of ['#/r/sala', '#/lobby/sala', '#/telemovel/sala', '#/qualquer']) {
+      expect(destinoNoRail(parseHash(h))).toBeNull()
+    }
+  })
+
+  it('o trilho dá os antecedentes, e não a página actual', () => {
+    expect(trilhoDe(parseHash('#/recordings/3f2b1c4d-5e6f-7a8b-9c0d-ddddeeeeffff'))).toEqual([
+      { hash: '#/', chave: 'shell.nav.inicio' },
+      { hash: '#/recordings', chave: 'shell.nav.gravacoes' },
+    ])
+    expect(trilhoDe(parseHash('#/whiteboards/diagram'))).toEqual([
+      { hash: '#/', chave: 'shell.nav.inicio' },
+      { hash: '#/whiteboards', chave: 'shell.nav.quadros' },
+    ])
+    // A moderação de uma sala não tinha destino nenhum no rail: o trilho é o
+    // único sítio que diz de onde ela vem.
+    expect(trilhoDe(parseHash('#/lobby/abc'))).toEqual([
+      { hash: '#/', chave: 'shell.nav.inicio' },
+      { hash: '#/rooms', chave: 'shell.nav.salas' },
+    ])
+    // Uma página de topo tem só o Início.
+    expect(trilhoDe(parseHash('#/admin'))).toEqual([{ hash: '#/', chave: 'shell.nav.inicio' }])
+    // E onde um trilho seria ruído, não há trilho.
+    for (const h of ['#/', '#/r/sala', '#/share/abc123', '#/invite/tok']) {
+      expect(trilhoDe(parseHash(h))).toEqual([])
+    }
+  })
+
+  it('cada ecrã da consola tem nome para o separador do browser', () => {
+    expect(chaveDoTitulo(parseHash('#/admin'))).toBe('shell.nav.administracao')
+    expect(chaveDoTitulo(parseHash('#/recordings/3f2b1c4d-5e6f-7a8b-9c0d-ddddeeeeffff'))).toBe('shell.nav.gravacoes')
+    expect(chaveDoTitulo(parseHash('#/qualquer'))).toBe('ui.rotaDesconhecida.titulo')
+    // O Início e a sala são nomeados pelo que mostram, não aqui.
+    expect(chaveDoTitulo(parseHash('#/'))).toBeNull()
+    expect(chaveDoTitulo(parseHash('#/r/sala'))).toBeNull()
+  })
+
+  it('todo o destino do rail tem rótulo, e nenhum rótulo está vazio', () => {
+    for (const [k, v] of Object.entries(NAV_I18N)) {
+      expect(v, k).toMatch(/^[a-z]+\.[A-Za-z.]+$/)
     }
   })
 })
