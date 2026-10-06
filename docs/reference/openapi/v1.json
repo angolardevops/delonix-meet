@@ -1480,6 +1480,31 @@
         ],
         "type": "object"
       },
+      "ConcurrencyLimit": {
+        "properties": {
+          "max_concurrent_participants": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ConcurrencyLimitReq": {
+        "properties": {
+          "max_concurrent_participants": {
+            "description": "Participantes concorrentes que a organização pode ter em cada nó de\nmedia. `null` = o valor por omissão do nó (`ORG_MAX_PARTICIPANTS`).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "ConflictCheckReq": {
         "properties": {
           "duration_min": {

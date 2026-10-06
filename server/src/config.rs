@@ -44,6 +44,14 @@ pub struct Config {
     /// operador a partir de testes de carga. Sem ele o inventário não inventa
     /// uma ocupação.
     pub node_peer_capacity: Option<u32>,
+    /// Ligações `/ws` simultâneas que UMA conta pode ter neste nó
+    /// (`MAX_WS_PER_USER`, por omissão 16; `0` desliga). Impede que uma conta
+    /// ocupe o nó com sockets. Não conta bots nem fontes de estúdio.
+    pub max_ws_per_user: Option<u32>,
+    /// Participantes concorrentes que uma organização pode ter NESTE nó quando
+    /// o operador não lhe fixou um tecto (`ORG_MAX_PARTICIPANTS`). Sem ele, uma
+    /// org sem tecto próprio é ilimitada.
+    pub org_max_participants: Option<u32>,
     /// `DELONIX_ALLOW_INSECURE=1`: segredos de dev aceites e CORS permissivo.
     /// Lido UMA vez aqui — nenhum outro módulo lê o ambiente.
     pub allow_insecure: bool,
@@ -474,6 +482,19 @@ impl Config {
                     .filter(|n| *n > 0)
                     .unwrap_or_else(|| {
                         panic!("NODE_PEER_CAPACITY: «{v}» não é um inteiro positivo")
+                    })
+            }),
+            max_ws_per_user: match bounded_env(src, "MAX_WS_PER_USER", 16, 0, 100_000) {
+                0 => None,
+                n => Some(n as u32),
+            },
+            org_max_participants: opt("ORG_MAX_PARTICIPANTS").map(|v| {
+                v.trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .unwrap_or_else(|| {
+                        panic!("ORG_MAX_PARTICIPANTS: «{v}» não é um inteiro positivo")
                     })
             }),
             migrate_on_start: src.var("DELONIX_MIGRATE").ok().as_deref() != Some("0"),
