@@ -33,6 +33,7 @@ export default {
     semFonte: 'Escolhe o ecrã ou liga a câmara para poder gravar.',
   },
   erros: {
+    destinos: 'Não foi possível guardar os destinos de emissão.',
     ecraTerminado: 'A partilha de ecrã terminou.',
     ecra: 'Não foi possível capturar o ecrã.',
     camara: 'Não foi possível aceder à câmara.',

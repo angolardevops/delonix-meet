@@ -33,6 +33,7 @@ export default {
     semFonte: '请选择屏幕或开启摄像头后再录制。',
   },
   erros: {
+    destinos: '无法保存直播目标。',
     ecraTerminado: '屏幕共享已结束。',
     ecra: '无法捕获屏幕。',
     camara: '无法访问摄像头。',

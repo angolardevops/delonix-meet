@@ -33,6 +33,7 @@ export default {
     semFonte: 'Choose a screen or turn on the camera to record.',
   },
   erros: {
+    destinos: 'Could not save the broadcast destinations.',
     ecraTerminado: 'Screen sharing ended.',
     ecra: 'Could not capture the screen.',
     camara: 'Could not access the camera.',

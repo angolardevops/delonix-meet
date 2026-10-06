@@ -33,6 +33,7 @@ export default {
     semFonte: "Choisissez l'écran ou allumez la caméra pour enregistrer.",
   },
   erros: {
+    destinos: "Impossible d'enregistrer les destinations de diffusion.",
     ecraTerminado: "Le partage d'écran est terminé.",
     ecra: "Impossible de capturer l'écran.",
     camara: "Impossible d'accéder à la caméra.",
