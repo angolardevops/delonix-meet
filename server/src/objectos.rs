@@ -70,7 +70,19 @@ impl std::fmt::Debug for Objectos {
 
 impl Objectos {
     pub fn novo(d: &Definicoes) -> Self {
+        // O cliente HTTP é EXPLÍCITO, e a crypto provider com ele. Sem cliente,
+        // todo o pedido morre em «dispatch failure» antes de sair da máquina
+        // (R308); com o `default-https-client` do SDK vinha o `aws-lc`, e este
+        // binário está todo em `ring` — as duas ao mesmo tempo fazem o rustls
+        // recusar-se a escolher e QUALQUER TLS do processo entra em panic,
+        // incluindo o DTLS do SFU, que não tem nada a ver com S3.
+        let http = aws_smithy_http_client::Builder::new()
+            .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
+                aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
+            ))
+            .build_https();
         let cfg = aws_sdk_s3::Config::builder()
+            .http_client(http)
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(d.regiao.clone()))
             .endpoint_url(&d.endpoint)
@@ -193,8 +205,24 @@ impl Erro {
     fn leitura(e: impl std::fmt::Display) -> Self {
         Self::Leitura(e.to_string())
     }
-    fn envio(e: impl std::fmt::Display) -> Self {
-        Self::Envio(e.to_string())
+
+    /// O erro do SDK reduzido ao que se pode mostrar: o **código do serviço**
+    /// (`NoSuchBucket`, `InvalidAccessKeyId`, `AccessDenied`…), que é uma
+    /// palavra e não topologia.
+    ///
+    /// Sem isto a mensagem era «service error», que não diz a um operador se o
+    /// bucket não existe ou se a chave está errada — e os dois arranjam-se de
+    /// maneiras opostas. Quando **não há código**, o erro não chegou a ser uma
+    /// resposta do serviço (não ligou, DNS, TLS): aí vale o texto do SDK, que
+    /// diz «dispatch failure», e esse é o sinal mais importante dos dois.
+    fn envio<E>(e: E) -> Self
+    where
+        E: aws_sdk_s3::error::ProvideErrorMetadata + std::fmt::Display,
+    {
+        match e.code() {
+            Some(c) => Self::Envio(c.to_string()),
+            None => Self::Envio(e.to_string()),
+        }
     }
 }
 
