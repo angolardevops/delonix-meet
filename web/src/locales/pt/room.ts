@@ -583,6 +583,23 @@ export default {
       authz_missing_capability: 'Não tens permissão para ligar a ramais a partir da sala.',
     },
   },
+  dispositivos: {
+    titulo: 'Estás também ao telefone',
+    texto: 'A tua conta está nesta sala pelo browser e por um telefone. Onde queres continuar?',
+    soMeet: 'Só no Meet (desligar o telefone)',
+    soMeetSemSom: 'Só no Meet (o telefone fica ligado, sem som)',
+    soTelefone: 'Só no telefone (sair daqui)',
+    nosDois: 'Nos dois',
+    eco: 'Nos dois, cada microfone apanha o outro: usa auscultadores ou cala um deles para evitar eco.',
+    ok: 'Percebi',
+    aTratar: 'A tratar…',
+    resultado: {
+      hung_up: 'O telefone foi desligado. Continuas só no Meet.',
+      muted: 'O telefone ficou sem som mas continua ligado: desliga a chamada no aparelho.',
+      both: 'Continuas nos dois. Usa auscultadores para evitar eco.',
+      gone: 'O telefone já saiu da sala.',
+    },
+  },
   definicoes: {
     fundos: 'Fundos e efeitos',
     aAplicar: 'a aplicar…',

@@ -583,6 +583,23 @@ export default {
       authz_missing_capability: 'You are not allowed to call extensions from the room.',
     },
   },
+  dispositivos: {
+    titulo: 'You are also on the phone',
+    texto: 'Your account is in this room through the browser and through a phone. Where do you want to continue?',
+    soMeet: 'Only on Meet (hang up the phone)',
+    soMeetSemSom: 'Only on Meet (the phone stays connected, muted)',
+    soTelefone: 'Only on the phone (leave here)',
+    nosDois: 'On both',
+    eco: 'On both, each microphone picks up the other: use headphones or mute one of them to avoid echo.',
+    ok: 'Got it',
+    aTratar: 'Working…',
+    resultado: {
+      hung_up: 'The phone was hung up. You continue only on Meet.',
+      muted: 'The phone is muted but still connected: hang up the call on the device.',
+      both: 'You continue on both. Use headphones to avoid echo.',
+      gone: 'The phone has already left the room.',
+    },
+  },
   definicoes: {
     fundos: 'Backgrounds and effects',
     aAplicar: 'applying…',

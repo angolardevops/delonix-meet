@@ -583,6 +583,23 @@ export default {
       authz_missing_capability: '你无权从会议室呼叫分机。',
     },
   },
+  dispositivos: {
+    titulo: '你也在通过电话参会',
+    texto: '你的账号同时通过浏览器和电话在此会议室中。你想在哪里继续？',
+    soMeet: '仅在 Meet（挂断电话）',
+    soMeetSemSom: '仅在 Meet（电话保持连接，但静音）',
+    soTelefone: '仅在电话（离开此处）',
+    nosDois: '两者都保留',
+    eco: '两者都保留时，每个麦克风都会拾取另一个的声音：请使用耳机或将其中一个静音以避免回声。',
+    ok: '知道了',
+    aTratar: '处理中…',
+    resultado: {
+      hung_up: '电话已挂断。你仅在 Meet 中继续。',
+      muted: '电话已静音但仍保持连接：请在设备上挂断通话。',
+      both: '你将在两者上继续。请使用耳机以避免回声。',
+      gone: '电话已离开会议室。',
+    },
+  },
   definicoes: {
     fundos: '背景和特效',
     aAplicar: '正在应用…',
