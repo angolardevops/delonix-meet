@@ -1683,15 +1683,6 @@ pub(crate) fn sql_active_member_with(viewer: &str, subject: &str) -> String {
     )
 }
 
-/// `viewer` é admin ACTIVO de uma organização a que `subject` pertence.
-pub(crate) fn sql_active_admin_of(viewer: &str, subject: &str) -> String {
-    format!(
-        "EXISTS(SELECT 1 FROM org_members me JOIN org_members o ON o.org_id = me.org_id \
-         WHERE me.user_id = {viewer} AND me.role = 'admin' AND me.archived_at IS NULL \
-           AND o.user_id = {subject})"
-    )
-}
-
 /// user_ids dos membros de um grupo (para iniciar chamada de grupo).
 /// Organizações a que um utilizador pertence (para disparar webhooks dos
 /// eventos das suas reuniões/gravações).

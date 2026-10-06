@@ -104,7 +104,7 @@ Não se reabrem nem se revêem como se estivessem em aberto:
 |---|---|---|---|
 | S1 | Qualquer registo era admin da plataforma | `config.platform_admin_user_ids` (`PLATFORM_ADMIN_USER_IDS`, UUIDs, fail-closed), verificado em `storage::require_platform_admin`. **Nunca** se deriva de `org_members`. Falta de papel é `403`, não `401` | R121 (#76) |
 | S2 | `odoo::provision` capturava contas de outra org por email | passa sempre por `odoo_sso::upsert_member` (regra R25); as recusadas saem em `skipped` com a razão | R121 |
-| S3 | Um membro arquivado mantinha acesso | «colega» e «quem pede» são membros ACTIVOS (`archived_at IS NULL`). O SUJEITO não se filtra quando o dado é da organização: a gravação de quem saiu continua descarregável pelo admin activo | R121 |
+| S3 | Um membro arquivado mantinha acesso | «colega» e «quem pede» são membros ACTIVOS (`archived_at IS NULL`). O SUJEITO não se filtra quando o dado é da organização: a gravação de quem saiu continua descarregável pelo admin activo. **A R121 fechou a primeira porta e não a segunda:** o `recordings::access` tinha predicados SQL próprios sem a condição, e até 2026-10-06 quem saía lia a transcrição, os presentes, as legendas, os capítulos e contava visualizações (R306, que os removeu e o pôs a derivar do `AccessFacts`) | R121, R306 |
 | — | `org::add_employee` capturava conta de outra org | recusa (`409`, `ForeignOrg`) uma conta já membro activo de outra org; portão `web/e2e/captura-empregado.mjs` | R122 (#78) |
 | — | `odoo::list_users` devolvia arquivados | filtra `archived_at IS NULL` | R143 |
 | — | `meetings_v1::resolve_org_user` juntava contas órfãs | só dentro do domínio da organização | R151 |

@@ -628,7 +628,11 @@ impl AccessFacts {
     /// participante da sala, ou partilha explícita. **Não** inclui
     /// `published_to_my_org`: publicar dá reprodução (`can_view`), não uma
     /// relação com quem esteve na reunião.
-    fn has_direct_relation(&self) -> bool {
+    ///
+    /// Pública porque é o que o `Access::direct_relation` do servidor é, e
+    /// chegar-lhe por [`Self::can_see_transcript`] fazia uma decisão de acesso
+    /// passar por um nome que não é o dela.
+    pub fn has_direct_relation(&self) -> bool {
         !self.departed() && (self.is_uploader || self.org_admin || self.participant || self.shared)
     }
 
