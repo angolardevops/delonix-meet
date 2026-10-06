@@ -866,11 +866,16 @@ cluster-down: ## Destrói o cluster local (nós, rede e kubeconfig)
 #  Infra PRÓPRIA do Meet, num cluster só dele. NÃO é o `make cluster`, que é
 #  o laboratório local: o que as separa é o cluster e o kubeconfig.
 # ============================================================
-.PHONY: prod-vms prod-vms-plano prod-inventario
+.PHONY: prod-vms prod-vms-plano prod-inventario prod-k8s prod-k8s-ensaio
 prod-vms-plano: ## Produção: o que o OpenTofu faria às VMs do Proxmox (LÊ ANTES de aplicar)
 	@cd deploy/tofu && tofu init -input=false >/dev/null && tofu plan
 prod-vms: ## Produção: cria/actualiza as VMs do cluster no Proxmox (pede confirmação)
 	@cd deploy/tofu && tofu init -input=false >/dev/null && tofu apply
+prod-k8s: ## Produção: instala o Kubernetes (3 control-planes) nas VMs do inventário
+	@[ -f deploy/ansible/inventory-producao.ini ] || { printf "$(Y)  ✗ falta deploy/ansible/inventory-producao.ini — corre «make prod-inventario»$(Z)\n"; exit 1; }
+	@cd deploy/ansible && ansible-playbook -i inventory-producao.ini producao.yml
+prod-k8s-ensaio: ## Produção: o que o Ansible MUDARIA no cluster, sem mudar nada
+	@cd deploy/ansible && ansible-playbook -i inventory-producao.ini producao.yml --check --diff
 prod-inventario: ## Produção: escreve o inventário do Ansible a partir do estado do OpenTofu
 	@cd deploy/tofu && tofu output -raw inventario_ansible > ../ansible/inventory-producao.ini
 	@printf "$(G)  ✓ deploy/ansible/inventory-producao.ini escrito do estado do OpenTofu$(Z)\n"

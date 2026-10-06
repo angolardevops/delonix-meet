@@ -1,0 +1,46 @@
+---
+# ============================================================
+#  O Kubernetes de produção do Meet (ADR-0020, fase 2).
+#
+#  Corre sobre as VMs que o OpenTofu criou, com o inventário que o
+#  `make prod-inventario` escreveu do estado dele. NÃO é o `playbook.yml`
+#  legado nem o `site.yml` zero-touch: aqueles instalam um control-plane só,
+#  e isto instala três.
+#
+#    make prod-vms && make prod-inventario
+#    make prod-k8s
+#
+#  Idempotente: correr duas vezes não parte nada. O que decide se um passo
+#  corre é o estado da máquina (há `/etc/kubernetes/admin.conf`?), não uma
+#  variável que alguém tem de lembrar-se de mudar.
+# ============================================================
+- name: Base de todos os nós (containerd, kubeadm, kubelet)
+  hosts: k8s
+  become: true
+  gather_facts: true
+  roles:
+    - k8s_base
+
+- name: O primeiro control-plane (kubeadm init, CNI, kube-vip)
+  hosts: control_plane[0]
+  become: true
+  roles:
+    - k8s_primeiro_cp
+
+- name: Os outros control-planes (join como control-plane)
+  hosts: control_plane[1:]
+  become: true
+  roles:
+    - k8s_outros_cp
+
+- name: Os nós de trabalho
+  hosts: workers
+  become: true
+  roles:
+    - k8s_workers
+
+- name: Depois do cluster de pé — MetalLB e o kubeconfig para esta máquina
+  hosts: control_plane[0]
+  become: true
+  roles:
+    - k8s_remates
