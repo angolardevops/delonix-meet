@@ -229,9 +229,18 @@ export default function Shell({
   return (
     <ShellCtx.Provider value={api}>
       <div className={cx('shell', navOpen && 'nav-open', collapsed && 'nav-collapsed')}>
-        <a className="skip-link" href="#conteudo">
+        {/* BOTÃO, não âncora: um `href="#conteudo"` é um hash, e o router
+            trata qualquer hash que não case como rota — este link, que é o
+            PRIMEIRO elemento focável da aplicação, levava quem usa teclado para
+            o Início a partir de qualquer ecrã. O `pages/Legal.tsx` já tinha
+            escrito esta armadilha por palavras; o Shell fazia-a. */}
+        <button
+          type="button"
+          className="skip-link"
+          onClick={() => document.getElementById('conteudo')?.focus()}
+        >
           {t('shell.saltarParaConteudo')}
-        </a>
+        </button>
         <nav id="shell-nav" className="shell-nav" aria-label={t('shell.nav.rotulo')}>
           <div className="shell-nav__brand">
             <button
