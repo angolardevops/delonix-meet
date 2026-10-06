@@ -3622,3 +3622,47 @@ Com os ficheiros repostos, o portão passa: 15 métricas citadas, todas existent
 - **A sintaxe PromQL dos 16 alertas não é validada** — não há `promtool` nesta máquina nem no CI. Existem as métricas; que a expressão esteja bem formada não está medido.
 
 **Ficheiros.** `deploy/k8s/observabilidade/servicemonitor.yaml`, `deploy/helm/delonix-meet/values-production.yaml` (`networkPolicy.metricsNamespace`), `scripts/check-observabilidade.sh`, `Makefile`, `.github/workflows/ci.yml`.
+
+### R308 — O cliente de objectos entrou sem cliente HTTP: TODO o pedido morria em «dispatch failure»
+
+**2026-10-06.** O `server/src/objectos.rs` chegou à `develop` no #262 com três testes de unidade — a chave de uma gravação, o ambiente incompleto a dar `None`, o `Debug` sem a chave secreta — e com esta linha no `Cargo.toml`:
+
+```toml
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+```
+
+O `default` do `aws-sdk-s3` 1.152 é `["sigv4a", "http-1x", "rustls", "default-https-client", "rt-tokio"]`. Desligar as `default-features` e não repor o `default-https-client` deixa o SDK **sem cliente HTTP nenhum**, e nesse estado todo o pedido falha antes de sair da máquina:
+
+```
+Envio("dispatch failure")
+```
+
+**Não é um caso de borda: o cliente não funcionava de maneira nenhuma.** Nem contra S3, nem contra um MinIO em `http://` — que nem TLS usa, e por isso parecia o caso que menos precisava de uma «https client». O nome da feature é o que o esconde.
+
+**Porque os testes não apanharam.** Os três de unidade eram bons testes e nenhum **fala com um armazenamento**: medem a construção da chave, a leitura do ambiente e o `Debug`. Um cliente sem transporte passa todos. O portão do `check-openapi`, o clippy, o `cargo test` inteiro e o CI do #262 estavam verdes com isto dentro.
+
+**E a mesma prova apanhou um segundo defeito, no próprio teste que escrevi para ela.** A primeira versão de `um_bucket_que_nao_existe_falha_…` só exigia «falha»; com o SDK sem transporte ela **passava pela razão errada** (`dispatch failure` é uma falha). Passou a exigir que o erro NÃO seja de ligação e que traga o código do serviço. Um teste de recusa tem de dizer **de que** recusa fala.
+
+**Regra.**
+- **Um cliente de rede não está provado por testes que não saem da máquina.** Enquanto não houver um serviço à frente, o que está medido é a construção do pedido — não o pedido.
+- **`default-features = false` num SDK obriga a ler o `default`** e a repor, à mão, o que ele dava. Aqui faltava o transporte.
+- **Um teste de recusa nomeia a recusa.** «Falhou» inclui «nem tentou».
+- **O erro mostrado ao operador leva o CÓDIGO do serviço** (`NoSuchBucket`, `InvalidAccessKeyId`, `AccessDenied`), que é uma palavra e não topologia. Antes era «service error», que não distingue um bucket inexistente de uma chave errada — e as duas coisas arranjam-se de maneiras opostas. Sem código do serviço, o erro não chegou a ser uma resposta: aí vale o texto do SDK (`dispatch failure`), que é o sinal mais importante dos dois.
+
+**Portão.** `scripts/objectos-prova.sh` — ergue um MinIO em contentor (rede própria, API só em loopback), cria o bucket com o `mc`, corre `server/tests/objectos_minio.rs` e desmonta. O teste **declara-se não medido** quando falta o ambiente, em vez de passar em silêncio, e o script verifica esse aviso (um teste de integração que passa sem o serviço de pé não prova nada).
+
+**Prova corrida a 2026-10-06** contra `minio/minio:latest`:
+- `testar()` escreve e apaga o objecto de prova;
+- `guardar` de um ficheiro de 300 KiB do disco, por `ByteStream::from_path`;
+- `tamanho` igual ao do ficheiro;
+- `ler_intervalo` em três formas — 1000–1999 comparado byte a byte com a fatia do original (um ficheiro de bytes iguais não distinguiria um intervalo deslocado), os primeiros 16, e o fim **pedido com folga** (um `Range` que passa do fim é o que um leitor manda quando calcula mal o último pedaço: o S3 corta, e não é erro);
+- depois de `apagar`, `tamanho` e `ler_intervalo` **falham** (é isso que deixa o servidor distinguir «não está lá» de «veio vazio»), e apagar outra vez **não** falha (no S3 é idempotente);
+- bucket inexistente → `NoSuchBucket`, sem a chave de acesso nem a secreta no texto.
+
+**Controlo negativo:** tirada a feature `default-https-client`, os dois testes falham, o segundo com «não cheguei a falar com o MinIO — isto não prova nada sobre o bucket: … dispatch failure». Reposta, passam.
+
+**O que NÃO está provado.**
+- **Contra a AWS S3 a sério, nada.** Mediu-se MinIO em `http://`. O caminho HTTPS com SigV4 contra o serviço da Amazon não foi exercitado — e é esse que usa o TLS que esta feature traz.
+- **O gravador continua a não usar isto.** O cliente está provado; o caminho da media continua em disco (ADR-0020).
+- **A prova não corre no CI.** É um script que ergue um contentor, como as outras provas de réplica do repo; corre-se à mão.
+- **Nada mede o desempenho.** 300 KiB num MinIO local não diz nada sobre uma gravação de uma hora num bucket remoto.

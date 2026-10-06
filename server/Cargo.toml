@@ -69,7 +69,14 @@ tracing-opentelemetry = "0.32"
 # Objectos (MinIO/S3) — ADR-0020, D2. O SDK da AWS e não um cliente à mão: a
 # assinatura SigV4 é fácil de escrever quase bem, e «quase bem» numa assinatura
 # são pedidos recusados que ninguém sabe explicar.
-aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+# `default-https-client` NÃO é opcional, por muito que o nome o sugira: sem ele
+# o SDK fica SEM cliente HTTP e TODO o pedido morre em «dispatch failure» —
+# incluindo contra um MinIO em `http://`, que nem TLS usa. Entrou aqui sem ele,
+# e os três testes de unidade do `objectos.rs` passavam na mesma porque nenhum
+# fala com um armazenamento. Quem apanhou foi o `scripts/objectos-prova.sh`,
+# contra um MinIO a sério (ADR-0020). O `http-1x` vem com ele no `default`.
+# Fora ficam o `sigv4a` (access points multi-região, que não usamos).
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "behavior-version-latest", "http-1x", "default-https-client"] }
 aws-config = { version = "1", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
 aws-credential-types = "1"
 rand = "0.8"

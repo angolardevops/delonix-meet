@@ -193,8 +193,24 @@ impl Erro {
     fn leitura(e: impl std::fmt::Display) -> Self {
         Self::Leitura(e.to_string())
     }
-    fn envio(e: impl std::fmt::Display) -> Self {
-        Self::Envio(e.to_string())
+
+    /// O erro do SDK reduzido ao que se pode mostrar: o **código do serviço**
+    /// (`NoSuchBucket`, `InvalidAccessKeyId`, `AccessDenied`…), que é uma
+    /// palavra e não topologia.
+    ///
+    /// Sem isto a mensagem era «service error», que não diz a um operador se o
+    /// bucket não existe ou se a chave está errada — e os dois arranjam-se de
+    /// maneiras opostas. Quando **não há código**, o erro não chegou a ser uma
+    /// resposta do serviço (não ligou, DNS, TLS): aí vale o texto do SDK, que
+    /// diz «dispatch failure», e esse é o sinal mais importante dos dois.
+    fn envio<E>(e: E) -> Self
+    where
+        E: aws_sdk_s3::error::ProvideErrorMetadata + std::fmt::Display,
+    {
+        match e.code() {
+            Some(c) => Self::Envio(c.to_string()),
+            None => Self::Envio(e.to_string()),
+        }
     }
 }
 
