@@ -14,6 +14,7 @@
  * utilizador neste browser — é uma preferência de espaço, não um overlay.
  */
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { NAV_I18N } from '../rota'
 import { useTranslation } from 'react-i18next'
 import { isAbort, myOrgs, OrgSummary, User } from '../api'
 import { Icon, IconName } from '../ui/icons'
@@ -155,21 +156,24 @@ export default function Shell({
   const isAdmin = org?.role === 'admin'
   const palette = usePaletteHost()
 
+  // Os rótulos vêm do `NAV_I18N` (rota.ts), que é a mesma fonte que o trilho
+  // usa: dois sítios a escrever o nome de «Gravações» davam dois nomes.
+  const item = (key: NavKey, icon: NavItem['icon']): NavItem => ({ key, label: t(NAV_I18N[key]), icon })
   const primary: NavItem[] = [
-    { key: 'home', label: t('shell.nav.inicio'), icon: 'home' },
-    { key: 'calendar', label: t('shell.nav.agenda'), icon: 'calendar' },
-    { key: 'rooms', label: t('shell.nav.salas'), icon: 'door' },
-    { key: 'studio', label: t('shell.nav.estudio'), icon: 'live' },
-    { key: 'recordings', label: t('shell.nav.gravacoes'), icon: 'film' },
-    { key: 'whiteboards', label: t('shell.nav.quadros'), icon: 'board' },
-    { key: 'directory', label: t('shell.nav.contactos'), icon: 'people' },
+    item('home', 'home'),
+    item('calendar', 'calendar'),
+    item('rooms', 'door'),
+    item('studio', 'live'),
+    item('recordings', 'film'),
+    item('whiteboards', 'board'),
+    item('directory', 'people'),
   ]
   const management: NavItem[] = [
-    { key: 'integrations', label: t('shell.nav.integracoes'), icon: 'plug' },
-    { key: 'analytics', label: t('shell.nav.analise'), icon: 'chart' },
-    { key: 'admin', label: t('shell.nav.administracao'), icon: 'building' },
-    { key: 'telecom', label: t('telecom.titulo'), icon: 'phone' },
-    { key: 'ai', label: t('consola.nav.ia'), icon: 'sparkles' },
+    item('integrations', 'plug'),
+    item('analytics', 'chart'),
+    item('admin', 'building'),
+    item('telecom', 'phone'),
+    item('ai', 'sparkles'),
   ]
 
   const openSettings = useCallback((tab: SettingsTab = 'account') => setSettings(tab), [])

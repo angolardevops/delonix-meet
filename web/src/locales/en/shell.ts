@@ -1,4 +1,5 @@
 export default {
+  trilho: 'Breadcrumb',
   saltarParaConteudo: 'Skip to content',
   procurar: 'Search…',
   atalhoPaleta: 'Ctrl K',

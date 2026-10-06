@@ -1,4 +1,4 @@
-import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
+import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { completeSsoLogin, currentUser, logout, User } from './api'
 import Shell, { NavKey } from './components/Shell'
@@ -6,7 +6,8 @@ import PaletteHost from './components/PaletteHost'
 import PresenceProvider from './components/PresenceProvider'
 import { Icon } from './ui/icons'
 import { Empty, Spinner } from './ui/kit'
-import { parseHash, type Route } from './rota'
+import { getAppName } from './branding'
+import { chaveDoTitulo, destinoNoRail, parseHash, type Route } from './rota'
 import { useTrabalhoEmCurso } from './trabalhoEmCurso'
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,30 @@ export default function App() {
   const [route, setRoute] = useState<Route>(parseHash())
   const trabalhoEmCurso = useTrabalhoEmCurso()
 
+  /**
+   * O nome do ecrã no separador do browser. Até 2026-10-06 o `document.title`
+   * era o nome da aplicação em TODOS os ecrãs: quinze abas iguais, histórico
+   * indistinguível, marcadores inúteis.
+   */
+  useEffect(() => {
+    const chave = chaveDoTitulo(route)
+    document.title = chave ? `${t(chave)} · ${getAppName()}` : getAppName()
+  }, [route, t])
+  /**
+   * Mudar de ecrã move o foco para o conteúdo. O `<main id="conteudo">` já
+   * tinha `tabIndex={-1}` e ninguém lhe dava foco: quem navega por teclado
+   * clicava num item do rail e tinha de atravessar o rail inteiro outra vez
+   * para chegar ao que abriu. Não corre no primeiro render — aí o foco é de
+   * quem chega à página, não nosso.
+   */
+  const primeiroRender = useRef(true)
+  useEffect(() => {
+    if (primeiroRender.current) {
+      primeiroRender.current = false
+      return
+    }
+    document.getElementById('conteudo')?.focus()
+  }, [route.kind])
   useEffect(() => {
     const onHash = () => setRoute(parseHash())
     // Sessão expirada (a renovação falhou): volta-se ao ecrã de entrada.
@@ -192,7 +217,9 @@ export default function App() {
           <Shell
             user={user}
             // A moderação é de UMA sala e não tem destino no rail: nenhum item fica activo.
-            active={(route.kind === 'lobby' ? null : route.kind === 'diagram' ? 'whiteboards' : route.kind === 'player' ? 'recordings' : route.kind) as NavKey}
+            // O destino aceso no rail — a hierarquia que estava enterrada neste
+            // ternário vive agora no `rota.ts`, e é a mesma que dá o trilho.
+            active={destinoNoRail(route) as NavKey}
             onNavigate={navigate}
             onEnterRoom={enterRoom}
             onLogout={() => {
