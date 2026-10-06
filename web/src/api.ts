@@ -699,6 +699,52 @@ export const shareWhiteboard = (id: string, isPublic: boolean) =>
   })
 export const whiteboardPngUrl = (id: string) => `/api/whiteboards/${id}/image`
 
+// ---------- Diagramas (o modelo EDITÁVEL; o quadro acima é o PNG) ----------
+
+/** O que a lista do servidor devolve — sem o documento. */
+export interface DiagramServerSummary {
+  id: string
+  title: string
+  notation: string
+  room_code: string
+  elements: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DiagramServerDetail extends DiagramServerSummary {
+  /** O `DiagramDoc` como o cliente o escreveu. Opaco para o servidor. */
+  doc: unknown
+}
+
+export interface DiagramSaveBody {
+  title: string
+  notation: string
+  room_code: string
+  elements: number
+  doc: unknown
+  /**
+   * O `updated_at` que este browser viu. Com ele, gravar a partir de um estado
+   * velho dá `409` em vez de escrever por cima do que outra aba gravou.
+   */
+  expected_updated_at?: string
+}
+
+export const listServerDiagrams = (signal?: AbortSignal) =>
+  request<DiagramServerSummary[]>('/api/diagrams', { signal })
+
+export const getServerDiagram = (id: string, signal?: AbortSignal) =>
+  request<DiagramServerDetail>(`/api/diagrams/${encodeURIComponent(id)}`, { signal })
+
+export const putServerDiagram = (id: string, body: DiagramSaveBody) =>
+  request<DiagramServerSummary>(`/api/diagrams/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+
+export const deleteServerDiagram = (id: string) =>
+  requestEmpty(`/api/diagrams/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
 export interface Webhook {
   id: string
   org_id: string

@@ -2800,6 +2800,101 @@
         ],
         "type": "object"
       },
+      "DiagramDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DiagramSummary"
+          },
+          {
+            "properties": {
+              "doc": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "doc"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Um diagrama com o documento. O `doc` é opaco para o servidor **de\npropósito**: a forma dele é do cliente (`DiagramDoc`, 1142 linhas de modelo\nem TypeScript), e tipá-la aqui obrigaria a mudar o Rust a cada forma nova de\nnó. O que o servidor garante é que é JSON, que cabe no tecto e de quem é."
+      },
+      "DiagramSaveReq": {
+        "properties": {
+          "doc": {
+            "description": "O documento. Objecto JSON; um array ou um número são recusados.",
+            "type": "object"
+          },
+          "elements": {
+            "description": "Nós mais traços. Só para a lista; não é verificado contra o `doc`.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "expected_updated_at": {
+            "description": "O `updated_at` que o cliente viu. Presente e diferente do que está\ngravado → `409`. Ausente → escreve (é o primeiro envio, ou um cliente\nque não participa no controlo).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notation": {
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "title": {
+            "description": "Truncado a 200 caracteres; vazio fica vazio (o cliente já tem um nome\npor omissão traduzido, e inventar um aqui dava dois nomes diferentes).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc"
+        ],
+        "type": "object"
+      },
+      "DiagramSummary": {
+        "description": "O que a lista mostra. Sem o `doc`: a lista de vinte diagramas não puxa vinte\ndocumentos inteiros para contar os elementos.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "elements": {
+            "description": "Número de nós mais traços, como o cliente o contou ao gravar.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notation": {
+            "description": "`uml` | `bpmn` | `arch` | `flow` | `free` — como o cliente a escreveu.",
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "notation",
+          "room_code",
+          "elements",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "DialIn": {
         "description": "Como ligar para uma sala de conferência por telefone.",
         "properties": {
@@ -14636,6 +14731,233 @@
         "summary": "O catálogo fechado de capacidades (estático, igual para todas as orgs).",
         "tags": [
           "authorization"
+        ]
+      }
+    },
+    "/api/diagrams": {
+      "get": {
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DiagramSummary"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Até 500, do mais recente para o mais antigo. Nunca os de outra pessoa, nem com a mesma organização."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/diagrams` — os diagramas de quem pede, mais recentes primeiro.",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/api/diagrams/{diagram_id}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Apagado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe, ou é de outra pessoa."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/diagrams/{diagram_id}` — apaga.",
+        "tags": [
+          "diagrams"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "O id que o cliente escolheu (`uid('d')`), não um UUID.",
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe, ou é de outra pessoa — a MESMA resposta, de propósito: um `403` confirmava a existência."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/diagrams/{diagram_id}` — um diagrama com o documento.",
+        "tags": [
+          "diagrams"
+        ]
+      },
+      "put": {
+        "operationId": "save",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramSaveReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramSummary"
+                }
+              }
+            },
+            "description": "O diagrama como ficou gravado. O `updated_at` daqui é o que o próximo `PUT` manda em `expected_updated_at`."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem organização, documento que não é objecto, acima de 2 MiB, notação desconhecida, ou id fora do formato."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`diagram.conflict` — mudou no servidor desde o `expected_updated_at`. Não há merge: o cliente mostra as duas datas e decide."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`diagram.too_many` — a pessoa chegou ao tecto de 500 diagramas."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/diagrams/{diagram_id}` — grava (cria ou substitui).",
+        "tags": [
+          "diagrams"
         ]
       }
     },

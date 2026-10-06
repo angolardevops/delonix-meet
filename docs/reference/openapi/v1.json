@@ -2800,6 +2800,101 @@
         ],
         "type": "object"
       },
+      "DiagramDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DiagramSummary"
+          },
+          {
+            "properties": {
+              "doc": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "doc"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Um diagrama com o documento. O `doc` é opaco para o servidor **de\npropósito**: a forma dele é do cliente (`DiagramDoc`, 1142 linhas de modelo\nem TypeScript), e tipá-la aqui obrigaria a mudar o Rust a cada forma nova de\nnó. O que o servidor garante é que é JSON, que cabe no tecto e de quem é."
+      },
+      "DiagramSaveReq": {
+        "properties": {
+          "doc": {
+            "description": "O documento. Objecto JSON; um array ou um número são recusados.",
+            "type": "object"
+          },
+          "elements": {
+            "description": "Nós mais traços. Só para a lista; não é verificado contra o `doc`.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "expected_updated_at": {
+            "description": "O `updated_at` que o cliente viu. Presente e diferente do que está\ngravado → `409`. Ausente → escreve (é o primeiro envio, ou um cliente\nque não participa no controlo).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notation": {
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "title": {
+            "description": "Truncado a 200 caracteres; vazio fica vazio (o cliente já tem um nome\npor omissão traduzido, e inventar um aqui dava dois nomes diferentes).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc"
+        ],
+        "type": "object"
+      },
+      "DiagramSummary": {
+        "description": "O que a lista mostra. Sem o `doc`: a lista de vinte diagramas não puxa vinte\ndocumentos inteiros para contar os elementos.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "elements": {
+            "description": "Número de nós mais traços, como o cliente o contou ao gravar.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notation": {
+            "description": "`uml` | `bpmn` | `arch` | `flow` | `free` — como o cliente a escreveu.",
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "notation",
+          "room_code",
+          "elements",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "DialIn": {
         "description": "Como ligar para uma sala de conferência por telefone.",
         "properties": {

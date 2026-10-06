@@ -856,7 +856,7 @@ export default {
   },
   guardar: {
     titulo: '保存到组织媒体库',
-    texto: '此画板的 PNG 图片将保存到“白板”，组织成员均可查看。可编辑模型仍保留在此浏览器中。',
+    texto: '此画板的 PNG 图片将保存到“白板”，组织成员均可查看。可编辑模型仅保留在你的帐户中。',
     vazio: '画板为空：没有可保存的内容。',
     tituloCampo: '标题',
     sala: '关联会议室',
@@ -873,17 +873,17 @@ export default {
     erro: '无法保存画板。',
   },
   local: {
-    titulo: '此浏览器中的图表',
-    ajuda: '可编辑模型保存在此浏览器中。如需在其他浏览器中使用，请导出模型（.json）后在那里导入。',
+    titulo: '我的图表',
+    ajuda: '可编辑模型保存在你的帐户中，在任何登录的电脑上都能打开。没有网络时仍会保存在此浏览器，连接恢复后自动上传。',
     abrir: '打开{{title}}',
-    eliminar: '从此浏览器中删除{{title}}',
+    eliminar: '删除{{title}}',
     eliminarTitulo: '删除图表',
-    eliminarTexto: '“{{title}}”将从此浏览器中移除。已保存到“白板”的 PNG 不会被删除。',
+    eliminarTexto: '“{{title}}”将从你的帐户和此浏览器中移除。已保存到“白板”的 PNG 不会被删除。',
     elementos_one: '{{count}} 个元素',
     elementos_other: '{{count}} 个元素',
     comPng: '“白板”中有 PNG',
     erro: '此浏览器不允许保存图表（IndexedDB 不可用）。',
-    naoEncontrado: '此浏览器中不存在该图表。',
+    naoEncontrado: '该图表不存在。',
   },
   exemplos: {
     uml: {

@@ -856,7 +856,7 @@ export default {
   },
   guardar: {
     titulo: 'Guardar na biblioteca da organização',
-    texto: 'Vai uma imagem PNG deste quadro para «Quadros», visível a quem é da organização. O modelo editável continua neste browser.',
+    texto: 'Vai uma imagem PNG deste quadro para «Quadros», visível a quem é da organização. O modelo editável fica só na tua conta.',
     vazio: 'O quadro está vazio: não há nada para guardar.',
     tituloCampo: 'Título',
     sala: 'Sala associada',
@@ -873,17 +873,17 @@ export default {
     erro: 'Não foi possível guardar o quadro.',
   },
   local: {
-    titulo: 'Diagramas neste browser',
-    ajuda: 'Os modelos editáveis ficam neste browser. Para os levar para outro, exporta o modelo (.json) e importa-o lá.',
+    titulo: 'Os meus diagramas',
+    ajuda: 'Os modelos editáveis ficam na tua conta e abrem em qualquer computador onde entres. Sem rede continuam a gravar neste browser e sobem quando a ligação voltar.',
     abrir: 'Abrir {{title}}',
-    eliminar: 'Eliminar {{title}} deste browser',
+    eliminar: 'Eliminar {{title}}',
     eliminarTitulo: 'Eliminar diagrama',
-    eliminarTexto: '«{{title}}» sai deste browser. Um PNG já guardado em Quadros não é apagado.',
+    eliminarTexto: '«{{title}}» sai da tua conta e deste browser. Um PNG já guardado em Quadros não é apagado.',
     elementos_one: '{{count}} elemento',
     elementos_other: '{{count}} elementos',
     comPng: 'PNG em Quadros',
     erro: 'Este browser não deixa guardar diagramas (IndexedDB indisponível).',
-    naoEncontrado: 'Este diagrama não existe neste browser.',
+    naoEncontrado: 'Este diagrama não existe.',
   },
   exemplos: {
     uml: {
