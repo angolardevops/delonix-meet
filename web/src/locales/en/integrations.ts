@@ -76,8 +76,7 @@ export default {
     testeFalhou: 'Connection failed',
     testaGravado: 'The test uses the saved configuration: save before testing the new destination.',
     objectosTitulo: 'Object storage',
-    objectosSub:
-      "Configured in the server's environment (OBJECT_STORE_*), not in this card: the keys are a cluster secret.",
+    objectosSub: "Configured in the server's environment (OBJECT_STORE_*), not in this card: the keys are a cluster secret.",
     objectosAindaNao: 'Recordings do NOT live here yet — they are still on disk. The connection test already measures this bucket.',
     objectosBucket: 'Bucket',
     objectosEndpoint: 'Endpoint',
