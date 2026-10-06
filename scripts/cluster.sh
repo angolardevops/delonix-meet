@@ -226,6 +226,14 @@ up)
   fumo "$HOST_IP"
   printf "\n%s✓ cluster «%s» pronto%s — %shttps://%s%s\n" "$g" "$CLUSTER_NAME" "$z" "$y" "$MEET_HOST" "$z"
   hosts "$HOST_IP"
+
+  # A organização, a voz e a CONTA DE DEMONSTRAÇÃO. Aqui e não à parte: quem
+  # sobe o cluster quer entrar nele, e um cluster de pé com um ecrã de registo
+  # vazio é meio caminho. Idempotente, e falhar não desfaz o cluster — por isso
+  # não leva o `set -e` à frente.
+  passo "contas de validação (make seed)"
+  bash scripts/seed.sh "https://${MEET_HOST}" || avisa "o seed não correu até ao fim — corre «make seed» quando o servidor responder"
+
   printf "  kubectl:  export KUBECONFIG=%s\n" "$KUBECONFIG"
   ;;
 status)

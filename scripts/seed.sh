@@ -30,6 +30,19 @@ PW=$(sed -n 's/^MEET_ADMIN_PASSWORD=//p' .env 2>/dev/null | head -1) || true
 
 g=$'\033[1;32m'; y=$'\033[1;33m'; z=$'\033[0m'
 
+# A conta de DEMONSTRAÇÃO (ver a secção lá em baixo). Lida e validada AQUI, antes
+# de se esperar pelo servidor: uma password curta é um erro de quem corre o
+# comando, e dizê-lo ao fim de oitenta segundos de espera é um desperdício.
+DEMO_EMAIL=${MEET_DEMO_EMAIL:-demo@ngolacloud.ao}
+DEMO_PW=${MEET_DEMO_PASSWORD:-demo1234}
+DEMO_ORG=${MEET_DEMO_ORG:-Demo}
+DEMO_OK=1
+if [ "${#DEMO_PW}" -lt 8 ]; then
+  printf "  %s!%s MEET_DEMO_PASSWORD tem %s caracteres e o mínimo do produto é 8 (identity::validation) — a conta demo fica por criar\n" \
+    "$y" "$z" "${#DEMO_PW}"
+  DEMO_OK=0
+fi
+
 # A borda pode demorar uns segundos a responder depois do `up`.
 for _ in $(seq 1 40); do
   [ "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 4 "$BASE/api/openapi.json" || true)" = 200 ] && break
@@ -58,6 +71,36 @@ else
   else
     printf "  %s!%s o registo devolveu %s — a conta de validação NÃO foi criada\n" "$y" "$z" "$codigo"
     exit 1
+  fi
+fi
+
+# ============================================================
+#  A conta de DEMONSTRAÇÃO — para validar melhorias no browser.
+#
+#  Própria e isolada: tem a sua organização, por isso mexer nela não estraga a
+#  do laboratório nem a voz semeada acima. Falhar aqui não desfaz nada do que
+#  veio antes.
+#
+#  A PASSWORD TEM DE TER 8 CARACTERES OU MAIS. Não é escolha deste script: é a
+#  política do produto (`identity::validation::validate_password`, 8-128), a
+#  mesma que um cliente encontra. Baixá-la para o laboratório seria mudar o
+#  produto para a demonstração ficar bonita.
+# ============================================================
+corpo_demo_login=$(printf '{"email":"%s","password":"%s"}' "$DEMO_EMAIL" "$DEMO_PW")
+if [ "$DEMO_OK" = 0 ]; then
+  : # dito acima, antes da espera pelo servidor
+elif [ "$(pede POST /api/auth/login "$corpo_demo_login")" = 200 ]; then
+  printf "  %s✓%s conta de demonstração: %s / %s\n" "$g" "$z" "$DEMO_EMAIL" "$DEMO_PW"
+else
+  corpo_demo=$(printf '{"org_name":"%s","email":"%s","username":"demo","password":"%s"}' \
+    "$DEMO_ORG" "$DEMO_EMAIL" "$DEMO_PW")
+  codigo=$(pede POST /api/auth/register "$corpo_demo")
+  if [ "$codigo" = 200 ] || [ "$codigo" = 201 ]; then
+    printf "  %s✓%s conta de demonstração criada: %s / %s\n" "$g" "$z" "$DEMO_EMAIL" "$DEMO_PW"
+  else
+    # 409 = o domínio já tem organização (outra corrida criou-a com outro email).
+    printf "  %s!%s o registo da conta demo devolveu %s — entra com a conta de administração\n" \
+      "$y" "$z" "$codigo"
   fi
 fi
 
@@ -177,3 +220,4 @@ with os.fdopen(fd, "w") as f:
     f.write(f"sala={sala['code']}\npin={voz['pin']}\nnumero={did}\nvoz={voz['id']}\n")
 ok(f"sala com PIN: {sala['code']} (em {sala_txt})")
 PY
+
