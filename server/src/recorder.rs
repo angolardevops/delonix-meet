@@ -897,27 +897,30 @@ impl Drop for GaugeGuard<'_> {
     }
 }
 
-/// Espera por uma vaga de composição, chamando `on_beat` a cada `beat_every`
-/// enquanto espera. O `acquire` fica fixo e é re-sondado: o semáforo do tokio
-/// serve por ordem de chegada, e largar o future perdia o lugar na fila.
+/// Espera por uma vaga de composição para `tenant`, chamando `on_beat` a cada
+/// `beat_every` enquanto espera. O `acquire` fica fixo e é re-sondado: largar o
+/// future perdia o lugar na fila. As vagas repartem-se por inquilino
+/// (`fair_slots`): uma organização com muitas composições à espera não deixa as
+/// outras atrás de si.
 async fn wait_for_slot<F, Fut>(
-    slots: Arc<tokio::sync::Semaphore>,
+    slots: crate::fair_slots::FairSlots,
+    tenant: Uuid,
     beat_every: std::time::Duration,
     mut on_beat: F,
-) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit>
+) -> anyhow::Result<crate::fair_slots::Slot>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
-    let acquire = slots.acquire_owned();
+    let acquire = slots.acquire(tenant);
     tokio::pin!(acquire);
     let mut tick = tokio::time::interval(beat_every);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     tick.tick().await; // o primeiro tick é imediato; o batimento só conta ao fim de um período
     loop {
         tokio::select! {
-            permit = &mut acquire => {
-                return permit.map_err(|_| anyhow::anyhow!("semáforo de composição fechado"));
+            slot = &mut acquire => {
+                return slot.map_err(|_| anyhow::anyhow!("vagas de composição fechadas"));
             }
             _ = tick.tick() => on_beat().await,
         }
@@ -1265,16 +1268,26 @@ async fn finalize_inner(
     // começar: esperar a vez não conta como tempo de composição.
     let waiting = GaugeGuard::up(&state.metrics.recording_compose_queued);
     let queued_at = std::time::Instant::now();
-    let _slot = wait_for_slot(state.compose_slots.clone(), COMPOSE_QUEUE_BEAT, || async {
-        if let Some(id) = rec_id {
-            let _ = sqlx::query(
+    // De quem é a composição: o inquilino da sala (a organização do dono), para
+    // que as vagas se repartam entre organizações e não por ordem de chegada.
+    let tenant = crate::signaling::resolve_tenant(state, room_id)
+        .await
+        .unwrap_or(crate::fair_slots::UNKNOWN_TENANT);
+    let _slot = wait_for_slot(
+        state.compose_slots.clone(),
+        tenant,
+        COMPOSE_QUEUE_BEAT,
+        || async {
+            if let Some(id) = rec_id {
+                let _ = sqlx::query(
                 "UPDATE recordings SET progress_at = now() WHERE id = $1 AND status = 'processing'",
             )
             .bind(id)
             .execute(&state.db)
             .await;
-        }
-    })
+            }
+        },
+    )
     .await?;
     drop(waiting);
     let _running = GaugeGuard::up(&state.metrics.recording_compose_running);
@@ -2543,12 +2556,13 @@ mod tests {
     #[tokio::test]
     async fn wait_for_slot_da_batimentos_enquanto_espera_e_entrega_a_vaga() {
         use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-        let slots = Arc::new(tokio::sync::Semaphore::new(1));
-        let held = slots.clone().acquire_owned().await.unwrap();
+        let slots = crate::fair_slots::FairSlots::new(1);
+        let held = slots.acquire(Uuid::nil()).await.unwrap();
         let beats = Arc::new(AtomicUsize::new(0));
         let b = beats.clone();
         let waiter = tokio::spawn(wait_for_slot(
             slots.clone(),
+            Uuid::nil(),
             Duration::from_millis(20),
             move || {
                 let b = b.clone();
@@ -2572,13 +2586,9 @@ mod tests {
             .expect("com a vaga livre tinha de acabar")
             .unwrap()
             .expect("a vaga tinha de ser entregue");
-        assert_eq!(
-            slots.available_permits(),
-            0,
-            "a vaga está agora com quem esperou"
-        );
+        assert_eq!(slots.available(), 0, "a vaga está agora com quem esperou");
         drop(permit);
-        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(slots.available(), 1);
     }
 
     // ------------------------------------------------------------------
@@ -2845,16 +2855,21 @@ mod tests {
     async fn o_tecto_de_vagas_nunca_e_excedido() {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
         const CAP: usize = 2;
-        let slots = Arc::new(tokio::sync::Semaphore::new(CAP));
+        let slots = crate::fair_slots::FairSlots::new(CAP);
         let now = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
         let mut tasks = Vec::new();
-        for _ in 0..8 {
+        for i in 0..8u128 {
             let (slots, now, peak) = (slots.clone(), now.clone(), peak.clone());
             tasks.push(tokio::spawn(async move {
-                let _slot = wait_for_slot(slots, Duration::from_secs(60), || async {})
-                    .await
-                    .unwrap();
+                let _slot = wait_for_slot(
+                    slots,
+                    Uuid::from_u128(i % 2),
+                    Duration::from_secs(60),
+                    || async {},
+                )
+                .await
+                .unwrap();
                 let n = now.fetch_add(1, SeqCst) + 1;
                 peak.fetch_max(n, SeqCst);
                 tokio::time::sleep(Duration::from_millis(25)).await;

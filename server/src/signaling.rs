@@ -3959,7 +3959,7 @@ pub async fn ws_handler(
 /// Falha ABERTA: se a base não responder devolve `None` e a sala entra como
 /// inquilino desconhecido — a admissão por capacidade total (`NodeFull`) continua
 /// a valer, só se perde a justiça por inquilino durante a falha.
-async fn resolve_tenant(state: &AppState, room_id: Uuid) -> Option<Uuid> {
+pub(crate) async fn resolve_tenant(state: &AppState, room_id: Uuid) -> Option<Uuid> {
     let owner: Uuid = sqlx::query_scalar("SELECT owner_id FROM rooms WHERE id = $1")
         .bind(room_id)
         .fetch_optional(&state.db)
