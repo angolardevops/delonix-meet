@@ -45,7 +45,9 @@ maneiras, e não são a mesma coisa:
 Para os dois caberem no mesmo PBX, a allowlist do laboratório só aceita a **porta 5060 de
 origem** — a do tronco UDP. O tronco TLS sai de uma porta efémera, não está na lista, e é
 desafiado. O `make seed` cria também uma sala com PIN
-(`deploy/compose/generated/sala-telefone.txt`), e o `make compose-voice-check` liga por cada
+(`deploy/compose/generated/sala-telefone.txt`) — e, se o ficheiro já existir, confere na
+base que a sala que ele descreve ainda lá está, e cria outra se não estiver (R302: uma base
+nova com um ficheiro de antes) —, e o `make compose-voice-check` liga por cada
 tronco: pelo da central, com o PIN certo (entra) e com um errado (autenticada, e recusada
 pelo IVR). Com o PIN certo, diz também **para onde a chamada foi** — a ponte telefone↔sala
 do SFU, ou a conferência local do FreeSWITCH —, lendo-o no registo do IVR em vez de o
