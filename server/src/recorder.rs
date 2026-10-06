@@ -3132,20 +3132,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
     }
 
+    /// Um pacote RTP de Opus para os testes do instante de cada pista. É igual
+    /// ao `opus_silencio` dos testes do relógio, mas próprio: esses testes (e a
+    /// função deles) saem com a correcção do pacote de áudio atrasado, e o
+    /// instante de uma pista mede-se em qualquer dos dois mundos.
+    fn opus_rtp(seq: u16, ts: u32) -> webrtc::rtp::packet::Packet {
+        let header = webrtc::rtp::header::Header {
+            sequence_number: seq,
+            timestamp: ts,
+            payload_type: 111,
+            ..Default::default()
+        };
+        webrtc::rtp::packet::Packet {
+            header,
+            payload: vec![0xf8, 0xff, 0xfe].into(),
+        }
+    }
+
     #[tokio::test]
     async fn a_pista_de_audio_comeca_no_primeiro_pacote_e_nao_na_ligacao() {
         let mut s = sessao_de_teste().await;
         let (w, _) = abre_pista(&mut s, "audio");
         let ligada = s.tracks[0].offset_ms;
         // Um payload vazio não chega a ser escrito: não é o início de nada.
-        let mut vazio = opus_silencio(1, 1000);
+        let mut vazio = opus_rtp(1, 1000);
         vazio.payload = Vec::new().into();
         w.write_rtp(&vazio);
         // O microfone está em silêncio: o DTX só manda o pacote seguinte daqui a pouco.
         dorme(120).await;
         assert_eq!(s.tracks[0].starts_at_ms(), ligada);
         let antes = agora_ms(&s);
-        w.write_rtp(&opus_silencio(2, 1000 + 19_200));
+        w.write_rtp(&opus_rtp(2, 1000 + 19_200));
         let depois = agora_ms(&s);
         let comeca = s.tracks[0].starts_at_ms();
         assert!(
@@ -3154,7 +3171,7 @@ mod tests {
              {antes} e {depois}), não quando o writer foi ligado ({ligada} ms)"
         );
         dorme(40).await;
-        w.write_rtp(&opus_silencio(3, 1000 + 20_160));
+        w.write_rtp(&opus_rtp(3, 1000 + 20_160));
         assert_eq!(s.tracks[0].starts_at_ms(), comeca, "só o primeiro conta");
         w.close().await;
         let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
