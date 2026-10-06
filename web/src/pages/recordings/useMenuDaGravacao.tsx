@@ -7,8 +7,9 @@
  * biblioteca com cinquenta gravações isso são dois cliques e uma leitura de
  * vídeo para chegar a «Partilhar».
  *
- * Uma gravação FALHADA não abre menu (R59): não há ficheiro, e oferecer acções
- * sobre o que não existe é prometer duas vezes à mesma pessoa.
+ * Uma gravação SEM FICHEIRO — falhada, ou que o servidor ainda está a compor —
+ * não abre menu (R59): oferecer acções sobre o que não existe é prometer duas
+ * vezes à mesma pessoa.
  */
 import { useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -33,7 +34,7 @@ export function useMenuDaGravacao({
   const [alvo, setAlvo] = useState<RecordingView | null>(null)
 
   const aoContexto = (r: RecordingView) => (e: EventoDePonteiro) => {
-    if (r.failed) return
+    if (!r.hasFile) return
     setAlvo(r)
     menu.abrir(e)
   }

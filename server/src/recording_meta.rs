@@ -168,6 +168,7 @@ fn default_visibility() -> String {
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "A gravação não tem ficheiro: falhou, ou o servidor ainda a está a compor (`status = processing`). Código genérico `conflict`."),
     )
 )]
 pub async fn publish(
@@ -282,6 +283,7 @@ pub async fn thumbnail(
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "A gravação não tem ficheiro: falhou, ou o servidor ainda a está a compor (`status = processing`). Código genérico `conflict`."),
     )
 )]
 pub async fn record_view(
