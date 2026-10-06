@@ -151,6 +151,129 @@ async fn state_and_transcript_status_are_derived_for_each_state(db: sqlx::PgPool
     }
 }
 
+/// A linha de uma gravação do servidor nasce em `processing` ANTES de o ffmpeg
+/// correr (`recorder::insert_processing`), e passa a `ready` quando a
+/// composição acaba. Entre uma coisa e outra a API tem de dizer «a compor»,
+/// com o progresso — dizia `failed` sem causa, e quem parava uma gravação via-a
+/// falhada até a composição acabar.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_recording_being_composed_is_processing_not_failed(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let (app, a) = (&f.app, &f.a);
+    // As colunas e os valores com que o `recorder::insert_processing` a cria.
+    let (id,): (uuid::Uuid,) = sqlx::query_as(
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status,
+                                 progress_pct, progress_at, kind)
+         VALUES ($1::uuid, $2::uuid, 'a compor.webm', 0, 'processing', 0, now(), 'meeting')
+         RETURNING id",
+    )
+    .bind(&f.room_id)
+    .bind(&a.user_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let rec = id.to_string();
+    let meta = format!("/api/recordings/{rec}");
+    let in_library = |lib: &Value| -> Value {
+        items(lib)
+            .iter()
+            .find(|r| r["id"] == rec.as_str())
+            .unwrap_or_else(|| panic!("a gravação a compor não está na biblioteca: {lib}"))
+            .clone()
+    };
+
+    // As três leituras dizem o mesmo: o recurso, o `/details` e a biblioteca.
+    let (st, m) = app.get(&meta, Some(&a.token)).await;
+    assert_eq!(st, 200, "{m}");
+    let (_, d) = app.get(&format!("{meta}/details"), Some(&a.token)).await;
+    let (_, lib) = app.get("/api/recordings", Some(&a.token)).await;
+    for (onde, r) in [
+        ("recurso", m),
+        ("details", d),
+        ("biblioteca", in_library(&lib)),
+    ] {
+        assert_eq!(r["status"], "processing", "{onde}: {r}");
+        assert_eq!(r["state"], "processing", "{onde}: {r}");
+        assert_eq!(r["progress_pct"], 0, "{onde}: {r}");
+        assert!(r["failure_reason"].is_null(), "{onde}: {r}");
+        assert_eq!(r["transcript_status"], "none", "{onde}: {r}");
+    }
+
+    // O progresso que o gravador vai escrevendo chega a quem lê.
+    sql(
+        app,
+        "UPDATE recordings SET progress_pct = 42, progress_at = now() WHERE id = $1::uuid",
+        &rec,
+    )
+    .await;
+    let (_, lib) = app.get("/api/recordings", Some(&a.token)).await;
+    assert_eq!(in_library(&lib)["progress_pct"], 42);
+
+    // Ainda não há ficheiro, e a recusa não diz que «falhou» (R59: nada se
+    // oferece sobre uma gravação que não está pronta).
+    let (st, e) = app.get(&format!("{meta}/content"), Some(&a.token)).await;
+    assert_eq!(st, 409, "{e}");
+    assert_eq!(e["code"], "recording.processing", "{e}");
+    assert!(
+        !e["error"].as_str().unwrap_or_default().contains("falhou"),
+        "{e}"
+    );
+    // O `409` é só para quem chega à gravação. Quem não chega — outra
+    // organização, ou um colega sem relação com ela — recebe o `404` de «não
+    // existe», como antes: o estado não confirma que o id existe.
+    for (quem, conta) in [
+        ("outra organização", &f.b),
+        ("colega sem relação", &f.duarte),
+    ] {
+        let (st, e) = app
+            .get(&format!("{meta}/content"), Some(&conta.token))
+            .await;
+        assert_eq!(st, 404, "{quem}: {e}");
+        let (st, e) = app.get(&meta, Some(&conta.token)).await;
+        assert_eq!(st, 404, "{quem}: {e}");
+    }
+    let (st, e) = app
+        .post(
+            &format!("{meta}/publish"),
+            Some(&a.token),
+            json!({"visibility": "org"}),
+        )
+        .await;
+    assert_eq!(st, 409, "{e}");
+    let (st, e) = app
+        .post(&format!("{meta}/views"), Some(&a.token), json!({}))
+        .await;
+    assert_eq!(st, 409, "{e}");
+
+    // Publicada à força (por SQL): continua a compor, não «publicada».
+    sql(
+        app,
+        "UPDATE recordings SET visibility = 'org', published_at = now() WHERE id = $1::uuid",
+        &rec,
+    )
+    .await;
+    let (_, m) = app.get(&meta, Some(&a.token)).await;
+    assert_eq!(m["state"], "processing", "{m}");
+
+    // Uma falha a sério continua a ler-se como antes: `failed`, com a causa,
+    // e o `400` do ficheiro traz essa causa.
+    sql(
+        app,
+        "UPDATE recordings SET status = 'failed', failure_reason = 'sem espaço',
+                progress_pct = NULL, progress_at = NULL WHERE id = $1::uuid",
+        &rec,
+    )
+    .await;
+    let (_, m) = app.get(&meta, Some(&a.token)).await;
+    assert_eq!(m["status"], "failed", "{m}");
+    assert_eq!(m["state"], "failed", "{m}");
+    assert_eq!(m["failure_reason"], "sem espaço", "{m}");
+    assert!(m["progress_pct"].is_null(), "{m}");
+    let (st, e) = app.get(&format!("{meta}/content"), Some(&a.token)).await;
+    assert_eq!(st, 400, "{e}");
+    assert_eq!(e["error"], "sem espaço", "{e}");
+}
+
 /// O `state` da UI é o do ficheiro, com `published` quando está pronta E
 /// publicada. Publicar uma gravação FALHADA não a promove: não há o que ver.
 #[sqlx::test(migrations = "./migrations")]

@@ -90,21 +90,23 @@ export default function RecordingTable({
         <tbody>
           {items.map((r) => {
             const failed = r.failed
+            // Sem ficheiro (falhada ou a compor) a linha é inerte: sem botão, sem clique (R59).
+            const inert = !r.hasFile
             const res = resolutionLabel(r)
             return (
               <tr
                 key={r.id}
-                className={cx('rec-row', !failed && 'dx-row-link')}
-                data-status={failed ? 'failed' : 'ready'}
+                className={cx('rec-row', !inert && 'dx-row-link')}
+                data-status={failed ? 'failed' : r.processing ? 'processing' : 'ready'}
                 data-selected={selectedId === r.id || undefined}
-                onClick={failed ? undefined : () => onOpen(r)}
+                onClick={inert ? undefined : () => onOpen(r)}
                 onContextMenu={menu.aoContexto(r)}
               >
                 <td>
                   <div className="rec-row__session">
                     <RowThumb r={r} />
                     <span className="rec-row__id">
-                      {failed ? (
+                      {inert ? (
                         <span className="rec-row__name">{r.name}</span>
                       ) : (
                         <button
@@ -127,13 +129,13 @@ export default function RecordingTable({
                   </div>
                 </td>
                 <td className="dx-num rec-row__dur" data-label={t('recordings.colunas.duracao')}>
-                  {failed ? '—' : r.durationMs !== null ? formatClock(r.durationMs) : <NoValue />}
+                  {inert ? '—' : r.durationMs !== null ? formatClock(r.durationMs) : <NoValue />}
                 </td>
                 <td className="rec-row__res" data-label={t('recordings.colunas.resolucao')}>
                   {res ? <span className="rec-res">{res}</span> : <NoValue />}
                 </td>
                 <td className="dx-num rec-row__size" data-label={t('recordings.colunas.tamanho')}>
-                  {/* Uma falhada não tem tamanho: «0 MB» leria-se como ficheiro vazio. */}
+                  {/* Sem ficheiro não há tamanho: «0 MB» leria-se como ficheiro vazio. */}
                   {r.sizeBytes === null ? '—' : formatBytes(r.sizeBytes, i18n.language)}
                 </td>
                 <td className="rec-row__state" data-label={t('recordings.colunas.estado')}>

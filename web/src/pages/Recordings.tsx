@@ -35,8 +35,10 @@ import RecordingTable from './recordings/RecordingTable'
 import { fromRecordingItem, RecordingView } from './recordings/recordingView'
 import { recordingsFallbackFor } from './recordings/search'
 import ShareDialog from './recordings/ShareDialog'
+import { useProcessingUpdates } from './recordings/useProcessingUpdates'
 
 type View = 'list' | 'grid'
+const NO_ITEMS: RecordingLibraryItem[] = []
 
 const VIEW_KEY = 'dx_rec_view'
 
@@ -75,7 +77,10 @@ export default function Recordings() {
   const [shareTarget, setShareTarget] = useState<RecordingView | null>(null)
 
   const page = rs.list.state.s === 'ready' ? rs.list.state.d : null
-  const items = useMemo(() => (page ? page.items.map(fromRecordingItem) : []), [page])
+  // As que o servidor ainda está a compor relêem-se à parte (progresso, e a
+  // passagem a «pronta»), sem voltar a pedir a lista.
+  const live = useProcessingUpdates(page?.items ?? NO_ITEMS)
+  const items = useMemo(() => (page ? page.items.map(live).map(fromRecordingItem) : []), [page, live])
   const ready = page !== null
 
   function changeView(v: View) {
@@ -87,20 +92,21 @@ export default function Recordings() {
     }
   }
 
-  // Selecção por omissão: a primeira PRONTA da página. Uma falhada nunca é seleccionada.
+  // Selecção por omissão: a primeira COM FICHEIRO da página. Uma falhada ou
+  // uma que ainda está a compor nunca é seleccionada.
   useEffect(() => {
     if (!ready) return
     const current = items.find((r) => r.id === selectedId)
-    if (current && !current.failed) return
-    const first = items.find((r) => !r.failed)
+    if (current?.hasFile) return
+    const first = items.find((r) => r.hasFile)
     setSelectedId(first?.id ?? null)
     setPicked(false)
   }, [ready, items, selectedId])
 
-  const selected = items.find((r) => r.id === selectedId && !r.failed) ?? null
+  const selected = items.find((r) => r.id === selectedId && r.hasFile) ?? null
 
   const open = useCallback((r: RecordingView) => {
-    if (r.failed) return
+    if (!r.hasFile) return
     setSelectedId(r.id)
     setPicked(true)
     setPanelOpen(true)
@@ -124,7 +130,7 @@ export default function Recordings() {
   }, [panelOpen, shareTarget])
 
   const renderItems = (rows: RecordingLibraryItem[]) => {
-    const views = rows.map(fromRecordingItem)
+    const views = rows.map(live).map(fromRecordingItem)
     return view === 'list' ? (
       <RecordingTable items={views} selectedId={selected?.id ?? null} retentionDays={retentionDays} onOpen={open} onShare={setShareTarget} />
     ) : (
