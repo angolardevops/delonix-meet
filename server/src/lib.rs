@@ -386,6 +386,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/organizations/{org_id}/seats",
             axum::routing::put(directory::operator_set_seats),
         )
+        // Tecto de participantes concorrentes por organização, por nó.
+        .route(
+            "/organizations/{org_id}/concurrency",
+            axum::routing::put(directory::operator_set_concurrency),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit::ip_rate_limit,
