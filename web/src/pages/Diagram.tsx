@@ -55,7 +55,7 @@ import { PENS } from './diagrams/paint'
 import Palette, { paletteItemByKey } from './diagrams/Palette'
 import SaveDialog from './diagrams/SaveDialog'
 import { downloadBlob, downloadText, pngFromSvg, svgFromCanvas } from './diagrams/snapshot'
-import { getDiagram, putDiagram } from './diagrams/store'
+import { getDiagram, putDiagram, sincronizaJa } from './diagrams/store'
 import { applyFix, fixAll, Issue, issueParams, validate } from './diagrams/validate'
 import { example, examplesFor } from './diagrams/examples'
 import { ensureCatalog } from './diagrams/catalog'
@@ -204,6 +204,22 @@ export default function Diagram({ id }: { id: string | null }) {
     }, 500)
     return () => clearTimeout(h)
   }, [doc, load.s])
+
+  // O envio para o servidor é atrasado três segundos (`store.ts`), para arrastar
+  // um nó não dar vinte `PUT` de um documento inteiro. Esses três segundos
+  // precisam de uma saída: sair do editor, ou esconder o separador, força o que
+  // estiver agendado. Sem isto, fechar dentro da janela deixava a última
+  // alteração só neste browser — exactamente o que o ADR-0020 veio corrigir.
+  useEffect(() => {
+    const aoEsconder = () => {
+      if (document.visibilityState === 'hidden') void sincronizaJa()
+    }
+    document.addEventListener('visibilitychange', aoEsconder)
+    return () => {
+      document.removeEventListener('visibilitychange', aoEsconder)
+      void sincronizaJa()
+    }
+  }, [])
 
   // ---------------------------------------------------------------- histórico
   // O documento corrente numa ref: o histórico não pode viver dentro de um

@@ -856,7 +856,7 @@ export default {
   },
   guardar: {
     titulo: 'Save to the organisation library',
-    texto: 'A PNG image of this board goes to Whiteboards, visible to members of the organisation. The editable model stays in this browser.',
+    texto: 'A PNG image of this board goes to Whiteboards, visible to members of the organisation. The editable model stays private to your account.',
     vazio: 'The board is empty: there is nothing to save.',
     tituloCampo: 'Title',
     sala: 'Linked room',
@@ -873,17 +873,17 @@ export default {
     erro: 'Could not save the board.',
   },
   local: {
-    titulo: 'Diagrams in this browser',
-    ajuda: 'Editable models stay in this browser. To take one elsewhere, export the model (.json) and import it there.',
+    titulo: 'My diagrams',
+    ajuda: 'Editable models live in your account and open on any computer you sign in to. With no network they keep saving in this browser and upload once the connection is back.',
     abrir: 'Open {{title}}',
-    eliminar: 'Delete {{title}} from this browser',
+    eliminar: 'Delete {{title}}',
     eliminarTitulo: 'Delete diagram',
-    eliminarTexto: '«{{title}}» is removed from this browser. A PNG already saved in Whiteboards is not deleted.',
+    eliminarTexto: '«{{title}}» is removed from your account and from this browser. A PNG already saved in Whiteboards is not deleted.',
     elementos_one: '{{count}} element',
     elementos_other: '{{count}} elements',
     comPng: 'PNG in Whiteboards',
     erro: 'This browser does not allow saving diagrams (IndexedDB unavailable).',
-    naoEncontrado: 'This diagram does not exist in this browser.',
+    naoEncontrado: 'This diagram does not exist.',
   },
   exemplos: {
     uml: {

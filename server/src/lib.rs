@@ -16,6 +16,7 @@ mod broadcast;
 pub mod config;
 mod crypto;
 pub mod data_exports;
+mod diagrams;
 mod dial_outs;
 mod directory;
 mod dlp;
@@ -120,6 +121,12 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 /// sobrepõem este valor com o seu próprio limite.
 const DEFAULT_BODY_LIMIT: usize = 1024 * 1024; // 1 MB
 const WHITEBOARD_BODY_LIMIT: usize = 12 * 1024 * 1024; // PNG 8MB → base64 ~11MB
+/// Corpo máximo do `PUT /api/diagrams/{id}`. O módulo valida o DOCUMENTO em
+/// 2 MiB; o pedido leva também o título e a notação, e o JSON escapado é maior
+/// do que o que a coluna guarda. Com o limite por omissão do axum (2 MiB) um
+/// documento no tecto morria no router com `413` em vez de levar o `400` que
+/// diz qual é o tecto.
+const DIAGRAM_BODY_LIMIT: usize = 4 * 1024 * 1024;
 
 /// Cabeçalhos de segurança nas respostas da API (defesa-em-profundidade;
 /// a CSP completa da SPA é definida no Nginx — ver deploy/nginx-delonix.conf).
@@ -798,6 +805,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/recordings/{recording_id}/captions/{lang}/vtt",
             get(recording_captions::vtt),
+        )
+        // ---- Diagramas (o modelo EDITÁVEL; o PNG é a biblioteca de quadros) ----
+        .route("/api/diagrams", get(diagrams::list))
+        .route(
+            "/api/diagrams/{diagram_id}",
+            get(diagrams::get_one)
+                .put(diagrams::save)
+                .delete(diagrams::delete)
+                // Um diagrama grande é JSON, não imagem: o limite por omissão
+                // do axum (2 MiB) é o MESMO tecto que o módulo valida, e sem
+                // folga o pedido morria no router com 413 em vez de responder
+                // o 400 que diz o que se passa.
+                .layer(DefaultBodyLimit::max(DIAGRAM_BODY_LIMIT)),
         )
         // ---- Quadros ----
         .route(

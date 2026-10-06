@@ -856,7 +856,7 @@ export default {
   },
   guardar: {
     titulo: "Enregistrer dans la bibliothèque de l'organisation",
-    texto: "Une image PNG de ce tableau part vers Tableaux, visible par les membres de l'organisation. Le modèle modifiable reste dans ce navigateur.",
+    texto: "Une image PNG de ce tableau part vers Tableaux, visible par les membres de l'organisation. Le modèle modifiable reste privé à votre compte.",
     vazio: "Le tableau est vide : il n'y a rien à enregistrer.",
     tituloCampo: 'Titre',
     sala: 'Salle associée',
@@ -873,17 +873,17 @@ export default {
     erro: "Impossible d'enregistrer le tableau.",
   },
   local: {
-    titulo: 'Diagrammes dans ce navigateur',
-    ajuda: "Les modèles modifiables restent dans ce navigateur. Pour en emporter un ailleurs, exportez le modèle (.json) et importez-le là-bas.",
+    titulo: 'Mes diagrammes',
+    ajuda: "Les modèles modifiables sont dans votre compte et s'ouvrent sur tout ordinateur où vous vous connectez. Sans réseau, ils continuent d'être enregistrés dans ce navigateur et sont envoyés dès le retour de la connexion.",
     abrir: 'Ouvrir {{title}}',
-    eliminar: 'Supprimer {{title}} de ce navigateur',
+    eliminar: 'Supprimer {{title}}',
     eliminarTitulo: 'Supprimer le diagramme',
-    eliminarTexto: "«{{title}}» est retiré de ce navigateur. Un PNG déjà enregistré dans Tableaux n'est pas supprimé.",
+    eliminarTexto: "«{{title}}» est retiré de votre compte et de ce navigateur. Un PNG déjà enregistré dans Tableaux n'est pas supprimé.",
     elementos_one: '{{count}} élément',
     elementos_other: '{{count}} éléments',
     comPng: 'PNG dans Tableaux',
     erro: "Ce navigateur ne permet pas d'enregistrer des diagrammes (IndexedDB indisponible).",
-    naoEncontrado: "Ce diagramme n'existe pas dans ce navigateur.",
+    naoEncontrado: "Ce diagramme n'existe pas.",
   },
   exemplos: {
     uml: {
