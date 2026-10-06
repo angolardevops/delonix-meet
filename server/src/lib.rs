@@ -35,6 +35,10 @@ pub mod net_guard;
 mod net_probe;
 pub mod nodes;
 mod notifications;
+// `pub` de propósito: o cliente está completo mas o gravador ainda não o chama
+// (ADR-0020). Deixá-lo privado dava `dead_code` em metade dos métodos, e a
+// resposta a isso seria um `#[allow]` — que é esconder, não resolver.
+pub mod objectos;
 mod odoo;
 mod odoo_sso;
 pub mod openapi;
