@@ -8,6 +8,7 @@ import { Icon } from './ui/icons'
 import { Empty, Spinner } from './ui/kit'
 import { getAppName } from './branding'
 import { chaveDoTitulo, destinoNoRail, parseHash, type Route } from './rota'
+import { useTrabalhoEmCurso } from './trabalhoEmCurso'
 
 // ---------------------------------------------------------------------------
 //  Corte por rota. EAGER ficam só os dois ecrãs de entrada — Entrar e Início
@@ -77,6 +78,7 @@ export default function App() {
   const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(currentUser())
   const [route, setRoute] = useState<Route>(parseHash())
+  const trabalhoEmCurso = useTrabalhoEmCurso()
 
   /**
    * O nome do ecrã no separador do browser. Até 2026-10-06 o `document.title`
@@ -187,6 +189,9 @@ export default function App() {
         <PaletteHost
           user={user}
           inRoom={route.kind === 'room'}
+          // Navegar por cima de uma EMISSÃO mata-a como mataria uma chamada: a
+          // paleta abre em nova aba nos dois casos (antes só na sala).
+          protegido={route.kind === 'room' || trabalhoEmCurso}
           onEnterRoom={enterRoom}
           onLogout={() => {
             logout()
