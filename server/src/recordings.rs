@@ -113,6 +113,10 @@ pub struct WebmBytes(Vec<u8>);
 )]
 pub struct ApiDoc;
 
+/// A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`);
+/// a resposta do upload junta-lhe `kind`, `status`, a media medida e
+/// `has_thumbnail`. As LEITURAS — a biblioteca, o recurso e a lista da sala —
+/// devolvem `RecordingLibraryItem`.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Recording {
     pub id: Uuid,
@@ -612,9 +616,20 @@ impl Access {
             .into())
     }
 
-    /// Há ficheiro para ler (pronta, ou pronta e a ser transcrita).
-    pub fn has_file(&self) -> bool {
-        matches!(self.status.as_str(), "ready" | "transcribing")
+    /// Recusa (`409`) o que só faz sentido sobre uma gravação com ficheiro:
+    /// `recording.processing` a compor, `recording.no_file` falhada. A mesma
+    /// regra e os mesmos códigos de partilhar e do link público.
+    pub fn require_file(&self) -> Result<(), ApiError> {
+        Ok(rules::require_file(self.processing_facts())?)
+    }
+
+    /// Só o `status`: é o que decide se há ficheiro. As marcas da transcrição
+    /// distinguem `ready` de `transcribing`, e os dois têm ficheiro.
+    fn processing_facts(&self) -> rules::ProcessingFacts<'_> {
+        rules::ProcessingFacts {
+            status: &self.status,
+            ..Default::default()
+        }
     }
 }
 
@@ -841,12 +856,22 @@ pub async fn upload(
 
 /// Gravações de uma sala específica (painel dentro da reunião).
 /// Só para participantes da sala — senão `403 room.not_participant`.
+///
+/// Devolve a MESMA representação da biblioteca e do recurso
+/// (`RecordingLibraryItem`): o `status` diz se há ficheiro (`processing` e
+/// `failed` não têm), e o `can_download` se quem pede o pode descarregar.
+///
+/// Sem paginação: devolve a lista de uma sala inteira (dívida — a rota já
+/// não paginava, e cada linha custa agora o que custa na biblioteca).
+// É mais uma VISTA da gravação, lida pela consulta e pela regra das outras.
+// Antes devolvia seis campos sem estado, e o painel oferecia «descarregar»
+// sobre uma gravação a compor, falhada, ou que o `?dl=1` ia recusar (R59).
 #[utoipa::path(
     get, path = "/api/rooms/{room_code}/recordings", tag = "recordings",
     security(("session" = [])),
     params(("room_code" = String, Path, description = "Código da sala.")),
     responses(
-        (status = 200, body = Vec<Recording>, description = "Mais recentes primeiro."),
+        (status = 200, body = Vec<RecordingItem>, description = "Mais recentes primeiro. Inclui as que o servidor ainda está a compor (`status = processing`, com `progress_pct`) e as falhadas (`status = failed`, com `failure_reason`): nenhuma das duas tem ficheiro. Só as gravações a que quem pede ainda chega — um participante que saiu da organização do dono recebe a lista sem elas."),
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "`room.not_participant`: não participou na sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -856,21 +881,32 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(code): Path<String>,
-) -> Result<Json<Vec<Recording>>, ApiError> {
+) -> Result<Json<Vec<RecordingItem>>, ApiError> {
     let room = room_by_code(&state, &code).await?;
     if !is_participant(&state, room.id, auth.user_id).await? {
         return Err(DomainError::forbidden("room.not_participant")
             .with_message("só quem participou na sala")
             .into());
     }
-    let recs: Vec<Recording> = sqlx::query_as(
-        "SELECT id, room_id, uploader_id, filename, size_bytes, created_at
-         FROM recordings WHERE room_id = $1 ORDER BY created_at DESC",
-    )
+    let rows = sqlx::query_as::<_, ItemRow>(&format!(
+        "{} WHERE r.room_id = $2 ORDER BY r.created_at DESC, r.id DESC",
+        *ITEM_SELECT
+    ))
+    .bind(auth.user_id)
     .bind(room.id)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(recs))
+    // Ter estado na sala não chega: a lista só anuncia o que as rotas por id
+    // servem a quem pede (S3 — quem saiu da organização do dono já não chega
+    // à gravação, e passaria a ler aqui a descrição e as etiquetas dela).
+    // Filtra-se em Rust porque não há página; quem paginar esta rota passa o
+    // filtro para SQL, como `LIBRARY_VISIBLE_*`, senão as páginas encolhem.
+    Ok(Json(
+        rows.into_iter()
+            .filter(|row| row.facts().can_see())
+            .map(|row| row.into_item(None))
+            .collect(),
+    ))
 }
 
 /// O que a biblioteca tem além dos parâmetros uniformes de `search::SearchParams`.
@@ -1090,11 +1126,7 @@ pub async fn download(
     // A compor: ainda não há ficheiro, e não é uma falha. Sem este ramo a
     // resposta era «esta gravação falhou», dita a quem acabou de a parar.
     if rules::file_status(rec.processing_facts()) == rules::FileStatus::Processing {
-        return Err(DomainError::conflict(
-            "recording.processing",
-            "A gravação ainda está a ser composta. Fica disponível quando o processamento acabar.",
-        )
-        .into());
+        return Err(rules::processing_conflict().into());
     }
     // Uma gravação falhada não tem ficheiro. Sem esta guarda, o pedido descia
     // até ao `File::open` e voltava um 500 opaco — quando a resposta honesta é
@@ -1267,6 +1299,9 @@ pub struct ShareReq {
 
 /// Partilha só-leitura de uma gravação com outro utilizador.
 /// Apenas quem fez o upload (o "dono") pode partilhar. Idempotente.
+///
+/// Só se partilha uma gravação com ficheiro: a compor ou falhada responde
+/// `409`. Retirar uma partilha (`DELETE`) não depende do estado.
 #[utoipa::path(
     post, path = "/api/recordings/{recording_id}/shares", tag = "recordings",
     security(("session" = [])),
@@ -1279,6 +1314,7 @@ pub struct ShareReq {
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
         (status = 404, description = "A gravação não existe ou não lhe chega; ou o utilizador destino não existe.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor — volta a pedir quando estiver `ready`. `recording.no_file`: falhou, não há o que partilhar. Só para quem a pode partilhar.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn share(
@@ -1287,7 +1323,7 @@ pub async fn share(
     Path(id): Path<Uuid>,
     Json(req): Json<ShareReq>,
 ) -> Result<Response, ApiError> {
-    owned_item(&state, id, auth.user_id).await?;
+    let rec = owned_item(&state, id, auth.user_id).await?;
     if req.user_id == auth.user_id {
         return Err(ApiError::BadRequest("cannot share with yourself".into()));
     }
@@ -1295,6 +1331,9 @@ pub async fn share(
     let target = crate::users::fetch_public(&state.db, req.user_id)
         .await
         .map_err(|_| ApiError::NotFound)?;
+    // O estado por último, como em `publish`: primeiro o pedido tem de estar
+    // bem formado e o destino existir.
+    rules::require_file(rec.processing_facts())?;
     let res = sqlx::query(
         "INSERT INTO recording_shares (recording_id, user_id, shared_by) VALUES ($1, $2, $3)
          ON CONFLICT (recording_id, user_id) DO NOTHING",
@@ -1376,6 +1415,10 @@ fn gen_token() -> String {
 
 /// Cria (ou substitui) um link público de partilha. Substituir roda o token:
 /// o link anterior deixa de funcionar.
+///
+/// Só para uma gravação com ficheiro: a compor ou falhada responde `409`, e
+/// o link que já existia fica como estava. Revogar (`DELETE`) e ler (`GET`)
+/// não dependem do estado.
 #[utoipa::path(
     put, path = "/api/recordings/{recording_id}/public-link", tag = "recordings",
     security(("session" = [])),
@@ -1386,6 +1429,7 @@ fn gen_token() -> String {
         (status = 401, description = "Sessão inválida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "`authz.missing_capability` (`recordings.publish`): vê a gravação mas não é o dono activo nem tem a capacidade.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, description = "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor — volta a pedir quando estiver `ready`. `recording.no_file`: falhou, não há o que partilhar. Só para quem a pode partilhar.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn create_link(
@@ -1394,7 +1438,8 @@ pub async fn create_link(
     Path(id): Path<Uuid>,
     Json(req): Json<CreateLinkReq>,
 ) -> Result<Json<ShareLink>, ApiError> {
-    owned_item(&state, id, auth.user_id).await?;
+    let rec = owned_item(&state, id, auth.user_id).await?;
+    rules::require_file(rec.processing_facts())?;
 
     let password_hash = if let Some(ref pw) = req.password {
         if pw.is_empty() {
@@ -1565,8 +1610,9 @@ fn share_grant_is_valid(state: &AppState, token: &str, password_hash: &str, gran
         )
 }
 
-/// O link, se existir e não tiver expirado: `(gravação, hash da password,
-/// nome, tamanho, criada em)`. Expirado responde como inexistente.
+/// O link, se existir, não tiver expirado e a gravação tiver ficheiro:
+/// `(gravação, hash da password, nome, tamanho, criada em)`. Expirado ou sem
+/// ficheiro responde como inexistente.
 type ShareLinkRow = (Uuid, Option<String>, String, i64, DateTime<Utc>);
 
 /// A linha tal como vem da base, ainda com a validade por verificar.
@@ -1577,12 +1623,13 @@ type ShareLinkDbRow = (
     String,
     i64,
     DateTime<Utc>,
+    String,
 );
 
 async fn live_share_link(state: &AppState, token: &str) -> Result<ShareLinkRow, ApiError> {
     let row: Option<ShareLinkDbRow> = sqlx::query_as(
         r#"SELECT l.recording_id, l.password_hash, l.expires_at,
-                      r.filename, r.size_bytes, r.created_at
+                      r.filename, r.size_bytes, r.created_at, r.status
                FROM recording_share_links l
                JOIN recordings r ON r.id = l.recording_id
                WHERE l.token = $1"#,
@@ -1590,9 +1637,21 @@ async fn live_share_link(state: &AppState, token: &str) -> Result<ShareLinkRow, 
     .bind(token)
     .fetch_optional(&state.db)
     .await?;
-    let (rec_id, password_hash, expires_at, filename, size_bytes, created_at) =
+    let (rec_id, password_hash, expires_at, filename, size_bytes, created_at, status) =
         row.ok_or(ApiError::NotFound)?;
     if expires_at.is_some_and(|exp| Utc::now() > exp) {
+        return Err(ApiError::NotFound);
+    }
+    // Um link já não se cria sem ficheiro, mas os que existiam antes dessa
+    // regra continuam na base. Sem isto respondiam `200` com `size_bytes: 0` e
+    // um `download_url` que dava `404` — e, sobre uma gravação ainda a compor,
+    // o conteúdo lia um ficheiro que o gravador ainda não deu por pronto. A
+    // quem abre um link não se diz o estado: não existe.
+    let facts = rules::ProcessingFacts {
+        status: &status,
+        ..Default::default()
+    };
+    if !facts.has_file() {
         return Err(ApiError::NotFound);
     }
     Ok((rec_id, password_hash, filename, size_bytes, created_at))
@@ -1608,7 +1667,7 @@ async fn live_share_link(state: &AppState, token: &str) -> Result<ShareLinkRow, 
     responses(
         (status = 200, body = PublicShareResp),
         (status = 401, description = "O link tem password: use `POST /api/public/recordings/{token}/access`.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente ou expirado; ou a gravação não tem ficheiro (falhou, ou o servidor ainda a está a compor).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn public_share(
@@ -1642,7 +1701,7 @@ pub async fn public_share(
     responses(
         (status = 200, body = PublicShareResp),
         (status = 401, description = "A password não confere.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Token inexistente ou expirado.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente ou expirado; ou a gravação não tem ficheiro (falhou, ou o servidor ainda a está a compor).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Cinco passwords erradas em 5 minutos neste link.", body = crate::openapi::ErrorBody),
     )
 )]
@@ -1692,7 +1751,7 @@ pub async fn public_share_access(
     responses(
         (status = 200, body = inline(WebmBytes), content_type = "video/webm", description = "Sempre `Content-Disposition: attachment`."),
         (status = 401, description = "O link tem password e o passe de leitura falta, expirou ou não é deste link.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Token inexistente, expirado, ou sem ficheiro (gravação falhada).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Token inexistente, expirado, ou sem ficheiro (a gravação falhou, ou o servidor ainda a está a compor).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn public_share_download(

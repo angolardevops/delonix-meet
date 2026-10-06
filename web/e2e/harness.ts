@@ -32,6 +32,9 @@ declare global {
       publicadores: () => string[]
       /** Liga/desliga a gravação no SERVIDOR (só o anfitrião pode). */
       gravar: (on: boolean) => void
+      /** Grava a media LOCAL com o `MediaRecorder` do browser durante `ms` e
+       *  devolve o webm em base64 — a régua a medir-se a si própria. */
+      gravarLocal: (ms: number) => Promise<string>
       /** Chamado quando o nó avisa que vai fechar (ver ServerMsg::Draining). */
       aoDrenar: ((reconnectInMs: number) => void) | null
       /** Linha do tempo desta sessão (ver callTimings.ts). */
@@ -60,8 +63,89 @@ window.__dlx = {
   pedirQualidade: () => {},
   publicadores: () => [],
   gravar: () => {},
+  gravarLocal: async () => '',
   aoDrenar: null,
   tempos: null,
+}
+
+/** Período da régua, em segundos: um clarão e um toque no mesmo instante. */
+const REGUA_PERIODO = 2
+const REGUA_MARCA = 0.1
+
+/** `fonte=regua`: som e imagem de REFERÊNCIA, para medir o sincronismo de uma
+ *  gravação. A câmara e o microfone falsos do Chromium (de ficheiro ou não)
+ *  arrancam cada um por si, e a distância entre os dois muda a cada entrada —
+ *  não servem de régua. Aqui os dois saem do MESMO relógio (o do
+ *  `AudioContext`): de dois em dois segundos, 100 ms de ecrã branco e 100 ms de
+ *  tom a `tom` Hz.
+ *
+ *  `fundo`: um tom que oscila entre os toques. Sem ele o microfone está em
+ *  silêncio digital e o DTX cala o envio (um pacote a cada 400 ms).
+ *  `faixa`: uma faixa clara fixa no topo da imagem — numa grelha, diz de quem
+ *  é cada célula sem depender dos clarões. */
+async function regua(fundo: boolean, tom: number, faixa: boolean): Promise<MediaStream> {
+  const ctx = new AudioContext({ sampleRate: 48000 })
+  await ctx.resume()
+  const saida = ctx.createMediaStreamDestination()
+  // Uma fonte sempre viva, a zeros: sem ela o grafo pára entre os toques, a
+  // pista deixa de receber amostras e o relógio RTP não anda — um microfone a
+  // sério entrega silêncio, não entrega nada.
+  const viva = ctx.createConstantSource()
+  viva.offset.value = 1e-5
+  viva.connect(saida)
+  viva.start()
+  if (fundo) {
+    const cama = ctx.createOscillator()
+    const vibrato = ctx.createOscillator()
+    const fundura = ctx.createGain()
+    const volume = ctx.createGain()
+    cama.frequency.value = 400
+    vibrato.frequency.value = 3
+    fundura.gain.value = 150
+    volume.gain.value = 0.08
+    vibrato.connect(fundura).connect(cama.frequency)
+    cama.connect(volume).connect(saida)
+    cama.start()
+    vibrato.start()
+  }
+  // Os toques marcam-se no relógio do áudio, com meio segundo de avanço.
+  let marcado = Math.ceil(ctx.currentTime / REGUA_PERIODO) * REGUA_PERIODO
+  const marca = () => {
+    while (marcado < ctx.currentTime + 0.5) {
+      const o = ctx.createOscillator()
+      const g = ctx.createGain()
+      o.frequency.value = tom
+      g.gain.value = 0.6
+      o.connect(g).connect(saida)
+      o.start(marcado)
+      o.stop(marcado + REGUA_MARCA)
+      marcado += REGUA_PERIODO
+    }
+  }
+  marca()
+  setInterval(marca, 100)
+
+  const tela = document.createElement('canvas')
+  tela.width = 640
+  tela.height = 480
+  const c = tela.getContext('2d')!
+  const pinta = () => {
+    // O instante que se OUVE agora: o relógio do contexto vai adiantado à saída.
+    const t = ctx.currentTime - (ctx.baseLatency || 0)
+    const fase = ((t % REGUA_PERIODO) + REGUA_PERIODO) % REGUA_PERIODO
+    c.fillStyle = fase < REGUA_MARCA ? '#fff' : '#222'
+    c.fillRect(0, 0, 640, 480)
+    // Um traço que anda: a tela só entrega quadros quando muda.
+    c.fillStyle = '#777'
+    c.fillRect((fase / REGUA_PERIODO) * 624, 464, 16, 16)
+    if (faixa) {
+      c.fillStyle = '#999'
+      c.fillRect(0, 0, 640, 120)
+    }
+    requestAnimationFrame(pinta)
+  }
+  pinta()
+  return new MediaStream([...tela.captureStream(30).getVideoTracks(), ...saida.stream.getAudioTracks()])
 }
 
 async function main() {
@@ -78,7 +162,14 @@ async function main() {
     params.get('som') === 'cru'
       ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
       : true
-  const stream = await navigator.mediaDevices.getUserMedia({ audio, video: true })
+  const fonte = params.get('fonte')
+  const stream =
+    fonte === 'nada'
+      ? // Só assiste: entra sem publicar nada (subscreve os outros, e mais nada).
+        new MediaStream()
+      : fonte === 'regua'
+      ? await regua(params.get('fundo') === '1', Number(params.get('tom')) || 2500, params.get('faixa') === '1')
+      : await navigator.mediaDevices.getUserMedia({ audio, video: true })
   const rtcConfig: RTCConfiguration = await fetch('/api/ice-servers', {
     headers: { Authorization: `Bearer ${params.get('access') ?? ''}` },
   })
@@ -127,6 +218,21 @@ async function main() {
     return out
   }
   window.__dlx.hangup = () => call.hangup()
+  window.__dlx.gravarLocal = (ms) =>
+    new Promise((resolve, reject) => {
+      const rec = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' })
+      const partes: Blob[] = []
+      rec.ondataavailable = (e) => partes.push(e.data)
+      rec.onerror = () => reject(new Error('MediaRecorder falhou'))
+      rec.onstop = async () => {
+        const b = new Uint8Array(await new Blob(partes).arrayBuffer())
+        let s = ''
+        for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000))
+        resolve(btoa(s))
+      }
+      rec.start()
+      setTimeout(() => rec.stop(), ms)
+    })
   window.__dlx.ready = true
   log('arnês pronto')
 }

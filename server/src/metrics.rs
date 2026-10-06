@@ -85,6 +85,11 @@ pub struct Metrics {
     /// justa do nó (zona de margem). A diferença para o total são as recusadas
     /// por o nó estar na capacidade, que não é de ninguém em particular.
     pub node_new_rooms_refused_fair_share_total: AtomicU64,
+    /// Ligações `/ws` recusadas por a conta já ter `MAX_WS_PER_USER` sockets.
+    pub ws_refused_user_cap_total: AtomicU64,
+    /// Ligações `/ws` recusadas por a organização já ter o seu tecto de
+    /// participantes concorrentes neste nó.
+    pub ws_refused_org_quota_total: AtomicU64,
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
@@ -237,6 +242,12 @@ impl Metrics {
              # HELP delonix_node_new_rooms_refused_fair_share_total Salas novas recusadas por o inquilino já usar a sua parte justa do nó.\n\
              # TYPE delonix_node_new_rooms_refused_fair_share_total counter\n\
              delonix_node_new_rooms_refused_fair_share_total {}\n\
+             # HELP delonix_ws_refused_user_cap_total Ligações /ws recusadas por a conta ter o máximo de sockets.\n\
+             # TYPE delonix_ws_refused_user_cap_total counter\n\
+             delonix_ws_refused_user_cap_total {}\n\
+             # HELP delonix_ws_refused_org_quota_total Ligações /ws recusadas por a organização ter o tecto de participantes.\n\
+             # TYPE delonix_ws_refused_org_quota_total counter\n\
+             delonix_ws_refused_org_quota_total {}\n\
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
@@ -321,6 +332,8 @@ impl Metrics {
             self.seats_reclaimed_redis_total.load(Relaxed),
             self.node_new_rooms_refused_total.load(Relaxed),
             self.node_new_rooms_refused_fair_share_total.load(Relaxed),
+            self.ws_refused_user_cap_total.load(Relaxed),
+            self.ws_refused_org_quota_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
             g(self.ws_queue_high_water.load(Relaxed)),
             self.ws_queue_dropped_total.load(Relaxed),

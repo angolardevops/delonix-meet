@@ -535,6 +535,51 @@ impl RecSink {
     }
 }
 
+/// O instante, no relógio da sessão, do primeiro pacote que a pista TEM.
+///
+/// O zero de uma pista é o primeiro quadro (ou pacote) que lá ficou escrito: o
+/// `Vp8IvfWriter` dá PTS 0 ao primeiro quadro, o `OpusClock` conta a partir do
+/// primeiro pacote. Esse instante NÃO é o de quando o writer foi ligado — uma
+/// pista de vídeo ligada a meio do fluxo espera pelo keyframe que o SFU pede
+/// (até 1 s, se o pedido cair no intervalo mínimo entre PLI, e mais se se
+/// perder), e uma de áudio em silêncio espera pelo pacote seguinte do DTX (até
+/// 400 ms). Posta na linha do tempo pelo instante da ligação, a pista entrava
+/// adiantada o tempo que esperou — a imagem à frente do som, ou o contrário.
+///
+/// Marca-o quem ENTREGA (`RecWriter::write_rtp`), à chegada do pacote, e lê-o
+/// a composição (`RecTrackMeta::starts_at_ms`).
+#[derive(Debug, Clone)]
+struct FirstPacket {
+    session_started: Instant,
+    /// Milissegundos desde o início da sessão; `NOT_YET` enquanto não chegou.
+    at_ms: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl FirstPacket {
+    const NOT_YET: u64 = u64::MAX;
+
+    fn new(session_started: Instant) -> Self {
+        Self {
+            session_started,
+            at_ms: Arc::new(std::sync::atomic::AtomicU64::new(Self::NOT_YET)),
+        }
+    }
+
+    /// A pista começa AGORA. Uma pista de vídeo cujo keyframe de abertura não
+    /// serviu volta a marcar no seguinte: vale a última marca.
+    fn mark(&self) {
+        let ms = self.session_started.elapsed().as_millis() as u64;
+        self.at_ms.store(ms, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn get(&self) -> Option<u64> {
+        match self.at_ms.load(std::sync::atomic::Ordering::Relaxed) {
+            Self::NOT_YET => None,
+            ms => Some(ms),
+        }
+    }
+}
+
 /// Durante quanto tempo se pede keyframe por uma pista de vídeo que ainda não
 /// abriu (ver `RecWriter::wants_keyframe`). Ao ritmo do `pli_allowed` do SFU
 /// são no máximo trinta pedidos por pista.
@@ -563,6 +608,11 @@ pub struct RecWriter {
     awaiting_key: Arc<std::sync::atomic::AtomicBool>,
     /// Quando o writer foi ligado — para dizer quanto a pista esperou pelo keyframe.
     opened: Instant,
+    /// Pista de vídeo: começa no keyframe que a abre. As de áudio começam no
+    /// primeiro pacote.
+    video: bool,
+    /// Quando chegou o primeiro pacote que a pista tem (ver `FirstPacket`).
+    first: FirstPacket,
     /// Até quando se pede keyframe por esta pista (`KEYFRAME_ASK_FOR`).
     ask_until: Instant,
     /// Já se avisou de que se desistiu de pedir.
@@ -577,8 +627,10 @@ impl RecWriter {
         cap: usize,
         metrics: Arc<crate::metrics::Metrics>,
         label: String,
+        first: FirstPacket,
     ) -> Self {
         let awaiting_key = sink.awaiting_key();
+        let video = matches!(sink, RecSink::Video(_));
         let (tx, rx) = std::sync::mpsc::sync_channel::<Box<webrtc::rtp::packet::Packet>>(cap);
         let (thread_metrics, thread_label) = (metrics.clone(), label.clone());
         let join = std::thread::Builder::new()
@@ -627,6 +679,8 @@ impl RecWriter {
             dropped: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             awaiting_key,
             opened: Instant::now(),
+            video,
+            first,
             ask_until: Instant::now() + KEYFRAME_ASK_FOR,
             gave_up: std::sync::atomic::AtomicBool::new(false),
             metrics,
@@ -643,13 +697,31 @@ impl RecWriter {
         // assim quem entrega sabe na hora se a pista já abriu, sem esperar
         // que a thread lá chegue — e não pede um keyframe que já tem em mão.
         let opens = self.awaiting_key.load(Relaxed) && rtp_starts_vp8_keyframe(pkt);
+        // O áudio começa no primeiro pacote que o `OggWriter` escreve (um
+        // payload vazio não chega lá — ver `RecSink::write_rtp`).
+        let starts = if self.video {
+            opens
+        } else {
+            self.first.get().is_none() && !pkt.payload.is_empty()
+        };
         if tx.try_send(Box::new(pkt.clone())).is_ok() {
+            if starts {
+                // É ESTE o instante em que a pista entra na linha do tempo da
+                // gravação, não o da ligação do writer (ver `FirstPacket`).
+                self.first.mark();
+            }
             if opens {
                 self.awaiting_key.store(false, Relaxed);
                 tracing::debug!(
                     track = %self.label,
                     espera_ms = self.opened.elapsed().as_millis() as u64,
                     "gravação: a pista de vídeo abriu no seu keyframe"
+                );
+            } else if starts {
+                tracing::debug!(
+                    track = %self.label,
+                    espera_ms = self.opened.elapsed().as_millis() as u64,
+                    "gravação: a pista de áudio começa no seu primeiro pacote"
                 );
             }
         } else {
@@ -751,7 +823,20 @@ impl Drop for RecWriter {
 pub struct RecTrackMeta {
     pub path: PathBuf,
     pub kind: String, // "video" | "audio"
+    /// Quando o writer foi LIGADO, em ms desde o início da sessão. Não é onde
+    /// a pista começa — isso é `starts_at_ms`.
     pub offset_ms: u64,
+    first: FirstPacket,
+}
+
+impl RecTrackMeta {
+    /// Onde a pista começa na linha do tempo da gravação, em ms desde o início
+    /// da sessão: o instante do primeiro pacote que ela tem. É este o valor que
+    /// a composição usa. Uma pista que nunca recebeu nada fica no instante da
+    /// ligação (e a composição deixa-a de fora, por estar vazia).
+    pub fn starts_at_ms(&self) -> u64 {
+        self.first.get().unwrap_or(self.offset_ms)
+    }
 }
 
 /// Sessão de gravação de uma sala.
@@ -845,11 +930,13 @@ impl RecordingSession {
                 }
             }
         };
-        let writer = RecWriter::spawn(sink, cap, metrics, format!("{n:02}-{kind}"));
+        let first = FirstPacket::new(self.started);
+        let writer = RecWriter::spawn(sink, cap, metrics, format!("{n:02}-{kind}"), first.clone());
         self.tracks.push(RecTrackMeta {
             path,
             kind: kind.to_string(),
             offset_ms,
+            first,
         });
         Some(writer)
     }
@@ -1311,60 +1398,7 @@ async fn finalize_inner(
         _ => None,
     };
 
-    if videos.len() == 1 && audios.len() <= 1 {
-        // Caso simples: o vídeo vai em cópia, sem reencode; o áudio não (R295).
-        cmd.arg("-i").arg(&videos[0].path);
-        if let Some(a) = audios.first() {
-            cmd.arg("-i").arg(&a.path);
-        }
-        cmd.args(single_publisher_args(!audios.is_empty(), downscale_to));
-    } else {
-        // Composição em grelha + mistura de áudio (VP9 CRF 30 + Opus 128k).
-        for v in &videos {
-            cmd.arg("-i").arg(&v.path);
-        }
-        for a in &audios {
-            cmd.arg("-i").arg(&a.path);
-        }
-        let n = videos.len();
-        let cols = (n as f64).sqrt().ceil() as usize;
-        let (tw, th) = grid_tile(quality, n);
-        let mut fc = String::new();
-        for (i, v) in videos.iter().enumerate() {
-            let off = v.offset_ms as f64 / 1000.0;
-            fc.push_str(&format!(
-                "[{i}:v]scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=start_duration={off:.3}:start_mode=add:color=black[v{i}];"
-            ));
-        }
-        let vout = if n > 1 {
-            let layout = (0..n)
-                .map(|i| format!("{}_{}", (i % cols) * tw as usize, (i / cols) * th as usize))
-                .collect::<Vec<_>>()
-                .join("|");
-            let ins = (0..n).map(|i| format!("[v{i}]")).collect::<String>();
-            fc.push_str(&format!(
-                "{ins}xstack=inputs={n}:layout={layout}:fill=black[vout];"
-            ));
-            "[vout]"
-        } else if n == 1 {
-            "[v0]"
-        } else {
-            ""
-        };
-        let offsets: Vec<u64> = audios.iter().map(|a| a.offset_ms).collect();
-        let (afc, aout) = audio_mix_graph(n, &offsets);
-        fc.push_str(&afc);
-        let fc = fc.trim_end_matches(';').to_string();
-        cmd.arg("-filter_complex").arg(&fc);
-        if !vout.is_empty() {
-            cmd.args(["-map", vout]);
-            cmd.args(VP9_ARGS);
-        }
-        if !aout.is_empty() {
-            cmd.args(["-map", &aout]);
-            cmd.args(OPUS_ARGS);
-        }
-    }
+    cmd.args(compose_args(&videos, &audios, quality, downscale_to));
     cmd.arg(&out);
 
     tracing::info!(%room_id, tracks = session.tracks.len(), "server recording: a compor webm…");
@@ -1579,31 +1613,183 @@ fn single_publisher_args(has_audio: bool, downscale_to: Option<u32>) -> Vec<Stri
     args
 }
 
-/// A parte de áudio do `-filter_complex` da composição: cada pista é enchida
-/// (`AUDIO_GAP_FILL`), atrasada pelo instante em que abriu (`offset_ms`) e,
-/// havendo mais de uma, misturam-se. `first_input` é o índice da primeira
-/// entrada de áudio do ffmpeg (as de vídeo vêm antes). Devolve o grafo (cada
-/// cadeia acabada em `;`) e o rótulo a mapear — vazios sem áudio.
-fn audio_mix_graph(first_input: usize, offsets_ms: &[u64]) -> (String, String) {
+/// Os argumentos do ffmpeg que compõem a gravação: as entradas (cada pista no
+/// seu instante), os filtros e os codecs — tudo menos o ficheiro de saída.
+/// `videos` e `audios` são as pistas com conteúdo, pela ordem da sessão.
+///
+/// Um vídeo com um áudio no máximo: o vídeo vai em cópia (ou reduzido a
+/// `downscale_to` linhas). Mais do que isso: grelha e mistura.
+fn compose_args(
+    videos: &[&RecTrackMeta],
+    audios: &[&RecTrackMeta],
+    quality: Option<&str>,
+    downscale_to: Option<u32>,
+) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = Vec::new();
+    let mut input = |shift_ms: u64, path: &Path| {
+        args.extend(input_shift(shift_ms).into_iter().map(Into::into));
+        args.push("-i".into());
+        args.push(path.into());
+    };
+    if videos.len() == 1 && audios.len() <= 1 {
+        // Caso simples: o vídeo vai em cópia, sem reencode; o áudio não (R295).
+        // Cada pista entra no seu instante: a que começou depois leva a
+        // diferença em `-itsoffset`, que vale também para o vídeo em cópia.
+        let (video_ms, audio_ms) = single_publisher_shifts(
+            videos[0].starts_at_ms(),
+            audios.first().map(|a| a.starts_at_ms()),
+        );
+        input(video_ms, &videos[0].path);
+        if let Some(a) = audios.first() {
+            input(audio_ms, &a.path);
+        }
+        args.extend(
+            single_publisher_args(!audios.is_empty(), downscale_to)
+                .into_iter()
+                .map(Into::into),
+        );
+        return args;
+    }
+    // Composição em grelha + mistura de áudio (VP9 CRF 30 + Opus 128k).
+    for t in videos.iter().chain(audios) {
+        input(0, &t.path);
+    }
+    let n = videos.len();
+    let cols = (n as f64).sqrt().ceil() as usize;
+    let (tw, th) = grid_tile(quality, n);
     let mut fc = String::new();
-    if offsets_ms.is_empty() {
+    for (i, v) in videos.iter().enumerate() {
+        fc.push_str(&grid_cell_chain(i, tw, th, v.starts_at_ms()));
+    }
+    let vout = if n > 1 {
+        let layout = (0..n)
+            .map(|i| format!("{}_{}", (i % cols) * tw as usize, (i / cols) * th as usize))
+            .collect::<Vec<_>>()
+            .join("|");
+        let ins = (0..n).map(|i| format!("[v{i}]")).collect::<String>();
+        fc.push_str(&format!(
+            "{ins}xstack=inputs={n}:layout={layout}:fill=black[vout];"
+        ));
+        "[vout]"
+    } else if n == 1 {
+        "[v0]"
+    } else {
+        ""
+    };
+    let starts: Vec<u64> = audios.iter().map(|a| a.starts_at_ms()).collect();
+    let (afc, aout) = audio_mix_graph(n, &starts);
+    fc.push_str(&afc);
+    args.push("-filter_complex".into());
+    args.push(fc.trim_end_matches(';').into());
+    if !vout.is_empty() {
+        args.extend(["-map", vout].map(Into::into));
+        args.extend(VP9_ARGS.map(Into::into));
+    }
+    if !aout.is_empty() {
+        args.push("-map".into());
+        args.push(aout.into());
+        args.extend(OPUS_ARGS.map(Into::into));
+    }
+    args
+}
+
+/// Quanto uma pista de áudio entra ADIANTADA na composição, em ms.
+///
+/// O `OggWriter` declara 3840 amostras de `pre-skip` no cabeçalho de cada
+/// pista, e o ffmpeg desconta-as ao início: os primeiros 80 ms de som são
+/// deitados fora e tudo o resto recua 80 ms. Todo o instante de áudio que a
+/// composição usa leva este acerto — sem ele o som chega 80 ms antes da
+/// imagem, e acertar só o lado do vídeo deixava a gravação PIOR do que estava
+/// (um avanço do som nota-se a partir de 45 ms; um atraso, só aos 125).
+const OGG_PRE_SKIP_MS: u64 = 80;
+
+/// A cadência da grelha. Cada vídeo é posto nesta cadência antes de entrar no
+/// `xstack` (ver `grid_cell_chain`).
+const GRID_FPS: u64 = 30;
+
+/// Quanto se atrasa cada entrada no caminho de um publicador, em ms: `(vídeo,
+/// áudio)`. Recebe o instante em que cada pista começa (`starts_at_ms`); a que
+/// começa primeiro fica no zero do ficheiro e a outra leva a diferença. O
+/// áudio conta com o `OGG_PRE_SKIP_MS`.
+fn single_publisher_shifts(video_at_ms: u64, audio_at_ms: Option<u64>) -> (u64, u64) {
+    let Some(audio_at_ms) = audio_at_ms.map(|ms| ms + OGG_PRE_SKIP_MS) else {
+        return (0, 0);
+    };
+    let zero = video_at_ms.min(audio_at_ms);
+    (video_at_ms - zero, audio_at_ms - zero)
+}
+
+/// Os argumentos que atrasam `ms` a entrada do ffmpeg que vier a seguir.
+///
+/// É `-itsoffset` e não um PTS inicial diferente de zero na pista: o ffmpeg
+/// põe cada entrada a começar no zero dela (desconta-lhe o `start_time`), em
+/// cópia e em filtros — medido no 6.1.1, um IVF com o primeiro quadro aos
+/// 400 ms sai com ele aos 0 ms.
+fn input_shift(ms: u64) -> Vec<String> {
+    if ms == 0 {
+        return Vec::new();
+    }
+    vec!["-itsoffset".into(), format!("{:.3}", ms as f64 / 1000.0)]
+}
+
+/// A cadeia de uma célula da grelha: o vídeo da entrada `i`, numa célula de
+/// `tw`×`th`, a começar aos `at_ms` da gravação (`starts_at_ms`), com preto
+/// até lá.
+///
+/// **`fps` antes de tudo, e o preto contado em QUADROS.** Duas coisas medidas
+/// com pistas a sério (ffmpeg 6.1.1), que o `tpad=start_duration` sobre a pista
+/// tal como vem fazia mal:
+/// - o `tpad` gera o preto à cadência que o ffmpeg ADIVINHA para a pista e
+///   avança cada quadro um passo arredondado à base de tempo dela (1/1000): a
+///   30 fps são 33 ms em vez de 33,33, e a imagem ficava adiantada 1 % do
+///   offset — 0,3 s para quem ligou a câmara aos 30 s de gravação, 6 s aos 10
+///   minutos;
+/// - o `xstack` dá um quadro por cada quadro de cada entrada, a instantes que
+///   não coincidem, e o codificador (cadência fixa) empurrava os que caíam na
+///   mesma casa para a seguinte: a imagem da grelha saía 30 a 70 ms atrasada.
+///
+/// Com todas as entradas na mesma cadência, o preto são `n` quadros exactos, o
+/// `xstack` dá um quadro por casa, e o erro de cada célula é o arredondamento
+/// do `fps`: meio quadro, 17 ms. O que sobra do instante depois de tirar os
+/// quadros inteiros (menos de um quadro) vai no `setpts`, antes do `fps`.
+fn grid_cell_chain(i: usize, tw: u32, th: u32, at_ms: u64) -> String {
+    let frames = at_ms * GRID_FPS / 1000;
+    let rest_s = at_ms as f64 / 1000.0 - frames as f64 / GRID_FPS as f64;
+    format!(
+        "[{i}:v]setpts=PTS+{rest_s:.4}/TB,fps={GRID_FPS},\
+         scale={tw}:{th}:force_original_aspect_ratio=decrease,\
+         pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,\
+         tpad=start={frames}:start_mode=add:color=black[v{i}];"
+    )
+}
+
+/// A parte de áudio do `-filter_complex` da composição: cada pista é enchida
+/// (`AUDIO_GAP_FILL`), atrasada até ao instante em que começa (`starts_ms`, o
+/// `starts_at_ms` de cada uma, mais o `OGG_PRE_SKIP_MS`) e, havendo mais de
+/// uma, misturam-se. `first_input` é o índice da primeira entrada de áudio do
+/// ffmpeg (as de vídeo vêm antes). Devolve o grafo (cada cadeia acabada em
+/// `;`) e o rótulo a mapear — vazios sem áudio.
+fn audio_mix_graph(first_input: usize, starts_ms: &[u64]) -> (String, String) {
+    let mut fc = String::new();
+    if starts_ms.is_empty() {
         return (fc, String::new());
     }
-    for (j, ms) in offsets_ms.iter().enumerate() {
+    for (j, at) in starts_ms.iter().enumerate() {
         let idx = first_input + j;
+        let ms = at + OGG_PRE_SKIP_MS;
         fc.push_str(&format!(
             "[{idx}:a]{AUDIO_GAP_FILL},adelay={ms}:all=1[a{j}];"
         ));
     }
-    if offsets_ms.len() == 1 {
+    if starts_ms.len() == 1 {
         return (fc, "[a0]".into());
     }
-    let ins = (0..offsets_ms.len())
+    let ins = (0..starts_ms.len())
         .map(|j| format!("[a{j}]"))
         .collect::<String>();
     fc.push_str(&format!(
         "{ins}amix=inputs={}:normalize=0[aout];",
-        offsets_ms.len()
+        starts_ms.len()
     ));
     (fc, "[aout]".into())
 }
@@ -1935,6 +2121,7 @@ mod tests {
             cap,
             Arc::new(crate::metrics::Metrics::default()),
             "teste".into(),
+            FirstPacket::new(Instant::now()),
         );
         (w, path)
     }
@@ -2392,7 +2579,13 @@ mod tests {
         let path = dir.join("teste.ogg");
         let sink = RecSink::audio(std::fs::File::create(&path).unwrap(), key).unwrap();
         let metrics = Arc::new(crate::metrics::Metrics::default());
-        let w = RecWriter::spawn(sink, 4096, metrics.clone(), "teste-audio".into());
+        let w = RecWriter::spawn(
+            sink,
+            4096,
+            metrics.clone(),
+            "teste-audio".into(),
+            FirstPacket::new(Instant::now()),
+        );
         for pkt in &pacotes {
             w.write_rtp(pkt);
         }
@@ -3160,7 +3353,8 @@ mod tests {
     }
 
     /// O que o CI vê (não tem ffmpeg): o enchimento está em TODAS as cadeias
-    /// de áudio, antes do `adelay`, e nenhum caminho leva o áudio em cópia.
+    /// de áudio, antes do `adelay`, e nenhum caminho leva o áudio em cópia. O
+    /// `adelay` é o instante da pista mais os 80 ms do `OGG_PRE_SKIP_MS`.
     #[test]
     fn o_audio_e_enchido_antes_de_qualquer_outro_filtro() {
         assert_eq!(AUDIO_GAP_FILL, "aresample=async=1:first_pts=0");
@@ -3168,8 +3362,8 @@ mod tests {
         assert_eq!(
             fc,
             format!(
-                "[2:a]{AUDIO_GAP_FILL},adelay=500:all=1[a0];\
-                 [3:a]{AUDIO_GAP_FILL},adelay=0:all=1[a1];\
+                "[2:a]{AUDIO_GAP_FILL},adelay=580:all=1[a0];\
+                 [3:a]{AUDIO_GAP_FILL},adelay=80:all=1[a1];\
                  [a0][a1]amix=inputs=2:normalize=0[aout];"
             )
         );
@@ -3177,7 +3371,7 @@ mod tests {
         assert_eq!(
             audio_mix_graph(0, &[7]),
             (
-                format!("[0:a]{AUDIO_GAP_FILL},adelay=7:all=1[a0];"),
+                format!("[0:a]{AUDIO_GAP_FILL},adelay=87:all=1[a0];"),
                 "[a0]".to_string()
             )
         );
@@ -3197,6 +3391,486 @@ mod tests {
         assert_eq!(
             single_publisher_args(false, None),
             ["-map", "0:v:0", "-c:v", "copy"]
+        );
+    }
+
+    // ------------------------------------------------------------------
+    //  Cada pista entra na gravação no instante do seu primeiro pacote
+    // ------------------------------------------------------------------
+    //
+    // O zero de uma pista é o primeiro quadro (ou pacote) que lá ficou. Uma
+    // pista de vídeo ligada a meio do fluxo espera pelo keyframe que o SFU
+    // pede; uma de áudio em silêncio, pelo pacote seguinte do DTX. Posta na
+    // linha do tempo pelo instante em que o writer foi LIGADO, entrava
+    // adiantada o tempo que esperou — a imagem à frente do som.
+
+    /// Os milissegundos da sessão, agora.
+    fn agora_ms(s: &RecordingSession) -> u64 {
+        s.started.elapsed().as_millis() as u64
+    }
+
+    async fn dorme(ms: u64) {
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
+
+    #[tokio::test]
+    async fn a_pista_de_video_comeca_no_keyframe_e_nao_na_ligacao() {
+        let mut s = sessao_de_teste().await;
+        dorme(30).await;
+        let (w, _) = abre_pista(&mut s, "video");
+        let ligada = s.tracks[0].offset_ms;
+        assert_eq!(
+            s.tracks[0].starts_at_ms(),
+            ligada,
+            "sem pacotes, a pista fica no instante da ligação"
+        );
+        // A meio do fluxo: quadros delta enquanto o keyframe pedido não chega.
+        let mut seq = 0u16;
+        for q in 0..3u32 {
+            for p in vp8_quadro_delta(&mut seq, q * 3000) {
+                w.write_rtp(&p);
+            }
+        }
+        dorme(120).await;
+        assert_eq!(
+            s.tracks[0].starts_at_ms(),
+            ligada,
+            "quadros delta não começam a pista"
+        );
+        let antes = agora_ms(&s);
+        w.write_rtp(&vp8_keyframe(seq, 3 * 3000));
+        let depois = agora_ms(&s);
+        let comeca = s.tracks[0].starts_at_ms();
+        assert!(
+            (antes..=depois).contains(&comeca) && comeca >= ligada + 120,
+            "a pista começa quando o keyframe chega ({comeca} ms; chegou entre {antes} e \
+             {depois}), não quando o writer foi ligado ({ligada} ms)"
+        );
+        // O que vem a seguir já não mexe no início.
+        dorme(40).await;
+        seq = seq.wrapping_add(1);
+        for q in 4..6u32 {
+            for p in vp8_quadro_delta(&mut seq, q * 3000) {
+                w.write_rtp(&p);
+            }
+        }
+        w.write_rtp(&vp8_keyframe(seq, 6 * 3000));
+        assert_eq!(s.tracks[0].starts_at_ms(), comeca);
+        w.close().await;
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn um_keyframe_de_abertura_que_nao_serviu_nao_fica_como_inicio_da_pista() {
+        let mut s = sessao_de_teste().await;
+        let (w, path) = abre_pista(&mut s, "video");
+        // O início de um keyframe, e a seguir um pacote que não é dele: a
+        // thread de escrita deita-o fora e a pista volta a esperar.
+        let mut inicio = vp8_keyframe(100, 3000);
+        inicio.header.marker = false;
+        w.write_rtp(&inicio);
+        let falhado = s.tracks[0].starts_at_ms();
+        w.write_rtp(&vp8_pacote(140, 6000, 0x00, 0x42, true));
+        ate_que("a pista volta a esperar pelo keyframe", || {
+            w.wants_keyframe()
+        })
+        .await;
+        dorme(120).await;
+        let antes = agora_ms(&s);
+        w.write_rtp(&vp8_keyframe(200, 9000));
+        let depois = agora_ms(&s);
+        ate_que("a pista abriu", || !w.wants_keyframe()).await;
+        w.close().await;
+        let comeca = s.tracks[0].starts_at_ms();
+        assert_eq!(ivf_quadros(&path).len(), 1, "só o keyframe inteiro");
+        assert!(
+            (antes..=depois).contains(&comeca) && comeca >= falhado + 120,
+            "o início é o do keyframe que ficou na pista ({comeca} ms; chegou entre {antes} \
+             e {depois}), não o do que foi deitado fora ({falhado} ms)"
+        );
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+    }
+
+    /// Um pacote RTP de Opus para os testes do instante de cada pista. É igual
+    /// ao `opus_silencio` dos testes do relógio, mas próprio: esses testes (e a
+    /// função deles) saem com a correcção do pacote de áudio atrasado, e o
+    /// instante de uma pista mede-se em qualquer dos dois mundos.
+    fn opus_rtp(seq: u16, ts: u32) -> webrtc::rtp::packet::Packet {
+        let header = webrtc::rtp::header::Header {
+            sequence_number: seq,
+            timestamp: ts,
+            payload_type: 111,
+            ..Default::default()
+        };
+        webrtc::rtp::packet::Packet {
+            header,
+            payload: vec![0xf8, 0xff, 0xfe].into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pista_de_audio_comeca_no_primeiro_pacote_e_nao_na_ligacao() {
+        let mut s = sessao_de_teste().await;
+        let (w, _) = abre_pista(&mut s, "audio");
+        let ligada = s.tracks[0].offset_ms;
+        // Um payload vazio não chega a ser escrito: não é o início de nada.
+        let mut vazio = opus_rtp(1, 1000);
+        vazio.payload = Vec::new().into();
+        w.write_rtp(&vazio);
+        // O microfone está em silêncio: o DTX só manda o pacote seguinte daqui a pouco.
+        dorme(120).await;
+        assert_eq!(s.tracks[0].starts_at_ms(), ligada);
+        let antes = agora_ms(&s);
+        w.write_rtp(&opus_rtp(2, 1000 + 19_200));
+        let depois = agora_ms(&s);
+        let comeca = s.tracks[0].starts_at_ms();
+        assert!(
+            (antes..=depois).contains(&comeca) && comeca >= ligada + 120,
+            "a pista começa quando o primeiro pacote chega ({comeca} ms; chegou entre \
+             {antes} e {depois}), não quando o writer foi ligado ({ligada} ms)"
+        );
+        dorme(40).await;
+        w.write_rtp(&opus_rtp(3, 1000 + 20_160));
+        assert_eq!(s.tracks[0].starts_at_ms(), comeca, "só o primeiro conta");
+        w.close().await;
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+    }
+
+    /// Os metadados de uma pista que começou aos `comeca_ms` da sessão (e cujo
+    /// writer tinha sido ligado aos `ligada_ms`).
+    fn pista(path: &str, kind: &str, ligada_ms: u64, comeca_ms: u64) -> RecTrackMeta {
+        let first = FirstPacket::new(Instant::now());
+        first
+            .at_ms
+            .store(comeca_ms, std::sync::atomic::Ordering::Relaxed);
+        RecTrackMeta {
+            path: PathBuf::from(path),
+            kind: kind.into(),
+            offset_ms: ligada_ms,
+            first,
+        }
+    }
+
+    fn textos(args: &[std::ffi::OsString]) -> Vec<String> {
+        args.iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// O que o CI vê (não tem ffmpeg): a composição põe cada pista no instante
+    /// em que COMEÇA, nos dois caminhos — e nunca no da ligação do writer.
+    #[test]
+    fn a_composicao_poe_cada_pista_no_instante_em_que_comeca() {
+        // Um publicador: a que começa depois leva a diferença; o áudio conta
+        // com os 80 ms de pre-skip.
+        assert_eq!(single_publisher_shifts(557, Some(10)), (467, 0));
+        assert_eq!(single_publisher_shifts(5, Some(300)), (0, 375));
+        assert_eq!(single_publisher_shifts(90, Some(10)), (0, 0));
+        assert_eq!(single_publisher_shifts(1234, None), (0, 0));
+        assert_eq!(input_shift(467), ["-itsoffset", "0.467"]);
+        assert!(input_shift(0).is_empty());
+
+        // O vídeo esperou 557 ms pelo keyframe; o áudio, 10 ms pelo pacote.
+        let (v, a) = (
+            pista("v.ivf", "video", 3, 560),
+            pista("a.ogg", "audio", 3, 13),
+        );
+        let args = textos(&compose_args(&[&v], &[&a], None, None));
+        assert_eq!(
+            args[..6],
+            ["-itsoffset", "0.467", "-i", "v.ivf", "-i", "a.ogg"],
+            "o vídeo em cópia entra atrasado o que esperou a mais do que o áudio"
+        );
+        assert_eq!(args[6..], single_publisher_args(true, None));
+        // Ao contrário: é o áudio que entra depois.
+        let (v, a) = (
+            pista("v.ivf", "video", 0, 20),
+            pista("a.ogg", "audio", 0, 340),
+        );
+        let args = textos(&compose_args(&[&v], &[&a], None, None));
+        assert_eq!(
+            args[..6],
+            ["-i", "v.ivf", "-itsoffset", "0.400", "-i", "a.ogg"]
+        );
+        // Sem áudio não há nada a acertar.
+        let args = textos(&compose_args(&[&v], &[], None, None));
+        assert_eq!(args[..2], ["-i", "v.ivf"]);
+
+        // Grelha: o preto de cada célula conta-se em quadros da cadência da
+        // grelha, com o `fps` antes; o resto (menos de um quadro) vai no `setpts`.
+        assert_eq!(
+            grid_cell_chain(1, 640, 360, 31_457),
+            "[1:v]setpts=PTS+0.0237/TB,fps=30,\
+             scale=640:360:force_original_aspect_ratio=decrease,\
+             pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,\
+             tpad=start=943:start_mode=add:color=black[v1];"
+        );
+        assert!(grid_cell_chain(0, 640, 360, 0).contains("setpts=PTS+0.0000/TB,fps=30,"));
+        assert!(grid_cell_chain(0, 640, 360, 0).contains("tpad=start=0:"));
+        let (v1, v2, a1, a2) = (
+            pista("1.ivf", "video", 2, 580),
+            pista("2.ivf", "video", 2, 31_457),
+            pista("1.ogg", "audio", 2, 12),
+            pista("2.ogg", "audio", 2, 31_000),
+        );
+        let args = textos(&compose_args(&[&v1, &v2], &[&a1, &a2], None, None));
+        assert_eq!(
+            args[..8],
+            ["-i", "1.ivf", "-i", "2.ivf", "-i", "1.ogg", "-i", "2.ogg"],
+            "na grelha os instantes vão nos filtros, não nas entradas"
+        );
+        assert_eq!(args[8], "-filter_complex");
+        let fc = &args[9];
+        for parte in [
+            "[0:v]setpts=PTS+0.0133/TB,fps=30,",
+            "tpad=start=17:start_mode=add:color=black[v0];",
+            "tpad=start=943:start_mode=add:color=black[v1];",
+            "[v0][v1]xstack=inputs=2:layout=0_0|640_0:fill=black[vout];",
+            "adelay=92:all=1[a0];",
+            "adelay=31080:all=1[a1];",
+        ] {
+            assert!(fc.contains(parte), "falta «{parte}» em {fc}");
+        }
+        assert!(
+            !fc.contains("start_duration"),
+            "o preto em segundos deriva 1 % do offset: {fc}"
+        );
+    }
+
+    /// Um vídeo VP8 a sério, um quadro por pacote RTP: `total_ms` a 30 fps de
+    /// preto, com um clarão branco de 100 ms aos `clarao_ms`. `None` se a
+    /// máquina não tem ffmpeg.
+    fn video_com_clarao(
+        dir: &Path,
+        clarao_ms: u32,
+        total_ms: u32,
+    ) -> Option<Vec<webrtc::rtp::packet::Packet>> {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let ivf = dir.join("clarao.ivf");
+        let (de, ate) = (clarao_ms as f64 / 1000.0, (clarao_ms + 99) as f64 / 1000.0);
+        let grafo = format!(
+            "color=c=black:s=64x64:r=30:d={d}[p];color=c=white:s=64x64:r=30:d={d}[b];\
+             [p][b]overlay=enable='between(t,{de},{ate})'",
+            d = total_ms as f64 / 1000.0
+        );
+        let res = std::process::Command::new(&bin)
+            .args(["-y", "-loglevel", "error", "-nostdin", "-f", "lavfi", "-i"])
+            .arg(&grafo)
+            .args(["-c:v", "libvpx", "-b:v", "200k", "-g", "300"])
+            .args(["-auto-alt-ref", "0", "-lag-in-frames", "0", "-f", "ivf"])
+            .arg(&ivf)
+            .output()
+            .ok()?;
+        assert!(
+            res.status.success(),
+            "ffmpeg falhou: {}",
+            String::from_utf8_lossy(&res.stderr)
+        );
+        let b = std::fs::read(&ivf).unwrap();
+        let mut pacotes = Vec::new();
+        let mut i = 32;
+        while i + 12 <= b.len() {
+            let n = u32::from_le_bytes(b[i..i + 4].try_into().unwrap()) as usize;
+            let quadro = u64::from_le_bytes(b[i + 4..i + 12].try_into().unwrap()) as u32;
+            let mut payload = vec![0x10u8]; // descritor: S=1, PID=0
+            payload.extend_from_slice(&b[i + 12..i + 12 + n]);
+            pacotes.push(webrtc::rtp::packet::Packet {
+                header: webrtc::rtp::header::Header {
+                    sequence_number: pacotes.len() as u16,
+                    timestamp: 50_000 + quadro * 3000,
+                    marker: true,
+                    payload_type: 96,
+                    ..Default::default()
+                },
+                payload: payload.into(),
+            });
+            i += 12 + n;
+        }
+        Some(pacotes)
+    }
+
+    /// Compõe com os argumentos de PRODUÇÃO (`compose_args`) e devolve o webm.
+    fn compoe(dir: &Path, args: &[std::ffi::OsString]) -> PathBuf {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let webm = dir.join("out.webm");
+        let res = std::process::Command::new(&bin)
+            .args(["-y", "-loglevel", "error", "-nostdin"])
+            .args(args)
+            .arg(&webm)
+            .output()
+            .unwrap();
+        assert!(
+            res.status.success(),
+            "ffmpeg falhou: {}",
+            String::from_utf8_lossy(&res.stderr)
+        );
+        webm
+    }
+
+    /// O instante (ms, pelos PTS do ficheiro) em que a zona `recorte`
+    /// (`w:h:x:y`) da imagem passa de escura a clara.
+    fn clarao_aos(webm: &Path, recorte: &str) -> u64 {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let res = std::process::Command::new(&bin)
+            .args(["-nostdin", "-loglevel", "info", "-i"])
+            .arg(webm)
+            .args(["-map", "0:v:0", "-vf"])
+            .arg(format!("crop={recorte},scale=4:4,format=gray,showinfo"))
+            .args(["-fps_mode", "passthrough", "-f", "null", "-"])
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&res.stderr);
+        let campo = |l: &str, chave: &str| -> Option<f64> {
+            let resto = &l[l.find(chave)? + chave.len()..];
+            let fim = resto
+                .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .unwrap_or(resto.len());
+            resto[..fim].parse().ok()
+        };
+        log.lines()
+            .filter_map(|l| Some((campo(l, "pts_time:")?, campo(l, "mean:[")?)))
+            .find(|(_, luz)| *luz > 128.0)
+            .map(|(t, _)| (t * 1000.0).round() as u64)
+            .expect("a composição não tem o clarão")
+    }
+
+    /// O instante (ms, a contar amostras) em que o tom a `freq` começa.
+    fn tom_aos(webm: &Path, freq: f32) -> u64 {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let res = std::process::Command::new(&bin)
+            .args(["-nostdin", "-loglevel", "error", "-i"])
+            .arg(webm)
+            .args(["-map", "0:a:0", "-ac", "1", "-ar", "48000"])
+            .args(["-f", "s16le", "-"])
+            .output()
+            .unwrap();
+        let (pares, _) = res.stdout.as_chunks::<2>();
+        let pcm: Vec<i16> = pares.iter().map(|b| i16::from_le_bytes(*b)).collect();
+        (0..pcm.len() / 48)
+            .step_by(5)
+            .find(|t| nivel(&pcm, freq, *t, t + 10) > 0.1)
+            .expect("a composição não tem o tom") as u64
+    }
+
+    /// Um publicador para os testes de sincronismo: áudio com um toque a
+    /// `freq` ao primeiro segundo da pista, vídeo com um clarão ao primeiro
+    /// segundo da pista. O áudio flui desde que o writer é ligado; o vídeo só
+    /// recebe o keyframe `espera_ms` depois (quadros delta até lá). Devolve
+    /// quanto a imagem ficou atrás do som NO RELÓGIO DA SESSÃO, em ms: é o que
+    /// a gravação tem de mostrar.
+    async fn publica(
+        s: &mut RecordingSession,
+        video: &[webrtc::rtp::packet::Packet],
+        freq: f32,
+        espera_ms: u64,
+    ) -> i64 {
+        let (wa, _) = abre_pista(s, "audio");
+        let (wv, _) = abre_pista(s, "video");
+        let mut enc = opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
+        enc.bitrate_bps = 32_000;
+        let mut out = vec![0u8; 1500];
+        let som_aos = agora_ms(s);
+        for i in 0..150u32 {
+            let pcm: Vec<f32> = (0..960u32)
+                .map(|k| {
+                    if !(50..55).contains(&i) {
+                        return 0.0;
+                    }
+                    let n = (i * 960 + k) as f32;
+                    0.5 * (2.0 * std::f32::consts::PI * freq * n / 48_000.0).sin()
+                })
+                .collect();
+            let len = enc.encode(&pcm, 960, &mut out).unwrap();
+            wa.write_rtp(&webrtc::rtp::packet::Packet {
+                header: webrtc::rtp::header::Header {
+                    sequence_number: i as u16,
+                    timestamp: 90_000 + i * 960,
+                    payload_type: 111,
+                    ..Default::default()
+                },
+                payload: out[..len].to_vec().into(),
+            });
+        }
+        let mut seq = 60_000u16;
+        for p in vp8_quadro_delta(&mut seq, 1000) {
+            wv.write_rtp(&p);
+        }
+        dorme(espera_ms).await;
+        let imagem_aos = agora_ms(s);
+        for p in video {
+            wv.write_rtp(p);
+        }
+        assert_eq!(wa.close().await + wv.close().await, 0);
+        imagem_aos as i64 - som_aos as i64
+    }
+
+    /// Os argumentos de produção para as pistas de `s`, como o `finalize_inner`
+    /// os pede.
+    fn args_de_producao(s: &RecordingSession) -> Vec<std::ffi::OsString> {
+        let de = |audio: bool| -> Vec<&RecTrackMeta> {
+            s.tracks
+                .iter()
+                .filter(|t| t.kind.ends_with("audio") == audio)
+                .collect()
+        };
+        compose_args(&de(false), &de(true), None, None)
+    }
+
+    /// Quanto a medição pode fugir: um quadro de vídeo a 30 fps (33 ms), meio
+    /// quadro do `fps` da grelha (17 ms) e o passo da procura do tom (5 ms).
+    const FOLGA_MS: i64 = 50;
+    const SEM_FFMPEG_SINC: &str = "ffmpeg indisponível — o sincronismo NÃO foi verificado";
+
+    /// O caminho de um publicador com os argumentos de produção: o vídeo em
+    /// cópia tem de entrar atrasado o que esperou pelo keyframe.
+    #[tokio::test]
+    async fn o_som_e_a_imagem_ficam_juntos_com_um_publicador() {
+        let mut s = sessao_de_teste().await;
+        let Some(video) = video_com_clarao(&s.dir, 1000, 3000) else {
+            eprintln!("{SEM_FFMPEG_SINC}");
+            return;
+        };
+        let devido = publica(&mut s, &video, 440.0, 400).await;
+        let webm = compoe(&s.dir, &args_de_producao(&s));
+        let medido = clarao_aos(&webm, "64:64:0:0") as i64 - tom_aos(&webm, 440.0) as i64;
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+        assert!(
+            (medido - devido).abs() <= FOLGA_MS,
+            "a imagem chegou {devido} ms depois do som e na gravação está a {medido} ms dele"
+        );
+    }
+
+    /// A grelha: cada célula no seu instante, com o seu som, e o segundo
+    /// publicador — que entrou mais tarde — no sítio certo da gravação.
+    #[tokio::test]
+    async fn o_som_e_a_imagem_ficam_juntos_na_grelha() {
+        let mut s = sessao_de_teste().await;
+        let Some(video) = video_com_clarao(&s.dir, 1000, 3000) else {
+            eprintln!("{SEM_FFMPEG_SINC}");
+            return;
+        };
+        let devido_a = publica(&mut s, &video, 440.0, 300).await;
+        dorme(1500).await;
+        let entrou_b = agora_ms(&s) as i64;
+        let devido_b = publica(&mut s, &video, 1000.0, 0).await;
+        let webm = compoe(&s.dir, &args_de_producao(&s));
+        let (som_a, som_b) = (tom_aos(&webm, 440.0) as i64, tom_aos(&webm, 1000.0) as i64);
+        let medido_a = clarao_aos(&webm, "640:360:0:0") as i64 - som_a;
+        let medido_b = clarao_aos(&webm, "640:360:640:0") as i64 - som_b;
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+        assert!(
+            (medido_a - devido_a).abs() <= FOLGA_MS,
+            "A: a imagem chegou {devido_a} ms depois do som e na gravação está a {medido_a} ms"
+        );
+        assert!(
+            (medido_b - devido_b).abs() <= FOLGA_MS,
+            "B: a imagem chegou {devido_b} ms depois do som e na gravação está a {medido_b} ms"
+        );
+        // O toque de B está ao primeiro segundo da pista dele, que começou
+        // quando ele entrou.
+        assert!(
+            (som_b - (entrou_b + 1000)).abs() <= FOLGA_MS,
+            "B entrou aos {entrou_b} ms e o toque dele, um segundo depois, está aos {som_b} ms"
         );
     }
 

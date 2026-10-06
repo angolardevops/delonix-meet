@@ -150,6 +150,34 @@ pub fn file_status(f: ProcessingFacts<'_>) -> FileStatus {
     FileStatus::Ready
 }
 
+/// A recusa de quem pede o ficheiro de uma gravação que o servidor ainda está
+/// a compor. Não é uma falha: quem a recebe volta a pedir quando acabar.
+pub fn processing_conflict() -> DomainError {
+    DomainError::conflict(
+        "recording.processing",
+        "A gravação ainda está a ser composta. Fica disponível quando o processamento acabar.",
+    )
+}
+
+/// Uma acção que mostra a gravação a OUTRA pessoa — partilhar com um
+/// utilizador, criar o link público, publicar, contar uma visualização — pede
+/// uma gravação com ficheiro. Sem ele, quem recebe fica com uma entrada sem
+/// nada para abrir, e o link público com um ficheiro que não existe.
+///
+/// Os dois casos sem ficheiro têm códigos diferentes porque pedem coisas
+/// diferentes a quem chama: `recording.processing` é esperar; em
+/// `recording.no_file` não há o que esperar.
+pub fn require_file(f: ProcessingFacts<'_>) -> Result<(), DomainError> {
+    match file_status(f) {
+        FileStatus::Ready | FileStatus::Transcribing => Ok(()),
+        FileStatus::Processing => Err(processing_conflict()),
+        FileStatus::Failed => Err(DomainError::conflict(
+            "recording.no_file",
+            "A gravação falhou e não tem ficheiro.",
+        )),
+    }
+}
+
 /// O `state` da UI: o `status`, com `published` quando está pronta E publicada.
 /// Publicar uma gravação falhada, ou uma que ainda está a compor, não a
 /// promove — não há o que ver.
@@ -771,6 +799,35 @@ mod tests {
         assert_eq!(file_status(facts("ready")), FileStatus::Ready);
         assert_eq!(file_status(facts("transcribing")), FileStatus::Ready);
         assert_eq!(display_state(FileStatus::Ready, true), "published");
+    }
+
+    /// Entregar a gravação a outra pessoa pede ficheiro, e a recusa diz qual
+    /// dos dois casos é: esperar (`processing`) ou não há o que esperar.
+    #[test]
+    fn entregar_a_outrem_pede_ficheiro() {
+        use delonix_meet_core::ErrorKind;
+        assert!(require_file(facts("ready")).is_ok());
+        assert!(require_file(facts("transcribing")).is_ok());
+        // A ser transcrita (reserva activa) tem ficheiro.
+        let a_transcrever = ProcessingFacts {
+            lease_active: true,
+            ..facts("ready")
+        };
+        assert!(require_file(a_transcrever).is_ok());
+
+        let e = require_file(facts("processing")).unwrap_err();
+        assert_eq!((e.kind, e.code), (ErrorKind::Conflict, "recording.processing"));
+        assert_eq!(e.code, processing_conflict().code);
+        assert!(!e.message.contains("falhou"), "a compor não é falha: {e}");
+        // Falhada e um estado desconhecido falham fechado, com o mesmo código.
+        for status in ["failed", "zombie", ""] {
+            let e = require_file(facts(status)).unwrap_err();
+            assert_eq!(
+                (e.kind, e.code),
+                (ErrorKind::Conflict, "recording.no_file"),
+                "{status:?}"
+            );
+        }
     }
 
     #[test]

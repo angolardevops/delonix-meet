@@ -1480,6 +1480,31 @@
         ],
         "type": "object"
       },
+      "ConcurrencyLimit": {
+        "properties": {
+          "max_concurrent_participants": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ConcurrencyLimitReq": {
+        "properties": {
+          "max_concurrent_participants": {
+            "description": "Participantes concorrentes que a organização pode ter em cada nó de\nmedia. `null` = o valor por omissão do nó (`ORG_MAX_PARTICIPANTS`).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "ConflictCheckReq": {
         "properties": {
           "duration_min": {
@@ -8225,6 +8250,7 @@
         "type": "object"
       },
       "Recording": {
+        "description": "A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`);\na resposta do upload junta-lhe `kind`, `status`, a media medida e\n`has_thumbnail`. As LEITURAS — a biblioteca, o recurso e a lista da sala —\ndevolvem `RecordingLibraryItem`.",
         "properties": {
           "created_at": {
             "format": "date-time",

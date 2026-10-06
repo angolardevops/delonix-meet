@@ -397,7 +397,12 @@ export interface QuarantineRow {
   count: number
 }
 
-export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms/${code}/recordings`)
+/**
+ * As gravações de uma sala (o painel dentro da reunião), na mesma forma da
+ * biblioteca: com `status`, `failure_reason`, `progress_pct` e `can_download`,
+ * para o painel não oferecer nada sobre uma gravação sem ficheiro (R59).
+ */
+export const listRecordings = (code: string) => request<RecordingLibraryItem[]>(`/api/rooms/${code}/recordings`)
 
 export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
 

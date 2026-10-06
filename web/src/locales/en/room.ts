@@ -478,6 +478,7 @@ export default {
     gravacoes: 'Recordings of this room',
     semGravacoes: 'No recordings yet.',
     megabytes: '{{n}} MB',
+    semDescarga: 'Only the person who recorded it, or an organisation administrator, can download it.',
     mensagemPrivada: 'Private message to {{nome}}',
     fixarParaTodos: "Pin {{nome}} on everyone's stage",
     desafixarParaTodos: 'Remove {{nome}} from the spotlight',
