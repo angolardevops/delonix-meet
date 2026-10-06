@@ -1,0 +1,27 @@
+# O Prometheus a ler o `/metrics` do servidor. Até 2026-10-06 não havia
+# ServiceMonitor nenhum no repositório: o servidor expunha 41 métricas e
+# ninguém as lia.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: delonix-meet-server
+  namespace: observabilidade
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames: [delonix-meet]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: delonix-meet
+      app.kubernetes.io/component: server
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      # O `job` que os alertas usam. Sem isto o job é o nome do Service e as
+      # regras de `up{job="delonix-meet-server"}` não casavam com nada —
+      # ficariam verdes com o produto em baixo.
+      relabelings:
+        - targetLabel: job
+          replacement: delonix-meet-server

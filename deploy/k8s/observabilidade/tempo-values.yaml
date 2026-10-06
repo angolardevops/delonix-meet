@@ -1,0 +1,18 @@
+# Tempo — onde os rastos ficam. Recebe do colector, guarda no MinIO.
+tempo:
+  retention: 168h   # 7 dias: um rasto velho não diagnostica nada
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: meet-tracos
+        endpoint: minio.minio.svc.cluster.local:9000
+        insecure: true
+        forcePathStyle: true
+  receivers:
+    otlp:
+      protocols:
+        grpc: { endpoint: 0.0.0.0:4317 }
+persistence:
+  enabled: true
+  size: 20Gi
