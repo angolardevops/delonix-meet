@@ -266,6 +266,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@cd server && cargo fmt --check && printf "$(G)  ✓ formatação Rust$(Z)\n"
 	@bash scripts/check-repo-hygiene.sh
 	@bash scripts/check-capability-claims.sh
+	@bash scripts/check-frontend-lint.sh
 	@bash scripts/check-route-auth.sh
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh

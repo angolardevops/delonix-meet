@@ -158,6 +158,18 @@ jobs:
       - name: Capacidades vendidas (nada se vende sem código por trás)
         run: bash scripts/check-capability-claims.sh
 
+      # O lint do frontend precisa das dependências; o job de fitness não as
+      # instalava porque até 2026-10-06 não havia lint nenhum para correr.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Dependências do frontend (para o lint)
+        run: npm ci --prefix web --no-audit --no-fund
+      - name: Lint do frontend (catraca — os problemas só descem)
+        run: bash scripts/check-frontend-lint.sh
+
       - name: Drift documental (módulos, migrações, versões, SQL)
         run: bash scripts/check-docs-drift.sh
 
