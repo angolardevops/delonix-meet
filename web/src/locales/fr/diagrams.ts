@@ -661,8 +661,8 @@ export default {
     problemas_other: '{{count}} problèmes dans le modèle',
     problemaPrimeiro_one: '{{count}} problème : {{primeiro}}',
     problemaPrimeiro_other: '{{count}} problèmes · {{primeiro}}',
-    localGuardado: 'enregistré dans ce navigateur',
-    localErro: "impossible d'enregistrer dans ce navigateur",
+    localGuardado: 'enregistré',
+    localErro: 'impossible d’enregistrer',
   },
   zoom: {
     rotulo: 'Zoom',

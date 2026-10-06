@@ -661,8 +661,8 @@ export default {
     problemas_other: '{{count}} problemas no modelo',
     problemaPrimeiro_one: '{{count}} problema: {{primeiro}}',
     problemaPrimeiro_other: '{{count}} problemas · {{primeiro}}',
-    localGuardado: 'guardado neste browser',
-    localErro: 'não foi possível guardar neste browser',
+    localGuardado: 'guardado',
+    localErro: 'não foi possível guardar',
   },
   zoom: {
     rotulo: 'Ampliação',
