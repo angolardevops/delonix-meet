@@ -7,7 +7,7 @@
 //! (`room_participants`), quem fez o upload, ou com quem foi partilhada
 //! (`recording_shares`). Partilha é sempre só-leitura (download). Uma gravação
 //! PUBLICADA para a organização (`visibility = 'org'`) é vista também pelos
-//! membros activos de uma organização do autor — ver `sql_can_view`.
+//! membros activos de uma organização do autor — ver `AccessFacts::can_view`.
 //!
 //! **Uma regra de acesso.** As rotas por id lêem os factos com [`load_item`] e
 //! decidem com `delonix_meet_domain::content::recording::AccessFacts` —
@@ -536,44 +536,16 @@ pub(crate) async fn participated_room(
 }
 
 // ---------- a regra de acesso, escrita uma vez ----------
-
-/// Predicado SQL «`viewer` pode gerir a gravação `r`»: quem a carregou, ou um
-/// admin activo de uma organização do autor (a mesma regra do download).
-pub(crate) fn sql_can_manage(viewer: &str) -> String {
-    format!(
-        "(r.uploader_id = {viewer} OR {})",
-        crate::org::sql_active_admin_of(viewer, "r.uploader_id")
-    )
-}
-
-/// Predicado SQL «`viewer` vê a gravação `r`»: participou na sala, carregou-a,
-/// foi-lhe partilhada, pode geri-la, ou está publicada para a organização e
-/// `viewer` é membro activo de uma organização do autor.
-pub(crate) fn sql_can_view(viewer: &str) -> String {
-    format!(
-        "(r.uploader_id = {viewer}
-          OR EXISTS(SELECT 1 FROM room_participants vp WHERE vp.room_id = r.room_id AND vp.user_id = {viewer})
-          OR EXISTS(SELECT 1 FROM recording_shares vs WHERE vs.recording_id = r.id AND vs.user_id = {viewer})
-          OR {manage}
-          OR (r.visibility = 'org' AND r.published_at IS NOT NULL AND {member}))",
-        manage = sql_can_manage(viewer),
-        member = crate::org::sql_active_member_with(viewer, "r.uploader_id"),
-    )
-}
-
-/// Predicado SQL «`viewer` tem ligação DIRECTA com a gravação `r`»: carregou-a,
-/// participou na sala, foi-lhe partilhada, ou pode geri-la. É o
-/// `AccessFacts::has_direct_relation` em SQL — tudo o que `sql_can_view` tem
-/// MENOS a publicação.
-pub(crate) fn sql_direct_relation(viewer: &str) -> String {
-    format!(
-        "(r.uploader_id = {viewer}
-          OR EXISTS(SELECT 1 FROM room_participants vp WHERE vp.room_id = r.room_id AND vp.user_id = {viewer})
-          OR EXISTS(SELECT 1 FROM recording_shares vs WHERE vs.recording_id = r.id AND vs.user_id = {viewer})
-          OR {manage})",
-        manage = sql_can_manage(viewer),
-    )
-}
+//
+// E é mesmo uma só: os predicados SQL que aqui viviam
+// (`sql_can_manage`/`sql_can_view`/`sql_direct_relation`) eram a SEGUNDA
+// derivação do acesso, e o único consumidor deles era o [`access`]. Faltava-lhes
+// a condição da S3 e por isso quem saía da organização do dono passava por eles
+// (R304). Saíram em vez de serem corrigidos: uma regra de acesso que existe em
+// dois sítios volta a divergir, e aqui não havia nada a pedi-la em SQL — nenhum
+// destes caminhos pagina, que é a razão por que a BIBLIOTECA tem os seus
+// (`LIBRARY_VISIBLE_*`, provados contra o domínio por
+// `library_scopes_agree_with_access_facts`).
 
 /// O que um pedido pode fazer a uma gravação.
 #[derive(Debug)]
@@ -635,30 +607,26 @@ impl Access {
 
 /// Resolve o acesso de `viewer` à gravação `id`. Quem não a pode ver recebe
 /// `404`: não se confirma a outra organização que o id existe.
+///
+/// Deriva do MESMO sítio que as rotas por id (`seen_item` → `AccessFacts`), e
+/// não de um predicado SQL próprio. Enquanto derivava do seu
+/// (`sql_can_view`/`sql_can_manage`/`sql_direct_relation`), faltava-lhe a
+/// condição da S3 que o `AccessFacts::departed` tem: quem saía da organização
+/// do dono recebia `200` em `/transcript`, `/participants` e `/captions`, e
+/// `204` em `POST /views`, da mesma gravação cujo `/details` já lhe respondia
+/// `404` (medido a 2026-10-05, escrito na R304). Uma gravação tem UMA regra de
+/// acesso; esta era a segunda porta.
 pub(crate) async fn access(state: &AppState, id: Uuid, viewer: Uuid) -> Result<Access, ApiError> {
-    type Row = (Uuid, String, Option<i64>, bool, bool, bool);
-    let row: Option<Row> = sqlx::query_as(&format!(
-        "SELECT r.room_id, r.status, r.duration_ms, {view}, {manage}, {direct}
-         FROM recordings r WHERE r.id = $1",
-        view = sql_can_view("$2"),
-        manage = sql_can_manage("$2"),
-        direct = sql_direct_relation("$2"),
-    ))
-    .bind(id)
-    .bind(viewer)
-    .fetch_optional(&state.db)
-    .await?;
-    match row {
-        Some((room_id, status, duration_ms, true, can_manage, direct_relation)) => Ok(Access {
-            id,
-            room_id,
-            status,
-            duration_ms,
-            can_manage,
-            direct_relation,
-        }),
-        _ => Err(ApiError::NotFound),
-    }
+    let row = seen_item(state, id, viewer).await?;
+    let facts = row.facts();
+    Ok(Access {
+        id: row.id,
+        room_id: row.room_id,
+        status: row.status,
+        duration_ms: row.duration_ms,
+        can_manage: facts.can_manage(),
+        direct_relation: facts.has_direct_relation(),
+    })
 }
 
 // ---------- recording.ready ----------
@@ -1061,7 +1029,7 @@ pub async fn details(
 
 // NOTA DE MERGE (integra-ui-template-rebuild): a versão original desta função
 // (lado `frontend/ui-template-rebuild`) fazia a sua própria consulta com
-// `item_select_sql()`/`sql_can_view`, um caminho de acesso PARALELO ao de
+// `item_select_sql()` e um predicado SQL próprio, um caminho de acesso PARALELO ao de
 // `seen_item`/`AccessFacts`. Reescrita para passar pela MESMA regra de acesso
 // que o resto do ficheiro usa (`seen_item` + `ItemRow::into_item`) em vez de
 // duplicar a verificação — ver a filosofia de resolução no relatório do merge.

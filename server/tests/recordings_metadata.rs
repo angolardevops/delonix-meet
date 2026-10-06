@@ -1772,6 +1772,89 @@ async fn publishing_does_not_open_transcript_nor_participants(db: sqlx::PgPool) 
     }
 }
 
+/// A S3 na SEGUNDA porta das gravações: quem sai da organização do dono perde
+/// a transcrição, os presentes, as legendas, os capítulos e as visualizações —
+/// não só o `/details`.
+///
+/// O `access()` derivava de predicados SQL próprios
+/// (`sql_can_view`/`sql_can_manage`/`sql_direct_relation`) a que faltava a
+/// condição do `AccessFacts::departed`. Medido a 2026-10-05 e escrito na R304:
+/// uma participante arquivada recebia `200` em `/transcript`, `/participants` e
+/// `/captions` e `204` em `POST /views` da MESMA gravação cujo `/details` já
+/// lhe respondia `404`. Duas portas, duas regras — e só uma estava certa.
+///
+/// A correcção foi tirar a segunda porta: o `access()` passa pelo `seen_item` e
+/// pelos `AccessFacts`, como as rotas por id. Este teste mede as duas metades:
+/// o que a participante lê enquanto é da casa, e que deixa de ler quando sai.
+#[sqlx::test(migrations = "./migrations")]
+async fn leaving_the_organization_closes_every_recording_route(db: sqlx::PgPool) {
+    let f = fixture(db).await;
+    let app = &f.app;
+    sqlx::query("UPDATE recordings SET transcript = 'texto da reunião' WHERE id = $1::uuid")
+        .bind(&f.rec)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    let lido = ["transcript", "participants", "captions", "chapters"];
+    let views = format!("/api/recordings/{}/views", f.rec);
+
+    // CONTROLO, antes de sair: a Carla participou na sala e lê tudo.
+    for path in lido {
+        let (st, v) = app
+            .get(
+                &format!("/api/recordings/{}/{path}", f.rec),
+                Some(&f.carla.token),
+            )
+            .await;
+        assert_eq!(st, 200, "{path} para quem participou: {v}");
+    }
+    let (st, v) = app.post(&views, Some(&f.carla.token), json!({})).await;
+    assert_eq!(st, 204, "contar uma visualização: {v}");
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.carla.token))
+        .await;
+    assert_eq!(st, 200);
+
+    // Sai da organização (a linha de `room_participants` é permanente).
+    sqlx::query("UPDATE org_members SET archived_at = now() WHERE user_id = $1::uuid")
+        .bind(&f.carla.user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // O `/details` já recusava antes desta correcção — é a porta que estava certa.
+    let (st, _) = app
+        .get(&format!("/api/recordings/{}", f.rec), Some(&f.carla.token))
+        .await;
+    assert_eq!(st, 404, "a porta de sempre");
+
+    // E agora as outras dizem o MESMO: `404`, não `403` — a quem saiu não se
+    // confirma que a gravação existe.
+    for path in lido {
+        let url = format!("/api/recordings/{}/{path}", f.rec);
+        let (st, v) = app.get(&url, Some(&f.carla.token)).await;
+        assert_eq!(st, 404, "{path} depois de sair: {v}");
+        assert!(
+            !v.to_string().contains("texto da reunião"),
+            "{path}: a recusa não devolve o conteúdo: {v}"
+        );
+    }
+    let (st, v) = app.post(&views, Some(&f.carla.token), json!({})).await;
+    assert_eq!(st, 404, "contar uma visualização depois de sair: {v}");
+
+    // CONTROLO de que não se fechou a mais: a dona continua a ler tudo.
+    for path in lido {
+        let (st, v) = app
+            .get(
+                &format!("/api/recordings/{}/{path}", f.rec),
+                Some(&f.a.token),
+            )
+            .await;
+        assert_eq!(st, 200, "{path} para a dona: {v}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 //  R236 — a duração de uma gravação carregada nunca aparecia
 // ---------------------------------------------------------------------------
