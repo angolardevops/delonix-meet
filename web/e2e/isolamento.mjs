@@ -149,6 +149,11 @@ await recusado('A altera definições da org B', `/api/orgs/${B.orgId}`, {
   token: A.token, method: 'PATCH', body: { hide_org_creation: true },
 })
 await recusado('A lê a análise de quarentena da org B', `/api/orgs/${B.orgId}/analytics/quarantine`, { token: A.token })
+// ADR-0019: converter a organização de outra pessoa em empresa — com o domínio
+// de email de QUEM converte. Se passasse, A dava o seu domínio à org de B.
+await recusado('A converte a org B em empresarial', `/api/orgs/${B.orgId}/upgrade`, {
+  token: A.token, method: 'POST', body: { name: 'Roubada Lda' },
+})
 await recusado('A cria uma sala de voz na org B', `/api/orgs/${B.orgId}/voice/rooms`, {
   token: A.token, method: 'POST', body: { room_code: salaB.code },
 })
