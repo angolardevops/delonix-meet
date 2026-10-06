@@ -732,7 +732,7 @@ voice-secret-rotate: ## Troca o VOICE_INTERNAL_SECRET do .env (depois: make comp
 	@bash scripts/rotate-voice-secret.sh
 esl-secret-rotate: ## Troca a TELEPHONY_ESL_PASSWORD (Event Socket do FreeSWITCH) do .env (depois: make compose-down/up e/ou make cluster)
 	@bash scripts/rotate-voice-secret.sh .env TELEPHONY_ESL_PASSWORD
-seed: ## Cria a organização «ngolacloud» e o administrador de validação (BASE=https://…)
+seed: ## Cria a organização «ngolacloud», o administrador e a conta demo@ngolacloud.ao (BASE=https://…)
 	@bash scripts/seed.sh $(or $(BASE),https://$(MEET_HOST):8443)
 compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do PBX e chamada de prova ao IVR
 	@bash scripts/compose-voice-check.sh
@@ -851,7 +851,7 @@ voice-images: ## Imagens de voz para o cluster local: FreeSWITCH (importado) + P
 	@printf "$(G)  ✓ imagens de voz prontas$(Z)\n"
 
 .PHONY: cluster cluster-status cluster-reset-db cluster-down
-cluster: ## Stack completo num cluster local (delonix cluster) — https://$(MEET_HOST)
+cluster: ## Stack completo num cluster local + contas de validação (demo@ngolacloud.ao) — https://$(MEET_HOST)
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) IMAGE_TAG=$(IMAGE_TAG) bash scripts/cluster.sh up
 cluster-status: ## Estado do cluster local: nós, pods, ingress e a prova de fumo
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh status
