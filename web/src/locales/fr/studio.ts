@@ -34,6 +34,7 @@ export default {
   },
   erros: {
     destinos: "Impossible d'enregistrer les destinations de diffusion.",
+    saidaBloqueada: "Vous êtes resté dans le Studio : un enregistrement ou une diffusion est en cours. Arrêtez-le d'abord pour partir.",
     ecraTerminado: "Le partage d'écran est terminé.",
     ecra: "Impossible de capturer l'écran.",
     camara: "Impossible d'accéder à la caméra.",

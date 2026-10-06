@@ -12738,6 +12738,19 @@
         ],
         "type": "object"
       },
+      "UpgradeOrgReq": {
+        "description": "Corpo de `POST /api/orgs/{org_id}/upgrade`.",
+        "properties": {
+          "name": {
+            "description": "Nome da empresa (2-80 caracteres).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "Usage": {
         "properties": {
           "by_trunk": {
@@ -29893,6 +29906,105 @@
         "summary": "Pede a paragem. Idempotente: parar uma sessão que já acabou devolve-a como\nestá. Uma sessão que ninguém chegou a arrancar (`requested`) fecha-se logo\n(`ended`); as outras ficam com `desired_state = stopped` para o executor as\nencerrar — o plano de controlo não decide o que o sinal está a fazer.",
         "tags": [
           "tv-broadcasts"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/upgrade": {
+      "post": {
+        "description": "Não é um registo novo nem uma organização nova: a conta, as salas, as\ngravações e os convites ficam onde estão. A organização muda de `kind` para\n`company`, ganha um nome de empresa e passa a ter o domínio do email de quem\nconverte — que é o que a torna encontrável pelos colegas e o que o registo\nempresarial usa para os juntar.\n\nExige o mesmo que o registo empresarial, e recusa pelos mesmos códigos\n(`registration.invalid_org_name`, `registration.corporate_email_required`,\n`registration.domain_taken`), mais `organization.already_company` quando já\né empresa — um pedido repetido não muda nada em silêncio.\n\nQuem pode: o administrador da organização (`org.administer`). Numa conta\nparticular é a própria pessoa, que é a administradora do seu espaço.",
+        "operationId": "upgrade_org",
+        "parameters": [
+          {
+            "description": "Organização a converter.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeOrgReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgSummary"
+                }
+              }
+            },
+            "description": "Convertida. Devolve a organização como o `GET` a devolve."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nome inválido, ou o email não serve de domínio (`registration.invalid_org_name`, `registration.corporate_email_required`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador (`authz.missing_capability`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo da organização."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O domínio já tem organização (`registration.domain_taken`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Já é empresarial (`organization.already_company`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/orgs/{org_id}/upgrade` — a conta PARTICULAR passa a EMPRESARIAL\n(ADR-0019).",
+        "tags": [
+          "orgs"
         ]
       }
     },

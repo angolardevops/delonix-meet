@@ -34,6 +34,7 @@ export default {
   },
   erros: {
     destinos: 'Could not save the broadcast destinations.',
+    saidaBloqueada: 'You stayed in the Studio: a recording or broadcast is running. Stop it first to leave.',
     ecraTerminado: 'Screen sharing ended.',
     ecra: 'Could not capture the screen.',
     camara: 'Could not access the camera.',

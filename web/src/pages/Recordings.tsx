@@ -55,6 +55,28 @@ function hashParam(name: string): string | null {
   return i < 0 ? null : new URLSearchParams(location.hash.slice(i + 1)).get(name)
 }
 
+/**
+ * Escreve (ou tira) um parâmetro no endereço, SEM empilhar no histórico.
+ *
+ * Porque é preciso: o âmbito era LIDO do endereço à entrada e nunca lá escrito
+ * ao mudar. Quem recebia `#/recordings?scope=published`, clicava em «Minhas» e
+ * voltava a partilhar o link, partilhava um endereço que dizia «publicadas» a
+ * mostrar as dele — o URL mentia. E um F5 desfazia a escolha.
+ *
+ * `replaceState` e não `location.hash`: mudar de separador não é navegar, e não
+ * deve gastar uma entrada do «voltar».
+ */
+function porNoEndereco(nome: string, valor: string | null): void {
+  const i = location.hash.indexOf('?')
+  const base = i < 0 ? location.hash : location.hash.slice(0, i)
+  const p = new URLSearchParams(i < 0 ? '' : location.hash.slice(i + 1))
+  if (valor === null) p.delete(nome)
+  else p.set(nome, valor)
+  const q = p.toString()
+  const alvo = q ? `${base}?${q}` : base
+  if (location.hash !== alvo) history.replaceState(null, '', alvo)
+}
+
 export default function Recordings() {
   const { t, i18n } = useTranslation()
   const { org } = useShell()
@@ -152,7 +174,11 @@ export default function Recordings() {
           <Segmented<'mine' | 'published'>
             label={t('recordings.ambito.rotulo')}
             value={scope}
-            onChange={setScope}
+            onChange={(v) => {
+              setScope(v)
+              // O endereço passa a dizer a verdade — e sobrevive ao F5.
+              porNoEndereco('scope', v === 'published' ? 'published' : null)
+            }}
             options={[
               { value: 'mine', label: t('recordings.ambito.minhas') },
               { value: 'published', label: t('recordings.ambito.publicadas') },

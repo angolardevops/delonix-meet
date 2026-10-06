@@ -13,6 +13,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { marcarTrabalhoEmCurso } from '../trabalhoEmCurso'
 import {
   apiErrorMessage,
   createRoom,
@@ -127,7 +128,13 @@ export default function Studio() {
       setTvVisitada(true)
     }
     const alvo = v === 'emissao' ? '#/studio' : v === 'tv' ? `#/studio?vista=tv&ecra=${ecra}` : `#/studio?vista=${v}`
-    if (location.hash !== alvo) history.replaceState(null, '', alvo)
+    // PUSH, não `replaceState`: com `replaceState` as dez posições do Estúdio
+    // (cinco vistas × cinco ecrãs de TV) não deixavam entrada no histórico, e o
+    // «voltar» do browser — que num telemóvel é o gesto de arrastar da margem,
+    // a dois centímetros do botão «ir para o ar» — saltava para FORA do Estúdio
+    // e desmontava o compositor com a emissão a decorrer. Agora anda entre as
+    // vistas, e sair com trabalho em curso passa pela guarda abaixo.
+    if (location.hash !== alvo) location.hash = alvo
   }, [])
   const setVista = useCallback((v: Vista) => irPara(v), [irPara])
   /** `null` volta ao palco do Estúdio — é o que os ecrãs de TV chamam. */
@@ -240,20 +247,58 @@ export default function Studio() {
   }, [t])
 
   const aGravarOuPausa = estado !== 'parado'
+  /**
+   * Há trabalho que não pode ser interrompido: a gravar, em pausa, no ar, ou a
+   * ligar ao destino. Escrito UMA vez porque três sítios o perguntam — o palco,
+   * as legendas e, desde 2026-10-06, a guarda de navegação.
+   */
+  const emCurso = aGravarOuPausa || directo.fase === 'no-ar' || directo.fase === 'a-ligar'
   const palco = usePalco({
     compRef,
     pronto,
-    bloqueado: aGravarOuPausa || directo.fase === 'no-ar' || directo.fase === 'a-ligar',
+    bloqueado: emCurso,
     titulo,
     organizacao: org?.name ?? '',
     avatar,
     aplicarAvatar: setAvatar,
   })
-  const estadoLegendas = useLegendas(
-    compRef,
-    palco.sobreposicoes.legendas,
-    aGravarOuPausa || directo.fase === 'no-ar',
-  )
+  const estadoLegendas = useLegendas(compRef, palco.sobreposicoes.legendas, emCurso)
+  // Quem está FORA do Estúdio também precisa de o saber (a paleta de comandos,
+  // que abre em nova aba para não interromper media a correr).
+  useEffect(() => {
+    marcarTrabalhoEmCurso(emCurso)
+    return () => marcarTrabalhoEmCurso(false)
+  }, [emCurso])
+  /**
+   * Com trabalho em curso, SAIR do Estúdio não acontece por acidente.
+   *
+   * Duas portas, porque são dois mecanismos diferentes:
+   * - **`beforeunload`** cobre o F5 e o fechar do separador. O diálogo é do
+   *   browser (e por isso vem traduzido por ele); a norma manda `preventDefault`
+   *   e não deixa escolher o texto.
+   * - **`hashchange`** cobre o «voltar» e qualquer clique que mude a rota: se o
+   *   endereço novo já não é do Estúdio, volta-se a ele e diz-se porquê. Não se
+   *   usa `popstate` porque um `popstate` não se pode cancelar — o que se pode é
+   *   voltar a entrar, e é isso que acontece.
+   *
+   * Parar a emissão é uma acção explícita («sair do ar»), não um efeito de
+   * navegar. O que esta guarda NÃO faz é impedir fechar a janela à força.
+   */
+  useEffect(() => {
+    if (!emCurso) return
+    const aoFechar = (e: BeforeUnloadEvent) => e.preventDefault()
+    const aoMudar = () => {
+      if (location.hash.startsWith('#/studio') || location.hash === '') return
+      location.hash = vista === 'emissao' ? '#/studio' : `#/studio?vista=${vista}`
+      setErro(t('studio.erros.saidaBloqueada'))
+    }
+    window.addEventListener('beforeunload', aoFechar)
+    window.addEventListener('hashchange', aoMudar)
+    return () => {
+      window.removeEventListener('beforeunload', aoFechar)
+      window.removeEventListener('hashchange', aoMudar)
+    }
+  }, [emCurso, vista, t])
   /**
    * Guarda no servidor o que o diálogo do destino mudou. O ecrã actualiza-se
    * primeiro (o diálogo fecha-se a seguir à edição) e a falha é dita — não se

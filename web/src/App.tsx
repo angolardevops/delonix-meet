@@ -1,11 +1,14 @@
-import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
+import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { completeSsoLogin, currentUser, logout, User } from './api'
 import Shell, { NavKey } from './components/Shell'
 import PaletteHost from './components/PaletteHost'
 import PresenceProvider from './components/PresenceProvider'
 import { Icon } from './ui/icons'
-import { Spinner } from './ui/kit'
+import { Empty, Spinner } from './ui/kit'
+import { getAppName } from './branding'
+import { chaveDoTitulo, destinoNoRail, parseHash, type Route } from './rota'
+import { useTrabalhoEmCurso } from './trabalhoEmCurso'
 
 // ---------------------------------------------------------------------------
 //  Corte por rota. EAGER ficam só os dois ecrãs de entrada — Entrar e Início
@@ -46,43 +49,61 @@ function RouteFallback({ children }: { children: ReactNode }) {
   return <Suspense fallback={<div className="dx-route-wait" aria-hidden="true" />}>{children}</Suspense>
 }
 
-type Route =
-  | { kind: NavKey }
-  | { kind: 'room'; code: string; voice: boolean }
-  | { kind: 'lobby'; code: string }
-  | { kind: 'telemovel'; code: string }
-  | { kind: 'share'; token: string }
-  | { kind: 'invite'; token: string }
-  | { kind: 'diagram'; id: string | null }
-  | { kind: 'player'; id: string }
-
-const PAGES: NavKey[] = ['calendar', 'rooms', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'telecom', 'ai']
-
-function parseHash(): Route {
-  const h = location.hash
-  const room = h.match(/^#\/r\/([a-z-]+)(\?voice)?$/)
-  if (room) return { kind: 'room', code: room[1], voice: !!room[2] }
-  const lobby = h.match(/^#\/lobby\/([a-z-]+)$/)
-  if (lobby) return { kind: 'lobby', code: lobby[1] }
-  const telemovel = h.match(/^#\/telemovel\/([a-z-]+)$/)
-  if (telemovel) return { kind: 'telemovel', code: telemovel[1] }
-  const share = h.match(/^#\/share\/([a-f0-9]+)$/)
-  if (share) return { kind: 'share', token: share[1] }
-  const invite = h.match(/^#\/invite\/([A-Za-z0-9_-]+)$/)
-  if (invite) return { kind: 'invite', token: invite[1] }
-  const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
-  if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
-  const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
-  if (player) return { kind: 'player', id: player[1] }
-  for (const p of PAGES) if (h.startsWith(`#/${p}`)) return { kind: p }
-  return { kind: 'home' }
+/**
+ * O endereço não é nenhuma rota. Mostra-o — era isto que faltava: até
+ * 2026-10-06 um endereço errado mostrava o Início com a barra a dizer outra
+ * coisa, e quem escrevia `#/estudio` (o nome português) nunca sabia que errou.
+ */
+function Desconhecida({ endereco }: { endereco: string }) {
+  const { t } = useTranslation()
+  return (
+    <Empty
+      icon="search"
+      title={t('ui.rotaDesconhecida.titulo')}
+      action={
+        <a className="dx-btn dx-btn--primary" href="#/">
+          {t('ui.rotaDesconhecida.inicio')}
+        </a>
+      }
+    >
+      <p>{t('ui.rotaDesconhecida.texto')}</p>
+      <code>{endereco}</code>
+    </Empty>
+  )
 }
+
+
 
 export default function App() {
   const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(currentUser())
   const [route, setRoute] = useState<Route>(parseHash())
+  const trabalhoEmCurso = useTrabalhoEmCurso()
 
+  /**
+   * O nome do ecrã no separador do browser. Até 2026-10-06 o `document.title`
+   * era o nome da aplicação em TODOS os ecrãs: quinze abas iguais, histórico
+   * indistinguível, marcadores inúteis.
+   */
+  useEffect(() => {
+    const chave = chaveDoTitulo(route)
+    document.title = chave ? `${t(chave)} · ${getAppName()}` : getAppName()
+  }, [route, t])
+  /**
+   * Mudar de ecrã move o foco para o conteúdo. O `<main id="conteudo">` já
+   * tinha `tabIndex={-1}` e ninguém lhe dava foco: quem navega por teclado
+   * clicava num item do rail e tinha de atravessar o rail inteiro outra vez
+   * para chegar ao que abriu. Não corre no primeiro render — aí o foco é de
+   * quem chega à página, não nosso.
+   */
+  const primeiroRender = useRef(true)
+  useEffect(() => {
+    if (primeiroRender.current) {
+      primeiroRender.current = false
+      return
+    }
+    document.getElementById('conteudo')?.focus()
+  }, [route.kind])
   useEffect(() => {
     const onHash = () => setRoute(parseHash())
     // Sessão expirada (a renovação falhou): volta-se ao ecrã de entrada.
@@ -168,6 +189,9 @@ export default function App() {
         <PaletteHost
           user={user}
           inRoom={route.kind === 'room'}
+          // Navegar por cima de uma EMISSÃO mata-a como mataria uma chamada: a
+          // paleta abre em nova aba nos dois casos (antes só na sala).
+          protegido={route.kind === 'room' || trabalhoEmCurso}
           onEnterRoom={enterRoom}
           onLogout={() => {
             logout()
@@ -193,7 +217,9 @@ export default function App() {
           <Shell
             user={user}
             // A moderação é de UMA sala e não tem destino no rail: nenhum item fica activo.
-            active={(route.kind === 'lobby' ? null : route.kind === 'diagram' ? 'whiteboards' : route.kind === 'player' ? 'recordings' : route.kind) as NavKey}
+            // O destino aceso no rail — a hierarquia que estava enterrada neste
+            // ternário vive agora no `rota.ts`, e é a mesma que dá o trilho.
+            active={destinoNoRail(route) as NavKey}
             onNavigate={navigate}
             onEnterRoom={enterRoom}
             onLogout={() => {
@@ -218,6 +244,7 @@ export default function App() {
               {route.kind === 'admin' && <Admin />}
               {route.kind === 'telecom' && <Telecom />}
               {route.kind === 'ai' && <Intelligence />}
+              {route.kind === 'desconhecida' && <Desconhecida endereco={route.endereco} />}
             </RouteFallback>
           </Shell>
         )}

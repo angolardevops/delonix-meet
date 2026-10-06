@@ -304,6 +304,13 @@ impl ItemRow {
         }
     }
 
+    /// Recusa (`409`) o que só faz sentido sobre uma gravação com ficheiro, com
+    /// os mesmos dois códigos do [`Access::require_file`]: a regra é uma só
+    /// (`content::recording::require_file`) e quem a quer chama-a daqui.
+    pub(crate) fn require_file(&self) -> Result<(), ApiError> {
+        Ok(rules::require_file(self.processing_facts())?)
+    }
+
     fn processing_facts(&self) -> rules::ProcessingFacts<'_> {
         rules::ProcessingFacts {
             status: &self.status,
@@ -480,12 +487,22 @@ async fn managed_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemR
     Ok(row)
 }
 
-/// Como [`seen_item`], e além disso tem de a poder publicar (partilhas e link
-/// público): o dono activo (`can_share`), OU quem tem `recordings.publish` numa
-/// organização activa do dono (ADR-0008 §1 — poder sobre gravações de OUTROS).
-/// Vê a gravação sem nenhum dos dois → `403 authz.missing_capability`; não a vê
-/// → `404` (de `seen_item`).
-async fn owned_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow, ApiError> {
+/// Como [`seen_item`], e além disso tem de a poder MOSTRAR A OUTREM (partilhas,
+/// link público e publicar para a organização): o dono activo (`can_share`), OU
+/// quem tem `recordings.publish` numa organização activa do dono (ADR-0008 §1 —
+/// poder sobre gravações de OUTROS). Vê a gravação sem nenhum dos dois →
+/// `403 authz.missing_capability`; não a vê → `404` (de `seen_item`).
+///
+/// O `publish` chegou aqui a 2026-10-06 (R306): pedia `require_manage`, e desde
+/// que o `access()` passou a derivar o `org_admin` da capacidade
+/// `recordings.view_others`, um papel a quem a organização NEGAVA
+/// `recordings.publish` publicava a gravação de um colega. Quem decide a quem
+/// uma gravação é mostrada é esta porta, não a de gerir metadados.
+pub(crate) async fn owned_item(
+    state: &AppState,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<ItemRow, ApiError> {
     let row = seen_item(state, id, user_id).await?;
     if row.facts().can_share() {
         return Ok(row);
@@ -495,7 +512,9 @@ async fn owned_item(state: &AppState, id: Uuid, user_id: Uuid) -> Result<ItemRow
         return Ok(row);
     }
     Err(DomainError::forbidden("authz.missing_capability")
-        .with_message("só o dono da gravação, ou quem tem recordings.publish, a partilha")
+        .with_message(
+            "só o dono da gravação, ou quem tem recordings.publish, a mostra a outras pessoas",
+        )
         .with_field("capability", cap.as_str())
         .into())
 }
