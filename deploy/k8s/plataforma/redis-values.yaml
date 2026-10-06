@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+#  O Redis do Meet — Sentinel, três nós (ADR-0020, fase 3).
+#
+#  O Redis guarda presença, pub/sub entre réplicas, sessões, estado de sala e
+#  os lugares reservados. Não é cache: perdê-lo tira pessoas de salas.
+#
+#  COM AUTENTICAÇÃO, que hoje não tem. Um Redis sem password dentro do cluster
+#  está a uma NetworkPolicy mal escrita de ser aberto — e a NetworkPolicy é
+#  defesa em profundidade, não a única porta.
+# ---------------------------------------------------------------------------
+architecture: replication
+
+auth:
+  enabled: true
+  sentinel: true
+  # A password vem de um Secret criado fora (ver README): não há sítio aqui
+  # onde a pôr, de propósito.
+  existingSecret: meet-redis-credenciais
+  existingSecretPasswordKey: REDIS_PASSWORD
+
+sentinel:
+  enabled: true
+  quorum: 2
+  # 5 s para dar um nó por morto. Mais baixo e um pico de carga provoca
+  # failovers que ninguém pediu; mais alto e uma sala fica muda à espera.
+  downAfterMilliseconds: 5000
+  failoverTimeout: 18000
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+replica:
+  replicaCount: 3
+  # Um por nó: três réplicas no mesmo worker morrem as três com ele.
+  podAntiAffinityPreset: hard
+  persistence:
+    enabled: true
+    size: 8Gi
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "1", memory: 2Gi }
+
+master:
+  persistence:
+    enabled: true
+    size: 8Gi
+
+commonConfiguration: |-
+  # AOF com fsync por segundo: o compromisso usual entre perder um segundo de
+  # escritas e pagar um fsync por operação. Para presença e lugares, um segundo
+  # é aceitável; perder tudo não é.
+  appendonly yes
+  appendfsync everysec
+  # Sem tecto de memória o Redis cresce até o kubelet o matar; com `allkeys-lru`
+  # ele deita fora o menos usado e continua a servir.
+  maxmemory 1500mb
+  maxmemory-policy allkeys-lru
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: observabilidade

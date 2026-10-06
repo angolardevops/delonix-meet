@@ -1,0 +1,101 @@
+# ---------------------------------------------------------------------------
+#  O Postgres do Meet — CloudNativePG, três instâncias (ADR-0020, fase 3).
+#
+#  Operador e não StatefulSet à mão: o que custa num Postgres replicado não é
+#  levantá-lo, é o FAILOVER — promover a réplica certa, mudar o endpoint, não
+#  promover duas. O operador faz isso; um StatefulSet deixa-o para quem estiver
+#  acordado às três da manhã.
+#
+#  O chart do Meet continua a ver isto como uma base externa, pelo DATABASE_URL
+#  do Secret: quem decide quem é o primário é o operador, e o Service
+#  `meet-pg-rw` aponta sempre para ele.
+# ---------------------------------------------------------------------------
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: meet-pg
+  namespace: delonix-meet
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+
+  # Uma réplica síncrona: uma transacção confirmada está em DOIS discos antes
+  # de o cliente a dar por feita. A terceira fica assíncrona — exigir duas
+  # síncronas faria o primário parar se qualquer uma caísse, que é trocar
+  # durabilidade por disponibilidade sem ninguém decidir.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+    parameters:
+      max_connections: "300"
+      shared_buffers: 1GB
+      effective_cache_size: 3GB
+      work_mem: 16MB
+      maintenance_work_mem: 256MB
+      # O Meet escreve muito em rajadas (gravações a terminar, CDR): um
+      # checkpoint a cada 5 min com estes valores evita a tempestade de I/O.
+      max_wal_size: 4GB
+      min_wal_size: 1GB
+      checkpoint_completion_target: "0.9"
+      random_page_cost: "1.1"   # disco SSD
+      # Para o `pg_stat_statements` da observabilidade (fase 4).
+      shared_preload_libraries: pg_stat_statements
+
+  bootstrap:
+    initdb:
+      database: delonix_meet
+      owner: delonix
+      secret:
+        name: meet-pg-credenciais
+      # pt_PT.UTF-8 não existe na imagem; o que importa é ser UTF-8.
+      encoding: UTF8
+
+  storage:
+    size: 100Gi
+    storageClass: ""   # a por omissão do cluster
+
+  resources:
+    requests: { cpu: "1", memory: 4Gi }
+    limits: { cpu: "4", memory: 8Gi }
+
+  # Cada instância num nó diferente. Sem isto, três réplicas podiam cair no
+  # mesmo worker e as três morriam com ele.
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+
+  # Backup contínuo (WAL) para o MinIO, com retenção de 30 dias. É isto que
+  # transforma «temos réplicas» em «podemos voltar atrás»: réplicas copiam o
+  # erro, backups não.
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://meet-backups/postgres
+      endpointURL: http://minio.minio.svc.cluster.local:9000
+      s3Credentials:
+        accessKeyId: { name: meet-minio-credenciais, key: ACCESS_KEY_ID }
+        secretAccessKey: { name: meet-minio-credenciais, key: SECRET_ACCESS_KEY }
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+        jobs: 2
+    retentionPolicy: "30d"
+
+  monitoring:
+    enablePodMonitor: true
+---
+# O backup COMPLETO, todas as noites. O WAL dá o ponto-no-tempo; isto dá a base
+# de onde partir, e sem ele restaurar significa reproduzir meses de WAL.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: meet-pg-noite
+  namespace: delonix-meet
+spec:
+  # 02:30 todos os dias (o fuso do cluster é UTC).
+  schedule: "0 30 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: meet-pg

@@ -1,0 +1,29 @@
+# ---------------------------------------------------------------------------
+#  ingress-nginx — a porta de entrada de meet.ngolacloud.com.
+# ---------------------------------------------------------------------------
+controller:
+  replicaCount: 2
+  service:
+    type: LoadBalancer
+    # Preserva o IP de quem chega. O servidor lê o X-Forwarded-For DA DIREITA
+    # com TRUSTED_PROXY_HOPS (R282): sem `Local`, todos os pedidos pareceriam
+    # vir do nó e o limite por IP deixaria de limitar nada.
+    externalTrafficPolicy: Local
+  config:
+    use-forwarded-headers: "true"
+    # O WebSocket da sala e o /live não podem morrer a meio de uma reunião.
+    proxy-read-timeout: "3600"
+    proxy-send-timeout: "3600"
+    # Uma gravação carregada do browser pode ser grande; 0 = sem tecto do lado
+    # do ingress, e o tecto é o da aplicação.
+    proxy-body-size: "0"
+    enable-real-ip: "true"
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      namespace: observabilidade
+  podAntiAffinity: hard
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
