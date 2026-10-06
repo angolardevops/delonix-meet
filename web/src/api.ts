@@ -1190,6 +1190,15 @@ export const getPlatformSettings = () =>
 
 // ---------- Platform storage ----------
 
+/** Objectos (MinIO/S3) como o servidor os vê no AMBIENTE — nunca as chaves. */
+export interface ObjectStoreView {
+  endpoint: string
+  bucket: string
+  region: string
+  /** Hoje `false`: as gravações continuam em disco (ADR-0020). */
+  used_for_recordings: boolean
+}
+
 export interface StorageConfig {
   storage_type: 'local' | 'nfs' | 'webdav'
   nfs_server: string | null
@@ -1198,6 +1207,8 @@ export interface StorageConfig {
   webdav_user: string | null
   webdav_password_set: boolean
   webdav_path: string
+  /** Ausente quando o servidor não tem `OBJECT_STORE_*` configurado. */
+  object_store?: ObjectStoreView | null
 }
 
 export interface StorageConfigSaveReq {

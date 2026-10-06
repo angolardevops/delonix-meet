@@ -75,6 +75,11 @@ export default {
     testeOk: '连接成功',
     testeFalhou: '连接失败',
     testaGravado: '测试使用已保存的配置：请先保存，再测试新的存储位置。',
+    objectosTitulo: '对象存储',
+    objectosSub: '在服务器环境中配置（OBJECT_STORE_*），不在此卡片中：密钥是集群机密。',
+    objectosAindaNao: '录制文件尚未存放在此处——仍在磁盘上。连接测试已检测此存储桶。',
+    objectosBucket: '存储桶',
+    objectosEndpoint: '地址',
   },
   webhooks: {
     destinos: '已配置的目标地址',

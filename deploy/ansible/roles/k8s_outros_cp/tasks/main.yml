@@ -1,0 +1,26 @@
+---
+# Os outros dois control-planes. Entram com `--control-plane`, que é o que lhes
+# dá um etcd e um API server — sem isso seriam nós de trabalho com nome bonito.
+- name: Já faz parte do cluster?
+  ansible.builtin.stat: { path: /etc/kubernetes/kubelet.conf }
+  register: kubelet_conf
+
+- name: kube-vip também aqui (o VIP migra para quem for líder)
+  ansible.builtin.set_fact:
+    k8s_iface: "{{ ansible_default_ipv4.interface }}"
+
+- ansible.builtin.template:
+    src: ../../k8s_primeiro_cp/templates/kube-vip.yaml.j2
+    dest: /etc/kubernetes/manifests/kube-vip.yaml
+    mode: "0600"
+  when: not kubelet_conf.stat.exists
+
+- name: kubeadm join como control-plane
+  ansible.builtin.command:
+    cmd: >-
+      kubeadm join {{ k8s_vip }}:{{ k8s_api_porta }}
+      --token {{ hostvars[groups['control_plane'][0]]['k8s_token'] }}
+      --discovery-token-ca-cert-hash {{ hostvars[groups['control_plane'][0]]['k8s_hash'] }}
+      --control-plane
+      --certificate-key {{ hostvars[groups['control_plane'][0]]['k8s_cert'] }}
+  when: not kubelet_conf.stat.exists

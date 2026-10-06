@@ -3587,3 +3587,38 @@ E o servidor aceitava **partilhar** e **criar o link público** de uma gravaçã
 - **`POST /views` passou de `204` a `404`** para quem saiu. É a resposta certa, mas é uma mudança de contrato para um cliente que conte visualizações sem olhar ao código.
 
 **Ficheiros.** `server/src/recordings.rs` (`access`, e a remoção de `sql_can_view`/`sql_can_manage`/`sql_direct_relation`), `server/src/org.rs` (remoção de `sql_active_admin_of`), `server/crates/delonix-meet-domain/src/content/recording.rs` (`has_direct_relation` público), `server/tests/recordings_metadata.rs`.
+
+### R307 — A observabilidade de produção apontava para um Service que não existe, e para a porta errada
+
+**2026-10-06.** O ADR-0020 (fase 4) trouxe 16 alertas e o primeiro `ServiceMonitor` do repositório. Medido contra o chart renderizado, antes de o cluster existir, o `ServiceMonitor` **não tinha alvo nenhum** — por duas razões independentes, e nenhuma delas dava erro:
+
+1. **O selector usava etiquetas que o chart não põe.** `app.kubernetes.io/name: delonix-meet` e `app.kubernetes.io/component: server` não existem em Service nenhum do `deploy/helm/delonix-meet`; as reais são `app: delonix-server` e `app.kubernetes.io/part-of: delonix-meet`.
+2. **O endpoint pedia a porta `http` (8180).** O `/metrics` vive no listener **interno** (`internal_routes()`, `INTERNAL_BIND_ADDR: 0.0.0.0:8181`, ADR-0006 §3), que nenhum ingress publica — Service `delonix-server-internal`, porta `internal`.
+
+E um terceiro, no mesmo caminho: a `NetworkPolicy` do chart abre o `:8181` ao namespace `networkPolicy.metricsNamespace`, cujo valor por omissão é **`monitoring`**, enquanto o `deploy/k8s/observabilidade/instalar.sh` instala em **`observabilidade`**. Com a política ligada (e em produção está), o scrape ficava fechado mesmo com o selector certo.
+
+**Porque isto é a pior classe de defeito de observabilidade.** Os três erros produzem o MESMO sintoma: zero alvos. Um `ServiceMonitor` sem alvos não falha, não avisa e não aparece — e os 16 alertas, todos escritos sobre `delonix_*` e `up{job="delonix-meet-server"}`, nunca disparam. O painel fica verde com o produto em baixo, que é exactamente o estado que a fase 4 existia para acabar. Comparar com o `job` dos alertas: esse já estava fixado por `relabelings` **porque** o nome do Service não serve — a mesma desconfiança não foi aplicada ao selector nem à porta.
+
+**Regra.**
+- **O `/metrics` do Meet está no listener interno.** Quem o quer raspar aponta ao Service com `delonix.io/exposure: internal` e à porta `internal`, não ao Service público.
+- **Um selector de `ServiceMonitor` mede-se contra o chart RENDERIZADO**, não contra as etiquetas que se espera que um chart tenha.
+- **Um selector tem de casar com UM Service.** `app: delonix-server` sozinho casa três (`/api`, `/ws`, interno) e dois deles não servem `/metrics`: dariam dois alvos em baixo para sempre.
+- **O namespace do Prometheus é uma escolha de duas pontas** — a `NetworkPolicy` e o `instalar.sh` — e as duas têm de dizer o mesmo.
+
+**Portão.** `scripts/check-observabilidade.sh` (no `make fitness` e no CI). Mede três coisas: cada `delonix_*` citado nas regras existe como `# TYPE` no `server/src/metrics.rs`; o selector do `ServiceMonitor` casa com **exactamente um** Service do chart renderizado e a porta que pede existe nele; e o `metricsNamespace` do `values-production.yaml` é o `NS=` do `instalar.sh`.
+
+**Prova corrida a 2026-10-06.** Quatro controlos negativos, cada um a reintroduzir um dos defeitos, cada um apanhado:
+- porta `internal` → `http`: «pede a porta «http» e o Service «delonix-server-internal» tem ['internal']»;
+- selector para `app.kubernetes.io/name`: «não casa com Service nenhum do chart», com a lista das etiquetas que existem;
+- `metricsNamespace` de volta a `monitoring`: «instala-se em «observabilidade» mas a NetworkPolicy abre o :8181 a «monitoring» — o scrape fica fechado»;
+- `delonix_join_total` → `delonix_join_total_inventado`: «a regra cita (…), que o server/src/metrics.rs não expõe».
+
+Com os ficheiros repostos, o portão passa: 15 métricas citadas, todas existentes; `ServiceMonitor → Service «delonix-server-internal», porta «internal»`. `check-helm.sh` (lint e 6 renders) e `check-k8s-render.sh` (86 recursos) verdes.
+
+**O que NÃO está provado.**
+- **Nada disto correu num cluster.** Mede-se o chart renderizado contra o `metrics.rs`; se o Prometheus raspa de facto só se sabe na primeira instalação. O portão fecha a classe de erro «aponta para o que não existe», não a classe «existe mas não responde».
+- **O portão não lê a `NetworkPolicy` renderizada**, lê o valor em `values-production.yaml`. Um dia em que o template deixe de usar `metricsNamespace` o portão continuaria verde.
+- **Os restantes `ServiceMonitor`** (MinIO, CNPG, Redis) vêm dos charts de terceiros e não são medidos aqui.
+- **A sintaxe PromQL dos 16 alertas não é validada** — não há `promtool` nesta máquina nem no CI. Existem as métricas; que a expressão esteja bem formada não está medido.
+
+**Ficheiros.** `deploy/k8s/observabilidade/servicemonitor.yaml`, `deploy/helm/delonix-meet/values-production.yaml` (`networkPolicy.metricsNamespace`), `scripts/check-observabilidade.sh`, `Makefile`, `.github/workflows/ci.yml`.

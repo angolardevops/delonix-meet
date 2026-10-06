@@ -30,6 +30,12 @@ export interface Destino {
    * `chave` NÃO vão na query — a chave guardada nunca volta ao browser.
    */
   id?: string
+  /**
+   * O servidor tem uma chave para este destino (`has_key`). É diferente de
+   * `chave` estar preenchida: a de um destino guardado nunca volta ao browser,
+   * e sem este campo um destino carregado lia-se como «sem chave».
+   */
+  temChaveGuardada?: boolean
 }
 
 /** O estado de UM destino, como o servidor o manda (`broadcast.rs`). */

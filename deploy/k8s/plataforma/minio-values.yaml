@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+#  MinIO — os ficheiros do Meet (ADR-0020, D2).
+#
+#  É isto que tira as gravações de um volume ReadWriteMany. O RWX obrigava a
+#  armazenamento de blocos partilhado e impedia três réplicas em nós
+#  diferentes de servirem a mesma gravação — que era exactamente o que o
+#  `values-production.yaml` pedia e a infra não dava.
+#
+#  Quatro nós em modo distribuído: é o mínimo para o erasure coding do MinIO
+#  aguentar a perda de um sem perder dados.
+# ---------------------------------------------------------------------------
+mode: distributed
+replicas: 4
+
+auth:
+  existingSecret: meet-minio-credenciais
+  rootUserSecretKey: ACCESS_KEY_ID
+  rootPasswordSecretKey: SECRET_ACCESS_KEY
+
+persistence:
+  enabled: true
+  size: 250Gi
+
+# Um por nó. Com três workers, um deles leva dois — e isso está dito aqui para
+# não parecer que há quatro nós quando há três.
+podAntiAffinityPreset: soft
+
+resources:
+  requests: { cpu: 250m, memory: 1Gi }
+  limits: { cpu: "2", memory: 4Gi }
+
+provisioning:
+  enabled: true
+  buckets:
+    - name: meet-gravacoes
+      versioning: true
+    - name: meet-backups
+      versioning: false
+  # O ciclo de vida das gravações é do produto (a coluna de retenção), não do
+  # bucket: um lifecycle aqui apagava por baixo da aplicação.
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    namespace: observabilidade

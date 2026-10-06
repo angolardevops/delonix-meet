@@ -1,0 +1,201 @@
+# ---------------------------------------------------------------------------
+#  Alertas e SLO do Meet (ADR-0020, fase 4).
+#
+#  Escritos sobre as métricas que o servidor JÁ EXPÕE em /metrics — as 41 de
+#  `server/src/metrics.rs`, não um catálogo genérico de Kubernetes. Um alerta
+#  sobre uma métrica que não existe é um alerta que nunca dispara, e é assim
+#  que se tem painéis verdes com o produto em baixo.
+#
+#  REGRA DA CASA: um alerta acorda alguém. Se não há nada a fazer com ele às
+#  três da manhã, é um painel, não um alerta — e está como `info`.
+# ---------------------------------------------------------------------------
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: delonix-meet
+  namespace: observabilidade
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    # -----------------------------------------------------------------------
+    - name: meet.disponibilidade
+      rules:
+        - alert: MeetServidorEmBaixo
+          expr: up{job="delonix-meet-server"} == 0
+          for: 2m
+          labels: { severity: critico }
+          annotations:
+            summary: "Uma réplica do servidor não responde"
+            description: "A instância {{ $labels.instance }} não responde há 2 minutos."
+
+        - alert: MeetSemReplicasSuficientes
+          # O `values-production.yaml` pede três. Duas ainda servem; uma é um
+          # pod a separar o produto de estar em baixo.
+          expr: sum(up{job="delonix-meet-server"}) < 2
+          for: 1m
+          labels: { severity: critico }
+          annotations:
+            summary: "Menos de duas réplicas do servidor vivas"
+            description: "Vivas: {{ $value }}. O serviço está a um pod de parar."
+
+        - alert: MeetReiniciosEmCiclo
+          expr: increase(kube_pod_container_status_restarts_total{namespace="delonix-meet"}[15m]) > 3
+          for: 5m
+          labels: { severity: aviso }
+          annotations:
+            summary: "{{ $labels.pod }} reiniciou mais de três vezes em 15 min"
+
+    # -----------------------------------------------------------------------
+    - name: meet.entrar-na-sala
+      rules:
+        # O SLO que importa ao utilizador: entrar na sala e funcionar.
+        - alert: MeetEntradasLentas
+          # `join_slow_total` é incrementado pelo próprio servidor quando a
+          # entrada passa do limiar dele — não é um limiar inventado aqui.
+          expr: |
+            rate(delonix_join_slow_total[10m])
+              / clamp_min(rate(delonix_join_total[10m]), 0.001) > 0.05
+          for: 10m
+          labels: { severity: aviso, slo: entrada }
+          annotations:
+            summary: "Mais de 5% das entradas em sala estão lentas"
+            description: "Proporção: {{ $value | humanizePercentage }} nos últimos 10 min."
+
+        - alert: MeetEntradasMuitoLentas
+          expr: |
+            rate(delonix_join_slow_total[10m])
+              / clamp_min(rate(delonix_join_total[10m]), 0.001) > 0.20
+          for: 5m
+          labels: { severity: critico, slo: entrada }
+          annotations:
+            summary: "Uma em cada cinco entradas está lenta"
+            description: "Proporção: {{ $value | humanizePercentage }}."
+
+    # -----------------------------------------------------------------------
+    - name: meet.qualidade-da-chamada
+      rules:
+        - alert: MeetQualidadeMa
+          expr: |
+            rate(delonix_qos_poor_total[15m])
+              / clamp_min(rate(delonix_qos_samples_total[15m]), 0.001) > 0.10
+          for: 15m
+          labels: { severity: aviso, slo: qualidade }
+          annotations:
+            summary: "Mais de 10% das amostras de qualidade estão más"
+
+        - alert: MeetCpuLimitaAChamada
+          # O servidor diz quando é ELE a limitar — não se adivinha pelo CPU do
+          # nó, que pode estar alto por outra coisa qualquer.
+          expr: rate(delonix_qos_cpu_limited_total[10m]) > 0
+          for: 10m
+          labels: { severity: aviso }
+          annotations:
+            summary: "O servidor está a degradar chamadas por falta de CPU"
+            description: "Subir réplicas ou o limite de CPU; o HPA pode já estar no tecto."
+
+        - alert: MeetTudoPorTurn
+          # Relay a 100% quer dizer que ninguém consegue ligação directa: ou o
+          # coturn anuncia o IP errado, ou as portas UDP estão fechadas.
+          expr: |
+            rate(delonix_qos_turn_relay_total[15m])
+              / clamp_min(rate(delonix_qos_scored_total[15m]), 0.001) > 0.90
+          for: 15m
+          labels: { severity: aviso }
+          annotations:
+            summary: "Quase todas as chamadas passam por TURN"
+            description: "Verificar `coturn.externalIP` e as portas UDP do relay."
+
+    # -----------------------------------------------------------------------
+    - name: meet.capacidade
+      rules:
+        - alert: MeetSalasRecusadasPorCapacidade
+          # ADR-0017: o nó recusa salas novas quando chega ao tecto. Uma recusa
+          # é um cliente que não entrou.
+          expr: rate(delonix_node_new_rooms_refused_total[10m]) > 0
+          for: 5m
+          labels: { severity: critico }
+          annotations:
+            summary: "Há salas a serem recusadas por capacidade do nó"
+
+        - alert: MeetQuotaDeOrganizacaoAtingida
+          expr: rate(delonix_ws_refused_org_quota_total[15m]) > 0
+          for: 15m
+          labels: { severity: info }
+          annotations:
+            summary: "Uma organização está a bater na quota de participantes"
+            description: "Decisão comercial, não avaria: alguém comprou menos do que usa."
+
+        - alert: MeetFilaDeWebsocketAEncher
+          expr: rate(delonix_ws_queue_dropped_total[10m]) > 0
+          for: 10m
+          labels: { severity: aviso }
+          annotations:
+            summary: "Mensagens de WebSocket a serem deitadas fora"
+            description: "A fila de um cliente encheu: rede dele, ou o servidor sem CPU."
+
+    # -----------------------------------------------------------------------
+    - name: meet.gravacao
+      rules:
+        - alert: MeetGravacoesOrfas
+          # Uma gravação órfã é media que ficou no disco sem linha na base:
+          # ocupa espaço e ninguém a vê.
+          expr: increase(delonix_sfu_recordings_orphaned_total[1h]) > 0
+          labels: { severity: aviso }
+          annotations:
+            summary: "Gravações órfãs no último período"
+
+        - alert: MeetComposicaoEmFila
+          # `compose_queued` alto com `compose_running` no tecto é o sinal de
+          # que o `FFMPEG_MAX_CONCURRENT` não chega para o que entra.
+          expr: delonix_recording_compose_queued > 10
+          for: 30m
+          labels: { severity: aviso }
+          annotations:
+            summary: "Mais de dez gravações à espera de composição há 30 min"
+
+        - alert: MeetPacotesDeGravacaoPerdidos
+          expr: rate(delonix_recording_packets_dropped_total[15m]) > 0
+          for: 15m
+          labels: { severity: critico }
+          annotations:
+            summary: "O gravador está a perder pacotes"
+            description: "O disco não acompanha. A gravação vai sair com buracos."
+
+    # -----------------------------------------------------------------------
+    - name: meet.integridade
+      rules:
+        - alert: MeetAuditoriaAFalhar
+          # A auditoria é a prova do que aconteceu. Falhar a escrevê-la é mais
+          # grave do que parece: é perder o registo, não o serviço.
+          expr: rate(delonix_audit_write_failures_total[10m]) > 0
+          for: 5m
+          labels: { severity: critico }
+          annotations:
+            summary: "A auditoria não está a ser escrita"
+
+        - alert: MeetChatPerdido
+          expr: rate(delonix_chat_persist_dropped_total[15m]) > 0
+          for: 15m
+          labels: { severity: aviso }
+          annotations:
+            summary: "Mensagens de chat a não serem guardadas"
+
+    # -----------------------------------------------------------------------
+    - name: meet.slo
+      rules:
+        # As regras de registo que alimentam os painéis de SLO. Pré-calculadas
+        # porque uma query de 30 dias sobre dados crus demora o suficiente para
+        # ninguém abrir o painel duas vezes.
+        - record: meet:entradas_boas:ratio5m
+          expr: |
+            1 - (
+              rate(delonix_join_slow_total[5m])
+                / clamp_min(rate(delonix_join_total[5m]), 0.001)
+            )
+        - record: meet:qualidade_boa:ratio5m
+          expr: |
+            1 - (
+              rate(delonix_qos_poor_total[5m])
+                / clamp_min(rate(delonix_qos_samples_total[5m]), 0.001)
+            )
