@@ -12738,6 +12738,19 @@
         ],
         "type": "object"
       },
+      "UpgradeOrgReq": {
+        "description": "Corpo de `POST /api/orgs/{org_id}/upgrade`.",
+        "properties": {
+          "name": {
+            "description": "Nome da empresa (2-80 caracteres).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "Usage": {
         "properties": {
           "by_trunk": {

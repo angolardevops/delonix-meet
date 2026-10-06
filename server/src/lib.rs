@@ -826,6 +826,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}",
             get(org::get_org).patch(org::update_settings),
         )
+        .route("/api/orgs/{org_id}/upgrade", post(org::upgrade_org))
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
         .route(
             "/api/orgs/{org_id}/analytics/quarantine",

@@ -29,13 +29,64 @@ pub fn validate_email(email: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Regra adicional do registo público: o domínio do email tem de parecer
-/// corporativo (não vazio, com pelo menos um ponto) — é o que se torna o
-/// domínio da organização. Devolve o domínio extraído.
+/// Domínios de email PÚBLICO: um deles nunca pode ser o domínio de uma
+/// organização.
+///
+/// A razão é o que acontecia sem a lista (ADR-0019): o domínio da organização é
+/// único na instalação, e o primeiro a registar uma «empresa» com `@gmail.com`
+/// ficava com `email_domain = 'gmail.com'` — a partir daí, QUALQUER outra pessoa
+/// com gmail que tentasse criar a sua empresa recebia `registration.domain_taken`
+/// e a mensagem «pede ao teu administrador para te adicionar», a falar de um
+/// estranho. Quem usa um email público tem conta PARTICULAR; uma empresa
+/// identifica-se pelo seu próprio domínio.
+///
+/// A lista é deliberadamente curta e cobre o que se vê em Angola e em Portugal.
+/// Não é uma defesa (quem quiser registar um domínio barato contorna-a): é o
+/// que impede o acidente comum.
+pub const PUBLIC_EMAIL_DOMAINS: &[&str] = &[
+    "gmail.com",
+    "googlemail.com",
+    "outlook.com",
+    "outlook.pt",
+    "hotmail.com",
+    "hotmail.co.uk",
+    "live.com",
+    "msn.com",
+    "yahoo.com",
+    "yahoo.com.br",
+    "ymail.com",
+    "icloud.com",
+    "me.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+    "gmx.com",
+    "mail.com",
+    "zoho.com",
+    "yandex.com",
+];
+
+/// `true` se o domínio é de email público (ver [`PUBLIC_EMAIL_DOMAINS`]).
+pub fn is_public_email_domain(domain: &str) -> bool {
+    let d = domain.trim().to_ascii_lowercase();
+    PUBLIC_EMAIL_DOMAINS.contains(&d.as_str())
+}
+
+/// Regra do registo EMPRESARIAL: o domínio do email tem de poder ser o domínio
+/// da organização — não vazio, com pelo menos um ponto, e não um domínio de
+/// email público. Devolve o domínio extraído.
+///
+/// Quem não passa aqui não fica de fora: fica com uma conta particular, que é
+/// o que o registo sem nome de organização cria.
 pub fn require_corporate_domain(email: &str) -> Result<String, String> {
     let domain = email.split('@').nth(1).unwrap_or("").to_string();
     if domain.is_empty() || !domain.contains('.') {
         return Err("email corporativo inválido".into());
+    }
+    if is_public_email_domain(&domain) {
+        return Err(format!(
+            "«{domain}» é um email pessoal e não pode ser o domínio de uma organização —              cria a conta sem nome de empresa e passa a empresarial quando tiveres um domínio próprio"
+        ));
     }
     Ok(domain)
 }
@@ -55,6 +106,29 @@ pub fn validate_password(password: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_public_email_domain_is_never_an_org_domain() {
+        // O acidente que a lista impede: o primeiro gmail tomava o domínio e
+        // trancava todos os outros (ADR-0019).
+        for email in ["ana@gmail.com", "ANA@Gmail.COM", "b@outlook.pt", "c@icloud.com"] {
+            let e = require_corporate_domain(&normalize_email(email)).unwrap_err();
+            assert!(e.contains("email pessoal"), "{email}: {e}");
+        }
+        // Um domínio próprio continua a passar, e vem em minúsculas.
+        assert_eq!(
+            require_corporate_domain(&normalize_email("Ana@Empresa.AO")).unwrap(),
+            "empresa.ao"
+        );
+        // O que já era recusado continua a ser, pela razão de forma.
+        for email in ["ana@localhost", "ana@", "sem-arroba"] {
+            assert_eq!(
+                require_corporate_domain(email).unwrap_err(),
+                "email corporativo inválido",
+                "{email}"
+            );
+        }
+    }
 
     #[test]
     fn normalize_trims_and_lowercases() {
