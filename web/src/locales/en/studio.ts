@@ -33,6 +33,7 @@ export default {
     semFonte: 'Choose a screen or turn on the camera to record.',
   },
   erros: {
+    saidaBloqueada: 'You stayed in the Studio: a recording or broadcast is running. Stop it first to leave.',
     ecraTerminado: 'Screen sharing ended.',
     ecra: 'Could not capture the screen.',
     camara: 'Could not access the camera.',

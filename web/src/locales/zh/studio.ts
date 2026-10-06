@@ -33,6 +33,7 @@ export default {
     semFonte: '请选择屏幕或开启摄像头后再录制。',
   },
   erros: {
+    saidaBloqueada: '已留在演播室：录制或直播正在进行中。请先停止后再离开。',
     ecraTerminado: '屏幕共享已结束。',
     ecra: '无法捕获屏幕。',
     camara: '无法访问摄像头。',

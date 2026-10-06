@@ -6,6 +6,7 @@ import PaletteHost from './components/PaletteHost'
 import PresenceProvider from './components/PresenceProvider'
 import { Icon } from './ui/icons'
 import { Spinner } from './ui/kit'
+import { useTrabalhoEmCurso } from './trabalhoEmCurso'
 
 // ---------------------------------------------------------------------------
 //  Corte por rota. EAGER ficam só os dois ecrãs de entrada — Entrar e Início
@@ -82,6 +83,7 @@ export default function App() {
   const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(currentUser())
   const [route, setRoute] = useState<Route>(parseHash())
+  const trabalhoEmCurso = useTrabalhoEmCurso()
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash())
@@ -168,6 +170,9 @@ export default function App() {
         <PaletteHost
           user={user}
           inRoom={route.kind === 'room'}
+          // Navegar por cima de uma EMISSÃO mata-a como mataria uma chamada: a
+          // paleta abre em nova aba nos dois casos (antes só na sala).
+          protegido={route.kind === 'room' || trabalhoEmCurso}
           onEnterRoom={enterRoom}
           onLogout={() => {
             logout()
