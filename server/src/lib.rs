@@ -1555,19 +1555,109 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
     state
 }
 
-/// Logs em texto (desenvolvimento) ou JSON (`LOG_FORMAT=json`, K8s/Loki).
-fn init_tracing(json: bool) {
+/// Logs em texto (desenvolvimento) ou JSON (`LOG_FORMAT=json`, K8s/Loki), e —
+/// com `OTEL_EXPORTER_OTLP_ENDPOINT` — rastos por OTLP (ADR-0020, fase 5).
+///
+/// A camada de rastos SÓ existe se a variável estiver definida e não vazia.
+/// Sem ela, o servidor arranca exactamente como arrancava: nada se exporta,
+/// nada se liga, e quem corre o Meet fora de um cluster não paga por isto.
+///
+/// Devolve o provider, se houver, para quem arranca o servidor o poder
+/// desligar no fim. Sem esse `shutdown`, os spans do último lote ficam no
+/// buffer e o rasto de um pedido que correu mal — que é precisamente o que se
+/// quer ver — nunca sai da máquina.
+#[must_use = "o provider tem de ser desligado no fim, senão os últimos spans perdem-se"]
+fn init_tracing(json: bool) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "delonix_server=info,tower_http=info".into());
-    if json {
-        tracing_subscriber::fmt()
-            .json()
-            .with_current_span(true)
-            .with_env_filter(filter)
-            .init();
+
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let registo = tracing_subscriber::registry().with(filter);
+    // Duas formas da MESMA camada de texto. O `if json` tem de estar aqui e
+    // não à volta de tudo porque os dois tipos não são o mesmo tipo.
+    let (texto_json, texto_simples) = if json {
+        (
+            Some(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_current_span(true),
+            ),
+            None,
+        )
     } else {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
+        (None, Some(tracing_subscriber::fmt::layer()))
+    };
+
+    let Some(endpoint) = endpoint else {
+        registo.with(texto_json).with(texto_simples).init();
+        return None;
+    };
+
+    match construir_otlp(&endpoint) {
+        Ok((provider, camada)) => {
+            registo
+                .with(texto_json)
+                .with(texto_simples)
+                .with(camada)
+                .init();
+            tracing::info!(endpoint, "rastos OTLP ligados");
+            Some(provider)
+        }
+        Err(e) => {
+            // FALHA ABERTA, de propósito: um colector em baixo não pode
+            // impedir o servidor de arrancar. Perde-se observabilidade, não o
+            // serviço — e o aviso fica no log para não se perder em silêncio.
+            registo.with(texto_json).with(texto_simples).init();
+            tracing::warn!(endpoint, error = %e, "OTLP indisponível — o servidor arranca sem rastos");
+            None
+        }
     }
+}
+
+/// O exportador e a camada de rastos. Separado para o `init_tracing` poder
+/// tratar a falha num sítio só.
+/// Genérica sobre o subscriber de propósito: quando a camada se junta, o
+/// subscriber já não é o `Registry` nu — é o `Registry` com o filtro e com a
+/// camada de texto por cima, e um tipo fixo aqui não casava com ele.
+#[allow(clippy::type_complexity)]
+fn construir_otlp<S>(
+    endpoint: &str,
+) -> Result<
+    (
+        opentelemetry_sdk::trace::SdkTracerProvider,
+        tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::SdkTracer>,
+    ),
+    Box<dyn std::error::Error>,
+>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_otlp::WithExportConfig as _;
+
+    let exportador = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()?;
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        // Em lote e não a cada span: um export por pedido punha o colector no
+        // caminho quente da media.
+        .with_batch_exporter(exportador)
+        .with_resource(
+            opentelemetry_sdk::Resource::builder()
+                .with_service_name("delonix-server")
+                .build(),
+        )
+        .build();
+    let camada = tracing_opentelemetry::layer().with_tracer(provider.tracer("delonix-server"));
+    Ok((provider, camada))
 }
 
 /// Arranca o servidor: configuração, base, estado partilhado, tarefas de
@@ -1587,7 +1677,7 @@ pub async fn run() {
         return;
     }
     let config = Config::from_env();
-    init_tracing(config.log_json);
+    let rastos = init_tracing(config.log_json);
     // Avisado DEPOIS de os logs existirem — antes perdia-se sem ninguém ver.
     if config.allow_insecure {
         tracing::warn!(
@@ -1973,6 +2063,9 @@ pub async fn run() {
     .unwrap();
     // Uma passagem em curso acaba; nenhuma nova começa.
     let _ = quarantine_sweeper.await;
+    // Depois do drain e das tarefas de fundo: é agora que o último lote de
+    // spans tem de sair, e é o lote de quem estava a fechar que interessa ver.
+    desligar_rastos(rastos);
 }
 
 /// Espera SIGTERM (K8s rollout/drain) ou Ctrl-C. Quando dispara, o axum PÁRA de
@@ -2071,6 +2164,17 @@ async fn drenar(state: Arc<AppState>) {
         segundos = limite.as_secs(),
         "drain: prazo esgotado — a fechar com participantes ainda ligados"
     );
+}
+
+/// Esvazia o que o exportador de rastos tem em buffer. Chama-se no fim do
+/// `run()`: sem isto, o último lote de spans morre com o processo — e é
+/// justamente o lote de quem estava a fechar que interessa ver.
+fn desligar_rastos(provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>) {
+    if let Some(p) = provider {
+        if let Err(e) = p.shutdown() {
+            tracing::warn!(error = %e, "o exportador de rastos não fechou limpo");
+        }
+    }
 }
 
 /// Uma passagem do sweeper de autorização (ADR-0008 §6, §8, §11).

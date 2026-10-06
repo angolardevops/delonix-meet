@@ -63,6 +63,13 @@ ingress:
 networkPolicy:
   enabled: true
 
+# Rastos por OTLP (ADR-0020, fase 5). Vazio = o servidor arranca sem rastos,
+# exactamente como antes. Com endereço, exporta para o colector — e se ele
+# estiver em baixo o servidor arranca na mesma, com um aviso no log: perde-se
+# observabilidade, não o serviço.
+otel:
+  endpoint: "http://otel-collector-opentelemetry-collector.observabilidade.svc.cluster.local:4317"
+
 coturn:
   # OBRIGATÓRIO por --set: coturn.externalIP.
   externalIP: ""

@@ -102,6 +102,12 @@ spec:
                 name: delonix-config
           env:
             {{- include "dm.serverSecretEnv" . | nindent 12 }}
+            {{- with $v.otel }}{{- if .endpoint }}
+            # Rastos por OTLP (ADR-0020). Só existe se o valor existir: sem ele
+            # o servidor arranca sem rastos, como sempre arrancou.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .endpoint | quote }}
+            {{- end }}{{- end }}
             # Opcional: vazio desliga a provisão de organizações (fail-closed).
             - name: PROVISIONING_SECRET
               valueFrom: { secretKeyRef: { name: {{ $s }}, key: PROVISIONING_SECRET, optional: true } }

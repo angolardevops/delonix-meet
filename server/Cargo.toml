@@ -58,6 +58,14 @@ chrono = { version = "0.4", features = ["serde"] }
 dashmap = "6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Rastos por OTLP (ADR-0020, fase 5). A camada SÓ existe com
+# `OTEL_EXPORTER_OTLP_ENDPOINT` definida: sem ela o servidor arranca como
+# sempre arrancou, e isto não é peso no caminho de ninguém.
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "trace"] }
+opentelemetry-semantic-conventions = "0.31"
+tracing-opentelemetry = "0.32"
 rand = "0.8"
 thiserror = "2"
 sha2 = "0.10"
