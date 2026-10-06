@@ -1796,6 +1796,10 @@ async fn leaving_the_organization_closes_every_recording_route(db: sqlx::PgPool)
         .await
         .unwrap();
 
+    // As quatro primeiras passavam pelo `access()`. O `chapters` NÃO — é
+    // `list_chapters`, que já ia pelo `seen_item` e já respondia `404` antes
+    // desta correcção: fica aqui como CONTROLO de que continua fechado, não
+    // como prova dela (medido pela revisão de segurança da R306).
     let lido = ["transcript", "participants", "captions", "chapters"];
     let views = format!("/api/recordings/{}/views", f.rec);
 
@@ -1843,15 +1847,18 @@ async fn leaving_the_organization_closes_every_recording_route(db: sqlx::PgPool)
     let (st, v) = app.post(&views, Some(&f.carla.token), json!({})).await;
     assert_eq!(st, 404, "contar uma visualização depois de sair: {v}");
 
-    // CONTROLO de que não se fechou a mais: a dona continua a ler tudo.
-    for path in lido {
-        let (st, v) = app
-            .get(
-                &format!("/api/recordings/{}/{path}", f.rec),
-                Some(&f.a.token),
-            )
-            .await;
-        assert_eq!(st, 200, "{path} para a dona: {v}");
+    // CONTROLO de que não se fechou a mais: a dona continua a ler tudo, e a
+    // admin ACTIVA da organização dela também — é por ela que se vê que o
+    // `org_admin` continua a abrir a porta (o `access()` passou a derivá-lo da
+    // capacidade `recordings.view_others` e não de `role = 'admin'`; está
+    // escrito na R306).
+    for (quem, token) in [("a dona", &f.a.token), ("a admin activa", &f.eva.token)] {
+        for path in lido {
+            let (st, v) = app
+                .get(&format!("/api/recordings/{}/{path}", f.rec), Some(token))
+                .await;
+            assert_eq!(st, 200, "{path} para {quem}: {v}");
+        }
     }
 }
 
