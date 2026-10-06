@@ -1,4 +1,9 @@
 export default {
+  rotaDesconhecida: {
+    titulo: 'Este endereço não existe',
+    texto: 'Não há nada em:',
+    inicio: 'Ir para o Início',
+  },
   fechar: 'Fechar',
   cancelar: 'Cancelar',
   guardar: 'Guardar',

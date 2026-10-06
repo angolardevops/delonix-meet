@@ -1,4 +1,9 @@
 export default {
+  rotaDesconhecida: {
+    titulo: "Cette adresse n'existe pas",
+    texto: "Il n'y a rien à :",
+    inicio: "Aller à l'accueil",
+  },
   fechar: 'Fermer',
   cancelar: 'Annuler',
   guardar: 'Enregistrer',
