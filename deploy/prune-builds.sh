@@ -19,11 +19,21 @@ docker image prune -af | tail -1
 NODE=delonix-stage-control-plane
 if nos=$(docker ps --format '{{.Names}}') && grep -qx "$NODE" <<<"$nos"; then
   PINNED=$(kubectl --context kind-delonix-stage -n delonix-meet get deploy delonix-server \
-    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | cut -d: -f2)
-  echo "[prune-builds] tag pinada: ${PINNED:-?}"
+    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | cut -d: -f2) || PINNED=
+  # Sem a tag pinada não se apaga nada do nó: o filtro abaixo só poupava a
+  # `latest`. Com `set -e` e `pipefail` um `kubectl` que falha já parava o
+  # script aqui — mas calado; o cron de domingo ficava sem saber porquê (R303).
+  if [ -z "$PINNED" ]; then
+    echo "[prune-builds] ✗ não consegui ler a tag pinada do delonix-server (kubectl, contexto kind-delonix-stage) — as tags do nó ficam como estão" >&2
+    exit 1
+  fi
+  echo "[prune-builds] tag pinada: $PINNED"
+  # `|| true` no `grep -v`: num nó já limpo (só a pinada e a `latest`) ele não
+  # deixa passar nada, sai com 1, e com `pipefail` o script morria aqui — antes
+  # da rede de segurança que está mais abaixo.
   docker exec "$NODE" crictl images 2>/dev/null \
     | awk '/delonix-(server|web)/ {print $2}' | sort -u \
-    | grep -vE "^(latest|${PINNED:-nunca})$" \
+    | { grep -vE "^(latest|${PINNED})$" || true; } \
     | while read -r tag; do
         docker exec "$NODE" crictl rmi \
           "docker.io/library/delonix-server:$tag" \
