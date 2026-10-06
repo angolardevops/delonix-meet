@@ -278,6 +278,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-replicas-compose.sh
 	@bash scripts/check-k8s-render.sh
 	@HELM=$(HELM) bash scripts/check-helm.sh
+	@HELM=$(HELM) bash scripts/check-observabilidade.sh
 	@bash scripts/check-arquitectura-catraca.sh
 	@bash scripts/check-crate-deps.sh
 	@bash scripts/check-proto.sh

@@ -1,22 +1,38 @@
 # O Prometheus a ler o `/metrics` do servidor. Até 2026-10-06 não havia
 # ServiceMonitor nenhum no repositório: o servidor expunha 41 métricas e
 # ninguém as lia.
+#
+# DUAS COISAS QUE ESTAVAM ERRADAS NA PRIMEIRA VERSÃO deste ficheiro, e que são
+# a razão destes comentários — nenhuma delas dava erro, as duas davam ZERO
+# alvos, e um ServiceMonitor sem alvos é indistinguível de um produto saudável:
+#
+#  1. O selector usava `app.kubernetes.io/name` e `…/component`, que o chart
+#     NÃO põe em Service nenhum. As etiquetas reais são `app: delonix-server`
+#     mais `delonix.io/exposure: internal`.
+#  2. O endpoint apontava para a porta `http` (8180). O `/metrics` vive no
+#     listener INTERNO (`INTERNAL_BIND_ADDR: 0.0.0.0:8181`, ADR-0006 §3), que
+#     nenhum ingress publica — porta `internal` do Service
+#     `delonix-server-internal`.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: delonix-meet-server
   namespace: observabilidade
   labels:
+    # O `serviceMonitorSelector` do kube-prometheus-stack casa por esta
+    # etiqueta: sem ela o Prometheus ignora o objecto sem dizer nada.
     release: kube-prometheus-stack
 spec:
   namespaceSelector:
     matchNames: [delonix-meet]
   selector:
     matchLabels:
-      app.kubernetes.io/name: delonix-meet
-      app.kubernetes.io/component: server
+      app: delonix-server
+      # Sem isto casavam TRÊS Services (o /api, o /ws e o interno) e dois deles
+      # não servem /metrics nenhum — dois alvos em baixo para sempre.
+      delonix.io/exposure: internal
   endpoints:
-    - port: http
+    - port: internal
       path: /metrics
       interval: 30s
       # O `job` que os alertas usam. Sem isto o job é o nome do Service e as

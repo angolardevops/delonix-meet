@@ -42,10 +42,38 @@ server:
   resources:
     requests: { cpu: 500m, memory: 512Mi }
     limits: { cpu: "2", memory: 2Gi }
+  # Armazenamento de OBJECTOS (ADR-0020, D2). Entra pelo ambiente e não pela
+  # tabela `platform_storage`: as chaves são um Secret do cluster, e guardá-las
+  # na base da aplicação é o que a S5 mandou parar de fazer.
+  #
+  # Com isto, o botão «testar» do painel do operador escreve e apaga um objecto
+  # de prova no MinIO. O que ele NÃO faz ainda é mudar onde as gravações ficam:
+  # elas continuam no volume abaixo, e o painel diz isso em letra grande. Ver o
+  # ADR-0020 e o `objectos.rs`.
+  extraEnv:
+    - name: OBJECT_STORE_ENDPOINT
+      value: "http://minio.minio.svc.cluster.local:9000"
+    - name: OBJECT_STORE_BUCKET
+      value: "meet-gravacoes"
+    - name: OBJECT_STORE_REGION
+      value: "us-east-1"
+    # O MESMO Secret que o chart do MinIO consome (`meet-minio-credenciais`),
+    # copiado para este namespace — um Secret não se lê de outro namespace.
+    - name: OBJECT_STORE_ACCESS_KEY
+      valueFrom:
+        secretKeyRef: { name: meet-minio-credenciais, key: ACCESS_KEY_ID }
+    - name: OBJECT_STORE_SECRET_KEY
+      valueFrom:
+        secretKeyRef: { name: meet-minio-credenciais, key: SECRET_ACCESS_KEY }
 
 # Várias réplicas em vários nós: o volume tem de ser ReadWriteMany.
 # A StorageClass é da infra-estrutura; vazia = a por omissão do cluster,
 # que tem de suportar RWX.
+#
+# ISTO AINDA É NECESSÁRIO, e o ADR-0020 diz porquê: o cliente de objectos já
+# existe (`objectos.rs`) mas o gravador continua a escrever aqui e o servidor a
+# servir daqui. O RWX só sai destes valores no dia em que o caminho da media
+# for ligado ao MinIO e medido contra ele — não no dia em que o cliente nasceu.
 recordings:
   accessMode: ReadWriteMany
   storageClassName: ""
@@ -62,6 +90,12 @@ ingress:
 
 networkPolicy:
   enabled: true
+  # O Prometheus desta produção vive em `observabilidade`, não em `monitoring`
+  # (deploy/k8s/observabilidade/instalar.sh). Sem isto a política fechava o
+  # :8181 ao scrape, o ServiceMonitor ficava com o alvo em baixo e TODOS os
+  # alertas sobre métricas do servidor ficavam sem dados — a falhar em silêncio,
+  # que é a pior maneira de uma observabilidade falhar.
+  metricsNamespace: observabilidade
 
 # Rastos por OTLP (ADR-0020, fase 5). Vazio = o servidor arranca sem rastos,
 # exactamente como antes. Com endereço, exporta para o colector — e se ele
