@@ -3,15 +3,15 @@
  * novos e sem números inventados.
  */
 import type { Meeting, RecordingItem } from '../../api'
-import { isFailed } from './format'
+import { hasFile } from './format'
 
 /**
  * «A seguir»: as gravações depois desta na ordem da biblioteca (a do
  * servidor, mais recentes primeiro), e a seguir as de antes. Nunca a própria,
- * nunca uma falhada.
+ * nunca uma sem ficheiro (falhada ou ainda a compor).
  */
 export function nextUp(library: RecordingItem[], currentId: string, limit = 10): RecordingItem[] {
-  const ok = library.filter((r) => !isFailed(r))
+  const ok = library.filter(hasFile)
   const i = ok.findIndex((r) => r.id === currentId)
   const ordered = i < 0 ? ok : [...ok.slice(i + 1), ...ok.slice(0, i)]
   return ordered.slice(0, limit)
@@ -31,7 +31,7 @@ export function sameSeries(library: RecordingItem[], meetings: Meeting[], rec: R
   const rooms = new Set(
     meetings.filter((x) => (x.id === root || x.recurrence_parent_id === root) && x.room_code).map((x) => x.room_code as string),
   )
-  return library.filter((r) => r.id !== rec.id && !isFailed(r) && rooms.has(r.room_code))
+  return library.filter((r) => r.id !== rec.id && hasFile(r) && rooms.has(r.room_code))
 }
 
 /** Instantes (s) das miniaturas: uma por cada ~30 s, entre 4 e 12, no meio do troço. */
