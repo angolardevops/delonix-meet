@@ -209,6 +209,9 @@ jobs:
       - name: A observabilidade aponta para coisas reais (um ServiceMonitor sem alvos é indistinguível de um produto saudável)
         run: bash scripts/check-observabilidade.sh
 
+      - name: O Ansible da produção lê-se e os plays casam com o inventário do tofu (ADR-0020)
+        run: bash scripts/check-ansible-producao.sh
+
       - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
         run: bash scripts/check-arquitectura-catraca.sh
 
