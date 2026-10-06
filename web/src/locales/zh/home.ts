@@ -57,6 +57,8 @@ export default {
     biblioteca: '媒体库',
     vazio: '暂无录制内容',
     vazioDica: '会议和演播室的录制内容准备就绪后将显示在这里。',
+    aProcessar: '处理中',
+    aCompor: '服务器正在合成文件',
     falhou: '失败',
     semMedia: '未录制到媒体',
   },
