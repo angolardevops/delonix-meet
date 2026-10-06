@@ -1,4 +1,9 @@
 export default {
+  rotaDesconhecida: {
+    titulo: '该地址不存在',
+    texto: '这里没有内容：',
+    inicio: '前往首页',
+  },
   fechar: '关闭',
   cancelar: '取消',
   guardar: '保存',

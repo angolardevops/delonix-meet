@@ -1,4 +1,5 @@
 export default {
+  trilho: 'Onde estás',
   saltarParaConteudo: 'Saltar para o conteúdo',
   procurar: 'Procurar…',
   atalhoPaleta: 'Ctrl K',
