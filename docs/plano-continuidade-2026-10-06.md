@@ -22,7 +22,7 @@ prova é a do CI na PR respectiva, não uma medição feita aqui.
 
 ## 1. Onde cada frente ficou
 
-### 1.1 As dez PRs abertas
+### 1.1 As doze PRs abertas
 
 Todas contra a `develop`. «CI» é o estado às 11:30 de 2026-10-06.
 
@@ -37,7 +37,17 @@ Todas contra a `develop`. «CI» é o estado às 11:30 de 2026-10-06.
 | [#236](https://github.com/angolardevops/delonix-meet/pull/236) | A mesma pessoa no browser e ao telefone escolhe onde continuar | verde | `Room.tsx` e `locales/*/room.ts`, como o #242 |
 | [#244](https://github.com/angolardevops/delonix-meet/pull/244) | Tecto de sockets por conta e quota de participantes por organização (ADR-0017) | novo | **Recuperado do disco hoje**; migração `0097` |
 | [#247](https://github.com/angolardevops/delonix-meet/pull/247) | As vagas de composição e o lote de repetições repartem-se por inquilino | novo | **Recuperado do disco hoje**; `fair_slots.rs` era inédito |
-| [#246](https://github.com/angolardevops/delonix-meet/pull/246) | Os restos da R295: o silêncio escrito ao gravar | **rascunho** | **Não funde como está** — ver §2.2 |
+| [#246](https://github.com/angolardevops/delonix-meet/pull/246) | Os restos da R295: o silêncio escrito ao gravar | **rascunho** | **Não funde como está** — ver o Sprint 2 |
+| [#248](https://github.com/angolardevops/delonix-meet/pull/248) | Este documento | novo | |
+| [#249](https://github.com/angolardevops/delonix-meet/pull/249) | `source-map-js` 1.2.2 | novo | **Funde primeiro** — ver abaixo |
+
+**O portão de dependências estava vermelho em todas elas, e não por causa de nenhuma.** O
+[GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) (ALTO) saiu a 2026-10-06 e
+apanha o `source-map-js` 1.0.0–1.2.1, transitiva do `postcss` pelo Vite. O `check-dep-audit.sh` dá
+vermelho a qualquer aviso novo, por isso o job «Segurança das dependências» caiu de uma vez em PRs
+que estavam verdes uma hora antes. Corrigido no #249 com um `overrides` para a 1.2.2 — não foi para
+a lista de aceites porque há correcção, e aceitar o que se pode corrigir é o que torna essa lista
+inútil quando aparecer um aviso que importe.
 
 ### 1.2 O que estava só no disco
 
@@ -94,9 +104,11 @@ A ordem conta. O Sprint 1 é dívida de entrega: nada de novo até o que está p
 
 ### Sprint 1 — Aterrar o que já está provado
 
-**Ordem de fusão.** As dez PRs tocam cinco vezes o mesmo `docs/reference/regressions.md` e duas
-vezes o mesmo `recorder.rs`: fundidas noutra ordem, cada fusão põe a seguinte em conflito.
+**Ordem de fusão.** As PRs tocam cinco vezes o mesmo `docs/reference/regressions.md` e duas vezes
+o mesmo `recorder.rs`: fundidas noutra ordem, cada fusão põe a seguinte em conflito. E nenhuma fica
+verde antes do #249.
 
+0. **#249** — sem ele nenhuma das outras fica verde, nem a `develop`.
 1. **#232** — base da pilha.
 2. **#242** — contém o #232; depois dele o #232 fica vazio.
 3. **#238** — primeiro dos dois que mexem no `recorder.rs`.
