@@ -661,8 +661,8 @@ export default {
     problemas_other: '模型中有 {{count}} 个问题',
     problemaPrimeiro_one: '{{count}} 个问题：{{primeiro}}',
     problemaPrimeiro_other: '{{count}} 个问题 · {{primeiro}}',
-    localGuardado: '已保存在此浏览器中',
-    localErro: '无法保存在此浏览器中',
+    localGuardado: '已保存',
+    localErro: '无法保存',
   },
   zoom: {
     rotulo: '缩放',
