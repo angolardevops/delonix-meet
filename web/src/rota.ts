@@ -91,3 +91,110 @@ export function parseHash(hash: string = location.hash): Route {
   if (pagina) return { kind: pagina }
   return { kind: 'desconhecida', endereco: h }
 }
+
+// ---------------------------------------------------------------------------
+//  O trilho (breadcrumbs), o título e a hierarquia
+//
+//  A hierarquia NÃO foi inventada aqui: estava escrita em dois sítios e
+//  enterrada. O pai de cada rota vivia num ternário dentro de um atributo do
+//  `App.tsx` (`player → recordings`, `diagram → whiteboards`) e os rótulos do
+//  primeiro nível são os do rail (`Shell.tsx`). O que faltava era um nome para
+//  isso e um sítio onde o pedir.
+// ---------------------------------------------------------------------------
+
+/**
+ * O rótulo de cada destino, por chave de tradução. É a MESMA fonte que o rail
+ * usa: o `Shell` importa este mapa e junta-lhe os ícones. Dois sítios a
+ * escrever o nome de «Gravações» davam dois nomes.
+ */
+export const NAV_I18N: Record<NavKey, string> = {
+  home: 'shell.nav.inicio',
+  calendar: 'shell.nav.agenda',
+  rooms: 'shell.nav.salas',
+  studio: 'shell.nav.estudio',
+  recordings: 'shell.nav.gravacoes',
+  whiteboards: 'shell.nav.quadros',
+  directory: 'shell.nav.contactos',
+  integrations: 'shell.nav.integracoes',
+  analytics: 'shell.nav.analise',
+  admin: 'shell.nav.administracao',
+  telecom: 'telecom.titulo',
+  ai: 'consola.nav.ia',
+}
+
+/** Um degrau do trilho: para onde leva e como se chama. */
+export type Degrau = { hash: string; chave: string }
+
+/**
+ * O destino do rail a que uma rota pertence — é o que fica aceso no menu.
+ * `null` para o que não tem destino (a sala, a moderação de uma sala, as
+ * páginas públicas).
+ */
+export function destinoNoRail(r: Route): NavKey | null {
+  switch (r.kind) {
+    case 'player':
+      return 'recordings'
+    case 'diagram':
+      return 'whiteboards'
+    case 'room':
+    case 'telemovel':
+    case 'share':
+    case 'invite':
+    case 'lobby':
+    case 'desconhecida':
+      return null
+    default:
+      return r.kind
+  }
+}
+
+/**
+ * Os ANTECEDENTES da rota, do Início até ao pai — a página actual não entra,
+ * porque o `<h1>` da barra já a diz.
+ *
+ * Vazio para o Início e para o que vive fora da consola: um trilho de um degrau
+ * não é um trilho, é ruído.
+ */
+export function trilhoDe(r: Route): Degrau[] {
+  const inicio: Degrau = { hash: '#/', chave: NAV_I18N.home }
+  switch (r.kind) {
+    case 'home':
+    case 'room':
+    case 'telemovel':
+    case 'share':
+    case 'invite':
+      return []
+    case 'player':
+      return [inicio, { hash: '#/recordings', chave: NAV_I18N.recordings }]
+    case 'diagram':
+      return [inicio, { hash: '#/whiteboards', chave: NAV_I18N.whiteboards }]
+    case 'lobby':
+      return [inicio, { hash: '#/rooms', chave: NAV_I18N.rooms }]
+    case 'desconhecida':
+      return [inicio]
+    default:
+      return [inicio]
+  }
+}
+
+/**
+ * A chave de tradução do nome da rota, para o `document.title` — que até
+ * 2026-10-06 era o nome da aplicação em TODOS os ecrãs (duas escritas em todo o
+ * `web/src`, as duas com o mesmo valor): quinze abas iguais, histórico do
+ * browser indistinguível e um leitor de ecrã a dizer sempre o mesmo.
+ *
+ * `null` quando o nome não se sabe aqui — a sala e o leitor de gravação são
+ * nomeados pelo que estão a mostrar, e isso é o ecrã que o sabe.
+ */
+export function chaveDoTitulo(r: Route): string | null {
+  const destino = destinoNoRail(r)
+  if (destino && destino !== 'home') return NAV_I18N[destino]
+  switch (r.kind) {
+    case 'lobby':
+      return 'shell.nav.salas'
+    case 'desconhecida':
+      return 'ui.rotaDesconhecida.titulo'
+    default:
+      return null
+  }
+}
