@@ -206,7 +206,11 @@ export default function Studio() {
         if (!isAbort(e)) setErro(apiErrorMessage(e, t('studio.erros.destinos')))
       })
     return () => ctrl.abort()
-  }, [org?.id])
+    // `t` entra porque a mensagem de erro é traduzida: mudar de língua relê a
+    // lista, o que é inofensivo (é idempotente) e é o que a regra dos hooks
+    // exige. Apanhado pelo ESLint que entrou no mesmo dia — o `tsc` e os 1161
+    // testes passavam com a dependência em falta.
+  }, [org?.id, t])
 
   // O compositor é um objecto imperativo com um canvas: monta uma vez e o
   // React só lhe dá ordens. Pô-lo em estado faria a árvore re-renderizar a
