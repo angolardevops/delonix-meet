@@ -478,6 +478,7 @@ export default {
     gravacoes: 'Gravações desta sala',
     semGravacoes: 'Ainda não há gravações.',
     megabytes: '{{n}} MB',
+    semDescarga: 'Só quem gravou, ou um administrador da organização, a pode descarregar.',
     mensagemPrivada: 'Mensagem privada a {{nome}}',
     fixarParaTodos: 'Fixar {{nome}} no palco de toda a gente',
     desafixarParaTodos: 'Tirar {{nome}} do destaque',

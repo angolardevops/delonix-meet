@@ -478,6 +478,7 @@ export default {
     gravacoes: '本会议室的录制内容',
     semGravacoes: '暂无录制内容。',
     megabytes: '{{n}} MB',
+    semDescarga: '只有录制者或组织管理员可以下载。',
     mensagemPrivada: '私聊 {{nome}}',
     fixarParaTodos: '为所有人将 {{nome}} 固定到舞台',
     desafixarParaTodos: '将 {{nome}} 移出焦点',

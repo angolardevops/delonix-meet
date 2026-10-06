@@ -173,7 +173,9 @@ continua, medido a 2026-10-03:
   `voice/call-records` com `LIMIT 500` (`voice.rs:620`), `meetings::list`
   (`meetings.rs:746`) sem limite, e `recordings::library` (`recordings.rs:902`) que só
   pagina se o pedido trouxer `page_size`/`page_token` — sem eles devolve tudo
-  (`recordings.rs:939`).
+  (`recordings.rs:939`). E `recordings::list` (as gravações de uma sala), sem limite
+  e, desde a R304, com o custo por linha da biblioteca: quem a paginar passa o filtro
+  `can_see()` de Rust para SQL.
 - **Três rotas de máquina na árvore pública:** `/api/voice/ivr/{directory,
   resolve-extension,dialplan-did}` (`lib.rs:834-841`), porque os Lua dos ramais já
   chamam esse caminho. Não é modelo: máquina-a-máquina novo vai para `/internal/v1`.
