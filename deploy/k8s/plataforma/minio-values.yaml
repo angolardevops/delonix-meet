@@ -17,6 +17,54 @@
 mode: distributed
 replicas: 4
 
+# ---------------------------------------------------------------------------
+#  DE ONDE VÊM AS IMAGENS — e porque é `bitnamilegacy`
+#
+#  Medido por API de registo a 2026-10-07, com controlos (`library/alpine` deu
+#  200, um repositório inventado deu 401):
+#
+#    docker.io/bitnami/minio:2025.7.23-debian-12-r3        404  (desapareceu)
+#    docker.io/bitnami/minio-object-browser:2.0.2-…        404  (desapareceu)
+#    docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r3  200
+#    docker.io/minio/minio:latest                          401  (oficial, sem acesso)
+#    quay.io/minio/minio:latest                             401  (oficial, sem acesso)
+#
+#  Duas coisas aconteceram em 2025: a Bitnami moveu as imagens gratuitas para
+#  `bitnamilegacy` e deixou de servir tags versionadas no `bitnami/*` público; e
+#  as imagens OFICIAIS do MinIO deixaram de ser puxáveis anonimamente — nem a
+#  `latest`, nem uma tag de 2024, nem no Docker Hub nem no quay.io.
+#
+#  Logo o `bitnamilegacy` não é preferência, é a única via que funciona sem
+#  subscrição. E tem um custo que fica escrito: **é um arquivo congelado, sem
+#  correcções de segurança**.
+#
+#  O QUE ISSO ARRISCA, HOJE E AMANHÃ. Hoje o MinIO não está no caminho das
+#  gravações — o ADR-0020 diz que «o gravador continua a escrever» no volume
+#  RWX. Quem o consome é o backup do Postgres, o Loki e o Tempo: dados
+#  operacionais. No dia em que o gravador passar a escrever aqui, passa a
+#  guardar gravações de clientes, e uma imagem sem patches deixa de servir.
+#  Essa é a data em que isto tem de ser revisto — não antes, não depois.
+#
+#  O chart da Bitnami NÃO pode apontar para a imagem oficial: renderiza
+#  `command: [/bin/bash, -c, …]` com os scripts de arranque próprios da
+#  Bitnami, que a imagem oficial não tem. Trocar de imagem é trocar de chart.
+# ---------------------------------------------------------------------------
+image:
+  registry: docker.io
+  repository: bitnamilegacy/minio
+clientImage:
+  registry: docker.io
+  repository: bitnamilegacy/minio-client
+volumePermissions:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/os-shell
+defaultInitContainers:
+  volumePermissions:
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/os-shell
+
 # A consola web fica DESLIGADA, e não é por gosto: a imagem que o chart lhe
 # pinta — `docker.io/bitnami/minio-object-browser:2.0.2-debian-12-r3` —
 # devolve 404 no Docker Hub (verificado por API a 2026-10-07). É a mudança de

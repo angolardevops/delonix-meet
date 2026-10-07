@@ -1,4 +1,29 @@
 # ---------------------------------------------------------------------------
+#  DE ONDE VÊM AS IMAGENS — e porque NÃO ficam em `latest`
+#
+#  O chart 28.3.1 da Bitnami aponta, por omissão, para
+#  `registry-1.docker.io/bitnami/redis:latest`. Duas razões para não aceitar:
+#
+#  1. `latest` é MUTÁVEL. O Redis guarda presença, sessões e lugares — um
+#     upgrade não anunciado a entrar num reinício de pod tira pessoas de salas.
+#     A doutrina do chart do Meet já proíbe `latest` em produção para as
+#     imagens do produto; não há razão para o Redis ser excepção.
+#  2. No catálogo público novo da Bitnami, `latest` é a ÚNICA tag gratuita — as
+#     versionadas passaram a exigir subscrição. Quem serve tags versionadas
+#     gratuitas é `bitnamilegacy`, o arquivo congelado.
+#
+#  Fixadas aqui, verificadas por API a 2026-10-07 (todas HTTP 200). Mesmo
+#  compromisso do MinIO: arquivo congelado, sem correcções de segurança, e com
+#  a data de revisão escrita no `minio-values.yaml`.
+#
+#  Redis 8.2.1 contra a app version 8.10.2 do chart: a série é a mesma (8.x) e
+#  é a mais recente que o arquivo tem. A diferença fica DITA e não medida.
+# ---------------------------------------------------------------------------
+image:
+  registry: docker.io
+  repository: bitnamilegacy/redis
+  tag: 8.2.1-debian-12-r0
+# ---------------------------------------------------------------------------
 #  O Redis do Meet — Sentinel, três nós (ADR-0020, fase 3).
 #
 #  O Redis guarda presença, pub/sub entre réplicas, sessões, estado de sala e
@@ -20,6 +45,10 @@ auth:
 
 sentinel:
   enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/redis-sentinel
+    tag: 8.2.1-debian-12-r0
   quorum: 2
   # 5 s para dar um nó por morto. Mais baixo e um pico de carga provoca
   # failovers que ninguém pediu; mais alto e uma sala fica muda à espera.
@@ -58,6 +87,10 @@ commonConfiguration: |-
 
 metrics:
   enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/redis-exporter
+    tag: 1.76.0-debian-12-r0
   # Declarados, e não o preset do chart: o exporter vive no namespace do Meet
   # e conta para a quota dele; o `check-helm.sh` soma-o a partir daqui, e um
   # preset escondido no chart bitnami seria um número que ninguém vê.
