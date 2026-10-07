@@ -173,6 +173,83 @@ LIMPA=(--set priorityClassName= --set server.priorityClassName=
        --set web.priorityClassName=)
 render sem-prioridade "${VOZ[@]}" "${LIMPA[@]}"
 render prioridade "${VOZ[@]}" "${LIMPA[@]}" --set priorityClassName=prova-prioridade
+
+# --- Gateway API (ADR-0021) ------------------------------------------------
+# O chart ganhou um segundo caminho de entrada. Estas recusas existem porque
+# cada uma delas, se passasse, perdia algo em silêncio.
+GW=("${PROD[@]}" --set ingress.enabled=false --set gateway.enabled=true
+    --set gateway.className=delonix --set gateway.tls.clusterIssuer=delonix-letsencrypt
+    --set gateway.acceptProvisioningInAccessLog=true)
+
+recusa "ingress e gateway ao mesmo tempo" "são exclusivos" \
+  "${PROD[@]}" --set gateway.enabled=true --set gateway.className=delonix
+recusa "gateway em mode=own sem GatewayClass" "gateway.className" \
+  "${PROD[@]}" --set ingress.enabled=false --set gateway.enabled=true
+recusa "gateway em produção sem TLS" "gateway.tls:" \
+  "${PROD[@]}" --set ingress.enabled=false --set gateway.enabled=true \
+  --set gateway.className=delonix --set gateway.acceptProvisioningInAccessLog=true
+recusa "gateway sem afinidade por sala em produção (R3)" "regressão R3" \
+  "${GW[@]}" --set gateway.affinity.implementation=none
+recusa "gateway sem reconhecer o bilhete no access log (R278)" "acceptProvisioningInAccessLog" \
+  "${PROD[@]}" --set ingress.enabled=false --set gateway.enabled=true \
+  --set gateway.className=delonix --set gateway.tls.clusterIssuer=x
+recusa "nem ingress nem gateway em produção" "sem um deles o host não é servido" \
+  "${PROD[@]}" --set ingress.enabled=false
+recusa "gateway em mode=attach sem parentRef" "gateway.parentRef.name" \
+  "${GW[@]}" --set gateway.mode=attach
+
+render production-gateway "${GW[@]}"
+
+# A invariante do ADR-0001 no caminho NOVO. No Ingress era a anotação
+# `upstream-hash-by: $arg_room`; aqui é uma BackendTrafficPolicy com
+# ConsistentHash por parâmetro de query. Se isto se perder, os pares de uma
+# sala caem em pods diferentes e o SFU em memória parte-se — sem um erro.
+python3 - "$OUT/production-gateway.yaml" <<'PYGW' || fail=1
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1], encoding='utf-8')) if d]
+erros = []
+pol = [d for d in docs if d.get('kind') == 'BackendTrafficPolicy']
+rotas = {d['metadata']['name']: d for d in docs if d.get('kind') == 'HTTPRoute'}
+
+if not pol:
+    erros.append("R3: sem BackendTrafficPolicy — não há hash(room)→mesmo pod")
+else:
+    ch = (pol[0].get('spec', {}).get('loadBalancer') or {}).get('consistentHash') or {}
+    if ch.get('type') != 'QueryParams':
+        erros.append(f"R3: consistentHash.type={ch.get('type')}, esperado QueryParams")
+    if [q.get('name') for q in ch.get('queryParams') or []] != ['room']:
+        erros.append(f"R3: o hash não é por `room`: {ch.get('queryParams')}")
+    alvos = [(t.get('kind'), t.get('name')) for t in pol[0]['spec'].get('targetRefs') or []]
+    if ('HTTPRoute', 'delonix-ws') not in alvos:
+        erros.append(f"R3: a política não se cola à rota do /ws: {alvos}")
+
+ws = rotas.get('delonix-ws')
+if not ws:
+    erros.append("R3: falta a HTTPRoute dedicada ao /ws")
+else:
+    destinos = [b.get('name') for r in ws['spec']['rules'] for b in r.get('backendRefs') or []]
+    if destinos != ['delonix-server-ws']:
+        erros.append(f"R3: o /ws não usa o Service dedicado: {destinos}")
+
+ger = rotas.get('delonix-meet')
+if ger:
+    caminhos = [m['path']['value'] for r in ger['spec']['rules'] for m in r.get('matches') or []]
+    if '/ws' in caminhos:
+        erros.append("R3: o /ws entrou na rota geral — a política de afinidade não se lhe aplica")
+    if '/api/public/extension-provisioning' not in caminhos:
+        erros.append("R278: falta o caminho do resgate do QR")
+    # ADR-0006 §3: as portas internas nunca são servidas de fora
+    portas = [b.get('port') for r in ger['spec']['rules'] for b in r.get('backendRefs') or []]
+    for proibida in (8181, 9180):
+        if proibida in portas:
+            erros.append(f"ADR-0006 §3: a porta interna {proibida} está exposta na rota")
+
+for e in erros:
+    print("✗ " + e)
+sys.exit(1 if erros else 0)
+PYGW
+[ "$fail" = 0 ] && echo "  ✓ Gateway API: afinidade por sala por ConsistentHash(room), /ws em Service dedicado, portas internas fora"
+
 [ "$fail" = 0 ] || exit 1
 
 if [ "${DRYRUN:-0}" = "1" ]; then

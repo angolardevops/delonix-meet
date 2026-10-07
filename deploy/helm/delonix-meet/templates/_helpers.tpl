@@ -214,6 +214,40 @@ capabilities:
 {{- end -}}
 {{- end -}}
 
+{{- /* gateway api — exclusivo do ingress, e com duas perdas que têm de ser reconhecidas */ -}}
+{{- if and $v.ingress.enabled $v.gateway.enabled -}}
+{{- $e = append $e "ingress.enabled e gateway.enabled são exclusivos: o cluster serve por Ingress OU por Gateway API, e dois caminhos de entrada para o mesmo host é tráfego a ir por onde ninguém escolheu" -}}
+{{- end -}}
+{{- if and $prod (not $v.ingress.enabled) (not $v.gateway.enabled) -}}
+{{- $e = append $e "entrada: em produção liga ingress.enabled ou gateway.enabled — sem um deles o host não é servido de fora" -}}
+{{- end -}}
+{{- if $v.gateway.enabled -}}
+{{- if not (has $v.gateway.mode (list "own" "attach")) -}}
+{{- $e = append $e (printf "gateway.mode=%s: é «own» (Gateway neste namespace) ou «attach» (colar-se a um existente)" $v.gateway.mode) -}}
+{{- end -}}
+{{- if and (eq $v.gateway.mode "own") (not $v.gateway.className) -}}
+{{- $e = append $e "gateway.className: em mode=own o Gateway precisa de uma GatewayClass (no ngola-lda chama-se «delonix»)" -}}
+{{- end -}}
+{{- if and (eq $v.gateway.mode "attach") (not $v.gateway.parentRef.name) -}}
+{{- $e = append $e "gateway.parentRef.name: em mode=attach indica o Gateway a que as rotas se colam — e confirma que ele aceita rotas deste namespace (allowedRoutes), senão as rotas ficam Accepted=False sem servir nada" -}}
+{{- end -}}
+{{- if and $prod (eq $v.gateway.mode "own") (not $v.gateway.tls.certificateRefName) (not $v.gateway.tls.clusterIssuer) -}}
+{{- $e = append $e "gateway.tls: em produção indica gateway.tls.clusterIssuer (cert-manager com --enable-gateway-api) ou gateway.tls.certificateRefName — sem um deles o Gateway só tem listener HTTP" -}}
+{{- end -}}
+{{- if and $v.gateway.tls.certificateRefName $v.gateway.tls.clusterIssuer -}}
+{{- $e = append $e "gateway.tls.certificateRefName e gateway.tls.clusterIssuer são exclusivos" -}}
+{{- end -}}
+{{- if not (has $v.gateway.affinity.implementation (list "envoy" "none")) -}}
+{{- $e = append $e (printf "gateway.affinity.implementation=%s: é «envoy» ou «none»" $v.gateway.affinity.implementation) -}}
+{{- end -}}
+{{- if and $prod (eq $v.gateway.affinity.implementation "none") -}}
+{{- $e = append $e "gateway.affinity.implementation=none em produção: sem a BackendTrafficPolicy não há hash(room)→mesmo pod, os pares de uma sala caem em pods diferentes e o SFU em memória parte-se — é a regressão R3, «media num só sentido» (ADR-0001). Com outra implementação de Gateway API, arranja o equivalente ANTES de pôr isto a none" -}}
+{{- end -}}
+{{- if and $prod (not $v.gateway.acceptProvisioningInAccessLog) -}}
+{{- $e = append $e "gateway.acceptProvisioningInAccessLog: em Gateway API o registo de acessos é do GATEWAY e não da rota, logo o caminho /api/public/extension-provisioning — que leva um bilhete de uso único (R278) — vai para o log. O Ingress tinha uma rota dedicada só para o desligar e isso não tem equivalente. Põe true para reconhecer, ou usa ingress.enabled" -}}
+{{- end -}}
+{{- end -}}
+
 {{- if $e -}}
 {{- fail (printf "\n\ndelonix-meet: a configuração foi recusada (%d):\n  - %s\n" (len $e) (join "\n  - " $e)) -}}
 {{- end -}}
