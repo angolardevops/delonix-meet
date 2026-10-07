@@ -26,7 +26,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DB_HOST=${1:?uso: k8s-app-secrets.sh <host-da-base> [namespace]}
-NS=${2:-${NS:-delonix-meet}}
+NS=${2:-${NS:-ngolacloud-meet}}
 
 [ -f .env ] || { echo "✗ falta o .env — corre «make bootstrap»" >&2; exit 1; }
 set -a
