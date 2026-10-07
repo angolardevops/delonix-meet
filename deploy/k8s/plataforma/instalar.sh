@@ -97,6 +97,20 @@ else
   printf "    os HTTPRoutes são trabalho à parte (ADR-0021, §«o que isto NÃO decide»).\n"
 fi
 
+# O Secret do MinIO nasce em $NS (é lá que a aplicação o lê), mas o MinIO
+# instala-se no namespace `minio` e o Loki/Tempo leem-no em `observabilidade`.
+# UM SECRET NÃO SE LÊ DE OUTRO NAMESPACE: sem esta cópia os pods do MinIO ficam
+# em ContainerCreating com `FailedMount: secret not found` — que não é um erro
+# da instalação, é um pod preso em silêncio. Medido a 2026-10-07.
+passo "o Secret do MinIO onde ele é lido (minio, observabilidade)"
+kubectl get ns minio >/dev/null 2>&1 || kubectl create ns minio
+for alvo in minio observabilidade; do
+  kubectl -n "$NS" get secret meet-minio-credenciais -o json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["metadata"]; d["metadata"]={"name":m["name"],"namespace":"'"$alvo"'"}; print(json.dumps(d))' \
+    | kubectl apply -f - >/dev/null
+  ok "meet-minio-credenciais em $alvo"
+done
+
 passo "StorageClass do MinIO (uma réplica — o MinIO já faz erasure coding)"
 kubectl apply -f storageclass-minio.yaml
 ok "longhorn-minio"
@@ -121,8 +135,10 @@ helm upgrade --install minio bitnami/minio \
 ok "MinIO, com os buckets meet-gravacoes e meet-backups"
 
 passo "Redis (Sentinel, COM autenticação)"
+# O `redis-values.yaml` também pede `metrics.serviceMonitor.enabled: true` — o
+# mesmo CRD em falta que o MinIO. A primeira passagem desliga-o igualmente.
 helm upgrade --install redis bitnami/redis \
-  -n "$NS" -f redis-values.yaml --wait --timeout 10m
+  -n "$NS" -f redis-values.yaml "${SM_EXTRA[@]}" --wait --timeout 10m
 ok "Redis"
 
 passo "CloudNativePG (operador)"

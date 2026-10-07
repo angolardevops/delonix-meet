@@ -17,6 +17,18 @@
 mode: distributed
 replicas: 4
 
+# A consola web fica DESLIGADA, e não é por gosto: a imagem que o chart lhe
+# pinta — `docker.io/bitnami/minio-object-browser:2.0.2-debian-12-r3` —
+# devolve 404 no Docker Hub (verificado por API a 2026-10-07). É a mudança de
+# catálogo da Bitnami de 2025: as imagens gratuitas passaram para
+# `bitnamilegacy` e o `bitnami/*` público deixou de servir tags versionadas.
+#
+# O Meet fala com o MinIO pela API (porta 9000), não pela consola. Ligá-la
+# exige decidir de onde vêm as imagens — ver o README §«de onde vêm as
+# imagens».
+console:
+  enabled: false
+
 auth:
   existingSecret: meet-minio-credenciais
   rootUserSecretKey: ACCESS_KEY_ID
