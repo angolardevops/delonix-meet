@@ -8,7 +8,7 @@
 //! - a fila, a rota e a idempotência são as do `sms.rs` (`plan` + `insert`).
 //!
 //! O lembrete não tem daemon próprio: é um passo do worker de SMS que já existe
-//! (`sms::spawn_worker`), e a reivindicação é atómica na base — dois pods não
+//! (`sms::levanta_filas`), e a reivindicação é atómica na base — dois pods não
 //! lembram a mesma reunião duas vezes.
 
 use chrono::{DateTime, FixedOffset, Utc};

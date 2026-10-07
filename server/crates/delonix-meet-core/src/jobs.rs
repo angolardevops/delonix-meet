@@ -153,10 +153,10 @@ impl Failure {
 
 /// Posse de um trabalho em curso: curta e renovada por quem o detém.
 ///
-/// A conta que importa, e que já se errou uma vez (R309): a reserva **não** se
-/// dimensiona pelo pior caso da ferramenta. Uma reserva de setenta e cinco
-/// minutos fazia o nó seguinte esperá-la inteira depois de um rollout — pior do
-/// que o problema que resolvia. É curta, e quem a tem empurra-a para a frente
+/// A conta que importa, e que já se errou uma vez: a reserva **não** se
+/// dimensiona pelo pior caso da ferramenta. Uma reserva dimensionada pelo tecto
+/// de um ffmpeg (setenta e cinco minutos) fazia o nó seguinte esperá-la inteira
+/// depois de um rollout — pior do que o problema que resolvia. É curta, e quem a tem empurra-a para a frente
 /// com [`Lease::renew_every`] enquanto vive; morto o processo, ninguém a renova.
 #[derive(Clone, Copy, Debug)]
 pub struct Lease {
@@ -248,7 +248,8 @@ mod tests {
 
     #[test]
     fn a_reserva_renova_se_quatro_vezes_e_nunca_em_rajada() {
-        // A lição da R309: curta e renovada, nunca dimensionada pelo pior caso.
+        // A lição: curta e renovada, nunca dimensionada pelo pior caso da
+        // ferramenta que corre o trabalho.
         let l = Lease::minutes(3);
         assert_eq!(l.renew_every(), Duration::from_secs(45));
         assert!(l.duration.as_secs() / l.renew_every().as_secs() >= 4);

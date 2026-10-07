@@ -16,18 +16,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use delonix_meet_core::jobs::{Lease, Queue, Retry};
+use delonix_meet_core::jobs::{Queue, Retry};
 use tokio_util::sync::CancellationToken;
 
-/// Uma fila montada: a declaração, a política e o ritmo.
+/// Uma fila montada: a declaração e a política.
+///
+/// Não leva a posse (`Lease`) nem o ritmo: o ritmo é do `levanta`, e a posse só
+/// entra quando a primeira fila que a renova passar por aqui (a composição e a
+/// transcrição, que ainda não migraram). Um campo que ninguém lê é uma porta
+/// sem consumidor, e a `delonix-meet-backend` é explícita sobre isso.
 pub struct Worker {
     pub queue: Queue,
     pub retry: Retry,
-    /// A posse de um trabalho em curso. `None` numa fila cujo trabalho é
-    /// instantâneo e não precisa de ser renovado (uma marca-e-esquece).
-    pub lease: Option<Lease>,
-    /// De quanto em quanto tempo se procura trabalho novo.
-    pub every: Duration,
 }
 
 /// Corre `uma_volta` a cada `every` até o token ser cancelado.
