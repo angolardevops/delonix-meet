@@ -19,6 +19,9 @@ use aes_gcm::{
     aead::{Aead, Payload},
     Aes256Gcm, KeyInit,
 };
+use delonix_meet_domain::content::composition::{
+    self as compose_rules, ComposeManifest, ComposeTrack,
+};
 use std::{
     io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -837,6 +840,17 @@ impl RecTrackMeta {
     pub fn starts_at_ms(&self) -> u64 {
         self.first.get().unwrap_or(self.offset_ms)
     }
+
+    /// A pista como vai no manifesto: o `starts_at_ms` já resolvido. É a ÚNICA
+    /// passagem de memória para manifesto — o `starts_at_ms()` acima, com o seu
+    /// fallback, fica coberto por quem testa a composição.
+    pub fn to_compose(&self) -> ComposeTrack {
+        ComposeTrack {
+            path: self.path.clone(),
+            kind: self.kind.clone(),
+            starts_at_ms: self.starts_at_ms(),
+        }
+    }
 }
 
 /// Sessão de gravação de uma sala.
@@ -853,6 +867,23 @@ pub struct RecordingSession {
 }
 
 impl RecordingSession {
+    /// O manifesto desta sessão: o que a composição precisa de saber sem a
+    /// sessão em memória. Guardado na linha `recordings` por
+    /// `insert_processing`, e é o que faz a composição ser retomável.
+    ///
+    /// `starts_at_ms()` resolve-se AQUI: o instante do primeiro pacote de cada
+    /// pista é um dado de memória, e sem ele guardado o `-itsoffset` de uma
+    /// segunda tentativa não daria o mesmo resultado.
+    pub fn manifest(&self) -> ComposeManifest {
+        ComposeManifest {
+            dir: self.dir.clone(),
+            tracks: self.tracks.iter().map(RecTrackMeta::to_compose).collect(),
+            expected_ms: self.started.elapsed().as_millis() as i64,
+            duration_secs: i32::try_from(self.started.elapsed().as_secs()).ok(),
+            by_user: self.by_user,
+        }
+    }
+
     /// `recordings_dir` vem de `state.config.recordings_dir` (lido uma vez no arranque).
     pub async fn new(
         by_user: Uuid,
@@ -944,20 +975,100 @@ impl RecordingSession {
 
 /// Compõe a gravação num único webm (em background) e insere-a na biblioteca.
 pub fn finalize(state: Arc<AppState>, room_id: Uuid, session: RecordingSession) {
+    let manifest = session.manifest();
     tokio::spawn(async move {
-        // A linha nasce JÁ, em `processing`: quem parou a gravação vê-a na
-        // biblioteca a compor, com progresso, em vez de um vazio de minutos.
-        let rec_id = insert_processing(&state, room_id, &session).await;
-        if let Err(e) = finalize_inner(&state, room_id, &session, rec_id).await {
-            tracing::error!(%room_id, error = %e, "server recording finalize failed");
-            // A falha passa a ser VISÍVEL. Antes ficava só aqui, o directório
-            // temporário era apagado, e a biblioteca não mostrava nada — do
-            // lado de quem carregou em «gravar» e viu o indicador aceso a
-            // reunião inteira, isso é indistinguível de nunca ter gravado.
-            registar_falha(&state, room_id, &session, rec_id, &e).await;
-        }
-        let _ = tokio::fs::remove_dir_all(&session.dir).await;
+        // A linha nasce JÁ, em `processing`, COM o manifesto e a primeira
+        // tentativa reservada: quem parou a gravação vê-a na biblioteca a
+        // compor, e se este processo morrer a seguir outro retoma de onde
+        // ficou (`resume_due`) em vez de a dar por perdida.
+        let rec_id = insert_processing(&state, room_id, &session, &manifest).await;
+        compose_once(&state, room_id, &manifest, rec_id).await;
     });
+}
+
+/// Uma passagem de composição: compõe, e em caso de falha decide se a gravação
+/// volta à fila ou se fica `failed`. É o corpo partilhado pelo primeiro
+/// `finalize` e por cada retoma de `resume_due` — sem isto, a retoma era uma
+/// cópia das regras de falha, que é o que a catraca da arquitectura persegue.
+async fn compose_once(
+    state: &Arc<AppState>,
+    room_id: Uuid,
+    manifest: &ComposeManifest,
+    rec_id: Option<Uuid>,
+) {
+    match finalize_inner(state, room_id, manifest, rec_id).await {
+        Ok(()) => {
+            // Só o caminho feliz apaga os segmentos. Uma falha que vai ser
+            // repetida PRECISA deles — apagá-los era o que fazia de qualquer
+            // falha uma perda definitiva.
+            let _ = tokio::fs::remove_dir_all(&manifest.dir).await;
+        }
+        Err(e) => {
+            tracing::error!(%room_id, error = %e, "server recording finalize failed");
+            let tentativas = match rec_id {
+                Some(id) => attempts_so_far(state, id).await,
+                // Sem linha não há contador: não se repete o que não se conta.
+                None => i32::MAX,
+            };
+            let repetivel = compose_rules::is_retryable(&e.to_string());
+            if compose_rules::should_retry(repetivel, tentativas)
+                && dir_ainda_existe(manifest).await
+            {
+                // Larga a reserva e MANTÉM `processing`: a próxima volta do
+                // varredor pega nela. Os segmentos ficam.
+                if let Some(id) = rec_id {
+                    liberar_reserva(state, id, &e).await;
+                }
+                tracing::warn!(%room_id, tentativas, "composição falhou — volta à fila");
+                return;
+            }
+            // A falha passa a ser VISÍVEL. Antes ficava só no log, o
+            // directório temporário era apagado, e a biblioteca não mostrava
+            // nada — do lado de quem carregou em «gravar» e viu o indicador
+            // aceso a reunião inteira, isso é indistinguível de nunca ter
+            // gravado.
+            registar_falha(state, room_id, manifest, rec_id, &e).await;
+            let _ = tokio::fs::remove_dir_all(&manifest.dir).await;
+        }
+    }
+}
+
+/// Quantas tentativas esta gravação já gastou. `i32::MAX` se não se souber —
+/// não se repete o que não se consegue contar.
+async fn attempts_so_far(state: &Arc<AppState>, rec_id: Uuid) -> i32 {
+    sqlx::query_scalar::<_, i32>("SELECT compose_attempts FROM recordings WHERE id = $1")
+        .bind(rec_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(i32::MAX)
+}
+
+/// Os segmentos ainda estão no disco? Num pod novo com disco efémero não
+/// estão, e aí retomar é impossível — mais vale falhar depressa e dizê-lo.
+async fn dir_ainda_existe(manifest: &ComposeManifest) -> bool {
+    tokio::fs::metadata(&manifest.dir)
+        .await
+        .map(|m| m.is_dir())
+        .unwrap_or(false)
+}
+
+/// Larga a reserva sem fechar a gravação: fica `processing` e reivindicável.
+/// O `failure_reason` escreve-se mesmo assim — quem está a olhar para o
+/// progresso merece saber que houve um tropeção, e a próxima tentativa
+/// reescreve-o.
+async fn liberar_reserva(state: &Arc<AppState>, rec_id: Uuid, erro: &anyhow::Error) {
+    let _ = sqlx::query(
+        "UPDATE recordings
+            SET compose_lease_token = NULL, compose_lease_expires_at = NULL,
+                progress_pct = 0, progress_at = now(), failure_reason = $2
+          WHERE id = $1 AND status = 'processing'",
+    )
+    .bind(rec_id)
+    .bind(causa_legivel(erro))
+    .execute(&state.db)
+    .await;
 }
 
 /// O que o gravador precisa de saber da sala.
@@ -988,23 +1099,33 @@ fn recording_filename(code: &str) -> String {
     format!("Reunião {code} — servidor — {stamp}.webm")
 }
 
-/// Insere a gravação em `processing`. `None` se a base falhar — a composição
-/// segue na mesma e a linha é inserida no fim, como antes.
+/// Insere a gravação em `processing` COM o manifesto e a primeira tentativa já
+/// reservada. `None` se a base falhar — a composição segue na mesma e a linha é
+/// inserida no fim, como antes (mas então não é retomável: sem linha não há
+/// manifesto).
 async fn insert_processing(
     state: &Arc<AppState>,
     room_id: Uuid,
     session: &RecordingSession,
+    manifest: &ComposeManifest,
 ) -> Option<Uuid> {
     let info = room_rec_info(state, room_id).await;
+    let lease = compose_rules::lease_duration(state.config.ffmpeg_timeout_secs);
     let r: Result<(Uuid,), _> = sqlx::query_as(
         "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status,
-                                 progress_pct, progress_at, kind)
-         VALUES ($1, $2, $3, 0, 'processing', 0, now(), $4) RETURNING id",
+                                 progress_pct, progress_at, kind,
+                                 compose_manifest, compose_lease_token,
+                                 compose_lease_expires_at, compose_attempts)
+         VALUES ($1, $2, $3, 0, 'processing', 0, now(), $4,
+                 $5::jsonb, $6, now() + make_interval(secs => $7), 1) RETURNING id",
     )
     .bind(room_id)
     .bind(session.by_user)
     .bind(recording_filename(&info.code))
     .bind(crate::recordings::kind_from_room_format(&info.format))
+    .bind(serde_json::to_string(manifest).unwrap_or_else(|_| "null".into()))
+    .bind(delonix_meet_core::crypto::random_hex(24))
+    .bind(lease.as_secs() as f64)
     .fetch_one(&state.db)
     .await;
     match r {
@@ -1132,6 +1253,162 @@ where
 /// E as presas em `transcribing` sem sinal de vida há 6 h voltam a `ready`
 /// (há ficheiro; a transcrição simplesmente não acabou): sem ai-worker vivo
 /// que as reclame, ficavam a dizer «a transcrever» para sempre.
+/// **Retoma as composições abandonadas.** Devolve quantas retomou.
+///
+/// É o que faltava: uma gravação em `processing` com manifesto e sem reserva em
+/// vigor é trabalho que alguém começou e não acabou — o pod morreu, o rollout
+/// levou-o, ou a tentativa anterior falhou de forma repetível. Reivindica-se
+/// com `FOR UPDATE SKIP LOCKED` (dois pods nunca pegam na mesma) e compõe-se
+/// outra vez a partir do manifesto.
+///
+/// Corre em TODOS os nós, como o `retry_due` dos webhooks. O limite por volta
+/// é baixo de propósito: a composição é cara em CPU e as vagas são repartidas
+/// por inquilino (`fair_slots`) — encher a fila de uma vez não a faria andar
+/// mais depressa, só atrasaria as chamadas vivas do mesmo pod.
+pub async fn resume_due(state: &Arc<AppState>) -> usize {
+    const RESUME_BATCH: i64 = 2;
+    let lease = compose_rules::lease_duration(state.config.ffmpeg_timeout_secs);
+    let claimed: Vec<(Uuid, Uuid, serde_json::Value, i32)> = match sqlx::query_as(
+        "UPDATE recordings r
+            SET compose_lease_token = md5(random()::text || clock_timestamp()::text),
+                compose_lease_expires_at = now() + make_interval(secs => $1),
+                compose_attempts = r.compose_attempts + 1,
+                progress_at = now()
+          WHERE r.id IN (
+                SELECT id FROM recordings
+                 WHERE status = 'processing'
+                   AND compose_manifest IS NOT NULL
+                   AND compose_attempts < $2
+                   AND (compose_lease_expires_at IS NULL
+                        OR compose_lease_expires_at < now())
+                 ORDER BY created_at
+                 FOR UPDATE SKIP LOCKED
+                 LIMIT $3)
+         RETURNING r.id, r.room_id, r.compose_manifest, r.compose_attempts",
+    )
+    .bind(lease.as_secs() as f64)
+    .bind(compose_rules::MAX_ATTEMPTS)
+    .bind(RESUME_BATCH)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "retoma de composições: reivindicação falhou");
+            return 0;
+        }
+    };
+    let mut retomadas = 0;
+    for (rec_id, room_id, raw, tentativa) in claimed {
+        let manifest: ComposeManifest = match serde_json::from_value(raw) {
+            Ok(m) => m,
+            Err(e) => {
+                // Manifesto que não se lê (de uma versão anterior do formato):
+                // não se retoma às cegas, fecha-se com a causa.
+                tracing::warn!(%rec_id, error = %e, "retoma: manifesto ilegível");
+                let _ = sqlx::query(
+                    "UPDATE recordings SET status = 'failed', compose_manifest = NULL,
+                            compose_lease_token = NULL, compose_lease_expires_at = NULL,
+                            progress_pct = NULL, progress_at = NULL,
+                            failure_reason = $2
+                      WHERE id = $1 AND status = 'processing'",
+                )
+                .bind(rec_id)
+                .bind(FALHA_INTERROMPIDA)
+                .execute(&state.db)
+                .await;
+                continue;
+            }
+        };
+        if !dir_ainda_existe(&manifest).await {
+            // Num pod novo com disco efémero os segmentos não viajaram. É uma
+            // perda real: dizê-la depressa vale mais do que tentar três vezes
+            // o que não pode funcionar.
+            tracing::warn!(%rec_id, dir = %manifest.dir.display(), "retoma: segmentos já não existem");
+            let _ = sqlx::query(
+                "UPDATE recordings SET status = 'failed', compose_manifest = NULL,
+                        compose_lease_token = NULL, compose_lease_expires_at = NULL,
+                        progress_pct = NULL, progress_at = NULL, failure_reason = $2
+                  WHERE id = $1 AND status = 'processing'",
+            )
+            .bind(rec_id)
+            .bind(FALHA_SEGMENTOS_PERDIDOS)
+            .execute(&state.db)
+            .await;
+            continue;
+        }
+        tracing::info!(%rec_id, %room_id, tentativa, "retoma de composição");
+        compose_once(state, room_id, &manifest, Some(rec_id)).await;
+        retomadas += 1;
+    }
+    retomadas
+}
+
+/// Apaga os directórios `tmp-*` que já não pertencem a nenhuma composição.
+///
+/// Antes, o `remove_dir_all` só corria no caminho feliz: cada processo morto a
+/// meio deixava os segmentos RTP no volume para sempre. Agora a composição
+/// retomável PRECISA deles enquanto a linha viver — por isso a regra é: apaga-se
+/// o que nenhuma gravação em `processing` reclama no manifesto, e só depois de
+/// uma folga que cubra a reserva mais longa.
+pub async fn sweep_orphan_segments(state: &Arc<AppState>) -> u64 {
+    let raiz = &state.config.recordings_dir;
+    let mut dir = match tokio::fs::read_dir(raiz).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(error = %e, "varredura de segmentos: não foi possível ler o directório");
+            return 0;
+        }
+    };
+    // Os que ainda têm dono. Uma consulta só, não uma por directório.
+    let vivos: Vec<String> = sqlx::query_scalar(
+        "SELECT compose_manifest->>'dir' FROM recordings
+          WHERE status = 'processing' AND compose_manifest IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    // A folga: a reserva mais longa mais uma hora. Um directório mais novo do
+    // que isto pode pertencer a uma composição a arrancar neste instante, cuja
+    // linha ainda não foi escrita.
+    let folga = compose_rules::lease_duration(state.config.ffmpeg_timeout_secs)
+        + std::time::Duration::from_secs(3600);
+    let mut apagados = 0;
+    while let Ok(Some(e)) = dir.next_entry().await {
+        let path = e.path();
+        if !path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("tmp-"))
+        {
+            continue;
+        }
+        if vivos.iter().any(|d| std::path::Path::new(d) == path) {
+            continue;
+        }
+        let recente = e
+            .metadata()
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|idade| idade < folga);
+        if recente {
+            continue;
+        }
+        if tokio::fs::remove_dir_all(&path).await.is_ok() {
+            tracing::info!(dir = %path.display(), "segmentos órfãos apagados");
+            apagados += 1;
+        }
+    }
+    apagados
+}
+
+/// As duas causas que uma retoma pode ter de escrever. Texto para pessoas: o
+/// detalhe técnico fica no log, onde serve a quem opera.
+const FALHA_INTERROMPIDA: &str = "O processamento foi interrompido (o servidor reiniciou a meio) e não foi possível retomá-lo. A equipa de operação tem o detalhe no registo.";
+const FALHA_SEGMENTOS_PERDIDOS: &str = "O processamento foi interrompido e os ficheiros temporários da gravação já não estavam disponíveis para o retomar. A equipa de operação tem o detalhe no registo.";
+
 pub async fn fail_stale_processing(state: &Arc<AppState>) -> u64 {
     if let Err(e) = sqlx::query(
         "UPDATE recordings SET status = 'ready', progress_pct = NULL, progress_at = NULL
@@ -1143,13 +1420,22 @@ pub async fn fail_stale_processing(state: &Arc<AppState>) -> u64 {
     {
         tracing::warn!(error = %e, "varredura de transcrições paradas falhou");
     }
+    // Só o que a RETOMA já não vai apanhar: sem manifesto (linhas nascidas
+    // antes da 0099, ou cuja base falhou no `insert_processing`) ou com as
+    // tentativas esgotadas. Uma gravação retomável fica em `processing` de
+    // propósito — é assim que o `resume_due` a encontra —, e marcá-la `failed`
+    // aqui era o que fazia de qualquer rollout uma perda definitiva.
     let limit = state.config.ffmpeg_timeout_secs as i64 + 600;
     match sqlx::query(
         "UPDATE recordings SET status = 'failed', progress_pct = NULL,
-                failure_reason = 'O processamento foi interrompido (o servidor reiniciou a meio). A equipa de operação tem o detalhe no registo.'
-         WHERE status = 'processing' AND COALESCE(progress_at, created_at) < now() - make_interval(secs => $1)",
+                compose_lease_token = NULL, compose_lease_expires_at = NULL,
+                failure_reason = $2
+         WHERE status = 'processing' AND COALESCE(progress_at, created_at) < now() - make_interval(secs => $1)
+           AND (compose_manifest IS NULL OR compose_attempts >= $3)",
     )
     .bind(limit as f64)
+    .bind(FALHA_INTERROMPIDA)
+    .bind(compose_rules::MAX_ATTEMPTS)
     .execute(&state.db)
     .await
     {
@@ -1215,14 +1501,18 @@ fn causa_legivel(e: &anyhow::Error) -> &'static str {
 async fn registar_falha(
     state: &Arc<AppState>,
     room_id: Uuid,
-    session: &RecordingSession,
+    manifest: &ComposeManifest,
     rec_id: Option<Uuid>,
     erro: &anyhow::Error,
 ) {
     if let Some(id) = rec_id {
         let r = sqlx::query(
+            // O manifesto e a reserva saem: a decisão de não repetir já foi
+            // tomada em `compose_once`, e os segmentos são apagados a seguir.
             "UPDATE recordings SET status = 'failed', failure_reason = $2, size_bytes = 0,
-                    progress_pct = NULL, progress_at = NULL
+                    progress_pct = NULL, progress_at = NULL,
+                    compose_manifest = NULL, compose_lease_token = NULL,
+                    compose_lease_expires_at = NULL
              WHERE id = $1",
         )
         .bind(id)
@@ -1248,7 +1538,7 @@ async fn registar_falha(
          VALUES ($1, $2, $3, 0, 'failed', $4)",
     )
     .bind(room_id)
-    .bind(session.by_user)
+    .bind(manifest.by_user)
     .bind(&nome)
     .bind(causa_legivel(erro))
     .execute(&state.db)
@@ -1328,21 +1618,23 @@ async fn run_bounded_progress(
 async fn finalize_inner(
     state: &Arc<AppState>,
     room_id: Uuid,
-    session: &RecordingSession,
+    manifest: &ComposeManifest,
     rec_id: Option<Uuid>,
 ) -> anyhow::Result<()> {
-    // Duração (G4): relógio de parede desde o início da sessão até aqui, ANTES
-    // do ffmpeg — o `finalize` é chamado quando a gravação pára. Não é a
-    // duração do media (não se sonda o ficheiro com ffprobe), por isso pode
-    // divergir alguns segundos; é o que se sabe sem mais um processo.
-    let duration_secs = i32::try_from(session.started.elapsed().as_secs()).ok();
+    // Duração (G4): relógio de parede da sessão, medido quando a gravação
+    // PAROU e guardado no manifesto. Não é a duração do media (não se sonda o
+    // ficheiro com ffprobe), por isso pode divergir alguns segundos; é o que
+    // se sabe sem mais um processo. Vem do manifesto e não de um `elapsed()`
+    // porque numa retoma o relógio da sessão já não existe — e o progresso
+    // tem de ter o mesmo denominador na segunda tentativa que na primeira.
+    let duration_secs = manifest.duration_secs;
     let info = room_rec_info(state, room_id).await;
     let quality = info.quality.as_deref();
-    let expected_ms = session.started.elapsed().as_millis() as i64;
+    let expected_ms = manifest.expected_ms;
     // Tracks com conteúdo real (ficheiros ~vazios ficam de fora).
-    let mut videos: Vec<&RecTrackMeta> = Vec::new();
-    let mut audios: Vec<&RecTrackMeta> = Vec::new();
-    for t in &session.tracks {
+    let mut videos: Vec<&ComposeTrack> = Vec::new();
+    let mut audios: Vec<&ComposeTrack> = Vec::new();
+    for t in &manifest.tracks {
         let is_big = tokio::fs::metadata(&t.path)
             .await
             .map(|m| m.len() > 4096)
@@ -1364,7 +1656,7 @@ async fn finalize_inner(
         anyhow::bail!("nothing recorded");
     }
 
-    let out = session.dir.join("out.webm");
+    let out = manifest.dir.join("out.webm");
     let mut cmd = tokio::process::Command::new(&state.config.ffmpeg_bin);
     cmd.arg("-y").arg("-loglevel").arg("error");
     // `-nostdin`: sem isto o ffmpeg herda o stdin do servidor e pode ficar à
@@ -1404,7 +1696,7 @@ async fn finalize_inner(
     cmd.args(compose_args(&videos, &audios, quality, downscale_to));
     cmd.arg(&out);
 
-    tracing::info!(%room_id, tracks = session.tracks.len(), "server recording: a compor webm…");
+    tracing::info!(%room_id, tracks = manifest.tracks.len(), "server recording: a compor webm…");
     // Tecto de tempo. Um input malformado (ou um codec inesperado — ver R18)
     // pendurava o ffmpeg indefinidamente: o directório `tmp-<uuid>` ficava no
     // volume, a gravação nunca chegava à biblioteca, e não havia erro nenhum
@@ -1464,7 +1756,7 @@ async fn finalize_inner(
     // descartado e a linha fica `failed` com a causa. Um erro de leitura da
     // quota NÃO descarta a gravação (um soluço da base não pode custar uma
     // reunião); regista-se e segue.
-    match crate::usage::enforce_recording_quota(state, session.by_user, size).await {
+    match crate::usage::enforce_recording_quota(state, manifest.by_user, size).await {
         Ok(()) => {}
         Err(crate::error::ApiError::Domain(d)) if d.code == "storage.quota_exceeded" => {
             let _ = tokio::fs::remove_file(&out).await;
@@ -1494,7 +1786,7 @@ async fn finalize_inner(
                  VALUES ($1, $2, $3, 0, 'processing', $4) RETURNING id",
             )
             .bind(room_id)
-            .bind(session.by_user)
+            .bind(manifest.by_user)
             .bind(&filename)
             .bind(kind)
             .fetch_one(&state.db)
@@ -1536,9 +1828,16 @@ async fn finalize_inner(
     // (`RecordingItem.duration_secs`) e os do schema rico (`duration_ms`)
     // ficam ambos servidos, sem um a apagar o outro.
     sqlx::query(
+        // `compose_*` a NULL: a gravação saiu da fila da composição e a
+        // reserva não pode ficar a apontar para um trabalho que já acabou.
+        // O manifesto também sai — os segmentos vão ser apagados a seguir e um
+        // manifesto que aponta para um directório que já não existe só serviria
+        // para enganar quem o lesse.
         "UPDATE recordings SET size_bytes = $2, status = 'ready', progress_pct = NULL,
                 progress_at = NULL, failure_reason = NULL,
-                duration_secs = $3, width = $4, height = $5
+                duration_secs = $3, width = $4, height = $5,
+                compose_manifest = NULL, compose_lease_token = NULL,
+                compose_lease_expires_at = NULL
          WHERE id = $1",
     )
     .bind(rec_id)
@@ -1554,13 +1853,13 @@ async fn finalize_inner(
         .fetch_optional(&state.db)
         .await?
         .unwrap_or_default();
-    crate::notifications::recording_ready(state, session.by_user, rec_id, &filename, &code).await;
+    crate::notifications::recording_ready(state, manifest.by_user, rec_id, &filename, &code).await;
 
     crate::recordings::fire_recording_ready(
         state,
         crate::recordings::ReadyRecording {
             id: rec_id,
-            uploader: session.by_user,
+            uploader: manifest.by_user,
             filename: &filename,
             size,
             room_code: &info.code,
@@ -1633,8 +1932,8 @@ fn single_publisher_args(has_audio: bool, downscale_to: Option<u32>) -> Vec<Stri
 /// Um vídeo com um áudio no máximo: o vídeo vai em cópia (ou reduzido a
 /// `downscale_to` linhas). Mais do que isso: grelha e mistura.
 fn compose_args(
-    videos: &[&RecTrackMeta],
-    audios: &[&RecTrackMeta],
+    videos: &[&ComposeTrack],
+    audios: &[&ComposeTrack],
     quality: Option<&str>,
     downscale_to: Option<u32>,
 ) -> Vec<std::ffi::OsString> {
@@ -1649,8 +1948,8 @@ fn compose_args(
         // Cada pista entra no seu instante: a que começou depois leva a
         // diferença em `-itsoffset`, que vale também para o vídeo em cópia.
         let (video_ms, audio_ms) = single_publisher_shifts(
-            videos[0].starts_at_ms(),
-            audios.first().map(|a| a.starts_at_ms()),
+            videos[0].starts_at_ms,
+            audios.first().map(|a| a.starts_at_ms),
         );
         input(video_ms, &videos[0].path);
         if let Some(a) = audios.first() {
@@ -1672,7 +1971,7 @@ fn compose_args(
     let (tw, th) = grid_tile(quality, n);
     let mut fc = String::new();
     for (i, v) in videos.iter().enumerate() {
-        fc.push_str(&grid_cell_chain(i, tw, th, v.starts_at_ms()));
+        fc.push_str(&grid_cell_chain(i, tw, th, v.starts_at_ms));
     }
     let vout = if n > 1 {
         let layout = (0..n)
@@ -1689,7 +1988,7 @@ fn compose_args(
     } else {
         ""
     };
-    let starts: Vec<u64> = audios.iter().map(|a| a.starts_at_ms()).collect();
+    let starts: Vec<u64> = audios.iter().map(|a| a.starts_at_ms).collect();
     let (afc, aout) = audio_mix_graph(n, &starts);
     fc.push_str(&afc);
     args.push("-filter_complex".into());
@@ -3548,17 +3847,24 @@ mod tests {
 
     /// Os metadados de uma pista que começou aos `comeca_ms` da sessão (e cujo
     /// writer tinha sido ligado aos `ligada_ms`).
-    fn pista(path: &str, kind: &str, ligada_ms: u64, comeca_ms: u64) -> RecTrackMeta {
+    /// Uma pista como a composição a vê. Passa pela MESMA conversão da
+    /// produção (`RecTrackMeta::to_compose`), para que o fallback de
+    /// `starts_at_ms()` — pista ligada mas sem pacote nenhum — continue a ser
+    /// o que estes testes exercitam.
+    fn pista(path: &str, kind: &str, ligada_ms: u64, comeca_ms: u64) -> ComposeTrack {
         let first = FirstPacket::new(Instant::now());
-        first
-            .at_ms
-            .store(comeca_ms, std::sync::atomic::Ordering::Relaxed);
+        if comeca_ms > 0 {
+            first
+                .at_ms
+                .store(comeca_ms, std::sync::atomic::Ordering::Relaxed);
+        }
         RecTrackMeta {
             path: PathBuf::from(path),
             kind: kind.into(),
             offset_ms: ligada_ms,
             first,
         }
+        .to_compose()
     }
 
     fn textos(args: &[std::ffi::OsString]) -> Vec<String> {
@@ -3817,8 +4123,9 @@ mod tests {
     /// Os argumentos de produção para as pistas de `s`, como o `finalize_inner`
     /// os pede.
     fn args_de_producao(s: &RecordingSession) -> Vec<std::ffi::OsString> {
-        let de = |audio: bool| -> Vec<&RecTrackMeta> {
-            s.tracks
+        let pistas: Vec<ComposeTrack> = s.tracks.iter().map(RecTrackMeta::to_compose).collect();
+        let de = |audio: bool| -> Vec<&ComposeTrack> {
+            pistas
                 .iter()
                 .filter(|t| t.kind.ends_with("audio") == audio)
                 .collect()

@@ -99,6 +99,12 @@ pub use dial_outs::caller_of_call as dial_outs_caller_of_call;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
+/// A retoma das composições abandonadas e a varredura dos segmentos órfãos
+/// (migração 0099), expostas aos testes de integração sem abrir o módulo —
+/// pelo mesmo motivo do `webhook_retry_due` abaixo.
+pub use recorder::{
+    resume_due as recording_resume_due, sweep_orphan_segments as recording_sweep_orphan_segments,
+};
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
@@ -1812,12 +1818,21 @@ pub async fn run() {
             loop {
                 ticker.tick().await;
                 recorder::retention_sweep(&state).await;
+                // Os `tmp-*` que nenhuma composição reclama. Antes acumulavam
+                // para sempre: só o caminho feliz os apagava.
+                match recorder::sweep_orphan_segments(&state).await {
+                    0 => {}
+                    n => tracing::info!(apagados = n, "segmentos órfãos apagados"),
+                }
             }
         });
     }
 
-    // Cron: gravações — as presas em `processing` por um pod que morreu passam
-    // a `failed`, e as transcritas ganham capítulos automáticos (LLM local).
+    // Cron: gravações — as composições abandonadas por um pod que morreu são
+    // RETOMADAS (o primeiro `tick` é imediato, que é o que importa: o caso
+    // normal é este processo acabar de arrancar depois de um rollout que
+    // interrompeu uma composição); só depois se fecham as que já não têm
+    // retoma possível, e as transcritas ganham capítulos automáticos.
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -1825,6 +1840,10 @@ pub async fn run() {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 ticker.tick().await;
+                match recorder::resume_due(&state).await {
+                    0 => {}
+                    n => tracing::info!(retomadas = n, "composições retomadas"),
+                }
                 recorder::fail_stale_processing(&state).await;
                 recording_chapters::auto_chapters_sweep(&state).await;
             }
@@ -2179,6 +2198,7 @@ async fn drenar(state: Arc<AppState>) {
                 segundos = inicio.elapsed().as_secs(),
                 "drain: todas as salas esvaziaram"
             );
+            esperar_composicoes(&state).await;
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -2187,6 +2207,47 @@ async fn drenar(state: Arc<AppState>) {
         restantes = state.hub.peers_ligados(),
         segundos = limite.as_secs(),
         "drain: prazo esgotado — a fechar com participantes ainda ligados"
+    );
+    esperar_composicoes(&state).await;
+}
+
+/// Dá às composições em curso o que resta do prazo de terminação.
+///
+/// O drain contava só os peers do WebSocket, e por isso toda a gravação que
+/// estivesse a compor durante um rollout morria com o pod: o ffmpeg tem
+/// `FFMPEG_TIMEOUT_SECS` (3600 s por omissão) e o drain tinha 52 s. Isto não
+/// resolve o desencontro — nem pode, o K8s manda SIGKILL aos 60 s —, resolve
+/// o caso frequente: a composição que estava quase a acabar acaba.
+///
+/// O que NÃO acaba já não se perde: a linha ficou `processing` com manifesto e
+/// a reserva expira, por isso o pod seguinte retoma-a (`recorder::resume_due`).
+/// Esta espera é uma optimização, não a garantia.
+async fn esperar_composicoes(state: &Arc<AppState>) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let em_curso = || state.metrics.recording_compose_running.load(Relaxed);
+    if em_curso() == 0 {
+        return;
+    }
+    let limite = std::time::Duration::from_secs(state.config.drain_compose_secs);
+    let inicio = std::time::Instant::now();
+    tracing::info!(
+        composicoes = em_curso(),
+        segundos = limite.as_secs(),
+        "drain: a aguardar composições em curso"
+    );
+    while inicio.elapsed() < limite {
+        if em_curso() == 0 {
+            tracing::info!(
+                segundos = inicio.elapsed().as_secs(),
+                "drain: composições terminadas"
+            );
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    tracing::warn!(
+        composicoes = em_curso(),
+        "drain: prazo esgotado — as composições em curso vão ser retomadas por outro nó"
     );
 }
 
