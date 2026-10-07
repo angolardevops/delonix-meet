@@ -25,6 +25,10 @@ spec:
         prometheus.io/port: "8180"
         prometheus.io/path: "/metrics"
     spec:
+      # Conta dedicada, sem token da API montado: o servidor não fala com o
+      # Kubernetes. Ver deploy/k8s/10-contas-e-rede.yaml.
+      serviceAccountName: delonix-server
+      automountServiceAccountToken: false
       # O SFU é in-memory por pod: dar tempo para as sessões drenarem no SIGTERM
       # (rollout/drain) em vez de cortar abruptamente. Com maxUnavailable:0 +
       # afinidade por sala, os clientes reconectam à mesma sala/pod.
