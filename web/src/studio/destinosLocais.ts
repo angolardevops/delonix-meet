@@ -19,11 +19,13 @@ export function estadoDoCartao(fase: EstadoDoDirecto['fase'], temChave: boolean)
 
 /** Contagem do cabeçalho («2 no ar · 1 sem chave»). */
 export function contagemDosDestinos(
-  destinos: readonly Pick<Destino, 'chave'>[],
+  destinos: readonly Pick<Destino, 'chave' | 'temChaveGuardada'>[],
   fase: EstadoDoDirecto['fase'],
 ): Record<EstadoDoCartao, number> {
   const r: Record<EstadoDoCartao, number> = { 'sem-chave': 0, pronto: 0, 'a-ligar': 0, 'no-ar': 0, erro: 0 }
-  for (const d of destinos) r[estadoDoCartao(fase, !!d.chave.trim())]++
+  // A chave de um destino GUARDADO não volta ao browser: contar só `chave`
+  // dizia «sem chave» a um destino configurado (ver `destinosGuardados.ts`).
+  for (const d of destinos) r[estadoDoCartao(fase, !!d.chave.trim() || !!d.temChaveGuardada)]++
   return r
 }
 

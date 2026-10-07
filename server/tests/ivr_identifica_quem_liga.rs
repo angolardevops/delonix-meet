@@ -115,7 +115,7 @@ fn errado(certo: &str) -> &'static str {
 /// O que a ponte faz ao atender a perna; devolve `(nome no censo, anónimo)`.
 async fn senta(app: &TestApp, room_id: Uuid, code: &str, ticket: Option<&str>) -> (String, bool) {
     let leg = Uuid::new_v4();
-    delonix_server::seat_phone_caller(&app.state, room_id, code, leg, ticket).await;
+    delonix_server::seat_phone_caller(&app.state, room_id, code, leg, ticket, None).await;
     let nome = app
         .state
         .hub

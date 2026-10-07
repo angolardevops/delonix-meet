@@ -8,11 +8,11 @@ import { recordingThumbnailUrl } from '../../api'
 import { thumbBackground } from './format'
 import type { RecordingView } from './recordingView'
 
-export function useThumbnail(rec: Pick<RecordingView, 'id' | 'hasThumbnail' | 'failed'>): string | null {
+export function useThumbnail(rec: Pick<RecordingView, 'id' | 'hasThumbnail' | 'hasFile'>): string | null {
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
     setUrl(null)
-    if (!rec.hasThumbnail || rec.failed) return
+    if (!rec.hasThumbnail || !rec.hasFile) return
     let live = true
     let made = ''
     recordingThumbnailUrl(rec.id)
@@ -28,7 +28,7 @@ export function useThumbnail(rec: Pick<RecordingView, 'id' | 'hasThumbnail' | 'f
       live = false
       if (made) URL.revokeObjectURL(made)
     }
-  }, [rec.id, rec.hasThumbnail, rec.failed])
+  }, [rec.id, rec.hasThumbnail, rec.hasFile])
   return url
 }
 

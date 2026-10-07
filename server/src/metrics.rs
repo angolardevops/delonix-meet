@@ -85,6 +85,11 @@ pub struct Metrics {
     /// justa do nó (zona de margem). A diferença para o total são as recusadas
     /// por o nó estar na capacidade, que não é de ninguém em particular.
     pub node_new_rooms_refused_fair_share_total: AtomicU64,
+    /// Ligações `/ws` recusadas por a conta já ter `MAX_WS_PER_USER` sockets.
+    pub ws_refused_user_cap_total: AtomicU64,
+    /// Ligações `/ws` recusadas por a organização já ter o seu tecto de
+    /// participantes concorrentes neste nó.
+    pub ws_refused_org_quota_total: AtomicU64,
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
@@ -141,11 +146,9 @@ pub struct Metrics {
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
     /// pior, e porque uma gravação corrompida em silêncio é a R18.
     pub recording_packets_dropped_total: AtomicU64,
-    /// Pacotes de áudio que a gravação descartou por chegarem com o timestamp
-    /// atrás do último escrito (a rede reordenou-os ou repetiu-os). Escritos,
-    /// somavam 24 h 51 min à pista — ver `recorder::OpusClock`. Sobe às
-    /// dezenas de cada vez que o relógio de uma origem recua de vez: é o
-    /// segundo que a pista perde até se re-ancorar.
+    /// Pacotes de áudio que a gravação não escreveu: chegaram atrasados para lá
+    /// da janela de reordenação, ou repetidos — ver `recorder::OpusTrack`. Um
+    /// atrasado dentro da janela escreve-se no sítio e não conta aqui.
     pub recording_audio_late_dropped_total: AtomicU64,
     /// Composições de gravação à espera de vaga (`FFMPEG_MAX_CONCURRENT`). Um
     /// valor que não desce é o sinal de que o nó compõe mais do que aguenta.
@@ -239,6 +242,12 @@ impl Metrics {
              # HELP delonix_node_new_rooms_refused_fair_share_total Salas novas recusadas por o inquilino já usar a sua parte justa do nó.\n\
              # TYPE delonix_node_new_rooms_refused_fair_share_total counter\n\
              delonix_node_new_rooms_refused_fair_share_total {}\n\
+             # HELP delonix_ws_refused_user_cap_total Ligações /ws recusadas por a conta ter o máximo de sockets.\n\
+             # TYPE delonix_ws_refused_user_cap_total counter\n\
+             delonix_ws_refused_user_cap_total {}\n\
+             # HELP delonix_ws_refused_org_quota_total Ligações /ws recusadas por a organização ter o tecto de participantes.\n\
+             # TYPE delonix_ws_refused_org_quota_total counter\n\
+             delonix_ws_refused_org_quota_total {}\n\
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
@@ -323,6 +332,8 @@ impl Metrics {
             self.seats_reclaimed_redis_total.load(Relaxed),
             self.node_new_rooms_refused_total.load(Relaxed),
             self.node_new_rooms_refused_fair_share_total.load(Relaxed),
+            self.ws_refused_user_cap_total.load(Relaxed),
+            self.ws_refused_org_quota_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
             g(self.ws_queue_high_water.load(Relaxed)),
             self.ws_queue_dropped_total.load(Relaxed),

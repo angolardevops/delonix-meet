@@ -650,9 +650,13 @@
   text-align: left;
   cursor: pointer;
 }
-.ed-lib__item:hover,
+.ed-lib__item:hover:not(:disabled),
 .ed-lib__item--on {
   border-color: var(--accent);
+}
+.ed-lib__item:disabled {
+  cursor: default;
+  color: var(--muted);
 }
 .ed-lib__name {
   font-weight: 600;

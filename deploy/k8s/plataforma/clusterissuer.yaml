@@ -1,0 +1,39 @@
+# O emissor dos certificados de meet.ngolacloud.com. O chart já pede
+# `letsencrypt-prod` pelo nome (values-production.yaml) — é este.
+#
+# O desafio é HTTP-01 pelo ingress: exige que o 80 de meet.ngolacloud.com
+# chegue a este cluster de fora. Se o domínio ainda não apontar para cá, o
+# certificado fica pendente e o ingress serve o certificado próprio do nginx —
+# não é avaria, é o DNS.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Trocar pelo email de quem recebe os avisos de expiração.
+    email: ops@ngolacloud.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-conta
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+---
+# O de ensaio, para experimentar sem gastar o limite do Let's Encrypt (cinco
+# certificados por domínio por semana, e esgotá-lo bloqueia sete dias).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ops@ngolacloud.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-conta
+    solvers:
+      - http01:
+          ingress:
+            class: nginx

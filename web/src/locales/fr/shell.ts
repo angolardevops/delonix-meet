@@ -1,4 +1,5 @@
 export default {
+  trilho: "Fil d'Ariane",
   saltarParaConteudo: 'Aller au contenu',
   procurar: 'Rechercher…',
   atalhoPaleta: 'Ctrl K',

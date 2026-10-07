@@ -138,12 +138,20 @@ export default function FormularioEntrada({
 
       <form className="auth-form__campos" onSubmit={submeter} data-testid="auth-form">
         {registo && (
-          <Field label={t('auth.registo.nomeOrg')} htmlFor="auth-org">
+          <Field
+            label={t('auth.registo.nomeOrg')}
+            htmlFor="auth-org"
+            hint={t('auth.registo.dicaOrg')}
+          >
+            {/* OPCIONAL (ADR-0019): em branco cria uma conta PARTICULAR, com
+                qualquer email. Com nome, é uma conta empresarial e o servidor
+                exige um domínio próprio — um email público é recusado com
+                `registration.corporate_email_required`. O `minLength` fica para
+                não deixar escrever um nome de uma letra, que o servidor recusa. */}
             <TextInput
               id="auth-org"
               name="organization"
               large
-              required
               minLength={2}
               autoComplete="organization"
               value={orgName}

@@ -11,6 +11,7 @@ import { apiErrorMessage, recordingObjectUrl } from '../../api'
 import type { RecordingLibraryItem } from '../../api'
 import { cx, Dialog, IconButton, Select, Spinner } from '../../ui/kit'
 import { BotaoEd, CartaoEd, TituloEd } from '../pecasDoEditor'
+import { hasFile, isProcessing } from '../../pages/recordings/format'
 import { recordingsFallback } from '../../pages/recordings/search'
 import { SearchBar, SearchResults } from '../../ui/search/SearchResults'
 import { useResourceSearch } from '../../ui/search/useResourceSearch'
@@ -53,7 +54,8 @@ export function Biblioteca({ onFechar, onEscolher }: { onFechar: () => void; onE
                   <button
                     type="button"
                     className="ed-lib__item"
-                    disabled={!!aImportar}
+                    // Sem ficheiro (falhada, ou ainda a compor) não há o que importar (R59).
+                    disabled={!!aImportar || !hasFile(r)}
                     onClick={async () => {
                       setAImportar(r.id)
                       try {
@@ -66,7 +68,8 @@ export function Biblioteca({ onFechar, onEscolher }: { onFechar: () => void; onE
                   >
                     <span className="ed-lib__name">{r.filename}</span>
                     <span className="dx-num dx-muted">
-                      {new Date(r.created_at).toLocaleString(i18n.language)} · {tamanhoLegivel(r.size_bytes, i18n.language)}
+                      {new Date(r.created_at).toLocaleString(i18n.language)} ·{' '}
+                      {hasFile(r) ? tamanhoLegivel(r.size_bytes, i18n.language) : isProcessing(r) ? t('recordings.estado.aProcessar') : t('recordings.estado.falhada')}
                     </span>
                     {aImportar === r.id && <Spinner label={t('editor.bin.aImportar')} />}
                   </button>

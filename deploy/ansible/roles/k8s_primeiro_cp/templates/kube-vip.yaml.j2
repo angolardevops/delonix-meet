@@ -1,0 +1,38 @@
+# kube-vip em modo ARP, como pod estático: nasce ANTES do API server e é o que
+# dá o endereço {{ k8s_vip }} aos três control-planes. Sem ele, o kubeconfig
+# apontaria para UM nó e a morte desse tirava o cluster do ar com os outros
+# dois vivos — que é o contrário de ter três.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-vip
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  containers:
+    - name: kube-vip
+      image: ghcr.io/kube-vip/kube-vip:v0.8.7
+      args: ["manager"]
+      env:
+        - { name: vip_arp, value: "true" }
+        - { name: port, value: "{{ k8s_api_porta }}" }
+        - { name: vip_interface, value: "{{ k8s_iface }}" }
+        - { name: vip_cidr, value: "32" }
+        - { name: cp_enable, value: "true" }
+        - { name: cp_namespace, value: "kube-system" }
+        - { name: vip_ddns, value: "false" }
+        - { name: svc_enable, value: "false" }   # os Services são do MetalLB
+        - { name: vip_leaderelection, value: "true" }
+        - { name: vip_leaseduration, value: "5" }
+        - { name: vip_renewdeadline, value: "3" }
+        - { name: vip_retryperiod, value: "1" }
+        - { name: address, value: "{{ k8s_vip }}" }
+        - { name: prometheus_server, value: ":2112" }
+      securityContext:
+        capabilities:
+          add: [NET_ADMIN, NET_RAW]
+      volumeMounts:
+        - { mountPath: /etc/kubernetes/admin.conf, name: kubeconfig }
+  volumes:
+    - name: kubeconfig
+      hostPath: { path: /etc/kubernetes/admin.conf }

@@ -15,11 +15,13 @@ use std::{
 };
 
 use common::TestApp;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpListener,
 };
+use tokio_tungstenite::tungstenite::Message;
 
 const ESL_PW: &str = "esl-de-teste-com-comprimento-suficiente-0123";
 
@@ -576,4 +578,240 @@ async fn sala_cifrada_e_ponte_desligada_recusam(db: sqlx::PgPool) {
     assert_eq!(st, 422, "{v}");
     assert_eq!(v["code"], "dial_out.bridge_not_configured", "{v}");
     drop(app);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_perna_de_um_dial_out_entra_com_o_nome_do_ramal_e_a_pessoa(db: sqlx::PgPool) {
+    let esl = spawn_esl().await;
+    let app = app_com_ponte(db, &esl).await;
+    let a = app.new_org("dialout-h.ao").await;
+    let colega = app.add_member(&a, "colega", "member").await;
+    let sala = app.new_room(&a, "Sala").await;
+    let code = codigo(&sala);
+    // Um ramal que é de uma PESSOA (member_id), com a etiqueta «Recepção».
+    let ext: String = sqlx::query_scalar(
+        "INSERT INTO voice_extensions
+             (org_id, extension, sip_username, sip_password_hash, sip_ha1, label, member_id)
+         VALUES ($1::uuid, '210', 'ramal_pessoa', 'x', 'x', 'Recepção', $2::uuid) RETURNING id::text",
+    )
+    .bind(a.org())
+    .bind(&colega.user_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let (st, v) = app
+        .post(&d(&code, ""), Some(&a.token), json!({"extension_id": ext}))
+        .await;
+    assert_eq!(st, 202, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    esperar_estado(&app, &a.token, &code, &id, "in_call").await;
+    let call_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT telephony_call_id FROM room_dial_outs WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let room_id: uuid::Uuid = sala["id"].as_str().unwrap().parse().unwrap();
+
+    // O que a ponte faz quando a perna atende: senta-a no censo.
+    let leg = uuid::Uuid::new_v4();
+    delonix_server::seat_phone_caller(&app.state, room_id, &code, leg, None, Some(call_id)).await;
+    let seat = app
+        .state
+        .hub
+        .seat_of(room_id, leg)
+        .expect("a perna está na sala");
+    assert!(!seat.anonymous, "já não é «Telefone» sem nome");
+    assert_eq!(seat.call_id, Some(call_id));
+    let colega_id: uuid::Uuid = colega.user_id.parse().unwrap();
+    assert_eq!(
+        app.state.hub.phone_legs_of(room_id, colega_id),
+        vec![(leg, Some(call_id))]
+    );
+    // Um `call_id` que não é de um dial-out desta sala (vem de um cabeçalho que ninguém assina)
+    // nunca se guarda: senão decidia o alvo do `hupall`.
+    let solta = uuid::Uuid::new_v4();
+    let leg2 = uuid::Uuid::new_v4();
+    delonix_server::seat_phone_caller(&app.state, room_id, &code, leg2, None, Some(solta)).await;
+    let seat2 = app.state.hub.seat_of(room_id, leg2).unwrap();
+    assert_eq!((seat2.call_id, seat2.anonymous), (None, true));
+    // Outra sala com o mesmo call_id não identifica ninguém.
+    let outra = codigo(&app.new_room(&a, "Outra").await);
+    assert!(
+        delonix_server::dial_outs_caller_of_call(&app.db, call_id, &outra)
+            .await
+            .is_none()
+    );
+}
+
+/// Espera por uma mensagem do tipo `tipo` no socket (as outras ignoram-se).
+async fn esperar_msg<S>(ws: &mut S, tipo: &str, ms: u64) -> Option<Value>
+where
+    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    let fim = tokio::time::Instant::now() + Duration::from_millis(ms);
+    loop {
+        let resto = fim.saturating_duration_since(tokio::time::Instant::now());
+        let Ok(Some(Ok(Message::Text(t)))) = tokio::time::timeout(resto, ws.next()).await else {
+            return None;
+        };
+        let v: Value = serde_json::from_str(&t).unwrap();
+        if v["type"] == tipo {
+            return Some(v);
+        }
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_mesma_pessoa_no_browser_e_ao_telefone_escolhe_onde_continuar(db: sqlx::PgPool) {
+    let esl = spawn_esl().await;
+    let app = app_com_ponte(db, &esl).await;
+    let a = app.new_org("dialout-i.ao").await;
+    let sala = app.new_room(&a, "Sala").await;
+    let code = codigo(&sala);
+    // A anfitriã tem um ramal seu (ex.: o Linphone dela) e chama-o a partir da sala.
+    let ext: String = sqlx::query_scalar(
+        "INSERT INTO voice_extensions
+             (org_id, extension, sip_username, sip_password_hash, sip_ha1, label, member_id)
+         VALUES ($1::uuid, '211', 'ramal_dela', 'x', 'x', 'Ana (Linphone)', $2::uuid) RETURNING id::text",
+    )
+    .bind(a.org())
+    .bind(&a.user_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+
+    // Ela está na sala pelo browser (WebSocket).
+    let (st, join) = app
+        .post(
+            &format!("/api/rooms/{code}/join"),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{join}");
+    let url = format!(
+        "{}/ws?token={}",
+        app.base.replacen("http", "ws", 1),
+        join["room_token"].as_str().unwrap()
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(url).await.expect("/ws");
+    assert!(esperar_msg(&mut ws, "joined", 10_000).await.is_some());
+
+    let (st, v) = app
+        .post(&d(&code, ""), Some(&a.token), json!({"extension_id": ext}))
+        .await;
+    assert_eq!(st, 202, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    esperar_estado(&app, &a.token, &code, &id, "in_call").await;
+    let call_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT telephony_call_id FROM room_dial_outs WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let room_id: uuid::Uuid = sala["id"].as_str().unwrap().parse().unwrap();
+
+    // A perna atende e senta-se na sala: o browser dela é avisado, com `can_hangup`.
+    let leg = uuid::Uuid::new_v4();
+    delonix_server::seat_phone_caller(&app.state, room_id, &code, leg, None, Some(call_id)).await;
+    let aviso = esperar_msg(&mut ws, "duplicate-device", 5_000)
+        .await
+        .expect("o browser da mesma pessoa tem de ser avisado");
+    assert_eq!(aviso["phone_id"], leg.to_string());
+    assert_eq!(aviso["can_hangup"], true);
+
+    // Outra conta da mesma organização, na mesma sala, com o id VERDADEIRO da perna: recusado.
+    let colega = app.add_member(&a, "intruso", "member").await;
+    let (st, j2) = app
+        .post(
+            &format!("/api/rooms/{code}/join"),
+            Some(&colega.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{j2}");
+    let url2 = format!(
+        "{}/ws?token={}",
+        app.base.replacen("http", "ws", 1),
+        j2["room_token"].as_str().unwrap()
+    );
+    let (mut ws2, _) = tokio_tungstenite::connect_async(url2)
+        .await
+        .expect("/ws do colega");
+    ws2.send(Message::Text(
+        json!({"type": "device-choice", "phone_id": leg, "keep": "meet"}).to_string(),
+    ))
+    .await
+    .unwrap();
+    // Quem está na sala de espera nem chega ao tratamento; quem chegasse receberia «gone».
+    // Em qualquer caso, nunca se actua na perna de outra pessoa.
+    if let Some(r2) = esperar_msg(&mut ws2, "duplicate-resolved", 1_500).await {
+        assert_eq!(
+            r2["outcome"], "gone",
+            "a perna de outra pessoa nunca se toca: {r2}"
+        );
+    }
+    assert!(
+        !esl.log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.starts_with("hupall ")),
+        "o hupall de outra pessoa nunca sai"
+    );
+
+    // Uma perna que não é dela não faz nada.
+    ws.send(Message::Text(
+        json!({"type": "device-choice", "phone_id": uuid::Uuid::new_v4(), "keep": "meet"})
+            .to_string(),
+    ))
+    .await
+    .unwrap();
+    let r = esperar_msg(&mut ws, "duplicate-resolved", 5_000)
+        .await
+        .expect("responde, para o diálogo não ficar preso");
+    assert_eq!(r["outcome"], "gone", "{r}");
+    assert!(
+        !esl.log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.starts_with("hupall ")),
+        "uma perna alheia nunca se desliga"
+    );
+
+    // «Continuar só no Meet»: a chamada que a sala fez tocar desliga-se.
+    ws.send(Message::Text(
+        json!({"type": "device-choice", "phone_id": leg, "keep": "meet"}).to_string(),
+    ))
+    .await
+    .unwrap();
+    let r = esperar_msg(&mut ws, "duplicate-resolved", 5_000)
+        .await
+        .expect("resposta");
+    assert_eq!(
+        (r["outcome"].as_str(), r["phone_id"].as_str()),
+        (Some("hung_up"), Some(leg.to_string().as_str()))
+    );
+    assert!(
+        esl.log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c == &format!("hupall NORMAL_CLEARING delonix_call_id {call_id}")),
+        "{:?}",
+        esl.log.lock().unwrap()
+    );
+
+    // «Nos dois»: nada se desliga.
+    ws.send(Message::Text(
+        json!({"type": "device-choice", "phone_id": leg, "keep": "both"}).to_string(),
+    ))
+    .await
+    .unwrap();
+    let r = esperar_msg(&mut ws, "duplicate-resolved", 5_000)
+        .await
+        .expect("resposta");
+    assert_eq!(r["outcome"], "both");
 }

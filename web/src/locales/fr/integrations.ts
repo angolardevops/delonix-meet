@@ -75,6 +75,11 @@ export default {
     testeOk: 'Connexion réussie',
     testeFalhou: 'La connexion a échoué',
     testaGravado: 'Le test utilise la configuration enregistrée : enregistrez avant de tester la nouvelle destination.',
+    objectosTitulo: 'Stockage objet',
+    objectosSub: "Configuré dans l'environnement du serveur (OBJECT_STORE_*), pas dans cette carte : les clés sont un secret du cluster.",
+    objectosAindaNao: "Les enregistrements n'y sont PAS encore — ils restent sur disque. Le test de connexion mesure déjà ce bucket.",
+    objectosBucket: 'Bucket',
+    objectosEndpoint: 'Adresse',
   },
   webhooks: {
     destinos: 'Destinations configurées',

@@ -57,6 +57,8 @@ export default {
     biblioteca: 'Bibliothèque',
     vazio: "Pas encore d'enregistrements",
     vazioDica: 'Les enregistrements des réunions et du studio apparaissent ici une fois prêts.',
+    aProcessar: 'Traitement',
+    aCompor: 'le serveur compose le fichier',
     falhou: 'Échec',
     semMedia: 'aucun média enregistré',
   },

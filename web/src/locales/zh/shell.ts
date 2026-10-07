@@ -1,4 +1,5 @@
 export default {
+  trilho: '导航路径',
   saltarParaConteudo: '跳至主要内容',
   procurar: '搜索…',
   atalhoPaleta: 'Ctrl K',

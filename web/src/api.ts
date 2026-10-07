@@ -327,7 +327,10 @@ export interface RecordingItem extends Recording {
   share_count: number
   /** RBAC: só dono + admins da org podem descarregar (os restantes só reproduzem). */
   can_download: boolean
-  /** `ready` = há ficheiro. `failed` = houve tentativa e não há nada. */
+  /**
+   * `ready` = há ficheiro. `failed` = houve tentativa e não há nada.
+   * `processing` = o servidor ainda está a compor o ficheiro (não é falha).
+   */
   status: 'ready' | 'failed' | string
   /** Causa em linguagem de utilizador, quando falhou. */
   failure_reason: string | null
@@ -394,7 +397,12 @@ export interface QuarantineRow {
   count: number
 }
 
-export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms/${code}/recordings`)
+/**
+ * As gravações de uma sala (o painel dentro da reunião), na mesma forma da
+ * biblioteca: com `status`, `failure_reason`, `progress_pct` e `can_download`,
+ * para o painel não oferecer nada sobre uma gravação sem ficheiro (R59).
+ */
+export const listRecordings = (code: string) => request<RecordingLibraryItem[]>(`/api/rooms/${code}/recordings`)
 
 export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
 
@@ -690,6 +698,52 @@ export const shareWhiteboard = (id: string, isPublic: boolean) =>
     body: JSON.stringify({ public: isPublic }),
   })
 export const whiteboardPngUrl = (id: string) => `/api/whiteboards/${id}/image`
+
+// ---------- Diagramas (o modelo EDITÁVEL; o quadro acima é o PNG) ----------
+
+/** O que a lista do servidor devolve — sem o documento. */
+export interface DiagramServerSummary {
+  id: string
+  title: string
+  notation: string
+  room_code: string
+  elements: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DiagramServerDetail extends DiagramServerSummary {
+  /** O `DiagramDoc` como o cliente o escreveu. Opaco para o servidor. */
+  doc: unknown
+}
+
+export interface DiagramSaveBody {
+  title: string
+  notation: string
+  room_code: string
+  elements: number
+  doc: unknown
+  /**
+   * O `updated_at` que este browser viu. Com ele, gravar a partir de um estado
+   * velho dá `409` em vez de escrever por cima do que outra aba gravou.
+   */
+  expected_updated_at?: string
+}
+
+export const listServerDiagrams = (signal?: AbortSignal) =>
+  request<DiagramServerSummary[]>('/api/diagrams', { signal })
+
+export const getServerDiagram = (id: string, signal?: AbortSignal) =>
+  request<DiagramServerDetail>(`/api/diagrams/${encodeURIComponent(id)}`, { signal })
+
+export const putServerDiagram = (id: string, body: DiagramSaveBody) =>
+  request<DiagramServerSummary>(`/api/diagrams/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+
+export const deleteServerDiagram = (id: string) =>
+  requestEmpty(`/api/diagrams/${encodeURIComponent(id)}`, { method: 'DELETE' })
 
 export interface Webhook {
   id: string
@@ -1136,6 +1190,15 @@ export const getPlatformSettings = () =>
 
 // ---------- Platform storage ----------
 
+/** Objectos (MinIO/S3) como o servidor os vê no AMBIENTE — nunca as chaves. */
+export interface ObjectStoreView {
+  endpoint: string
+  bucket: string
+  region: string
+  /** Hoje `false`: as gravações continuam em disco (ADR-0020). */
+  used_for_recordings: boolean
+}
+
 export interface StorageConfig {
   storage_type: 'local' | 'nfs' | 'webdav'
   nfs_server: string | null
@@ -1144,6 +1207,8 @@ export interface StorageConfig {
   webdav_user: string | null
   webdav_password_set: boolean
   webdav_path: string
+  /** Ausente quando o servidor não tem `OBJECT_STORE_*` configurado. */
+  object_store?: ObjectStoreView | null
 }
 
 export interface StorageConfigSaveReq {

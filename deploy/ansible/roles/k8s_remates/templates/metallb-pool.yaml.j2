@@ -1,0 +1,20 @@
+# O intervalo de onde saem os IP dos Services LoadBalancer. Num Proxmox não há
+# nuvem que os dê, e o coturn do Meet pede um (`coturn.service.type`).
+#
+# TEM de estar fora do que o DHCP distribui: dois donos para o mesmo endereço
+# dá um conflito que só aparece quando alguém liga um portátil.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: meet
+  namespace: metallb-system
+spec:
+  addresses: ["{{ metallb_intervalo }}"]
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: meet
+  namespace: metallb-system
+spec:
+  ipAddressPools: [meet]

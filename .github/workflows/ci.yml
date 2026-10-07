@@ -158,6 +158,18 @@ jobs:
       - name: Capacidades vendidas (nada se vende sem código por trás)
         run: bash scripts/check-capability-claims.sh
 
+      # O lint do frontend precisa das dependências; o job de fitness não as
+      # instalava porque até 2026-10-06 não havia lint nenhum para correr.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Dependências do frontend (para o lint)
+        run: npm ci --prefix web --no-audit --no-fund
+      - name: Lint do frontend (catraca — os problemas só descem)
+        run: bash scripts/check-frontend-lint.sh
+
       - name: Drift documental (módulos, migrações, versões, SQL)
         run: bash scripts/check-docs-drift.sh
 
@@ -193,6 +205,15 @@ jobs:
 
       - name: Chart Helm renderiza, recusa o inseguro e respeita ADR-0001/ADR-0006
         run: bash scripts/check-helm.sh
+
+      - name: A observabilidade aponta para coisas reais (um ServiceMonitor sem alvos é indistinguível de um produto saudável)
+        run: bash scripts/check-observabilidade.sh
+
+      - name: O Ansible da produção lê-se e os plays casam com o inventário do tofu (ADR-0020)
+        run: bash scripts/check-ansible-producao.sh
+
+      - name: Uma só crypto provider do rustls (as duas fazem QUALQUER TLS do processo entrar em panic — R308)
+        run: bash scripts/check-crypto-provider.sh
 
       - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
         run: bash scripts/check-arquitectura-catraca.sh
@@ -392,6 +413,11 @@ jobs:
           # Uma gravação que falha tem de ser VISTA — e as três vistas da
           # biblioteca não podem oferecer acções sobre ela (R59).
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # E uma que o servidor ainda está a COMPOR não é uma falhada: lê-se
+          # «a processar», com o progresso, nas mesmas vistas e sem acções. A
+          # linha entra por SQL, como o gravador a insere, porque a janela real
+          # é curta demais para um teste a apanhar.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/gravacao-a-compor.mjs
           # A REENTRADA volta ao CI (R98). Esteve fora seis rondas por falhar só
           # no runner — e a causa era o PRODUTO: duas renovações de sessão
           # concorrentes revogavam-se uma à outra e punham o utilizador na
@@ -417,6 +443,13 @@ jobs:
           # admitir → retrato remoto. É a promessa central do produto e não
           # havia teste nenhum a cobri-la ponta a ponta.
           APP=http://localhost:5174 node web/e2e/reuniao.mjs
+          # O painel de gravações DENTRO da sala é mais uma vista da gravação
+          # (R59): nenhum botão sobre uma a compor, falhada, ou que quem vê não
+          # pode descarregar; e uma gravação do servidor parada na sala entra na
+          # lista sozinha. Sem ffmpeg, essa acaba falhada com a causa — é a
+          # falha de operação que o runner dá de graça. Depois do `reuniao.mjs`,
+          # que prova que se entra numa sala pela interface.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/gravacao-na-sala.mjs
           # Um CONVIDADO SEM CONTA entra pela interface: o link, um nome, a
           # sala de espera, o anfitrião admite. É o caminho que decide a
           # adopção, e durante meses o servidor teve a rota e nenhum ecrã a

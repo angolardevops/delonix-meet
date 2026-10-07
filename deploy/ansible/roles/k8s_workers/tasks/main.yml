@@ -1,0 +1,12 @@
+---
+- name: Já faz parte do cluster?
+  ansible.builtin.stat: { path: /etc/kubernetes/kubelet.conf }
+  register: kubelet_conf
+
+- name: kubeadm join
+  ansible.builtin.command:
+    cmd: >-
+      kubeadm join {{ k8s_vip }}:{{ k8s_api_porta }}
+      --token {{ hostvars[groups['control_plane'][0]]['k8s_token'] }}
+      --discovery-token-ca-cert-hash {{ hostvars[groups['control_plane'][0]]['k8s_hash'] }}
+  when: not kubelet_conf.stat.exists

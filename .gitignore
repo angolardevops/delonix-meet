@@ -103,3 +103,4 @@ deploy/compose/generated/
 
 # Prova dos troncos (scripts/troncos-prova.sh): segredos e a configuração da réplica.
 .troncos-prova/
+.kube/

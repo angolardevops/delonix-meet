@@ -35,8 +35,10 @@ import RecordingTable from './recordings/RecordingTable'
 import { fromRecordingItem, RecordingView } from './recordings/recordingView'
 import { recordingsFallbackFor } from './recordings/search'
 import ShareDialog from './recordings/ShareDialog'
+import { useProcessingUpdates } from './recordings/useProcessingUpdates'
 
 type View = 'list' | 'grid'
+const NO_ITEMS: RecordingLibraryItem[] = []
 
 const VIEW_KEY = 'dx_rec_view'
 
@@ -51,6 +53,28 @@ function storedView(): View {
 function hashParam(name: string): string | null {
   const i = location.hash.indexOf('?')
   return i < 0 ? null : new URLSearchParams(location.hash.slice(i + 1)).get(name)
+}
+
+/**
+ * Escreve (ou tira) um parâmetro no endereço, SEM empilhar no histórico.
+ *
+ * Porque é preciso: o âmbito era LIDO do endereço à entrada e nunca lá escrito
+ * ao mudar. Quem recebia `#/recordings?scope=published`, clicava em «Minhas» e
+ * voltava a partilhar o link, partilhava um endereço que dizia «publicadas» a
+ * mostrar as dele — o URL mentia. E um F5 desfazia a escolha.
+ *
+ * `replaceState` e não `location.hash`: mudar de separador não é navegar, e não
+ * deve gastar uma entrada do «voltar».
+ */
+function porNoEndereco(nome: string, valor: string | null): void {
+  const i = location.hash.indexOf('?')
+  const base = i < 0 ? location.hash : location.hash.slice(0, i)
+  const p = new URLSearchParams(i < 0 ? '' : location.hash.slice(i + 1))
+  if (valor === null) p.delete(nome)
+  else p.set(nome, valor)
+  const q = p.toString()
+  const alvo = q ? `${base}?${q}` : base
+  if (location.hash !== alvo) history.replaceState(null, '', alvo)
 }
 
 export default function Recordings() {
@@ -75,7 +99,10 @@ export default function Recordings() {
   const [shareTarget, setShareTarget] = useState<RecordingView | null>(null)
 
   const page = rs.list.state.s === 'ready' ? rs.list.state.d : null
-  const items = useMemo(() => (page ? page.items.map(fromRecordingItem) : []), [page])
+  // As que o servidor ainda está a compor relêem-se à parte (progresso, e a
+  // passagem a «pronta»), sem voltar a pedir a lista.
+  const live = useProcessingUpdates(page?.items ?? NO_ITEMS)
+  const items = useMemo(() => (page ? page.items.map(live).map(fromRecordingItem) : []), [page, live])
   const ready = page !== null
 
   function changeView(v: View) {
@@ -87,20 +114,21 @@ export default function Recordings() {
     }
   }
 
-  // Selecção por omissão: a primeira PRONTA da página. Uma falhada nunca é seleccionada.
+  // Selecção por omissão: a primeira COM FICHEIRO da página. Uma falhada ou
+  // uma que ainda está a compor nunca é seleccionada.
   useEffect(() => {
     if (!ready) return
     const current = items.find((r) => r.id === selectedId)
-    if (current && !current.failed) return
-    const first = items.find((r) => !r.failed)
+    if (current?.hasFile) return
+    const first = items.find((r) => r.hasFile)
     setSelectedId(first?.id ?? null)
     setPicked(false)
   }, [ready, items, selectedId])
 
-  const selected = items.find((r) => r.id === selectedId && !r.failed) ?? null
+  const selected = items.find((r) => r.id === selectedId && r.hasFile) ?? null
 
   const open = useCallback((r: RecordingView) => {
-    if (r.failed) return
+    if (!r.hasFile) return
     setSelectedId(r.id)
     setPicked(true)
     setPanelOpen(true)
@@ -124,7 +152,7 @@ export default function Recordings() {
   }, [panelOpen, shareTarget])
 
   const renderItems = (rows: RecordingLibraryItem[]) => {
-    const views = rows.map(fromRecordingItem)
+    const views = rows.map(live).map(fromRecordingItem)
     return view === 'list' ? (
       <RecordingTable items={views} selectedId={selected?.id ?? null} retentionDays={retentionDays} onOpen={open} onShare={setShareTarget} />
     ) : (
@@ -146,7 +174,11 @@ export default function Recordings() {
           <Segmented<'mine' | 'published'>
             label={t('recordings.ambito.rotulo')}
             value={scope}
-            onChange={setScope}
+            onChange={(v) => {
+              setScope(v)
+              // O endereço passa a dizer a verdade — e sobrevive ao F5.
+              porNoEndereco('scope', v === 'published' ? 'published' : null)
+            }}
             options={[
               { value: 'mine', label: t('recordings.ambito.minhas') },
               { value: 'published', label: t('recordings.ambito.publicadas') },

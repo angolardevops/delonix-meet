@@ -26,11 +26,17 @@ export function contentorPostgres() {
   return nomes[0]
 }
 
-/** `psql -tAc` no contentor descoberto, devolvendo a primeira linha. */
+/**
+ * `psql -tAc` no contentor descoberto, devolvendo a primeira linha.
+ *
+ * `PG_EXEC` troca o `docker exec <contentor>` por outro prefixo — numa máquina
+ * em que a base corre noutro motor: `PG_EXEC="delonix container exec meu-pg"`.
+ */
 export function sql(q, { db = 'delonix_meet', user = 'delonix' } = {}) {
+  const prefixo = process.env.PG_EXEC ? process.env.PG_EXEC.trim().split(/\s+/) : ['docker', 'exec', contentorPostgres()]
   return execFileSync(
-    'docker',
-    ['exec', contentorPostgres(), 'psql', '-U', user, '-d', db, '-tAc', q],
+    prefixo[0],
+    [...prefixo.slice(1), 'psql', '-U', user, '-d', db, '-tAc', q],
     { stdio: ['ignore', 'pipe', 'pipe'] },
   )
     .toString()

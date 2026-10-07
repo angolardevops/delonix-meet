@@ -879,3 +879,57 @@ async fn another_organization_cannot_redeliver_list_or_read_my_deliveries(db: sq
     wait_final(&app, &a, &hook, 2).await;
     assert_eq!(rx.received().len(), 2);
 }
+
+/// Insere `n` entregas falhadas e vencidas de `hook`, com `retry_at` a começar
+/// `older_secs` atrás e a avançar um segundo por entrega.
+async fn insert_due(app: &TestApp, org: &str, hook: &str, n: i32, older_secs: i32) {
+    sqlx::query(
+        "INSERT INTO webhook_deliveries (org_id, webhook_id, event, payload, attempt, status, retry_at)
+         SELECT $1::uuid, $2::uuid, 'meeting.created', '{\"event\":\"meeting.created\"}'::jsonb,
+                1, 'failed', now() - make_interval(secs => $4 - g)
+           FROM generate_series(1, $3) AS g",
+    )
+    .bind(org)
+    .bind(hook)
+    .bind(n)
+    .bind(older_secs)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// Uma organização com muitas repetições vencidas não deixa as das outras à
+/// espera: o lote de 50 reparte-se por organização. A tem 60 repetições mais
+/// antigas, B tem uma mais recente — ordenado só por `retry_at`, a de B ficava
+/// fora do primeiro lote.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_backlog_in_one_organization_does_not_starve_anothers_retries(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx_a = Receiver::spawn().await;
+    let rx_b = Receiver::spawn().await;
+    let a = app.new_org("alfa.test").await;
+    let b = app.new_org("beta.test").await;
+    let hook_a = new_hook(&app, &a, &rx_a.url).await;
+    let hook_b = new_hook(&app, &b, &rx_b.url).await;
+    insert_due(&app, a.org(), &hook_a, 60, 3600).await;
+    insert_due(&app, b.org(), &hook_b, 1, 5).await;
+
+    // Um passo: o lote de 50, repartido — a de B entra mesmo sendo a mais recente.
+    let sent = delonix_server::webhook_retry_due(&app.state).await.unwrap();
+    assert_eq!(sent, 50, "o lote enche-se");
+    assert_eq!(
+        rx_b.received().len(),
+        1,
+        "a repetição da organização B tinha de entrar no primeiro lote"
+    );
+    assert_eq!(rx_a.received().len(), 49);
+
+    // Só A tem repetições por fazer: o passo seguinte leva-as todas, sem teto
+    // por organização que atrase quem está sozinho.
+    let sent = delonix_server::webhook_retry_due(&app.state).await.unwrap();
+    assert_eq!(sent, 11);
+    assert_eq!(rx_a.received().len(), 60);
+    // O corpo e a organização de cada repetição são os da própria: nada de A
+    // chegou ao receptor de B.
+    assert_eq!(rx_b.received().len(), 1);
+}

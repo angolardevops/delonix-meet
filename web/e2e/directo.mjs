@@ -37,6 +37,15 @@ ok('o painel do directo aparece', (await painel.count()) > 0 && texto('directo.t
 ok('o browser sabe codificar H.264',
    await page.evaluate(() => MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')))
 
+// Os destinos são da ORGANIZAÇÃO e vêm do servidor (ADR em `destinosGuardados.ts`):
+// uma organização nova não tem nenhum, e é o anfitrião que cria o primeiro.
+// Antes havia um YouTube escrito à mão no código, e por isso este e2e nunca
+// exercitou o acto de criar — que é o que um utilizador faz.
+await painel.locator('[data-studio="destino-adicionar"]').click()
+// O `onAdicionar` ABRE o diálogo do cartão novo (devolve o índice «para o
+// abrir»). Fecha-se para o que segue poder clicar no cartão — senão o scrim
+// do diálogo intercepta o clique, que foi o que o CI apanhou.
+await page.keyboard.press('Escape')
 // Um cartão por destino, com o estado que o browser conhece; os campos
 // editam-se num diálogo aberto a partir do cartão.
 const cartao = painel.locator('[data-studio="destino"]').first()

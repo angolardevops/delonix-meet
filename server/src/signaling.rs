@@ -20,6 +20,16 @@ use crate::{auth::verify_jwt, error::ApiError, AppState};
 
 // ---------- Protocol ----------
 
+/// O que a pessoa escolheu ao ser avisada de que está também ao telefone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceKeep {
+    /// Continuar só no browser: o telefone desliga (ou, se não houver como, fica sem som).
+    Meet,
+    /// Continuar nos dois (a pessoa assume o eco).
+    Both,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ClientMsg {
@@ -155,6 +165,13 @@ pub enum ClientMsg {
     },
     Kick {
         to: Uuid,
+    },
+    /// A resposta de quem está na sala pelo browser E por um telefone (a mesma
+    /// pessoa): ficar só aqui, ou nos dois. «Só no telefone» é o cliente a sair da
+    /// sala: não precisa do servidor.
+    DeviceChoice {
+        phone_id: Uuid,
+        keep: DeviceKeep,
     },
     // Controlos do anfitrião sobre a sala (em runtime):
     RoomLock {
@@ -638,6 +655,19 @@ pub enum ServerMsg {
         error: Option<String>,
     },
     Kicked, // para o alvo: foste removido
+    /// Para o browser de quem está também ao telefone nesta sala: pergunta em que
+    /// dispositivo continuar. `can_hangup`: o servidor consegue desligar a chamada
+    /// (uma que a sala fez tocar); senão só a pode deixar sem som.
+    DuplicateDevice {
+        phone_id: Uuid,
+        can_hangup: bool,
+    },
+    /// O que o servidor fez com a escolha: `hung_up` | `muted` | `both` | `gone`
+    /// (a perna já não está cá, ou não é desta pessoa).
+    DuplicateResolved {
+        phone_id: Uuid,
+        outcome: String,
+    },
     /// Definições runtime da sala (lock, só-anfitrião-partilha).
     RoomSettings {
         locked: bool,
@@ -1060,8 +1090,14 @@ pub struct Seat {
     pub on_stage: bool,
     /// A chamada da ponte (o `dial-out`/perna) — é por este id que o anfitrião
     /// age sobre a pessoa pela REST.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Nunca sai do servidor: é o alvo do `hupall`, e quem o sabe sabe qual chamada derrubar.
+    #[serde(skip)]
     pub call_id: Option<Uuid>,
+    /// A PESSOA de quem esta chamada é (o bilhete de identidade, ou o ramal que o
+    /// anfitrião chamou). Nunca sai do servidor: serve para saber que a mesma
+    /// pessoa está também no browser (`DuplicateDevice`), não para mostrar a ninguém.
+    #[serde(skip)]
+    pub member_id: Option<Uuid>,
 }
 
 impl Seat {
@@ -2328,6 +2364,68 @@ impl SignalingHub {
         Some(info)
     }
 
+    /// As pernas de telefone desta PESSOA na sala: `(id da perna, id da chamada)`.
+    pub fn phone_legs_of(&self, room_id: Uuid, member: Uuid) -> Vec<(Uuid, Option<Uuid>)> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| {
+                r.peers
+                    .iter()
+                    .filter(|(_, p)| p.seat.outside_app() && p.seat.member_id == Some(member))
+                    .map(|(id, p)| (*id, p.seat.call_id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Os lugares de browser desta pessoa na sala (um telefone nunca conta).
+    fn browser_seats_of(&self, room_id: Uuid, user_id: Uuid) -> Vec<Uuid> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| {
+                r.peers
+                    .iter()
+                    .filter(|(_, p)| {
+                        !p.seat.outside_app()
+                            && !p.is_bot
+                            && p.user_id == user_id
+                            && p.disconnected_at.is_none()
+                    })
+                    .map(|(id, _)| *id)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A pessoa `member` está na sala pelo browser E por telefone: pergunta-lhe, no
+    /// browser, em que dispositivo continuar. Com `only`, só a esse lugar (quem acabou
+    /// de entrar); sem ele, a todos os seus browsers (chegou o telefone).
+    /// Devolve quantas perguntas saíram.
+    pub fn notify_duplicates(&self, room_id: Uuid, member: Uuid, only: Option<Uuid>) -> usize {
+        let legs = self.phone_legs_of(room_id, member);
+        if legs.is_empty() {
+            return 0;
+        }
+        let mut n = 0;
+        for seat in self.browser_seats_of(room_id, member) {
+            if only.is_some_and(|o| o != seat) {
+                continue;
+            }
+            for (leg, call) in &legs {
+                self.send_to(
+                    room_id,
+                    seat,
+                    ServerMsg::DuplicateDevice {
+                        phone_id: *leg,
+                        can_hangup: call.is_some(),
+                    },
+                );
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// O `Seat` de um participante na sala.
     pub fn seat_of(&self, room_id: Uuid, peer_id: Uuid) -> Option<Seat> {
         self.rooms
@@ -2490,6 +2588,66 @@ impl SignalingHub {
     /// inquilinos com gente)`, contando o inquilino que pede mesmo sem gente.
     /// Salas sem marca contam como UM inquilino à parte: nunca se somam ao de
     /// ninguém.
+    /// O inquilino já marcado numa sala deste nó, se a sala existe e foi marcada.
+    pub fn room_tenant(&self, room_id: Uuid) -> Option<Uuid> {
+        self.rooms.get(&room_id).and_then(|r| r.tenant)
+    }
+
+    /// Sockets de pessoas que esta conta tem ligados a este nó, em todas as
+    /// salas, incluindo a sala de espera. Não conta lugares em graça (o socket já caiu), bots nem a ponte
+    /// telefónica: o tecto é contra uma conta que acumula ligações, e esses são
+    /// identidades de serviço emitidas pela organização.
+    pub fn user_sockets(&self, user_id: Uuid) -> usize {
+        self.rooms
+            .iter()
+            .map(|r| {
+                let na_sala = r
+                    .peers
+                    .values()
+                    .filter(|p| {
+                        p.user_id == user_id
+                            && p.disconnected_at.is_none()
+                            && !p.is_bot
+                            && !p.is_pstn
+                    })
+                    .count();
+                // À espera de ser admitido também é um socket aberto.
+                let a_espera = r
+                    .waiting
+                    .values()
+                    .filter(|w| w.subject == Some(user_id))
+                    .count();
+                na_sala + a_espera
+            })
+            .sum()
+    }
+
+    /// Há nesta sala um lugar em graça que `segredo` reclamaria? Não o consome:
+    /// só serve para não contar como ENTRADA NOVA, nas quotas, quem volta.
+    pub fn seat_reclaimable(
+        &self,
+        room_id: Uuid,
+        segredo: &str,
+        janela: std::time::Duration,
+    ) -> bool {
+        if segredo.is_empty() {
+            return false;
+        }
+        let Some(room) = self.rooms.get(&room_id) else {
+            return false;
+        };
+        let agora = std::time::Instant::now();
+        room.peers.values().any(|p| {
+            p.disconnected_at.is_some_and(|caiu| {
+                agora.duration_since(caiu) <= janela
+                    && delonix_meet_core::crypto::ct_eq(
+                        p.reconnect_secret.expose().as_bytes(),
+                        segredo.as_bytes(),
+                    )
+            })
+        })
+    }
+
     pub fn tenant_load(&self, tenant: Uuid) -> (i64, i64) {
         let mut por_inquilino: HashMap<Option<Uuid>, i64> = HashMap::new();
         for r in self.rooms.iter() {
@@ -3734,6 +3892,7 @@ impl SignalingHub {
             | ClientMsg::StudioCommand { .. }
             | ClientMsg::StudioSourceStatus { .. }
             | ClientMsg::StudioCommandResult { .. }
+            | ClientMsg::DeviceChoice { .. }
             | ClientMsg::BreakoutsClose => {}
         }
         true
@@ -3860,13 +4019,52 @@ pub async fn ws_handler(
     // A mensagem NÃO promete «tentar noutro nó»: com a afinidade por hash da sala
     // um novo pedido cai neste mesmo nó. Realojar uma sala recusada noutro pod
     // não está feito, e a mensagem também não diz quanto ocupam os outros.
-    let mut tenant: Option<Uuid> = None;
+    // Tecto de ligações por conta: barato (memória do nó) e feito primeiro.
+    // Quem volta a um lugar em graça não conta como ligação nova.
+    let grace = std::time::Duration::from_secs(state.config.reconnect_grace_secs);
+    let regressa = query
+        .reconnect
+        .as_deref()
+        .is_some_and(|s| state.hub.seat_reclaimable(room_id, s, grace));
+    if let (Some(max), None, false, false) = (
+        state.config.max_ws_per_user,
+        source.as_ref(),
+        claims.is_bot,
+        regressa,
+    ) {
+        if state.hub.user_sockets(claims.sub) >= max as usize {
+            state
+                .metrics
+                .ws_refused_user_cap_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(ApiError::TooManyRequests);
+        }
+    }
+    // O inquilino sai da marca da sala (já resolvido na primeira entrada neste
+    // nó) ou deriva-se de `rooms.owner_id`. Fica `None` se a base falhar: as
+    // regras por inquilino falham ABERTAS, e o tecto do nó continua a valer.
+    let tenant: Option<Uuid> = match state.hub.room_tenant(room_id) {
+        Some(t) => Some(t),
+        None => resolve_tenant(&state, room_id).await,
+    };
+    // Quota de participantes da organização, neste nó. Não conta entradas de
+    // quem reclama o seu lugar nem identidades de serviço.
+    if let (Some(t), None, false, false) = (tenant, source.as_ref(), claims.is_bot, regressa) {
+        if let Some(limit) = org_participant_limit(&state, t).await {
+            if state.hub.tenant_load(t).0 >= limit {
+                state
+                    .metrics
+                    .ws_refused_org_quota_total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Err(ApiError::TooManyRequests);
+            }
+        }
+    }
     if let Some(capacity) = state.config.node_peer_capacity.map(i64::from) {
         if !state.hub.tem_sala(room_id) {
             use delonix_meet_domain::operations::media_node::{
                 admit_new_room, NewRoomAdmission, NodeOccupancy,
             };
-            tenant = resolve_tenant(&state, room_id).await;
             let (tenant_peers, active_tenants) = match tenant {
                 Some(t) => state.hub.tenant_load(t),
                 None => (0, 1),
@@ -3952,6 +4150,23 @@ pub async fn ws_handler(
     }))
 }
 
+/// O tecto de participantes concorrentes da organização `org_id` neste nó: o
+/// que o operador lhe fixou, ou o valor por omissão do nó. `None` = sem tecto.
+/// Falha ABERTA se a base não responder, como o resto das regras por inquilino.
+async fn org_participant_limit(state: &AppState, org_id: Uuid) -> Option<i64> {
+    let fixado: Option<i32> =
+        sqlx::query_scalar("SELECT max_concurrent_participants FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    fixado
+        .map(i64::from)
+        .or(state.config.org_max_participants.map(i64::from))
+}
+
 /// O inquilino de uma sala: a organização do DONO (a primeira, de forma estável,
 /// se pertencer a várias) ou o próprio dono se não tiver nenhuma (um utilizador
 /// individual). Deriva-se no servidor a partir de `rooms.owner_id`.
@@ -3959,7 +4174,7 @@ pub async fn ws_handler(
 /// Falha ABERTA: se a base não responder devolve `None` e a sala entra como
 /// inquilino desconhecido — a admissão por capacidade total (`NodeFull`) continua
 /// a valer, só se perde a justiça por inquilino durante a falha.
-async fn resolve_tenant(state: &AppState, room_id: Uuid) -> Option<Uuid> {
+pub(crate) async fn resolve_tenant(state: &AppState, room_id: Uuid) -> Option<Uuid> {
     let owner: Uuid = sqlx::query_scalar("SELECT owner_id FROM rooms WHERE id = $1")
         .bind(room_id)
         .fetch_optional(&state.db)
@@ -4630,6 +4845,8 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         companion: entrada.companion,
         started_at: entrada.started_at,
     });
+    // Entrou pelo browser e já tem um telefone nesta sala (a mesma pessoa): pergunta-lhe.
+    state.hub.notify_duplicates(room_id, user_id, Some(peer_id));
     // Copia o lugar para fora do pod: se este morrer, outro pode reconhecê-lo.
     // Depois do `Joined`, para não atrasar quem entra; uma falha do Redis só
     // deixa o lugar com a protecção que já tinha (a memória deste pod).
@@ -4870,6 +5087,51 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                         peer_id,
                         ServerMsg::Presenting { from: peer_id, on },
                     );
+                }
+                Ok(ClientMsg::DeviceChoice { phone_id, keep }) => {
+                    // Só a perna DESTA pessoa: um id de outra chamada não faz nada.
+                    let Some((_, call_id)) = state
+                        .hub
+                        .phone_legs_of(room_id, user_id)
+                        .into_iter()
+                        .find(|(leg, _)| *leg == phone_id)
+                    else {
+                        // Já não está cá (desligou entretanto) ou não é desta pessoa: a
+                        // resposta é a mesma, sem dizer qual — e o diálogo não fica preso.
+                        let _ = tx.send(ServerMsg::DuplicateResolved {
+                            phone_id,
+                            outcome: "gone".into(),
+                        });
+                        continue;
+                    };
+                    let outcome = match keep {
+                        DeviceKeep::Both => "both",
+                        DeviceKeep::Meet => {
+                            // Cala-se SEMPRE primeiro: o `hupall` responde `+OK` mesmo quando não
+                            // apanha nenhum canal, e a perna não pode ficar na sala de microfone aberto.
+                            if let Some(p) = state.hub.phone.get() {
+                                p.set_muted(phone_id, true);
+                            }
+                            state
+                                .hub
+                                .update_external(room_id, phone_id, |_, _, mic| *mic = false);
+                            let desligou = match (call_id, state.telephony.originator.clone()) {
+                                (Some(c), Some(o)) => o.hangup(c).await.is_ok(),
+                                _ => false,
+                            };
+                            if desligou {
+                                "hung_up"
+                            } else {
+                                // Sem como desligar (uma chamada que entrou por ramal+PIN): fica
+                                // sem som e a pessoa desliga-a no aparelho.
+                                "muted"
+                            }
+                        }
+                    };
+                    let _ = tx.send(ServerMsg::DuplicateResolved {
+                        phone_id,
+                        outcome: outcome.into(),
+                    });
                 }
                 Ok(ClientMsg::ServerRecord {
                     active,
@@ -6640,8 +6902,104 @@ mod tests {
             video_unavailable: true,
             weak_link: false,
             on_stage: false,
-            call_id: Some(Uuid::nil()),
+            call_id: None,
+            member_id: None,
         }
+    }
+
+    fn perna_de(member: Uuid, com_chamada: bool) -> Seat {
+        Seat {
+            member_id: Some(member),
+            call_id: com_chamada.then(Uuid::new_v4),
+            ..telefone_seat()
+        }
+    }
+
+    /// A mesma pessoa no browser e ao telefone: o browser é avisado, quem não é a pessoa não.
+    #[tokio::test]
+    async fn a_mesma_pessoa_ao_telefone_e_no_browser_e_avisada_no_browser() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let ana = Uuid::new_v4();
+        let (a_peer, tx_a, mut rx_a) = peer();
+        let (o_peer, tx_o, mut rx_o) = peer();
+        hub.join(room, a_peer, ana, "ana".into(), false, false, false, tx_a);
+        hub.join(
+            room,
+            o_peer,
+            Uuid::new_v4(),
+            "outro".into(),
+            false,
+            false,
+            false,
+            tx_o,
+        );
+        while rx_a.try_recv().is_ok() {}
+        while rx_o.try_recv().is_ok() {}
+
+        // Chega o telefone da Ana (uma chamada que a sala fez tocar): só o browser da Ana é avisado.
+        let (tel, tx_t, _rx_t) = peer();
+        hub.join_external(room, tel, "Ana".into(), perna_de(ana, true), tx_t);
+        assert_eq!(hub.notify_duplicates(room, ana, None), 1);
+        let mut visto = None;
+        while let Ok(m) = rx_a.try_recv() {
+            if let ServerMsg::DuplicateDevice {
+                phone_id,
+                can_hangup,
+            } = m
+            {
+                visto = Some((phone_id, can_hangup));
+            }
+        }
+        assert_eq!(visto, Some((tel, true)));
+        while let Ok(m) = rx_o.try_recv() {
+            assert!(
+                !matches!(m, ServerMsg::DuplicateDevice { .. }),
+                "o outro não é avisado"
+            );
+        }
+        // As pernas dela, e só as dela.
+        assert_eq!(hub.phone_legs_of(room, ana).len(), 1);
+        assert!(hub.phone_legs_of(room, Uuid::new_v4()).is_empty());
+    }
+
+    /// O telefone já cá estava: quem entra depois pelo browser é avisado, e só esse lugar.
+    #[tokio::test]
+    async fn quem_entra_no_browser_com_o_telefone_na_sala_e_avisado_so_nesse_lugar() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let bia = Uuid::new_v4();
+        let (tel, tx_t, _rx_t) = peer();
+        hub.join_external(room, tel, "Bia".into(), perna_de(bia, false), tx_t);
+        let (b1, tx_1, mut rx_1) = peer();
+        hub.join(room, b1, bia, "bia".into(), false, false, false, tx_1);
+        assert_eq!(hub.notify_duplicates(room, bia, Some(b1)), 1);
+        let mut visto = None;
+        while let Ok(m) = rx_1.try_recv() {
+            if let ServerMsg::DuplicateDevice {
+                phone_id,
+                can_hangup,
+            } = m
+            {
+                visto = Some((phone_id, can_hangup));
+            }
+        }
+        // Sem `call_id` não há como desligar a chamada: só se consegue calá-la.
+        assert_eq!(visto, Some((tel, false)));
+        // Um segundo browser da Bia (outro separador) não é incomodado por quem entrou agora.
+        let (b2, tx_2, mut rx_2) = peer();
+        hub.join(room, b2, bia, "bia".into(), false, false, false, tx_2);
+        while rx_2.try_recv().is_ok() {}
+        assert_eq!(
+            hub.notify_duplicates(room, bia, Some(b1)),
+            1,
+            "só o lugar pedido"
+        );
+        assert!(rx_2.try_recv().is_err());
+        // Um telefone sem pessoa (anónimo) nunca avisa ninguém.
+        let (anon, tx_an, _rx_an) = peer();
+        hub.join_external(room, anon, "Telefone".into(), telefone_seat(), tx_an);
+        assert_eq!(hub.phone_legs_of(room, bia).len(), 1);
     }
 
     #[test]

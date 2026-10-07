@@ -168,6 +168,7 @@ fn default_visibility() -> String {
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor. `recording.no_file`: falhou."),
     )
 )]
 pub async fn publish(
@@ -176,16 +177,16 @@ pub async fn publish(
     Path(id): Path<Uuid>,
     Json(req): Json<PublishReq>,
 ) -> Result<Json<RecordingItem>, ApiError> {
-    let a = access(&state, id, auth.user_id).await?;
-    a.require_manage()?;
+    // Publicar é MOSTRAR A OUTREM, como partilhar e como o link público: pede
+    // o dono activo ou `recordings.publish` (`owned_item`), não «gerir
+    // metadados». Ver a R306 — com o `require_manage` de antes, um papel a quem
+    // a organização negava `recordings.publish` publicava a gravação de um
+    // colega por esta porta.
+    let rec = crate::recordings::owned_item(&state, id, auth.user_id).await?;
     if req.visibility != "org" {
         return Err(ApiError::BadRequest("visibility must be 'org'".into()));
     }
-    if !a.has_file() {
-        return Err(ApiError::Conflict(
-            "só se publica uma gravação que tem ficheiro".into(),
-        ));
-    }
+    rec.require_file()?;
     sqlx::query(
         "UPDATE recordings SET visibility = $2, published_at = COALESCE(published_at, now())
          WHERE id = $1",
@@ -222,6 +223,10 @@ pub async fn unpublish(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<RecordingItem>, ApiError> {
+    // DESPUBLICAR fica em `require_manage`, de propósito, e não sobe para o
+    // `owned_item` como o `publish` subiu: retirar exposição não pode ser mais
+    // difícil do que criá-la. É a mesma razão por que desfazer uma partilha ou
+    // revogar um link não depende do estado da gravação (R304).
     let a = access(&state, id, auth.user_id).await?;
     a.require_manage()?;
     sqlx::query("UPDATE recordings SET visibility = 'private', published_at = NULL WHERE id = $1")
@@ -282,6 +287,7 @@ pub async fn thumbnail(
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
+        (status = 409, body = crate::openapi::ErrorBody, description = "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor. `recording.no_file`: falhou."),
     )
 )]
 pub async fn record_view(
@@ -290,9 +296,7 @@ pub async fn record_view(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     let a = access(&state, id, auth.user_id).await?;
-    if !a.has_file() {
-        return Err(ApiError::Conflict("a gravação não tem ficheiro".into()));
-    }
+    a.require_file()?;
     sqlx::query(
         "INSERT INTO recording_views (recording_id, user_id) VALUES ($1, $2)
          ON CONFLICT (recording_id, user_id, viewed_on) DO UPDATE SET last_at = now()",

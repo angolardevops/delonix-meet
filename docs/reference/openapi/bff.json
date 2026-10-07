@@ -1480,6 +1480,31 @@
         ],
         "type": "object"
       },
+      "ConcurrencyLimit": {
+        "properties": {
+          "max_concurrent_participants": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ConcurrencyLimitReq": {
+        "properties": {
+          "max_concurrent_participants": {
+            "description": "Participantes concorrentes que a organização pode ter em cada nó de\nmedia. `null` = o valor por omissão do nó (`ORG_MAX_PARTICIPANTS`).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "ConflictCheckReq": {
         "properties": {
           "duration_min": {
@@ -2772,6 +2797,101 @@
         },
         "required": [
           "poll_interval_secs"
+        ],
+        "type": "object"
+      },
+      "DiagramDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DiagramSummary"
+          },
+          {
+            "properties": {
+              "doc": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "doc"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Um diagrama com o documento. O `doc` é opaco para o servidor **de\npropósito**: a forma dele é do cliente (`DiagramDoc`, 1142 linhas de modelo\nem TypeScript), e tipá-la aqui obrigaria a mudar o Rust a cada forma nova de\nnó. O que o servidor garante é que é JSON, que cabe no tecto e de quem é."
+      },
+      "DiagramSaveReq": {
+        "properties": {
+          "doc": {
+            "description": "O documento. Objecto JSON; um array ou um número são recusados.",
+            "type": "object"
+          },
+          "elements": {
+            "description": "Nós mais traços. Só para a lista; não é verificado contra o `doc`.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "expected_updated_at": {
+            "description": "O `updated_at` que o cliente viu. Presente e diferente do que está\ngravado → `409`. Ausente → escreve (é o primeiro envio, ou um cliente\nque não participa no controlo).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notation": {
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "title": {
+            "description": "Truncado a 200 caracteres; vazio fica vazio (o cliente já tem um nome\npor omissão traduzido, e inventar um aqui dava dois nomes diferentes).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc"
+        ],
+        "type": "object"
+      },
+      "DiagramSummary": {
+        "description": "O que a lista mostra. Sem o `doc`: a lista de vinte diagramas não puxa vinte\ndocumentos inteiros para contar os elementos.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "elements": {
+            "description": "Número de nós mais traços, como o cliente o contou ao gravar.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notation": {
+            "description": "`uml` | `bpmn` | `arch` | `flow` | `free` — como o cliente a escreveu.",
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "notation",
+          "room_code",
+          "elements",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -5888,6 +6008,31 @@
         ],
         "type": "object"
       },
+      "ObjectStoreView": {
+        "description": "O armazenamento de objectos, como o operador o pode ver: endereço e bucket,\n**nunca** as chaves. Vem do ambiente (Secret do cluster), não da tabela.",
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "used_for_recordings": {
+            "description": "Hoje é sempre `false`: as gravações continuam a ser escritas em disco e\nservidas de lá. O ADR-0020 diz porquê — ligar o gravador sem um MinIO\nreal onde medir deixaria o produto num estado que ninguém exercitou.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "endpoint",
+          "bucket",
+          "region",
+          "used_for_recordings"
+        ],
+        "type": "object"
+      },
       "OdooConfig": {
         "properties": {
           "hide_org_creation": {
@@ -8225,6 +8370,7 @@
         "type": "object"
       },
       "Recording": {
+        "description": "A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`);\na resposta do upload junta-lhe `kind`, `status`, a media medida e\n`has_thumbnail`. As LEITURAS — a biblioteca, o recurso e a lista da sala —\ndevolvem `RecordingLibraryItem`.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -8600,7 +8746,7 @@
             "type": "integer"
           },
           "progress_pct": {
-            "description": "Progresso do passo em curso, 0–100. `null` fora dele.",
+            "description": "Progresso da composição, 0–100, enquanto o `status` é `processing`.\n`null` fora dela (a transcrição não escreve progresso aqui).",
             "format": "int32",
             "type": [
               "integer",
@@ -8642,7 +8788,7 @@
             "type": "string"
           },
           "status": {
-            "description": "Estado do FICHEIRO: `transcribing` | `ready` | `failed`.\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
+            "description": "Estado do FICHEIRO: `processing` | `transcribing` | `ready` | `failed`.\n\n`processing` é o servidor a compor o ficheiro depois de a gravação\nparar: ainda não há nada para reproduzir, o `progress_pct` diz quanto\nfalta, e não é uma falha (`failure_reason` é `null`).\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
             "type": "string"
           },
           "tags": {
@@ -11098,6 +11244,17 @@
               "null"
             ]
           },
+          "object_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectStoreView",
+                "description": "Armazenamento de objectos visto pelo AMBIENTE do servidor, quando existe.\nNão é um `storage_type`: ver `ObjectStoreView`."
+              }
+            ]
+          },
           "storage_type": {
             "description": "`local` | `nfs` | `webdav` (`local` quando nunca foi configurado).",
             "type": "string"
@@ -12709,6 +12866,19 @@
         },
         "required": [
           "version"
+        ],
+        "type": "object"
+      },
+      "UpgradeOrgReq": {
+        "description": "Corpo de `POST /api/orgs/{org_id}/upgrade`.",
+        "properties": {
+          "name": {
+            "description": "Nome da empresa (2-80 caracteres).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },
@@ -14597,6 +14767,233 @@
         "summary": "O catálogo fechado de capacidades (estático, igual para todas as orgs).",
         "tags": [
           "authorization"
+        ]
+      }
+    },
+    "/api/diagrams": {
+      "get": {
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DiagramSummary"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Até 500, do mais recente para o mais antigo. Nunca os de outra pessoa, nem com a mesma organização."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/diagrams` — os diagramas de quem pede, mais recentes primeiro.",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/api/diagrams/{diagram_id}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Apagado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe, ou é de outra pessoa."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/diagrams/{diagram_id}` — apaga.",
+        "tags": [
+          "diagrams"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "O id que o cliente escolheu (`uid('d')`), não um UUID.",
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe, ou é de outra pessoa — a MESMA resposta, de propósito: um `403` confirmava a existência."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/diagrams/{diagram_id}` — um diagrama com o documento.",
+        "tags": [
+          "diagrams"
+        ]
+      },
+      "put": {
+        "operationId": "save",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramSaveReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramSummary"
+                }
+              }
+            },
+            "description": "O diagrama como ficou gravado. O `updated_at` daqui é o que o próximo `PUT` manda em `expected_updated_at`."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem organização, documento que não é objecto, acima de 2 MiB, notação desconhecida, ou id fora do formato."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`diagram.conflict` — mudou no servidor desde o `expected_updated_at`. Não há merge: o cliente mostra as duas datas e decide."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`diagram.too_many` — a pessoa chegou ao tecto de 500 diagramas."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/diagrams/{diagram_id}` — grava (cria ou substitui).",
+        "tags": [
+          "diagrams"
         ]
       }
     },
@@ -29870,6 +30267,105 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/upgrade": {
+      "post": {
+        "description": "Não é um registo novo nem uma organização nova: a conta, as salas, as\ngravações e os convites ficam onde estão. A organização muda de `kind` para\n`company`, ganha um nome de empresa e passa a ter o domínio do email de quem\nconverte — que é o que a torna encontrável pelos colegas e o que o registo\nempresarial usa para os juntar.\n\nExige o mesmo que o registo empresarial, e recusa pelos mesmos códigos\n(`registration.invalid_org_name`, `registration.corporate_email_required`,\n`registration.domain_taken`), mais `organization.already_company` quando já\né empresa — um pedido repetido não muda nada em silêncio.\n\nQuem pode: o administrador da organização (`org.administer`). Numa conta\nparticular é a própria pessoa, que é a administradora do seu espaço.",
+        "operationId": "upgrade_org",
+        "parameters": [
+          {
+            "description": "Organização a converter.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeOrgReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgSummary"
+                }
+              }
+            },
+            "description": "Convertida. Devolve a organização como o `GET` a devolve."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Nome inválido, ou o email não serve de domínio (`registration.invalid_org_name`, `registration.corporate_email_required`)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador (`authz.missing_capability`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo da organização."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O domínio já tem organização (`registration.domain_taken`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Já é empresarial (`organization.already_company`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/orgs/{org_id}/upgrade` — a conta PARTICULAR passa a EMPRESARIAL\n(ADR-0019).",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/users": {
       "get": {
         "operationId": "list_users",
@@ -31451,7 +31947,7 @@
                 }
               }
             },
-            "description": "Token inexistente ou expirado."
+            "description": "Token inexistente ou expirado; ou a gravação não tem ficheiro (falhou, ou o servidor ainda a está a compor)."
           }
         },
         "summary": "Acesso público a uma gravação via token (sem autenticação).",
@@ -31514,7 +32010,7 @@
                 }
               }
             },
-            "description": "Token inexistente ou expirado."
+            "description": "Token inexistente ou expirado; ou a gravação não tem ficheiro (falhou, ou o servidor ainda a está a compor)."
           },
           "429": {
             "content": {
@@ -31587,7 +32083,7 @@
                 }
               }
             },
-            "description": "Token inexistente, expirado, ou sem ficheiro (gravação falhada)."
+            "description": "Token inexistente, expirado, ou sem ficheiro (a gravação falhou, ou o servidor ainda a está a compor)."
           }
         },
         "summary": "Download via link público (sem autenticação — token é a credencial; num\nlink com password, o passe de leitura que `POST …/access` devolveu).",
@@ -33585,6 +34081,16 @@
             },
             "description": "Gravação inexistente, sem acesso (inclui membro arquivado), ou ficheiro em falta no disco."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.processing`: o servidor ainda está a compor o ficheiro (`status = processing`). Não é uma falha: volta a pedir quando a gravação estiver `ready`. Só para quem chega à gravação."
+          },
           "416": {
             "description": "`Range` bem escrito mas fora do ficheiro. Traz `Content-Range: bytes */<total>`."
           }
@@ -33876,6 +34382,7 @@
         ]
       },
       "put": {
+        "description": "Só para uma gravação com ficheiro: a compor ou falhada responde `409`, e\no link que já existia fica como estava. Revogar (`DELETE`) e ler (`GET`)\nnão dependem do estado.",
         "operationId": "create_link",
         "parameters": [
           {
@@ -33938,6 +34445,16 @@
               }
             },
             "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor — volta a pedir quando estiver `ready`. `recording.no_file`: falhou, não há o que partilhar. Só para quem a pode partilhar."
           }
         },
         "security": [
@@ -34016,6 +34533,16 @@
               }
             },
             "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor. `recording.no_file`: falhou."
           }
         },
         "security": [
@@ -34099,6 +34626,7 @@
         ]
       },
       "post": {
+        "description": "Só se partilha uma gravação com ficheiro: a compor ou falhada responde\n`409`. Retirar uma partilha (`DELETE`) não depende do estado.",
         "operationId": "share",
         "parameters": [
           {
@@ -34181,6 +34709,16 @@
               }
             },
             "description": "A gravação não existe ou não lhe chega; ou o utilizador destino não existe."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor — volta a pedir quando estiver `ready`. `recording.no_file`: falhou, não há o que partilhar. Só para quem a pode partilhar."
           }
         },
         "security": [
@@ -34520,6 +35058,16 @@
               }
             },
             "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A gravação não tem ficheiro. `recording.processing`: o servidor ainda a está a compor. `recording.no_file`: falhou."
           }
         },
         "security": [
@@ -35887,6 +36435,7 @@
     },
     "/api/rooms/{room_code}/recordings": {
       "get": {
+        "description": "Devolve a MESMA representação da biblioteca e do recurso\n(`RecordingLibraryItem`): o `status` diz se há ficheiro (`processing` e\n`failed` não têm), e o `can_download` se quem pede o pode descarregar.\n\nSem paginação: devolve a lista de uma sala inteira (dívida — a rota já\nnão paginava, e cada linha custa agora o que custa na biblioteca).",
         "operationId": "list",
         "parameters": [
           {
@@ -35905,13 +36454,13 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/Recording"
+                    "$ref": "#/components/schemas/RecordingLibraryItem"
                   },
                   "type": "array"
                 }
               }
             },
-            "description": "Mais recentes primeiro."
+            "description": "Mais recentes primeiro. Inclui as que o servidor ainda está a compor (`status = processing`, com `progress_pct`) e as falhadas (`status = failed`, com `failure_reason`): nenhuma das duas tem ficheiro. Só as gravações a que quem pede ainda chega — um participante que saiu da organização do dono recebe a lista sem elas."
           },
           "401": {
             "content": {

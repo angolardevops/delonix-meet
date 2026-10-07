@@ -1082,3 +1082,149 @@ async fn add_employee_accepts_account_archived_elsewhere(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{body}");
     assert_eq!(body["user_id"], x.user_id.as_str());
 }
+
+/// ADR-0019: o registo sem nome de organização cria uma conta PARTICULAR, e ela
+/// passa a EMPRESARIAL quando quiser — sem registo novo e sem perder nada.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_personal_account_signs_up_without_a_company_and_upgrades_later(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+
+    // 1. Registo SEM `org_name`, e com um email PÚBLICO: é o caso que até
+    //    2026-10-06 dava `registration.invalid_org_name`.
+    let (st, b) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "ana@gmail.com", "username": "ana", "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert!(st < 300, "registo particular recusado: {st} {b}");
+    let ana = app.login("ana@gmail.com").await;
+
+    // O espaço dela existe, chama-se por ela, e é `personal`.
+    let (st, orgs) = app.get("/api/orgs", Some(&ana.token)).await;
+    assert_eq!(st, 200, "{orgs}");
+    let org_id = orgs[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(orgs[0]["name"], "Espaço de ana", "{orgs}");
+    let kind: String = sqlx::query_scalar("SELECT kind FROM organizations WHERE id = $1::uuid")
+        .bind(&org_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(kind, "personal");
+    let domain: String =
+        sqlx::query_scalar("SELECT email_domain FROM organizations WHERE id = $1::uuid")
+            .bind(&org_id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(domain, "", "uma conta particular não toma domínio nenhum");
+
+    // 2. PEDIR empresa com um email público continua a ser recusado — é o que
+    //    impedia o primeiro gmail de trancar todos os outros.
+    let (st, b) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"org_name": "Empresa do Bruno", "email": "bruno@gmail.com",
+                   "username": "bruno", "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "registration.corporate_email_required");
+    // E o Bruno entra como particular, sem empresa.
+    let (st, _) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "bruno@gmail.com", "username": "bruno",
+                   "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert!(st < 300, "o segundo gmail também tem conta");
+
+    // 3. A conversão: a Ana passa a empresa. Com o gmail dela, não pode.
+    let upgrade = format!("/api/orgs/{org_id}/upgrade");
+    let (st, b) = app
+        .post(
+            &upgrade,
+            Some(&ana.token),
+            json!({"name": "Empresa da Ana"}),
+        )
+        .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "registration.corporate_email_required");
+
+    // 4. Com um email de domínio próprio, converte.
+    let (st, _) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "carla@carla.ao", "username": "carla",
+                   "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert!(st < 300);
+    let carla = app.login("carla@carla.ao").await;
+    let (_, orgs) = app.get("/api/orgs", Some(&carla.token)).await;
+    let org_c = orgs[0]["id"].as_str().unwrap().to_string();
+    let upgrade_c = format!("/api/orgs/{org_c}/upgrade");
+    let (st, b) = app
+        .post(&upgrade_c, Some(&carla.token), json!({"name": "Carla Lda"}))
+        .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["name"], "Carla Lda");
+    let (kind, domain): (String, String) =
+        sqlx::query_as("SELECT kind, email_domain FROM organizations WHERE id = $1::uuid")
+            .bind(&org_c)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!((kind.as_str(), domain.as_str()), ("company", "carla.ao"));
+
+    // 5. Outra vez: não muda nada em silêncio.
+    let (st, b) = app
+        .post(&upgrade_c, Some(&carla.token), json!({"name": "Carla SA"}))
+        .await;
+    assert_eq!(st, 422, "{b}");
+    assert_eq!(b["code"], "organization.already_company");
+    let name: String = sqlx::query_scalar("SELECT name FROM organizations WHERE id = $1::uuid")
+        .bind(&org_c)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(name, "Carla Lda", "a recusa não escreveu nada");
+
+    // 6. Nome ilegível: erro de forma, e nada escrito.
+    let (st, _) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "dora@dora.ao", "username": "dora",
+                   "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert!(st < 300);
+    let dora = app.login("dora@dora.ao").await;
+    let (_, orgs) = app.get("/api/orgs", Some(&dora.token)).await;
+    let org_d = orgs[0]["id"].as_str().unwrap().to_string();
+    let (st, b) = app
+        .post(
+            &format!("/api/orgs/{org_d}/upgrade"),
+            Some(&dora.token),
+            json!({"name": "X"}),
+        )
+        .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "registration.invalid_org_name");
+
+    // 7. Quem não é da organização não a converte: `404`, não `403`.
+    let (st, _) = app
+        .post(
+            &format!("/api/orgs/{org_c}/upgrade"),
+            Some(&dora.token),
+            json!({"name": "Roubada Lda"}),
+        )
+        .await;
+    assert_eq!(st, 404, "a org de outra pessoa nem se confirma que existe");
+}

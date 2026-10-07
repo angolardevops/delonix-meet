@@ -1337,11 +1337,26 @@ pub async fn seat_phone_caller(
     room_code: &str,
     leg_id: Uuid,
     caller_ticket: Option<&str>,
+    call_id: Option<Uuid>,
 ) {
-    let who = match caller_ticket {
+    let mut who = match caller_ticket {
         Some(t) => crate::voice_caller::redeem(&state.db, t, room_code).await,
         None => None,
     };
+    // Uma chamada que a SALA fez tocar (um dial-out) sabe quem é: o ramal que o
+    // anfitrião escolheu. Sem isto entrava como «Telefone», sem nome nem pessoa.
+    // O `call_id` só se guarda (e com ele o poder de o desligar) quando é de um dial-out
+    // DESTA sala: vem de um cabeçalho SIP que ninguém assina, e decide o alvo do `hupall`.
+    let mut call_id_validado = None;
+    if who.is_none() {
+        if let Some(c) = call_id {
+            if let Some(w) = crate::dial_outs::caller_of_call(&state.db, c, room_code).await {
+                who = Some(w);
+                call_id_validado = Some(c);
+            }
+        }
+    }
+    let member_id = who.as_ref().and_then(|w| w.member_id);
     // O telefone não tem WebSocket: o lado receptor é drenado e deitado fora.
     // A fila existe só porque o censo a exige para toda a gente.
     let (tx, mut rx_peer, _sd) = crate::signaling::PeerTx::new(16, state.metrics.clone());
@@ -1356,10 +1371,16 @@ pub async fn seat_phone_caller(
             channel: delonix_meet_domain::conferencing::channels::Channel::Phone,
             anonymous,
             video_unavailable: true,
+            call_id: call_id_validado,
+            member_id,
             ..Default::default()
         },
         tx,
     );
+    // A mesma pessoa já está na sala pelo browser: pergunta-lhe em que dispositivo continuar.
+    if let Some(m) = member_id {
+        state.hub.notify_duplicates(room_id, m, None);
+    }
 }
 
 /// `host:porta` que o FreeSWITCH usa para alcançar o UA SIP. O
@@ -1520,6 +1541,7 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                             room_id,
                             room_code,
                             caller_ticket,
+                            call_id,
                             ..
                         } => {
                             seat_phone_caller(
@@ -1528,6 +1550,7 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                                 room_code,
                                 *leg_id,
                                 caller_ticket.as_deref(),
+                                *call_id,
                             )
                             .await;
                         }

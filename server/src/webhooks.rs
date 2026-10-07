@@ -432,12 +432,30 @@ const RETRY_BATCH: i64 = 50;
 /// `X-Delonix-Delivery` é novo por tentativa e o `X-Delonix-Event-Id` é o mesmo.
 pub async fn retry_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
     let mut tx = state.db.begin().await?;
+    // O lote reparte-se POR ORGANIZAÇÃO: a primeira repetição de cada uma, depois
+    // a segunda de cada uma, e assim por diante (`rn`), cada organização por
+    // ordem de `retry_at`. Ordenar só por `retry_at` deixava uma organização com
+    // milhares de entregas falhadas ocupar todos os lotes e as repetições das
+    // outras à espera de que ela esvaziasse. Com uma só organização à espera
+    // continua a levar o lote inteiro.
+    //
+    // A escolha não bloqueia (a janela não se combina com `FOR UPDATE`); o
+    // bloqueio vem a seguir sobre os ids escolhidos, e volta a verificar a
+    // condição: dois workers que escolham as mesmas linhas não as repetem.
     let due: Vec<(Uuid, Uuid, String, String, i32, Uuid)> = sqlx::query_as(
         "SELECT id, webhook_id, event, payload::text, attempt, event_id
            FROM webhook_deliveries
-          WHERE status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now()
+          WHERE id = ANY(
+                  SELECT id FROM (
+                    SELECT id, retry_at,
+                           row_number() OVER (PARTITION BY org_id ORDER BY retry_at) AS rn
+                      FROM webhook_deliveries
+                     WHERE status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now()
+                  ) due
+                  ORDER BY rn, retry_at
+                  LIMIT $1)
+            AND status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now()
           ORDER BY retry_at
-          LIMIT $1
             FOR UPDATE SKIP LOCKED",
     )
     .bind(RETRY_BATCH)

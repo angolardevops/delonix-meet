@@ -14,6 +14,10 @@ tempo (ver «O que isto não prova»).
 > Enquanto não fundir, uma corrida nova mede a ferramenta E o defeito ao mesmo
 > tempo. Volta a correr antes de citar qualquer número daqui, e diz contra que
 > commit.
+>
+> **A reunião grande foi repetida a 2026-10-05** e os números dela estão em
+> [teste-de-carga-2026-10-05.md](teste-de-carga-2026-10-05.md). As restantes
+> tabelas desta página continuam sem repetição.
 
 ## Método
 
@@ -64,6 +68,12 @@ degrau é marcado INCONCLUSIVO em vez de FALHA.
 
 Estável até **30 pessoas** (870 fluxos, 1,5 Gbps, 5,6 núcleos, 0% perda).
 Com 40 pessoas colapsou (13–46% de perda).
+
+> **Repetido a 2026-10-05** contra a `develop` `803f4d46`, na mesma máquina:
+> 40 pessoas dão **1560 de 1560 fluxos** e 0,03% de perda média (2834 Mbps,
+> 11,2 núcleos). O colapso das 40 desapareceu. Ver
+> [teste-de-carga-2026-10-05.md](teste-de-carga-2026-10-05.md) — que também não
+> reavaliou a gravação a decorrer.
 
 ### Gravação no servidor com chamadas a decorrer (20 chamadas × 4)
 

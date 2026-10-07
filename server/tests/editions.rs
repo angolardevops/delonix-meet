@@ -25,10 +25,18 @@ async fn saas_default_keeps_one_org_per_domain(db: sqlx::PgPool) {
     assert_eq!(st, 409);
     assert_eq!(v["code"], "registration.domain_taken");
     assert!(v["error"].as_str().unwrap().contains("alfa.ao"));
-    // Sem nome de org em tenancy multi: 400 com campo.
+    // Sem nome de org em tenancy multi: CONTA PARTICULAR (ADR-0019). Era
+    // `400 registration.invalid_org_name` até 2026-10-06, e era isso que
+    // obrigava quem se inscrevia a inventar uma empresa.
     let (st, v) = register(&app, "x@gama.ao", None).await;
-    assert_eq!(st, 400);
-    assert_eq!(v["code"], "registration.invalid_org_name");
+    assert_eq!(st, 200, "{v}");
+    let x = app.login("x@gama.ao").await;
+    let (_, orgs) = app.get("/api/orgs", Some(&x.token)).await;
+    assert_eq!(orgs[0]["name"], "Espaço de x");
+    // E o domínio NÃO fica tomado por uma conta particular: outra pessoa do
+    // mesmo domínio pode criar lá a empresa.
+    let (st, _) = register(&app, "chefe@gama.ao", Some("Gama")).await;
+    assert_eq!(st, 200, "uma conta particular não tranca o domínio");
 
     let (_, s) = app.get("/api/public/settings", None).await;
     assert_eq!(s["edition"], "saas");

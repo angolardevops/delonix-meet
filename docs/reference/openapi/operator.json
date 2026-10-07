@@ -1480,6 +1480,31 @@
         ],
         "type": "object"
       },
+      "ConcurrencyLimit": {
+        "properties": {
+          "max_concurrent_participants": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ConcurrencyLimitReq": {
+        "properties": {
+          "max_concurrent_participants": {
+            "description": "Participantes concorrentes que a organização pode ter em cada nó de\nmedia. `null` = o valor por omissão do nó (`ORG_MAX_PARTICIPANTS`).",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "ConflictCheckReq": {
         "properties": {
           "duration_min": {
@@ -2772,6 +2797,101 @@
         },
         "required": [
           "poll_interval_secs"
+        ],
+        "type": "object"
+      },
+      "DiagramDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DiagramSummary"
+          },
+          {
+            "properties": {
+              "doc": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "doc"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Um diagrama com o documento. O `doc` é opaco para o servidor **de\npropósito**: a forma dele é do cliente (`DiagramDoc`, 1142 linhas de modelo\nem TypeScript), e tipá-la aqui obrigaria a mudar o Rust a cada forma nova de\nnó. O que o servidor garante é que é JSON, que cabe no tecto e de quem é."
+      },
+      "DiagramSaveReq": {
+        "properties": {
+          "doc": {
+            "description": "O documento. Objecto JSON; um array ou um número são recusados.",
+            "type": "object"
+          },
+          "elements": {
+            "description": "Nós mais traços. Só para a lista; não é verificado contra o `doc`.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "expected_updated_at": {
+            "description": "O `updated_at` que o cliente viu. Presente e diferente do que está\ngravado → `409`. Ausente → escreve (é o primeiro envio, ou um cliente\nque não participa no controlo).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notation": {
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "title": {
+            "description": "Truncado a 200 caracteres; vazio fica vazio (o cliente já tem um nome\npor omissão traduzido, e inventar um aqui dava dois nomes diferentes).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc"
+        ],
+        "type": "object"
+      },
+      "DiagramSummary": {
+        "description": "O que a lista mostra. Sem o `doc`: a lista de vinte diagramas não puxa vinte\ndocumentos inteiros para contar os elementos.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "elements": {
+            "description": "Número de nós mais traços, como o cliente o contou ao gravar.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notation": {
+            "description": "`uml` | `bpmn` | `arch` | `flow` | `free` — como o cliente a escreveu.",
+            "type": "string"
+          },
+          "room_code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "notation",
+          "room_code",
+          "elements",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -5888,6 +6008,31 @@
         ],
         "type": "object"
       },
+      "ObjectStoreView": {
+        "description": "O armazenamento de objectos, como o operador o pode ver: endereço e bucket,\n**nunca** as chaves. Vem do ambiente (Secret do cluster), não da tabela.",
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "used_for_recordings": {
+            "description": "Hoje é sempre `false`: as gravações continuam a ser escritas em disco e\nservidas de lá. O ADR-0020 diz porquê — ligar o gravador sem um MinIO\nreal onde medir deixaria o produto num estado que ninguém exercitou.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "endpoint",
+          "bucket",
+          "region",
+          "used_for_recordings"
+        ],
+        "type": "object"
+      },
       "OdooConfig": {
         "properties": {
           "hide_org_creation": {
@@ -8225,6 +8370,7 @@
         "type": "object"
       },
       "Recording": {
+        "description": "A gravação acabada de carregar (`POST /api/rooms/{room_code}/recordings`);\na resposta do upload junta-lhe `kind`, `status`, a media medida e\n`has_thumbnail`. As LEITURAS — a biblioteca, o recurso e a lista da sala —\ndevolvem `RecordingLibraryItem`.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -8600,7 +8746,7 @@
             "type": "integer"
           },
           "progress_pct": {
-            "description": "Progresso do passo em curso, 0–100. `null` fora dele.",
+            "description": "Progresso da composição, 0–100, enquanto o `status` é `processing`.\n`null` fora dela (a transcrição não escreve progresso aqui).",
             "format": "int32",
             "type": [
               "integer",
@@ -8642,7 +8788,7 @@
             "type": "string"
           },
           "status": {
-            "description": "Estado do FICHEIRO: `transcribing` | `ready` | `failed`.\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
+            "description": "Estado do FICHEIRO: `processing` | `transcribing` | `ready` | `failed`.\n\n`processing` é o servidor a compor o ficheiro depois de a gravação\nparar: ainda não há nada para reproduzir, o `progress_pct` diz quanto\nfalta, e não é uma falha (`failure_reason` é `null`).\n\nA entrada falhada existe para ser VISTA: antes, uma gravação que não\ncompunha desaparecia sem deixar rasto, e quem carregou em «gravar»\nficava a pensar que tinha um ficheiro algures. Ver migração 0036.",
             "type": "string"
           },
           "tags": {
@@ -11098,6 +11244,17 @@
               "null"
             ]
           },
+          "object_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectStoreView",
+                "description": "Armazenamento de objectos visto pelo AMBIENTE do servidor, quando existe.\nNão é um `storage_type`: ver `ObjectStoreView`."
+              }
+            ]
+          },
           "storage_type": {
             "description": "`local` | `nfs` | `webdav` (`local` quando nunca foi configurado).",
             "type": "string"
@@ -12712,6 +12869,19 @@
         ],
         "type": "object"
       },
+      "UpgradeOrgReq": {
+        "description": "Corpo de `POST /api/orgs/{org_id}/upgrade`.",
+        "properties": {
+          "name": {
+            "description": "Nome da empresa (2-80 caracteres).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "Usage": {
         "properties": {
           "by_trunk": {
@@ -14010,6 +14180,103 @@
         ]
       }
     },
+    "/api/operator/v1/organizations/{org_id}/concurrency": {
+      "put": {
+        "operationId": "operator_set_concurrency",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConcurrencyLimitReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConcurrencyLimit"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é administrador da plataforma"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Tecto de participantes concorrentes de uma organização, por nó — só o\noperador da plataforma. É um limite do plano: a própria organização não o\naltera. A contagem é por nó, não global: com N nós a organização pode chegar\na N vezes este valor.",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/operator/v1/organizations/{org_id}/seats": {
       "put": {
         "operationId": "operator_set_seats",
@@ -14193,7 +14460,7 @@
                 }
               }
             },
-            "description": "`storage_type` fora de `local`/`nfs`/`webdav`."
+            "description": "`storage_type` fora de `local`/`nfs`/`webdav`. `s3` é recusado de propósito: os objectos configuram-se no ambiente (`OBJECT_STORE_*`) e ainda não são onde as gravações ficam (ADR-0020)."
           },
           "401": {
             "content": {
@@ -14326,7 +14593,7 @@
                 }
               }
             },
-            "description": "Configuração incompleta, tipo desconhecido, ou o WebDAV falhou/respondeu não-2xx."
+            "description": "Configuração incompleta, tipo desconhecido, o WebDAV falhou/respondeu não-2xx, ou o armazenamento de objectos do ambiente recusou a escrita de prova."
           },
           "401": {
             "content": {

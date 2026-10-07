@@ -1,0 +1,75 @@
+# Prometheus, Alertmanager e Grafana. O que o Meet precisa está nos
+# `alertas.yaml` e no `servicemonitor.yaml` — isto é o motor.
+prometheus:
+  prometheusSpec:
+    retention: 30d
+    retentionSize: 40GB
+    # Lê TODOS os ServiceMonitor e PrometheusRule do cluster, não só os que
+    # tenham a etiqueta do release. Sem isto, o ServiceMonitor do Meet (que
+    # vive noutro namespace) era ignorado em silêncio — e um Prometheus que
+    # ignora em silêncio é um painel verde com o produto em baixo.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources: { requests: { storage: 50Gi } }
+    resources:
+      requests: { cpu: 500m, memory: 2Gi }
+      limits: { cpu: "2", memory: 6Gi }
+
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources: { requests: { storage: 5Gi } }
+  config:
+    route:
+      group_by: [alertname, severity]
+      group_wait: 30s
+      group_interval: 5m
+      # Doze horas antes de repetir: um alerta que se repete de hora a hora
+      # deixa de ser lido, e um que não se repete nunca é esquecido.
+      repeat_interval: 12h
+      receiver: ninguem
+      routes:
+        - matchers: ['severity = info']
+          receiver: ninguem
+    receivers:
+      # DELIBERADAMENTE vazio. Encaminhar para email ou Slack precisa de um
+      # segredo e de uma decisão de quem é acordado — e inventar isso aqui
+      # daria alertas que ninguém recebe com a aparência de alertas que
+      # alguém recebe.
+      - name: ninguem
+
+grafana:
+  defaultDashboardsTimezone: Africa/Luanda
+  persistence:
+    enabled: true
+    size: 5Gi
+  # A password do admin vem de um Secret criado fora (ver README).
+  admin:
+    existingSecret: meet-grafana-credenciais
+    userKey: admin-user
+    passwordKey: admin-password
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.observabilidade.svc.cluster.local:3100
+    - name: Tempo
+      type: tempo
+      url: http://tempo.observabilidade.svc.cluster.local:3100
+
+# O que vem do próprio cluster e não é nosso.
+kubeEtcd: { enabled: true }
+kubeControllerManager: { enabled: true }
+kubeScheduler: { enabled: true }

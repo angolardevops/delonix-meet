@@ -357,3 +357,8 @@ voice:
     resources:
       requests: { cpu: 100m, memory: 128Mi }
       limits: { cpu: "1", memory: 512Mi }
+
+# Rastos por OTLP (ADR-0020, fase 5). Vazio = desligado, que é o que um
+# laboratório quer: sem colector, nada a exportar.
+otel:
+  endpoint: ""

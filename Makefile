@@ -266,6 +266,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@cd server && cargo fmt --check && printf "$(G)  ✓ formatação Rust$(Z)\n"
 	@bash scripts/check-repo-hygiene.sh
 	@bash scripts/check-capability-claims.sh
+	@bash scripts/check-frontend-lint.sh
 	@bash scripts/check-route-auth.sh
 	@bash scripts/check-docs-drift.sh
 	@bash scripts/check-room-affinity.sh
@@ -277,6 +278,9 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-replicas-compose.sh
 	@bash scripts/check-k8s-render.sh
 	@HELM=$(HELM) bash scripts/check-helm.sh
+	@HELM=$(HELM) bash scripts/check-observabilidade.sh
+	@bash scripts/check-ansible-producao.sh
+	@bash scripts/check-crypto-provider.sh
 	@bash scripts/check-arquitectura-catraca.sh
 	@bash scripts/check-crate-deps.sh
 	@bash scripts/check-proto.sh
@@ -731,7 +735,7 @@ voice-secret-rotate: ## Troca o VOICE_INTERNAL_SECRET do .env (depois: make comp
 	@bash scripts/rotate-voice-secret.sh
 esl-secret-rotate: ## Troca a TELEPHONY_ESL_PASSWORD (Event Socket do FreeSWITCH) do .env (depois: make compose-down/up e/ou make cluster)
 	@bash scripts/rotate-voice-secret.sh .env TELEPHONY_ESL_PASSWORD
-seed: ## Cria a organização «ngolacloud» e o administrador de validação (BASE=https://…)
+seed: ## Cria a organização «ngolacloud», o administrador e a conta demo@ngolacloud.ao (BASE=https://…)
 	@bash scripts/seed.sh $(or $(BASE),https://$(MEET_HOST):8443)
 compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do PBX e chamada de prova ao IVR
 	@bash scripts/compose-voice-check.sh
@@ -850,7 +854,7 @@ voice-images: ## Imagens de voz para o cluster local: FreeSWITCH (importado) + P
 	@printf "$(G)  ✓ imagens de voz prontas$(Z)\n"
 
 .PHONY: cluster cluster-status cluster-reset-db cluster-down
-cluster: ## Stack completo num cluster local (delonix cluster) — https://$(MEET_HOST)
+cluster: ## Stack completo num cluster local + contas de validação (demo@ngolacloud.ao) — https://$(MEET_HOST)
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) IMAGE_TAG=$(IMAGE_TAG) bash scripts/cluster.sh up
 cluster-status: ## Estado do cluster local: nós, pods, ingress e a prova de fumo
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh status
@@ -858,6 +862,30 @@ cluster-reset-db: ## Apaga a base de dados do cluster local (depois: make cluste
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh reset-db
 cluster-down: ## Destrói o cluster local (nós, rede e kubeconfig)
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh down
+
+# ============================================================
+#  PRODUÇÃO — meet.ngolacloud.com (ADR-0020)
+#
+#  Infra PRÓPRIA do Meet, num cluster só dele. NÃO é o `make cluster`, que é
+#  o laboratório local: o que as separa é o cluster e o kubeconfig.
+# ============================================================
+.PHONY: prod-vms prod-vms-plano prod-inventario prod-k8s prod-k8s-ensaio prod-plataforma prod-observabilidade
+prod-vms-plano: ## Produção: o que o OpenTofu faria às VMs do Proxmox (LÊ ANTES de aplicar)
+	@cd deploy/tofu && tofu init -input=false >/dev/null && tofu plan
+prod-vms: ## Produção: cria/actualiza as VMs do cluster no Proxmox (pede confirmação)
+	@cd deploy/tofu && tofu init -input=false >/dev/null && tofu apply
+prod-k8s: ## Produção: instala o Kubernetes (3 control-planes) nas VMs do inventário
+	@[ -f deploy/ansible/inventory-producao.ini ] || { printf "$(Y)  ✗ falta deploy/ansible/inventory-producao.ini — corre «make prod-inventario»$(Z)\n"; exit 1; }
+	@cd deploy/ansible && ansible-playbook -i inventory-producao.ini producao.yml
+prod-k8s-ensaio: ## Produção: o que o Ansible MUDARIA no cluster, sem mudar nada
+	@cd deploy/ansible && ansible-playbook -i inventory-producao.ini producao.yml --check --diff
+prod-plataforma: ## Produção: instala a plataforma do cluster (ingress, TLS, Postgres, Redis, MinIO)
+	@bash deploy/k8s/plataforma/instalar.sh
+prod-observabilidade: ## Produção: instala Prometheus, Grafana, Loki, Tempo e o colector OTLP
+	@bash deploy/k8s/observabilidade/instalar.sh
+prod-inventario: ## Produção: escreve o inventário do Ansible a partir do estado do OpenTofu
+	@cd deploy/tofu && tofu output -raw inventario_ansible > ../ansible/inventory-producao.ini
+	@printf "$(G)  ✓ deploy/ansible/inventory-producao.ini escrito do estado do OpenTofu$(Z)\n"
 
 # ============================================================
 #  MANUTENÇÃO

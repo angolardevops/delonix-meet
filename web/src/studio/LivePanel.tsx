@@ -16,6 +16,7 @@
 import { ReactNode, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Alert, Button, cx, Dialog, Field, IconButton, TextInput } from '../ui/kit'
+import { temChave as temChaveDoDestino } from './destinosGuardados'
 import { contagemDosDestinos, estadoDoCartao, ORDEM_DA_CONTAGEM } from './destinosLocais'
 import type { EstadoDoCartao } from './destinosLocais'
 import { plataformaDoUrl } from './palco'
@@ -144,7 +145,7 @@ function CartaoDoDestino({
 }) {
   const { t } = useTranslation()
   const nome = d.rotulo?.trim() || t('studio.directo.destino', { n: i + 1 })
-  const temChave = !!d.chave.trim()
+  const temChave = temChaveDoDestino(d)
   const estado = estadoDoCartao(fase, temChave)
   return (
     <li className={cx('st-dest', `st-dest--${estado}`)} data-studio="destino" data-estado={estado}>

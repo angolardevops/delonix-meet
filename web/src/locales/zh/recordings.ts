@@ -48,6 +48,9 @@ export default {
     estado: '状态',
   },
   estado: {
+    aProcessar: '处理中',
+    aProcessarPct: '处理中 {{pct}}%',
+    aProcessarAviso: '服务器仍在合成此录制内容，完成后即可使用。',
     aTranscrever: '转写中',
     aTranscreverPct: '转写中 {{pct}}%',
     publicada: '已发布',

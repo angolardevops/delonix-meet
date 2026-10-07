@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Recording } from '../api'
+import type { RecordingLibraryItem } from '../api'
 import { participanteLocal } from '../convidado'
 import { Icon } from '../ui/icons'
 import { Avatar, Button, IconButton, Tag, Toggle, cx } from '../ui/kit'
 import { BreakoutsCard } from './BreakoutsCard'
 import { SpeakingBars } from './ParticipantTile'
 import { ligacaoFraca } from './qosAmostra'
+import { RoomRecordings } from './RoomRecordings'
 import type { Breakouts } from './useBreakouts'
 import type { Participants } from './useParticipants'
 import type { RemotePeer } from './useRoomCore'
@@ -56,8 +57,8 @@ export function PeoplePanel({
   onGrantShare: (peerId: string, allowed: boolean) => void
   onTransferHost: (peer: RemotePeer) => void
   breakouts: Breakouts
-  recordings: Recording[]
-  onDownload: (r: Recording) => void
+  recordings: RecordingLibraryItem[]
+  onDownload: (r: RecordingLibraryItem) => void
   /** Ausente para um convidado sem conta: convidar é pesquisar pessoas da organização, e ele não tem nenhuma. */
   onInvite?: () => void
   /** «Ligar a…» um ramal da organização (só anfitrião; ausente para um convidado sem conta). */
@@ -68,7 +69,7 @@ export function PeoplePanel({
   spotlightId?: string | null
   onSpotlight?: (peerId: string | null) => void
 }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const me = participanteLocal().username
   const q = search.trim().toLowerCase()
@@ -263,18 +264,7 @@ export function PeoplePanel({
       {isHost && isTraining && <BreakoutsCard code={code} api={breakouts} className="rm-block" />}
 
       <Bloco icon="film" titulo={t('room.pessoas.gravacoes')}>
-        {recordings.length === 0 && <p className="dx-muted">{t('room.pessoas.semGravacoes')}</p>}
-        {recordings.map((r) => (
-          <button key={r.id} type="button" className="rm-rec" onClick={() => onDownload(r)}>
-            <Icon name="download" size={14} />
-            <span className="rm-rec__text">
-              <span>{r.filename}</span>
-              <small className="dx-num dx-muted">
-                {new Date(r.created_at).toLocaleString(i18n.language)} · {t('room.pessoas.megabytes', { n: (r.size_bytes / 1_048_576).toFixed(1) })}
-              </small>
-            </span>
-          </button>
-        ))}
+        <RoomRecordings recordings={recordings} onDownload={onDownload} />
       </Bloco>
     </div>
   )

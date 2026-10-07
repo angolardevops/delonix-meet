@@ -254,92 +254,184 @@ impl Vp8IvfWriter {
     }
 }
 
-/// O relógio de uma pista Opus em gravação: decide se um pacote pode chegar ao
-/// `OggWriter`, e com que timestamp.
+/// A ordem e o relógio de uma pista Opus em gravação: recebe os pacotes pela
+/// ordem em que chegam e entrega-os pela ordem em que foram ditos, com um
+/// timestamp que o `OggWriter` aguenta.
 ///
 /// O `OggWriter` (webrtc-media 0.17.2) avança a posição do grânulo com
 /// `timestamp - anterior`, uma subtracção de `u32` sem `wrapping`. Um pacote
-/// que chegue com o timestamp para trás — a rede reordenou-o, ou repetiu-o —
-/// soma perto de 2^32 amostras à pista em release (24 h 51 min a 48 kHz, e a
-/// pista não recupera) e deita abaixo a thread de escrita em debug. A bomba do
-/// SFU entrega os pacotes pela ordem em que chegam, por isso é aqui que se
-/// decide: **o que não está à frente do último escrito não se escreve.**
+/// que lhe chegue com o timestamp para trás soma perto de 2^32 amostras à
+/// pista em release (24 h 51 min a 48 kHz) e deita abaixo a thread de escrita
+/// em debug. A bomba do SFU entrega pela ordem de chegada, por isso é aqui que
+/// se garante: **o `OggWriter` só vê timestamps a crescer.**
 ///
-/// A comparação é a distância com sinal em aritmética de 32 bits, para a volta
-/// legítima do relógio (os browsers começam o timestamp num valor ao acaso) não
-/// ser lida como recuo. E o timestamp entregue é contado a partir do primeiro
-/// pacote da pista: o `OggWriter` só usa diferenças, e assim a subtracção dele
-/// nunca vê a volta — que em release dá certo por acaso, e em debug é pânico.
-/// Só voltaria a vê-la numa pista cujo relógio avançasse mais de 2^32 amostras
-/// do primeiro pacote ao último (24 h 51 min, ou saltos para a frente que os
-/// somem).
-///
-/// **Um recuo que não passa é um relógio novo, não um atraso.** Uma origem que
-/// recomece o timestamp para trás (a perna de um telefone depois de uma
-/// transferência, por exemplo) ficava muda na gravação até o relógio alcançar
-/// o ponto onde ia — até 12 h 25 min. Por isso, `OPUS_CLOCK_RESYNC_AFTER`
-/// atrasados SEGUIDOS que avançam entre si re-ancoram a pista: a rede não
-/// reordena um segundo inteiro por ordem, e uma rajada de reordenação tem
-/// sempre pacotes em dia pelo meio, que desfazem a contagem.
+/// - **Um atrasado escreve-se no sítio.** Os últimos `OPUS_REORDER_WINDOW`
+///   pacotes ficam à espera, por ordem de timestamp, e só o mais antigo sai
+///   quando chega mais um. Numa gravação o atraso não custa nada, e descartar
+///   custava 20 ms de fala por pacote (R294, medido no ficheiro composto).
+/// - **O que chega para lá da janela, ou repetido, não se escreve** — e
+///   conta-se.
+/// - **Um recuo que não passa é um relógio novo.** Uma origem que recomece o
+///   timestamp para trás (a perna de um telefone depois de uma transferência)
+///   põe todos os pacotes seguintes atrás do último escrito. Em vez de os
+///   deitar fora, guardam-se: `OPUS_RESYNC_AFTER` seguidos que avançam entre si
+///   são o relógio novo, e escrevem-se todos, a seguir ao último escrito. Um
+///   pacote em dia pelo meio mostra que eram só atrasados, e saem. A rede não
+///   reordena um segundo inteiro por ordem. Um recuo mais curto do que isso
+///   não chega a ser relógio novo: perde-se até o relógio alcançar o ponto
+///   onde ia, como uma rajada de atrasados.
+/// - **As comparações são distâncias com sinal em 32 bits**, para a volta
+///   legítima do relógio (os browsers começam o timestamp num valor ao acaso)
+///   não ser um recuo. E o timestamp entregue conta a partir do primeiro
+///   pacote escrito: o `OggWriter` só usa diferenças, e assim a subtracção
+///   dele não vê a volta — que em release dá certo por acaso, e em debug é
+///   pânico. Só voltaria a vê-la numa pista cujo relógio avançasse mais de
+///   2^32 amostras do primeiro pacote ao último.
 #[derive(Default)]
-struct OpusClock {
-    /// `(primeiro timestamp aceite, último timestamp aceite)`.
-    seen: Option<(u32, u32)>,
-    /// Atrasados seguidos que avançam entre si:
-    /// `(timestamp do primeiro, timestamp do último, quantos)`.
-    late_run: Option<(u32, u32, u32)>,
+struct OpusTrack {
+    /// `(primeiro timestamp escrito, último timestamp escrito)`.
+    written: Option<(u32, u32)>,
+    /// À frente do último escrito, por ordem de timestamp, à espera de vez.
+    window: Vec<webrtc::rtp::packet::Packet>,
+    /// Atrás do último escrito, seguidos e a avançar entre si: ou são um
+    /// relógio novo, ou são atrasados.
+    stale: Vec<webrtc::rtp::packet::Packet>,
 }
 
-/// Quantos atrasados seguidos fazem um relógio novo: 1 s de Opus contínuo em
-/// pacotes de 20 ms (com DTX são os mesmos 50 pacotes, e mais tempo).
-const OPUS_CLOCK_RESYNC_AFTER: u32 = 50;
+/// Quantos pacotes esperam pela sua vez: 200 ms de Opus contínuo em pacotes de
+/// 20 ms. Um receptor ao vivo já teria desistido de um pacote mais atrasado.
+const OPUS_REORDER_WINDOW: usize = 10;
 
-/// O que o `OpusClock` decide sobre um pacote.
-#[derive(Debug, PartialEq, Eq)]
-enum OpusTick {
-    /// À frente do último escrito: escreve-se com este timestamp.
-    Write(u32),
-    /// Atrasado ou repetido: não se escreve.
-    Late,
-    /// O relógio da origem recuou de vez. A pista continua com este timestamp,
-    /// que conta o tempo passado desde o primeiro atrasado — o que se descartou
-    /// pelo caminho fica como um buraco, e o resto da pista não sai do sítio.
-    Resync(u32),
+/// Quantos pacotes seguidos atrás do último escrito fazem um relógio novo. O
+/// último escrito anda `OPUS_REORDER_WINDOW` pacotes atrás do mais novo que
+/// chegou, por isso são 50 atrás do mais novo: 1 s de Opus contínuo em
+/// pacotes de 20 ms (com DTX são os mesmos pacotes, e mais tempo).
+const OPUS_RESYNC_AFTER: usize = 50 - OPUS_REORDER_WINDOW;
+// O passo do relógio novo mede-se entre vizinhos da série.
+const _: () = assert!(OPUS_RESYNC_AFTER >= 2);
+
+/// O que aconteceu na pista ao receber um pacote (ou ao fechar).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct OpusOutcome {
+    /// Pacotes que não se escreveram: atrasados para lá da janela, ou repetidos.
+    late: u32,
+    /// O relógio da origem recuou de vez, e a pista continuou com o novo.
+    resynced: bool,
 }
 
-impl OpusClock {
-    /// A distância de `from` a `to` em aritmética de 32 bits, com sinal:
-    /// positiva se `to` está à frente, mesmo com a volta do relógio pelo meio.
+impl OpusTrack {
+    /// `to` está à frente de `from`, mesmo com a volta do relógio pelo meio.
     fn ahead(to: u32, from: u32) -> bool {
         to.wrapping_sub(from) as i32 > 0
     }
 
-    fn accept(&mut self, ts: u32) -> OpusTick {
-        let Some((first, last)) = &mut self.seen else {
-            self.seen = Some((ts, ts));
-            return OpusTick::Write(0);
-        };
-        if Self::ahead(ts, *last) {
-            self.late_run = None;
-            *last = ts;
-            return OpusTick::Write(ts.wrapping_sub(*first));
+    /// Recebe um pacote e põe em `out` os que já se podem escrever, por ordem
+    /// e com o timestamp final.
+    fn push(
+        &mut self,
+        pkt: webrtc::rtp::packet::Packet,
+        out: &mut Vec<webrtc::rtp::packet::Packet>,
+    ) -> OpusOutcome {
+        let ts = pkt.header.timestamp;
+        let mut did = OpusOutcome::default();
+        if self.written.is_some_and(|(_, last)| !Self::ahead(ts, last)) {
+            // Um que não avança sobre o anterior desfaz a série: recomeça nele.
+            let breaks = |p: &webrtc::rtp::packet::Packet| !Self::ahead(ts, p.header.timestamp);
+            if self.stale.last().is_some_and(breaks) {
+                did.late += self.stale.len() as u32;
+                self.stale.clear();
+            }
+            self.stale.push(pkt);
+            if self.stale.len() >= OPUS_RESYNC_AFTER {
+                did.late += self.resync(out);
+                did.resynced = true;
+            }
+            return did;
         }
-        let (run_start, run_len) = match self.late_run {
-            Some((start, prev, n)) if Self::ahead(ts, prev) => (start, n + 1),
-            _ => (ts, 1),
-        };
-        if run_len < OPUS_CLOCK_RESYNC_AFTER {
-            self.late_run = Some((run_start, ts, run_len));
-            return OpusTick::Late;
+        // Um pacote em dia: os que esperavam para ser um relógio novo eram só
+        // atrasados.
+        did.late += self.stale.len() as u32;
+        self.stale.clear();
+        // Depois dos que não estão à frente dele: um repetido fica a seguir ao
+        // original, e é o original que se escreve (o `emit` recusa o segundo).
+        let at = self
+            .window
+            .partition_point(|p| !Self::ahead(p.header.timestamp, ts));
+        self.window.insert(at, pkt);
+        if self.window.len() > OPUS_REORDER_WINDOW {
+            let oldest = self.window.remove(0);
+            did.late += self.emit(oldest, out);
         }
-        // O primeiro atrasado da série fica no instante do último escrito, e
-        // este pacote à distância dele que o relógio novo mediu.
-        let written = last.wrapping_sub(*first);
-        let out = written.wrapping_add(ts.wrapping_sub(run_start));
-        *first = ts.wrapping_sub(out);
-        *last = ts;
-        self.late_run = None;
-        OpusTick::Resync(out)
+        did
+    }
+
+    /// O fecho: o que esperava na janela escreve-se; o que esperava para ser
+    /// um relógio novo não chegou a sê-lo, e descarta-se.
+    fn flush(&mut self, out: &mut Vec<webrtc::rtp::packet::Packet>) -> OpusOutcome {
+        let mut did = OpusOutcome::default();
+        for pkt in std::mem::take(&mut self.window) {
+            did.late += self.emit(pkt, out);
+        }
+        did.late += self.stale.len() as u32;
+        self.stale.clear();
+        did
+    }
+
+    /// Entrega um pacote com o timestamp contado do primeiro escrito. Devolve
+    /// 1 se não o entregou, porque não avança sobre o último escrito: é um
+    /// repetido, ou os primeiros pacotes da pista vieram a meio relógio uns
+    /// dos outros e a janela não os soube ordenar. O `OggWriter` nunca vê um
+    /// timestamp que não cresce.
+    fn emit(
+        &mut self,
+        mut pkt: webrtc::rtp::packet::Packet,
+        out: &mut Vec<webrtc::rtp::packet::Packet>,
+    ) -> u32 {
+        let ts = pkt.header.timestamp;
+        let first = match &mut self.written {
+            None => {
+                self.written = Some((ts, ts));
+                ts
+            }
+            Some((first, last)) => {
+                if !Self::ahead(ts, *last) {
+                    return 1;
+                }
+                *last = ts;
+                *first
+            }
+        };
+        pkt.header.timestamp = ts.wrapping_sub(first);
+        out.push(pkt);
+        0
+    }
+
+    /// O relógio novo entra na pista: primeiro sai o que o antigo ainda tinha
+    /// à espera, e depois os pacotes guardados, com o primeiro um passo depois
+    /// do último escrito. O passo é o MENOR entre vizinhos da série: um
+    /// silêncio logo a seguir ao primeiro pacote (DTX) não pode empurrar o
+    /// resto da pista. Devolve os que não se escreveram.
+    fn resync(&mut self, out: &mut Vec<webrtc::rtp::packet::Packet>) -> u32 {
+        let mut late = 0;
+        for pkt in std::mem::take(&mut self.window) {
+            late += self.emit(pkt, out);
+        }
+        let stale = std::mem::take(&mut self.stale);
+        let t0 = stale[0].header.timestamp;
+        let step = stale
+            .windows(2)
+            .map(|w| w[1].header.timestamp.wrapping_sub(w[0].header.timestamp))
+            .min()
+            .unwrap_or(960);
+        if let Some((first, last)) = &mut self.written {
+            let written = last.wrapping_sub(*first);
+            *first = t0.wrapping_sub(written.wrapping_add(step));
+            *last = t0.wrapping_sub(step);
+        }
+        for pkt in stale {
+            late += self.emit(pkt, out);
+        }
+        late
     }
 }
 
@@ -349,18 +441,11 @@ enum RecSink {
     Audio {
         w: OggWriter<std::io::BufWriter<std::fs::File>>,
         key: Option<Arc<Aes256Gcm>>,
-        clock: OpusClock,
+        track: OpusTrack,
+        /// Os pacotes que a `track` deu por prontos, entre a chegada de um e
+        /// a escrita (um `Vec` que se reaproveita).
+        ready: Vec<webrtc::rtp::packet::Packet>,
     },
-}
-
-/// O que o `RecSink` fez a um pacote.
-#[derive(Debug, PartialEq, Eq)]
-enum SinkWrite {
-    Done,
-    /// Áudio com o timestamp atrás do último escrito: descartado.
-    Late,
-    /// Áudio escrito depois de o relógio da origem ter recuado de vez.
-    Resync,
 }
 
 impl RecSink {
@@ -380,48 +465,117 @@ impl RecSink {
         Ok(RecSink::Audio {
             w: OggWriter::new(std::io::BufWriter::with_capacity(64 * 1024, file), 48000, 2)?,
             key,
-            clock: OpusClock::default(),
+            track: OpusTrack::default(),
+            ready: Vec::new(),
         })
     }
 
-    fn write_rtp(&mut self, mut pkt: webrtc::rtp::packet::Packet) -> SinkWrite {
+    fn write_rtp(&mut self, pkt: webrtc::rtp::packet::Packet) -> OpusOutcome {
         match self {
             RecSink::Video(w) => {
                 let _ = w.write_rtp(&pkt);
-                SinkWrite::Done
+                OpusOutcome::default()
             }
-            RecSink::Audio { w, key, clock } => {
+            RecSink::Audio {
+                w,
+                key,
+                track,
+                ready,
+            } => {
                 // Um payload vazio não chega a ser escrito pelo `OggWriter`:
-                // não pode avançar o relógio de uma pista em que não entrou.
+                // não pode ocupar lugar numa pista em que não entra.
                 if pkt.payload.is_empty() {
-                    return SinkWrite::Done;
+                    return OpusOutcome::default();
                 }
-                let (ts, done) = match clock.accept(pkt.header.timestamp) {
-                    OpusTick::Write(ts) => (ts, SinkWrite::Done),
-                    OpusTick::Resync(ts) => (ts, SinkWrite::Resync),
-                    OpusTick::Late => return SinkWrite::Late,
-                };
-                // Opus: 1 frame por pacote — desencripta o payload (offset 1).
-                if let Some(key) = key {
-                    let Some(clear) = decrypt_e2ee(key, &pkt.payload, 1) else {
-                        return done;
-                    };
-                    pkt.payload = clear.into();
-                }
-                pkt.header.timestamp = ts;
-                let _ = w.write_rtp(&pkt);
-                done
+                let did = track.push(pkt, ready);
+                Self::write_opus(w, key.as_deref(), ready);
+                did
             }
         }
     }
-    fn close(&mut self) {
+
+    /// Escreve os pacotes que a pista deu por prontos. Opus: 1 frame por
+    /// pacote — desencripta o payload (offset 1); o que não autentica não se
+    /// escreve, e o seguinte cobre o tempo dele como uma perda.
+    fn write_opus(
+        w: &mut OggWriter<std::io::BufWriter<std::fs::File>>,
+        key: Option<&Aes256Gcm>,
+        ready: &mut Vec<webrtc::rtp::packet::Packet>,
+    ) {
+        for mut pkt in ready.drain(..) {
+            if let Some(key) = key {
+                let Some(clear) = decrypt_e2ee(key, &pkt.payload, 1) else {
+                    continue;
+                };
+                pkt.payload = clear.into();
+            }
+            let _ = w.write_rtp(&pkt);
+        }
+    }
+
+    fn close(&mut self) -> OpusOutcome {
         match self {
             RecSink::Video(w) => {
                 let _ = w.close();
+                OpusOutcome::default()
             }
-            RecSink::Audio { w, .. } => {
+            RecSink::Audio {
+                w,
+                key,
+                track,
+                ready,
+            } => {
+                // O que esperava a vez na janela ainda é da gravação.
+                let did = track.flush(ready);
+                Self::write_opus(w, key.as_deref(), ready);
                 let _ = w.close();
+                did
             }
+        }
+    }
+}
+
+/// O instante, no relógio da sessão, do primeiro pacote que a pista TEM.
+///
+/// O zero de uma pista é o primeiro quadro (ou pacote) que lá ficou escrito: o
+/// `Vp8IvfWriter` dá PTS 0 ao primeiro quadro, o `OpusClock` conta a partir do
+/// primeiro pacote. Esse instante NÃO é o de quando o writer foi ligado — uma
+/// pista de vídeo ligada a meio do fluxo espera pelo keyframe que o SFU pede
+/// (até 1 s, se o pedido cair no intervalo mínimo entre PLI, e mais se se
+/// perder), e uma de áudio em silêncio espera pelo pacote seguinte do DTX (até
+/// 400 ms). Posta na linha do tempo pelo instante da ligação, a pista entrava
+/// adiantada o tempo que esperou — a imagem à frente do som, ou o contrário.
+///
+/// Marca-o quem ENTREGA (`RecWriter::write_rtp`), à chegada do pacote, e lê-o
+/// a composição (`RecTrackMeta::starts_at_ms`).
+#[derive(Debug, Clone)]
+struct FirstPacket {
+    session_started: Instant,
+    /// Milissegundos desde o início da sessão; `NOT_YET` enquanto não chegou.
+    at_ms: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl FirstPacket {
+    const NOT_YET: u64 = u64::MAX;
+
+    fn new(session_started: Instant) -> Self {
+        Self {
+            session_started,
+            at_ms: Arc::new(std::sync::atomic::AtomicU64::new(Self::NOT_YET)),
+        }
+    }
+
+    /// A pista começa AGORA. Uma pista de vídeo cujo keyframe de abertura não
+    /// serviu volta a marcar no seguinte: vale a última marca.
+    fn mark(&self) {
+        let ms = self.session_started.elapsed().as_millis() as u64;
+        self.at_ms.store(ms, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn get(&self) -> Option<u64> {
+        match self.at_ms.load(std::sync::atomic::Ordering::Relaxed) {
+            Self::NOT_YET => None,
+            ms => Some(ms),
         }
     }
 }
@@ -454,6 +608,11 @@ pub struct RecWriter {
     awaiting_key: Arc<std::sync::atomic::AtomicBool>,
     /// Quando o writer foi ligado — para dizer quanto a pista esperou pelo keyframe.
     opened: Instant,
+    /// Pista de vídeo: começa no keyframe que a abre. As de áudio começam no
+    /// primeiro pacote.
+    video: bool,
+    /// Quando chegou o primeiro pacote que a pista tem (ver `FirstPacket`).
+    first: FirstPacket,
     /// Até quando se pede keyframe por esta pista (`KEYFRAME_ASK_FOR`).
     ask_until: Instant,
     /// Já se avisou de que se desistiu de pedir.
@@ -468,8 +627,10 @@ impl RecWriter {
         cap: usize,
         metrics: Arc<crate::metrics::Metrics>,
         label: String,
+        first: FirstPacket,
     ) -> Self {
         let awaiting_key = sink.awaiting_key();
+        let video = matches!(sink, RecSink::Video(_));
         let (tx, rx) = std::sync::mpsc::sync_channel::<Box<webrtc::rtp::packet::Packet>>(cap);
         let (thread_metrics, thread_label) = (metrics.clone(), label.clone());
         let join = std::thread::Builder::new()
@@ -477,36 +638,39 @@ impl RecWriter {
             .spawn(move || {
                 let mut sink = sink;
                 let mut late: u64 = 0;
+                // Contado e avisado como a fila cheia: um pacote que não entra
+                // na gravação nunca é silencioso (R18).
+                let mut account = |did: OpusOutcome| {
+                    if did.late > 0 {
+                        let n = u64::from(did.late);
+                        thread_metrics
+                            .recording_audio_late_dropped_total
+                            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+                        // Um aviso ao primeiro e a cada 500.
+                        if late == 0 || (late + n) / 500 > late / 500 {
+                            tracing::warn!(
+                                track = %thread_label,
+                                descartados = late + n,
+                                "gravação: áudio atrasado para lá da janela, ou repetido — não se escreve"
+                            );
+                        }
+                        late += n;
+                    }
+                    if did.resynced {
+                        tracing::warn!(
+                            track = %thread_label,
+                            "gravação: o relógio do áudio recuou de vez — a pista continua com o relógio novo"
+                        );
+                    }
+                };
                 // O laço termina quando TODOS os emissores caem (o `close`
                 // larga o `tx`), e só então se fecha o ficheiro. É isto que
                 // garante que o que estava em fila chega ao disco antes de o
                 // ffmpeg abrir o ficheiro.
                 while let Ok(pkt) = rx.recv() {
-                    match sink.write_rtp(*pkt) {
-                        SinkWrite::Done => {}
-                        SinkWrite::Late => {
-                            // Contado e avisado como a fila cheia: um pacote
-                            // que não entra na gravação nunca é silencioso (R18).
-                            crate::metrics::Metrics::bump(
-                                &thread_metrics.recording_audio_late_dropped_total,
-                            );
-                            if late.is_multiple_of(500) {
-                                tracing::warn!(
-                                    track = %thread_label,
-                                    descartados = late + 1,
-                                    "gravação: pacote de áudio atrasado ou repetido — não se escreve"
-                                );
-                            }
-                            late += 1;
-                        }
-                        SinkWrite::Resync => tracing::warn!(
-                            track = %thread_label,
-                            descartados = late,
-                            "gravação: o relógio do áudio recuou de vez — a pista continua com o relógio novo"
-                        ),
-                    }
+                    account(sink.write_rtp(*pkt));
                 }
-                sink.close();
+                account(sink.close());
             })
             .expect("thread de gravação");
         Self {
@@ -515,6 +679,8 @@ impl RecWriter {
             dropped: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             awaiting_key,
             opened: Instant::now(),
+            video,
+            first,
             ask_until: Instant::now() + KEYFRAME_ASK_FOR,
             gave_up: std::sync::atomic::AtomicBool::new(false),
             metrics,
@@ -531,13 +697,31 @@ impl RecWriter {
         // assim quem entrega sabe na hora se a pista já abriu, sem esperar
         // que a thread lá chegue — e não pede um keyframe que já tem em mão.
         let opens = self.awaiting_key.load(Relaxed) && rtp_starts_vp8_keyframe(pkt);
+        // O áudio começa no primeiro pacote que o `OggWriter` escreve (um
+        // payload vazio não chega lá — ver `RecSink::write_rtp`).
+        let starts = if self.video {
+            opens
+        } else {
+            self.first.get().is_none() && !pkt.payload.is_empty()
+        };
         if tx.try_send(Box::new(pkt.clone())).is_ok() {
+            if starts {
+                // É ESTE o instante em que a pista entra na linha do tempo da
+                // gravação, não o da ligação do writer (ver `FirstPacket`).
+                self.first.mark();
+            }
             if opens {
                 self.awaiting_key.store(false, Relaxed);
                 tracing::debug!(
                     track = %self.label,
                     espera_ms = self.opened.elapsed().as_millis() as u64,
                     "gravação: a pista de vídeo abriu no seu keyframe"
+                );
+            } else if starts {
+                tracing::debug!(
+                    track = %self.label,
+                    espera_ms = self.opened.elapsed().as_millis() as u64,
+                    "gravação: a pista de áudio começa no seu primeiro pacote"
                 );
             }
         } else {
@@ -639,7 +823,20 @@ impl Drop for RecWriter {
 pub struct RecTrackMeta {
     pub path: PathBuf,
     pub kind: String, // "video" | "audio"
+    /// Quando o writer foi LIGADO, em ms desde o início da sessão. Não é onde
+    /// a pista começa — isso é `starts_at_ms`.
     pub offset_ms: u64,
+    first: FirstPacket,
+}
+
+impl RecTrackMeta {
+    /// Onde a pista começa na linha do tempo da gravação, em ms desde o início
+    /// da sessão: o instante do primeiro pacote que ela tem. É este o valor que
+    /// a composição usa. Uma pista que nunca recebeu nada fica no instante da
+    /// ligação (e a composição deixa-a de fora, por estar vazia).
+    pub fn starts_at_ms(&self) -> u64 {
+        self.first.get().unwrap_or(self.offset_ms)
+    }
 }
 
 /// Sessão de gravação de uma sala.
@@ -733,11 +930,13 @@ impl RecordingSession {
                 }
             }
         };
-        let writer = RecWriter::spawn(sink, cap, metrics, format!("{n:02}-{kind}"));
+        let first = FirstPacket::new(self.started);
+        let writer = RecWriter::spawn(sink, cap, metrics, format!("{n:02}-{kind}"), first.clone());
         self.tracks.push(RecTrackMeta {
             path,
             kind: kind.to_string(),
             offset_ms,
+            first,
         });
         Some(writer)
     }
@@ -897,27 +1096,30 @@ impl Drop for GaugeGuard<'_> {
     }
 }
 
-/// Espera por uma vaga de composição, chamando `on_beat` a cada `beat_every`
-/// enquanto espera. O `acquire` fica fixo e é re-sondado: o semáforo do tokio
-/// serve por ordem de chegada, e largar o future perdia o lugar na fila.
+/// Espera por uma vaga de composição para `tenant`, chamando `on_beat` a cada
+/// `beat_every` enquanto espera. O `acquire` fica fixo e é re-sondado: largar o
+/// future perdia o lugar na fila. As vagas repartem-se por inquilino
+/// (`fair_slots`): uma organização com muitas composições à espera não deixa as
+/// outras atrás de si.
 async fn wait_for_slot<F, Fut>(
-    slots: Arc<tokio::sync::Semaphore>,
+    slots: crate::fair_slots::FairSlots,
+    tenant: Uuid,
     beat_every: std::time::Duration,
     mut on_beat: F,
-) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit>
+) -> anyhow::Result<crate::fair_slots::Slot>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
-    let acquire = slots.acquire_owned();
+    let acquire = slots.acquire(tenant);
     tokio::pin!(acquire);
     let mut tick = tokio::time::interval(beat_every);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     tick.tick().await; // o primeiro tick é imediato; o batimento só conta ao fim de um período
     loop {
         tokio::select! {
-            permit = &mut acquire => {
-                return permit.map_err(|_| anyhow::anyhow!("semáforo de composição fechado"));
+            slot = &mut acquire => {
+                return slot.map_err(|_| anyhow::anyhow!("vagas de composição fechadas"));
             }
             _ = tick.tick() => on_beat().await,
         }
@@ -1199,60 +1401,7 @@ async fn finalize_inner(
         _ => None,
     };
 
-    if videos.len() == 1 && audios.len() <= 1 {
-        // Caso simples: o vídeo vai em cópia, sem reencode; o áudio não (R295).
-        cmd.arg("-i").arg(&videos[0].path);
-        if let Some(a) = audios.first() {
-            cmd.arg("-i").arg(&a.path);
-        }
-        cmd.args(single_publisher_args(!audios.is_empty(), downscale_to));
-    } else {
-        // Composição em grelha + mistura de áudio (VP9 CRF 30 + Opus 128k).
-        for v in &videos {
-            cmd.arg("-i").arg(&v.path);
-        }
-        for a in &audios {
-            cmd.arg("-i").arg(&a.path);
-        }
-        let n = videos.len();
-        let cols = (n as f64).sqrt().ceil() as usize;
-        let (tw, th) = grid_tile(quality, n);
-        let mut fc = String::new();
-        for (i, v) in videos.iter().enumerate() {
-            let off = v.offset_ms as f64 / 1000.0;
-            fc.push_str(&format!(
-                "[{i}:v]scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=start_duration={off:.3}:start_mode=add:color=black[v{i}];"
-            ));
-        }
-        let vout = if n > 1 {
-            let layout = (0..n)
-                .map(|i| format!("{}_{}", (i % cols) * tw as usize, (i / cols) * th as usize))
-                .collect::<Vec<_>>()
-                .join("|");
-            let ins = (0..n).map(|i| format!("[v{i}]")).collect::<String>();
-            fc.push_str(&format!(
-                "{ins}xstack=inputs={n}:layout={layout}:fill=black[vout];"
-            ));
-            "[vout]"
-        } else if n == 1 {
-            "[v0]"
-        } else {
-            ""
-        };
-        let offsets: Vec<u64> = audios.iter().map(|a| a.offset_ms).collect();
-        let (afc, aout) = audio_mix_graph(n, &offsets);
-        fc.push_str(&afc);
-        let fc = fc.trim_end_matches(';').to_string();
-        cmd.arg("-filter_complex").arg(&fc);
-        if !vout.is_empty() {
-            cmd.args(["-map", vout]);
-            cmd.args(VP9_ARGS);
-        }
-        if !aout.is_empty() {
-            cmd.args(["-map", &aout]);
-            cmd.args(OPUS_ARGS);
-        }
-    }
+    cmd.args(compose_args(&videos, &audios, quality, downscale_to));
     cmd.arg(&out);
 
     tracing::info!(%room_id, tracks = session.tracks.len(), "server recording: a compor webm…");
@@ -1265,16 +1414,26 @@ async fn finalize_inner(
     // começar: esperar a vez não conta como tempo de composição.
     let waiting = GaugeGuard::up(&state.metrics.recording_compose_queued);
     let queued_at = std::time::Instant::now();
-    let _slot = wait_for_slot(state.compose_slots.clone(), COMPOSE_QUEUE_BEAT, || async {
-        if let Some(id) = rec_id {
-            let _ = sqlx::query(
+    // De quem é a composição: o inquilino da sala (a organização do dono), para
+    // que as vagas se repartam entre organizações e não por ordem de chegada.
+    let tenant = crate::signaling::resolve_tenant(state, room_id)
+        .await
+        .unwrap_or(crate::fair_slots::UNKNOWN_TENANT);
+    let _slot = wait_for_slot(
+        state.compose_slots.clone(),
+        tenant,
+        COMPOSE_QUEUE_BEAT,
+        || async {
+            if let Some(id) = rec_id {
+                let _ = sqlx::query(
                 "UPDATE recordings SET progress_at = now() WHERE id = $1 AND status = 'processing'",
             )
             .bind(id)
             .execute(&state.db)
             .await;
-        }
-    })
+            }
+        },
+    )
     .await?;
     drop(waiting);
     let _running = GaugeGuard::up(&state.metrics.recording_compose_running);
@@ -1467,31 +1626,183 @@ fn single_publisher_args(has_audio: bool, downscale_to: Option<u32>) -> Vec<Stri
     args
 }
 
-/// A parte de áudio do `-filter_complex` da composição: cada pista é enchida
-/// (`AUDIO_GAP_FILL`), atrasada pelo instante em que abriu (`offset_ms`) e,
-/// havendo mais de uma, misturam-se. `first_input` é o índice da primeira
-/// entrada de áudio do ffmpeg (as de vídeo vêm antes). Devolve o grafo (cada
-/// cadeia acabada em `;`) e o rótulo a mapear — vazios sem áudio.
-fn audio_mix_graph(first_input: usize, offsets_ms: &[u64]) -> (String, String) {
+/// Os argumentos do ffmpeg que compõem a gravação: as entradas (cada pista no
+/// seu instante), os filtros e os codecs — tudo menos o ficheiro de saída.
+/// `videos` e `audios` são as pistas com conteúdo, pela ordem da sessão.
+///
+/// Um vídeo com um áudio no máximo: o vídeo vai em cópia (ou reduzido a
+/// `downscale_to` linhas). Mais do que isso: grelha e mistura.
+fn compose_args(
+    videos: &[&RecTrackMeta],
+    audios: &[&RecTrackMeta],
+    quality: Option<&str>,
+    downscale_to: Option<u32>,
+) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = Vec::new();
+    let mut input = |shift_ms: u64, path: &Path| {
+        args.extend(input_shift(shift_ms).into_iter().map(Into::into));
+        args.push("-i".into());
+        args.push(path.into());
+    };
+    if videos.len() == 1 && audios.len() <= 1 {
+        // Caso simples: o vídeo vai em cópia, sem reencode; o áudio não (R295).
+        // Cada pista entra no seu instante: a que começou depois leva a
+        // diferença em `-itsoffset`, que vale também para o vídeo em cópia.
+        let (video_ms, audio_ms) = single_publisher_shifts(
+            videos[0].starts_at_ms(),
+            audios.first().map(|a| a.starts_at_ms()),
+        );
+        input(video_ms, &videos[0].path);
+        if let Some(a) = audios.first() {
+            input(audio_ms, &a.path);
+        }
+        args.extend(
+            single_publisher_args(!audios.is_empty(), downscale_to)
+                .into_iter()
+                .map(Into::into),
+        );
+        return args;
+    }
+    // Composição em grelha + mistura de áudio (VP9 CRF 30 + Opus 128k).
+    for t in videos.iter().chain(audios) {
+        input(0, &t.path);
+    }
+    let n = videos.len();
+    let cols = (n as f64).sqrt().ceil() as usize;
+    let (tw, th) = grid_tile(quality, n);
     let mut fc = String::new();
-    if offsets_ms.is_empty() {
+    for (i, v) in videos.iter().enumerate() {
+        fc.push_str(&grid_cell_chain(i, tw, th, v.starts_at_ms()));
+    }
+    let vout = if n > 1 {
+        let layout = (0..n)
+            .map(|i| format!("{}_{}", (i % cols) * tw as usize, (i / cols) * th as usize))
+            .collect::<Vec<_>>()
+            .join("|");
+        let ins = (0..n).map(|i| format!("[v{i}]")).collect::<String>();
+        fc.push_str(&format!(
+            "{ins}xstack=inputs={n}:layout={layout}:fill=black[vout];"
+        ));
+        "[vout]"
+    } else if n == 1 {
+        "[v0]"
+    } else {
+        ""
+    };
+    let starts: Vec<u64> = audios.iter().map(|a| a.starts_at_ms()).collect();
+    let (afc, aout) = audio_mix_graph(n, &starts);
+    fc.push_str(&afc);
+    args.push("-filter_complex".into());
+    args.push(fc.trim_end_matches(';').into());
+    if !vout.is_empty() {
+        args.extend(["-map", vout].map(Into::into));
+        args.extend(VP9_ARGS.map(Into::into));
+    }
+    if !aout.is_empty() {
+        args.push("-map".into());
+        args.push(aout.into());
+        args.extend(OPUS_ARGS.map(Into::into));
+    }
+    args
+}
+
+/// Quanto uma pista de áudio entra ADIANTADA na composição, em ms.
+///
+/// O `OggWriter` declara 3840 amostras de `pre-skip` no cabeçalho de cada
+/// pista, e o ffmpeg desconta-as ao início: os primeiros 80 ms de som são
+/// deitados fora e tudo o resto recua 80 ms. Todo o instante de áudio que a
+/// composição usa leva este acerto — sem ele o som chega 80 ms antes da
+/// imagem, e acertar só o lado do vídeo deixava a gravação PIOR do que estava
+/// (um avanço do som nota-se a partir de 45 ms; um atraso, só aos 125).
+const OGG_PRE_SKIP_MS: u64 = 80;
+
+/// A cadência da grelha. Cada vídeo é posto nesta cadência antes de entrar no
+/// `xstack` (ver `grid_cell_chain`).
+const GRID_FPS: u64 = 30;
+
+/// Quanto se atrasa cada entrada no caminho de um publicador, em ms: `(vídeo,
+/// áudio)`. Recebe o instante em que cada pista começa (`starts_at_ms`); a que
+/// começa primeiro fica no zero do ficheiro e a outra leva a diferença. O
+/// áudio conta com o `OGG_PRE_SKIP_MS`.
+fn single_publisher_shifts(video_at_ms: u64, audio_at_ms: Option<u64>) -> (u64, u64) {
+    let Some(audio_at_ms) = audio_at_ms.map(|ms| ms + OGG_PRE_SKIP_MS) else {
+        return (0, 0);
+    };
+    let zero = video_at_ms.min(audio_at_ms);
+    (video_at_ms - zero, audio_at_ms - zero)
+}
+
+/// Os argumentos que atrasam `ms` a entrada do ffmpeg que vier a seguir.
+///
+/// É `-itsoffset` e não um PTS inicial diferente de zero na pista: o ffmpeg
+/// põe cada entrada a começar no zero dela (desconta-lhe o `start_time`), em
+/// cópia e em filtros — medido no 6.1.1, um IVF com o primeiro quadro aos
+/// 400 ms sai com ele aos 0 ms.
+fn input_shift(ms: u64) -> Vec<String> {
+    if ms == 0 {
+        return Vec::new();
+    }
+    vec!["-itsoffset".into(), format!("{:.3}", ms as f64 / 1000.0)]
+}
+
+/// A cadeia de uma célula da grelha: o vídeo da entrada `i`, numa célula de
+/// `tw`×`th`, a começar aos `at_ms` da gravação (`starts_at_ms`), com preto
+/// até lá.
+///
+/// **`fps` antes de tudo, e o preto contado em QUADROS.** Duas coisas medidas
+/// com pistas a sério (ffmpeg 6.1.1), que o `tpad=start_duration` sobre a pista
+/// tal como vem fazia mal:
+/// - o `tpad` gera o preto à cadência que o ffmpeg ADIVINHA para a pista e
+///   avança cada quadro um passo arredondado à base de tempo dela (1/1000): a
+///   30 fps são 33 ms em vez de 33,33, e a imagem ficava adiantada 1 % do
+///   offset — 0,3 s para quem ligou a câmara aos 30 s de gravação, 6 s aos 10
+///   minutos;
+/// - o `xstack` dá um quadro por cada quadro de cada entrada, a instantes que
+///   não coincidem, e o codificador (cadência fixa) empurrava os que caíam na
+///   mesma casa para a seguinte: a imagem da grelha saía 30 a 70 ms atrasada.
+///
+/// Com todas as entradas na mesma cadência, o preto são `n` quadros exactos, o
+/// `xstack` dá um quadro por casa, e o erro de cada célula é o arredondamento
+/// do `fps`: meio quadro, 17 ms. O que sobra do instante depois de tirar os
+/// quadros inteiros (menos de um quadro) vai no `setpts`, antes do `fps`.
+fn grid_cell_chain(i: usize, tw: u32, th: u32, at_ms: u64) -> String {
+    let frames = at_ms * GRID_FPS / 1000;
+    let rest_s = at_ms as f64 / 1000.0 - frames as f64 / GRID_FPS as f64;
+    format!(
+        "[{i}:v]setpts=PTS+{rest_s:.4}/TB,fps={GRID_FPS},\
+         scale={tw}:{th}:force_original_aspect_ratio=decrease,\
+         pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,\
+         tpad=start={frames}:start_mode=add:color=black[v{i}];"
+    )
+}
+
+/// A parte de áudio do `-filter_complex` da composição: cada pista é enchida
+/// (`AUDIO_GAP_FILL`), atrasada até ao instante em que começa (`starts_ms`, o
+/// `starts_at_ms` de cada uma, mais o `OGG_PRE_SKIP_MS`) e, havendo mais de
+/// uma, misturam-se. `first_input` é o índice da primeira entrada de áudio do
+/// ffmpeg (as de vídeo vêm antes). Devolve o grafo (cada cadeia acabada em
+/// `;`) e o rótulo a mapear — vazios sem áudio.
+fn audio_mix_graph(first_input: usize, starts_ms: &[u64]) -> (String, String) {
+    let mut fc = String::new();
+    if starts_ms.is_empty() {
         return (fc, String::new());
     }
-    for (j, ms) in offsets_ms.iter().enumerate() {
+    for (j, at) in starts_ms.iter().enumerate() {
         let idx = first_input + j;
+        let ms = at + OGG_PRE_SKIP_MS;
         fc.push_str(&format!(
             "[{idx}:a]{AUDIO_GAP_FILL},adelay={ms}:all=1[a{j}];"
         ));
     }
-    if offsets_ms.len() == 1 {
+    if starts_ms.len() == 1 {
         return (fc, "[a0]".into());
     }
-    let ins = (0..offsets_ms.len())
+    let ins = (0..starts_ms.len())
         .map(|j| format!("[a{j}]"))
         .collect::<String>();
     fc.push_str(&format!(
         "{ins}amix=inputs={}:normalize=0[aout];",
-        offsets_ms.len()
+        starts_ms.len()
     ));
     (fc, "[aout]".into())
 }
@@ -1823,6 +2134,7 @@ mod tests {
             cap,
             Arc::new(crate::metrics::Metrics::default()),
             "teste".into(),
+            FirstPacket::new(Instant::now()),
         );
         (w, path)
     }
@@ -2171,31 +2483,49 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    //  O relógio de uma pista de áudio: pacotes atrasados e a volta dos 32 bits
+    //  A ordem e o relógio de uma pista de áudio (`OpusTrack`)
     // ------------------------------------------------------------------
     //
     // O `OggWriter` avança a posição do grânulo com `timestamp - anterior`, uma
     // subtracção de `u32` sem `wrapping`. Um pacote com o timestamp para trás
     // (reordenação na rede, ou um duplicado) soma perto de 2^32 amostras à pista
     // em release — 24 h e 51 min — e deita abaixo a thread de escrita em debug.
+    // E descartá-lo tirava 20 ms à fala (R294): escreve-se no sítio.
 
-    /// Um pacote Opus mínimo: 20 ms de silêncio (TOC `0xF8`, um frame CELT).
-    fn opus_silencio(seq: u16, ts: u32) -> webrtc::rtp::packet::Packet {
+    type Pacote = webrtc::rtp::packet::Packet;
+
+    /// Um pacote Opus mínimo, com o número de sequência no payload para se
+    /// saber, no ficheiro, que pacote ficou em que página. O TOC `0xF8` é um
+    /// frame CELT de 20 ms; o `OggWriter` não o descodifica.
+    fn pacote_opus(seq: u16, ts: u32) -> Pacote {
         let header = webrtc::rtp::header::Header {
             sequence_number: seq,
             timestamp: ts,
             payload_type: 111,
             ..Default::default()
         };
-        webrtc::rtp::packet::Packet {
+        Pacote {
             header,
-            payload: vec![0xf8, 0xff, 0xfe].into(),
+            payload: vec![0xf8, (seq >> 8) as u8, seq as u8].into(),
         }
     }
 
-    /// `(tipo de cabeçalho, posição do grânulo)` de cada página do OGG.
-    /// Tipo `2` = início do fluxo, `4` = fim do fluxo.
-    fn ogg_paginas(path: &std::path::Path) -> Vec<(u8, u64)> {
+    /// `n` pacotes de 20 ms pela ordem em que foram ditos, a começar em `base`.
+    fn falados(n: u16, base: u32) -> Vec<Pacote> {
+        (0..n)
+            .map(|i| pacote_opus(i, base.wrapping_add(u32::from(i) * 960)))
+            .collect()
+    }
+
+    /// O pacote `k` chega `atraso` lugares depois do seu.
+    fn atrasa(pacotes: &mut Vec<Pacote>, k: usize, atraso: usize) {
+        let p = pacotes.remove(k);
+        pacotes.insert(k + atraso, p);
+    }
+
+    /// `(tipo de cabeçalho, posição do grânulo, payload)` de cada página do
+    /// OGG. Tipo `2` = início do fluxo, `4` = fim do fluxo.
+    fn ogg_paginas(path: &std::path::Path) -> Vec<(u8, u64, Vec<u8>)> {
         let b = std::fs::read(path).expect("ficheiro de gravação");
         let mut paginas = Vec::new();
         let mut i = 0;
@@ -2204,92 +2534,174 @@ mod tests {
             let granulo = u64::from_le_bytes(b[i + 6..i + 14].try_into().unwrap());
             let n_seg = b[i + 26] as usize;
             let corpo: usize = b[i + 27..i + 27 + n_seg].iter().map(|&x| x as usize).sum();
-            paginas.push((b[i + 5], granulo));
+            let payload = b[i + 27 + n_seg..i + 27 + n_seg + corpo].to_vec();
+            paginas.push((b[i + 5], granulo, payload));
             i += 27 + n_seg + corpo;
         }
         paginas
     }
 
     /// O que ficou de uma pista de áudio gravada num teste.
+    #[derive(Debug)]
     struct PistaGravada {
-        /// Grânulos das páginas de áudio, sem os dois cabeçalhos nem o fecho.
-        granulos: Vec<u64>,
+        /// `(grânulo, payload)` das páginas de áudio, sem os dois cabeçalhos
+        /// nem o fecho.
+        paginas: Vec<(u64, Vec<u8>)>,
         /// A última página é a de fim do fluxo: a thread chegou ao `close`.
         fechada: bool,
         /// `recording_audio_late_dropped_total` no fim.
         atrasados: u64,
-        /// O ficheiro tal como ficou em disco.
-        bytes: Vec<u8>,
     }
 
-    /// Grava pacotes Opus com os timestamps dados, pela ordem dada, e fecha.
+    impl PistaGravada {
+        fn granulos(&self) -> Vec<u64> {
+            self.paginas.iter().map(|p| p.0).collect()
+        }
+        /// Os números de sequência dos `pacote_opus`, pela ordem das páginas.
+        fn seqs(&self) -> Vec<u16> {
+            self.paginas
+                .iter()
+                .map(|(_, p)| u16::from_be_bytes([p[1], p[2]]))
+                .collect()
+        }
+    }
+
+    /// Os grânulos de `n` pacotes de 20 ms seguidos, sem nada em falta.
+    fn granulos_seguidos(n: u64) -> Vec<u64> {
+        (0..n).map(|i| 1 + i * 960).collect()
+    }
+
+    /// Grava pacotes com os timestamps dados, pela ordem dada (a sequência é
+    /// a ordem de chegada), e fecha.
     async fn grava_audio(timestamps: &[u32]) -> PistaGravada {
         let pacotes = timestamps
             .iter()
             .enumerate()
-            .map(|(i, ts)| opus_silencio(i as u16, *ts))
+            .map(|(i, ts)| pacote_opus(i as u16, *ts))
             .collect();
         grava_pacotes_de_audio(None, pacotes).await
     }
 
+    /// Grava pelo caminho de produção: a thread do `RecWriter` e o `RecSink`.
     async fn grava_pacotes_de_audio(
         key: Option<Arc<Aes256Gcm>>,
-        pacotes: Vec<webrtc::rtp::packet::Packet>,
+        pacotes: Vec<Pacote>,
     ) -> PistaGravada {
         let dir = std::env::temp_dir().join(format!("dlx-rec-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("teste.ogg");
         let sink = RecSink::audio(std::fs::File::create(&path).unwrap(), key).unwrap();
         let metrics = Arc::new(crate::metrics::Metrics::default());
-        let w = RecWriter::spawn(sink, 4096, metrics.clone(), "teste-audio".into());
+        let w = RecWriter::spawn(
+            sink,
+            4096,
+            metrics.clone(),
+            "teste-audio".into(),
+            FirstPacket::new(Instant::now()),
+        );
         for pkt in &pacotes {
             w.write_rtp(pkt);
         }
         w.close().await;
         let paginas = ogg_paginas(&path);
-        let bytes = std::fs::read(&path).unwrap();
-        // Para olhar para o ficheiro com o `ffprobe`, fora do teste.
-        if let Ok(guardar) = std::env::var("DLX_TESTE_GUARDA_OGG") {
-            let _ = std::fs::copy(&path, guardar);
-        }
         let _ = std::fs::remove_dir_all(&dir);
         assert!(paginas.len() >= 2, "faltam os cabeçalhos do OGG");
-        assert_eq!(paginas[0], (2, 0), "a primeira página é o OpusHead");
+        assert_eq!((paginas[0].0, paginas[0].1), (2, 0), "falta o OpusHead");
         PistaGravada {
-            granulos: paginas[2..]
+            fechada: paginas.last().is_some_and(|p| p.0 == 4),
+            paginas: paginas[2..]
                 .iter()
                 .filter(|p| p.0 != 4)
-                .map(|p| p.1)
+                .map(|p| (p.1, p.2.clone()))
                 .collect(),
-            fechada: paginas.last().is_some_and(|p| p.0 == 4),
             atrasados: metrics
                 .recording_audio_late_dropped_total
                 .load(std::sync::atomic::Ordering::Relaxed),
-            bytes,
         }
     }
 
+    /// Passa `chegada` pela `OpusTrack` e fecha: `(sequência, timestamp
+    /// entregue)` de cada pacote escrito, e a soma do que aconteceu.
+    fn pela_pista(chegada: Vec<Pacote>) -> (Vec<(u16, u32)>, OpusOutcome) {
+        let (mut track, mut out) = (OpusTrack::default(), Vec::new());
+        let mut total = OpusOutcome::default();
+        let mut soma = |did: OpusOutcome| {
+            total.late += did.late;
+            total.resynced |= did.resynced;
+        };
+        for pkt in chegada {
+            soma(track.push(pkt, &mut out));
+        }
+        soma(track.flush(&mut out));
+        let escritos = out
+            .iter()
+            .map(|p| (p.header.sequence_number, p.header.timestamp))
+            .collect();
+        (escritos, total)
+    }
+
     #[tokio::test]
-    async fn pacote_de_audio_atrasado_nao_avanca_a_pista_um_dia() {
+    async fn um_pacote_de_audio_atrasado_escreve_se_no_sitio() {
         // 0, 1920, e só depois o 960 que a rede atrasou. 60 ms de áudio.
         let pista = grava_audio(&[0, 1920, 960]).await;
-        let ultimo = *pista.granulos.last().expect("páginas de áudio");
+        let ultimo = pista.paginas.last().expect("páginas de áudio").0;
         assert!(
             ultimo <= 1 + 1920,
             "a pista de 60 ms ficou com {:.1} h (grânulo {ultimo}): {:?}",
             ultimo as f64 / 48000.0 / 3600.0,
-            pista.granulos
+            pista.granulos()
         );
         assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
-        assert_eq!(pista.granulos, vec![1, 1921], "o atrasado não se escreve");
-        assert_eq!(pista.atrasados, 1, "descartado, mas contado");
+        assert_eq!(pista.granulos(), granulos_seguidos(3));
+        assert_eq!(pista.seqs(), vec![0, 2, 1], "o atrasado fica no meio");
+        assert_eq!(pista.atrasados, 0, "nada se perdeu");
     }
 
     #[tokio::test]
-    async fn depois_de_um_atrasado_ou_repetido_a_pista_continua() {
-        let pista = grava_audio(&[0, 960, 960, 0, 1920, 2880]).await;
+    async fn uma_pista_reordenada_fica_igual_a_que_chegou_em_ordem() {
+        let em_ordem = falados(200, 90_000);
+        let mut chegada = em_ordem.clone();
+        chegada.swap(20, 21);
+        atrasa(&mut chegada, 50, 3);
+        // O limite: um pacote que chega depois dos `OPUS_REORDER_WINDOW`
+        // seguintes ainda encontra o seu lugar.
+        atrasa(&mut chegada, 100, OPUS_REORDER_WINDOW);
+        chegada.swap(198, 199);
+        let certa = grava_pacotes_de_audio(None, em_ordem).await;
+        let pista = grava_pacotes_de_audio(None, chegada).await;
         assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
-        assert_eq!(pista.granulos, vec![1, 961, 1921, 2881]);
+        assert_eq!(pista.atrasados, 0);
+        assert_eq!(certa.granulos(), granulos_seguidos(200));
+        assert_eq!(pista.paginas, certa.paginas, "página a página");
+    }
+
+    #[tokio::test]
+    async fn um_atrasado_para_la_da_janela_nao_se_escreve_e_conta_se() {
+        let mut chegada = falados(60, 90_000);
+        atrasa(&mut chegada, 20, OPUS_REORDER_WINDOW + 1);
+        let pista = grava_pacotes_de_audio(None, chegada).await;
+        assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
+        let sem_o_20: Vec<u16> = (0..60).filter(|i| *i != 20).collect();
+        assert_eq!(pista.seqs(), sem_o_20);
+        assert_eq!(pista.atrasados, 1, "descartado, mas contado");
+        // O lugar dele fica como o de um pacote perdido: 40 ms entre vizinhos.
+        let g = pista.granulos();
+        assert_eq!(g[20] - g[19], 1920);
+        assert_eq!(*g.last().unwrap(), 1 + 59 * 960);
+    }
+
+    #[tokio::test]
+    async fn um_repetido_nao_se_escreve_duas_vezes() {
+        let em_ordem = falados(40, 90_000);
+        let mut chegada = em_ordem.clone();
+        // um repetido logo a seguir ao original, e outro de um pacote que já
+        // foi escrito há muito
+        chegada.insert(6, em_ordem[5].clone());
+        chegada.insert(31, em_ordem[3].clone());
+        let certa = grava_pacotes_de_audio(None, em_ordem).await;
+        let pista = grava_pacotes_de_audio(None, chegada).await;
+        assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
+        assert_eq!(pista.paginas, certa.paginas);
         assert_eq!(pista.atrasados, 2);
     }
 
@@ -2298,20 +2710,15 @@ mod tests {
         // Os browsers começam o timestamp RTP num valor ao acaso, e a 48 kHz o
         // relógio de 32 bits dá a volta a cada 24 h 51 min: uma pista apanha a
         // volta a meio com a probabilidade da sua duração sobre esse tempo.
-        let antes = u32::MAX - 959;
-        let pista = grava_audio(&[antes, antes.wrapping_add(960), 960, 1920]).await;
+        // Aqui o pacote 20 tem o timestamp 0, e chega trocado com o 19.
+        let mut chegada = falados(40, 0u32.wrapping_sub(20 * 960));
+        assert_eq!(chegada[20].header.timestamp, 0);
+        chegada.swap(19, 20);
+        let pista = grava_pacotes_de_audio(None, chegada).await;
         assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
-        assert_eq!(pista.granulos, vec![1, 961, 1921, 2881]);
+        assert_eq!(pista.granulos(), granulos_seguidos(40));
+        assert_eq!(pista.seqs(), (0..40).collect::<Vec<u16>>());
         assert_eq!(pista.atrasados, 0, "a volta não é um atraso");
-    }
-
-    #[tokio::test]
-    async fn um_atrasado_do_outro_lado_da_volta_tambem_se_descarta() {
-        let antes = u32::MAX - 959;
-        let pista = grava_audio(&[antes, 0, antes.wrapping_add(480), 960]).await;
-        assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
-        assert_eq!(pista.granulos, vec![1, 961, 1921]);
-        assert_eq!(pista.atrasados, 1);
     }
 
     #[test]
@@ -2320,98 +2727,258 @@ mod tests {
         // a volta: em release dava certo por acaso, em debug é pânico — e o CI
         // corre em release, por isso é aqui que isto se guarda.
         let antes = u32::MAX - 959;
-        let mut clock = OpusClock::default();
-        assert_eq!(clock.accept(antes), OpusTick::Write(0));
-        assert_eq!(clock.accept(0), OpusTick::Write(960));
-        assert_eq!(clock.accept(antes.wrapping_add(480)), OpusTick::Late);
-        assert_eq!(clock.accept(0), OpusTick::Late, "repetido");
-        assert_eq!(clock.accept(960), OpusTick::Write(1920));
-        // Um salto para a FRENTE é tempo que passou (DTX, um telefone calado
-        // pelo anfitrião): aceita-se tal como vem.
-        assert_eq!(clock.accept(960 + 480_000), OpusTick::Write(1920 + 480_000));
-    }
-
-    #[test]
-    fn um_recuo_que_nao_passa_e_um_relogio_novo() {
-        // A origem recomeça o relógio 10 min atrás. Sem re-ancorar, a pista
-        // ficava muda na gravação durante esses 10 min.
-        let mut clock = OpusClock::default();
-        for i in 0..100u32 {
-            assert_eq!(clock.accept(28_800_000 + i * 960), OpusTick::Write(i * 960));
-        }
-        let ultimo = 99 * 960;
-        let n = OPUS_CLOCK_RESYNC_AFTER;
-        for i in 0..n - 1 {
-            assert_eq!(clock.accept(i * 960), OpusTick::Late, "atrasado {i}");
-        }
-        // O primeiro atrasado ficou no instante do último escrito; este vem
-        // `n - 1` frames depois dele. O segundo descartado é um buraco na pista,
-        // não um encurtamento: o resto não sai do sítio.
+        let chegada = vec![
+            pacote_opus(0, antes),
+            pacote_opus(1, 0),
+            pacote_opus(2, 960),
+            // Um salto para a FRENTE é tempo que passou (DTX, um telefone
+            // calado pelo anfitrião): aceita-se tal como vem.
+            pacote_opus(3, 960 + 480_000),
+        ];
+        let (escritos, total) = pela_pista(chegada);
         assert_eq!(
-            clock.accept((n - 1) * 960),
-            OpusTick::Resync(ultimo + (n - 1) * 960)
+            escritos,
+            vec![(0, 0), (1, 960), (2, 1920), (3, 1920 + 480_000)]
         );
-        assert_eq!(clock.accept(n * 960), OpusTick::Write(ultimo + n * 960));
-        assert_eq!(clock.accept((n - 2) * 960), OpusTick::Late);
+        assert_eq!(total, OpusOutcome::default());
+    }
+
+    /// 100 pacotes, e a origem recomeça o relógio 10 min atrás, de vez.
+    fn com_recuo(depois: u16) -> Vec<Pacote> {
+        let mut chegada = falados(100, 28_800_000);
+        chegada.extend((0..depois).map(|j| pacote_opus(100 + j, u32::from(j) * 960)));
+        chegada
     }
 
     #[test]
-    fn uma_rajada_de_reordenacao_nao_e_um_relogio_novo() {
-        let n = OPUS_CLOCK_RESYNC_AFTER;
-        let mut clock = OpusClock::default();
-        assert_eq!(clock.accept(0), OpusTick::Write(0));
-        assert_eq!(clock.accept(1_000_000), OpusTick::Write(1_000_000));
+    fn um_recuo_que_nao_passa_e_um_relogio_novo_e_nao_se_perde_nada() {
+        let n = OPUS_RESYNC_AFTER as u16 + 10;
+        let (escritos, total) = pela_pista(com_recuo(n));
+        // Todos, pela ordem em que foram ditos, e seguidos: o primeiro do
+        // relógio novo fica um passo depois do último do antigo.
+        let seguidos: Vec<(u16, u32)> = (0..100 + n).map(|i| (i, u32::from(i) * 960)).collect();
+        assert_eq!(escritos, seguidos);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 0,
+                resynced: true
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn depois_de_o_relogio_recuar_de_vez_a_pista_continua_inteira() {
+        let n = OPUS_RESYNC_AFTER as u16 + 10;
+        let pista = grava_pacotes_de_audio(None, com_recuo(n)).await;
+        assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
+        assert_eq!(pista.granulos(), granulos_seguidos(100 + u64::from(n)));
+        assert_eq!(pista.seqs(), (0..100 + n).collect::<Vec<u16>>());
+        assert_eq!(pista.atrasados, 0);
+    }
+
+    #[test]
+    fn o_relogio_novo_entra_ao_ultimo_pacote_da_serie_e_nao_antes() {
+        // Exactamente `OPUS_RESYNC_AFTER`, e a pista fecha: já são um relógio
+        // novo, e escrevem-se todos.
+        let n = OPUS_RESYNC_AFTER as u16;
+        let (escritos, total) = pela_pista(com_recuo(n));
+        let seguidos: Vec<(u16, u32)> = (0..100 + n).map(|i| (i, u32::from(i) * 960)).collect();
+        assert_eq!(escritos, seguidos);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 0,
+                resynced: true
+            }
+        );
+    }
+
+    #[test]
+    fn um_silencio_no_inicio_do_relogio_novo_nao_empurra_a_pista() {
+        // O relógio novo começa com um pacote, 400 ms de DTX, e depois fala.
+        // O primeiro fica um passo de 20 ms depois do último escrito — o passo
+        // da fala, não o do silêncio.
+        let n = OPUS_RESYNC_AFTER as u16;
+        let mut chegada = falados(100, 28_800_000);
+        chegada.push(pacote_opus(100, 0));
+        chegada.extend((0..n).map(|j| pacote_opus(101 + j, 19_200 + u32::from(j) * 960)));
+        let (escritos, total) = pela_pista(chegada);
+        assert!(total.resynced && total.late == 0, "{total:?}");
+        assert_eq!(escritos[99], (99, 99 * 960));
+        assert_eq!(escritos[100], (100, 100 * 960), "um passo de fala depois");
+        assert_eq!(
+            escritos[101],
+            (101, 100 * 960 + 19_200),
+            "e o silêncio dele"
+        );
+        assert_eq!(escritos[102], (102, 100 * 960 + 19_200 + 960));
+    }
+
+    /// 100 pacotes, e a origem recomeça o relógio `recuo` pacotes atrás do
+    /// último, de vez; chegam `depois` pacotes do relógio novo.
+    fn com_recuo_curto(recuo: u32, depois: u16) -> Vec<Pacote> {
+        let base = 28_800_000 + (99 - recuo) * 960;
+        let mut chegada = falados(100, 28_800_000);
+        chegada.extend((0..depois).map(|j| pacote_opus(100 + j, base + u32::from(j) * 960)));
+        chegada
+    }
+
+    #[test]
+    fn um_recuo_de_um_segundo_ja_e_um_relogio_novo() {
+        // 49 pacotes atrás do mais novo (0,98 s): os primeiros
+        // `OPUS_RESYNC_AFTER` ficam atrás do último escrito, e chega. Nada se
+        // perde. O número é literal de propósito: é o que a R294 já lia como
+        // relógio novo, e subir o limiar ou a janela não o pode tirar daqui.
+        let (escritos, total) = pela_pista(com_recuo_curto(49, 60));
+        let seguidos: Vec<(u16, u32)> = (0..160).map(|i| (i, u32::from(i) * 960)).collect();
+        assert_eq!(escritos, seguidos);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 0,
+                resynced: true
+            }
+        );
+    }
+
+    #[test]
+    fn um_recuo_mais_curto_perde_se_ate_o_relogio_alcancar_o_ponto_onde_ia() {
+        // Um pacote menos de recuo, e a série não chega ao fim: o relógio novo
+        // alcança o último escrito antes disso. Perde-se tudo até ele passar o
+        // mais novo do relógio antigo — é o que acontecia antes da janela, e
+        // não se distingue de uma rajada de atrasados.
+        let recuo = 48;
+        let (escritos, total) = pela_pista(com_recuo_curto(recuo, 60));
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: recuo + 1,
+                resynced: false
+            }
+        );
+        // Os 100 do relógio antigo, e os do novo a partir do primeiro que
+        // passa à frente — seguidos, sem um passo fora do sítio.
+        let primeiro_novo = 100 + recuo as u16 + 1;
+        let mut esperados: Vec<(u16, u32)> = (0..100).map(|i| (i, u32::from(i) * 960)).collect();
+        esperados
+            .extend((primeiro_novo..160).map(|s| (s, u32::from(s - primeiro_novo + 100) * 960)));
+        assert_eq!(escritos, esperados);
+    }
+
+    #[test]
+    fn o_que_nao_se_escreve_quando_o_relogio_novo_entra_tambem_se_conta() {
+        // Um repetido ainda à espera na janela quando o relógio novo entra: a
+        // janela sai toda, ele é recusado — e tem de aparecer na conta (R18).
+        let n = OPUS_RESYNC_AFTER as u16;
+        let mut chegada = falados(100, 28_800_000);
+        chegada.push(chegada[99].clone());
+        chegada.extend((0..n).map(|j| pacote_opus(100 + j, u32::from(j) * 960)));
+        let (escritos, total) = pela_pista(chegada);
+        let seguidos: Vec<(u16, u32)> = (0..100 + n).map(|i| (i, u32::from(i) * 960)).collect();
+        assert_eq!(escritos, seguidos);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 1,
+                resynced: true
+            }
+        );
+    }
+
+    #[test]
+    fn dois_pacotes_a_meio_relogio_um_do_outro_nao_rebentam_a_escrita() {
+        // A exactamente 2^31 nenhum está «à frente» do outro, e a janela não
+        // tem como os ordenar. O que não avança sobre o último escrito não se
+        // entrega (em debug, o `OggWriter` rebentava) — e conta-se.
+        let (escritos, total) = pela_pista(vec![pacote_opus(0, 0), pacote_opus(1, 0x8000_0000)]);
+        assert_eq!(escritos, vec![(0, 0)]);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: 1,
+                resynced: false
+            }
+        );
+    }
+
+    #[test]
+    fn os_que_esperavam_por_um_relogio_novo_ao_fechar_nao_se_escrevem() {
+        // Menos do que `OPUS_RESYNC_AFTER` atrás do último escrito, e a pista
+        // fecha: não chegaram a provar que eram um relógio novo.
+        let n = OPUS_RESYNC_AFTER as u16 - 1;
+        let (escritos, total) = pela_pista(com_recuo(n));
+        assert_eq!(escritos.len(), 100);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: u32::from(n),
+                resynced: false
+            }
+        );
+    }
+
+    #[test]
+    fn uma_rajada_de_atrasados_nao_e_um_relogio_novo() {
+        let n = OPUS_RESYNC_AFTER as u32;
+        let mut chegada = falados(30, 1_000_000);
+        let (mut seq, mut atrasados) = (30u16, 0u32);
+        let mut junta = |chegada: &mut Vec<Pacote>, ts: u32| {
+            chegada.push(pacote_opus(seq, ts));
+            seq += 1;
+        };
         // Atrasados que avançam SEMPRE, de volta para volta, mas com um pacote
         // em dia pelo meio: é ele que desfaz a contagem, e ela nunca chega ao
-        // fim. Sem isso, 50 reordenações soltas ao longo de uma reunião davam um
-        // relógio novo e esticavam a pista o tempo entre a primeira e a última.
+        // fim. Sem isso, 50 atrasos soltos ao longo de uma reunião davam um
+        // relógio novo, e áudio velho escrito fora do sítio.
         for volta in 0..4u32 {
             for i in 1..n {
-                assert_eq!(clock.accept((volta * n + i) * 960), OpusTick::Late);
+                junta(&mut chegada, (volta * n + i) * 960);
+                atrasados += 1;
             }
-            let em_dia = 1_000_000 + (volta + 1) * 960;
-            assert_eq!(clock.accept(em_dia), OpusTick::Write(em_dia));
+            junta(&mut chegada, 1_000_000 + (30 + volta) * 960);
         }
         // E atrasados que NÃO avançam entre si (o mesmo pacote repetido, ou a
         // andar para trás) também não: cada um recomeça a série.
         for _ in 0..3 * n {
-            assert_eq!(clock.accept(960), OpusTick::Late);
+            junta(&mut chegada, 960);
+            atrasados += 1;
         }
         for i in (1..3 * n).rev() {
-            assert_eq!(clock.accept(i * 960), OpusTick::Late);
+            junta(&mut chegada, i * 960);
+            atrasados += 1;
         }
+        let (escritos, total) = pela_pista(chegada);
+        assert_eq!(
+            total,
+            OpusOutcome {
+                late: atrasados,
+                resynced: false
+            }
+        );
+        let em_dia: Vec<u32> = (0..34).map(|i| i * 960).collect();
+        assert_eq!(
+            escritos.iter().map(|e| e.1).collect::<Vec<u32>>(),
+            em_dia,
+            "só o que chegou em dia, e seguido"
+        );
     }
 
     #[tokio::test]
-    async fn depois_de_o_relogio_recuar_de_vez_a_pista_volta_a_gravar() {
-        let n = OPUS_CLOCK_RESYNC_AFTER;
-        let mut timestamps: Vec<u32> = (0..10).map(|i| 28_800_000 + i * 960).collect();
-        timestamps.extend((0..n + 10).map(|i| i * 960));
-        let pista = grava_audio(&timestamps).await;
-        assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
-        assert_eq!(u64::from(n - 1), pista.atrasados);
-        // 10 antes do recuo, mais o que re-ancora e os 10 a seguir.
-        assert_eq!(pista.granulos.len(), 21);
-        let ultimo_antes = 1 + 9 * 960;
-        assert_eq!(pista.granulos[9], ultimo_antes);
-        assert_eq!(pista.granulos[10], ultimo_antes + u64::from(n - 1) * 960);
-        assert_eq!(pista.granulos[20], ultimo_antes + u64::from(n + 9) * 960);
-    }
-
-    #[tokio::test]
-    async fn um_payload_vazio_nao_avanca_o_relogio_da_pista() {
-        // O `OggWriter` ignora-o sem mexer no relógio dele; se o nosso avançasse,
-        // os dois deixavam de falar do mesmo «último escrito».
-        let mut vazio = opus_silencio(1, 4800);
+    async fn um_payload_vazio_nao_ocupa_lugar_na_pista() {
+        // O `OggWriter` ignora-o sem mexer no relógio dele. Se entrasse na
+        // pista, o pacote a sério com o mesmo timestamp era dado como repetido.
+        let mut vazio = pacote_opus(1, 960);
         vazio.payload = Vec::new().into();
-        let pacotes = vec![opus_silencio(0, 0), vazio, opus_silencio(2, 960)];
+        let pacotes = vec![pacote_opus(0, 0), vazio, pacote_opus(2, 960)];
         let pista = grava_pacotes_de_audio(None, pacotes).await;
-        assert_eq!(pista.granulos, vec![1, 961]);
+        assert_eq!(pista.granulos(), granulos_seguidos(2));
+        assert_eq!(pista.seqs(), vec![0, 2]);
         assert_eq!(pista.atrasados, 0);
     }
 
     #[tokio::test]
-    async fn o_audio_cifrado_passa_pelo_mesmo_relogio_e_sai_decifrado() {
+    async fn o_audio_cifrado_passa_pela_mesma_pista_e_sai_decifrado() {
         // Com cifra ponta-a-ponta o payload é trocado pelo decifrado no mesmo
         // pacote a que se acerta o timestamp: os dois têm de chegar ao disco.
         let key = Arc::new(chave_de_teste(7));
@@ -2420,29 +2987,27 @@ mod tests {
             .into_iter()
             .map(|(ts, n)| {
                 let claro = frame(n);
-                let mut pkt = opus_silencio(n as u16, ts);
+                let mut pkt = pacote_opus(n as u16, ts);
                 pkt.payload = cifra_como_o_browser(&key, &claro[..1], &claro[1..], &[n; 12]).into();
                 pkt
             })
             .collect();
         // Um frame que não autentica (outra chave), em dia: não se escreve, não
-        // conta como atrasado, e o seguinte cobre o tempo dele como uma perda —
-        // são os grânulos que o mostram: escrito, havia uma página em 3841.
+        // conta como atrasado, e o seguinte cobre o tempo dele como uma perda.
         let claro = frame(5);
-        let mut alheio = opus_silencio(5, 3840);
+        let mut alheio = pacote_opus(5, 3840);
         alheio.payload =
             cifra_como_o_browser(&chave_de_teste(8), &claro[..1], &claro[1..], &[5; 12]).into();
         pacotes.insert(4, alheio);
         let pista = grava_pacotes_de_audio(Some(key), pacotes).await;
         assert!(pista.fechada, "a thread de escrita morreu antes do fecho");
-        assert_eq!(pista.granulos, vec![1, 1921, 2881, 4801]);
-        assert_eq!(pista.atrasados, 1);
-        let tem = |n: u8| pista.bytes.windows(41).any(|w| w == &frame(n)[..]);
-        assert!(
-            tem(1) && tem(2) && tem(4) && tem(6),
-            "os frames saem decifrados"
-        );
-        assert!(!tem(3), "o atrasado não entra");
+        // O 3 chegou atrasado e está no sítio; o 5 não autentica e falta.
+        let claros: Vec<(u64, Vec<u8>)> = [(1, 1u8), (961, 3), (1921, 2), (2881, 4), (4801, 6)]
+            .into_iter()
+            .map(|(g, n)| (g, frame(n)))
+            .collect();
+        assert_eq!(pista.paginas, claros);
+        assert_eq!(pista.atrasados, 0);
     }
 
     #[test]
@@ -2543,12 +3108,13 @@ mod tests {
     #[tokio::test]
     async fn wait_for_slot_da_batimentos_enquanto_espera_e_entrega_a_vaga() {
         use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-        let slots = Arc::new(tokio::sync::Semaphore::new(1));
-        let held = slots.clone().acquire_owned().await.unwrap();
+        let slots = crate::fair_slots::FairSlots::new(1);
+        let held = slots.acquire(Uuid::nil()).await.unwrap();
         let beats = Arc::new(AtomicUsize::new(0));
         let b = beats.clone();
         let waiter = tokio::spawn(wait_for_slot(
             slots.clone(),
+            Uuid::nil(),
             Duration::from_millis(20),
             move || {
                 let b = b.clone();
@@ -2572,13 +3138,9 @@ mod tests {
             .expect("com a vaga livre tinha de acabar")
             .unwrap()
             .expect("a vaga tinha de ser entregue");
-        assert_eq!(
-            slots.available_permits(),
-            0,
-            "a vaga está agora com quem esperou"
-        );
+        assert_eq!(slots.available(), 0, "a vaga está agora com quem esperou");
         drop(permit);
-        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(slots.available(), 1);
     }
 
     // ------------------------------------------------------------------
@@ -2801,7 +3363,8 @@ mod tests {
     }
 
     /// O que o CI vê (não tem ffmpeg): o enchimento está em TODAS as cadeias
-    /// de áudio, antes do `adelay`, e nenhum caminho leva o áudio em cópia.
+    /// de áudio, antes do `adelay`, e nenhum caminho leva o áudio em cópia. O
+    /// `adelay` é o instante da pista mais os 80 ms do `OGG_PRE_SKIP_MS`.
     #[test]
     fn o_audio_e_enchido_antes_de_qualquer_outro_filtro() {
         assert_eq!(AUDIO_GAP_FILL, "aresample=async=1:first_pts=0");
@@ -2809,8 +3372,8 @@ mod tests {
         assert_eq!(
             fc,
             format!(
-                "[2:a]{AUDIO_GAP_FILL},adelay=500:all=1[a0];\
-                 [3:a]{AUDIO_GAP_FILL},adelay=0:all=1[a1];\
+                "[2:a]{AUDIO_GAP_FILL},adelay=580:all=1[a0];\
+                 [3:a]{AUDIO_GAP_FILL},adelay=80:all=1[a1];\
                  [a0][a1]amix=inputs=2:normalize=0[aout];"
             )
         );
@@ -2818,7 +3381,7 @@ mod tests {
         assert_eq!(
             audio_mix_graph(0, &[7]),
             (
-                format!("[0:a]{AUDIO_GAP_FILL},adelay=7:all=1[a0];"),
+                format!("[0:a]{AUDIO_GAP_FILL},adelay=87:all=1[a0];"),
                 "[a0]".to_string()
             )
         );
@@ -2841,20 +3404,505 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    //  Cada pista entra na gravação no instante do seu primeiro pacote
+    // ------------------------------------------------------------------
+    //
+    // O zero de uma pista é o primeiro quadro (ou pacote) que lá ficou. Uma
+    // pista de vídeo ligada a meio do fluxo espera pelo keyframe que o SFU
+    // pede; uma de áudio em silêncio, pelo pacote seguinte do DTX. Posta na
+    // linha do tempo pelo instante em que o writer foi LIGADO, entrava
+    // adiantada o tempo que esperou — a imagem à frente do som.
+
+    /// Os milissegundos da sessão, agora.
+    fn agora_ms(s: &RecordingSession) -> u64 {
+        s.started.elapsed().as_millis() as u64
+    }
+
+    async fn dorme(ms: u64) {
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
+
+    #[tokio::test]
+    async fn a_pista_de_video_comeca_no_keyframe_e_nao_na_ligacao() {
+        let mut s = sessao_de_teste().await;
+        dorme(30).await;
+        let (w, _) = abre_pista(&mut s, "video");
+        let ligada = s.tracks[0].offset_ms;
+        assert_eq!(
+            s.tracks[0].starts_at_ms(),
+            ligada,
+            "sem pacotes, a pista fica no instante da ligação"
+        );
+        // A meio do fluxo: quadros delta enquanto o keyframe pedido não chega.
+        let mut seq = 0u16;
+        for q in 0..3u32 {
+            for p in vp8_quadro_delta(&mut seq, q * 3000) {
+                w.write_rtp(&p);
+            }
+        }
+        dorme(120).await;
+        assert_eq!(
+            s.tracks[0].starts_at_ms(),
+            ligada,
+            "quadros delta não começam a pista"
+        );
+        let antes = agora_ms(&s);
+        w.write_rtp(&vp8_keyframe(seq, 3 * 3000));
+        let depois = agora_ms(&s);
+        let comeca = s.tracks[0].starts_at_ms();
+        assert!(
+            (antes..=depois).contains(&comeca) && comeca >= ligada + 120,
+            "a pista começa quando o keyframe chega ({comeca} ms; chegou entre {antes} e \
+             {depois}), não quando o writer foi ligado ({ligada} ms)"
+        );
+        // O que vem a seguir já não mexe no início.
+        dorme(40).await;
+        seq = seq.wrapping_add(1);
+        for q in 4..6u32 {
+            for p in vp8_quadro_delta(&mut seq, q * 3000) {
+                w.write_rtp(&p);
+            }
+        }
+        w.write_rtp(&vp8_keyframe(seq, 6 * 3000));
+        assert_eq!(s.tracks[0].starts_at_ms(), comeca);
+        w.close().await;
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn um_keyframe_de_abertura_que_nao_serviu_nao_fica_como_inicio_da_pista() {
+        let mut s = sessao_de_teste().await;
+        let (w, path) = abre_pista(&mut s, "video");
+        // O início de um keyframe, e a seguir um pacote que não é dele: a
+        // thread de escrita deita-o fora e a pista volta a esperar.
+        let mut inicio = vp8_keyframe(100, 3000);
+        inicio.header.marker = false;
+        w.write_rtp(&inicio);
+        let falhado = s.tracks[0].starts_at_ms();
+        w.write_rtp(&vp8_pacote(140, 6000, 0x00, 0x42, true));
+        ate_que("a pista volta a esperar pelo keyframe", || {
+            w.wants_keyframe()
+        })
+        .await;
+        dorme(120).await;
+        let antes = agora_ms(&s);
+        w.write_rtp(&vp8_keyframe(200, 9000));
+        let depois = agora_ms(&s);
+        ate_que("a pista abriu", || !w.wants_keyframe()).await;
+        w.close().await;
+        let comeca = s.tracks[0].starts_at_ms();
+        assert_eq!(ivf_quadros(&path).len(), 1, "só o keyframe inteiro");
+        assert!(
+            (antes..=depois).contains(&comeca) && comeca >= falhado + 120,
+            "o início é o do keyframe que ficou na pista ({comeca} ms; chegou entre {antes} \
+             e {depois}), não o do que foi deitado fora ({falhado} ms)"
+        );
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+    }
+
+    /// Um pacote RTP de Opus para os testes do instante de cada pista. É igual
+    /// ao `opus_silencio` dos testes do relógio, mas próprio: esses testes (e a
+    /// função deles) saem com a correcção do pacote de áudio atrasado, e o
+    /// instante de uma pista mede-se em qualquer dos dois mundos.
+    fn opus_rtp(seq: u16, ts: u32) -> webrtc::rtp::packet::Packet {
+        let header = webrtc::rtp::header::Header {
+            sequence_number: seq,
+            timestamp: ts,
+            payload_type: 111,
+            ..Default::default()
+        };
+        webrtc::rtp::packet::Packet {
+            header,
+            payload: vec![0xf8, 0xff, 0xfe].into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pista_de_audio_comeca_no_primeiro_pacote_e_nao_na_ligacao() {
+        let mut s = sessao_de_teste().await;
+        let (w, _) = abre_pista(&mut s, "audio");
+        let ligada = s.tracks[0].offset_ms;
+        // Um payload vazio não chega a ser escrito: não é o início de nada.
+        let mut vazio = opus_rtp(1, 1000);
+        vazio.payload = Vec::new().into();
+        w.write_rtp(&vazio);
+        // O microfone está em silêncio: o DTX só manda o pacote seguinte daqui a pouco.
+        dorme(120).await;
+        assert_eq!(s.tracks[0].starts_at_ms(), ligada);
+        let antes = agora_ms(&s);
+        w.write_rtp(&opus_rtp(2, 1000 + 19_200));
+        let depois = agora_ms(&s);
+        let comeca = s.tracks[0].starts_at_ms();
+        assert!(
+            (antes..=depois).contains(&comeca) && comeca >= ligada + 120,
+            "a pista começa quando o primeiro pacote chega ({comeca} ms; chegou entre \
+             {antes} e {depois}), não quando o writer foi ligado ({ligada} ms)"
+        );
+        dorme(40).await;
+        w.write_rtp(&opus_rtp(3, 1000 + 20_160));
+        assert_eq!(s.tracks[0].starts_at_ms(), comeca, "só o primeiro conta");
+        w.close().await;
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+    }
+
+    /// Os metadados de uma pista que começou aos `comeca_ms` da sessão (e cujo
+    /// writer tinha sido ligado aos `ligada_ms`).
+    fn pista(path: &str, kind: &str, ligada_ms: u64, comeca_ms: u64) -> RecTrackMeta {
+        let first = FirstPacket::new(Instant::now());
+        first
+            .at_ms
+            .store(comeca_ms, std::sync::atomic::Ordering::Relaxed);
+        RecTrackMeta {
+            path: PathBuf::from(path),
+            kind: kind.into(),
+            offset_ms: ligada_ms,
+            first,
+        }
+    }
+
+    fn textos(args: &[std::ffi::OsString]) -> Vec<String> {
+        args.iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// O que o CI vê (não tem ffmpeg): a composição põe cada pista no instante
+    /// em que COMEÇA, nos dois caminhos — e nunca no da ligação do writer.
+    #[test]
+    fn a_composicao_poe_cada_pista_no_instante_em_que_comeca() {
+        // Um publicador: a que começa depois leva a diferença; o áudio conta
+        // com os 80 ms de pre-skip.
+        assert_eq!(single_publisher_shifts(557, Some(10)), (467, 0));
+        assert_eq!(single_publisher_shifts(5, Some(300)), (0, 375));
+        assert_eq!(single_publisher_shifts(90, Some(10)), (0, 0));
+        assert_eq!(single_publisher_shifts(1234, None), (0, 0));
+        assert_eq!(input_shift(467), ["-itsoffset", "0.467"]);
+        assert!(input_shift(0).is_empty());
+
+        // O vídeo esperou 557 ms pelo keyframe; o áudio, 10 ms pelo pacote.
+        let (v, a) = (
+            pista("v.ivf", "video", 3, 560),
+            pista("a.ogg", "audio", 3, 13),
+        );
+        let args = textos(&compose_args(&[&v], &[&a], None, None));
+        assert_eq!(
+            args[..6],
+            ["-itsoffset", "0.467", "-i", "v.ivf", "-i", "a.ogg"],
+            "o vídeo em cópia entra atrasado o que esperou a mais do que o áudio"
+        );
+        assert_eq!(args[6..], single_publisher_args(true, None));
+        // Ao contrário: é o áudio que entra depois.
+        let (v, a) = (
+            pista("v.ivf", "video", 0, 20),
+            pista("a.ogg", "audio", 0, 340),
+        );
+        let args = textos(&compose_args(&[&v], &[&a], None, None));
+        assert_eq!(
+            args[..6],
+            ["-i", "v.ivf", "-itsoffset", "0.400", "-i", "a.ogg"]
+        );
+        // Sem áudio não há nada a acertar.
+        let args = textos(&compose_args(&[&v], &[], None, None));
+        assert_eq!(args[..2], ["-i", "v.ivf"]);
+
+        // Grelha: o preto de cada célula conta-se em quadros da cadência da
+        // grelha, com o `fps` antes; o resto (menos de um quadro) vai no `setpts`.
+        assert_eq!(
+            grid_cell_chain(1, 640, 360, 31_457),
+            "[1:v]setpts=PTS+0.0237/TB,fps=30,\
+             scale=640:360:force_original_aspect_ratio=decrease,\
+             pad=640:360:(ow-iw)/2:(oh-ih)/2,setsar=1,\
+             tpad=start=943:start_mode=add:color=black[v1];"
+        );
+        assert!(grid_cell_chain(0, 640, 360, 0).contains("setpts=PTS+0.0000/TB,fps=30,"));
+        assert!(grid_cell_chain(0, 640, 360, 0).contains("tpad=start=0:"));
+        let (v1, v2, a1, a2) = (
+            pista("1.ivf", "video", 2, 580),
+            pista("2.ivf", "video", 2, 31_457),
+            pista("1.ogg", "audio", 2, 12),
+            pista("2.ogg", "audio", 2, 31_000),
+        );
+        let args = textos(&compose_args(&[&v1, &v2], &[&a1, &a2], None, None));
+        assert_eq!(
+            args[..8],
+            ["-i", "1.ivf", "-i", "2.ivf", "-i", "1.ogg", "-i", "2.ogg"],
+            "na grelha os instantes vão nos filtros, não nas entradas"
+        );
+        assert_eq!(args[8], "-filter_complex");
+        let fc = &args[9];
+        for parte in [
+            "[0:v]setpts=PTS+0.0133/TB,fps=30,",
+            "tpad=start=17:start_mode=add:color=black[v0];",
+            "tpad=start=943:start_mode=add:color=black[v1];",
+            "[v0][v1]xstack=inputs=2:layout=0_0|640_0:fill=black[vout];",
+            "adelay=92:all=1[a0];",
+            "adelay=31080:all=1[a1];",
+        ] {
+            assert!(fc.contains(parte), "falta «{parte}» em {fc}");
+        }
+        assert!(
+            !fc.contains("start_duration"),
+            "o preto em segundos deriva 1 % do offset: {fc}"
+        );
+    }
+
+    /// Um vídeo VP8 a sério, um quadro por pacote RTP: `total_ms` a 30 fps de
+    /// preto, com um clarão branco de 100 ms aos `clarao_ms`. `None` se a
+    /// máquina não tem ffmpeg.
+    fn video_com_clarao(
+        dir: &Path,
+        clarao_ms: u32,
+        total_ms: u32,
+    ) -> Option<Vec<webrtc::rtp::packet::Packet>> {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let ivf = dir.join("clarao.ivf");
+        let (de, ate) = (clarao_ms as f64 / 1000.0, (clarao_ms + 99) as f64 / 1000.0);
+        let grafo = format!(
+            "color=c=black:s=64x64:r=30:d={d}[p];color=c=white:s=64x64:r=30:d={d}[b];\
+             [p][b]overlay=enable='between(t,{de},{ate})'",
+            d = total_ms as f64 / 1000.0
+        );
+        let res = std::process::Command::new(&bin)
+            .args(["-y", "-loglevel", "error", "-nostdin", "-f", "lavfi", "-i"])
+            .arg(&grafo)
+            .args(["-c:v", "libvpx", "-b:v", "200k", "-g", "300"])
+            .args(["-auto-alt-ref", "0", "-lag-in-frames", "0", "-f", "ivf"])
+            .arg(&ivf)
+            .output()
+            .ok()?;
+        assert!(
+            res.status.success(),
+            "ffmpeg falhou: {}",
+            String::from_utf8_lossy(&res.stderr)
+        );
+        let b = std::fs::read(&ivf).unwrap();
+        let mut pacotes = Vec::new();
+        let mut i = 32;
+        while i + 12 <= b.len() {
+            let n = u32::from_le_bytes(b[i..i + 4].try_into().unwrap()) as usize;
+            let quadro = u64::from_le_bytes(b[i + 4..i + 12].try_into().unwrap()) as u32;
+            let mut payload = vec![0x10u8]; // descritor: S=1, PID=0
+            payload.extend_from_slice(&b[i + 12..i + 12 + n]);
+            pacotes.push(webrtc::rtp::packet::Packet {
+                header: webrtc::rtp::header::Header {
+                    sequence_number: pacotes.len() as u16,
+                    timestamp: 50_000 + quadro * 3000,
+                    marker: true,
+                    payload_type: 96,
+                    ..Default::default()
+                },
+                payload: payload.into(),
+            });
+            i += 12 + n;
+        }
+        Some(pacotes)
+    }
+
+    /// Compõe com os argumentos de PRODUÇÃO (`compose_args`) e devolve o webm.
+    fn compoe(dir: &Path, args: &[std::ffi::OsString]) -> PathBuf {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let webm = dir.join("out.webm");
+        let res = std::process::Command::new(&bin)
+            .args(["-y", "-loglevel", "error", "-nostdin"])
+            .args(args)
+            .arg(&webm)
+            .output()
+            .unwrap();
+        assert!(
+            res.status.success(),
+            "ffmpeg falhou: {}",
+            String::from_utf8_lossy(&res.stderr)
+        );
+        webm
+    }
+
+    /// O instante (ms, pelos PTS do ficheiro) em que a zona `recorte`
+    /// (`w:h:x:y`) da imagem passa de escura a clara.
+    fn clarao_aos(webm: &Path, recorte: &str) -> u64 {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let res = std::process::Command::new(&bin)
+            .args(["-nostdin", "-loglevel", "info", "-i"])
+            .arg(webm)
+            .args(["-map", "0:v:0", "-vf"])
+            .arg(format!("crop={recorte},scale=4:4,format=gray,showinfo"))
+            .args(["-fps_mode", "passthrough", "-f", "null", "-"])
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&res.stderr);
+        let campo = |l: &str, chave: &str| -> Option<f64> {
+            let resto = &l[l.find(chave)? + chave.len()..];
+            let fim = resto
+                .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .unwrap_or(resto.len());
+            resto[..fim].parse().ok()
+        };
+        log.lines()
+            .filter_map(|l| Some((campo(l, "pts_time:")?, campo(l, "mean:[")?)))
+            .find(|(_, luz)| *luz > 128.0)
+            .map(|(t, _)| (t * 1000.0).round() as u64)
+            .expect("a composição não tem o clarão")
+    }
+
+    /// O instante (ms, a contar amostras) em que o tom a `freq` começa.
+    fn tom_aos(webm: &Path, freq: f32) -> u64 {
+        let bin = std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let res = std::process::Command::new(&bin)
+            .args(["-nostdin", "-loglevel", "error", "-i"])
+            .arg(webm)
+            .args(["-map", "0:a:0", "-ac", "1", "-ar", "48000"])
+            .args(["-f", "s16le", "-"])
+            .output()
+            .unwrap();
+        let (pares, _) = res.stdout.as_chunks::<2>();
+        let pcm: Vec<i16> = pares.iter().map(|b| i16::from_le_bytes(*b)).collect();
+        (0..pcm.len() / 48)
+            .step_by(5)
+            .find(|t| nivel(&pcm, freq, *t, t + 10) > 0.1)
+            .expect("a composição não tem o tom") as u64
+    }
+
+    /// Um publicador para os testes de sincronismo: áudio com um toque a
+    /// `freq` ao primeiro segundo da pista, vídeo com um clarão ao primeiro
+    /// segundo da pista. O áudio flui desde que o writer é ligado; o vídeo só
+    /// recebe o keyframe `espera_ms` depois (quadros delta até lá). Devolve
+    /// quanto a imagem ficou atrás do som NO RELÓGIO DA SESSÃO, em ms: é o que
+    /// a gravação tem de mostrar.
+    async fn publica(
+        s: &mut RecordingSession,
+        video: &[webrtc::rtp::packet::Packet],
+        freq: f32,
+        espera_ms: u64,
+    ) -> i64 {
+        let (wa, _) = abre_pista(s, "audio");
+        let (wv, _) = abre_pista(s, "video");
+        let mut enc = opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
+        enc.bitrate_bps = 32_000;
+        let mut out = vec![0u8; 1500];
+        let som_aos = agora_ms(s);
+        for i in 0..150u32 {
+            let pcm: Vec<f32> = (0..960u32)
+                .map(|k| {
+                    if !(50..55).contains(&i) {
+                        return 0.0;
+                    }
+                    let n = (i * 960 + k) as f32;
+                    0.5 * (2.0 * std::f32::consts::PI * freq * n / 48_000.0).sin()
+                })
+                .collect();
+            let len = enc.encode(&pcm, 960, &mut out).unwrap();
+            wa.write_rtp(&webrtc::rtp::packet::Packet {
+                header: webrtc::rtp::header::Header {
+                    sequence_number: i as u16,
+                    timestamp: 90_000 + i * 960,
+                    payload_type: 111,
+                    ..Default::default()
+                },
+                payload: out[..len].to_vec().into(),
+            });
+        }
+        let mut seq = 60_000u16;
+        for p in vp8_quadro_delta(&mut seq, 1000) {
+            wv.write_rtp(&p);
+        }
+        dorme(espera_ms).await;
+        let imagem_aos = agora_ms(s);
+        for p in video {
+            wv.write_rtp(p);
+        }
+        assert_eq!(wa.close().await + wv.close().await, 0);
+        imagem_aos as i64 - som_aos as i64
+    }
+
+    /// Os argumentos de produção para as pistas de `s`, como o `finalize_inner`
+    /// os pede.
+    fn args_de_producao(s: &RecordingSession) -> Vec<std::ffi::OsString> {
+        let de = |audio: bool| -> Vec<&RecTrackMeta> {
+            s.tracks
+                .iter()
+                .filter(|t| t.kind.ends_with("audio") == audio)
+                .collect()
+        };
+        compose_args(&de(false), &de(true), None, None)
+    }
+
+    /// Quanto a medição pode fugir: um quadro de vídeo a 30 fps (33 ms), meio
+    /// quadro do `fps` da grelha (17 ms) e o passo da procura do tom (5 ms).
+    const FOLGA_MS: i64 = 50;
+    const SEM_FFMPEG_SINC: &str = "ffmpeg indisponível — o sincronismo NÃO foi verificado";
+
+    /// O caminho de um publicador com os argumentos de produção: o vídeo em
+    /// cópia tem de entrar atrasado o que esperou pelo keyframe.
+    #[tokio::test]
+    async fn o_som_e_a_imagem_ficam_juntos_com_um_publicador() {
+        let mut s = sessao_de_teste().await;
+        let Some(video) = video_com_clarao(&s.dir, 1000, 3000) else {
+            eprintln!("{SEM_FFMPEG_SINC}");
+            return;
+        };
+        let devido = publica(&mut s, &video, 440.0, 400).await;
+        let webm = compoe(&s.dir, &args_de_producao(&s));
+        let medido = clarao_aos(&webm, "64:64:0:0") as i64 - tom_aos(&webm, 440.0) as i64;
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+        assert!(
+            (medido - devido).abs() <= FOLGA_MS,
+            "a imagem chegou {devido} ms depois do som e na gravação está a {medido} ms dele"
+        );
+    }
+
+    /// A grelha: cada célula no seu instante, com o seu som, e o segundo
+    /// publicador — que entrou mais tarde — no sítio certo da gravação.
+    #[tokio::test]
+    async fn o_som_e_a_imagem_ficam_juntos_na_grelha() {
+        let mut s = sessao_de_teste().await;
+        let Some(video) = video_com_clarao(&s.dir, 1000, 3000) else {
+            eprintln!("{SEM_FFMPEG_SINC}");
+            return;
+        };
+        let devido_a = publica(&mut s, &video, 440.0, 300).await;
+        dorme(1500).await;
+        let entrou_b = agora_ms(&s) as i64;
+        let devido_b = publica(&mut s, &video, 1000.0, 0).await;
+        let webm = compoe(&s.dir, &args_de_producao(&s));
+        let (som_a, som_b) = (tom_aos(&webm, 440.0) as i64, tom_aos(&webm, 1000.0) as i64);
+        let medido_a = clarao_aos(&webm, "640:360:0:0") as i64 - som_a;
+        let medido_b = clarao_aos(&webm, "640:360:640:0") as i64 - som_b;
+        let _ = std::fs::remove_dir_all(s.dir.parent().unwrap());
+        assert!(
+            (medido_a - devido_a).abs() <= FOLGA_MS,
+            "A: a imagem chegou {devido_a} ms depois do som e na gravação está a {medido_a} ms"
+        );
+        assert!(
+            (medido_b - devido_b).abs() <= FOLGA_MS,
+            "B: a imagem chegou {devido_b} ms depois do som e na gravação está a {medido_b} ms"
+        );
+        // O toque de B está ao primeiro segundo da pista dele, que começou
+        // quando ele entrou.
+        assert!(
+            (som_b - (entrou_b + 1000)).abs() <= FOLGA_MS,
+            "B entrou aos {entrou_b} ms e o toque dele, um segundo depois, está aos {som_b} ms"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn o_tecto_de_vagas_nunca_e_excedido() {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
         const CAP: usize = 2;
-        let slots = Arc::new(tokio::sync::Semaphore::new(CAP));
+        let slots = crate::fair_slots::FairSlots::new(CAP);
         let now = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
         let mut tasks = Vec::new();
-        for _ in 0..8 {
+        for i in 0..8u128 {
             let (slots, now, peak) = (slots.clone(), now.clone(), peak.clone());
             tasks.push(tokio::spawn(async move {
-                let _slot = wait_for_slot(slots, Duration::from_secs(60), || async {})
-                    .await
-                    .unwrap();
+                let _slot = wait_for_slot(
+                    slots,
+                    Uuid::from_u128(i % 2),
+                    Duration::from_secs(60),
+                    || async {},
+                )
+                .await
+                .unwrap();
                 let n = now.fetch_add(1, SeqCst) + 1;
                 peak.fetch_max(n, SeqCst);
                 tokio::time::sleep(Duration::from_millis(25)).await;
