@@ -1,4 +1,84 @@
+# ---------------------------------------------------------------------------
+#  O namespace do Meet, e as três coisas sem as quais «isolado» é uma palavra.
+#
+#  O ADR-0021 pôs a produção a PARTILHAR o cluster `ngola-lda` com o
+#  `ngolacloud-system`. Um namespace NÃO é uma fronteira dura: o control-plane,
+#  o Longhorn e os nós são os mesmos. O que se segue é o mínimo para o vizinho
+#  ruidoso não ser o Meet.
+# ---------------------------------------------------------------------------
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ngolacloud-meet
+  labels:
+    app.kubernetes.io/part-of: ngolacloud
+    # Pod Security Admission. O nível é MEDIDO, não aspiracional:
+    #
+    #  - `baseline` em enforce porque nada no caminho de produção usa a rede do
+    #    nó (`coturn.hostNetwork: false`, `voice.enabled: false`), e hostNetwork
+    #    é o que o baseline proíbe e nós não precisamos.
+    #  - `restricted` NÃO se impõe por causa de UM pod: o coturn corre com
+    #    `allowPrivilegeEscalation: true` e `NET_BIND_SERVICE`, e está escrito
+    #    porque não é descuido — o binário da imagem tem file-capabilities e com
+    #    no-new-privs o exec dá EPERM (ver `templates/coturn.yaml`). O
+    #    `restricted` proíbe as duas coisas e rejeitaria o pod.
+    #  - mas fica em `warn` e `audit`: vê-se o que falharia sem bloquear nada,
+    #    e no dia em que o coturn deixar de precisar disto sobe-se o enforce.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+# ---------------------------------------------------------------------------
+#  O tecto. Sem isto, um HPA a disparar ou uma fuga de memória no Meet come o
+#  cluster que serve o resto da plataforma — e o modo de falha seria pods de
+#  OUTRO namespace a morrer, que é o pior sítio para se ir procurar a causa.
+#
+#  Números contra o medido a 2026-10-07: 5 workers Ready com 6 CPU e ~17,5 GiB
+#  alocáveis cada (~30 CPU, ~87 GiB), e o resto do cluster a pedir ~900m e
+#  ~600Mi por nó. O Meet em produção mínima pede ~4 CPU e ~6 GiB de requests;
+#  com o HPA nos 8 réplicas são 4 CPU só de server. O tecto dá folga para isso
+#  e pára bem antes de o cluster ficar sem onde pôr o `ngolacloud-system`.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ngolacloud-meet
+  namespace: ngolacloud-meet
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 12Gi
+    limits.cpu: "24"
+    limits.memory: 32Gi
+    pods: "60"
+    persistentvolumeclaims: "12"
+    # A gama do MetalLB tem 28 endereços (192.168.1.73-100) para TODO o
+    # cluster. Dois LoadBalancers é o que o Meet precisa (coturn, e um de
+    # reserva); mais do que isso tira endereços a quem vem depois.
+    services.loadbalancers: "2"
+---
+# ---------------------------------------------------------------------------
+#  O chão e o cabo. Duas funções distintas:
+#
+#  1. DEFAULTS — a maior parte dos manifests de `deploy/k8s/` não declara
+#     `resources`, e um pod sem requests é um pod que o scheduler acha que não
+#     pesa e que o kubelet mata primeiro sob pressão. Com isto nenhum pod entra
+#     sem conta.
+#  2. MÁXIMO por contentor — para um valor mal escrito não reservar meio nó.
+#     O tecto é 8 CPU / 16Gi e NÃO é arbitrário: é o que acomoda o limite mais
+#     alto declarado no repo (o worker de IA, 4 CPU / 12Gi) sem o rejeitar. Um
+#     máximo abaixo disso rejeitaria pods em silêncio, que é a maneira de a
+#     segurança parecer configuração e ser avaria.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ngolacloud-meet
+  namespace: ngolacloud-meet
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 100m, memory: 128Mi }
+      default: { cpu: 500m, memory: 512Mi }
+      min: { cpu: 10m, memory: 16Mi }
+      max: { cpu: "8", memory: 16Gi }
