@@ -1,5 +1,6 @@
 //! Contexto **content**: gravações, partilhas, quadros, transcrições.
 
+pub mod composition;
 pub mod live_output;
 pub mod recording;
 pub mod search;
