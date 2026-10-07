@@ -3680,3 +3680,31 @@ A resposta não foi outra feature: o `aws-smithy-http-client` passa a ser depend
 - **O gravador continua a não usar isto.** O cliente está provado; o caminho da media continua em disco (ADR-0020).
 - **A prova não corre no CI.** É um script que ergue um contentor, como as outras provas de réplica do repo; corre-se à mão.
 - **Nada mede o desempenho.** 300 KiB num MinIO local não diz nada sobre uma gravação de uma hora num bucket remoto.
+
+### R309 — A composição de uma gravação morria em todo o rollout, e só se sabia 70 minutos depois
+
+**2026-10-07.** `recorder::finalize` era um `tokio::spawn` nu. A linha nascia em `processing` (bom: a biblioteca mostrava progresso em vez de um vazio), mas o que a composição precisa — o directório `tmp-<uuid>` dos segmentos e o instante do primeiro pacote de cada pista — só existia na **memória da tarefa**. Depois de um reinício do servidor nada no mundo sabia retomar aquilo: `fail_stale_processing` só podia marcar `failed`.
+
+Três números medidos, e é a sua razão que faz disto uma certeza em vez de um risco:
+
+| | Valor | Onde |
+|---|---|---|
+| Orçamento do ffmpeg | **3600 s** | `config.rs` (`FFMPEG_TIMEOUT_SECS`) |
+| Orçamento do drain | 12 + 40 = **52 s** | `DRAIN_READINESS_SECS` + `DRAIN_GRACE_SECS` |
+| SIGKILL do K8s | **60 s** | `deploy/k8s/02-server.yaml`, `helm/values.yaml` |
+| Até a pessoa saber que falhou | `ffmpeg_timeout + 600` = **4200 s ≈ 70 min** | `recorder.rs` |
+
+E o `drenar()` contava só os peers do WebSocket (`hub.peers_ligados()`): não sabia que havia uma composição a correr. Portanto **toda a gravação que estivesse a compor durante um rollout morria** — e um rollout é a operação mais banal que existe. Quem gravou ficava a olhar para «a compor, 37 %» durante setenta minutos antes de lhe dizerem que falhou, sem como voltar a pedir: a reunião já tinha acabado.
+
+Dois danos colaterais do mesmo sítio: o `remove_dir_all` só corria no caminho feliz, pelo que cada processo morto deixava segmentos RTP no volume **para sempre**; e o nome do ficheiro e o `kind` eram lidos na tarefa, sem ficarem guardados, pelo que nem se reconstruíam.
+
+**Porque passou.** A fila da **transcrição** (reserva + token + `transcription_attempts`, no mesmo ficheiro de migrações) já era exemplar, e a dos **webhooks** também. O que faltava não era a técnica — era aplicá-la ao trabalho que ninguém classificou como «fila», porque arrancava de um handler e não de um varredor. Um `tokio::spawn` parece pequeno demais para merecer estado persistente, e é exactamente aí que o trabalho se perde.
+
+**Regra.**
+- **Trabalho que leva mais tempo do que o drain tem de ser reivindicável, não despachado.** Se o orçamento da tarefa é maior do que `terminationGracePeriodSeconds`, o processo vai ser morto a meio dela algum dia — e nesse dia o que importa é a linha na base dizer o que falta fazer, não o log dizer o que se perdeu.
+- **O que a tarefa precisa não pode viver só na memória da tarefa.** O manifesto (`recordings.compose_manifest`, migração 0099) é a diferença entre «interrompido» e «perdido».
+- **Só o caminho feliz apaga os ficheiros de trabalho.** Apagá-los na falha transforma qualquer tropeção numa perda definitiva.
+- **Um varredor que marca `failed` tem de saber quem ainda pode ser salvo.** O `fail_stale_processing` fecha agora só o que a retoma não apanha: sem manifesto ou com as tentativas esgotadas.
+- **O que o drain espera é o que o drain conhece.** Contar peers e chamar-lhe «drenado» é dizer que o resto não existe.
+
+**Guardado por** `server/tests/recording_compose_retoma.rs` (a máquina de estados: quem é reivindicado, quem é poupado, quem é fechado e com que causa) e pelos testes de `delonix_meet_domain::content::composition`. O que esses testes **não** guardam, e tem de ser medido à mão: a composição a chegar a `ready` numa retoma, porque isso precisa de ffmpeg e **o CI não o tem**.

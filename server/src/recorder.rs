@@ -1253,7 +1253,9 @@ where
 /// E as presas em `transcribing` sem sinal de vida há 6 h voltam a `ready`
 /// (há ficheiro; a transcrição simplesmente não acabou): sem ai-worker vivo
 /// que as reclame, ficavam a dizer «a transcrever» para sempre.
-/// **Retoma as composições abandonadas.** Devolve quantas retomou.
+/// **Retoma as composições abandonadas.** Devolve quantas DESPACHOU — não
+/// quantas acabaram: cada uma segue na sua tarefa, porque uma composição
+/// demora até uma hora e este ciclo corre a cada cinco minutos.
 ///
 /// É o que faltava: uma gravação em `processing` com manifesto e sem reserva em
 /// vigor é trabalho que alguém começou e não acabou — o pod morreu, o rollout
@@ -1338,7 +1340,16 @@ pub async fn resume_due(state: &Arc<AppState>) -> usize {
             continue;
         }
         tracing::info!(%rec_id, %room_id, tentativa, "retoma de composição");
-        compose_once(state, room_id, &manifest, Some(rec_id)).await;
+        // DESPACHA, não espera. A composição demora até
+        // `FFMPEG_TIMEOUT_SECS` (1 h) e esta função é chamada do ciclo de 5
+        // min que também fecha as gravações paradas e gera capítulos:
+        // esperar aqui prendia esse ciclo horas a fio. A reserva é o que
+        // impede a volta seguinte de pegar na mesma gravação, e as vagas
+        // (`fair_slots`) é que limitam quantos ffmpeg correm ao mesmo tempo.
+        let state = state.clone();
+        tokio::spawn(async move {
+            compose_once(&state, room_id, &manifest, Some(rec_id)).await;
+        });
         retomadas += 1;
     }
     retomadas
