@@ -44,7 +44,7 @@ fi
 
 # 4) opcional: confirmar no cluster vivo
 if [ "${KUBECTL:-0}" = "1" ]; then
-  if kubectl -n delonix-meet get svc delonix-server-ws >/dev/null 2>&1; then
+  if kubectl -n ngolacloud-meet get svc delonix-server-ws >/dev/null 2>&1; then
     echo "  ✓ (live) Service delonix-server-ws existe no cluster"
   else
     echo "✗ (live) Service delonix-server-ws AUSENTE no cluster"; fail=1

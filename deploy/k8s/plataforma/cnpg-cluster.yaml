@@ -14,7 +14,7 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: meet-pg
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   instances: 3
   imageName: ghcr.io/cloudnative-pg/postgresql:17.2
@@ -92,7 +92,7 @@ apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
 metadata:
   name: meet-pg-noite
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   # 02:30 todos os dias (o fuso do cluster é UTC).
   schedule: "0 30 2 * * *"

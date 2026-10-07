@@ -281,7 +281,7 @@ não existir (`make voice-secret-k8s`); o Ansible (`k8s_app`) cria-o a partir do
 ou por kustomize cria-o antes:
 
 ```bash
-kubectl -n delonix-meet create secret generic delonix-voice \
+kubectl -n ngolacloud-meet create secret generic delonix-voice \
   --from-literal=VOICE_INTERNAL_SECRET="$(openssl rand -hex 32)"
 ```
 
@@ -301,10 +301,10 @@ publicado `voice-internal-secret-for-pstn` dentro do `delonix-secrets`** — o
 valor (503), mas a chave deve sair e o segredo tem de ser rodado:
 
 ```bash
-kubectl -n delonix-meet patch secret delonix-secrets --type=json \
+kubectl -n ngolacloud-meet patch secret delonix-secrets --type=json \
   -p='[{"op":"remove","path":"/data/VOICE_INTERNAL_SECRET"}]'
 make voice-secret-k8s                                   # cria o delonix-voice novo
-kubectl -n delonix-meet rollout restart deploy/delonix-server
+kubectl -n ngolacloud-meet rollout restart deploy/delonix-server
 ```
 
 **Os segredos da aplicação (`delonix-secrets`) também saíram do repositório
@@ -331,7 +331,7 @@ bash scripts/k8s-app-secrets.sh <host-do-postgres-no-cluster>
    `bash scripts/k8s-app-secrets.sh <host>`: o `JWT_SECRET` novo **desliga todas as
    sessões**, que é o que se quer depois de uma chave publicada.
 2. O coturn lê o `TURN_SECRET` do mesmo Secret:
-   `kubectl -n delonix-meet rollout restart deploy/delonix-coturn deploy/delonix-server`.
+   `kubectl -n ngolacloud-meet rollout restart deploy/delonix-coturn deploy/delonix-server`.
 3. A password do Postgres **não muda sozinha**: o chart da Bitnami só a define quando
    cria o volume. Num cluster de ensaio, apaga-se o volume e reinstala-se; num
    cluster com dados, `ALTER USER delonix PASSWORD '…'` com a do `.env`, e só depois
@@ -349,7 +349,7 @@ Com edição (saas ou enterprise), aplicar o overlay em vez da base — ver
 ```bash
 bash scripts/check-k8s-render.sh               # render + fronteiras, sem cluster
 kubectl apply -k deploy/k8s-overlays/saas
-kubectl -n delonix-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
+kubectl -n ngolacloud-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
 ```
 
 O overlay pressupõe o cert-manager instalado (emite o mTLS do gRPC) e um

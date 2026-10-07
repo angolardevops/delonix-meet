@@ -12,7 +12,7 @@
 # nunca no Ingress. É para aqui que o IVR do FreeSWITCH fala.
 apiVersion: v1
 kind: Service
-metadata: { name: delonix-server-internal, namespace: delonix-meet }
+metadata: { name: delonix-server-internal, namespace: ngolacloud-meet }
 spec:
   selector: { app: delonix-server }
   ports:
@@ -20,7 +20,7 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: freeswitch, namespace: delonix-meet, labels: { app: freeswitch } }
+metadata: { name: freeswitch, namespace: ngolacloud-meet, labels: { app: freeswitch } }
 spec:
   replicas: 1
   strategy: { type: Recreate }
@@ -34,7 +34,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "/entrypoint/freeswitch-entrypoint.sh"]
           env:
-            - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.delonix-meet.svc.cluster.local:8181" }
+            - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.ngolacloud-meet.svc.cluster.local:8181" }
             - { name: DELONIX_RAMAIS_SIP_PORT, value: "5070" }
             - name: VOICE_INTERNAL_SECRET
               valueFrom: { secretKeyRef: { name: delonix-voice, key: VOICE_INTERNAL_SECRET } }
@@ -69,7 +69,7 @@ spec:
 # sobrevive a um ClusterIP à frente).
 apiVersion: v1
 kind: Service
-metadata: { name: freeswitch, namespace: delonix-meet }
+metadata: { name: freeswitch, namespace: ngolacloud-meet }
 spec:
   clusterIP: None
   # O nome tem de resolver mesmo antes de o pod estar pronto: o Kamailio
@@ -84,7 +84,7 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: kamailio, namespace: delonix-meet, labels: { app: kamailio } }
+metadata: { name: kamailio, namespace: ngolacloud-meet, labels: { app: kamailio } }
 spec:
   replicas: 1
   selector: { matchLabels: { app: kamailio } }
@@ -103,7 +103,7 @@ spec:
           # autenticado com a conta SIP da sua organização. O bordo pede o HA1
           # ao listener interno do servidor.
           env:
-            - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.delonix-meet.svc.cluster.local:8181" }
+            - { name: DELONIX_CONTROL_URL, value: "http://delonix-server-internal.ngolacloud-meet.svc.cluster.local:8181" }
             - name: VOICE_INTERNAL_SECRET
               valueFrom: { secretKeyRef: { name: delonix-voice, key: VOICE_INTERNAL_SECRET } }
           ports:
@@ -129,7 +129,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: kamailio, namespace: delonix-meet }
+metadata: { name: kamailio, namespace: ngolacloud-meet }
 spec:
   clusterIP: None
   selector: { app: kamailio }
@@ -140,7 +140,7 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: pbx-cliente, namespace: delonix-meet, labels: { app: pbx-cliente } }
+metadata: { name: pbx-cliente, namespace: ngolacloud-meet, labels: { app: pbx-cliente } }
 spec:
   replicas: 1
   selector: { matchLabels: { app: pbx-cliente } }
@@ -174,7 +174,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: pbx-cliente, namespace: delonix-meet }
+metadata: { name: pbx-cliente, namespace: ngolacloud-meet }
 spec:
   clusterIP: None
   selector: { app: pbx-cliente }

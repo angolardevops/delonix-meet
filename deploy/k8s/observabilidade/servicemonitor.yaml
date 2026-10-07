@@ -24,7 +24,7 @@ metadata:
     release: kube-prometheus-stack
 spec:
   namespaceSelector:
-    matchNames: [delonix-meet]
+    matchNames: [ngolacloud-meet]
   selector:
     matchLabels:
       app: delonix-server

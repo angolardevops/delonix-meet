@@ -12,7 +12,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: ollama-models
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
@@ -23,7 +23,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-ollama
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels:
     app: delonix-ollama
 spec:
@@ -95,7 +95,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: delonix-ollama
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   selector:
     app: delonix-ollama

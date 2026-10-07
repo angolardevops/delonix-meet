@@ -39,7 +39,7 @@
 # (com 1 réplica um PDB só bloquearia drains de nó sem dar proteção).
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: coturn, namespace: delonix-meet, labels: { app: coturn } }
+metadata: { name: coturn, namespace: ngolacloud-meet, labels: { app: coturn } }
 spec:
   replicas: 1
   selector: { matchLabels: { app: coturn } }
@@ -135,7 +135,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: coturn
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels: { app: coturn }
 spec:
   type: LoadBalancer

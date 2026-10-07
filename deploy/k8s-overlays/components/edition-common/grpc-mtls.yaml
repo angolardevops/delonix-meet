@@ -21,7 +21,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: delonix-meet-selfsigned
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   selfSigned: {}
 ---
@@ -29,7 +29,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: delonix-meet-internal-ca
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   isCA: true
   commonName: delonix-meet-internal-ca
@@ -46,7 +46,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: delonix-meet-internal
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   ca:
     secretName: delonix-meet-internal-ca
@@ -55,17 +55,17 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: delonix-server-grpc
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   secretName: delonix-server-grpc-tls
   duration: 2160h    # 90 dias
   renewBefore: 360h  # 15 dias — o cert-manager renova; o servidor tem de reler
-  commonName: delonix-server-internal.delonix-meet.svc
+  commonName: delonix-server-internal.ngolacloud-meet.svc
   dnsNames:
     - delonix-server-internal
-    - delonix-server-internal.delonix-meet
-    - delonix-server-internal.delonix-meet.svc
-    - delonix-server-internal.delonix-meet.svc.cluster.local
+    - delonix-server-internal.ngolacloud-meet
+    - delonix-server-internal.ngolacloud-meet.svc
+    - delonix-server-internal.ngolacloud-meet.svc.cluster.local
   usages:
     - server auth
   privateKey:

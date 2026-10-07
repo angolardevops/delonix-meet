@@ -9,7 +9,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: open-webui-data
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
@@ -20,7 +20,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-open-webui
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels:
     app: delonix-open-webui
 spec:
@@ -45,7 +45,7 @@ spec:
             - containerPort: 8080
           env:
             - name: OLLAMA_BASE_URL
-              value: "http://delonix-ollama.delonix-meet.svc.cluster.local:11434"
+              value: "http://delonix-ollama.ngolacloud-meet.svc.cluster.local:11434"
             # Sem telemetria/chamadas externas — soberania como no resto do stack.
             - { name: ENABLE_OPENAI_API, value: "false" }
             - { name: WEBUI_NAME, value: "Delonix AI" }
@@ -81,7 +81,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: delonix-open-webui
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   selector:
     app: delonix-open-webui
@@ -93,7 +93,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: delonix-ai
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "512m" # upload de modelos GGUF
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600" # respostas longas do LLM

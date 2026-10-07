@@ -30,7 +30,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: delonix-ai-worker-grpc
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   secretName: delonix-ai-worker-grpc-tls
   duration: 2160h    # 90 dias
@@ -50,7 +50,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-ai-worker
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels: { app: delonix-ai-worker }
 spec:
   replicas: 1
@@ -160,7 +160,7 @@ spec:
 # usares uma fila de trabalhos:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
-metadata: { name: delonix-ai-worker, namespace: delonix-meet }
+metadata: { name: delonix-ai-worker, namespace: ngolacloud-meet }
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: delonix-ai-worker }
   # HPA só escala a zero com o feature-gate HPAScaleToZero (alpha). Para

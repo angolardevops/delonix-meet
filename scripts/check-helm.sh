@@ -103,7 +103,7 @@ lint local "${LOCAL[@]}"
 # ---- 3. recusas -------------------------------------------------------
 recusa() { # descrição, texto esperado, args…
   local desc=$1 esperado=$2; shift 2
-  if "$HELM" template meet "$CHART" -n delonix-meet "$@" >"$OUT/recusa.out" 2>"$OUT/recusa.err"; then
+  if "$HELM" template meet "$CHART" -n ngolacloud-meet "$@" >"$OUT/recusa.out" 2>"$OUT/recusa.err"; then
     erro "devia ter sido recusado e renderizou: $desc"
   elif ! grep -qF -- "$esperado" "$OUT/recusa.err"; then
     erro "recusado, mas sem a mensagem «$esperado»: $desc"
@@ -138,14 +138,14 @@ recusa "várias réplicas sem Redis" "REDIS_URL é obrigatório" \
 recusa "ponte telefone↔sala sem IPs do FreeSWITCH" "server.phoneBridge.freeswitchIPs" \
   "${LOCAL[@]}" --set server.phoneBridge.enabled=true
 recusa "ESL com o FreeSWITCH em hostNetwork e sem redes declaradas" "voice.freeswitch.eslCidrs: com server.telephony.eslAddr e o FreeSWITCH em hostNetwork" \
-  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 --set voice.freeswitch.hostNetwork=true
+  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 --set voice.freeswitch.hostNetwork=true
 recusa "ESL em produção sem política de rede nem redes declaradas" "server.telephony.eslAddr em produção" \
-  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 --set networkPolicy.enabled=false
+  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 --set networkPolicy.enabled=false
 
 # ---- 4. render --------------------------------------------------------
 render() { # nome, args…
   local nome=$1; shift
-  if "$HELM" template meet "$CHART" -n delonix-meet "$@" >"$OUT/$nome.yaml" 2>"$OUT/$nome.err"; then
+  if "$HELM" template meet "$CHART" -n ngolacloud-meet "$@" >"$OUT/$nome.yaml" 2>"$OUT/$nome.err"; then
     echo "  ✓ render $nome ($(grep -c '^kind:' "$OUT/$nome.yaml") recursos)"
   else
     erro "render falhou: $nome"; grep -v 'found symbolic link' "$OUT/$nome.err" | sed 's/^/    /' | head -20
@@ -153,8 +153,8 @@ render() { # nome, args…
 }
 render production "${PROD[@]}"
 render production-voz "${VOZ[@]}"
-render production-voz-esl "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021
-render production-voz-esl-cidrs "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 \
+render production-voz-esl "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021
+render production-voz-esl-cidrs "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 \
   --set 'voice.freeswitch.eslCidrs={10.244.0.0/16}'
 render local "${LOCAL[@]}"
 render local-2 "${LOCAL[@]}"

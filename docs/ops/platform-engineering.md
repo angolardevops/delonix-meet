@@ -161,7 +161,7 @@ de nó). O manifesto [02-server.yaml](../../deploy/k8s/02-server.yaml) já traz 
 # 0% perda = relay OK. Correr de dentro de um pod E de fora (host/cliente):
 turnutils_uclient -y -W <TURN_SECRET> -u t -n 6 -m 2 <coturn-ip>
 # Sinal de saúde nos logs do coturn: "peer usage" com rb>0 (relayou pacotes de peer).
-kubectl -n delonix-meet logs -l app=coturn | grep 'peer usage'
+kubectl -n ngolacloud-meet logs -l app=coturn | grep 'peer usage'
 ```
 
 ---
@@ -214,7 +214,7 @@ da app + coturn, e atualiza `/etc/hosts` com o VIP → `meet.delonix.local`.
 ```bash
 make image-push   # build server+web + kind load (necessário antes)
 make stage        # cluster + infra + app + coturn + /etc/hosts
-kubectl get po -n delonix-meet
+kubectl get po -n ngolacloud-meet
 ```
 Redeploy só das imagens: `make image-push` (faz `rollout restart` automático).
 
@@ -254,11 +254,11 @@ caiam no mesmo pod:
   PCs SFU ligados, publicações/peers (counters). Módulo [server/src/metrics.rs](../../server/src/metrics.rs).
   Scrape via anotações de pod (já em [02-server.yaml](../../deploy/k8s/02-server.yaml)).
   ```bash
-  kubectl -n delonix-meet port-forward deploy/delonix-server 9292:8180
+  kubectl -n ngolacloud-meet port-forward deploy/delonix-server 9292:8180
   curl -s localhost:9292/metrics | grep '^delonix_'
   ```
 - **Health:** `GET /health` (200 = vivo) e `GET /api/status` (`{"status":"ok"}`, público).
-- **Logs:** k8s → `kubectl logs -l app=delonix-server -n delonix-meet -f`.
+- **Logs:** k8s → `kubectl logs -l app=delonix-server -n ngolacloud-meet -f`.
   Bare-metal → `journalctl --user -u delonix-server -f`.
 - **Golden signals a alarmar:**
 
@@ -311,9 +311,9 @@ caiam no mesmo pod:
 
 **Comandos de triagem rápidos:**
 ```bash
-kubectl -n delonix-meet get po,svc,ingress        # estado geral
-kubectl -n delonix-meet rollout status deploy/delonix-server
-kubectl -n delonix-meet logs -l app=delonix-server --tail=100
+kubectl -n ngolacloud-meet get po,svc,ingress        # estado geral
+kubectl -n ngolacloud-meet rollout status deploy/delonix-server
+kubectl -n ngolacloud-meet logs -l app=delonix-server --tail=100
 bash scripts/check-tenant-rls.sh                  # isolamento RLS intacto?
 bash scripts/check-room-affinity.sh               # afinidade /ws intacta?
 ```

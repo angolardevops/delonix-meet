@@ -18,7 +18,7 @@ helm upgrade --install meet deploy/helm/delonix-meet -n meet-lab --create-namesp
   -f deploy/helm/delonix-meet/values-local.yaml --set host=meet-lab.test
 
 # Produção — meet.ngolacloud.com
-helm upgrade --install meet deploy/helm/delonix-meet -n delonix-meet \
+helm upgrade --install meet deploy/helm/delonix-meet -n ngolacloud-meet \
   -f deploy/helm/delonix-meet/values-production.yaml \
   --set image.tag=<git describe> \
   --set secrets.existingSecret=<nome do Secret> \
@@ -89,7 +89,7 @@ Outros Secrets, por nome:
 
 ```bash
 # Exemplo de criação — os valores nunca passam pelo git nem pelo chart
-kubectl -n delonix-meet create secret generic delonix-meet-secrets \
+kubectl -n ngolacloud-meet create secret generic delonix-meet-secrets \
   --from-literal=DATABASE_URL="postgres://…" \
   --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
   --from-literal=TURN_SECRET="$(openssl rand -hex 24)" \
