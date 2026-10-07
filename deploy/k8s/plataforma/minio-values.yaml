@@ -8,6 +8,11 @@
 #
 #  Quatro nós em modo distribuído: é o mínimo para o erasure coding do MinIO
 #  aguentar a perda de um sem perder dados.
+#
+#  O TAMANHO é medido, não escolhido: a 2026-10-07 o Longhorn do `delonix-lda`
+#  tinha 146 GiB livres em três dos cinco nós. Os 250Gi que aqui estavam não
+#  assentavam em nenhum deles. 100Gi x 4 nós dão ~200 GiB utilizáveis depois do
+#  erasure coding, e assentam em qualquer nó.
 # ---------------------------------------------------------------------------
 mode: distributed
 replicas: 4
@@ -19,7 +24,11 @@ auth:
 
 persistence:
   enabled: true
-  size: 250Gi
+  size: 100Gi
+  # UMA réplica no Longhorn (ver `storageclass-minio.yaml`): o MinIO já faz
+  # erasure coding entre os quatro pods, e replicar outra vez por baixo é
+  # pagar duas vezes pela mesma redundância.
+  storageClass: longhorn-minio
 
 # Um por nó. Com três workers, um deles leva dois — e isso está dito aqui para
 # não parecer que há quatro nós quando há três.
@@ -40,6 +49,12 @@ provisioning:
   # bucket: um lifecycle aqui apagava por baixo da aplicação.
 
 metrics:
+  # ATENÇÃO À ORDEM: o CRD `ServiceMonitor` vem do kube-prometheus-stack, que
+  # a fase 4 (`../observabilidade/instalar.sh`) instala DEPOIS desta. Numa
+  # instalação de zero este `true` faz o chart falhar com «no matches for kind
+  # ServiceMonitor». O `instalar.sh` desta pasta detecta o CRD e desliga isto
+  # na primeira passagem, avisando — e a segunda passagem, depois da
+  # observabilidade, liga-o.
   serviceMonitor:
     enabled: true
     namespace: observabilidade
