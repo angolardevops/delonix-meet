@@ -295,14 +295,19 @@ pub struct Config {
     /// aqui. O default cobre um `periodSeconds: 10` de readiness com folga.
     pub drain_readiness_secs: u64,
     /// Segundos que o drain dá às composições de gravação em curso depois de
-    /// as salas esvaziarem (`DRAIN_COMPOSE_SECS`, por omissão 8).
+    /// as salas esvaziarem (`DRAIN_COMPOSE_SECS`, por omissão 5).
     ///
-    /// Curto por obrigação, não por escolha: o que resta do
-    /// `terminationGracePeriodSeconds` (60 s) depois do readiness (12 s) e da
-    /// graça das salas (40 s) é quase nada. Serve o caso frequente — a
-    /// composição que estava quase a acabar acaba. A que não acabar JÁ NÃO SE
-    /// PERDE: fica `processing` com manifesto e o nó seguinte retoma-a
-    /// (`recorder::resume_due`, migração 0099).
+    /// Curto por obrigação, não por escolha, e a conta tem de fechar: o
+    /// `terminationGracePeriodSeconds` é **60 s** (`deploy/k8s/02-server.yaml`),
+    /// e 12 (readiness) + 40 (salas) + 5 = **57 s** deixa 3 s de folga antes do
+    /// SIGKILL. Com 8 dava 60 exactos — o SIGKILL chegava no mesmo instante em
+    /// que a espera terminava, e um drain que acaba ao mesmo tempo que é morto
+    /// não é um drain. Quem subir um dos três tem de subir a graça do K8s.
+    ///
+    /// Serve o caso frequente: a composição que estava quase a acabar acaba. A
+    /// que não acabar JÁ NÃO SE PERDE — fica `processing` com manifesto e o nó
+    /// seguinte retoma-a (`recorder::resume_due`, migração 0099). Esta espera é
+    /// uma optimização; a garantia é a retoma.
     pub drain_compose_secs: u64,
     /// Atraso que se pede ao cliente antes de reconectar (`DRAIN_RECONNECT_MS`,
     /// default 2000). O cliente acrescenta jitter por cima — sem isso, uma sala
@@ -702,7 +707,7 @@ impl Config {
             drain_grace_secs: bounded_env(src, "DRAIN_GRACE_SECS", 40, 1, 3_600) as u64,
             reconnect_grace_secs: bounded_env(src, "RECONNECT_GRACE_SECS", 45, 5, 300) as u64,
             drain_readiness_secs: bounded_env(src, "DRAIN_READINESS_SECS", 12, 0, 300) as u64,
-            drain_compose_secs: bounded_env(src, "DRAIN_COMPOSE_SECS", 8, 0, 3_600) as u64,
+            drain_compose_secs: bounded_env(src, "DRAIN_COMPOSE_SECS", 5, 0, 3_600) as u64,
             drain_reconnect_ms: bounded_env(src, "DRAIN_RECONNECT_MS", 2_000, 100, 60_000) as u64,
             ffmpeg_timeout_secs: bounded_env(src, "FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
             ffmpeg_threads: bounded_env(src, "FFMPEG_THREADS", 2, 1, 64) as u32,
