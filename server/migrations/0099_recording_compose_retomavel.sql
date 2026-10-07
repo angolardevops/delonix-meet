@@ -26,6 +26,12 @@
 -- em claro (a chave cedida pelo anfitrião é usada nos writers, à entrada, e
 -- morre com a sessão). Retomar não precisa dela — este manifesto não guarda
 -- nada que o servidor não guardasse já.
+-- A reserva é CURTA (3 min) e renovada a cada 30 s por quem compõe — o mesmo
+-- batimento que já escrevia `progress_at`, agora também para a posse. A versão
+-- longa (o tecto do ffmpeg mais folga, 75 min) estragava o caso que isto existe
+-- para salvar: num rollout o pod morria com 75 minutos de reserva na mão e o
+-- pod novo esperava-os inteiros. Trocar setenta minutos de espera por setenta e
+-- cinco não é um remédio. Regras em `composition::{LEASE, RENEW_EVERY}`.
 ALTER TABLE recordings
     ADD COLUMN compose_manifest          JSONB       NULL,
     ADD COLUMN compose_lease_token       TEXT        NULL,

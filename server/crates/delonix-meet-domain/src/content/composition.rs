@@ -23,17 +23,38 @@ use serde::{Deserialize, Serialize};
 /// malformado que rebente o ffmpeg não pode ocupar uma vaga para sempre.
 pub const MAX_ATTEMPTS: i32 = 3;
 
-/// Prazo da reserva de uma composição. Tem de cobrir o pior caso do ffmpeg
-/// (`FFMPEG_TIMEOUT_SECS`, 1 h por omissão) mais a espera por vaga, senão dois
-/// pods compunham a mesma gravação ao mesmo tempo.
-const MIN_LEASE: u64 = 5 * 60;
-const MAX_LEASE: u64 = 6 * 3600;
+/// Prazo da reserva, **renovado pelo batimento** enquanto a composição vive.
+///
+/// A primeira versão disto punha a reserva a cobrir o pior caso do ffmpeg
+/// (`FFMPEG_TIMEOUT_SECS` + folga = 75 min) — e isso estragava precisamente o
+/// caso que a retoma existe para salvar: num rollout, o pod morria com uma
+/// reserva de 75 minutos na mão, e o pod novo tinha de esperar esse tempo
+/// inteiro antes de poder reivindicar. Trocar setenta minutos de espera por
+/// setenta e cinco não é um remédio.
+///
+/// A reserva é por isso CURTA e renovada por quem a detém: enquanto a tarefa
+/// vive, o batimento ([`RENEW_EVERY`]) empurra-a para a frente; quando o
+/// processo morre, ninguém a renova e o trabalho fica reivindicável em três
+/// minutos. É o mecanismo que o repo já tinha no `progress_at` — passa a valer
+/// também para a posse.
+pub const LEASE: Duration = Duration::from_secs(180);
 
-/// Prazo efectivo: o tecto do ffmpeg mais a folga da fila, preso a 5 min..6 h.
-/// A folga é generosa de propósito — uma reserva que expira cedo é pior do que
-/// uma que expira tarde, porque duplica trabalho em vez de o atrasar.
-pub fn lease_duration(ffmpeg_timeout_secs: u64) -> Duration {
-    Duration::from_secs(ffmpeg_timeout_secs.saturating_add(900).clamp(MIN_LEASE, MAX_LEASE))
+/// De quanto em quanto tempo quem compõe renova a reserva. Seis vezes dentro
+/// da [`LEASE`]: um soluço da base (ou um ffmpeg calado) não custa a posse.
+///
+/// Renova-se por RELÓGIO e não por progresso do ffmpeg: um ffmpeg que estanca
+/// deixa de reportar, e se a renovação dependesse disso a reserva caía com o
+/// processo ainda vivo — dois ffmpeg a escrever o mesmo `out.webm`.
+pub const RENEW_EVERY: Duration = Duration::from_secs(30);
+
+/// Idade a partir da qual um directório `tmp-*` sem dono se pode apagar.
+///
+/// Generosa de propósito, e sem relação com a [`LEASE`]: um directório pode
+/// pertencer a uma composição que acabou de arrancar e cuja linha ainda não foi
+/// escrita, ou a uma que está a correr há quase o tecto inteiro do ffmpeg.
+/// Apagar cedo é perder uma gravação; apagar tarde é ocupar disco mais um dia.
+pub fn orphan_grace(ffmpeg_timeout_secs: u64) -> Duration {
+    Duration::from_secs(ffmpeg_timeout_secs.saturating_add(3600).clamp(3600, 24 * 3600))
 }
 
 /// Depois de uma falha: a gravação volta à fila da composição?
@@ -96,14 +117,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_reserva_cobre_o_tecto_do_ffmpeg() {
-        // O caso que importa: com o tecto por omissão a reserva é MAIOR do que
-        // ele, senão um segundo pod pegava na gravação a meio da primeira.
-        assert!(lease_duration(3600) > Duration::from_secs(3600));
-        // Presa em baixo e em cima.
-        assert_eq!(lease_duration(0), Duration::from_secs(900));
-        assert_eq!(lease_duration(30), Duration::from_secs(930));
-        assert_eq!(lease_duration(u64::MAX), Duration::from_secs(MAX_LEASE));
+    fn a_reserva_e_curta_e_renova_se_com_folga() {
+        // O defeito que isto guarda: uma reserva longa fazia o pod novo esperar
+        // mais do que a gravação já tinha esperado. Tem de ser minutos, não
+        // horas, e muito menor do que o tecto do ffmpeg.
+        assert!(LEASE <= Duration::from_secs(300), "a reserva voltou a ser longa");
+        assert!(LEASE < Duration::from_secs(3600));
+        // E a renovação tem de caber várias vezes dentro dela: uma só
+        // oportunidade de renovar perdia a posse ao primeiro soluço.
+        assert!(
+            LEASE.as_secs() / RENEW_EVERY.as_secs() >= 4,
+            "a renovação não tem folga dentro da reserva"
+        );
+    }
+
+    #[test]
+    fn a_folga_dos_orfaos_cobre_o_tecto_do_ffmpeg() {
+        // Ao contrário da reserva, esta TEM de ser maior do que o tecto: um
+        // directório de uma composição a correr não se apaga.
+        assert!(orphan_grace(3600) > Duration::from_secs(3600));
+        assert_eq!(orphan_grace(0), Duration::from_secs(3600));
+        assert_eq!(orphan_grace(u64::MAX), Duration::from_secs(24 * 3600));
     }
 
     #[test]

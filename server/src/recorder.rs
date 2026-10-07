@@ -1110,7 +1110,6 @@ async fn insert_processing(
     manifest: &ComposeManifest,
 ) -> Option<Uuid> {
     let info = room_rec_info(state, room_id).await;
-    let lease = compose_rules::lease_duration(state.config.ffmpeg_timeout_secs);
     let r: Result<(Uuid,), _> = sqlx::query_as(
         "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status,
                                  progress_pct, progress_at, kind,
@@ -1125,7 +1124,7 @@ async fn insert_processing(
     .bind(crate::recordings::kind_from_room_format(&info.format))
     .bind(serde_json::to_string(manifest).unwrap_or_else(|_| "null".into()))
     .bind(delonix_meet_core::crypto::random_hex(24))
-    .bind(lease.as_secs() as f64)
+    .bind(compose_rules::LEASE.as_secs() as f64)
     .fetch_one(&state.db)
     .await;
     match r {
@@ -1179,17 +1178,41 @@ fn spawn_progress_writer(
     mut rx: tokio::sync::watch::Receiver<i64>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        while rx.changed().await.is_ok() {
-            let done = *rx.borrow_and_update();
+        let mut renovacao = tokio::time::interval(compose_rules::RENEW_EVERY);
+        renovacao.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        renovacao.tick().await; // o primeiro é imediato e a reserva já está posta
+        loop {
+            // Duas razões para escrever, e a diferença importa: o progresso
+            // vem do ffmpeg e pode PARAR (um input malformado deixa-o calado);
+            // a renovação vem do relógio e só para quando a tarefa morre. Se a
+            // posse dependesse do progresso, um ffmpeg estancado perdia a
+            // reserva com o processo ainda vivo — e dois ffmpeg escreviam o
+            // mesmo `out.webm`.
+            let avancou = tokio::select! {
+                mudou = rx.changed() => {
+                    if mudou.is_err() {
+                        return; // o ffmpeg acabou e largou o Sender
+                    }
+                    true
+                }
+                _ = renovacao.tick() => false,
+            };
+            let pct = avancou.then(|| composition_pct(*rx.borrow_and_update(), expected_ms));
             let _ = sqlx::query(
-                "UPDATE recordings SET progress_pct = $2, progress_at = now()
-                 WHERE id = $1 AND status = 'processing'",
+                "UPDATE recordings
+                    SET progress_pct = COALESCE($2, progress_pct),
+                        progress_at = now(),
+                        compose_lease_expires_at = now() + make_interval(secs => $3)
+                  WHERE id = $1 AND status = 'processing'",
             )
             .bind(rec_id)
-            .bind(composition_pct(done, expected_ms))
+            .bind(pct)
+            .bind(compose_rules::LEASE.as_secs() as f64)
             .execute(&state.db)
             .await;
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if avancou {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
         }
     })
 }
@@ -1269,7 +1292,6 @@ where
 /// mais depressa, só atrasaria as chamadas vivas do mesmo pod.
 pub async fn resume_due(state: &Arc<AppState>) -> usize {
     const RESUME_BATCH: i64 = 2;
-    let lease = compose_rules::lease_duration(state.config.ffmpeg_timeout_secs);
     let claimed: Vec<(Uuid, Uuid, serde_json::Value, i32)> = match sqlx::query_as(
         "UPDATE recordings r
             SET compose_lease_token = md5(random()::text || clock_timestamp()::text),
@@ -1288,7 +1310,7 @@ pub async fn resume_due(state: &Arc<AppState>) -> usize {
                  LIMIT $3)
          RETURNING r.id, r.room_id, r.compose_manifest, r.compose_attempts",
     )
-    .bind(lease.as_secs() as f64)
+    .bind(compose_rules::LEASE.as_secs() as f64)
     .bind(compose_rules::MAX_ATTEMPTS)
     .bind(RESUME_BATCH)
     .fetch_all(&state.db)
@@ -1379,11 +1401,10 @@ pub async fn sweep_orphan_segments(state: &Arc<AppState>) -> u64 {
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
-    // A folga: a reserva mais longa mais uma hora. Um directório mais novo do
-    // que isto pode pertencer a uma composição a arrancar neste instante, cuja
-    // linha ainda não foi escrita.
-    let folga = compose_rules::lease_duration(state.config.ffmpeg_timeout_secs)
-        + std::time::Duration::from_secs(3600);
+    // A folga NÃO é a reserva (essa são minutos): um directório pode ser de
+    // uma composição a correr há quase o tecto inteiro do ffmpeg, ou de uma que
+    // arrancou neste instante e cuja linha ainda não foi escrita.
+    let folga = compose_rules::orphan_grace(state.config.ffmpeg_timeout_secs);
     let mut apagados = 0;
     while let Ok(Some(e)) = dir.next_entry().await {
         let path = e.path();
@@ -1728,12 +1749,19 @@ async fn finalize_inner(
         COMPOSE_QUEUE_BEAT,
         || async {
             if let Some(id) = rec_id {
+                // Dá sinal de vida E renova a posse: uma composição que espera
+                // vaga há mais do que a reserva não pode ser reivindicada por
+                // outro nó só por ainda não ter começado.
                 let _ = sqlx::query(
-                "UPDATE recordings SET progress_at = now() WHERE id = $1 AND status = 'processing'",
-            )
-            .bind(id)
-            .execute(&state.db)
-            .await;
+                    "UPDATE recordings
+                        SET progress_at = now(),
+                            compose_lease_expires_at = now() + make_interval(secs => $2)
+                      WHERE id = $1 AND status = 'processing'",
+                )
+                .bind(id)
+                .bind(compose_rules::LEASE.as_secs() as f64)
+                .execute(&state.db)
+                .await;
             }
         },
     )
