@@ -253,3 +253,72 @@ async fn os_segmentos_orfaos_sao_apagados_e_os_reclamados_poupados(db: sqlx::PgP
         "o directório órfão ficou no volume"
     );
 }
+
+/// **A prova que o CI não pode dar:** uma composição interrompida chega a
+/// `ready` quando outro processo a retoma, com ffmpeg a sério e segmentos a
+/// sério. `#[ignore]` porque o CI não tem ffmpeg
+/// (`.github/workflows/ci.yml:397`) — corre-se à mão:
+///
+/// ```sh
+/// cargo test --test recording_compose_retoma -- --ignored --nocapture
+/// ```
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "precisa de ffmpeg no PATH; o CI não o tem"]
+async fn uma_composicao_interrompida_chega_a_ready_na_retoma(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let room = app.new_room(&a, "gravada").await;
+    let room_id = room["id"].as_str().unwrap();
+
+    // Segmentos a sério: um OGG/Opus de 3 s feito pelo próprio ffmpeg. É o que
+    // o writer do Opus deixaria no `tmp-*` depois de uma gravação só de áudio.
+    let dir = app
+        .state
+        .config
+        .recordings_dir
+        .join(format!("tmp-{}", Uuid::new_v4()));
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let ogg = dir.join("00-audio.ogg");
+    let feito = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i"])
+        .arg("sine=frequency=440:duration=3")
+        .args(["-c:a", "libopus"])
+        .arg(&ogg)
+        .status()
+        .expect("ffmpeg não está no PATH");
+    assert!(
+        feito.success(),
+        "não foi possível criar o segmento de prova"
+    );
+
+    // A linha como o `insert_processing` a deixou, com a reserva já expirada:
+    // é o que o pod seguinte encontra depois de um rollout.
+    let id = em_processing(&app, room_id, &a.user_id, &dir, true, 1, true).await;
+
+    let despachadas = delonix_server::recording_resume_due(&app.state).await;
+    assert_eq!(despachadas, 1, "a retoma não pegou na gravação");
+
+    // A composição corre na sua tarefa; espera-se por ela com tecto.
+    let limite = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut e = estado(&app, id).await;
+    while e.status == "processing" && std::time::Instant::now() < limite {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        e = estado(&app, id).await;
+    }
+    assert_eq!(
+        e.status, "ready",
+        "a retoma não levou a gravação a ready (causa: {:?})",
+        e.causa
+    );
+    // O ficheiro final existe e tem bytes.
+    let final_path = app.state.config.recordings_dir.join(format!("{id}.webm"));
+    let meta = tokio::fs::metadata(&final_path)
+        .await
+        .expect("o .webm final não foi escrito");
+    assert!(meta.len() > 0, "o .webm final está vazio");
+    // E os segmentos foram apagados: o caminho feliz limpa.
+    assert!(
+        tokio::fs::metadata(&dir).await.is_err(),
+        "os segmentos ficaram no volume depois de a composição acabar"
+    );
+}
