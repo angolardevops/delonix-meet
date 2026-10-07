@@ -39,6 +39,7 @@ mod notifications;
 // `pub` de propósito: o cliente está completo mas o gravador ainda não o chama
 // (ADR-0020). Deixá-lo privado dava `dead_code` em metade dos métodos, e a
 // resposta a isso seria um `#[allow]` — que é esconder, não resolver.
+mod jobs;
 pub mod objectos;
 mod odoo;
 mod odoo_sso;
