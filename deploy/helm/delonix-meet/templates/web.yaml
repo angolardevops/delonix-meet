@@ -18,6 +18,8 @@ spec:
         app: delonix-web
         {{- include "dm.labels" . | nindent 8 }}
     spec:
+      serviceAccountName: delonix-web
+      automountServiceAccountToken: false
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       # nginx-unprivileged: uid 101, porta 8080.
       securityContext:

@@ -35,6 +35,8 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      serviceAccountName: delonix-server
+      automountServiceAccountToken: false
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       # O SFU é em memória por pod: o SIGTERM abre o drain (o /ready passa a
       # 503, as salas são avisadas) e o SIGKILL só pode chegar depois dele.
