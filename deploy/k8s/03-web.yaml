@@ -15,6 +15,17 @@ spec:
       labels:
         app: delonix-web
     spec:
+      # A conta dedicada e SEM token montado: a web é nginx a servir ficheiros
+      # estáticos — não fala com a API do Kubernetes, e um token montado só
+      # serve para ser roubado de dentro de um pod que nunca precisa dele.
+      serviceAccountName: delonix-web
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: web
           image: delonix-web:latest
@@ -22,6 +33,24 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          # O `delonix-web` era a ÚNICA carga do deploy/k8s sem sondas: o
+          # kubelet dava-a por pronta assim que o processo arrancava, e o
+          # Service mandava-lhe tráfego antes de o nginx estar a servir.
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: [ALL]
           resources:
             requests:
               cpu: 100m

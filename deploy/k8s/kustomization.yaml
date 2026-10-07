@@ -14,6 +14,7 @@ resources:
   - 01-config.yaml # só o ConfigMap. O Secret delonix-secrets cria-se ANTES: scripts/k8s-app-secrets.sh
   - 02-server.yaml # Deployment + Services (/api + /ws dedicado) + PDB
   - 03-web.yaml
+  - 10-contas-e-rede.yaml # ServiceAccounts (sem token montado) + NetworkPolicy por carga
   - 04-ingress.yaml # /api,/rtc + /ws (upstream-hash-by:$arg_room — afinidade R3)
   - 05-cert-manager.yaml # ClusterIssuer (prod; .local usa mkcert/CA interna)
   - 07-ollama.yaml # LLM local (tradução de legendas + resumo MoM — ai.rs)

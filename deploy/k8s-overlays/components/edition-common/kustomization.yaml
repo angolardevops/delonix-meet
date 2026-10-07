@@ -25,7 +25,9 @@ kind: Component
 # ============================================================
 resources:
   - internal-service.yaml
-  - networkpolicy.yaml
+  # networkpolicy.yaml mudou-se para a BASE (deploy/k8s/10-contas-e-rede.yaml):
+  # o caminho plano do laboratório ficava sem política nenhuma, e duas cópias
+  # da mesma regra divergem. O overlay herda-a da base.
   - grpc-mtls.yaml
 
 patches:
