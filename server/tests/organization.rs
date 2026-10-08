@@ -608,7 +608,7 @@ async fn admin_api_keys_voice_and_odoo(db: sqlx::PgPool) {
     let (_, cfg) = app.get(&org_path(&org, "integrations/odoo"), t).await;
     assert_eq!(cfg["odoo_url"], "https://erp.alfa.test");
     // `hide_org_creation`/`hide_sso_button` SAÍRAM desta resposta: já não são
-    // configuração de tenant (ver `platform_login_settings`, migração 0102).
+    // configuração de tenant (ver `platform_login_settings`, migração 0103).
     assert!(cfg["hide_org_creation"].is_null(), "{cfg}");
     assert_eq!(cfg["odoo_admin_id"], a.user_id.as_str());
     let (st, tok) = app

@@ -144,7 +144,7 @@ pub struct OdooConfigReq {
     // acrescentes de volta): são política de PLATAFORMA — ver
     // `OperatorLoginSettings` e `GET/PUT /api/operator/v1/login-settings`. Um
     // admin de organização escondia o registo e o SSO de TODA a plataforma
-    // (`BOOL_OR` em `public_settings`, corrigido com a migração 0102).
+    // (`BOOL_OR` em `public_settings`, corrigido com a migração 0103).
 }
 
 // ---------- handlers BFF (sessão admin) ----------
@@ -651,7 +651,7 @@ pub struct PublicCapabilities {
 /// (`platform_login_settings`, id=1) — nunca agrega sobre organizações: antes
 /// desta rota agregar com `BOOL_OR(hide_org_creation)` sobre todas as orgs com
 /// `odoo_enabled`, o admin de UMA organização escondia o registo e/ou o SSO
-/// para TODA a plataforma. Corrigido pela migração 0102; a escrita agora só
+/// para TODA a plataforma. Corrigido pela migração 0103; a escrita agora só
 /// acontece em `PUT /api/operator/v1/login-settings` (admin de plataforma).
 #[utoipa::path(
     get, path = "/api/public/settings", tag = "odoo",

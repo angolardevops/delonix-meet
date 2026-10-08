@@ -412,7 +412,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // botão SSO no ecrã de entrada. Era escrita por um admin de tenant
         // (hide_org_creation/hide_sso_button em organizations) e agregada com
         // BOOL_OR sobre todas as orgs — um único tenant escondia-o para toda a
-        // plataforma. Migração 0102.
+        // plataforma. Migração 0103.
         .route(
             "/login-settings",
             get(odoo::get_login_settings).put(odoo::save_login_settings),

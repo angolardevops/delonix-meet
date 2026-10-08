@@ -274,7 +274,7 @@ async fn shared_did_pool_requires_platform_admin(db: sqlx::PgPool) {
 
 /// `GET /api/public/settings` lia `hide_org_creation`/`hide_sso_button` com
 /// `BOOL_OR` sobre TODAS as organizações com `odoo_enabled=TRUE`
-/// (`odoo.rs`, antes da migração 0102): o admin de UMA organização, mesmo
+/// (`odoo.rs`, antes da migração 0103): o admin de UMA organização, mesmo
 /// criada agora mesmo, escondia o registo de contas e/ou o botão de SSO no
 /// ecrã de login de TODA a plataforma — uma política de instalação decidida
 /// por um único cliente. Correcção: as duas flags saíram de `organizations` e
