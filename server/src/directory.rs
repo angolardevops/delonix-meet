@@ -2483,7 +2483,7 @@ async fn load_operator_org(state: &AppState, org_id: Uuid) -> Result<OperatorOrg
 /// agregado: caro de calcular para N organizações a cada refrescar, e não é
 /// preciso para decidir em qual entrar (usa `GET .../{org_id}` para isso).
 #[utoipa::path(
-    get, path = "/api/operator/v1/organizations", tag = "platform",
+    get, path = "/api/operator/v1/tenants", tag = "platform",
     security(("session" = [])),
     params(crate::roles::PageQuery),
     responses((status = 200, body = OperatorOrgPage), (status = 401, body = crate::openapi::ErrorBody),
@@ -2530,7 +2530,7 @@ pub async fn list_operator_organizations(
 /// handler chama directamente as funções de domínio/armazenamento
 /// (`org::seat_summary`, `usage::org_storage_usage_for`) em vez das rotas.
 #[utoipa::path(
-    get, path = "/api/operator/v1/organizations/{org_id}", tag = "platform",
+    get, path = "/api/operator/v1/tenants/{org_id}", tag = "platform",
     security(("session" = [])),
     params(("org_id" = Uuid, Path)),
     responses((status = 200, body = OperatorOrgDetail), (status = 401, body = crate::openapi::ErrorBody),
@@ -2577,7 +2577,7 @@ pub struct OperatorQuotasReq {
 /// voz validados em `org::update_settings` (dial-in PSTN) saem da autoridade
 /// do inquilino para aqui.
 #[utoipa::path(
-    put, path = "/api/operator/v1/organizations/{org_id}/quotas", tag = "platform",
+    put, path = "/api/operator/v1/tenants/{org_id}/quotas", tag = "platform",
     security(("session" = [])),
     params(("org_id" = Uuid, Path)),
     request_body = OperatorQuotasReq,

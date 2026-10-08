@@ -26,7 +26,7 @@ async fn operador_lista_e_gere_quotas_de_tenants(db: sqlx::PgPool) {
     //     uso agregado (isso é só o detalhe). ---
     let (st, page) = app
         .get(
-            "/api/operator/v1/organizations?page_size=100",
+            "/api/operator/v1/tenants?page_size=100",
             Some(&operator.token),
         )
         .await;
@@ -50,20 +50,18 @@ async fn operador_lista_e_gere_quotas_de_tenants(db: sqlx::PgPool) {
     );
 
     // --- Admin de tenant (não operador): 403 nas três rotas novas. ---
-    let (st, e) = app
-        .get("/api/operator/v1/organizations", Some(&alfa.token))
-        .await;
+    let (st, e) = app.get("/api/operator/v1/tenants", Some(&alfa.token)).await;
     assert_eq!(st, 403, "{e}");
     let (st, e) = app
         .get(
-            &format!("/api/operator/v1/organizations/{}", alfa.org()),
+            &format!("/api/operator/v1/tenants/{}", alfa.org()),
             Some(&alfa.token),
         )
         .await;
     assert_eq!(st, 403, "{e}");
     let (st, e) = app
         .put(
-            &format!("/api/operator/v1/organizations/{}/quotas", alfa.org()),
+            &format!("/api/operator/v1/tenants/{}/quotas", alfa.org()),
             Some(&alfa.token),
             json!({"max_rooms": 5}),
         )
@@ -73,7 +71,7 @@ async fn operador_lista_e_gere_quotas_de_tenants(db: sqlx::PgPool) {
     // --- Detalhe: traz uso real (lugares e armazenamento). ---
     let (st, detail) = app
         .get(
-            &format!("/api/operator/v1/organizations/{}", alfa.org()),
+            &format!("/api/operator/v1/tenants/{}", alfa.org()),
             Some(&operator.token),
         )
         .await;
@@ -86,7 +84,7 @@ async fn operador_lista_e_gere_quotas_de_tenants(db: sqlx::PgPool) {
     // --- Altera as quotas de ALFA: não afecta BETA. ---
     let (st, updated) = app
         .put(
-            &format!("/api/operator/v1/organizations/{}/quotas", alfa.org()),
+            &format!("/api/operator/v1/tenants/{}/quotas", alfa.org()),
             Some(&operator.token),
             json!({"max_groups": 2, "max_rooms": 7, "max_meetings": -1,
                    "voice_media_backend": "provider", "voice_did_model": "dedicated"}),
@@ -114,7 +112,7 @@ async fn operador_lista_e_gere_quotas_de_tenants(db: sqlx::PgPool) {
     // `org::update_settings`).
     let (st, _) = app
         .put(
-            &format!("/api/operator/v1/organizations/{}/quotas", alfa.org()),
+            &format!("/api/operator/v1/tenants/{}/quotas", alfa.org()),
             Some(&operator.token),
             json!({"voice_media_backend": "bogus"}),
         )
@@ -134,7 +132,7 @@ async fn operador_lista_e_gere_quotas_de_tenants(db: sqlx::PgPool) {
 
     let (_, beta_detail) = app
         .get(
-            &format!("/api/operator/v1/organizations/{}", beta.org()),
+            &format!("/api/operator/v1/tenants/{}", beta.org()),
             Some(&operator.token),
         )
         .await;
@@ -164,7 +162,7 @@ async fn operador_lista_e_gere_quotas_de_tenants(db: sqlx::PgPool) {
 
     let (_, alfa_detail2) = app
         .get(
-            &format!("/api/operator/v1/organizations/{}", alfa.org()),
+            &format!("/api/operator/v1/tenants/{}", alfa.org()),
             Some(&operator.token),
         )
         .await;
@@ -175,7 +173,7 @@ async fn operador_lista_e_gere_quotas_de_tenants(db: sqlx::PgPool) {
     );
     let (_, beta_detail2) = app
         .get(
-            &format!("/api/operator/v1/organizations/{}", beta.org()),
+            &format!("/api/operator/v1/tenants/{}", beta.org()),
             Some(&operator.token),
         )
         .await;
