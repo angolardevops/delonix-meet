@@ -277,11 +277,6 @@ async fn uma_exportacao_que_falha_volta_a_fila_com_espera(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
 
-    // Pede a exportação (entra `queued`) e tira-lhe o sítio onde escrever.
-    let (s, _) = app
-        .post("/api/users/me/data-exports", Some(&a.token), json!({}))
-        .await;
-    assert_eq!(s, 202, "o pedido não entrou na fila");
     // Põe um FICHEIRO onde o directório devia estar: é o que um disco cheio ou
     // uma permissão em falta fazem — escrever ali deixa de ser possível. O pai
     // tem de existir primeiro; o harness só cria o directório quando precisa.
@@ -293,6 +288,19 @@ async fn uma_exportacao_que_falha_volta_a_fila_com_espera(db: sqlx::PgPool) {
     )
     .expect("não consegui criar o directório-pai");
     std::fs::write(&dir, b"isto nao e um directorio").expect("não consegui bloquear o directório");
+
+    // A linha entra na fila DIRECTAMENTE, e não pelo `POST`: o handler de
+    // criação despacha um `run_queue` por si, e isso é uma corrida contra este
+    // teste — a tarefa do `POST` reivindica a exportação antes de lhe tirarmos
+    // o sítio onde escrever, e fica dentro do `build()` quando o teste
+    // asserta. Localmente ganhava-se a corrida; no CI, sob carga, perdia-se
+    // (`attempts=1`, `status=running`). Assim a fila é exercitada por uma só
+    // volta, à nossa ordem.
+    sqlx::query("INSERT INTO data_exports (user_id, status) VALUES ($1::uuid, 'queued')")
+        .bind(&a.user_id)
+        .execute(&app.db)
+        .await
+        .expect("não consegui pôr a exportação na fila");
 
     // A volta da fila: falha a gerar e TEM de voltar a `queued` com espera.
     delonix_server::data_export_run_queue(&app.state).await;
