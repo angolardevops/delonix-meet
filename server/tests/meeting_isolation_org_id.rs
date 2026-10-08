@@ -95,7 +95,11 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
             None,
         )
         .await;
-    assert_eq!(get_a.status, 200, "controlo positivo falhou: {}", get_a.text);
+    assert_eq!(
+        get_a.status, 200,
+        "controlo positivo falhou: {}",
+        get_a.text
+    );
 
     // O DEFEITO: a chave da B — que nunca criou, nem é dona, desta reunião —
     // só porque Carlos tem (arquivada) uma linha em `org_members` para a B.
