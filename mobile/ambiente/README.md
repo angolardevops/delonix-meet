@@ -37,7 +37,8 @@ que devolve a configuração `lpconfig` do Linphone. A app aceita o mesmo: **ler
 Pré-requisito: laboratório em modo LAN (o QR tem de ser `https` e o IP alcançável do emulador; um `.local` é recusado pelo servidor):
 
 ```bash
-cd <worktree do laboratório> && make compose-up LAN_IP=<ip desta máquina>
+cd .worktrees/delonix-meet/laboratorio-develop && make compose-up LAN_IP=<ip desta máquina>
+# (outro sítio: export DP_LAB_DIR=<worktree do laboratório>)
 ```
 
 O `patrol.sh` arranca o `gatilho-gsm.py`, que também emite bilhetes (`/lab/bilhete`, `/lab/credenciais`, `/lab/bilhete-usado`)

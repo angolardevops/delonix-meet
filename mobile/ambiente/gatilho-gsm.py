@@ -24,7 +24,10 @@ ROTAS = {"/gsm/call": "call", "/gsm/accept": "accept", "/gsm/cancel": "cancel"}
 # O teste Patrol precisa de um bilhete de provisionamento FRESCO e só o administrador o emite.
 # O anfitrião tem as credenciais de laboratório (.env do worktree do laboratório); o aparelho
 # nunca as vê, só o bilhete ou as credenciais do ramal DE TESTE. Nunca se escreve segredo no log.
-LAB = Path(__file__).resolve().parents[3] / "laboratorio"
+import os
+
+# DP_LAB_DIR muda de sítio; por omissão o worktree do laboratório criado sobre a develop
+LAB = Path(os.environ.get("DP_LAB_DIR") or Path(__file__).resolve().parents[3] / "laboratorio-develop")
 RAMAL_TESTE = ("1900", "DelonixPhone (emulador)")  # ramal da empresa, só para estes testes
 
 
