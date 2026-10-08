@@ -946,7 +946,7 @@ if (gravacaoA) {
 const chaveApiA = await req(`/api/orgs/${A.orgId}/api-keys`, {
   token: A.token, method: 'POST', body: { name: 's3-arquivo' },
 })
-await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
+const reuniaoS3antes = await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
   token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 antes', starts_at: new Date(Date.now() + 7200_000).toISOString(), host_email: C.email },
 })
@@ -967,6 +967,42 @@ await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/ap
   token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
 })
+
+console.log('\n--- T1: a chave da B não alcança uma reunião da A por /api/v1/meetings ---')
+// Achado da auditoria de 2026-10-08: `meeting_in_org` (e as equivalentes em
+// `apikeys.rs`, `v1_meetings`/`v1_meeting_notes`) decidiam se uma reunião
+// "pertence" à organização da chave só verificando se o DONO é (ou foi,
+// mesmo arquivado) membro dessa organização — nunca se a reunião nasceu lá.
+// A `reuniaoS3antes` é real (criada ali acima pela chave da A, com C como
+// anfitriã) — um 404 para a chave da B é mesmo "não é tua", não "não
+// existe". `chaveB` é a chave `dlx_` da B criada para o teste de destruição
+// cross-tenant, acima.
+if (reuniaoS3antes?.id) {
+  const m = reuniaoS3antes.id
+  const chaveApiB = chaveB.json?.key
+  await recusado('a chave da B lê a reunião da A', `/api/v1/meetings/${m}`, { token: chaveApiB })
+  await recusado('a chave da B lê a ata/transcrição da reunião da A', `/api/v1/meetings/${m}/minutes`, { token: chaveApiB })
+  await recusado('a chave da B altera a reunião da A', `/api/v1/meetings/${m}`, {
+    token: chaveApiB, method: 'PATCH', body: { title: 'sequestrada pela B' },
+  })
+  await recusado('a chave da B toca na reunião da A', `/api/v1/meetings/${m}/ring`, {
+    token: chaveApiB, method: 'POST',
+  })
+  const listaB = await req('/api/v1/meetings', { token: chaveApiB })
+  const apareceu = Array.isArray(listaB.json?.meetings) && listaB.json.meetings.some((x) => x.id === m)
+  if (listaB.status === 200 && !apareceu) ok('a listagem da B não traz a reunião da A')
+  else nok('a listagem da B não traz a reunião da A', `devolveu ${listaB.status}: ${JSON.stringify(listaB.json).slice(0, 160)}`)
+  // E o recurso da A tem de sobreviver aos pedidos recusados da B — o
+  // DELETE por último, para não destruir o fixture a meio dos casos acima.
+  await recusado('a chave da B apaga a reunião da A', `/api/v1/meetings/${m}`, {
+    token: chaveApiB, method: 'DELETE',
+  })
+  const aindaLa = await req(`/api/v1/meetings/${m}`, { token: chaveApiA.json?.key })
+  if (aindaLa.status === 200) ok('a reunião da A continua lá depois dos pedidos da B')
+  else nok('a reunião da A continua lá depois dos pedidos da B', `devolveu ${aindaLa.status}`)
+} else {
+  nok('fixture da reunião da A para o T1', 'a criação de controlo acima não devolveu id')
+}
 
 console.log('\n--- «Ligar a…» a partir da sala da A (dial-outs) ---')
 // Fazer tocar um ramal custa atenção e, na F2, dinheiro: quem não gere a sala
