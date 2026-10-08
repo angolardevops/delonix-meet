@@ -41,7 +41,7 @@ sem uma prática que lhe faça falta no seu papel.
 |---|---|---|---|
 | `resources` em todo o workload | ✓ | ✓ | — |
 | probes (`readiness`/`liveness`) | 8/10 | ✓ | **falta** no `60-ai-gpu-worker` |
-| `securityContext` | 8/10 | ✓ | **falta** no `52-data-plain` |
+| `securityContext` | **10/10 (2026-10-08)** | ✓ | **feito**: o `52-data-plain` e o `50-data` levam-no, com os uids medidos nas imagens. Ver o passo 5 — `drop: ALL` sozinho quebrava-os |
 | `runAsNonRoot`, `readOnlyRootFilesystem`, `drop: ["ALL"]`, `seccompProfile` | ✓ | ✓ | — |
 | `ServiceAccount` + `automountServiceAccountToken: false` | ✓ | ✓ | — (#266) |
 | `NetworkPolicy` | ✓ | ✓ | — (#266) |
@@ -164,8 +164,87 @@ sem uma prática que lhe faça falta no seu papel.
 4. **`priorityClassName`** para o SFU e os dados, nos dois lados. Precisa de uma
    decisão: que classes existem no cluster partilhado, o que é do operador do
    `delonix-lda` e não meu.
-5. Os dois buracos pequenos: probes no `60-ai-gpu-worker` e `securityContext`
-   no `52-data-plain`.
+5. ~~Os dois buracos pequenos: probes no `60-ai-gpu-worker` e `securityContext`
+   no `52-data-plain`.~~ **MEDIDO a 2026-10-08. Metade feita; e não eram dois,
+   nem pequenos.**
+
+   **O que a medição acrescentou ao enunciado:** a kustomization de `deploy/k8s`
+   inclui **12 dos 17** ficheiros. Os outros cinco — `06-external-apps`,
+   `09-whisper`, `21-server-hpa`, `50-data`, `52-data-plain`, `60-ai-gpu-worker`
+   — aplicam-se à mão com `kubectl apply -f` e **nenhum render os cobria**. Não
+   era um buraco no `52-data-plain`: era não haver portão nenhum sobre essa
+   família. Era por aí que as lacunas entravam.
+
+   ### Feito: o `securityContext`, com a armadilha medida
+
+   `drop: ["ALL"]` sozinho **quebra** as imagens oficiais do Postgres e do
+   Redis: elas arrancam como root e trocam de utilizador no entrypoint, que faz
+   `chown`. Medido com o motor (`delonix container run --cap-drop ALL`), seis
+   execuções:
+
+   | imagem | utilizador | resultado |
+   |---|---|---|
+   | `postgres:16-alpine` | root | `chown: /var/lib/postgresql/data/pgdata: Operation not permitted` |
+   | `postgres:16-alpine` | uid 70:70 | `database system is ready to accept connections` |
+   | `redis:7-alpine` | root | `chown: .: Operation not permitted` |
+   | `redis:7-alpine` | uid 999:1000 | `Ready to accept connections tcp` |
+   | `postgres:16-alpine` | uid 70, rootfs só de leitura + tmpfs `/tmp` e `/var/run/postgresql` | `ready to accept connections` |
+   | `redis:7-alpine` | uid 999, rootfs só de leitura + tmpfs `/data` | `Ready to accept connections tcp` |
+
+   Daí o `52-data-plain.yaml` levar os uids do `/etc/passwd` das imagens (70 e
+   999, não um palpite), `readOnlyRootFilesystem: true` com os volumes que a
+   medição mostrou necessários, e o `50-data.yaml` — que já corria non-root —
+   levar só o `drop: ["ALL"]` e o `allowPrivilegeEscalation: false`.
+
+   **Uma coisa que medi e NÃO era defeito:** o `50-data.yaml` corre o
+   `postgres:17-alpine` com `runAsUser: 999`, que é o uid do *redis* (o do
+   postgres é 70). Parecia um copiar-colar errado. Medido, **arranca**: o
+   Postgres corre com um uid arbitrário desde que o diretório seja escrivível,
+   e o `fsGroup: 999` garante-o. Não mexi.
+
+   **Não medido:** o `fsGroup` sobre um PVC. As provas acima correram com
+   tmpfs, porque não havia cluster de pé (`kubectl cluster-info` → connection
+   refused). Está anotado no próprio manifesto.
+
+   ### Feito: o portão que faltava
+
+   A verificação 8 do `check-k8s-render.sh`
+   (`scripts/k8s-optin-higiene.py`) exige, nos manifestos fora da
+   kustomization: **recursos, `drop: ALL`, sem escalada, non-root**. Uma
+   excepção, com a razão escrita (`09-whisper`: a imagem é construída neste
+   repo, pôr non-root exige fixar o uid no Dockerfile dela), e o portão **falha
+   se a excepção deixar de ser necessária** — uma excepção morta esconde a
+   próxima regressão.
+
+   **Não exige `livenessProbe`, de propósito.** Numa base de dados, uma sonda de
+   liveness transforma uma consulta lenta num ciclo de reinícios, e a readiness
+   já a tira do Service. É também por isso que **não** acrescentei liveness ao
+   `52-data-plain`.
+
+   **Controlos negativos medidos:** tirar o `drop: ALL` do Postgres → falha;
+   tirar os recursos do `09-whisper` (que tem excepção só para `non-root`) →
+   falha; pôr o `09-whisper` non-root → falha a dizer que a excepção já não é
+   necessária.
+
+   ### Por fazer, e porque não é YAML
+
+   **As sondas do `60-ai-gpu-worker`.** O worker não serve HTTP e não escreve
+   batimento nenhum (`ai-worker/worker.py`), logo não há o que sondar. A imagem
+   é `nvidia/cuda:…-ubuntu22.04`, tem shell, portanto uma sonda `exec` é
+   possível — mas precisa de código:
+
+   - um batimento por ficheiro, pulsado **por progresso** e não por relógio. Em
+     `transcriber.py` a transcrição corre num gerador (`for seg in raw`), pelo
+     que um `pulso()` por segmento é um gancho limpo. Por relógio não serve: um
+     worker pendurado continuaria a parecer vivo, e seria uma sonda que não
+     prova nada;
+   - um `startupProbe` tolerante antes da liveness, porque o primeiro arranque
+     descarrega o modelo `large-v3` (~3 GB);
+   - readiness **não** faz sentido: o worker não tem Service nem recebe tráfego.
+
+   É uma peça de código com teste, não uma linha de manifesto — e o worker ainda
+   não está entregue em sítio nenhum (`ghcr.io/OWNER/...:latest`, com o `OWNER`
+   por preencher).
 
 ## 4. O que fica de fora, e porquê
 

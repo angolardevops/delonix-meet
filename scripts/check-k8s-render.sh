@@ -25,6 +25,10 @@
 #   7. em TODOS: todo o Deployment com mais de uma réplica (ou com um HPA a
 #      mirá-lo) espalha-se por nó, com ScheduleAnyway. Réplicas todas no mesmo
 #      nó ficam `Available` num único ponto de falha, sem dar erro nenhum.
+#   8. os manifestos OPT-IN de deploy/k8s (os que a kustomization NÃO inclui, e
+#      que se aplicam com `kubectl apply -f`) têm recursos, largam as
+#      capacidades, não permitem escalada e correm non-root. Nenhum render os
+#      cobria, e foi por aí que entraram as lacunas que isto fecha.
 #
 #  Opcional (DRYRUN=1): `kubectl apply --dry-run=client` sobre o renderizado.
 #  Precisa de um API server acessível (o client dry-run faz discovery dos
@@ -69,6 +73,18 @@ if [ "${DRYRUN:-0}" = "1" ]; then
     fi
   done
 fi
+
+# ---- 8. os manifestos OPT-IN, que nenhum render cobre ----------------------
+#  A kustomization de deploy/k8s inclui 12 dos 17 ficheiros. Os outros aplicam-se
+#  à mão (`kubectl apply -f`) e por isso NUNCA passavam por portão nenhum — é
+#  assim que o 52-data-plain.yaml andou sem `securityContext` e o 50-data.yaml
+#  sem largar capacidades, sem nada acusar.
+#
+#  Quatro invariantes, e DE PROPÓSITO não exige `livenessProbe`: numa base de
+#  dados uma sonda de liveness transforma uma consulta lenta num ciclo de
+#  reinícios, e a readiness já a tira do Service. Onde a liveness faz falta é
+#  num worker que se pendura — e isso precisa de código no worker, não de YAML.
+python3 scripts/k8s-optin-higiene.py deploy/k8s || fail=1
 
 OUT="$OUT" HPA_SRC=deploy/k8s/21-server-hpa.yaml python3 - <<'PYEOF' || fail=1
 import os, sys, yaml
