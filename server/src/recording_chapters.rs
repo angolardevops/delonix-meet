@@ -561,47 +561,158 @@ pub async fn generate(
 
 /// Varredura: capítulos automáticos para as gravações transcritas que ainda
 /// não os têm. Poucas por volta — é o mesmo LLM que resume as actas.
+/// A fila dos capítulos automáticos, declarada uma vez.
+///
+/// O `NOT EXISTS` é a defesa que já existia: uma resposta inutilizável do modelo
+/// (`ai.bad_response`) não se repete sozinha a cada volta — a gravação ficava à
+/// frente da fila para sempre. Volta-se a pedir à mão.
+///
+/// O que é NOVO é o tecto e a espera: o braço de erro e o `ai.timeout` não
+/// contavam nada, e uma gravação que estourasse o prazo do modelo era repetida
+/// a cada 5 min **para sempre**, a ocupar 1 das 2 vagas por volta.
+///
+/// `tenant_column: None`: a selecção é por `transcribed_at` e o lote é de dois;
+/// a justiça entre organizações aqui seria sobre a org da SALA, que exigiria
+/// uma junção — fica anotado como o que falta se isto algum dia saturar.
+const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "auto_chapters",
+    table: "recordings",
+    id_column: "id",
+    ready_when: "transcribed_at IS NOT NULL AND transcript_error IS NULL \
+                 AND chapters_generated_at IS NULL AND status = 'ready' \
+                 AND jsonb_array_length(transcript_segments) > 0 \
+                 AND chapters_attempts < {max_attempts} \
+                 AND (chapters_next_attempt_at IS NULL OR chapters_next_attempt_at <= now()) \
+                 AND NOT EXISTS (SELECT 1 FROM recording_chapter_generations g \
+                                  WHERE g.recording_id = recordings.id \
+                                    AND g.status = 'failed' AND g.error_code = 'ai.bad_response')",
+    claim_set: "chapters_attempts = chapters_attempts + 1, chapters_next_attempt_at = NULL",
+    returning: "id",
+    order_by: "transcribed_at",
+    tenant_column: None,
+    batch: 2,
+};
+
+/// Três tentativas, 5 e 20 minutos entre elas.
+///
+/// Mais longo do que o das exportações porque ninguém está à espera disto: os
+/// capítulos são uma comodidade que aparece depois da transcrição, e um modelo
+/// local que estourou o prazo tem mais chance de responder daqui a vinte
+/// minutos do que daqui a trinta segundos.
+const POLITICA: delonix_meet_core::jobs::Retry = delonix_meet_core::jobs::Retry {
+    max_attempts: 3,
+    delays: &[300, 1200],
+    jitter: 0.2,
+};
+
+/// Uma gravação reivindicada para gerar capítulos.
+#[derive(sqlx::FromRow)]
+struct Reivindicada {
+    id: Uuid,
+}
+
 pub async fn auto_chapters_sweep(state: &Arc<AppState>) {
     if state.config.ollama_url.is_none() {
         return;
     }
-    let pending: Vec<(Uuid,)> = match sqlx::query_as(
-        "SELECT id FROM recordings
-         WHERE transcribed_at IS NOT NULL AND transcript_error IS NULL
-           AND chapters_generated_at IS NULL AND status = 'ready'
-           AND jsonb_array_length(transcript_segments) > 0
-           AND NOT EXISTS (SELECT 1 FROM recording_chapter_generations g
-                            WHERE g.recording_id = recordings.id
-                              AND g.status = 'failed' AND g.error_code = 'ai.bad_response')
-         ORDER BY transcribed_at LIMIT 2",
+    let pending: Vec<Reivindicada> = match crate::jobs::claim(
+        state,
+        &crate::jobs::Worker {
+            queue: FILA,
+            retry: POLITICA,
+            lease: None,
+        },
     )
-    .fetch_all(&state.db)
     .await
     {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!(error = %e, "auto chapters: consulta falhou");
+            tracing::warn!(error = %e, "auto chapters: reivindicação falhou");
             return;
         }
     };
-    // (O `NOT EXISTS` acima: uma resposta inutilizável não se repete sozinha a
-    // cada volta — a gravação ficava à frente da fila para sempre. Volta-se a
-    // pedir à mão.)
-    for (id,) in pending {
+    for Reivindicada { id } in pending {
         match generate_for(state, id, None).await {
             Ok(GenerateOutcome::Generated(n)) => {
                 tracing::info!(recording = %id, chapters = n, "capítulos automáticos gerados")
             }
             Ok(GenerateOutcome::LlmUnavailable) => {
+                // O LLM em baixo NÃO é culpa desta gravação. A reivindicação já
+                // contou a tentativa, por isso devolve-se: sem isto, uma avaria
+                // do Ollama queimava as três tentativas de todas as gravações
+                // em fila, e elas nunca mais teriam capítulos — exactamente o
+                // tipo de dano que este trabalho existe para evitar.
+                devolve_tentativa(state, id).await;
                 tracing::warn!(recording = %id, "capítulos: LLM sem resposta — fica para a próxima volta");
                 return;
             }
             Ok(GenerateOutcome::BadResponse) => {
+                // Pílula envenenada: o `NOT EXISTS` da fila já a exclui para
+                // sempre. A tentativa fica gasta, que é o correcto.
                 tracing::warn!(recording = %id, "capítulos: resposta do modelo sem capítulos utilizáveis")
             }
-            Ok(GenerateOutcome::NoTranscript | GenerateOutcome::AlreadyRunning) => {}
-            Err(e) => tracing::warn!(recording = %id, error = %e, "capítulos: falhou"),
+            Ok(GenerateOutcome::NoTranscript | GenerateOutcome::AlreadyRunning) => {
+                // Nada foi tentado: a tentativa volta.
+                devolve_tentativa(state, id).await;
+            }
+            Err(e) => {
+                tracing::warn!(recording = %id, error = %e, "capítulos: falhou");
+                adia(state, id).await;
+            }
         }
+    }
+}
+
+/// Devolve a tentativa que a reivindicação contou, quando a falha não é desta
+/// gravação (o LLM em baixo, nada que transcrever, outra geração já a correr).
+async fn devolve_tentativa(state: &AppState, id: Uuid) {
+    let _ = sqlx::query(
+        "UPDATE recordings SET chapters_attempts = GREATEST(chapters_attempts - 1, 0)
+          WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&state.db)
+    .await;
+}
+
+/// Adia a próxima tentativa pelo backoff da política, com espalhamento.
+///
+/// Sem isto, um erro repetia-se a cada volta de 5 min para sempre — a gravação
+/// ocupava 1 das 2 vagas e atrasava as que vinham atrás.
+async fn adia(state: &AppState, id: Uuid) {
+    let tentativas: i32 =
+        sqlx::query_scalar("SELECT chapters_attempts FROM recordings WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(POLITICA.max_attempts);
+    let Some(espera) = POLITICA.delay_after(tentativas) else {
+        // Tentativas esgotadas: o `ready_when` da fila já não a selecciona.
+        return;
+    };
+    let (lo, hi) = POLITICA.jitter_range();
+    // Os `::float8` são obrigatórios: sem eles o Postgres não infere o tipo dos
+    // parâmetros dentro da aritmética do `random()` e a instrução falha.
+    let r = sqlx::query(
+        "UPDATE recordings
+            SET chapters_next_attempt_at = now() + make_interval(
+                    secs => $2::float8 * ($3::float8 + random() * $4::float8))
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(espera.as_secs() as f64)
+    .bind(lo)
+    .bind(hi - lo)
+    .execute(&state.db)
+    .await;
+    match r {
+        Ok(_) => {
+            tracing::info!(recording = %id, tentativas, espera_s = espera.as_secs(), "capítulos: adiada")
+        }
+        // Não se cala: sem o adiamento, isto volta a cada 5 minutos.
+        Err(e) => tracing::error!(recording = %id, error = %e, "capítulos: o adiamento falhou"),
     }
 }
 
