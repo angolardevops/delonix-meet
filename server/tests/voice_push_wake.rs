@@ -91,6 +91,17 @@ fn novo_id() -> String {
 }
 
 async fn acordar(app: &TestApp, dominio: &str, sip_user: &str, call: &str) -> (u16, Value) {
+    acordar_de(app, dominio, sip_user, call, "").await
+}
+
+/// Como `acordar`, mas diz quem liga (o utilizador SIP do chamador, como o FreeSWITCH o autenticou).
+async fn acordar_de(
+    app: &TestApp,
+    dominio: &str,
+    sip_user: &str,
+    call: &str,
+    chamador_sip: &str,
+) -> (u16, Value) {
     let res = app
         .http
         .post(app.url("/internal/v1/voice/push/wake"))
@@ -99,7 +110,7 @@ async fn acordar(app: &TestApp, dominio: &str, sip_user: &str, call: &str) -> (u
             "domain": dominio,
             "sip_username": sip_user,
             "call_uuid": call,
-            "caller_extension": "1001"
+            "caller_sip_username": chamador_sip
         }))
         .send()
         .await
@@ -271,6 +282,9 @@ async fn o_wake_acorda_o_aparelho_certo_uma_so_vez_e_sem_o_token(db: sqlx::PgPoo
     let a = app.new_org("alfa-wake.ao").await;
     let ana = app.add_member(&a, "ana", "member").await;
     let ramal = novo_ramal(&app, &a, &ana, "1004").await;
+    let bruno = app.add_member(&a, "bruno", "member").await;
+    let ramal_bruno = novo_ramal(&app, &a, &bruno, "1005").await;
+    let sip_bruno = ramal_bruno["sip_username"].as_str().unwrap().to_string();
     let sip = ramal["sip_username"].as_str().unwrap().to_string();
     let dom = dominio(&app, &slug_de(&app, a.org()).await);
     let id = novo_id();
@@ -281,7 +295,16 @@ async fn o_wake_acorda_o_aparelho_certo_uma_so_vez_e_sem_o_token(db: sqlx::PgPoo
         201
     );
 
-    let (st, r) = acordar(&app, &dom, &sip, "11111111-aaaa-bbbb-cccc-000000000001").await;
+    // Quem liga é o ramal 1005 (o Lua manda o utilizador SIP dele): o telemóvel recebe o NÚMERO, nunca
+    // o utilizador SIP.
+    let (st, r) = acordar_de(
+        &app,
+        &dom,
+        &sip,
+        "11111111-aaaa-bbbb-cccc-000000000001",
+        &sip_bruno,
+    )
+    .await;
     assert_eq!(st, 200, "{r}");
     assert_eq!(r, json!({"awaiting": true, "devices": 1}));
     {
@@ -292,7 +315,12 @@ async fn o_wake_acorda_o_aparelho_certo_uma_so_vez_e_sem_o_token(db: sqlx::PgPoo
             recebidos[0]["call_uuid"],
             "11111111-aaaa-bbbb-cccc-000000000001"
         );
-        assert_eq!(recebidos[0]["caller"], "1001");
+        assert_eq!(recebidos[0]["caller"], "1005");
+        assert!(
+            !recebidos[0].to_string().contains(&sip_bruno),
+            "o utilizador SIP do chamador foi para o telemóvel de outra pessoa: {}",
+            recebidos[0]
+        );
         assert!(
             !recebidos[0].to_string().contains(TOKEN_DO_APARELHO),
             "o token foi no pedido ao fornecedor: {}",
@@ -603,4 +631,43 @@ async fn ha_um_limite_de_wakes_por_ramal_e_por_minuto(db: sqlx::PgPool) {
     let (_, r) = acordar(&app, &dom, sip, "chamada-13").await;
     assert_eq!(r, json!({"awaiting": false, "devices": 0}));
     assert_eq!(lab.pedidos.lock().unwrap().len(), 12);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn um_chamador_que_nao_e_ramal_desta_organizacao_vai_sem_nome(db: sqlx::PgPool) {
+    let lab = receptor().await;
+    let app = spawn(db, Some(&lab)).await;
+    let a = app.new_org("alfa-chamador.ao").await;
+    let b = app.new_org("beta-chamador.ao").await;
+    let ana = app.add_member(&a, "ana", "member").await;
+    let bia = app.add_member(&b, "bia", "member").await;
+    let ramal_ana = novo_ramal(&app, &a, &ana, "1004").await;
+    let ramal_bia = novo_ramal(&app, &b, &bia, "1004").await;
+    let sip_ana = ramal_ana["sip_username"].as_str().unwrap();
+    let sip_bia = ramal_bia["sip_username"].as_str().unwrap();
+    let dom = dominio(&app, &slug_de(&app, a.org()).await);
+    assert_eq!(
+        registar(&app, &ana, &novo_id(), corpo("lab", "android", "tok-c"))
+            .await
+            .0,
+        201
+    );
+
+    // Um chamador de OUTRA organização (o utilizador SIP existe, mas não aqui) e um inventado: sem nome.
+    acordar_de(&app, &dom, sip_ana, "chamada-outra-org", sip_bia).await;
+    acordar_de(
+        &app,
+        &dom,
+        sip_ana,
+        "chamada-inventada",
+        "ramal_que_nao_existe",
+    )
+    .await;
+    let recebidos = lab.pedidos.lock().unwrap();
+    assert_eq!(recebidos.len(), 2, "{recebidos:?}");
+    for r in recebidos.iter() {
+        assert_eq!(r["caller"], "", "{r}");
+        assert!(!r.to_string().contains(sip_bia));
+        assert!(!r.to_string().contains("ramal_que_nao_existe"));
+    }
 }

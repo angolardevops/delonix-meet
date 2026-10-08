@@ -194,8 +194,12 @@ def prova_real(lab, porta):
         uuid1 = secrets.token_hex(4).rjust(8, "0") + "-0000-0000-0000-0000000000a1"
         t0 = time.time(); r, dt = originar(lab, chamador, lab.dominio, numero, uuid1)
         ped = list(Receptor.pedidos)
-        linha(len(ped) == 1 and ped[0].get("device_id") == dev and ped[0].get("call_uuid") == uuid1 and token_push not in json.dumps(ped),
-              "o servidor REAL pediu ao fornecedor para acordar o aparelho certo, sem o token", f"pedidos={len(ped)}")
+        # O `call_uuid` é o do canal que corre o dialplan (a perna de dentro do loopback), não o `origination_uuid`
+        # da perna de fora: o que se exige é que seja um UUID de canal e que o aparelho seja o certo.
+        uuid_ok = len(ped) == 1 and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(ped[0].get("call_uuid", ""))) is not None
+        linha(len(ped) == 1 and ped[0].get("device_id") == dev and uuid_ok and token_push not in json.dumps(ped),
+              "o servidor REAL pediu ao fornecedor para acordar o aparelho certo, sem o token",
+              f"pedidos={len(ped)}, device_certo={bool(ped) and ped[0].get('device_id') == dev}, uuid_de_canal={uuid_ok}, caller={ped[0].get('caller') if ped else None!r}")
         linha(tel.t_invite is not None and tel.t_registo is not None and tel.t_invite > tel.t_registo and 2.5 <= (tel.t_invite - t0) <= 9,
               "o aparelho acordou, registou-se e recebeu o INVITE", "sem INVITE" if tel.t_invite is None else f"INVITE aos {tel.t_invite - t0:.1f}s")
         linha("USER_BUSY" in r, "a chamada seguiu para o aparelho (que recusou com 486)", r)

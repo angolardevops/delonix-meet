@@ -460,9 +460,11 @@ pub struct WakeReq {
     sip_username: String,
     /// O UUID do canal do FreeSWITCH: dá idempotência ao pedido.
     call_uuid: String,
-    /// Quem liga (número curto ou utilizador SIP do chamador): vai no push.
+    /// O utilizador SIP de quem liga, como o FreeSWITCH o autenticou (vazio se a chamada vem de fora). É
+    /// metade da credencial dele: **nunca** vai para o telemóvel de outra pessoa. O servidor traduz-o para o
+    /// número curto do chamador DESTA organização (ver [`caller_label`]).
     #[serde(default)]
-    caller_extension: String,
+    caller_sip_username: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -576,7 +578,7 @@ pub async fn ivr_push_wake(
     .fetch_all(&state.db)
     .await?;
 
-    let caller = rules::clean_caller(&req.caller_extension);
+    let caller = caller_label(&state, org_id, &req.caller_sip_username).await?;
     let mut tasks = Vec::new();
     let mut already = 0i64;
     for d in devices {
@@ -638,6 +640,27 @@ pub async fn ivr_push_wake(
         awaiting: devices > 0,
         devices,
     }))
+}
+
+/// O que o telemóvel mostra de quem liga: o NÚMERO CURTO do ramal chamador, procurado na organização do
+/// destino. Um chamador que não é ramal desta organização (tronco, outra org, desconhecido) vai como vazio:
+/// o push nunca leva o utilizador SIP de ninguém.
+async fn caller_label(
+    state: &AppState,
+    org_id: Uuid,
+    caller_sip_username: &str,
+) -> Result<String, ApiError> {
+    if caller_sip_username.is_empty() {
+        return Ok(String::new());
+    }
+    let number: Option<String> = sqlx::query_scalar(
+        "SELECT extension FROM voice_extensions WHERE org_id = $1 AND sip_username = $2",
+    )
+    .bind(org_id)
+    .bind(caller_sip_username)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(number.map(|n| rules::clean_caller(&n)).unwrap_or_default())
 }
 
 async fn send(state: &AppState, d: &WakeDevice, call_uuid: &str, caller: &str) -> Outcome {

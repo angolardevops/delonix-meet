@@ -147,7 +147,7 @@ end
 local wait = wait_secs()
 if wait > 0 and not registered(target_sip_username, domain) then
   -- Só caracteres que o mod_curl e o JSON aguentam (a lista é a do resto do script).
-  local body = string.format('{"domain":"%s","sip_username":"%s","call_uuid":"%s","caller_extension":"%s"}',
+  local body = string.format('{"domain":"%s","sip_username":"%s","call_uuid":"%s","caller_sip_username":"%s"}',
     limpo(domain), limpo(target_sip_username), limpo(session:get_uuid()), limpo(auth_user))
   -- `delonix_push_wake_url` (URL completo) só existe para a prova do S-02; em produção é o control plane.
   local wake_full = (api:executeString("global_getvar delonix_push_wake_url") or ""):gsub("%s+$", "")

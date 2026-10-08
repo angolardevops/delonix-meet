@@ -39,14 +39,17 @@ nunca se devolve o token. **Revogar uma sessão (ADR-0011) revoga os aparelhos d
 de ser acordada: «terminar o iPhone» passa a querer dizer isso.
 
 **Wake (interno, segredo de voz).** `POST /internal/v1/voice/push/wake` com `{domain, sip_username,
-call_uuid, caller_extension}`. O servidor resolve o ramal **dentro da organização do domínio** (nunca cruza
+call_uuid, caller_sip_username}`. O servidor resolve o ramal **dentro da organização do domínio** (nunca cruza
 orgs: RNF-29), procura aparelhos activos, manda **um** push por aparelho e responde
 `{"awaiting": true|false, "devices": n}` (`awaiting` é verdadeiro se houver pelo menos um aparelho). Sem aparelhos: `awaiting:false` e a chamada falha já (como hoje). O
 limite de pedidos por ramal e por minuto é do servidor, para um chamador não poder usar isto para inundar o
 telemóvel de alguém.
 
-**Conteúdo do push.** Só o que a app precisa para o ecrã de chamada e para casar o INVITE: `call_uuid`, o
-nome ou extensão de quem liga (o que o servidor autenticou, nunca o `From`), e a hora. Nada de credenciais,
+**Conteúdo do push.** Só o que a app precisa para o ecrã de chamada e para casar o INVITE: `call_uuid` e o
+**número curto** de quem liga, que o servidor procura (na organização do destino) a partir do utilizador SIP
+que o FreeSWITCH autenticou, nunca o `From`. **O utilizador SIP de ninguém vai num push**: é metade da
+credencial dele (medido: a primeira versão mandava-o, e a prova ponta-a-ponta apanhou-o). Um chamador que
+não é ramal desta organização vai sem nome. Nada de credenciais,
 nem número externo em claro quando o chamador vem do tronco (CLI: decisão do dono, RF-65).
 
 **Fornecedores.** *Trait* `PushProvider` com: `fcm` (HTTP v1, mensagem só de dados, prioridade alta),
