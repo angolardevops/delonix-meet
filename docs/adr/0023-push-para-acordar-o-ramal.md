@@ -80,10 +80,31 @@ tarde (o *wake* é um servidor de papel; o fornecedor de push não existe ainda)
 | Aparelho que se regista aos 5,0 s | um *wake* (ramal certo, segredo de voz presente); o INVITE chegou **15 ms depois do registo** |
 | Esse aparelho recusa com 486 | a chamada seguiu para ele (`USER_BUSY` a quem liga) |
 
+## Medido com o servidor REAL (S-01 + S-02), no laboratório
+
+`scripts/ramais-push-espera-prova.py --real`, com o compose levantado por
+`make compose-up LAN_IP=… PUSH_LAB_URL=http://…:18890/push`. Uma pessoa de prova com ramal e sessão; o aparelho
+`lab` regista-se pela API; o receptor `lab` (esta máquina) faz de «app que acorda» e regista o ramal por TLS 3 s
+depois do pedido. **6 em 6:**
+
+| Cenário | Resultado |
+|---|---|
+| Aparelho registado pela API real | 201, o token não volta na resposta |
+| Chamada ao ramal sem registo | o servidor real pediu ao fornecedor o aparelho certo, sem o token; `caller='1902'` |
+| O aparelho acorda e regista-se | o INVITE chegou **aos 3,0 s** da chamada |
+| O aparelho recusa (486) | a chamada seguiu para ele (`USER_BUSY`) |
+| Aparelho revogado | falha em 0,05 s, ninguém é acordado |
+| Sessão do aparelho terminada | falha em 0,06 s, ninguém é acordado |
+
+**Defeito apanhado por esta prova, e corrigido:** a primeira versão mandava ao telemóvel o utilizador SIP do
+chamador (`ramal_ebec6d65…`), que é metade da credencial dele. Os testes Rust passavam porque eu lhes dava um
+valor inventado. O servidor passou a traduzi-lo para o número curto (e a mandar vazio se o chamador não é ramal
+desta organização), e há testes para os dois casos.
+
 ## O que isto NÃO prova
 
-- **Nenhum push real**: nem FCM, nem APNs. O *wake* é um servidor de papel e o endpoint do servidor ainda não
-  existe; o caminho Lua para o endpoint real está escrito mas por exercitar contra ele.
+- **Nenhum push real**: nem FCM, nem APNs. O fornecedor `lab` fala com um receptor de papel; o caminho FreeSWITCH →
+  servidor real foi exercitado (secção acima), mas só com o `lab`.
 - **Que um telemóvel real acorda a tempo** (RNF-02: ≤ 4 a 5 s). Isso depende de FCM/APNs e do aparelho.
 - **Outras entradas para o mesmo ramal**: a espera está no `ramais_dial.lua` (chamadas entre ramais).
   Uma chamada originada pelo servidor por ESL (ligar a partir da sala, ADR de F1) ou vinda do PSTN não passa
