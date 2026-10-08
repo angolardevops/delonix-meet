@@ -5680,6 +5680,44 @@
         ],
         "type": "object"
       },
+      "MomSummaryState": {
+        "description": "O estado do resumo da acta pelo LLM, devolvido no `202` de\n`POST …/minutes/summary`: é a «operação a consultar» que a checklist da\n`delonix-meet-api` pede para trabalho assíncrono.",
+        "properties": {
+          "attempts": {
+            "description": "Quantas tentativas já foram gastas (tecto de 3).",
+            "format": "int32",
+            "type": "integer"
+          },
+          "next_attempt_at": {
+            "description": "Quando a próxima tentativa pode correr. `null` = pronta já.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "queued_at": {
+            "description": "Quando o pedido entrou na fila.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summarized_at": {
+            "description": "Preenchido quando o resumo FICOU. É o que o Odoo lê para saber que a\nata é a versão final.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "attempts"
+        ],
+        "type": "object"
+      },
       "MoneyDto": {
         "description": "Dinheiro na API: texto decimal + moeda (nunca um número JSON).",
         "properties": {
@@ -16543,6 +16581,75 @@
           }
         ],
         "summary": "Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/minutes/summary": {
+      "post": {
+        "description": "PORQUE EXISTE (trabalho nº4): o resumo era um `tokio::spawn` com um só\nchamador. Se o Ollama estivesse em baixo ou o pod reiniciasse, não havia\ncoluna de estado, nem varredor, nem forma de pedir outra vez — a ata por\nregras ficava, mas o Odoo passava a ver para sempre uma reunião sem ata\nfinal, sem ninguém poder corrigir.\n\nRepetir é SEGURO e deliberadamente idempotente no efeito: põe o pedido na\nfila com as tentativas a zero. Se o resumo já existir, a fila não o\nselecciona (`minutes_ai_at IS NULL` no `ready_when`), e a resposta mostra-o\nem `summarized_at` — quem chamou vê que não havia nada a fazer.",
+        "operationId": "request_mom_summary",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MomSummaryState"
+                }
+              }
+            },
+            "description": "Na fila. O estado lê-se aqui e em `GET /api/meetings`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sessão inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe, ou não é dono nem convidado"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`mom.no_transcript`: sem transcrição suficiente para valer um resumo"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Pede (ou repete) o resumo da acta pelo LLM local.",
         "tags": [
           "meetings"
         ]
