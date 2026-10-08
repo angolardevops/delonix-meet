@@ -92,8 +92,8 @@ mod ui;
 mod usage;
 mod users;
 mod voice;
-mod voice_devices;
 mod voice_caller;
+mod voice_devices;
 mod webhooks;
 mod whiteboards;
 
