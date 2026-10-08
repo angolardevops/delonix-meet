@@ -408,6 +408,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/storage/test", post(storage::test_storage))
         .route("/storage/pvc-manifest", get(storage::pvc_manifest))
+        // Config de LOGIN da plataforma: esconder «criar organização» e/ou o
+        // botão SSO no ecrã de entrada. Era escrita por um admin de tenant
+        // (hide_org_creation/hide_sso_button em organizations) e agregada com
+        // BOOL_OR sobre todas as orgs — um único tenant escondia-o para toda a
+        // plataforma. Migração 0102.
+        .route(
+            "/login-settings",
+            get(odoo::get_login_settings).put(odoo::save_login_settings),
+        )
         // Inventário de nós de media (G10).
         .route("/nodes", get(nodes::list))
         // Tecto de lugares por organização (ADR-0008 §7).

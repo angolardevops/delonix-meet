@@ -84,13 +84,22 @@ impl FromRequestParts<Arc<AppState>> for OdooTokenAuth {
 /// configurações públicas da página de login.
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(get_config, save_config, rotate_token, public_settings),
+    paths(
+        get_config,
+        save_config,
+        rotate_token,
+        public_settings,
+        get_login_settings,
+        save_login_settings
+    ),
     components(schemas(
         OdooConfig,
         OdooConfigReq,
         OdooTokenResp,
         PublicSettings,
-        PublicCapabilities
+        PublicCapabilities,
+        OperatorLoginSettings,
+        OperatorLoginSettingsReq
     ))
 )]
 pub struct ApiDoc;
@@ -122,8 +131,6 @@ pub struct OdooConfig {
     pub odoo_token_prefix: Option<String>,
     pub odoo_admin_id: Option<Uuid>,
     pub odoo_synced_at: Option<DateTime<Utc>>,
-    pub hide_org_creation: bool,
-    pub hide_sso_button: bool,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -133,8 +140,11 @@ pub struct OdooConfigReq {
     /// endereço interno é recusado com 400, salvo `OUTBOUND_ALLOW_HOSTS`.
     pub odoo_url: Option<String>,
     pub odoo_db: Option<String>,
-    pub hide_org_creation: bool,
-    pub hide_sso_button: bool,
+    // `hide_org_creation`/`hide_sso_button` SAÍRAM daqui de propósito (não as
+    // acrescentes de volta): são política de PLATAFORMA — ver
+    // `OperatorLoginSettings` e `GET/PUT /api/operator/v1/login-settings`. Um
+    // admin de organização escondia o registo e o SSO de TODA a plataforma
+    // (`BOOL_OR` em `public_settings`, corrigido com a migração 0102).
 }
 
 // ---------- handlers BFF (sessão admin) ----------
@@ -160,7 +170,7 @@ pub async fn get_config(
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
     let cfg: OdooConfig = sqlx::query_as(
         "SELECT id AS org_id, odoo_enabled, odoo_url, odoo_db, odoo_token_prefix,
-                odoo_admin_id, odoo_synced_at, hide_org_creation, hide_sso_button
+                odoo_admin_id, odoo_synced_at
          FROM organizations WHERE id = $1",
     )
     .bind(org_id)
@@ -207,15 +217,12 @@ pub async fn save_config(
     sqlx::query(
         "UPDATE organizations
          SET odoo_enabled = $1, odoo_url = $2, odoo_db = $3,
-             hide_org_creation = $4, hide_sso_button = $5,
-             odoo_admin_id = COALESCE(odoo_admin_id, $6)
-         WHERE id = $7",
+             odoo_admin_id = COALESCE(odoo_admin_id, $4)
+         WHERE id = $5",
     )
     .bind(req.odoo_enabled)
     .bind(url)
     .bind(req.odoo_db)
-    .bind(req.hide_org_creation)
-    .bind(req.hide_sso_button)
     .bind(auth.user_id)
     .bind(org_id)
     .execute(&state.db)
@@ -640,7 +647,12 @@ pub struct PublicCapabilities {
 }
 
 /// `GET /api/public/settings` — sem autenticação; usado na página de login.
-/// Agrega flags de todas as orgs com integração Odoo activa.
+/// Lê o único registo de configuração de LOGIN da plataforma
+/// (`platform_login_settings`, id=1) — nunca agrega sobre organizações: antes
+/// desta rota agregar com `BOOL_OR(hide_org_creation)` sobre todas as orgs com
+/// `odoo_enabled`, o admin de UMA organização escondia o registo e/ou o SSO
+/// para TODA a plataforma. Corrigido pela migração 0102; a escrita agora só
+/// acontece em `PUT /api/operator/v1/login-settings` (admin de plataforma).
 #[utoipa::path(
     get, path = "/api/public/settings", tag = "odoo",
     responses(
@@ -650,16 +662,7 @@ pub struct PublicCapabilities {
 pub async fn public_settings(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<PublicSettings>, ApiError> {
-    let row: Option<(Option<bool>, Option<bool>)> = sqlx::query_as(
-        "SELECT BOOL_OR(hide_org_creation), BOOL_OR(hide_sso_button)
-         FROM organizations WHERE odoo_enabled = TRUE",
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    let (hide_org, hide_sso) = row
-        .map(|(a, b)| (a.unwrap_or(false), b.unwrap_or(false)))
-        .unwrap_or((false, false));
+    let (hide_org, hide_sso) = login_settings_row(&state.db).await?;
 
     use delonix_meet_core::edition::{RegistrationMode, TenancyMode};
     let c = &state.config;
@@ -686,6 +689,105 @@ pub async fn public_settings(
             multi_organization: c.tenancy_mode == TenancyMode::Multi,
             operator_surface: c.edition.operator_surface(),
         },
+    }))
+}
+
+/// `(hide_org_creation, hide_sso_button)` do único registo (id=1). Sem
+/// registo ainda (instalação nova, nunca gravada por um operador) → `false`
+/// nos dois — o mesmo padrão de `platform_storage::get_storage`.
+async fn login_settings_row(db: &sqlx::PgPool) -> Result<(bool, bool), ApiError> {
+    let row: Option<(bool, bool)> = sqlx::query_as(
+        "SELECT hide_org_creation, hide_sso_button FROM platform_login_settings WHERE id = 1",
+    )
+    .fetch_optional(db)
+    .await?;
+    Ok(row.unwrap_or((false, false)))
+}
+
+// ---------- configuração de LOGIN da plataforma (admin de plataforma) ----------
+
+/// Configuração de LOGIN da plataforma — a mesma forma no `GET` e no `PUT`.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OperatorLoginSettings {
+    pub hide_org_creation: bool,
+    pub hide_sso_button: bool,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct OperatorLoginSettingsReq {
+    pub hide_org_creation: bool,
+    pub hide_sso_button: bool,
+}
+
+/// `GET /api/operator/v1/login-settings` — lê a config actual (admin plataforma).
+#[utoipa::path(
+    get, path = "/api/operator/v1/login-settings", tag = "platform",
+    security(("session" = [])),
+    responses(
+        (status = 200, body = OperatorLoginSettings),
+        (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn get_login_settings(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<OperatorLoginSettings>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    let (hide_org_creation, hide_sso_button) = login_settings_row(&state.db).await?;
+    Ok(Json(OperatorLoginSettings {
+        hide_org_creation,
+        hide_sso_button,
+    }))
+}
+
+/// `PUT /api/operator/v1/login-settings` — grava a config (admin plataforma).
+///
+/// Esta é a ÚNICA escrita destas duas flags desde a correcção da migração
+/// 0102: um admin de organização já não as tem no seu formulário (saíram de
+/// `OdooConfigReq`), e `organizations` já não tem as colunas.
+#[utoipa::path(
+    put, path = "/api/operator/v1/login-settings", tag = "platform",
+    security(("session" = [])),
+    request_body = OperatorLoginSettingsReq,
+    responses(
+        (status = 200, body = OperatorLoginSettings),
+        (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn save_login_settings(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<OperatorLoginSettingsReq>,
+) -> Result<Json<OperatorLoginSettings>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+
+    sqlx::query(
+        "INSERT INTO platform_login_settings (id, hide_org_creation, hide_sso_button, updated_at)
+         VALUES (1, $1, $2, now())
+         ON CONFLICT (id) DO UPDATE
+         SET hide_org_creation = EXCLUDED.hide_org_creation,
+             hide_sso_button   = EXCLUDED.hide_sso_button,
+             updated_at        = now()",
+    )
+    .bind(req.hide_org_creation)
+    .bind(req.hide_sso_button)
+    .execute(&state.db)
+    .await?;
+
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "platform.login_settings_saved",
+        "",
+    )
+    .await;
+
+    Ok(Json(OperatorLoginSettings {
+        hide_org_creation: req.hide_org_creation,
+        hide_sso_button: req.hide_sso_button,
     }))
 }
 
