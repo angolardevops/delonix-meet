@@ -117,6 +117,10 @@ pub use recording_chapters::auto_chapters_sweep;
 pub use voice::{discard_caller_ticket, seat_phone_caller};
 /// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
 pub use webhooks::retry_due as webhook_retry_due;
+/// O registo transaccional das entregas e o tipo do evento, expostos aos testes
+/// de integração: é o que permite provar o nº3 — gravar numa transacção, NÃO
+/// enviar (a «morte» do processo), e o evento sair depois pelo varredor.
+pub use webhooks::{enqueue as webhook_enqueue, sweep_deliveries, Event as WebhookEvent};
 
 use axum::{
     extract::DefaultBodyLimit,
