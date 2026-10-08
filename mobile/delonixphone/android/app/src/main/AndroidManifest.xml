@@ -1,6 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- RF-25: observar o estado da chamada celular. Nunca lemos o número. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Provisionamento por HTTPS e registo SIP. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Ler o QR de provisionamento; a câmara é opcional, há endereço colado e parâmetros manuais. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application
         android:label="delonixphone"
         android:name="${applicationName}"

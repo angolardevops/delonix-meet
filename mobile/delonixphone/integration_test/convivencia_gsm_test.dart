@@ -1,4 +1,5 @@
 import 'package:delonixphone/app.dart';
+import 'package:delonixphone/src/conta/controlador_conta.dart';
 import 'package:delonixphone/src/telefonia/monitor_chamada_celular_android.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,7 +20,10 @@ void main() {
       Finder estado(String texto) => find.text('Chamada celular: $texto');
 
       await $.pumpWidgetAndSettle(
-        DelonixPhoneApp(monitor: MonitorChamadaCelularAndroid()),
+        DelonixPhoneApp(
+          monitor: MonitorChamadaCelularAndroid(),
+          controlador: ControladorConta.padrao(),
+        ),
       );
 
       // Instalação limpa (clearPackageData): ainda sem a permissão do sistema.

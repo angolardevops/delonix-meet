@@ -2,14 +2,21 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'src/conta/controlador_conta.dart';
 import 'src/telefonia/estado_chamada_celular.dart';
+import 'src/ui/cartao_conta.dart';
 
 /// Primeiro ecrã: só mostra o estado da chamada celular. Os textos têm de ir para o i18n
 /// (pt, en, fr, es: RF-67) quando a app crescer; aqui ficam directos porque o ecrã é um andaime.
 class DelonixPhoneApp extends StatelessWidget {
-  const DelonixPhoneApp({super.key, required this.monitor});
+  const DelonixPhoneApp({
+    super.key,
+    required this.monitor,
+    required this.controlador,
+  });
 
   final MonitorChamadaCelular monitor;
+  final ControladorConta controlador;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -18,7 +25,42 @@ class DelonixPhoneApp extends StatelessWidget {
       colorSchemeSeed: const Color(0xFF0B5FFF),
       useMaterial3: true,
     ),
-    home: EcraEstadoChamada(monitor: monitor),
+    home: EcraInicio(monitor: monitor, controlador: controlador),
+  );
+}
+
+class EcraInicio extends StatefulWidget {
+  const EcraInicio({
+    super.key,
+    required this.monitor,
+    required this.controlador,
+  });
+
+  final MonitorChamadaCelular monitor;
+  final ControladorConta controlador;
+
+  @override
+  State<EcraInicio> createState() => _EcraInicioState();
+}
+
+class _EcraInicioState extends State<EcraInicio> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controlador.carregar();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('DelonixPhone')),
+    body: ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        CartaoConta(controlador: widget.controlador),
+        const SizedBox(height: 16),
+        EcraEstadoChamada(monitor: widget.monitor),
+      ],
+    ),
   );
 }
 
@@ -76,11 +118,11 @@ class _EcraEstadoChamadaState extends State<EcraEstadoChamada> {
     final texto = _semPermissao
         ? 'Chamada celular: sem permissão'
         : 'Chamada celular: ${_estado == null ? 'a ler…' : _texto(_estado!)}';
-    return Scaffold(
-      appBar: AppBar(title: const Text('DelonixPhone')),
-      body: Center(
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               texto,
@@ -88,7 +130,7 @@ class _EcraEstadoChamadaState extends State<EcraEstadoChamada> {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             if (_semPermissao) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               FilledButton(
                 key: const Key('pedir-permissao-telefone'),
                 onPressed: _pedir,

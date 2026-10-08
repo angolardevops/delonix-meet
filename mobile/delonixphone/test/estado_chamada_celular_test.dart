@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:delonixphone/app.dart';
+
+import 'conta_falsos.dart';
+
 import 'package:delonixphone/src/telefonia/estado_chamada_celular.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -56,7 +59,9 @@ void main() {
   group('EcraEstadoChamada', () {
     testWidgets('sem permissão pede-a e depois mostra o estado', (t) async {
       final monitor = _Falso();
-      await t.pumpWidget(DelonixPhoneApp(monitor: monitor));
+      await t.pumpWidget(
+        DelonixPhoneApp(monitor: monitor, controlador: controladorFalso()),
+      );
       await t.pump();
       expect(_estado(t), 'Chamada celular: sem permissão');
 
@@ -69,7 +74,9 @@ void main() {
 
     testWidgets('com permissão já dada segue as mudanças', (t) async {
       final monitor = _Falso(concedida: true);
-      await t.pumpWidget(DelonixPhoneApp(monitor: monitor));
+      await t.pumpWidget(
+        DelonixPhoneApp(monitor: monitor, controlador: controladorFalso()),
+      );
       await t.pump();
       await _emitir(t, monitor, EstadoChamadaCelular.emCurso);
       expect(_estado(t), 'Chamada celular: em curso');
