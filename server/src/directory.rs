@@ -2414,6 +2414,231 @@ pub async fn operator_set_seats(
 }
 
 // ---------------------------------------------------------------------------
+//  Operador: listagem e quotas por organização (backoffice)
+// ---------------------------------------------------------------------------
+
+/// A mesma selecção de colunas da listagem e do detalhe de operador — uma só
+/// fonte, chamada pelas três rotas em vez de copiada. A contagem de membros
+/// vem de `org::active_member_count_sql` (regra 1: pertença decide-se em
+/// `org.rs`, não se escreve `org_members` à mão aqui).
+fn operator_org_select() -> String {
+    let member_count = crate::org::active_member_count_sql("o.id");
+    format!(
+        "SELECT o.id, o.name, o.slug, o.domain, o.created_at,
+                {member_count} AS member_count,
+                o.max_groups, o.max_rooms, o.max_meetings, o.max_storage_bytes,
+                o.max_seats, o.max_concurrent_participants
+           FROM organizations o"
+    )
+}
+
+/// Uma organização vista pelo operador: identidade + os seis tectos de plano.
+/// Sem uso agregado (lugares ocupados, bytes ocupados) — isso é só o
+/// detalhe (`OperatorOrgDetail`).
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct OperatorOrgSummary {
+    pub id: Uuid,
+    pub name: String,
+    pub slug: String,
+    pub domain: String,
+    pub created_at: DateTime<Utc>,
+    /// Membros activos (sem convites pendentes nem arquivados).
+    pub member_count: i64,
+    pub max_groups: Option<i32>,
+    pub max_rooms: Option<i32>,
+    pub max_meetings: Option<i32>,
+    pub max_storage_bytes: Option<i64>,
+    pub max_seats: Option<i64>,
+    pub max_concurrent_participants: Option<i32>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OperatorOrgPage {
+    pub items: Vec<OperatorOrgSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+}
+
+/// Detalhe de uma organização para o operador: os tectos de plano MAIS o uso
+/// real (lugares ocupados, bytes ocupados).
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OperatorOrgDetail {
+    pub org: OperatorOrgSummary,
+    pub seats: crate::org::SeatSummary,
+    pub storage: crate::usage::OrgStorageUsage,
+}
+
+/// Uma organização pelo `id`, nas colunas de `operator_org_select()` — usado
+/// pelo detalhe e pela resposta de `operator_set_quotas` (que devolve o
+/// recurso actualizado, como os irmãos `seats`/`concurrency`).
+async fn load_operator_org(state: &AppState, org_id: Uuid) -> Result<OperatorOrgSummary, ApiError> {
+    sqlx::query_as(&format!("{} WHERE o.id = $1", operator_org_select()))
+        .bind(org_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)
+}
+
+/// Organizações da plataforma, paginadas por nome — só o operador. Sem uso
+/// agregado: caro de calcular para N organizações a cada refrescar, e não é
+/// preciso para decidir em qual entrar (usa `GET .../{org_id}` para isso).
+#[utoipa::path(
+    get, path = "/api/operator/v1/organizations", tag = "platform",
+    security(("session" = [])),
+    params(crate::roles::PageQuery),
+    responses((status = 200, body = OperatorOrgPage), (status = 401, body = crate::openapi::ErrorBody),
+              (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador da plataforma"))
+)]
+pub async fn list_operator_organizations(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(q): Query<crate::roles::PageQuery>,
+) -> Result<Json<OperatorOrgPage>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    let page = PageRequest {
+        page_size: q.page_size,
+        page_token: q.page_token,
+    };
+    let size = page.size();
+    let cursor: Option<NameCursor> = page.cursor()?;
+    let select = operator_org_select();
+    let rows: Vec<OperatorOrgSummary> = sqlx::query_as(&format!(
+        "{select}
+          WHERE ($1::text IS NULL OR (lower(o.name), o.id) > ($1, $2))
+          ORDER BY lower(o.name), o.id LIMIT $3"
+    ))
+    .bind(cursor.as_ref().map(|c| c.name.clone()))
+    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
+    .bind(size as i64 + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let p = delonix_meet_core::page::Page::from_overfetch(rows, size, |o: &OperatorOrgSummary| {
+        NameCursor {
+            name: o.name.to_lowercase(),
+            id: o.id,
+        }
+    });
+    Ok(Json(OperatorOrgPage {
+        items: p.items,
+        next_page_token: p.next_page_token,
+    }))
+}
+
+/// Detalhe de uma organização, com uso real — só o operador. As rotas do
+/// inquilino (`GET /api/orgs/{org_id}/seats`, `.../storage-usage`) exigem que
+/// quem pede seja MEMBRO; um operador normalmente não é, por isso este
+/// handler chama directamente as funções de domínio/armazenamento
+/// (`org::seat_summary`, `usage::org_storage_usage_for`) em vez das rotas.
+#[utoipa::path(
+    get, path = "/api/operator/v1/organizations/{org_id}", tag = "platform",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses((status = 200, body = OperatorOrgDetail), (status = 401, body = crate::openapi::ErrorBody),
+              (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador da plataforma"),
+              (status = 404, body = crate::openapi::ErrorBody))
+)]
+pub async fn get_operator_organization(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<OperatorOrgDetail>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    let org = load_operator_org(&state, org_id).await?;
+    Ok(Json(OperatorOrgDetail {
+        seats: crate::org::seat_summary(&state, org_id, 60).await?,
+        storage: crate::usage::org_storage_usage_for(&state, org_id).await?,
+        org,
+    }))
+}
+
+/// Corpo de `PUT /api/operator/v1/organizations/{org_id}/quotas`.
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct OperatorQuotasReq {
+    /// `null`/negativo = ilimitado.
+    #[serde(default)]
+    pub max_groups: Option<i32>,
+    /// `null`/negativo = ilimitado.
+    #[serde(default)]
+    pub max_rooms: Option<i32>,
+    /// `null`/negativo = ilimitado.
+    #[serde(default)]
+    pub max_meetings: Option<i32>,
+    /// `'freeswitch' | 'provider'`. Omisso ou fora do enum mantém o actual.
+    #[serde(default)]
+    pub voice_media_backend: Option<String>,
+    /// `'shared' | 'dedicated'`. Omisso ou fora do enum mantém o actual.
+    #[serde(default)]
+    pub voice_did_model: Option<String>,
+}
+
+/// Quotas de plano de uma organização — só o operador da plataforma. PUT
+/// substitui (`max_groups`/`max_rooms`/`max_meetings`) e devolve o recurso
+/// actualizado, como os irmãos `seats`/`concurrency`. Os mesmos dois campos de
+/// voz validados em `org::update_settings` (dial-in PSTN) saem da autoridade
+/// do inquilino para aqui.
+#[utoipa::path(
+    put, path = "/api/operator/v1/organizations/{org_id}/quotas", tag = "platform",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = OperatorQuotasReq,
+    responses((status = 200, body = OperatorOrgSummary), (status = 400, body = crate::openapi::ErrorBody),
+              (status = 401, body = crate::openapi::ErrorBody),
+              (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador da plataforma"),
+              (status = 404, body = crate::openapi::ErrorBody), (status = 429, body = crate::openapi::ErrorBody))
+)]
+pub async fn operator_set_quotas(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<OperatorQuotasReq>,
+) -> Result<Json<OperatorOrgSummary>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    // Quotas: None/negativo => ilimitado (NULL) — mesma regra de `org::update_settings`.
+    let norm = |v: Option<i32>| v.filter(|n| *n >= 0);
+    // Dial-in PSTN: valida os enums (None/inválido => mantém o actual via COALESCE).
+    let backend = req
+        .voice_media_backend
+        .as_deref()
+        .and_then(|b| matches!(b, "freeswitch" | "provider").then(|| b.to_string()));
+    let did_model = req
+        .voice_did_model
+        .as_deref()
+        .and_then(|m| matches!(m, "shared" | "dedicated").then(|| m.to_string()));
+    let n = sqlx::query(
+        "UPDATE organizations SET max_groups = $2, max_rooms = $3, max_meetings = $4,
+             voice_media_backend = COALESCE($5, voice_media_backend),
+             voice_did_model = COALESCE($6, voice_did_model)
+         WHERE id = $1",
+    )
+    .bind(org_id)
+    .bind(norm(req.max_groups))
+    .bind(norm(req.max_rooms))
+    .bind(norm(req.max_meetings))
+    .bind(&backend)
+    .bind(&did_model)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "org.quotas_set",
+        &serde_json::json!({
+            "max_groups": norm(req.max_groups), "max_rooms": norm(req.max_rooms),
+            "max_meetings": norm(req.max_meetings),
+            "voice_media_backend": backend, "voice_did_model": did_model,
+        })
+        .to_string(),
+    )
+    .await;
+    Ok(Json(load_operator_org(&state, org_id).await?))
+}
+
+// ---------------------------------------------------------------------------
 //  Aprovisionamento e regras de entrada
 // ---------------------------------------------------------------------------
 
@@ -2660,6 +2885,9 @@ pub async fn provisioning(
         release_seats,
         operator_set_seats,
         operator_set_concurrency,
+        list_operator_organizations,
+        get_operator_organization,
+        operator_set_quotas,
         get_entry_rules,
         put_entry_rules,
         provisioning,
@@ -2689,6 +2917,10 @@ pub async fn provisioning(
         SeatLimitReq,
         ConcurrencyLimitReq,
         ConcurrencyLimit,
+        OperatorOrgSummary,
+        OperatorOrgPage,
+        OperatorOrgDetail,
+        OperatorQuotasReq,
         AttendanceLog,
         EntryRules,
         EntryRulesReq,
