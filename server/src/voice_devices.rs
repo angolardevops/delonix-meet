@@ -283,7 +283,7 @@ pub async fn put_my_device(
             HeaderValue::from_str(&format!(
                 "/api/orgs/{org_id}/my-extension/devices/{device_id}"
             ))
-            .map_err(|e| DomainError::internal(e))?,
+            .map_err(DomainError::internal)?,
         );
         Ok(resp)
     } else {
