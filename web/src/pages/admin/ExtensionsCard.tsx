@@ -57,7 +57,7 @@ import {
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import LinphoneQrDialog from '../../components/LinphoneQrDialog'
 import PinOnce from '../../components/PinOnce'
-import { Alert, Button, Card, Dialog, Field, IconButton, Segmented, Select, StatusBadge, TextInput, Toggle } from '../../ui/kit'
+import { Alert, Button, Card, Confirm, Dialog, Field, IconButton, Segmented, Select, StatusBadge, TextInput, Toggle } from '../../ui/kit'
 import { orgErrorMessage, refusalAware } from './orgShared'
 
 export default function ExtensionsCard({ orgId, people }: { orgId: string; people: Employee[] }) {
@@ -70,6 +70,15 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
   const [choosingPin, setChoosingPin] = useState<Extension | null>(null)
   const [qrFor, setQrFor] = useState<Extension | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  /**
+   * A acção à espera de confirmação. Um estado só para as quatro: o
+   * `window.confirm` que estas substituem tinha a mensagem traduzida mas os
+   * botões «OK/Cancel» do browser, em inglês, num produto com quatro línguas.
+   */
+  const [pendente, setPendente] = useState<{
+    tipo: 'regenerar' | 'apagar' | 'pin' | 'did'
+    e: Extension
+  } | null>(null)
   const [err, setErr] = useState('')
 
   const membersWithoutExtension = (list: Extension[]) => {
@@ -98,7 +107,6 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
   }
 
   async function regenerate(e: Extension) {
-    if (!window.confirm(t('consola.ramais.regenerarConfirmar', { extensao: e.extension }))) return
     setBusyId(e.id)
     setErr('')
     try {
@@ -112,7 +120,6 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
   }
 
   async function remove(e: Extension) {
-    if (!window.confirm(t('consola.ramais.apagarConfirmar', { extensao: e.extension }))) return
     setBusyId(e.id)
     setErr('')
     try {
@@ -144,8 +151,6 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
    * a pessoa gera outro na sua área — quem administra nunca o vê.
    */
   async function clearPin(e: Extension) {
-    const key = e.member_id ? 'consola.ramais.pin.forcarConfirmar' : 'consola.ramais.pin.limparConfirmar'
-    if (!window.confirm(t(key, { extensao: e.extension }))) return
     setBusyId(e.id)
     setErr('')
     try {
@@ -172,7 +177,6 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
   }
 
   async function unassignDid(e: Extension) {
-    if (!window.confirm(t('consola.ramais.did.desatribuirConfirmar', { extensao: e.extension }))) return
     setBusyId(e.id)
     setErr('')
     try {
@@ -201,11 +205,11 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
               list={list}
               busyId={busyId}
               onToggleActive={toggleActive}
-              onRegeneratePassword={regenerate}
-              onRemove={remove}
+              onRegeneratePassword={(e) => setPendente({ tipo: 'regenerar', e })}
+              onRemove={(e) => setPendente({ tipo: 'apagar', e })}
               onGeneratePin={generatePin}
               onChoosePin={setChoosingPin}
-              onClearPin={clearPin}
+              onClearPin={(e) => setPendente({ tipo: 'pin', e })}
               onConfigureLinphone={setQrFor}
               renderDid={(e) => (
                 <DidCell
@@ -214,7 +218,7 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
                   assignable={dids.state.s === 'ready' ? assignableDids(dids.state.d) : []}
                   busy={busyId === e.id}
                   onAssign={(didId) => assignDid(e, didId)}
-                  onUnassign={() => unassignDid(e)}
+                  onUnassign={() => setPendente({ tipo: 'did', e })}
                 />
               )}
             />
@@ -273,6 +277,41 @@ export default function ExtensionsCard({ orgId, people }: { orgId: string; peopl
             extensions.reload()
           }}
         />
+      )}
+      {pendente && (
+        <Confirm
+          title={t(
+            {
+              regenerar: 'consola.ramais.regenerar',
+              apagar: 'consola.ramais.apagar',
+              pin: pendente.e.member_id ? 'consola.ramais.pin.forcar' : 'consola.ramais.pin.limpar',
+              did: 'consola.ramais.did.desatribuir',
+            }[pendente.tipo],
+          )}
+          onClose={() => setPendente(null)}
+          onConfirm={async () => {
+            const { tipo, e } = pendente
+            if (tipo === 'regenerar') await regenerate(e)
+            else if (tipo === 'apagar') await remove(e)
+            else if (tipo === 'pin') await clearPin(e)
+            else await unassignDid(e)
+          }}
+          icon={pendente.tipo === 'regenerar' ? 'refresh' : 'trash'}
+        >
+          <p>
+            {t(
+              {
+                regenerar: 'consola.ramais.regenerarConfirmar',
+                apagar: 'consola.ramais.apagarConfirmar',
+                pin: pendente.e.member_id
+                  ? 'consola.ramais.pin.forcarConfirmar'
+                  : 'consola.ramais.pin.limparConfirmar',
+                did: 'consola.ramais.did.desatribuirConfirmar',
+              }[pendente.tipo],
+              { extensao: pendente.e.extension },
+            )}
+          </p>
+        </Confirm>
       )}
     </Card>
   )
