@@ -53,18 +53,40 @@ sem uma prática que lhe faça falta no seu papel.
 | **`ServiceMonitor` + `PrometheusRule`** | ✓ (`k8s/observabilidade/`) | **—** | **invertido:** a observabilidade está no lado do laboratório e **não no chart de produção**. É o lado errado, e a R307 já mostrou o que custa um `ServiceMonitor` sem alvos |
 | `priorityClassName` | — | — | **falta nos dois.** Sob pressão de nó, o SFU e o Postgres são desalojados como qualquer coisa |
 | `preStop` | — | — | **falta nos dois**, mas o servidor dren a por SIGTERM (`drenar()`), logo é menos grave do que parece |
-| `ResourceQuota` / `LimitRange` no namespace | — | — | **falta nos dois.** No cluster PARTILHADO do ADR-0021 é o que impede o Meet de comer o que é dos outros |
+| `ResourceQuota` / `LimitRange` no namespace | — | **✓ (2026-10-08)** | **feito no chart**, ligado só em produção. Continua a faltar no `k8s/`, onde é um tecto inventado num cluster de um nó |
 | Imagens por digest (`@sha256:`) | — | — | falta nos dois; há `make pin` para as versões, não para digests |
 
 ## 3. O que proponho, por raio de dano
 
 **Nada disto é YAML novo sem um porquê medido.** Por ordem:
 
-1. **`ResourceQuota` + `LimitRange` no namespace do chart.** O ADR-0021 pôs a
-   produção num cluster **partilhado** (`ngolacloud-meet` no `delonix-lda`).
-   Sem quota, um pico do Meet come o que é dos vizinhos — e é o caso em que o
-   dano não é nosso, é de terceiros. **Prova:** `helm template` a render os dois
-   recursos, e o `check-k8s-render.sh` verde.
+1. ~~**`ResourceQuota` + `LimitRange` no namespace do chart.**~~ **FEITO a
+   2026-10-08.** O ADR-0021 pôs a produção num cluster **partilhado**
+   (`ngolacloud-meet` no `delonix-lda`). Sem quota, um pico do Meet come o que é
+   dos vizinhos — e é o caso em que o dano não é nosso, é de terceiros.
+
+   Duas correcções ao que eu tinha escrito aqui:
+
+   - **O portão é o `check-helm.sh`, não o `check-k8s-render.sh`.** Este lê o
+     `kubectl kustomize` de `deploy/k8s`; o chart é outro caminho para o mesmo
+     cluster e tem portão próprio. Escrevi o nome errado.
+   - **A conta à mão ficou 10% curta** (22 CPU / 18 Gi estimados contra 24,35 /
+     19,81 medidos no render): esqueci o perfil de voz e o Job de migração. E
+     faltava-lhe o surge: o pico real durante um rollout é **26,6 CPU / 22,06
+     Gi, 17 pods**.
+
+   A quota leva ~20% sobre esse pico (32 CPU, 27 Gi, 40 pods) e vai **desligada
+   por omissão** — num laboratório de um nó seria um tecto inventado; é o
+   `values-production.yaml` que a liga.
+
+   **Prova:** o `check-helm.sh` **recalcula a conta a partir do render** e falha
+   se a quota não cobrir o pico com rollout, se o `max` por contentor ficar
+   abaixo do maior contentor do chart (a admissão rejeitaria o nosso próprio
+   coturn), ou se o `default`/`defaultRequest` não for uma quantidade > 0. Os
+   cinco controlos negativos medidos: quota de memória a 20Gi → falha a 22,06;
+   `max` a 2 CPU → falha contra o coturn de 4; `defaultRequest: {}` → falha;
+   `maxReplicas` 8→20 sem refazer a conta → falha a 50,6 CPU; template apagado →
+   falha. O laboratório é verificado ao contrário: **não** pode levar quota.
 2. **O `ServiceMonitor` e as regras mudam-se para o chart.** Hoje a
    observabilidade de produção vive no lado do laboratório. **Prova:** o
    `helm template` a produzi-los com os selectores do chart, e um controlo

@@ -21,8 +21,10 @@
 #      upstream-hash-by:$arg_room; ninguém liga DELONIX_ALLOW_INSECURE;
 #      FORCE_TURN_RELAY=1; readiness em /ready; drain maior que o do servidor;
 #   6. produção: NENHUM Secret renderizado, nenhuma imagem sem tag ou `latest`;
-#   7. laboratório: os segredos gerados são aleatórios (dois renders diferem);
-#   8. nenhum segredo de desenvolvimento conhecido (deploy/k8s/01-config.yaml,
+#   7. produção: a quota do namespace cobre o pico COM ROLLOUT, recalculado do
+#      render (ADR-0021), e o `max` do LimitRange não rejeita os nossos pods;
+#   8. laboratório: os segredos gerados são aleatórios (dois renders diferem);
+#   9. nenhum segredo de desenvolvimento conhecido (deploy/k8s/01-config.yaml,
 #      server/src/config.rs) aparece no chart nem no que ele renderiza.
 #
 #  Opcional (DRYRUN=1): `kubectl apply --dry-run=server` do perfil de
@@ -428,6 +430,96 @@ else:
     abertas = [(p.get("protocol"), p.get("port"), p.get("endPort")) for r in regras if not r.get("from") for p in r.get("ports") or []]
     if any(a <= 8021 <= (b or a) for proto, a, b in abertas if proto == "TCP"):
         erros.append("[production-voz-esl] uma regra sem origem cobre o 8021: a política não fecha nada")
+
+# 6c. a quota do namespace cobre o pico COM ROLLOUT (ADR-0021: cluster
+#     partilhado). Recalcula a conta do topo de templates/quota.yaml a partir
+#     do render — um comentário que ninguém recalcula não é uma garantia.
+def _cpu(v):
+    v = str(v)
+    return float(v[:-1]) / 1000 if v.endswith("m") else float(v)
+
+def _mem(v):
+    v = str(v)
+    for suf, mult in (("Ki", 2**10), ("Mi", 2**20), ("Gi", 2**30), ("Ti", 2**40),
+                      ("K", 1e3), ("M", 1e6), ("G", 1e9)):
+        if v.endswith(suf):
+            return float(v[: -len(suf)]) * mult
+    return float(v)
+
+def _surge(d, n):
+    """Pods a mais durante um rollout. `Recreate` não soma: derruba antes de subir."""
+    est = (d.get("spec") or {}).get("strategy") or {}
+    if d["kind"] != "Deployment" or est.get("type") == "Recreate":
+        return 0
+    ms = (est.get("rollingUpdate") or {}).get("maxSurge", "25%")
+    if isinstance(ms, str) and ms.endswith("%"):
+        import math
+        return math.ceil(n * float(ms[:-1]) / 100)
+    return int(ms)
+
+docs = carregar("production-voz")
+quota = um(docs, "ResourceQuota", "delonix-meet-quota")
+faixa = um(docs, "LimitRange", "delonix-meet-limits")
+if not quota:
+    erros.append("[production-voz] falta o ResourceQuota do namespace — em cluster partilhado "
+                 "um pico do Meet come o que é dos vizinhos (ADR-0021)")
+if not faixa:
+    erros.append("[production-voz] falta o LimitRange do namespace")
+if quota and faixa:
+    hpa = {d["spec"]["scaleTargetRef"]["name"]: d["spec"]["maxReplicas"]
+           for d in docs if d.get("kind") == "HorizontalPodAutoscaler"}
+    pico = {"cpu": 0.0, "mem": 0.0, "pods": 0}
+    maior = {"cpu": 0.0, "mem": 0.0}
+    for d, spec in pod_specs(docs):
+        n = 1 if d["kind"] == "Job" else hpa.get(d["metadata"]["name"],
+                                                 (d.get("spec") or {}).get("replicas", 1))
+        n += _surge(d, n)
+        pico["pods"] += n
+        for ct in spec.get("containers", []) + spec.get("initContainers", []):
+            lm = ((ct.get("resources") or {}).get("limits") or {})
+            c, m = _cpu(lm.get("cpu", 0)), _mem(lm.get("memory", 0))
+            pico["cpu"] += c * n
+            pico["mem"] += m * n
+            maior["cpu"], maior["mem"] = max(maior["cpu"], c), max(maior["mem"], m)
+    dura = quota["spec"]["hard"]
+    tecto = {"cpu": _cpu(dura["limits.cpu"]), "mem": _mem(dura["limits.memory"]),
+             "pods": float(dura["pods"])}
+    for eixo, unidade, div in (("cpu", "CPU", 1), ("mem", "Gi", 2**30), ("pods", "pods", 1)):
+        if tecto[eixo] < pico[eixo]:
+            erros.append(f"[production-voz] a quota de {eixo} ({tecto[eixo]/div:.2f} {unidade}) "
+                         f"não cobre o pico COM ROLLOUT ({pico[eixo]/div:.2f} {unidade}) — "
+                         "refaz a conta no topo de templates/quota.yaml")
+    # O `max` por contentor não pode rejeitar os nossos próprios pods.
+    lim = faixa["spec"]["limits"][0]
+    for eixo, chave, unidade, div in (("cpu", "cpu", "CPU", 1), ("mem", "memory", "Gi", 2**30)):
+        f = _cpu(lim["max"][chave]) if eixo == "cpu" else _mem(lim["max"][chave])
+        if f < maior[eixo]:
+            erros.append(f"[production-voz] o LimitRange max.{chave} ({f/div:.2f} {unidade}) é menor "
+                         f"que o maior contentor do chart ({maior[eixo]/div:.2f} {unidade}) — a "
+                         "admissão rejeitava o nosso próprio pod")
+    # O default/defaultRequest é o que torna a quota aplicável. Tem de estar lá
+    # E ser uma quantidade > 0: um `cpu: ""` renderiza, mas o API server
+    # recusa-o — e só se via no cluster.
+    for campo in ("default", "defaultRequest"):
+        bloco = lim.get(campo) or {}
+        if not bloco:
+            erros.append(f"[production-voz] o LimitRange sem {campo} não torna a quota aplicável: "
+                         "um pod sem `resources` não consome requests nenhum")
+            continue
+        for chave, ler in (("cpu", _cpu), ("memory", _mem)):
+            try:
+                q = ler(bloco[chave])
+            except (KeyError, ValueError):
+                erros.append(f"[production-voz] LimitRange {campo}.{chave} = "
+                             f"{bloco.get(chave, '<ausente>')!r} não é uma quantidade")
+                continue
+            if q <= 0:
+                erros.append(f"[production-voz] LimitRange {campo}.{chave} é {q} — "
+                             "um default de zero é o mesmo que não ter default")
+
+# a quota é só de produção: num laboratório de um nó seria um tecto inventado
+if um(carregar("local"), "ResourceQuota", "delonix-meet-quota"):
+    erros.append("[local] o laboratório não leva quota — os números são a escala de produção")
 
 # 7. laboratório: aleatórios a sério
 def dados(nome):

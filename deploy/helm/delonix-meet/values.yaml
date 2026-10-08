@@ -362,3 +362,35 @@ voice:
 # laboratório quer: sem colector, nada a exportar.
 otel:
   endpoint: ""
+
+# ResourceQuota e LimitRange do namespace (templates/quota.yaml).
+#
+# DESLIGADA por omissão: os números são a escala do `values-production.yaml`, e
+# num laboratório de um nó ou num cluster dedicado seriam um tecto inventado.
+# O `values-production.yaml` liga-a, porque o ADR-0021 pôs a produção num
+# cluster PARTILHADO e sem quota um pico do Meet come o que é dos vizinhos.
+#
+# A conta está escrita no topo do `templates/quota.yaml`: é o pico com o HPA no
+# máximo MAIS o surge do rollout (26,6 CPU / 22,1 Gi medidos no render), com
+# ~20% de folga. QUEM MUDAR RÉPLICAS OU LIMITES REFAZ A CONTA — e o
+# `check-helm.sh` recalcula-a do render e falha se a quota não a cobrir.
+quota:
+  enabled: false
+  requests:
+    cpu: "8"
+    memory: 8Gi
+  limits:
+    cpu: "32"
+    memory: 27Gi
+  maxPods: "40"
+  maxPvcs: "8"
+  maxLoadBalancers: "2"
+  container:
+    # Para o que aterra no namespace SEM `resources` — um pod de depuração, um
+    # Job avulso. Os pods do chart já os declaram todos.
+    defaultRequest: { cpu: 100m, memory: 128Mi }
+    defaultLimit: { cpu: "1", memory: 1Gi }
+    # Barra por contentor: um zero a mais no `values` não esgota a quota num
+    # pod. Acima do maior que temos (o coturn, com 4 CPU) — se ficasse IGUAL, a
+    # admissão passava a rejeitar o coturn no primeiro aumento.
+    max: { cpu: "6", memory: 4Gi }

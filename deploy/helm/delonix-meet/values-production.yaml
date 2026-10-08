@@ -114,3 +114,9 @@ coturn:
 # dono: o chart sabe instalá-la, mas o caminho de um PBX externo não foi medido.
 voice:
   enabled: false
+
+# Cluster partilhado (ADR-0021): a quota do namespace é obrigatória aqui. Os
+# números por omissão estão dimensionados para ESTA escala — ver a conta no
+# topo de `templates/quota.yaml`.
+quota:
+  enabled: true
