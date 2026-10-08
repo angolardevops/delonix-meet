@@ -601,14 +601,15 @@ async fn admin_api_keys_voice_and_odoo(db: sqlx::PgPool) {
         .put(
             &org_path(&org, "integrations/odoo"),
             t,
-            json!({"odoo_enabled": false, "odoo_url": "https://erp.alfa.test/", "odoo_db": "prod",
-                   "hide_org_creation": true, "hide_sso_button": false}),
+            json!({"odoo_enabled": false, "odoo_url": "https://erp.alfa.test/", "odoo_db": "prod"}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
     let (_, cfg) = app.get(&org_path(&org, "integrations/odoo"), t).await;
     assert_eq!(cfg["odoo_url"], "https://erp.alfa.test");
-    assert_eq!(cfg["hide_org_creation"], true);
+    // `hide_org_creation`/`hide_sso_button` SAÍRAM desta resposta: já não são
+    // configuração de tenant (ver `platform_login_settings`, migração 0102).
+    assert!(cfg["hide_org_creation"].is_null(), "{cfg}");
     assert_eq!(cfg["odoo_admin_id"], a.user_id.as_str());
     let (st, tok) = app
         .post(
@@ -813,8 +814,7 @@ async fn cross_org_admin_is_denied_on_every_org_route(db: sqlx::PgPool) {
         .put(
             &org_path(&borg, "integrations/odoo"),
             t,
-            json!({"odoo_enabled": true, "odoo_url": "https://evil.test", "odoo_db": "x",
-                   "hide_org_creation": true, "hide_sso_button": true}),
+            json!({"odoo_enabled": true, "odoo_url": "https://evil.test", "odoo_db": "x"}),
         )
         .await;
     assert_eq!(st, 404);
