@@ -15,7 +15,10 @@
 #   2. o ServiceMonitor selecciona etiquetas que o chart RENDERIZA, e a porta
 #      que ele pede existe no Service seleccionado (precisa de helm);
 #   3. o namespace que a NetworkPolicy abre ao Prometheus é o namespace onde a
-#      observabilidade se instala.
+#      observabilidade se instala;
+#   4. as TRÊS declarações do namespace do Meet dizem o mesmo — o objecto
+#      Namespace, o `namespaceSelector` do scrape e o `-n` do comando
+#      documentado. Esquecer o do scrape num rename dá zero alvos em silêncio.
 # ============================================================
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -52,6 +55,48 @@ if [ -z "$ns_instala" ]; then
   fail "não encontrei NS= no $OBS/instalar.sh"
 elif [ "$ns_instala" != "$ns_policy" ]; then
   fail "a observabilidade instala-se em «$ns_instala» mas a NetworkPolicy abre o :8181 a «${ns_policy:-<nada>}» — o scrape fica fechado"
+fi
+
+# ---- 4. as três declarações do namespace do Meet dizem o mesmo --------------
+#  O namespace onde o Meet corre está escrito em TRÊS sítios independentes, e
+#  nada os mantinha em passo:
+#
+#    deploy/k8s/00-namespace.yaml             o objecto Namespace
+#    o `namespaceSelector` do ServiceMonitor  onde o Prometheus vai procurar
+#    o comando `-n …` documentado no values-production.yaml
+#
+#  A #269 (produção no cluster partilhado) teve de os encontrar e editar à mão,
+#  um a um. Esquecer o do ServiceMonitor não dá erro nenhum: dá ZERO alvos, com
+#  o painel verde e o produto em baixo — exactamente o que este portão existe
+#  para apanhar, e o que aconteceu a 2026-10-06 com o selector errado.
+ns_objecto=$(python3 scripts/ns-declarado.py namespace deploy/k8s/00-namespace.yaml)
+ns_scrape=$(python3 scripts/ns-declarado.py scrape "$OBS/servicemonitor.yaml")
+ns_chart=$(python3 scripts/ns-declarado.py comando "$VP")
+
+if [ -z "$ns_objecto" ]; then
+  fail "não encontrei o nome do Namespace em deploy/k8s/00-namespace.yaml"
+elif [ -z "$ns_scrape" ]; then
+  fail "não consegui ler o namespaceSelector.matchNames do ServiceMonitor"
+elif [ -z "$ns_chart" ]; then
+  fail "não encontrei o namespace no comando helm upgrade documentado em $VP"
+else
+  ok4=1
+  if [ "$ns_scrape" != "$ns_objecto" ]; then
+    case ",$ns_scrape," in
+      *",$ns_objecto,"*)
+        # O namespace certo está lá, mas não sozinho: há alvos, e também há
+        # alvos a mais, de instalações que não são esta.
+        fail "o ServiceMonitor procura em «$ns_scrape» e o Meet só ocupa «$ns_objecto» — os namespaces a mais trazem alvos de outra instalação para os nossos alertas" ;;
+      *)
+        fail "o Meet corre em «$ns_objecto» mas o ServiceMonitor procura em «$ns_scrape» — zero alvos, e um ServiceMonitor sem alvos é indistinguível de um produto saudável" ;;
+    esac
+    ok4=0
+  fi
+  if [ "$ns_chart" != "$ns_objecto" ]; then
+    fail "o Namespace declara «$ns_objecto» e o comando documentado instala em «$ns_chart» — um dos dois está desactualizado"
+    ok4=0
+  fi
+  [ "$ok4" = 1 ] && echo "  ✓ namespace do Meet: «$ns_objecto» nas três declarações (objecto, scrape, comando)"
 fi
 
 # ---- 2. o ServiceMonitor casa com o que o chart renderiza -------------------
@@ -157,4 +202,4 @@ if [ "$falhas" -gt 0 ]; then
   echo "${r}✗ observabilidade: $falhas problema(s)${z}"
   exit 1
 fi
-echo "${g}✓ observabilidade: $n métricas citadas existem; o scrape chega ao Service certo; o namespace do Prometheus bate com o da política${z}"
+echo "${g}✓ observabilidade: $n métricas citadas existem; o scrape chega ao Service certo; o namespace do Prometheus bate com o da política; o namespace do Meet é o mesmo nas três declarações${z}"

@@ -50,7 +50,7 @@ sem uma prática que lhe faça falta no seu papel.
 | `terminationGracePeriodSeconds` | ✓ | ✓ | — |
 | Afinidade por sala no ingress | ✓ | ✓ | — (R3) |
 | **`topologySpreadConstraints`** | **—** | ✓ | **o chart espalha por nó e zona; o `k8s/` não.** Num cluster de um nó (kind) é indiferente; na produção partilhada do ADR-0021 **não é** |
-| **`ServiceMonitor` + `PrometheusRule`** | ✓ (`k8s/observabilidade/`) | **—** | **invertido:** a observabilidade está no lado do laboratório e **não no chart de produção**. É o lado errado, e a R307 já mostrou o que custa um `ServiceMonitor` sem alvos |
+| **`ServiceMonitor` + `PrometheusRule`** | ✓ (`k8s/observabilidade/`) | — (correcto) | **eu estava errado:** `k8s/observabilidade/` não é o lado do laboratório, é a fase 4 do ADR-0020 — um instalador de produção, fora do kustomize, que põe os objectos no namespace `observabilidade`. Ver o passo 2 |
 | `priorityClassName` | — | — | **falta nos dois.** Sob pressão de nó, o SFU e o Postgres são desalojados como qualquer coisa |
 | `preStop` | — | — | **falta nos dois**, mas o servidor dren a por SIGTERM (`drenar()`), logo é menos grave do que parece |
 | `ResourceQuota` / `LimitRange` no namespace | — | **✓ (2026-10-08)** | **feito no chart**, ligado só em produção. Continua a faltar no `k8s/`, onde é um tecto inventado num cluster de um nó |
@@ -87,11 +87,42 @@ sem uma prática que lhe faça falta no seu papel.
    `max` a 2 CPU → falha contra o coturn de 4; `defaultRequest: {}` → falha;
    `maxReplicas` 8→20 sem refazer a conta → falha a 50,6 CPU; template apagado →
    falha. O laboratório é verificado ao contrário: **não** pode levar quota.
-2. **O `ServiceMonitor` e as regras mudam-se para o chart.** Hoje a
-   observabilidade de produção vive no lado do laboratório. **Prova:** o
-   `helm template` a produzi-los com os selectores do chart, e um controlo
-   negativo que mostre o portão a ver um selector errado (foi exactamente o
-   defeito da R307).
+2. ~~**O `ServiceMonitor` e as regras mudam-se para o chart.**~~ **MEDIDO a
+   2026-10-08, e a proposta estava errada em ambas as pontas.** Fiz outra coisa.
+
+   O que eu afirmei: «a observabilidade de produção vive no lado do
+   laboratório». O que a medição mostrou:
+
+   - `deploy/k8s/observabilidade/` **não está no kustomization** e não é o lado
+     do laboratório. É a **fase 4 do ADR-0020**: um instalador de produção
+     (`instalar.sh`) que monta o kube-prometheus-stack, o Loki, o Alloy, o Tempo
+     e o OTel Collector no namespace `observabilidade`, e só no fim aplica o
+     `servicemonitor.yaml` e o `alertas.yaml`.
+   - O `ServiceMonitor` **vive no namespace `observabilidade`**, com a etiqueta
+     `release: kube-prometheus-stack` que o `serviceMonitorSelector` do operador
+     exige. Pertence à pilha de monitorização, não ao chart do Meet: metê-lo no
+     chart punha o Helm a possuir um objecto fora do namespace do seu release, e
+     a depender de CRDs que o cluster pode não ter.
+   - E o cruzamento que eu queria **já existe**: o `check-observabilidade.sh`
+     valida, desde 2026-10-06, o selector e a porta do `ServiceMonitor` contra o
+     que o **chart** renderiza. O risco de deriva que motivava a mudança já
+     estava coberto.
+
+   **O defeito real, esse sim medido:** o namespace do Meet está escrito em
+   **três** sítios independentes — o objecto `Namespace` em
+   `deploy/k8s/00-namespace.yaml`, o `namespaceSelector.matchNames` do
+   `ServiceMonitor`, e o `-n …` do comando documentado no
+   `values-production.yaml` — e **nada os mantinha em passo**. A #269 teve de os
+   encontrar e editar à mão, um a um. Esquecer o do `ServiceMonitor` não dá erro:
+   dá **zero alvos**, com o painel verde e o produto em baixo. É o mesmo sintoma
+   da R307, por outra porta.
+
+   **O que fiz:** a verificação 4 do `check-observabilidade.sh` cruza as três
+   declarações, com o leitor em `scripts/ns-declarado.py` (sem PyYAML, que o CI
+   não instala). **Controlos negativos medidos:** rename feito a meio →
+   «zero alvos»; comando documentado desactualizado → «um dos dois está
+   desactualizado»; `matchNames` com um namespace a mais → «os namespaces a mais
+   trazem alvos de outra instalação». E o rename completo da #269 passa.
 3. **`topologySpreadConstraints` no `k8s/`** — ou a decisão escrita de que o
    laboratório não os quer, porque num nó só são ruído. **Prefiro a decisão
    escrita:** pôr constraints que nunca se satisfazem num cluster de um nó deixa
