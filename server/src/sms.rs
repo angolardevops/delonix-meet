@@ -1746,18 +1746,23 @@ fn concat_reference(id: Uuid) -> u8 {
         (status = 401, description = "Token `dlxg_` inválido ou revogado.", body = crate::openapi::ErrorBody),
     )
 )]
-/// **Esta reivindicação NÃO passa pela peça comum, de propósito.**
-///
-/// Não é a oitava cópia do mesmo padrão: é outra forma. Junta `sms_device`,
-/// filtra pelo gateway AUTENTICADO e pela org do token — valores do pedido, não
-/// constantes da fila —, o `FOR UPDATE OF m2` aponta a um alias dentro da
-/// junção, e o `RETURNING` traz uma coluna da tabela juntada (`device_key`).
-///
-/// A `delonix_meet_core::jobs::Queue` é de UMA tabela com predicados fixos.
-/// Fazê-la acomodar isto seria dar-lhe junções e parâmetros por chamada — um
-/// construtor de consultas, que é o que o desenho
-/// (`docs/desenho-2026-10-07-uma-fila-so.md`) disse para não fazer. Fica aqui,
-/// e o portão `check-filas-reivindicacao.sh` conhece-a pelo nome.
+// ESTA REIVINDICAÇÃO NÃO PASSA PELA PEÇA COMUM, DE PROPÓSITO.
+//
+// Comentário normal e não de documentação: este handler é uma rota, e o
+// `utoipa` leva o `///` para o `summary`/`description` do OpenAPI público —
+// uma nota de implementação sobre filas não tem nada que fazer na
+// documentação que um integrador lê.
+//
+// Não é a oitava cópia do mesmo padrão: é outra forma. Junta `sms_device`,
+// filtra pelo gateway AUTENTICADO e pela org do token — valores do pedido, não
+// constantes da fila —, o `FOR UPDATE OF m2` aponta a um alias dentro da
+// junção, e o `RETURNING` traz uma coluna da tabela juntada (`device_key`).
+//
+// A `delonix_meet_core::jobs::Queue` é de UMA tabela com predicados fixos.
+// Fazê-la acomodar isto seria dar-lhe junções e parâmetros por chamada — um
+// construtor de consultas, que é o que o desenho
+// (`docs/desenho-2026-10-07-uma-fila-so.md`) disse para não fazer. Fica aqui,
+// e o portão `check-filas-reivindicacao.sh` conhece-a pelo nome.
 pub async fn agent_claim(
     State(state): State<Arc<AppState>>,
     gw: SmsGatewayAuth,
