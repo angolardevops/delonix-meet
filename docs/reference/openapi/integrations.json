@@ -5122,6 +5122,13 @@
           "minutes": {
             "type": "string"
           },
+          "org_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "owner_id": {
             "format": "uuid",
             "type": "string"

@@ -37,6 +37,13 @@ pub struct Meeting {
     pub recurrence_count: Option<i16>,
     pub recurrence_byday: Option<String>,
     pub recurrence_parent_id: Option<Uuid>,
+    // Organização em cujo contexto a reunião nasceu (migração 0104). Fonte
+    // de verdade de `meetings_v1::meeting_in_org` e das equivalentes em
+    // `apikeys.rs` — nunca a pertença (actual OU arquivada) do dono. `NULL`
+    // numa reunião órfã (dono sem organização nenhuma na altura da
+    // criação/backfill): fica invisível a qualquer chave `dlx_`. Nota de
+    // implementação — `//`, não `///`: não é descrição pública do contrato.
+    pub org_id: Option<Uuid>,
 }
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
@@ -92,7 +99,7 @@ pub const MEETING_COLUMNS: &str =
     "id, owner_id, title, description, kind, starts_at, duration_min, \
      room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
      recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
-     recurrence_parent_id";
+     recurrence_parent_id, org_id";
 
 /// Reunião enriquecida para a UI do calendário.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -576,13 +583,20 @@ pub async fn create(
         None
     };
 
-    // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
-    // membro da org do criador. NULL => ilimitado.
-    if let Some(org_id) = crate::org::orgs_of_user(&state, auth.user_id)
+    // Organização em cujo contexto a reunião nasce (migração 0104): a
+    // primeira organização ACTIVA do criador — mesma heurística que já
+    // servia só para a quota abaixo, agora também gravada em `meetings.org_id`
+    // (ver `meeting_in_org`/`v1_meetings`/`v1_meeting_notes`, que passam a
+    // confiar nesta coluna e não em pertença inferida). `None` só para uma
+    // conta sem organização nenhuma — a reunião nasce sem dono-de-org.
+    let creator_org_id = crate::org::orgs_of_user(&state, auth.user_id)
         .await
         .first()
-        .copied()
-    {
+        .copied();
+
+    // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
+    // membro da org do criador. NULL => ilimitado.
+    if let Some(org_id) = creator_org_id {
         let limit: Option<i32> =
             sqlx::query_scalar("SELECT max_meetings FROM organizations WHERE id = $1")
                 .bind(org_id)
@@ -638,8 +652,8 @@ pub async fn create(
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
-                               format, waiting_room, auto_record, record_quality, sms_reminder_min)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                               format, waiting_room, auto_record, record_quality, sms_reminder_min, org_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          RETURNING {MEETING_COLUMNS}"
     ))
     .bind(auth.user_id)
@@ -659,6 +673,7 @@ pub async fn create(
     .bind(req.options.auto_record)
     .bind(&req.options.record_quality)
     .bind(req.sms_reminder_min)
+    .bind(creator_org_id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -1909,8 +1924,8 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         let child_id: Option<(Uuid,)> = sqlx::query_as(
             "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                    recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                                   recurrence_byday, recurrence_parent_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                                   recurrence_byday, recurrence_parent_id, org_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT DO NOTHING
              RETURNING id",
         )
@@ -1927,6 +1942,9 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         .bind(parent.recurrence_count)
         .bind(&parent.recurrence_byday)
         .bind(parent.id)
+        // A ocorrência herda a organização da reunião-mãe (migração 0104) —
+        // a mesma organização, nunca uma inferida de novo.
+        .bind(parent.org_id)
         .fetch_optional(db)
         .await
         .ok()

@@ -5122,6 +5122,13 @@
           "minutes": {
             "type": "string"
           },
+          "org_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "owner_id": {
             "format": "uuid",
             "type": "string"
@@ -14345,7 +14352,7 @@
                 }
               }
             },
-            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+            "description": "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"
           },
           "429": {
             "content": {
@@ -14511,7 +14518,7 @@
                 }
               }
             },
-            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+            "description": "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"
           },
           "422": {
             "content": {
@@ -14601,7 +14608,7 @@
                 }
               }
             },
-            "description": "A reunião não existe ou o dono não é membro da organização da chave."
+            "description": "A reunião não existe ou não pertence à organização da chave (`meetings.org_id`)."
           },
           "429": {
             "content": {
@@ -14690,7 +14697,7 @@
                 }
               }
             },
-            "description": "a reunião não existe ou o dono não é membro da organização da chave"
+            "description": "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"
           },
           "429": {
             "content": {
