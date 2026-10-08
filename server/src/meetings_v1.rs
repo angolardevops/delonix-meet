@@ -388,7 +388,7 @@ async fn resolve_org_user(
 
 /// A reunião pertence à organização da chave?
 ///
-/// Fonte da verdade: `meetings.org_id` (migração 0095), gravado na criação —
+/// Fonte da verdade: `meetings.org_id` (migração 0102), gravado na criação —
 /// NUNCA inferência via pertença do dono. Antes desta correcção a regra era
 /// «o dono é membro da org», sem olhar a `archived_at` nem a se a reunião
 /// nasceu mesmo naquela organização: um utilizador que tivesse (ainda que só
@@ -397,7 +397,7 @@ async fn resolve_org_user(
 /// assunto de outra organização qualquer (auditoria 2026-10-08, T1).
 ///
 /// O `OR` com `org_id IS NULL` é defesa em profundidade, não o caminho
-/// principal: cobre só a reunião legada cujo backfill (migração 0095) não
+/// principal: cobre só a reunião legada cujo backfill (migração 0102) não
 /// conseguiu atribuir organização nenhuma (dono sem pertença alguma na
 /// altura), e mesmo aí exige pertença ACTIVA — nunca arquivada — do dono.
 /// Uma reunião com `org_id` explícito nunca cai neste ramo.
@@ -670,7 +670,7 @@ pub async fn create(
     // `org_id` é a organização da CHAVE que está a criar — não uma inferência
     // a partir de quem o anfitrião é membro de quê. É exactamente o que
     // `meeting_in_org` (e as equivalentes em `apikeys.rs`) passam a exigir
-    // (migração 0095) em vez de pertença do dono.
+    // (migração 0102) em vez de pertença do dono.
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_code,
                                format, waiting_room, auto_record, record_quality, org_id)

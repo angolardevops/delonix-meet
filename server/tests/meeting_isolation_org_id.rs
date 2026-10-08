@@ -23,7 +23,7 @@
 //! de tentar reproduzir esse estado pela BFF: o que importa provar é que o
 //! CÓDIGO nunca devia ter confiado só na pertença (activa ou arquivada) do
 //! dono para decidir a quem pertence a reunião — e com o `org_id` explícito
-//! da migração 0095 deixa de confiar.
+//! da migração 0102 deixa de confiar.
 //!
 //! Antes da correcção, as quatro chamadas abaixo (GET, PATCH, DELETE, ring) e
 //! a listagem/notas de `apikeys.rs` deviam falhar (o que ESTE teste prova

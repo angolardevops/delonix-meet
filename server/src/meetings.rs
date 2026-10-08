@@ -37,7 +37,7 @@ pub struct Meeting {
     pub recurrence_count: Option<i16>,
     pub recurrence_byday: Option<String>,
     pub recurrence_parent_id: Option<Uuid>,
-    /// Organização em cujo contexto a reunião nasceu (migração 0095). Fonte
+    /// Organização em cujo contexto a reunião nasceu (migração 0102). Fonte
     /// de verdade de `meetings_v1::meeting_in_org` e das equivalentes em
     /// `apikeys.rs` — nunca a pertença (actual OU arquivada) do dono. `NULL`
     /// numa reunião órfã (dono sem organização nenhuma na altura da
@@ -582,7 +582,7 @@ pub async fn create(
         None
     };
 
-    // Organização em cujo contexto a reunião nasce (migração 0095): a
+    // Organização em cujo contexto a reunião nasce (migração 0102): a
     // primeira organização ACTIVA do criador — mesma heurística que já
     // servia só para a quota abaixo, agora também gravada em `meetings.org_id`
     // (ver `meeting_in_org`/`v1_meetings`/`v1_meeting_notes`, que passam a
@@ -1941,7 +1941,7 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         .bind(parent.recurrence_count)
         .bind(&parent.recurrence_byday)
         .bind(parent.id)
-        // A ocorrência herda a organização da reunião-mãe (migração 0095) —
+        // A ocorrência herda a organização da reunião-mãe (migração 0102) —
         // a mesma organização, nunca uma inferida de novo.
         .bind(parent.org_id)
         .fetch_optional(db)
