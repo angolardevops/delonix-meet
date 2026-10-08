@@ -207,7 +207,7 @@ export default {
     retencaoDica_other: 'Gravações com mais de {{count}} dias são apagadas.',
     retencaoInvalida: 'Indica um número inteiro de 0 a 3650.',
     quotas: 'Quotas',
-    quotasDica: 'Vazio = ilimitado.',
+    quotasDica: 'O plano da plataforma. Fala com o operador para mudar.',
     quotaGrupos: 'Grupos',
     quotaSalas: 'Salas físicas',
     quotaReunioes: 'Reuniões agendadas',

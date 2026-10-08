@@ -207,7 +207,7 @@ export default {
     retencaoDica_other: 'Les enregistrements de plus de {{count}} jours sont supprimés.',
     retencaoInvalida: 'Indiquez un nombre entier de 0 à 3650.',
     quotas: 'Quotas',
-    quotasDica: 'Vide = illimité.',
+    quotasDica: "Le plan de la plateforme. Contactez l'opérateur pour le changer.",
     quotaGrupos: 'Groupes',
     quotaSalas: 'Salles physiques',
     quotaReunioes: 'Réunions planifiées',
