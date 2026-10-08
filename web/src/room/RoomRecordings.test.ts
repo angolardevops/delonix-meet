@@ -132,7 +132,7 @@ describe('gravações da sala — o que o painel oferece por estado', () => {
     await usar('pt-AO')
     const html = render([rec()])
     expect(botoes(html)).toBe(1)
-    expect(html).toMatch(/3\sMB/)
+    expect(html).toMatch(/3\sMiB/)
     // O nome acessível do botão diz o que ele faz, não só o nome do ficheiro.
     expect(html).toMatch(/<button[^>]*>.*Descarregar.*Reunião abc\.webm/)
     expect(html).not.toContain('Só quem gravou')
@@ -148,7 +148,7 @@ describe('gravações da sala — o que o painel oferece por estado', () => {
     const html = render([rec({ can_download: false, owned: true })])
     expect(botoes(html)).toBe(0)
     expect(html).toContain('Reunião abc.webm')
-    expect(html).toMatch(/3\sMB/)
+    expect(html).toMatch(/3\sMiB/)
     // …e diz porquê: sem isto era um cartão igual ao botão, que não respondia.
     expect(html).toContain('Só quem gravou, ou um administrador da organização, a pode descarregar.')
     expect(html).not.toContain('Descarregar')

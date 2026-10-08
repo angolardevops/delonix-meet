@@ -74,13 +74,5 @@ export function formatAgo(iso: string | null | undefined, locale: string): strin
   return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-export function formatBytes(b: number, locale: string): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let v = b
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toLocaleString(locale, { maximumFractionDigits: i >= 3 ? 2 : 0 })} ${units[i]}`
-}
+/** Tamanho legível — o formatador único (`ui/format`). */
+export { formatBytes } from '../../ui/format'
