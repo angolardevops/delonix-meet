@@ -391,3 +391,21 @@ browser em vez do cliente webrtc-rs.
   multiplexar no runtime das apps web).
 - CiliumNetworkPolicy: SIP (5060/5061) e RTP (faixa dinâmica) só entre trunk↔Kamailio↔FreeSWITCH.
 - Escalar 300+ canais: acrescentar nós ao `dispatcher.list`; o Kamailio balanceia.
+
+## TLS nos ramais
+
+Sem TLS, as chaves do SRTP (SDES) vão em claro no SDP (ADR-0009). O perfil dos ramais liga o TLS no
+entrypoint (`voice/cluster/freeswitch-entrypoint.sh`, passo 9b); sem a primeira variável nada muda.
+
+| Variável | Efeito |
+|---|---|
+| `DELONIX_RAMAIS_TLS_PORT` | Porta TLS do perfil (ex. `5071`). **Ausente = sem TLS.** Presente sem certificado, o arranque falha: não cai em UDP calado |
+| `DELONIX_RAMAIS_TLS_DIR` | Pasta com `tls.crt` (cadeia completa) e `tls.key`; por omissão `/tls-ramais`. O certificado tem de cobrir o nome ou IP a que o telefone se liga |
+| `DELONIX_RAMAIS_TLS_ONLY` | `true` fecha o UDP/TCP do perfil: só TLS (o certo em produção) |
+
+O certificado tem de cobrir o nome ou o IP a que o telefone se liga (SAN). Pedir TLS sem certificado falha o
+arranque. O servidor tem de mandar o telefone para lá (`VOICE_RAMAIS_PUBLIC_TRANSPORT=tls` e
+`VOICE_RAMAIS_PUBLIC_PORT`, ver `docs/deployment.md`). A pasta do Sofia é `$${conf_dir}/tls`, **não** a
+`$${certs_dir}` (a do prefixo de instalação, com os `.pem` da vanilla): com ela o perfil serve um
+`CN=FreeSWITCH` auto-assinado em vez do nosso (medido). Prova: `scripts/ramais-tls-prova.py`
+(certificado conferido, TLS ≥ 1.2, REGISTER com digest por TLS, e os controlos negativos).
