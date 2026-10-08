@@ -225,14 +225,15 @@ async fn recurring_meeting_current_behavior_count_off_by_one(db: sqlx::PgPool) {
 async fn meeting_quota_is_enforced(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
-    let (st, body) = app
-        .patch(
-            &format!("/api/orgs/{}", a.org()),
-            Some(&a.token),
-            json!({"max_meetings": 1}),
-        )
-        .await;
-    assert_eq!(st, 200, "{body}");
+    // `max_meetings` SAIU de `OrgSettingsReq` (PR1 do backoffice, auditoria de
+    // 2026-10-08): é quota de PLATAFORMA, não se escreve pelo PATCH de
+    // tenant. Quem a põe em vigor aqui é SQL directo (a rota de operador
+    // ainda não existe nesta árvore).
+    sqlx::query("UPDATE organizations SET max_meetings = 1 WHERE id = $1::uuid")
+        .bind(a.org())
+        .execute(&app.db)
+        .await
+        .unwrap();
     app.new_meeting(&a, "primeira", &[]).await;
     let (st, body) = app
         .post(

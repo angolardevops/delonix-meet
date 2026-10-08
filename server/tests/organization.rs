@@ -322,12 +322,19 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     assert!(v["broken_at_seq"].is_null());
     assert!(v["entries"].as_i64().unwrap() >= 2);
 
-    // Definições: normaliza o domínio.
+    // Definições: normaliza o domínio. `max_rooms` SAIU de `OrgSettingsReq`
+    // (PR1 do backoffice, auditoria de 2026-10-08): a quota é plataforma, não
+    // tenant, e por isso quem a põe em vigor aqui é SQL directo, não o PATCH.
+    sqlx::query("UPDATE organizations SET max_rooms = 1 WHERE id = $1::uuid")
+        .bind(&org)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let (st, body) = app
         .patch(
             &format!("/api/orgs/{org}"),
             t,
-            json!({"domain": "HTTPS://Meet.Alfa.test/", "retention_days": 99999, "max_rooms": 1}),
+            json!({"domain": "HTTPS://Meet.Alfa.test/", "retention_days": 99999}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
@@ -343,7 +350,7 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
         .patch(
             &format!("/api/orgs/{org}"),
             t,
-            json!({"domain": "https://Meet.Alfa.test/", "retention_days": 99999, "max_rooms": 1}),
+            json!({"domain": "https://Meet.Alfa.test/", "retention_days": 99999}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
@@ -353,12 +360,12 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     );
     // G9: chat_retention_days grava e persiste (visível em GET /api/orgs).
     // max_rooms repete-se: este endpoint substitui o registo inteiro, e a
-    // quota de 1 sala continua a ser exercida mais abaixo.
+    // quota de 1 sala (posta a SQL acima) continua a ser exercida mais abaixo.
     let (st, body) = app
         .patch(
             &format!("/api/orgs/{org}"),
             t,
-            json!({"domain": "meet.alfa.test", "retention_days": 3650, "chat_retention_days": 7, "max_rooms": 1}),
+            json!({"domain": "meet.alfa.test", "retention_days": 3650, "chat_retention_days": 7}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
@@ -386,6 +393,68 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 409, "{body}");
     assert!(body["error"].as_str().unwrap().contains("limite"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn admin_patch_ignores_platform_quota_and_voice_fields(db: sqlx::PgPool) {
+    // PR1 do backoffice (auditoria de 2026-10-08): `max_groups`/`max_rooms`/
+    // `max_meetings`/`voice_media_backend`/`voice_did_model` SAÍRAM de
+    // `OrgSettingsReq`. Um admin de TENANT que os manda em PATCH recebe 200
+    // (o pedido continua válido pelos campos que restam), mas os valores
+    // gravados não mudam — a prova de que o caminho de escrita foi mesmo
+    // removido do servidor, e não apenas escondido no formulário do
+    // frontend (`SettingsCard.tsx`). A leitura continua: `GET /api/orgs`
+    // mostra sempre o plano actual (ver `admin_stats_audit_settings_and_quota`
+    // e `my_orgs_shape`).
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let org = a.org().to_string();
+    let t = Some(a.token.as_str());
+
+    // O plano actual, como só a plataforma o poria (SQL directo: a rota de
+    // operador que o fará é o PR2, ainda não existe nesta árvore).
+    sqlx::query(
+        "UPDATE organizations SET max_groups = 5, max_rooms = 5, max_meetings = 5,
+             voice_media_backend = 'freeswitch', voice_did_model = 'shared'
+         WHERE id = $1::uuid",
+    )
+    .bind(&org)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let (st, body) = app
+        .patch(
+            &format!("/api/orgs/{org}"),
+            t,
+            json!({
+                "domain": "meet.alfa.test", "retention_days": 30,
+                "max_groups": 999, "max_rooms": 999, "max_meetings": 999,
+                "voice_media_backend": "provider", "voice_did_model": "dedicated"
+            }),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    // O plano não mudou: nem a quota (visível em OrgSummary)…
+    let (_, orgs) = app.get("/api/orgs", t).await;
+    assert_eq!(orgs[0]["max_groups"], 5, "{orgs}");
+    assert_eq!(orgs[0]["max_rooms"], 5, "{orgs}");
+    assert_eq!(orgs[0]["max_meetings"], 5, "{orgs}");
+    // …nem os campos de voz (não entram em OrgSummary; lêem-se directo).
+    let (backend, did_model): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT voice_media_backend, voice_did_model FROM organizations WHERE id = $1::uuid",
+    )
+    .bind(&org)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(backend.as_deref(), Some("freeswitch"));
+    assert_eq!(did_model.as_deref(), Some("shared"));
+
+    // O que o PATCH tem autoridade para mudar mudou mesmo (domain/retention).
+    assert_eq!(orgs[0]["domain"], "meet.alfa.test");
+    assert_eq!(orgs[0]["retention_days"], 30);
 }
 
 #[sqlx::test(migrations = "./migrations")]
