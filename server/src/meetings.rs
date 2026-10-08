@@ -630,6 +630,9 @@ pub async fn create(
         )));
     }
 
+    // ANTES da transacção: as consultas do dono usam a pool.
+    let dono = dono_do_evento(&state, auth.user_id).await;
+    let mut tx = state.db.begin().await?;
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
@@ -654,7 +657,7 @@ pub async fn create(
     .bind(req.options.auto_record)
     .bind(&req.options.record_quality)
     .bind(req.sms_reminder_min)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
     for uid in req.invitee_ids.iter().filter(|u| **u != auth.user_id) {
@@ -664,11 +667,27 @@ pub async fn create(
         )
         .bind(meeting.id)
         .bind(uid)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
 
-    // Gera instâncias filhas para reuniões recorrentes (até 6 meses).
+    // A reunião, os convidados e o registo do `meeting.created`: uma
+    // transacção (trabalho nº3). Fecha a janela em que um SIGTERM apagava o
+    // aviso sem deixar rasto, E de passagem torna atómico o que já não era —
+    // a reunião e os seus convidados eram duas escritas soltas, e uma falha
+    // no meio deixava uma reunião sem as pessoas convidadas.
+    let fila = match dono {
+        Some(d) => {
+            let ctx = monta_meeting_webhook(d, &meeting, "meeting.created");
+            enqueue_meeting_webhook(&mut tx, ctx, "meeting.created").await?
+        }
+        None => Vec::new(),
+    };
+    tx.commit().await?;
+
+    // Depois do commit: HTTP para fora, notificações e as instâncias filhas não
+    // seguram locks. As recorrentes já eram escritas à parte (cada instância é
+    // uma linha própria) — ficam onde estavam em efeito, só mais abaixo.
     if meeting.recurrence_freq.is_some() {
         let invitees: Vec<Uuid> = req
             .invitee_ids
@@ -678,8 +697,7 @@ pub async fn create(
             .collect();
         generate_instances(&state.db, &meeting, &invitees).await;
     }
-
-    fire_meeting_webhook(&state, &meeting, auth.user_id, "meeting.created").await;
+    crate::webhooks::envia(&state, "meeting.created", fila).await;
     crate::notifications::meeting_invited(&state, &meeting, auth.user_id, &req.invitee_ids).await;
 
     let sms = match sms_org {
@@ -722,22 +740,64 @@ pub async fn create(
 
 /// Dispara um evento de reunião para os webhooks das organizações do dono.
 /// O link usa o domínio de produção da org, se configurado (settings).
-pub(crate) async fn fire_meeting_webhook(
-    state: &Arc<AppState>,
-    meeting: &Meeting,
-    owner: Uuid,
-    event: &'static str,
-) {
+/// **Registra** as entregas de um evento de reunião na transacção de quem
+/// chama (trabalho nº3). Devolve o que há a enviar depois do commit.
+///
+/// Era um `fire` disparado numa tarefa à parte: entre o `COMMIT` que criava ou
+/// arrancava a reunião e o `INSERT` da entrega havia uma janela em que um
+/// SIGTERM apagava o aviso sem deixar rasto — e o `meeting.created` é o que um
+/// ERP integrado usa para saber que há reunião.
+///
+/// **O contexto LÊ-SE ANTES de abrir a transacção** — ver
+/// [`contexto_meeting_webhook`]. Segurar uma transacção enquanto se pede outra
+/// ligação à pool é a armadilha que a `delonix-meet-backend` avisa pelo nome: o
+/// `acquire` espera, e sob a pool pequena dos testes o handler estoura. Foi
+/// exactamente o que esta função fazia na primeira versão.
+/// O que o registo de um evento de reunião precisa, calculado **fora** da
+/// transacção: as organizações do dono, o texto e o payload. As duas consultas
+/// que isto faz (`orgs_of_user`, `primary_domain`) usam a pool, e por isso não
+/// podem correr com uma transacção aberta na mão.
+pub(crate) struct ContextoWebhook {
+    orgs: Vec<Uuid>,
+    text: String,
+    payload: serde_json::Value,
+}
+
+/// Prepara o contexto. `None` quando não há nada a enviar (dono sem organização).
+/// O que se sabe do DONO antes de a reunião existir: as organizações e a base
+/// do link. **Lê-se ANTES de abrir a transacção** — as duas consultas usam a
+/// pool, e pedir uma segunda ligação com uma transacção na mão é a armadilha que
+/// a `delonix-meet-backend` avisa pelo nome («um handler que segura duas
+/// ligações espera 30 s pelo acquire e responde 500»). Foi o que a primeira
+/// versão deste trabalho fez, e foi um teste pré-existente que o apanhou.
+pub(crate) struct DonoDoEvento {
+    orgs: Vec<Uuid>,
+    base: String,
+}
+
+/// `None` quando não há nada a enviar (dono sem organização).
+pub(crate) async fn dono_do_evento(state: &Arc<AppState>, owner: Uuid) -> Option<DonoDoEvento> {
     let orgs = crate::org::orgs_of_user(state, owner).await;
     if orgs.is_empty() {
-        return;
+        return None;
     }
     let domain = crate::org::primary_domain(state, owner).await;
     let base = if domain.is_empty() {
-        "".to_string()
+        String::new()
     } else {
         format!("https://{domain}")
     };
+    Some(DonoDoEvento { orgs, base })
+}
+
+/// Monta o texto e o payload. **Puro** — nada de IO, por isso corre sem
+/// problema com a transacção aberta, que é onde a reunião já existe.
+pub(crate) fn monta_meeting_webhook(
+    dono: DonoDoEvento,
+    meeting: &Meeting,
+    event: &'static str,
+) -> ContextoWebhook {
+    let DonoDoEvento { orgs, base } = dono;
     let link = meeting
         .room_code
         .as_ref()
@@ -769,18 +829,40 @@ pub(crate) async fn fire_meeting_webhook(
         "room_code": meeting.room_code,
         "link": link,
     });
+    ContextoWebhook {
+        orgs,
+        text,
+        payload,
+    }
+}
+
+pub(crate) async fn enqueue_meeting_webhook(
+    conn: &mut sqlx::PgConnection,
+    ctx: ContextoWebhook,
+    event: &'static str,
+) -> Result<Vec<crate::webhooks::Enfileirada>, sqlx::Error> {
+    let ContextoWebhook {
+        orgs,
+        text,
+        payload,
+    } = ctx;
+    let mut fila = Vec::new();
     for org_id in orgs {
-        crate::webhooks::fire(
-            state.clone(),
-            org_id,
-            crate::webhooks::Event {
-                name: event,
-                title: "Delonix Meet".into(),
-                text: text.clone(),
-                payload: payload.clone(),
-            },
+        fila.extend(
+            crate::webhooks::enqueue(
+                &mut *conn,
+                org_id,
+                &crate::webhooks::Event {
+                    name: event,
+                    title: "Delonix Meet".into(),
+                    text: text.clone(),
+                    payload: payload.clone(),
+                },
+            )
+            .await?,
         );
     }
+    Ok(fila)
 }
 
 /// Só o dono ou um convidado pode arrancar/exportar a reunião. Antes desta
@@ -1211,16 +1293,27 @@ pub async fn start(
         Some(&opts.record_quality),
     )
     .await?;
+    // O `room_code` e o registo do `meeting.started` numa transacção
+    // (trabalho nº3): o aviso diz que a reunião começou E onde, e as duas
+    // coisas são a mesma verdade.
+    let dono = dono_do_evento(&state, auth.user_id).await;
+    let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE meetings SET room_code = $1 WHERE id = $2")
         .bind(&room.code)
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
-
-    // Webhook meeting.started (com o room_code já preenchido).
     let mut started_meeting = meeting.clone();
     started_meeting.room_code = Some(room.code.clone());
-    fire_meeting_webhook(&state, &started_meeting, auth.user_id, "meeting.started").await;
+    let fila = match dono {
+        Some(d) => {
+            let ctx = monta_meeting_webhook(d, &started_meeting, "meeting.started");
+            enqueue_meeting_webhook(&mut tx, ctx, "meeting.started").await?
+        }
+        None => Vec::new(),
+    };
+    tx.commit().await?;
+    crate::webhooks::envia(&state, "meeting.started", fila).await;
 
     // Estilo Teams: a reunião começou → "desperta" os convidados. Quem está
     // online recebe a chamada a tocar (aceitar entra na sala); quem não está

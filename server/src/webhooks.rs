@@ -114,42 +114,72 @@ pub struct Event {
     pub payload: serde_json::Value,
 }
 
-/// Dispara um evento para todos os webhooks ativos de uma organização que o
-/// tenham subscrito. Corre em background — falhas são registadas (no log e em
-/// `webhook_deliveries`), não propagadas.
-pub fn fire(state: Arc<AppState>, org_id: Uuid, event: Event) {
-    tokio::spawn(async move {
-        let hooks: Vec<Webhook> = match sqlx::query_as(&format!(
-            "SELECT {WEBHOOK_COLUMNS} FROM org_webhooks WHERE org_id = $1 AND active = TRUE"
-        ))
-        .bind(org_id)
-        .fetch_all(&state.db)
-        .await
-        {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::warn!(error = %e, "webhook query failed");
-                return;
-            }
-        };
-        for hook in hooks {
-            if !hook.events.split(',').any(|e| e.trim() == event.name) {
-                continue;
-            }
-            let body = body_for(&hook, &event);
-            // O registo não é condição do envio: se a base falhar aqui, a
-            // entrega segue sem linha (e fica o aviso no log).
-            let (ids, body) =
-                match record_pending(&state.db, &hook, event.name, &body, 1, None).await {
-                    Ok(d) => (Some(d.ids), d.payload),
-                    Err(e) => {
-                        tracing::warn!(hook = %hook.id, error = %e, "registo da entrega falhou");
-                        (None, body)
-                    }
-                };
-            attempt(&state, &hook, event.name, &body, ids, 1).await;
+/// Uma entrega já GRAVADA, à espera de sair.
+pub struct Enfileirada {
+    hook: Webhook,
+    /// O corpo tal como ficou no `payload` da linha: é ele que se assina e
+    /// envia, para que o primeiro envio e qualquer reenvio mandem os mesmos
+    /// bytes.
+    body: serde_json::Value,
+    ids: DeliveryIds,
+}
+
+/// **Grava as entregas deste evento, na transacção de quem chama.**
+///
+/// PORQUE EXISTE (trabalho nº3 do
+/// `docs/levantamento-2026-10-07-trabalho-assincrono.md`): o `fire` dispara
+/// numa tarefa à parte, e entre o `COMMIT` do evento de negócio e o `INSERT`
+/// desta linha havia uma janela em que um `SIGTERM` **apagava o evento sem
+/// deixar rasto nenhum** — nem entrega, nem linha falhada, nem nada para
+/// reenviar na consola. O código assumia-o por escrito: «o registo não é
+/// condição do envio».
+///
+/// Chamado com a transacção do evento de negócio, a linha `pending` e a
+/// mudança de estado passam a nascer **juntas ou nenhuma**. A partir daí a rede
+/// de segurança já existia: o `sweep_deliveries` reagenda as `pending`
+/// abandonadas e o `retry_due` envia-as.
+///
+/// Não envia nada. O envio é de [`envia`], DEPOIS do commit — segurar uma
+/// transacção aberta durante um HTTP para fora seria trocar um defeito por
+/// outro pior.
+pub async fn enqueue(
+    conn: &mut sqlx::PgConnection,
+    org_id: Uuid,
+    event: &Event,
+) -> Result<Vec<Enfileirada>, sqlx::Error> {
+    let hooks: Vec<Webhook> = sqlx::query_as(&format!(
+        "SELECT {WEBHOOK_COLUMNS} FROM org_webhooks WHERE org_id = $1 AND active = TRUE"
+    ))
+    .bind(org_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut saida = Vec::new();
+    for hook in hooks {
+        if !hook.events.split(',').any(|e| e.trim() == event.name) {
+            continue;
         }
-    });
+        let body = body_for(&hook, event);
+        // O erro PROPAGA-SE, ao contrário de antes: se a linha não se grava, a
+        // transacção do evento de negócio desfaz-se com ela. É o ponto todo
+        // deste trabalho — uma entrega não registada não é uma entrega.
+        let d = record_pending(&mut *conn, &hook, event.name, &body, 1, None).await?;
+        saida.push(Enfileirada {
+            hook,
+            body: d.payload,
+            ids: d.ids,
+        });
+    }
+    Ok(saida)
+}
+
+/// Envia o que [`enqueue`] gravou. Chama-se DEPOIS do commit.
+///
+/// Best-effort de propósito: o que falhar aqui fica `pending` na base e o
+/// `sweep_deliveries` reagenda-o. Nada se perde por este envio falhar.
+pub async fn envia(state: &AppState, nome: &str, fila: Vec<Enfileirada>) {
+    for Enfileirada { hook, body, ids } in fila {
+        attempt(state, &hook, nome, &body, Some(ids), 1).await;
+    }
 }
 
 /// O corpo JSON a enviar a um webhook, conforme o tipo do destino.
@@ -196,7 +226,7 @@ struct PendingDelivery {
 /// isso mandam os mesmos bytes (a ordem das chaves é a do JSONB, não a de quem
 /// construiu o JSON).
 async fn record_pending(
-    db: &sqlx::PgPool,
+    db: impl sqlx::PgExecutor<'_>,
     hook: &Webhook,
     event: &str,
     body: &serde_json::Value,
@@ -386,7 +416,7 @@ async fn send(
 /// nada, e é exactamente o caso que o retry existe para cobrir. Pode, raramente,
 /// duplicar uma entrega que chegou mas cujo resultado não se chegou a escrever
 /// — a entrega é «pelo menos uma vez».
-pub(crate) async fn sweep_deliveries(db: &sqlx::PgPool) -> Result<(u64, u64), sqlx::Error> {
+pub async fn sweep_deliveries(db: &sqlx::PgPool) -> Result<(u64, u64), sqlx::Error> {
     let abandoned = sqlx::query(
         "UPDATE webhook_deliveries
             SET status = 'failed', error = $1, delivered_at = now(),

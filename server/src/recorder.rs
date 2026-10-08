@@ -1901,6 +1901,17 @@ async fn finalize_inner(
     // ficheiro final). Gravadas as duas: os consumidores do schema simples
     // (`RecordingItem.duration_secs`) e os do schema rico (`duration_ms`)
     // ficam ambos servidos, sem um a apagar o outro.
+    // A passagem a `ready` e o REGISTO das entregas do `recording.ready` numa
+    // só transacção (trabalho nº3). Antes, o `fire` disparava numa tarefa à
+    // parte e entre este commit e o `INSERT` da entrega havia uma janela em que
+    // um SIGTERM apagava o aviso sem deixar rasto nenhum — nem entrega, nem
+    // linha falhada, nem nada para reenviar na consola. Ou saem as duas, ou
+    // nenhuma; o envio vem depois do commit.
+    // ANTES da transacção: a consulta das organizações usa a pool, e segurar
+    // uma transacção enquanto se pede outra ligação é a armadilha que a
+    // `delonix-meet-backend` avisa pelo nome.
+    let orgs = crate::org::orgs_of_user(state, manifest.by_user).await;
+    let mut tx = state.db.begin().await?;
     sqlx::query(
         // `compose_*` a NULL: a gravação saiu da fila da composição e a
         // reserva não pode ficar a apontar para um trabalho que já acabou.
@@ -1919,18 +1930,12 @@ async fn finalize_inner(
     .bind(duration_secs)
     .bind(dims.map(|d| d.0))
     .bind(dims.map(|d| d.1))
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
     tracing::info!(%room_id, %rec_id, size, "server recording pronta na biblioteca");
-    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1")
-        .bind(room_id)
-        .fetch_optional(&state.db)
-        .await?
-        .unwrap_or_default();
-    crate::notifications::recording_ready(state, manifest.by_user, rec_id, &filename, &code).await;
-
-    crate::recordings::fire_recording_ready(
-        state,
+    let fila = crate::recordings::enqueue_recording_ready(
+        orgs,
+        &mut tx,
         crate::recordings::ReadyRecording {
             id: rec_id,
             uploader: manifest.by_user,
@@ -1942,7 +1947,23 @@ async fn finalize_inner(
             source: "server",
         },
     )
-    .await;
+    .await?;
+    tx.commit().await?;
+
+    // DEPOIS do commit, e por esta ordem: a notificação e o envio só fazem
+    // sentido com a gravação mesmo pronta. Antes, a notificação era escrita
+    // antes do commit — avisava uma pessoa de uma gravação que ainda podia não
+    // ficar.
+    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .fetch_optional(&state.db)
+        .await?
+        .unwrap_or_default();
+    crate::notifications::recording_ready(state, manifest.by_user, rec_id, &filename, &code).await;
+    // Segurar a transacção durante um HTTP para fora seria trocar um defeito
+    // por outro pior. O que falhar aqui fica `pending` e o varredor dos
+    // webhooks reagenda-o.
+    crate::webhooks::envia(state, "recording.ready", fila).await;
     Ok(())
 }
 

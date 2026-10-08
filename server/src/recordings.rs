@@ -665,7 +665,20 @@ pub(crate) struct ReadyRecording<'a> {
 
 /// Dispara `recording.ready` para as organizações de quem gravou/carregou.
 /// Uma só função para o gravador do servidor e para o upload.
-pub(crate) async fn fire_recording_ready(state: &Arc<AppState>, r: ReadyRecording<'_>) {
+/// **Registra** as entregas do `recording.ready` na transacção de quem chama
+/// (trabalho nº3). Devolve o que há a enviar depois do commit; `envia` manda.
+///
+/// Era um `fire` disparado numa tarefa à parte, com uma janela entre o
+/// `COMMIT` que marcou a gravação `ready` e o `INSERT` da entrega em que um
+/// SIGTERM apagava o aviso sem deixar rasto.
+/// `orgs` vem de FORA: a consulta usa a pool, e pedir uma segunda ligação com
+/// uma transacção na mão é a armadilha que a `delonix-meet-backend` avisa pelo
+/// nome. Quem chama lê-as antes do `begin`.
+pub(crate) async fn enqueue_recording_ready(
+    orgs: Vec<Uuid>,
+    conn: &mut sqlx::PgConnection,
+    r: ReadyRecording<'_>,
+) -> Result<Vec<crate::webhooks::Enfileirada>, sqlx::Error> {
     let ReadyRecording {
         id: rec_id,
         uploader,
@@ -676,10 +689,10 @@ pub(crate) async fn fire_recording_ready(state: &Arc<AppState>, r: ReadyRecordin
         media,
         source,
     } = r;
-    let orgs = crate::org::orgs_of_user(state, uploader).await;
     if orgs.is_empty() {
-        return;
+        return Ok(Vec::new());
     }
+    let _ = uploader;
     let mb = size / (1024 * 1024);
     let text = format!("Nova gravação disponível: «{filename}» ({mb} MB)");
     let payload = serde_json::json!({
@@ -696,18 +709,23 @@ pub(crate) async fn fire_recording_ready(state: &Arc<AppState>, r: ReadyRecordin
         "video_codec": media.video_codec,
         "audio_codec": media.audio_codec,
     });
+    let mut fila = Vec::new();
     for org_id in orgs {
-        crate::webhooks::fire(
-            state.clone(),
-            org_id,
-            crate::webhooks::Event {
-                name: "recording.ready",
-                title: "Delonix Meet".into(),
-                text: text.clone(),
-                payload: payload.clone(),
-            },
+        fila.extend(
+            crate::webhooks::enqueue(
+                &mut *conn,
+                org_id,
+                &crate::webhooks::Event {
+                    name: "recording.ready",
+                    title: "Delonix Meet".into(),
+                    text: text.clone(),
+                    payload: payload.clone(),
+                },
+            )
+            .await?,
         );
     }
+    Ok(fila)
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
@@ -818,20 +836,60 @@ pub async fn upload(
     let media = crate::media_probe::probe_and_store(&state, rec.id, &path).await;
     let has_thumbnail = crate::media_probe::thumbnail_path(&state, rec.id).exists();
     tracing::info!(room = %room.code, id = %rec.id, size = body.len(), "recording stored");
-    fire_recording_ready(
-        &state,
-        ReadyRecording {
-            id: rec.id,
-            uploader: auth.user_id,
-            filename: &rec.filename,
-            size: rec.size_bytes,
-            room_code: &room.code,
-            kind,
-            media: &media,
-            source: "upload",
-        },
-    )
-    .await;
+    // O UPLOAD é o caso em que uma transacção NÃO fecha a janela, e vale dizer
+    // porquê em vez de a fingir fechada: a linha da gravação já foi commitada
+    // `ready` lá atrás (antes de o ficheiro ser escrito e medido), e o payload
+    // do `recording.ready` precisa do `media`, que só se sabe depois do
+    // `ffprobe`. Embrulhar só o registo das entregas move a janela, não a
+    // elimina.
+    //
+    // O que a fecharia: inserir a gravação em `processing`, e passá-la a
+    // `ready` na MESMA transacção do registo das entregas, depois de medida —
+    // o que também corrigiria a linha ser anunciada pronta antes de o ficheiro
+    // estar validado. É uma mudança ao contrato desta rota (o `status` que a
+    // resposta devolve) e não entra neste trabalho.
+    //
+    // Entretanto: a transacção aqui garante que as entregas das várias
+    // organizações do dono nascem todas ou nenhuma, e a rede de segurança
+    // (varredor + `retry_due`) vale como para as outras.
+    let orgs = crate::org::orgs_of_user(&state, auth.user_id).await;
+    let fila = match state.db.begin().await {
+        Ok(mut tx) => {
+            let r = enqueue_recording_ready(
+                orgs,
+                &mut tx,
+                ReadyRecording {
+                    id: rec.id,
+                    uploader: auth.user_id,
+                    filename: &rec.filename,
+                    size: rec.size_bytes,
+                    room_code: &room.code,
+                    kind,
+                    media: &media,
+                    source: "upload",
+                },
+            )
+            .await;
+            match r {
+                Ok(f) => match tx.commit().await {
+                    Ok(()) => f,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "upload: o registo das entregas não ficou");
+                        Vec::new()
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "upload: o registo das entregas falhou");
+                    Vec::new()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "upload: sem transacção para registar as entregas");
+            Vec::new()
+        }
+    };
+    crate::webhooks::envia(&state, "recording.ready", fila).await;
     Ok(Json(UploadResp {
         recording: rec,
         kind: kind.to_string(),

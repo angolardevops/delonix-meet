@@ -933,3 +933,82 @@ async fn a_backlog_in_one_organization_does_not_starve_anothers_retries(db: sqlx
     // chegou ao receptor de B.
     assert_eq!(rx_b.received().len(), 1);
 }
+
+/// **O defeito que o trabalho nº3 fecha: um evento morto na janela.**
+///
+/// O `fire` antigo disparava numa tarefa à parte e entre o `COMMIT` do evento
+/// de negócio e o `INSERT` da entrega havia uma janela em que um `SIGTERM`
+/// apagava o evento **sem deixar rasto nenhum** — nem entrega, nem linha
+/// falhada, nem nada para reenviar na consola. O código assumia-o por escrito:
+/// «o registo não é condição do envio».
+///
+/// Aqui a morte é simulada da única forma honesta: grava-se na transacção,
+/// faz-se o commit, e **não se envia**. O que o teste exige é que o evento
+/// saia mesmo assim, pela rede de segurança que já existia.
+#[sqlx::test(migrations = "./migrations")]
+async fn um_evento_gravado_sai_mesmo_que_o_envio_nunca_aconteca(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+
+    // 1. O evento é GRAVADO na transacção do negócio, e a transacção fecha.
+    let mut tx = app.db.begin().await.unwrap();
+    let fila = delonix_server::webhook_enqueue(
+        &mut tx,
+        a.org().parse().unwrap(),
+        &delonix_server::WebhookEvent {
+            name: "meeting.created",
+            title: "Delonix Meet".into(),
+            text: "Reunião criada".into(),
+            payload: json!({"meeting_id": "o-que-nao-se-pode-perder"}),
+        },
+    )
+    .await
+    .expect("o registo da entrega falhou");
+    tx.commit().await.unwrap();
+    assert_eq!(fila.len(), 1, "o webhook subscrito não ficou na fila");
+
+    // 2. O PROCESSO MORRE AQUI: `envia` nunca é chamado. A `fila` é largada.
+    drop(fila);
+    assert!(
+        rx.received().is_empty(),
+        "não devia ter saído nada: o envio não aconteceu"
+    );
+    // Mas a linha existe, e é isso que faz a diferença.
+    let pendentes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM webhook_deliveries WHERE webhook_id = $1::uuid AND status = 'pending'",
+    )
+    .bind(&hook)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        pendentes, 1,
+        "o evento morreu na janela — sem linha nenhuma"
+    );
+
+    // 3. O nó seguinte arranca. Envelhece a `pending` para o varredor a dar por
+    //    abandonada (é o que um processo morto deixa), e corre a rede de
+    //    segurança que já existia.
+    sqlx::query(
+        "UPDATE webhook_deliveries SET created_at = now() - interval '2 hours'
+          WHERE webhook_id = $1::uuid",
+    )
+    .bind(&hook)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    delonix_server::sweep_deliveries(&app.db).await.unwrap();
+    assert!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap() > 0,
+        "o varredor não reagendou a entrega abandonada"
+    );
+
+    // 4. E o evento SAIU — com o corpo original, que é o que o integrador espera.
+    let recebido = rx.received();
+    assert_eq!(recebido.len(), 1, "o evento não saiu depois do arranque");
+    let corpo: Value = serde_json::from_slice(&recebido[0].body).unwrap();
+    assert_eq!(corpo["event"], "meeting.created");
+    assert_eq!(corpo["data"]["meeting_id"], "o-que-nao-se-pode-perder");
+}

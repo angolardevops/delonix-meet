@@ -713,7 +713,41 @@ pub async fn create(
 
     let (_, skipped) = add_invitees(&state, key.org_id, meeting.id, host_id, &req.invitees).await?;
 
-    crate::meetings::fire_meeting_webhook(&state, &meeting, host_id, "meeting.created").await;
+    // NOTA DE ÂMBITO (trabalho nº3): aqui a transacção agrupa só o REGISTO das
+    // entregas, não a escrita de negócio. A `/api/v1` cria a reunião mais
+    // acima, passa por um caminho de IDEMPOTÊNCIA que pode sair antes
+    // (`meeting_external_refs` com conflito) e chama o `add_invitees`, que usa
+    // a pool — enfiar uma transacção por aí exigiria mudar essa função e tratar
+    // o rollback do caminho de saída, com risco para a idempotência, que é o
+    // contrato desta rota. Fica anotado: a janela entre o commit da reunião e
+    // este registo NÃO está fechada nesta superfície.
+    //
+    // O que ganha mesmo assim: as entregas das várias organizações nascem todas
+    // ou nenhuma, e uma vez nascidas o varredor e o `retry_due` recuperam-nas.
+    // O dono lê-se ANTES da transacção (as consultas usam a pool).
+    let dono = crate::meetings::dono_do_evento(&state, host_id).await;
+    let fila = match (dono, state.db.begin().await) {
+        (Some(d), Ok(mut tx)) => {
+            let ctx = crate::meetings::monta_meeting_webhook(d, &meeting, "meeting.created");
+            match crate::meetings::enqueue_meeting_webhook(&mut tx, ctx, "meeting.created").await {
+                Ok(f) if tx.commit().await.is_ok() => f,
+                Ok(_) => {
+                    tracing::warn!("v1: o registo das entregas não ficou");
+                    Vec::new()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "v1: o registo das entregas falhou");
+                    Vec::new()
+                }
+            }
+        }
+        (None, _) => Vec::new(),
+        (_, Err(e)) => {
+            tracing::warn!(error = %e, "v1: sem transacção para registar as entregas");
+            Vec::new()
+        }
+    };
+    crate::webhooks::envia(&state, "meeting.created", fila).await;
     crate::audit::log(
         &state.db,
         Some(key.org_id),
@@ -924,8 +958,37 @@ pub async fn ring(
     )
     .await;
 
-    crate::meetings::fire_meeting_webhook(&state, &meeting, meeting.owner_id, "meeting.started")
-        .await;
+    // NOTA DE ÂMBITO (trabalho nº3): aqui a transacção agrupa só o REGISTO das
+    // entregas, não a escrita de negócio. A `/api/v1` cria a sala e marca o arranque
+    // mais acima, por caminhos partilhados com a BFF. Fica anotado: a janela
+    // entre esse commit e este registo NÃO está fechada nesta superfície.
+    //
+    // O que ganha mesmo assim: as entregas das várias organizações nascem todas
+    // ou nenhuma, e uma vez nascidas o varredor e o `retry_due` recuperam-nas.
+    // O dono lê-se ANTES da transacção (as consultas usam a pool).
+    let dono = crate::meetings::dono_do_evento(&state, meeting.owner_id).await;
+    let fila = match (dono, state.db.begin().await) {
+        (Some(d), Ok(mut tx)) => {
+            let ctx = crate::meetings::monta_meeting_webhook(d, &meeting, "meeting.started");
+            match crate::meetings::enqueue_meeting_webhook(&mut tx, ctx, "meeting.started").await {
+                Ok(f) if tx.commit().await.is_ok() => f,
+                Ok(_) => {
+                    tracing::warn!("v1: o registo das entregas não ficou");
+                    Vec::new()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "v1: o registo das entregas falhou");
+                    Vec::new()
+                }
+            }
+        }
+        (None, _) => Vec::new(),
+        (_, Err(e)) => {
+            tracing::warn!(error = %e, "v1: sem transacção para registar as entregas");
+            Vec::new()
+        }
+    };
+    crate::webhooks::envia(&state, "meeting.started", fila).await;
     tracing::info!(%id, ringing = ringing.len(), offline = offline.len(), "ring por API");
 
     Ok(Json(serde_json::json!({

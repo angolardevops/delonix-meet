@@ -421,39 +421,72 @@ pub fn spawn_mom_summary(state: Arc<AppState>, meeting_id: Uuid) {
             tracing::warn!(%meeting_id, "MoM AI: Ollama indisponível — mantém ata por regras");
             return;
         };
-        let _ =
-            sqlx::query("UPDATE meetings SET minutes = $1, minutes_ai_at = now() WHERE id = $2")
-                .bind(summary.chars().take(200_000).collect::<String>())
-                .bind(meeting_id)
-                .execute(&state.db)
-                .await;
-        tracing::info!(%meeting_id, "MoM AI: ata resumida via Ollama");
-        // Notifica integrações (ex.: nk_delonix_meet no Odoo) que o MoM final
-        // está pronto — o webhook só acelera o pull; o cron do Odoo apanha na
-        // mesma se este ping se perder.
+        // A ata e as entregas do `meeting.mom_ready` numa só transacção
+        // (trabalho nº3): o Odoo lê o `minutes_ai_at` para saber que o MoM é a
+        // versão final, e antes havia uma janela entre a gravar e a registar a
+        // entrega em que um SIGTERM apagava o aviso sem deixar rasto. Ou saem
+        // as duas, ou nenhuma.
+        match grava_ata_e_avisa(&state, meeting_id, &summary).await {
+            Ok(fila) => {
+                tracing::info!(%meeting_id, "MoM AI: ata resumida via Ollama");
+                // O envio vem DEPOIS do commit. O que falhar aqui fica
+                // `pending` e o varredor dos webhooks reagenda-o.
+                crate::webhooks::envia(&state, "meeting.mom_ready", fila).await;
+            }
+            Err(e) => {
+                tracing::error!(%meeting_id, error = %e, "MoM AI: a ata não ficou gravada");
+            }
+        }
+    });
+}
+
+/// Grava a ata resumida e REGISTA as entregas do `meeting.mom_ready` na mesma
+/// transacção. Devolve o que há a enviar depois do commit.
+async fn grava_ata_e_avisa(
+    state: &Arc<AppState>,
+    meeting_id: Uuid,
+    summary: &str,
+) -> Result<Vec<crate::webhooks::Enfileirada>, sqlx::Error> {
+    let orgs_do_dono = {
         let owner: Option<(Uuid, String)> =
             sqlx::query_as("SELECT owner_id, title FROM meetings WHERE id = $1")
                 .bind(meeting_id)
                 .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
-        if let Some((owner_id, title)) = owner {
-            let payload = serde_json::json!({ "meeting_id": meeting_id, "title": title });
-            for org_id in crate::org::orgs_of_user(&state, owner_id).await {
-                crate::webhooks::fire(
-                    state.clone(),
-                    org_id,
-                    crate::webhooks::Event {
-                        name: "meeting.mom_ready",
-                        title: "Delonix Meet".into(),
-                        text: format!("Ata pronta: {title}"),
-                        payload: payload.clone(),
-                    },
-                );
-            }
-        }
-    });
+                .await?;
+        owner
+    };
+    let Some((owner_id, title)) = orgs_do_dono else {
+        return Ok(Vec::new());
+    };
+    // As organizações do dono LEEM-SE antes de abrir a transacção: é uma
+    // consulta que não precisa de estar lá dentro, e `orgs_of_user` usa a pool.
+    let orgs = crate::org::orgs_of_user(state, owner_id).await;
+
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE meetings SET minutes = $1, minutes_ai_at = now() WHERE id = $2")
+        .bind(summary.chars().take(200_000).collect::<String>())
+        .bind(meeting_id)
+        .execute(&mut *tx)
+        .await?;
+    let payload = serde_json::json!({ "meeting_id": meeting_id, "title": title });
+    let mut fila = Vec::new();
+    for org_id in orgs {
+        fila.extend(
+            crate::webhooks::enqueue(
+                &mut tx,
+                org_id,
+                &crate::webhooks::Event {
+                    name: "meeting.mom_ready",
+                    title: "Delonix Meet".into(),
+                    text: format!("Ata pronta: {title}"),
+                    payload: payload.clone(),
+                },
+            )
+            .await?,
+        );
+    }
+    tx.commit().await?;
+    Ok(fila)
 }
 
 // ---------- Endpoint de tradução (legendas em tempo real) ----------
