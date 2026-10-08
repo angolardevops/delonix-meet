@@ -419,6 +419,7 @@ pub async fn run_queue(state: &Arc<AppState>) {
             &crate::jobs::Worker {
                 queue: FILA,
                 retry: POLITICA,
+                lease: None,
             },
         )
         .await;

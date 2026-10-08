@@ -430,44 +430,73 @@ const RETRY_BATCH: i64 = 50;
 /// A entrega é «pelo menos uma vez» e sem ordem: uma repetição pode chegar
 /// depois de eventos mais recentes. O corpo é o mesmo bit a bit; o
 /// `X-Delonix-Delivery` é novo por tentativa e o `X-Delonix-Event-Id` é o mesmo.
+/// A fila das repetições, declarada uma vez.
+///
+/// **Esta era a implementação de referência** — a única do repositório com
+/// backoff, espalhamento, classificação da falha e justiça entre organizações.
+/// A peça comum (`delonix_meet_core::jobs`) foi desenhada a partir dela, e esta
+/// migração é a última, de propósito: só se mexe no que funciona depois de a
+/// peça provar que faz tudo o que ele fazia.
+///
+/// O que a declaração substitui é o SQL, não o comportamento. A repartição por
+/// organização (`tenant_column`) é a mesma `row_number() OVER (PARTITION BY
+/// org_id …)` que estava aqui à mão, e é a razão por que a peça a tem: era a
+/// única boa ideia da casa nesta matéria e passou a estar ao alcance das sete.
+///
+/// O `claim_set` é só `retry_at = NULL` — a linha da tentativa SEGUINTE é
+/// inserida por quem chama, **dentro da mesma transacção** (ver
+/// `store::jobs::claim_in`): limpar o `retry_at` e criar a linha nova têm de ser
+/// atómicos, senão uma morte entre as duas perde a repetição.
+const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "webhook_retry",
+    table: "webhook_deliveries",
+    id_column: "id",
+    ready_when: "status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now()",
+    claim_set: "retry_at = NULL",
+    returning: "id, webhook_id, event, payload::text AS payload, attempt, event_id",
+    order_by: "retry_at",
+    tenant_column: Some("org_id"),
+    batch: RETRY_BATCH,
+};
+
+/// Uma entrega reivindicada para repetir.
+#[derive(sqlx::FromRow)]
+struct PorRepetir {
+    id: Uuid,
+    webhook_id: Uuid,
+    event: String,
+    payload: String,
+    attempt: i32,
+    event_id: Uuid,
+}
+
 pub async fn retry_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
     let mut tx = state.db.begin().await?;
-    // O lote reparte-se POR ORGANIZAÇÃO: a primeira repetição de cada uma, depois
-    // a segunda de cada uma, e assim por diante (`rn`), cada organização por
-    // ordem de `retry_at`. Ordenar só por `retry_at` deixava uma organização com
-    // milhares de entregas falhadas ocupar todos os lotes e as repetições das
-    // outras à espera de que ela esvaziasse. Com uma só organização à espera
-    // continua a levar o lote inteiro.
-    //
-    // A escolha não bloqueia (a janela não se combina com `FOR UPDATE`); o
-    // bloqueio vem a seguir sobre os ids escolhidos, e volta a verificar a
-    // condição: dois workers que escolham as mesmas linhas não as repetem.
-    let due: Vec<(Uuid, Uuid, String, String, i32, Uuid)> = sqlx::query_as(
-        "SELECT id, webhook_id, event, payload::text, attempt, event_id
-           FROM webhook_deliveries
-          WHERE id = ANY(
-                  SELECT id FROM (
-                    SELECT id, retry_at,
-                           row_number() OVER (PARTITION BY org_id ORDER BY retry_at) AS rn
-                      FROM webhook_deliveries
-                     WHERE status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now()
-                  ) due
-                  ORDER BY rn, retry_at
-                  LIMIT $1)
-            AND status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now()
-          ORDER BY retry_at
-            FOR UPDATE SKIP LOCKED",
+    // A transacção é NOSSA e fica aberta: a reivindicação limpa o `retry_at` e
+    // nós inserimos a linha da tentativa seguinte aqui dentro. Separá-las
+    // perdia a repetição se o processo morresse no meio.
+    let due: Vec<PorRepetir> = delonix_meet_store::jobs::claim_in(
+        &mut *tx,
+        &FILA,
+        &delonix_meet_core::jobs::Retry {
+            max_attempts: rules::MAX_AUTO_ATTEMPTS,
+            delays: &[],
+            jitter: 0.0,
+        },
+        None,
     )
-    .bind(RETRY_BATCH)
-    .fetch_all(&mut *tx)
     .await?;
 
     let mut sends = Vec::with_capacity(due.len());
-    for (id, hook_id, event, payload, previous, event_id) in due {
-        sqlx::query("UPDATE webhook_deliveries SET retry_at = NULL WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+    for PorRepetir {
+        id,
+        webhook_id: hook_id,
+        event,
+        payload,
+        attempt: previous,
+        event_id,
+    } in due
+    {
         let hook: Option<Webhook> = sqlx::query_as(&format!(
             "SELECT {WEBHOOK_COLUMNS} FROM org_webhooks WHERE id = $1 AND active = TRUE"
         ))

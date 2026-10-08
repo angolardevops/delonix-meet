@@ -23,49 +23,97 @@ pub struct Claimed {
 
 /// Reserva a gravação pronta mais antiga ainda por transcrever, ou uma cuja
 /// reserva expirou. `SKIP LOCKED`: dois workers nunca levam a mesma.
+/// A fila da transcrição, declarada uma vez.
+///
+/// Era o sexto `FOR UPDATE SKIP LOCKED` à mão do servidor, e já era um dos três
+/// completos (reserva, token, tecto de tentativas). Passa pela peça comum
+/// (`crate::jobs`) para que deixe de ser a sétima variante da mesma coisa.
+///
+/// **Duas mudanças de forma, e nenhuma de comportamento:**
+///
+/// 1. o token da reserva passa a nascer no SQL (`md5(random()…)`) em vez de em
+///    Rust. Serve o mesmo: é um segredo opaco que só quem reservou conhece, e
+///    volta no `returning` para o *worker* o guardar. Gerá-lo em Rust obrigava
+///    a ligar um valor dentro do `claim_set`, que é um fragmento da fila;
+///    gerá-lo aqui não muda o que o *worker* vê;
+/// 2. o prazo vem por `{lease_secs}`, substituído pelo `Lease` do `Worker` —
+///    porque este prazo é **pedido pelo worker**, não uma constante da fila.
+///    Passa pelo prendedor do domínio (`rules::lease_duration`, 1 min..2 h)
+///    antes de chegar aqui.
+///
+/// `tenant_column: None`: a ordem é por `created_at` e o lote é de um, como
+/// antes. A justiça entre organizações exigiria a org da SALA por junção —
+/// fica anotado para quando a GPU for o recurso disputado.
+const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "transcription",
+    table: "recordings",
+    id_column: "id",
+    ready_when: "transcribed_at IS NULL AND transcription_failed_at IS NULL \
+                 AND status = 'ready' \
+                 AND transcription_attempts < {max_attempts} \
+                 AND (transcription_lease_expires_at IS NULL \
+                      OR transcription_lease_expires_at < now())",
+    claim_set: "transcription_lease_token = md5(random()::text || clock_timestamp()::text), \
+                transcription_lease_expires_at = now() + make_interval(secs => {lease_secs}), \
+                transcription_attempts = transcription_attempts + 1",
+    // O `returning` é lido ANTES da marca da posse (a escolha e a marca são
+    // duas instruções na mesma transacção), por isso o token e o prazo não
+    // podem vir daqui — leem-se depois, pelo id.
+    returning: "id",
+    order_by: "created_at",
+    tenant_column: None,
+    batch: 1,
+};
+
+#[derive(sqlx::FromRow)]
+struct Reservada {
+    id: Uuid,
+}
+
 pub async fn claim(
     state: &AppState,
     worker_id: &str,
     lease_seconds: i32,
 ) -> Result<Option<Claimed>, ApiError> {
     let lease = rules::lease_duration(lease_seconds);
-    let token = delonix_meet_core::crypto::random_hex(24);
-    let row: Option<(Uuid, String, chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as(
-        "UPDATE recordings r
-            SET transcription_lease_token = $1,
-                transcription_lease_expires_at = now() + make_interval(secs => $2),
-                transcription_attempts = r.transcription_attempts + 1
-          WHERE r.id = (
-                SELECT id FROM recordings
-                 WHERE transcribed_at IS NULL
-                   AND transcription_failed_at IS NULL
-                   AND status = 'ready'
-                   AND transcription_attempts < $3
-                   AND (transcription_lease_expires_at IS NULL
-                        OR transcription_lease_expires_at < now())
-                 ORDER BY created_at
-                 FOR UPDATE SKIP LOCKED
-                 LIMIT 1)
-         RETURNING r.id,
-                   COALESCE((SELECT code FROM rooms WHERE id = r.room_id), ''),
-                   r.transcription_lease_expires_at,
-                   r.transcription_attempts",
+    let levadas: Vec<Reservada> = delonix_meet_store::jobs::claim(
+        &state.db,
+        &FILA,
+        &delonix_meet_core::jobs::Retry {
+            max_attempts: rules::MAX_ATTEMPTS,
+            delays: &[],
+            jitter: 0.0,
+        },
+        Some(lease),
     )
-    .bind(&token)
-    .bind(lease.as_secs() as f64)
-    .bind(rules::MAX_ATTEMPTS)
-    .fetch_optional(&state.db)
     .await?;
-    Ok(row.map(|(recording_id, room_code, expires, attempt)| {
-        tracing::info!(%recording_id, worker = worker_id, attempt, "transcrição reservada");
-        Claimed {
-            recording_id,
-            lease_token: token,
-            media_file: format!("{recording_id}.webm"),
-            room_code,
-            lease_expires_unix: expires.timestamp(),
-            attempt,
-        }
+    let Some(Reservada { id }) = levadas.into_iter().next() else {
+        return Ok(None);
+    };
+    // O que o worker precisa, lido depois da marca: o token e o prazo que a
+    // reivindicação acabou de escrever.
+    let (token, expires, attempt): (String, chrono::DateTime<chrono::Utc>, i32) = sqlx::query_as(
+        "SELECT transcription_lease_token, transcription_lease_expires_at,
+                transcription_attempts
+           FROM recordings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+    let room_code: String =
+        sqlx::query_scalar("SELECT COALESCE(code, '') FROM rooms WHERE id = (SELECT room_id FROM recordings WHERE id = $1)")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_default();
+    tracing::info!(recording_id = %id, worker = worker_id, attempt, "transcrição reservada");
+    Ok(Some(Claimed {
+        recording_id: id,
+        lease_token: token,
+        media_file: format!("{id}.webm"),
+        room_code,
+        lease_expires_unix: expires.timestamp(),
+        attempt,
     }))
 }
 

@@ -1933,6 +1933,7 @@ async fn dispatch_operator_batch(state: &Arc<AppState>) -> Result<usize, ApiErro
         &crate::jobs::Worker {
             queue: FILA_OPERADOR,
             retry: delonix_meet_core::jobs::Retry::ONCE,
+            lease: None,
         },
     )
     .await?;
