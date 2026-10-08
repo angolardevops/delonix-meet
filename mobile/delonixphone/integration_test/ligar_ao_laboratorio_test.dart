@@ -33,7 +33,15 @@ Future<void> _registarEEsperar(
   String esperado,
 ) async {
   await $(const Key('registar')).tap();
-  await $(find.text(esperado)).waitUntilVisible(timeout: _prazoRede);
+  // Espera o fim do registo (qualquer resultado) e só depois compara: se falhar, a mensagem
+  // do teste traz o texto que a app mostrou, em vez de «não encontrei o widget».
+  final fim = DateTime.now().add(_prazoRede);
+  String estado() =>
+      $.tester.widget<Text>(find.byKey(const Key('conta-estado'))).data ?? '';
+  while (estado() == 'A registar…' && DateTime.now().isBefore(fim)) {
+    await $.pump(const Duration(milliseconds: 300));
+  }
+  expect(estado(), contains(esperado));
 }
 
 void main() {
@@ -53,11 +61,9 @@ void main() {
 
       await $(const Key('conta-nome')).waitUntilVisible(timeout: _prazoRede);
       expect(find.text('Conta pronta, por registar'), findsOneWidget);
-      expect(
-        find.byKey(const Key('conta-aviso-sem-cifra')),
-        findsOneWidget,
-        reason: 'o laboratório só tem UDP: a app tem de o dizer',
-      );
+      // O QR do laboratório em modo LAN manda registar por TLS: sem aviso de «sem cifra».
+      expect(find.textContaining('TLS'), findsOneWidget);
+      expect(find.byKey(const Key('conta-aviso-sem-cifra')), findsNothing);
       await _registarEEsperar($, 'Registado');
     },
   );
@@ -108,9 +114,11 @@ void main() {
         .enterText(palavraPasse ?? c['palavraPasse'] as String);
     await $(const Key('m-dominio')).enterText(c['dominio'] as String);
     await $(const Key('m-servidor')).enterText(c['servidor'] as String);
-    await $(const Key('m-transporte')).scrollTo();
-    await $(const Key('m-transporte')).tap();
-    await $('UDP').last.tap();
+    if (c['transporte'] == 'udp') {
+      await $(const Key('m-transporte')).scrollTo();
+      await $(const Key('m-transporte')).tap();
+      await $('UDP').last.tap();
+    } // por omissão o formulário vem em TLS
     await $(const Key('m-guardar')).scrollTo();
     await $(const Key('m-guardar')).tap();
     await $(const Key('conta-nome')).waitUntilVisible();
@@ -135,9 +143,7 @@ void main() {
         await GatilhoLab.credenciais(),
         palavraPasse: 'palavra-passe-errada-123',
       );
-      await $(const Key('registar')).tap();
-      await $(find.textContaining('credenciais inválidas'))
-          .waitUntilVisible(timeout: _prazoRede);
+      await _registarEEsperar($, 'credenciais inválidas');
       expect(find.textContaining('palavra-passe-errada-123'), findsNothing);
     },
   );

@@ -263,7 +263,7 @@ representativo** da produção.
 | S-02 | **Segurar a chamada enquanto o aparelho acorda** (hook no dialplan/ESL que dispara o push e re-tenta o *bridge* até haver REGISTER) | RF-32 | A medir contra FreeSWITCH |
 | S-03 | **Credencial SIP por dispositivo** e revogação ligada às sessões do ADR-0011 | RF-04/05 | Hoje 1 ramal = 1 `sip_username` (a confirmar o resto) |
 | S-04 | Endpoint de **provisionamento** em `/api/v1` (devolve a configuração SIP e o token de provisionamento por QR) | RF-02/03 | Dados já existem em `VoiceExtensionInfo` |
-| S-05 | Perfil Sofia em **TLS** (e, se a Fase 0 o decidir, `wss`) como único perfil público dos ramais | RNF-20 | Exemplo da doc diz `udp` |
+| S-05 | Perfil Sofia em **TLS** (e, se a Fase 0 o decidir, `wss`) como único perfil público dos ramais | RNF-20 | Exemplo da doc diz `udp`. **Feito no laboratório** (branch `delonix-meet-telefonia/ramais-tls`, TLS opcional por `DELONIX_RAMAIS_TLS_PORT`, medido com `scripts/ramais-tls-prova.py`); por fazer: helm/cluster, `TLS_ONLY` em produção, e a rotação do certificado (S-09) |
 | S-06 | Histórico e voicemail por **API** a partir do CDR (`telephony_cdr.rs`) e de uma caixa de voz | RF-58/60 | A confirmar o que o CDR expõe por ramal |
 | S-07 | Presença: estado do ramal/sala exposto com isolamento por org | RF-55 | A medir |
 | S-08 | Endpoint de telemetria de qualidade e recusa de versões antigas | RNF-50/52 | — |

@@ -14,14 +14,21 @@ class _Servidor {
     this.qop = true,
     this.ignorar = false,
   }) {
-    socket.listen((e) {
+    socket?.listen((e) {
       if (e != RawSocketEvent.read) return;
-      final d = socket.receive();
+      final d = socket!.receive();
       if (d == null || ignorar) return;
       _atender(utf8.decode(d.data), d);
     });
   }
-  final RawDatagramSocket socket;
+
+  /// Para o servidor TLS: só a lógica de resposta, sem socket UDP.
+  _Servidor.semSocket(this.palavraPasse)
+    : socket = null,
+      qop = true,
+      ignorar = false;
+
+  final RawDatagramSocket? socket;
   final String palavraPasse;
   final bool qop;
   final bool ignorar;
@@ -48,7 +55,11 @@ class _Servidor {
       ).firstMatch(msg)?.group(1)?.trim() ??
       '';
 
-  void _atender(String msg, Datagram d) {
+  void _atender(String msg, Datagram d) =>
+      socket!.send(utf8.encode(responder(msg)), d.address, d.port);
+
+  /// A resposta a um pedido: 401 com desafio à primeira, 200 ou 403 à segunda.
+  String responder(String msg) {
     pedidos.add(msg);
     final aut = _h(msg, 'Authorization');
     String estado;
@@ -86,10 +97,10 @@ class _Servidor {
       '',
       '',
     ].join('\r\n');
-    socket.send(utf8.encode(r), d.address, d.port);
+    return r;
   }
 
-  void fechar() => socket.close();
+  void fechar() => socket?.close();
 }
 
 ContaSip _conta(
@@ -103,7 +114,7 @@ ContaSip _conta(
   dominio: _Servidor.realm,
   servidor: ServidorSip(
     anfitriao: '127.0.0.1',
-    porta: s.socket.port,
+    porta: s.socket!.port,
     transporte: t,
   ),
 );
@@ -157,10 +168,10 @@ void main() {
     });
   });
 
-  group('RegistoSipUdp contra um servidor simulado', () {
+  group('RegistoSip contra um servidor simulado', () {
     late _Servidor srv;
     tearDown(() => srv.fechar());
-    final registo = RegistoSipUdp(
+    final registo = RegistoSip(
       t1: const Duration(milliseconds: 50),
       prazo: const Duration(seconds: 2),
     );
@@ -207,9 +218,9 @@ void main() {
       expect(srv.pedidos, isEmpty);
     });
 
-    test('TLS ainda não é suportado: diz-o em vez de fingir', () async {
+    test('TCP em claro não existe: diz-o em vez de fingir', () async {
       srv = await _Servidor.iniciar('segredo');
-      final r = await registo.registar(_conta(srv, t: TransporteSip.tls));
+      final r = await registo.registar(_conta(srv, t: TransporteSip.tcp));
       expect(r.ok, isFalse);
       expect(r.mensagem, contains('TLS'));
       expect(srv.pedidos, isEmpty);
@@ -219,6 +230,144 @@ void main() {
       srv = await _Servidor.iniciar('segredo');
       await registo.desregistar(_conta(srv));
       expect(srv.pedidos.last, contains('Expires: 0'));
+    });
+  });
+
+  group('RegistoSip sobre TLS (certificado efémero gerado com openssl)', () {
+    late Directory pasta;
+    late SecureServerSocket servidor;
+    late _Servidor logica;
+    late List<int> certificadoPem;
+    var openssl = true;
+
+    setUpAll(() async {
+      pasta = await Directory.systemTemp.createTemp('registo-tls');
+      final r = await Process.run('openssl', [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-nodes',
+        '-days',
+        '2',
+        '-subj',
+        '/CN=teste',
+        '-addext',
+        'subjectAltName=IP:127.0.0.1',
+        '-keyout',
+        '${pasta.path}/k.pem',
+        '-out',
+        '${pasta.path}/c.pem',
+      ]);
+      openssl = r.exitCode == 0;
+      if (!openssl) return;
+      certificadoPem = await File('${pasta.path}/c.pem').readAsBytes();
+      final ctx = SecurityContext()
+        ..useCertificateChain('${pasta.path}/c.pem')
+        ..usePrivateKey('${pasta.path}/k.pem');
+      servidor = await SecureServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+        ctx,
+      );
+      logica = _Servidor.semSocket('segredo');
+      servidor.listen(
+        (c) {
+          final buf = <int>[];
+          c.listen((bytes) {
+            buf.addAll(bytes);
+            // uma mensagem por pedido: os pedidos desta prova não levam corpo
+            while (true) {
+              final i = utf8
+                  .decode(buf, allowMalformed: true)
+                  .indexOf('\r\n\r\n');
+              if (i < 0) return;
+              final msg = utf8
+                  .decode(buf, allowMalformed: true)
+                  .substring(0, i + 4);
+              buf.removeRange(0, utf8.encode(msg).length);
+              c.add(utf8.encode(logica.responder(msg)));
+            }
+          }, onError: (Object _) {});
+        },
+        onError: (
+          Object _,
+        ) {} /* o cliente que não confia no certificado aborta o handshake */,
+      );
+    });
+    tearDownAll(() async {
+      if (openssl) await servidor.close();
+      await pasta.delete(recursive: true);
+    });
+    setUp(() {
+      if (openssl) logica.pedidos.clear();
+    });
+
+    ContaSip contaTls() => ContaSip(
+      nomeExibicao: 'Ana',
+      utilizador: 'ramal_x',
+      palavraPasse: 'segredo',
+      dominio: _Servidor.realm,
+      servidor: ServidorSip(
+        anfitriao: '127.0.0.1',
+        porta: servidor.port,
+        transporte: TransporteSip.tls,
+      ),
+    );
+
+    test(
+      'com a raiz de confiança: 401 e depois 200, por um canal cifrado',
+      () async {
+        if (!openssl) return markTestSkipped('sem openssl');
+        final r = await RegistoSip(
+          raizConfiavel: certificadoPem,
+          prazo: const Duration(seconds: 3),
+        ).registar(contaTls());
+        expect(r.ok, isTrue, reason: r.mensagem);
+        expect(logica.pedidos, hasLength(2));
+        expect(logica.pedidos.first, contains('Via: SIP/2.0/TLS '));
+        expect(logica.pedidos.first, contains('transport=tls'));
+      },
+    );
+
+    test(
+      'sem a raiz o certificado não é de confiança e NADA é enviado',
+      () async {
+        if (!openssl) return markTestSkipped('sem openssl');
+        final r = await RegistoSip(prazo: const Duration(seconds: 3))
+            .registar(contaTls());
+        expect(r.ok, isFalse);
+        expect(r.mensagem, contains('certificado'));
+        expect(logica.pedidos, isEmpty);
+      },
+    );
+
+    test('um build de release ignora a raiz de laboratório', () async {
+      if (!openssl) return markTestSkipped('sem openssl');
+      final r = await RegistoSip(
+        raizConfiavel: certificadoPem,
+        release: true,
+        prazo: const Duration(seconds: 3),
+      ).registar(contaTls());
+      expect(r.ok, isFalse);
+      expect(logica.pedidos, isEmpty);
+    });
+
+    test('palavra-passe errada por TLS: 403', () async {
+      if (!openssl) return markTestSkipped('sem openssl');
+      final c = contaTls();
+      final errada = ContaSip(
+        nomeExibicao: c.nomeExibicao,
+        utilizador: c.utilizador,
+        palavraPasse: 'x',
+        dominio: c.dominio,
+        servidor: c.servidor,
+      );
+      final r = await RegistoSip(
+        raizConfiavel: certificadoPem,
+        prazo: const Duration(seconds: 3),
+      ).registar(errada);
+      expect(r.codigo, 403);
     });
   });
 }

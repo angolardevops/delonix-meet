@@ -53,6 +53,11 @@ para não mexer nos ramais de pessoas. A raiz de confiança do laboratório entr
 | palavra-passe errada | 403 do FreeSWITCH; a mensagem não repete a palavra-passe |
 | negar a câmara | o ecrã de recurso aparece |
 
+**Registo por TLS.** Com o perfil TLS dos ramais (branch `delonix-meet-telefonia/ramais-tls`: `DELONIX_RAMAIS_TLS_PORT`,
+passo 9b do entrypoint do FreeSWITCH) o QR do laboratório já manda registar por **TLS na 5071**, com o certificado
+da borda (cobre o IP), e o `RegistoSip` confere-o contra a raiz de laboratório (`LAB_CA_B64`, só debug). Sem esse
+perfil o QR continua em UDP/5070 e a app mostra o aviso «sem cifra». O FreeSWITCH lista a conta como `Registered(TLS)`.
+
 **Não provado:** a leitura de um QR com a câmara. A câmara virtual do emulador (cena 3D) saiu em branco no emulador sem janela;
-fica por medir num aparelho real ou com a janela do emulador. O registo é UDP em 5070: o laboratório não tem perfil TLS (S-05),
-e a app só deixa de recusar o UDP em debug. O registo de diagnóstico (`RegistoSipUdp`) não é o motor de chamadas.
+fica por medir num aparelho real ou com a janela do emulador. TCP em claro não existe na app, e o UDP só em debug.
+O registo de diagnóstico (`RegistoSip`) não é o motor de chamadas: sem SRTP, sem chamadas, sem CGNAT.

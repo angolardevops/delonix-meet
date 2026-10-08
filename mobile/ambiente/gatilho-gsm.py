@@ -74,9 +74,10 @@ class Laboratorio:
         # `iter("{*}x")` não aceita o curinga do espaço de nomes (só `find`): filtra-se à mão
         cfg = {(s.get("name"), e.get("name")): (e.text or "")
                for s in raiz.iter() if s.tag.endswith("}section") for e in s if e.tag.endswith("}entry")}
-        proxy = re.search(r"sip:([^:;>]+):(\d+)", cfg[("proxy_0", "reg_proxy")])
+        proxy = re.search(r"sip:([^:;>]+):(\d+)(?:;transport=(\w+))?", cfg[("proxy_0", "reg_proxy")])
         return {"utilizador": cfg[("auth_info_0", "username")], "palavraPasse": cfg[("auth_info_0", "passwd")],
-                "dominio": cfg[("auth_info_0", "domain")], "servidor": f"{proxy.group(1)}:{proxy.group(2)}"}
+                "dominio": cfg[("auth_info_0", "domain")], "servidor": f"{proxy.group(1)}:{proxy.group(2)}",
+                "transporte": (proxy.group(3) or "udp").lower()}
 
 
 LAB_ROTAS = {"/lab/bilhete", "/lab/credenciais", "/lab/bilhete-usado"}

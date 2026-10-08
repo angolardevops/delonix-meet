@@ -28,21 +28,26 @@ abstract interface class ServicoRegisto {
   Future<void> desregistar(ContaSip conta);
 }
 
-/// REGISTER com digest sobre UDP, em Dart puro.
+/// REGISTER com digest sobre UDP ou TLS, em Dart puro.
 ///
 /// **É uma ferramenta de diagnóstico, não o motor de chamadas.** Prova que as credenciais
-/// provisionadas registam no FreeSWITCH e dá o estado de registo (RF-07). Só faz UDP: TCP e TLS
-/// ainda não (o laboratório só expõe UDP em 5070), por isso devolve uma falha clara em vez de
-/// fingir. Sem SRTP, sem chamadas, sem NAT/CGNAT (RNF-45): isso é do motor.
-class RegistoSipUdp implements ServicoRegisto {
-  RegistoSipUdp({
+/// provisionadas registam no FreeSWITCH e dá o estado de registo (RF-07). TLS confere o
+/// certificado do servidor contra as raízes do sistema (e, só fora de release, contra
+/// [raizConfiavel], a raiz do laboratório). TCP em claro não existe. Sem SRTP, sem chamadas, sem
+/// NAT/CGNAT (RNF-45): isso é do motor.
+class RegistoSip implements ServicoRegisto {
+  RegistoSip({
     this.t1 = const Duration(milliseconds: 500),
     this.prazo = const Duration(seconds: 10),
+    List<int>? raizConfiavel,
+    bool release = false,
     Random? aleatorio,
-  }) : _r = aleatorio ?? Random.secure();
+  }) : _raiz = release ? null : raizConfiavel,
+       _r = aleatorio ?? Random.secure();
 
   final Duration t1;
   final Duration prazo;
+  final List<int>? _raiz;
   final Random _r;
 
   @override
@@ -62,32 +67,40 @@ class RegistoSipUdp implements ServicoRegisto {
   ).join();
 
   Future<ResultadoRegisto> _registo(ContaSip conta, int expira) async {
-    if (conta.servidor.transporte != TransporteSip.udp) {
-      return ResultadoRegisto.falhou(
+    if (conta.servidor.transporte == TransporteSip.tcp) {
+      return const ResultadoRegisto.falhou(
         null,
-        'O transporte ${conta.servidor.transporte.name.toUpperCase()} ainda não é suportado nesta versão.',
+        'TCP em claro não é suportado: use TLS.',
       );
     }
-    final enderecos = await InternetAddress.lookup(
-      conta.servidor.anfitriao,
-      type: InternetAddressType.IPv4,
-    ).timeout(prazo, onTimeout: () => <InternetAddress>[]);
-    if (enderecos.isEmpty) {
+    final _Canal canal;
+    try {
+      canal = conta.servidor.transporte == TransporteSip.tls
+          ? await _CanalTls.abrir(conta.servidor, _raiz, prazo)
+          : await _CanalUdp.abrir(conta.servidor, prazo, t1);
+    } on HandshakeException catch (e) {
+      // `e.message` e o erro do SO descrevem o handshake (certificado, versão, ligação cortada);
+      // não levam credenciais.
+      return ResultadoRegisto.falhou(
+        null,
+        'O certificado do servidor SIP não é de confiança (${e.message}${e.osError == null ? '' : ': ${e.osError!.message}'}).',
+      );
+    } on _SemServidor {
       return const ResultadoRegisto.falhou(
         null,
         'Não foi possível resolver o servidor.',
       );
+    } on SocketException {
+      return const ResultadoRegisto.falhou(
+        null,
+        'Não foi possível ligar ao servidor SIP.',
+      );
+    } on TimeoutException {
+      return const ResultadoRegisto.falhou(
+        null,
+        'O servidor SIP não respondeu a tempo.',
+      );
     }
-    final destino = enderecos.first;
-    final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-    final respostas = StreamController<String>.broadcast();
-    socket.listen((e) {
-      if (e == RawSocketEvent.read) {
-        final d = socket.receive();
-        if (d != null) respostas.add(utf8.decode(d.data, allowMalformed: true));
-      }
-    });
-    final ip = await _ipLocal(destino);
     final callId = '${_hex(8)}@delonixphone';
     final tag = _hex(4);
     var cseq = 0;
@@ -97,13 +110,13 @@ class RegistoSipUdp implements ServicoRegisto {
 
     String pedido(String? autorizacao) => [
       'REGISTER $uriRegisto SIP/2.0',
-      'Via: SIP/2.0/UDP $ip:${socket.port};branch=z9hG4bK${_hex(6)};rport',
+      'Via: SIP/2.0/${canal.via} ${canal.ipLocal}:${canal.portaLocal};branch=z9hG4bK${_hex(6)};rport',
       'Max-Forwards: 70',
       'From: "$nome" <$identidade>;tag=$tag',
       'To: <$identidade>',
       'Call-ID: $callId',
       'CSeq: ${++cseq} REGISTER',
-      'Contact: <sip:${conta.utilizador}@$ip:${socket.port};transport=udp>',
+      'Contact: <sip:${conta.utilizador}@${canal.ipLocal}:${canal.portaLocal};transport=${canal.via.toLowerCase()}>',
       'Expires: $expira',
       'User-Agent: DelonixPhone/0.1 (diagnostico)',
       if (autorizacao != null) 'Authorization: $autorizacao',
@@ -113,14 +126,8 @@ class RegistoSipUdp implements ServicoRegisto {
     ].join('\r\n');
 
     try {
-      var resp = await _transaccao(
-        socket,
-        destino,
-        conta.servidor.porta,
-        pedido(null),
-        respostas.stream,
-        callId,
-      );
+      final p1 = pedido(null);
+      var resp = await _transaccao(canal, p1, callId, cseq);
       if (resp == null) {
         return const ResultadoRegisto.falhou(null, 'O servidor não respondeu.');
       }
@@ -159,14 +166,8 @@ class RegistoSipUdp implements ServicoRegisto {
             'uri="$uriRegisto", response="$r", algorithm=MD5'
             '${desafio.qop != null ? ', qop=auth, nc=00000001, cnonce="$cnonce"' : ''}'
             '${desafio.opaque != null ? ', opaque="${desafio.opaque}"' : ''}';
-        resp = await _transaccao(
-          socket,
-          destino,
-          conta.servidor.porta,
-          pedido(auth),
-          respostas.stream,
-          callId,
-        );
+        final p2 = pedido(auth);
+        resp = await _transaccao(canal, p2, callId, cseq);
         if (resp == null) {
           return const ResultadoRegisto.falhou(
             null,
@@ -182,62 +183,214 @@ class RegistoSipUdp implements ServicoRegisto {
         ),
         final c => ResultadoRegisto.falhou(
           c,
-          'Registo falhou (${resp.codigo} ${resp.motivo}).',
+          'Registo falhou ($c ${resp.motivo}).',
         ),
       };
     } finally {
-      socket.close();
-      await respostas.close();
+      await canal.fechar();
     }
   }
 
-  /// Enviar, e reenviar com T1 a duplicar (RFC 3261 §17.1.2.2) até haver resposta final.
+  /// Envia e espera a resposta final com a mesma Call-ID e CSeq: um 401 atrasado da 1.ª tentativa
+  /// não pode fechar a 2.ª. Em UDP reenvia com T1 a duplicar (RFC 3261 §17.1.2.2); em TLS o
+  /// transporte já é fiável e não se reenvia.
   Future<_Resposta?> _transaccao(
-    RawDatagramSocket s,
-    InternetAddress d,
-    int porta,
+    _Canal c,
     String msg,
-    Stream<String> entrada,
     String callId,
+    int cseq,
   ) async {
-    final dados = utf8.encode(msg);
     final fim = DateTime.now().add(prazo);
-    final c = Completer<_Resposta?>();
-    final sub = entrada.listen((t) {
+    final pronta = Completer<_Resposta?>();
+    final sub = c.mensagens.listen((t) {
       final r = _Resposta.ler(t);
-      if (r != null &&
+      final mesmo =
+          r != null &&
           r.cabecalho('call-id') == callId &&
-          r.codigo >= 200 &&
-          !c.isCompleted) {
-        c.complete(r);
-      }
+          r.cabecalho('cseq')?.startsWith('$cseq ') == true;
+      if (mesmo && r.codigo >= 200 && !pronta.isCompleted) pronta.complete(r);
     });
     var espera = t1;
     () async {
-      while (!c.isCompleted && DateTime.now().isBefore(fim)) {
-        s.send(dados, d, porta);
+      while (!pronta.isCompleted && DateTime.now().isBefore(fim)) {
+        c.enviar(msg);
+        if (c.fiavel) {
+          await pronta.future.timeout(
+            fim.difference(DateTime.now()),
+            onTimeout: () => null,
+          );
+          break;
+        }
         await Future<void>.delayed(espera);
         espera = Duration(milliseconds: min(espera.inMilliseconds * 2, 4000));
       }
-      if (!c.isCompleted) c.complete(null);
+      if (!pronta.isCompleted) pronta.complete(null);
     }();
     try {
-      return await c.future;
+      return await pronta.future;
     } finally {
       await sub.cancel();
     }
   }
+}
 
-  /// O IPv4 local que sai para [destino] (para o Via/Contact). Cai em 0.0.0.0 se não houver.
-  Future<String> _ipLocal(InternetAddress destino) async {
-    for (final i in await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-    )) {
-      for (final a in i.addresses) {
-        if (!a.isLoopback) return a.address;
-      }
+class _SemServidor implements Exception {}
+
+/// O canal por onde vão os pedidos: datagramas (UDP) ou um fluxo cifrado (TLS).
+abstract class _Canal {
+  String get via;
+  String get ipLocal;
+  int get portaLocal;
+  bool get fiavel;
+  Stream<String> get mensagens;
+  void enviar(String mensagem);
+  Future<void> fechar();
+}
+
+/// O IPv4 local que sai por uma interface que não é loopback (para o Via/Contact).
+Future<String> _ipLocal() async {
+  for (final i in await NetworkInterface.list(type: InternetAddressType.IPv4)) {
+    for (final a in i.addresses) {
+      if (!a.isLoopback) return a.address;
     }
-    return '0.0.0.0';
+  }
+  return '0.0.0.0';
+}
+
+class _CanalUdp implements _Canal {
+  _CanalUdp._(this._socket, this._destino, this._porta, this.ipLocal) {
+    _socket.listen((e) {
+      if (e == RawSocketEvent.read) {
+        final d = _socket.receive();
+        if (d != null) _entrada.add(utf8.decode(d.data, allowMalformed: true));
+      }
+    });
+  }
+
+  final RawDatagramSocket _socket;
+  final InternetAddress _destino;
+  final int _porta;
+  final _entrada = StreamController<String>.broadcast();
+
+  static Future<_CanalUdp> abrir(
+    ServidorSip s,
+    Duration prazo,
+    Duration t1,
+  ) async {
+    final enderecos = await InternetAddress.lookup(
+      s.anfitriao,
+      type: InternetAddressType.IPv4,
+    ).timeout(prazo, onTimeout: () => <InternetAddress>[]);
+    if (enderecos.isEmpty) throw _SemServidor();
+    final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+    return _CanalUdp._(socket, enderecos.first, s.porta, await _ipLocal());
+  }
+
+  @override
+  final String ipLocal;
+  @override
+  String get via => 'UDP';
+  @override
+  int get portaLocal => _socket.port;
+  @override
+  bool get fiavel => false;
+  @override
+  Stream<String> get mensagens => _entrada.stream;
+  @override
+  void enviar(String m) => _socket.send(utf8.encode(m), _destino, _porta);
+  @override
+  Future<void> fechar() async {
+    _socket.close();
+    await _entrada.close();
+  }
+}
+
+class _CanalTls implements _Canal {
+  _CanalTls._(this._socket) {
+    _socket.listen(
+      (bytes) {
+        _buffer.addAll(bytes);
+        _cortar();
+      },
+      onDone: () => _entrada.close(),
+      onError: (Object _) => _entrada.close(),
+      cancelOnError: true,
+    );
+  }
+
+  final SecureSocket _socket;
+  final _buffer = <int>[];
+  final _entrada = StreamController<String>.broadcast();
+
+  static Future<_CanalTls> abrir(
+    ServidorSip s,
+    List<int>? raiz,
+    Duration prazo,
+  ) async {
+    final ctx = SecurityContext(withTrustedRoots: true);
+    if (raiz != null && raiz.isNotEmpty) ctx.setTrustedCertificatesBytes(raiz);
+    // O certificado é conferido contra o nome/IP a que nos ligamos; sem `onBadCertificate`, uma
+    // falha é um HandshakeException e a ligação não se faz.
+    return _CanalTls._(
+      await SecureSocket.connect(
+        s.anfitriao,
+        s.porta,
+        context: ctx,
+        timeout: prazo,
+      ),
+    );
+  }
+
+  /// Corta o fluxo em mensagens SIP: cabeçalhos até à linha vazia, mais `Content-Length` bytes.
+  void _cortar() {
+    while (true) {
+      final fim = _procurar(_buffer, const [13, 10, 13, 10]);
+      if (fim < 0) return;
+      final cab = utf8.decode(_buffer.sublist(0, fim), allowMalformed: true);
+      final cl = int.tryParse(
+        RegExp(
+              r'^(?:content-length|l)\s*:\s*(\d+)',
+              caseSensitive: false,
+              multiLine: true,
+            ).firstMatch(cab)?.group(1) ??
+            '0',
+      )!;
+      if (_buffer.length < fim + 4 + cl) return;
+      _buffer.removeRange(0, fim + 4 + cl);
+      _entrada.add('$cab\r\n\r\n');
+    }
+  }
+
+  static int _procurar(List<int> dados, List<int> agulha) {
+    for (var i = 0; i + agulha.length <= dados.length; i++) {
+      var igual = true;
+      for (var j = 0; j < agulha.length; j++) {
+        if (dados[i + j] != agulha[j]) {
+          igual = false;
+          break;
+        }
+      }
+      if (igual) return i;
+    }
+    return -1;
+  }
+
+  @override
+  String get via => 'TLS';
+  @override
+  String get ipLocal => _socket.address.address;
+  @override
+  int get portaLocal => _socket.port;
+  @override
+  bool get fiavel => true;
+  @override
+  Stream<String> get mensagens => _entrada.stream;
+  @override
+  void enviar(String m) => _socket.add(utf8.encode(m));
+  @override
+  Future<void> fechar() async {
+    await _socket.close();
+    if (!_entrada.isClosed) await _entrada.close();
   }
 }
 

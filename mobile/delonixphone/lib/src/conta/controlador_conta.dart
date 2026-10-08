@@ -22,14 +22,17 @@ class ControladorConta extends ChangeNotifier {
     bool? permitirSemCifra,
   }) : permitirSemCifra = permitirSemCifra ?? !kReleaseMode;
 
-  factory ControladorConta.padrao() => ControladorConta(
-    armazem: ArmazemContaSeguro(),
-    provisionador: ClienteProvisionamento(
-      raizConfiavel: _raizLabB64.isEmpty ? null : base64Decode(_raizLabB64),
-      release: kReleaseMode,
-    ),
-    registo: RegistoSipUdp(),
-  );
+  factory ControladorConta.padrao() {
+    final raiz = _raizLabB64.isEmpty ? null : base64Decode(_raizLabB64);
+    return ControladorConta(
+      armazem: ArmazemContaSeguro(),
+      provisionador: ClienteProvisionamento(
+        raizConfiavel: raiz,
+        release: kReleaseMode,
+      ),
+      registo: RegistoSip(raizConfiavel: raiz, release: kReleaseMode),
+    );
+  }
 
   final ArmazemConta _armazem;
   final Provisionador _provisionador;
