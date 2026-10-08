@@ -38,6 +38,7 @@ import { Icon } from '../ui/icons'
 import { Alert, Button, Checkbox, cx, Dialog, Empty, Field, Select, StatusBadge, TextInput, Toggle } from '../ui/kit'
 import { Menu, useMenuDeContexto, type AccaoDeMenu, type EventoDePonteiro } from '../ui/Menu'
 import '../ui/salas.css'
+import { copiarTexto } from '../ui/copy'
 
 type Formato = 'normal' | 'training'
 
@@ -109,7 +110,7 @@ export default function Rooms() {
 
   const copiar = useCallback(async (code: string) => {
     try {
-      await navigator.clipboard.writeText(enderecoDaSala(code))
+      if (!(await copiarTexto(enderecoDaSala(code)))) return
       setCopiada(code)
       setTimeout(() => setCopiada((c) => (c === code ? null : c)), 2000)
     } catch {

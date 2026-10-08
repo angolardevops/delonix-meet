@@ -22,6 +22,7 @@ import {
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Alert, Button, Card, Confirm, Dialog, Select, StatusBadge, TextInput } from '../../ui/kit'
 import { formatAgo, orgErrorMessage, refusalAware, useLocaleTag } from './orgShared'
+import { copiarTexto } from '../../ui/copy'
 
 export default function SmsGatewayCard({ orgId }: { orgId: string }) {
   const { t } = useTranslation()
@@ -211,7 +212,7 @@ function PairDialog({ orgId, onClose }: { orgId: string; onClose: () => void }) 
             icon="copy"
             onClick={async () => {
               try {
-                await navigator.clipboard.writeText(created.token)
+                await copiarTexto(created.token)
                 setCopied(true)
               } catch {
                 setErr(t('org.sms.gateways.erroCopiar'))

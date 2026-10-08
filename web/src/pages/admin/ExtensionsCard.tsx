@@ -59,6 +59,7 @@ import LinphoneQrDialog from '../../components/LinphoneQrDialog'
 import PinOnce from '../../components/PinOnce'
 import { Alert, Button, Card, Confirm, Dialog, Field, IconButton, Segmented, Select, StatusBadge, TextInput, Toggle } from '../../ui/kit'
 import { orgErrorMessage, refusalAware } from './orgShared'
+import { copiarTexto } from '../../ui/copy'
 
 export default function ExtensionsCard({ orgId, people }: { orgId: string; people: Employee[] }) {
   const { t } = useTranslation()
@@ -883,7 +884,7 @@ export function ExtensionCredentials({ created, onCopied }: { created: Extension
   async function copy(f: CredentialField) {
     if (f.value === null) return
     try {
-      await navigator.clipboard.writeText(f.value)
+      await copiarTexto(f.value)
       setCopiedKey(f.key)
     } catch {
       // Sem clipboard (contexto não seguro, permissão negada): o valor está à
@@ -932,7 +933,7 @@ function RevealDialog({ created, onClose }: { created: ExtensionCreated; onClose
 
   async function copyAll() {
     try {
-      await navigator.clipboard.writeText(credentialsText(credentialFields(created, t)))
+      await copiarTexto(credentialsText(credentialFields(created, t)))
       setCopiedAll(true)
     } catch {
       // Sem clipboard (contexto não seguro, permissão negada): a pessoa copia
