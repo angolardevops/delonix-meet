@@ -261,3 +261,69 @@ async fn export_is_rate_limited(db: sqlx::PgPool) {
     let (st, e) = app.post(EXPORTS, Some(&ana.token), json!({})).await;
     assert_eq!(st, 202, "{e}");
 }
+
+/// **Uma exportação que falha por acidente volta à fila, não à pessoa.**
+///
+/// O defeito que isto guarda: a fila das exportações tinha reserva, requeue do
+/// abandonado e `SKIP LOCKED`, mas **zero tentativas**. Qualquer falha fechava
+/// o pedido como `failed` com a mensagem «peça outra» — a pessoa era o
+/// mecanismo de retry, e pela regra da casa um passo manual no caminho do
+/// cliente é um bloqueio.
+///
+/// Força-se a falha tornando o directório das exportações impossível de
+/// escrever, que é o que um disco cheio faz.
+#[sqlx::test(migrations = "./migrations")]
+async fn uma_exportacao_que_falha_volta_a_fila_com_espera(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+
+    // Pede a exportação (entra `queued`) e tira-lhe o sítio onde escrever.
+    let (s, _) = app
+        .post("/api/users/me/data-exports", Some(&a.token), json!({}))
+        .await;
+    assert_eq!(s, 202, "o pedido não entrou na fila");
+    // Põe um FICHEIRO onde o directório devia estar: é o que um disco cheio ou
+    // uma permissão em falta fazem — escrever ali deixa de ser possível. O pai
+    // tem de existir primeiro; o harness só cria o directório quando precisa.
+    let dir = app.state.config.data_exports_dir.clone();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(
+        dir.parent()
+            .expect("o directório das exportações não tem pai"),
+    )
+    .expect("não consegui criar o directório-pai");
+    std::fs::write(&dir, b"isto nao e um directorio").expect("não consegui bloquear o directório");
+
+    // A volta da fila: falha a gerar e TEM de voltar a `queued` com espera.
+    delonix_server::data_export_run_queue(&app.state).await;
+    let (status, attempts, espera): (String, i32, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as(
+            "SELECT status, attempts, next_attempt_at FROM data_exports WHERE user_id = $1::uuid",
+        )
+        .bind(&a.user_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(attempts, 1, "a tentativa não foi contada");
+    assert_eq!(
+        status, "queued",
+        "a exportação foi dada por perdida à primeira falha"
+    );
+    let espera = espera.expect("voltou à fila sem espera: repetiria em rajada");
+    assert!(
+        espera > chrono::Utc::now(),
+        "a espera do backoff ficou no passado"
+    );
+
+    // E a espera é respeitada: a volta seguinte NÃO a leva outra vez.
+    delonix_server::data_export_run_queue(&app.state).await;
+    let depois: i32 =
+        sqlx::query_scalar("SELECT attempts FROM data_exports WHERE user_id = $1::uuid")
+            .bind(&a.user_id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(depois, 1, "a fila ignorou o next_attempt_at e repetiu já");
+
+    let _ = std::fs::remove_file(&dir);
+}

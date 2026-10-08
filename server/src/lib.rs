@@ -96,6 +96,9 @@ mod voice_caller;
 mod webhooks;
 mod whiteboards;
 
+/// A fila das exportações e a sua reivindicação, expostas aos testes de
+/// integração sem abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use data_exports::run_queue as data_export_run_queue;
 pub use dial_outs::caller_of_call as dial_outs_caller_of_call;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
