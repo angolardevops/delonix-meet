@@ -121,7 +121,12 @@ class ClienteProvisionamento implements Provisionador {
   final Duration _prazo;
 
   @override
-  Future<ContaSip> resgatar(String lido) async {
+  Future<ContaSip> resgatar(String lido) async =>
+      contaDeLpconfig(await baixarConfiguracao(lido));
+
+  /// O XML `lpconfig` tal como o servidor o entrega. **Gasta o bilhete.** O motor SIP (ADR-0022)
+  /// carrega-o directamente; [contaDeLpconfig] serve a validação e o ecrã.
+  Future<String> baixarConfiguracao(String lido) async {
     final uri = enderecoDeProvisionamento(lido);
     final contexto = SecurityContext(withTrustedRoots: true);
     if (_raiz != null && _raiz.isNotEmpty) {
@@ -146,7 +151,8 @@ class ClienteProvisionamento implements Provisionador {
           'O servidor recusou o provisionamento (HTTP ${resposta.statusCode}).',
         );
       }
-      return contaDeLpconfig(corpo);
+      contaDeLpconfig(corpo); // valida antes de entregar ao motor
+      return corpo;
     } on HandshakeException {
       throw const ProvisionamentoInvalido(
         'O certificado do servidor não é de confiança.',

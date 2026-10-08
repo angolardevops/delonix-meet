@@ -2,6 +2,12 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // Linphone SDK (spike da Fase 0, ADR-0022): AGPLv3 ou licença comercial. Só entra em
+        // builds de DEBUG (ver app/build.gradle.kts): nenhum binário de release leva código AGPL.
+        maven {
+            url = uri("https://download.linphone.org/maven_repository")
+            content { includeGroup("org.linphone.no-video") }
+        }
     }
 }
 

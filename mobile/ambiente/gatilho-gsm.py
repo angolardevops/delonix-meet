@@ -71,6 +71,19 @@ class Laboratorio:
     def resgatar(self, url):
         return self.chamar("GET", url[len(self.base):], bruto=True)
 
+    def tocar(self, q):
+        """O FreeSWITCH origina uma chamada para o ramal [u]@[d] e, ao atender, toca um tom de 440 Hz sem parar (`endless_playback`: o `playback` de um tom acaba sozinho e o servidor desligava a chamada ao fim de 1 s).
+        Só o anfitrião fala com o Event Socket (a password vem do .env do laboratório)."""
+        u, d = q.get("u", ""), q.get("d", "")
+        if not (SEGURO.match(u) and SEGURO.match(d)):
+            raise KeyError("u/d")
+        env = dict(l.split("=", 1) for l in (LAB / ".env").read_text().splitlines() if "=" in l and not l.startswith("#"))
+        r = subprocess.run(["delonix", "container", "exec", "delonix-freeswitch", "fs_cli", "-H", "127.0.0.1", "-p",
+                            env["TELEPHONY_ESL_PASSWORD"], "-x",
+                            f"originate {{ignore_early_media=true,originate_timeout=25}}user/{u}@{d} &endless_playback(tone_stream://%(1000,0,440))"],
+                           capture_output=True, text=True, timeout=40)
+        return {"ok": "+OK" in r.stdout}
+
     def credenciais(self):
         """Gasta um bilhete e devolve a conta do ramal de teste (para o caminho manual)."""
         raiz = ET.fromstring(self.resgatar(self.bilhete()))
@@ -83,14 +96,26 @@ class Laboratorio:
                 "transporte": (proxy.group(3) or "udp").lower()}
 
 
-LAB_ROTAS = {"/lab/bilhete", "/lab/credenciais", "/lab/bilhete-usado"}
+LAB_ROTAS = {"/lab/bilhete", "/lab/credenciais", "/lab/bilhete-usado", "/lab/tocar"}
+SEGURO = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")  # o que entra na linha do fs_cli: nada de espaços nem aspas
 _lab = None
 
 
 class Gatilho(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path in LAB_ROTAS:
-            self._lab()
+        rota, _, consulta = self.path.partition("?")
+        if rota == "/adb/microfone":
+            # Comando FIXO, sem nada do pedido: dá o microfone à app de testes. Os testes de chamada não
+            # provam o diálogo do sistema (isso é do teste da permissão do telefone): a automação do
+            # diálogo falhava com a máquina carregada.
+            r = subprocess.run(["adb", "shell", "pm", "grant", "ao.ngolacloud.delonixphone", "android.permission.RECORD_AUDIO"],
+                               capture_output=True, text=True, timeout=15)
+            self.send_response(200 if r.returncode == 0 else 502)
+            self.end_headers()
+            self.wfile.write(b"ok" if r.returncode == 0 else r.stderr.encode())
+            return
+        if rota in LAB_ROTAS:
+            self._lab(rota, consulta)
             return
         accao = ROTAS.get(self.path)
         if accao is None:
@@ -102,14 +127,16 @@ class Gatilho(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write((r.stdout if ok else r.stderr or r.stdout).encode())
 
-    def _lab(self):
+    def _lab(self, rota, consulta):
         global _lab
         try:
             _lab = _lab or Laboratorio()
-            if self.path == "/lab/bilhete":
+            if rota == "/lab/bilhete":
                 corpo = {"url": _lab.bilhete()}
-            elif self.path == "/lab/credenciais":
+            elif rota == "/lab/credenciais":
                 corpo = _lab.credenciais()
+            elif rota == "/lab/tocar":
+                corpo = _lab.tocar(dict(p.split("=", 1) for p in consulta.split("&") if "=" in p))
             else:  # um URL que já foi resgatado: para provar que o 2.º uso é recusado
                 url = _lab.bilhete()
                 _lab.resgatar(url)

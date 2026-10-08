@@ -56,4 +56,9 @@ flutter {
 
 dependencies {
     androidTestUtil("androidx.test:orchestrator:1.5.1")
+    // ADR-0022, spike da Fase 0: o liblinphone (variante só de voz) é AGPLv3 ou comercial. Só em
+    // debug: um build de release/profile NÃO o leva (usa o stub de src/release e src/profile), por
+    // isso nenhum binário distribuível contém código AGPL antes de existir contrato.
+    debugImplementation("org.linphone.no-video:linphone-sdk-android:5.4.127")
+    debugImplementation("androidx.media:media:1.2.0")
 }
