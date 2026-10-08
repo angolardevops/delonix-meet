@@ -110,6 +110,9 @@ Prioridade MoSCoW: **M** obrigatório v1 · **S** devia (v1.x) · **C** podia ·
 | RF-20 | Rotas de áudio: auricular, alta-voz, Bluetooth, fones com fio; mudança a meio da chamada | M | Trocar com chamada activa sem cortar |
 | RF-21 | Continuidade: a chamada sobrevive a Wi-Fi↔dados (re-INVITE/ICE restart) | S | Cortar o Wi-Fi a meio; recupera em ≤ 5 s |
 | RF-22 | Chamadas de emergência: **não** passam pela app; abre o marcador nativo | M | 112/113/… nunca vão por SIP |
+| RF-23 | **Retorno de chamada por GSM** quando não há dados utilizáveis: a app pede ao servidor, que liga ao telemóvel do utilizador pelo tronco e faz a ponte para o destino. A SIM é do próprio utilizador e o SIP não corre no aparelho | S | Sem dados, o pedido chega por SMS/dados mínimos; o telemóvel toca e fala-se com o destino |
+| RF-24 | **Marcador nativo como reserva** (`TelecomManager.placeCall` / `tel:`), sempre por escolha do utilizador | S | Sem dados, a app oferece «ligar pela rede móvel» |
+| RF-25 | **Convivência com chamadas GSM**: uma chamada celular a entrar põe a chamada SIP em espera, e esta retoma-se ao terminar; sem áudio cruzado (Android `TelephonyCallback`, iOS interrupção da `AVAudioSession`/`CXCallObserver`) | M | Emulador: `gsm call` durante uma chamada SIP; a SIP fica em espera e retoma |
 
 ### 5.3 Chamadas recebidas com a app terminada (o núcleo)
 
@@ -224,6 +227,33 @@ Os alvos são **propostas a validar na Fase 0**, não medições.
 | RNF-53 | Testes: unidade, *widget*, contrato (contra o OpenAPI e contra o laboratório), SIPp para o servidor, aparelhos reais em CI nocturna | Portão `delonixphone_gate` com `PASS/WARN/FAIL` |
 | RNF-54 | Acessibilidade WCAG 2.2 AA nos ecrãs críticos | Auditoria manual por plataforma |
 | RNF-55 | Documentação do utilizador e runbook de suporte | Antes do piloto |
+
+### 6.6 O que o GSM NÃO é (limite das APIs nativas)
+
+Nenhuma API pública do Android ou do iOS dá a uma app o áudio de uma chamada celular, nem
+permite injectar áudio nela: no Android a fonte `VOICE_CALL` é reservada ao sistema, e o
+`CallKit` do iOS só observa o estado. Portanto **a app não faz de ponte GSM↔SIP**, e um
+telemóvel com SIM a terminar tráfego seria uma «SIM box», que a regra de casa de
+`delonix-meet-voip` exclui. O GSM entra só como RF-23/24/25. O CGNAT trata-se com ligação
+TLS de saída persistente, *keep-alive*, push e media ancorada no FreeSWITCH (RNF-45), nunca
+com GSM.
+
+### 6.7 Estratégia de testes sem aparelho
+
+| Camada | Ferramenta | Prova |
+|---|---|---|
+| Unidade e *widget* | Flutter `flutter test` | Lógica de estado de chamada, formatação E.164, máquina de registo |
+| Fluxos na app | Flutter `integration_test` + **Patrol** (diálogos, permissões e notificações nativos) | Login → ramal registado → chamada |
+| Fluxos declarativos | **Maestro** (YAML) | Os mesmos percursos, escritos por quem não programa |
+| Android | **Emulador com KVM**, imagem com Play (FCM) e outra de gama baixa | `adb emu gsm call/cancel/busy`, `sms send`, `gsm signal`, `network delay/speed` |
+| Telecom | `adb shell dumpsys telecom` | A chamada aparece como chamada do sistema; RF-25 |
+| CGNAT | *Network namespace* + `nftables` (SNAT, temporizadores de *conntrack* curtos) com um cliente SIP de linha de comandos atrás | O mapeamento expira; a app re-regista em ≤ 5 s (RNF-03) |
+| Servidor SIP | **SIPp** contra o laboratório | Carga de REGISTER/INVITE, TLS, SRTP |
+| iPhone | Runner **macOS** na nuvem para compilar e testar no simulador; depois uma farm de aparelhos reais | O simulador **não** prova PushKit nem áudio CallKit |
+| Push | Projecto Firebase gratuito para FCM; APNs exige Apple Developer pago | Sem a conta Apple, RNF-01/02 no iPhone ficam por provar |
+
+Um atalho de push só para *debug* serve o desenvolvimento, e fica marcado como **não
+representativo** da produção.
 
 ## 7. Trabalho necessário no servidor (lacunas medidas ou prováveis)
 
