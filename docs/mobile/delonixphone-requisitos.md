@@ -72,9 +72,9 @@ Servidor: FreeSWITCH (SIP+SRTP) · API Meet · NOVO: pasarela de push
 | **baresip** (+ wrapper) | bom | SDES, DTLS | parcial | BSD | Menos maduro em iOS; muito trabalho de integração. |
 | **flutter_webrtc + SIP sobre WSS** (JsSIP/`sip_ua`) | via WebSocket | **DTLS-SRTP**, não SDES | sim | BSD/MIT | Exige `wss` no FreeSWITCH (hoje não configurado) e muda o contrato de media face ao ADR-0010; perde-se fiabilidade em background. |
 
-  **Recomendação provisória:** Fase 0 mede liblinphone e a opção WebRTC/WSS contra o
-  laboratório, e o dono do produto decide a licença **antes** de escrever UI. Sem licença
-  comercial, a escolha realista é a via WebRTC ou o baresip.
+  **Decidido (ADR-0022, proposto):** liblinphone atrás da `SipEngine`, com **licença comercial da
+  Belledonne** para tudo o que saia da equipa (AGPLv3 só em desenvolvimento e CI). Plano B decidido já:
+  WebRTC com SIP sobre WSS. Razões, custos e critérios de saída no ADR; o preço e o contrato são do dono.
 
 ## 5. Requisitos funcionais
 
@@ -268,6 +268,7 @@ representativo** da produção.
 | S-07 | Presença: estado do ramal/sala exposto com isolamento por org | RF-55 | A medir |
 | S-08 | Endpoint de telemetria de qualidade e recusa de versões antigas | RNF-50/52 | — |
 | S-09 | Rotação de certificado documentada para o *pinning* | RNF-30 | — |
+| S-10 | **Só no plano B (ADR-0022):** perfil `wss` com DTLS-SRTP no FreeSWITCH, e medir o que o `rtp_secure_media=mandatory` global faz a ofertas DTLS | RF-12, RNF-21 | Não medido |
 
 ## 8. Plano por fases (cada uma fecha com prova num aparelho real)
 
@@ -283,8 +284,8 @@ representativo** da produção.
 ## 9. Perguntas para o dono do produto
 
 1. **Q1 — Onde vive?** `mobile/delonixphone/` no repo do Meet (recomendado) ou repo novo?
-2. **Q2 — Licença do motor.** Aceita publicar a app sob GPLv3, ou compra licença comercial do
-   liblinphone? Se nenhuma, a Fase 0 compara só WebRTC/WSS e baresip.
+2. **Q2 — Licença do motor.** Respondida no ADR-0022: licença comercial da Belledonne. **Falta pedir a
+   cotação** (perguntas no ADR) e assiná-la antes de qualquer binário sair da equipa.
 3. **Q3 — Conta particular tem ramal?** Se sim, quem o atribui, já que não há admin.
 4. **Q4 — Voicemail e transcrição** entram na v1 ou ficam para depois do piloto?
 5. **Q5 — Mercado de lançamento e operadoras** para medir o CGNAT e a qualidade (Unitel,
