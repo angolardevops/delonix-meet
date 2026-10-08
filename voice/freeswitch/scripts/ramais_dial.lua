@@ -40,7 +40,7 @@ local control_url = (api:executeString("global_getvar delonix_control_url") or "
 local secret      = (api:executeString("global_getvar delonix_voice_secret") or ""):gsub("%s+$", "")
 
 -- POST JSON ao control plane via mod_curl; devolve o corpo (string) ou nil.
-local function http_post(path, body)
+local function http_post(path, body, full_url)
   -- Sintaxe do mod_curl: as opções vêm ANTES do método, cada uma com o seu
   -- valor separado por espaço (`content-type <tipo>`, `append_headers
   -- <nome:valor>`), e o corpo é o argumento a seguir a `post`. Na forma
@@ -51,7 +51,7 @@ local function http_post(path, body)
   -- o tempo que o control plane demorasse a não responder.
   local args = string.format(
     "%s%s connect-timeout 3 timeout 6 content-type application/json append_headers 'X-Voice-Secret: %s' post '%s'",
-    control_url, path, secret, body)
+    full_url and "" or control_url, full_url or path, secret, body)
   -- Pela API do mod_curl, e não pela aplicação de dialplan (R227): os
   -- argumentos de uma aplicação — o segredo e, no IVR, o PIN — ficam escritos
   -- na linha EXECUTE do log a cada chamada, e no app_log do CDR. A API leva os
@@ -128,6 +128,53 @@ if not target_sip_username or #target_sip_username == 0 then
   freeswitch.consoleLog("INFO", "[delonix_ramais] " .. destination .. "@" .. domain .. " não resolvido\n")
   session:hangup("UNALLOCATED_NUMBER")
   return
+end
+
+-- S-02 (ADR-0023): o destino é um telemóvel e pode estar com a app morta, sem registo. Sem isto a
+-- chamada morria em 10 ms (`USER_NOT_REGISTERED`, medido). Com `delonix_push_wait_secs` > 0 (DESLIGADO
+-- por omissão: o comportamento antigo) a chamada fica a tocar ao chamador, o control plane é avisado
+-- para acordar os aparelhos do ramal (push) e espera-se pelo REGISTO, até ao limite. Se o ramal já está
+-- registado nada muda. A espera não é infinita e acaba logo que o chamador desligue.
+local function wait_secs()
+  return tonumber((api:executeString("global_getvar delonix_push_wait_secs") or ""):match("%d+")) or 0
+end
+
+local function registered(user, dom)
+  local c = api:executeString(string.format("sofia_contact internal/%s@%s", user, dom)) or ""
+  return c ~= "" and not c:match("^error/")
+end
+
+local wait = wait_secs()
+if wait > 0 and not registered(target_sip_username, domain) then
+  -- Só caracteres que o mod_curl e o JSON aguentam (a lista é a do resto do script).
+  local body = string.format('{"domain":"%s","sip_username":"%s","call_uuid":"%s","caller_extension":"%s"}',
+    limpo(domain), limpo(target_sip_username), limpo(session:get_uuid()), limpo(auth_user))
+  -- `delonix_push_wake_url` (URL completo) só existe para a prova do S-02; em produção é o control plane.
+  local wake_full = (api:executeString("global_getvar delonix_push_wake_url") or ""):gsub("%s+$", "")
+  local wake
+  if wake_full ~= "" and wake_full:match("^https?://") then
+    wake = http_post("", body, wake_full)
+  else
+    wake = http_post("/internal/v1/voice/push/wake", body)
+  end
+  -- O servidor decide se há aparelhos acordáveis. Sem resposta, ou `awaiting:false`, não se espera:
+  -- é o comportamento de antes (falha já), e não uma chamada presa à espera de nada.
+  if wake and wake:match('"awaiting"%s*:%s*true') then
+    session:execute("ring_ready")
+    local deadline = os.time() + wait
+    while session:ready() and os.time() < deadline and not registered(target_sip_username, domain) do
+      session:sleep(500)
+    end
+    if not session:ready() then
+      return -- o chamador desistiu à espera
+    end
+    if not registered(target_sip_username, domain) then
+      freeswitch.consoleLog("INFO", "[delonix_ramais] " .. destination .. "@" .. domain .. " não acordou em " .. wait .. " s\n")
+      session:hangup("NO_USER_RESPONSE")
+      return
+    end
+    freeswitch.consoleLog("INFO", "[delonix_ramais] " .. destination .. "@" .. domain .. " registou-se a tempo\n")
+  end
 end
 
 session:setVariable("rtp_secure_media", "mandatory") -- não recusa esta perna, já negociada: isso é da global (R226)
