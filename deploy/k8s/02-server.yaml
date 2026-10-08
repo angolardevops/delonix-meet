@@ -25,6 +25,35 @@ spec:
         prometheus.io/port: "8180"
         prometheus.io/path: "/metrics"
     spec:
+      # Espalhar as 3 réplicas por nó (e por zona, no servidor). `ScheduleAnyway`
+      # e não `DoNotSchedule`: no laboratório de UM nó (kind, `make cluster`) isto
+      # é um no-op, e um `DoNotSchedule` deixava pods `Pending` sem ninguém
+      # perceber porquê. Onde conta é no artefacto de PRODUTO — os overlays
+      # `k8s-overlays/saas` e `.../enterprise` (ADR-0006 §2), que um cliente
+      # aplica com `kubectl apply -k` no SEU cluster, de vários nós. Sem isto, as
+      # 3 réplicas podem aterrar todas no mesmo nó e a perda desse nó leva o
+      # serviço inteiro. É o padrão que o chart de produção já usa.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: delonix-server }
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: delonix-server }
+      # Reforço do espalhamento por nó, em `preferred` — o scheduler tenta e não
+      # falha se não puder. É o que o chart faz para o servidor.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: { app: delonix-server }
       # Conta dedicada, sem token da API montado: o servidor não fala com o
       # Kubernetes. Ver deploy/k8s/10-contas-e-rede.yaml.
       serviceAccountName: delonix-server

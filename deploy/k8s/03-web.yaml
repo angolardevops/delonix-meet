@@ -15,6 +15,20 @@ spec:
       labels:
         app: delonix-web
     spec:
+      # Espalhar as 3 réplicas por nó (e por zona, no servidor). `ScheduleAnyway`
+      # e não `DoNotSchedule`: no laboratório de UM nó (kind, `make cluster`) isto
+      # é um no-op, e um `DoNotSchedule` deixava pods `Pending` sem ninguém
+      # perceber porquê. Onde conta é no artefacto de PRODUTO — os overlays
+      # `k8s-overlays/saas` e `.../enterprise` (ADR-0006 §2), que um cliente
+      # aplica com `kubectl apply -k` no SEU cluster, de vários nós. Sem isto, as
+      # 3 réplicas podem aterrar todas no mesmo nó e a perda desse nó leva o
+      # serviço inteiro. É o padrão que o chart de produção já usa.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: delonix-web }
       # A conta dedicada e SEM token montado: a web é nginx a servir ficheiros
       # estáticos — não fala com a API do Kubernetes, e um token montado só
       # serve para ser roubado de dentro de um pod que nunca precisa dele.

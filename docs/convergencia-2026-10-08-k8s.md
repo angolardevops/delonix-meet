@@ -49,7 +49,7 @@ sem uma prática que lhe faça falta no seu papel.
 | `HorizontalPodAutoscaler` | ✓ (opt-in) | ✓ | — |
 | `terminationGracePeriodSeconds` | ✓ | ✓ | — |
 | Afinidade por sala no ingress | ✓ | ✓ | — (R3) |
-| **`topologySpreadConstraints`** | **—** | ✓ | **o chart espalha por nó e zona; o `k8s/` não.** Num cluster de um nó (kind) é indiferente; na produção partilhada do ADR-0021 **não é** |
+| **`topologySpreadConstraints`** | **✓ (2026-10-08)** | ✓ | **feito**, com o padrão exacto do chart (`ScheduleAnyway`, nó e zona no servidor, nó na web) e um portão a impedir a regressão. A razão não é o laboratório: são os overlays `saas`/`enterprise`, que são artefacto de PRODUTO |
 | **`ServiceMonitor` + `PrometheusRule`** | ✓ (`k8s/observabilidade/`) | — (correcto) | **eu estava errado:** `k8s/observabilidade/` não é o lado do laboratório, é a fase 4 do ADR-0020 — um instalador de produção, fora do kustomize, que põe os objectos no namespace `observabilidade`. Ver o passo 2 |
 | `priorityClassName` | — | — | **falta nos dois.** Sob pressão de nó, o SFU e o Postgres são desalojados como qualquer coisa |
 | `preStop` | — | — | **falta nos dois**, mas o servidor dren a por SIGTERM (`drenar()`), logo é menos grave do que parece |
@@ -123,10 +123,44 @@ sem uma prática que lhe faça falta no seu papel.
    «zero alvos»; comando documentado desactualizado → «um dos dois está
    desactualizado»; `matchNames` com um namespace a mais → «os namespaces a mais
    trazem alvos de outra instalação». E o rename completo da #269 passa.
-3. **`topologySpreadConstraints` no `k8s/`** — ou a decisão escrita de que o
-   laboratório não os quer, porque num nó só são ruído. **Prefiro a decisão
-   escrita:** pôr constraints que nunca se satisfazem num cluster de um nó deixa
-   pods `Pending` e ninguém percebe porquê.
+3. ~~**`topologySpreadConstraints` no `k8s/`** — ou a decisão escrita de que o
+   laboratório não os quer. **Prefiro a decisão escrita.**~~ **FEITO a
+   2026-10-08: escolhi o YAML, e a minha preferência estava errada por duas
+   razões medidas.**
+
+   - **O medo era infundado.** Eu escrevi «constraints que nunca se satisfazem
+     num cluster de um nó deixam pods `Pending` e ninguém percebe porquê». Isso
+     só é verdade com `whenUnsatisfiable: DoNotSchedule`. O padrão que o **próprio
+     chart** já usa é `ScheduleAnyway`, que num nó é um **no-op** — não há pod
+     `Pending` nenhum. O portão passou a recusar `DoNotSchedule` por este
+     motivo, para que a armadilha não entre por outra mão.
+   - **O `k8s/` não é só o laboratório.** A secção 1 deste documento diz
+     «`deploy/k8s/` = o laboratório», e isso é verdade para a *base aplicada
+     directamente*. Mas o `docs/deployment.md` mostra que os overlays
+     `k8s-overlays/saas` e `.../enterprise` são o **artefacto de produto** para
+     Kubernetes (ADR-0006 §2, um binário três perfis), que um cliente aplica com
+     `kubectl apply -k` no **seu** cluster, de vários nós. E a base declara
+     `replicas: 3` no servidor e na web **sem espalhamento nenhum**: as três
+     podiam aterrar todas no mesmo nó, com o Deployment `Available` e três pods,
+     num único ponto de falha — sem dar erro.
+
+   **Paridade medida** depois da mudança, nos três renders e no chart:
+
+   | | servidor | web |
+   |---|---|---|
+   | `deploy/k8s` | nó + zona, `ScheduleAnyway`, anti-afinidade `preferred` | nó, `ScheduleAnyway` |
+   | overlay `saas` | idem | idem |
+   | overlay `enterprise` | idem (1 réplica: indiferente, inofensivo) | idem |
+   | chart de produção | idem | idem |
+
+   **Prova:** a verificação 7 do `check-k8s-render.sh` — todo o `Deployment` com
+   mais de uma réplica **ou com um HPA a mirá-lo** tem de se espalhar por nó, e
+   nenhum pode usar `DoNotSchedule`. **Controlos negativos medidos:** tirar o
+   espalhamento da web → falha nos três; `DoNotSchedule` no servidor → falha;
+   tirar o do servidor → falha. E o ramo «um HPA a mirá-lo» **não é exercitado
+   pelos manifestos de hoje** (nenhum Deployment tem ≤1 réplica com HPA), pelo
+   que foi provado sinteticamente: `replicas: 1` no servidor, que no overlay
+   `saas` tem HPA → «tem um HPA a mirá-lo e não se espalha por nó».
 4. **`priorityClassName`** para o SFU e os dados, nos dois lados. Precisa de uma
    decisão: que classes existem no cluster partilhado, o que é do operador do
    `delonix-lda` e não meu.
