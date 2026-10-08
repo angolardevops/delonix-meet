@@ -33,8 +33,8 @@ mod common;
 use common::TestApp;
 use serde_json::json;
 
-fn auth_header(key: &str) -> (&'static str, String) {
-    ("Authorization", format!("Bearer {key}"))
+fn bearer(key: &str) -> String {
+    format!("Bearer {key}")
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -48,6 +48,8 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
     let b = app.new_org("beta-t1.test").await;
     let (_, key_a) = app.api_key(&a).await;
     let (_, key_b) = app.api_key(&b).await;
+    let hdr_a = bearer(&key_a);
+    let hdr_b = bearer(&key_b);
 
     // Carlos: membro ACTIVO da A (anfitrião legítimo de reuniões da A) e,
     // independentemente disso, uma linha ARQUIVADA em `org_members` para a
@@ -75,7 +77,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::POST,
             "/api/v1/meetings",
-            &[auth_header(&key_a)],
+            &[("Authorization", hdr_a.as_str())],
             Some(json!({
                 "title": "reunião da A",
                 "starts_at": starts,
@@ -91,7 +93,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::GET,
             &format!("/api/v1/meetings/{meeting_id}"),
-            &[auth_header(&key_a)],
+            &[("Authorization", hdr_a.as_str())],
             None,
         )
         .await;
@@ -107,7 +109,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::GET,
             &format!("/api/v1/meetings/{meeting_id}"),
-            &[auth_header(&key_b)],
+            &[("Authorization", hdr_b.as_str())],
             None,
         )
         .await;
@@ -121,7 +123,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::GET,
             &format!("/api/v1/meetings/{meeting_id}/minutes"),
-            &[auth_header(&key_b)],
+            &[("Authorization", hdr_b.as_str())],
             None,
         )
         .await;
@@ -135,7 +137,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::PATCH,
             &format!("/api/v1/meetings/{meeting_id}"),
-            &[auth_header(&key_b)],
+            &[("Authorization", hdr_b.as_str())],
             Some(json!({"title": "sequestrada pela B"})),
         )
         .await;
@@ -149,7 +151,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::POST,
             &format!("/api/v1/meetings/{meeting_id}/ring"),
-            &[auth_header(&key_b)],
+            &[("Authorization", hdr_b.as_str())],
             None,
         )
         .await;
@@ -166,12 +168,13 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::GET,
             "/api/v1/meetings",
-            &[auth_header(&key_b)],
+            &[("Authorization", hdr_b.as_str())],
             None,
         )
         .await;
     assert_eq!(list_b.status, 200, "{}", list_b.text);
-    let ids: Vec<&str> = list_b.json()["meetings"]
+    let list_b_json = list_b.json();
+    let ids: Vec<&str> = list_b_json["meetings"]
         .as_array()
         .unwrap()
         .iter()
@@ -188,7 +191,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::GET,
             &format!("/api/v1/meetings/{meeting_id}"),
-            &[auth_header(&key_a)],
+            &[("Authorization", hdr_a.as_str())],
             None,
         )
         .await;
@@ -203,7 +206,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::DELETE,
             &format!("/api/v1/meetings/{meeting_id}"),
-            &[auth_header(&key_b)],
+            &[("Authorization", hdr_b.as_str())],
             None,
         )
         .await;
@@ -216,7 +219,7 @@ async fn chave_de_outra_org_nao_alcanca_reuniao_de_dono_com_pertenca_arquivada(d
         .raw(
             reqwest::Method::GET,
             &format!("/api/v1/meetings/{meeting_id}"),
-            &[auth_header(&key_a)],
+            &[("Authorization", hdr_a.as_str())],
             None,
         )
         .await;
@@ -238,13 +241,15 @@ async fn chave_de_org_sem_qualquer_relacao_nao_alcanca_a_reuniao(db: sqlx::PgPoo
     let b = app.new_org("beta-t1b.test").await;
     let (_, key_a) = app.api_key(&a).await;
     let (_, key_b) = app.api_key(&b).await;
+    let hdr_a = bearer(&key_a);
+    let hdr_b = bearer(&key_b);
 
     let starts = (chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339();
     let created = app
         .raw(
             reqwest::Method::POST,
             "/api/v1/meetings",
-            &[auth_header(&key_a)],
+            &[("Authorization", hdr_a.as_str())],
             Some(json!({"title": "reunião só da A", "starts_at": starts, "host_email": a.email})),
         )
         .await;
@@ -255,7 +260,7 @@ async fn chave_de_org_sem_qualquer_relacao_nao_alcanca_a_reuniao(db: sqlx::PgPoo
         .raw(
             reqwest::Method::GET,
             &format!("/api/v1/meetings/{meeting_id}"),
-            &[auth_header(&key_b)],
+            &[("Authorization", hdr_b.as_str())],
             None,
         )
         .await;
