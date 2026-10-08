@@ -39,6 +39,7 @@ mod notifications;
 // `pub` de propósito: o cliente está completo mas o gravador ainda não o chama
 // (ADR-0020). Deixá-lo privado dava `dead_code` em metade dos métodos, e a
 // resposta a isso seria um `#[allow]` — que é esconder, não resolver.
+mod jobs;
 pub mod objectos;
 mod odoo;
 mod odoo_sso;
@@ -95,6 +96,9 @@ mod voice_caller;
 mod webhooks;
 mod whiteboards;
 
+/// A fila das exportações e a sua reivindicação, expostas aos testes de
+/// integração sem abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use data_exports::run_queue as data_export_run_queue;
 pub use dial_outs::caller_of_call as dial_outs_caller_of_call;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
@@ -2048,8 +2052,12 @@ pub async fn run() {
         });
     }
 
-    // Gateway de SMS: envio pelos operadores e varrimento das mensagens paradas.
-    sms::spawn_worker(state.clone());
+    // As filas de trabalho durável: tarefas com `CancellationToken`, paradas no
+    // drain em vez de abortadas a meio da volta (ver `jobs.rs`). Os ciclos
+    // acima são `tokio::spawn` soltos por migrar — à medida que cada fila passa
+    // pela peça comum, desce para aqui.
+    let mut filas = jobs::Filas::new();
+    sms::levanta_filas(&mut filas, state.clone());
 
     if let Some(addr) = config.internal_bind_addr.clone() {
         let internal = build_internal_router(state.clone());
@@ -2099,6 +2107,10 @@ pub async fn run() {
         async move {
             shutdown_signal().await;
             quarantine_stop.cancel();
+            // As filas param ANTES do drain das salas: uma volta que esteja a
+            // escrever na base acaba enquanto a base ainda está lá, e nenhuma
+            // nova começa durante o drain.
+            filas.parar(std::time::Duration::from_secs(5)).await;
             drenar(state).await;
         }
     })

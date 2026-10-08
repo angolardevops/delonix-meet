@@ -1838,7 +1838,9 @@ pub async fn agent_result(
 
 /// Arranca o worker. Pára sozinho quando o pod começa a drenar: não se reclama
 /// trabalho novo num processo que vai morrer.
-pub fn spawn_worker(state: Arc<AppState>) {
+/// Levanta as filas do SMS. Já não abre `tokio::spawn` nenhum: as tarefas
+/// vivem no `Filas` do `run()`, que as pára no shutdown.
+pub fn levanta_filas(filas: &mut crate::jobs::Filas, state: Arc<AppState>) {
     for (op, _, _) in NUMBERING_PLAN {
         let raw = match op {
             Operator::Unitel => state.config.sms_unitel_smpp.as_deref(),
@@ -1855,49 +1857,93 @@ pub fn spawn_worker(state: Arc<AppState>) {
             }
         }
     }
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(2));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut ticks: u64 = 0;
-        loop {
-            ticker.tick().await;
-            if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
-                tracing::info!("SMS: worker parado (drain)");
-                return;
-            }
-            if let Err(e) = dispatch_operator_batch(&state).await {
-                tracing::warn!(error = %e, "SMS: lote de operador falhou");
-            }
-            ticks += 1;
-            // Lembretes de reunião por SMS (sms_notify): o mesmo worker, sem
-            // daemon novo; a reivindicação na base é atómica entre pods.
-            if ticks.is_multiple_of(REMINDER_SWEEP_TICKS) {
-                if let Err(e) = crate::sms_notify::remind_due(&state).await {
-                    tracing::warn!(error = %e, "SMS: varrimento de lembretes falhou");
-                }
-            }
-            if ticks.is_multiple_of(30) {
-                if let Err(e) = fail_stale(&state).await {
-                    tracing::warn!(error = %e, "SMS: varrimento de paradas falhou");
-                }
-            }
-        }
+    // As três coisas que isto fazia passam a ser três filas com ritmo próprio.
+    //
+    // Antes era UM `tokio::spawn` com um ticker de 2 s e dois contadores de
+    // tiques (`ticks.is_multiple_of(…)`) a decidir quando correr as outras
+    // duas. Três problemas disso: o ritmo de cada uma estava escrito como um
+    // múltiplo do ritmo da primeira, uma volta lenta do envio atrasava os
+    // lembretes, e o `return` no drain abandonava a volta a meio. As filas
+    // param no `CancellationToken` e a volta em curso acaba.
+    let s1 = state.clone();
+    filas.levanta("sms_operator", Duration::from_secs(2), move || {
+        let s = s1.clone();
+        async move { dispatch_operator_batch(&s).await.map_err(as_db_error) }
+    });
+    let s2 = state.clone();
+    filas.levanta(
+        "sms_reminder",
+        Duration::from_secs(2 * REMINDER_SWEEP_TICKS),
+        move || {
+            let s = s2.clone();
+            async move { crate::sms_notify::remind_due(&s).await.map_err(as_db_error) }
+        },
+    );
+    filas.levanta("sms_stale", Duration::from_secs(60), move || {
+        let s = state.clone();
+        async move { fail_stale(&s).await.map(|()| 0).map_err(as_db_error) }
     });
 }
 
-async fn dispatch_operator_batch(state: &AppState) -> Result<(), ApiError> {
-    let rows: Vec<(Uuid, String, String, Option<String>)> = sqlx::query_as(
-        "UPDATE sms_message SET status = 'claimed', claimed_at = now()
-         WHERE id IN (
-             SELECT id FROM sms_message
-             WHERE route = 'operator' AND status = 'queued'
-             ORDER BY created_at LIMIT 10
-             FOR UPDATE SKIP LOCKED)
-         RETURNING id, to_e164, body, operator",
+/// O runner fala `sqlx::Error`; estas três devolvem `ApiError`. A conversão é
+/// só para o registo — nenhuma destas falhas chega a um cliente — e preserva o
+/// texto, que é o que serve a quem lê o log.
+fn as_db_error(e: ApiError) -> sqlx::Error {
+    sqlx::Error::Protocol(e.to_string())
+}
+
+/// A fila do envio por operador, declarada uma vez.
+///
+/// Era um `UPDATE … FOR UPDATE SKIP LOCKED` à mão, o quinto de sete iguais no
+/// servidor. Passa pela peça comum (`crate::jobs`), e com isso **ganha a
+/// justiça entre organizações**: o lote reparte-se pelos inquilinos em vez de
+/// ser dado por ordem de chegada. Antes, uma organização com mil mensagens em
+/// fila levava todos os lotes de dez e as das outras esperavam que ela
+/// esvaziasse.
+///
+/// `Retry::ONCE` mantém a regra desta fila, que é deliberada e está escrita no
+/// `fail_stale`: **não se reenvia para não duplicar**. Uma mensagem entregue ao
+/// operador e não confirmada pode ter saído, e mandá-la outra vez custa dinheiro
+/// a quem a recebe duas vezes. Dar-lhe tentativas é uma decisão de produto, não
+/// uma consequência deste refactor.
+const FILA_OPERADOR: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "sms_operator",
+    table: "sms_message",
+    id_column: "id",
+    ready_when: "route = 'operator' AND status = 'queued'",
+    claim_set: "status = 'claimed', claimed_at = now()",
+    returning: "id, to_e164, body, operator",
+    order_by: "created_at",
+    tenant_column: Some("org_id"),
+    batch: 10,
+};
+
+/// Uma mensagem reivindicada para envio pelo operador.
+#[derive(sqlx::FromRow)]
+struct PorEnviar {
+    id: Uuid,
+    to_e164: String,
+    body: String,
+    operator: Option<String>,
+}
+
+async fn dispatch_operator_batch(state: &Arc<AppState>) -> Result<usize, ApiError> {
+    let rows: Vec<PorEnviar> = crate::jobs::claim(
+        state,
+        &crate::jobs::Worker {
+            queue: FILA_OPERADOR,
+            retry: delonix_meet_core::jobs::Retry::ONCE,
+        },
     )
-    .fetch_all(&state.db)
     .await?;
-    for (id, to, body, operator) in rows {
+    let levados = rows.len();
+    for PorEnviar {
+        id,
+        to_e164: to,
+        body,
+        operator,
+    } in rows
+    {
         let outcome = match operator.as_deref().and_then(Operator::parse) {
             None => Err("mensagem de operador sem operador".to_string()),
             Some(op) => match operator_link(state, op) {
@@ -1931,7 +1977,7 @@ async fn dispatch_operator_batch(state: &AppState) -> Result<(), ApiError> {
         .execute(&state.db)
         .await?;
     }
-    Ok(())
+    Ok(levados)
 }
 
 /// No máximo uma vez: o que ficou parado FALHA, não volta à fila.

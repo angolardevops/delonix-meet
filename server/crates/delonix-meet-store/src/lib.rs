@@ -10,4 +10,8 @@
 //! tonic ou webrtc, e outro (a catraca da arquitectura) impede o SQL de
 //! reaparecer fora daqui uma vez que uma fatia sai do monólito.
 
+/// Reivindicação de trabalho de uma fila. Fora dos contextos delimitados de
+/// propósito: as sete filas que junta atravessam cinco dos oito.
+pub mod jobs;
+
 pub mod identity;

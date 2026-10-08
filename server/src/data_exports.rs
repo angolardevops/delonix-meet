@@ -360,8 +360,52 @@ pub async fn content(
 // ---------------------------------------------------------------------------
 
 /// Processa a fila até não haver mais pedidos `queued`. Público para os testes.
-pub async fn run_queue(state: &AppState) {
-    // Pedidos abandonados por um processo que morreu voltam à fila.
+/// A fila das exportações, declarada uma vez.
+///
+/// Era o terceiro `FOR UPDATE SKIP LOCKED` à mão do servidor, e o único com
+/// reserva e requeue do abandonado **mas sem tentativas nenhumas**. Passa pela
+/// peça comum (`crate::jobs`) e ganha-as.
+///
+/// `tenant_column: None` de propósito: uma exportação é de uma PESSOA, não de
+/// uma organização, e há um índice único que garante um só pedido activo por
+/// pessoa (`data_exports_one_active_uidx`, migração 0080) — ninguém pode
+/// encher a fila, logo a ordem de chegada basta.
+const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "data_export",
+    table: "data_exports",
+    id_column: "id",
+    // Pronta: na fila, sem espera pendente, e com tentativas por gastar.
+    ready_when: "status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= now()) \
+                 AND attempts < {max_attempts}",
+    claim_set: "status = 'running', started_at = now(), attempts = attempts + 1",
+    returning: "id, user_id",
+    order_by: "created_at",
+    tenant_column: None,
+    batch: 1,
+};
+
+/// Três tentativas, 30 s e 2 min entre elas.
+///
+/// Curto de propósito: a pessoa está à espera do ficheiro e vê o estado na
+/// consola. Uma hora de backoff — como nos webhooks, onde o destino é uma
+/// máquina — seria pior do que falhar depressa e deixá-la pedir outra.
+const POLITICA: delonix_meet_core::jobs::Retry = delonix_meet_core::jobs::Retry {
+    max_attempts: 3,
+    delays: &[30, 120],
+    jitter: 0.2,
+};
+
+/// Uma exportação reivindicada.
+#[derive(sqlx::FromRow)]
+struct Reivindicada {
+    id: Uuid,
+    user_id: Uuid,
+}
+
+pub async fn run_queue(state: &Arc<AppState>) {
+    // Pedidos abandonados por um processo que morreu voltam à fila. A reserva
+    // continua a ser o `started_at` — o que muda é que voltar à fila já não é
+    // de graça: a tentativa foi contada na reivindicação.
     let _ = sqlx::query(
         "UPDATE data_exports SET status = 'queued', started_at = NULL
           WHERE status = 'running' AND started_at < now() - make_interval(secs => $1)",
@@ -370,17 +414,19 @@ pub async fn run_queue(state: &AppState) {
     .execute(&state.db)
     .await;
     loop {
-        let claimed: Result<Option<(Uuid, Uuid)>, sqlx::Error> = sqlx::query_as(
-            "UPDATE data_exports SET status = 'running', started_at = now()
-              WHERE id = (SELECT id FROM data_exports WHERE status = 'queued'
-                           ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
-              RETURNING id, user_id",
+        let claimed: Result<Vec<Reivindicada>, sqlx::Error> = crate::jobs::claim(
+            state,
+            &crate::jobs::Worker {
+                queue: FILA,
+                retry: POLITICA,
+            },
         )
-        .fetch_optional(&state.db)
         .await;
         let (id, user_id) = match claimed {
-            Ok(Some(x)) => x,
-            Ok(None) => return,
+            Ok(v) => match v.into_iter().next() {
+                Some(r) => (r.id, r.user_id),
+                None => return,
+            },
             Err(e) => {
                 tracing::warn!(error = %e, "exportação: não foi possível reivindicar");
                 return;
@@ -410,18 +456,81 @@ pub async fn run_queue(state: &AppState) {
             }
             Err(e) => {
                 tracing::error!(%id, error = %e, "exportação falhou");
+                // O ficheiro a meio sai sempre: a tentativa seguinte recomeça.
                 let _ =
                     tokio::fs::remove_file(file_path(state, id).with_extension("zip.part")).await;
-                let _ = sqlx::query(
-                    "UPDATE data_exports SET status = 'failed', completed_at = now(),
-                            error = 'não foi possível gerar a exportação; peça outra'
-                      WHERE id = $1",
-                )
-                .bind(id)
-                .execute(&state.db)
-                .await;
+                falhou(state, id, &e).await;
             }
         }
+    }
+}
+
+/// Fecha uma tentativa falhada: volta à fila com espera, ou desiste.
+///
+/// Antes só havia o segundo caminho, e com a mensagem «peça outra» — a pessoa
+/// era o mecanismo de retry. Agora uma falha transitória (a base a reiniciar, o
+/// disco cheio por um minuto) custa trinta segundos, não uma ida à consola.
+async fn falhou(state: &AppState, id: Uuid, erro: &anyhow::Error) {
+    use delonix_meet_core::jobs::Failure;
+    let tentativas: i32 = sqlx::query_scalar("SELECT attempts FROM data_exports WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        // Sem contador não se repete: não se insiste no que não se consegue contar.
+        .unwrap_or(i32::MAX);
+    // Qualquer falha a GERAR a exportação pode passar sozinha: o que a faz
+    // falhar é a base, o disco ou o armazenamento, nunca o pedido — que já foi
+    // validado quando entrou na fila. Uma falha estável esgota as tentativas
+    // depressa (três) e não fica a repetir-se para sempre.
+    let _ = erro;
+    if !POLITICA.should_retry(Failure::Transient, tentativas) {
+        let _ = sqlx::query(
+            "UPDATE data_exports SET status = 'failed', completed_at = now(),
+                    error = 'não foi possível gerar a exportação; peça outra'
+              WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&state.db)
+        .await;
+        return;
+    }
+    let espera = POLITICA
+        .delay_after(tentativas)
+        .unwrap_or_default()
+        .as_secs() as f64;
+    let (lo, hi) = POLITICA.jitter_range();
+    // Volta à fila com espera. O espalhamento é aplicado AQUI porque é quem
+    // tem a fonte de aleatoriedade (o `random()` do Postgres) — a peça pura
+    // só dá os limites.
+    // Os `::float8` não são decoração: sem eles o Postgres não consegue inferir
+    // o tipo dos parâmetros dentro da aritmética do `random()` e a instrução
+    // falha — e falhava em silêncio, porque isto era um `let _ =`. A exportação
+    // ficava presa em `running` até o requeue do abandonado a apanhar, quinze
+    // minutos depois.
+    let r = sqlx::query(
+        "UPDATE data_exports
+            SET status = 'queued', started_at = NULL,
+                next_attempt_at = now() + make_interval(
+                    secs => $2::float8 * ($3::float8 + random() * $4::float8))
+          WHERE id = $1 AND status = 'running'",
+    )
+    .bind(id)
+    .bind(espera)
+    .bind(lo)
+    .bind(hi - lo)
+    .execute(&state.db)
+    .await;
+    match r {
+        Ok(n) if n.rows_affected() > 0 => {
+            tracing::info!(%id, tentativas, espera_s = espera, "exportação volta à fila")
+        }
+        // Não se cala: uma exportação que não volta à fila nem fica falhada é
+        // uma linha presa, e era exactamente o que este caminho existia para
+        // evitar.
+        Ok(_) => tracing::warn!(%id, "exportação: o regresso à fila não encontrou a linha"),
+        Err(e) => tracing::error!(%id, error = %e, "exportação: o regresso à fila falhou"),
     }
 }
 
