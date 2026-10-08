@@ -17,6 +17,12 @@ O «wake» é um servidor de papel nesta máquina: o endpoint real e os forneced
 não existem. Isto prova o lado do FreeSWITCH. Não prova push, nem iPhone, nem o toque no aparelho.
 
 A palavra-passe do ramal de prova nunca é impressa. Cria (se faltarem) os ramais da empresa 1901 e 1902.
+
+MODO REAL (`--real`): em vez de um servidor de papel, usa o servidor do laboratório. Exige o compose levantado com
+`make compose-up LAN_IP=<ip> PUSH_LAB_URL=http://<ip>:18890/push` (o `compose-lan.sh` põe o URL no servidor e liga a
+espera de 20 s no FreeSWITCH). Cria uma PESSOA de prova com ramal e sessão, regista-lhe um aparelho `lab` pela API, e
+o receptor `lab` (esta máquina, porta 18890) faz de «app que acorda»: ao receber o pedido do servidor, regista o
+ramal por TLS 3 s depois. Mede a cadeia completa: FreeSWITCH → servidor real → fornecedor lab → registo → INVITE.
 """
 import argparse, hashlib, json, os, re, secrets, socket, ssl, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -135,9 +141,93 @@ def originar(lab, chamador_user, dominio, destino, uuid):
     r = lab.fs(f"originate {{origination_uuid={uuid},sip_auth_username={chamador_user},sip_auth_realm={dominio},domain_name={dominio},sip_from_host={dominio}}}loopback/{destino}/delonix_ramais &park", timeout=120)
     return r, time.time() - t0
 
+class Receptor(BaseHTTPRequestHandler):
+    """O fornecedor `lab` de papel (modo real): guarda o que o servidor entrega e faz o telefone acordar."""
+    pedidos, acordar = [], None
+    def do_POST(self):
+        n = int(self.headers.get("content-length", 0))
+        try: corpo = json.loads(self.rfile.read(n) or b"{}")
+        except ValueError: corpo = {}
+        Receptor.pedidos.append({"t": time.time(), **corpo})
+        self.send_response(200); self.send_header("content-length", "0"); self.end_headers()
+        if Receptor.acordar:
+            threading.Thread(target=Receptor.acordar, daemon=True).start()
+    def log_message(self, *_): pass
+
+def sessao(lab, email, senha):
+    r = lab.api("POST", "/api/auth/login", {"email": email, "password": senha})
+    sid = json.loads(__import__("base64").urlsafe_b64decode(r["access_token"].split(".")[1] + "==")).get("sid")
+    return r["access_token"], r["user"]["id"], sid
+
+def prova_real(lab, porta):
+    sufixo = secrets.token_hex(3)
+    dominio_mail = "ngolacloud.local"
+    email, senha = f"push-prova-{sufixo}@{dominio_mail}", secrets.token_urlsafe(18) + "Aa1!"
+    lab.api("POST", f"/api/orgs/{lab.org['id']}/members", {"email": email, "username": f"push-prova-{sufixo}", "password": senha, "role": "member", "title": "Prova de push"})
+    tok, uid, sid = sessao(lab, email, senha)
+    usados = {e["extension"] for e in lab.api("GET", f"/api/orgs/{lab.org['id']}/extensions")}
+    numero = next(str(n) for n in range(1950, 2000) if str(n) not in usados)
+    ext = lab.api("POST", f"/api/orgs/{lab.org['id']}/extensions", {"extension": numero, "member_id": uid})
+    user_sip, senha_sip = lab.credencial(ext)
+    def meu(m, path, b=None, token=tok):
+        r = urllib.request.Request(lab.base + path, method=m, data=json.dumps(b).encode() if b is not None else None,
+            headers={"content-type": "application/json", "authorization": "Bearer " + token})
+        try:
+            with urllib.request.urlopen(r, context=lab.ctx, timeout=15) as x:
+                return x.status, x.read().decode()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode()
+    base = f"/api/orgs/{lab.org['id']}/my-extension/devices"
+    token_push = "token-de-prova-" + secrets.token_hex(8)
+    dev = str(__import__("uuid").uuid4())
+    st, resp = meu("PUT", f"{base}/{dev}", {"platform": "android", "provider": "lab", "push_token": token_push, "app_version": "prova"})
+    linha(st == 201 and token_push not in resp, "o aparelho regista-se pela API real e o token não volta", f"HTTP {st}")
+    srv = ThreadingHTTPServer((lab.ip, porta), Receptor); threading.Thread(target=srv.serve_forever, daemon=True).start()
+    lab.fs("global_setvar delonix_push_wake_url="); lab.fs("global_setvar delonix_push_wait_secs=20")
+    aor = f"{user_sip}@{lab.dominio}"
+    chamador = lab.credencial(lab.ramal("1902", "Prova push (chamador)"))[0]
+    try:
+        # 1. a cadeia completa
+        lab.fs(f"sofia profile internal flush_inbound_reg {aor}")
+        tel = Aparelho(lab, user_sip, senha_sip, lab.dominio); Receptor.pedidos.clear()
+        Receptor.acordar = lambda: (time.sleep(3), tel.registar())
+        uuid1 = secrets.token_hex(4).rjust(8, "0") + "-0000-0000-0000-0000000000a1"
+        t0 = time.time(); r, dt = originar(lab, chamador, lab.dominio, numero, uuid1)
+        ped = list(Receptor.pedidos)
+        linha(len(ped) == 1 and ped[0].get("device_id") == dev and ped[0].get("call_uuid") == uuid1 and token_push not in json.dumps(ped),
+              "o servidor REAL pediu ao fornecedor para acordar o aparelho certo, sem o token", f"pedidos={len(ped)}")
+        linha(tel.t_invite is not None and tel.t_registo is not None and tel.t_invite > tel.t_registo and 2.5 <= (tel.t_invite - t0) <= 9,
+              "o aparelho acordou, registou-se e recebeu o INVITE", "sem INVITE" if tel.t_invite is None else f"INVITE aos {tel.t_invite - t0:.1f}s")
+        linha("USER_BUSY" in r, "a chamada seguiu para o aparelho (que recusou com 486)", r)
+        tel.fechar(); lab.fs(f"sofia profile internal flush_inbound_reg {aor}")
+        # 2. controlo negativo: aparelho revogado -> falha já e ninguém é acordado
+        st, _ = meu("DELETE", f"{base}/{dev}"); Receptor.pedidos.clear()
+        r, dt = originar(lab, chamador, lab.dominio, numero, secrets.token_hex(4).rjust(8, "0") + "-0000-0000-0000-0000000000a2")
+        linha(st == 204 and "USER_NOT_REGISTERED" in r and dt < 3 and not Receptor.pedidos, "aparelho revogado: a chamada falha já e ninguém é acordado", f"{r} em {dt:.2f}s, pedidos={len(Receptor.pedidos)}")
+        # 3. controlo negativo: terminar a SESSÃO do aparelho
+        tok2, _, sid2 = sessao(lab, email, senha)
+        dev2 = str(__import__("uuid").uuid4())
+        st, _ = meu("PUT", f"{base}/{dev2}", {"platform": "android", "provider": "lab", "push_token": token_push + "-2"}, token=tok2)
+        st2, _ = meu("DELETE", f"/api/users/me/sessions/{sid2}", token=tok)
+        Receptor.pedidos.clear()
+        r, dt = originar(lab, chamador, lab.dominio, numero, secrets.token_hex(4).rjust(8, "0") + "-0000-0000-0000-0000000000a3")
+        linha(st == 201 and st2 in (200, 204) and "USER_NOT_REGISTERED" in r and dt < 3 and not Receptor.pedidos,
+              "sessão do aparelho terminada: a chamada falha já e ninguém é acordado", f"{r} em {dt:.2f}s, pedidos={len(Receptor.pedidos)}")
+    finally:
+        Receptor.acordar = None
+        lab.fs("global_setvar delonix_push_wait_secs=0")
+        lab.fs(f"sofia profile internal flush_inbound_reg {aor}")
+        srv.shutdown()
+    print(f"\n{falhas} falha(s)  (pessoa de prova: push-prova-{sufixo}, ramal {numero}, ficam no laboratório)"); sys.exit(min(falhas, 255))
+
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--lab", required=True); a = ap.parse_args()
+    ap = argparse.ArgumentParser(); ap.add_argument("--lab", required=True)
+    ap.add_argument("--real", action="store_true", help="usa o servidor do laboratório em vez de um servidor de papel")
+    ap.add_argument("--porta", type=int, default=18890, help="porta do receptor lab (modo real)")
+    a = ap.parse_args()
     lab = Lab(a.lab); lab.entrar()
+    if a.real:
+        prova_real(lab, a.porta)
     alvo, chamador = lab.ramal("1901", "Prova push (destino)"), lab.ramal("1902", "Prova push (chamador)")
     user_alvo, senha_alvo = lab.credencial(alvo)
     user_cham, _ = lab.credencial(chamador)

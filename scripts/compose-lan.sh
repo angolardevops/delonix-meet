@@ -43,6 +43,16 @@ fi
 # A chave da raiz fica só para o dono. A da borda tem de ser lida pelo nginx do
 # contentor (outro uid, rootless), como as restantes de deploy/compose/generated.
 chmod 600 "$TLS/ca.key"; chmod 644 "$TLS/tls.key" "$TLS"/*.crt
+# Opcional (ADR-0023, S-01): com PUSH_LAB_URL=http://<ip>:<porta>/push o servidor entrega os pedidos de
+# «acordar» de um aparelho `lab` a esse URL (a prova scripts/ramais-push-real-prova.py é quem o serve), o
+# FreeSWITCH passa a segurar 20 s a chamada para um ramal sem registo, e o host do URL entra na isenção da
+# guarda de saída (só ele). Sem a variável nada disto existe.
+PUSH_SERVER_ENV=""; PUSH_FS_ENV=""
+if [ -n "${PUSH_LAB_URL:-}" ]; then
+  [[ "$PUSH_LAB_URL" =~ ^http://([0-9.]+):[0-9]+/[A-Za-z0-9/_-]*$ ]] || { echo "PUSH_LAB_URL tem de ser http://<ip>:<porta>/<caminho>: $PUSH_LAB_URL" >&2; exit 1; }
+  PUSH_SERVER_ENV=$'\n      PUSH_LAB_URL: '"${PUSH_LAB_URL}"$'\n      OUTBOUND_ALLOW_HOSTS: '"${BASH_REMATCH[1]}"
+  PUSH_FS_ENV=$'\n      DELONIX_PUSH_WAIT_SECS: "20"'
+fi
 cat <<YAML
 # Gerado por scripts/compose-lan.sh — NÃO versionar (tem o IP desta máquina).
 services:
@@ -56,7 +66,7 @@ services:
       # O QR do Linphone manda o telefone registar por TLS, na porta TLS do perfil dos ramais.
       VOICE_RAMAIS_PUBLIC_PORT: "5071"
       VOICE_RAMAIS_PUBLIC_TRANSPORT: tls
-      CORS_ORIGINS: https://${LAN_IP}:8443,https://${MEET_HOST}:8443
+      CORS_ORIGINS: https://${LAN_IP}:8443,https://${MEET_HOST}:8443${PUSH_SERVER_ENV}
   # A borda fica também na rede local, com o certificado que cobre este IP. Em
   # 8080 serve a raiz de laboratório, para o telemóvel a ir buscar e instalar.
   edge:
@@ -74,7 +84,7 @@ services:
       # O 5070 (UDP/TCP em claro) fica de reserva para o softphone de linha de comandos das provas.
       DELONIX_RAMAIS_TLS_PORT: "5071"
       DELONIX_RTP_MIN: "20000"
-      DELONIX_RTP_MAX: "20100"
+      DELONIX_RTP_MAX: "20100"${PUSH_FS_ENV}
     volumes:
       - ./deploy/compose/generated/lan-tls/tls.crt:/tls-ramais/tls.crt:ro
       - ./deploy/compose/generated/lan-tls/tls.key:/tls-ramais/tls.key:ro
