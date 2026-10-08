@@ -53,6 +53,9 @@ services:
   server:
     environment:
       VOICE_RAMAIS_PUBLIC_HOST: ${LAN_IP}
+      # O QR do Linphone manda o telefone registar por TLS, na porta TLS do perfil dos ramais.
+      VOICE_RAMAIS_PUBLIC_PORT: "5071"
+      VOICE_RAMAIS_PUBLIC_TRANSPORT: tls
       CORS_ORIGINS: https://${LAN_IP}:8443,https://${MEET_HOST}:8443
   # A borda fica também na rede local, com o certificado que cobre este IP. Em
   # 8080 serve a raiz de laboratório, para o telemóvel a ir buscar e instalar.
@@ -67,10 +70,17 @@ services:
   freeswitch:
     environment:
       DELONIX_EXTERNAL_IP: ${LAN_IP}
+      # TLS nos ramais (entrypoint, passo 9b), com o MESMO certificado da borda: cobre este IP.
+      # O 5070 (UDP/TCP em claro) fica de reserva para o softphone de linha de comandos das provas.
+      DELONIX_RAMAIS_TLS_PORT: "5071"
       DELONIX_RTP_MIN: "20000"
       DELONIX_RTP_MAX: "20100"
+    volumes:
+      - ./deploy/compose/generated/lan-tls/tls.crt:/tls-ramais/tls.crt:ro
+      - ./deploy/compose/generated/lan-tls/tls.key:/tls-ramais/tls.key:ro
     ports:
       - "${LAN_IP}:5070:5070/udp"
       - "${LAN_IP}:5070:5070/tcp"
+      - "${LAN_IP}:5071:5071/tcp"
       - "${LAN_IP}:20000-20100:20000-20100/udp"
 YAML
