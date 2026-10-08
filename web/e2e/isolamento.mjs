@@ -604,6 +604,11 @@ if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   await recusado('A escreve a ACTA da reunião da B', `/api/meetings/${m}/minutes`, {
     token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
   })
+  // Pedir o resumo pelo LLM gasta GPU e revela que a reunião existe: a recusa
+  // tem de ser a mesma das outras (404, sem confirmar que existe).
+  await recusado('A pede o RESUMO da acta da reunião da B', `/api/meetings/${m}/minutes/summary`, {
+    token: A.token, method: 'POST', body: {},
+  })
   await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda-items`, { token: A.token })
   await recusado('A lê os convidados da reunião da B', `/api/meetings/${m}/invitees`, { token: A.token })
   await recusado('A lê o plano de acção da reunião da B', `/api/meetings/${m}/action-plan`, { token: A.token })
