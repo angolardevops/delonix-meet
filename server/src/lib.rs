@@ -109,6 +109,9 @@ pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
 pub use recorder::{
     resume_due as recording_resume_due, sweep_orphan_segments as recording_sweep_orphan_segments,
 };
+/// A varredura dos capítulos automáticos, exposta aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use recording_chapters::auto_chapters_sweep;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};

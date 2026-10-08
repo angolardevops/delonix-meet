@@ -84,15 +84,15 @@ próprio e reparte-se por três.
 
 | Área | Portão |
 |---|---|
-| Qualquer mudança | `make fitness` — `cargo fmt --check` mais dezasseis dos dezoito `scripts/check-*.sh` (`Makefile:230-248`). Os dois que só correm no CI: `check-isolamento-cobertura.sh` e `check-browser-antes-do-e2e.sh` (`.github/workflows/ci.yml:169,172`) |
+| Qualquer mudança | `make fitness` — `cargo fmt --check` mais os `scripts/check-*.sh`. **Medido a 2026-10-08: 27 scripts**, todos no `make fitness` menos dois, que só correm no CI: `check-isolamento-cobertura.sh` e `check-browser-antes-do-e2e.sh` |
 | Backend | **o que o CI corre, por esta ordem** (`ci.yml:57-86`): `cargo fmt --manifest-path server/Cargo.toml --check` · `bash scripts/check-clippy-ratchet.sh` · `cargo test --manifest-path server/Cargo.toml --release --workspace -- --test-threads=4` · `cargo build --release` · `bash scripts/check-openapi.sh`. O `fmt` é o primeiro e é o que mais vezes trava um push apressado |
 | Rota nova ou alterada | `delonix-meet-api` §Portões |
 | Frontend | `cd web && npx tsc --noEmit && npx vitest run` + o e2e do ecrã |
 | Media | `cargo test --release sfu_e2e` + `node web/e2e/reuniao.mjs` |
 | Telefone e PSTN | `delonix-meet-telefonia` §Portões — inclui as provas contra um FreeSWITCH real, que **não correm no CI** |
 
-Os dezoito portões: `arquitectura-catraca`, `browser-antes-do-e2e`, `capability-claims`,
-`clippy-ratchet`, `crate-deps`, `dep-audit`, `docs-drift`, `ffmpeg-licenca`, `fs-xml`,
+Os portões (`ls scripts/check-*.sh` é a lista a sério; esta envelhece): `arquitectura-catraca`, `browser-antes-do-e2e`, `capability-claims`,
+`clippy-ratchet`, `crate-deps`, `dep-audit`, `docs-drift`, `ffmpeg-licenca`, **`filas-reivindicacao`**, `fs-xml`,
 `isolamento-cobertura`, `k8s-render`, `lua-sintaxe`, `openapi`, `proto`, `repo-hygiene`, `room-affinity`,
 `route-auth`, `tenant-rls`. O `check-tenant-rls.sh` exige um cluster vivo e **salta sem
 ele** — verde aí não prova nada.
@@ -100,7 +100,7 @@ ele** — verde aí não prova nada.
 ## O estado real (2026-10-03, `main` `024583a` mais a R225) — não o redescubras
 
 Números medidos, não lembrados: **173 regressões** no catálogo (a última é a R225),
-**31 binários** em `server/tests/`, **16 portões** `scripts/check-*.sh`, catraca do
+**31 binários** em `server/tests/`, **27 portões** `scripts/check-*.sh` (2026-10-08), catraca do
 clippy em **13** (`scripts/clippy-baseline.txt`), `rotas_sem_openapi=0`
 (`scripts/openapi-baseline.txt`), **73 migrações** (a última é a `0073`). PRs abertas:
 **não medido** nesta revisão (sem rede) — corre `gh pr list` antes de desenhar.

@@ -22,14 +22,36 @@
 //! Sem `tenant_column` o passo 1 degenera no `ORDER BY … LIMIT` de sempre, e a
 //! fila comporta-se como as seis antigas.
 
+use std::time::Duration;
+
 use delonix_meet_core::jobs::{Queue, Retry};
 use sqlx::{postgres::PgRow, FromRow, PgPool, Row};
 
+/// Substitui os dois marcadores que uma declaração de fila pode usar.
+///
+/// **Porque se interpola em vez de ligar por *bind*:** estes dois valores
+/// aparecem dentro de fragmentos que a fila escreve (`ready_when`, `claim_set`),
+/// e um `$n` ali obrigaria cada fila a saber a numeração dos parâmetros que o
+/// adaptador reserva — um acoplamento que a primeira fila nova quebraria.
+///
+/// **Porque é seguro:** `{max_attempts}` é um `i32` do nosso código, e
+/// `{lease_secs}` é um `u64` que passou pelo prendedor do domínio
+/// (`transcription::lease_duration`, 1 min..2 h). Nenhum dos dois é texto, e
+/// nenhum chega aqui sem ter sido um número tipado — não há caminho para
+/// conteúdo de um pedido entrar na consulta.
+fn substitui(fragmento: &str, retry: &Retry, lease: Option<Duration>) -> String {
+    let s = fragmento.replace("{max_attempts}", &retry.max_attempts.to_string());
+    match lease {
+        Some(l) => s.replace("{lease_secs}", &l.as_secs().to_string()),
+        None => s,
+    }
+}
+
 /// Monta o SQL da escolha. Os nomes vêm todos de `&'static str` do módulo que
-/// declara a fila (nunca de um pedido); o único valor interpolado é o tecto de
-/// tentativas, que é um `i32` do nosso código. O lote vai por *bind*.
+/// declara a fila (nunca de um pedido); os únicos valores interpolados são os
+/// dois marcadores de [`substitui`]. O lote vai por *bind*.
 fn select_sql(q: &Queue, retry: &Retry) -> String {
-    let ready = q.ready_when.replace("{max_attempts}", &retry.max_attempts.to_string());
+    let ready = substitui(q.ready_when, retry, None);
     let escolha = match q.tenant_column {
         // Reparte o lote: a primeira de cada inquilino, depois a segunda de
         // cada um, e assim por diante. Com um só inquilino à espera, continua a
@@ -67,19 +89,57 @@ fn select_sql(q: &Queue, retry: &Retry) -> String {
 /// O que volta é o `q.returning` de cada linha reivindicada, já com o
 /// `q.claim_set` escrito e a transacção fechada: se isto devolve uma linha, o
 /// trabalho é de quem chamou e de mais ninguém.
-pub async fn claim<T>(pool: &PgPool, q: &Queue, retry: &Retry) -> Result<Vec<T>, sqlx::Error>
+pub async fn claim<T>(
+    pool: &PgPool,
+    q: &Queue,
+    retry: &Retry,
+    lease: Option<Duration>,
+) -> Result<Vec<T>, sqlx::Error>
 where
     T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
 {
     let mut tx = pool.begin().await?;
-    let rows = sqlx::query(&select_sql(q, retry))
-        .bind(q.batch)
-        .fetch_all(&mut *tx)
-        .await?;
-    if rows.is_empty() {
+    let levados = claim_in(&mut tx, q, retry, lease).await?;
+    if levados.is_empty() {
         // Nada a fazer: fecha sem escrever. Um `commit` de uma transacção que
         // não mexeu em nada é barato, mas um `rollback` é mais honesto.
         tx.rollback().await?;
+    } else {
+        tx.commit().await?;
+    }
+    Ok(levados)
+}
+
+/// A reivindicação **numa transacção de quem chama**, que fica aberta.
+///
+/// Existe por uma razão medida: a fila dos webhooks faz, na MESMA transacção da
+/// reivindicação, mais do que marcar a posse — insere a linha da tentativa
+/// seguinte (`redelivery_of`), copiada da anterior. Passar esse `INSERT` para
+/// fora da transacção abria uma janela em que o processo podia morrer com o
+/// `retry_at` já limpo e a linha nova por criar: **a repetição perdia-se**.
+/// Isso enfraqueceria a durabilidade da única fila do repositório que a tinha
+/// completa, e a Regra 0 é clara — não se mexe em código que funciona para
+/// piorar.
+///
+/// Quem chama é dono do `commit` e de tudo o que faça entre uma coisa e outra.
+pub async fn claim_in<T>(
+    conn: &mut sqlx::PgConnection,
+    q: &Queue,
+    retry: &Retry,
+    lease: Option<Duration>,
+) -> Result<Vec<T>, sqlx::Error>
+where
+    T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
+{
+    // `&mut PgConnection` e não um `Acquire` genérico: o genérico fazia a
+    // inferência de `Send` falhar em quem chama isto de dentro de um
+    // `tokio::spawn` (o `data_exports::create` despacha o `run_queue`), com um
+    // erro que apontava para o `spawn` e não para aqui.
+    let rows = sqlx::query(&select_sql(q, retry))
+        .bind(q.batch)
+        .fetch_all(&mut *conn)
+        .await?;
+    if rows.is_empty() {
         return Ok(Vec::new());
     }
     let ids: Vec<sqlx::types::Uuid> = rows
@@ -89,18 +149,13 @@ where
     sqlx::query(&format!(
         "UPDATE {table} SET {set} WHERE {id} = ANY($1)",
         table = q.table,
-        set = q.claim_set,
+        set = substitui(q.claim_set, retry, lease),
         id = q.id_column,
     ))
     .bind(&ids)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
-    let levados = rows
-        .iter()
-        .map(T::from_row)
-        .collect::<Result<Vec<T>, _>>()?;
-    tx.commit().await?;
-    Ok(levados)
+    rows.iter().map(T::from_row).collect()
 }
 
 #[cfg(test)]

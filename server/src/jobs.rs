@@ -16,18 +16,20 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use delonix_meet_core::jobs::{Queue, Retry};
+use delonix_meet_core::jobs::{Lease, Queue, Retry};
 use tokio_util::sync::CancellationToken;
 
-/// Uma fila montada: a declaração e a política.
+/// Uma fila montada: a declaração, a política e — quando a fila reserva — o
+/// prazo da posse.
 ///
-/// Não leva a posse (`Lease`) nem o ritmo: o ritmo é do `levanta`, e a posse só
-/// entra quando a primeira fila que a renova passar por aqui (a composição e a
-/// transcrição, que ainda não migraram). Um campo que ninguém lê é uma porta
-/// sem consumidor, e a `delonix-meet-backend` é explícita sobre isso.
+/// Não leva o ritmo: esse é do [`Filas::levanta`]. A `lease` é `None` nas filas
+/// cujo trabalho é instantâneo, e `Some` nas que escrevem um prazo no
+/// `claim_set` com o marcador `{lease_secs}` — a transcrição, cujo prazo vem no
+/// pedido do *worker* e por isso não pode ser uma constante da fila.
 pub struct Worker {
     pub queue: Queue,
     pub retry: Retry,
+    pub lease: Option<Lease>,
 }
 
 /// Corre `uma_volta` a cada `every` até o token ser cancelado.
@@ -128,7 +130,8 @@ pub async fn claim<T>(state: &Arc<crate::AppState>, w: &Worker) -> Result<Vec<T>
 where
     T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
 {
-    delonix_meet_store::jobs::claim(&state.db, &w.queue, &w.retry).await
+    delonix_meet_store::jobs::claim(&state.db, &w.queue, &w.retry, w.lease.map(|l| l.duration))
+        .await
 }
 
 #[cfg(test)]

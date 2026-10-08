@@ -1290,30 +1290,59 @@ where
 /// é baixo de propósito: a composição é cara em CPU e as vagas são repartidas
 /// por inquilino (`fair_slots`) — encher a fila de uma vez não a faria andar
 /// mais depressa, só atrasaria as chamadas vivas do mesmo pod.
+/// A fila da composição, declarada uma vez.
+///
+/// Era o sétimo `FOR UPDATE SKIP LOCKED` à mão do servidor, e nasceu DEPOIS do
+/// desenho da peça comum (#268) — a oitava cópia do padrão a entrar enquanto o
+/// trabalho de a acabar estava em curso, que é exactamente o que a catraca não
+/// apanha e o desenho avisou.
+///
+/// `tenant_column: None`: a repartição entre inquilinos desta fila já existe a
+/// jusante, nas vagas de composição (`fair_slots`), que é onde o recurso
+/// disputado (CPU do ffmpeg) está. Pôr justiça também aqui seria contá-la duas
+/// vezes.
+const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "recording_compose",
+    table: "recordings",
+    id_column: "id",
+    ready_when: "status = 'processing' AND compose_manifest IS NOT NULL \
+                 AND compose_attempts < {max_attempts} \
+                 AND (compose_lease_expires_at IS NULL \
+                      OR compose_lease_expires_at < now())",
+    claim_set: "compose_lease_token = md5(random()::text || clock_timestamp()::text), \
+                compose_lease_expires_at = now() + make_interval(secs => {lease_secs}), \
+                compose_attempts = compose_attempts + 1, \
+                progress_at = now()",
+    returning: "id, room_id, compose_manifest, compose_attempts",
+    order_by: "created_at",
+    tenant_column: None,
+    batch: 2,
+};
+
+/// Uma composição reivindicada para retomar.
+#[derive(sqlx::FromRow)]
+struct Retomavel {
+    id: Uuid,
+    room_id: Uuid,
+    compose_manifest: serde_json::Value,
+    compose_attempts: i32,
+}
+
 pub async fn resume_due(state: &Arc<AppState>) -> usize {
-    const RESUME_BATCH: i64 = 2;
-    let claimed: Vec<(Uuid, Uuid, serde_json::Value, i32)> = match sqlx::query_as(
-        "UPDATE recordings r
-            SET compose_lease_token = md5(random()::text || clock_timestamp()::text),
-                compose_lease_expires_at = now() + make_interval(secs => $1),
-                compose_attempts = r.compose_attempts + 1,
-                progress_at = now()
-          WHERE r.id IN (
-                SELECT id FROM recordings
-                 WHERE status = 'processing'
-                   AND compose_manifest IS NOT NULL
-                   AND compose_attempts < $2
-                   AND (compose_lease_expires_at IS NULL
-                        OR compose_lease_expires_at < now())
-                 ORDER BY created_at
-                 FOR UPDATE SKIP LOCKED
-                 LIMIT $3)
-         RETURNING r.id, r.room_id, r.compose_manifest, r.compose_attempts",
+    let claimed: Vec<Retomavel> = match crate::jobs::claim(
+        state,
+        &crate::jobs::Worker {
+            queue: FILA,
+            retry: delonix_meet_core::jobs::Retry {
+                max_attempts: compose_rules::MAX_ATTEMPTS,
+                delays: &[],
+                jitter: 0.0,
+            },
+            lease: Some(delonix_meet_core::jobs::Lease {
+                duration: compose_rules::LEASE,
+            }),
+        },
     )
-    .bind(compose_rules::LEASE.as_secs() as f64)
-    .bind(compose_rules::MAX_ATTEMPTS)
-    .bind(RESUME_BATCH)
-    .fetch_all(&state.db)
     .await
     {
         Ok(r) => r,
@@ -1323,7 +1352,13 @@ pub async fn resume_due(state: &Arc<AppState>) -> usize {
         }
     };
     let mut retomadas = 0;
-    for (rec_id, room_id, raw, tentativa) in claimed {
+    for Retomavel {
+        id: rec_id,
+        room_id,
+        compose_manifest: raw,
+        compose_attempts: tentativa,
+    } in claimed
+    {
         let manifest: ComposeManifest = match serde_json::from_value(raw) {
             Ok(m) => m,
             Err(e) => {
