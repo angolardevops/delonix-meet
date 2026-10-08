@@ -1943,7 +1943,12 @@ mod tests {
         crate::extension_pin::clear_extension_pin,
         crate::extension_provisioning::issue_my_ticket,
         crate::extension_provisioning::issue_extension_ticket,
-        crate::extension_provisioning::redeem
+        crate::extension_provisioning::redeem,
+        crate::voice_devices::put_my_device,
+        crate::voice_devices::list_my_devices,
+        crate::voice_devices::delete_my_device,
+        crate::voice_devices::list_extension_devices,
+        crate::voice_devices::delete_extension_device
     ),
     components(schemas(
         VoiceExtensionInfo,
@@ -1960,7 +1965,9 @@ mod tests {
         crate::extension_pin::MyExtension,
         crate::extension_pin::SetPinReq,
         crate::extension_pin::GeneratedPin,
-        crate::extension_provisioning::ProvisioningTicket
+        crate::extension_provisioning::ProvisioningTicket,
+        crate::voice_devices::DeviceInfo,
+        crate::voice_devices::PutDeviceReq
     ))
 )]
 pub struct ApiDoc;

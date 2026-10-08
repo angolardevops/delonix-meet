@@ -8087,6 +8087,34 @@
         ],
         "type": "object"
       },
+      "PutDeviceReq": {
+        "properties": {
+          "app_version": {
+            "description": "Versão da app, só para diagnóstico.",
+            "type": "string"
+          },
+          "platform": {
+            "description": "`android` ou `ios`.",
+            "example": "android",
+            "type": "string"
+          },
+          "provider": {
+            "description": "`fcm` (Android), `apns_voip` (iOS) ou `lab` (só laboratório).",
+            "example": "fcm",
+            "type": "string"
+          },
+          "push_token": {
+            "description": "O token que o fornecedor deu à app. Guarda-se cifrado e não volta em nenhuma resposta.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "provider",
+          "push_token"
+        ],
+        "type": "object"
+      },
       "PutDialPlanReq": {
         "properties": {
           "rules": {
@@ -19524,6 +19552,168 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/extensions/{id}/devices": {
+      "get": {
+        "operationId": "list_extension_devices",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O ramal não existe NESTA organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O administrador lista os aparelhos activos de um ramal da organização.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/extensions/{id}/devices/{device_id}": {
+      "delete": {
+        "operationId": "delete_extension_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Aparelho.",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Aparelho desligado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O ramal ou o aparelho não existem NESTA organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O administrador desliga um aparelho de um ramal da organização («terminar o telemóvel»).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/extensions/{id}/did": {
       "delete": {
         "operationId": "unassign_extension_did",
@@ -21806,6 +21996,244 @@
           }
         ],
         "summary": "O ramal de quem pede nesta organização (qualquer membro activo).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/devices": {
+      "get": {
+        "operationId": "list_my_devices",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, ou não tem ramal (`ramais.no_extension`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Os aparelhos activos do SEU ramal (no máximo oito: não há paginação). Nunca devolve o token.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/devices/{device_id}": {
+      "delete": {
+        "operationId": "delete_my_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Aparelho.",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Aparelho desligado: deixa de ser acordado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, não tem ramal, ou o aparelho não é seu (ou já está revogado)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A pessoa desliga um aparelho do SEU ramal.",
+        "tags": [
+          "voice"
+        ]
+      },
+      "put": {
+        "operationId": "put_my_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Identificador do aparelho, escolhido pela app (UUID).",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDeviceReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceInfo"
+                }
+              }
+            },
+            "description": "Aparelho já existia: token renovado."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceInfo"
+                }
+              }
+            },
+            "description": "Aparelho criado."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.platform_invalid`, `devices.provider_invalid`, `devices.provider_platform_mismatch`, `devices.token_invalid` ou `devices.app_version_invalid`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, não tem ramal (`ramais.no_extension`), ou o `id` é de outro aparelho."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.revoked` (usar um `id` novo) ou `devices.too_many`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.needs_session` (token anterior às sessões) ou `ramais.extension_inactive`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A pessoa regista (ou renova) o aparelho do SEU ramal. O `id` é da app: repetir o pedido com o mesmo\n`id` renova o token em vez de criar outro aparelho. Um aparelho revogado não ressuscita: a app pede\ncom um `id` novo.",
         "tags": [
           "voice"
         ]

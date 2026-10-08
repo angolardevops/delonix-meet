@@ -282,6 +282,19 @@ await recusado('A emite um QR do Linphone para um ramal da org B', `/api/orgs/${
 await recusado('A emite um QR do Linphone para «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/provisioning-ticket`, {
   token: A.token, method: 'POST', body: {},
 })
+// Aparelhos do ramal e *wake* por push (ADR-0023): A não regista, lê nem desliga aparelhos na org B,
+// nem lista ou desliga os de um ramal da org B (o token de push é o que acorda o telemóvel de alguém).
+await recusado('A regista um aparelho em «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices/${fantasma}`, {
+  token: A.token, method: 'PUT', body: { platform: 'android', provider: 'lab', push_token: 'token-de-prova' },
+})
+await recusado('A lista os aparelhos de «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices`, { token: A.token })
+await recusado('A desliga um aparelho de «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices/${fantasma}`, {
+  token: A.token, method: 'DELETE',
+})
+await recusado('A lista os aparelhos de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/devices`, { token: A.token })
+await recusado('A desliga um aparelho de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/devices/${fantasma}`, {
+  token: A.token, method: 'DELETE',
+})
 
 // O segredo mais valioso desta família: com ele, qualquer um emite no canal
 // de YouTube da empresa. A provar: A não alcança os destinos da B (ler, rodar

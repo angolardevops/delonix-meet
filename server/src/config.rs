@@ -155,6 +155,9 @@ pub struct Config {
     /// DENTRO da org (ver migração 0064); sem isto, o ramal "101" da Acme e o
     /// "101" da Zeta colidiriam no mesmo directório SIP.
     pub voice_ramais_domain_suffix: String,
+    /// Só laboratório e testes (ADR-0023): o URL do operador a que o servidor entrega o pedido de «acordar»
+    /// de um aparelho `lab`. Vazio = o fornecedor `lab` não está configurado (não acorda ninguém).
+    pub push_lab_url: Option<String>,
     /// Número curto RESERVADO que um ramal marca para entrar numa reunião
     /// (`VOICE_MEETING_ACCESS_NUMBER`, 3–5 dígitos sem zero à esquerda; por
     /// omissão `8000`). O FreeSWITCH não o conhece: pergunta-o ao servidor em
@@ -606,6 +609,7 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
+            push_lab_url: opt("PUSH_LAB_URL"),
             voice_ramais_domain_suffix: opt("VOICE_RAMAIS_DOMAIN_SUFFIX")
                 .unwrap_or_else(|| "ramais.delonix.meet".into()),
             voice_meeting_access_number: {

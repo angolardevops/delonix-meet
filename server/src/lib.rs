@@ -92,6 +92,7 @@ mod ui;
 mod usage;
 mod users;
 mod voice;
+mod voice_devices;
 mod voice_caller;
 mod webhooks;
 mod whiteboards;
@@ -311,6 +312,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
         .route(
             "/internal/v1/voice/ivr/dialplan-did",
             post(ramais::ivr_dialplan_did),
+        )
+        // O FreeSWITCH pergunta se há aparelhos a acordar para um ramal sem registo, e o ramal só toca
+        // depois de se registar (`ramais_dial.lua`, S-02; ADR-0023).
+        .route(
+            "/internal/v1/voice/push/wake",
+            post(voice_devices::ivr_push_wake),
         )
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
         // `mod_xml_curl`. Mesmo segredo interno do IVR.
@@ -1158,6 +1165,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/my-extension/provisioning-ticket",
             post(extension_provisioning::issue_my_ticket),
+        )
+        // Os aparelhos do ramal e o *wake* por push (ADR-0023, S-01): a pessoa regista e desliga os SEUS;
+        // o administrador lista e desliga os de qualquer ramal da organização.
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices",
+            get(voice_devices::list_my_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices/{device_id}",
+            axum::routing::put(voice_devices::put_my_device).delete(voice_devices::delete_my_device),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices",
+            get(voice_devices::list_extension_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices/{device_id}",
+            axum::routing::delete(voice_devices::delete_extension_device),
         )
         .route(
             "/api/orgs/{org_id}/extensions/{id}/provisioning-ticket",
