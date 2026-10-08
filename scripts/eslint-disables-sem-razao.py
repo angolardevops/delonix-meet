@@ -14,10 +14,13 @@ Um disable COM a razão escrita imediatamente acima não é um problema escondid
 é uma decisão registada. Contar só os outros muda o incentivo — escrever porquê
 passa a ser o caminho para a catraca descer, em vez de silenciar.
 
-«Razão escrita» = há um comentário nas DUAS linhas anteriores. Duas e não uma
-porque o padrão real do repo às vezes é «comentário, linha de código que ele
-explica, disable» — o `ui/search/ListSearch` faz isso, e a primeira versão
-deste contador não lhe via a razão que lá estava.
+«Razão escrita» = há um comentário nas TRÊS linhas acima do disable. O padrão
+real do repo é um comentário de duas ou três linhas a explicar a decisão, às
+vezes com a linha de código que ele explica no meio (o `ui/search/ListSearch` e
+o `ui/search/useResourceSearch` fazem isso) — uma janela de uma linha dava
+falso positivo em ambos, e foram falsos positivos MEUS, não código a corrigir.
+
+Três e não cinco: com cinco, aceitava prosa de OUTRO assunto como razão.
 
 É deliberadamente simples: um portão que tentasse julgar a QUALIDADE da razão
 seria um portão que ninguém percebe quando falha.
@@ -33,7 +36,20 @@ for p in raiz.rglob('*'):
     linhas = p.read_text().split('\n')
     for i, linha in enumerate(linhas):
         if 'eslint-disable' in linha and 'react-hooks' in linha:
-            antes = [linhas[j].strip() for j in (i - 2, i - 1) if j >= 0]
-            if not any(a.startswith(('//', '*', '/*')) for a in antes):
+            # Sobe no máximo TRÊS linhas. A janela foi MEDIDA, não escolhida:
+            # com cinco, o contador aceitava prosa de outro assunto como razão
+            # (no `pages/RecordingPlayer` apanhava um comentário sobre
+            # capítulos a -5, e no `pages/Studio` a cauda de outra frase a -4).
+            # Com três, as 22 razões aceites são todas sobre as dependências do
+            # efeito — verificadas uma a uma.
+            tem_razao = False
+            for j in range(i - 1, max(i - 4, -1), -1):
+                linha_acima = linhas[j].strip()
+                if linha_acima.startswith(('//', '*', '/*')):
+                    tem_razao = True
+                    break
+                if not linha_acima:
+                    continue
+            if not tem_razao:
                 n += 1
 print(n)
