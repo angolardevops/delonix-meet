@@ -37,11 +37,12 @@ pub struct Meeting {
     pub recurrence_count: Option<i16>,
     pub recurrence_byday: Option<String>,
     pub recurrence_parent_id: Option<Uuid>,
-    /// Organização em cujo contexto a reunião nasceu (migração 0104). Fonte
-    /// de verdade de `meetings_v1::meeting_in_org` e das equivalentes em
-    /// `apikeys.rs` — nunca a pertença (actual OU arquivada) do dono. `NULL`
-    /// numa reunião órfã (dono sem organização nenhuma na altura da
-    /// criação/backfill): fica invisível a qualquer chave `dlx_`.
+    // Organização em cujo contexto a reunião nasceu (migração 0104). Fonte
+    // de verdade de `meetings_v1::meeting_in_org` e das equivalentes em
+    // `apikeys.rs` — nunca a pertença (actual OU arquivada) do dono. `NULL`
+    // numa reunião órfã (dono sem organização nenhuma na altura da
+    // criação/backfill): fica invisível a qualquer chave `dlx_`. Nota de
+    // implementação — `//`, não `///`: não é descrição pública do contrato.
     pub org_id: Option<Uuid>,
 }
 
