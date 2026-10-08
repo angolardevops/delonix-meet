@@ -142,7 +142,7 @@ describe('o aviso de «sem rede» é do Estúdio', () => {
     expect(s).toMatch(/\{!online && \(\s*<div[^>]*data-studio="offline"[^>]*>\s*\{t\('studio\.offline'\)\}/)
     expect(s).toContain("window.addEventListener('offline', desce)")
     for (const loc of ['pt', 'en', 'fr']) {
-      expect(read(`web/src/locales/${loc}/studio.ts`)).toMatch(/^  offline: /m)
+      expect(read(`web/src/locales/${loc}/studio.ts`)).toMatch(/^ {2}offline: /m)
     }
   })
 })

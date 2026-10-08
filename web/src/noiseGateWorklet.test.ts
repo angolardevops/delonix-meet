@@ -14,16 +14,25 @@ import { beforeAll, describe, expect, it } from 'vitest'
 const SR = 48_000
 const BLOCK = 128
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let NoiseGateProcessor: any
+/**
+ * O processador que o `registerProcessor` do worklet nos entrega. É um
+ * construtor vindo de JS sem tipos: tipá-lo como construtor (e não `any`) dá
+ * o que o teste precisa e tira o `eslint-disable` de `no-explicit-any`, que a
+ * catraca do lint contava DUAS vezes — como problema e como disable.
+ */
+interface GateProcessor {
+  process(entradas: Float32Array[][], saidas: Float32Array[][], params: Record<string, number[]>): boolean
+}
+let NoiseGateProcessor: new () => GateProcessor
 
 beforeAll(async () => {
   ;(globalThis as unknown as { sampleRate: number }).sampleRate = SR
   ;(globalThis as unknown as { AudioWorkletProcessor: new () => object }).AudioWorkletProcessor = class {}
-  ;(globalThis as unknown as { registerProcessor: (name: string, cls: unknown) => void }).registerProcessor = (
-    _name,
-    cls,
-  ) => {
+  ;(
+    globalThis as unknown as {
+      registerProcessor: (name: string, cls: new () => GateProcessor) => void
+    }
+  ).registerProcessor = (_name, cls) => {
     NoiseGateProcessor = cls
   }
   // Plain JS sem tipos — carrega-se pelo efeito lateral do registerProcessor

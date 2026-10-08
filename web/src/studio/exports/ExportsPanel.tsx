@@ -253,7 +253,6 @@ export default function ExportsPanel({
         recarregarHistorico()
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [projecto.id, lerBlob, marcaDeAgua, onGuardar, recarregarHistorico, registar, t],
   )
 
