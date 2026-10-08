@@ -6382,27 +6382,6 @@
           "domain": {
             "type": "string"
           },
-          "max_groups": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_meetings": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_rooms": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "require_mfa": {
             "description": "A organização exige autenticação de dois factores. Hoje impede os\nmembros de removerem o ÚLTIMO factor; não força a inscrição no login.\nOmisso => mantém o actual.",
             "type": [
@@ -6413,20 +6392,6 @@
           "retention_days": {
             "format": "int32",
             "type": "integer"
-          },
-          "voice_did_model": {
-            "description": "Dial-in PSTN: modelo de DID ('shared' | 'dedicated').",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "voice_media_backend": {
-            "description": "Dial-in PSTN: backend de media ('freeswitch' | 'provider').",
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "type": "object"
@@ -17103,7 +17068,7 @@
             "session": []
           }
         ],
-        "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou\nomissas ficam ilimitadas; valores de voz fora do enum são ignorados.",
+        "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. As quotas\n(`max_groups`/`max_rooms`/`max_meetings`) e os campos de voz\n(`voice_media_backend`/`voice_did_model`) não se escrevem aqui: são o\nplano da plataforma, não ficam no pedido de um admin de tenant.",
         "tags": [
           "orgs"
         ]
