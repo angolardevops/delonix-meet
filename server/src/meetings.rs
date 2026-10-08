@@ -52,6 +52,7 @@ pub struct Meeting {
         start,
         ics,
         save_minutes,
+        request_mom_summary,
         invitees,
         respond,
         quarantine_analytics,
@@ -69,6 +70,7 @@ pub struct Meeting {
         RoomConflict,
         Conflicts,
         MinutesReq,
+        MomSummaryState,
         RoomNotes,
         StartResp,
         ConflictCheckReq,
@@ -1043,6 +1045,95 @@ pub struct MinutesReq {
     pub room_code: Option<String>,
 }
 
+/// O estado do resumo da acta pelo LLM, devolvido no `202` de
+/// `POST …/minutes/summary`: é a «operação a consultar» que a checklist da
+/// `delonix-meet-api` pede para trabalho assíncrono.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct MomSummaryState {
+    /// Quando o pedido entrou na fila.
+    pub queued_at: Option<chrono::DateTime<Utc>>,
+    /// Quantas tentativas já foram gastas (tecto de 3).
+    pub attempts: i32,
+    /// Quando a próxima tentativa pode correr. `null` = pronta já.
+    pub next_attempt_at: Option<chrono::DateTime<Utc>>,
+    /// Preenchido quando o resumo FICOU. É o que o Odoo lê para saber que a
+    /// ata é a versão final.
+    pub summarized_at: Option<chrono::DateTime<Utc>>,
+}
+
+/// Pede (ou repete) o resumo da acta pelo LLM local.
+///
+/// PORQUE EXISTE (trabalho nº4): o resumo era um `tokio::spawn` com um só
+/// chamador. Se o Ollama estivesse em baixo ou o pod reiniciasse, não havia
+/// coluna de estado, nem varredor, nem forma de pedir outra vez — a ata por
+/// regras ficava, mas o Odoo passava a ver para sempre uma reunião sem ata
+/// final, sem ninguém poder corrigir.
+///
+/// Repetir é SEGURO e deliberadamente idempotente no efeito: põe o pedido na
+/// fila com as tentativas a zero. Se o resumo já existir, a fila não o
+/// selecciona (`minutes_ai_at IS NULL` no `ready_when`), e a resposta mostra-o
+/// em `summarized_at` — quem chamou vê que não havia nada a fazer.
+#[utoipa::path(
+    post, path = "/api/meetings/{meeting_id}/minutes/summary", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 202, body = MomSummaryState, description = "Na fila. O estado lê-se aqui e em `GET /api/meetings`."),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe, ou não é dono nem convidado"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`mom.no_transcript`: sem transcrição suficiente para valer um resumo"),
+    )
+)]
+pub async fn request_mom_summary(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<MomSummaryState>), ApiError> {
+    // A MESMA regra de acesso do `save_minutes`: dono ou convidado. A quem não
+    // chega dá-se `404` e não se confirma que a reunião existe.
+    // `(i32,)` e não `(i64,)`: o `length()` do Postgres devolve `integer`, e
+    // descodificá-lo como `bigint` falha no sqlx — o handler respondia `500`
+    // opaco em vez do `422`. O SQL é de runtime neste repo (zero macros
+    // `query!`), por isso o tipo errado só aparece a correr.
+    let transcript_len: Option<(i32,)> = sqlx::query_as(
+        "SELECT length(btrim(COALESCE(m.transcript, ''))) FROM meetings m
+         LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $2
+         WHERE m.id = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)",
+    )
+    .bind(id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((len,)) = transcript_len else {
+        return Err(ApiError::NotFound);
+    };
+    if len < 80 {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "mom.no_transcript",
+            "esta reunião não tem transcrição suficiente para valer um resumo",
+        )
+        .into());
+    }
+    let mut conn = state.db.acquire().await?;
+    crate::ai::enqueue_mom_summary(&mut conn, id).await?;
+    let (queued_at, attempts, next_attempt_at, summarized_at) = sqlx::query_as(
+        "SELECT mom_queued_at, mom_attempts, mom_next_attempt_at, minutes_ai_at
+           FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(MomSummaryState {
+            queued_at,
+            attempts,
+            next_attempt_at,
+            summarized_at,
+        }),
+    ))
+}
+
 /// Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.
 #[utoipa::path(
     put, path = "/api/meetings/{meeting_id}/minutes", tag = "meetings",
@@ -1083,16 +1174,20 @@ pub async fn save_minutes(
     // Censurar aqui protege de uma vez todos os leitores a jusante.
     let minutes = crate::dlp::censor(req.minutes.trim());
     let transcript = crate::dlp::censor(req.transcript.trim());
+    // A ata e o PEDIDO do resumo numa transacção (trabalho nº4): antes, o
+    // resumo era um `tokio::spawn` sem estado — se o Ollama estivesse em baixo
+    // ou o pod reiniciasse, não havia coluna, nem varredor, nem rota, e o Odoo
+    // ficava a ver para sempre uma reunião sem ata final. Agora o pedido é uma
+    // linha na fila, e ou fica com a ata ou com nenhuma.
+    let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE meetings SET minutes = $1, transcript = $2 WHERE id = $3")
         .bind(minutes.chars().take(200_000).collect::<String>())
         .bind(transcript.chars().take(200_000).collect::<String>())
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
-    // A transcrição (ata bruta) ficou persistida acima; em background o LLM
-    // local gera o resumo elegante e substitui `minutes` (ai.rs — no-op sem
-    // OLLAMA_URL; se falhar, fica a ata por regras enviada pelo cliente).
-    crate::ai::spawn_mom_summary(state.clone(), id);
+    crate::ai::enqueue_mom_summary(&mut tx, id).await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

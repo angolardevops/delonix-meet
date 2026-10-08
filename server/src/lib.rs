@@ -689,6 +689,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
         .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
         .route("/api/meetings/{meeting_id}/minutes", axum::routing::put(meetings::save_minutes))
+        // Pede (ou repete) o resumo da acta pelo LLM — `202` com o estado da
+        // fila. Custom method sob o sub-recurso `minutes`, como a checklist da
+        // `delonix-meet-api` manda para uma acção que não é CRUD.
+        .route(
+            "/api/meetings/{meeting_id}/minutes/summary",
+            axum::routing::post(meetings::request_mom_summary),
+        )
         .route("/api/meetings/{meeting_id}/invitees", get(meetings::invitees))
         .route("/api/meetings/{meeting_id}/invitees/me", axum::routing::put(meetings::respond))
         .route(
@@ -2065,6 +2072,33 @@ pub async fn run() {
     // pela peça comum, desce para aqui.
     let mut filas = jobs::Filas::new();
     sms::levanta_filas(&mut filas, state.clone());
+    // Chamadas penduradas (trabalho nº5): o `finish_stale` só corria de
+    // handlers de LEITURA, por isso uma chamada que ficou a tocar sem fim
+    // bloqueava o ramal e contava para o limite de concorrência até alguém
+    // abrir o ecrã daquela sala ou organização. Agora não precisa de ninguém a
+    // olhar. São `UPDATE`s idempotentes, não reivindicações — dois nós fecham
+    // as mesmas linhas com o mesmo resultado.
+    {
+        let db = state.db.clone();
+        filas.levanta("telephony_stale", Duration::from_secs(60), move || {
+            let db = db.clone();
+            async move {
+                let a = dial_outs::finish_stale_all(&db).await?;
+                let b = telephony_service::finish_stale_all(&db).await?;
+                Ok((a + b) as usize)
+            }
+        });
+    }
+
+    // O resumo da acta pelo LLM (trabalho nº4): a cada minuto, o que foi
+    // enfileirado ao gravar a ata ou pela rota. No-op sem `OLLAMA_URL`.
+    {
+        let s = state.clone();
+        filas.levanta("mom_summary", Duration::from_secs(60), move || {
+            let s = s.clone();
+            async move { ai::mom_summary_due(&s).await }
+        });
+    }
 
     if let Some(addr) = config.internal_bind_addr.clone() {
         let internal = build_internal_router(state.clone());
