@@ -311,6 +311,7 @@ export default function Intelligence() {
             </header>
             <div className="dx-table-wrap ai-box">
               <table className="ai-langs" data-testid="ai-langs">
+                <caption className="dx-sr-only">{t('consola.ia.titulo')}</caption>
                 <thead>
                   <tr>
                     <th scope="col">{t('consola.ia.colIdioma')}</th>

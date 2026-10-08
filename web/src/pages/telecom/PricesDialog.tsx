@@ -87,6 +87,7 @@ export default function PricesDialog({ orgId, trunk, onClose, onChanged }: { org
             <>
               <div className="dx-table-wrap">
                 <table className="dx-table tel-table" data-testid="tel-prices">
+                  <caption className="dx-sr-only">{t('telecom.precos.titulo', { nome: trunk.name })}</caption>
                   <thead>
                     <tr>
                       <th scope="col">{t('telecom.precos.colPreco')}</th>

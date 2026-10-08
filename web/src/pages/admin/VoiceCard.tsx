@@ -160,6 +160,7 @@ export default function VoiceCard({ orgId }: { orgId: string }) {
           ) : (
             <div className="dx-table-wrap org-table-wrap org-audit__scroll">
               <table className="dx-table org-table" data-testid="voice-cdr">
+                <caption className="dx-sr-only">{t('consola.voz.titulo')}</caption>
                 <thead>
                   <tr>
                     <th scope="col">{t('consola.voz.quando')}</th>

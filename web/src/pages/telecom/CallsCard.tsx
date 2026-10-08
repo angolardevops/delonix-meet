@@ -40,6 +40,7 @@ export default function CallsCard({
             <>
               <div className="dx-table-wrap">
                 <table className="dx-table tel-table" data-testid="tel-calls">
+                  <caption className="dx-sr-only">{t('telecom.chamadas.titulo')}</caption>
                   <thead>
                     <tr>
                       <th scope="col">{t('telecom.chamadas.colSentido')}</th>

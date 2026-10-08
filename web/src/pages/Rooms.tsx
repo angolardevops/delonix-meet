@@ -240,6 +240,7 @@ function Tabela({
         {alvo?.name}
       </Menu>
       <table className="dx-table sl-table">
+        <caption className="dx-sr-only">{t('salas.titulo')}</caption>
         <thead>
           <tr>
             <th scope="col">{t('salas.coluna.sala')}</th>

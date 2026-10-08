@@ -290,14 +290,15 @@ export default function ExportsPanel({
   const tabela = (historico: bd.RegistoDeExportacao[]) => (
     <div className="ed-exp__table ed-exp__table--hist dx-table-wrap" data-exp-hist>
       <table className="dx-table">
+        <caption className="dx-sr-only">{t('editor.topo.exportacoes')}</caption>
         <thead>
           <tr>
-            <th>{t('editor.exportar.colunas.exportacao')}</th>
-            <th>{t('editor.exportar.colunas.predefinicao')}</th>
-            <th>{t('editor.exportar.colunas.formato')}</th>
-            <th>{t('editor.exportar.colunas.tamanho')}</th>
-            <th>{t('editor.exportar.colunas.estado')}</th>
-            <th>{t('editor.exportar.colunas.destino')}</th>
+            <th scope="col">{t('editor.exportar.colunas.exportacao')}</th>
+            <th scope="col">{t('editor.exportar.colunas.predefinicao')}</th>
+            <th scope="col">{t('editor.exportar.colunas.formato')}</th>
+            <th scope="col">{t('editor.exportar.colunas.tamanho')}</th>
+            <th scope="col">{t('editor.exportar.colunas.estado')}</th>
+            <th scope="col">{t('editor.exportar.colunas.destino')}</th>
           </tr>
         </thead>
         <tbody>
@@ -477,9 +478,9 @@ export default function ExportsPanel({
               <table className="dx-table">
                 <thead>
                   <tr>
-                    <th>{t('editor.exportar.colunas.predefinicao')}</th>
-                    <th>{t('editor.exportar.colunas.formato')}</th>
-                    <th>{t('editor.exportar.colunas.saida')}</th>
+                    <th scope="col">{t('editor.exportar.colunas.predefinicao')}</th>
+                    <th scope="col">{t('editor.exportar.colunas.formato')}</th>
+                    <th scope="col">{t('editor.exportar.colunas.saida')}</th>
                   </tr>
                 </thead>
                 <tbody>

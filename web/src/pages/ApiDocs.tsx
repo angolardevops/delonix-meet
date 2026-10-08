@@ -142,10 +142,11 @@ export default function ApiDocs() {
             {ep.campos && (
               <div className="dx-table-wrap">
                 <table className="dx-table">
+                  <caption className="dx-sr-only">{t('publico.api.autenticacao')}</caption>
                   <thead>
                     <tr>
-                      <th>{t('publico.api.campo')}</th>
-                      <th>{t('publico.api.descricao')}</th>
+                      <th scope="col">{t('publico.api.campo')}</th>
+                      <th scope="col">{t('publico.api.descricao')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -183,8 +184,8 @@ export default function ApiDocs() {
               <table className="dx-table">
                 <thead>
                   <tr>
-                    <th>{t('publico.api.evento')}</th>
-                    <th>{t('publico.api.descricao')}</th>
+                    <th scope="col">{t('publico.api.evento')}</th>
+                    <th scope="col">{t('publico.api.descricao')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -207,8 +208,8 @@ export default function ApiDocs() {
             <table className="dx-table">
               <thead>
                 <tr>
-                  <th>{t('publico.api.codigo')}</th>
-                  <th>{t('publico.api.descricao')}</th>
+                  <th scope="col">{t('publico.api.codigo')}</th>
+                  <th scope="col">{t('publico.api.descricao')}</th>
                 </tr>
               </thead>
               <tbody>
