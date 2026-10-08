@@ -285,6 +285,22 @@ kubectl -n delonix-meet create secret generic delonix-voice \
 Sem ele o servidor arranca e só as rotas de IVR dão `503`. O mesmo valor tem de ir
 para a camada de media (FreeSWITCH, `voice/README.md`).
 
+**TLS na sinalização dos ramais (ADR-0009).** Sem TLS, as chaves do SRTP (SDES) vão em claro no SDP.
+O perfil dos ramais do FreeSWITCH liga o TLS com três variáveis do **FreeSWITCH** (entrypoint,
+passo 9b; nada muda sem a primeira):
+
+| Variável | Efeito |
+|---|---|
+| `DELONIX_RAMAIS_TLS_PORT` | Porta TLS do perfil (ex. `5071`). **Ausente = sem TLS.** Presente sem certificado, o arranque falha: não cai em UDP calado |
+| `DELONIX_RAMAIS_TLS_DIR` | Pasta com `tls.crt` (cadeia completa) e `tls.key`; por omissão `/tls-ramais`. O certificado tem de cobrir o nome ou IP a que o telefone se liga |
+| `DELONIX_RAMAIS_TLS_ONLY` | `true` fecha o UDP/TCP do perfil: só TLS (o certo em produção) |
+
+O servidor tem de mandar o telefone para lá: `VOICE_RAMAIS_PUBLIC_TRANSPORT=tls` e `VOICE_RAMAIS_PUBLIC_PORT`
+igual à porta TLS, senão o QR do Linphone continua a apontar para o UDP. No compose do laboratório em modo
+LAN (`make compose-up LAN_IP=…`) está tudo ligado, com o certificado da borda; o helm e o cluster local
+**não** estão (continuam em UDP). Prova: `scripts/ramais-tls-prova.py` (certificado, TLS ≥ 1.2, REGISTER
+com digest por TLS, e os controlos negativos).
+
 **Um cluster que já tenha sido instalado com o `01-config.yaml` antigo tem o valor
 publicado `voice-internal-secret-for-pstn` dentro do `delonix-secrets`** — o
 `kubectl apply` não apaga uma chave que saiu do `stringData`. O servidor recusa esse
