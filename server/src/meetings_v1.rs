@@ -386,14 +386,32 @@ async fn resolve_org_user(
 
 // ---------- helpers ----------
 
-/// A reunião pertence à organização da chave? Mesma regra do
-/// `GET /api/v1/meetings` já existente: o dono é membro da org.
+/// A reunião pertence à organização da chave?
+///
+/// Fonte da verdade: `meetings.org_id` (migração 0095), gravado na criação —
+/// NUNCA inferência via pertença do dono. Antes desta correcção a regra era
+/// «o dono é membro da org», sem olhar a `archived_at` nem a se a reunião
+/// nasceu mesmo naquela organização: um utilizador que tivesse (ainda que só
+/// outrora, arquivado) uma linha em `org_members` para a organização da
+/// chave bastava para a chave ler/alterar/apagar a reunião, mesmo sendo ela
+/// assunto de outra organização qualquer (auditoria 2026-10-08, T1).
+///
+/// O `OR` com `org_id IS NULL` é defesa em profundidade, não o caminho
+/// principal: cobre só a reunião legada cujo backfill (migração 0095) não
+/// conseguiu atribuir organização nenhuma (dono sem pertença alguma na
+/// altura), e mesmo aí exige pertença ACTIVA — nunca arquivada — do dono.
+/// Uma reunião com `org_id` explícito nunca cai neste ramo.
 async fn meeting_in_org(state: &AppState, org_id: Uuid, id: Uuid) -> Result<Meeting, ApiError> {
     let meeting: Option<Meeting> = sqlx::query_as(&format!(
         "SELECT {MEETING_COLS} FROM meetings m
          WHERE m.id = $1
-           AND EXISTS (SELECT 1 FROM org_members om
-                       WHERE om.org_id = $2 AND om.user_id = m.owner_id)"
+           AND (
+             m.org_id = $2
+             OR (m.org_id IS NULL
+                 AND EXISTS (SELECT 1 FROM org_members om
+                             WHERE om.org_id = $2 AND om.user_id = m.owner_id
+                               AND om.archived_at IS NULL))
+           )"
     ))
     .bind(id)
     .bind(org_id)
@@ -649,10 +667,14 @@ pub async fn create(
     .await?;
     crate::rooms::apply_session_options(&state.db, &room.code, &req.options).await?;
 
+    // `org_id` é a organização da CHAVE que está a criar — não uma inferência
+    // a partir de quem o anfitrião é membro de quê. É exactamente o que
+    // `meeting_in_org` (e as equivalentes em `apikeys.rs`) passam a exigir
+    // (migração 0095) em vez de pertença do dono.
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_code,
-                               format, waiting_room, auto_record, record_quality)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                               format, waiting_room, auto_record, record_quality, org_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING {MEETING_COLS}"
     ))
     .bind(host_id)
@@ -666,6 +688,7 @@ pub async fn create(
     .bind(req.options.waiting_room)
     .bind(req.options.auto_record)
     .bind(&req.options.record_quality)
+    .bind(key.org_id)
     .fetch_one(&state.db)
     .await?;
 

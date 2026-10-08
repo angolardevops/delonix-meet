@@ -704,13 +704,23 @@ pub async fn v1_meetings(
         auto_record: bool,
         record_quality: String,
     }
+    // `m.org_id` (migração 0095) é a fonte da verdade — não a pertença do
+    // dono, que nem olhava a `archived_at` (auditoria 2026-10-08, T1; mesma
+    // correcção de `meetings_v1::meeting_in_org`). O `OR` com `org_id IS
+    // NULL` é só defesa em profundidade para a reunião legada sem
+    // organização atribuída pelo backfill, e mesmo aí exige pertença ACTIVA.
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT m.id, m.title, m.description, m.kind, m.starts_at, m.duration_min,
                 m.room_code, m.created_at, m.minutes_ai_at,
                 m.format, m.waiting_room, m.auto_record, m.record_quality
          FROM meetings m
-         WHERE EXISTS (SELECT 1 FROM org_members om
-                       WHERE om.org_id = $1 AND om.user_id = m.owner_id)
+         WHERE (
+             m.org_id = $1
+             OR (m.org_id IS NULL
+                 AND EXISTS (SELECT 1 FROM org_members om
+                             WHERE om.org_id = $1 AND om.user_id = m.owner_id
+                               AND om.archived_at IS NULL))
+           )
            AND ($2::timestamptz IS NULL
                 OR m.created_at >= $2 OR m.starts_at >= $2 OR m.minutes_ai_at >= $2)
          ORDER BY m.starts_at LIMIT 500",
@@ -778,11 +788,20 @@ pub async fn v1_meeting_notes(
         String,
         Option<chrono::DateTime<chrono::Utc>>,
     )> = sqlx::query_as(
+        // `m.org_id` (migração 0095) é a fonte da verdade — mesma correcção
+        // de `meetings_v1::meeting_in_org` e de `v1_meetings` acima; o `OR`
+        // com `org_id IS NULL` é só defesa em profundidade para a reunião
+        // legada sem organização atribuída, e exige pertença ACTIVA mesmo aí.
         "SELECT m.title, m.minutes, m.transcript, m.minutes_ai_at
              FROM meetings m
              WHERE m.id = $1
-               AND EXISTS (SELECT 1 FROM org_members om
-                           WHERE om.org_id = $2 AND om.user_id = m.owner_id)",
+               AND (
+                 m.org_id = $2
+                 OR (m.org_id IS NULL
+                     AND EXISTS (SELECT 1 FROM org_members om
+                                 WHERE om.org_id = $2 AND om.user_id = m.owner_id
+                                   AND om.archived_at IS NULL))
+               )",
     )
     .bind(id)
     .bind(key.org_id)
