@@ -704,7 +704,7 @@ pub async fn v1_meetings(
         auto_record: bool,
         record_quality: String,
     }
-    // `m.org_id` (migração 0102) é a fonte da verdade — não a pertença do
+    // `m.org_id` (migração 0104) é a fonte da verdade — não a pertença do
     // dono, que nem olhava a `archived_at` (auditoria 2026-10-08, T1; mesma
     // correcção de `meetings_v1::meeting_in_org`). O `OR` com `org_id IS
     // NULL` é só defesa em profundidade para a reunião legada sem
@@ -773,7 +773,7 @@ pub struct V1MeetingNotes {
         (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
         (status = 403, description = "A chave não tem o escopo `meetings:read` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
-        (status = 404, description = "A reunião não existe ou o dono não é membro da organização da chave.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A reunião não existe ou não pertence à organização da chave (`meetings.org_id`).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn v1_meeting_notes(
@@ -788,7 +788,7 @@ pub async fn v1_meeting_notes(
         String,
         Option<chrono::DateTime<chrono::Utc>>,
     )> = sqlx::query_as(
-        // `m.org_id` (migração 0102) é a fonte da verdade — mesma correcção
+        // `m.org_id` (migração 0104) é a fonte da verdade — mesma correcção
         // de `meetings_v1::meeting_in_org` e de `v1_meetings` acima; o `OR`
         // com `org_id IS NULL` é só defesa em profundidade para a reunião
         // legada sem organização atribuída, e exige pertença ACTIVA mesmo aí.

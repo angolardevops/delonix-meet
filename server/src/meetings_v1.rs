@@ -388,7 +388,7 @@ async fn resolve_org_user(
 
 /// A reunião pertence à organização da chave?
 ///
-/// Fonte da verdade: `meetings.org_id` (migração 0102), gravado na criação —
+/// Fonte da verdade: `meetings.org_id` (migração 0104), gravado na criação —
 /// NUNCA inferência via pertença do dono. Antes desta correcção a regra era
 /// «o dono é membro da org», sem olhar a `archived_at` nem a se a reunião
 /// nasceu mesmo naquela organização: um utilizador que tivesse (ainda que só
@@ -397,7 +397,7 @@ async fn resolve_org_user(
 /// assunto de outra organização qualquer (auditoria 2026-10-08, T1).
 ///
 /// O `OR` com `org_id IS NULL` é defesa em profundidade, não o caminho
-/// principal: cobre só a reunião legada cujo backfill (migração 0102) não
+/// principal: cobre só a reunião legada cujo backfill (migração 0104) não
 /// conseguiu atribuir organização nenhuma (dono sem pertença alguma na
 /// altura), e mesmo aí exige pertença ACTIVA — nunca arquivada — do dono.
 /// Uma reunião com `org_id` explícito nunca cai neste ramo.
@@ -670,7 +670,7 @@ pub async fn create(
     // `org_id` é a organização da CHAVE que está a criar — não uma inferência
     // a partir de quem o anfitrião é membro de quê. É exactamente o que
     // `meeting_in_org` (e as equivalentes em `apikeys.rs`) passam a exigir
-    // (migração 0102) em vez de pertença do dono.
+    // (migração 0104) em vez de pertença do dono.
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_code,
                                format, waiting_room, auto_record, record_quality, org_id)
@@ -796,7 +796,7 @@ pub async fn create(
         (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados; `meeting.invalid_format` / `meeting.invalid_record_quality`"),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
         (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"),
         (status = 422, body = crate::openapi::ErrorBody, description = "`meeting.auto_record_e2ee`: gravação automática numa sala E2EE"),
         (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
@@ -935,7 +935,7 @@ pub async fn patch(
         (status = 400, body = crate::openapi::ErrorBody, description = "a reunião ainda não tem sala"),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
         (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"),
         (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
@@ -1036,7 +1036,7 @@ pub async fn ring(
         (status = 200, body = DeleteMeetingResp),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
         (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"),
         (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
