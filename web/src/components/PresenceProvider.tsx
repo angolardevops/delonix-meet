@@ -196,6 +196,10 @@ export default function PresenceProvider({
       off()
       p.close()
     }
+    // `[]` de propósito: a ligação de presença abre UMA vez por sessão e
+    // fecha-se na desmontagem. Reabri-la por uma dependência mudar perdia o
+    // estado de quem está online e mandava um `close`/`open` ao servidor por
+    // cada render do provedor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

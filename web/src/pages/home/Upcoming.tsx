@@ -18,6 +18,7 @@ import { Alert, Avatar, AvatarStack, Button, cx, Empty, Skeleton } from '../../u
 import { calendarHash, fmtDayMonth, fmtTime, localeOf, meetingEnd, meetingStart, sameDay } from '../calendar/dates'
 import Respond, { InviteStatus } from '../calendar/Respond'
 import DeviceCheck from './DeviceCheck'
+import { copiarTexto } from '../../ui/copy'
 
 /** Três linhas, como no template; o resto está a um clique em «Ver agenda». */
 const MAX = 3
@@ -66,7 +67,10 @@ export default function Upcoming({ odooCalendar = false }: { odooCalendar?: bool
   async function copyLink(code: string) {
     setErr('')
     try {
-      await navigator.clipboard.writeText(roomLink(code))
+      if (!(await copiarTexto(roomLink(code)))) {
+        setErr(t('consola.inicio.erroCopiar'))
+        return
+      }
       setCopied(code)
       setTimeout(() => setCopied((c) => (c === code ? null : c)), 2000)
     } catch {

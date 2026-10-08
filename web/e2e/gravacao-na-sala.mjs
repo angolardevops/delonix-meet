@@ -3,7 +3,7 @@
 // nem o que o servidor vai recusar a quem está a ver.
 //
 // `GET /api/rooms/{code}/recordings` devolvia seis campos sem estado. Uma
-// gravação a compor ou falhada aparecia no painel com «0.0 MB» e o botão de
+// gravação a compor ou falhada aparecia no painel com «0.0 MiB» e o botão de
 // descarregar; o clique dava `409` ou `400`, e o ecrã «não foi possível
 // descarregar». E o botão era oferecido a TODOS os participantes, quando o
 // `?dl=1` só aceita o dono ou um administrador.
@@ -141,16 +141,16 @@ const linha = (nome) => p.locator('.rm-rec', { hasText: nome })
 const texto = async (nome) => (await linha(nome).first().innerText().catch(() => '')).replace(/\s+/g, ' ')
 chk(await p.locator('.rm-rec').count() === 4, `painel: as quatro gravações estão na lista → ${await p.locator('.rm-rec').count()}`)
 
-// A compor: inerte, com o progresso, e nunca «0.0 MB».
+// A compor: inerte, com o progresso, e nunca um tamanho.
 chk(await linha(nomes.compor).count() === 1 && await p.locator('button.rm-rec', { hasText: nomes.compor }).count() === 0, 'a compor: a linha NÃO é um botão (R59)')
 chk(/a processar 40%/i.test(await texto(nomes.compor)), `a compor: diz «A processar 40%» → ${JSON.stringify(await texto(nomes.compor))}`)
-chk(!/MB/.test(await texto(nomes.compor)) && !/falhad/i.test(await texto(nomes.compor)), 'a compor: sem «0.0 MB» e sem «Falhada»')
+chk(!/MiB/.test(await texto(nomes.compor)) && !/falhad/i.test(await texto(nomes.compor)), 'a compor: sem tamanho e sem «Falhada»')
 // Falhada: inerte, com a causa.
 chk(await p.locator('button.rm-rec', { hasText: nomes.falhada }).count() === 0, 'falhada: a linha NÃO é um botão (R59)')
 chk(/falhada/i.test(await texto(nomes.falhada)) && (await texto(nomes.falhada)).includes(CAUSA), `falhada: diz «Falhada» e a causa → ${JSON.stringify(await texto(nomes.falhada))}`)
 // Pronta e minha: o botão de sempre (controlo).
 chk(await p.locator('button.rm-rec', { hasText: nomes.minha }).count() === 1, 'pronta minha: é um botão de descarregar (controlo)')
-chk(/3\s?MB/.test(await texto(nomes.minha)), `pronta minha: mostra o tamanho → ${JSON.stringify(await texto(nomes.minha))}`)
+chk(/3\s?MiB/.test(await texto(nomes.minha)), `pronta minha: mostra o tamanho → ${JSON.stringify(await texto(nomes.minha))}`)
 // Pronta de outra pessoa: vê-se, sem botão.
 chk(await linha(nomes.alheia).count() === 1 && await p.locator('button.rm-rec', { hasText: nomes.alheia }).count() === 0, 'pronta de outra pessoa: aparece, sem botão — o servidor recusaria o download')
 chk(/só quem gravou/i.test(await texto(nomes.alheia)), `pronta de outra pessoa: e diz de quem é o download → ${JSON.stringify(await texto(nomes.alheia))}`)
@@ -182,7 +182,7 @@ const pronta = await p.waitForFunction(
   nomes.compor, { timeout: 20000 },
 ).then(() => true, () => false)
 chk(pronta, 'quando a composição acaba, a linha passa a botão de descarregar, sem recarregar')
-chk(/3\s?MB/.test(await texto(nomes.compor)) && !/a processar/i.test(await texto(nomes.compor)), 'e mostra o tamanho em vez de «A processar»')
+chk(/3\s?MiB/.test(await texto(nomes.compor)) && !/a processar/i.test(await texto(nomes.compor)), 'e mostra o tamanho em vez de «A processar»')
 const anuncio = await p.locator('ul.rm-recs + [role=status]').innerText().catch(() => '')
 chk(anuncio.includes(nomes.compor) && /pronta/i.test(anuncio), `e a passagem é anunciada a quem não vê o ecrã → ${JSON.stringify(anuncio)}`)
 await foto('pronta')

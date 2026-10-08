@@ -230,6 +230,7 @@ export default function MembersCard({
           renderItems={(rows) => (
             <div className="dx-table-wrap org-table-wrap">
               <table className="dx-table org-table">
+                <caption className="dx-sr-only">{t('org.membro.titulo')}</caption>
                 <thead>
                   <tr>
                     <th scope="col">

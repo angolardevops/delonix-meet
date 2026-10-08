@@ -22,6 +22,7 @@ import { contarPreenchimento, encontrarPreenchimento, palavrasDasCues, relogio }
 import { fonteDaBiblioteca, segmentosDasCues } from '../captions/servidor'
 import type { Edicao, Projecto } from './projecto'
 import { capitulos, novoId } from './projecto'
+import { copiarTexto } from '../../ui/copy'
 
 type Resultado =
   | { tarefa: 'summary'; dados: StudioAiSummary }
@@ -188,7 +189,7 @@ function DialogoDoResultado({
 
   async function copiar(texto: string) {
     try {
-      await navigator.clipboard.writeText(texto)
+      await copiarTexto(texto)
       setAviso(t('editor.iaServidor.copiado'))
     } catch {
       setAviso(t('editor.iaServidor.copiaFalhou'))

@@ -14,6 +14,7 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon, IconName } from './icons'
@@ -422,6 +423,77 @@ export function Skeleton({ h = 14, w = '100%' }: { h?: number; w?: number | stri
 /**
  * Diálogo modal: foco preso ao abrir, Esc fecha, o foco volta a quem abriu.
  */
+/**
+ * Confirmação de uma acção, sobre o [`Dialog`].
+ *
+ * PORQUE EXISTE: havia cinco `window.confirm(...)` no backoffice (um no
+ * `SmsGatewayCard`, quatro no `ExtensionsCard`). A MENSAGEM já era traduzida
+ * pelo `t(...)` — mas os botões **«OK» e «Cancel» são do browser**, em inglês,
+ * num produto com quatro línguas. E o `confirm` nativo não se estiliza, não se
+ * fecha com `Escape` do nosso lado, e bloqueia o fio do browser enquanto está
+ * aberto.
+ *
+ * NÃO FOI INVENTADO: é o padrão que o `telecom/TrunksCard` e o
+ * `admin/MemberDialogs` já faziam à mão — `Dialog` + `Alert` para o erro +
+ * dois `Button`, com o perigoso em `variant="danger"`. Aqui fica num sítio.
+ *
+ * O `onConfirm` pode ser assíncrono: o botão fica `busy` enquanto corre, e um
+ * erro aparece no `Alert` sem fechar o diálogo — quem está a apagar algo tem
+ * de ver porque não deu, em vez de o diálogo desaparecer em silêncio.
+ */
+export function Confirm({
+  title,
+  children,
+  onClose,
+  onConfirm,
+  confirmLabel,
+  tone = 'danger',
+  icon,
+  erroDe,
+}: {
+  title: ReactNode
+  children?: ReactNode
+  onClose: () => void
+  /** Corre ao confirmar. Se lançar, a mensagem fica no `Alert`. */
+  onConfirm: () => Promise<void> | void
+  /** Texto do botão que confirma. Por omissão, `ui.confirmar`. */
+  confirmLabel?: string
+  tone?: 'danger' | 'primary'
+  icon?: string
+  /** Traduz o erro apanhado. Sem isto usa-se a mensagem do `Error`. */
+  erroDe?: (e: unknown) => string
+}) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  async function confirmar() {
+    setBusy(true)
+    setErr('')
+    try {
+      await onConfirm()
+      onClose()
+    } catch (x) {
+      setErr(erroDe ? erroDe(x) : x instanceof Error ? x.message : String(x))
+      // Fica aberto de propósito: o erro é a informação.
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog title={title} onClose={onClose}>
+      {children}
+      {err && <Alert tone="danger">{err}</Alert>}
+      <div className="dx-dialog__foot">
+        <Button variant="secondary" onClick={onClose} disabled={busy} data-close>
+          {t('ui.cancelar')}
+        </Button>
+        <Button variant={tone} icon={icon} busy={busy} onClick={() => void confirmar()}>
+          {confirmLabel ?? t('ui.confirmar')}
+        </Button>
+      </div>
+    </Dialog>
+  )
+}
+
 export function Dialog({
   title,
   onClose,
