@@ -285,6 +285,13 @@ kubectl -n delonix-meet create secret generic delonix-voice \
 Sem ele o servidor arranca e só as rotas de IVR dão `503`. O mesmo valor tem de ir
 para a camada de media (FreeSWITCH, `voice/README.md`).
 
+**TLS na sinalização dos ramais (ADR-0009).** Sem TLS, as chaves do SRTP (SDES) vão em claro no SDP.
+O perfil dos ramais do FreeSWITCH liga o TLS com variáveis **do FreeSWITCH** (não do servidor), descritas em
+`voice/README.md` (secção «TLS nos ramais»). O servidor tem de mandar o telefone para lá:
+`VOICE_RAMAIS_PUBLIC_TRANSPORT=tls` e `VOICE_RAMAIS_PUBLIC_PORT` igual à porta TLS, senão o QR do Linphone
+continua a apontar para o UDP. No compose do laboratório em modo LAN (`make compose-up LAN_IP=…`) está tudo
+ligado, com o certificado da borda; o helm e o cluster local **não** estão (continuam em UDP).
+
 **Um cluster que já tenha sido instalado com o `01-config.yaml` antigo tem o valor
 publicado `voice-internal-secret-for-pstn` dentro do `delonix-secrets`** — o
 `kubectl apply` não apaga uma chave que saiu do `stringData`. O servidor recusa esse
