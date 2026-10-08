@@ -272,6 +272,104 @@ async fn shared_did_pool_requires_platform_admin(db: sqlx::PgPool) {
     assert_eq!(body["org_id"], Value::Null, "{body}");
 }
 
+/// `GET /api/public/settings` lia `hide_org_creation`/`hide_sso_button` com
+/// `BOOL_OR` sobre TODAS as organizações com `odoo_enabled=TRUE`
+/// (`odoo.rs`, antes da migração 0103): o admin de UMA organização, mesmo
+/// criada agora mesmo, escondia o registo de contas e/ou o botão de SSO no
+/// ecrã de login de TODA a plataforma — uma política de instalação decidida
+/// por um único cliente. Correcção: as duas flags saíram de `organizations` e
+/// de `OdooConfigReq`/`OdooConfig` (o admin de tenant já não as tem onde
+/// escrever) e passaram a um único registo de PLATAFORMA
+/// (`platform_login_settings`, id=1), escrito só por
+/// `PUT /api/operator/v1/login-settings` (admin de plataforma).
+#[sqlx::test(migrations = "./migrations")]
+async fn odoo_tenant_nao_influencia_configuracao_global_de_login(db: sqlx::PgPool) {
+    // O administrador da PLATAFORMA é declarado por UUID no arranque; a conta
+    // só nasce depois — mesmo padrão de `shared_did_pool_requires_platform_admin`.
+    let boot = TestApp::spawn(db.clone()).await;
+    let operator = boot.new_org("operador-login.ao").await;
+    drop(boot);
+    let app = TestApp::spawn_with(db, &[("PLATFORM_ADMIN_USER_IDS", &operator.user_id)]).await;
+
+    let a = app.new_org("alfa-login.test").await;
+    let b = app.new_org("beta-login.test").await;
+
+    // Estado inicial: nada escondido.
+    let (st, pub0) = app.get("/api/public/settings", None).await;
+    assert_eq!(st, 200);
+    assert_eq!(pub0["hide_org_creation"], false, "{pub0}");
+    assert_eq!(pub0["hide_sso_button"], false, "{pub0}");
+
+    // O ataque: A activa a SUA integração Odoo e tenta esconder o registo e o
+    // SSO de toda a plataforma pelo caminho de admin de tenant — mesmo
+    // forçando os campos antigos no corpo do pedido, o servidor ignora-os,
+    // porque saíram de `OdooConfigReq`.
+    let (st, body) = app
+        .put(
+            &format!("/api/orgs/{}/integrations/odoo", a.org()),
+            Some(&a.token),
+            json!({"odoo_enabled": true, "odoo_url": "https://erp.alfa-login.test",
+                   "odoo_db": "prod", "hide_org_creation": true, "hide_sso_button": true}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    // A resposta já não tem as colunas — a gravação não as tocou.
+    assert!(body.get("hide_org_creation").is_none(), "{body}");
+    assert!(body.get("hide_sso_button").is_none(), "{body}");
+
+    // B não fez NADA, e o pedido não tem a ver com A: a configuração GLOBAL
+    // de login não pode ter mudado.
+    let (st, pub1) = app.get("/api/public/settings", None).await;
+    assert_eq!(st, 200);
+    assert_eq!(
+        pub1["hide_org_creation"], false,
+        "a integração Odoo de A vazou para a configuração GLOBAL de login: {pub1}"
+    );
+    assert_eq!(pub1["hide_sso_button"], false, "{pub1}");
+
+    // Mesmo indo direto à rota de plataforma, o admin de A (não é admin de
+    // plataforma) é recusado — 403, nunca aceite em silêncio.
+    let (st, body) = app
+        .put(
+            "/api/operator/v1/login-settings",
+            Some(&a.token),
+            json!({"hide_org_creation": true, "hide_sso_button": true}),
+        )
+        .await;
+    assert_eq!(st, 403, "{body}");
+    let (st, pub2) = app.get("/api/public/settings", None).await;
+    assert_eq!(st, 200);
+    assert_eq!(pub2["hide_org_creation"], false, "{pub2}");
+
+    // Controlo positivo: o administrador da PLATAFORMA liga as flags, e a
+    // configuração GLOBAL muda — para todos, incluindo B.
+    let (st, body) = app
+        .put(
+            "/api/operator/v1/login-settings",
+            Some(&operator.token),
+            json!({"hide_org_creation": true, "hide_sso_button": true}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["hide_org_creation"], true, "{body}");
+    assert_eq!(body["hide_sso_button"], true, "{body}");
+
+    let (st, pub3) = app.get("/api/public/settings", None).await;
+    assert_eq!(st, 200);
+    assert_eq!(pub3["hide_org_creation"], true, "{pub3}");
+    assert_eq!(pub3["hide_sso_button"], true, "{pub3}");
+
+    // B continua sem ter tocado em nada disto.
+    let (st, cfg_b) = app
+        .get(
+            &format!("/api/orgs/{}/integrations/odoo", b.org()),
+            Some(&b.token),
+        )
+        .await;
+    assert_eq!(st, 200);
+    assert_eq!(cfg_b["odoo_enabled"], false, "{cfg_b}");
+}
+
 /// R142 — a chave de API do inquilino (`dlx_`) abria as rotas da integração
 /// Odoo, que são do token `dlxo_`.
 #[sqlx::test(migrations = "./migrations")]

@@ -194,6 +194,9 @@ function GroupBody<T>({
         if (!isAbort(e)) setState({ s: 'error', msg: apiErrorMessage(e, t('search.estado.erro')) })
       })
     return () => ctrl.abort()
+    // O `key` resume a pesquisa (resource, filtro, grupo) num texto, e é ele
+    // que deve disparar isto — não as funções e objectos de onde saiu, que são
+    // novos a cada render. O `t` fica fora: só serve a mensagem de erro.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, idx, nonce])
 

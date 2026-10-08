@@ -5122,6 +5122,13 @@
           "minutes": {
             "type": "string"
           },
+          "org_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "owner_id": {
             "format": "uuid",
             "type": "string"
@@ -6073,12 +6080,6 @@
       },
       "OdooConfig": {
         "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          },
           "odoo_admin_id": {
             "format": "uuid",
             "type": [
@@ -6122,20 +6123,12 @@
         },
         "required": [
           "org_id",
-          "odoo_enabled",
-          "hide_org_creation",
-          "hide_sso_button"
+          "odoo_enabled"
         ],
         "type": "object"
       },
       "OdooConfigReq": {
         "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          },
           "odoo_db": {
             "type": [
               "string",
@@ -6154,9 +6147,7 @@
           }
         },
         "required": [
-          "odoo_enabled",
-          "hide_org_creation",
-          "hide_sso_button"
+          "odoo_enabled"
         ],
         "type": "object"
       },
@@ -6344,6 +6335,37 @@
           "label",
           "prefixes",
           "configured"
+        ],
+        "type": "object"
+      },
+      "OperatorLoginSettings": {
+        "description": "Configuração de LOGIN da plataforma — a mesma forma no `GET` e no `PUT`.",
+        "properties": {
+          "hide_org_creation": {
+            "type": "boolean"
+          },
+          "hide_sso_button": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hide_org_creation",
+          "hide_sso_button"
+        ],
+        "type": "object"
+      },
+      "OperatorLoginSettingsReq": {
+        "properties": {
+          "hide_org_creation": {
+            "type": "boolean"
+          },
+          "hide_sso_button": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hide_org_creation",
+          "hide_sso_button"
         ],
         "type": "object"
       },

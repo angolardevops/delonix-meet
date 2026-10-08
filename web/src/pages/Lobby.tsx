@@ -337,6 +337,7 @@ export default function Lobby({ code }: { code: string }) {
             <div className="lb-tablecard">
               <div className="dx-table-wrap">
                 <table className="lb-table">
+                  <caption className="dx-sr-only">{t('room.lobby.participantes')}</caption>
                   <thead>
                     <tr>
                       <th scope="col">{t('room.lobby.pessoa')}</th>

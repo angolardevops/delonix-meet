@@ -64,13 +64,15 @@ export interface BrowserModel {
 async function probeBrowserModel(signal: AbortSignal): Promise<BrowserModel> {
   const sizes = await Promise.all(MODEL_FILES.map((f) => staticSize(`${MODEL_BASE}/${f}`, signal).catch(() => null)))
   const installed = sizes.every((s) => s !== null)
-  let cached = false
+  // Sem valor inicial: o `try`/`catch` cobre os dois caminhos, e atribuir
+  // `false` antes era um valor que nunca se lia.
+  let cached: boolean
   try {
     cached = 'caches' in window && (await caches.has('transformers-cache'))
   } catch {
     cached = false
   }
-  let originUsage: number | null = null
+  let originUsage: number | null
   try {
     originUsage = (await navigator.storage?.estimate?.())?.usage ?? null
   } catch {
@@ -311,6 +313,7 @@ export default function Intelligence() {
             </header>
             <div className="dx-table-wrap ai-box">
               <table className="ai-langs" data-testid="ai-langs">
+                <caption className="dx-sr-only">{t('consola.ia.titulo')}</caption>
                 <thead>
                   <tr>
                     <th scope="col">{t('consola.ia.colIdioma')}</th>

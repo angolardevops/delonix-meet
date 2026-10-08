@@ -39,8 +39,8 @@ import {
 function evento(spec: string, extra: Partial<EventoDeTecla> = {}): EventoDeTecla & TeclaDaMesa {
   const c = analisarCombinacao(spec)
   const t = c.tecla
-  let key = t
-  let code = ''
+  let key: string
+  let code: string
   if (/^[0-9]$/.test(t)) {
     key = t
     code = `Digit${t}`

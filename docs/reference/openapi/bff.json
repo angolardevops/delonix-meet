@@ -5122,6 +5122,13 @@
           "minutes": {
             "type": "string"
           },
+          "org_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "owner_id": {
             "format": "uuid",
             "type": "string"
@@ -6073,12 +6080,6 @@
       },
       "OdooConfig": {
         "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          },
           "odoo_admin_id": {
             "format": "uuid",
             "type": [
@@ -6122,20 +6123,12 @@
         },
         "required": [
           "org_id",
-          "odoo_enabled",
-          "hide_org_creation",
-          "hide_sso_button"
+          "odoo_enabled"
         ],
         "type": "object"
       },
       "OdooConfigReq": {
         "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          },
           "odoo_db": {
             "type": [
               "string",
@@ -6154,9 +6147,7 @@
           }
         },
         "required": [
-          "odoo_enabled",
-          "hide_org_creation",
-          "hide_sso_button"
+          "odoo_enabled"
         ],
         "type": "object"
       },
@@ -6344,6 +6335,37 @@
           "label",
           "prefixes",
           "configured"
+        ],
+        "type": "object"
+      },
+      "OperatorLoginSettings": {
+        "description": "Configuração de LOGIN da plataforma — a mesma forma no `GET` e no `PUT`.",
+        "properties": {
+          "hide_org_creation": {
+            "type": "boolean"
+          },
+          "hide_sso_button": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hide_org_creation",
+          "hide_sso_button"
+        ],
+        "type": "object"
+      },
+      "OperatorLoginSettingsReq": {
+        "properties": {
+          "hide_org_creation": {
+            "type": "boolean"
+          },
+          "hide_sso_button": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hide_org_creation",
+          "hide_sso_button"
         ],
         "type": "object"
       },
@@ -32642,7 +32664,7 @@
             "description": ""
           }
         },
-        "summary": "`GET /api/public/settings` — sem autenticação; usado na página de login.\nAgrega flags de todas as orgs com integração Odoo activa.",
+        "summary": "`GET /api/public/settings` — sem autenticação; usado na página de login.\nLê o único registo de configuração de LOGIN da plataforma\n(`platform_login_settings`, id=1) — nunca agrega sobre organizações: antes\ndesta rota agregar com `BOOL_OR(hide_org_creation)` sobre todas as orgs com\n`odoo_enabled`, o admin de UMA organização escondia o registo e/ou o SSO\npara TODA a plataforma. Corrigido pela migração 0103; a escrita agora só\nacontece em `PUT /api/operator/v1/login-settings` (admin de plataforma).",
         "tags": [
           "odoo"
         ]

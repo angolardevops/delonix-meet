@@ -38,14 +38,16 @@ d=json.load(sys.stdin)
 print(sum(f["errorCount"]+f["warningCount"] for f in d))
 ')
 # Os disables contam-se no código, não no relatório: é o que o relatório não vê.
-escondidos=$(/usr/bin/grep -rlE 'eslint-disable.*react-hooks' "$WEB/src" 2>/dev/null \
-  | xargs -r /usr/bin/grep -cE 'eslint-disable.*react-hooks' \
-  | awk -F: '{s+=$NF} END {print s+0}')
+# SÓ os que NÃO dizem porquê (mudança de 2026-10-08): a razão está escrita no
+# `scripts/eslint-disables-sem-razao.py`. Em resumo: um disable com a razão no
+# comentário acima é uma decisão registada, não um problema escondido — e
+# contar só os outros faz de «escrever porquê» o caminho para a catraca descer.
+escondidos=$(python3 scripts/eslint-disables-sem-razao.py "$WEB/src")
 total=$((problemas + escondidos))
 
 if [ "${BLESS:-}" = "1" ]; then
   printf '%s\n' "$total" > "$BASE"
-  echo "✓ lint: catraca gravada ($total = $problemas reportados + $escondidos silenciados)"
+  echo "✓ lint: catraca gravada ($total = $problemas reportados + $escondidos silenciados SEM razão)"
   exit 0
 fi
 
@@ -57,7 +59,8 @@ fasquia=$(cat "$BASE")
 
 if [ "$total" -gt "$fasquia" ]; then
   echo "✗ lint: problemas do frontend subiram de $fasquia para $total"
-  echo "     ($problemas reportados pelo eslint + $escondidos silenciados por eslint-disable)"
+  echo "     ($problemas reportados pelo eslint + $escondidos silenciados SEM razão escrita)"
+  echo "     Um disable com a razão no comentário acima não conta — escreve porquê."
   echo "     Vê quais:  cd web && node_modules/.bin/eslint src"
   echo "     Um 'eslint-disable' novo NÃO baixa a conta — é contado na mesma."
   exit 1

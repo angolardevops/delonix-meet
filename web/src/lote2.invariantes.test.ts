@@ -152,6 +152,11 @@ describe('3.2.5 · nada de emoji como controlo na consola', () => {
   // cor, e renderizam igual em todo o lado. Uma versão anterior metia-os no
   // mesmo saco e acusava 56 sítios, a maioria setas em prosa — um portão que
   // grita por tudo é ignorado tal como um portão cego.
+  // O `no-misleading-character-class` vê o `\u{FE0F}` (selector de variação)
+  // numa classe e avisa que ele COMBINA com o que vem antes. É verdade e é
+  // intencional: o que se procura aqui é a presença do selector, sozinho ou
+  // colado — um emoji «texto» com FE0F é tão emoji como o outro.
+  // eslint-disable-next-line no-misleading-character-class
   const EMOJI = /[\u{1F300}-\u{1FAFF}\u{FE0F}]/u
   // `⌘` e `⌥` são NOMES DE TECLAS dentro de <kbd> — conteúdo, não controlo.
   const TECLAS = /[\u2318\u2325\u21E7\u23CE]/u

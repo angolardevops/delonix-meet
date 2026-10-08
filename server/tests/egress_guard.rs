@@ -120,10 +120,7 @@ async fn odoo_url_interno_e_recusado_ao_gravar(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
     let a = app.new_org("alfa.test").await;
     let path = format!("/api/orgs/{}/integrations/odoo", a.org());
-    let corpo = |url: &str| {
-        json!({"odoo_enabled": true, "odoo_url": url, "odoo_db": "prod",
-               "hide_org_creation": false, "hide_sso_button": false})
-    };
+    let corpo = |url: &str| json!({"odoo_enabled": true, "odoo_url": url, "odoo_db": "prod"});
     for url in [
         "http://127.0.0.1:8069",
         "http://169.254.169.254",
