@@ -409,3 +409,13 @@ arranque. O servidor tem de mandar o telefone para lá (`VOICE_RAMAIS_PUBLIC_TRA
 `$${certs_dir}` (a do prefixo de instalação, com os `.pem` da vanilla): com ela o perfil serve um
 `CN=FreeSWITCH` auto-assinado em vez do nosso (medido). Prova: `scripts/ramais-tls-prova.py`
 (certificado conferido, TLS ≥ 1.2, REGISTER com digest por TLS, e os controlos negativos).
+
+## Chamada à espera do aparelho (S-02, ADR-0023)
+
+`DELONIX_PUSH_WAIT_SECS` (entrypoint, passo 6; 0 a 60, por omissão **0 = desligado**): quanto uma chamada
+entre ramais espera que o aparelho do destino acorde por push e se registe. Com valor > 0, se o destino não
+está registado o `ramais_dial.lua` pede o *wake* ao servidor (`POST /internal/v1/voice/push/wake`) e, se este
+responder `awaiting:true`, segura a chamada a tocar ao chamador até ao registo ou ao limite
+(`NO_USER_RESPONSE`). Sem `awaiting:true` falha já, como antes. Prova: `scripts/ramais-push-espera-prova.py`.
+O endpoint e os fornecedores de push (S-01) **ainda não existem**: hoje só o lado do FreeSWITCH.
+

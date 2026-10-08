@@ -119,7 +119,7 @@ class Aparelho:
                 if m.startswith("INVITE") and self.t_invite is None:
                     self.t_invite = time.time()
                     h = lambda n: re.search(rf"(?im)^{n}:\s*(.*)$", m).group(1).strip()
-                    via = "\r\n".join(re.findall(r"(?im)^Via:.*$", m))
+                    via = "\r\n".join(v.strip() for v in re.findall(r"(?im)^Via:.*$", m))  # strip: o `.*$` apanha o \r final
                     self.sock.sendall("\r\n".join(["SIP/2.0 486 Busy Here", via, f"From: {h('From')}", f"To: {h('To')};tag={secrets.token_hex(4)}",
                         f"Call-ID: {h('Call-ID')}", f"CSeq: {h('CSeq')}", "Content-Length: 0", "", ""]).encode())
                 if not m: return
@@ -143,24 +143,27 @@ def main():
     user_cham, _ = lab.credencial(chamador)
     srv = ThreadingHTTPServer((lab.ip, 0), Wake); porta = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    lab.fs(f"global_setvar delonix_push_wake_url http://{lab.ip}:{porta}/wake")
+    lab.fs(f"global_setvar delonix_push_wake_url=http://{lab.ip}:{porta}/wake")
     desregistado = lambda: user_alvo not in lab.fs("sofia status profile internal reg")
+    aor = lambda: f"{user_alvo}@{lab.dominio}"
+    # Uma corrida anterior pode ter deixado o ramal de prova registado (o registo vale 120 s): limpa-se.
+    lab.fs(f"sofia profile internal flush_inbound_reg {aor()}")
     try:
-        assert desregistado(), "o ramal de prova já está registado"
+        assert desregistado(), "o ramal de prova continua registado depois de limpo"
         # 2. controlo negativo: espera desligada
-        lab.fs("global_setvar delonix_push_wait_secs 0"); Wake.pedidos.clear(); Wake.awaiting = True
+        lab.fs("global_setvar delonix_push_wait_secs=0"); Wake.pedidos.clear(); Wake.awaiting = True
         r, dt = originar(lab, user_cham, lab.dominio, "1901", secrets.token_hex(4).rjust(8, "0") + "-0000-0000-0000-000000000002")
         linha("USER_NOT_REGISTERED" in r and dt < 3 and not Wake.pedidos, "espera desligada (0): falha de imediato e não pede wake", f"{r} em {dt:.2f}s, wakes={len(Wake.pedidos)}")
         # 3. controlo negativo: o servidor diz que não há aparelhos acordáveis
-        lab.fs("global_setvar delonix_push_wait_secs 15"); Wake.pedidos.clear(); Wake.awaiting = False
+        lab.fs("global_setvar delonix_push_wait_secs=15"); Wake.pedidos.clear(); Wake.awaiting = False
         r, dt = originar(lab, user_cham, lab.dominio, "1901", secrets.token_hex(4).rjust(8, "0") + "-0000-0000-0000-000000000003")
         linha("USER_NOT_REGISTERED" in r and dt < 3 and len(Wake.pedidos) == 1, "awaiting:false: falha de imediato, mas pediu o wake uma vez", f"{r} em {dt:.2f}s, wakes={len(Wake.pedidos)}")
         # 4. o aparelho nunca acorda: acaba ao fim do limite
-        lab.fs("global_setvar delonix_push_wait_secs 4"); Wake.pedidos.clear(); Wake.awaiting = True
+        lab.fs("global_setvar delonix_push_wait_secs=4"); Wake.pedidos.clear(); Wake.awaiting = True
         r, dt = originar(lab, user_cham, lab.dominio, "1901", secrets.token_hex(4).rjust(8, "0") + "-0000-0000-0000-000000000004")
         linha("NO_USER_RESPONSE" in r and 3.5 <= dt <= 7, "sem registo: acaba ao fim do limite (4 s) com NO_USER_RESPONSE", f"{r} em {dt:.2f}s")
         # 1. o aparelho acorda tarde: o INVITE chega depois do registo
-        lab.fs("global_setvar delonix_push_wait_secs 20"); Wake.pedidos.clear(); Wake.awaiting = True
+        lab.fs("global_setvar delonix_push_wait_secs=20"); Wake.pedidos.clear(); Wake.awaiting = True
         ap_ = Aparelho(lab, user_alvo, senha_alvo, lab.dominio); res = {}
         def chamada():
             res["r"], res["dt"] = originar(lab, user_cham, lab.dominio, "1901", secrets.token_hex(4).rjust(8, "0") + "-0000-0000-0000-000000000001")
@@ -177,7 +180,8 @@ def main():
         linha("USER_BUSY" in res.get("r", ""), "a chamada seguiu para o aparelho (que recusou com 486: a prova não atende)", res.get("r", "sem resposta"))
         ap_.fechar()
     finally:
-        lab.fs("global_setvar delonix_push_wait_secs 0"); lab.fs("global_setvar delonix_push_wake_url ")
+        lab.fs("global_setvar delonix_push_wait_secs=0"); lab.fs("global_setvar delonix_push_wake_url=")
+        lab.fs(f"sofia profile internal flush_inbound_reg {aor()}")  # não deixar a prova registada
         srv.shutdown()
     print(f"\n{falhas} falha(s)"); sys.exit(min(falhas, 255))
 
