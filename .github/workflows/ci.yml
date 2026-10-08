@@ -218,6 +218,9 @@ jobs:
       - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
         run: bash scripts/check-arquitectura-catraca.sh
 
+      - name: Toda a reivindicação de trabalho passa pela peça comum
+        run: bash scripts/check-filas-reivindicacao.sh
+
       - name: Regra da dependência entre crates (ADR-0006 §1)
         run: bash scripts/check-crate-deps.sh
 

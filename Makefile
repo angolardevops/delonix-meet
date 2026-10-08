@@ -269,6 +269,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-frontend-lint.sh
 	@bash scripts/check-route-auth.sh
 	@bash scripts/check-docs-drift.sh
+	@bash scripts/check-filas-reivindicacao.sh
 	@bash scripts/check-room-affinity.sh
 	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-fs-xml.sh
