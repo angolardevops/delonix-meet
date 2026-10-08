@@ -74,6 +74,9 @@ abstract interface class SipEngine {
 
   /// Atende a chamada a tocar (se houver).
   Future<bool> atender();
+
+  /// Recusa a chamada a tocar (se houver).
+  Future<bool> recusar();
   Future<bool> enviarDtmf(String digitos);
   Future<bool> terminarChamada();
   Future<DiagnosticoMotor> diagnostico();

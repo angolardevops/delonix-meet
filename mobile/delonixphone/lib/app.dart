@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'src/chamadas/servico_chamadas.dart';
 import 'src/conta/controlador_conta.dart';
 import 'src/telefonia/estado_chamada_celular.dart';
+import 'src/ui/cartao_chamada.dart';
 import 'src/ui/cartao_conta.dart';
 
 /// Primeiro ecrã: só mostra o estado da chamada celular. Os textos têm de ir para o i18n
@@ -13,10 +15,14 @@ class DelonixPhoneApp extends StatelessWidget {
     super.key,
     required this.monitor,
     required this.controlador,
+    this.servico,
   });
 
   final MonitorChamadaCelular monitor;
   final ControladorConta controlador;
+
+  /// O motor SIP e as chamadas. `null` nos testes de ecrã que não o usam.
+  final ServicoChamadas? servico;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -25,7 +31,11 @@ class DelonixPhoneApp extends StatelessWidget {
       colorSchemeSeed: const Color(0xFF0B5FFF),
       useMaterial3: true,
     ),
-    home: EcraInicio(monitor: monitor, controlador: controlador),
+    home: EcraInicio(
+      monitor: monitor,
+      controlador: controlador,
+      servico: servico,
+    ),
   );
 }
 
@@ -34,10 +44,12 @@ class EcraInicio extends StatefulWidget {
     super.key,
     required this.monitor,
     required this.controlador,
+    this.servico,
   });
 
   final MonitorChamadaCelular monitor;
   final ControladorConta controlador;
+  final ServicoChamadas? servico;
 
   @override
   State<EcraInicio> createState() => _EcraInicioState();
@@ -57,6 +69,10 @@ class _EcraInicioState extends State<EcraInicio> {
       padding: const EdgeInsets.all(16),
       children: [
         CartaoConta(controlador: widget.controlador),
+        if (widget.servico != null) ...[
+          const SizedBox(height: 16),
+          CartaoChamada(servico: widget.servico!),
+        ],
         const SizedBox(height: 16),
         EcraEstadoChamada(monitor: widget.monitor),
       ],

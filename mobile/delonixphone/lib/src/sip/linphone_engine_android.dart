@@ -68,6 +68,10 @@ class LinphoneEngineAndroid implements SipEngine {
       await _metodos.invokeMethod<bool>('atender') ?? false;
 
   @override
+  Future<bool> recusar() async =>
+      await _metodos.invokeMethod<bool>('recusar') ?? false;
+
+  @override
   Future<bool> enviarDtmf(String digitos) async =>
       await _metodos.invokeMethod<bool>('enviarDtmf', {'digitos': digitos}) ??
       false;

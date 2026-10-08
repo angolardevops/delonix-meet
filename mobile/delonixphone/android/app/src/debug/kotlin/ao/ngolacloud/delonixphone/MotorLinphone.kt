@@ -63,6 +63,7 @@ class MotorLinphone(private val contexto: Context) : MotorSip {
                     r.success(chamadaNova != null)
                 }
                 "atender" -> r.success(chamada?.accept() == 0)
+                "recusar" -> r.success(chamada?.decline(org.linphone.core.Reason.Declined) == 0)
                 "enviarDtmf" -> r.success(chamada?.sendDtmfs(c.argument<String>("digitos")!!) == 0)
                 "terminarChamada" -> r.success(chamada?.terminate() == 0)
                 "diagnostico" -> r.success(diagnostico())

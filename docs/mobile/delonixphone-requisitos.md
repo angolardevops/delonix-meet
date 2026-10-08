@@ -300,3 +300,18 @@ representativo** da produção.
 - Não confirmei se o `transport` real dos ramais é TLS nas instalações existentes.
 - O quadro de licenças e o comportamento actual das lojas vêm do meu conhecimento geral
   (até Jun/2026) e **têm de ser reconfirmados** nas fontes oficiais antes de decidir.
+
+## 11. Estado medido da Fase 0 (2026-10-08)
+
+| Pergunta da Fase 0 | Estado | Prova |
+|---|---|---|
+| O motor regista com o QR do Meet e chama com SRTP/Opus? | **Sim**, no emulador | `spike-fase0-liblinphone.md` (4 em 4) |
+| O servidor sabe acordar um ramal sem registo? | **Sim** (S-01 e S-02), com o fornecedor `lab` | PR #279, ADR-0023, 11 testes e prova 6 em 6 |
+| A app morta acorda, regista-se e toca? | **Sim**, no emulador, com push de **laboratório** | `mobile/ambiente/prova-acordar.py` (8 em 8): `180` ao chamador, atender no ecrã dá `200 OK` |
+| Toca com um push **real** (FCM, APNs) num telemóvel? | **Por provar** | falta conta Firebase (Android) e Apple Developer (iOS) |
+
+Por fazer: FCM e APNs reais (RNF-01/02 só se medem com eles); serviço em primeiro plano `phoneCall`, Doze e
+restrições de fabricantes; iPhone (CallKit/PushKit); ligar a partir da sala por ESL e o PSTN (o *wake* é do
+servidor); credencial por aparelho e atender num só aparelho (S-03, RF-35); CGNAT combinado com o motor; áudio
+real; a licença comercial (ADR-0022).
+

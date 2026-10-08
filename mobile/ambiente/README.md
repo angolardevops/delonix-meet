@@ -62,3 +62,37 @@ perfil o QR continua em UDP/5070 e a app mostra o aviso «sem cifra». O FreeSWI
 **Não provado:** a leitura de um QR com a câmara. A câmara virtual do emulador (cena 3D) saiu em branco no emulador sem janela;
 fica por medir num aparelho real ou com a janela do emulador. TCP em claro não existe na app, e o UDP só em debug.
 O registo de diagnóstico (`RegistoSip`) não é o motor de chamadas: sem SRTP, sem chamadas, sem CGNAT.
+
+## A app acorda por push de laboratório (ADR-0023)
+
+`prova-acordar.py` prova a cadeia completa com a **app morta** no emulador. O servidor, o FreeSWITCH e a app são
+os reais; só o fornecedor de push é «de papel» (o receptor desta máquina abre a app por *intent*, como o FCM
+faria).
+
+```bash
+# 1. laboratório com o push ligado (a imagem do servidor tem de levar o S-01, PR #279)
+cd .worktrees/delonix-meet/laboratorio-develop && make compose-up LAN_IP=<ip> PUSH_LAB_URL=http://<ip>:18890/push
+# 2. emulador a correr e o APK de debug instalado (a raiz de laboratório entra por --dart-define)
+. mobile/ambiente/env.sh
+(cd mobile/delonixphone && flutter build apk --debug --dart-define=LAB_CA_B64=$(base64 -w0 <lab>/deploy/compose/generated/lan-tls/ca.crt))
+adb install -r -g mobile/delonixphone/build/app/outputs/flutter-apk/app-debug.apk
+# 3. a prova (cria uma pessoa de prova com ramal no laboratório e deixa-a lá)
+python3 -I mobile/ambiente/prova-acordar.py --lab <worktree do laboratório>
+```
+
+O que mede (8 em 8 em 2026-10-08): a app configura-se por *intent* (provisiona pelo QR, entra no Meet, regista o
+aparelho `lab`, arranca o motor e regista-se por TLS); fica morta e o ramal sem registo; uma chamada de um
+telefone SIP de papel (TLS, SRTP, PCMU) é segurada pelo FreeSWITCH; o servidor pede o push; a app abre, regista-se e
+mostra «Chamada a entrar»; o chamador ouve `180`; atende-se **no ecrã** e o chamador recebe `200 OK`; e, com o
+aparelho revogado, o chamador recebe `480` em 0,1 s e a app continua morta.
+
+**O que não prova:** FCM/APNs reais, um telemóvel físico, a app morta pelo sistema (usa-se `am force-stop`),
+áudio (o emulador corre sem som), nem o iPhone. Os *intents* `dlx_*` são uma comodidade de laboratório: a
+configuração (`dlx_configurar_url`, `dlx_email`, `dlx_senha`) **só corre em debug**, e num release é ignorada.
+
+**Um engano que esta prova desfez:** a primeira versão fazia a chamada por `originate … loopback/…`, cuja perna só
+fala `L16/8000`; o FreeSWITCH oferecia à app só `L16` e a app recusava com 488 (`INCOMPATIBLE_DESTINATION`).
+Era um artefacto da prova, não do Lua: com um chamador a sério (PCMU) a oferta é normal. Fica o aviso de que
+**o codec da perna chamadora condiciona a oferta à app**: uma chamada de um telefone só com G.729 falharia da
+mesma forma (por medir).
+
