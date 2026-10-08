@@ -1154,16 +1154,12 @@ export interface OdooConfig {
   odoo_token_prefix: string | null
   odoo_admin_id: string | null
   odoo_synced_at: string | null
-  hide_org_creation: boolean
-  hide_sso_button: boolean
 }
 
 export interface OdooConfigSaveReq {
   odoo_enabled: boolean
   odoo_url: string | null
   odoo_db: string | null
-  hide_org_creation: boolean
-  hide_sso_button: boolean
 }
 
 export const getOdooConfig = (orgId: string) =>

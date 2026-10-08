@@ -6073,12 +6073,6 @@
       },
       "OdooConfig": {
         "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          },
           "odoo_admin_id": {
             "format": "uuid",
             "type": [
@@ -6122,20 +6116,12 @@
         },
         "required": [
           "org_id",
-          "odoo_enabled",
-          "hide_org_creation",
-          "hide_sso_button"
+          "odoo_enabled"
         ],
         "type": "object"
       },
       "OdooConfigReq": {
         "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          },
           "odoo_db": {
             "type": [
               "string",
@@ -6154,9 +6140,7 @@
           }
         },
         "required": [
-          "odoo_enabled",
-          "hide_org_creation",
-          "hide_sso_button"
+          "odoo_enabled"
         ],
         "type": "object"
       },
@@ -6344,6 +6328,37 @@
           "label",
           "prefixes",
           "configured"
+        ],
+        "type": "object"
+      },
+      "OperatorLoginSettings": {
+        "description": "Configuração de LOGIN da plataforma — a mesma forma no `GET` e no `PUT`.",
+        "properties": {
+          "hide_org_creation": {
+            "type": "boolean"
+          },
+          "hide_sso_button": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hide_org_creation",
+          "hide_sso_button"
+        ],
+        "type": "object"
+      },
+      "OperatorLoginSettingsReq": {
+        "properties": {
+          "hide_org_creation": {
+            "type": "boolean"
+          },
+          "hide_sso_button": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hide_org_creation",
+          "hide_sso_button"
         ],
         "type": "object"
       },
@@ -14089,6 +14104,107 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/operator/v1/login-settings": {
+      "get": {
+        "operationId": "get_login_settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorLoginSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão válida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/operator/v1/login-settings` — lê a config actual (admin plataforma).",
+        "tags": [
+          "platform"
+        ]
+      },
+      "put": {
+        "description": "Esta é a ÚNICA escrita destas duas flags desde a correcção da migração\n0102: um admin de organização já não as tem no seu formulário (saíram de\n`OdooConfigReq`), e `organizations` já não tem as colunas.",
+        "operationId": "save_login_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorLoginSettingsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorLoginSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão válida."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`PUT /api/operator/v1/login-settings` — grava a config (admin plataforma).",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/operator/v1/nodes": {
       "get": {
         "operationId": "list",
