@@ -128,7 +128,34 @@ async fn room_for_host(state: &AppState, user_id: Uuid, code: &str) -> Result<Ro
     Ok(room)
 }
 
-/// Fecha o que ficou a tocar sem fim (ver `STALE_SECS`).
+/// Fecha o que ficou a tocar sem fim, em TODAS as salas (trabalho nº5).
+///
+/// PORQUE EXISTE: a versão por sala abaixo só corre de handlers de LEITURA, e
+/// uma chamada pendurada bloqueia o ramal e conta para o limite de concorrência
+/// — se ninguém abrir o ecrã daquela sala, fica assim. Isto corre de um ciclo,
+/// sem precisar de alguém a olhar.
+///
+/// Não é uma reivindicação (não há trabalho a levar, só estado a fechar), por
+/// isso não passa pela peça das filas: é um `UPDATE` idempotente, e dois nós a
+/// corrê-lo ao mesmo tempo fecham as mesmas linhas com o mesmo resultado.
+pub(crate) async fn finish_stale_all(db: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
+    let n = sqlx::query(
+        "UPDATE room_dial_outs
+            SET status = 'failed', failure_code = 'stale', ended_at = now()
+          WHERE status IN ('queued','dialing','ringing')
+            AND created_at < now() - make_interval(secs => $1)",
+    )
+    .bind(STALE_SECS as f64)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(n)
+}
+
+/// Fecha o que ficou a tocar sem fim NESTA sala (ver `STALE_SECS`).
+///
+/// Fica, apesar do `finish_stale_all`: quem abre o ecrã vê o estado certo já,
+/// sem esperar pela volta do ciclo.
 async fn finish_stale(state: &AppState, room_id: Uuid) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE room_dial_outs

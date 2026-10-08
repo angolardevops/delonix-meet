@@ -2072,6 +2072,24 @@ pub async fn run() {
     // pela peça comum, desce para aqui.
     let mut filas = jobs::Filas::new();
     sms::levanta_filas(&mut filas, state.clone());
+    // Chamadas penduradas (trabalho nº5): o `finish_stale` só corria de
+    // handlers de LEITURA, por isso uma chamada que ficou a tocar sem fim
+    // bloqueava o ramal e contava para o limite de concorrência até alguém
+    // abrir o ecrã daquela sala ou organização. Agora não precisa de ninguém a
+    // olhar. São `UPDATE`s idempotentes, não reivindicações — dois nós fecham
+    // as mesmas linhas com o mesmo resultado.
+    {
+        let db = state.db.clone();
+        filas.levanta("telephony_stale", Duration::from_secs(60), move || {
+            let db = db.clone();
+            async move {
+                let a = dial_outs::finish_stale_all(&db).await?;
+                let b = telephony_service::finish_stale_all(&db).await?;
+                Ok((a + b) as usize)
+            }
+        });
+    }
+
     // O resumo da acta pelo LLM (trabalho nº4): a cada minuto, o que foi
     // enfileirado ao gravar a ata ou pela rota. No-op sem `OLLAMA_URL`.
     {
