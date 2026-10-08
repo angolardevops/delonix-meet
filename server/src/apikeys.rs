@@ -704,7 +704,7 @@ pub async fn v1_meetings(
         auto_record: bool,
         record_quality: String,
     }
-    // `m.org_id` (migração 0103) é a fonte da verdade — não a pertença do
+    // `m.org_id` (migração 0104) é a fonte da verdade — não a pertença do
     // dono, que nem olhava a `archived_at` (auditoria 2026-10-08, T1; mesma
     // correcção de `meetings_v1::meeting_in_org`). O `OR` com `org_id IS
     // NULL` é só defesa em profundidade para a reunião legada sem
@@ -788,7 +788,7 @@ pub async fn v1_meeting_notes(
         String,
         Option<chrono::DateTime<chrono::Utc>>,
     )> = sqlx::query_as(
-        // `m.org_id` (migração 0103) é a fonte da verdade — mesma correcção
+        // `m.org_id` (migração 0104) é a fonte da verdade — mesma correcção
         // de `meetings_v1::meeting_in_org` e de `v1_meetings` acima; o `OR`
         // com `org_id IS NULL` é só defesa em profundidade para a reunião
         // legada sem organização atribuída, e exige pertença ACTIVA mesmo aí.
