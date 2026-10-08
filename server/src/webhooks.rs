@@ -476,7 +476,7 @@ pub async fn retry_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
     // nós inserimos a linha da tentativa seguinte aqui dentro. Separá-las
     // perdia a repetição se o processo morresse no meio.
     let due: Vec<PorRepetir> = delonix_meet_store::jobs::claim_in(
-        &mut *tx,
+        &mut tx,
         &FILA,
         &delonix_meet_core::jobs::Retry {
             max_attempts: rules::MAX_AUTO_ATTEMPTS,
