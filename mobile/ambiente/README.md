@@ -96,3 +96,16 @@ Era um artefacto da prova, não do Lua: com um chamador a sério (PCMU) a oferta
 **o codec da perna chamadora condiciona a oferta à app**: uma chamada de um telefone só com G.729 falharia da
 mesma forma (por medir).
 
+
+## A cadeia completa com o delonix-push real
+
+`prova-acordar-delonix.sh` sobe um delonix-push (repo `angolardevops/delonix-push`), liga o laboratório do Meet a ele
+(`PUSH_DELONIX_URL` e `PUSH_DELONIX_KEY` no `compose-lan.sh`), constrói o APK e corre `prova-acordar-delonix.py`:
+a app configura-se, o Meet cunha o aparelho no delonix-push, o processo da app é morto (o serviço renasce), uma chamada
+SIP de papel (TLS, SRTP, PCMU) entra com o **ecrã apagado**, o FreeSWITCH segura-a e pede o *wake*, o delonix-push entrega
+à app, a notificação de ecrã inteiro abre a Activity, a app regista-se por SIP e toca, atende-se («200 OK»), e por fim
+desligar o aparelho no Meet revoga-o também no delonix-push. Medido a 2026-10-09 no emulador: 11 verificações.
+
+Armadilhas que a prova apanhou: o `uiautomator dump` falha com o ecrã desligado e lê-se um `u.xml` antigo (apaga-se antes);
+o `pm clear` repõe as permissões (`POST_NOTIFICATIONS` e `USE_FULL_SCREEN_INTENT` concedem-se depois); o ecrã inteiro só abre a
+Activity com o ecrã apagado. **Não prova** FCM/APNs, um telemóvel físico, nem áudio.
