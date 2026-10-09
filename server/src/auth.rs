@@ -1302,15 +1302,52 @@ pub async fn sso_callback(
 
     let account = match &existing {
         Some(u) => {
-            // Pertença decide-se em org.rs (catraca, regra 1): `role_in_org`
-            // já filtra `archived_at`.
-            let active = crate::org::role_in_org(&state, entry.org_id, u.id)
-                .await?
-                .is_some();
+            // Pertença decide-se em org.rs (catraca, regra 1): `is_full_member`
+            // já filtra `archived_at` E exclui `external_guest` -- um
+            // convidado externo desta org não abre, com o IdP dela, uma
+            // sessão completa da conta (que pode ser admin noutra org:
+            // achado C1 da revisão de 2026-10-09).
+            let active = crate::org::is_full_member(&state, entry.org_id, u.id).await?;
             Some(active)
         }
         None => None,
     };
+
+    // Identidade federada já ligada (achado A1): depois do primeiro login
+    // SSO, a conta fica presa ao (iss, sub) que a autenticou -- nunca ao
+    // email sozinho, que qualquer IdP (inclusive um de outra org) pode
+    // afirmar livremente. Sem isto, o IdP de uma segunda org "herdava" a
+    // conta na primeira vez que o email coincidisse.
+    if let Some(u) = &existing {
+        let bound: Option<(String, String)> =
+            sqlx::query_as("SELECT sso_provider, sso_subject FROM users WHERE id = $1")
+                .bind(u.id)
+                .fetch_optional(&state.db)
+                .await?;
+        if let Some((bound_provider, bound_subject)) = bound {
+            if !bound_provider.is_empty()
+                && (bound_provider != sso_provider || bound_subject != sso_subject)
+            {
+                tracing::warn!(
+                    %email, org_id = %entry.org_id, %sso_provider,
+                    "SSO recusado: identidade federada não corresponde à já ligada"
+                );
+                crate::audit::log(
+                    &state.db,
+                    Some(entry.org_id),
+                    u.id,
+                    "auth.sso_refused",
+                    &email,
+                )
+                .await;
+                return Err(ApiError::Domain(
+                    delonix_meet_core::DomainError::forbidden(SSO_IDENTITY_MISMATCH).with_message(
+                        "Esta conta já está ligada a outro fornecedor de identidade.",
+                    ),
+                ));
+            }
+        }
+    }
     let org_domain: String =
         sqlx::query_scalar("SELECT email_domain FROM organizations WHERE id = $1")
             .bind(entry.org_id)
@@ -1438,6 +1475,9 @@ pub async fn sso_callback(
 pub(crate) const SSO_ACCOUNT_NOT_IN_ORG: &str = "sso.account_not_in_org";
 /// Código estável: conta nova de um domínio que não é o da org do IdP.
 pub(crate) const SSO_EMAIL_DOMAIN_MISMATCH: &str = "sso.email_domain_mismatch";
+/// Código estável: a conta já está ligada a um (issuer, subject) diferente
+/// do que este IdP afirmou -- nunca se re-liga por email sozinho (achado A1).
+pub(crate) const SSO_IDENTITY_MISMATCH: &str = "sso.identity_mismatch";
 
 /// O que o callback SSO pode fazer com o email que o IdP afirmou.
 #[derive(Debug, PartialEq, Eq)]

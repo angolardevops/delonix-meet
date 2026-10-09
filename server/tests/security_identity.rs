@@ -254,6 +254,93 @@ async fn sso_callback_refuses_account_of_another_org(db: sqlx::PgPool) {
     assert_eq!(n, 0, "a vítima foi juntada à org do atacante");
 }
 
+/// C1 (revisão de segurança 2026-10-09) — um CONVIDADO EXTERNO de uma
+/// organização não é "membro" dela para efeitos de SSO. `role_in_org` lê a
+/// coluna legada `org_members.role`, que colapsa 'member' e
+/// 'external_guest' no mesmo texto ('member') -- por isso o callback
+/// achava a vítima "activa" na org do atacante e abria-lhe a conta REAL
+/// (admin da sua própria org), sem nunca ter sido convidada para lá além
+/// de uma reunião. É o mesmo ataque do teste anterior, mas pela porta dos
+/// convites legítimos entre empresas, que esse teste não cobria.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_callback_refuses_external_guest_of_the_idp_org(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let vitima = app.new_org("vitima2.test").await; // admin da SUA própria org
+    let atacante = app.new_org("atacante2.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &atacante, &idp).await;
+
+    // A vítima é só CONVIDADA EXTERNA da org do atacante (parceria entre
+    // empresas, reunião conjunta) -- nunca pediu para entrar lá como membro.
+    sqlx::query("SELECT seed_system_roles($1::uuid)")
+        .bind(atacante.org())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let guest_role_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM org_roles WHERE org_id = $1::uuid AND system_key = 'external_guest'",
+    )
+    .bind(atacante.org())
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, role_id, title)
+         VALUES ($1::uuid, $2::uuid, 'member', $3, 'Convidado')",
+    )
+    .bind(atacante.org())
+    .bind(&vitima.user_id)
+    .bind(guest_role_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    // Controlo positivo: o admin do atacante continua a entrar pelo SSO
+    // da sua própria org -- a correcção não parte o caminho legítimo.
+    let (st, sub, body) = sso_flow(&app, &idp, "atacante2.test", &atacante.email).await;
+    assert_eq!(st, 302, "membro real da org ainda entra por SSO: {body}");
+    assert_eq!(sub.as_deref(), Some(atacante.user_id.as_str()));
+
+    // O ataque: o IdP do atacante (que ele controla) afirma o email da
+    // vítima -- que "existe" em org_members, mas só como convidada.
+    let (st, sub, body) = sso_flow(&app, &idp, "atacante2.test", &vitima.email).await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "convidado externo abriu a conta real da vítima: {body}"
+    );
+    assert_eq!(body["code"], "sso.account_not_in_org", "{body}");
+}
+
+/// A1 (revisão de segurança 2026-10-09) — depois do primeiro login SSO, a
+/// conta fica presa ao (issuer, subject) que a autenticou. Antes desta
+/// correcção, qualquer IdP que afirmasse o MESMO email reabria a conta --
+/// mesmo um segundo IdP, de outra organização ou reconfigurado sem aviso.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_callback_refuses_identity_not_already_bound(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("zeta.test").await;
+    let idp1 = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp1).await;
+
+    // Primeiro login: liga a conta a (issuer de idp1, sub).
+    let (st, sub, body) = sso_flow(&app, &idp1, "zeta.test", &admin.email).await;
+    assert_eq!(st, 302, "primeiro login SSO: {body}");
+    assert_eq!(sub.as_deref(), Some(admin.user_id.as_str()));
+
+    // Um SEGUNDO IdP -- a org trocou de fornecedor, ou alguém comprometeu a
+    // configuração -- afirma o MESMO email.
+    let idp2 = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp2).await;
+    let (st, sub, body) = sso_flow(&app, &idp2, "zeta.test", &admin.email).await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "segundo IdP reabriu a conta só pelo email: {body}"
+    );
+    assert_eq!(body["code"], "sso.identity_mismatch", "{body}");
+}
+
 /// R130 — O JIT criava conta para QUALQUER email, de qualquer domínio, e
 /// juntava-a à org. Uma org só pode criar contas do seu próprio domínio.
 #[sqlx::test(migrations = "./migrations")]

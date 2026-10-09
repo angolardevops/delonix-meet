@@ -343,6 +343,44 @@ pub async fn role_in_org(
     Ok(row.map(|r| r.0))
 }
 
+/// `true` se a pertença é de PLENO DIREITO — exclui `external_guest`.
+///
+/// `role_in_org` lê a coluna legada `org_members.role` ('admin'/'member'),
+/// que é DERIVADA de `role_id` por gatilho e colapsa `member` e
+/// `external_guest` no mesmo texto ('member') -- ver migração 0053. Por
+/// isso `role_in_org(...).is_some()` nunca distingue um convidado externo
+/// de um colega: ambos "existem" em `org_members`. Isto é seguro para a
+/// maioria dos usos (um convidado pode legitimamente entrar numa sala),
+/// mas é a fonte directa de R130/C1 na porta SSO: um convidado externo de
+/// uma organização X não pode usar o IdP de X para abrir uma sessão
+/// COMPLETA da conta dele (que pode ser admin noutra organização Y onde X
+/// nunca devia ter entrado). Esta função junta `org_roles.system_key` para
+/// responder à pergunta certa: "é mesmo desta organização, ou só convidado
+/// para lá entrar numa reunião?".
+pub async fn is_full_member(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT r.system_key FROM org_members m
+         LEFT JOIN org_roles r ON r.id = m.role_id
+         WHERE m.org_id = $1 AND m.user_id = $2 AND m.archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(match row {
+        // Sem role_id (contas antigas, pré-0053): a coluna `role` legada
+        // nunca guardou 'external_guest', por isso a ausência de role_id
+        // é um membro normal.
+        Some((None,)) => true,
+        Some((Some(key),)) => key != "external_guest",
+        None => false,
+    })
+}
+
 /// «É administrador da org» = a capacidade de sistema `org.administer` (ADR-0008
 /// §4): o `owner` e o `admin` de sistema, exactamente o `admin` de hoje.
 /// Não membro activo → 404; sem a capacidade → 403 `authz.missing_capability`.
