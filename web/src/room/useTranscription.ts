@@ -27,6 +27,17 @@ export function buildMoM(lines: string[], t: TFunction, locale: string): string 
 }
 
 /**
+ * Vale a pena tentar gravar a acta de reserva: há alguma coisa transcrita e
+ * ainda não se gravou. Deliberadamente SEM olhar a quem é anfitrião —
+ * QUALQUER participante que seja o último a sair tenta esta reserva, não só
+ * ele (handleUnload/saveOnLeave/saveOnServerRecordingStop, mais abaixo). O
+ * servidor é que decide se quem pede tem autorização (dono ou convidado).
+ */
+export function devoTentarGravarActaDeReserva(numLinhas: number, momSaved: boolean): boolean {
+  return numLinhas > 0 && !momSaved
+}
+
+/**
  * Legendas (CC) e notas IA. Um ÚNICO motor de voz corre sempre que as legendas
  * OU a transcrição partilhada estão ligadas — a Web Speech não permite várias
  * instâncias ao mesmo tempo.
@@ -188,9 +199,16 @@ export function useTranscription(core: RoomCore) {
   // Fechar o separador sem «Sair»: a acta vai por `fetch keepalive`, que
   // completa depois do unload. Lê o token REAL (`accessTokenValue`) — a versão
   // anterior lia uma chave que não existe e nunca guardava nada.
+  //
+  // QUALQUER participante tenta esta reserva, não só o anfitrião: se ele
+  // fechar o portátil ou perder rede antes de o seu próprio `beforeunload`
+  // completar, a acta nunca nasceria (o servidor também reenfileira
+  // defensivamente ao esvaziar a sala, mas só quando já há dados gravados —
+  // isto é o que os grava da primeira vez). `linesRef`/`momSavedRef` evitam
+  // gravar vazio ou duplicar quando mais do que um participante tenta.
   useEffect(() => {
     function handleUnload() {
-      if (!core.isHostRef.current || linesRef.current.length === 0 || momSavedRef.current) return
+      if (!devoTentarGravarActaDeReserva(linesRef.current.length, momSavedRef.current)) return
       const token = accessTokenValue()
       if (!token) return
       void fetch(`/api/rooms/${code}/minutes`, {
@@ -202,7 +220,7 @@ export function useTranscription(core: RoomCore) {
     }
     window.addEventListener('beforeunload', handleUnload)
     return () => window.removeEventListener('beforeunload', handleUnload)
-  }, [code, t, locale, core.isHostRef])
+  }, [code, t, locale])
 
   /** Só o anfitrião liga a transcrição partilhada; o eco do servidor actualiza. */
   function toggleTranscription() {
@@ -221,16 +239,22 @@ export function useTranscription(core: RoomCore) {
     }
   }
 
-  /** Antes de sair: o anfitrião não perde as notas ao encerrar. */
+  /**
+   * Antes de sair: quem sai não perde as notas ao encerrar — reserva de
+   * QUALQUER participante, não só do anfitrião (ver `handleUnload` acima).
+   * Quem não é dono nem convidado da reunião recebe `404` do servidor; o
+   * chamador (`useCallSession.leave`) já engole esse erro sem bloquear a
+   * saída.
+   */
   async function saveOnLeave() {
-    if (!core.isHostRef.current || linesRef.current.length === 0 || momSavedRef.current) return
+    if (!devoTentarGravarActaDeReserva(linesRef.current.length, momSavedRef.current)) return
     setStatus(t('room.estado.aGuardarActa'))
     await saveMinutesByRoom(code, buildMoM(linesRef.current, t, locale), linesRef.current.join('\n'))
   }
 
   /** A gravação no servidor parou: guarda a acta sem bloquear a interface. */
   function saveOnServerRecordingStop() {
-    if (!core.isHostRef.current || linesRef.current.length === 0 || momSavedRef.current) return
+    if (!devoTentarGravarActaDeReserva(linesRef.current.length, momSavedRef.current)) return
     saveMinutesByRoom(code, buildMoM(linesRef.current, t, locale), linesRef.current.join('\n'))
       .then(() => {
         setMomSaved(true)
