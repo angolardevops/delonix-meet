@@ -38,6 +38,7 @@ namespace da aplicação.
 | **MinIO** | 4 nós distribuídos, buckets versionados | Tira as gravações do volume ReadWriteMany, que amarrava o produto a blocos partilhados (D2). |
 | **ingress-nginx** | 2 réplicas, `externalTrafficPolicy: Local` | **Preserva o IP de quem chega.** Sem isso, todos os pedidos pareceriam vir do nó e o limite por IP (R282) deixava de limitar. |
 | **cert-manager** | `letsencrypt-prod` e `letsencrypt-staging` | O chart já pede o `letsencrypt-prod` pelo nome. O de ensaio existe para não gastar o limite de cinco por semana — esgotá-lo bloqueia sete dias. |
+| **Classes de prioridade** | `meet-critico` (10000) e `meet-normal` (1000), ambas com `globalDefault: false` | **O primeiro passo do `instalar.sh`**, porque o `values-production.yaml` refere-lhes os nomes e um `priorityClassName` que não exista faz o API server **recusar o pod**. No cluster partilhado do ADR-0021 é o que decide quem se aguenta sob pressão de nó: o caminho da chamada e os dados ficam em `meet-critico`, o resto degrada. O `globalDefault: false` é obrigatório — a `true`, a classe passaria a ser a prioridade dos pods de **outras equipas**. Os valores são um ponto de partida: só têm significado comparados com as classes dos vizinhos, que não são nossas. |
 
 ## O que isto NÃO resolve
 

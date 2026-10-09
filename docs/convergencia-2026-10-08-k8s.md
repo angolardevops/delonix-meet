@@ -40,8 +40,8 @@ sem uma prática que lhe faça falta no seu papel.
 | Prática | `k8s/` | chart | Veredicto |
 |---|---|---|---|
 | `resources` em todo o workload | ✓ | ✓ | — |
-| probes (`readiness`/`liveness`) | 8/10 | ✓ | **falta** no `60-ai-gpu-worker` |
-| `securityContext` | **10/10 (2026-10-08)** | ✓ | **feito**: o `52-data-plain` e o `50-data` levam-no, com os uids medidos nas imagens. Ver o passo 5 — `drop: ALL` sozinho quebrava-os |
+| probes (`readiness`/`liveness`) | **9/10 (2026-10-09)** | ✓ | **feito** no `60-ai-gpu-worker`: `startupProbe` + `livenessProbe` sobre um batimento pulsado por PROGRESSO. Sem `readiness`, de propósito — não tem Service |
+| `securityContext` | **10/10 (2026-10-09)** | ✓ | **feito**: `52-data-plain`, `50-data` e `09-whisper`, todos com o uid **medido** na imagem. Ver o passo 5 — `drop: ALL` sozinho quebrava o Postgres e o Redis |
 | `runAsNonRoot`, `readOnlyRootFilesystem`, `drop: ["ALL"]`, `seccompProfile` | ✓ | ✓ | — |
 | `ServiceAccount` + `automountServiceAccountToken: false` | ✓ | ✓ | — (#266) |
 | `NetworkPolicy` | ✓ | ✓ | — (#266) |
@@ -51,7 +51,7 @@ sem uma prática que lhe faça falta no seu papel.
 | Afinidade por sala no ingress | ✓ | ✓ | — (R3) |
 | **`topologySpreadConstraints`** | **✓ (2026-10-08)** | ✓ | **feito**, com o padrão exacto do chart (`ScheduleAnyway`, nó e zona no servidor, nó na web) e um portão a impedir a regressão. A razão não é o laboratório: são os overlays `saas`/`enterprise`, que são artefacto de PRODUTO |
 | **`ServiceMonitor` + `PrometheusRule`** | ✓ (`k8s/observabilidade/`) | — (correcto) | **eu estava errado:** `k8s/observabilidade/` não é o lado do laboratório, é a fase 4 do ADR-0020 — um instalador de produção, fora do kustomize, que põe os objectos no namespace `observabilidade`. Ver o passo 2 |
-| `priorityClassName` | — | — | **falta nos dois.** Sob pressão de nó, o SFU e o Postgres são desalojados como qualquer coisa |
+| `priorityClassName` | — (deliberado) | **maçaneta (2026-10-09)** | o chart expõe-o nos 9 workloads, **vazio por omissão**; o kustomize **não** o pode fixar. Falta o dono dizer os NOMES das classes do `delonix-lda` |
 | `preStop` | — | — | **falta nos dois**, mas o servidor dren a por SIGTERM (`drenar()`), logo é menos grave do que parece |
 | `ResourceQuota` / `LimitRange` no namespace | — | **✓ (2026-10-08)** | **feito no chart**, ligado só em produção. Continua a faltar no `k8s/`, onde é um tecto inventado num cluster de um nó |
 | Imagens por digest (`@sha256:`) | — | — | falta nos dois; há `make pin` para as versões, não para digests |
@@ -161,9 +161,111 @@ sem uma prática que lhe faça falta no seu papel.
    pelos manifestos de hoje** (nenhum Deployment tem ≤1 réplica com HPA), pelo
    que foi provado sinteticamente: `replicas: 1` no servidor, que no overlay
    `saas` tem HPA → «tem um HPA a mirá-lo e não se espalha por nó».
-4. **`priorityClassName`** para o SFU e os dados, nos dois lados. Precisa de uma
-   decisão: que classes existem no cluster partilhado, o que é do operador do
-   `delonix-lda` e não meu.
+4. **`priorityClassName`** — **a canalização ficou feita a 2026-10-09; o que
+   falta é a resposta do dono, e é só isso.**
+
+   A decisão que eu não podia tomar continua a ser dele: que classes existem no
+   cluster partilhado é do operador do `delonix-lda`. Mas isso não impedia a
+   parte que **é** minha, e a medição mostrou que ela nem existia: antes disto,
+   **`priorityClassName` não aparecia uma única vez em `deploy/`** — não era «o
+   nome está em falta», era não haver sítio onde o pôr.
+
+   **O chart expõe-o nos nove workloads** (servidor, web, coturn, FreeSWITCH,
+   Kamailio, PBX de laboratório, Postgres, Redis, e o **Job de migração**, que
+   bloqueia o release: um Job não agendado deixa a versão nova a meio). Dois
+   níveis, para o caso natural de o caminho da chamada valer mais do que o
+   resto:
+
+   ```
+   --set priorityClassName=meet-normal \
+   --set server.priorityClassName=meet-critico \
+   --set coturn.priorityClassName=meet-critico
+   ```
+
+   **E nunca fixo, nem no chart nem no kustomize.** Não é timidez: um
+   `priorityClassName` que não exista no cluster faz o **API server recusar o
+   pod** — a instalação falha no `kubectl apply`, não num aviso. Um nome
+   inventado por nós quebrava a instalação de quem nos aplica. (As classes
+   `system-cluster-critical` e `system-node-critical` são do Kubernetes e, por
+   omissão, só se usam no `kube-system`: não servem aqui.)
+
+   **Prova:** por omissão nenhum workload renderiza prioridade; com um valor,
+   **todos** a levam; com um override, o servidor e o coturn ficam em
+   `meet-critico` e os outros em `meet-normal`. Medido nos perfis de produção,
+   de produção com voz, e de laboratório.
+
+   **Controlos negativos** (cruzamento 6d do `check-helm.sh`, e o novo no
+   `k8s-optin-higiene.py`):
+
+   | ataque | o portão diz |
+   |---|---|
+   | tirar a maçaneta de um workload | `com priorityClassName=prova-prioridade …, estes workloads NÃO a levam: Deployment/coturn` |
+   | FIXAR uma classe no chart | `sem priorityClassName nos valores, estes workloads renderizam um: Deployment/delonix-web` |
+   | FIXAR uma classe num manifesto do `k8s/` | `52-data-plain.yaml StatefulSet/delonix-postgres fixa priorityClassName «meet-inventado»` |
+   | FIXAR uma classe num overlay **nosso** | `k8s-overlays/components/edition-common/server-patch.yaml … fixa priorityClassName` |
+
+   A segunda metade do cruzamento é a que apodrece sozinha: **um workload novo
+   que não leve a maçaneta** só se vê com um render que a ligue, e é isso que o
+   portão passou a fazer.
+
+   ### Os nomes, decididos a 2026-10-09 — o passo fecha
+
+   O dono concordou com a proposta: **duas** classes.
+
+   | classe | valor | quem a leva | porquê |
+   |---|---|---|---|
+   | `meet-critico` | 10000 | servidor, coturn, Postgres, Redis, e o Job de migração | desalojá-los **derruba reuniões a decorrer** |
+   | `meet-normal` | 1000 | web, FreeSWITCH, Kamailio | degradam sem a reunião cair |
+
+   Ficam em `deploy/k8s/plataforma/priorityclasses.yaml` — **objectos de cluster,
+   não do release**: num cluster partilhado o `helm uninstall` do Meet não pode
+   levar atrás uma classe que outros possam estar a usar. E são o **primeiro
+   passo do `instalar.sh`** dessa pasta, porque não têm dependência nenhuma e
+   tudo o resto depende delas.
+
+   **A afirmação que repeti toda a sessão, agora medida** num cluster real
+   (`kubectl apply --dry-run=server`, que passa pela admissão sem escrever):
+
+   | pod com | o API server |
+   |---|---|
+   | `priorityClassName: meet-critico` | aceita, e resolve `spec.priority` = **10000** |
+   | `priorityClassName: meet-inventado` | `Error from server (Forbidden): pods "…" is forbidden: no PriorityClass with name meet-inventado was found` |
+
+   Não é um aviso nem um pod a ficar `Pending`: é um **403 na criação**. É por
+   isso que as classes são o primeiro passo, e que o repo nunca fixa um nome num
+   manifesto que vá para o cluster de outra pessoa.
+
+   Três decisões que valem a pena ler no ficheiro:
+
+   - **`globalDefault: false` nas duas.** A `true`, uma classe passa a ser a
+     prioridade de **todos** os pods do cluster que não declarem uma — incluindo
+     os de outras equipas, noutros namespaces. Seria o mesmo dano que a quota
+     evita, pela porta oposta;
+   - **`preemptionPolicy: Never` no `meet-normal`.** Essa classe serve para não
+     ser desalojada antes de quem não tem classe, **não** para desalojar os
+     outros: espera a sua vez em vez de tirar o lugar a um vizinho;
+   - **os valores são um ponto de partida.** Um número de prioridade só tem
+     significado comparado com as outras classes do mesmo cluster, e as dos
+     vizinhos não são nossas para conhecer. Subir a nossa é baixar a de outro —
+     fala-se com o operador do `delonix-lda` antes.
+
+   O **Postgres e o Redis não aparecem no `values-production.yaml`**: em produção
+   são externos (CloudNativePG e Redis com Sentinel, ADR-0020 fase 3), logo
+   configurá-los no chart era config morta. A prioridade deles põe-se onde eles
+   vivem, na plataforma.
+
+   **Prova** — cruzamento 6e do `check-helm.sh`, e o 6d corrigido:
+
+   | ataque | o portão diz |
+   |---|---|
+   | os valores pedem uma classe que ninguém declara | `usam a classe «meet-inventado» e o …/priorityclasses.yaml não a declara` |
+   | `globalDefault: true` | `a classe «meet-critico» … passaria a ser a prioridade de TODOS os pods do cluster` |
+   | classes declaradas que ninguém usa | `declara ['meet-critico', 'meet-normal'] e nenhum valor do chart as usa` |
+
+   **E o portão apanhou-me a mim:** o cruzamento 6d media a metade «ninguém fixa
+   uma classe» contra o render de **produção** — que agora liga as classes, pelo
+   que deixou de servir de controlo negativo. Passou a ter dois renders
+   dedicados, um com todas as chaves vazias e outro com uma só.
 5. ~~Os dois buracos pequenos: probes no `60-ai-gpu-worker` e `securityContext`
    no `52-data-plain`.~~ **MEDIDO a 2026-10-08. Metade feita; e não eram dois,
    nem pequenos.**
@@ -226,25 +328,137 @@ sem uma prática que lhe faça falta no seu papel.
    falha; pôr o `09-whisper` non-root → falha a dizer que a excepção já não é
    necessária.
 
-   ### Por fazer, e porque não é YAML
+   ### Feito a 2026-10-09: as sondas do `60-ai-gpu-worker`
 
-   **As sondas do `60-ai-gpu-worker`.** O worker não serve HTTP e não escreve
-   batimento nenhum (`ai-worker/worker.py`), logo não há o que sondar. A imagem
-   é `nvidia/cuda:…-ubuntu22.04`, tem shell, portanto uma sonda `exec` é
-   possível — mas precisa de código:
+   Na primeira passagem ficaram de fora, com o desenho escrito. Foi esse desenho
+   que se executou, sem mudar de ideias:
 
-   - um batimento por ficheiro, pulsado **por progresso** e não por relógio. Em
-     `transcriber.py` a transcrição corre num gerador (`for seg in raw`), pelo
-     que um `pulso()` por segmento é um gancho limpo. Por relógio não serve: um
-     worker pendurado continuaria a parecer vivo, e seria uma sonda que não
-     prova nada;
-   - um `startupProbe` tolerante antes da liveness, porque o primeiro arranque
-     descarrega o modelo `large-v3` (~3 GB);
-   - readiness **não** faz sentido: o worker não tem Service nem recebe tráfego.
+   - **um batimento pulsado por PROGRESSO** (`ai-worker/batimento.py`), não por
+     relógio. É a decisão que faz a sonda valer algo: um batimento de relógio
+     continuaria a tocar o ficheiro com o CUDA travado, e seria uma sonda que
+     não prova nada — o mesmo defeito de um `ServiceMonitor` sem alvos. O pulso
+     parte de quem avança: **uma volta do ciclo** (`worker.run`) e **cada
+     segmento** que o `faster-whisper` produz. O gerador de segmentos em
+     `transcriber.py` era uma compreensão de tuplo; passou a ciclo só para poder
+     pulsar;
+   - **o ficheiro só nasce depois do modelo estar carregado.** É o que deixa o
+     `startupProbe` distinguir «ainda a descarregar o `large-v3`» (~3 GB no
+     primeiro arranque) de «pendurado»: ele espera que o ficheiro **apareça**,
+     com 10 s × 180 = **30 minutos** de folga. Só depois a liveness olha para a
+     **idade** (600 s, 3 × 60 s ⇒ reinício após ~12 min sem progresso);
+   - **sem `readinessProbe`**, de propósito: o worker não tem Service e não
+     recebe tráfego. Uma readiness aqui seria um campo preenchido para o portão
+     ver, não para servir de nada;
+   - **um batimento que falha a escrever não derruba a transcrição.** Queixa-se
+     **uma vez** e continua; quem decide é o Kubernetes, ao não ver o ficheiro
+     aparecer. Essa é a decisão certa para ficar no Kubernetes, não no Python.
 
-   É uma peça de código com teste, não uma linha de manifesto — e o worker ainda
-   não está entregue em sítio nenhum (`ghcr.io/OWNER/...:latest`, com o `OWNER`
-   por preencher).
+   **Medido na base da imagem** (`ubuntu:22.04`, a camada de baixo do
+   `nvidia/cuda:…-ubuntu22.04`), com o motor: o `startupProbe` vê o ficheiro;
+   com um batimento fresco a liveness diz vivo; com 20 minutos diz morto; sem
+   ficheiro, o `startupProbe` continua a esperar. Quatro comportamentos, quatro
+   medições.
+
+   ### E um achado maior do que a peça: a bateria do worker nunca corria
+
+   Ao escrever os testes descobri que `ai-worker` **não aparecia no Makefile nem
+   no `ci.yml`** — os **24 testes do worker nunca correram em sítio nenhum**. Uma
+   bateria que ninguém corre não é uma bateria, e sete testes novos sobre um
+   batimento não valeriam nada dentro dela.
+
+   Está ligada nos dois sítios: um passo no job `fitness` do CI e um alvo
+   `make test-ai-worker` (que o `make test` chama). Instala **só** o
+   `grpcio==1.66.2` e o `protobuf==5.27.5`, nas versões do `requirements.txt`: o
+   `faster-whisper` e os 3 GB de modelo não entram, porque o `transcriber.py`
+   importa-o **tarde**, dentro do construtor, e nenhum teste o constrói. Nesta
+   máquina, sem `grpcio`, três testes dão `ModuleNotFoundError` — o alvo **diz
+   qual é o comando** em vez de passar por cima. Com a dependência: **24/24**.
+
+   ### Os controlos negativos
+
+   Dos sete testes novos:
+
+   | ataque ao código | o teste diz |
+   |---|---|
+   | tirar o pulso do ciclo | `0 != 3: um pulso por volta` **e** `0 != 1: nenhum enquanto está pendurado` |
+   | pulsar uma vez em vez de por segmento | `1 != 6: um pulso por segmento do gerador` |
+   | queixar-se a cada pulso em vez de uma vez | `2 != 1: queixa-se UMA vez` |
+   | o ficheiro nascer antes do modelo | falha — o `startupProbe` deixava de distinguir |
+
+   **Um defeito no meu próprio teste, encontrado ao atacá-lo:** a primeira versão
+   de `test_cada_volta_do_ciclo_pulsa` usava o **pulso** para parar o ciclo, pelo
+   que tirar o pulso fazia o teste **pendurar** em vez de falhar — e um teste que
+   pendura é pior do que um que falha. Passou a ser travado pela **fonte**.
+
+   E dois portões a mais em `scripts/k8s-optin-higiene.py`, porque a sonda
+   depende de três ficheiros concordarem:
+
+   | ataque | o portão diz |
+   |---|---|
+   | renomear a variável só no manifesto | `tem uma sonda que refere $HEARTBEAT_FILE e o contentor não declara essa variável — a sonda não dá erro, dá sempre falso` |
+   | renomear só no código do worker | `as sondas leem $HEARTBEAT_FILE e o transcribe_worker.py não lê essa variável — a sonda mediria um ficheiro que ninguém toca` |
+
+   ### Fechado a 2026-10-09: o `09-whisper` non-root, e a imagem que ninguém construía
+
+   Era a última excepção do portão nº8, com a razão «exige fixar o uid no
+   Dockerfile dela». Ao ir fixá-lo, a medição corrigiu-me duas vezes:
+
+   - **não era difícil**: o modelo vem **embutido na imagem** (`/models`, por um
+     `RUN` do build) e o `app.py` **não escreve em disco nenhum**. O manifesto não
+     monta volume nenhum. Bastava dar o `/models` a ler ao uid;
+   - **mas havia um bloqueio real, e não era o que eu tinha escrito**: nada neste
+     repo construía o `delonix-whisper:latest`. O `deploy/build-images.sh`
+     constrói o servidor, a web e (opcional) o `ai-worker` — o `whisper-server`
+     **não estava lá**. E o motivo é concreto: o `Dockerfile` dele faz
+     `COPY requirements.txt .`, e o `build_one` passava a **raiz** por contexto,
+     o que falha com `No such file or directory`. O `build_one` passou a aceitar
+     um contexto, e o whisper entra com `BUILD_WHISPER=1`.
+
+   **Medido com o motor** (`--user 65532:65532`, que é o que o `runAsUser` do
+   Kubernetes faz): `MODELO CARREGADO como uid 65532`, o uvicorn arranca, e o
+   `/health` devolve `{"ok":true,"model":"small","device":"cpu"}`. O uid é o 65532,
+   o mesmo do `ai-worker/Dockerfile`.
+
+   **Um achado sobre o motor, de passagem:** o `delonix` 4.5.0 **não honra o
+   `USER` da imagem** — sem `--user` corre como uid 0, e o `container exec` nem
+   consegue trocar de utilizador. A medição acima teve de forçar o uid, que é
+   aliás o que o Kubernetes faz.
+
+   O portão nº8 fica com **zero excepções**. A regra que as acompanha mantém-se:
+   uma excepção traz a razão pela qual não é só uma linha de YAML, e o portão
+   **falha quando ela deixa de ser necessária**.
+
+   ### Validado por um API server, a 2026-10-09
+
+   Tudo o que está acima foi medido com `helm template`, `kubectl kustomize` e os
+   portões — mas até aqui **nenhum destes manifestos tinha passado por um API
+   server**. O `check-helm.sh` tem um modo `DRYRUN=1` para isso e nunca pudera
+   correr, por falta de cluster.
+
+   Com o cluster local de pé:
+
+   ```
+   ✓ (dry-run server, ns meet-helm) local: 33 recursos aceites pelo API server
+   ```
+
+   E o perfil de **produção**, que o `DRYRUN=1` não cobre, validado à mão num
+   namespace de prova — **20 recursos aceites**, entre eles:
+
+   | recurso | |
+   |---|---|
+   | `resourcequota/delonix-meet-quota` | passo 1 |
+   | `limitrange/delonix-meet-limits` | passo 1 |
+   | `deployment.apps/delonix-server` | com `topologySpreadConstraints` (passo 3) **e** `priorityClassName: meet-critico` (passo 4) |
+   | `job.batch/delonix-server-migrate` | com `meet-critico` |
+
+   O `delonix-server` **só** é aceite porque as duas classes já estavam criadas
+   no cluster — é a cadeia inteira (classes → valores → render → admissão)
+   validada de ponta a ponta, e não cinco peças que parecem encaixar.
+
+   ### Continua por fazer
+
+   Nada. **Os cinco passos estão fechados** (o 4 a 2026-10-09, com os nomes
+   decididos pelo dono).
 
 ## 4. O que fica de fora, e porquê
 

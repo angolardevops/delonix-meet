@@ -23,6 +23,13 @@
 #   6. produção: NENHUM Secret renderizado, nenhuma imagem sem tag ou `latest`;
 #   7. produção: a quota do namespace cobre o pico COM ROLLOUT, recalculado do
 #      render (ADR-0021), e o `max` do LimitRange não rejeita os nossos pods;
+#   7b. a prioridade de agendamento é opcional (ninguém FIXA uma classe) e, quando
+#      dada, chega a TODOS os workloads — incluindo o Job de migração, que bloqueia
+#      o release;
+#   7c. os nomes de classe que os valores usam estão DECLARADOS em
+#      deploy/k8s/plataforma/priorityclasses.yaml, e nenhuma classe é o default do
+#      cluster (um globalDefault: true mudava a prioridade dos pods de outras
+#      equipas);
 #   8. laboratório: os segredos gerados são aleatórios (dois renders diferem);
 #   9. nenhum segredo de desenvolvimento conhecido (deploy/k8s/01-config.yaml,
 #      server/src/config.rs) aparece no chart nem no que ele renderiza.
@@ -151,6 +158,19 @@ render production-voz-esl-cidrs "${VOZ[@]}" --set server.telephony.eslAddr=frees
   --set 'voice.freeswitch.eslCidrs={10.244.0.0/16}'
 render local "${LOCAL[@]}"
 render local-2 "${LOCAL[@]}"
+# Dois renders dedicados ao cruzamento 6d. Não se reaproveita o de produção:
+# desde que o values-production.yaml passou a LIGAR as classes, ele já não
+# serve de controlo negativo (o portão apanhou-me nisso mesmo).
+#
+#   sem-prioridade: todas as chaves VAZIAS → ninguém pode renderizar uma;
+#   prioridade:     uma só chave, sem overrides → todos têm de a levar.
+LIMPA=(--set priorityClassName= --set server.priorityClassName=
+       --set coturn.priorityClassName= --set postgresql.priorityClassName=
+       --set redis.priorityClassName= --set voice.freeswitch.priorityClassName=
+       --set voice.kamailio.priorityClassName= --set voice.labPbx.priorityClassName=
+       --set web.priorityClassName=)
+render sem-prioridade "${VOZ[@]}" "${LIMPA[@]}"
+render prioridade "${VOZ[@]}" "${LIMPA[@]}" --set priorityClassName=prova-prioridade
 [ "$fail" = 0 ] || exit 1
 
 if [ "${DRYRUN:-0}" = "1" ]; then
@@ -520,6 +540,71 @@ if quota and faixa:
 # a quota é só de produção: num laboratório de um nó seria um tecto inventado
 if um(carregar("local"), "ResourceQuota", "delonix-meet-quota"):
     erros.append("[local] o laboratório não leva quota — os números são a escala de produção")
+
+# 6d. a prioridade de agendamento é uma MAÇANETA, e chega a todos
+#     Num cluster partilhado (ADR-0021) o `priorityClassName` decide quem é
+#     desalojado quando um nó aperta. O chart NÃO pode fixar um nome — um
+#     `priorityClassName` que não exista faz o API server recusar o pod — logo
+#     é opcional. Duas coisas têm de valer:
+#
+#       sem o valor: NINGUÉM renderiza uma prioridade (ninguém a fixou);
+#       com o valor: TODOS a renderizam (ninguém se esqueceu de a ligar num
+#                    workload novo — é esta a metade que apodrece sozinha).
+sem = carregar("sem-prioridade")
+fixos = [f"{d['kind']}/{d['metadata']['name']}"
+         for d, spec in pod_specs(sem) if spec.get("priorityClassName")]
+if fixos:
+    erros.append("[sem-prioridade] com TODAS as chaves de prioridade vazias, estes workloads "
+                 f"renderizam uma: {', '.join(fixos)} — o chart não pode FIXAR um nome de "
+                 "classe, porque uma que não exista no cluster faz o API server recusar o pod")
+
+com = carregar("prioridade")
+faltam = [f"{d['kind']}/{d['metadata']['name']}"
+          for d, spec in pod_specs(com) if spec.get("priorityClassName") != "prova-prioridade"]
+if faltam:
+    erros.append("[prioridade] com `priorityClassName=prova-prioridade` nos valores, estes "
+                 f"workloads NÃO a levam: {', '.join(faltam)} — a maçaneta não chega a todos, "
+                 "e num nó apertado eles são desalojados antes dos outros")
+elif not list(pod_specs(com)):
+    erros.append("[prioridade] o render não trouxe workload nenhum — o portão deixou de medir")
+
+# 6e. os nomes de classe que os valores usam EXISTEM, e nenhuma classe é o
+#     default do cluster.
+#     Um `priorityClassName` que não exista faz o API server RECUSAR o pod: o
+#     `helm upgrade` falha, não avisa. E uma PriorityClass com
+#     `globalDefault: true` passa a ser a prioridade de TODOS os pods do
+#     cluster que não declarem uma — incluindo os de outras equipas, noutros
+#     namespaces. Num cluster partilhado (ADR-0021) é o mesmo dano que a quota
+#     evita, pela porta oposta.
+CLASSES = "deploy/k8s/plataforma/priorityclasses.yaml"
+usados = set()
+for nome in ("production", "production-voz"):
+    for d, spec in pod_specs(carregar(nome)):
+        if spec.get("priorityClassName"):
+            usados.add(spec["priorityClassName"])
+
+try:
+    with open(CLASSES) as f:
+        declaradas = {d["metadata"]["name"]: d for d in yaml.safe_load_all(f)
+                      if d and d.get("kind") == "PriorityClass"}
+except FileNotFoundError:
+    declaradas = {}
+    if usados:
+        erros.append(f"os valores usam as classes {sorted(usados)} e o {CLASSES} não existe — "
+                     "o API server recusaria os pods")
+
+for nome_classe in sorted(usados - set(declaradas)):
+    erros.append(f"os valores do chart usam a classe «{nome_classe}» e o {CLASSES} não a declara "
+                 "— um priorityClassName que não exista faz o API server RECUSAR o pod, e o "
+                 "`helm upgrade` falha")
+for nome_classe, d in sorted(declaradas.items()):
+    if d.get("globalDefault"):
+        erros.append(f"{CLASSES}: a classe «{nome_classe}» tem globalDefault: true — passaria a "
+                     "ser a prioridade de TODOS os pods do cluster que não declarem uma, "
+                     "incluindo os de outras equipas (ADR-0021: o cluster é partilhado)")
+if declaradas and not usados:
+    erros.append(f"o {CLASSES} declara {sorted(declaradas)} e nenhum valor do chart as usa — "
+                 "classes que ninguém pede não protegem nada")
 
 # 7. laboratório: aleatórios a sério
 def dados(nome):

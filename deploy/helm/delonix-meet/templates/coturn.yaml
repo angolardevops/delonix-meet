@@ -28,6 +28,14 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9641"
     spec:
+      # Prioridade de agendamento — OPCIONAL e nunca fixa no chart. Num
+      # cluster PARTILHADO (ADR-0021) é o que decide quem é desalojado
+      # quando um nó aperta; mas o nome da classe é do operador do cluster,
+      # e um `priorityClassName` que não exista faz o API server RECUSAR o
+      # pod. Por isso: vazio por omissão, e quem instala diz o nome.
+      {{- with $c.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       {{- if $c.hostNetwork }}
       hostNetwork: true

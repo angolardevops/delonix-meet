@@ -35,6 +35,14 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      # Prioridade de agendamento — OPCIONAL e nunca fixa no chart. Num
+      # cluster PARTILHADO (ADR-0021) é o que decide quem é desalojado
+      # quando um nó aperta; mas o nome da classe é do operador do cluster,
+      # e um `priorityClassName` que não exista faz o API server RECUSAR o
+      # pod. Por isso: vazio por omissão, e quem instala diz o nome.
+      {{- with $v.server.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       serviceAccountName: delonix-server
       automountServiceAccountToken: false
       {{- include "dm.imagePullSecrets" . | nindent 6 }}

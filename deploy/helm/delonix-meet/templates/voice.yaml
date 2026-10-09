@@ -92,6 +92,14 @@ spec:
       annotations:
         checksum/meet: {{ printf "%s%s" (.Files.Get "files/voice/freeswitch-entrypoint.sh") (.Files.Glob "files/voice/freeswitch/*").AsConfig | sha256sum }}
     spec:
+      # Prioridade de agendamento — OPCIONAL e nunca fixa no chart. Num
+      # cluster PARTILHADO (ADR-0021) é o que decide quem é desalojado
+      # quando um nó aperta; mas o nome da classe é do operador do cluster,
+      # e um `priorityClassName` que não exista faz o API server RECUSAR o
+      # pod. Por isso: vazio por omissão, e quem instala diz o nome.
+      {{- with $vo.freeswitch.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       {{- if $vo.freeswitch.hostNetwork }}
       hostNetwork: true
@@ -280,6 +288,14 @@ spec:
         # A allowlist e o cfg só são lidos ao arrancar.
         checksum/cfg: {{ printf "%s%s%s" (.Files.Get "files/voice/kamailio.cfg") (.Files.Get "files/voice/tls.cfg") (toYaml $vo.trunks) | sha256sum }}
     spec:
+      # Prioridade de agendamento — OPCIONAL e nunca fixa no chart. Num
+      # cluster PARTILHADO (ADR-0021) é o que decide quem é desalojado
+      # quando um nó aperta; mas o nome da classe é do operador do cluster,
+      # e um `priorityClassName` que não exista faz o API server RECUSAR o
+      # pod. Por isso: vazio por omissão, e quem instala diz o nome.
+      {{- with $vo.kamailio.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       {{- if $vo.kamailio.hostNetwork }}
       hostNetwork: true
@@ -452,6 +468,14 @@ spec:
         app: pbx-cliente
         {{- include "dm.labels" . | nindent 8 }}
     spec:
+      # Prioridade de agendamento — OPCIONAL e nunca fixa no chart. Num
+      # cluster PARTILHADO (ADR-0021) é o que decide quem é desalojado
+      # quando um nó aperta; mas o nome da classe é do operador do cluster,
+      # e um `priorityClassName` que não exista faz o API server RECUSAR o
+      # pod. Por isso: vazio por omissão, e quem instala diz o nome.
+      {{- with $vo.labPbx.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: asterisk
