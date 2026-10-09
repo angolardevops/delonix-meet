@@ -7,6 +7,7 @@ import '../conta/controlador_conta.dart';
 import '../conta/provisionamento.dart';
 import '../meet/armazem_meet.dart';
 import '../meet/cliente_meet.dart';
+import '../push/push_delonix.dart';
 
 /// Põe a app a andar quando é acordada (ADR-0023): carrega a conta, arranca o motor SIP, e trata os
 /// intents `dlx_*`.
@@ -24,6 +25,7 @@ class Orquestrador {
     this.raizConfiavel,
     this.release = kReleaseMode,
     this.versaoApp = '0.1-lab',
+    this.push,
   }) : _fabricaCliente =
            fabricaCliente ??
            ((base) => ClienteMeet(
@@ -38,6 +40,9 @@ class Orquestrador {
   final List<int>? raizConfiavel;
   final bool release;
   final String versaoApp;
+
+  /// A ligação própria ao delonix-push (só existe no Android).
+  final PushDelonix? push;
   final ClienteMeet Function(Uri base) _fabricaCliente;
   final Random _r = Random.secure();
 
@@ -67,17 +72,19 @@ class Orquestrador {
         url,
         extras['dlx_email'],
         extras['dlx_senha'],
+        fornecedor: extras['dlx_push'] == 'delonix' ? 'delonix' : 'lab',
       );
     }
     if (extras.containsKey('dlx_acordar')) await _garantirMotor();
   }
 
-  /// Provisiona pelo QR, entra no Meet, regista o aparelho `lab` e arranca o motor. Só em debug.
+  /// Provisiona pelo QR, entra no Meet, regista o aparelho (`lab` ou `delonix`) e arranca o motor. Só em debug.
   Future<void> configurarDeLaboratorio(
     String url,
     String? email,
-    String? senha,
-  ) async {
+    String? senha, {
+    String fornecedor = 'lab',
+  }) async {
     if (release) {
       throw StateError('a configuração de laboratório só existe em debug');
     }
@@ -100,15 +107,17 @@ class Orquestrador {
         final aparelho = anterior?.aparelhoId ?? _uuid();
         final tokenPush = anterior?.tokenPush ?? 'lab-${_hex(16)}';
         estado.value = 'a registar o aparelho';
-        await cliente.registarAparelho(
+        final r = await cliente.registar(
           sessao,
           orgId: org,
           aparelhoId: aparelho,
           plataforma: 'android',
-          fornecedor: 'lab',
+          fornecedor: fornecedor,
           tokenPush: tokenPush,
           versaoApp: versaoApp,
         );
+        // Aparelho `delonix` novo: o Meet deu-lhe o serviço e o segredo, que vão direitos ao serviço nativo.
+        if (r.grant != null) await push?.configurar(r.grant!);
         await armazem.guardar(
           DadosMeet(
             base: base.toString(),

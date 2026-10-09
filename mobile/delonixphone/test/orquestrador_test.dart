@@ -6,6 +6,7 @@ import 'package:delonixphone/src/acordar/orquestrador.dart';
 import 'package:delonixphone/src/chamadas/servico_chamadas.dart';
 import 'package:delonixphone/src/meet/armazem_meet.dart';
 import 'package:delonixphone/src/meet/cliente_meet.dart';
+import 'package:delonixphone/src/push/push_delonix.dart';
 import 'package:delonixphone/src/sip/sip_engine.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -71,6 +72,16 @@ class _Meet {
         estado = 201;
         ultimoCorpo = jsonDecode(corpo) as Map<String, dynamic>;
         ultimoCaminho = r.uri.path;
+        if (ultimoCorpo!['provider'] == 'delonix') {
+          json = {
+            'id': 'x',
+            'delonix_push': {
+              'url': 'https://push.exemplo.ao',
+              'device_id': 'dev-123',
+              'device_secret': 'dpd_segredo-do-aparelho',
+            },
+          };
+        }
       }
       r.response
         ..statusCode = estado
@@ -93,8 +104,16 @@ class _Meet {
 const _url =
     'https://10.0.0.5:8443/api/public/extension-provisioning/abababababababababababababababababababababababababababababababab';
 
+class _PushFalso implements PushDelonix {
+  final configurados = <GrantPush>[];
+  @override
+  Future<void> configurar(GrantPush g) async => configurados.add(g);
+  @override
+  Future<void> parar() async {}
+}
+
 ({Orquestrador o, _Motor motor, _ArmazemMeetMemoria meet, RegistoFalso r})
-_montar(_Meet meet, {bool release = false}) {
+_montar(_Meet meet, {bool release = false, PushDelonix? push}) {
   final motor = _Motor();
   final armazem = _ArmazemMeetMemoria();
   final registo = RegistoFalso();
@@ -104,6 +123,7 @@ _montar(_Meet meet, {bool release = false}) {
     servico: ServicoChamadas(motor),
     armazem: armazem,
     release: release,
+    push: push,
     fabricaCliente: (_) => ClienteMeet(
       base: Uri.parse('http://127.0.0.1:${meet.servidor.port}'),
       permitirHttpSoParaTestes: true,
@@ -138,6 +158,47 @@ void main() {
     );
     expect(m.motor.iniciadas, hasLength(1));
   });
+
+  test('fornecedor delonix: o segredo que o Meet dá vai ao serviço de push e não fica guardado em Dart', () async {
+    final meet = await _Meet.iniciar();
+    addTearDown(() => meet.servidor.close(force: true));
+    final push = _PushFalso();
+    final m = _montar(meet, push: push);
+    await m.o.tratar({
+      'dlx_configurar_url': _url,
+      'dlx_email': 'ana@x.ao',
+      'dlx_senha': 'p',
+      'dlx_push': 'delonix',
+    });
+    expect(m.o.estado.value, 'pronto');
+    expect(meet.ultimoCorpo, containsPair('provider', 'delonix'));
+    expect(push.configurados, hasLength(1));
+    expect(push.configurados.single.deviceSecret, 'dpd_segredo-do-aparelho');
+    expect(push.configurados.single.url, 'https://push.exemplo.ao');
+    final guardado = await m.meet.ler();
+    expect(
+      guardado!.toJson().values.join(' '),
+      isNot(contains('dpd_segredo-do-aparelho')),
+      reason:
+          'o segredo do aparelho só existe no armazenamento nativo do serviço',
+    );
+  });
+
+  test(
+    'fornecedor lab (por omissão): o serviço de push não é tocado',
+    () async {
+      final meet = await _Meet.iniciar();
+      addTearDown(() => meet.servidor.close(force: true));
+      final push = _PushFalso();
+      final m = _montar(meet, push: push);
+      await m.o.tratar({
+        'dlx_configurar_url': _url,
+        'dlx_email': 'a@x.ao',
+        'dlx_senha': 'p',
+      });
+      expect(push.configurados, isEmpty);
+    },
+  );
 
   test(
     'o mesmo aparelho e o mesmo token de push em configurações seguintes',

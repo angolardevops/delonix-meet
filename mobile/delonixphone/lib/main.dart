@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import 'app.dart';
+import 'src/push/push_delonix.dart';
 import 'src/acordar/intencoes.dart';
 import 'src/acordar/orquestrador.dart';
 import 'src/chamadas/servico_chamadas.dart';
@@ -30,6 +31,7 @@ Future<void> main() async {
     servico: servico,
     armazem: ArmazemMeetSeguro(),
     raizConfiavel: raiz,
+    push: PushDelonixCanal(),
   );
   runApp(
     DelonixPhoneApp(

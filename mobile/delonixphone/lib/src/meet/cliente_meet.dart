@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../push/push_delonix.dart';
+
 /// Um erro do servidor do Meet que a app sabe explicar. O [codigo] é o `code` estável do envelope de
 /// erro do servidor (ex. `devices.too_many`); nunca leva credenciais.
 class ErroMeet implements Exception {
@@ -143,6 +145,26 @@ class ClienteMeet {
     required String fornecedor,
     required String tokenPush,
     String versaoApp = '',
+  }) async => (await registar(
+    s,
+    orgId: orgId,
+    aparelhoId: aparelhoId,
+    plataforma: plataforma,
+    fornecedor: fornecedor,
+    tokenPush: tokenPush,
+    versaoApp: versaoApp,
+  )).criado;
+
+  /// Como [registarAparelho], mas devolve também o [GrantPush] que o Meet dá, uma só vez, a um aparelho NOVO
+  /// com o fornecedor `delonix`.
+  Future<ResultadoRegisto> registar(
+    SessaoMeet s, {
+    required String orgId,
+    required String aparelhoId,
+    required String plataforma,
+    required String fornecedor,
+    required String tokenPush,
+    String versaoApp = '',
   }) async {
     final (estado, json) = await _pedir(
       'PUT',
@@ -155,12 +177,22 @@ class ClienteMeet {
         'app_version': versaoApp,
       },
     );
-    if (estado == 201) return true;
-    if (estado == 200) return false;
+    if (estado == 201 || estado == 200) {
+      return ResultadoRegisto(
+        criado: estado == 201,
+        grant: json is Map ? GrantPush.deJson(json['delonix_push']) : null,
+      );
+    }
     throw _erro(
       estado,
       json,
       'O servidor recusou o registo do aparelho (HTTP $estado).',
     );
   }
+}
+
+class ResultadoRegisto {
+  const ResultadoRegisto({required this.criado, this.grant});
+  final bool criado;
+  final GrantPush? grant;
 }
