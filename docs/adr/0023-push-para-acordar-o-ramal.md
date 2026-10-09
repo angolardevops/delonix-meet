@@ -109,7 +109,7 @@ desta organização), e há testes para os dois casos.
 - **Outras entradas para o mesmo ramal:** a espera do FreeSWITCH está no `ramais_dial.lua` (chamadas entre
   ramais). As chamadas que o **servidor** origina por ESL (ligar a partir da sala) têm a sua espera no servidor
   (`PUSH_WAIT_SECS`, `dial_outs.rs`): acorda os aparelhos e só origina depois de o ramal se registar (provado com
-  um ESL falso, 5 testes, e duas mutações apanhadas). **O PSTN para um ramal (DID) continua por tratar.**
+  um ESL falso, 5 testes, e duas mutações apanhadas). O PSTN para um ramal (DID) passa a usar a mesma espera: o dialplan que o servidor serve em `dialplan-did` corre `ramais_dial.lua did <ramal> <domínio>` em vez de um `bridge` directo (testes Rust e sintaxe Lua verificados; **por provar num FreeSWITCH real**, o laboratório estava em baixo).
 - **Credencial por aparelho (S-03):** ainda é uma só credencial por ramal; com dois telemóveis no mesmo
   ramal o primeiro a atender não cancela o outro (RF-35).
 - O Lua corre a cada chamada a consultar `sofia_contact` de 500 em 500 ms durante a espera: custo medido só

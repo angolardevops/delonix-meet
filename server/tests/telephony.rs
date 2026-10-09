@@ -1882,7 +1882,10 @@ async fn an_extension_did_only_answers_inbound_calls(db: sqlx::PgPool) {
     };
     let entra = ask("public").await;
     assert!(
-        entra.contains(&format!("user/{}@", r["sip_username"].as_str().unwrap())),
+        entra.contains(&format!(
+            "ramais_dial.lua did {} ",
+            r["sip_username"].as_str().unwrap()
+        )),
         "{entra}"
     );
     for context in ["delonix-outbound", "delonix_ramais"] {
