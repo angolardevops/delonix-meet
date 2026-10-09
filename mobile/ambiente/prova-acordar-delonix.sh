@@ -30,7 +30,7 @@ echo "▶ laboratório com o fornecedor delonix"
 cd "$LAB"
 make compose-down >/dev/null 2>&1 || true
 LAB_DB_NAME="${LAB_DB_NAME:-delonix_meet_push}" PUSH_DELONIX_URL="http://$LAN_IP:$PORT" PUSH_DELONIX_KEY="$KEY" make compose-up LAN_IP="$LAN_IP" >/tmp/lab-up.log 2>&1 || { tail -20 /tmp/lab-up.log; exit 2; }
-for _ in $(seq 90); do curl -sk -o /dev/null -w '%{http_code}' "https://$LAN_IP:8443/api/health" 2>/dev/null | grep -q 200 && break; sleep 2; done
+for _ in $(seq 90); do curl -sk -o /dev/null -w '%{http_code}' "https://$LAN_IP:8443/api/health" 2>/dev/null | grep 200 >/dev/null && break; sleep 2; done
 
 make seed BASE="https://$LAN_IP:8443" >/tmp/lab-seed.log 2>&1 || { tail -15 /tmp/lab-seed.log; exit 2; }
 

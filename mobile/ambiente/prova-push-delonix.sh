@@ -32,7 +32,7 @@ enviar() { api -H "authorization: Bearer $KEY" -H 'content-type: application/jso
   -d "{\"device_id\":\"$DID\",\"priority\":\"high\",\"payload\":{\"kind\":\"incoming_call\",\"call_uuid\":\"$1\",\"caller\":\"1902\"}}" localhost:$PORT/v1/messages \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["message_ids"][0])'; }
 espera_estado() { for _ in $(seq 40); do [ "$(estado "$1")" = "$2" ] && return 0; sleep 0.5; done; return 1; }
-servico_vivo() { adb shell dumpsys activity services $PKG 2>/dev/null | grep -q "PushService"; }
+servico_vivo() { adb shell dumpsys activity services $PKG 2>/dev/null | grep "PushService" >/dev/null; }
 
 echo "== instalar e configurar =="
 adb install -r -g "$APK" >/dev/null 2>&1 || { echo "falhou a instalação de $APK"; exit 2; }
@@ -48,16 +48,16 @@ adb shell am broadcast -n $PKG/.PushConfigReceiver -a ao.ngolacloud.delonixphone
 adb shell input keyevent KEYCODE_BACK; sleep 2
 for _ in $(seq 30); do servico_vivo && break; sleep 0.5; done
 servico_vivo && t "serviço em primeiro plano a correr, sem Activity" ok || t "serviço em primeiro plano a correr, sem Activity" ko "PushService não aparece"
-adb shell dumpsys activity services $PKG | grep -q "isForeground=true" && t "é mesmo de primeiro plano (notificação permanente)" ok || t "é mesmo de primeiro plano" ko "isForeground=false"
+adb shell dumpsys activity services $PKG | grep "isForeground=true" >/dev/null && t "é mesmo de primeiro plano (notificação permanente)" ok || t "é mesmo de primeiro plano" ko "isForeground=false"
 
 echo "== chamada a entrar com a app sem Activity e o ecrã desligado =="
 adb shell input keyevent KEYCODE_SLEEP; sleep 1
 M1=$(enviar 11111111-0000-0000-0000-00000000aaaa)
 espera_estado "$M1" delivered && t "o servidor real viu o ack da app" ok || t "o servidor real viu o ack da app" ko "estado=$(estado "$M1")"
 sleep 2
-adb logcat -d | grep -q "chamada a entrar por push.*call=11111111-0000-0000-0000-00000000aaaa caller=1902" && t "o handler recebeu o call_uuid e o número curto" ok || t "o handler recebeu o call_uuid e o número curto" ko "sem linha no logcat"
-adb shell dumpsys notification --noredact | grep -q "pkg=$PKG.*channel=chamadas" && t "a notificação de chamada (canal «chamadas») foi publicada" ok || t "a notificação de chamada foi publicada" ko "sem canal chamadas no dumpsys"
-adb shell dumpsys activity activities | grep -E "topResumedActivity|mResumedActivity" | grep -q "$PKG/.MainActivity" && t "a Activity abriu com o ecrã desligado (só o ecrã inteiro o permite a um serviço)" ok || t "a Activity da app abriu" ko "$(adb shell dumpsys activity activities | grep -E 'topResumedActivity' | head -1)"
+adb logcat -d | grep "chamada a entrar por push.*call=11111111-0000-0000-0000-00000000aaaa caller=1902" >/dev/null && t "o handler recebeu o call_uuid e o número curto" ok || t "o handler recebeu o call_uuid e o número curto" ko "sem linha no logcat"
+adb shell dumpsys notification --noredact | grep "pkg=$PKG.*channel=chamadas" >/dev/null && t "a notificação de chamada (canal «chamadas») foi publicada" ok || t "a notificação de chamada foi publicada" ko "sem canal chamadas no dumpsys"
+adb shell dumpsys activity activities | grep -E "topResumedActivity|mResumedActivity" | grep "$PKG/.MainActivity" >/dev/null && t "a Activity abriu com o ecrã desligado (só o ecrã inteiro o permite a um serviço)" ok || t "a Activity da app abriu" ko "$(adb shell dumpsys activity activities | grep -E 'topResumedActivity' | head -1)"
 
 echo "== o sistema mata o processo =="
 adb shell input keyevent KEYCODE_WAKEUP; adb shell input keyevent KEYCODE_HOME
@@ -74,6 +74,6 @@ echo "== aparelho revogado =="
 api -X DELETE -H "authorization: Bearer $KEY" localhost:$PORT/v1/devices/$DID -o /dev/null
 adb shell run-as $PKG kill -9 "$(adb shell pidof $PKG | tr -d '\r' | awk '{print $1}')" 2>/dev/null
 sleep 12
-adb shell dumpsys activity services $PKG | grep -q "isForeground=true" && t "o serviço pára com o segredo revogado" ko "continua em primeiro plano" || t "o serviço pára com o segredo revogado" ok
+adb shell dumpsys activity services $PKG | grep "isForeground=true" >/dev/null && t "o serviço pára com o segredo revogado" ko "continua em primeiro plano" || t "o serviço pára com o segredo revogado" ok
 
 echo; echo "passou $ok, falhou $ko"; [ "$ko" = 0 ]
