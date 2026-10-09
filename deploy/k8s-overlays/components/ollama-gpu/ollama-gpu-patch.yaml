@@ -1,0 +1,26 @@
+# Patch estratégico sobre o Deployment delonix-ollama (deploy/k8s/07-ollama.yaml).
+# `containers` funde-se pela chave `name` — não substitui o container `ollama`
+# já declarado na base, só acrescenta `resources.limits` a ele.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-ollama
+  namespace: delonix-meet
+spec:
+  template:
+    spec:
+      # Só agenda em nós com GPU (mesmo padrão do worker de Whisper em
+      # deploy/k8s/60-ai-gpu-worker.yaml):
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      # Tolera o taint típico dos pools de GPU:
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      runtimeClassName: nvidia # usa o NVIDIA container runtime (se configurado)
+      containers:
+        - name: ollama
+          resources:
+            limits:
+              nvidia.com/gpu: 1
