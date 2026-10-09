@@ -66,6 +66,15 @@ if [ -n "${PUSH_DELONIX_URL:-}" ] || [ -n "${PUSH_DELONIX_KEY:-}" ]; then
   PUSH_FS_ENV=$'\n      DELONIX_PUSH_WAIT_SECS: "20"'
 fi
 [ -n "$PUSH_HOSTS" ] && PUSH_SERVER_ENV+=$'\n      OUTBOUND_ALLOW_HOSTS: '"${PUSH_HOSTS}"
+# Opcional: LAB_DB_NAME=<nome> aponta o servidor para OUTRA base do mesmo Postgres (criada à parte), em vez de
+# `delonix_meet`. Serve para provar uma branch cujas migrações não encaixam na base que o laboratório já tem, sem a apagar.
+# A URL vem do `.env` (só muda o nome da base) e vai para o ficheiro gerado, que não se versiona.
+if [ -n "${LAB_DB_NAME:-}" ]; then
+  [[ "$LAB_DB_NAME" =~ ^[a-z_][a-z0-9_]{0,40}$ ]] || { echo "LAB_DB_NAME inválido: $LAB_DB_NAME" >&2; exit 1; }
+  DB_URL=$(sed -n 's/^DATABASE_URL=//p' .env | head -1)
+  [ -n "$DB_URL" ] || { echo "sem DATABASE_URL no .env" >&2; exit 1; }
+  PUSH_SERVER_ENV+=$'\n      DATABASE_URL: '"${DB_URL%/*}/${LAB_DB_NAME}"
+fi
 cat <<YAML
 # Gerado por scripts/compose-lan.sh — NÃO versionar (tem o IP desta máquina).
 services:
