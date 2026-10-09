@@ -419,6 +419,7 @@ pub async fn run_queue(state: &Arc<AppState>) {
             &crate::jobs::Worker {
                 queue: FILA,
                 retry: POLITICA,
+                lease: None,
             },
         )
         .await;
@@ -459,7 +460,7 @@ pub async fn run_queue(state: &Arc<AppState>) {
                 // O ficheiro a meio sai sempre: a tentativa seguinte recomeça.
                 let _ =
                     tokio::fs::remove_file(file_path(state, id).with_extension("zip.part")).await;
-                falhou(state, id, &e).await;
+                falhou(state, id).await;
             }
         }
     }
@@ -470,7 +471,7 @@ pub async fn run_queue(state: &Arc<AppState>) {
 /// Antes só havia o segundo caminho, e com a mensagem «peça outra» — a pessoa
 /// era o mecanismo de retry. Agora uma falha transitória (a base a reiniciar, o
 /// disco cheio por um minuto) custa trinta segundos, não uma ida à consola.
-async fn falhou(state: &AppState, id: Uuid, erro: &anyhow::Error) {
+async fn falhou(state: &AppState, id: Uuid) {
     use delonix_meet_core::jobs::Failure;
     let tentativas: i32 = sqlx::query_scalar("SELECT attempts FROM data_exports WHERE id = $1")
         .bind(id)
@@ -480,11 +481,12 @@ async fn falhou(state: &AppState, id: Uuid, erro: &anyhow::Error) {
         .flatten()
         // Sem contador não se repete: não se insiste no que não se consegue contar.
         .unwrap_or(i32::MAX);
-    // Qualquer falha a GERAR a exportação pode passar sozinha: o que a faz
-    // falhar é a base, o disco ou o armazenamento, nunca o pedido — que já foi
-    // validado quando entrou na fila. Uma falha estável esgota as tentativas
-    // depressa (três) e não fica a repetir-se para sempre.
-    let _ = erro;
+    // NÃO recebe o erro, de propósito: qualquer falha a GERAR a exportação pode
+    // passar sozinha — o que a faz falhar é a base, o disco ou o armazenamento,
+    // nunca o pedido, que já foi validado quando entrou na fila. Classificar
+    // aqui seria dar a entender que há uma falha estável a distinguir, e não
+    // há; o tecto de três tentativas é o que impede a insistência eterna. O
+    // erro em si já foi registado por quem chama.
     if !POLITICA.should_retry(Failure::Transient, tentativas) {
         let _ = sqlx::query(
             "UPDATE data_exports SET status = 'failed', completed_at = now(),

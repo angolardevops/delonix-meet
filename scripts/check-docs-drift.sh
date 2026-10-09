@@ -92,6 +92,15 @@ skills = {os.path.basename(os.path.dirname(p)) for p in glob.glob('.claude/skill
 # Os crates `delonix-meet-*` partilham o prefixo: os planeados (árvore do ADR-0004,
 # `├── delonix-meet-x/`) e os que já existirem num Cargo.toml não são revisores.
 crates = set(re.findall(r'(delonix-meet-[a-z]+)/', open('docs/adr/0004-organizacao-alvo-do-backend.md', encoding='utf-8').read()))
+# Objectos Kubernetes declarados em deploy/ — `delonix-meet-quota`,
+# `delonix-meet-limits`, `delonix-meet-internal`… São outro espaço de nomes: um
+# documento que cite um deles não está a citar um revisor que não existe, e a
+# regra abaixo acusava-o como se estivesse (medido a 2026-10-09, com a quota do
+# namespace).
+objectos = set()
+for f in glob.glob('deploy/**/*.yaml', recursive=True):
+    with open(f, encoding='utf-8', errors='replace') as fh:
+        objectos |= set(re.findall(r'^\s*name: (delonix-meet-[a-z]+)\b', fh.read(), re.M))
 # O ADR-0006 refina a lista (tabela `| \`delonix-meet-x\` |`) — os crates dele também não são revisores.
 crates |= set(re.findall(r'\| `(delonix-meet-[a-z]+)` \|', open('docs/adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md', encoding='utf-8').read()))
 for toml in glob.glob('server/**/Cargo.toml', recursive=True):
@@ -122,7 +131,8 @@ for p in docs:
     # `nk-delonix-meet-integration.md` é um ficheiro que existe no repo, e citá-lo
     # fazia o portão pedir um revisor `delonix-meet-integration` que nunca existiu.
     for nome in sorted(set(re.findall(r'(?<![\w-])delonix-meet-[a-z]+\b', texto))):
-        if nome not in agentes and nome not in skills and nome not in crates:
+        if nome not in agentes and nome not in skills and nome not in crates \
+                and nome not in objectos:
             print(f"✗ drift: {p} cita '{nome}', que não existe em .claude/agents/ nem em .claude/skills/")
             falha = True
     for n, linha in enumerate(texto.splitlines(), 1):

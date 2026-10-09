@@ -12,6 +12,7 @@
  * coluna) é novo, porque a sala não o tem.
  */
 import { calcularRects, type Rect } from '../room/compositor'
+import { formatBytes } from '../ui/format'
 
 // ------------------------------------------------------------------ layouts
 
@@ -302,15 +303,14 @@ export function hhmmss(segundos: number): string {
   return h > 0 ? `${dd(h)}:${dd(m)}:${dd(s)}` : `${dd(m)}:${dd(s)}`
 }
 
-/** Bytes legíveis (KB, MB, GB) com a vírgula da língua. */
+/**
+ * Tamanho legível. **Delega** no formatador único (`ui/format`).
+ *
+ * Tinha a sua própria implementação — base 1024 mas com casas variáveis e
+ * rótulo «KB» sobre uma divisão por 1024. Era o QUARTO formatador de bytes do
+ * frontend, e o que escapou à primeira medição porque tem o nome em português:
+ * um `grep` por `formatBytes` não o apanha. Fica a lição no sítio onde custou.
+ */
 export function formatarBytes(bytes: number, locale = 'pt-AO'): string {
-  const unidades = ['B', 'KB', 'MB', 'GB', 'TB']
-  let v = Math.max(0, bytes)
-  let i = 0
-  while (v >= 1024 && i < unidades.length - 1) {
-    v /= 1024
-    i++
-  }
-  const casas = i === 0 ? 0 : v < 10 ? 2 : 1
-  return `${v.toLocaleString(locale, { minimumFractionDigits: casas, maximumFractionDigits: casas })} ${unidades[i]}`
+  return formatBytes(bytes, locale)
 }

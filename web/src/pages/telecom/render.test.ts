@@ -28,7 +28,7 @@ const { default: DialPlanDialog } = await import('./DialPlanDialog')
 const { default: TestNumberDialog, TestResult } = await import('./TestNumberDialog')
 
 const noop = () => {}
-const semChavesCruas = (html: string) => expect(html).not.toMatch(/(telecom|ui|org)\.[a-zA-Z]/)
+const semChavesCruas = (html: string) => expect(html).not.toMatch(/\b(telecom|ui|org)\.[a-zA-Z]/)
 
 const status = (over: Partial<Trunk['status']> = {}): Trunk['status'] => ({
   state: 'up',

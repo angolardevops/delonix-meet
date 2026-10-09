@@ -250,6 +250,20 @@ test: fitness web-deps ## Corre os testes (fitness functions + cargo test + type
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
 	@cd web && npm run build >/dev/null && printf "$(G)  ✓ build do frontend (compila SCSS — R54)$(Z)\n"
+	@$(MAKE) --no-print-directory test-ai-worker
+
+.PHONY: test-ai-worker
+test-ai-worker: ## Testes do worker de IA (Python): batimento, ciclo, gRPC com dobras
+	@# Até 2026-10-08 estes 24 testes NÃO corriam em sítio nenhum — nem aqui nem
+	@# no CI. Precisam só do grpcio/protobuf (o faster-whisper é importado tarde,
+	@# dentro do construtor, e nenhum teste o constrói). Sem grpcio, três deles
+	@# dão ModuleNotFoundError — e é por isso que isto DIZ o que falta em vez de
+	@# passar por cima.
+	@if ! python3 -c 'import grpc' >/dev/null 2>&1; then \
+	  printf "$(Y)  · falta o grpcio: pip install grpcio==1.66.2 protobuf==5.27.5$(Z)\n"; \
+	  printf "$(Y)    (3 dos 24 testes vão falhar com ModuleNotFoundError)$(Z)\n"; \
+	fi
+	@cd ai-worker/tests && python3 -m unittest discover -s . && printf "$(G)  ✓ worker de IA$(Z)\n"
 
 .PHONY: web-deps
 web-deps: ## Garante web/node_modules (npm ci) — sem isto o `make test` morria com um 'Error 127' opaco
@@ -269,6 +283,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-frontend-lint.sh
 	@bash scripts/check-route-auth.sh
 	@bash scripts/check-docs-drift.sh
+	@bash scripts/check-filas-reivindicacao.sh
 	@bash scripts/check-room-affinity.sh
 	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-fs-xml.sh

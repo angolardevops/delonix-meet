@@ -64,18 +64,14 @@ pub struct OrgSettingsReq {
     /// sempre o que vier aqui, não um `PATCH` parcial.
     #[serde(default)]
     pub chat_retention_days: Option<i32>,
-    #[serde(default)]
-    pub max_groups: Option<i32>,
-    #[serde(default)]
-    pub max_rooms: Option<i32>,
-    #[serde(default)]
-    pub max_meetings: Option<i32>,
-    /// Dial-in PSTN: backend de media ('freeswitch' | 'provider').
-    #[serde(default)]
-    pub voice_media_backend: Option<String>,
-    /// Dial-in PSTN: modelo de DID ('shared' | 'dedicated').
-    #[serde(default)]
-    pub voice_did_model: Option<String>,
+    // `max_groups`/`max_rooms`/`max_meetings`/`voice_media_backend`/
+    // `voice_did_model` SAÍRAM deste pedido de propósito (não as acrescentes
+    // de volta): são o plano que a PLATAFORMA vende, não política de
+    // tenant — a auditoria de 2026-10-08 encontrou que qualquer admin do
+    // próprio tenant as escrevia aqui. A leitura continua em `OrgSummary`
+    // (o admin vê o seu plano); a escrita fica para uma rota de operador,
+    // atrás de `require_platform_admin`, no PR2 — ainda não existe nesta
+    // árvore.
     /// A organização exige autenticação de dois factores. Hoje impede os
     /// membros de removerem o ÚLTIMO factor; não força a inscrição no login.
     /// Omisso => mantém o actual.
@@ -146,8 +142,10 @@ pub struct OrgSettingsUpdated {
 
 /// Definições da organização (só admin): domínio de produção + retenção.
 /// O domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a
-/// retenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou
-/// omissas ficam ilimitadas; valores de voz fora do enum são ignorados.
+/// retenção (>0) apaga gravações mais antigas que N dias. As quotas
+/// (`max_groups`/`max_rooms`/`max_meetings`) e os campos de voz
+/// (`voice_media_backend`/`voice_did_model`) não se escrevem aqui: são o
+/// plano da plataforma, não ficam no pedido de um admin de tenant.
 #[utoipa::path(
     patch, path = "/api/orgs/{org_id}", tag = "orgs",
     security(("session" = [])),
@@ -179,9 +177,6 @@ pub async fn update_settings(
             name: "org.update_settings",
             target: serde_json::json!({
                 "org_id": org_id, "domain": req.domain, "retention_days": req.retention_days,
-                "max_groups": req.max_groups, "max_rooms": req.max_rooms,
-                "max_meetings": req.max_meetings, "voice_media_backend": req.voice_media_backend,
-                "voice_did_model": req.voice_did_model,
             }),
         },
     )
@@ -202,34 +197,15 @@ pub async fn update_settings(
     // 0-3650 é tratado como se não tivesse vindo, em vez de rejeitar o
     // pedido inteiro por um único campo opcional.
     let chat_retention = req.chat_retention_days.filter(|n| (0..=3650).contains(n));
-    // Quotas: None/negativo => ilimitado (NULL).
-    let norm = |v: Option<i32>| v.filter(|n| *n >= 0);
-    // Dial-in PSTN: valida os enums (None => mantém o atual via COALESCE).
-    let backend = req
-        .voice_media_backend
-        .as_deref()
-        .and_then(|b| matches!(b, "freeswitch" | "provider").then(|| b.to_string()));
-    let did_model = req
-        .voice_did_model
-        .as_deref()
-        .and_then(|m| matches!(m, "shared" | "dedicated").then(|| m.to_string()));
     sqlx::query(
         "UPDATE organizations SET domain = $1, retention_days = $2,
-             max_groups = $3, max_rooms = $4, max_meetings = $5,
-             voice_media_backend = COALESCE($7, voice_media_backend),
-             voice_did_model = COALESCE($8, voice_did_model),
-             chat_retention_days = $9,
-             require_mfa = COALESCE($10, require_mfa)
-         WHERE id = $6",
+             chat_retention_days = $4,
+             require_mfa = COALESCE($5, require_mfa)
+         WHERE id = $3",
     )
     .bind(&domain)
     .bind(retention)
-    .bind(norm(req.max_groups))
-    .bind(norm(req.max_rooms))
-    .bind(norm(req.max_meetings))
     .bind(org_id)
-    .bind(backend)
-    .bind(did_model)
     .bind(chat_retention)
     .bind(req.require_mfa)
     .execute(&state.db)
@@ -1745,6 +1721,15 @@ pub async fn org_stats(
 pub(crate) fn recording_uploader_in_org_sql(org: &str, uploader: &str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = {org} AND om.user_id = {uploader})"
+    )
+}
+
+/// Fragmento SQL reutilizável: membros activos de uma organização, pela
+/// coluna `org_col` (ex.: `"o.id"`). A mesma subconsulta de `MY_ORGS_SQL`
+/// (regra 1 — pertença decide-se aqui, não copiada noutro módulo).
+pub(crate) fn active_member_count_sql(org_col: &str) -> String {
+    format!(
+        "(SELECT COUNT(*) FROM org_members mm WHERE mm.org_id = {org_col} AND mm.archived_at IS NULL)"
     )
 }
 

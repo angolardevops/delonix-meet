@@ -1290,30 +1290,59 @@ where
 /// é baixo de propósito: a composição é cara em CPU e as vagas são repartidas
 /// por inquilino (`fair_slots`) — encher a fila de uma vez não a faria andar
 /// mais depressa, só atrasaria as chamadas vivas do mesmo pod.
+/// A fila da composição, declarada uma vez.
+///
+/// Era o sétimo `FOR UPDATE SKIP LOCKED` à mão do servidor, e nasceu DEPOIS do
+/// desenho da peça comum (#268) — a oitava cópia do padrão a entrar enquanto o
+/// trabalho de a acabar estava em curso, que é exactamente o que a catraca não
+/// apanha e o desenho avisou.
+///
+/// `tenant_column: None`: a repartição entre inquilinos desta fila já existe a
+/// jusante, nas vagas de composição (`fair_slots`), que é onde o recurso
+/// disputado (CPU do ffmpeg) está. Pôr justiça também aqui seria contá-la duas
+/// vezes.
+const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "recording_compose",
+    table: "recordings",
+    id_column: "id",
+    ready_when: "status = 'processing' AND compose_manifest IS NOT NULL \
+                 AND compose_attempts < {max_attempts} \
+                 AND (compose_lease_expires_at IS NULL \
+                      OR compose_lease_expires_at < now())",
+    claim_set: "compose_lease_token = md5(random()::text || clock_timestamp()::text), \
+                compose_lease_expires_at = now() + make_interval(secs => {lease_secs}), \
+                compose_attempts = compose_attempts + 1, \
+                progress_at = now()",
+    returning: "id, room_id, compose_manifest, compose_attempts",
+    order_by: "created_at",
+    tenant_column: None,
+    batch: 2,
+};
+
+/// Uma composição reivindicada para retomar.
+#[derive(sqlx::FromRow)]
+struct Retomavel {
+    id: Uuid,
+    room_id: Uuid,
+    compose_manifest: serde_json::Value,
+    compose_attempts: i32,
+}
+
 pub async fn resume_due(state: &Arc<AppState>) -> usize {
-    const RESUME_BATCH: i64 = 2;
-    let claimed: Vec<(Uuid, Uuid, serde_json::Value, i32)> = match sqlx::query_as(
-        "UPDATE recordings r
-            SET compose_lease_token = md5(random()::text || clock_timestamp()::text),
-                compose_lease_expires_at = now() + make_interval(secs => $1),
-                compose_attempts = r.compose_attempts + 1,
-                progress_at = now()
-          WHERE r.id IN (
-                SELECT id FROM recordings
-                 WHERE status = 'processing'
-                   AND compose_manifest IS NOT NULL
-                   AND compose_attempts < $2
-                   AND (compose_lease_expires_at IS NULL
-                        OR compose_lease_expires_at < now())
-                 ORDER BY created_at
-                 FOR UPDATE SKIP LOCKED
-                 LIMIT $3)
-         RETURNING r.id, r.room_id, r.compose_manifest, r.compose_attempts",
+    let claimed: Vec<Retomavel> = match crate::jobs::claim(
+        state,
+        &crate::jobs::Worker {
+            queue: FILA,
+            retry: delonix_meet_core::jobs::Retry {
+                max_attempts: compose_rules::MAX_ATTEMPTS,
+                delays: &[],
+                jitter: 0.0,
+            },
+            lease: Some(delonix_meet_core::jobs::Lease {
+                duration: compose_rules::LEASE,
+            }),
+        },
     )
-    .bind(compose_rules::LEASE.as_secs() as f64)
-    .bind(compose_rules::MAX_ATTEMPTS)
-    .bind(RESUME_BATCH)
-    .fetch_all(&state.db)
     .await
     {
         Ok(r) => r,
@@ -1323,7 +1352,13 @@ pub async fn resume_due(state: &Arc<AppState>) -> usize {
         }
     };
     let mut retomadas = 0;
-    for (rec_id, room_id, raw, tentativa) in claimed {
+    for Retomavel {
+        id: rec_id,
+        room_id,
+        compose_manifest: raw,
+        compose_attempts: tentativa,
+    } in claimed
+    {
         let manifest: ComposeManifest = match serde_json::from_value(raw) {
             Ok(m) => m,
             Err(e) => {
@@ -1866,6 +1901,17 @@ async fn finalize_inner(
     // ficheiro final). Gravadas as duas: os consumidores do schema simples
     // (`RecordingItem.duration_secs`) e os do schema rico (`duration_ms`)
     // ficam ambos servidos, sem um a apagar o outro.
+    // A passagem a `ready` e o REGISTO das entregas do `recording.ready` numa
+    // só transacção (trabalho nº3). Antes, o `fire` disparava numa tarefa à
+    // parte e entre este commit e o `INSERT` da entrega havia uma janela em que
+    // um SIGTERM apagava o aviso sem deixar rasto nenhum — nem entrega, nem
+    // linha falhada, nem nada para reenviar na consola. Ou saem as duas, ou
+    // nenhuma; o envio vem depois do commit.
+    // ANTES da transacção: a consulta das organizações usa a pool, e segurar
+    // uma transacção enquanto se pede outra ligação é a armadilha que a
+    // `delonix-meet-backend` avisa pelo nome.
+    let orgs = crate::org::orgs_of_user(state, manifest.by_user).await;
+    let mut tx = state.db.begin().await?;
     sqlx::query(
         // `compose_*` a NULL: a gravação saiu da fila da composição e a
         // reserva não pode ficar a apontar para um trabalho que já acabou.
@@ -1884,18 +1930,12 @@ async fn finalize_inner(
     .bind(duration_secs)
     .bind(dims.map(|d| d.0))
     .bind(dims.map(|d| d.1))
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
     tracing::info!(%room_id, %rec_id, size, "server recording pronta na biblioteca");
-    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1")
-        .bind(room_id)
-        .fetch_optional(&state.db)
-        .await?
-        .unwrap_or_default();
-    crate::notifications::recording_ready(state, manifest.by_user, rec_id, &filename, &code).await;
-
-    crate::recordings::fire_recording_ready(
-        state,
+    let fila = crate::recordings::enqueue_recording_ready(
+        orgs,
+        &mut tx,
         crate::recordings::ReadyRecording {
             id: rec_id,
             uploader: manifest.by_user,
@@ -1907,7 +1947,23 @@ async fn finalize_inner(
             source: "server",
         },
     )
-    .await;
+    .await?;
+    tx.commit().await?;
+
+    // DEPOIS do commit, e por esta ordem: a notificação e o envio só fazem
+    // sentido com a gravação mesmo pronta. Antes, a notificação era escrita
+    // antes do commit — avisava uma pessoa de uma gravação que ainda podia não
+    // ficar.
+    let code: String = sqlx::query_scalar("SELECT code FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .fetch_optional(&state.db)
+        .await?
+        .unwrap_or_default();
+    crate::notifications::recording_ready(state, manifest.by_user, rec_id, &filename, &code).await;
+    // Segurar a transacção durante um HTTP para fora seria trocar um defeito
+    // por outro pior. O que falhar aqui fica `pending` e o varredor dos
+    // webhooks reagenda-o.
+    crate::webhooks::envia(state, "recording.ready", fila).await;
     Ok(())
 }
 

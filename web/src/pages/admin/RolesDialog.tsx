@@ -351,6 +351,7 @@ function RoleEditor({
         {(data) => (
           <div className="dx-table-wrap">
             <table className="dx-table rbac-matrix">
+              <caption className="dx-sr-only">{t('rbac.titulo')}</caption>
               <thead>
                 <tr>
                   <th scope="col">{t('rbac.capacidade')}</th>

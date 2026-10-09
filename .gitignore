@@ -4,6 +4,8 @@ server/target/
 # Node
 web/node_modules
 web/dist/
+web-admin/node_modules
+web-admin/dist/
 
 # Flutter
 mobile/build/

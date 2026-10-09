@@ -142,9 +142,11 @@ describe('formatos', () => {
   })
 
   it('formatarBytes', () => {
+    // Desde que há UM formatador (`ui/format`): rótulo binário honesto e
+    // decimais só a partir de MiB. Isto dizia «1.50 KB» para 1536 bytes.
     expect(formatarBytes(512, 'en-GB')).toBe('512 B')
-    expect(formatarBytes(1536, 'en-GB')).toBe('1.50 KB')
-    expect(formatarBytes(42.8 * 1024 ** 3, 'en-GB')).toBe('42.8 GB')
+    expect(formatarBytes(1536, 'en-GB')).toBe('2 KiB')
+    expect(formatarBytes(42.8 * 1024 ** 3, 'en-GB')).toBe('42.8 GiB')
   })
 
   it('partirEmLinhas não perde palavras', () => {

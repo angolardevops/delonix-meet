@@ -69,6 +69,7 @@ export default function RecordingTable({
     <div className="dx-table-wrap rec-table-wrap">
       {menu.elemento}
       <table className="rec-table">
+        <caption className="dx-sr-only">{t('recordings.titulo')}</caption>
         <colgroup>
           <col />
           <col className="rec-col--dur" />

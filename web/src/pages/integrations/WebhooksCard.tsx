@@ -68,13 +68,14 @@ export function WebhooksCard({ orgId }: { orgId: string }) {
                     renderItems={(rows) => (
                   <div className="dx-table-wrap integ-table">
                     <table className="dx-table">
+                      <caption className="dx-sr-only">{t('integrations.webhooks.titulo')}</caption>
                       <thead>
                         <tr>
-                          <th>{t('integrations.webhooks.colTipo')}</th>
-                          <th>{t('integrations.webhooks.colDestino')}</th>
-                          <th>{t('integrations.webhooks.colEventos')}</th>
-                          <th>{t('integrations.webhooks.colEstado')}</th>
-                          <th>
+                          <th scope="col">{t('integrations.webhooks.colTipo')}</th>
+                          <th scope="col">{t('integrations.webhooks.colDestino')}</th>
+                          <th scope="col">{t('integrations.webhooks.colEventos')}</th>
+                          <th scope="col">{t('integrations.webhooks.colEstado')}</th>
+                          <th scope="col">
                             <span className="dx-sr-only">{t('integrations.colAccoes')}</span>
                           </th>
                         </tr>

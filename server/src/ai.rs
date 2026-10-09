@@ -399,61 +399,214 @@ pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) 
 /// Gera o resumo AI em background e substitui a ata da reunião. Chamado depois
 /// de `save_minutes` persistir a versão por regras + a transcrição (ata bruta):
 /// se o LLM falhar, a ata por regras fica — nunca se perde nada.
-pub fn spawn_mom_summary(state: Arc<AppState>, meeting_id: Uuid) {
+/// A fila do resumo da acta, declarada uma vez (trabalho nº4).
+///
+/// `mom_queued_at IS NOT NULL` é o marcador EXPLÍCITO: sem ele, um predicado
+/// derivado («sem resumo e com transcrição») reclamaria todas as reuniões
+/// históricas no instante do deploy. Enfileira-se ao gravar a ata, ou pela rota
+/// `POST /api/meetings/{meeting_id}/minutes/summary`.
+///
+/// `tenant_column: Some("owner_id")`: as `meetings` não têm organização
+/// (migração 0031), e o dono serve a justiça — quem fecha dez reuniões seguidas
+/// não empurra os outros para trás da fila do LLM.
+const FILA_MOM: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "mom_summary",
+    table: "meetings",
+    id_column: "id",
+    ready_when: "mom_queued_at IS NOT NULL AND minutes_ai_at IS NULL \
+                 AND mom_attempts < {max_attempts} \
+                 AND (mom_next_attempt_at IS NULL OR mom_next_attempt_at <= now()) \
+                 AND length(btrim(transcript)) >= 80",
+    claim_set: "mom_attempts = mom_attempts + 1, mom_next_attempt_at = NULL",
+    returning: "id, title, transcript",
+    order_by: "mom_queued_at",
+    tenant_column: Some("owner_id"),
+    batch: 2,
+};
+
+/// Três tentativas, 2 e 10 minutos. O LLM local é a causa provável de falha e
+/// recupera em minutos; ninguém está em frente ao ecrã à espera disto.
+const POLITICA_MOM: delonix_meet_core::jobs::Retry = delonix_meet_core::jobs::Retry {
+    max_attempts: 3,
+    delays: &[120, 600],
+    jitter: 0.2,
+};
+
+/// Uma reunião reivindicada para resumir.
+#[derive(sqlx::FromRow)]
+struct PorResumir {
+    id: Uuid,
+    title: String,
+    transcript: String,
+}
+
+/// **Enfileira** o resumo. Chama-se na transacção de quem grava a ata, para que
+/// a ata e o pedido de resumo nasçam juntos.
+pub(crate) async fn enqueue_mom_summary(
+    conn: &mut sqlx::PgConnection,
+    meeting_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE meetings
+            SET mom_queued_at = now(), mom_attempts = 0, mom_next_attempt_at = NULL
+          WHERE id = $1",
+    )
+    .bind(meeting_id)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Uma volta da fila: reivindica até duas reuniões e resume-as. Devolve quantas.
+pub async fn mom_summary_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
     if state.config.ollama_url.is_none() {
-        return;
+        return Ok(0);
     }
-    tokio::spawn(async move {
-        let row: Option<(String, String)> =
-            sqlx::query_as("SELECT title, transcript FROM meetings WHERE id = $1")
-                .bind(meeting_id)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
-        let Some((title, transcript)) = row else {
-            return;
-        };
-        if transcript.trim().len() < 80 {
-            return; // transcrição a menos para valer um resumo
-        }
-        let Some(summary) = summarize_minutes(&state, &title, &transcript).await else {
+    let levadas: Vec<PorResumir> = crate::jobs::claim(
+        state,
+        &crate::jobs::Worker {
+            queue: FILA_MOM,
+            retry: POLITICA_MOM,
+            lease: None,
+        },
+    )
+    .await?;
+    let n = levadas.len();
+    for PorResumir {
+        id,
+        title,
+        transcript,
+    } in levadas
+    {
+        resume_uma(state, id, &title, &transcript).await;
+    }
+    Ok(n)
+}
+
+/// Devolve a tentativa que a reivindicação contou, quando a falha não é desta
+/// reunião (o LLM em baixo). A lição é a dos capítulos: com o incremento cego,
+/// uma avaria do Ollama queimava as tentativas de TODAS as reuniões em fila e
+/// elas nunca mais teriam ata final — dano permanente por avaria temporária.
+async fn devolve_tentativa_mom(state: &AppState, id: Uuid) {
+    let _ = sqlx::query(
+        "UPDATE meetings SET mom_attempts = GREATEST(mom_attempts - 1, 0) WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&state.db)
+    .await;
+}
+
+/// Adia a próxima tentativa pelo backoff da política, com espalhamento.
+async fn adia_mom(state: &AppState, id: Uuid) {
+    let tentativas: i32 = sqlx::query_scalar("SELECT mom_attempts FROM meetings WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(POLITICA_MOM.max_attempts);
+    let Some(espera) = POLITICA_MOM.delay_after(tentativas) else {
+        return; // tentativas esgotadas: o `ready_when` já não a selecciona
+    };
+    let (lo, hi) = POLITICA_MOM.jitter_range();
+    // Os `::float8` são obrigatórios: sem eles o Postgres não infere o tipo dos
+    // parâmetros dentro da aritmética do `random()` e a instrução falha.
+    if let Err(e) = sqlx::query(
+        "UPDATE meetings
+            SET mom_next_attempt_at = now() + make_interval(
+                    secs => $2::float8 * ($3::float8 + random() * $4::float8))
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(espera.as_secs() as f64)
+    .bind(lo)
+    .bind(hi - lo)
+    .execute(&state.db)
+    .await
+    {
+        tracing::error!(meeting_id = %id, error = %e, "MoM: o adiamento falhou");
+    }
+}
+
+async fn resume_uma(state: &Arc<AppState>, meeting_id: Uuid, title: &str, transcript: &str) {
+    {
+        let Some(summary) = summarize_minutes(state, title, transcript).await else {
+            // O LLM em baixo NÃO é culpa desta reunião: a tentativa volta. A
+            // ata por regras fica (nunca se perde nada), e a fila tenta outra
+            // vez quando o Ollama voltar.
+            devolve_tentativa_mom(state, meeting_id).await;
             tracing::warn!(%meeting_id, "MoM AI: Ollama indisponível — mantém ata por regras");
             return;
         };
-        let _ =
-            sqlx::query("UPDATE meetings SET minutes = $1, minutes_ai_at = now() WHERE id = $2")
-                .bind(summary.chars().take(200_000).collect::<String>())
-                .bind(meeting_id)
-                .execute(&state.db)
-                .await;
-        tracing::info!(%meeting_id, "MoM AI: ata resumida via Ollama");
-        // Notifica integrações (ex.: nk_delonix_meet no Odoo) que o MoM final
-        // está pronto — o webhook só acelera o pull; o cron do Odoo apanha na
-        // mesma se este ping se perder.
+        // A ata e as entregas do `meeting.mom_ready` numa só transacção
+        // (trabalho nº3): o Odoo lê o `minutes_ai_at` para saber que o MoM é a
+        // versão final, e antes havia uma janela entre a gravar e a registar a
+        // entrega em que um SIGTERM apagava o aviso sem deixar rasto. Ou saem
+        // as duas, ou nenhuma.
+        match grava_ata_e_avisa(state, meeting_id, &summary).await {
+            Ok(fila) => {
+                tracing::info!(%meeting_id, "MoM AI: ata resumida via Ollama");
+                // O envio vem DEPOIS do commit. O que falhar aqui fica
+                // `pending` e o varredor dos webhooks reagenda-o.
+                crate::webhooks::envia(state, "meeting.mom_ready", fila).await;
+            }
+            Err(e) => {
+                // A base falhou: pode passar sozinha. Adia pelo backoff em vez
+                // de repetir na volta seguinte.
+                tracing::error!(%meeting_id, error = %e, "MoM AI: a ata não ficou gravada");
+                adia_mom(state, meeting_id).await;
+            }
+        }
+    }
+}
+
+/// Grava a ata resumida e REGISTA as entregas do `meeting.mom_ready` na mesma
+/// transacção. Devolve o que há a enviar depois do commit.
+async fn grava_ata_e_avisa(
+    state: &Arc<AppState>,
+    meeting_id: Uuid,
+    summary: &str,
+) -> Result<Vec<crate::webhooks::Enfileirada>, sqlx::Error> {
+    let orgs_do_dono = {
         let owner: Option<(Uuid, String)> =
             sqlx::query_as("SELECT owner_id, title FROM meetings WHERE id = $1")
                 .bind(meeting_id)
                 .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
-        if let Some((owner_id, title)) = owner {
-            let payload = serde_json::json!({ "meeting_id": meeting_id, "title": title });
-            for org_id in crate::org::orgs_of_user(&state, owner_id).await {
-                crate::webhooks::fire(
-                    state.clone(),
-                    org_id,
-                    crate::webhooks::Event {
-                        name: "meeting.mom_ready",
-                        title: "Delonix Meet".into(),
-                        text: format!("Ata pronta: {title}"),
-                        payload: payload.clone(),
-                    },
-                );
-            }
-        }
-    });
+                .await?;
+        owner
+    };
+    let Some((owner_id, title)) = orgs_do_dono else {
+        return Ok(Vec::new());
+    };
+    // As organizações do dono LEEM-SE antes de abrir a transacção: é uma
+    // consulta que não precisa de estar lá dentro, e `orgs_of_user` usa a pool.
+    let orgs = crate::org::orgs_of_user(state, owner_id).await;
+
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE meetings SET minutes = $1, minutes_ai_at = now() WHERE id = $2")
+        .bind(summary.chars().take(200_000).collect::<String>())
+        .bind(meeting_id)
+        .execute(&mut *tx)
+        .await?;
+    let payload = serde_json::json!({ "meeting_id": meeting_id, "title": title });
+    let mut fila = Vec::new();
+    for org_id in orgs {
+        fila.extend(
+            crate::webhooks::enqueue(
+                &mut tx,
+                org_id,
+                &crate::webhooks::Event {
+                    name: "meeting.mom_ready",
+                    title: "Delonix Meet".into(),
+                    text: format!("Ata pronta: {title}"),
+                    payload: payload.clone(),
+                },
+            )
+            .await?,
+        );
+    }
+    tx.commit().await?;
+    Ok(fila)
 }
 
 // ---------- Endpoint de tradução (legendas em tempo real) ----------

@@ -98,6 +98,18 @@ pub async fn org_storage_usage(
     Path(org_id): Path<Uuid>,
 ) -> Result<Json<OrgStorageUsage>, ApiError> {
     crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+    Ok(Json(org_storage_usage_for(&state, org_id).await?))
+}
+
+/// O mesmo cálculo de `org_storage_usage`, sem o gate de membro — esta rota
+/// exige `admin.pub` (membro admin da org); a rota de operador
+/// (`directory::get_operator_organization`) exige administrador da
+/// PLATAFORMA, que normalmente não é membro nenhum, por isso chama esta
+/// função directamente em vez da rota.
+pub(crate) async fn org_storage_usage_for(
+    state: &AppState,
+    org_id: Uuid,
+) -> Result<OrgStorageUsage, ApiError> {
     let in_org = crate::org::recording_uploader_in_org_sql("$1", "r.uploader_id");
     let (rec_n, rec_b, wb_n, wb_b, max): (i64, i64, i64, i64, Option<i64>) =
         sqlx::query_as(&format!(
@@ -113,14 +125,14 @@ pub async fn org_storage_usage(
         .await?;
     let row = (rec_n, rec_b, wb_n, wb_b);
     let (recordings, whiteboards, usage) = buckets(row);
-    Ok(Json(OrgStorageUsage {
+    Ok(OrgStorageUsage {
         org_id,
         recordings,
         whiteboards,
         used_bytes: usage.used_bytes(),
         max_storage_bytes: max,
         remaining_bytes: rules::remaining(usage, max),
-    }))
+    })
 }
 
 /// Armazenamento de quem está autenticado: as gravações que carregou e os

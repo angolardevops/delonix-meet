@@ -97,10 +97,17 @@ def process_one(source: JobSource, transcriber: Transcriber, recordings_dir: str
 
 
 def run(source: JobSource, transcriber: Transcriber, recordings_dir: str,
-        poll_seconds: float, stop: threading.Event, log: Log) -> None:
+        poll_seconds: float, stop: threading.Event, log: Log,
+        pulso: Callable[[], None] = lambda: None) -> None:
     """Ciclo até `stop`. Sem trabalho (ou com a fonte em baixo) espera
-    `poll_seconds`, acordando logo que chegue um SIGTERM."""
+    `poll_seconds`, acordando logo que chegue um SIGTERM.
+
+    `pulso` é o batimento (ai-worker/batimento.py): uma volta do ciclo é
+    progresso. Dentro de uma transcrição longa o pulso vem do transcritor, a
+    cada segmento — ver o comentário em batimento.py sobre porque NÃO é por
+    relógio."""
     while not stop.is_set():
+        pulso()
         outcome = process_one(source, transcriber, recordings_dir, log)
         if outcome in (Outcome.IDLE, Outcome.ERROR):
             stop.wait(poll_seconds)

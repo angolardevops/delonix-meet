@@ -2473,6 +2473,28 @@
         ],
         "type": "object"
       },
+      "DelonixPushGrant": {
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "device_secret": {
+            "description": "Credencial do aparelho para `GET {url}/v1/connect`. Não volta a ser mostrada.",
+            "type": "string"
+          },
+          "url": {
+            "description": "URL base do serviço delonix-push.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "device_id",
+          "device_secret"
+        ],
+        "type": "object"
+      },
       "Department": {
         "properties": {
           "created_at": {
@@ -2563,6 +2585,29 @@
           "app_version"
         ],
         "type": "object"
+      },
+      "DeviceCreated": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DeviceInfo"
+          },
+          {
+            "properties": {
+              "delonix_push": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DelonixPushGrant"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "A resposta a um aparelho NOVO. Com o fornecedor `delonix` e o serviço configurado, traz o que a app precisa\npara se ligar ao delonix-push; **o segredo só aparece aqui, uma vez**."
       },
       "DeviceInfo": {
         "properties": {
@@ -5122,6 +5167,13 @@
           "minutes": {
             "type": "string"
           },
+          "org_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "owner_id": {
             "format": "uuid",
             "type": "string"
@@ -5680,6 +5732,44 @@
         ],
         "type": "object"
       },
+      "MomSummaryState": {
+        "description": "O estado do resumo da acta pelo LLM, devolvido no `202` de\n`POST …/minutes/summary`: é a «operação a consultar» que a checklist da\n`delonix-meet-api` pede para trabalho assíncrono.",
+        "properties": {
+          "attempts": {
+            "description": "Quantas tentativas já foram gastas (tecto de 3).",
+            "format": "int32",
+            "type": "integer"
+          },
+          "next_attempt_at": {
+            "description": "Quando a próxima tentativa pode correr. `null` = pronta já.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "queued_at": {
+            "description": "Quando o pedido entrou na fila.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summarized_at": {
+            "description": "Preenchido quando o resumo FICOU. É o que o Odoo lê para saber que a\nata é a versão final.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "attempts"
+        ],
+        "type": "object"
+      },
       "MoneyDto": {
         "description": "Dinheiro na API: texto decimal + moeda (nunca um número JSON).",
         "properties": {
@@ -6035,12 +6125,6 @@
       },
       "OdooConfig": {
         "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          },
           "odoo_admin_id": {
             "format": "uuid",
             "type": [
@@ -6084,20 +6168,12 @@
         },
         "required": [
           "org_id",
-          "odoo_enabled",
-          "hide_org_creation",
-          "hide_sso_button"
+          "odoo_enabled"
         ],
         "type": "object"
       },
       "OdooConfigReq": {
         "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          },
           "odoo_db": {
             "type": [
               "string",
@@ -6116,9 +6192,7 @@
           }
         },
         "required": [
-          "odoo_enabled",
-          "hide_org_creation",
-          "hide_sso_button"
+          "odoo_enabled"
         ],
         "type": "object"
       },
@@ -6309,18 +6383,97 @@
         ],
         "type": "object"
       },
-      "OrgSettingsReq": {
+      "OperatorLoginSettings": {
+        "description": "Configuração de LOGIN da plataforma — a mesma forma no `GET` e no `PUT`.",
         "properties": {
-          "chat_retention_days": {
-            "description": "`null`/omisso = promessa por omissão (fim do dia UTC da última\nmensagem); como os outros campos deste pedido, o valor gravado é\nsempre o que vier aqui, não um `PATCH` parcial.",
+          "hide_org_creation": {
+            "type": "boolean"
+          },
+          "hide_sso_button": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hide_org_creation",
+          "hide_sso_button"
+        ],
+        "type": "object"
+      },
+      "OperatorLoginSettingsReq": {
+        "properties": {
+          "hide_org_creation": {
+            "type": "boolean"
+          },
+          "hide_sso_button": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hide_org_creation",
+          "hide_sso_button"
+        ],
+        "type": "object"
+      },
+      "OperatorOrgDetail": {
+        "description": "Detalhe de uma organização para o operador: os tectos de plano MAIS o uso\nreal (lugares ocupados, bytes ocupados).",
+        "properties": {
+          "org": {
+            "$ref": "#/components/schemas/OperatorOrgSummary"
+          },
+          "seats": {
+            "$ref": "#/components/schemas/SeatSummary"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/OrgStorageUsage"
+          }
+        },
+        "required": [
+          "org",
+          "seats",
+          "storage"
+        ],
+        "type": "object"
+      },
+      "OperatorOrgPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorOrgSummary"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "OperatorOrgSummary": {
+        "description": "Uma organização vista pelo operador: identidade + os seis tectos de plano.\nSem uso agregado (lugares ocupados, bytes ocupados) — isso é só o\ndetalhe (`OperatorOrgDetail`).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "max_concurrent_participants": {
             "format": "int32",
             "type": [
               "integer",
               "null"
             ]
-          },
-          "domain": {
-            "type": "string"
           },
           "max_groups": {
             "format": "int32",
@@ -6343,6 +6496,99 @@
               "null"
             ]
           },
+          "max_seats": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_storage_bytes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "member_count": {
+            "description": "Membros activos (sem convites pendentes nem arquivados).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "domain",
+          "created_at",
+          "member_count"
+        ],
+        "type": "object"
+      },
+      "OperatorQuotasReq": {
+        "description": "Corpo de `PUT /api/operator/v1/organizations/{org_id}/quotas`.",
+        "properties": {
+          "max_groups": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_meetings": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_rooms": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "voice_did_model": {
+            "description": "`'shared' | 'dedicated'`. Omisso ou fora do enum mantém o actual.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "voice_media_backend": {
+            "description": "`'freeswitch' | 'provider'`. Omisso ou fora do enum mantém o actual.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "OrgSettingsReq": {
+        "properties": {
+          "chat_retention_days": {
+            "description": "`null`/omisso = promessa por omissão (fim do dia UTC da última\nmensagem); como os outros campos deste pedido, o valor gravado é\nsempre o que vier aqui, não um `PATCH` parcial.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "domain": {
+            "type": "string"
+          },
           "require_mfa": {
             "description": "A organização exige autenticação de dois factores. Hoje impede os\nmembros de removerem o ÚLTIMO factor; não força a inscrição no login.\nOmisso => mantém o actual.",
             "type": [
@@ -6353,20 +6599,6 @@
           "retention_days": {
             "format": "int32",
             "type": "integer"
-          },
-          "voice_did_model": {
-            "description": "Dial-in PSTN: modelo de DID ('shared' | 'dedicated').",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "voice_media_backend": {
-            "description": "Dial-in PSTN: backend de media ('freeswitch' | 'provider').",
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "type": "object"
@@ -8046,6 +8278,34 @@
         },
         "required": [
           "vtt"
+        ],
+        "type": "object"
+      },
+      "PutDeviceReq": {
+        "properties": {
+          "app_version": {
+            "description": "Versão da app, só para diagnóstico.",
+            "type": "string"
+          },
+          "platform": {
+            "description": "`android` ou `ios`.",
+            "example": "android",
+            "type": "string"
+          },
+          "provider": {
+            "description": "`fcm` (Android), `apns_voip` (iOS), `delonix` (o serviço delonix-push, ambos) ou `lab` (só laboratório).",
+            "example": "fcm",
+            "type": "string"
+          },
+          "push_token": {
+            "description": "O token que o fornecedor deu à app. Guarda-se cifrado e não volta em nenhuma resposta. Com o fornecedor\n`delonix` e o serviço configurado, o servidor cunha o aparelho no delonix-push e **ignora** este valor.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "provider",
+          "push_token"
         ],
         "type": "object"
       },
@@ -16548,6 +16808,75 @@
         ]
       }
     },
+    "/api/meetings/{meeting_id}/minutes/summary": {
+      "post": {
+        "description": "PORQUE EXISTE (trabalho nº4): o resumo era um `tokio::spawn` com um só\nchamador. Se o Ollama estivesse em baixo ou o pod reiniciasse, não havia\ncoluna de estado, nem varredor, nem forma de pedir outra vez — a ata por\nregras ficava, mas o Odoo passava a ver para sempre uma reunião sem ata\nfinal, sem ninguém poder corrigir.\n\nRepetir é SEGURO e deliberadamente idempotente no efeito: põe o pedido na\nfila com as tentativas a zero. Se o resumo já existir, a fila não o\nselecciona (`minutes_ai_at IS NULL` no `ready_when`), e a resposta mostra-o\nem `summarized_at` — quem chamou vê que não havia nada a fazer.",
+        "operationId": "request_mom_summary",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MomSummaryState"
+                }
+              }
+            },
+            "description": "Na fila. O estado lê-se aqui e em `GET /api/meetings`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sessão inválida"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a reunião não existe, ou não é dono nem convidado"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`mom.no_transcript`: sem transcrição suficiente para valer um resumo"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Pede (ou repete) o resumo da acta pelo LLM local.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
     "/api/meetings/{meeting_id}/start": {
       "post": {
         "operationId": "start",
@@ -16974,7 +17303,7 @@
             "session": []
           }
         ],
-        "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou\nomissas ficam ilimitadas; valores de voz fora do enum são ignorados.",
+        "summary": "Definições da organização (só admin): domínio de produção + retenção.\nO domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a\nretenção (>0) apaga gravações mais antigas que N dias. As quotas\n(`max_groups`/`max_rooms`/`max_meetings`) e os campos de voz\n(`voice_media_backend`/`voice_did_model`) não se escrevem aqui: são o\nplano da plataforma, não ficam no pedido de um admin de tenant.",
         "tags": [
           "orgs"
         ]
@@ -19417,6 +19746,168 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/extensions/{id}/devices": {
+      "get": {
+        "operationId": "list_extension_devices",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O ramal não existe NESTA organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O administrador lista os aparelhos activos de um ramal da organização.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/extensions/{id}/devices/{device_id}": {
+      "delete": {
+        "operationId": "delete_extension_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Aparelho.",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Aparelho desligado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O ramal ou o aparelho não existem NESTA organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O administrador desliga um aparelho de um ramal da organização («terminar o telemóvel»).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/extensions/{id}/did": {
       "delete": {
         "operationId": "unassign_extension_did",
@@ -21699,6 +22190,244 @@
           }
         ],
         "summary": "O ramal de quem pede nesta organização (qualquer membro activo).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/devices": {
+      "get": {
+        "operationId": "list_my_devices",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, ou não tem ramal (`ramais.no_extension`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Os aparelhos activos do SEU ramal (no máximo oito: não há paginação). Nunca devolve o token.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/devices/{device_id}": {
+      "delete": {
+        "operationId": "delete_my_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Aparelho.",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Aparelho desligado: deixa de ser acordado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, não tem ramal, ou o aparelho não é seu (ou já está revogado)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A pessoa desliga um aparelho do SEU ramal.",
+        "tags": [
+          "voice"
+        ]
+      },
+      "put": {
+        "operationId": "put_my_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Identificador do aparelho, escolhido pela app (UUID).",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDeviceReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceInfo"
+                }
+              }
+            },
+            "description": "Aparelho já existia: token renovado."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceCreated"
+                }
+              }
+            },
+            "description": "Aparelho criado (com `delonix_push` se o fornecedor é `delonix`)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.platform_invalid`, `devices.provider_invalid`, `devices.provider_platform_mismatch`, `devices.token_invalid` ou `devices.app_version_invalid`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, não tem ramal (`ramais.no_extension`), ou o `id` é de outro aparelho."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.revoked` (usar um `id` novo) ou `devices.too_many`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.needs_session` (token anterior às sessões) ou `ramais.extension_inactive`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A pessoa regista (ou renova) o aparelho do SEU ramal. O `id` é da app: repetir o pedido com o mesmo\n`id` renova o token em vez de criar outro aparelho. Um aparelho revogado não ressuscita: a app pede\ncom um `id` novo.",
         "tags": [
           "voice"
         ]
@@ -32107,7 +32836,7 @@
             "description": ""
           }
         },
-        "summary": "`GET /api/public/settings` — sem autenticação; usado na página de login.\nAgrega flags de todas as orgs com integração Odoo activa.",
+        "summary": "`GET /api/public/settings` — sem autenticação; usado na página de login.\nLê o único registo de configuração de LOGIN da plataforma\n(`platform_login_settings`, id=1) — nunca agrega sobre organizações: antes\ndesta rota agregar com `BOOL_OR(hide_org_creation)` sobre todas as orgs com\n`odoo_enabled`, o admin de UMA organização escondia o registo e/ou o SSO\npara TODA a plataforma. Corrigido pela migração 0103; a escrita agora só\nacontece em `PUT /api/operator/v1/login-settings` (admin de plataforma).",
         "tags": [
           "odoo"
         ]

@@ -48,6 +48,7 @@ export default function OrgsCard({
         renderItems={(rows) => (
       <div className="dx-table-wrap org-table-wrap">
         <table className="dx-table org-table" data-testid="admin-orgs">
+          <caption className="dx-sr-only">{t('consola.orgs.titulo')}</caption>
           <thead>
             <tr>
               <th scope="col">{t('consola.orgs.organizacao')}</th>

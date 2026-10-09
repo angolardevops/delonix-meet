@@ -37,6 +37,13 @@ pub struct Meeting {
     pub recurrence_count: Option<i16>,
     pub recurrence_byday: Option<String>,
     pub recurrence_parent_id: Option<Uuid>,
+    // Organização em cujo contexto a reunião nasceu (migração 0104). Fonte
+    // de verdade de `meetings_v1::meeting_in_org` e das equivalentes em
+    // `apikeys.rs` — nunca a pertença (actual OU arquivada) do dono. `NULL`
+    // numa reunião órfã (dono sem organização nenhuma na altura da
+    // criação/backfill): fica invisível a qualquer chave `dlx_`. Nota de
+    // implementação — `//`, não `///`: não é descrição pública do contrato.
+    pub org_id: Option<Uuid>,
 }
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
@@ -52,6 +59,7 @@ pub struct Meeting {
         start,
         ics,
         save_minutes,
+        request_mom_summary,
         invitees,
         respond,
         quarantine_analytics,
@@ -69,6 +77,7 @@ pub struct Meeting {
         RoomConflict,
         Conflicts,
         MinutesReq,
+        MomSummaryState,
         RoomNotes,
         StartResp,
         ConflictCheckReq,
@@ -90,7 +99,7 @@ pub const MEETING_COLUMNS: &str =
     "id, owner_id, title, description, kind, starts_at, duration_min, \
      room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
      recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
-     recurrence_parent_id";
+     recurrence_parent_id, org_id";
 
 /// Reunião enriquecida para a UI do calendário.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -574,13 +583,20 @@ pub async fn create(
         None
     };
 
-    // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
-    // membro da org do criador. NULL => ilimitado.
-    if let Some(org_id) = crate::org::orgs_of_user(&state, auth.user_id)
+    // Organização em cujo contexto a reunião nasce (migração 0104): a
+    // primeira organização ACTIVA do criador — mesma heurística que já
+    // servia só para a quota abaixo, agora também gravada em `meetings.org_id`
+    // (ver `meeting_in_org`/`v1_meetings`/`v1_meeting_notes`, que passam a
+    // confiar nesta coluna e não em pertença inferida). `None` só para uma
+    // conta sem organização nenhuma — a reunião nasce sem dono-de-org.
+    let creator_org_id = crate::org::orgs_of_user(&state, auth.user_id)
         .await
         .first()
-        .copied()
-    {
+        .copied();
+
+    // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
+    // membro da org do criador. NULL => ilimitado.
+    if let Some(org_id) = creator_org_id {
         let limit: Option<i32> =
             sqlx::query_scalar("SELECT max_meetings FROM organizations WHERE id = $1")
                 .bind(org_id)
@@ -630,11 +646,14 @@ pub async fn create(
         )));
     }
 
+    // ANTES da transacção: as consultas do dono usam a pool.
+    let dono = dono_do_evento(&state, auth.user_id).await;
+    let mut tx = state.db.begin().await?;
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
-                               format, waiting_room, auto_record, record_quality, sms_reminder_min)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                               format, waiting_room, auto_record, record_quality, sms_reminder_min, org_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          RETURNING {MEETING_COLUMNS}"
     ))
     .bind(auth.user_id)
@@ -654,7 +673,8 @@ pub async fn create(
     .bind(req.options.auto_record)
     .bind(&req.options.record_quality)
     .bind(req.sms_reminder_min)
-    .fetch_one(&state.db)
+    .bind(creator_org_id)
+    .fetch_one(&mut *tx)
     .await?;
 
     for uid in req.invitee_ids.iter().filter(|u| **u != auth.user_id) {
@@ -664,11 +684,27 @@ pub async fn create(
         )
         .bind(meeting.id)
         .bind(uid)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
 
-    // Gera instâncias filhas para reuniões recorrentes (até 6 meses).
+    // A reunião, os convidados e o registo do `meeting.created`: uma
+    // transacção (trabalho nº3). Fecha a janela em que um SIGTERM apagava o
+    // aviso sem deixar rasto, E de passagem torna atómico o que já não era —
+    // a reunião e os seus convidados eram duas escritas soltas, e uma falha
+    // no meio deixava uma reunião sem as pessoas convidadas.
+    let fila = match dono {
+        Some(d) => {
+            let ctx = monta_meeting_webhook(d, &meeting, "meeting.created");
+            enqueue_meeting_webhook(&mut tx, ctx, "meeting.created").await?
+        }
+        None => Vec::new(),
+    };
+    tx.commit().await?;
+
+    // Depois do commit: HTTP para fora, notificações e as instâncias filhas não
+    // seguram locks. As recorrentes já eram escritas à parte (cada instância é
+    // uma linha própria) — ficam onde estavam em efeito, só mais abaixo.
     if meeting.recurrence_freq.is_some() {
         let invitees: Vec<Uuid> = req
             .invitee_ids
@@ -678,8 +714,7 @@ pub async fn create(
             .collect();
         generate_instances(&state.db, &meeting, &invitees).await;
     }
-
-    fire_meeting_webhook(&state, &meeting, auth.user_id, "meeting.created").await;
+    crate::webhooks::envia(&state, "meeting.created", fila).await;
     crate::notifications::meeting_invited(&state, &meeting, auth.user_id, &req.invitee_ids).await;
 
     let sms = match sms_org {
@@ -722,22 +757,64 @@ pub async fn create(
 
 /// Dispara um evento de reunião para os webhooks das organizações do dono.
 /// O link usa o domínio de produção da org, se configurado (settings).
-pub(crate) async fn fire_meeting_webhook(
-    state: &Arc<AppState>,
-    meeting: &Meeting,
-    owner: Uuid,
-    event: &'static str,
-) {
+/// **Registra** as entregas de um evento de reunião na transacção de quem
+/// chama (trabalho nº3). Devolve o que há a enviar depois do commit.
+///
+/// Era um `fire` disparado numa tarefa à parte: entre o `COMMIT` que criava ou
+/// arrancava a reunião e o `INSERT` da entrega havia uma janela em que um
+/// SIGTERM apagava o aviso sem deixar rasto — e o `meeting.created` é o que um
+/// ERP integrado usa para saber que há reunião.
+///
+/// **O contexto LÊ-SE ANTES de abrir a transacção** — ver
+/// [`contexto_meeting_webhook`]. Segurar uma transacção enquanto se pede outra
+/// ligação à pool é a armadilha que a `delonix-meet-backend` avisa pelo nome: o
+/// `acquire` espera, e sob a pool pequena dos testes o handler estoura. Foi
+/// exactamente o que esta função fazia na primeira versão.
+/// O que o registo de um evento de reunião precisa, calculado **fora** da
+/// transacção: as organizações do dono, o texto e o payload. As duas consultas
+/// que isto faz (`orgs_of_user`, `primary_domain`) usam a pool, e por isso não
+/// podem correr com uma transacção aberta na mão.
+pub(crate) struct ContextoWebhook {
+    orgs: Vec<Uuid>,
+    text: String,
+    payload: serde_json::Value,
+}
+
+/// Prepara o contexto. `None` quando não há nada a enviar (dono sem organização).
+/// O que se sabe do DONO antes de a reunião existir: as organizações e a base
+/// do link. **Lê-se ANTES de abrir a transacção** — as duas consultas usam a
+/// pool, e pedir uma segunda ligação com uma transacção na mão é a armadilha que
+/// a `delonix-meet-backend` avisa pelo nome («um handler que segura duas
+/// ligações espera 30 s pelo acquire e responde 500»). Foi o que a primeira
+/// versão deste trabalho fez, e foi um teste pré-existente que o apanhou.
+pub(crate) struct DonoDoEvento {
+    orgs: Vec<Uuid>,
+    base: String,
+}
+
+/// `None` quando não há nada a enviar (dono sem organização).
+pub(crate) async fn dono_do_evento(state: &Arc<AppState>, owner: Uuid) -> Option<DonoDoEvento> {
     let orgs = crate::org::orgs_of_user(state, owner).await;
     if orgs.is_empty() {
-        return;
+        return None;
     }
     let domain = crate::org::primary_domain(state, owner).await;
     let base = if domain.is_empty() {
-        "".to_string()
+        String::new()
     } else {
         format!("https://{domain}")
     };
+    Some(DonoDoEvento { orgs, base })
+}
+
+/// Monta o texto e o payload. **Puro** — nada de IO, por isso corre sem
+/// problema com a transacção aberta, que é onde a reunião já existe.
+pub(crate) fn monta_meeting_webhook(
+    dono: DonoDoEvento,
+    meeting: &Meeting,
+    event: &'static str,
+) -> ContextoWebhook {
+    let DonoDoEvento { orgs, base } = dono;
     let link = meeting
         .room_code
         .as_ref()
@@ -769,18 +846,40 @@ pub(crate) async fn fire_meeting_webhook(
         "room_code": meeting.room_code,
         "link": link,
     });
+    ContextoWebhook {
+        orgs,
+        text,
+        payload,
+    }
+}
+
+pub(crate) async fn enqueue_meeting_webhook(
+    conn: &mut sqlx::PgConnection,
+    ctx: ContextoWebhook,
+    event: &'static str,
+) -> Result<Vec<crate::webhooks::Enfileirada>, sqlx::Error> {
+    let ContextoWebhook {
+        orgs,
+        text,
+        payload,
+    } = ctx;
+    let mut fila = Vec::new();
     for org_id in orgs {
-        crate::webhooks::fire(
-            state.clone(),
-            org_id,
-            crate::webhooks::Event {
-                name: event,
-                title: "Delonix Meet".into(),
-                text: text.clone(),
-                payload: payload.clone(),
-            },
+        fila.extend(
+            crate::webhooks::enqueue(
+                &mut *conn,
+                org_id,
+                &crate::webhooks::Event {
+                    name: event,
+                    title: "Delonix Meet".into(),
+                    text: text.clone(),
+                    payload: payload.clone(),
+                },
+            )
+            .await?,
         );
     }
+    Ok(fila)
 }
 
 /// Só o dono ou um convidado pode arrancar/exportar a reunião. Antes desta
@@ -961,6 +1060,95 @@ pub struct MinutesReq {
     pub room_code: Option<String>,
 }
 
+/// O estado do resumo da acta pelo LLM, devolvido no `202` de
+/// `POST …/minutes/summary`: é a «operação a consultar» que a checklist da
+/// `delonix-meet-api` pede para trabalho assíncrono.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct MomSummaryState {
+    /// Quando o pedido entrou na fila.
+    pub queued_at: Option<chrono::DateTime<Utc>>,
+    /// Quantas tentativas já foram gastas (tecto de 3).
+    pub attempts: i32,
+    /// Quando a próxima tentativa pode correr. `null` = pronta já.
+    pub next_attempt_at: Option<chrono::DateTime<Utc>>,
+    /// Preenchido quando o resumo FICOU. É o que o Odoo lê para saber que a
+    /// ata é a versão final.
+    pub summarized_at: Option<chrono::DateTime<Utc>>,
+}
+
+/// Pede (ou repete) o resumo da acta pelo LLM local.
+///
+/// PORQUE EXISTE (trabalho nº4): o resumo era um `tokio::spawn` com um só
+/// chamador. Se o Ollama estivesse em baixo ou o pod reiniciasse, não havia
+/// coluna de estado, nem varredor, nem forma de pedir outra vez — a ata por
+/// regras ficava, mas o Odoo passava a ver para sempre uma reunião sem ata
+/// final, sem ninguém poder corrigir.
+///
+/// Repetir é SEGURO e deliberadamente idempotente no efeito: põe o pedido na
+/// fila com as tentativas a zero. Se o resumo já existir, a fila não o
+/// selecciona (`minutes_ai_at IS NULL` no `ready_when`), e a resposta mostra-o
+/// em `summarized_at` — quem chamou vê que não havia nada a fazer.
+#[utoipa::path(
+    post, path = "/api/meetings/{meeting_id}/minutes/summary", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 202, body = MomSummaryState, description = "Na fila. O estado lê-se aqui e em `GET /api/meetings`."),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe, ou não é dono nem convidado"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`mom.no_transcript`: sem transcrição suficiente para valer um resumo"),
+    )
+)]
+pub async fn request_mom_summary(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<MomSummaryState>), ApiError> {
+    // A MESMA regra de acesso do `save_minutes`: dono ou convidado. A quem não
+    // chega dá-se `404` e não se confirma que a reunião existe.
+    // `(i32,)` e não `(i64,)`: o `length()` do Postgres devolve `integer`, e
+    // descodificá-lo como `bigint` falha no sqlx — o handler respondia `500`
+    // opaco em vez do `422`. O SQL é de runtime neste repo (zero macros
+    // `query!`), por isso o tipo errado só aparece a correr.
+    let transcript_len: Option<(i32,)> = sqlx::query_as(
+        "SELECT length(btrim(COALESCE(m.transcript, ''))) FROM meetings m
+         LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $2
+         WHERE m.id = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)",
+    )
+    .bind(id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((len,)) = transcript_len else {
+        return Err(ApiError::NotFound);
+    };
+    if len < 80 {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "mom.no_transcript",
+            "esta reunião não tem transcrição suficiente para valer um resumo",
+        )
+        .into());
+    }
+    let mut conn = state.db.acquire().await?;
+    crate::ai::enqueue_mom_summary(&mut conn, id).await?;
+    let (queued_at, attempts, next_attempt_at, summarized_at) = sqlx::query_as(
+        "SELECT mom_queued_at, mom_attempts, mom_next_attempt_at, minutes_ai_at
+           FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(MomSummaryState {
+            queued_at,
+            attempts,
+            next_attempt_at,
+            summarized_at,
+        }),
+    ))
+}
+
 /// Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.
 #[utoipa::path(
     put, path = "/api/meetings/{meeting_id}/minutes", tag = "meetings",
@@ -1001,16 +1189,20 @@ pub async fn save_minutes(
     // Censurar aqui protege de uma vez todos os leitores a jusante.
     let minutes = crate::dlp::censor(req.minutes.trim());
     let transcript = crate::dlp::censor(req.transcript.trim());
+    // A ata e o PEDIDO do resumo numa transacção (trabalho nº4): antes, o
+    // resumo era um `tokio::spawn` sem estado — se o Ollama estivesse em baixo
+    // ou o pod reiniciasse, não havia coluna, nem varredor, nem rota, e o Odoo
+    // ficava a ver para sempre uma reunião sem ata final. Agora o pedido é uma
+    // linha na fila, e ou fica com a ata ou com nenhuma.
+    let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE meetings SET minutes = $1, transcript = $2 WHERE id = $3")
         .bind(minutes.chars().take(200_000).collect::<String>())
         .bind(transcript.chars().take(200_000).collect::<String>())
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
-    // A transcrição (ata bruta) ficou persistida acima; em background o LLM
-    // local gera o resumo elegante e substitui `minutes` (ai.rs — no-op sem
-    // OLLAMA_URL; se falhar, fica a ata por regras enviada pelo cliente).
-    crate::ai::spawn_mom_summary(state.clone(), id);
+    crate::ai::enqueue_mom_summary(&mut tx, id).await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1211,16 +1403,27 @@ pub async fn start(
         Some(&opts.record_quality),
     )
     .await?;
+    // O `room_code` e o registo do `meeting.started` numa transacção
+    // (trabalho nº3): o aviso diz que a reunião começou E onde, e as duas
+    // coisas são a mesma verdade.
+    let dono = dono_do_evento(&state, auth.user_id).await;
+    let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE meetings SET room_code = $1 WHERE id = $2")
         .bind(&room.code)
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
-
-    // Webhook meeting.started (com o room_code já preenchido).
     let mut started_meeting = meeting.clone();
     started_meeting.room_code = Some(room.code.clone());
-    fire_meeting_webhook(&state, &started_meeting, auth.user_id, "meeting.started").await;
+    let fila = match dono {
+        Some(d) => {
+            let ctx = monta_meeting_webhook(d, &started_meeting, "meeting.started");
+            enqueue_meeting_webhook(&mut tx, ctx, "meeting.started").await?
+        }
+        None => Vec::new(),
+    };
+    tx.commit().await?;
+    crate::webhooks::envia(&state, "meeting.started", fila).await;
 
     // Estilo Teams: a reunião começou → "desperta" os convidados. Quem está
     // online recebe a chamada a tocar (aceitar entra na sala); quem não está
@@ -1721,8 +1924,8 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         let child_id: Option<(Uuid,)> = sqlx::query_as(
             "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                    recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                                   recurrence_byday, recurrence_parent_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                                   recurrence_byday, recurrence_parent_id, org_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT DO NOTHING
              RETURNING id",
         )
@@ -1739,6 +1942,9 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         .bind(parent.recurrence_count)
         .bind(&parent.recurrence_byday)
         .bind(parent.id)
+        // A ocorrência herda a organização da reunião-mãe (migração 0104) —
+        // a mesma organização, nunca uma inferida de novo.
+        .bind(parent.org_id)
         .fetch_optional(db)
         .await
         .ok()

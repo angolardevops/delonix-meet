@@ -43,6 +43,38 @@ fi
 # A chave da raiz fica só para o dono. A da borda tem de ser lida pelo nginx do
 # contentor (outro uid, rootless), como as restantes de deploy/compose/generated.
 chmod 600 "$TLS/ca.key"; chmod 644 "$TLS/tls.key" "$TLS"/*.crt
+# Opcional (ADR-0023, S-01): com PUSH_LAB_URL=http://<ip>:<porta>/push o servidor entrega os pedidos de
+# «acordar» de um aparelho `lab` a esse URL (a prova scripts/ramais-push-real-prova.py é quem o serve), o
+# FreeSWITCH passa a segurar 20 s a chamada para um ramal sem registo, e o host do URL entra na isenção da
+# guarda de saída (só ele). Sem a variável nada disto existe.
+PUSH_SERVER_ENV=""; PUSH_FS_ENV=""; PUSH_HOSTS=""
+if [ -n "${PUSH_LAB_URL:-}" ]; then
+  [[ "$PUSH_LAB_URL" =~ ^http://([0-9.]+):[0-9]+/[A-Za-z0-9/_-]*$ ]] || { echo "PUSH_LAB_URL tem de ser http://<ip>:<porta>/<caminho>: $PUSH_LAB_URL" >&2; exit 1; }
+  PUSH_SERVER_ENV+=$'\n      PUSH_LAB_URL: '"${PUSH_LAB_URL}"
+  PUSH_HOSTS="${BASH_REMATCH[1]}"
+  PUSH_FS_ENV=$'\n      DELONIX_PUSH_WAIT_SECS: "20"'
+fi
+# Opcional (ADR-0023): com PUSH_DELONIX_URL=http://<ip>:<porta> e PUSH_DELONIX_KEY=dpk_… o servidor cunha os aparelhos
+# `delonix` nesse delonix-push e acorda-os por lá; o FreeSWITCH passa a segurar 20 s as chamadas. A chave é um segredo:
+# vai para o ficheiro gerado (que não se versiona) e nunca para o log.
+if [ -n "${PUSH_DELONIX_URL:-}" ] || [ -n "${PUSH_DELONIX_KEY:-}" ]; then
+  [[ "${PUSH_DELONIX_URL:-}" =~ ^http://([0-9.]+):[0-9]+$ ]] || { echo "PUSH_DELONIX_URL tem de ser http://<ip>:<porta>: ${PUSH_DELONIX_URL:-}" >&2; exit 1; }
+  DELONIX_PUSH_HOST="${BASH_REMATCH[1]}"
+  [[ "${PUSH_DELONIX_KEY:-}" =~ ^dpk_[0-9a-f]{64}$ ]] || { echo "PUSH_DELONIX_KEY tem de ser a chave dpk_… do projecto" >&2; exit 1; }
+  PUSH_SERVER_ENV+=$'\n      PUSH_DELONIX_URL: '"${PUSH_DELONIX_URL}"$'\n      PUSH_DELONIX_KEY: '"${PUSH_DELONIX_KEY}"
+  PUSH_HOSTS="${PUSH_HOSTS:+$PUSH_HOSTS,}${DELONIX_PUSH_HOST}"
+  PUSH_FS_ENV=$'\n      DELONIX_PUSH_WAIT_SECS: "20"'
+fi
+[ -n "$PUSH_HOSTS" ] && PUSH_SERVER_ENV+=$'\n      OUTBOUND_ALLOW_HOSTS: '"${PUSH_HOSTS}"
+# Opcional: LAB_DB_NAME=<nome> aponta o servidor para OUTRA base do mesmo Postgres (criada à parte), em vez de
+# `delonix_meet`. Serve para provar uma branch cujas migrações não encaixam na base que o laboratório já tem, sem a apagar.
+# A URL vem do `.env` (só muda o nome da base) e vai para o ficheiro gerado, que não se versiona.
+if [ -n "${LAB_DB_NAME:-}" ]; then
+  [[ "$LAB_DB_NAME" =~ ^[a-z_][a-z0-9_]{0,40}$ ]] || { echo "LAB_DB_NAME inválido: $LAB_DB_NAME" >&2; exit 1; }
+  DB_URL=$(sed -n 's/^DATABASE_URL=//p' .env | head -1)
+  [ -n "$DB_URL" ] || { echo "sem DATABASE_URL no .env" >&2; exit 1; }
+  PUSH_SERVER_ENV+=$'\n      DATABASE_URL: '"${DB_URL%/*}/${LAB_DB_NAME}"
+fi
 cat <<YAML
 # Gerado por scripts/compose-lan.sh — NÃO versionar (tem o IP desta máquina).
 services:
@@ -53,7 +85,10 @@ services:
   server:
     environment:
       VOICE_RAMAIS_PUBLIC_HOST: ${LAN_IP}
-      CORS_ORIGINS: https://${LAN_IP}:8443,https://${MEET_HOST}:8443
+      # O QR do Linphone manda o telefone registar por TLS, na porta TLS do perfil dos ramais.
+      VOICE_RAMAIS_PUBLIC_PORT: "5071"
+      VOICE_RAMAIS_PUBLIC_TRANSPORT: tls
+      CORS_ORIGINS: https://${LAN_IP}:8443,https://${MEET_HOST}:8443${PUSH_SERVER_ENV}
   # A borda fica também na rede local, com o certificado que cobre este IP. Em
   # 8080 serve a raiz de laboratório, para o telemóvel a ir buscar e instalar.
   edge:
@@ -67,10 +102,17 @@ services:
   freeswitch:
     environment:
       DELONIX_EXTERNAL_IP: ${LAN_IP}
+      # TLS nos ramais (entrypoint, passo 9b), com o MESMO certificado da borda: cobre este IP.
+      # O 5070 (UDP/TCP em claro) fica de reserva para o softphone de linha de comandos das provas.
+      DELONIX_RAMAIS_TLS_PORT: "5071"
       DELONIX_RTP_MIN: "20000"
-      DELONIX_RTP_MAX: "20100"
+      DELONIX_RTP_MAX: "20100"${PUSH_FS_ENV}
+    volumes:
+      - ./deploy/compose/generated/lan-tls/tls.crt:/tls-ramais/tls.crt:ro
+      - ./deploy/compose/generated/lan-tls/tls.key:/tls-ramais/tls.key:ro
     ports:
       - "${LAN_IP}:5070:5070/udp"
       - "${LAN_IP}:5070:5070/tcp"
+      - "${LAN_IP}:5071:5071/tcp"
       - "${LAN_IP}:20000-20100:20000-20100/udp"
 YAML

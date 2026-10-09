@@ -656,6 +656,25 @@ async fn apply_event(db: &sqlx::PgPool, id: Uuid, ev: &CallEvent) -> Result<(), 
 }
 
 /// Linhas `dialing` com mais de 5 minutos: o processo que as seguia morreu.
+/// Fecha as chamadas penduradas de TODAS as organizações (trabalho nº5).
+///
+/// A versão por organização abaixo só corre de handlers de LEITURA: uma chamada
+/// que ficou `dialing` sem ninguém abrir o ecrã daquela org ficava assim para
+/// sempre, a contar para os limites. Isto corre de um ciclo.
+pub(crate) async fn finish_stale_all(db: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
+    let n = sqlx::query(
+        "UPDATE telephony_outbound_calls
+            SET status = 'failed', error = 'o servidor reiniciou antes do resultado', finished_at = now()
+          WHERE status IN ('dialing','ringing') AND created_at < now() - interval '5 minutes'",
+    )
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(n)
+}
+
+/// Como o `finish_stale_all`, mas só NESTA organização. Fica porque quem abre o
+/// ecrã vê o estado certo já, sem esperar pela volta do ciclo.
 pub(crate) async fn finish_stale(state: &AppState, org_id: Uuid) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE telephony_outbound_calls

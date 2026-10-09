@@ -32,6 +32,9 @@ externalRedis:
   fromSecret: true
 
 server:
+  # O caminho da chamada: desalojar o SFU derruba reuniões a decorrer.
+  # O Job de migração herda esta classe (bloqueia o release).
+  priorityClassName: meet-critico
   replicas: 3
   migrations:
     mode: job
@@ -105,6 +108,8 @@ otel:
   endpoint: "http://otel-collector-opentelemetry-collector.observabilidade.svc.cluster.local:4317"
 
 coturn:
+  # Sem relay não há media atrás de NAT: é caminho da chamada.
+  priorityClassName: meet-critico
   # OBRIGATÓRIO por --set: coturn.externalIP.
   externalIP: ""
   service:
@@ -114,3 +119,22 @@ coturn:
 # dono: o chart sabe instalá-la, mas o caminho de um PBX externo não foi medido.
 voice:
   enabled: false
+
+# Cluster partilhado (ADR-0021): a quota do namespace é obrigatória aqui. Os
+# números por omissão estão dimensionados para ESTA escala — ver a conta no
+# topo de `templates/quota.yaml`.
+quota:
+  enabled: true
+
+# Prioridade de agendamento (ADR-0021: cluster PARTILHADO).
+#
+# PRÉ-REQUISITO: as duas classes têm de existir no cluster ANTES deste release —
+# um `priorityClassName` que não exista faz o API server RECUSAR o pod, e o
+# `helm upgrade` falha. Aplicam-se com
+# `deploy/k8s/plataforma/priorityclasses.yaml`, que é o PRIMEIRO passo do
+# `instalar.sh` dessa pasta.
+#
+# Este é o default; o `server` e o `coturn` sobrepõem-no com `meet-critico`
+# (ver lá acima). O Postgres e o Redis não aparecem aqui porque em produção são
+# EXTERNOS — o chart não os instala, e configurá-los aqui era config morta.
+priorityClassName: meet-normal

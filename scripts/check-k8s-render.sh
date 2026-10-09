@@ -21,7 +21,14 @@
 #   5. saas: edição/registo/tenancy, DELONIX_MIGRATE=0, Job `migrate` com a
 #      MESMA imagem do Deployment, REDIS_URL não vazio, e o HPA igual ao
 #      deploy/k8s/21-server-hpa.yaml (a cópia do overlay não pode derivar);
-#   6. enterprise: edição/registo/tenancy, DELONIX_MIGRATE=1, uma réplica.
+#   6. enterprise: edição/registo/tenancy, DELONIX_MIGRATE=1, uma réplica;
+#   7. em TODOS: todo o Deployment com mais de uma réplica (ou com um HPA a
+#      mirá-lo) espalha-se por nó, com ScheduleAnyway. Réplicas todas no mesmo
+#      nó ficam `Available` num único ponto de falha, sem dar erro nenhum.
+#   8. os manifestos OPT-IN de deploy/k8s (os que a kustomization NÃO inclui, e
+#      que se aplicam com `kubectl apply -f`) têm recursos, largam as
+#      capacidades, não permitem escalada e correm non-root. Nenhum render os
+#      cobria, e foi por aí que entraram as lacunas que isto fecha.
 #
 #  Opcional (DRYRUN=1): `kubectl apply --dry-run=client` sobre o renderizado.
 #  Precisa de um API server acessível (o client dry-run faz discovery dos
@@ -67,6 +74,18 @@ if [ "${DRYRUN:-0}" = "1" ]; then
   done
 fi
 
+# ---- 8. os manifestos OPT-IN, que nenhum render cobre ----------------------
+#  A kustomization de deploy/k8s inclui 12 dos 17 ficheiros. Os outros aplicam-se
+#  à mão (`kubectl apply -f`) e por isso NUNCA passavam por portão nenhum — é
+#  assim que o 52-data-plain.yaml andou sem `securityContext` e o 50-data.yaml
+#  sem largar capacidades, sem nada acusar.
+#
+#  Quatro invariantes, e DE PROPÓSITO não exige `livenessProbe`: numa base de
+#  dados uma sonda de liveness transforma uma consulta lenta num ciclo de
+#  reinícios, e a readiness já a tira do Service. Onde a liveness faz falta é
+#  num worker que se pendura — e isso precisa de código no worker, não de YAML.
+python3 scripts/k8s-optin-higiene.py deploy/k8s || fail=1
+
 OUT="$OUT" HPA_SRC=deploy/k8s/21-server-hpa.yaml python3 - <<'PYEOF' || fail=1
 import os, sys, yaml
 
@@ -110,6 +129,40 @@ for nome in ("base", "saas", "enterprise"):
             if svc == INTERNAL_SVC or port in INTERNAL_PORTS:
                 erros.append(f"[{nome}] Ingress {ing['metadata']['name']} {path} → {svc}:{port} — "
                              "porta interna (8181/9180) exposta por ingress (ADR-0006 §3)")
+
+    # 7. tudo o que tem mais de uma réplica (ou um HPA a mirá-lo) espalha-se
+    #    por nó. Sem isto, as 3 réplicas podem aterrar todas no mesmo nó e a
+    #    perda desse nó leva o serviço inteiro — e nada dava erro: o Deployment
+    #    fica `Available`, com 3 pods, num único ponto de falha.
+    #    `ScheduleAnyway`, não `DoNotSchedule`: no laboratório de UM nó (kind) é
+    #    um no-op, e o `DoNotSchedule` deixava pods `Pending` sem explicação.
+    #    Onde conta é no artefacto de PRODUTO: os overlays saas/enterprise que
+    #    um cliente aplica no SEU cluster (ADR-0006 §2).
+    alvos_de_hpa = {
+        d["spec"]["scaleTargetRef"]["name"]
+        for d in docs
+        if d.get("kind") == "HorizontalPodAutoscaler"
+    }
+    for d in (x for x in docs if x.get("kind") == "Deployment"):
+        quem = d["metadata"]["name"]
+        n = (d.get("spec") or {}).get("replicas", 1)
+        tem_hpa = quem in alvos_de_hpa
+        if n <= 1 and not tem_hpa:
+            continue
+        porque = f"{n} réplicas" if n > 1 else "um HPA a mirá-lo"
+        tsc = (d["spec"]["template"]["spec"].get("topologySpreadConstraints") or [])
+        chaves = {c.get("topologyKey") for c in tsc}
+        if "kubernetes.io/hostname" not in chaves:
+            erros.append(f"[{nome}] o Deployment {quem} tem {porque} e não se espalha por nó "
+                         "(topologySpreadConstraints com topologyKey kubernetes.io/hostname) — "
+                         "as réplicas podem aterrar todas no mesmo nó e ficar `Available` "
+                         "num único ponto de falha")
+            continue
+        duros = [c["topologyKey"] for c in tsc if c.get("whenUnsatisfiable") == "DoNotSchedule"]
+        if duros:
+            erros.append(f"[{nome}] o Deployment {quem} usa DoNotSchedule em {duros} — num cluster "
+                         "de um nó (o laboratório) isso deixa pods `Pending` sem explicação; "
+                         "usa ScheduleAnyway, como o chart de produção")
 
     if nome == "base":
         continue

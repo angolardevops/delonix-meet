@@ -207,7 +207,7 @@ export default {
     retencaoDica_other: 'Recordings older than {{count}} days are deleted.',
     retencaoInvalida: 'Enter a whole number from 0 to 3650.',
     quotas: 'Quotas',
-    quotasDica: 'Empty = unlimited.',
+    quotasDica: 'Your platform plan. Contact the operator to change it.',
     quotaGrupos: 'Groups',
     quotaSalas: 'Physical rooms',
     quotaReunioes: 'Scheduled meetings',

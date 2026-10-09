@@ -127,11 +127,11 @@ describe('3.2.1 · nenhuma regra se resolve pela posição no ficheiro', () => {
       const vistos = new Map<string, number>()
       let grupo: string[] = []
       for (const l of read(f).split('\n')) {
-        if (/^[.#\[:a-z][^{}@/]*,\s*$/i.test(l)) {
+        if (/^[.#[:a-z][^{}@/]*,\s*$/i.test(l)) {
           grupo.push(l.trim().replace(/,$/, ''))
           continue
         }
-        const m = l.match(/^([.#\[:a-z][^{}@/]*?)\s*\{\s*$/i)
+        const m = l.match(/^([.#[:a-z][^{}@/]*?)\s*\{\s*$/i)
         if (m) {
           const sel = [...grupo, m[1]].join(', ')
           vistos.set(sel, (vistos.get(sel) ?? 0) + 1)

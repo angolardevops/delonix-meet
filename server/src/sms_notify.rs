@@ -274,22 +274,53 @@ pub(crate) async fn queue_for_meeting(
 /// quem não recusou o convite. Uma reunião que já começou quando o varrimento a
 /// apanha (servidor em baixo) fica marcada e não se lembra: um lembrete depois
 /// da hora é ruído pago.
+/// A fila dos lembretes, declarada uma vez.
+///
+/// `Retry::ONCE` não é omissão: a marca escreve-se ANTES de enviar e o módulo
+/// diz porquê — «no máximo uma vez». Um lembrete repetido é ruído pago.
+///
+/// `tenant_column: Some("owner_id")` e não `org_id`: as `meetings` não têm
+/// coluna de organização (só dono — ver migração 0031), e o dono serve bem a
+/// justiça aqui, porque é por pessoa que os lembretes se acumulam. Uma pessoa
+/// com cem reuniões na mesma janela deixa de empurrar as outras para trás.
+const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
+    name: "sms_reminder",
+    table: "meetings",
+    id_column: "id",
+    ready_when: "sms_reminder_min IS NOT NULL AND sms_reminder_done_at IS NULL \
+                 AND starts_at - make_interval(mins => sms_reminder_min) <= now()",
+    claim_set: "sms_reminder_done_at = now()",
+    returning: "id, owner_id, title, starts_at",
+    order_by: "starts_at",
+    tenant_column: Some("owner_id"),
+    batch: REMINDER_BATCH,
+};
+
+/// Uma reunião reivindicada para lembrar.
+#[derive(sqlx::FromRow)]
+struct PorLembrar {
+    id: Uuid,
+    owner_id: Uuid,
+    title: String,
+    starts_at: DateTime<Utc>,
+}
+
 pub async fn remind_due(state: &AppState) -> Result<usize, ApiError> {
-    let due: Vec<(Uuid, Uuid, String, DateTime<Utc>)> = sqlx::query_as(
-        "UPDATE meetings SET sms_reminder_done_at = now()
-         WHERE id IN (
-             SELECT id FROM meetings
-             WHERE sms_reminder_min IS NOT NULL AND sms_reminder_done_at IS NULL
-               AND starts_at - make_interval(mins => sms_reminder_min) <= now()
-             ORDER BY starts_at LIMIT $1
-             FOR UPDATE SKIP LOCKED)
-         RETURNING id, owner_id, title, starts_at",
+    let due: Vec<PorLembrar> = delonix_meet_store::jobs::claim(
+        &state.db,
+        &FILA,
+        &delonix_meet_core::jobs::Retry::ONCE,
+        None,
     )
-    .bind(REMINDER_BATCH)
-    .fetch_all(&state.db)
     .await?;
     let mut queued = 0;
-    for (id, owner_id, title, starts_at) in due {
+    for PorLembrar {
+        id,
+        owner_id,
+        title,
+        starts_at,
+    } in due
+    {
         if starts_at <= Utc::now() {
             tracing::info!(meeting = %id, "SMS: lembrete fora de horas — não enviado");
             continue;

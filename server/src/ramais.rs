@@ -1754,7 +1754,8 @@ pub async fn ivr_dialplan_did(
         <condition field="destination_number" expression="^\+?{dest_digits_x}$">
           <action application="set" data="rtp_secure_media=mandatory"/>
           <action application="set" data="hangup_after_bridge=true"/>
-          <action application="bridge" data="user/{sip_username_x}@{domain_x}"/>
+          <!-- O Lua acorda o aparelho por push (ADR-0023) e liga: sem espera configurada é o `bridge` de sempre. -->
+          <action application="lua" data="ramais_dial.lua did {sip_username_x} {domain_x}"/>
         </condition>
       </extension>
     </context>
@@ -1901,7 +1902,7 @@ mod tests {
         <condition field="destination_number" expression="^\+?{dest}$">
           <action application="set" data="rtp_secure_media=mandatory"/>
           <action application="set" data="hangup_after_bridge=true"/>
-          <action application="bridge" data="user/{user}@{domain}"/>
+          <action application="lua" data="ramais_dial.lua did {user} {domain}"/>
         </condition>
       </extension>
     </context>
@@ -1914,8 +1915,7 @@ mod tests {
         assert!(body.starts_with("<?xml"));
         assert!(body.contains(r#"section name="dialplan""#));
         assert!(body.contains(r#"context name="public""#));
-        assert!(body.contains("bridge"));
-        assert!(body.contains("user/ramal_abc123@acme.ramais.delonix.meet"));
+        assert!(body.contains("ramais_dial.lua did ramal_abc123 acme.ramais.delonix.meet"));
     }
 }
 
@@ -1943,7 +1943,12 @@ mod tests {
         crate::extension_pin::clear_extension_pin,
         crate::extension_provisioning::issue_my_ticket,
         crate::extension_provisioning::issue_extension_ticket,
-        crate::extension_provisioning::redeem
+        crate::extension_provisioning::redeem,
+        crate::voice_devices::put_my_device,
+        crate::voice_devices::list_my_devices,
+        crate::voice_devices::delete_my_device,
+        crate::voice_devices::list_extension_devices,
+        crate::voice_devices::delete_extension_device
     ),
     components(schemas(
         VoiceExtensionInfo,
@@ -1960,7 +1965,9 @@ mod tests {
         crate::extension_pin::MyExtension,
         crate::extension_pin::SetPinReq,
         crate::extension_pin::GeneratedPin,
-        crate::extension_provisioning::ProvisioningTicket
+        crate::extension_provisioning::ProvisioningTicket,
+        crate::voice_devices::DeviceInfo,
+        crate::voice_devices::PutDeviceReq
     ))
 )]
 pub struct ApiDoc;

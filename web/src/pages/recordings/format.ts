@@ -6,14 +6,8 @@
 import type { RecordingItem } from '../../api'
 import { avatarTone } from '../../ui/kit'
 
-export function formatBytes(bytes: number, lang: string): string {
-  const gb = bytes / 1024 ** 3
-  if (gb >= 1) {
-    return new Intl.NumberFormat(lang, { style: 'unit', unit: 'gigabyte', maximumFractionDigits: 1 }).format(gb)
-  }
-  const mb = bytes / 1024 ** 2
-  return new Intl.NumberFormat(lang, { style: 'unit', unit: 'megabyte', maximumFractionDigits: 1 }).format(mb)
-}
+/** Tamanho legível — o formatador único (`ui/format`). */
+export { formatBytes } from '../../ui/format'
 
 export function formatDateTime(iso: string, lang: string): string {
   const d = new Date(iso)

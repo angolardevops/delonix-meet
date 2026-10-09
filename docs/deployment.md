@@ -154,6 +154,9 @@ openssl rand -hex 24   # → password do Postgres
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |
 | `OLLAMA_MODEL_SUMMARY` / `OLLAMA_MODEL_TRANSLATE` | modelos (ex. `qwen2.5:7b` / `qwen2.5:1.5b`) |
 | `VOICE_INTERNAL_SECRET` | Segredo da API interna de IVR (PSTN), cabeçalho `X-Voice-Secret`. Vazio, com menos de 32 caracteres, ou igual a um valor que já esteve no repositório (`BURNED_VOICE_SECRETS` em `server/src/config.rs`) = `/api/voice/ivr/*` responde **503** com a razão e o arranque avisa; o resto do servidor corre. Com `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio. Gerar com `openssl rand -hex 32`. Em Kubernetes vem do Secret `delonix-voice` ([§6](#6-cenário-b--kubernetes)), nunca de `01-config.yaml` (R154) |
+| `PUSH_WAIT_SECS` | ADR-0023: quantos segundos uma chamada que o **servidor** origina (ligar a partir da sala) para um ramal sem registo espera que o aparelho acorde por push e se registe (0 a 60). **0 = desligado (por omissão):** liga já, como antes. É a contraparte, para as chamadas do servidor, do `DELONIX_PUSH_WAIT_SECS` do FreeSWITCH (`voice/README.md`), que só vê as chamadas que passam pelo seu dialplan. Sem aparelhos registados, ou com o ramal já registado, não espera |
+| `PUSH_LAB_URL` | **Só laboratório e testes** (ADR-0023): URL a que o servidor entrega o pedido de «acordar» de um aparelho registado com o fornecedor `lab`, atrás da guarda de saída (`OUTBOUND_ALLOW_HOSTS` para um host interno). **Ausente = o fornecedor `lab` não acorda ninguém.** FCM e APNs ainda não existem: um aparelho `fcm` ou `apns_voip` aceita-se no registo mas não é acordado |
+| `PUSH_DELONIX_URL` + `PUSH_DELONIX_KEY` | URL base do serviço **delonix-push** (open source) e a chave de servidor `dpk_…` do projecto (**segredo**), para os aparelhos registados com o fornecedor `delonix` (o token é o `device_id` do serviço). Atrás da guarda de saída (`OUTBOUND_ALLOW_HOSTS` para um host interno). **Qualquer um ausente = o fornecedor `delonix` não acorda ninguém** |
 | `PHONE_BRIDGE_SIP_BIND` | Ponte telefone↔sala ([ADR-0010](adr/0010-ponte-telefone-sala.md)): onde o UA SIP escuta, `host:porta` UDP (ex. `0.0.0.0:5080`). **Ausente = ponte desligada** e o dial-in cai na conferência local do FreeSWITCH, sem regressão. É a única variável que a liga |
 | `PHONE_BRIDGE_FREESWITCH_IPS` | IPs **ou nomes** (resolvidos a cada `PHONE_BRIDGE_RESOLVE_SECS`; só privados, nunca loopback) dos FreeSWITCH autorizados a mandar `INVITE` e RTP, separados por vírgulas. **Fail-closed: vazia, o UA nem arranca** — um UA que aceitasse qualquer origem é uma porta para dentro das salas. Aceita-se ainda o antigo `PSTN_BRIDGE_FREESWITCH_IP` (um só IP) |
 | `PHONE_BRIDGE_SIP_ADVERTISE` | O que o control plane devolve ao IVR no `sip_uri` (`host:porta`), quando o endereço alcançável de fora não é o do bind — NAT, `hostPort` em K8s. Por omissão, `PSTN_BRIDGE_HOST`/`SFU_EXTERNAL_IP` com a porta do bind |
@@ -284,6 +287,13 @@ kubectl -n delonix-meet create secret generic delonix-voice \
 
 Sem ele o servidor arranca e só as rotas de IVR dão `503`. O mesmo valor tem de ir
 para a camada de media (FreeSWITCH, `voice/README.md`).
+
+**TLS na sinalização dos ramais (ADR-0009).** Sem TLS, as chaves do SRTP (SDES) vão em claro no SDP.
+O perfil dos ramais do FreeSWITCH liga o TLS com variáveis **do FreeSWITCH** (não do servidor), descritas em
+`voice/README.md` (secção «TLS nos ramais»). O servidor tem de mandar o telefone para lá:
+`VOICE_RAMAIS_PUBLIC_TRANSPORT=tls` e `VOICE_RAMAIS_PUBLIC_PORT` igual à porta TLS, senão o QR do Linphone
+continua a apontar para o UDP. No compose do laboratório em modo LAN (`make compose-up LAN_IP=…`) está tudo
+ligado, com o certificado da borda; o helm e o cluster local **não** estão (continuam em UDP).
 
 **Um cluster que já tenha sido instalado com o `01-config.yaml` antigo tem o valor
 publicado `voice-internal-secret-for-pstn` dentro do `delonix-secrets`** — o

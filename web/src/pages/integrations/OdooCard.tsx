@@ -8,9 +8,9 @@
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, getOdooConfig, getPlatformSettings, OdooConfig, rotateOdooToken, saveOdooConfig } from '../../api'
+import { apiErrorMessage, getOdooConfig, OdooConfig, rotateOdooToken, saveOdooConfig } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
-import { Alert, Button, Card, Field, StatusBadge, Tag, TextInput, Toggle } from '../../ui/kit'
+import { Alert, Button, Card, Field, StatusBadge, TextInput, Toggle } from '../../ui/kit'
 import { ConfirmDialog } from './ConfirmDialog'
 import { guarded, IntegHead, SecretOnce, useDateFmt } from './common'
 
@@ -57,8 +57,6 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
   const [enabled, setEnabled] = useState(initial.odoo_enabled)
   const [url, setUrl] = useState(initial.odoo_url ?? '')
   const [db, setDb] = useState(initial.odoo_db ?? '')
-  const [hideOrg, setHideOrg] = useState(initial.hide_org_creation)
-  const [hideSso, setHideSso] = useState(initial.hide_sso_button)
   const [prefix, setPrefix] = useState(initial.odoo_token_prefix)
   const [token, setToken] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -66,7 +64,6 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
   const [confirmRotate, setConfirmRotate] = useState(false)
   const [err, setErr] = useState('')
   const [ok, setOk] = useState(false)
-  const pub = useAsync(() => getPlatformSettings(), [orgId, initial])
 
   async function save() {
     setBusy(true)
@@ -77,8 +74,6 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
         odoo_enabled: enabled,
         odoo_url: url.trim() || null,
         odoo_db: db.trim() || null,
-        hide_org_creation: hideOrg,
-        hide_sso_button: hideSso,
       })
       setOk(true)
       onSaved()
@@ -109,8 +104,14 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
 
   return (
     <div className="integ-stack">
-      {/* Os quatro mosaicos do template: o que se liga e desliga nesta
-          integração, e o token — o que o servidor guarda, nada mais. */}
+      {/* Os dois mosaicos do template: o que se liga e desliga nesta
+          integração, e o token — o que o servidor guarda, nada mais.
+          «Esconder criar organização» e «esconder SSO» SAÍRAM deste
+          formulário: eram escritos por um admin de tenant e agregados sobre
+          TODAS as organizações em `/api/public/settings`, pelo que qualquer
+          uma escondia isto para toda a plataforma. Agora é configuração de
+          plataforma (`/api/operator/v1/login-settings`, backoffice a
+          desenhar) — não as acrescentes de volta aqui. */}
       <div className="integ-tiles">
         <div className="integ-tile">
           <Toggle label={t('integrations.odoo.activar')} hint={t('integrations.odoo.sub')} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
@@ -130,12 +131,6 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
             {prefix ? t('integrations.odoo.rodarCurto') : t('integrations.odoo.gerarCurto')}
           </button>
         </section>
-        <div className="integ-tile">
-          <Toggle label={t('integrations.odoo.ocultarCriarOrg')} hint={t('integrations.odoo.visibilidadeCurta')} checked={hideOrg} onChange={(e) => setHideOrg(e.target.checked)} />
-        </div>
-        <div className="integ-tile">
-          <Toggle label={t('integrations.odoo.ocultarSso')} hint={t('integrations.odoo.visibilidadeCurta')} checked={hideSso} onChange={(e) => setHideSso(e.target.checked)} />
-        </div>
       </div>
       {!prefix && <span className="dx-muted integ-small">{t('integrations.odoo.semToken')}</span>}
       {token && <SecretOnce value={token} note={t('integrations.odoo.tokenUmaVez')} />}
@@ -146,13 +141,6 @@ function OdooForm({ orgId, initial, onSaved }: { orgId: string; initial: OdooCon
           <span className="dx-num dx-muted">
             {initial.odoo_synced_at ? fmt(initial.odoo_synced_at) : t('integrations.odoo.nuncaSincronizou')}
           </span>
-          {pub.state.s === 'ready' && (
-            <span className="dx-chips" title={t('integrations.odoo.emVigorDica')}>
-              <span className="dx-muted">{t('integrations.odoo.emVigor')}</span>
-              <Tag>{pub.state.d.hide_org_creation ? t('integrations.odoo.criarContaOculto') : t('integrations.odoo.criarContaVisivel')}</Tag>
-              <Tag>{pub.state.d.hide_sso_button ? t('integrations.odoo.ssoOculto') : t('integrations.odoo.ssoVisivel')}</Tag>
-            </span>
-          )}
         </div>
       </div>
 

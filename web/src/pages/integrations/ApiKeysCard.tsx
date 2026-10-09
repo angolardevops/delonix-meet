@@ -71,13 +71,14 @@ export function ApiKeysCard({ orgId }: { orgId: string }) {
                   renderItems={(rows) => (
                 <div className="dx-table-wrap integ-table">
                   <table className="dx-table">
+                    <caption className="dx-sr-only">{t('integrations.apiKeys.titulo')}</caption>
                     <thead>
                       <tr>
-                        <th>{t('integrations.apiKeys.colNome')}</th>
-                        <th>{t('integrations.apiKeys.colPrefixo')}</th>
-                        <th>{t('integrations.apiKeys.colCriada')}</th>
-                        <th>{t('integrations.apiKeys.colUsada')}</th>
-                        <th>
+                        <th scope="col">{t('integrations.apiKeys.colNome')}</th>
+                        <th scope="col">{t('integrations.apiKeys.colPrefixo')}</th>
+                        <th scope="col">{t('integrations.apiKeys.colCriada')}</th>
+                        <th scope="col">{t('integrations.apiKeys.colUsada')}</th>
+                        <th scope="col">
                           <span className="dx-sr-only">{t('integrations.colAccoes')}</span>
                         </th>
                       </tr>

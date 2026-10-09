@@ -128,7 +128,34 @@ async fn room_for_host(state: &AppState, user_id: Uuid, code: &str) -> Result<Ro
     Ok(room)
 }
 
-/// Fecha o que ficou a tocar sem fim (ver `STALE_SECS`).
+/// Fecha o que ficou a tocar sem fim, em TODAS as salas (trabalho nº5).
+///
+/// PORQUE EXISTE: a versão por sala abaixo só corre de handlers de LEITURA, e
+/// uma chamada pendurada bloqueia o ramal e conta para o limite de concorrência
+/// — se ninguém abrir o ecrã daquela sala, fica assim. Isto corre de um ciclo,
+/// sem precisar de alguém a olhar.
+///
+/// Não é uma reivindicação (não há trabalho a levar, só estado a fechar), por
+/// isso não passa pela peça das filas: é um `UPDATE` idempotente, e dois nós a
+/// corrê-lo ao mesmo tempo fecham as mesmas linhas com o mesmo resultado.
+pub(crate) async fn finish_stale_all(db: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
+    let n = sqlx::query(
+        "UPDATE room_dial_outs
+            SET status = 'failed', failure_code = 'stale', ended_at = now()
+          WHERE status IN ('queued','dialing','ringing')
+            AND created_at < now() - make_interval(secs => $1)",
+    )
+    .bind(STALE_SECS as f64)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(n)
+}
+
+/// Fecha o que ficou a tocar sem fim NESTA sala (ver `STALE_SECS`).
+///
+/// Fica, apesar do `finish_stale_all`: quem abre o ecrã vê o estado certo já,
+/// sem esperar pela volta do ciclo.
 async fn finish_stale(state: &AppState, room_id: Uuid) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE room_dial_outs
@@ -400,6 +427,14 @@ pub async fn create(
     )
     .await;
 
+    // Para acordar o aparelho antes de ligar (ADR-0023): o que `origin` vai consumir.
+    let acordar = (
+        state.clone(),
+        req.extension_id,
+        extension.clone(),
+        sip_username.clone(),
+        sip_domain.clone(),
+    );
     let origin = OriginateRequest {
         call_id,
         org_id,
@@ -449,6 +484,14 @@ pub async fn create(
         {
             return;
         }
+        // Um ramal móvel com a app morta não tem registo e o `originate` falharia já. Com `PUSH_WAIT_SECS` > 0
+        // acorda-se o aparelho e espera-se pelo registo; cancelado entretanto, nem se origina.
+        let (st, ext_id, numero, user, dominio) = acordar;
+        if st.config.push_wait_secs > 0
+            && !aguardar_aparelho(&st, org_id, ext_id, &numero, &user, &dominio, call_id, id).await
+        {
+            return;
+        }
         if let Err(e) = originator.originate(&origin, Arc::new(Sink(tx))).await {
             // O ESL em baixo, a ponte inacessível: a pessoa nunca fica «a tocar».
             tracing::warn!(dial_out = %id, "originate falhou: {e}");
@@ -465,6 +508,60 @@ pub async fn create(
 
     let view = one(&state, room.id, id).await?;
     Ok((StatusCode::ACCEPTED, Json(view)))
+}
+
+/// Chamada a um ramal sem registo (ADR-0023): acorda os aparelhos (push) e espera pelo REGISTO, até
+/// `PUSH_WAIT_SECS`. Devolve `false` se o pedido foi cancelado entretanto (então não se origina). Em qualquer
+/// dúvida — sem Event Socket, o ramal já está registado, ninguém a acordar, o limite por minuto — devolve
+/// `true` e a chamada segue como sempre; se o aparelho não acordar a tempo, o `originate` falha como antes.
+#[allow(clippy::too_many_arguments)]
+async fn aguardar_aparelho(
+    state: &Arc<AppState>,
+    org_id: Uuid,
+    extension_id: Uuid,
+    number: &str,
+    sip_username: &str,
+    domain: &str,
+    call_id: Uuid,
+    id: Uuid,
+) -> bool {
+    use crate::voice_devices as aparelhos;
+    // Só o «não registado» CERTO acorda: «não sei» (sem ESL, erro) é o comportamento de antes.
+    if aparelhos::ramal_registado(state, sip_username, domain).await != Some(false) {
+        return true;
+    }
+    match aparelhos::acordar_ramal(
+        state,
+        org_id,
+        extension_id,
+        number,
+        &call_id.to_string(),
+        "",
+    )
+    .await
+    {
+        Ok(w) if w.awaiting => {}
+        _ => return true,
+    }
+    let fim = std::time::Instant::now()
+        + std::time::Duration::from_secs(u64::from(state.config.push_wait_secs));
+    while std::time::Instant::now() < fim {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let vivo: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM room_dial_outs WHERE id = $1 AND status = 'dialing')",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(true);
+        if !vivo {
+            return false;
+        }
+        if aparelhos::ramal_registado(state, sip_username, domain).await == Some(true) {
+            return true;
+        }
+    }
+    true
 }
 
 async fn one(state: &AppState, room_id: Uuid, id: Uuid) -> Result<DialOutView, ApiError> {

@@ -93,6 +93,7 @@ mod usage;
 mod users;
 mod voice;
 mod voice_caller;
+mod voice_devices;
 mod webhooks;
 mod whiteboards;
 
@@ -109,11 +110,20 @@ pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
 pub use recorder::{
     resume_due as recording_resume_due, sweep_orphan_segments as recording_sweep_orphan_segments,
 };
+/// A varredura dos capítulos automáticos, exposta aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use recording_chapters::auto_chapters_sweep;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
+/// O varredor que revoga no delonix-push os aparelhos de sessões terminadas, exposto aos testes (ADR-0023).
+pub use voice_devices::reconcile_delonix;
 /// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
 pub use webhooks::retry_due as webhook_retry_due;
+/// O registo transaccional das entregas e o tipo do evento, expostos aos testes
+/// de integração: é o que permite provar o nº3 — gravar numa transacção, NÃO
+/// enviar (a «morte» do processo), e o evento sair depois pelo varredor.
+pub use webhooks::{enqueue as webhook_enqueue, sweep_deliveries, Event as WebhookEvent};
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -305,6 +315,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
             "/internal/v1/voice/ivr/dialplan-did",
             post(ramais::ivr_dialplan_did),
         )
+        // O FreeSWITCH pergunta se há aparelhos a acordar para um ramal sem registo, e o ramal só toca
+        // depois de se registar (`ramais_dial.lua`, S-02; ADR-0023).
+        .route(
+            "/internal/v1/voice/push/wake",
+            post(voice_devices::ivr_push_wake),
+        )
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
         // `mod_xml_curl`. Mesmo segredo interno do IVR.
         .route(
@@ -394,6 +410,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let operator_routes = Router::new()
         // Provisão de org — segredo de plataforma (a org ainda não existe).
         .route("/organizations", post(apikeys::v1_provision_org))
+        // Tenants (organizações já existentes) vistos pelo operador —
+        // `/tenants`, não `/organizations`, de propósito: o provisionamento
+        // acima autentica por segredo e está declarado público em
+        // `scripts/rotas-publicas.txt`; partilhar o caminho com uma rota de
+        // sessão fazia `check-route-auth.sh` falhar (o portão compara só por
+        // caminho, não por método — refazê-lo está fora do âmbito desta PR).
+        .route("/tenants", get(directory::list_operator_organizations))
+        // Detalhe de UM tenant, com uso real (lugares e armazenamento
+        // ocupados) — as rotas do inquilino exigem membro, o operador não é.
+        .route(
+            "/tenants/{org_id}",
+            get(directory::get_operator_organization),
+        )
+        // Quotas de plano (grupos/salas/reuniões + dial-in PSTN) — saem da
+        // autoridade do inquilino (`PATCH /api/orgs/{org_id}`) para aqui.
+        .route(
+            "/tenants/{org_id}/quotas",
+            axum::routing::put(directory::operator_set_quotas),
+        )
         // Armazenamento remoto da plataforma: TrueNAS NFS / Nextcloud WebDAV.
         .route(
             "/storage",
@@ -401,6 +436,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/storage/test", post(storage::test_storage))
         .route("/storage/pvc-manifest", get(storage::pvc_manifest))
+        // Config de LOGIN da plataforma: esconder «criar organização» e/ou o
+        // botão SSO no ecrã de entrada. Era escrita por um admin de tenant
+        // (hide_org_creation/hide_sso_button em organizations) e agregada com
+        // BOOL_OR sobre todas as orgs — um único tenant escondia-o para toda a
+        // plataforma. Migração 0103.
+        .route(
+            "/login-settings",
+            get(odoo::get_login_settings).put(odoo::save_login_settings),
+        )
         // Inventário de nós de media (G10).
         .route("/nodes", get(nodes::list))
         // Tecto de lugares por organização (ADR-0008 §7).
@@ -682,6 +726,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
         .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
         .route("/api/meetings/{meeting_id}/minutes", axum::routing::put(meetings::save_minutes))
+        // Pede (ou repete) o resumo da acta pelo LLM — `202` com o estado da
+        // fila. Custom method sob o sub-recurso `minutes`, como a checklist da
+        // `delonix-meet-api` manda para uma acção que não é CRUD.
+        .route(
+            "/api/meetings/{meeting_id}/minutes/summary",
+            axum::routing::post(meetings::request_mom_summary),
+        )
         .route("/api/meetings/{meeting_id}/invitees", get(meetings::invitees))
         .route("/api/meetings/{meeting_id}/invitees/me", axum::routing::put(meetings::respond))
         .route(
@@ -1144,6 +1195,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/my-extension/provisioning-ticket",
             post(extension_provisioning::issue_my_ticket),
+        )
+        // Os aparelhos do ramal e o *wake* por push (ADR-0023, S-01): a pessoa regista e desliga os SEUS;
+        // o administrador lista e desliga os de qualquer ramal da organização.
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices",
+            get(voice_devices::list_my_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices/{device_id}",
+            axum::routing::put(voice_devices::put_my_device).delete(voice_devices::delete_my_device),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices",
+            get(voice_devices::list_extension_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices/{device_id}",
+            axum::routing::delete(voice_devices::delete_extension_device),
         )
         .route(
             "/api/orgs/{org_id}/extensions/{id}/provisioning-ticket",
@@ -1813,6 +1882,23 @@ pub async fn run() {
         quarantine_stop.clone(),
     ));
 
+    // Cron: aparelhos de push (delonix-push) cuja sessão terminou ou expirou deixam de se poder ligar ao serviço
+    // (ADR-0023). Sem o serviço configurado não faz nada.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match voice_devices::reconcile_delonix(&state).await {
+                    0 => {}
+                    n => tracing::info!(revogados = n, "aparelhos revogados no delonix-push"),
+                }
+            }
+        });
+    }
+
     // Cron: retenção de gravações (DLP-lite) a cada hora — apaga as que
     // passaram do prazo configurado por organização.
     {
@@ -2058,6 +2144,33 @@ pub async fn run() {
     // pela peça comum, desce para aqui.
     let mut filas = jobs::Filas::new();
     sms::levanta_filas(&mut filas, state.clone());
+    // Chamadas penduradas (trabalho nº5): o `finish_stale` só corria de
+    // handlers de LEITURA, por isso uma chamada que ficou a tocar sem fim
+    // bloqueava o ramal e contava para o limite de concorrência até alguém
+    // abrir o ecrã daquela sala ou organização. Agora não precisa de ninguém a
+    // olhar. São `UPDATE`s idempotentes, não reivindicações — dois nós fecham
+    // as mesmas linhas com o mesmo resultado.
+    {
+        let db = state.db.clone();
+        filas.levanta("telephony_stale", Duration::from_secs(60), move || {
+            let db = db.clone();
+            async move {
+                let a = dial_outs::finish_stale_all(&db).await?;
+                let b = telephony_service::finish_stale_all(&db).await?;
+                Ok((a + b) as usize)
+            }
+        });
+    }
+
+    // O resumo da acta pelo LLM (trabalho nº4): a cada minuto, o que foi
+    // enfileirado ao gravar a ata ou pela rota. No-op sem `OLLAMA_URL`.
+    {
+        let s = state.clone();
+        filas.levanta("mom_summary", Duration::from_secs(60), move || {
+            let s = s.clone();
+            async move { ai::mom_summary_due(&s).await }
+        });
+    }
 
     if let Some(addr) = config.internal_bind_addr.clone() {
         let internal = build_internal_router(state.clone());

@@ -116,11 +116,16 @@ chmod 700 "$CDR_PENDENTES"
 # que toca num ramal. Segui-lo era ligar ao Contact que o outro lado escolhe,
 # sem passar pela guarda de saída (R213). Uma variável de canal que não exista
 # lê-se das globais (switch_channel.c).
+# DELONIX_PUSH_WAIT_SECS (S-02, ADR-0023): quantos segundos uma chamada espera que o aparelho do
+# destino acorde (push) e se registe. 0 (por omissão) desliga: a chamada falha logo, como antes.
+case ${DELONIX_PUSH_WAIT_SECS:-0} in ''|*[!0-9]*) echo "DELONIX_PUSH_WAIT_SECS não é um número de segundos" >&2; exit 1;; esac
+[ "${DELONIX_PUSH_WAIT_SECS:-0}" -le 60 ] || { echo "DELONIX_PUSH_WAIT_SECS acima de 60 s (uma chamada não espera mais)" >&2; exit 1; }
 cat >"$CONF/vars-meet.xml" <<XML
 <include>
   <X-PRE-PROCESS cmd="set" data="delonix_control_url=${DELONIX_CONTROL_URL}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_voice_secret=${VOICE_INTERNAL_SECRET}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_ramais_sip_port=${DELONIX_RAMAIS_SIP_PORT:-5070}"/>
+  <X-PRE-PROCESS cmd="set" data="delonix_push_wait_secs=${DELONIX_PUSH_WAIT_SECS:-0}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_cdr_dir=${CDR_PENDENTES}"/>
   <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
   <X-PRE-PROCESS cmd="set" data="outbound_redirect_fatal=true"/>
@@ -181,6 +186,34 @@ if [ -n "${DELONIX_EXTERNAL_IP:-}" ]; then
     { echo "não consegui pôr o endereço externo no perfil dos ramais" >&2; exit 1; }
   sed -i -E "s#<!-- <param name=\"rtp-start-port\" value=\"[0-9]+\"/> -->#<param name=\"rtp-start-port\" value=\"${DELONIX_RTP_MIN:-20000}\"/>#; s#<!-- <param name=\"rtp-end-port\" value=\"[0-9]+\"/> -->#<param name=\"rtp-end-port\" value=\"${DELONIX_RTP_MAX:-20100}\"/>#" \
     "$CONF/autoload_configs/switch.conf.xml"
+fi
+
+# 9b. TLS na sinalização dos ramais (ADR-0009: as chaves do SRTP/SDES vão no SDP, por
+#     isso sem TLS seguem em claro). OPCIONAL: só liga com DELONIX_RAMAIS_TLS_PORT, e então
+#     o certificado é obrigatório — pedir TLS sem certificado falha o arranque, não cai em
+#     UDP calado. Sem a variável nada muda (cluster e compose por omissão).
+#       DELONIX_RAMAIS_TLS_PORT   porta TLS do perfil dos ramais (ex. 5071)
+#       DELONIX_RAMAIS_TLS_DIR    onde estão tls.crt e tls.key (cadeia completa e chave), por omissão /tls-ramais
+#       DELONIX_RAMAIS_TLS_ONLY   "true" fecha o UDP/TCP do perfil: só TLS (o certo em produção)
+#     O certificado tem de cobrir o nome ou o IP a que o telefone se liga (SAN): é por ele que
+#     o telefone o confere. TLS 1.2 no mínimo; não se pede certificado ao telefone (a
+#     identidade do ramal é o digest).
+if [ -n "${DELONIX_RAMAIS_TLS_PORT:-}" ]; then
+  case $DELONIX_RAMAIS_TLS_PORT in ''|*[!0-9]*|0*) echo "DELONIX_RAMAIS_TLS_PORT não é uma porta" >&2; exit 1;; esac
+  [ "$DELONIX_RAMAIS_TLS_PORT" -le 65535 ] || { echo "DELONIX_RAMAIS_TLS_PORT fora do intervalo" >&2; exit 1; }
+  TLS_DIR=${DELONIX_RAMAIS_TLS_DIR:-/tls-ramais}
+  [ -s "$TLS_DIR/tls.crt" ] && [ -s "$TLS_DIR/tls.key" ] ||
+    { echo "DELONIX_RAMAIS_TLS_PORT pede TLS mas falta $TLS_DIR/tls.crt ou tls.key" >&2; exit 1; }
+  case ${DELONIX_RAMAIS_TLS_ONLY:-false} in true|false) ;; *) echo "DELONIX_RAMAIS_TLS_ONLY é true ou false" >&2; exit 1;; esac
+  # O Sofia lê certificado e chave de um só ficheiro (agent.pem). A pasta é $${conf_dir}/tls e NÃO a
+  # $${certs_dir}: esta é a do prefixo de instalação (…/etc/freeswitch/tls, com os .pem da vanilla),
+  # e com ela o perfil serve um certificado «CN=FreeSWITCH» auto-assinado em vez do nosso (medido).
+  mkdir -p "$CONF/tls"
+  ( umask 077; cat "$TLS_DIR/tls.crt" "$TLS_DIR/tls.key" >"$CONF/tls/agent.pem" )
+  sed -i "s#<param name=\"sip-port\" value=\"[^\"]*\"/>#&\n      <param name=\"tls\" value=\"true\"/>\n      <param name=\"tls-only\" value=\"${DELONIX_RAMAIS_TLS_ONLY:-false}\"/>\n      <param name=\"tls-bind-params\" value=\"transport=tls\"/>\n      <param name=\"tls-sip-port\" value=\"${DELONIX_RAMAIS_TLS_PORT}\"/>\n      <param name=\"tls-cert-dir\" value=\"\$\${conf_dir}/tls\"/>\n      <param name=\"tls-version\" value=\"tlsv1.2\"/>\n      <param name=\"tls-verify-policy\" value=\"none\"/>#" \
+    "$CONF/sip_profiles/internal.xml"
+  grep -q "tls-sip-port\" value=\"${DELONIX_RAMAIS_TLS_PORT}\"" "$CONF/sip_profiles/internal.xml" ||
+    { echo "não consegui pôr o TLS no perfil dos ramais" >&2; exit 1; }
 fi
 
 # 10. De onde um ramal se pode registar. O servidor responde ao directório com

@@ -134,6 +134,7 @@ export default function ActionPlanPanel({ meetingId, isOwner }: { meetingId: str
 
             <div className="dx-table-wrap">
               <table className="dx-table cal-plan">
+                <caption className="dx-sr-only">{t('schedule.plano.accoes')}</caption>
                 <thead>
                   <tr>
                     {COLS.map((c) => (

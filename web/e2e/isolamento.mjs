@@ -282,6 +282,19 @@ await recusado('A emite um QR do Linphone para um ramal da org B', `/api/orgs/${
 await recusado('A emite um QR do Linphone para «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/provisioning-ticket`, {
   token: A.token, method: 'POST', body: {},
 })
+// Aparelhos do ramal e *wake* por push (ADR-0023): A não regista, lê nem desliga aparelhos na org B,
+// nem lista ou desliga os de um ramal da org B (o token de push é o que acorda o telemóvel de alguém).
+await recusado('A regista um aparelho em «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices/${fantasma}`, {
+  token: A.token, method: 'PUT', body: { platform: 'android', provider: 'lab', push_token: 'token-de-prova' },
+})
+await recusado('A lista os aparelhos de «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices`, { token: A.token })
+await recusado('A desliga um aparelho de «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices/${fantasma}`, {
+  token: A.token, method: 'DELETE',
+})
+await recusado('A lista os aparelhos de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/devices`, { token: A.token })
+await recusado('A desliga um aparelho de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/devices/${fantasma}`, {
+  token: A.token, method: 'DELETE',
+})
 
 // O segredo mais valioso desta família: com ele, qualquer um emite no canal
 // de YouTube da empresa. A provar: A não alcança os destinos da B (ler, rodar
@@ -603,6 +616,11 @@ if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   })
   await recusado('A escreve a ACTA da reunião da B', `/api/meetings/${m}/minutes`, {
     token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
+  })
+  // Pedir o resumo pelo LLM gasta GPU e revela que a reunião existe: a recusa
+  // tem de ser a mesma das outras (404, sem confirmar que existe).
+  await recusado('A pede o RESUMO da acta da reunião da B', `/api/meetings/${m}/minutes/summary`, {
+    token: A.token, method: 'POST', body: {},
   })
   await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda-items`, { token: A.token })
   await recusado('A lê os convidados da reunião da B', `/api/meetings/${m}/invitees`, { token: A.token })
@@ -941,7 +959,7 @@ if (gravacaoA) {
 const chaveApiA = await req(`/api/orgs/${A.orgId}/api-keys`, {
   token: A.token, method: 'POST', body: { name: 's3-arquivo' },
 })
-await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
+const reuniaoS3antes = await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
   token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 antes', starts_at: new Date(Date.now() + 7200_000).toISOString(), host_email: C.email },
 })
@@ -962,6 +980,42 @@ await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/ap
   token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
 })
+
+console.log('\n--- T1: a chave da B não alcança uma reunião da A por /api/v1/meetings ---')
+// Achado da auditoria de 2026-10-08: `meeting_in_org` (e as equivalentes em
+// `apikeys.rs`, `v1_meetings`/`v1_meeting_notes`) decidiam se uma reunião
+// "pertence" à organização da chave só verificando se o DONO é (ou foi,
+// mesmo arquivado) membro dessa organização — nunca se a reunião nasceu lá.
+// A `reuniaoS3antes` é real (criada ali acima pela chave da A, com C como
+// anfitriã) — um 404 para a chave da B é mesmo "não é tua", não "não
+// existe". `chaveB` é a chave `dlx_` da B criada para o teste de destruição
+// cross-tenant, acima.
+if (reuniaoS3antes?.id) {
+  const m = reuniaoS3antes.id
+  const chaveApiB = chaveB.json?.key
+  await recusado('a chave da B lê a reunião da A', `/api/v1/meetings/${m}`, { token: chaveApiB })
+  await recusado('a chave da B lê a ata/transcrição da reunião da A', `/api/v1/meetings/${m}/minutes`, { token: chaveApiB })
+  await recusado('a chave da B altera a reunião da A', `/api/v1/meetings/${m}`, {
+    token: chaveApiB, method: 'PATCH', body: { title: 'sequestrada pela B' },
+  })
+  await recusado('a chave da B toca na reunião da A', `/api/v1/meetings/${m}/ring`, {
+    token: chaveApiB, method: 'POST',
+  })
+  const listaB = await req('/api/v1/meetings', { token: chaveApiB })
+  const apareceu = Array.isArray(listaB.json?.meetings) && listaB.json.meetings.some((x) => x.id === m)
+  if (listaB.status === 200 && !apareceu) ok('a listagem da B não traz a reunião da A')
+  else nok('a listagem da B não traz a reunião da A', `devolveu ${listaB.status}: ${JSON.stringify(listaB.json).slice(0, 160)}`)
+  // E o recurso da A tem de sobreviver aos pedidos recusados da B — o
+  // DELETE por último, para não destruir o fixture a meio dos casos acima.
+  await recusado('a chave da B apaga a reunião da A', `/api/v1/meetings/${m}`, {
+    token: chaveApiB, method: 'DELETE',
+  })
+  const aindaLa = await req(`/api/v1/meetings/${m}`, { token: chaveApiA.json?.key })
+  if (aindaLa.status === 200) ok('a reunião da A continua lá depois dos pedidos da B')
+  else nok('a reunião da A continua lá depois dos pedidos da B', `devolveu ${aindaLa.status}`)
+} else {
+  nok('fixture da reunião da A para o T1', 'a criação de controlo acima não devolveu id')
+}
 
 console.log('\n--- «Ligar a…» a partir da sala da A (dial-outs) ---')
 // Fazer tocar um ramal custa atenção e, na F2, dinheiro: quem não gere a sala
