@@ -1077,6 +1077,41 @@ pub async fn v1_provision_org(
             _ => None,
         };
 
+    // C2 (revisão de segurança, 2026-10-09): PROVISIONING_SECRET é um segredo
+    // ÚNICO para toda a plataforma, mas é o que o módulo Odoo de CADA cliente
+    // usa para chegar aqui -- por desenho, está em todos os Odoo clientes ao
+    // mesmo tempo. Sem esta guarda, quem o tivesse (de instalar o módulo numa
+    // base de testes, por exemplo) conseguia REPROVISIONAR a organização de
+    // OUTRO cliente só por acertar `(odoo_db, odoo_company_id)` -- muitas
+    // vezes previsível -- e ficava com uma chave `dlx_` nova de escopo
+    // completo para ela, trocava-lhe a config SSO (login como qualquer
+    // membro) e reescrevia o `email_domain`. Criar uma org nova continua a
+    // bastar o segredo de plataforma (é o único credential que uma empresa
+    // nova pode ter); REPROVISIONAR uma que já existe passa a exigir a
+    // própria chave `dlx_` dessa organização -- só quem já a controla pode
+    // emitir uma chave nova ou tocar na config SSO dela. Perder essa chave É
+    // um motivo para falar com um administrador, não para o segredo global a
+    // substituir sozinho.
+    if let Some((org_id, _)) = &existing_org {
+        let caller_key = lookup_key(&state, &headers).await?.0;
+        let authorised = caller_key.is_some_and(|k| k.org_id == *org_id);
+        if !authorised {
+            tracing::warn!(
+                %org_id, odoo_db = ?req.odoo_db, odoo_company_id = ?req.odoo_company_id,
+                "reprovisionamento recusado: sem a chave de API da organização"
+            );
+            return Err(
+                delonix_meet_core::DomainError::forbidden("provisioning.reauth_required")
+                    .with_message(
+                        "Esta organização já existe. Reprovisionar exige a chave de API dela \
+                 (Authorization: Bearer dlx_...), não só o segredo de plataforma -- \
+                 fala com um administrador do Delonix Meet se a perdeste.",
+                    )
+                    .into(),
+            );
+        }
+    }
+
     // Org com slug único (sufixo em colisão). SEM a quota anti-abuso de
     // create_org: aqui a autorização é o segredo de plataforma, não um user.
     let base = crate::org::slugify(name);

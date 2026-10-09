@@ -782,9 +782,35 @@ async fn admin_orgs_provisioning_with_secret(db: sqlx::PgPool) {
     assert_eq!(org["email_domain"], "gama.test");
     assert_eq!(org["members"], 1, "o utilizador de serviço");
 
-    // Mesma empresa Odoo (db + company_id): mesma org, chave NOVA.
-    let r = post(secret, body).await;
-    assert_eq!(r.status, 200);
+    // Mesma empresa Odoo (db + company_id), só o segredo de plataforma:
+    // RECUSADO (C1/C2, revisão de 2026-10-09). O segredo é o mesmo em todos
+    // os Odoo clientes -- sem isto, quem o tivesse reprovisionava a org de
+    // QUALQUER OUTRO cliente só por acertar (odoo_db, odoo_company_id), e
+    // saía com uma chave de escopo completo para ela.
+    let r = post(secret, body.clone()).await;
+    assert_eq!(r.status, 403, "{}", r.text);
+    let n0: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM org_api_keys WHERE org_id = $1::uuid")
+        .bind(p["org_id"].as_str().unwrap())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n0, 1, "nenhuma chave nova foi emitida sem autorização");
+
+    // A MESMA chamada, mas com a própria chave da org (quem já a controla):
+    // mesma org, chave NOVA -- o caminho legítimo de reprovisionar/rodar a
+    // chave continua a funcionar.
+    let r = app
+        .raw(
+            reqwest::Method::POST,
+            "/api/operator/v1/organizations",
+            &[
+                ("X-Provisioning-Secret", secret),
+                ("Authorization", &format!("Bearer {key}")),
+            ],
+            Some(body),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
     let p2 = r.json();
     assert_eq!(p2["org_id"], p["org_id"]);
     assert_ne!(p2["api_key"], p["api_key"]);
