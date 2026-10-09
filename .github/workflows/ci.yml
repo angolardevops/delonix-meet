@@ -146,6 +146,33 @@ jobs:
       - name: Build de produção
         run: npm run build
 
+  web_admin:
+    name: Backoffice (web-admin)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web-admin/package-lock.json
+
+      - run: npm ci
+
+      - name: Tipos (tsc --noEmit)
+        run: node_modules/.bin/tsc --noEmit
+
+      - name: Testes (vitest)
+        run: node_modules/.bin/vitest run
+
+      # Sem e2e ainda (R-nada registado): é a primeira versão do backoffice,
+      # só tsc + vitest + build, como o resto desta fase documenta no PR.
+      - name: Build de produção
+        run: npm run build
+
   fitness:
     name: Fitness functions (arquitectura + higiene)
     runs-on: ubuntu-latest
