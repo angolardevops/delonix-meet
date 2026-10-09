@@ -32,6 +32,9 @@ export function useRemoteControl(core: RoomCore) {
           setStatus(t('room.estado.controloRecusado'))
         }
       }),
+    // `t` e `setStatus` fora de propósito: o mesmo motivo do useLocalMedia —
+    // reregistar handlers do WebSocket por causa de uma troca de língua perde
+    // eventos. O `core.peersRef` é um ref, estável.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [signal],
   )

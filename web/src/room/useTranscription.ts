@@ -130,6 +130,11 @@ export function useTranscription(core: RoomCore) {
       }),
     ]
     return () => offs.forEach((off) => off())
+    // Só `signal`, como no useLocalMedia. O `stamp` é recriado a cada render
+    // (fecha sobre o `locale`), e incluí-lo remontava as subscrições sempre.
+    // CUSTO ASSUMIDO: depois de trocar de língua, as horas das linhas já
+    // recebidas ficam no formato antigo até à próxima ligação. Trocámos isso
+    // por não perder legendas no intervalo de um reregisto.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal])
 
