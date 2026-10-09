@@ -34,6 +34,14 @@ spec:
       containers:
         - name: postgres
           image: postgres:17-alpine
+          # O pod já corre non-root (uid 999), e por isso largar as capacidades
+          # é seguro: medido com o motor, `postgres:17-alpine` arranca com uid
+          # 999 e com `--cap-drop ALL` («database system is ready to accept
+          # connections»). Como ROOT com as capacidades largadas NÃO arranca —
+          # o entrypoint faz chown e perde o CAP_CHOWN.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
           args: ["-c", "max_connections=200"]
           env:
             - { name: POSTGRES_DB, value: delonix_meet }
@@ -77,6 +85,11 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
+          # Mesma razão do Postgres acima: uid 999 + `drop: ALL` medido a
+          # arrancar («Ready to accept connections tcp»).
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
           args: ["--appendonly", "yes"]
           ports: [{ name: redis, containerPort: 6379 }]
           readinessProbe:

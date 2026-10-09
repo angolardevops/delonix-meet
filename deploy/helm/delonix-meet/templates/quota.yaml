@@ -1,0 +1,83 @@
+{{- /*
+  ResourceQuota e LimitRange do namespace.
+
+  PORQUE EXISTEM (tabela de convergência de 2026-10-08): o ADR-0021 pôs a
+  produção num cluster PARTILHADO (`ngolacloud-meet` no `delonix-lda`). Sem
+  quota, um pico do Meet — e o HPA leva o servidor a 8 réplicas — come o CPU e a
+  memória que são dos vizinhos. É o único item da tabela em que o dano NÃO é
+  nosso: é de terceiros que não pediram nada.
+
+  LIGADA EM PRODUÇÃO, não por omissão: os números abaixo saem da escala que o
+  `values-production.yaml` declara, e num laboratório de um nó (ou num cluster
+  dedicado) seriam um tecto inventado. Quem instala noutro sítio põe
+  `quota.enabled: true` com os SEUS números.
+
+  A CONTA — medida no render de produção com voz, não estimada à mão (a
+  estimativa à mão ficou 10% curta por esquecer o perfil de voz e o Job de
+  migração):
+
+    limites somados, com o HPA no máximo (8 réplicas do servidor):
+                                                  24,35 CPU   19,81 Gi   15 pods
+    o rollout acrescenta:  server maxSurge 1       + 2 CPU     + 2 Gi     +1 pod
+                           web maxSurge 25% de 3   + 0,25 CPU  + 0,25 Gi  +1 pod
+                           (coturn, voz e dados são `Recreate`: não somam)
+    pico real com rollout:                         26,60 CPU   22,06 Gi   17 pods
+
+  A quota leva ~20% de folga sobre o PICO COM ROLLOUT: 32 CPU, 27Gi, 40 pods.
+  Dimensionar sobre o pico sem rollout rebenta o primeiro deploy, que é o
+  momento exacto em que se descobre o erro.
+
+  `requests` somados no mesmo pico: 5,8 CPU, 5,6 Gi — a quota de 8/8Gi é o que
+  reservamos ao scheduler do cluster partilhado.
+
+  QUEM MUDAR RÉPLICAS OU LIMITES REFAZ ESTA CONTA. Não é um pedido: o
+  `check-helm.sh` recalcula-a a partir do render e FALHA se a quota não cobrir
+  o pico com rollout.
+*/ -}}
+{{- $v := .Values }}
+{{- if $v.quota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: delonix-meet-quota
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: {{ $v.quota.requests.cpu | quote }}
+    requests.memory: {{ $v.quota.requests.memory | quote }}
+    limits.cpu: {{ $v.quota.limits.cpu | quote }}
+    limits.memory: {{ $v.quota.limits.memory | quote }}
+    # Tecto de objectos: um ciclo de reconciliação em fuga cria pods sem fim, e
+    # o CPU não é o primeiro a acabar — é a quota de pods do nó.
+    pods: {{ $v.quota.maxPods | quote }}
+    persistentvolumeclaims: {{ $v.quota.maxPvcs | quote }}
+    services.loadbalancers: {{ $v.quota.maxLoadBalancers | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: delonix-meet-limits
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  limits:
+    # Os pods DESTE chart já declaram requests/limits — o `check-helm.sh`
+    # recusa um contentor sem eles. O `default`/`defaultRequest` é para o que
+    # mais aterra no namespace e o chart não controla: um pod de depuração, um
+    # Job avulso, um chart vizinho. Sem isto, um pod sem `resources` não
+    # consome quota de `requests` nenhuma e o scheduler coloca-o em qualquer
+    # nó — fica invisível à contabilidade.
+    - type: Container
+      default:
+        cpu: {{ $v.quota.container.defaultLimit.cpu | quote }}
+        memory: {{ $v.quota.container.defaultLimit.memory | quote }}
+      defaultRequest:
+        cpu: {{ $v.quota.container.defaultRequest.cpu | quote }}
+        memory: {{ $v.quota.container.defaultRequest.memory | quote }}
+      # O máximo por contentor é uma barra, não uma reserva: impede que um
+      # `values` com um zero a mais esgote a quota num pod só.
+      max:
+        cpu: {{ $v.quota.container.max.cpu | quote }}
+        memory: {{ $v.quota.container.max.memory | quote }}
+{{- end }}

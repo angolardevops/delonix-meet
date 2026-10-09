@@ -38,9 +38,42 @@ spec:
     metadata:
       labels: { app: delonix-postgres }
     spec:
+      # Endurecimento MEDIDO, não copiado. As imagens oficiais do Postgres e do
+      # Redis arrancam como root e trocam de utilizador no entrypoint, e por
+      # isso `drop: ["ALL"]` sozinho QUEBRA-AS — medido com o motor
+      # (`delonix container run --cap-drop ALL`):
+      #
+      #   postgres:16-alpine, root, drop ALL   → chown: /var/lib/postgresql/data/pgdata: Operation not permitted
+      #   postgres:16-alpine, uid 70:70, idem  → database system is ready to accept connections
+      #   redis:7-alpine, root, drop ALL       → chown: .: Operation not permitted
+      #   redis:7-alpine, uid 999:1000, idem   → Ready to accept connections tcp
+      #
+      # Ou seja: largar capacidades só funciona se o pod JÁ correr com o uid
+      # final — é o que está aqui. Os uids vêm do /etc/passwd das imagens
+      # (postgres 70:70, redis 999:1000), não de um palpite.
+      #
+      # O rootfs só de leitura também foi medido, com os caminhos de escrita
+      # montados à parte: o Postgres precisa de /tmp e /var/run/postgresql (o
+      # PGDATA vem do PVC), o Redis de /data (onde o `--save` escreve o RDB).
+      #
+      # NÃO MEDIDO: o `fsGroup` sobre o PVC. A prova acima correu com tmpfs,
+      # porque não havia cluster de pé. Num volume que chegue com outro dono, o
+      # `fsGroup: 70` é o que o torna escrivível — se o initdb se queixar de
+      # permissões no primeiro arranque, é aqui que se olha.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: postgres
           image: postgres:16-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
           envFrom:
             - configMapRef: { name: delonix-config }
           env:
@@ -52,6 +85,11 @@ spec:
             - { containerPort: 5432, name: postgres }
           volumeMounts:
             - { name: data, mountPath: /var/lib/postgresql/data }
+            # Com o rootfs só de leitura, o que o Postgres escreve fora do
+            # PGDATA tem de ter volume próprio (medido: sem estes dois ele não
+            # arranca).
+            - { name: tmp, mountPath: /tmp }
+            - { name: run, mountPath: /var/run/postgresql }
           readinessProbe:
             exec: { command: ["pg_isready", "-U", "delonix", "-d", "delonix_meet"] }
             initialDelaySeconds: 5
@@ -59,6 +97,9 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: "2", memory: 1Gi }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: run, emptyDir: {} }
   volumeClaimTemplates:
     - metadata: { name: data }
       spec:
@@ -89,9 +130,20 @@ spec:
     metadata:
       labels: { app: delonix-redis }
     spec:
+      # Os mesmos uids medidos, e a mesma razão — ver o comentário no Postgres
+      # acima. O Redis é 999:1000 no /etc/passwd da imagem.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: redis
           image: redis:7-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
           # Sem password: o REDIS_URL da config não a leva, e o Redis só é
           # alcançável dentro do cluster (Service ClusterIP, sem ingress).
           args: ["--save", "60", "1", "--appendonly", "no"]
@@ -104,3 +156,10 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { cpu: "1", memory: 512Mi }
+          # Onde o `--save 60 1` escreve o RDB. Com o rootfs só de leitura é
+          # obrigatório, e é `emptyDir` de propósito: estes dados são do
+          # laboratório e perdem-se com o pod, como já se perdiam.
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - { name: data, emptyDir: {} }
