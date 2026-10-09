@@ -107,8 +107,12 @@ Além do `lab`, o servidor fala com o **delonix-push** (serviço da N'GolaCloud,
 {PUSH_DELONIX_URL}/v1/messages` com a chave `PUSH_DELONIX_KEY`. O token do aparelho é o `device_id` que o serviço
 devolveu; o serviço decide se entrega por ligação própria, FCM ou APNs. O pedido leva `priority:high`, TTL de 60 s,
 `collapse_key` e `idempotency_key` por chamada, e só o número curto de quem liga (testado: o utilizador SIP não vai).
-Medido contra um serviço de papel (13 testes de `voice_push_wake`); **falta**: o registo do aparelho no delonix-push
-(hoje a app teria de receber `device_id`+segredo do Meet, que ainda não os cunha) e uma prova com o serviço real.
+**Registo:** com o serviço configurado, um `PUT …/devices/{id}` NOVO com `provider:"delonix"` faz o Meet cunhar o
+aparelho no delonix-push (`POST /v1/devices`) e devolver `delonix_push:{url, device_id, device_secret}` **uma só vez**
+(o token enviado pela app é ignorado; uma renovação não volta a cunhar nem a mostrar o segredo). Desligar o aparelho
+no Meet revoga-o também no serviço (melhor esforço). Se o serviço não responde, 422 `devices.push_unavailable`.
+Medido contra um serviço de papel (13 testes de `voice_push_wake`); **falta** uma prova com o delonix-push real
+ligado ao Meet, e revogar no serviço quando é a *sessão* que termina (hoje só o desligar explícito).
 
 ## O que isto NÃO prova
 

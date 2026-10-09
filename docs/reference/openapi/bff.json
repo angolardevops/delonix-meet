@@ -2473,6 +2473,28 @@
         ],
         "type": "object"
       },
+      "DelonixPushGrant": {
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "device_secret": {
+            "description": "Credencial do aparelho para `GET {url}/v1/connect`. Não volta a ser mostrada.",
+            "type": "string"
+          },
+          "url": {
+            "description": "URL base do serviço delonix-push.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "device_id",
+          "device_secret"
+        ],
+        "type": "object"
+      },
       "Department": {
         "properties": {
           "created_at": {
@@ -2563,6 +2585,29 @@
           "app_version"
         ],
         "type": "object"
+      },
+      "DeviceCreated": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DeviceInfo"
+          },
+          {
+            "properties": {
+              "delonix_push": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DelonixPushGrant"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "A resposta a um aparelho NOVO. Com o fornecedor `delonix` e o serviço configurado, traz o que a app precisa\npara se ligar ao delonix-push; **o segredo só aparece aqui, uma vez**."
       },
       "DeviceInfo": {
         "properties": {
@@ -8126,7 +8171,7 @@
             "type": "string"
           },
           "push_token": {
-            "description": "O token que o fornecedor deu à app. Guarda-se cifrado e não volta em nenhuma resposta.",
+            "description": "O token que o fornecedor deu à app. Guarda-se cifrado e não volta em nenhuma resposta. Com o fornecedor\n`delonix` e o serviço configurado, o servidor cunha o aparelho no delonix-push e **ignora** este valor.",
             "type": "string"
           }
         },
@@ -22193,11 +22238,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeviceInfo"
+                  "$ref": "#/components/schemas/DeviceCreated"
                 }
               }
             },
-            "description": "Aparelho criado."
+            "description": "Aparelho criado (com `delonix_push` se o fornecedor é `delonix`)."
           },
           "400": {
             "content": {

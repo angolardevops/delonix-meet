@@ -55,6 +55,24 @@ pub struct DeviceInfo {
     pub last_seen_at: DateTime<Utc>,
 }
 
+/// A resposta a um aparelho NOVO. Com o fornecedor `delonix` e o serviço configurado, traz o que a app precisa
+/// para se ligar ao delonix-push; **o segredo só aparece aqui, uma vez**.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeviceCreated {
+    #[serde(flatten)]
+    pub device: DeviceInfo,
+    pub delonix_push: Option<DelonixPushGrant>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DelonixPushGrant {
+    /// URL base do serviço delonix-push.
+    pub url: String,
+    pub device_id: Uuid,
+    /// Credencial do aparelho para `GET {url}/v1/connect`. Não volta a ser mostrada.
+    pub device_secret: String,
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct PutDeviceReq {
     /// `android` ou `ios`.
@@ -63,7 +81,8 @@ pub struct PutDeviceReq {
     /// `fcm` (Android), `apns_voip` (iOS), `delonix` (o serviço delonix-push, ambos) ou `lab` (só laboratório).
     #[schema(example = "fcm")]
     pub provider: String,
-    /// O token que o fornecedor deu à app. Guarda-se cifrado e não volta em nenhuma resposta.
+    /// O token que o fornecedor deu à app. Guarda-se cifrado e não volta em nenhuma resposta. Com o fornecedor
+    /// `delonix` e o serviço configurado, o servidor cunha o aparelho no delonix-push e **ignora** este valor.
     pub push_token: String,
     /// Versão da app, só para diagnóstico.
     #[serde(default)]
@@ -143,7 +162,7 @@ fn validate(req: &PutDeviceReq) -> Result<(rules::Platform, rules::Provider), Ap
     ),
     request_body = PutDeviceReq,
     responses(
-        (status = 201, body = DeviceInfo, description = "Aparelho criado."),
+        (status = 201, body = DeviceCreated, description = "Aparelho criado (com `delonix_push` se o fornecedor é `delonix`)."),
         (status = 200, body = DeviceInfo, description = "Aparelho já existia: token renovado."),
         (status = 400, body = crate::openapi::ErrorBody, description = "`devices.platform_invalid`, `devices.provider_invalid`, `devices.provider_platform_mismatch`, `devices.token_invalid` ou `devices.app_version_invalid`."),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -173,6 +192,22 @@ pub async fn put_my_device(
         )
     })?;
     let (platform, provider) = validate(&req)?;
+    // Fornecedor `delonix` com o serviço configurado: um aparelho NOVO é cunhado lá e o token passa a ser o
+    // `device_id` dele. Uma renovação não volta a cunhar (o segredo já está com a app).
+    let mut grant: Option<DelonixPushGrant> = None;
+    let mut req = req;
+    if provider == rules::Provider::Delonix && delonix_configured(&state) {
+        let known: Option<String> =
+            sqlx::query_scalar("SELECT provider FROM voice_devices WHERE id = $1")
+                .bind(device_id)
+                .fetch_optional(&state.db)
+                .await?;
+        if known.is_none() {
+            let g = mint_delonix(&state, platform.as_str()).await?;
+            req.push_token = g.device_id.to_string();
+            grant = Some(g);
+        }
+    }
     let sealed = crate::secrets_at_rest::seal(
         &state.config,
         &req.push_token,
@@ -252,7 +287,9 @@ pub async fn put_my_device(
     } else {
         sqlx::query_as(
             "UPDATE voice_devices
-                SET platform = $2, provider = $3, push_token = $4, push_token_hash = $5,
+                SET platform = $2, provider = $3,
+                    push_token = CASE WHEN $3 = 'delonix' AND provider = 'delonix' AND $8 THEN push_token ELSE $4 END,
+                    push_token_hash = CASE WHEN $3 = 'delonix' AND provider = 'delonix' AND $8 THEN push_token_hash ELSE $5 END,
                     app_version = $6, session_id = $7, last_seen_at = now()
               WHERE id = $1
               RETURNING id, platform, provider, app_version, created_at, last_seen_at",
@@ -264,6 +301,7 @@ pub async fn put_my_device(
         .bind(&token_hash)
         .bind(&req.app_version)
         .bind(session_id)
+        .bind(delonix_configured(&state))
         .fetch_one(&mut *tx)
         .await?
     };
@@ -277,7 +315,14 @@ pub async fn put_my_device(
             platform.as_str(),
         )
         .await;
-        let mut resp = (StatusCode::CREATED, Json(info)).into_response();
+        let mut resp = (
+            StatusCode::CREATED,
+            Json(DeviceCreated {
+                device: info,
+                delonix_push: grant,
+            }),
+        )
+            .into_response();
         resp.headers_mut().insert(
             header::LOCATION,
             HeaderValue::from_str(&format!(
@@ -289,6 +334,85 @@ pub async fn put_my_device(
     } else {
         Ok(Json(info).into_response())
     }
+}
+
+fn delonix_configured(state: &AppState) -> bool {
+    state.config.push_delonix_url.is_some() && state.config.push_delonix_key.is_some()
+}
+
+/// Cria o aparelho no delonix-push (`POST /v1/devices`) com a chave do projecto.
+async fn mint_delonix(state: &AppState, platform: &str) -> Result<DelonixPushGrant, ApiError> {
+    #[derive(Deserialize)]
+    struct Minted {
+        device_id: Uuid,
+        device_secret: String,
+    }
+    let unavailable = || {
+        DomainError::precondition(
+            "devices.push_unavailable",
+            "o serviço de push não respondeu: tente de novo daqui a pouco",
+        )
+    };
+    let (Some(base), Some(key)) = (
+        state.config.push_delonix_url.as_deref(),
+        state.config.push_delonix_key.as_deref(),
+    ) else {
+        return Err(unavailable().into());
+    };
+    let base = base.trim_end_matches('/');
+    let url = state
+        .outbound
+        .check_operator_url(&format!("{base}/v1/devices"))
+        .await
+        .map_err(|_| unavailable())?;
+    let r = state
+        .outbound
+        .operator()
+        .post(url)
+        .bearer_auth(key)
+        .json(&serde_json::json!({ "platform": platform }))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|_| unavailable())?;
+    if !r.status().is_success() {
+        tracing::warn!(status = %r.status(), "delonix-push recusou cunhar o aparelho");
+        return Err(unavailable().into());
+    }
+    let m: Minted = r.json().await.map_err(|_| unavailable())?;
+    Ok(DelonixPushGrant {
+        url: base.to_string(),
+        device_id: m.device_id,
+        device_secret: m.device_secret,
+    })
+}
+
+/// Revoga o aparelho no delonix-push (melhor esforço: o Meet já deixou de o acordar).
+async fn revoke_delonix(state: &AppState, push_device: Uuid) {
+    let (Some(base), Some(key)) = (
+        state.config.push_delonix_url.as_deref(),
+        state.config.push_delonix_key.as_deref(),
+    ) else {
+        return;
+    };
+    let Ok(url) = state
+        .outbound
+        .check_operator_url(&format!(
+            "{}/v1/devices/{push_device}",
+            base.trim_end_matches('/')
+        ))
+        .await
+    else {
+        return;
+    };
+    let _ = state
+        .outbound
+        .operator()
+        .delete(url)
+        .bearer_auth(key)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
 }
 
 /// Os aparelhos activos do SEU ramal (no máximo oito: não há paginação). Nunca devolve o token.
@@ -426,6 +550,15 @@ async fn revoke(
     device_id: Uuid,
     actor: Uuid,
 ) -> Result<StatusCode, ApiError> {
+    let sealed: Option<(String, String)> = sqlx::query_as(
+        "SELECT provider, push_token FROM voice_devices
+          WHERE id = $1 AND org_id = $2 AND extension_id = $3 AND revoked_at IS NULL",
+    )
+    .bind(device_id)
+    .bind(org_id)
+    .bind(extension_id)
+    .fetch_optional(&state.db)
+    .await?;
     let n = sqlx::query(
         "UPDATE voice_devices SET revoked_at = now()
           WHERE id = $1 AND org_id = $2 AND extension_id = $3 AND revoked_at IS NULL",
@@ -438,6 +571,19 @@ async fn revoke(
     .rows_affected();
     if n == 0 {
         return Err(ApiError::NotFound);
+    }
+    if let Some((provider, token)) = sealed {
+        if provider == "delonix" {
+            if let Ok(open) = crate::secrets_at_rest::open(
+                &state.config,
+                &token,
+                &format!("voice_devices.push_token:{device_id}"),
+            ) {
+                if let Ok(push_id) = open.parse::<Uuid>() {
+                    revoke_delonix(state, push_id).await;
+                }
+            }
+        }
     }
     crate::audit::log(
         &state.db,

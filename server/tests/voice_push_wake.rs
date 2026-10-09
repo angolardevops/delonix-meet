@@ -672,7 +672,11 @@ async fn um_chamador_que_nao_e_ramal_desta_organizacao_vai_sem_nome(db: sqlx::Pg
     }
 }
 
-/// O serviço `delonix-push` de papel: guarda a chave com que o chamaram e o corpo.
+/// O `device_id` que o delonix-push de papel devolve ao cunhar um aparelho.
+const ID_CUNHADO: &str = "0a0a0a0a-1111-2222-3333-444444444444";
+
+/// O serviço `delonix-push` de papel: guarda a chave com que o chamaram e o corpo. Também cunha
+/// aparelhos (`POST /v1/devices`) e regista as revogações (`DELETE`, com o caminho em `vistos`).
 async fn delonix_push_de_papel(status: u16) -> (String, Arc<Mutex<Vec<(String, Value)>>>) {
     type Vistos = Arc<Mutex<Vec<(String, Value)>>>;
     let vistos: Vistos = Arc::default();
@@ -694,7 +698,29 @@ async fn delonix_push_de_papel(status: u16) -> (String, Arc<Mutex<Vec<(String, V
                     },
                 ),
             )
-            .with_state(vistos.clone());
+            .route(
+            "/v1/devices",
+            post(
+                |State(v): State<Vistos>, h: axum::http::HeaderMap, Json(b): Json<Value>| async move {
+                    let auth = h.get("authorization").and_then(|x| x.to_str().ok()).unwrap_or("").to_string();
+                    v.lock().unwrap().push((format!("POST /v1/devices {auth}"), b));
+                    (
+                        axum::http::StatusCode::CREATED,
+                        Json(json!({"device_id": ID_CUNHADO, "device_secret": "dpd_segredo-do-aparelho"})),
+                    )
+                },
+            ),
+        )
+        .route(
+            "/v1/devices/{id}",
+            axum::routing::delete(
+                |State(v): State<Vistos>, axum::extract::Path(id): axum::extract::Path<String>| async move {
+                    v.lock().unwrap().push((format!("DELETE /v1/devices/{id}"), Value::Null));
+                    axum::http::StatusCode::NO_CONTENT
+                },
+            ),
+        )
+        .with_state(vistos.clone());
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = l.local_addr().unwrap().port();
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
@@ -722,14 +748,33 @@ async fn o_fornecedor_delonix_acorda_pelo_delonix_push_sem_o_utilizador_sip(db: 
     let sip = ramal["sip_username"].as_str().unwrap().to_string();
     let sip_bruno = ramal_bruno["sip_username"].as_str().unwrap().to_string();
     let dom = dominio(&app, &slug_de(&app, a.org()).await);
-    let id_push = novo_id(); // o device_id que o delonix-push devolveu
+    let meu_id = novo_id();
+    // A app manda um token de enchimento: o servidor cunha o aparelho no delonix-push e ignora-o.
+    let (st, resp) = registar(&app, &ana, &meu_id, corpo("delonix", "ios", "enchimento")).await;
     assert_eq!(
-        registar(&app, &ana, &novo_id(), corpo("delonix", "ios", &id_push))
-            .await
-            .0,
-        201,
-        "o fornecedor delonix serve iPhone e Android"
+        st, 201,
+        "o fornecedor delonix serve iPhone e Android: {resp}"
     );
+    assert_eq!(resp["delonix_push"]["device_id"], ID_CUNHADO);
+    assert_eq!(
+        resp["delonix_push"]["device_secret"],
+        "dpd_segredo-do-aparelho"
+    );
+    assert_eq!(resp["delonix_push"]["url"], url);
+    assert_eq!(
+        vistos.lock().unwrap()[0].0,
+        "POST /v1/devices Bearer dpk_chave-do-projecto"
+    );
+    assert_eq!(vistos.lock().unwrap()[0].1["platform"], "ios");
+    // Renovar não volta a cunhar nem a mostrar o segredo.
+    let (st, resp) = registar(&app, &ana, &meu_id, corpo("delonix", "ios", "enchimento")).await;
+    assert_eq!(st, 200, "{resp}");
+    assert!(
+        resp.get("delonix_push").is_none() && !resp.to_string().contains("dpd_"),
+        "{resp}"
+    );
+    assert_eq!(vistos.lock().unwrap().len(), 1, "cunhou outra vez");
+    let id_push = ID_CUNHADO.to_string();
 
     let (_, r) = acordar_de(
         &app,
@@ -740,21 +785,36 @@ async fn o_fornecedor_delonix_acorda_pelo_delonix_push_sem_o_utilizador_sip(db: 
     )
     .await;
     assert_eq!(r, json!({"awaiting": true, "devices": 1}));
-    let v = vistos.lock().unwrap();
-    assert_eq!(v.len(), 1, "{v:?}");
-    assert_eq!(v[0].0, "Bearer dpk_chave-do-projecto");
-    assert_eq!(v[0].1["device_id"], id_push);
-    assert_eq!(v[0].1["priority"], "high");
-    assert_eq!(v[0].1["payload"]["caller"], "1011");
-    assert_eq!(v[0].1["payload"]["kind"], "incoming_call");
-    assert_eq!(
-        v[0].1["idempotency_key"],
-        "wake:22222222-aaaa-bbbb-cccc-000000000001"
-    );
+    {
+        let v = vistos.lock().unwrap();
+        assert_eq!(v.len(), 2, "{v:?}"); // a cunhagem e a mensagem
+        assert_eq!(v[1].0, "Bearer dpk_chave-do-projecto");
+        assert_eq!(v[1].1["device_id"], id_push);
+        assert_eq!(v[1].1["priority"], "high");
+        assert_eq!(v[1].1["payload"]["caller"], "1011");
+        assert_eq!(v[1].1["payload"]["kind"], "incoming_call");
+        assert_eq!(
+            v[1].1["idempotency_key"],
+            "wake:22222222-aaaa-bbbb-cccc-000000000001"
+        );
+        assert!(
+            !v[1].1.to_string().contains(&sip_bruno),
+            "o utilizador SIP do chamador foi para o delonix-push: {}",
+            v[1].1
+        );
+    }
+    // Desligar o aparelho no Meet revoga-o também no delonix-push.
+    let (st, _) = app
+        .delete(&caminho_aparelho(&ana, &meu_id), Some(&ana.token))
+        .await;
+    assert_eq!(st, 204);
     assert!(
-        !v[0].1.to_string().contains(&sip_bruno),
-        "o utilizador SIP do chamador foi para o delonix-push: {}",
-        v[0].1
+        vistos
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(k, _)| k == &format!("DELETE /v1/devices/{ID_CUNHADO}")),
+        "o aparelho ficou vivo no delonix-push"
     );
 }
 
