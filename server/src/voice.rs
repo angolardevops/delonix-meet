@@ -1566,7 +1566,20 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                                 seat.weak_link = weak;
                             });
                         }
-                        BridgeEvent::Ended { leg_id, room_id } => st.hub.leave(*room_id, *leg_id),
+                        BridgeEvent::Ended { leg_id, room_id } => {
+                            // Mesmo sinal do `drop(ws)` em `signaling.rs`: se
+                            // esta perna de telefone era a última na sala,
+                            // `meeting.ended`/o reenfileiramento da acta têm
+                            // de disparar aqui também — uma reunião só com
+                            // telefones nunca passa por `handle_socket`.
+                            if st.hub.leave(*room_id, *leg_id) {
+                                let st = st.clone();
+                                let room_id = *room_id;
+                                tokio::spawn(async move {
+                                    crate::meetings::on_room_emptied(st, room_id).await;
+                                });
+                            }
+                        }
                         // A ponte recusou a perna: o bilhete que ela trazia
                         // não entrou em sala nenhuma e deixa de valer.
                         BridgeEvent::Refused { caller_ticket } => {

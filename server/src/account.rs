@@ -207,12 +207,23 @@ pub(crate) async fn build_profile(state: &AppState, user_id: Uuid) -> Result<Pro
 
 /// Uma conta é gerida por um Odoo activo? (a mesma leitura que o perfil mostra)
 pub(crate) async fn is_odoo_managed(state: &AppState, user_id: Uuid) -> Result<bool, ApiError> {
+    is_odoo_managed_with(&state.db, user_id).await
+}
+
+/// A MESMA regra contra qualquer executor — serve a pool e serve uma
+/// transacção já aberta. Existe porque pedir uma 2ª ligação à pool com uma
+/// transacção de pé a esgota (a reposição de password reconfere o Odoo com a
+/// transacção aberta); a regra fica num só sítio e não se copia.
+pub(crate) async fn is_odoo_managed_with<'e, E>(db: E, user_id: Uuid) -> Result<bool, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     Ok(sqlx::query_scalar(
         "SELECT (u.odoo_managed AND u.odoo_org_id IS NOT NULL AND COALESCE(o.odoo_enabled, FALSE))
            FROM users u LEFT JOIN organizations o ON o.id = u.odoo_org_id WHERE u.id = $1",
     )
     .bind(user_id)
-    .fetch_optional(&state.db)
+    .fetch_optional(db)
     .await?
     .unwrap_or(false))
 }

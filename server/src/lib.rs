@@ -97,10 +97,18 @@ mod voice_devices;
 mod webhooks;
 mod whiteboards;
 
+/// A volta da fila do resumo da acta, exposta aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use ai::mom_summary_due;
 /// A fila das exportações e a sua reivindicação, expostas aos testes de
 /// integração sem abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
 pub use data_exports::run_queue as data_export_run_queue;
 pub use dial_outs::caller_of_call as dial_outs_caller_of_call;
+/// A varredura de lugares expirados (R91) e o aviso de sala vazia que ela
+/// dispara — exposta pelo mesmo motivo: `TestApp` não arranca o cron de
+/// `run()`, e esperar por um temporizador real tornaria os testes lentos e
+/// pouco deterministas.
+pub use meetings::sweep_expired_seats;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
@@ -944,6 +952,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(directory::resend_invitation),
         )
         // O token é a credencial: rate-limit por IP como no login.
+        // Reposição de password: o administrador emite (autenticado,
+        // `admin.manage_accounts` e sem escalada), a pessoa usa SEM sessão —
+        // está fora da conta. A pública leva o mesmo limite por IP do
+        // `/api/invitations/accept`, pela mesma razão: é uma credencial.
+        .route(
+            "/api/orgs/{org_id}/users/{user_id}/password-reset",
+            post(directory::issue_password_reset),
+        )
+        .route(
+            "/api/password-resets/accept",
+            post(directory::accept_password_reset).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
         .route(
             "/api/invitations/accept",
             post(directory::accept_invitation).layer(middleware::from_fn_with_state(
@@ -1834,7 +1857,10 @@ pub async fn run() {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 ticker.tick().await;
-                let n = state.hub.expire_disconnected(janela);
+                // Também avisa `meetings::on_room_emptied` para cada sala que
+                // isto deixou vazia — sinal fiável de "a reunião acabou",
+                // independente de topologia/SFU.
+                let n = crate::meetings::sweep_expired_seats(&state, janela).await;
                 if n > 0 {
                     state
                         .metrics
