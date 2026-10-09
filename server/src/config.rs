@@ -208,6 +208,29 @@ pub struct Config {
     /// media; sem relay-only o ICE liga por um par que passa o check mas fica
     /// preto. `FORCE_TURN_RELAY=1` exige coturn alcançável. Off em local.
     pub force_turn_relay: bool,
+    /// Relay de correio do operador (`SMTP_HOST`). Vazio => **o correio fica
+    /// desligado** e quem enfileira recebe-o dito, em vez de enfileirar
+    /// mensagens que ninguém envia. O D7 (2026-10-09, ADR-0025) escolheu o
+    /// relay primeiro: não há SMTP por organização, e por isso também não há
+    /// host escolhido pelo inquilino — o `net_guard` só guarda URLs HTTP e não
+    /// cobre uma ligação SMTP.
+    pub smtp_host: Option<String>,
+    /// Porta do relay (`SMTP_PORT`, 587, 1..=65535). 587 = submissão com
+    /// STARTTLS, que é o que o `smtp_starttls` assume.
+    pub smtp_port: u16,
+    /// Conta no relay (`SMTP_USERNAME`). Vazio => entrega sem autenticação,
+    /// que só faz sentido num relay da rede interna.
+    pub smtp_username: Option<String>,
+    /// Password no relay (`SMTP_PASSWORD`). Nunca aparece em log nem em
+    /// resposta de API.
+    pub smtp_password: Option<String>,
+    /// Remetente (`SMTP_FROM`), p.ex. `Delonix Meet <nao-responda@exemplo.ao>`.
+    /// Sem ele o correio fica desligado: uma mensagem sem remetente é recusada
+    /// por qualquer relay sério.
+    pub smtp_from: Option<String>,
+    /// `SMTP_STARTTLS=0` desliga o STARTTLS (1 por omissão). Só para um relay
+    /// em `localhost`: sem isto a password da conta viaja em claro.
+    pub smtp_starttls: bool,
     /// URL do Ollama in-cluster (LLM local — soberania: o texto nunca sai do
     /// datacenter). Vazio => IA desligada, fail-open: o MoM fica por regras
     /// (cliente) e a tradução de legendas não aparece.
@@ -695,6 +718,12 @@ impl Config {
                 65_535,
             ) as u16,
             force_turn_relay: src.var("FORCE_TURN_RELAY").ok().as_deref() == Some("1"),
+            smtp_host: opt("SMTP_HOST"),
+            smtp_port: bounded_env(src, "SMTP_PORT", 587, 1, 65_535) as u16,
+            smtp_username: opt("SMTP_USERNAME"),
+            smtp_password: opt("SMTP_PASSWORD"),
+            smtp_from: opt("SMTP_FROM"),
+            smtp_starttls: src.var("SMTP_STARTTLS").ok().as_deref() != Some("0"),
             ollama_url: src.var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
             ollama_model_translate: src
                 .var("OLLAMA_MODEL_TRANSLATE")

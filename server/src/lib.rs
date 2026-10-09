@@ -26,6 +26,7 @@ mod extension_provisioning;
 mod fair_slots;
 pub mod grpc;
 mod guests;
+mod mail;
 mod media_probe;
 mod meetings;
 mod meetings_v1;
@@ -104,6 +105,14 @@ pub use ai::mom_summary_due;
 /// integração sem abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
 pub use data_exports::run_queue as data_export_run_queue;
 pub use dial_outs::caller_of_call as dial_outs_caller_of_call;
+/// A espinha do correio, exposta aos testes de integração (D7, ADR-0025): a
+/// caixa de saída e as duas filas provam-se contra Postgres real, com um relay
+/// que não existe de propósito — o comportamento da fila não depende de haver
+/// correio a sair no CI.
+pub use mail::{
+    enabled as mail_enabled, enqueue as mail_enqueue, send_due as mail_send_due,
+    sweep as mail_sweep, Outgoing as MailOutgoing, Purpose as MailPurpose,
+};
 /// A varredura de lugares expirados (R91) e o aviso de sala vazia que ela
 /// dispara — exposta pelo mesmo motivo: `TestApp` não arranca o cron de
 /// `run()`, e esperar por um temporizador real tornaria os testes lentos e
@@ -2184,6 +2193,28 @@ pub async fn run() {
                 let a = dial_outs::finish_stale_all(&db).await?;
                 let b = telephony_service::finish_stale_all(&db).await?;
                 Ok((a + b) as usize)
+            }
+        });
+    }
+
+    // Correio (D7, ADR-0025): a cada 15 s manda o que está na caixa de saída e
+    // repete o que falhou. No-op sem `SMTP_HOST`/`SMTP_FROM` — o relay é do
+    // operador e um servidor sem ele simplesmente não envia.
+    {
+        let s = state.clone();
+        filas.levanta("mail_send", Duration::from_secs(15), move || {
+            let s = s.clone();
+            async move { mail::send_due(&s).await }
+        });
+    }
+    // As abandonadas (um processo que morreu a meio de um envio) e a retenção.
+    {
+        let db = state.db.clone();
+        filas.levanta("mail_sweep", Duration::from_secs(120), move || {
+            let db = db.clone();
+            async move {
+                let (reagendadas, apagadas) = mail::sweep(&db).await?;
+                Ok((reagendadas + apagadas) as usize)
             }
         });
     }
