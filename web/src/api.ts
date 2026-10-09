@@ -669,12 +669,6 @@ export interface OrgSummary {
   max_meetings?: number | null
 }
 
-export interface OrgQuotas {
-  max_groups: number | null
-  max_rooms: number | null
-  max_meetings: number | null
-}
-
 export interface WhiteboardMeta {
   id: string
   title: string
@@ -754,15 +748,15 @@ export interface Webhook {
   active: boolean
 }
 
-export const updateOrgSettings = (
-  orgId: string,
-  domain: string,
-  retentionDays: number,
-  quotas?: Partial<OrgQuotas>,
-) =>
+// `max_groups`/`max_rooms`/`max_meetings`/`voice_media_backend`/
+// `voice_did_model` SAÍRAM deste pedido de propósito (não os acrescentes de
+// volta): são o plano que a PLATAFORMA vende, não política de tenant — ver
+// `OrgSettingsReq` em `server/src/org.rs`. `OrgSummary` continua a devolvê-los
+// para leitura (o cartão de definições mostra-os só como texto).
+export const updateOrgSettings = (orgId: string, domain: string, retentionDays: number) =>
   request(`/api/orgs/${orgId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ domain, retention_days: retentionDays, ...quotas }),
+    body: JSON.stringify({ domain, retention_days: retentionDays }),
   })
 
 /** Busca autenticada de um recurso binário → object URL (para <img>). */

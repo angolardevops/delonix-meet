@@ -207,7 +207,7 @@ export default {
     retencaoDica_other: '超过 {{count}} 天的录制内容将被删除。',
     retencaoInvalida: '请输入 0 至 3650 之间的整数。',
     quotas: '配额',
-    quotasDica: '留空表示不限。',
+    quotasDica: '平台的套餐。要更改请联系运营方。',
     quotaGrupos: '群组',
     quotaSalas: '实体会议室',
     quotaReunioes: '已预约会议',
