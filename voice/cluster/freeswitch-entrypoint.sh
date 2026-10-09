@@ -116,11 +116,16 @@ chmod 700 "$CDR_PENDENTES"
 # que toca num ramal. Segui-lo era ligar ao Contact que o outro lado escolhe,
 # sem passar pela guarda de saída (R213). Uma variável de canal que não exista
 # lê-se das globais (switch_channel.c).
+# DELONIX_PUSH_WAIT_SECS (S-02, ADR-0023): quantos segundos uma chamada espera que o aparelho do
+# destino acorde (push) e se registe. 0 (por omissão) desliga: a chamada falha logo, como antes.
+case ${DELONIX_PUSH_WAIT_SECS:-0} in ''|*[!0-9]*) echo "DELONIX_PUSH_WAIT_SECS não é um número de segundos" >&2; exit 1;; esac
+[ "${DELONIX_PUSH_WAIT_SECS:-0}" -le 60 ] || { echo "DELONIX_PUSH_WAIT_SECS acima de 60 s (uma chamada não espera mais)" >&2; exit 1; }
 cat >"$CONF/vars-meet.xml" <<XML
 <include>
   <X-PRE-PROCESS cmd="set" data="delonix_control_url=${DELONIX_CONTROL_URL}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_voice_secret=${VOICE_INTERNAL_SECRET}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_ramais_sip_port=${DELONIX_RAMAIS_SIP_PORT:-5070}"/>
+  <X-PRE-PROCESS cmd="set" data="delonix_push_wait_secs=${DELONIX_PUSH_WAIT_SECS:-0}"/>
   <X-PRE-PROCESS cmd="set" data="delonix_cdr_dir=${CDR_PENDENTES}"/>
   <X-PRE-PROCESS cmd="set" data="rtp_secure_media=mandatory"/>
   <X-PRE-PROCESS cmd="set" data="outbound_redirect_fatal=true"/>

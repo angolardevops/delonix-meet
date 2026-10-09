@@ -427,6 +427,14 @@ pub async fn create(
     )
     .await;
 
+    // Para acordar o aparelho antes de ligar (ADR-0023): o que `origin` vai consumir.
+    let acordar = (
+        state.clone(),
+        req.extension_id,
+        extension.clone(),
+        sip_username.clone(),
+        sip_domain.clone(),
+    );
     let origin = OriginateRequest {
         call_id,
         org_id,
@@ -476,6 +484,14 @@ pub async fn create(
         {
             return;
         }
+        // Um ramal móvel com a app morta não tem registo e o `originate` falharia já. Com `PUSH_WAIT_SECS` > 0
+        // acorda-se o aparelho e espera-se pelo registo; cancelado entretanto, nem se origina.
+        let (st, ext_id, numero, user, dominio) = acordar;
+        if st.config.push_wait_secs > 0
+            && !aguardar_aparelho(&st, org_id, ext_id, &numero, &user, &dominio, call_id, id).await
+        {
+            return;
+        }
         if let Err(e) = originator.originate(&origin, Arc::new(Sink(tx))).await {
             // O ESL em baixo, a ponte inacessível: a pessoa nunca fica «a tocar».
             tracing::warn!(dial_out = %id, "originate falhou: {e}");
@@ -492,6 +508,60 @@ pub async fn create(
 
     let view = one(&state, room.id, id).await?;
     Ok((StatusCode::ACCEPTED, Json(view)))
+}
+
+/// Chamada a um ramal sem registo (ADR-0023): acorda os aparelhos (push) e espera pelo REGISTO, até
+/// `PUSH_WAIT_SECS`. Devolve `false` se o pedido foi cancelado entretanto (então não se origina). Em qualquer
+/// dúvida — sem Event Socket, o ramal já está registado, ninguém a acordar, o limite por minuto — devolve
+/// `true` e a chamada segue como sempre; se o aparelho não acordar a tempo, o `originate` falha como antes.
+#[allow(clippy::too_many_arguments)]
+async fn aguardar_aparelho(
+    state: &Arc<AppState>,
+    org_id: Uuid,
+    extension_id: Uuid,
+    number: &str,
+    sip_username: &str,
+    domain: &str,
+    call_id: Uuid,
+    id: Uuid,
+) -> bool {
+    use crate::voice_devices as aparelhos;
+    // Só o «não registado» CERTO acorda: «não sei» (sem ESL, erro) é o comportamento de antes.
+    if aparelhos::ramal_registado(state, sip_username, domain).await != Some(false) {
+        return true;
+    }
+    match aparelhos::acordar_ramal(
+        state,
+        org_id,
+        extension_id,
+        number,
+        &call_id.to_string(),
+        "",
+    )
+    .await
+    {
+        Ok(w) if w.awaiting => {}
+        _ => return true,
+    }
+    let fim = std::time::Instant::now()
+        + std::time::Duration::from_secs(u64::from(state.config.push_wait_secs));
+    while std::time::Instant::now() < fim {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let vivo: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM room_dial_outs WHERE id = $1 AND status = 'dialing')",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(true);
+        if !vivo {
+            return false;
+        }
+        if aparelhos::ramal_registado(state, sip_username, domain).await == Some(true) {
+            return true;
+        }
+    }
+    true
 }
 
 async fn one(state: &AppState, room_id: Uuid, id: Uuid) -> Result<DialOutView, ApiError> {

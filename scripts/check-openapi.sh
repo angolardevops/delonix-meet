@@ -61,6 +61,9 @@ EXCLUIDAS = {'/ws', '/rtc', '/api/rooms/{room_code}/live', '/health', '/ready', 
              # Callbacks `mod_xml_curl` do FreeSWITCH (ramais): máquina-a-máquina, por
              # segredo partilhado, respondem XML — o contrato é o do FreeSWITCH.
              '/internal/v1/voice/ivr/directory', '/internal/v1/voice/ivr/dialplan-did', '/internal/v1/voice/ivr/resolve-extension',
+             # O *wake* por push (ADR-0023, S-01): o FreeSWITCH pergunta se há aparelhos a acordar. Contrato com o
+             # `ramais_dial.lua`, no listener interno, como o resto da máquina do IVR.
+             '/internal/v1/voice/push/wake',
              # Telefonia máquina-a-máquina: o contrato é o do FreeSWITCH
              # (mod_json_cdr, mod_xml_curl), escrito no ADR-0009.
              '/internal/v1/telephony/call-records', '/internal/v1/telephony/freeswitch-config',

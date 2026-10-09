@@ -93,6 +93,7 @@ mod usage;
 mod users;
 mod voice;
 mod voice_caller;
+mod voice_devices;
 mod webhooks;
 mod whiteboards;
 
@@ -115,6 +116,8 @@ pub use recording_chapters::auto_chapters_sweep;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
+/// O varredor que revoga no delonix-push os aparelhos de sessões terminadas, exposto aos testes (ADR-0023).
+pub use voice_devices::reconcile_delonix;
 /// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
 pub use webhooks::retry_due as webhook_retry_due;
 /// O registo transaccional das entregas e o tipo do evento, expostos aos testes
@@ -311,6 +314,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
         .route(
             "/internal/v1/voice/ivr/dialplan-did",
             post(ramais::ivr_dialplan_did),
+        )
+        // O FreeSWITCH pergunta se há aparelhos a acordar para um ramal sem registo, e o ramal só toca
+        // depois de se registar (`ramais_dial.lua`, S-02; ADR-0023).
+        .route(
+            "/internal/v1/voice/push/wake",
+            post(voice_devices::ivr_push_wake),
         )
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
         // `mod_xml_curl`. Mesmo segredo interno do IVR.
@@ -1187,6 +1196,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/my-extension/provisioning-ticket",
             post(extension_provisioning::issue_my_ticket),
         )
+        // Os aparelhos do ramal e o *wake* por push (ADR-0023, S-01): a pessoa regista e desliga os SEUS;
+        // o administrador lista e desliga os de qualquer ramal da organização.
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices",
+            get(voice_devices::list_my_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices/{device_id}",
+            axum::routing::put(voice_devices::put_my_device).delete(voice_devices::delete_my_device),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices",
+            get(voice_devices::list_extension_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices/{device_id}",
+            axum::routing::delete(voice_devices::delete_extension_device),
+        )
         .route(
             "/api/orgs/{org_id}/extensions/{id}/provisioning-ticket",
             post(extension_provisioning::issue_extension_ticket),
@@ -1854,6 +1881,23 @@ pub async fn run() {
         Duration::from_secs(300),
         quarantine_stop.clone(),
     ));
+
+    // Cron: aparelhos de push (delonix-push) cuja sessão terminou ou expirou deixam de se poder ligar ao serviço
+    // (ADR-0023). Sem o serviço configurado não faz nada.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match voice_devices::reconcile_delonix(&state).await {
+                    0 => {}
+                    n => tracing::info!(revogados = n, "aparelhos revogados no delonix-push"),
+                }
+            }
+        });
+    }
 
     // Cron: retenção de gravações (DLP-lite) a cada hora — apaga as que
     // passaram do prazo configurado por organização.

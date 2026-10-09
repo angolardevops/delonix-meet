@@ -600,6 +600,27 @@ impl FreeswitchSipControl {
 
 #[async_trait]
 impl SipControl for FreeswitchSipControl {
+    async fn extension_registered(
+        &self,
+        sip_username: &str,
+        domain: &str,
+    ) -> Result<bool, PortError> {
+        let cfg = self
+            .esl
+            .as_ref()
+            .ok_or_else(|| PortError::NotConfigured("sem TELEPHONY_ESL_ADDR".into()))?;
+        // Só caracteres que o utilizador SIP e o domínio podem ter: nada que feche o comando.
+        let user = safe(sip_username, b"_-.")?;
+        let dom = safe(domain, b"_-.")?;
+        let mut c = EslConn::connect(cfg).await?;
+        // `*/` procura em todos os perfis: os ramais registam-se no `internal`, não no perfil dos troncos.
+        let r = c
+            .api(&format!("sofia_contact */{user}@{dom}"), COMMAND_TIMEOUT)
+            .await?;
+        let r = r.trim();
+        Ok(!r.is_empty() && !r.starts_with("error/") && !r.starts_with("-ERR"))
+    }
+
     async fn snapshot(&self, gateway_names: &[String]) -> Result<SipSnapshot, PortError> {
         if self.esl.is_none() && self.kamailio.is_none() {
             return Err(PortError::NotConfigured(
