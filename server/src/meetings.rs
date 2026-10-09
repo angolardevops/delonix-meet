@@ -821,22 +821,24 @@ pub(crate) fn monta_meeting_webhook(
         .map(|c| format!("{base}/#/r/{c}"))
         .unwrap_or_default();
     let when = meeting.starts_at.format("%Y-%m-%d %H:%M UTC");
-    let verb = if event == "meeting.started" {
-        "começou"
+    let sufixo = if link.is_empty() {
+        String::new()
     } else {
-        "agendada"
+        format!(" · {link}")
     };
-    let text = format!(
-        "Reunião «{}» {} para {}{}",
-        meeting.title,
-        verb,
-        when,
-        if link.is_empty() {
-            String::new()
+    // `meeting.ended` não fala do `starts_at` (não é «termina PARA»,
+    // é um facto já consumado) — os outros dois continuam com a frase
+    // original.
+    let text = if event == "meeting.ended" {
+        format!("Reunião «{}» terminou{sufixo}", meeting.title)
+    } else {
+        let verb = if event == "meeting.started" {
+            "começou"
         } else {
-            format!(" · {link}")
-        }
-    );
+            "agendada"
+        };
+        format!("Reunião «{}» {verb} para {when}{sufixo}", meeting.title)
+    };
     let payload = serde_json::json!({
         "meeting_id": meeting.id,
         "title": meeting.title,
@@ -880,6 +882,126 @@ pub(crate) async fn enqueue_meeting_webhook(
         );
     }
     Ok(fila)
+}
+
+/// Tempo de graça entre a sala ficar vazia e considerarmos a acta por IA
+/// encalhada. Dá tempo ao fluxo normal — o `PUT .../minutes` do cliente
+/// (que já chama `ai::enqueue_mom_summary`) mais a fila `mom_summary_due`
+/// (`ai.rs`, até três tentativas com 2 e 10 minutos de intervalo) — de
+/// terminar sozinho antes de reenfileirarmos por cima.
+const GRACA_REENFILEIRAMENTO_MOM_MIN: i64 = 15;
+
+/// Chamado por `signaling.rs` quando a última pessoa sai de uma sala SFU.
+/// Dispara `meeting.ended` e reenfileira defensivamente o resumo da acta —
+/// SÓ quando a sala tem mesmo uma reunião associada: uma sala ad-hoc ou
+/// pessoal não tem `room_code` em nenhuma linha de `meetings`, e não produz
+/// nada aqui. As duas metades são independentes — uma falhar não impede a
+/// outra — e ambas best-effort, como o resto dos webhooks.
+pub(crate) async fn on_room_emptied(state: Arc<AppState>, room_id: Uuid) {
+    let code: Option<(String,)> = sqlx::query_as("SELECT code FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some((code,)) = code else { return };
+
+    let meeting: Option<Meeting> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE room_code = $1"
+    ))
+    .bind(&code)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(meeting) = meeting else { return };
+
+    fire_meeting_ended(&state, &meeting).await;
+    reenfileira_mom_se_encalhada(&state, meeting.id).await;
+}
+
+/// Regista e envia o `meeting.ended`. Sem escrita de negócio para emparelhar
+/// (ao contrário de `start`, que grava o `room_code` na mesma transacção), por
+/// isso regista directamente numa ligação adquirida — o mesmo padrão de
+/// `broadcast::fire_stream_event` para um evento disparado fora do pedido
+/// HTTP que o originou.
+async fn fire_meeting_ended(state: &Arc<AppState>, meeting: &Meeting) {
+    let Some(dono) = dono_do_evento(state, meeting.owner_id).await else {
+        return;
+    };
+    let ctx = monta_meeting_webhook(dono, meeting, "meeting.ended");
+    let mut conn = match state.db.acquire().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(meeting_id = %meeting.id, error = %e, "meeting.ended: sem ligação à base");
+            return;
+        }
+    };
+    let fila = match enqueue_meeting_webhook(&mut conn, ctx, "meeting.ended").await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(meeting_id = %meeting.id, error = %e, "meeting.ended: registo da entrega falhou");
+            return;
+        }
+    };
+    drop(conn);
+    crate::webhooks::envia(state, "meeting.ended", fila).await;
+}
+
+/// Estado mínimo de `meetings` para decidir se a acta por IA encalhou.
+#[derive(sqlx::FromRow)]
+struct EstadoMom {
+    transcript: String,
+    minutes: String,
+    minutes_ai_at: Option<DateTime<Utc>>,
+    mom_queued_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+/// Reenfileira o resumo da acta quando os dados chegaram (transcrição ou ata
+/// não vazias) mas `minutes_ai_at` continua por preencher passado o tempo de
+/// graça — o caso mais comum de falha silenciosa (o processamento nunca
+/// correu, ou correu e esgotou as tentativas). NÃO cobre o caso em que
+/// ninguém gravou nada: essa falha fica para uma fase futura.
+async fn reenfileira_mom_se_encalhada(state: &Arc<AppState>, meeting_id: Uuid) {
+    let estado: Option<EstadoMom> = sqlx::query_as(
+        "SELECT transcript, minutes, minutes_ai_at, mom_queued_at, created_at
+           FROM meetings WHERE id = $1",
+    )
+    .bind(meeting_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(estado) = estado else { return };
+
+    if estado.minutes_ai_at.is_some() {
+        return; // já tem ata final — nada a fazer
+    }
+    let ha_dados = !estado.transcript.trim().is_empty() || !estado.minutes.trim().is_empty();
+    if !ha_dados {
+        return; // ninguém gravou nada — fora do âmbito (ver doc acima)
+    }
+    // Referência: o último pedido explícito (`mom_queued_at`), ou o
+    // nascimento da reunião se nunca chegou a ser pedido.
+    let referencia = estado.mom_queued_at.unwrap_or(estado.created_at);
+    if Utc::now() - referencia < ChronoDuration::minutes(GRACA_REENFILEIRAMENTO_MOM_MIN) {
+        return; // ainda dentro da janela normal (fila + retries)
+    }
+
+    let mut conn = match state.db.acquire().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(%meeting_id, error = %e, "reenfileiramento defensivo da acta: sem ligação");
+            return;
+        }
+    };
+    match crate::ai::enqueue_mom_summary(&mut conn, meeting_id).await {
+        Ok(()) => tracing::info!(%meeting_id, "acta encalhada — reenfileirada defensivamente"),
+        Err(e) => {
+            tracing::warn!(%meeting_id, error = %e, "reenfileiramento defensivo da acta falhou")
+        }
+    }
 }
 
 /// Só o dono ou um convidado pode arrancar/exportar a reunião. Antes desta
