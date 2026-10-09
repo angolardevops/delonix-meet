@@ -1,7 +1,7 @@
 //! Webhooks de saída por organização (Slack / Teams / Mattermost / genérico).
 //!
 //! Eventos disparados: ver `KNOWN_EVENTS` (`meeting.created`,
-//! `meeting.started`, `meeting.mom_ready`, `recording.ready`,
+//! `meeting.started`, `meeting.ended`, `meeting.mom_ready`, `recording.ready`,
 //! `stream.published`, `stream.ended`).
 //! Os alvos Slack/Mattermost recebem `{ "text": "..." }`; Teams recebe um
 //! MessageCard; o alvo `generic` recebe o JSON estruturado com a assinatura
@@ -65,6 +65,11 @@ type HmacSha256 = Hmac<Sha256>;
 pub const KNOWN_EVENTS: &[&str] = &[
     "meeting.created",
     "meeting.started",
+    // Fim de REUNIÃO (sala vazia, com reunião associada) — não confundir com
+    // `stream.ended`, que é de transmissão directa. É best-effort como os
+    // outros: dispara-se quando a última pessoa sai, e uma sala ad-hoc sem
+    // reunião formal nunca o produz (ver `meetings::on_room_emptied`).
+    "meeting.ended",
     "meeting.mom_ready",
     "recording.ready",
     // Directo (`broadcast.rs`): `published` quando o PRIMEIRO destino fica no

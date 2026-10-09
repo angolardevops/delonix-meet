@@ -12,6 +12,21 @@
         ],
         "type": "object"
       },
+      "AcceptPasswordResetReq": {
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "type": "object"
+      },
       "AcceptedInvitation": {
         "properties": {
           "access_expires_at": {
@@ -33,6 +48,20 @@
         "required": [
           "org_id",
           "role_id"
+        ],
+        "type": "object"
+      },
+      "AcceptedPasswordReset": {
+        "properties": {
+          "sessions_revoked": {
+            "description": "Sessões terminadas pela reposição. Todas: a pessoa entra de novo.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessions_revoked"
         ],
         "type": "object"
       },
@@ -4374,6 +4403,38 @@
           "username",
           "status",
           "decline_reason"
+        ],
+        "type": "object"
+      },
+      "IssuedPasswordReset": {
+        "properties": {
+          "delivery_channel": {
+            "description": "`manual`: quem emite entrega o token. Quando o correio existir\n(D7), passa a poder ser `email`.",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "token": {
+            "description": "Aparece **uma só vez**, nesta resposta. A base guarda só o hash.",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "expires_at",
+          "token",
+          "delivery_channel"
         ],
         "type": "object"
       },
@@ -29928,6 +29989,92 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/users/{user_id}/password-reset": {
+      "post": {
+        "operationId": "issue_password_reset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedPasswordReset"
+                }
+              }
+            },
+            "description": "O `token` vem preenchido UMA só vez."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sem `admin.manage_accounts`, fora do departamento, ou `authz.escalation`/`role.owner_assignment` (repor é tomar a conta)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a organização não existe, ou o alvo não é membro activo"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`account.managed_by_odoo`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Emite uma reposição de password para um membro da organização.",
+        "tags": [
+          "directory"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/voice/billing": {
       "get": {
         "operationId": "billing_summary",
@@ -31078,6 +31225,87 @@
         "summary": "Método personalizado: volta a enviar o MESMO payload ao URL ACTUAL do\nwebhook (guarda anti-SSRF reaplicada), numa entrega nova com\n`redelivery_of`. Responde `202` com a entrega nova em `pending`; o\nresultado lê-se no `Location`.",
         "tags": [
           "webhooks"
+        ]
+      }
+    },
+    "/api/password-resets/accept": {
+      "post": {
+        "operationId": "accept_password_reset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptPasswordResetReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedPasswordReset"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "password fora da política"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`password_reset.not_found` — token errado, já usado ou revogado"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`account.managed_by_odoo`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`password_reset.expired`"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "limite por IP"
+          }
+        },
+        "summary": "Usa uma reposição de password. **Pública**: quem a usa está fora da conta.",
+        "tags": [
+          "directory"
         ]
       }
     },

@@ -233,6 +233,12 @@ await recusado('A apaga um papel da org B', `/api/orgs/${B.orgId}/roles/${fantas
 await recusado('A duplica um papel da org B', `/api/orgs/${B.orgId}/roles/${fantasma}/duplicate`, {
   token: A.token, method: 'POST', body: {},
 })
+// Repor a password de alguém é TOMAR-LHE a conta: se isto não fosse recusado,
+// o isolamento entre organizações acabava aqui — nenhuma outra rota dá acesso
+// tão completo a uma conta alheia.
+await recusado('A repõe a password de um utilizador da org B', `/api/orgs/${B.orgId}/users/${B.userId}/password-reset`, {
+  token: A.token, method: 'POST',
+})
 await recusado('A atribui um papel a um membro da org B', `/api/orgs/${B.orgId}/members/${B.userId}/role`, {
   token: A.token, method: 'PUT', body: { role_id: fantasma },
 })

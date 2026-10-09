@@ -33,9 +33,12 @@ dns_proxied: "{{ cfg.dns.proxied | default(false) }}"
 
 # ---- IA local (Ollama: tradução de legendas + resumo MoM) ----
 ollama_enabled: "{{ cfg.kubernetes.ollama_enabled | default(cfg.ollama.enabled | default(true)) }}"
-ollama_gpu: "{{ cfg.kubernetes.ollama_gpu | default(cfg.ollama.gpu | default(false)) }}"
 ollama_model_translate: "{{ cfg.ollama.model_translate | default('qwen2.5:1.5b') }}"
 ollama_model_summary: "{{ cfg.ollama.model_summary | default('qwen2.5:7b') }}"
+# GPU do Ollama: já NÃO é uma variável Ansible (era `ollama_gpu`, um
+# `kubectl patch` imperativo pós-apply — removido, ver k8s_app/tasks/main.yml).
+# O caminho é o componente kustomize deploy/k8s-overlays/components/ollama-gpu
+# (ADR-0024), desligado por omissão até existir hardware de GPU.
 
 # ---- coturn / media ----
 turn_realm: "{{ cfg.turn.realm | default('') | ternary(cfg.turn.realm | default(''), (domain if domain else 'delonix.local')) }}"
