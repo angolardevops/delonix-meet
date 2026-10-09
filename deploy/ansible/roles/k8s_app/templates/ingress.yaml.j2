@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: delonix-ingress
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   annotations:
 {% if tls_effective_mode == 'letsencrypt' %}
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
@@ -28,7 +28,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: delonix-ws
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   annotations:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
