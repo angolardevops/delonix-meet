@@ -43,6 +43,10 @@ export function useMulticam(core: RoomCore) {
       ...core.peers.filter((p) => p.stream).map((p): Fonte => ({ id: p.peerId, nome: p.username, stream: p.stream })),
     ]
     compositorRef.current.definirParticipantes(fontes)
+    // `t` fora de propósito: este efeito não pode recriar o AudioContext (ver
+    // o comentário acima — emudeceria o directo), e com `t` nas dependências
+    // uma troca de língua fazia-o correr. CUSTO ASSUMIDO: o nome da fonte
+    // «quadro» fica na língua antiga até alguém entrar ou sair.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, core.peers, core.localStreamRef, boardStream])
 

@@ -114,6 +114,9 @@ export function usePip(core: RoomCore, pinnedId: string | null) {
     pipFonte.current = escolhido
     v.srcObject = stream
     void v.play().catch(() => {})
+    // As dependências são o ESTADO que decide a fonte do PiP. O `estado` e o
+    // `streamDe` são funções recriadas a cada render: incluí-las trocava a
+    // fonte do PiP em renders onde nada mudou, e cada troca pisca a imagem.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pipOn, peers, speaking, presentation, pinnedId])
 

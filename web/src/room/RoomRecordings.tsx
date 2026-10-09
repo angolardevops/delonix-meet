@@ -39,6 +39,9 @@ export function RoomRecordings({
     const ended = views.filter((v) => composing.current.has(v.id) && !v.processing)
     composing.current = new Set(views.filter((v) => v.processing).map((v) => v.id))
     if (ended.length > 0) setAnnouncement(ended.map((v) => `${v.name}: ${stateText({ kind: v.failed ? 'failed' : 'ready' })}`).join('. '))
+    // `recordings` é a entrada real; `views` e `stateText` são derivados a cada
+    // render, e pô-los aqui fazia o anúncio correr sempre — o leitor de ecrã
+    // repetiria a lista inteira em vez de dizer só o que acabou.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordings])
 

@@ -26,11 +26,16 @@ export default function TourOverlay() {
   const tour = useOnboardingTour()
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
 
+  // O `anchor` sai do `tour` ANTES do efeito: o corpo passa a depender de uma
+  // string e não do objecto inteiro, e as dependências deixam de mentir — sem
+  // `eslint-disable` nenhum. O `update` fecha sobre o `anchor` desta
+  // renderização, que é o que ele deve usar.
+  const anchor = tour.current.anchor
   useEffect(() => {
     if (!tour.open) return
-    const el = document.querySelector<HTMLElement>(`[data-tour="${tour.current.anchor}"]`)
+    const el = document.querySelector<HTMLElement>(`[data-tour="${anchor}"]`)
     el?.classList.add('dx-tour-target')
-    const update = () => setPos(place(tour.current.anchor))
+    const update = () => setPos(place(anchor))
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
@@ -39,7 +44,7 @@ export default function TourOverlay() {
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
     }
-  }, [tour.open, tour.current.anchor])
+  }, [tour.open, anchor])
 
   if (!tour.open) {
     if (!tour.resumable) return null

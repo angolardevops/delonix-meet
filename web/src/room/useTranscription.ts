@@ -179,6 +179,10 @@ export function useTranscription(core: RoomCore) {
       transcriberRef.current = null
       setInterim('')
     }
+    // As dependências são o que decide LIGAR ou DESLIGAR a transcrição. O `t`,
+    // os setters e o `stamp` são lidos quando o transcritor reporta; incluí-los
+    // reiniciava o transcritor a meio de uma frase, e o que estava a ser
+    // reconhecido perdia-se.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ccOn, transcribing, sttLang, core.roomState, serverAsr])
 
