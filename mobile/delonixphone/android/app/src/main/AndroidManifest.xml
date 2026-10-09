@@ -6,9 +6,12 @@
     <!-- Ler o QR de provisionamento; a câmara é opcional, há endereço colado e parâmetros manuais. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Chamada a entrar por push: notificação (Android 13+) e ecrã inteiro (Android 14+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <application
         android:label="delonixphone"
-        android:name="${applicationName}"
+        android:name=".App"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

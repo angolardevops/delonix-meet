@@ -2,6 +2,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // SDK do delonix-push (Apache-2.0), publicado com `./gradlew publishToMavenLocal` em delonix-push/sdk/android.
+        mavenLocal()
         // Linphone SDK (spike da Fase 0, ADR-0022): AGPLv3 ou licença comercial. Só entra em
         // builds de DEBUG (ver app/build.gradle.kts): nenhum binário de release leva código AGPL.
         maven {

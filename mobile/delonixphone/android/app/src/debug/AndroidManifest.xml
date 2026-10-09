@@ -3,5 +3,9 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- SÓ em debug: o teste Patrol fala em HTTP com o gatilho do anfitrião (10.0.2.2).
          O build de release continua sem tráfego em claro (RNF-20). -->
-    <application android:usesCleartextTraffic="true" />
+    <application android:usesCleartextTraffic="true">
+        <receiver android:name=".PushConfigReceiver" android:exported="true">
+            <intent-filter><action android:name="ao.ngolacloud.delonixphone.PUSH_CONFIGURAR" /></intent-filter>
+        </receiver>
+    </application>
 </manifest>

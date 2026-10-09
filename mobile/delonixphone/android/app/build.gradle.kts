@@ -55,6 +55,8 @@ flutter {
 }
 
 dependencies {
+    // Push próprio (delonix-push): ligação com ack num serviço em primeiro plano. Apache-2.0, vai também em release.
+    implementation("ao.ngolacloud.push:android:0.1.0-SNAPSHOT")
     androidTestUtil("androidx.test:orchestrator:1.5.1")
     // ADR-0022, spike da Fase 0: o liblinphone (variante só de voz) é AGPLv3 ou comercial. Só em
     // debug: um build de release/profile NÃO o leva (usa o stub de src/release e src/profile), por

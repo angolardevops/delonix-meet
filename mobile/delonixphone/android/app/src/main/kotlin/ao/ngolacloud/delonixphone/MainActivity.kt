@@ -8,6 +8,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import ao.ngolacloud.push.android.DelonixPush
 
 class MainActivity : FlutterActivity() {
     // Um pedido de permissão pendente por código: o resultado volta ao Dart que o pediu.
@@ -68,6 +69,24 @@ class MainActivity : FlutterActivity() {
                 }
             },
         )
+        // O push próprio: a app entrega o URL e o segredo que o Meet devolveu ao registar o aparelho.
+        MethodChannel(mensageiro, CANAL_PUSH).setMethodCallHandler { chamada, resultado ->
+            when (chamada.method) {
+                "configurar" -> {
+                    val url = chamada.argument<String>("url")
+                    val segredo = chamada.argument<String>("segredo")
+                    if (url.isNullOrBlank() || segredo.isNullOrBlank()) {
+                        resultado.error("argumentos", "url e segredo são obrigatórios", null)
+                    } else {
+                        DelonixPush.configure(this, url, segredo)
+                        DelonixPush.start(this)
+                        resultado.success(null)
+                    }
+                }
+                "parar" -> { DelonixPush.clear(this); resultado.success(null) }
+                else -> resultado.notImplemented()
+            }
+        }
         val motor = MotorFabrica.criar(this)
         MethodChannel(mensageiro, MotorSip.CANAL).setMethodCallHandler(motor)
         EventChannel(mensageiro, MotorSip.CANAL_EVENTOS).setStreamHandler(motor)
@@ -101,6 +120,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         const val CANAL_PERMISSOES = "ao.ngolacloud.delonixphone/permissoes"
+        const val CANAL_PUSH = "ao.ngolacloud.delonixphone/push"
         const val CANAL_INTENCAO = "ao.ngolacloud.delonixphone/intencao"
         const val CANAL_INTENCAO_EVENTOS = "ao.ngolacloud.delonixphone/intencao_eventos"
         private const val PEDIDO_TELEFONE = 4401
