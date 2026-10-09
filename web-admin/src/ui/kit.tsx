@@ -1,0 +1,553 @@
+/**
+ * Kit de componentes do Delonix Meet. Uma página compõe-se daqui: botão,
+ * campo, cartão, badge, tabela, diálogo. Variante nova = classe em
+ * `base.css` + propriedade aqui, nunca estilo escrito na página.
+ */
+import {
+  ButtonHTMLAttributes,
+  forwardRef,
+  InputHTMLAttributes,
+  type KeyboardEvent as EventoDeTeclaReact,
+  ReactNode,
+  SelectHTMLAttributes,
+  TextareaHTMLAttributes,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react'
+import { useTranslation } from 'react-i18next'
+import { Icon, IconName } from './icons'
+
+function cx(...parts: (string | false | null | undefined)[]) {
+  return parts.filter(Boolean).join(' ')
+}
+export { cx }
+
+type BtnVariant = 'primary' | 'secondary' | 'ghost' | 'outline' | 'danger' | 'live'
+
+export const Button = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & {
+    variant?: BtnVariant
+    size?: 'sm' | 'md' | 'lg'
+    block?: boolean
+    icon?: IconName
+    busy?: boolean
+  }
+>(function Button({ variant = 'secondary', size = 'md', block, icon, busy, className, children, type, disabled, ...rest }, ref) {
+  return (
+    <button
+      ref={ref}
+      type={type ?? 'button'}
+      className={cx('dx-btn', `dx-btn--${variant}`, size !== 'md' && `dx-btn--${size}`, block && 'dx-btn--block', className)}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      {...rest}
+    >
+      {busy ? <span className="dx-spinner" aria-hidden="true" /> : icon ? <Icon name={icon} /> : null}
+      {children}
+    </button>
+  )
+})
+
+export const IconButton = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { icon: IconName; label: string; bare?: boolean }
+>(function IconButton({ icon, label, bare, className, type, ...rest }, ref) {
+  return (
+    <button
+      ref={ref}
+      type={type ?? 'button'}
+      className={cx('dx-iconbtn', bare && 'dx-iconbtn--bare', className)}
+      aria-label={label}
+      title={label}
+      {...rest}
+    >
+      <Icon name={icon} />
+    </button>
+  )
+})
+
+export function Card({
+  title,
+  actions,
+  eyebrow,
+  children,
+  className,
+  bodyClass,
+  flush,
+  as: Tag = 'section',
+}: {
+  title?: ReactNode
+  actions?: ReactNode
+  eyebrow?: ReactNode
+  children?: ReactNode
+  className?: string
+  bodyClass?: string
+  flush?: boolean
+  as?: 'section' | 'div' | 'article'
+}) {
+  return (
+    <Tag className={cx('dx-card', flush && 'dx-card--flush', className)}>
+      {(title || actions) && (
+        <header className="dx-card__head">
+          {title && <h2 className="dx-card__title" style={{ margin: 0 }}>{title}</h2>}
+          {eyebrow && <span className="dx-muted dx-num" style={{ fontSize: 10.5 }}>{eyebrow}</span>}
+          <span className="dx-spacer" />
+          {actions}
+        </header>
+      )}
+      <div className={cx('dx-card__body', bodyClass)}>{children}</div>
+    </Tag>
+  )
+}
+
+export function SectionHead({ title, meta, action }: { title: ReactNode; meta?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="dx-section-head">
+      <h2>{title}</h2>
+      {meta}
+      <span className="dx-spacer" />
+      {action}
+    </div>
+  )
+}
+
+export function Tag({ tone, children, plain }: { tone?: 'live' | 'accent' | 'success'; children: ReactNode; plain?: boolean }) {
+  return <span className={cx('dx-tag', tone && `dx-tag--${tone}`, plain && 'dx-tag--plain')}>{children}</span>
+}
+
+export type BadgeTone = 'record' | 'live' | 'warning' | 'success' | 'neutral'
+
+/** Badge de estado: cor + forma (ponto, triângulo, ícone) + texto. */
+export function StatusBadge({ tone, children, icon }: { tone: BadgeTone; children: ReactNode; icon?: IconName }) {
+  const mark =
+    tone === 'live' ? (
+      <span className="dx-badge__tri" aria-hidden="true" />
+    ) : icon ? (
+      <Icon name={icon} size={11} />
+    ) : (
+      <span className="dx-badge__dot" aria-hidden="true" />
+    )
+  return (
+    <span className={cx('dx-badge', `dx-badge--${tone}`)}>
+      {mark}
+      {children}
+    </span>
+  )
+}
+
+export function Field({
+  label,
+  hint,
+  error,
+  aside,
+  children,
+  htmlFor,
+}: {
+  label: ReactNode
+  hint?: ReactNode
+  error?: ReactNode
+  aside?: ReactNode
+  children: ReactNode
+  htmlFor?: string
+}) {
+  return (
+    <div className="dx-field">
+      <label className="dx-field__label" htmlFor={htmlFor}>
+        <span>{label}</span>
+        {aside}
+      </label>
+      {children}
+      {error ? (
+        <span className="dx-field__error" role="alert">
+          {error}
+        </span>
+      ) : hint ? (
+        <span className="dx-field__hint">{hint}</span>
+      ) : null}
+    </div>
+  )
+}
+
+export const TextInput = forwardRef<
+  HTMLInputElement,
+  InputHTMLAttributes<HTMLInputElement> & { large?: boolean; code?: boolean }
+>(function TextInput({ large, code, className, ...rest }, ref) {
+  return <input ref={ref} className={cx('dx-input', large && 'dx-input--lg', code && 'dx-input--code', className)} {...rest} />
+})
+
+export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function TextArea(
+  { className, ...rest },
+  ref,
+) {
+  return <textarea ref={ref} className={cx('dx-textarea', className)} {...rest} />
+})
+
+export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select className={cx('dx-select', className)} {...rest}>
+      {children}
+    </select>
+  )
+}
+
+export function Checkbox({
+  label,
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & { label: ReactNode }) {
+  return (
+    <label className="dx-check">
+      <input type="checkbox" {...rest} />
+      <span>{label}</span>
+    </label>
+  )
+}
+
+export function Toggle({
+  label,
+  hint,
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & { label: ReactNode; hint?: ReactNode }) {
+  return (
+    <label className="dx-toggle">
+      <input type="checkbox" role="switch" {...rest} />
+      <span>
+        <span style={{ display: 'block', fontWeight: 600 }}>{label}</span>
+        {hint && <span className="dx-muted" style={{ fontSize: 10.5 }}>{hint}</span>}
+      </span>
+    </label>
+  )
+}
+
+export interface SegmentedOption<T extends string> {
+  value: T
+  label: ReactNode
+  /** Dica do rato e do leitor de ecrã — é aqui que vai a tecla do atalho. */
+  title?: string
+  disabled?: boolean
+}
+
+/**
+ * Grupo de segmentos — o selector de vistas da app. Um só botão carregado
+ * (`aria-pressed`), e as setas andam por ele: num grupo de botões o Tab passa
+ * ao seguinte da PÁGINA, e quem navega por teclado não tinha como percorrer as
+ * vistas sem sair do grupo.
+ *
+ * `dataKey` escreve `data-<chave>="<valor>"` em cada segmento: é por aí que o
+ * e2e agarra uma vista («data-studio-vista»), sem depender do rótulo, que muda
+ * com a língua.
+ */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+  className,
+  dataKey,
+}: {
+  value: T
+  options: SegmentedOption<T>[]
+  onChange: (v: T) => void
+  label: string
+  className?: string
+  dataKey?: string
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const idx = options.findIndex((o) => o.value === value)
+
+  /** O segmento activável a `delta` passos daqui, dando a volta e saltando os desactivados. */
+  function seguinte(delta: number): number | null {
+    const n = options.length
+    if (!n) return null
+    const base = idx < 0 ? 0 : idx
+    for (let k = 1; k <= n; k++) {
+      const j = (base + delta * k + n * n) % n
+      if (!options[j].disabled) return j
+    }
+    return null
+  }
+
+  function aoTeclar(e: EventoDeTeclaReact<HTMLDivElement>) {
+    const extremo = (de: number, passo: number) => {
+      for (let j = de; j >= 0 && j < options.length; j += passo) if (!options[j].disabled) return j
+      return null
+    }
+    const j =
+      e.key === 'ArrowRight' || e.key === 'ArrowDown'
+        ? seguinte(1)
+        : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+          ? seguinte(-1)
+          : e.key === 'Home'
+            ? extremo(0, 1)
+            : e.key === 'End'
+              ? extremo(options.length - 1, -1)
+              : null
+    if (j === null) return
+    e.preventDefault()
+    onChange(options[j].value)
+    ref.current?.querySelectorAll<HTMLButtonElement>('button')[j]?.focus()
+  }
+
+  return (
+    <div ref={ref} className={cx('dx-seg', className)} role="group" aria-label={label} onKeyDown={aoTeclar}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={o.value === value}
+          title={o.title}
+          disabled={o.disabled}
+          onClick={() => onChange(o.value)}
+          {...(dataKey ? { [`data-${dataKey}`]: o.value } : {})}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export function Tabs<T extends string>({
+  value,
+  tabs,
+  onChange,
+  label,
+}: {
+  value: T
+  tabs: { value: T; label: ReactNode; count?: number }[]
+  onChange: (v: T) => void
+  label: string
+}) {
+  return (
+    <div className="dx-tabs" role="tablist" aria-label={label}>
+      {tabs.map((tab) => (
+        <button
+          key={tab.value}
+          type="button"
+          role="tab"
+          aria-selected={tab.value === value}
+          onClick={() => onChange(tab.value)}
+        >
+          {tab.label}
+          {tab.count ? <span className="dx-count">{tab.count}</span> : null}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** Cor estável por nome — o mesmo participante tem sempre o mesmo tom. */
+const AVATAR_TONES = ['#9e2026', '#3c5a7a', '#7a4a68', '#3d6a5e', '#6b5a2e', '#47617d', '#3a6b73', '#6a3d3d', '#4f4a7a', '#5a6b3d']
+
+export function avatarTone(seed: string) {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  return AVATAR_TONES[h % AVATAR_TONES.length]
+}
+
+export function initials(name: string) {
+  const parts = name.trim().split(/[\s._@-]+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+export function Avatar({ name, size = 24 }: { name: string; size?: number }) {
+  return (
+    <span
+      className="dx-avatar"
+      style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.38)), background: avatarTone(name) }}
+      aria-hidden="true"
+    >
+      {initials(name)}
+    </span>
+  )
+}
+
+export function AvatarStack({ names, max = 3, size = 24 }: { names: string[]; max?: number; size?: number }) {
+  const shown = names.slice(0, max)
+  const extra = names.length - shown.length
+  return (
+    <span className="dx-avatars" title={names.join(', ')}>
+      {shown.map((n, i) => (
+        <Avatar key={n + i} name={n} size={size} />
+      ))}
+      {extra > 0 && (
+        <span className="dx-avatar dx-num" style={{ width: size, height: size, fontSize: 9, background: 'var(--border)', color: 'var(--muted)' }}>
+          +{extra}
+        </span>
+      )}
+    </span>
+  )
+}
+
+export function Meter({ value, tone }: { value: number; tone?: 'success' | 'live' }) {
+  const v = Math.max(0, Math.min(100, value))
+  return (
+    <div className={cx('dx-meter', tone && `dx-meter--${tone}`)} role="presentation">
+      <span style={{ width: `${v}%` }} />
+    </div>
+  )
+}
+
+export function Empty({ icon = 'info', title, children, action }: { icon?: IconName; title: ReactNode; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="dx-empty">
+      <Icon name={icon} />
+      <div className="dx-empty__title">{title}</div>
+      {children && <div style={{ maxWidth: 420 }}>{children}</div>}
+      {action}
+    </div>
+  )
+}
+
+export function Alert({ tone, children, icon }: { tone?: 'danger' | 'warning' | 'success'; children: ReactNode; icon?: IconName }) {
+  return (
+    <div className={cx('dx-alert', tone && `dx-alert--${tone}`)} role={tone === 'danger' ? 'alert' : 'status'}>
+      <Icon name={icon ?? (tone === 'success' ? 'check' : tone ? 'alert' : 'info')} />
+      <div style={{ minWidth: 0 }}>{children}</div>
+    </div>
+  )
+}
+
+export function Spinner({ label }: { label?: string }) {
+  return <span className="dx-spinner" role="status" aria-label={label} />
+}
+
+export function Skeleton({ h = 14, w = '100%' }: { h?: number; w?: number | string }) {
+  return <div className="dx-skeleton" style={{ height: h, width: w }} aria-hidden="true" />
+}
+
+/**
+ * Diálogo modal: foco preso ao abrir, Esc fecha, o foco volta a quem abriu.
+ */
+/**
+ * Confirmação de uma acção, sobre o [`Dialog`].
+ *
+ * PORQUE EXISTE: havia cinco `window.confirm(...)` no backoffice (um no
+ * `SmsGatewayCard`, quatro no `ExtensionsCard`). A MENSAGEM já era traduzida
+ * pelo `t(...)` — mas os botões **«OK» e «Cancel» são do browser**, em inglês,
+ * num produto com quatro línguas. E o `confirm` nativo não se estiliza, não se
+ * fecha com `Escape` do nosso lado, e bloqueia o fio do browser enquanto está
+ * aberto.
+ *
+ * NÃO FOI INVENTADO: é o padrão que o `telecom/TrunksCard` e o
+ * `admin/MemberDialogs` já faziam à mão — `Dialog` + `Alert` para o erro +
+ * dois `Button`, com o perigoso em `variant="danger"`. Aqui fica num sítio.
+ *
+ * O `onConfirm` pode ser assíncrono: o botão fica `busy` enquanto corre, e um
+ * erro aparece no `Alert` sem fechar o diálogo — quem está a apagar algo tem
+ * de ver porque não deu, em vez de o diálogo desaparecer em silêncio.
+ */
+export function Confirm({
+  title,
+  children,
+  onClose,
+  onConfirm,
+  confirmLabel,
+  tone = 'danger',
+  icon,
+  erroDe,
+}: {
+  title: ReactNode
+  children?: ReactNode
+  onClose: () => void
+  /** Corre ao confirmar. Se lançar, a mensagem fica no `Alert`. */
+  onConfirm: () => Promise<void> | void
+  /** Texto do botão que confirma. Por omissão, `ui.confirmar`. */
+  confirmLabel?: string
+  tone?: 'danger' | 'primary'
+  icon?: string
+  /** Traduz o erro apanhado. Sem isto usa-se a mensagem do `Error`. */
+  erroDe?: (e: unknown) => string
+}) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  async function confirmar() {
+    setBusy(true)
+    setErr('')
+    try {
+      await onConfirm()
+      onClose()
+    } catch (x) {
+      setErr(erroDe ? erroDe(x) : x instanceof Error ? x.message : String(x))
+      // Fica aberto de propósito: o erro é a informação.
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog title={title} onClose={onClose}>
+      {children}
+      {err && <Alert tone="danger">{err}</Alert>}
+      <div className="dx-dialog__foot">
+        <Button variant="secondary" onClick={onClose} disabled={busy} data-close>
+          {t('ui.cancelar')}
+        </Button>
+        <Button variant={tone} icon={icon} busy={busy} onClick={() => void confirmar()}>
+          {confirmLabel ?? t('ui.confirmar')}
+        </Button>
+      </div>
+    </Dialog>
+  )
+}
+
+export function Dialog({
+  title,
+  onClose,
+  children,
+  footer,
+  wide,
+}: {
+  title: ReactNode
+  onClose: () => void
+  children: ReactNode
+  footer?: ReactNode
+  wide?: boolean
+}) {
+  const { t } = useTranslation()
+  const ref = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  // O fecho vive numa ref: um `onClose` novo a cada render do pai não pode
+  // voltar a correr o efeito (roubava o foco ao campo onde se está a escrever).
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null
+    const el = ref.current
+    const first = el?.querySelector<HTMLElement>('input, select, textarea, button:not([data-close])')
+    ;(first ?? el)?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        closeRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      prev?.focus?.()
+    }
+  }, [])
+  return (
+    <div className="dx-dialog-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div
+        ref={ref}
+        className={cx('dx-dialog', wide && 'dx-dialog--wide')}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
+        <header className="dx-dialog__head">
+          <h2 id={titleId}>{title}</h2>
+          <IconButton icon="x" label={t('ui.fechar')} bare onClick={onClose} data-close />
+        </header>
+        <div className="dx-dialog__body">{children}</div>
+        {footer && <footer className="dx-dialog__foot">{footer}</footer>}
+      </div>
+    </div>
+  )
+}
