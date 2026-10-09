@@ -470,9 +470,9 @@ pub struct WakeReq {
 #[derive(Debug, Serialize)]
 pub struct WakeResp {
     /// O FreeSWITCH segura a chamada só se for `true`.
-    awaiting: bool,
+    pub(crate) awaiting: bool,
     /// Quantos aparelhos foram acordados (ou já o tinham sido por este `call_uuid`).
-    devices: i64,
+    pub(crate) devices: i64,
 }
 
 impl WakeResp {
@@ -544,6 +544,41 @@ pub async fn ivr_push_wake(
         return Ok(Json(WakeResp::NOBODY));
     }
 
+    let caller = caller_label(&state, org_id, &req.caller_sip_username).await?;
+    acordar_ramal(
+        &state,
+        org_id,
+        extension_id,
+        &number,
+        &req.call_uuid,
+        &caller,
+    )
+    .await
+    .map(Json)
+}
+
+/// O ramal tem registo no FreeSWITCH? `None` se não se consegue saber (sem Event Socket, ou um erro): quem
+/// chama trata isso como «não sei» e segue como se esta funcionalidade não existisse.
+pub(crate) async fn ramal_registado(
+    state: &AppState,
+    sip_username: &str,
+    domain: &str,
+) -> Option<bool> {
+    let sip = state.telephony.sip.as_ref()?;
+    sip.extension_registered(sip_username, domain).await.ok()
+}
+
+/// O núcleo do *wake*, partilhado pelo FreeSWITCH (`ivr_push_wake`) e pelas chamadas que o próprio servidor
+/// origina (ligar a partir da sala): limite por ramal e por minuto, aparelhos activos de sessões vivas, um push
+/// por (chamada, aparelho). `caller` já vem traduzido para o número curto (ver [`caller_label`]).
+pub(crate) async fn acordar_ramal(
+    state: &Arc<AppState>,
+    org_id: Uuid,
+    extension_id: Uuid,
+    number: &str,
+    call_uuid: &str,
+    caller: &str,
+) -> Result<WakeResp, ApiError> {
     // O limite por ramal e por minuto, e a limpeza do que já não serve.
     sqlx::query(
         "DELETE FROM voice_push_wakes WHERE created_at < now() - make_interval(hours => $1::int)",
@@ -557,12 +592,12 @@ pub async fn ivr_push_wake(
             AND call_uuid <> $2",
     )
     .bind(extension_id)
-    .bind(&req.call_uuid)
+    .bind(call_uuid)
     .fetch_one(&state.db)
     .await?;
     if recent >= rules::MAX_WAKES_PER_MINUTE {
         tracing::warn!(%extension_id, "wake recusado: limite por minuto do ramal");
-        return Ok(Json(WakeResp::NOBODY));
+        return Ok(WakeResp::NOBODY);
     }
 
     // Só aparelhos activos CUJA SESSÃO continua viva: terminar a sessão desliga o telemóvel.
@@ -578,7 +613,6 @@ pub async fn ivr_push_wake(
     .fetch_all(&state.db)
     .await?;
 
-    let caller = caller_label(&state, org_id, &req.caller_sip_username).await?;
     let mut tasks = Vec::new();
     let mut already = 0i64;
     for d in devices {
@@ -587,7 +621,7 @@ pub async fn ivr_push_wake(
             "INSERT INTO voice_push_wakes (call_uuid, device_id, extension_id)
              VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
         )
-        .bind(&req.call_uuid)
+        .bind(call_uuid)
         .bind(d.id)
         .bind(extension_id)
         .execute(&state.db)
@@ -599,8 +633,8 @@ pub async fn ivr_push_wake(
             continue;
         }
         let state = state.clone();
-        let call_uuid = req.call_uuid.clone();
-        let caller = caller.clone();
+        let call_uuid = call_uuid.to_string();
+        let caller = caller.to_string();
         tasks.push(async move { send(&state, &d, &call_uuid, &caller).await });
     }
     let outcomes = tokio::time::timeout(WAKE_BUDGET, futures_util::future::join_all(tasks))
@@ -632,14 +666,14 @@ pub async fn ivr_push_wake(
             Some(org_id),
             Uuid::nil(),
             "ramal.acordado_por_push",
-            &number,
+            number,
         )
         .await;
     }
-    Ok(Json(WakeResp {
+    Ok(WakeResp {
         awaiting: devices > 0,
         devices,
-    }))
+    })
 }
 
 /// O que o telemóvel mostra de quem liga: o NÚMERO CURTO do ramal chamador, procurado na organização do

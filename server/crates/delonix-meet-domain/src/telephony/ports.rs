@@ -97,6 +97,14 @@ pub trait SipControl: Send + Sync {
     /// Força um novo REGISTER dos gateways (FreeSWITCH `sofia profile … killgw`
     /// + `rescan`). Não espera pelo resultado: o estado lê-se no `snapshot`.
     async fn restart_registration(&self, gateway_names: &[String]) -> Result<(), PortError>;
+    /// O ramal `sip_username@domain` tem um registo vivo no media server? Serve a chamada que o servidor
+    /// origina para um ramal móvel (ADR-0023): se não está registado, acorda-se o aparelho e espera-se pelo
+    /// registo antes de ligar.
+    async fn extension_registered(
+        &self,
+        sip_username: &str,
+        domain: &str,
+    ) -> Result<bool, PortError>;
 }
 
 // ============================================================

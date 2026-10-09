@@ -106,9 +106,10 @@ desta organização), e há testes para os dois casos.
 - **Nenhum push real**: nem FCM, nem APNs. O fornecedor `lab` fala com um receptor de papel; o caminho FreeSWITCH →
   servidor real foi exercitado (secção acima), mas só com o `lab`.
 - **Que um telemóvel real acorda a tempo** (RNF-02: ≤ 4 a 5 s). Isso depende de FCM/APNs e do aparelho.
-- **Outras entradas para o mesmo ramal**: a espera está no `ramais_dial.lua` (chamadas entre ramais).
-  Uma chamada originada pelo servidor por ESL (ligar a partir da sala, ADR de F1) ou vinda do PSTN não passa
-  por aqui: o servidor tem de chamar o *wake* por si antes de originar. **Por desenhar.**
+- **Outras entradas para o mesmo ramal:** a espera do FreeSWITCH está no `ramais_dial.lua` (chamadas entre
+  ramais). As chamadas que o **servidor** origina por ESL (ligar a partir da sala) têm a sua espera no servidor
+  (`PUSH_WAIT_SECS`, `dial_outs.rs`): acorda os aparelhos e só origina depois de o ramal se registar (provado com
+  um ESL falso, 5 testes, e duas mutações apanhadas). **O PSTN para um ramal (DID) continua por tratar.**
 - **Credencial por aparelho (S-03):** ainda é uma só credencial por ramal; com dois telemóveis no mesmo
   ramal o primeiro a atender não cancela o outro (RF-35).
 - O Lua corre a cada chamada a consultar `sofia_contact` de 500 em 500 ms durante a espera: custo medido só

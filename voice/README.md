@@ -417,5 +417,5 @@ entre ramais espera que o aparelho do destino acorde por push e se registe. Com 
 está registado o `ramais_dial.lua` pede o *wake* ao servidor (`POST /internal/v1/voice/push/wake`) e, se este
 responder `awaiting:true`, segura a chamada a tocar ao chamador até ao registo ou ao limite
 (`NO_USER_RESPONSE`). Sem `awaiting:true` falha já, como antes. Prova: `scripts/ramais-push-espera-prova.py`.
-O endpoint e os fornecedores de push (S-01) **ainda não existem**: hoje só o lado do FreeSWITCH.
+O endpoint (`POST /internal/v1/voice/push/wake`), a tabela de aparelhos e o fornecedor `lab` existem (S-01); FCM e APNs não. As chamadas que o **servidor** origina (ligar a partir da sala) não passam por este Lua: têm o seu `PUSH_WAIT_SECS` no servidor (`docs/deployment.md`).
 
