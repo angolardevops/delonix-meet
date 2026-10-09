@@ -2,9 +2,10 @@
 # ============================================================
 #  A plataforma do cluster de produção do Meet (ADR-0020, fase 3).
 #
-#  Por esta ordem, e a ordem importa: o MinIO antes do Postgres (o backup do
-#  Postgres escreve lá), e o cert-manager antes do ingress ter certificados
-#  para pedir.
+#  Por esta ordem, e a ordem importa: as classes de prioridade primeiro (o chart
+#  do Meet refere-lhes os nomes, e um nome que não exista faz o API server
+#  recusar o pod), o MinIO antes do Postgres (o backup do Postgres escreve lá),
+#  e o cert-manager antes do ingress ter certificados para pedir.
 #
 #  Idempotente: `helm upgrade --install` e `kubectl apply`. Correr duas vezes
 #  não parte nada.
@@ -35,6 +36,14 @@ for s in meet-pg-credenciais meet-redis-credenciais meet-minio-credenciais; do
     || morre "falta o Secret $s em $NS — ver o README §Segredos. NÃO invento passwords."
 done
 ok "os três Secrets existem"
+
+# As classes de prioridade PRIMEIRO: são objectos de CLUSTER, não têm
+# dependência nenhuma, e o `values-production.yaml` do chart refere-lhes os
+# nomes — um `priorityClassName` que não exista faz o API server RECUSAR o pod.
+# Falhar aqui é barato; falhar no `helm upgrade` do Meet não.
+passo "classes de prioridade (meet-critico, meet-normal)"
+kubectl apply -f priorityclasses.yaml
+ok "classes de prioridade"
 
 passo "ingress-nginx"
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx >/dev/null

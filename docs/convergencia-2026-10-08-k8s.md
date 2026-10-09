@@ -207,6 +207,54 @@ sem uma prática que lhe faça falta no seu papel.
    A segunda metade do cruzamento é a que apodrece sozinha: **um workload novo
    que não leve a maçaneta** só se vê com um render que a ligue, e é isso que o
    portão passou a fazer.
+
+   ### Os nomes, decididos a 2026-10-09 — o passo fecha
+
+   O dono concordou com a proposta: **duas** classes.
+
+   | classe | valor | quem a leva | porquê |
+   |---|---|---|---|
+   | `meet-critico` | 10000 | servidor, coturn, Postgres, Redis, e o Job de migração | desalojá-los **derruba reuniões a decorrer** |
+   | `meet-normal` | 1000 | web, FreeSWITCH, Kamailio | degradam sem a reunião cair |
+
+   Ficam em `deploy/k8s/plataforma/priorityclasses.yaml` — **objectos de cluster,
+   não do release**: num cluster partilhado o `helm uninstall` do Meet não pode
+   levar atrás uma classe que outros possam estar a usar. E são o **primeiro
+   passo do `instalar.sh`** dessa pasta, porque não têm dependência nenhuma e
+   tudo o resto depende delas: um `priorityClassName` que não exista faz o API
+   server **recusar o pod**, e o `helm upgrade` falha em vez de avisar.
+
+   Três decisões que valem a pena ler no ficheiro:
+
+   - **`globalDefault: false` nas duas.** A `true`, uma classe passa a ser a
+     prioridade de **todos** os pods do cluster que não declarem uma — incluindo
+     os de outras equipas, noutros namespaces. Seria o mesmo dano que a quota
+     evita, pela porta oposta;
+   - **`preemptionPolicy: Never` no `meet-normal`.** Essa classe serve para não
+     ser desalojada antes de quem não tem classe, **não** para desalojar os
+     outros: espera a sua vez em vez de tirar o lugar a um vizinho;
+   - **os valores são um ponto de partida.** Um número de prioridade só tem
+     significado comparado com as outras classes do mesmo cluster, e as dos
+     vizinhos não são nossas para conhecer. Subir a nossa é baixar a de outro —
+     fala-se com o operador do `delonix-lda` antes.
+
+   O **Postgres e o Redis não aparecem no `values-production.yaml`**: em produção
+   são externos (CloudNativePG e Redis com Sentinel, ADR-0020 fase 3), logo
+   configurá-los no chart era config morta. A prioridade deles põe-se onde eles
+   vivem, na plataforma.
+
+   **Prova** — cruzamento 6e do `check-helm.sh`, e o 6d corrigido:
+
+   | ataque | o portão diz |
+   |---|---|
+   | os valores pedem uma classe que ninguém declara | `usam a classe «meet-inventado» e o …/priorityclasses.yaml não a declara` |
+   | `globalDefault: true` | `a classe «meet-critico» … passaria a ser a prioridade de TODOS os pods do cluster` |
+   | classes declaradas que ninguém usa | `declara ['meet-critico', 'meet-normal'] e nenhum valor do chart as usa` |
+
+   **E o portão apanhou-me a mim:** o cruzamento 6d media a metade «ninguém fixa
+   uma classe» contra o render de **produção** — que agora liga as classes, pelo
+   que deixou de servir de controlo negativo. Passou a ter dois renders
+   dedicados, um com todas as chaves vazias e outro com uma só.
 5. ~~Os dois buracos pequenos: probes no `60-ai-gpu-worker` e `securityContext`
    no `52-data-plain`.~~ **MEDIDO a 2026-10-08. Metade feita; e não eram dois,
    nem pequenos.**
@@ -371,9 +419,8 @@ sem uma prática que lhe faça falta no seu papel.
 
    ### Continua por fazer
 
-   Nada nesta secção. Do documento inteiro fica **uma** coisa, e é uma resposta,
-   não trabalho: os **nomes** das classes de prioridade do `delonix-lda` (passo
-   4, onde a canalização já está feita).
+   Nada. **Os cinco passos estão fechados** (o 4 a 2026-10-09, com os nomes
+   decididos pelo dono).
 
 ## 4. O que fica de fora, e porquê
 
