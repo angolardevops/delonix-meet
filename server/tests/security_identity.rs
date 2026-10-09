@@ -411,6 +411,88 @@ async fn sso_refuses_archived_member(db: sqlx::PgPool) {
     assert_eq!(body["code"], "sso.account_not_in_org", "{body}");
 }
 
+/// A2 (revisão de segurança, 2026-10-09) — o `state` anti-CSRF vivia na
+/// memória de UM processo. A produção corre várias réplicas sem afinidade
+/// de sessão: um `authorize` numa réplica e o `callback` a cair noutra
+/// (o caso normal, não um ataque) respondia 401 sem motivo nenhum visível
+/// para quem está a entrar. Duas instâncias de `TestApp` sobre a MESMA
+/// base simulam exactamente isso.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_callback_works_across_replicas_without_sticky_sessions(db: sqlx::PgPool) {
+    let app_a = TestApp::spawn_with(db.clone(), &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app_a.new_org("multireplica.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app_a, &admin, &idp).await;
+
+    // Uma SEGUNDA "réplica", mesma base de dados, porta diferente.
+    let app_b = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+
+    // authorize na réplica A.
+    let r = app_a
+        .raw(
+            reqwest::Method::GET,
+            "/api/auth/sso/authorize?domain=multireplica.test",
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 302, "sso/authorize em A: {}", r.text);
+    let location = url::Url::parse(&r.header("location").unwrap()).unwrap();
+    let q = |k: &str| {
+        location
+            .query_pairs()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.to_string())
+            .unwrap()
+    };
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.email = admin.email.clone();
+        a.nonce = q("nonce");
+    }
+
+    // callback na réplica B -- é o que um `DashMap` por processo nunca
+    // conseguia ver.
+    let r = app_b
+        .raw(
+            reqwest::Method::GET,
+            &format!(
+                "/api/auth/sso/callback?code=codigo-falso&state={}",
+                q("state")
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(
+        r.status, 302,
+        "callback na réplica B não viu o state emitido pela réplica A: {}",
+        r.text
+    );
+    let loc = r.header("location").unwrap();
+    assert!(loc.contains("token="), "{loc}");
+
+    // O state é de uso único: repetir o MESMO callback (em qualquer réplica)
+    // já não encontra nada -- prova que ficou mesmo em Postgres, não
+    // duplicado num DashMap por processo que o primeiro consumo não limpou.
+    let r = app_a
+        .raw(
+            reqwest::Method::GET,
+            &format!(
+                "/api/auth/sso/callback?code=codigo-falso&state={}",
+                q("state")
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(
+        r.status, 401,
+        "state reutilizável entre réplicas: {}",
+        r.text
+    );
+}
+
 // ---------------------------------------------------------------------------
 //  MFA — força bruta do código
 // ---------------------------------------------------------------------------

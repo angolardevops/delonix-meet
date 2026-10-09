@@ -978,22 +978,62 @@ pub async fn logout(
 
 // ---------- SSO / OIDC ----------
 
-use dashmap::DashMap;
-use std::time::Instant;
-
-/// Estado PKCE pendente: guardado em memória entre o redirect e o callback.
-/// TTL de 10 minutos — limpo no consumo ou por expiração passiva.
+/// Estado PKCE pendente entre o redirect e o callback. TTL de 10 minutos.
+///
+/// A2 (revisão de segurança, 2026-10-09): isto vivia num `DashMap` estático,
+/// na memória de UM processo. A instalação de produção corre várias réplicas
+/// sem afinidade de sessão -- um `authorize` numa réplica e o `callback` a
+/// cair noutra (o normal, sem sticky sessions) respondia 401 sem motivo
+/// nenhum visível para quem entra. Fica em Postgres, o ponto de encontro de
+/// todas as réplicas -- mesmo papel do `webauthn_ceremonies` (migração 0079)
+/// para o desafio WebAuthn.
 struct PkceEntry {
     verifier: String,
     org_id: Uuid,
     nonce: String,
-    created: Instant,
 }
 
-/// Cache global de estados OIDC pendentes (anti-CSRF `state` → PKCE verifier).
-/// Vive em memória: OK para single-node; em multi-node, migrar para Redis.
-static SSO_PENDING: std::sync::LazyLock<DashMap<String, PkceEntry>> =
-    std::sync::LazyLock::new(DashMap::new);
+/// Grava o estado pendente (chamado por `sso_login` a seguir a emitir o
+/// `state`). Único escritor: um `state` repetido é uma colisão de
+/// `CsrfToken::new_random` (impraticável) e fica melhor a dar erro do que a
+/// sobrescrever silenciosamente a entrada de outro login em curso.
+async fn sso_pending_insert(
+    db: &sqlx::PgPool,
+    state: &str,
+    entry: &PkceEntry,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO sso_pending_states (state, org_id, verifier, nonce) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(state)
+    .bind(entry.org_id)
+    .bind(&entry.verifier)
+    .bind(&entry.nonce)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Consome o estado pendente de uma só vez: o `DELETE ... RETURNING` é
+/// atómico, por isso duas réplicas a receber o MESMO callback em paralelo
+/// (replay do `code`+`state`) nunca conseguem as duas uma entrada válida --
+/// só a primeira apaga a linha. `created_at` fora da janela de 10 minutos
+/// conta como "não encontrado", o mesmo 401 de sempre.
+async fn sso_pending_take(db: &sqlx::PgPool, state: &str) -> Result<Option<PkceEntry>, ApiError> {
+    let row: Option<(Uuid, String, String)> = sqlx::query_as(
+        "DELETE FROM sso_pending_states
+          WHERE state = $1 AND created_at > now() - interval '10 minutes'
+          RETURNING org_id, verifier, nonce",
+    )
+    .bind(state)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|(org_id, verifier, nonce)| PkceEntry {
+        verifier,
+        org_id,
+        nonce,
+    }))
+}
 
 /// Resultado da verificação de SSO para um domínio de email.
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1152,19 +1192,17 @@ pub async fn sso_login(
         .set_pkce_challenge(pkce_challenge)
         .url();
 
-    // Guardar o verifier PKCE para validar no callback.
-    SSO_PENDING.insert(
-        csrf_token.secret().clone(),
-        PkceEntry {
+    // Guardar o verifier PKCE para validar no callback (Postgres: ver A2).
+    sso_pending_insert(
+        &state.db,
+        csrf_token.secret(),
+        &PkceEntry {
             verifier: pkce_verifier.secret().clone(),
             org_id,
             nonce: nonce.secret().clone(),
-            created: Instant::now(),
         },
-    );
-
-    // Limpar entradas expiradas (> 10 min) passivamente.
-    SSO_PENDING.retain(|_, v| v.created.elapsed().as_secs() < 600);
+    )
+    .await?;
 
     tracing::info!(%domain, %org_id, "SSO login redirect → IdP");
 
@@ -1212,15 +1250,12 @@ pub async fn sso_callback(
         .get("state")
         .ok_or_else(|| ApiError::BadRequest("state is required".into()))?;
 
-    // Recuperar e consumir o PKCE entry (one-time use).
-    let (_, entry) = SSO_PENDING
-        .remove(csrf_state)
+    // Recuperar e consumir o PKCE entry (uso único, atómico — ver A2).
+    // A janela de 10 minutos já é parte da condição do DELETE: uma entrada
+    // vencida não é devolvida, conta como "não encontrada".
+    let entry = sso_pending_take(&state.db, csrf_state)
+        .await?
         .ok_or(ApiError::Unauthorized)?;
-
-    // Expirado?
-    if entry.created.elapsed().as_secs() > 600 {
-        return Err(ApiError::Unauthorized);
-    }
 
     // Recarregar config do IdP da org.
     let sso: (String, String, String) = sqlx::query_as(
