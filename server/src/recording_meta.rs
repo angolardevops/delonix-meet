@@ -317,11 +317,24 @@ pub struct Participant {
     pub joined_at: DateTime<Utc>,
 }
 
+/// Página de participantes — o `Page<Participant>` com nome, para o contrato
+/// poder referir a forma em vez de a descrever em prosa.
+///
+/// `next_page_token` NÃO leva `skip_serializing_if`, ao contrário do
+/// `TrunkPage`: o `Page<T>` serializa-o sempre, e na última página sai `null`.
+/// Tirá-lo mudava o fio para quem já lê estas duas rotas.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ParticipantPage {
+    pub items: Vec<Participant>,
+    /// Cursor da página seguinte; `null` na última.
+    pub next_page_token: Option<String>,
+}
+
 async fn participants_of_room(
     state: &AppState,
     room_id: Uuid,
     q: &PageQuery,
-) -> Result<Page<Participant>, ApiError> {
+) -> Result<ParticipantPage, ApiError> {
     let size = q.size()?;
     let cursor = q.cursor()?;
     let rows: Vec<Participant> = sqlx::query_as(
@@ -338,7 +351,11 @@ async fn participants_of_room(
     .bind(size + 1)
     .fetch_all(&state.db)
     .await?;
-    Ok(paginate(rows, size, |p| (p.joined_at, p.user_id)))
+    let pagina = paginate(rows, size, |p| (p.joined_at, p.user_id));
+    Ok(ParticipantPage {
+        items: pagina.items,
+        next_page_token: pagina.next_page_token,
+    })
 }
 
 /// `GET /api/recordings/{id}/participants` — quem esteve na sala da gravação.
@@ -347,7 +364,7 @@ async fn participants_of_room(
     security(("session" = [])),
     params(("recording_id" = Uuid, Path, description = "Gravação."), ("page_size" = Option<u32>, Query, description = "Itens por página."), ("page_token" = Option<String>, Query, description = "Cursor da página seguinte.")),
     responses(
-        (status = 200, body = serde_json::Value, description = "Página `{items: [Participant], next_page_token}`."),
+        (status = 200, body = ParticipantPage, description = "Por ordem de entrada (`joined_at`, `user_id`)."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody, description = "`recording.participants_forbidden`: chega à gravação por estar PUBLICADA, mas não participou — publicar dá reprodução, não a lista de presentes."),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -358,7 +375,7 @@ pub async fn recording_participants(
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Query(q): Query<PageQuery>,
-) -> Result<Json<Page<Participant>>, ApiError> {
+) -> Result<Json<ParticipantPage>, ApiError> {
     let a = access(&state, id, auth.user_id).await?;
     a.require_direct_relation("recording.participants_forbidden")?;
     participants_of_room(&state, a.room_id, &q).await.map(Json)
@@ -370,7 +387,7 @@ pub async fn recording_participants(
     security(("session" = [])),
     params(("room_code" = String, Path, description = "Código da sala."), ("page_size" = Option<u32>, Query, description = "Itens por página."), ("page_token" = Option<String>, Query, description = "Cursor da página seguinte.")),
     responses(
-        (status = 200, body = serde_json::Value, description = "Página `{items: [Participant], next_page_token}`."),
+        (status = 200, body = ParticipantPage, description = "Por ordem de entrada (`joined_at`, `user_id`)."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
@@ -381,7 +398,7 @@ pub async fn room_participants(
     auth: AuthUser,
     Path(code): Path<String>,
     Query(q): Query<PageQuery>,
-) -> Result<Json<Page<Participant>>, ApiError> {
+) -> Result<Json<ParticipantPage>, ApiError> {
     let room = crate::recordings::participated_room(&state, &code, auth.user_id).await?;
     participants_of_room(&state, room.id, &q).await.map(Json)
 }
@@ -535,6 +552,41 @@ pub(crate) fn check_t_ms(t_ms: i64, duration_ms: Option<i64>) -> Result<(), ApiE
 mod tests {
     use super::*;
 
+    /// O `ParticipantPage` só vale a pena se serializar EXACTAMENTE como o
+    /// `Page<Participant>` que as duas rotas devolviam antes de ter nome. Um
+    /// `skip_serializing_if` acrescentado a qualquer um dos dois tira o
+    /// `next_page_token` da última página e quebra quem já lê a rota — este
+    /// teste é o que impede isso de passar.
+    #[test]
+    fn participant_page_serializa_como_o_page_generico() {
+        let p = Participant {
+            user_id: Uuid::nil(),
+            username: "ana".into(),
+            joined_at: DateTime::<Utc>::from_timestamp_micros(1_789_000_000_123_456).unwrap(),
+        };
+        let generico = Page {
+            items: vec![p],
+            next_page_token: None,
+        };
+        let json_generico = serde_json::to_value(&generico).unwrap();
+        let nomeado = ParticipantPage {
+            items: generico.items,
+            next_page_token: generico.next_page_token,
+        };
+        assert_eq!(json_generico, serde_json::to_value(&nomeado).unwrap());
+        // E o cursor da última página sai como `null`, não desaparece.
+        assert!(serde_json::to_value(&nomeado).unwrap()["next_page_token"].is_null());
+
+        let com_cursor = ParticipantPage {
+            items: nomeado.items,
+            next_page_token: Some("abc".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&com_cursor).unwrap()["next_page_token"],
+            "abc"
+        );
+    }
+
     #[test]
     fn cursor_ida_e_volta() {
         let at = DateTime::<Utc>::from_timestamp_micros(1_789_000_000_123_456).unwrap();
@@ -617,6 +669,6 @@ mod tests {
         room_participants,
         transcript
     ),
-    components(schemas(PublishReq, Participant, Segment, Transcript))
+    components(schemas(PublishReq, Participant, ParticipantPage, Segment, Transcript))
 )]
 pub struct ApiDoc;

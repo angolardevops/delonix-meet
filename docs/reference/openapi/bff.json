@@ -4438,6 +4438,26 @@
         ],
         "type": "object"
       },
+      "ItemSearch": {
+        "description": "O que acompanha um item quando há `q`.",
+        "properties": {
+          "highlight": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "score",
+          "highlight"
+        ],
+        "type": "object"
+      },
       "JoinPreferencesBody": {
         "additionalProperties": false,
         "description": "Preferências de entrada. No `PUT` é a representação COMPLETA: um campo\nomisso volta à omissão (desligado).",
@@ -6473,6 +6493,27 @@
         ],
         "type": "object"
       },
+      "Participant": {
+        "properties": {
+          "joined_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "joined_at"
+        ],
+        "type": "object"
+      },
       "ParticipantConflict": {
         "properties": {
           "meeting_id": {
@@ -6500,6 +6541,28 @@
           "meeting_id",
           "meeting_title",
           "starts_at"
+        ],
+        "type": "object"
+      },
+      "ParticipantPage": {
+        "description": "Página de participantes — o `Page<Participant>` com nome, para o contrato\npoder referir a forma em vez de a descrever em prosa.\n\n`next_page_token` NÃO leva `skip_serializing_if`, ao contrário do\n`TrunkPage`: o `Page<T>` serializa-o sempre, e na última página sai `null`.\nTirá-lo mudava o fio para quem já lê estas duas rotas.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Participant"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "description": "Cursor da página seguinte; `null` na última.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -8122,7 +8185,7 @@
         "type": "object"
       },
       "RecordingPage": {
-        "description": "Página da biblioteca (com `page_size`, `page_token`, `filter`, `filters`,\n`group_by` ou `order_by`): o envelope do ADR-0007\n(`docs/reference/pesquisa.md` §2.3). Só documentação — a resposta é\n`search::SearchPage`, com cada item acompanhado de `search: {score,\nhighlight}` quando há `q`. Continua a ter `items` e `next_page_token`, como a\npágina de antes; `total`, `total_kind` e `groups` são acrescento.",
+        "description": "Página da biblioteca (com `page_size`, `page_token`, `filter`, `filters`,\n`group_by` ou `order_by`): o envelope do ADR-0007\n(`docs/reference/pesquisa.md` §2.3). Só documentação — a resposta é\n`search::SearchPage`. Continua a ter `items` e `next_page_token`, como a\npágina de antes; `total`, `total_kind` e `groups` são acrescento.",
         "properties": {
           "groups": {
             "items": {
@@ -8135,7 +8198,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/RecordingLibraryItem"
+              "$ref": "#/components/schemas/RecordingSearchItem"
             },
             "type": "array"
           },
@@ -8173,6 +8236,30 @@
           "total_kind"
         ],
         "type": "object"
+      },
+      "RecordingSearchItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RecordingLibraryItem"
+          },
+          {
+            "properties": {
+              "search": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ItemSearch",
+                    "description": "Só com `q`."
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "Um item da biblioteca com o acréscimo de pesquisa. Só documentação — a\nresposta é `search::SearchItem<RecordingItem>`, que achata o item e junta\n`search` quando há `q`. Os atributos serde são os MESMOS do `SearchItem`,\npara o documentado e o serializado não divergirem."
       },
       "RecordingShareLink": {
         "description": "Link público de uma gravação. O hash da password nunca sai.",
@@ -33574,10 +33661,12 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
               }
             },
-            "description": "Página `{items: [Participant], next_page_token}`."
+            "description": "Por ordem de entrada (`joined_at`, `user_id`)."
           },
           "401": {
             "content": {
@@ -35687,10 +35776,12 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
               }
             },
-            "description": "Página `{items: [Participant], next_page_token}`."
+            "description": "Por ordem de entrada (`joined_at`, `user_id`)."
           },
           "401": {
             "content": {
