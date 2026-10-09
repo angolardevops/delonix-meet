@@ -740,3 +740,74 @@ async fn login_rate_limit_applies_to_sso_enforced_accounts(db: sqlx::PgPool) {
         "conta de domínio com SSO exclusivo sem travão por conta"
     );
 }
+
+/// A3 (revisão de segurança, 2026-10-09) — `enforce_sso` bloqueava o login
+/// por password de QUALQUER conta cujo email terminasse no domínio
+/// reivindicado, mesmo sem ela ter nada a ver com a organização que o
+/// impôs. Isto transformava um domínio de email em dono de toda a gente
+/// que o usasse: bastava uma org registar-se com um email desse domínio
+/// (o registo não o verifica -- aberto conhecido) e ligar o enforce_sso
+/// para trancar o login por password de uma conta de OUTRA organização,
+/// sem relação nenhuma com a que o activou.
+#[sqlx::test(migrations = "./migrations")]
+async fn enforce_sso_only_blocks_members_of_the_enforcing_org(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+
+    // A org "squat" reivindica o domínio (regista-se com um email dele) e
+    // liga enforce_sso -- exactamente o que um atacante faria.
+    let squat = app.new_org("squat.test").await;
+    let (st, body) = app
+        .put(
+            &format!("/api/orgs/{}/sso", squat.org()),
+            Some(&squat.token),
+            json!({"issuer_url": "https://idp.squat.test", "client_id": "cid",
+                   "client_secret": "segredo", "enforce_sso": true}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    // A VÍTIMA é membro de uma organização COMPLETAMENTE DIFERENTE, sem
+    // SSO nenhum. `POST /members` recusa um email fora do domínio da
+    // própria org (prova em separado, noutro teste) -- por isso o email
+    // "estranho" entra como entraria numa conta LEGADA ou convertida antes
+    // da regra actual, directo na base: o que importa aqui é o estado da
+    // conta no momento do login, não o caminho que a lá pôs.
+    let outra = app.new_org("outra-empresa.test").await;
+    let vitima = app.add_member(&outra, "funcionaria", "member").await;
+    let vitima_email = "funcionaria@squat.test";
+    sqlx::query("UPDATE users SET email = $1 WHERE id = $2::uuid")
+        .bind(vitima_email)
+        .bind(&vitima.user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // Controlo positivo: o próprio squat continua travado (a correcção não
+    // parte o caso legítimo -- é o mesmo teste que
+    // sso_enforced_blocks_password_login em organization.rs).
+    let (st, body) = app
+        .post(
+            "/api/auth/login",
+            None,
+            json!({"email": squat.email, "password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(
+        st, 400,
+        "membro real da org que impõe SSO devia ficar travado: {body}"
+    );
+
+    // O ataque: a vítima, que nunca teve nada a ver com "squat", continua a
+    // conseguir entrar com a password da SUA organização.
+    let (st, body) = app
+        .post(
+            "/api/auth/login",
+            None,
+            json!({"email": vitima_email, "password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(
+        st, 200,
+        "conta de outra organização ficou bloqueada por um domínio que não é dela: {body}"
+    );
+}

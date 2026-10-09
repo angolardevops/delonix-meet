@@ -625,18 +625,34 @@ pub async fn login(
         return Err(ApiError::TooManyRequests);
     }
 
-    // Bloquear login por password se a organização exige SSO exclusivo.
-    if is_sso_enforced(&state.db, &email).await {
-        return Err(ApiError::BadRequest(
-            "Esta organização exige login via SSO — usa o botão «Entrar com SSO»".into(),
-        ));
-    }
     let row: Option<(Uuid, String, String, String, chrono::DateTime<Utc>)> = sqlx::query_as(
         "SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1",
     )
     .bind(&email)
     .fetch_optional(&state.db)
     .await?;
+
+    // Bloquear login por password se a organização exige SSO exclusivo.
+    //
+    // A3 (revisão de segurança, 2026-10-09): bloquear por DOMÍNIO sozinho
+    // trancava o login por password de QUALQUER conta desse domínio,
+    // mesmo quem nunca teve nada a ver com a organização que activou o
+    // `enforce_sso` -- bastava uma org estranha reivindicar o domínio
+    // (o registo não verifica o email) para bloquear plataforma inteira.
+    // Uma conta que já existe só é bloqueada se for membro de PLENO
+    // DIREITO da organização que o impõe. Quem ainda não tem conta
+    // continua a ser empurrado para SSO -- é o que evita um empregado
+    // novo criar uma conta de password à parte da empresa que já exige SSO.
+    let domain = email.rsplit_once('@').map(|(_, d)| d).unwrap_or("");
+    let sso_enforced = match &row {
+        Some((id, ..)) => sso_enforced_for_account(&state, *id, domain).await?,
+        None => is_sso_enforced(&state.db, &email).await,
+    };
+    if sso_enforced {
+        return Err(ApiError::BadRequest(
+            "Esta organização exige login via SSO — usa o botão «Entrar com SSO»".into(),
+        ));
+    }
 
     // Verify against a dummy hash when the user doesn't exist so timing
     // doesn't leak account existence.
@@ -1542,6 +1558,37 @@ pub async fn is_sso_enforced(db: &sqlx::PgPool, email: &str) -> bool {
     .await
     .unwrap_or(None);
     row.is_some()
+}
+
+/// `true` se a CONTA `user_id` deve ser bloqueada do login por password,
+/// porque é membro de pleno direito (achado C1: nunca `external_guest`) de
+/// uma organização que exige SSO para o domínio do seu próprio email.
+///
+/// Ao contrário de `is_sso_enforced` (usada só para quem ainda não tem
+/// conta), esta NÃO basta o domínio bater certo com alguma organização --
+/// é a organização inteira que pode ter sido reivindicada por um estranho
+/// (achado A3). Uma conta só fica presa ao SSO da organização de que é
+/// realmente membro.
+async fn sso_enforced_for_account(
+    state: &AppState,
+    user_id: Uuid,
+    domain: &str,
+) -> Result<bool, ApiError> {
+    if domain.is_empty() {
+        return Ok(false);
+    }
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT o.id FROM org_sso_configs s
+         JOIN organizations o ON o.id = s.org_id
+         WHERE o.email_domain = $1 AND s.enforce_sso = TRUE",
+    )
+    .bind(domain)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((org_id,)) = row else {
+        return Ok(false);
+    };
+    crate::org::is_full_member(state, org_id, user_id).await
 }
 
 #[cfg(test)]
