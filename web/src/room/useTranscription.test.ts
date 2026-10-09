@@ -1,5 +1,19 @@
-import { describe, expect, it } from 'vitest'
-import { devoTentarGravarActaDeReserva } from './useTranscription'
+import { describe, expect, it, vi } from 'vitest'
+
+// `useTranscription.ts` importa `api.ts`, que lê o `localStorage` no topo do
+// módulo — e a bateria corre em `node` (não há jsdom instalado neste repo).
+// O esboço tem de existir ANTES do import, por isso o módulo entra por
+// `await import()` e não por `import` estático — mesmo padrão de
+// `api.guardas.test.ts`.
+vi.stubGlobal('localStorage', {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+  clear: () => {},
+})
+vi.stubGlobal('window', { dispatchEvent: () => true, addEventListener: () => {} })
+
+const { devoTentarGravarActaDeReserva } = await import('./useTranscription')
 
 // Não há infra-estrutura de teste de hooks React neste repo (sem
 // @testing-library/react-hooks nem equivalente) — por isso testa-se a lógica
