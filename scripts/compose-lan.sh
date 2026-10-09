@@ -47,12 +47,25 @@ chmod 600 "$TLS/ca.key"; chmod 644 "$TLS/tls.key" "$TLS"/*.crt
 # «acordar» de um aparelho `lab` a esse URL (a prova scripts/ramais-push-real-prova.py é quem o serve), o
 # FreeSWITCH passa a segurar 20 s a chamada para um ramal sem registo, e o host do URL entra na isenção da
 # guarda de saída (só ele). Sem a variável nada disto existe.
-PUSH_SERVER_ENV=""; PUSH_FS_ENV=""
+PUSH_SERVER_ENV=""; PUSH_FS_ENV=""; PUSH_HOSTS=""
 if [ -n "${PUSH_LAB_URL:-}" ]; then
   [[ "$PUSH_LAB_URL" =~ ^http://([0-9.]+):[0-9]+/[A-Za-z0-9/_-]*$ ]] || { echo "PUSH_LAB_URL tem de ser http://<ip>:<porta>/<caminho>: $PUSH_LAB_URL" >&2; exit 1; }
-  PUSH_SERVER_ENV=$'\n      PUSH_LAB_URL: '"${PUSH_LAB_URL}"$'\n      OUTBOUND_ALLOW_HOSTS: '"${BASH_REMATCH[1]}"
+  PUSH_SERVER_ENV+=$'\n      PUSH_LAB_URL: '"${PUSH_LAB_URL}"
+  PUSH_HOSTS="${BASH_REMATCH[1]}"
   PUSH_FS_ENV=$'\n      DELONIX_PUSH_WAIT_SECS: "20"'
 fi
+# Opcional (ADR-0023): com PUSH_DELONIX_URL=http://<ip>:<porta> e PUSH_DELONIX_KEY=dpk_… o servidor cunha os aparelhos
+# `delonix` nesse delonix-push e acorda-os por lá; o FreeSWITCH passa a segurar 20 s as chamadas. A chave é um segredo:
+# vai para o ficheiro gerado (que não se versiona) e nunca para o log.
+if [ -n "${PUSH_DELONIX_URL:-}" ] || [ -n "${PUSH_DELONIX_KEY:-}" ]; then
+  [[ "${PUSH_DELONIX_URL:-}" =~ ^http://([0-9.]+):[0-9]+$ ]] || { echo "PUSH_DELONIX_URL tem de ser http://<ip>:<porta>: ${PUSH_DELONIX_URL:-}" >&2; exit 1; }
+  DELONIX_PUSH_HOST="${BASH_REMATCH[1]}"
+  [[ "${PUSH_DELONIX_KEY:-}" =~ ^dpk_[0-9a-f]{64}$ ]] || { echo "PUSH_DELONIX_KEY tem de ser a chave dpk_… do projecto" >&2; exit 1; }
+  PUSH_SERVER_ENV+=$'\n      PUSH_DELONIX_URL: '"${PUSH_DELONIX_URL}"$'\n      PUSH_DELONIX_KEY: '"${PUSH_DELONIX_KEY}"
+  PUSH_HOSTS="${PUSH_HOSTS:+$PUSH_HOSTS,}${DELONIX_PUSH_HOST}"
+  PUSH_FS_ENV=$'\n      DELONIX_PUSH_WAIT_SECS: "20"'
+fi
+[ -n "$PUSH_HOSTS" ] && PUSH_SERVER_ENV+=$'\n      OUTBOUND_ALLOW_HOSTS: '"${PUSH_HOSTS}"
 cat <<YAML
 # Gerado por scripts/compose-lan.sh — NÃO versionar (tem o IP desta máquina).
 services:
