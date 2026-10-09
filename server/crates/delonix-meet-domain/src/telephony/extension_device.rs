@@ -34,6 +34,9 @@ pub enum Provider {
     ApnsVoip,
     /// Só laboratório e testes: o servidor entrega o pedido a um URL do operador (`PUSH_LAB_URL`).
     Lab,
+    /// O serviço `delonix-push` (open source, da N'GolaCloud): o token é o `device_id` que ele devolveu.
+    /// Serve Android e iPhone (o serviço entrega por ligação própria, FCM ou APNs conforme o aparelho).
+    Delonix,
 }
 
 impl Provider {
@@ -42,6 +45,7 @@ impl Provider {
             "fcm" => Some(Self::Fcm),
             "apns_voip" => Some(Self::ApnsVoip),
             "lab" => Some(Self::Lab),
+            "delonix" => Some(Self::Delonix),
             _ => None,
         }
     }
@@ -51,6 +55,7 @@ impl Provider {
             Self::Fcm => "fcm",
             Self::ApnsVoip => "apns_voip",
             Self::Lab => "lab",
+            Self::Delonix => "delonix",
         }
     }
 
@@ -59,7 +64,7 @@ impl Provider {
     pub fn serves(self, platform: Platform) -> bool {
         matches!(
             (self, platform),
-            (Self::Fcm, Platform::Android) | (Self::ApnsVoip, Platform::Ios) | (Self::Lab, _)
+            (Self::Fcm, Platform::Android) | (Self::ApnsVoip, Platform::Ios) | (Self::Lab | Self::Delonix, _)
         )
     }
 }

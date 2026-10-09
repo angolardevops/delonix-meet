@@ -8121,7 +8121,7 @@
             "type": "string"
           },
           "provider": {
-            "description": "`fcm` (Android), `apns_voip` (iOS) ou `lab` (só laboratório).",
+            "description": "`fcm` (Android), `apns_voip` (iOS), `delonix` (o serviço delonix-push, ambos) ou `lab` (só laboratório).",
             "example": "fcm",
             "type": "string"
           },

@@ -101,6 +101,15 @@ chamador (`ramal_ebec6d65…`), que é metade da credencial dele. Os testes Rust
 valor inventado. O servidor passou a traduzi-lo para o número curto (e a mandar vazio se o chamador não é ramal
 desta organização), e há testes para os dois casos.
 
+## Fornecedor `delonix` (delonix-push, open source)
+
+Além do `lab`, o servidor fala com o **delonix-push** (serviço da N'GolaCloud, repo próprio e aberto): `POST
+{PUSH_DELONIX_URL}/v1/messages` com a chave `PUSH_DELONIX_KEY`. O token do aparelho é o `device_id` que o serviço
+devolveu; o serviço decide se entrega por ligação própria, FCM ou APNs. O pedido leva `priority:high`, TTL de 60 s,
+`collapse_key` e `idempotency_key` por chamada, e só o número curto de quem liga (testado: o utilizador SIP não vai).
+Medido contra um serviço de papel (13 testes de `voice_push_wake`); **falta**: o registo do aparelho no delonix-push
+(hoje a app teria de receber `device_id`+segredo do Meet, que ainda não os cunha) e uma prova com o serviço real.
+
 ## O que isto NÃO prova
 
 - **Nenhum push real**: nem FCM, nem APNs. O fornecedor `lab` fala com um receptor de papel; o caminho FreeSWITCH →

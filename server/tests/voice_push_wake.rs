@@ -671,3 +671,109 @@ async fn um_chamador_que_nao_e_ramal_desta_organizacao_vai_sem_nome(db: sqlx::Pg
         assert!(!r.to_string().contains("ramal_que_nao_existe"));
     }
 }
+
+/// O serviço `delonix-push` de papel: guarda a chave com que o chamaram e o corpo.
+async fn delonix_push_de_papel(status: u16) -> (String, Arc<Mutex<Vec<(String, Value)>>>) {
+    type Vistos = Arc<Mutex<Vec<(String, Value)>>>;
+    let vistos: Vistos = Arc::default();
+    let app =
+        Router::new()
+            .route(
+                "/v1/messages",
+                post(
+                    move |State(v): State<Vistos>,
+                          h: axum::http::HeaderMap,
+                          Json(b): Json<Value>| async move {
+                        let auth = h
+                            .get("authorization")
+                            .and_then(|x| x.to_str().ok())
+                            .unwrap_or("")
+                            .to_string();
+                        v.lock().unwrap().push((auth, b));
+                        axum::http::StatusCode::from_u16(status).unwrap()
+                    },
+                ),
+            )
+            .with_state(vistos.clone());
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    (format!("http://127.0.0.1:{port}"), vistos)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn o_fornecedor_delonix_acorda_pelo_delonix_push_sem_o_utilizador_sip(db: sqlx::PgPool) {
+    let (url, vistos) = delonix_push_de_papel(202).await;
+    let app = TestApp::spawn_with(
+        db,
+        &[
+            ("VOICE_INTERNAL_SECRET", VOICE_SECRET),
+            ("OUTBOUND_ALLOW_HOSTS", "127.0.0.1"),
+            ("PUSH_DELONIX_URL", url.as_str()),
+            ("PUSH_DELONIX_KEY", "dpk_chave-do-projecto"),
+        ],
+    )
+    .await;
+    let a = app.new_org("delonix-push.ao").await;
+    let ana = app.add_member(&a, "ana", "member").await;
+    let ramal = novo_ramal(&app, &a, &ana, "1010").await;
+    let bruno = app.add_member(&a, "bruno", "member").await;
+    let ramal_bruno = novo_ramal(&app, &a, &bruno, "1011").await;
+    let sip = ramal["sip_username"].as_str().unwrap().to_string();
+    let sip_bruno = ramal_bruno["sip_username"].as_str().unwrap().to_string();
+    let dom = dominio(&app, &slug_de(&app, a.org()).await);
+    let id_push = novo_id(); // o device_id que o delonix-push devolveu
+    assert_eq!(
+        registar(&app, &ana, &novo_id(), corpo("delonix", "ios", &id_push))
+            .await
+            .0,
+        201,
+        "o fornecedor delonix serve iPhone e Android"
+    );
+
+    let (_, r) = acordar_de(
+        &app,
+        &dom,
+        &sip,
+        "22222222-aaaa-bbbb-cccc-000000000001",
+        &sip_bruno,
+    )
+    .await;
+    assert_eq!(r, json!({"awaiting": true, "devices": 1}));
+    let v = vistos.lock().unwrap();
+    assert_eq!(v.len(), 1, "{v:?}");
+    assert_eq!(v[0].0, "Bearer dpk_chave-do-projecto");
+    assert_eq!(v[0].1["device_id"], id_push);
+    assert_eq!(v[0].1["priority"], "high");
+    assert_eq!(v[0].1["payload"]["caller"], "1011");
+    assert_eq!(v[0].1["payload"]["kind"], "incoming_call");
+    assert_eq!(
+        v[0].1["idempotency_key"],
+        "wake:22222222-aaaa-bbbb-cccc-000000000001"
+    );
+    assert!(
+        !v[0].1.to_string().contains(&sip_bruno),
+        "o utilizador SIP do chamador foi para o delonix-push: {}",
+        v[0].1
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn o_fornecedor_delonix_sem_configuracao_nao_acorda(db: sqlx::PgPool) {
+    // Sem URL/chave: aceita-se o registo, ninguém é acordado e o FreeSWITCH não fica à espera.
+    let app = spawn(db.clone(), None).await;
+    let a = app.new_org("delonix-push-b.ao").await;
+    let ana = app.add_member(&a, "ana", "member").await;
+    let ramal = novo_ramal(&app, &a, &ana, "1020").await;
+    let sip = ramal["sip_username"].as_str().unwrap().to_string();
+    let dom = dominio(&app, &slug_de(&app, a.org()).await);
+    registar(
+        &app,
+        &ana,
+        &novo_id(),
+        corpo("delonix", "android", &novo_id()),
+    )
+    .await;
+    let (_, r) = acordar(&app, &dom, &sip, "33333333-aaaa-bbbb-cccc-000000000001").await;
+    assert_eq!(r["awaiting"], false, "{r}");
+}

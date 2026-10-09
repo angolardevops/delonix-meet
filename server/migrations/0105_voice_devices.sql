@@ -15,7 +15,7 @@ CREATE TABLE voice_devices (
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     session_id      UUID NOT NULL REFERENCES user_sessions(id) ON DELETE CASCADE,
     platform        TEXT NOT NULL CHECK (platform IN ('android', 'ios')),
-    provider        TEXT NOT NULL CHECK (provider IN ('fcm', 'apns_voip', 'lab')),
+    provider        TEXT NOT NULL CHECK (provider IN ('fcm', 'apns_voip', 'lab', 'delonix')),
     push_token      TEXT NOT NULL,
     push_token_hash TEXT NOT NULL,
     app_version     TEXT NOT NULL DEFAULT '' CHECK (char_length(app_version) <= 64),

@@ -60,7 +60,7 @@ pub struct PutDeviceReq {
     /// `android` ou `ios`.
     #[schema(example = "android")]
     pub platform: String,
-    /// `fcm` (Android), `apns_voip` (iOS) ou `lab` (só laboratório).
+    /// `fcm` (Android), `apns_voip` (iOS), `delonix` (o serviço delonix-push, ambos) ou `lab` (só laboratório).
     #[schema(example = "fcm")]
     pub provider: String,
     /// O token que o fornecedor deu à app. Guarda-se cifrado e não volta em nenhuma resposta.
@@ -104,7 +104,7 @@ fn validate(req: &PutDeviceReq) -> Result<(rules::Platform, rules::Provider), Ap
     let provider = rules::Provider::parse(&req.provider).ok_or_else(|| {
         DomainError::invalid(
             "devices.provider_invalid",
-            "o fornecedor é «fcm», «apns_voip» ou «lab»",
+            "o fornecedor é «fcm», «apns_voip», «delonix» ou «lab»",
         )
     })?;
     if !provider.serves(platform) {
@@ -703,8 +703,66 @@ async fn send(state: &AppState, d: &WakeDevice, call_uuid: &str, caller: &str) -
     };
     match provider {
         rules::Provider::Lab => send_lab(state, d, call_uuid, caller).await,
+        rules::Provider::Delonix => send_delonix(state, d, call_uuid, caller).await,
         // FCM e APNs ainda não existem (sem conta Firebase nem Apple): não fingem que enviaram.
         rules::Provider::Fcm | rules::Provider::ApnsVoip => Outcome::NotConfigured,
+    }
+}
+
+/// O serviço `delonix-push`: `POST {PUSH_DELONIX_URL}/v1/messages` com a chave do projecto. O token do aparelho
+/// é o `device_id` que o serviço devolveu. A mensagem leva só o que a app precisa (`call_uuid` e o número curto
+/// de quem liga, nunca o utilizador SIP) e expira depressa: uma chamada que tocou há um minuto já não interessa.
+async fn send_delonix(state: &AppState, d: &WakeDevice, call_uuid: &str, caller: &str) -> Outcome {
+    let (Some(base), Some(key)) = (
+        state.config.push_delonix_url.as_deref(),
+        state.config.push_delonix_key.as_deref(),
+    ) else {
+        return Outcome::NotConfigured;
+    };
+    let Ok(token) = crate::secrets_at_rest::open(
+        &state.config,
+        &d.push_token,
+        &format!("voice_devices.push_token:{}", d.id),
+    ) else {
+        return Outcome::Failed;
+    };
+    let Ok(target) = token.parse::<Uuid>() else {
+        return Outcome::Failed;
+    };
+    let url = match state
+        .outbound
+        .check_operator_url(&format!("{}/v1/messages", base.trim_end_matches('/')))
+        .await
+    {
+        Ok(u) => u,
+        Err(_) => {
+            tracing::warn!("PUSH_DELONIX_URL recusado pela guarda de saída");
+            return Outcome::Failed;
+        }
+    };
+    let body = serde_json::json!({
+        "device_id": target,
+        "priority": "high",
+        "ttl_secs": 60,
+        "collapse_key": format!("call:{call_uuid}"),
+        "idempotency_key": format!("wake:{call_uuid}"),
+        "payload": { "kind": "incoming_call", "call_uuid": call_uuid, "caller": caller },
+    });
+    match state
+        .outbound
+        .operator()
+        .post(url)
+        .bearer_auth(key)
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => Outcome::Sent,
+        Ok(r) => {
+            tracing::warn!(status = %r.status(), "delonix-push recusou o wake");
+            Outcome::Failed
+        }
+        Err(_) => Outcome::Failed,
     }
 }
 
