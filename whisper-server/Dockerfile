@@ -27,5 +27,14 @@ ARG MODEL=small
 ENV WHISPER_MODEL=${MODEL}
 RUN python -c "from faster_whisper import WhisperModel; WhisperModel('${MODEL}', device='cpu', compute_type='int8')"
 
+# Não-root, como as outras imagens deste repo (o cabeçalho do
+# deploy/build-images.sh afirma-o para todas). Uid NUMÉRICO e sem entrada no
+# /etc/passwd de propósito: é o que o `runAsNonRoot` do Kubernetes exige, e
+# nada aqui chama getpwuid — o app.py não escreve em disco nenhum (medido) e o
+# modelo já está embutido em /models pelo passo acima, logo basta dar-lho a ler.
+# O 65532 é o mesmo uid do ai-worker/Dockerfile.
+RUN chown -R 65532:65532 /models /app
+USER 65532:65532
+
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "4000000"]

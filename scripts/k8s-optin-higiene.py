@@ -29,11 +29,12 @@ import yaml
 
 # Excepções, cada uma com a razão pela qual NÃO é só uma linha de YAML.
 # Formato: (ficheiro, workload, contentor, invariante) -> razão
-EXCEPCOES = {
-    ("09-whisper.yaml", "delonix-whisper", "whisper", "non-root"):
-        "a imagem é construída neste repo (delonix-whisper:latest); pôr non-root "
-        "exige saber/fixar o uid no Dockerfile dela, não é uma linha de manifesto",
-}
+# Vazio a 2026-10-09: a última excepção (o `09-whisper` non-root) foi FECHADA —
+# o uid ficou fixo no whisper-server/Dockerfile e medido com o motor. Fica aqui
+# a estrutura, e a regra que a acompanha: uma excepção traz a razão pela qual
+# NÃO é só uma linha de YAML, e o portão falha quando ela deixa de ser
+# necessária — uma excepção morta esconde a próxima regressão.
+EXCEPCOES: dict[tuple[str, str, str, str], str] = {}
 
 
 def envs_das_sondas(ct: dict) -> set[str]:

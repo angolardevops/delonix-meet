@@ -41,7 +41,7 @@ sem uma prática que lhe faça falta no seu papel.
 |---|---|---|---|
 | `resources` em todo o workload | ✓ | ✓ | — |
 | probes (`readiness`/`liveness`) | **9/10 (2026-10-09)** | ✓ | **feito** no `60-ai-gpu-worker`: `startupProbe` + `livenessProbe` sobre um batimento pulsado por PROGRESSO. Sem `readiness`, de propósito — não tem Service |
-| `securityContext` | **10/10 (2026-10-08)** | ✓ | **feito**: o `52-data-plain` e o `50-data` levam-no, com os uids medidos nas imagens. Ver o passo 5 — `drop: ALL` sozinho quebrava-os |
+| `securityContext` | **10/10 (2026-10-09)** | ✓ | **feito**: `52-data-plain`, `50-data` e `09-whisper`, todos com o uid **medido** na imagem. Ver o passo 5 — `drop: ALL` sozinho quebrava o Postgres e o Redis |
 | `runAsNonRoot`, `readOnlyRootFilesystem`, `drop: ["ALL"]`, `seccompProfile` | ✓ | ✓ | — |
 | `ServiceAccount` + `automountServiceAccountToken: false` | ✓ | ✓ | — (#266) |
 | `NetworkPolicy` | ✓ | ✓ | — (#266) |
@@ -296,11 +296,39 @@ sem uma prática que lhe faça falta no seu papel.
    | renomear a variável só no manifesto | `tem uma sonda que refere $HEARTBEAT_FILE e o contentor não declara essa variável — a sonda não dá erro, dá sempre falso` |
    | renomear só no código do worker | `as sondas leem $HEARTBEAT_FILE e o transcribe_worker.py não lê essa variável — a sonda mediria um ficheiro que ninguém toca` |
 
+   ### Fechado a 2026-10-09: o `09-whisper` non-root, e a imagem que ninguém construía
+
+   Era a última excepção do portão nº8, com a razão «exige fixar o uid no
+   Dockerfile dela». Ao ir fixá-lo, a medição corrigiu-me duas vezes:
+
+   - **não era difícil**: o modelo vem **embutido na imagem** (`/models`, por um
+     `RUN` do build) e o `app.py` **não escreve em disco nenhum**. O manifesto não
+     monta volume nenhum. Bastava dar o `/models` a ler ao uid;
+   - **mas havia um bloqueio real, e não era o que eu tinha escrito**: nada neste
+     repo construía o `delonix-whisper:latest`. O `deploy/build-images.sh`
+     constrói o servidor, a web e (opcional) o `ai-worker` — o `whisper-server`
+     **não estava lá**. E o motivo é concreto: o `Dockerfile` dele faz
+     `COPY requirements.txt .`, e o `build_one` passava a **raiz** por contexto,
+     o que falha com `No such file or directory`. O `build_one` passou a aceitar
+     um contexto, e o whisper entra com `BUILD_WHISPER=1`.
+
+   **Medido com o motor** (`--user 65532:65532`, que é o que o `runAsUser` do
+   Kubernetes faz): `MODELO CARREGADO como uid 65532`, o uvicorn arranca, e o
+   `/health` devolve `{"ok":true,"model":"small","device":"cpu"}`. O uid é o 65532,
+   o mesmo do `ai-worker/Dockerfile`.
+
+   **Um achado sobre o motor, de passagem:** o `delonix` 4.5.0 **não honra o
+   `USER` da imagem** — sem `--user` corre como uid 0, e o `container exec` nem
+   consegue trocar de utilizador. A medição acima teve de forçar o uid, que é
+   aliás o que o Kubernetes faz.
+
+   O portão nº8 fica com **zero excepções**. A regra que as acompanha mantém-se:
+   uma excepção traz a razão pela qual não é só uma linha de YAML, e o portão
+   **falha quando ela deixa de ser necessária**.
+
    ### Continua por fazer
 
-   O **`09-whisper` non-root**: a imagem é construída neste repo, pelo que exige
-   fixar o uid no Dockerfile dela. Está como excepção **com razão escrita** no
-   portão nº8 — e o portão falha se a excepção deixar de ser necessária.
+   Só o **passo 4** (`priorityClassName`), que precisa de uma resposta do dono.
 
 ## 4. O que fica de fora, e porquê
 

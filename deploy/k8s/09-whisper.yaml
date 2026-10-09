@@ -31,6 +31,15 @@ spec:
         app: delonix-whisper
     spec:
       securityContext:
+        # MEDIDO a 2026-10-09, não assumido. O modelo vem EMBUTIDO na imagem
+        # (`/models`, pelo build) e o `app.py` não escreve em disco nenhum —
+        # logo basta dar-lho a ler, e o Dockerfile faz o `chown` para este uid.
+        # Provado com o motor, `--user 65532:65532`: «MODELO CARREGADO como uid
+        # 65532», o uvicorn arranca e o `/health` devolve
+        # `{"ok":true,"model":"small","device":"cpu"}`.
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: whisper
