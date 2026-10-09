@@ -97,6 +97,9 @@ mod voice_devices;
 mod webhooks;
 mod whiteboards;
 
+/// A volta da fila do resumo da acta, exposta aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use ai::mom_summary_due;
 /// A fila das exportações e a sua reivindicação, expostas aos testes de
 /// integração sem abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
 pub use data_exports::run_queue as data_export_run_queue;
