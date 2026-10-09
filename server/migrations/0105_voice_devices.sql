@@ -21,7 +21,10 @@ CREATE TABLE voice_devices (
     app_version     TEXT NOT NULL DEFAULT '' CHECK (char_length(app_version) <= 64),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    revoked_at      TIMESTAMPTZ
+    revoked_at      TIMESTAMPTZ,
+    -- Fornecedor `delonix`: quando o aparelho foi revogado no serviço delonix-push (sessão terminada, expirada,
+    -- aparelho desligado). NULL enquanto estiver por fazer: o varredor repete até conseguir.
+    push_revoked_at TIMESTAMPTZ
 );
 -- O mesmo token no mesmo ramal é o mesmo aparelho: um registo novo (reinstalação, `id` novo) revoga o
 -- anterior em vez de acordar o telemóvel duas vezes.

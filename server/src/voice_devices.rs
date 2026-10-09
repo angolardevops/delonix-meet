@@ -387,13 +387,14 @@ async fn mint_delonix(state: &AppState, platform: &str) -> Result<DelonixPushGra
     })
 }
 
-/// Revoga o aparelho no delonix-push (melhor esforço: o Meet já deixou de o acordar).
-async fn revoke_delonix(state: &AppState, push_device: Uuid) {
+/// Revoga o aparelho no delonix-push (`DELETE /v1/devices/{id}`). `true` se ficou revogado (204, ou 404: já não
+/// existe); `false` se o serviço não respondeu ou não está configurado: fica por fazer e o varredor repete.
+async fn revoke_delonix(state: &AppState, push_device: Uuid) -> bool {
     let (Some(base), Some(key)) = (
         state.config.push_delonix_url.as_deref(),
         state.config.push_delonix_key.as_deref(),
     ) else {
-        return;
+        return false;
     };
     let Ok(url) = state
         .outbound
@@ -403,16 +404,69 @@ async fn revoke_delonix(state: &AppState, push_device: Uuid) {
         ))
         .await
     else {
-        return;
+        return false;
     };
-    let _ = state
+    match state
         .outbound
         .operator()
         .delete(url)
         .bearer_auth(key)
         .timeout(Duration::from_secs(5))
         .send()
-        .await;
+        .await
+    {
+        Ok(r) => r.status().is_success() || r.status() == StatusCode::NOT_FOUND,
+        Err(_) => false,
+    }
+}
+
+/// Varredor: revoga no delonix-push os aparelhos `delonix` cuja sessão terminou, expirou ou que foram desligados
+/// e ainda não foram revogados lá (o Meet já não os acorda, mas a app ainda se ligaria ao serviço com o segredo
+/// antigo). Idempotente e seguro com várias réplicas: um DELETE repetido dá 404, que conta como feito.
+/// Devolve quantos revogou.
+pub async fn reconcile_delonix(state: &AppState) -> usize {
+    if state.config.push_delonix_url.is_none() || state.config.push_delonix_key.is_none() {
+        return 0;
+    }
+    let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT d.id, d.push_token
+           FROM voice_devices d
+           LEFT JOIN user_sessions s ON s.id = d.session_id
+          WHERE d.provider = 'delonix' AND d.push_revoked_at IS NULL
+            AND (d.revoked_at IS NOT NULL OR s.revoked_at IS NOT NULL)
+          ORDER BY d.created_at
+          LIMIT 50",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let mut done = 0;
+    for (id, sealed) in rows {
+        let push_id = crate::secrets_at_rest::open(
+            &state.config,
+            &sealed,
+            &format!("voice_devices.push_token:{id}"),
+        )
+        .ok()
+        .and_then(|t| t.parse::<Uuid>().ok());
+        // Sem `device_id` válido (o serviço não estava configurado ao registar) não há nada a revogar lá.
+        let revoked = match push_id {
+            Some(p) => revoke_delonix(state, p).await,
+            None => true,
+        };
+        if revoked {
+            let _ = sqlx::query(
+                "UPDATE voice_devices
+                    SET push_revoked_at = now(), revoked_at = COALESCE(revoked_at, now())
+                  WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&state.db)
+            .await;
+            done += 1;
+        }
+    }
+    done
 }
 
 /// Os aparelhos activos do SEU ramal (no máximo oito: não há paginação). Nunca devolve o token.
@@ -580,7 +634,14 @@ async fn revoke(
                 &format!("voice_devices.push_token:{device_id}"),
             ) {
                 if let Ok(push_id) = open.parse::<Uuid>() {
-                    revoke_delonix(state, push_id).await;
+                    if revoke_delonix(state, push_id).await {
+                        let _ = sqlx::query(
+                            "UPDATE voice_devices SET push_revoked_at = now() WHERE id = $1",
+                        )
+                        .bind(device_id)
+                        .execute(&state.db)
+                        .await;
+                    }
                 }
             }
         }

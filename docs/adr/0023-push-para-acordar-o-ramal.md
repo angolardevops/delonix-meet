@@ -112,7 +112,10 @@ aparelho no delonix-push (`POST /v1/devices`) e devolver `delonix_push:{url, dev
 (o token enviado pela app é ignorado; uma renovação não volta a cunhar nem a mostrar o segredo). Desligar o aparelho
 no Meet revoga-o também no serviço (melhor esforço). Se o serviço não responde, 422 `devices.push_unavailable`.
 Medido contra um serviço de papel (13 testes de `voice_push_wake`); **falta** uma prova com o delonix-push real
-ligado ao Meet, e revogar no serviço quando é a *sessão* que termina (hoje só o desligar explícito).
+ligado ao Meet.
+**Sessão terminada:** um varredor (a cada 60 s, `voice_devices::reconcile_delonix`) revoga no delonix-push os aparelhos
+`delonix` cuja sessão terminou ou expirou, ou que foram desligados, e regista `push_revoked_at`; um DELETE repetido dá 404 e
+conta como feito, por isso é seguro com várias réplicas do servidor.
 
 ## O que isto NÃO prova
 

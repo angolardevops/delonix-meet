@@ -837,3 +837,71 @@ async fn o_fornecedor_delonix_sem_configuracao_nao_acorda(db: sqlx::PgPool) {
     let (_, r) = acordar(&app, &dom, &sip, "33333333-aaaa-bbbb-cccc-000000000001").await;
     assert_eq!(r["awaiting"], false, "{r}");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn terminar_a_sessao_revoga_o_aparelho_no_delonix_push(db: sqlx::PgPool) {
+    let (url, vistos) = delonix_push_de_papel(202).await;
+    let app = TestApp::spawn_with(
+        db,
+        &[
+            ("VOICE_INTERNAL_SECRET", VOICE_SECRET),
+            ("OUTBOUND_ALLOW_HOSTS", "127.0.0.1"),
+            ("PUSH_DELONIX_URL", url.as_str()),
+            ("PUSH_DELONIX_KEY", "dpk_chave-do-projecto"),
+        ],
+    )
+    .await;
+    let a = app.new_org("delonix-sessao.ao").await;
+    let ana = app.add_member(&a, "ana", "member").await;
+    novo_ramal(&app, &a, &ana, "1030").await;
+    let telemovel = app.login(&ana.email).await;
+    let portatil = app.login(&ana.email).await;
+    let sid = jwt_claims(&telemovel.token)["sid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let id = novo_id();
+    let (st, resp) = app
+        .put(
+            &format!("/api/orgs/{}/my-extension/devices/{id}", a.org()),
+            Some(&telemovel.token),
+            corpo("delonix", "android", "enchimento"),
+        )
+        .await;
+    assert_eq!(st, 201, "{resp}");
+    let apagados = |v: &Arc<Mutex<Vec<(String, Value)>>>| {
+        v.lock()
+            .unwrap()
+            .iter()
+            .filter(|(k, _)| k.starts_with("DELETE"))
+            .count()
+    };
+
+    // Com a sessão viva o varredor não toca no aparelho.
+    assert_eq!(delonix_server::reconcile_delonix(&app.state).await, 0);
+    assert_eq!(apagados(&vistos), 0);
+
+    // Terminar a sessão: o varredor revoga-o no serviço, uma só vez.
+    let (st, _) = app
+        .delete(
+            &format!("/api/users/me/sessions/{sid}"),
+            Some(&portatil.token),
+        )
+        .await;
+    assert!(st == 200 || st == 204, "{st}");
+    assert_eq!(delonix_server::reconcile_delonix(&app.state).await, 1);
+    assert!(
+        vistos
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(k, _)| k == &format!("DELETE /v1/devices/{ID_CUNHADO}")),
+        "o aparelho ficou vivo no delonix-push"
+    );
+    assert_eq!(
+        delonix_server::reconcile_delonix(&app.state).await,
+        0,
+        "já está feito: não repete"
+    );
+    assert_eq!(apagados(&vistos), 1);
+}

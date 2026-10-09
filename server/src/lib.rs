@@ -116,6 +116,8 @@ pub use recording_chapters::auto_chapters_sweep;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
+/// O varredor que revoga no delonix-push os aparelhos de sessões terminadas, exposto aos testes (ADR-0023).
+pub use voice_devices::reconcile_delonix;
 /// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
 pub use webhooks::retry_due as webhook_retry_due;
 /// O registo transaccional das entregas e o tipo do evento, expostos aos testes
@@ -1860,6 +1862,23 @@ pub async fn run() {
         Duration::from_secs(300),
         quarantine_stop.clone(),
     ));
+
+    // Cron: aparelhos de push (delonix-push) cuja sessão terminou ou expirou deixam de se poder ligar ao serviço
+    // (ADR-0023). Sem o serviço configurado não faz nada.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match voice_devices::reconcile_delonix(&state).await {
+                    0 => {}
+                    n => tracing::info!(revogados = n, "aparelhos revogados no delonix-push"),
+                }
+            }
+        });
+    }
 
     // Cron: retenção de gravações (DLP-lite) a cada hora — apaga as que
     // passaram do prazo configurado por organização.
