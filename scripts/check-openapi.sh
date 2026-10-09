@@ -6,7 +6,13 @@
 #     que o cliente TypeScript do web e o SDK consomem. Um handler que muda de
 #     forma sem o spec mudar no mesmo commit é uma quebra silenciosa para quem
 #     gera código a partir dele.
-#  2. CATRACA DA COBERTURA. Cada operação (método + caminho) montada no router
+#  2. NENHUM `$ref` PENDURADO. Cada spec leva só os esquemas que as suas
+#     próprias operações alcançam (`openapi.rs::build`) — a v1 não carrega os
+#     tipos do operador. O corte é por fecho transitivo, por isso uma forma de
+#     `$ref` que a travessia não conheça deixaria de ser ruído e passaria a ser
+#     um contrato QUEBRADO: aponta para um esquema que não está no ficheiro.
+#     Este portão recusa isso.
+#  3. CATRACA DA COBERTURA. Cada operação (método + caminho) montada no router
 #     tem de estar no spec da sua superfície. Hoje há dívida herdada; o número
 #     de operações SEM documentação não pode subir, e desce com BLESS.
 #     Fora da conta, com razão: WebSockets (/ws, /rtc, directo — o contrato é o
@@ -48,6 +54,32 @@ for sup, path in gerado.items():
         else:
             print(f'✗ openapi: {alvo} difere do spec gerado — corre BLESS=1 bash scripts/check-openapi.sh e commita o diff')
             falha = True
+
+# ---- nenhum `$ref` pendurado: o fecho transitivo tem de fechar ----
+def refs_de_esquema(valor, saida):
+    """Nomes de cada `$ref` para `#/components/schemas/…`, a qualquer profundidade."""
+    if isinstance(valor, dict):
+        for chave, v in valor.items():
+            if chave == '$ref' and isinstance(v, str) and v.startswith('#/components/schemas/'):
+                saida.add(v.rsplit('/', 1)[1])
+            else:
+                refs_de_esquema(v, saida)
+    elif isinstance(valor, list):
+        for v in valor:
+            refs_de_esquema(v, saida)
+
+for sup, path in gerado.items():
+    spec = json.load(open(path, encoding='utf-8'))
+    declarados = set(spec.get('components', {}).get('schemas', {}))
+    usados = set()
+    refs_de_esquema(spec, usados)
+    pendurados = sorted(usados - declarados)
+    if pendurados:
+        print(f'✗ openapi: {sup}.json refere esquemas que NÃO declara — contrato quebrado:')
+        for n in pendurados:
+            print(f'     #/components/schemas/{n}')
+        print('     (openapi.rs::build corta por alcance; a travessia `refs_de_esquema` perdeu uma forma de $ref)')
+        falha = True
 
 # ---- cobertura: operações montadas vs documentadas ----
 lib = open('server/src/lib.rs', encoding='utf-8').read()
