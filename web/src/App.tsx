@@ -78,6 +78,8 @@ export default function App() {
   const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(currentUser())
   const [route, setRoute] = useState<Route>(parseHash())
+  // Desafio MFA devolvido pelo SSO (A4) — ver o `useEffect` de `#/sso-mfa`.
+  const [ssoMfaToken, setSsoMfaToken] = useState<string | null>(null)
   const trabalhoEmCurso = useTrabalhoEmCurso()
 
   /**
@@ -129,6 +131,17 @@ export default function App() {
     }
   }, [])
 
+  // Regresso do IdP com um segundo factor LOCAL activo (A4): `#/sso-mfa?mfa_token=…`
+  // -- sem cookie nem access token, só o desafio. O mesmo ecrã de MFA do login
+  // por password trata-o a partir daqui (ver `ssoMfaToken` abaixo).
+  useEffect(() => {
+    if (location.hash.startsWith('#/sso-mfa')) {
+      const m = location.hash.match(/mfa_token=([^&]+)/)
+      setSsoMfaToken(m ? m[1] : null)
+      location.hash = '/login'
+    }
+  }, [])
+
   function enterRoom(code: string, voice = false) {
     location.hash = `/r/${code}${voice ? '?voice' : ''}`
   }
@@ -136,7 +149,7 @@ export default function App() {
     location.hash = key === 'home' ? '/' : `/${key}`
   }
 
-  if (location.hash.startsWith('#/sso-complete')) {
+  if (location.hash.startsWith('#/sso-complete') || location.hash.startsWith('#/sso-mfa')) {
     return (
       <div className="wait-screen" role="status">
         <Spinner />
@@ -160,6 +173,7 @@ export default function App() {
       <Login
         pendingRoom={route.kind === 'lobby' || route.kind === 'telemovel' ? route.code : null}
         onLogin={aoEntrar}
+        initialMfaToken={ssoMfaToken}
       />
     )
   }

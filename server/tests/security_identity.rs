@@ -893,3 +893,82 @@ async fn enforce_sso_only_blocks_members_of_the_enforcing_org(db: sqlx::PgPool) 
         "conta de outra organização ficou bloqueada por um domínio que não é dela: {body}"
     );
 }
+
+/// A4 (revisão de segurança, 2026-10-09) — o SSO emitia sessão directa mesmo
+/// para uma conta com um segundo factor LOCAL activo. O IdP ser "o" factor de
+/// quem administra a organização não é o mesmo que ser o segundo factor
+/// DESTA conta: quem activou TOTP aqui quer os dois, e o SSO não lho podia
+/// retirar em silêncio -- sobretudo depois de C1/A1 (identidade federada já
+/// ter sido o caminho de uma tomada de conta nesta mesma revisão).
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_callback_challenges_local_mfa_instead_of_issuing_a_session(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("mfa-sso.test").await;
+    let (secret, _) = enable_mfa(&app, &admin.token).await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+
+    let r = app
+        .raw(
+            reqwest::Method::GET,
+            "/api/auth/sso/authorize?domain=mfa-sso.test",
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 302, "{}", r.text);
+    let location = url::Url::parse(&r.header("location").unwrap()).unwrap();
+    let q = |k: &str| {
+        location
+            .query_pairs()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.to_string())
+            .unwrap()
+    };
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.email = admin.email.clone();
+        a.nonce = q("nonce");
+    }
+
+    let r = app
+        .raw(
+            reqwest::Method::GET,
+            &format!(
+                "/api/auth/sso/callback?code=codigo-falso&state={}",
+                q("state")
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 302, "{}", r.text);
+    let loc = r.header("location").unwrap();
+    // Nem sessão (sem cookie `dlx_refresh`) nem access token no fragmento --
+    // só o desafio, pelo mesmo caminho do login por password.
+    assert!(
+        loc.contains("/#/sso-mfa?mfa_token="),
+        "SSO com MFA local devia desafiar, não abrir sessão: {loc}"
+    );
+    assert!(
+        !r.headers.contains_key(reqwest::header::SET_COOKIE),
+        "cookie de sessão definido antes do segundo factor: {:?}",
+        r.headers
+    );
+    let mfa_token = loc.split("mfa_token=").nth(1).unwrap().to_string();
+
+    // O desafio é REAL: completa-se pelo mesmo endpoint do login por
+    // password, com o código TOTP desta conta. Passo SEGUINTE ao do
+    // `enable_mfa`: a ACTIVAÇÃO já consome o passo actual (`last_step`,
+    // anti-replay), e usar o mesmo aqui falhava por repetição, não pela
+    // correcção em teste.
+    let (st, body) = app
+        .post(
+            "/api/auth/login/mfa",
+            None,
+            json!({"mfa_token": mfa_token, "code": totp_at_step(&secret, current_step() + 1)}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["user"]["id"], admin.user_id);
+}

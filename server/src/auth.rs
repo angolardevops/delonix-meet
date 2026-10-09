@@ -1226,7 +1226,7 @@ pub async fn sso_login(
         ("state" = String, Query, description = "State anti-CSRF emitido por `/api/auth/sso/authorize` (uso único, 10 min)."),
     ),
     responses(
-        (status = 302, description = "Redirecção para o frontend com o access token no fragmento. Define o cookie `dlx_refresh`."),
+        (status = 302, description = "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4)."),
         (status = 400, description = "`code`/`state` em falta, ou o IdP não devolveu email.", body = crate::openapi::ErrorBody),
         (status = 401, description = "State desconhecido, já consumido ou expirado.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Regra de pertença (R130): `sso.account_not_in_org` — a conta existe mas não é membro activo desta organização; `sso.email_domain_mismatch` — conta nova de um domínio que não é o da organização.", body = crate::openapi::ErrorBody),
@@ -1486,6 +1486,39 @@ pub async fn sso_callback(
             new_user
         }
     };
+
+    // A4 (revisão de segurança, 2026-10-09): o SSO emitia sessão directa,
+    // mesmo para uma conta com um segundo factor LOCAL activo -- ao
+    // contrário do login por password (acima, `factors.any()`), que nunca
+    // dá sessão sem ele. O IdP ser "o" factor de quem o administra não é o
+    // mesmo que ser o segundo factor DESTA conta: se alguém activou TOTP ou
+    // uma chave de acesso aqui, é porque quer os dois, e o SSO não lho pode
+    // retirar em silêncio -- sobretudo depois de C1/A1 (identidade federada
+    // já ter sido o caminho de uma tomada de conta nesta mesma revisão).
+    let factors = crate::mfa::factors(&state.db, user.id).await?;
+    if factors.any() {
+        crate::audit::log(
+            &state.db,
+            Some(entry.org_id),
+            user.id,
+            "auth.mfa_challenge",
+            &email,
+        )
+        .await;
+        let mfa_token = mfa_challenge_token(&state, user.id)?;
+        let redirect_url = state
+            .config
+            .cors_origins
+            .first()
+            .map(|o| format!("{o}/#/sso-mfa?mfa_token={mfa_token}"))
+            .unwrap_or_else(|| format!("https://localhost:5173/#/sso-mfa?mfa_token={mfa_token}"));
+        tracing::info!(%email, org_id = %entry.org_id, "SSO: desafio do segundo factor local");
+        return Ok((
+            [(header::LOCATION, redirect_url)],
+            axum::http::StatusCode::FOUND,
+        )
+            .into_response());
+    }
 
     // Emitir tokens nativos do Delonix e redirecionar para o frontend.
     let session = SessionMeta::fresh(&headers, ip, crate::sessions::AuthMethod::Sso);
