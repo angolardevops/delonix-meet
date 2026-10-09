@@ -1,7 +1,12 @@
 //! `meeting.ended` e o reenfileiramento defensivo da acta — disparados por
-//! `meetings::on_room_emptied` quando a última pessoa sai de uma sala SFU
-//! com uma reunião associada (`signaling.rs`, ponto onde a gravação órfã
-//! já se finaliza).
+//! `meetings::on_room_emptied` quando uma sala com reunião associada fica
+//! genuinamente vazia. O sinal normal é a varredura de lugares expirados
+//! (R91, `signaling::expire_disconnected`) — um simples `drop(ws)`, sem
+//! `ClientMsg::Leave` nem media WebRTC negociada, só conta como saída
+//! depois da janela de graça. Estes testes chamam
+//! `delonix_server::sweep_expired_seats(&app.state, Duration::ZERO)`
+//! directamente (exposta para isto — `TestApp` não arranca o cron real de
+//! `lib.rs`) em vez de esperar por um temporizador.
 mod common;
 
 use std::time::Duration;
@@ -24,6 +29,24 @@ type Ws =
 
 async fn spawn_app(db: sqlx::PgPool) -> TestApp {
     TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await
+}
+
+/// Varre com janela ZERO (expira já qualquer lugar marcado `disconnected_at`,
+/// mesmo há 1ms) em repetição curta, até o servidor ter processado o
+/// `drop(ws)` (chamado `disconnect()` no fundo de `handle_socket`) — não há
+/// um acessor público para "este peer já está marcado", por isso repete a
+/// própria varredura em vez de inventar um. Sem efeito e sem custo chamar
+/// isto antes de o servidor ter processado o fecho: não há nada para expirar
+/// e devolve 0.
+async fn sweep_until_expired(app: &TestApp) -> usize {
+    for _ in 0..100 {
+        let n = delonix_server::sweep_expired_seats(&app.state, Duration::ZERO).await;
+        if n > 0 {
+            return n;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    0
 }
 
 /// Um receptor HTTP real, como em `webhook_deliveries.rs`.
@@ -129,16 +152,18 @@ async fn join_room_socket(app: &TestApp, code: &str, who: &Account) -> Ws {
     panic!("o joined não chegou");
 }
 
-/// Espera até haver `n` entregas no receptor (polling — a entrega é
-/// best-effort e assíncrona, disparada numa tarefa de fundo pelo
-/// `on_room_emptied`).
+/// Espera até haver `n` entregas no receptor. `webhooks::envia` faz a
+/// primeira tentativa em linha (dentro de `on_room_emptied`, que
+/// `sweep_until_expired` já esperou terminar) — a entrega local a
+/// `127.0.0.1` devia estar lá antes disto sequer repetir uma vez; a margem é
+/// só para não depender de nenhuma garantia de escalonamento do tokio.
 async fn wait_received(rx: &Receiver, n: usize) -> Vec<Value> {
-    for _ in 0..200 {
+    for _ in 0..50 {
         let got = rx.received();
         if got.len() >= n {
             return got;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!(
         "o webhook não chegou a tempo (recebidos: {})",
@@ -161,6 +186,9 @@ async fn meeting_ended_fires_when_the_last_participant_leaves_a_room_with_a_meet
 
     let ws = join_room_socket(&app, &code, &a).await;
     drop(ws); // única pessoa na sala sai — sala fica vazia
+
+    let n = sweep_until_expired(&app).await;
+    assert_eq!(n, 1, "um lugar tinha de expirar");
 
     let got = wait_received(&rx, 1).await;
     assert_eq!(got.len(), 1, "{got:?}");
@@ -190,11 +218,10 @@ async fn no_meeting_ended_for_an_ad_hoc_room_without_a_meeting(db: sqlx::PgPool)
     let ws = join_room_socket(&app, &code, &a).await;
     drop(ws);
 
-    // Dá tempo ao `on_room_emptied` de correr (não há nada a receber: a
-    // ausência é o que se prova). Um `sleep` curto chega — não há rede real a
-    // reagir, só uma consulta à base que ou encontra `meetings.room_code` ou
-    // não.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // A sala fica vazia (e `on_room_emptied` corre) — a ausência que se
+    // prova é o `meeting.ended`, não o esvaziamento em si.
+    let n = sweep_until_expired(&app).await;
+    assert_eq!(n, 1, "um lugar tinha de expirar");
     assert!(
         rx.received().is_empty(),
         "uma sala sem reunião não deveria disparar meeting.ended: {:?}",
@@ -235,22 +262,23 @@ async fn room_emptying_requeues_a_stuck_minutes_summary(db: sqlx::PgPool) {
     let ws = join_room_socket(&app, &code, &a).await;
     drop(ws);
 
-    // Polling directo na base: `mom_queued_at` deve voltar a ficar recente
-    // (reenfileirado) e `mom_attempts` a zero.
-    for _ in 0..100 {
-        let row: (chrono::DateTime<chrono::Utc>, i32) =
-            sqlx::query_as("SELECT mom_queued_at, mom_attempts FROM meetings WHERE id = $1::uuid")
-                .bind(&meeting_id)
-                .fetch_one(&app.db)
-                .await
-                .unwrap();
-        let (queued_at, attempts) = row;
-        if attempts == 0 && chrono::Utc::now() - queued_at < chrono::Duration::seconds(30) {
-            return; // reenfileirado — prova feita
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("a acta encalhada não foi reenfileirada a tempo");
+    let n = sweep_until_expired(&app).await;
+    assert_eq!(n, 1, "um lugar tinha de expirar");
+
+    // `on_room_emptied` já correu dentro de `sweep_until_expired` — o
+    // reenfileiramento é síncrono (`enqueue_mom_summary`, um `UPDATE`), sem
+    // fila nem rede: lê-se já.
+    let (queued_at, attempts): (chrono::DateTime<chrono::Utc>, i32) =
+        sqlx::query_as("SELECT mom_queued_at, mom_attempts FROM meetings WHERE id = $1::uuid")
+            .bind(&meeting_id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(attempts, 0, "reenfileirar zera as tentativas");
+    assert!(
+        chrono::Utc::now() - queued_at < chrono::Duration::seconds(30),
+        "mom_queued_at devia ter ficado recente"
+    );
 }
 
 /// Dentro do tempo de graça (acabou de ser pedida), esvaziar a sala NÃO
@@ -280,7 +308,11 @@ async fn room_emptying_does_not_requeue_within_the_grace_period(db: sqlx::PgPool
 
     let ws = join_room_socket(&app, &code, &a).await;
     drop(ws);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // `on_room_emptied` corre mesmo (a sala fica vazia) — a prova é que,
+    // apesar disso, o tempo de graça de 15 MIN da acta (não o da reserva de
+    // lugar, que aqui é irrelevante) continua a impedir o reenfileiramento.
+    let n = sweep_until_expired(&app).await;
+    assert_eq!(n, 1, "um lugar tinha de expirar");
 
     let (queued_at, attempts): (chrono::DateTime<chrono::Utc>, i32) =
         sqlx::query_as("SELECT mom_queued_at, mom_attempts FROM meetings WHERE id = $1::uuid")

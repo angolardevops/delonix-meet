@@ -891,7 +891,9 @@ pub(crate) async fn enqueue_meeting_webhook(
 /// terminar sozinho antes de reenfileirarmos por cima.
 const GRACA_REENFILEIRAMENTO_MOM_MIN: i64 = 15;
 
-/// Chamado por `signaling.rs` quando a última pessoa sai de uma sala SFU.
+/// Chamado quando uma sala fica genuinamente vazia (peers E sala de espera)
+/// — por `signaling::expire_disconnected` (via [`sweep_expired_seats`], a
+/// fonte normal) ou, raramente, por um `leave()` imediato que já a esvaziou.
 /// Dispara `meeting.ended` e reenfileira defensivamente o resumo da acta —
 /// SÓ quando a sala tem mesmo uma reunião associada: uma sala ad-hoc ou
 /// pessoal não tem `room_code` em nenhuma linha de `meetings`, e não produz
@@ -918,6 +920,20 @@ pub(crate) async fn on_room_emptied(state: Arc<AppState>, room_id: Uuid) {
 
     fire_meeting_ended(&state, &meeting).await;
     reenfileira_mom_se_encalhada(&state, meeting.id).await;
+}
+
+/// Varre os lugares reservados expirados (`signaling::expire_disconnected`) e
+/// chama [`on_room_emptied`] para cada sala que isso deixou vazia — a mesma
+/// lógica do cron em `lib.rs`, extraída para que os testes de integração a
+/// possam invocar directamente (com `janela = Duration::ZERO` para expirar
+/// já, por exemplo) em vez de esperar por um temporizador real, que
+/// `TestApp` não arranca. Devolve quantos lugares expiraram.
+pub async fn sweep_expired_seats(state: &Arc<AppState>, janela: std::time::Duration) -> usize {
+    let (n, esvaziadas) = state.hub.expire_disconnected(janela);
+    for room_id in esvaziadas {
+        on_room_emptied(state.clone(), room_id).await;
+    }
+    n
 }
 
 /// Regista e envia o `meeting.ended`. Sem escrita de negócio para emparelhar

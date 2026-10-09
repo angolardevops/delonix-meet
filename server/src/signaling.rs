@@ -2010,8 +2010,11 @@ impl SignalingHub {
     }
 
     /// Varre os lugares reservados que passaram da janela e transforma-os em
-    /// saídas a sério. Chamado periodicamente; devolve quantos expiraram.
-    pub fn expire_disconnected(&self, janela: std::time::Duration) -> usize {
+    /// saídas a sério. Chamado periodicamente; devolve quantos expiraram E,
+    /// à parte, as salas que ficaram vazias com isto — o chamador (o cron em
+    /// `lib.rs`) é quem tem o `AppState` para avisar `meetings::on_room_emptied`
+    /// (este módulo não conhece `meetings`, só `signaling`).
+    pub fn expire_disconnected(&self, janela: std::time::Duration) -> (usize, Vec<Uuid>) {
         let agora = std::time::Instant::now();
         let mut expirados: Vec<(Uuid, Uuid)> = Vec::new();
         for room in self.rooms.iter() {
@@ -2024,10 +2027,13 @@ impl SignalingHub {
             }
         }
         // `leave` apaga também a cópia do lugar no Redis.
+        let mut esvaziadas = Vec::new();
         for (room_id, peer_id) in &expirados {
-            self.leave(*room_id, *peer_id);
+            if self.leave(*room_id, *peer_id) {
+                esvaziadas.push(*room_id);
+            }
         }
-        expirados.len()
+        (expirados.len(), esvaziadas)
     }
 
     /// Há neste nó um peer com este id na sala — vivo ou com o lugar reservado?
@@ -2197,7 +2203,13 @@ impl SignalingHub {
         n
     }
 
-    pub fn leave(&self, room_id: Uuid, peer_id: Uuid) {
+    /// Devolve `true` quando ESTA saída deixou a sala vazia (peers E sala de
+    /// espera) — o sinal fiável de "a reunião acabou", independente de
+    /// topologia (`mesh` ou `sfu`) e de ter havido media WebRTC negociada. O
+    /// gatilho imediato em `handle_socket` (ligado a `state.sfu.remove_peer`)
+    /// só existe para a gravação (`recorder::finalize`) e só dispara quando
+    /// há mesmo uma sessão SFU — não serve para detectar sala vazia em geral.
+    pub fn leave(&self, room_id: Uuid, peer_id: Uuid) -> bool {
         // Quem fica sozinho com a sua própria conta deixa de ser companion
         // (R114). Sem isto, fechar o portátil deixava o telemóvel mudo e com um
         // aviso a falar de um dispositivo que já não está lá — e ninguém liga o
@@ -2276,6 +2288,7 @@ impl SignalingHub {
                 room.peers.is_empty() && room.waiting.is_empty()
             });
         }
+        removed && empty
     }
 
     // ---------- Canais: participantes de fora da app (ADR-0010) ----------
@@ -5299,18 +5312,15 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         crate::studio_realtime::on_source_left(&state, room_id, s, peer_id);
     }
     if sfu_mode {
-        // Última pessoa a sair leva a gravação órfã para finalização.
+        // Última pessoa a sair leva a gravação órfã para finalização. Isto é
+        // SÓ sobre a sessão de media (SFU) — não é o sinal de "a reunião
+        // acabou" em geral (uma sala `mesh`, ou uma sessão SFU que nunca
+        // chegou a negociar media, nunca passaria por aqui). Esse sinal é o
+        // `leave()`/`expire_disconnected()` do `hub`, mais abaixo e no cron de
+        // `lib.rs` — ver `meetings::on_room_emptied`.
         if let Some(session) = state.sfu.remove_peer(room_id, peer_id).await {
             tracing::info!(%room_id, "room empty — finalizing server recording");
             crate::recorder::finalize(state.clone(), room_id, session);
-            // Mesmo ponto: avisa `meeting.ended` (só se a sala tiver mesmo
-            // uma reunião associada) e reenfileira defensivamente a acta por
-            // IA se ficou encalhada. Numa tarefa à parte — não atrasa o
-            // fecho do socket nem a finalização da gravação acima.
-            let st = state.clone();
-            tokio::spawn(async move {
-                crate::meetings::on_room_emptied(st, room_id).await;
-            });
         }
     }
     // O lugar fica RESERVADO durante a janela de graça (R91) em vez de se
@@ -5322,8 +5332,20 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // marca. Fazer o `leave` com um `sleep` neste ponto prenderia a tarefa do
     // socket durante a janela inteira, e uma sala com muita rotação acumularia
     // tarefas adormecidas sem tecto.
-    if !state.hub.disconnect(room_id, peer_id) {
-        state.hub.leave(room_id, peer_id);
+    //
+    // Mas se ESTE `leave` imediato (só acontece quando `disconnect` encontra
+    // o peer já ausente — raro, ex. kick concorrente) deixar a sala vazia,
+    // avisa logo: não há razão para esperar pela varredura se já se sabe.
+    let esvaziou = if state.hub.disconnect(room_id, peer_id) {
+        false
+    } else {
+        state.hub.leave(room_id, peer_id)
+    };
+    if esvaziou {
+        let st = state.clone();
+        tokio::spawn(async move {
+            crate::meetings::on_room_emptied(st, room_id).await;
+        });
     }
     if let Some(parent) = breakout_parent_of(&state, room_id) {
         broadcast_breakout_state(&state, parent);
@@ -6508,15 +6530,41 @@ mod tests {
             hub.reclaim(room, &segredo, nula).is_none(),
             "fora da janela não se reclama"
         );
-        assert_eq!(hub.expire_disconnected(nula), 1, "um lugar tem de expirar");
+        let (n, esvaziadas) = hub.expire_disconnected(nula);
+        assert_eq!(n, 1, "um lugar tem de expirar");
+        assert!(
+            esvaziadas.is_empty(),
+            "b continua na sala — não devia ficar vazia"
+        );
         match rx_b.recv().await.unwrap() {
             ServerMsg::PeerLeft { peer_id } => assert_eq!(peer_id, a),
             other => panic!("ao expirar, os outros veem uma SAÍDA: {other:?}"),
         }
+        let (n2, _) = hub.expire_disconnected(nula);
         assert_eq!(
-            hub.expire_disconnected(nula),
-            0,
+            n2, 0,
             "expirar duas vezes o mesmo lugar seria uma saída a dobrar"
+        );
+    }
+
+    /// Quando o ÚLTIMO lugar reservado expira, a sala fica vazia — é o sinal
+    /// que `meetings::on_room_emptied` usa (via o cron de `lib.rs`), e tem de
+    /// disparar mesmo sem nenhuma sessão SFU/WebRTC envolvida (ex. `mesh`).
+    #[tokio::test]
+    async fn expirar_o_ultimo_lugar_esvazia_a_sala() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        hub.disconnect(room, a);
+
+        let nula = std::time::Duration::from_secs(0);
+        let (n, esvaziadas) = hub.expire_disconnected(nula);
+        assert_eq!(n, 1);
+        assert_eq!(
+            esvaziadas,
+            vec![room],
+            "a sala ficou sem ninguém — tinha de aparecer"
         );
     }
 
