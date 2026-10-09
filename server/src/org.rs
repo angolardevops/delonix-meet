@@ -1724,6 +1724,15 @@ pub(crate) fn recording_uploader_in_org_sql(org: &str, uploader: &str) -> String
     )
 }
 
+/// Fragmento SQL reutilizável: membros activos de uma organização, pela
+/// coluna `org_col` (ex.: `"o.id"`). A mesma subconsulta de `MY_ORGS_SQL`
+/// (regra 1 — pertença decide-se aqui, não copiada noutro módulo).
+pub(crate) fn active_member_count_sql(org_col: &str) -> String {
+    format!(
+        "(SELECT COUNT(*) FROM org_members mm WHERE mm.org_id = {org_col} AND mm.archived_at IS NULL)"
+    )
+}
+
 /// A organização do autor a mostrar a quem pede: de entre as organizações de
 /// `subject`, a que `viewer` também partilha como membro ACTIVO — e, se não
 /// partilhar nenhuma, a mais antiga. Sub-consulta de uma linha (`id`, `name`),

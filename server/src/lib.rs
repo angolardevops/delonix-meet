@@ -401,6 +401,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let operator_routes = Router::new()
         // Provisão de org — segredo de plataforma (a org ainda não existe).
         .route("/organizations", post(apikeys::v1_provision_org))
+        // Tenants (organizações já existentes) vistos pelo operador —
+        // `/tenants`, não `/organizations`, de propósito: o provisionamento
+        // acima autentica por segredo e está declarado público em
+        // `scripts/rotas-publicas.txt`; partilhar o caminho com uma rota de
+        // sessão fazia `check-route-auth.sh` falhar (o portão compara só por
+        // caminho, não por método — refazê-lo está fora do âmbito desta PR).
+        .route("/tenants", get(directory::list_operator_organizations))
+        // Detalhe de UM tenant, com uso real (lugares e armazenamento
+        // ocupados) — as rotas do inquilino exigem membro, o operador não é.
+        .route(
+            "/tenants/{org_id}",
+            get(directory::get_operator_organization),
+        )
+        // Quotas de plano (grupos/salas/reuniões + dial-in PSTN) — saem da
+        // autoridade do inquilino (`PATCH /api/orgs/{org_id}`) para aqui.
+        .route(
+            "/tenants/{org_id}/quotas",
+            axum::routing::put(directory::operator_set_quotas),
+        )
         // Armazenamento remoto da plataforma: TrueNAS NFS / Nextcloud WebDAV.
         .route(
             "/storage",

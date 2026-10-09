@@ -6369,6 +6369,168 @@
         ],
         "type": "object"
       },
+      "OperatorOrgDetail": {
+        "description": "Detalhe de uma organização para o operador: os tectos de plano MAIS o uso\nreal (lugares ocupados, bytes ocupados).",
+        "properties": {
+          "org": {
+            "$ref": "#/components/schemas/OperatorOrgSummary"
+          },
+          "seats": {
+            "$ref": "#/components/schemas/SeatSummary"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/OrgStorageUsage"
+          }
+        },
+        "required": [
+          "org",
+          "seats",
+          "storage"
+        ],
+        "type": "object"
+      },
+      "OperatorOrgPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorOrgSummary"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "OperatorOrgSummary": {
+        "description": "Uma organização vista pelo operador: identidade + os seis tectos de plano.\nSem uso agregado (lugares ocupados, bytes ocupados) — isso é só o\ndetalhe (`OperatorOrgDetail`).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "max_concurrent_participants": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_groups": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_meetings": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_rooms": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_seats": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_storage_bytes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "member_count": {
+            "description": "Membros activos (sem convites pendentes nem arquivados).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "domain",
+          "created_at",
+          "member_count"
+        ],
+        "type": "object"
+      },
+      "OperatorQuotasReq": {
+        "description": "Corpo de `PUT /api/operator/v1/organizations/{org_id}/quotas`.",
+        "properties": {
+          "max_groups": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_meetings": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_rooms": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "voice_did_model": {
+            "description": "`'shared' | 'dedicated'`. Omisso ou fora do enum mantém o actual.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "voice_media_backend": {
+            "description": "`'freeswitch' | 'provider'`. Omisso ou fora do enum mantém o actual.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "OrgSettingsReq": {
         "properties": {
           "chat_retention_days": {
@@ -14758,6 +14920,237 @@
           }
         ],
         "summary": "`POST /api/operator/v1/storage/test` — testa a ligação ao storage configurado.",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/operator/v1/tenants": {
+      "get": {
+        "operationId": "list_operator_organizations",
+        "parameters": [
+          {
+            "description": "1-100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorOrgPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é administrador da plataforma"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Organizações da plataforma, paginadas por nome — só o operador. Sem uso\nagregado: caro de calcular para N organizações a cada refrescar, e não é\npreciso para decidir em qual entrar (usa `GET .../{org_id}` para isso).",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/operator/v1/tenants/{org_id}": {
+      "get": {
+        "operationId": "get_operator_organization",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorOrgDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é administrador da plataforma"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Detalhe de uma organização, com uso real — só o operador. As rotas do\ninquilino (`GET /api/orgs/{org_id}/seats`, `.../storage-usage`) exigem que\nquem pede seja MEMBRO; um operador normalmente não é, por isso este\nhandler chama directamente as funções de domínio/armazenamento\n(`org::seat_summary`, `usage::org_storage_usage_for`) em vez das rotas.",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/operator/v1/tenants/{org_id}/quotas": {
+      "put": {
+        "operationId": "operator_set_quotas",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorQuotasReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorOrgSummary"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é administrador da plataforma"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Quotas de plano de uma organização — só o operador da plataforma. PUT\nsubstitui (`max_groups`/`max_rooms`/`max_meetings`) e devolve o recurso\nactualizado, como os irmãos `seats`/`concurrency`. Os mesmos dois campos de\nvoz validados em `org::update_settings` (dial-in PSTN) saem da autoridade\ndo inquilino para aqui.",
         "tags": [
           "platform"
         ]
