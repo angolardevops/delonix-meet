@@ -12,6 +12,21 @@
         ],
         "type": "object"
       },
+      "AcceptPasswordResetReq": {
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "type": "object"
+      },
       "AcceptedInvitation": {
         "properties": {
           "access_expires_at": {
@@ -33,6 +48,20 @@
         "required": [
           "org_id",
           "role_id"
+        ],
+        "type": "object"
+      },
+      "AcceptedPasswordReset": {
+        "properties": {
+          "sessions_revoked": {
+            "description": "Sessões terminadas pela reposição. Todas: a pessoa entra de novo.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessions_revoked"
         ],
         "type": "object"
       },
@@ -4623,6 +4652,38 @@
           "username",
           "status",
           "decline_reason"
+        ],
+        "type": "object"
+      },
+      "IssuedPasswordReset": {
+        "properties": {
+          "delivery_channel": {
+            "description": "`manual`: quem emite entrega o token. Quando o correio existir\n(D7), passa a poder ser `email`.",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "token": {
+            "description": "Aparece **uma só vez**, nesta resposta. A base guarda só o hash.",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "expires_at",
+          "token",
+          "delivery_channel"
         ],
         "type": "object"
       },

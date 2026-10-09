@@ -2891,6 +2891,8 @@ pub async fn provisioning(
         get_entry_rules,
         put_entry_rules,
         provisioning,
+        issue_password_reset,
+        accept_password_reset,
     ),
     components(schemas(
         DirectoryEntry,
@@ -2926,6 +2928,9 @@ pub async fn provisioning(
         EntryRulesReq,
         OdooProvisioning,
         Provisioning,
+        IssuedPasswordReset,
+        AcceptPasswordResetReq,
+        AcceptedPasswordReset,
         crate::org::SeatSummary,
     ))
 )]
