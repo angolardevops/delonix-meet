@@ -240,6 +240,21 @@ jobs:
       # executado aqui de propósito: um teste que faz skip em silêncio no CI
       # dá luz verde sem ter provado nada. Corre onde há cluster (`make prod`).
 
+      # O worker de IA (ai-worker/, Python) tinha 24 testes e NENHUM corria:
+      # medido a 2026-10-08, `ai-worker` não aparecia no Makefile nem neste
+      # ficheiro. Uma bateria que ninguém corre não é uma bateria.
+      #
+      # Só o grpcio e o protobuf, nas versões do requirements.txt — o
+      # faster-whisper (e os ~3 GB de modelo) não entram: o `transcriber.py`
+      # importa-o TARDE, dentro do construtor, e nenhum teste o constrói.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Testes do worker de IA (batimento, ciclo, gRPC com dobras)
+        run: |
+          pip install --quiet grpcio==1.66.2 protobuf==5.27.5
+          cd ai-worker/tests && python -m unittest discover -s . -v
+
   seguranca:
     name: Segurança das dependências
     runs-on: ubuntu-latest

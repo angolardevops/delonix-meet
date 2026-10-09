@@ -93,6 +93,38 @@ spec:
             - { name: WHISPER_DEVICE, value: cuda }
             - { name: WHISPER_COMPUTE, value: float16 }
             - { name: HF_HOME, value: /models }
+            # O batimento: o único sinal de vida que este worker tem (não serve
+            # HTTP, não tem Service). As sondas abaixo leem ESTE caminho pela
+            # variável, não por um literal repetido.
+            - { name: HEARTBEAT_FILE, value: /tmp/batimento }
+          # `startupProbe`: espera que o batimento APAREÇA. O ficheiro só nasce
+          # depois do modelo estar carregado, e o primeiro arranque descarrega o
+          # large-v3 (~3 GB) para o PVC `ai-models`. 10 s × 180 = **30 minutos**
+          # de folga; sem isto a liveness matava o pod a meio da descarga, e o
+          # pod seguinte recomeçava a descarga — para sempre.
+          startupProbe:
+            exec: { command: ["sh", "-c", 'test -f "$HEARTBEAT_FILE"'] }
+            periodSeconds: 10
+            failureThreshold: 180
+          # `livenessProbe`: já arrancou, agora conta a IDADE do batimento. O
+          # pulso vem do PROGRESSO (uma volta do ciclo, cada segmento que o
+          # faster-whisper produz — ver ai-worker/batimento.py), e é por isso que
+          # isto detecta um worker PENDURADO: com um batimento por relógio, um
+          # CUDA travado continuaria a tocar o ficheiro e a sonda não provaria
+          # nada. 600 s cobre a maior folga legítima entre pulsos — o VAD antes
+          # do primeiro segmento de uma gravação longa. 3 × 60 s ⇒ reinício
+          # depois de ~12 min sem progresso.
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - test $(( $(date +%s) - $(stat -c %Y "$HEARTBEAT_FILE") )) -lt 600
+            periodSeconds: 60
+            failureThreshold: 3
+          # SEM readinessProbe, de propósito: este worker não tem Service e não
+          # recebe tráfego — não há de onde o tirar. A readiness aqui seria um
+          # campo preenchido para o portão ver, e não para servir de nada.
           resources:
             # A GPU é um recurso agendável: 1 GPU inteira por pod.
             limits:

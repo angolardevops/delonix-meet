@@ -49,6 +49,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.environ.get("DELONIX_PROTO_GEN_DIR", os.path.join(HERE, "gen")))
 
 from job_source import ConfigError, GrpcJobSource, LegacyDbJobSource, open_channel  # noqa: E402
+from batimento import Batimento  # noqa: E402
 from transcriber import FakeTranscriber, WhisperTranscriber  # noqa: E402
 import worker  # noqa: E402
 
@@ -98,7 +99,7 @@ def build_source(env):
     raise ConfigError("falta DELONIX_GRPC_ADDR (ou, deprecado, DATABASE_URL)")
 
 
-def build_transcriber(env):
+def build_transcriber(env, pulso=lambda: None):
     kind = env.get("TRANSCRIBER", "whisper")
     if kind == "fake":
         log("AVISO: TRANSCRIBER=fake — não há modelo; só para testes")
@@ -107,7 +108,8 @@ def build_transcriber(env):
         raise ConfigError(f"TRANSCRIBER={kind!r} desconhecido (whisper|fake)")
     return WhisperTranscriber(env.get("WHISPER_MODEL", "large-v3"),
                               env.get("WHISPER_DEVICE", "cuda"),
-                              env.get("WHISPER_COMPUTE", "float16"), log)
+                              env.get("WHISPER_COMPUTE", "float16"), log,
+                              pulso=pulso)
 
 
 def main(argv=None, env=None) -> int:
@@ -123,7 +125,12 @@ def main(argv=None, env=None) -> int:
         poll_seconds = _int_env(env, "POLL_SECONDS", 20)
         # A fonte primeiro: um erro de configuração não deve esperar 3GB de modelo.
         source = build_source(env)
-        transcriber = build_transcriber(env)
+        # O batimento nasce aqui mas só toca o ficheiro DEPOIS do modelo estar
+        # pronto (o primeiro pulso é a seguir): é isso que deixa o
+        # `startupProbe` esperar pela descarga do large-v3 sem a liveness o
+        # matar a meio. Ver ai-worker/batimento.py.
+        batimento = Batimento(env.get("HEARTBEAT_FILE", "/tmp/batimento"), log)
+        transcriber = build_transcriber(env, pulso=batimento.pulso)
     except ConfigError as e:
         log(f"ERRO de configuração: {e}")
         if source is not None:
@@ -131,13 +138,17 @@ def main(argv=None, env=None) -> int:
         return 2
 
     try:
+        # O modelo está pronto: o primeiro pulso cria o ficheiro, e é o que o
+        # `startupProbe` espera.
+        batimento.pulso()
         if opts.once:
             return EXIT_CODES[worker.process_one(source, transcriber, recordings_dir, log)]
         stop = threading.Event()
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())
         log("a sondar trabalhos")
-        worker.run(source, transcriber, recordings_dir, poll_seconds, stop, log)
+        worker.run(source, transcriber, recordings_dir, poll_seconds, stop, log,
+                   pulso=batimento.pulso)
         log("terminado")
         return 0
     finally:

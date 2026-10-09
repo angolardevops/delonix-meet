@@ -40,7 +40,7 @@ sem uma prática que lhe faça falta no seu papel.
 | Prática | `k8s/` | chart | Veredicto |
 |---|---|---|---|
 | `resources` em todo o workload | ✓ | ✓ | — |
-| probes (`readiness`/`liveness`) | 8/10 | ✓ | **falta** no `60-ai-gpu-worker` |
+| probes (`readiness`/`liveness`) | **9/10 (2026-10-09)** | ✓ | **feito** no `60-ai-gpu-worker`: `startupProbe` + `livenessProbe` sobre um batimento pulsado por PROGRESSO. Sem `readiness`, de propósito — não tem Service |
 | `securityContext` | **10/10 (2026-10-08)** | ✓ | **feito**: o `52-data-plain` e o `50-data` levam-no, com os uids medidos nas imagens. Ver o passo 5 — `drop: ALL` sozinho quebrava-os |
 | `runAsNonRoot`, `readOnlyRootFilesystem`, `drop: ["ALL"]`, `seccompProfile` | ✓ | ✓ | — |
 | `ServiceAccount` + `automountServiceAccountToken: false` | ✓ | ✓ | — (#266) |
@@ -226,25 +226,81 @@ sem uma prática que lhe faça falta no seu papel.
    falha; pôr o `09-whisper` non-root → falha a dizer que a excepção já não é
    necessária.
 
-   ### Por fazer, e porque não é YAML
+   ### Feito a 2026-10-09: as sondas do `60-ai-gpu-worker`
 
-   **As sondas do `60-ai-gpu-worker`.** O worker não serve HTTP e não escreve
-   batimento nenhum (`ai-worker/worker.py`), logo não há o que sondar. A imagem
-   é `nvidia/cuda:…-ubuntu22.04`, tem shell, portanto uma sonda `exec` é
-   possível — mas precisa de código:
+   Na primeira passagem ficaram de fora, com o desenho escrito. Foi esse desenho
+   que se executou, sem mudar de ideias:
 
-   - um batimento por ficheiro, pulsado **por progresso** e não por relógio. Em
-     `transcriber.py` a transcrição corre num gerador (`for seg in raw`), pelo
-     que um `pulso()` por segmento é um gancho limpo. Por relógio não serve: um
-     worker pendurado continuaria a parecer vivo, e seria uma sonda que não
-     prova nada;
-   - um `startupProbe` tolerante antes da liveness, porque o primeiro arranque
-     descarrega o modelo `large-v3` (~3 GB);
-   - readiness **não** faz sentido: o worker não tem Service nem recebe tráfego.
+   - **um batimento pulsado por PROGRESSO** (`ai-worker/batimento.py`), não por
+     relógio. É a decisão que faz a sonda valer algo: um batimento de relógio
+     continuaria a tocar o ficheiro com o CUDA travado, e seria uma sonda que
+     não prova nada — o mesmo defeito de um `ServiceMonitor` sem alvos. O pulso
+     parte de quem avança: **uma volta do ciclo** (`worker.run`) e **cada
+     segmento** que o `faster-whisper` produz. O gerador de segmentos em
+     `transcriber.py` era uma compreensão de tuplo; passou a ciclo só para poder
+     pulsar;
+   - **o ficheiro só nasce depois do modelo estar carregado.** É o que deixa o
+     `startupProbe` distinguir «ainda a descarregar o `large-v3`» (~3 GB no
+     primeiro arranque) de «pendurado»: ele espera que o ficheiro **apareça**,
+     com 10 s × 180 = **30 minutos** de folga. Só depois a liveness olha para a
+     **idade** (600 s, 3 × 60 s ⇒ reinício após ~12 min sem progresso);
+   - **sem `readinessProbe`**, de propósito: o worker não tem Service e não
+     recebe tráfego. Uma readiness aqui seria um campo preenchido para o portão
+     ver, não para servir de nada;
+   - **um batimento que falha a escrever não derruba a transcrição.** Queixa-se
+     **uma vez** e continua; quem decide é o Kubernetes, ao não ver o ficheiro
+     aparecer. Essa é a decisão certa para ficar no Kubernetes, não no Python.
 
-   É uma peça de código com teste, não uma linha de manifesto — e o worker ainda
-   não está entregue em sítio nenhum (`ghcr.io/OWNER/...:latest`, com o `OWNER`
-   por preencher).
+   **Medido na base da imagem** (`ubuntu:22.04`, a camada de baixo do
+   `nvidia/cuda:…-ubuntu22.04`), com o motor: o `startupProbe` vê o ficheiro;
+   com um batimento fresco a liveness diz vivo; com 20 minutos diz morto; sem
+   ficheiro, o `startupProbe` continua a esperar. Quatro comportamentos, quatro
+   medições.
+
+   ### E um achado maior do que a peça: a bateria do worker nunca corria
+
+   Ao escrever os testes descobri que `ai-worker` **não aparecia no Makefile nem
+   no `ci.yml`** — os **24 testes do worker nunca correram em sítio nenhum**. Uma
+   bateria que ninguém corre não é uma bateria, e sete testes novos sobre um
+   batimento não valeriam nada dentro dela.
+
+   Está ligada nos dois sítios: um passo no job `fitness` do CI e um alvo
+   `make test-ai-worker` (que o `make test` chama). Instala **só** o
+   `grpcio==1.66.2` e o `protobuf==5.27.5`, nas versões do `requirements.txt`: o
+   `faster-whisper` e os 3 GB de modelo não entram, porque o `transcriber.py`
+   importa-o **tarde**, dentro do construtor, e nenhum teste o constrói. Nesta
+   máquina, sem `grpcio`, três testes dão `ModuleNotFoundError` — o alvo **diz
+   qual é o comando** em vez de passar por cima. Com a dependência: **24/24**.
+
+   ### Os controlos negativos
+
+   Dos sete testes novos:
+
+   | ataque ao código | o teste diz |
+   |---|---|
+   | tirar o pulso do ciclo | `0 != 3: um pulso por volta` **e** `0 != 1: nenhum enquanto está pendurado` |
+   | pulsar uma vez em vez de por segmento | `1 != 6: um pulso por segmento do gerador` |
+   | queixar-se a cada pulso em vez de uma vez | `2 != 1: queixa-se UMA vez` |
+   | o ficheiro nascer antes do modelo | falha — o `startupProbe` deixava de distinguir |
+
+   **Um defeito no meu próprio teste, encontrado ao atacá-lo:** a primeira versão
+   de `test_cada_volta_do_ciclo_pulsa` usava o **pulso** para parar o ciclo, pelo
+   que tirar o pulso fazia o teste **pendurar** em vez de falhar — e um teste que
+   pendura é pior do que um que falha. Passou a ser travado pela **fonte**.
+
+   E dois portões a mais em `scripts/k8s-optin-higiene.py`, porque a sonda
+   depende de três ficheiros concordarem:
+
+   | ataque | o portão diz |
+   |---|---|
+   | renomear a variável só no manifesto | `tem uma sonda que refere $HEARTBEAT_FILE e o contentor não declara essa variável — a sonda não dá erro, dá sempre falso` |
+   | renomear só no código do worker | `as sondas leem $HEARTBEAT_FILE e o transcribe_worker.py não lê essa variável — a sonda mediria um ficheiro que ninguém toca` |
+
+   ### Continua por fazer
+
+   O **`09-whisper` non-root**: a imagem é construída neste repo, pelo que exige
+   fixar o uid no Dockerfile dela. Está como excepção **com razão escrita** no
+   portão nº8 — e o portão falha se a excepção deixar de ser necessária.
 
 ## 4. O que fica de fora, e porquê
 
