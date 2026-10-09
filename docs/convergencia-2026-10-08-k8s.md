@@ -428,6 +428,33 @@ sem uma prática que lhe faça falta no seu papel.
    uma excepção traz a razão pela qual não é só uma linha de YAML, e o portão
    **falha quando ela deixa de ser necessária**.
 
+   ### Validado por um API server, a 2026-10-09
+
+   Tudo o que está acima foi medido com `helm template`, `kubectl kustomize` e os
+   portões — mas até aqui **nenhum destes manifestos tinha passado por um API
+   server**. O `check-helm.sh` tem um modo `DRYRUN=1` para isso e nunca pudera
+   correr, por falta de cluster.
+
+   Com o cluster local de pé:
+
+   ```
+   ✓ (dry-run server, ns meet-helm) local: 33 recursos aceites pelo API server
+   ```
+
+   E o perfil de **produção**, que o `DRYRUN=1` não cobre, validado à mão num
+   namespace de prova — **20 recursos aceites**, entre eles:
+
+   | recurso | |
+   |---|---|
+   | `resourcequota/delonix-meet-quota` | passo 1 |
+   | `limitrange/delonix-meet-limits` | passo 1 |
+   | `deployment.apps/delonix-server` | com `topologySpreadConstraints` (passo 3) **e** `priorityClassName: meet-critico` (passo 4) |
+   | `job.batch/delonix-server-migrate` | com `meet-critico` |
+
+   O `delonix-server` **só** é aceite porque as duas classes já estavam criadas
+   no cluster — é a cadeia inteira (classes → valores → render → admissão)
+   validada de ponta a ponta, e não cinco peças que parecem encaixar.
+
    ### Continua por fazer
 
    Nada. **Os cinco passos estão fechados** (o 4 a 2026-10-09, com os nomes
