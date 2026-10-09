@@ -117,6 +117,44 @@ def main() -> int:
                         "aplica-se com `kubectl apply -f` e chega ao cluster assim mesmo"
                     )
 
+    # Nenhum manifesto DESTE REPO pode FIXAR um priorityClassName — nem a base,
+    # nem os overlays que publicamos. Não sabemos que classes existem no cluster
+    # de quem nos aplica, e um nome que não exista faz o API server RECUSAR o
+    # pod: a instalação falha no `kubectl apply`, não num aviso. No chart é uma
+    # maçaneta (cruzamento 6d do check-helm.sh); no kustomize, quem precisar
+    # dela põe-na num overlay SEU, fora deste repo.
+    #
+    # Esta verificação cobre TODOS os ficheiros, não só os opt-in — daí o
+    # prefixo «k8s» e não «opt-in».
+    raiz = os.path.dirname(base.rstrip("/")) or "."
+    candidatos = sorted(glob.glob(os.path.join(base, "*.yaml")))
+    candidatos += sorted(glob.glob(os.path.join(raiz, "k8s-overlays", "**", "*.yaml"),
+                                   recursive=True))
+    for caminho in candidatos:
+        nome_f = os.path.relpath(caminho, raiz)
+        if os.path.basename(caminho) == "kustomization.yaml":
+            continue
+        with open(caminho, encoding="utf-8") as f:
+            try:
+                docs_f = [x for x in yaml.safe_load_all(f) if x]
+            except yaml.YAMLError:
+                continue  # patches estratégicos podem não ser YAML inteiro
+        for d in docs_f:
+            if not isinstance(d, dict):
+                continue
+            tpl = (d.get("spec") or {}).get("template")
+            if not isinstance(tpl, dict) or not isinstance(tpl.get("spec"), dict):
+                continue
+            pcn = tpl["spec"].get("priorityClassName")
+            if pcn:
+                quem = (d.get("metadata") or {}).get("name", "?")
+                erros.append(
+                    f"✗ k8s: {nome_f} {d.get('kind', '?')}/{quem} fixa priorityClassName "
+                    f"«{pcn}» — este repo não sabe que classes existem no cluster de quem o "
+                    "aplica, e uma que não exista faz o API server recusar o pod. No chart é "
+                    "uma maçaneta; aqui, põe-na num overlay teu, fora deste repo"
+                )
+
     # O batimento do worker de IA: a variável que as sondas leem tem de ser a que
     # o worker escreve. São dois ficheiros em linguagens diferentes, e um rename
     # num deles dá uma sonda que mede um ficheiro que ninguém toca — ou seja, um

@@ -51,7 +51,7 @@ sem uma prática que lhe faça falta no seu papel.
 | Afinidade por sala no ingress | ✓ | ✓ | — (R3) |
 | **`topologySpreadConstraints`** | **✓ (2026-10-08)** | ✓ | **feito**, com o padrão exacto do chart (`ScheduleAnyway`, nó e zona no servidor, nó na web) e um portão a impedir a regressão. A razão não é o laboratório: são os overlays `saas`/`enterprise`, que são artefacto de PRODUTO |
 | **`ServiceMonitor` + `PrometheusRule`** | ✓ (`k8s/observabilidade/`) | — (correcto) | **eu estava errado:** `k8s/observabilidade/` não é o lado do laboratório, é a fase 4 do ADR-0020 — um instalador de produção, fora do kustomize, que põe os objectos no namespace `observabilidade`. Ver o passo 2 |
-| `priorityClassName` | — | — | **falta nos dois.** Sob pressão de nó, o SFU e o Postgres são desalojados como qualquer coisa |
+| `priorityClassName` | — (deliberado) | **maçaneta (2026-10-09)** | o chart expõe-o nos 9 workloads, **vazio por omissão**; o kustomize **não** o pode fixar. Falta o dono dizer os NOMES das classes do `delonix-lda` |
 | `preStop` | — | — | **falta nos dois**, mas o servidor dren a por SIGTERM (`drenar()`), logo é menos grave do que parece |
 | `ResourceQuota` / `LimitRange` no namespace | — | **✓ (2026-10-08)** | **feito no chart**, ligado só em produção. Continua a faltar no `k8s/`, onde é um tecto inventado num cluster de um nó |
 | Imagens por digest (`@sha256:`) | — | — | falta nos dois; há `make pin` para as versões, não para digests |
@@ -161,9 +161,52 @@ sem uma prática que lhe faça falta no seu papel.
    pelos manifestos de hoje** (nenhum Deployment tem ≤1 réplica com HPA), pelo
    que foi provado sinteticamente: `replicas: 1` no servidor, que no overlay
    `saas` tem HPA → «tem um HPA a mirá-lo e não se espalha por nó».
-4. **`priorityClassName`** para o SFU e os dados, nos dois lados. Precisa de uma
-   decisão: que classes existem no cluster partilhado, o que é do operador do
-   `delonix-lda` e não meu.
+4. **`priorityClassName`** — **a canalização ficou feita a 2026-10-09; o que
+   falta é a resposta do dono, e é só isso.**
+
+   A decisão que eu não podia tomar continua a ser dele: que classes existem no
+   cluster partilhado é do operador do `delonix-lda`. Mas isso não impedia a
+   parte que **é** minha, e a medição mostrou que ela nem existia: antes disto,
+   **`priorityClassName` não aparecia uma única vez em `deploy/`** — não era «o
+   nome está em falta», era não haver sítio onde o pôr.
+
+   **O chart expõe-o nos nove workloads** (servidor, web, coturn, FreeSWITCH,
+   Kamailio, PBX de laboratório, Postgres, Redis, e o **Job de migração**, que
+   bloqueia o release: um Job não agendado deixa a versão nova a meio). Dois
+   níveis, para o caso natural de o caminho da chamada valer mais do que o
+   resto:
+
+   ```
+   --set priorityClassName=meet-normal \
+   --set server.priorityClassName=meet-critico \
+   --set coturn.priorityClassName=meet-critico
+   ```
+
+   **E nunca fixo, nem no chart nem no kustomize.** Não é timidez: um
+   `priorityClassName` que não exista no cluster faz o **API server recusar o
+   pod** — a instalação falha no `kubectl apply`, não num aviso. Um nome
+   inventado por nós quebrava a instalação de quem nos aplica. (As classes
+   `system-cluster-critical` e `system-node-critical` são do Kubernetes e, por
+   omissão, só se usam no `kube-system`: não servem aqui.)
+
+   **Prova:** por omissão nenhum workload renderiza prioridade; com um valor,
+   **todos** a levam; com um override, o servidor e o coturn ficam em
+   `meet-critico` e os outros em `meet-normal`. Medido nos perfis de produção,
+   de produção com voz, e de laboratório.
+
+   **Controlos negativos** (cruzamento 6d do `check-helm.sh`, e o novo no
+   `k8s-optin-higiene.py`):
+
+   | ataque | o portão diz |
+   |---|---|
+   | tirar a maçaneta de um workload | `com priorityClassName=prova-prioridade …, estes workloads NÃO a levam: Deployment/coturn` |
+   | FIXAR uma classe no chart | `sem priorityClassName nos valores, estes workloads renderizam um: Deployment/delonix-web` |
+   | FIXAR uma classe num manifesto do `k8s/` | `52-data-plain.yaml StatefulSet/delonix-postgres fixa priorityClassName «meet-inventado»` |
+   | FIXAR uma classe num overlay **nosso** | `k8s-overlays/components/edition-common/server-patch.yaml … fixa priorityClassName` |
+
+   A segunda metade do cruzamento é a que apodrece sozinha: **um workload novo
+   que não leve a maçaneta** só se vê com um render que a ligue, e é isso que o
+   portão passou a fazer.
 5. ~~Os dois buracos pequenos: probes no `60-ai-gpu-worker` e `securityContext`
    no `52-data-plain`.~~ **MEDIDO a 2026-10-08. Metade feita; e não eram dois,
    nem pequenos.**
@@ -328,7 +371,9 @@ sem uma prática que lhe faça falta no seu papel.
 
    ### Continua por fazer
 
-   Só o **passo 4** (`priorityClassName`), que precisa de uma resposta do dono.
+   Nada nesta secção. Do documento inteiro fica **uma** coisa, e é uma resposta,
+   não trabalho: os **nomes** das classes de prioridade do `delonix-lda` (passo
+   4, onde a canalização já está feita).
 
 ## 4. O que fica de fora, e porquê
 

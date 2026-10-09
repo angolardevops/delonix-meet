@@ -394,3 +394,23 @@ quota:
     # pod. Acima do maior que temos (o coturn, com 4 CPU) — se ficasse IGUAL, a
     # admissão passava a rejeitar o coturn no primeiro aumento.
     max: { cpu: "6", memory: 4Gi }
+
+# Prioridade de agendamento dos pods — VAZIO por omissão, de propósito.
+#
+# Num cluster PARTILHADO (ADR-0021) é isto que decide quem é desalojado quando
+# um nó aperta: sem prioridade, o SFU e o Postgres são tão desalojáveis como
+# qualquer coisa. MAS o nome da classe é do operador do cluster, e um
+# `priorityClassName` que não exista no cluster faz o API server **recusar o
+# pod** — por isso o chart nunca inventa um nome.
+#
+# Este valor é o default para os oito workloads. Para dar mais prioridade ao
+# caminho da chamada do que ao resto, basta sobrepor por workload:
+#
+#   --set priorityClassName=meet-normal \
+#   --set server.priorityClassName=meet-critico \
+#   --set postgresql.priorityClassName=meet-critico \
+#   --set coturn.priorityClassName=meet-critico
+#
+# As classes `system-cluster-critical` e `system-node-critical` são do
+# Kubernetes e, por omissão, só se usam no `kube-system` — não servem aqui.
+priorityClassName: ""

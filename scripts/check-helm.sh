@@ -23,6 +23,9 @@
 #   6. produção: NENHUM Secret renderizado, nenhuma imagem sem tag ou `latest`;
 #   7. produção: a quota do namespace cobre o pico COM ROLLOUT, recalculado do
 #      render (ADR-0021), e o `max` do LimitRange não rejeita os nossos pods;
+#   7b. a prioridade de agendamento é opcional (ninguém FIXA uma classe) e, quando
+#      dada, chega a TODOS os workloads — incluindo o Job de migração, que bloqueia
+#      o release;
 #   8. laboratório: os segredos gerados são aleatórios (dois renders diferem);
 #   9. nenhum segredo de desenvolvimento conhecido (deploy/k8s/01-config.yaml,
 #      server/src/config.rs) aparece no chart nem no que ele renderiza.
@@ -151,6 +154,9 @@ render production-voz-esl-cidrs "${VOZ[@]}" --set server.telephony.eslAddr=frees
   --set 'voice.freeswitch.eslCidrs={10.244.0.0/16}'
 render local "${LOCAL[@]}"
 render local-2 "${LOCAL[@]}"
+# Com a prioridade LIGADA, para o cruzamento 6d abaixo: um workload novo
+# que não leve a maçaneta só se vê assim.
+render prioridade "${VOZ[@]}" --set priorityClassName=prova-prioridade
 [ "$fail" = 0 ] || exit 1
 
 if [ "${DRYRUN:-0}" = "1" ]; then
@@ -520,6 +526,33 @@ if quota and faixa:
 # a quota é só de produção: num laboratório de um nó seria um tecto inventado
 if um(carregar("local"), "ResourceQuota", "delonix-meet-quota"):
     erros.append("[local] o laboratório não leva quota — os números são a escala de produção")
+
+# 6d. a prioridade de agendamento é uma MAÇANETA, e chega a todos
+#     Num cluster partilhado (ADR-0021) o `priorityClassName` decide quem é
+#     desalojado quando um nó aperta. O chart NÃO pode fixar um nome — um
+#     `priorityClassName` que não exista faz o API server recusar o pod — logo
+#     é opcional. Duas coisas têm de valer:
+#
+#       sem o valor: NINGUÉM renderiza uma prioridade (ninguém a fixou);
+#       com o valor: TODOS a renderizam (ninguém se esqueceu de a ligar num
+#                    workload novo — é esta a metade que apodrece sozinha).
+sem = carregar("production-voz")
+fixos = [f"{d['kind']}/{d['metadata']['name']}"
+         for d, spec in pod_specs(sem) if spec.get("priorityClassName")]
+if fixos:
+    erros.append("[production-voz] sem `priorityClassName` nos valores, estes workloads "
+                 f"renderizam um: {', '.join(fixos)} — o chart não pode FIXAR um nome de "
+                 "classe, porque uma que não exista no cluster faz o API server recusar o pod")
+
+com = carregar("prioridade")
+faltam = [f"{d['kind']}/{d['metadata']['name']}"
+          for d, spec in pod_specs(com) if spec.get("priorityClassName") != "prova-prioridade"]
+if faltam:
+    erros.append("[prioridade] com `priorityClassName=prova-prioridade` nos valores, estes "
+                 f"workloads NÃO a levam: {', '.join(faltam)} — a maçaneta não chega a todos, "
+                 "e num nó apertado eles são desalojados antes dos outros")
+elif not list(pod_specs(com)):
+    erros.append("[prioridade] o render não trouxe workload nenhum — o portão deixou de medir")
 
 # 7. laboratório: aleatórios a sério
 def dados(nome):
