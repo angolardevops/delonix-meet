@@ -2998,3 +2998,231 @@ mod tests {
         assert!(order_of(Some("email")).is_err());
     }
 }
+// ---------------------------------------------------------------------------
+//  Reposição de password emitida por um administrador
+// ---------------------------------------------------------------------------
+//
+//  PORQUE EXISTE. Antes disto o ÚNICO caminho para mudar uma password era a
+//  própria pessoa, com a password actual ou uma sessão recente
+//  (`users.rs`, `sessions::prove_current_password` / `require_recent`). Nenhuma
+//  rota escrevia o `password_hash` de OUTRA conta: quem perdia a password
+//  ficava fora para sempre.
+//
+//  É a metade da E3 do plano de lacunas que NÃO depende de correio: o
+//  administrador emite, o token aparece UMA vez na resposta, e ele entrega-o
+//  pelo canal que já usa para os convites. É o mesmo molde do
+//  `temporary_password` do `org::add_employee`, que já faz isto para contas
+//  NOVAS.
+//
+//  TRÊS GUARDAS, e nenhuma é decorativa:
+//
+//  1. `accounts_scope` + departamento — a mesma de todas as escritas de contas;
+//  2. **sem escalada**: `roles::ensure_can_assign` com o papel DO ALVO. Repor é
+//     tomar a conta, logo quem não poderia NOMEAR aquele papel não pode repor
+//     aquela conta. Sem isto, um administrador de departamento tomava a conta
+//     do dono da organização;
+//  3. conta gerida pelo Odoo — a password é a do Odoo, e um hash local novo
+//     seria sobrescrito no próximo login (a mesma razão que o `users.rs` dá
+//     para recusar a mudança pela própria pessoa).
+
+/// 24 h: é um token que alguém entrega à mão e que a pessoa usa no mesmo dia.
+const DEFAULT_RESET_HOURS: i64 = 24;
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct IssuedPasswordReset {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub expires_at: DateTime<Utc>,
+    /// Aparece **uma só vez**, nesta resposta. A base guarda só o hash.
+    pub token: String,
+    /// `manual`: quem emite entrega o token. Quando o correio existir
+    /// (D7), passa a poder ser `email`.
+    pub delivery_channel: &'static str,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct AcceptPasswordResetReq {
+    pub token: String,
+    pub password: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct AcceptedPasswordReset {
+    /// Sessões terminadas pela reposição. Todas: a pessoa entra de novo.
+    pub sessions_revoked: u64,
+}
+
+fn reset_token_hash(token: &str) -> String {
+    delonix_meet_core::crypto::sha256_hex(token.trim())
+}
+
+/// Emite uma reposição de password para um membro da organização.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/users/{user_id}/password-reset", tag = "directory",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), ("user_id" = Uuid, Path)),
+    responses(
+        (status = 201, body = IssuedPasswordReset, description = "O `token` vem preenchido UMA só vez."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "sem `admin.manage_accounts`, fora do departamento, ou `authz.escalation`/`role.owner_assignment` (repor é tomar a conta)"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a organização não existe, ou o alvo não é membro activo"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`account.managed_by_odoo`"),
+    )
+)]
+pub async fn issue_password_reset(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((org_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<Response, ApiError> {
+    let restricted = accounts_scope(&state, org_id, auth.user_id).await?;
+    let (role_id, department_id) = crate::org::member_subject(&state.db, org_id, user_id)
+        .await?
+        .ok_or_else(|| ApiError::from(DomainError::not_found("member.not_found")))?;
+    if restricted.is_some() && department_id != restricted {
+        return Err(outside_scope());
+    }
+    // Repor é tomar a conta: vale a mesma regra de nomeação (ADR-0008 §5).
+    crate::roles::ensure_can_assign(&state, org_id, auth.user_id, role_id).await?;
+    if crate::account::is_odoo_managed(&state, user_id).await? {
+        return Err(DomainError::conflict(
+            "account.managed_by_odoo",
+            "a password desta conta é a do Odoo: reponha-a no Odoo",
+        )
+        .into());
+    }
+
+    let token = delonix_meet_core::crypto::prefixed_token("dlxr_");
+    let hash = reset_token_hash(&token);
+    let prefix: String = token.chars().take(12).collect();
+    let expires_at = Utc::now() + chrono::Duration::hours(DEFAULT_RESET_HOURS);
+
+    let mut tx = state.db.begin().await?;
+    // Uma pendente por pessoa (índice parcial único): emitir outra REVOGA a
+    // anterior. Sem isto ficavam dois tokens válidos e revogar um não fechava
+    // o outro.
+    sqlx::query("UPDATE password_resets SET status = 'revoked' WHERE user_id = $1 AND status = 'pending'")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO password_resets (user_id, org_id, token_hash, token_prefix, expires_at, issued_by)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .bind(&hash)
+    .bind(&prefix)
+    .bind(expires_at)
+    .bind(auth.user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "user.password_reset_issued",
+        &user_id.to_string(),
+    )
+    .await;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(IssuedPasswordReset {
+            id,
+            user_id,
+            expires_at,
+            token,
+            delivery_channel: "manual",
+        }),
+    )
+        .into_response())
+}
+
+/// Usa uma reposição de password. **Pública**: quem a usa está fora da conta.
+#[utoipa::path(
+    post, path = "/api/password-resets/accept", tag = "directory",
+    request_body = AcceptPasswordResetReq,
+    responses(
+        (status = 200, body = AcceptedPasswordReset),
+        (status = 400, body = crate::openapi::ErrorBody, description = "password fora da política"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "`password_reset.not_found` — token errado, já usado ou revogado"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`account.managed_by_odoo`"),
+        (status = 412, body = crate::openapi::ErrorBody, description = "`password_reset.expired`"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "limite por IP"),
+    )
+)]
+pub async fn accept_password_reset(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AcceptPasswordResetReq>,
+) -> Result<Json<AcceptedPasswordReset>, ApiError> {
+    // A MESMA política de password do registo e da mudança, num só sítio.
+    delonix_meet_domain::identity::validation::validate_password(&req.password)
+        .map_err(ApiError::BadRequest)?;
+
+    let hash = reset_token_hash(&req.token);
+    // Um 404 igual para token errado, usado, revogado e inexistente: distinguir
+    // dava um oráculo a quem adivinha.
+    let not_found = || ApiError::from(DomainError::not_found("password_reset.not_found"));
+
+    let mut tx = state.db.begin().await?;
+    let row: Option<(Uuid, Uuid, String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, user_id, token_hash, expires_at FROM password_resets
+          WHERE token_hash = $1 AND status = 'pending' FOR UPDATE",
+    )
+    .bind(&hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((id, user_id, stored, expires_at)) = row else {
+        return Err(not_found());
+    };
+    if !delonix_meet_core::crypto::ct_eq(stored.as_bytes(), hash.as_bytes()) {
+        return Err(not_found());
+    }
+    if expires_at <= Utc::now() {
+        sqlx::query("UPDATE password_resets SET status = 'expired' WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Err(DomainError::precondition(
+            "password_reset.expired",
+            "a reposição expirou — peça outra",
+        )
+        .into());
+    }
+    // Reconfere o Odoo AGORA: a conta pode ter passado a ser gerida depois de
+    // a reposição ter sido emitida, e então este hash seria lixo.
+    if crate::account::is_odoo_managed(&state, user_id).await? {
+        return Err(DomainError::conflict(
+            "account.managed_by_odoo",
+            "a password desta conta é a do Odoo: reponha-a no Odoo",
+        )
+        .into());
+    }
+    let new_hash = crate::auth::hash_password(&req.password)?;
+    sqlx::query("UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2")
+        .bind(&new_hash)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE password_resets SET status = 'used', used_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    // TODAS as sessões: quem repõe a password pode estar a recuperar de um
+    // acesso indevido, e deixar a sessão do intruso de pé esvaziava a reposição.
+    let sessions_revoked = crate::sessions::revoke_all_except(&state, user_id, None).await?;
+    crate::audit::log(
+        &state.db,
+        None,
+        user_id,
+        "user.password_reset_used",
+        &sessions_revoked.to_string(),
+    )
+    .await;
+    Ok(Json(AcceptedPasswordReset { sessions_revoked }))
+}
