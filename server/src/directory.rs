@@ -3100,10 +3100,12 @@ pub async fn issue_password_reset(
     // Uma pendente por pessoa (índice parcial único): emitir outra REVOGA a
     // anterior. Sem isto ficavam dois tokens válidos e revogar um não fechava
     // o outro.
-    sqlx::query("UPDATE password_resets SET status = 'revoked' WHERE user_id = $1 AND status = 'pending'")
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE password_resets SET status = 'revoked' WHERE user_id = $1 AND status = 'pending'",
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO password_resets (user_id, org_id, token_hash, token_prefix, expires_at, issued_by)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
@@ -3149,7 +3151,7 @@ pub async fn issue_password_reset(
         (status = 400, body = crate::openapi::ErrorBody, description = "password fora da política"),
         (status = 404, body = crate::openapi::ErrorBody, description = "`password_reset.not_found` — token errado, já usado ou revogado"),
         (status = 409, body = crate::openapi::ErrorBody, description = "`account.managed_by_odoo`"),
-        (status = 412, body = crate::openapi::ErrorBody, description = "`password_reset.expired`"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`password_reset.expired`"),
         (status = 429, body = crate::openapi::ErrorBody, description = "limite por IP"),
     )
 )]
@@ -3167,19 +3169,19 @@ pub async fn accept_password_reset(
     let not_found = || ApiError::from(DomainError::not_found("password_reset.not_found"));
 
     let mut tx = state.db.begin().await?;
-    let row: Option<(Uuid, Uuid, String, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT id, user_id, token_hash, expires_at FROM password_resets
+    // A busca É a comparação: a linha é encontrada PELO hash, que tem 256 bits
+    // imprevisíveis. Não se compara o hash outra vez — seria comparar um valor
+    // com ele próprio e fingir que isso é um controlo.
+    let row: Option<(Uuid, Uuid, Uuid, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, user_id, org_id, expires_at FROM password_resets
           WHERE token_hash = $1 AND status = 'pending' FOR UPDATE",
     )
     .bind(&hash)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((id, user_id, stored, expires_at)) = row else {
+    let Some((id, user_id, org_id, expires_at)) = row else {
         return Err(not_found());
     };
-    if !delonix_meet_core::crypto::ct_eq(stored.as_bytes(), hash.as_bytes()) {
-        return Err(not_found());
-    }
     if expires_at <= Utc::now() {
         sqlx::query("UPDATE password_resets SET status = 'expired' WHERE id = $1")
             .bind(id)
@@ -3193,8 +3195,9 @@ pub async fn accept_password_reset(
         .into());
     }
     // Reconfere o Odoo AGORA: a conta pode ter passado a ser gerida depois de
-    // a reposição ter sido emitida, e então este hash seria lixo.
-    if crate::account::is_odoo_managed(&state, user_id).await? {
+    // a reposição ter sido emitida, e então este hash seria lixo. Vai pela
+    // transacção ABERTA: uma 2ª ligação à pool aqui esgotava-a.
+    if crate::account::is_odoo_managed_with(&mut *tx, user_id).await? {
         return Err(DomainError::conflict(
             "account.managed_by_odoo",
             "a password desta conta é a do Odoo: reponha-a no Odoo",
@@ -3218,7 +3221,7 @@ pub async fn accept_password_reset(
     let sessions_revoked = crate::sessions::revoke_all_except(&state, user_id, None).await?;
     crate::audit::log(
         &state.db,
-        None,
+        Some(org_id),
         user_id,
         "user.password_reset_used",
         &sessions_revoked.to_string(),
