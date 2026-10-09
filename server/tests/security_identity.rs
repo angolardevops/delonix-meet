@@ -352,7 +352,25 @@ async fn sso_jit_only_creates_accounts_of_the_org_domain(db: sqlx::PgPool) {
     let idp = FakeIdp::start().await;
     wire_sso(&app, &admin, &idp).await;
 
-    // Controlo positivo: email NOVO do domínio da org → conta criada, membro.
+    // A3, raiz: domínio certo mas AINDA sem prova de posse por DNS TXT --
+    // o JIT recusa-se, não cria a conta.
+    let (st, sub, body) = sso_flow(&app, &idp, "gama.test", "nova@gama.test").await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "JIT antes de provar o domínio: {body}"
+    );
+    assert_eq!(body["code"], "sso.domain_not_verified", "{body}");
+    assert_eq!(
+        user_id_by_email(&app, "nova@gama.test").await,
+        None,
+        "conta criada sem o domínio provado"
+    );
+
+    app.verify_domain(admin.org()).await;
+
+    // Controlo positivo: email NOVO do domínio da org, já provado → conta
+    // criada, membro.
     let (st, sub, body) = sso_flow(&app, &idp, "gama.test", "nova@gama.test").await;
     assert_eq!(st, 302, "JIT do próprio domínio: {body}");
     let criada = user_id_by_email(&app, "nova@gama.test").await;
@@ -792,6 +810,7 @@ async fn login_rate_limit_applies_to_sso_enforced_accounts(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200, "{body}");
+    app.verify_domain(admin.org()).await;
 
     // Controlo positivo: a recusa do SSO exclusivo continua a ser dita.
     let (st, body) = app
@@ -847,6 +866,10 @@ async fn enforce_sso_only_blocks_members_of_the_enforcing_org(db: sqlx::PgPool) 
         )
         .await;
     assert_eq!(st, 200, "{body}");
+    // Este teste prova o gate de PERTENÇA (is_full_member), não o de posse
+    // do domínio (esse tem teste próprio) -- domínio já provado, para os
+    // dois não se confundirem.
+    app.verify_domain(squat.org()).await;
 
     // A VÍTIMA é membro de uma organização COMPLETAMENTE DIFERENTE, sem
     // SSO nenhum. `POST /members` recusa um email fora do domínio da

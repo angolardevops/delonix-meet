@@ -367,6 +367,20 @@ impl TestApp {
 
     /// Arquiva um membro directamente na base (como os e2e fazem): marca
     /// `archived_at`, que é o que o `remove_employee` faz.
+    /// Marca o domínio de email da org como já provado por DNS TXT (A3,
+    /// raiz) -- directo na base, porque um teste de HTTP não pode publicar
+    /// um registo DNS a sério. Quem precisa de JIT por SSO ou de
+    /// `enforce_sso` com teeth tem de chamar isto primeiro.
+    pub async fn verify_domain(&self, org_id: &str) {
+        sqlx::query(
+            "UPDATE organizations SET email_domain_verified_at = now() WHERE id = $1::uuid",
+        )
+        .bind(org_id)
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
     pub async fn archive_member(&self, org_id: &str, user_id: &str) {
         sqlx::query(
             "UPDATE org_members SET archived_at = now()

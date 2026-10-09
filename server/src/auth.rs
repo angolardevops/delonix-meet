@@ -1404,8 +1404,9 @@ pub async fn sso_callback(
             .bind(entry.org_id)
             .fetch_one(&state.db)
             .await?;
+    let domain_verified = crate::org::email_domain_is_verified(&state, entry.org_id).await?;
 
-    match sso_login_decision(&email, &org_domain, account) {
+    match sso_login_decision(&email, &org_domain, account, domain_verified) {
         SsoLoginDecision::LogIn | SsoLoginDecision::Provision => {}
         SsoLoginDecision::Refuse(code) => {
             tracing::warn!(%email, org_id = %entry.org_id, code, "SSO recusado: fora da regra de pertença");
@@ -1420,6 +1421,11 @@ pub async fn sso_callback(
             let message = match code {
                 SSO_ACCOUNT_NOT_IN_ORG => {
                     "Esta conta não é membro activo desta organização — o SSO dela não a abre."
+                }
+                SSO_DOMAIN_NOT_VERIFIED => {
+                    "Esta organização ainda não provou a posse do domínio de email \
+                     (Definições → Domínio) — um admin tem de publicar o registo DNS TXT \
+                     antes de novas contas poderem entrar por SSO."
                 }
                 _ => "O email devolvido pelo IdP não é do domínio desta organização.",
             };
@@ -1562,6 +1568,11 @@ pub(crate) const SSO_EMAIL_DOMAIN_MISMATCH: &str = "sso.email_domain_mismatch";
 /// Código estável: a conta já está ligada a um (issuer, subject) diferente
 /// do que este IdP afirmou -- nunca se re-liga por email sozinho (achado A1).
 pub(crate) const SSO_IDENTITY_MISMATCH: &str = "sso.identity_mismatch";
+/// Código estável: domínio ainda sem prova de posse (DNS TXT) -- JIT recusado
+/// até lá (achado A3, raiz). `enforce_sso` tem a mesma guarda, noutro sítio
+/// (`sso_enforced_for_account`), porque entra pelo login por password, não
+/// pelo callback.
+pub(crate) const SSO_DOMAIN_NOT_VERIFIED: &str = "sso.domain_not_verified";
 
 /// O que o callback SSO pode fazer com o email que o IdP afirmou.
 #[derive(Debug, PartialEq, Eq)]
@@ -1585,10 +1596,14 @@ pub(crate) enum SsoLoginDecision {
 ///   org tiver domínio (uma org sem domínio não cria contas por SSO).
 ///
 /// `account`: `None` = não há conta com este email; `Some(activo)`.
+/// `domain_verified`: a org já provou o domínio por DNS TXT (A3, raiz)?
+/// Só importa no ramo `None` -- o JIT é o que cria confiança do nada; o
+/// `LogIn` de uma conta já membro não precisa de prova nenhuma extra.
 pub(crate) fn sso_login_decision(
     email: &str,
     org_domain: &str,
     account: Option<bool>,
+    domain_verified: bool,
 ) -> SsoLoginDecision {
     match account {
         Some(true) => SsoLoginDecision::LogIn,
@@ -1599,10 +1614,12 @@ pub(crate) fn sso_login_decision(
                 Some((local, domain)) if !local.is_empty() => domain.to_lowercase(),
                 _ => String::new(),
             };
-            if !org_domain.is_empty() && email_domain == org_domain {
-                SsoLoginDecision::Provision
-            } else {
+            if org_domain.is_empty() || email_domain != org_domain {
                 SsoLoginDecision::Refuse(SSO_EMAIL_DOMAIN_MISMATCH)
+            } else if !domain_verified {
+                SsoLoginDecision::Refuse(SSO_DOMAIN_NOT_VERIFIED)
+            } else {
+                SsoLoginDecision::Provision
             }
         }
     }
@@ -1610,7 +1627,9 @@ pub(crate) fn sso_login_decision(
 
 /// `GET /api/auth/sso/enforce?domain=...`
 /// O handler de login local consulta isto para bloquear password quando
-/// a org exige SSO exclusivo.
+/// a org exige SSO exclusivo. Só conta se o domínio já tiver prova de posse
+/// por DNS TXT (A3, raiz) -- senão um domínio alheio reivindicado por uma
+/// org estranha empurrava gente sem conta nenhuma para o SSO de outrem.
 pub async fn is_sso_enforced(db: &sqlx::PgPool, email: &str) -> bool {
     let domain = email.split('@').nth(1).unwrap_or("");
     if domain.is_empty() {
@@ -1619,7 +1638,8 @@ pub async fn is_sso_enforced(db: &sqlx::PgPool, email: &str) -> bool {
     let row: Option<(bool,)> = sqlx::query_as(
         "SELECT s.enforce_sso FROM org_sso_configs s
          JOIN organizations o ON o.id = s.org_id
-         WHERE o.email_domain = $1 AND s.enforce_sso = TRUE",
+         WHERE o.email_domain = $1 AND s.enforce_sso = TRUE
+           AND o.email_domain_verified_at IS NOT NULL",
     )
     .bind(domain)
     .fetch_optional(db)
@@ -1648,7 +1668,8 @@ async fn sso_enforced_for_account(
     let row: Option<(Uuid,)> = sqlx::query_as(
         "SELECT o.id FROM org_sso_configs s
          JOIN organizations o ON o.id = s.org_id
-         WHERE o.email_domain = $1 AND s.enforce_sso = TRUE",
+         WHERE o.email_domain = $1 AND s.enforce_sso = TRUE
+           AND o.email_domain_verified_at IS NOT NULL",
     )
     .bind(domain)
     .fetch_optional(&state.db)
@@ -1668,27 +1689,35 @@ mod tests {
     fn sso_login_decision_is_the_most_restrictive_rule() {
         use SsoLoginDecision::*;
         // Membro activo entra; qualquer outra conta existente é recusada,
-        // mesmo com o email no domínio da org.
+        // mesmo com o email no domínio da org. `domain_verified` não entra
+        // nestes ramos -- por isso passa-se `false` de propósito, para
+        // provar que não muda o resultado.
         assert_eq!(
-            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(true)),
+            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(true), false),
             LogIn
         );
         assert_eq!(
-            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(false)),
+            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(false), false),
             Refuse(SSO_ACCOUNT_NOT_IN_ORG)
         );
         assert_eq!(
-            sso_login_decision("admin@beta.ao", "alfa.ao", Some(false)),
+            sso_login_decision("admin@beta.ao", "alfa.ao", Some(false), false),
             Refuse(SSO_ACCOUNT_NOT_IN_ORG)
         );
-        // Conta nova: só do domínio da org, e só se a org tiver domínio.
+        // Conta nova: só do domínio da org, só se a org tiver domínio, e só
+        // com o domínio provado por DNS TXT (A3, raiz).
         assert_eq!(
-            sso_login_decision("nova@alfa.ao", "alfa.ao", None),
+            sso_login_decision("nova@alfa.ao", "alfa.ao", None, true),
             Provision
         );
         assert_eq!(
-            sso_login_decision("nova@alfa.ao", "Alfa.AO ", None),
+            sso_login_decision("nova@alfa.ao", "Alfa.AO ", None, true),
             Provision
+        );
+        assert_eq!(
+            sso_login_decision("nova@alfa.ao", "alfa.ao", None, false),
+            Refuse(SSO_DOMAIN_NOT_VERIFIED),
+            "domínio certo mas não verificado"
         );
         for (email, dom) in [
             ("nova@beta.ao", "alfa.ao"),
@@ -1698,8 +1727,10 @@ mod tests {
             ("sem-arroba", "alfa.ao"),
             ("x@evil.ao@alfa.ao", "evil.ao"),
         ] {
+            // O domínio errado vem SEMPRE antes da prova de posse: mesmo
+            // "verificado" (true) não abre a porta a quem nem domínio tem.
             assert_eq!(
-                sso_login_decision(email, dom, None),
+                sso_login_decision(email, dom, None, true),
                 Refuse(SSO_EMAIL_DOMAIN_MISMATCH),
                 "{email} em {dom:?}"
             );
