@@ -221,8 +221,19 @@ sem uma prática que lhe faça falta no seu papel.
    não do release**: num cluster partilhado o `helm uninstall` do Meet não pode
    levar atrás uma classe que outros possam estar a usar. E são o **primeiro
    passo do `instalar.sh`** dessa pasta, porque não têm dependência nenhuma e
-   tudo o resto depende delas: um `priorityClassName` que não exista faz o API
-   server **recusar o pod**, e o `helm upgrade` falha em vez de avisar.
+   tudo o resto depende delas.
+
+   **A afirmação que repeti toda a sessão, agora medida** num cluster real
+   (`kubectl apply --dry-run=server`, que passa pela admissão sem escrever):
+
+   | pod com | o API server |
+   |---|---|
+   | `priorityClassName: meet-critico` | aceita, e resolve `spec.priority` = **10000** |
+   | `priorityClassName: meet-inventado` | `Error from server (Forbidden): pods "…" is forbidden: no PriorityClass with name meet-inventado was found` |
+
+   Não é um aviso nem um pod a ficar `Pending`: é um **403 na criação**. É por
+   isso que as classes são o primeiro passo, e que o repo nunca fixa um nome num
+   manifesto que vá para o cluster de outra pessoa.
 
    Três decisões que valem a pena ler no ficheiro:
 

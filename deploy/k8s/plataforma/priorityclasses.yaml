@@ -11,6 +11,15 @@
 # isso isto é o PRIMEIRO passo do `instalar.sh`: são objectos de CLUSTER, não
 # têm dependência nenhuma, e tudo o resto depende deles.
 #
+# MEDIDO a 2026-10-09 num cluster real (`kubectl apply --dry-run=server`, que
+# passa pela admissão sem escrever nada):
+#
+#   com meet-critico    → aceite, e o API server resolve `spec.priority` = 10000
+#   com meet-inventado  → Error from server (Forbidden): pods "…" is forbidden:
+#                         no PriorityClass with name meet-inventado was found
+#
+# Não é um aviso nem um pod pendente: é um 403 na criação.
+#
 # OS VALORES SÃO UM PONTO DE PARTIDA, NÃO UMA VERDADE. O número só tem
 # significado COMPARADO com as outras classes do mesmo cluster, e as dos
 # vizinhos não são nossas para conhecer. Se o Meet estiver a ser desalojado
