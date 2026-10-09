@@ -5303,6 +5303,14 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         if let Some(session) = state.sfu.remove_peer(room_id, peer_id).await {
             tracing::info!(%room_id, "room empty — finalizing server recording");
             crate::recorder::finalize(state.clone(), room_id, session);
+            // Mesmo ponto: avisa `meeting.ended` (só se a sala tiver mesmo
+            // uma reunião associada) e reenfileira defensivamente a acta por
+            // IA se ficou encalhada. Numa tarefa à parte — não atrasa o
+            // fecho do socket nem a finalização da gravação acima.
+            let st = state.clone();
+            tokio::spawn(async move {
+                crate::meetings::on_room_emptied(st, room_id).await;
+            });
         }
     }
     // O lugar fica RESERVADO durante a janela de graça (R91) em vez de se
