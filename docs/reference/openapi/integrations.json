@@ -6369,6 +6369,168 @@
         ],
         "type": "object"
       },
+      "OperatorOrgDetail": {
+        "description": "Detalhe de uma organização para o operador: os tectos de plano MAIS o uso\nreal (lugares ocupados, bytes ocupados).",
+        "properties": {
+          "org": {
+            "$ref": "#/components/schemas/OperatorOrgSummary"
+          },
+          "seats": {
+            "$ref": "#/components/schemas/SeatSummary"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/OrgStorageUsage"
+          }
+        },
+        "required": [
+          "org",
+          "seats",
+          "storage"
+        ],
+        "type": "object"
+      },
+      "OperatorOrgPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorOrgSummary"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "OperatorOrgSummary": {
+        "description": "Uma organização vista pelo operador: identidade + os seis tectos de plano.\nSem uso agregado (lugares ocupados, bytes ocupados) — isso é só o\ndetalhe (`OperatorOrgDetail`).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "max_concurrent_participants": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_groups": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_meetings": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_rooms": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_seats": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_storage_bytes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "member_count": {
+            "description": "Membros activos (sem convites pendentes nem arquivados).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "domain",
+          "created_at",
+          "member_count"
+        ],
+        "type": "object"
+      },
+      "OperatorQuotasReq": {
+        "description": "Corpo de `PUT /api/operator/v1/organizations/{org_id}/quotas`.",
+        "properties": {
+          "max_groups": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_meetings": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_rooms": {
+            "description": "`null`/negativo = ilimitado.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "voice_did_model": {
+            "description": "`'shared' | 'dedicated'`. Omisso ou fora do enum mantém o actual.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "voice_media_backend": {
+            "description": "`'freeswitch' | 'provider'`. Omisso ou fora do enum mantém o actual.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "OrgSettingsReq": {
         "properties": {
           "chat_retention_days": {
