@@ -155,6 +155,18 @@ kubectl -n "$NS" wait --for=condition=Ready cluster/meet-pg --timeout=15m \
   || printf "  %s!%s o cluster Postgres ainda não está pronto — «kubectl -n %s describe cluster meet-pg»\n" "$y" "$z" "$NS"
 ok "Postgres"
 
+# O `enablePodMonitor` nasce a false porque o CRD vem da fase 4. Quando ele
+# existir — nesta passagem ou numa seguinte — liga-se. É o mesmo motivo do
+# SM_EXTRA, e por isso a segunda passagem do script não é um remendo: é parte
+# do desenho.
+if kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1; then
+  kubectl -n "$NS" patch cluster meet-pg --type=merge \
+    -p '{"spec":{"monitoring":{"enablePodMonitor":true}}}' >/dev/null \
+    && ok "PodMonitor do Postgres ligado"
+else
+  printf "  %s!%s sem o CRD PodMonitor: as métricas do Postgres ficam por recolher nesta passagem.\n" "$y" "$z"
+fi
+
 printf "\n%s✓ plataforma instalada (modo %s)%s\n" "$g" "$MODO" "$z"
 printf "  Postgres (escrita): meet-pg-rw.%s.svc.cluster.local:5432\n" "$NS"
 printf "  Postgres (leitura): meet-pg-ro.%s.svc.cluster.local:5432\n" "$NS"
