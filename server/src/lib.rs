@@ -944,6 +944,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(directory::resend_invitation),
         )
         // O token é a credencial: rate-limit por IP como no login.
+        // Reposição de password: o administrador emite (autenticado,
+        // `admin.manage_accounts` e sem escalada), a pessoa usa SEM sessão —
+        // está fora da conta. A pública leva o mesmo limite por IP do
+        // `/api/invitations/accept`, pela mesma razão: é uma credencial.
+        .route(
+            "/api/orgs/{org_id}/users/{user_id}/password-reset",
+            post(directory::issue_password_reset),
+        )
+        .route(
+            "/api/password-resets/accept",
+            post(directory::accept_password_reset).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
         .route(
             "/api/invitations/accept",
             post(directory::accept_invitation).layer(middleware::from_fn_with_state(
