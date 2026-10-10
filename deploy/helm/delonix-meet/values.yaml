@@ -256,6 +256,53 @@ coturn:
   tolerations: []
 
 # ------------------------------------------------------------
+#  Gateway API — para clusters que servem por Gateway e não por ingress-nginx.
+#
+#  EXCLUSIVO do `ingress`: um ou outro, nunca os dois. O chart recusa ambos.
+#
+#  O que se GANHA: funciona em clusters sem ingress-nginx, e a precedência dos
+#  caminhos é da especificação em vez de três objectos Ingress separados.
+#  O que se PERDE: desligar o registo de acessos numa só rota. No Envoy o
+#  access log é do Gateway, não da rota — ver `acceptProvisioningInAccessLog`.
+# ------------------------------------------------------------
+gateway:
+  enabled: false
+  # own    — cria um Gateway NESTE namespace. Gasta um IP do LoadBalancer, e
+  #          só aceita rotas deste namespace (`allowedRoutes: from: Same`).
+  # attach — cola-se a um Gateway existente, possivelmente noutro namespace.
+  #          CUIDADO: esse Gateway tem de permitir rotas do nosso namespace.
+  #          Medido a 2026-10-07: o Gateway do `ngolacloud-system` está em
+  #          `from: Same` e NÃO as aceita — ligar-se a ele exigiria mudar o
+  #          recurso de outro inquilino.
+  mode: own
+  # Obrigatório em mode=own. No `ngola-lda` a GatewayClass chama-se `delonix`.
+  className: ""
+  parentRef:
+    name: ""
+    namespace: ""
+    sectionName: ""
+  tls:
+    # Um Secret kubernetes.io/tls que já existe...
+    certificateRefName: ""
+    # ...ou deixa o cert-manager emitir (precisa de `--enable-gateway-api`).
+    clusterIssuer: ""
+  affinity:
+    # `envoy` — emite a BackendTrafficPolicy com ConsistentHash por `room`,
+    #           que é o que mantém a invariante do ADR-0001.
+    # `none`  — NÃO emite política nenhuma. A afinidade por sala DESAPARECE e
+    #           os pares de uma sala caem em pods diferentes: é a regressão R3,
+    #           «media num só sentido». O chart recusa isto em produção.
+    implementation: envoy
+  # R278: o caminho `/api/public/extension-provisioning` leva um bilhete de uso
+  # único — uma credencial. O Ingress tinha uma rota dedicada só para desligar
+  # o registo de acessos nela. Em Gateway API isso NÃO existe: o access log é
+  # do Gateway. Com `gateway.enabled`, esse caminho vai para o log.
+  #
+  # Põe `true` para reconhecer e seguir. O chart recusa-se a instalar sem isto,
+  # em vez de perder a protecção em silêncio.
+  acceptProvisioningInAccessLog: false
+
+# ------------------------------------------------------------
 #  Voz — bordo SIP (Kamailio) e gateway de media (FreeSWITCH).
 #  O PBX do cliente (Issabel/FreePBX) NÃO é instalado: é do cliente e vive
 #  fora do cluster. Aqui só se declara por onde ele entra.

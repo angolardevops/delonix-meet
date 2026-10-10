@@ -1,0 +1,148 @@
+{{- $v := .Values -}}
+{{- if $v.gateway.enabled }}
+{{- $g := $v.gateway -}}
+{{- /*
+  Gateway API — a alternativa ao Ingress, para clusters que servem por Gateway
+  e não por ingress-nginx (ADR-0021: o `ngola-lda` tem Envoy Gateway).
+
+  TRÊS COISAS QUE O INGRESS FAZIA E AQUI MUDAM DE FORMA, e a terceira perde-se:
+
+  1. A precedência dos caminhos é da ESPECIFICAÇÃO, não de três objectos
+     separados: o Gateway API manda o prefixo mais longo ganhar, logo o
+     `/api/public/extension-provisioning` ganha ao `/api` sem truque nenhum.
+  2. A afinidade por sala (ADR-0001) deixa de ser uma anotação do nginx e passa
+     a ser uma `BackendTrafficPolicy` com `ConsistentHash` por parâmetro de
+     query. É específica do Envoy Gateway — ver a recusa em `_helpers.tpl`.
+  3. DESLIGAR O REGISTO DE ACESSOS NUMA SÓ ROTA NÃO EXISTE. No Envoy o access
+     log é do Gateway (`EnvoyProxy.telemetry.accessLog`), não da rota. O
+     terceiro Ingress existia só para isso — o caminho do resgate do QR leva um
+     bilhete de uso único (R278) e não devia ir para o log. Com Gateway API
+     esse caminho VAI para o log do Gateway. O chart recusa-se a seguir sem o
+     reconhecimento explícito de quem instala.
+*/ -}}
+{{- if eq $g.mode "own" }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: delonix-meet
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+  {{- with $g.tls.clusterIssuer }}
+  annotations:
+    # O cert-manager emite para Gateways quando corre com `--enable-gateway-api`.
+    cert-manager.io/cluster-issuer: {{ . | quote }}
+  {{- end }}
+spec:
+  gatewayClassName: {{ $g.className | quote }}
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: {{ $v.host | quote }}
+      # `Same`: só rotas DESTE namespace se lhe podem colar. Num cluster com
+      # inquilinos, um Gateway que aceita rotas de qualquer namespace é uma
+      # forma de outro inquilino publicar no nosso nome.
+      allowedRoutes: { namespaces: { from: Same } }
+    {{- if or $g.tls.certificateRefName $g.tls.clusterIssuer }}
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: {{ $v.host | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ $g.tls.certificateRefName | default "delonix-meet-tls" | quote }}
+      allowedRoutes: { namespaces: { from: Same } }
+    {{- end }}
+---
+{{- end }}
+{{- $parent := dict -}}
+{{- if eq $g.mode "own" -}}
+{{- $parent = dict "name" "delonix-meet" -}}
+{{- else -}}
+{{- $parent = dict "name" $g.parentRef.name "namespace" $g.parentRef.namespace -}}
+{{- if $g.parentRef.sectionName -}}{{- $_ := set $parent "sectionName" $g.parentRef.sectionName -}}{{- end -}}
+{{- end -}}
+# As rotas gerais. O `/ws` NÃO entra aqui: tem rota própria, porque a política
+# de afinidade se cola a uma rota e não queremos aplicá-la ao resto.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: delonix-meet
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - {{- toYaml $parent | nindent 6 }}
+  hostnames: [{{ $v.host | quote }}]
+  rules:
+    # O prefixo mais longo ganha por especificação: esta regra apanha o resgate
+    # do QR antes do `/api` abaixo, sem precisar de objecto separado.
+    - matches:
+        - path: { type: PathPrefix, value: /api/public/extension-provisioning }
+      backendRefs:
+        - { name: delonix-server, port: 8180 }
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+        - path: { type: PathPrefix, value: /rtc }
+      backendRefs:
+        - { name: delonix-server, port: 8180 }
+    {{- with $v.ingress.asr.serviceName }}
+    - matches:
+        - path: { type: PathPrefix, value: /asr }
+      backendRefs:
+        - { name: {{ . | quote }}, port: {{ $v.ingress.asr.servicePort }} }
+    {{- end }}
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - { name: delonix-web, port: 80 }
+---
+# O `/ws` com afinidade por sala. Service DEDICADO (`delonix-server-ws`) pela
+# mesma razão do Ingress: partilhar Service com o `/api` faz o balanceador
+# fundir os destinos e descartar o hash — a regressão R3, «media num só
+# sentido».
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: delonix-ws
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - {{- toYaml $parent | nindent 6 }}
+  hostnames: [{{ $v.host | quote }}]
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /ws }
+      backendRefs:
+        - { name: delonix-server-ws, port: 8180 }
+{{- if eq $g.affinity.implementation "envoy" }}
+---
+# hash(room) → sempre o mesmo pod. O SFU é em memória por pod: todos os pares
+# de uma sala têm de cair no mesmo (ADR-0001). O cliente põe `&room=CODE` no
+# URL do `/ws`, e é esse parâmetro que entra no hash.
+#
+# ISTO É ESPECÍFICO DO ENVOY GATEWAY (`gateway.envoyproxy.io/v1alpha1`).
+# Noutra implementação de Gateway API a política é ignorada em silêncio e a
+# afinidade desaparece sem um único erro — ver a recusa em `_helpers.tpl`.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: delonix-ws-afinidade
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: delonix-ws
+  loadBalancer:
+    type: ConsistentHash
+    consistentHash:
+      type: QueryParams
+      queryParams:
+        - name: room
+{{- end }}
+{{- end }}

@@ -281,3 +281,59 @@ make helm-package
 Não validado por este chart em lado nenhum: media por coturn com um browser,
 cert-manager, LoadBalancer, várias réplicas em vários nós, HPA, base externa
 real, um PBX fora do cluster e a ponte telefone↔sala.
+
+## Entrada: Ingress ou Gateway API
+
+São **exclusivos** — o chart recusa os dois ligados. O `ingress` continua a ser a omissão;
+o `gateway` existe para clusters que servem por Gateway API e não têm ingress-nginx
+([ADR-0021](../../../docs/adr/0021-a-producao-do-meet-partilha-o-cluster-ngola-lda.md)).
+
+```bash
+helm upgrade --install meet deploy/helm/delonix-meet -n ngolacloud-meet \
+  -f deploy/helm/delonix-meet/values-production.yaml \
+  --set image.tag=<git describe> --set secrets.existingSecret=<Secret> \
+  --set coturn.externalIP=<IP do relay> \
+  --set ingress.enabled=false \
+  --set gateway.enabled=true --set gateway.className=delonix \
+  --set gateway.tls.clusterIssuer=delonix-letsencrypt \
+  --set gateway.acceptProvisioningInAccessLog=true
+```
+
+### `mode: own` é a omissão, e há uma razão medida
+
+`own` cria um Gateway **neste** namespace, com `allowedRoutes: from: Same` — nenhum outro
+inquilino lhe pode colar rotas. Custa um IP do LoadBalancer.
+
+`attach` cola-se a um Gateway existente, e **o Gateway tem de aceitar rotas do nosso
+namespace**. Medido a 2026-10-07: o Gateway do `ngolacloud-system` está em `from: Same` e
+**não as aceita** — usá-lo exigiria mudar o recurso de outro inquilino. Em `attach` com um
+Gateway que não nos aceita, as rotas ficam `Accepted=False` e não servem nada, sem erro
+na instalação.
+
+### As duas coisas que mudam de forma, e a que se perde
+
+**A afinidade por sala continua, por outro mecanismo.** No Ingress era
+`nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"`. Aqui é uma
+`BackendTrafficPolicy` com `ConsistentHash` de `type: QueryParams` sobre `room`, colada à
+HTTPRoute dedicada do `/ws` — que aponta, como antes, para o Service **dedicado**
+`delonix-server-ws`. O SFU é em memória por pod e todos os pares de uma sala têm de cair
+no mesmo (ADR-0001); perder isto é a regressão **R3**, «media num só sentido».
+
+`gateway.affinity.implementation` é `envoy` por omissão porque a política é **específica
+do Envoy Gateway**. Noutra implementação de Gateway API ela é ignorada **em silêncio** e a
+afinidade desaparece sem um único erro. Em produção o chart recusa `none`.
+
+**A precedência dos caminhos passa a ser da especificação.** O Ingress precisava de três
+objectos para o `/api/public/extension-provisioning` ganhar ao `/api`; em Gateway API o
+prefixo mais longo ganha, e é uma regra na mesma rota.
+
+**E perde-se desligar o registo de acessos numa só rota.** No Envoy o access log é do
+Gateway (`EnvoyProxy.telemetry.accessLog`), não da rota. O terceiro Ingress existia
+exactamente para isso: o caminho do resgate do QR do Linphone leva um **bilhete de uso
+único** — uma credencial — e não devia ir para o log (**R278**). Com Gateway API vai. O
+chart **recusa-se a instalar** sem `gateway.acceptProvisioningInAccessLog=true`, para que
+isso seja uma decisão de quem instala e não uma perda silenciosa.
+
+Tudo isto está sob catraca no `scripts/check-helm.sh`: sete recusas, um render próprio, e
+asserções sobre o hash, o Service dedicado, o caminho do QR e as portas internas. As
+asserções foram testadas por mutação — cinco quebras, cinco detectadas.

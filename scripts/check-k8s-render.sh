@@ -273,5 +273,35 @@ for e in erros:
 sys.exit(1 if erros else 0)
 PYEOF
 
+# ---------------------------------------------------------------------------
+#  As imagens da plataforma: nem `latest`, nem `bitnami/` sem legacy.
+#
+#  Medido a 2026-10-07: o `bitnami/*` público deixou de servir tags
+#  versionadas (404) e as oficiais do MinIO deixaram de ser puxáveis
+#  anonimamente (401). A única via gratuita com tags versionadas é
+#  `bitnamilegacy`. E `latest` é mutável — num Redis que guarda presença e
+#  sessões, um upgrade não anunciado num reinício de pod tira pessoas de salas.
+#
+#  Isto é estático e não vai à rede: guarda a ESCOLHA, não a existência.
+# ---------------------------------------------------------------------------
+img_fail=0
+for f in deploy/k8s/plataforma/*-values.yaml; do
+  [ -e "$f" ] || continue
+  while IFS= read -r linha; do
+    case "$linha" in
+      *"repository: bitnami/"*)
+        echo "✗ $f: «$linha» — o bitnami/* público não serve tags versionadas; usa bitnamilegacy/"; img_fail=1 ;;
+    esac
+  done < <(/usr/bin/grep -nE '^\s*repository: bitnami/' "$f" 2>/dev/null)
+  if /usr/bin/grep -qE '^\s*tag: *"?latest"?' "$f" 2>/dev/null; then
+    echo "✗ $f: tag «latest» — é mutável e um upgrade entra num reinício de pod sem aviso"; img_fail=1
+  fi
+done
+if [ "$img_fail" = 0 ]; then
+  echo "✓ imagens da plataforma: sem latest e sem bitnami/* público (só bitnamilegacy, com tag fixa)"
+else
+  fail=1
+fi
+
 [ "$fail" = 0 ] && echo "✓ manifestos k8s renderizam; portas internas fora do ingress; ADR-0001 intacto nos overlays"
 exit $fail

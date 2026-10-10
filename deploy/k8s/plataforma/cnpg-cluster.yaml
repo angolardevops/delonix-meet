@@ -27,6 +27,19 @@ spec:
     synchronous:
       method: any
       number: 1
+
+    # O `shared_preload_libraries` NÃO é um `parameter`: o CNPG gere-o e o
+    # webhook recusa o Cluster inteiro se lá aparecer —
+    #   «Invalid value: "pg_stat_statements": Can't set fixed configuration
+    #    parameter»
+    # Medido a 2026-10-09: o Cluster esteve 47h sem existir por causa disto, e
+    # o `kubectl apply` não o disse alto porque trata cada documento do
+    # ficheiro à parte — o `ScheduledBackup` do fim do ficheiro ENTROU, e ficou
+    # 43 horas a repetir «Unknown cluster meet-pg». Um ficheiro, metade
+    # aplicada, nenhum erro à vista.
+    shared_preload_libraries:
+      - pg_stat_statements
+
     parameters:
       max_connections: "300"
       shared_buffers: 1GB
@@ -39,8 +52,6 @@ spec:
       min_wal_size: 1GB
       checkpoint_completion_target: "0.9"
       random_page_cost: "1.1"   # disco SSD
-      # Para o `pg_stat_statements` da observabilidade (fase 4).
-      shared_preload_libraries: pg_stat_statements
 
   bootstrap:
     initdb:
@@ -69,6 +80,11 @@ spec:
   # Backup contínuo (WAL) para o MinIO, com retenção de 30 dias. É isto que
   # transforma «temos réplicas» em «podemos voltar atrás»: réplicas copiam o
   # erro, backups não.
+  # ⚠ PRAZO: o `barmanObjectStore` nativo está DEPRECADO e é REMOVIDO no
+  # CloudNativePG **1.31.0**. O operador instalado é **1.30.1** — uma minor de
+  # distância. Antes de o actualizar, isto tem de migrar para o Barman Cloud
+  # Plugin, que é um componente à parte e não uma mudança de campo. Medido a
+  # 2026-10-09, dito pelo próprio webhook em cada apply.
   backup:
     barmanObjectStore:
       destinationPath: s3://meet-backups/postgres
@@ -84,7 +100,13 @@ spec:
     retentionPolicy: "30d"
 
   monitoring:
-    enablePodMonitor: true
+    # DESLIGADO aqui de propósito, por duas razões:
+    #
+    #  1. O CRD `PodMonitor` vem do kube-prometheus-stack, que é a FASE 4 —
+    #     depois desta. Medido a 2026-10-09: não existe no `delonix-lda`.
+    #     O `instalar.sh` liga-o por `kubectl patch` quando o CRD aparecer.
+    #  2. O campo está DEPRECADO: o CNPG manda criar o PodMonitor à mão.
+    enablePodMonitor: false
 ---
 # O backup COMPLETO, todas as noites. O WAL dá o ponto-no-tempo; isto dá a base
 # de onde partir, e sem ele restaurar significa reproduzir meses de WAL.

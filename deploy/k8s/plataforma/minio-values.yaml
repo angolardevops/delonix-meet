@@ -8,9 +8,74 @@
 #
 #  Quatro nós em modo distribuído: é o mínimo para o erasure coding do MinIO
 #  aguentar a perda de um sem perder dados.
+#
+#  O TAMANHO é medido, não escolhido: a 2026-10-07 o Longhorn do `delonix-lda`
+#  tinha 146 GiB livres em três dos cinco nós. Os 250Gi que aqui estavam não
+#  assentavam em nenhum deles. 100Gi x 4 nós dão ~200 GiB utilizáveis depois do
+#  erasure coding, e assentam em qualquer nó.
 # ---------------------------------------------------------------------------
 mode: distributed
 replicas: 4
+
+# ---------------------------------------------------------------------------
+#  DE ONDE VÊM AS IMAGENS — e porque é `bitnamilegacy`
+#
+#  Medido por API de registo a 2026-10-07, com controlos (`library/alpine` deu
+#  200, um repositório inventado deu 401):
+#
+#    docker.io/bitnami/minio:2025.7.23-debian-12-r3        404  (desapareceu)
+#    docker.io/bitnami/minio-object-browser:2.0.2-…        404  (desapareceu)
+#    docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r3  200
+#    docker.io/minio/minio:latest                          401  (oficial, sem acesso)
+#    quay.io/minio/minio:latest                             401  (oficial, sem acesso)
+#
+#  Duas coisas aconteceram em 2025: a Bitnami moveu as imagens gratuitas para
+#  `bitnamilegacy` e deixou de servir tags versionadas no `bitnami/*` público; e
+#  as imagens OFICIAIS do MinIO deixaram de ser puxáveis anonimamente — nem a
+#  `latest`, nem uma tag de 2024, nem no Docker Hub nem no quay.io.
+#
+#  Logo o `bitnamilegacy` não é preferência, é a única via que funciona sem
+#  subscrição. E tem um custo que fica escrito: **é um arquivo congelado, sem
+#  correcções de segurança**.
+#
+#  O QUE ISSO ARRISCA, HOJE E AMANHÃ. Hoje o MinIO não está no caminho das
+#  gravações — o ADR-0020 diz que «o gravador continua a escrever» no volume
+#  RWX. Quem o consome é o backup do Postgres, o Loki e o Tempo: dados
+#  operacionais. No dia em que o gravador passar a escrever aqui, passa a
+#  guardar gravações de clientes, e uma imagem sem patches deixa de servir.
+#  Essa é a data em que isto tem de ser revisto — não antes, não depois.
+#
+#  O chart da Bitnami NÃO pode apontar para a imagem oficial: renderiza
+#  `command: [/bin/bash, -c, …]` com os scripts de arranque próprios da
+#  Bitnami, que a imagem oficial não tem. Trocar de imagem é trocar de chart.
+# ---------------------------------------------------------------------------
+image:
+  registry: docker.io
+  repository: bitnamilegacy/minio
+clientImage:
+  registry: docker.io
+  repository: bitnamilegacy/minio-client
+volumePermissions:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/os-shell
+defaultInitContainers:
+  volumePermissions:
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/os-shell
+
+# A consola web fica DESLIGADA, e não é por gosto: a imagem que o chart lhe
+# pinta — `docker.io/bitnami/minio-object-browser:2.0.2-debian-12-r3` —
+# devolve 404 no Docker Hub (verificado por API a 2026-10-07). É a mudança de
+# catálogo da Bitnami de 2025: as imagens gratuitas passaram para
+# `bitnamilegacy` e o `bitnami/*` público deixou de servir tags versionadas.
+#
+# O Meet fala com o MinIO pela API (porta 9000), não pela consola. Ligá-la
+# exige decidir de onde vêm as imagens — ver o README §«de onde vêm as
+# imagens».
+console:
+  enabled: false
 
 auth:
   existingSecret: meet-minio-credenciais
@@ -19,7 +84,11 @@ auth:
 
 persistence:
   enabled: true
-  size: 250Gi
+  size: 100Gi
+  # UMA réplica no Longhorn (ver `storageclass-minio.yaml`): o MinIO já faz
+  # erasure coding entre os quatro pods, e replicar outra vez por baixo é
+  # pagar duas vezes pela mesma redundância.
+  storageClass: longhorn-minio
 
 # Um por nó. Com três workers, um deles leva dois — e isso está dito aqui para
 # não parecer que há quatro nós quando há três.
@@ -40,6 +109,12 @@ provisioning:
   # bucket: um lifecycle aqui apagava por baixo da aplicação.
 
 metrics:
+  # ATENÇÃO À ORDEM: o CRD `ServiceMonitor` vem do kube-prometheus-stack, que
+  # a fase 4 (`../observabilidade/instalar.sh`) instala DEPOIS desta. Numa
+  # instalação de zero este `true` faz o chart falhar com «no matches for kind
+  # ServiceMonitor». O `instalar.sh` desta pasta detecta o CRD e desliga isto
+  # na primeira passagem, avisando — e a segunda passagem, depois da
+  # observabilidade, liga-o.
   serviceMonitor:
     enabled: true
     namespace: observabilidade
