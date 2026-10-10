@@ -1193,6 +1193,12 @@ async fn sso_login_inner(
     state: Arc<AppState>,
     params: std::collections::HashMap<String, String>,
 ) -> Result<Response, ApiError> {
+    // O endereço público PRIMEIRO: é configuração deste servidor, e sem ela
+    // não vale a pena ir ao fornecedor (nem, no callback, gastar o `state`).
+    let callback_url = format!(
+        "{}/api/auth/sso/callback",
+        sso_public_origin(&state, DEV_API_ORIGIN)?
+    );
     let domain = params
         .get("domain")
         .map(|d| d.trim().to_lowercase())
@@ -1233,12 +1239,6 @@ async fn sso_login_inner(
         openidconnect::core::CoreProviderMetadata::discover_async(issuer, &http_client)
             .await
             .map_err(oidc_discovery_error)?;
-
-    // O callback URL é relativo ao host que serviu o pedido.
-    let callback_url = format!(
-        "{}/api/auth/sso/callback",
-        sso_public_origin(&state, DEV_API_ORIGIN)?
-    );
 
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
@@ -1319,6 +1319,12 @@ async fn sso_callback_inner(
     headers: HeaderMap,
     params: std::collections::HashMap<String, String>,
 ) -> Result<Response, ApiError> {
+    // O endereço público PRIMEIRO: é configuração deste servidor, e sem ela
+    // não vale a pena ir ao fornecedor (nem, no callback, gastar o `state`).
+    let callback_url = format!(
+        "{}/api/auth/sso/callback",
+        sso_public_origin(&state, DEV_API_ORIGIN)?
+    );
     let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     let code = params
         .get("code")
@@ -1365,11 +1371,6 @@ async fn sso_callback_inner(
         openidconnect::core::CoreProviderMetadata::discover_async(issuer, &http_client)
             .await
             .map_err(oidc_discovery_error)?;
-
-    let callback_url = format!(
-        "{}/api/auth/sso/callback",
-        sso_public_origin(&state, DEV_API_ORIGIN)?
-    );
 
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
