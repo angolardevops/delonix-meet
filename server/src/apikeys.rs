@@ -1207,17 +1207,39 @@ pub async fn v1_provision_org(
 
     // Domínio de email (best-effort — o índice único pode colidir com outra
     // org; nesse caso fica por definir e o admin resolve).
+    //
+    // E fica PROVADO na mesma escrita (decisão do dono, 2026-10-10): quem
+    // provisiona é o operador da plataforma, com o segredo de provisionamento,
+    // e é ele que responde por este domínio — o mesmo papel que o registo DNS
+    // TXT tem para uma org criada pelo próprio cliente (A3, 0110). Sem isto, uma
+    // org provisionada pelo Odoo recusava o JIT de todas as contas novas até
+    // alguém publicar um TXT, e o laboratório da Frente C mediu-o. Fica na
+    // trilha quem respondeu pelo domínio.
     if let Some(domain) = req
         .email_domain
         .as_ref()
         .map(|d| d.trim().to_lowercase())
         .filter(|d| !d.is_empty())
     {
-        let _ = sqlx::query("UPDATE organizations SET email_domain = $1 WHERE id = $2")
-            .bind(&domain)
-            .bind(org_id)
-            .execute(&state.db)
+        let gravado = sqlx::query(
+            "UPDATE organizations SET email_domain = $1, email_domain_verified_at = now()
+              WHERE id = $2",
+        )
+        .bind(&domain)
+        .bind(org_id)
+        .execute(&state.db)
+        .await
+        .is_ok_and(|r| r.rows_affected() == 1);
+        if gravado {
+            crate::audit::log(
+                &state.db,
+                Some(org_id),
+                service_user_id,
+                "organization.email_domain_vouched_by_operator",
+                &domain,
+            )
             .await;
+        }
     }
 
     // Config OIDC (fecha o SSO no mesmo passo — sem SQL manual). O
