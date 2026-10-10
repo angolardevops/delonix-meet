@@ -13465,9 +13465,9 @@
         ],
         "responses": {
           "302": {
-            "description": "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE."
+            "description": "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE. É uma navegação do browser: um erro também redirecciona, para `#/login?sso_error=<código>` no endereço público (`sso.provider_unavailable` quando o IdP não responde, `invalid_argument` quando o emissor é recusado pela guarda de saída, `not_found` sem SSO para o domínio)."
           },
-          "400": {
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13475,17 +13475,7 @@
                 }
               }
             },
-            "description": "`domain` em falta, ou o emissor OIDC da organização aponta para um endereço interno (guarda de saída)."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Nenhuma organização com SSO configurado para o domínio."
+            "description": "`sso.public_url_missing` — sem `PUBLIC_URL` nem `CORS_ORIGINS` não há para onde voltar (em produção; em modo inseguro serve o `localhost` de desenvolvimento). Sem endereço configurado, os erros saem em JSON e não redireccionam."
           },
           "429": {
             "content": {
@@ -13496,16 +13486,6 @@
               }
             },
             "description": "Limite de pedidos de autenticação por IP."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Issuer inválido ou discovery OIDC falhou."
           }
         },
         "summary": "`GET /api/auth/sso/authorize?domain=example.com`\nDescobre o IdP OIDC da organização, gera state+PKCE e redireciona (302)\no browser do utilizador para o IdP (Google/Microsoft/Okta).",
@@ -13540,9 +13520,9 @@
         ],
         "responses": {
           "302": {
-            "description": "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4)."
+            "description": "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4). É uma navegação do browser: uma recusa ou falha também redirecciona, para `#/login?sso_error=<código>` -- `sso.domain_not_verified`, `sso.account_not_in_org`, `sso.email_domain_mismatch`, `sso.provider_unavailable` (o IdP não respondeu na troca do código), `sso.invalid_id_token` (o id_token não verifica), `auth.unauthenticated` (state desconhecido, usado ou expirado), `conflict` (o JIT colidiu)."
           },
-          "400": {
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13550,47 +13530,7 @@
                 }
               }
             },
-            "description": "`code`/`state` em falta, ou o IdP não devolveu email."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "State desconhecido, já consumido ou expirado."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Regra de pertença (R130): `sso.account_not_in_org` — a conta existe mas não é membro activo desta organização; `sso.email_domain_mismatch` — conta nova de um domínio que não é o da organização."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "A configuração SSO da organização foi removida entretanto."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Provisionamento JIT colidiu com email/username existente."
+            "description": "`sso.public_url_missing` — sem `PUBLIC_URL` nem `CORS_ORIGINS` não há para onde voltar (em produção; em modo inseguro serve o `localhost` de desenvolvimento). Sem endereço configurado, os erros saem em JSON e não redireccionam."
           },
           "429": {
             "content": {
@@ -13601,16 +13541,6 @@
               }
             },
             "description": "Limite de pedidos de autenticação por IP."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Discovery, troca de código ou verificação do id_token falhou."
           }
         },
         "summary": "`GET /api/auth/sso/callback?code=...&state=...`\nRecebe o código de autorização do IdP, troca-o pelo id_token, e faz\nJust-in-Time Provisioning se o utilizador não existir.",
