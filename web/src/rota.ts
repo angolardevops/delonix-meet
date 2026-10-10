@@ -28,6 +28,8 @@ export type Route =
   | { kind: 'telemovel'; code: string }
   | { kind: 'share'; token: string }
   | { kind: 'invite'; token: string }
+  /** O ecrã de entrada (`#/login`, com ou sem `?sso_error=`). */
+  | { kind: 'login' }
   /** O link do email de prova do endereço (`#/verificar-email?token=…`). */
   | { kind: 'verificar-email'; token: string }
   /** O link do email de reposição de password (`#/repor-password?token=…`). */
@@ -85,6 +87,7 @@ export function parseHash(hash: string = location.hash): Route {
   if (telemovel) return { kind: 'telemovel', code: telemovel[1].toLowerCase() }
   const share = h.match(/^#\/share\/([a-f0-9]+)(?:\?.*)?$/)
   if (share) return { kind: 'share', token: share[1] }
+  if (/^#\/login(?:\?.*)?$/.test(h)) return { kind: 'login' }
   const invite = h.match(/^#\/invite\/([A-Za-z0-9_-]+)(?:\?.*)?$/)
   if (invite) return { kind: 'invite', token: invite[1] }
   const verificar = h.match(/^#\/verificar-email\?token=([A-Za-z0-9_-]+)$/)
@@ -148,6 +151,7 @@ export function destinoNoRail(r: Route): NavKey | null {
     case 'telemovel':
     case 'share':
     case 'invite':
+    case 'login':
     case 'verificar-email':
     case 'repor-password':
     case 'lobby':
@@ -173,6 +177,7 @@ export function trilhoDe(r: Route): Degrau[] {
     case 'telemovel':
     case 'share':
     case 'invite':
+    case 'login':
     case 'verificar-email':
     case 'repor-password':
       return []
@@ -202,6 +207,8 @@ export function chaveDoTitulo(r: Route): string | null {
   const destino = destinoNoRail(r)
   if (destino && destino !== 'home') return NAV_I18N[destino]
   switch (r.kind) {
+    case 'login':
+      return 'auth.entrar.titulo'
     case 'lobby':
       return 'shell.nav.salas'
     case 'desconhecida':

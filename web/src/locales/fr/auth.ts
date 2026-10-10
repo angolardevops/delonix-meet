@@ -1,4 +1,14 @@
 export default {
+  ssoErro: {
+    dominioPorProvar: 'Votre organisation n’a pas encore prouvé la propriété de son domaine e-mail. Tant qu’un administrateur n’a pas publié l’enregistrement DNS, seuls les comptes existants se connectent par SSO.',
+    foraDaOrg: 'Ce compte n’est pas un membre actif de l’organisation de ce fournisseur d’identité.',
+    outroDominio: 'L’e-mail renvoyé par le fournisseur d’identité n’appartient pas au domaine de cette organisation.',
+    fornecedorEmBaixo: 'Le fournisseur d’identité de l’organisation n’a pas répondu. Réessayez plus tard ou contactez l’administrateur.',
+    tokenRecusado: 'La réponse du fournisseur d’identité n’a pas été acceptée. Contactez l’administrateur de l’organisation.',
+    expirou: 'La connexion SSO a expiré ou a déjà été utilisée. Réessayez.',
+    contaEmConflito: 'Un compte avec cet e-mail ou ce nom existe déjà. Contactez l’administrateur.',
+    generico: 'Impossible de se connecter par SSO. Réessayez.',
+  },
   reposicao: {
     link: 'Mot de passe oublié ?',
     titulo: 'Réinitialiser le mot de passe',

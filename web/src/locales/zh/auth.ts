@@ -1,4 +1,14 @@
 export default {
+  ssoErro: {
+    dominioPorProvar: '您的组织尚未证明其电子邮件域名的所有权。在管理员发布 DNS 记录之前，只有已存在的账户可以通过 SSO 登录。',
+    foraDaOrg: '此账户不是该身份提供商所属组织的活跃成员。',
+    outroDominio: '身份提供商返回的电子邮件不属于此组织的域名。',
+    fornecedorEmBaixo: '组织的身份提供商没有响应。请稍后重试，或联系管理员。',
+    tokenRecusado: '身份提供商的响应未被接受。请联系组织管理员。',
+    expirou: 'SSO 登录已过期或已被使用。请重试。',
+    contaEmConflito: '已存在使用此电子邮件或名称的账户。请联系管理员。',
+    generico: '无法通过 SSO 登录。请重试。',
+  },
   reposicao: {
     link: '忘记密码？',
     titulo: '重置密码',

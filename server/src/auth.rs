@@ -1090,6 +1090,52 @@ pub async fn sso_check(
     }
 }
 
+/// O endereço público CONFIGURADO: `PUBLIC_URL`, ou o primeiro `CORS_ORIGINS`
+/// por compatibilidade com as instalações que só têm esse.
+fn sso_configured_origin(state: &AppState) -> Option<String> {
+    state
+        .config
+        .public_url
+        .clone()
+        .or_else(|| state.config.cors_origins.first().cloned())
+        .map(|o| o.trim_end_matches('/').to_string())
+}
+
+/// O endereço público da web, de onde saem o `redirect_uri` do SSO e o
+/// regresso ao frontend. Sem nenhum configurado, em produção RECUSA: até aqui
+/// caía em silêncio para `localhost`, e um servidor mal configurado mandava o
+/// browser de quem entra para a sua própria máquina. Só em modo inseguro
+/// (laboratório, testes) o `localhost` de desenvolvimento continua a servir.
+fn sso_public_origin(state: &AppState, dev_fallback: &str) -> Result<String, ApiError> {
+    match sso_configured_origin(state) {
+        Some(o) => Ok(o),
+        None if state.config.allow_insecure => Ok(dev_fallback.to_string()),
+        None => Err(delonix_meet_core::DomainError::precondition(
+            "sso.public_url_missing",
+            "o servidor não sabe o seu endereço público (PUBLIC_URL) e não completa o SSO",
+        )
+        .into()),
+    }
+}
+
+/// O `redirect_uri` registado no IdP (servido pelo servidor).
+const DEV_API_ORIGIN: &str = "http://localhost:8180";
+/// O frontend de desenvolvimento (vite).
+const DEV_WEB_ORIGIN: &str = "https://localhost:5173";
+
+/// O fornecedor de identidade não respondeu como devia (descoberta, JWKS,
+/// troca do código). É do LADO DELE, e diz-se: um 500 «internal error» punha a
+/// procurar a avaria no servidor errado. O detalhe fica no log, não na resposta.
+fn sso_provider_unavailable(stage: &str, e: impl std::fmt::Display) -> ApiError {
+    tracing::warn!(stage, error = %e, "SSO: o fornecedor de identidade falhou");
+    delonix_meet_core::DomainError::new(
+        delonix_meet_core::ErrorKind::Unavailable,
+        "sso.provider_unavailable",
+        "o fornecedor de identidade da organização não respondeu — tente mais tarde ou fale com o administrador",
+    )
+    .into()
+}
+
 /// Erro da descoberta OIDC. Um emissor recusado pela guarda de saída é um erro
 /// de CONFIGURAÇÃO da organização (400, com razão), não uma avaria do servidor.
 fn oidc_discovery_error(
@@ -1099,7 +1145,25 @@ fn oidc_discovery_error(
         openidconnect::DiscoveryError::Request(crate::net_guard::OidcHttpError::Blocked(why)) => {
             ApiError::BadRequest(format!("emissor OIDC recusado pela guarda de saída: {why}"))
         }
-        e => ApiError::Internal(format!("OIDC discovery: {e}")),
+        e => sso_provider_unavailable("descoberta", e),
+    }
+}
+
+/// O `authorize` e o `callback` do SSO são NAVEGAÇÕES do browser, não pedidos
+/// de API: um erro em JSON deixava a pessoa num ecrã de texto cru. Volta ao
+/// login com o código, e a web diz a frase. Sem endereço público conhecido não
+/// há para onde voltar, e o erro sai como sempre.
+fn sso_error_to_login(state: &AppState, e: ApiError) -> Response {
+    match sso_configured_origin(state) {
+        Some(origin) => (
+            [(
+                header::LOCATION,
+                format!("{origin}/#/login?sso_error={}", e.code()),
+            )],
+            axum::http::StatusCode::FOUND,
+        )
+            .into_response(),
+        None => e.into_response(),
     }
 }
 
@@ -1110,17 +1174,31 @@ fn oidc_discovery_error(
     get, path = "/api/auth/sso/authorize", tag = "auth",
     params(("domain" = String, Query, description = "Domínio de email da organização.")),
     responses(
-        (status = 302, description = "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE."),
-        (status = 400, description = "`domain` em falta, ou o emissor OIDC da organização aponta para um endereço interno (guarda de saída).", body = crate::openapi::ErrorBody),
-        (status = 404, description = "Nenhuma organização com SSO configurado para o domínio.", body = crate::openapi::ErrorBody),
+        (status = 302, description = "Redirecção (`Location`) para o endpoint de autorização do IdP, com state + PKCE. É uma navegação do browser: um erro também redirecciona, para `#/login?sso_error=<código>` no endereço público (`sso.provider_unavailable` quando o IdP não responde, `invalid_argument` quando o emissor é recusado pela guarda de saída, `not_found` sem SSO para o domínio)."),
+        (status = 422, description = "`sso.public_url_missing` — sem `PUBLIC_URL` nem `CORS_ORIGINS` não há para onde voltar (em produção; em modo inseguro serve o `localhost` de desenvolvimento). Sem endereço configurado, os erros saem em JSON e não redireccionam.", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
-        (status = 500, description = "Issuer inválido ou discovery OIDC falhou.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn sso_login(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    match sso_login_inner(state.clone(), params).await {
+        Ok(r) => r,
+        Err(e) => sso_error_to_login(&state, e),
+    }
+}
+
+async fn sso_login_inner(
+    state: Arc<AppState>,
+    params: std::collections::HashMap<String, String>,
 ) -> Result<Response, ApiError> {
+    // O endereço público PRIMEIRO: é configuração deste servidor, e sem ela
+    // não vale a pena ir ao fornecedor (nem, no callback, gastar o `state`).
+    let callback_url = format!(
+        "{}/api/auth/sso/callback",
+        sso_public_origin(&state, DEV_API_ORIGIN)?
+    );
     let domain = params
         .get("domain")
         .map(|d| d.trim().to_lowercase())
@@ -1161,14 +1239,6 @@ pub async fn sso_login(
         openidconnect::core::CoreProviderMetadata::discover_async(issuer, &http_client)
             .await
             .map_err(oidc_discovery_error)?;
-
-    // O callback URL é relativo ao host que serviu o pedido.
-    let callback_url = state
-        .config
-        .cors_origins
-        .first()
-        .map(|o| format!("{o}/api/auth/sso/callback"))
-        .unwrap_or_else(|| "http://localhost:8180/api/auth/sso/callback".to_string());
 
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
@@ -1226,14 +1296,9 @@ pub async fn sso_login(
         ("state" = String, Query, description = "State anti-CSRF emitido por `/api/auth/sso/authorize` (uso único, 10 min)."),
     ),
     responses(
-        (status = 302, description = "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4)."),
-        (status = 400, description = "`code`/`state` em falta, ou o IdP não devolveu email.", body = crate::openapi::ErrorBody),
-        (status = 401, description = "State desconhecido, já consumido ou expirado.", body = crate::openapi::ErrorBody),
-        (status = 403, description = "Regra de pertença (R130): `sso.account_not_in_org` — a conta existe mas não é membro activo desta organização; `sso.email_domain_mismatch` — conta nova de um domínio que não é o da organização.", body = crate::openapi::ErrorBody),
-        (status = 404, description = "A configuração SSO da organização foi removida entretanto.", body = crate::openapi::ErrorBody),
-        (status = 409, description = "Provisionamento JIT colidiu com email/username existente.", body = crate::openapi::ErrorBody),
+        (status = 302, description = "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4). É uma navegação do browser: uma recusa ou falha também redirecciona, para `#/login?sso_error=<código>` -- `sso.domain_not_verified`, `sso.account_not_in_org`, `sso.email_domain_mismatch`, `sso.provider_unavailable` (o IdP não respondeu na troca do código), `sso.invalid_id_token` (o id_token não verifica), `auth.unauthenticated` (state desconhecido, usado ou expirado), `conflict` (o JIT colidiu)."),
+        (status = 422, description = "`sso.public_url_missing` — sem `PUBLIC_URL` nem `CORS_ORIGINS` não há para onde voltar (em produção; em modo inseguro serve o `localhost` de desenvolvimento). Sem endereço configurado, os erros saem em JSON e não redireccionam.", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
-        (status = 500, description = "Discovery, troca de código ou verificação do id_token falhou.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn sso_callback(
@@ -1241,7 +1306,25 @@ pub async fn sso_callback(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    match sso_callback_inner(state.clone(), addr, headers, params).await {
+        Ok(r) => r,
+        Err(e) => sso_error_to_login(&state, e),
+    }
+}
+
+async fn sso_callback_inner(
+    state: Arc<AppState>,
+    addr: SocketAddr,
+    headers: HeaderMap,
+    params: std::collections::HashMap<String, String>,
 ) -> Result<Response, ApiError> {
+    // O endereço público PRIMEIRO: é configuração deste servidor, e sem ela
+    // não vale a pena ir ao fornecedor (nem, no callback, gastar o `state`).
+    let callback_url = format!(
+        "{}/api/auth/sso/callback",
+        sso_public_origin(&state, DEV_API_ORIGIN)?
+    );
     let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
     let code = params
         .get("code")
@@ -1289,13 +1372,6 @@ pub async fn sso_callback(
             .await
             .map_err(oidc_discovery_error)?;
 
-    let callback_url = state
-        .config
-        .cors_origins
-        .first()
-        .map(|o| format!("{o}/api/auth/sso/callback"))
-        .unwrap_or_else(|| "http://localhost:8180/api/auth/sso/callback".to_string());
-
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
         ClientId::new(client_id),
@@ -1313,7 +1389,7 @@ pub async fn sso_callback(
         .set_pkce_verifier(PkceCodeVerifier::new(entry.verifier))
         .request_async(&http_client)
         .await
-        .map_err(|e| ApiError::Internal(format!("token exchange: {e}")))?;
+        .map_err(|e| sso_provider_unavailable("troca do código", e))?;
 
     // Verificar o id_token (assinatura + nonce + issuer + audience).
     let id_token = token_response
@@ -1323,7 +1399,14 @@ pub async fn sso_callback(
     let verifier = client.id_token_verifier();
     let claims = id_token
         .claims(&verifier, &Nonce::new(entry.nonce))
-        .map_err(|e| ApiError::Internal(format!("id_token verification: {e}")))?;
+        .map_err(|e| {
+            // Um id_token que não verifica (assinatura, nonce, emissor,
+            // audiência) é uma afirmação RECUSADA, não uma avaria.
+            tracing::warn!(error = %e, "SSO: id_token recusado");
+            ApiError::from(delonix_meet_core::DomainError::forbidden(
+                "sso.invalid_id_token",
+            ))
+        })?;
 
     // Extrair email e nome do id_token.
     let email = claims
@@ -1488,6 +1571,14 @@ pub async fn sso_callback(
 
             tx.commit().await?;
             tracing::info!(%email, org_id = %entry.org_id, "SSO JIT provisioned new user");
+            crate::audit::log(
+                &state.db,
+                Some(entry.org_id),
+                new_user.id,
+                "auth.sso_provisioned",
+                &email,
+            )
+            .await;
             crate::ramais::assign_on_join(&state, entry.org_id, new_user.id).await;
             new_user
         }
@@ -1512,12 +1603,10 @@ pub async fn sso_callback(
         )
         .await;
         let mfa_token = mfa_challenge_token(&state, user.id)?;
-        let redirect_url = state
-            .config
-            .cors_origins
-            .first()
-            .map(|o| format!("{o}/#/sso-mfa?mfa_token={mfa_token}"))
-            .unwrap_or_else(|| format!("https://localhost:5173/#/sso-mfa?mfa_token={mfa_token}"));
+        let redirect_url = format!(
+            "{}/#/sso-mfa?mfa_token={mfa_token}",
+            sso_public_origin(&state, DEV_WEB_ORIGIN)?
+        );
         tracing::info!(%email, org_id = %entry.org_id, "SSO: desafio do segundo factor local");
         return Ok((
             [(header::LOCATION, redirect_url)],
@@ -1537,19 +1626,23 @@ pub async fn sso_callback(
 
     // Redirecionar para o frontend com o access_token como fragment (nunca na query
     // string, para não aparecer em logs do servidor). O frontend lê o hash fragment.
-    let redirect_url = state
-        .config
-        .cors_origins
-        .first()
-        .map(|o| format!("{o}/#/sso-complete?token={}", pair.access_token))
-        .unwrap_or_else(|| {
-            format!(
-                "https://localhost:5173/#/sso-complete?token={}",
-                pair.access_token
-            )
-        });
+    let redirect_url = format!(
+        "{}/#/sso-complete?token={}",
+        sso_public_origin(&state, DEV_WEB_ORIGIN)?,
+        pair.access_token
+    );
 
     tracing::info!(email = %pair.user.email, "SSO login success");
+    // A entrada por SSO fica na trilha como o login por password
+    // (`auth.login`): até aqui só a RECUSA ficava (`auth.sso_refused`).
+    crate::audit::log(
+        &state.db,
+        Some(entry.org_id),
+        pair.user.id,
+        "auth.sso_login",
+        &pair.user.email,
+    )
+    .await;
 
     Ok((
         [
