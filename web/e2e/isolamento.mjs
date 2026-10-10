@@ -174,6 +174,16 @@ await recusado('A verifica a cadeia de auditoria da org B', `/api/orgs/${B.orgId
   token: A.token,
 })
 await recusado('A lê a configuração de SSO da org B', `/api/orgs/${B.orgId}/sso`, { token: A.token })
+// A3: o token do TXT da org B não sai para A, e A não pode pôr o servidor a
+// consultar o DNS do domínio de B — a recusa tem de vir ANTES do handler.
+await recusadoNaPorta('A lê o registo de prova do domínio da org B', `/api/orgs/${B.orgId}/domain-verification`, {
+  token: A.token,
+})
+await recusadoNaPorta(
+  'A pede a verificação do domínio da org B',
+  `/api/orgs/${B.orgId}/domain-verification/check`,
+  { method: 'POST', token: A.token },
+)
 await recusado('A lê a facturação de voz da org B', `/api/orgs/${B.orgId}/voice/billing`, {
   token: A.token,
 })

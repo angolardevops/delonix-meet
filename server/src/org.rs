@@ -102,6 +102,8 @@ pub struct OrgSettingsReq {
         get_sso_config,
         upsert_sso_config,
         delete_sso_config,
+        get_domain_verification,
+        check_domain_verification,
     ),
     components(schemas(
         Organization,
@@ -118,6 +120,7 @@ pub struct OrgSettingsReq {
         Organizer,
         SsoConfigPublic,
         SsoConfigReq,
+        DomainVerificationStatus,
         CreateOrgReq,
         UpgradeOrgReq,
         CreateBranchReq,
@@ -341,6 +344,44 @@ pub async fn role_in_org(
     .fetch_optional(&state.db)
     .await?;
     Ok(row.map(|r| r.0))
+}
+
+/// `true` se a pertença é de PLENO DIREITO — exclui `external_guest`.
+///
+/// `role_in_org` lê a coluna legada `org_members.role` ('admin'/'member'),
+/// que é DERIVADA de `role_id` por gatilho e colapsa `member` e
+/// `external_guest` no mesmo texto ('member') -- ver migração 0053. Por
+/// isso `role_in_org(...).is_some()` nunca distingue um convidado externo
+/// de um colega: ambos "existem" em `org_members`. Isto é seguro para a
+/// maioria dos usos (um convidado pode legitimamente entrar numa sala),
+/// mas é a fonte directa de R130/C1 na porta SSO: um convidado externo de
+/// uma organização X não pode usar o IdP de X para abrir uma sessão
+/// COMPLETA da conta dele (que pode ser admin noutra organização Y onde X
+/// nunca devia ter entrado). Esta função junta `org_roles.system_key` para
+/// responder à pergunta certa: "é mesmo desta organização, ou só convidado
+/// para lá entrar numa reunião?".
+pub async fn is_full_member(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT r.system_key FROM org_members m
+         LEFT JOIN org_roles r ON r.id = m.role_id
+         WHERE m.org_id = $1 AND m.user_id = $2 AND m.archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(match row {
+        // Sem role_id (contas antigas, pré-0053): a coluna `role` legada
+        // nunca guardou 'external_guest', por isso a ausência de role_id
+        // é um membro normal.
+        Some((None,)) => true,
+        Some((Some(key),)) => key != "external_guest",
+        None => false,
+    })
 }
 
 /// «É administrador da org» = a capacidade de sistema `org.administer` (ADR-0008
@@ -2242,6 +2283,151 @@ pub async fn delete_sso_config(
     }
     tracing::info!(%org_id, "SSO config deleted");
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+// ---------- Prova de posse do domínio (A3, revisão de segurança 2026-10-09) ----------
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DomainVerificationStatus {
+    pub domain: String,
+    /// Nome e valor do registo TXT que o admin tem de publicar.
+    pub record_name: String,
+    pub record_value: String,
+    pub verified: bool,
+    pub verified_at: Option<chrono::DateTime<Utc>>,
+}
+
+async fn domain_verification_row(
+    state: &AppState,
+    org_id: Uuid,
+) -> Result<(String, String, Option<DateTime<Utc>>), ApiError> {
+    let row: Option<(String, Option<String>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT email_domain, email_domain_verify_token, email_domain_verified_at
+         FROM organizations WHERE id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((domain, token, verified_at)) = row else {
+        return Err(ApiError::NotFound);
+    };
+    if domain.is_empty() {
+        return Err(DomainError::precondition(
+            "org.no_email_domain",
+            "esta organização ainda não tem domínio de email -- regista-te ou \
+             converte a conta com um email desse domínio primeiro",
+        )
+        .into());
+    }
+    // O token nasce aqui, lazy, na primeira vez que alguém pede o estado --
+    // não há motivo para o gerar antes de haver domínio para provar.
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            let t = crate::domain_verify::new_token();
+            sqlx::query("UPDATE organizations SET email_domain_verify_token = $1 WHERE id = $2")
+                .bind(&t)
+                .bind(org_id)
+                .execute(&state.db)
+                .await?;
+            t
+        }
+    };
+    Ok((domain, token, verified_at))
+}
+
+/// `GET /api/orgs/:org_id/domain-verification` — o registo TXT a publicar e
+/// se já está verificado. Só admin.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/domain-verification", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = DomainVerificationStatus),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "A organização ainda não tem domínio de email (`org.no_email_domain`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn get_domain_verification(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<DomainVerificationStatus>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let (domain, token, verified_at) = domain_verification_row(&state, org_id).await?;
+    Ok(Json(DomainVerificationStatus {
+        record_name: crate::domain_verify::record_name(&domain),
+        record_value: crate::domain_verify::expected_value(&token),
+        verified: verified_at.is_some(),
+        verified_at,
+        domain,
+    }))
+}
+
+/// `POST /api/orgs/:org_id/domain-verification/check` — consulta o DNS TXT
+/// agora e grava `email_domain_verified_at` se bater certo. Idempotente:
+/// repetir depois de já verificado só confirma. Só admin.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/domain-verification/check", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = DomainVerificationStatus, description = "`verified` diz se o TXT já batia certo nesta consulta."),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "A organização ainda não tem domínio de email (`org.no_email_domain`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn check_domain_verification(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<DomainVerificationStatus>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let (domain, token, mut verified_at) = domain_verification_row(&state, org_id).await?;
+    if verified_at.is_none() && crate::domain_verify::verify(&domain, &token).await? {
+        sqlx::query("UPDATE organizations SET email_domain_verified_at = now() WHERE id = $1")
+            .bind(org_id)
+            .execute(&state.db)
+            .await?;
+        verified_at = Some(Utc::now());
+        tracing::info!(%org_id, %domain, "domínio verificado por DNS TXT");
+        crate::audit::log(
+            &state.db,
+            Some(org_id),
+            auth.user_id,
+            "org.domain_verified",
+            &domain,
+        )
+        .await;
+    }
+    Ok(Json(DomainVerificationStatus {
+        record_name: crate::domain_verify::record_name(&domain),
+        record_value: crate::domain_verify::expected_value(&token),
+        verified: verified_at.is_some(),
+        verified_at,
+        domain,
+    }))
+}
+
+/// A org `org_id` tem o domínio de email provado por DNS TXT? É a pergunta
+/// que `enforce_sso` e o JIT do SSO fazem antes de confiar no domínio
+/// (`auth.rs`) -- sem isto, quem reivindica um domínio primeiro (o registo
+/// não verifica o email) ficava dono dele para sempre.
+pub(crate) async fn email_domain_is_verified(
+    state: &AppState,
+    org_id: Uuid,
+) -> Result<bool, ApiError> {
+    let verified: Option<bool> = sqlx::query_scalar(
+        "SELECT email_domain_verified_at IS NOT NULL FROM organizations WHERE id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(verified.unwrap_or(false))
 }
 
 pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uuid>, ApiError> {

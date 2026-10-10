@@ -172,6 +172,7 @@ webauthn-rs = { version = "=0.5.5", features = ["danger-allow-state-serialisatio
 # o resto é texto pequeno). Sem `deflate`/`bzip2`/`aes`: menos código nativo.
 zip = { version = "2", default-features = false }
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "rustls-native-certs"] }
+hickory-resolver = { version = "0.26.3", default-features = false, features = ["system-config", "tokio"] }
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

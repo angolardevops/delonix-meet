@@ -254,6 +254,93 @@ async fn sso_callback_refuses_account_of_another_org(db: sqlx::PgPool) {
     assert_eq!(n, 0, "a vítima foi juntada à org do atacante");
 }
 
+/// C1 (revisão de segurança 2026-10-09) — um CONVIDADO EXTERNO de uma
+/// organização não é "membro" dela para efeitos de SSO. `role_in_org` lê a
+/// coluna legada `org_members.role`, que colapsa 'member' e
+/// 'external_guest' no mesmo texto ('member') -- por isso o callback
+/// achava a vítima "activa" na org do atacante e abria-lhe a conta REAL
+/// (admin da sua própria org), sem nunca ter sido convidada para lá além
+/// de uma reunião. É o mesmo ataque do teste anterior, mas pela porta dos
+/// convites legítimos entre empresas, que esse teste não cobria.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_callback_refuses_external_guest_of_the_idp_org(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let vitima = app.new_org("vitima2.test").await; // admin da SUA própria org
+    let atacante = app.new_org("atacante2.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &atacante, &idp).await;
+
+    // A vítima é só CONVIDADA EXTERNA da org do atacante (parceria entre
+    // empresas, reunião conjunta) -- nunca pediu para entrar lá como membro.
+    sqlx::query("SELECT seed_system_roles($1::uuid)")
+        .bind(atacante.org())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let guest_role_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM org_roles WHERE org_id = $1::uuid AND system_key = 'external_guest'",
+    )
+    .bind(atacante.org())
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO org_members (org_id, user_id, role, role_id, title)
+         VALUES ($1::uuid, $2::uuid, 'member', $3, 'Convidado')",
+    )
+    .bind(atacante.org())
+    .bind(&vitima.user_id)
+    .bind(guest_role_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    // Controlo positivo: o admin do atacante continua a entrar pelo SSO
+    // da sua própria org -- a correcção não parte o caminho legítimo.
+    let (st, sub, body) = sso_flow(&app, &idp, "atacante2.test", &atacante.email).await;
+    assert_eq!(st, 302, "membro real da org ainda entra por SSO: {body}");
+    assert_eq!(sub.as_deref(), Some(atacante.user_id.as_str()));
+
+    // O ataque: o IdP do atacante (que ele controla) afirma o email da
+    // vítima -- que "existe" em org_members, mas só como convidada.
+    let (st, sub, body) = sso_flow(&app, &idp, "atacante2.test", &vitima.email).await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "convidado externo abriu a conta real da vítima: {body}"
+    );
+    assert_eq!(body["code"], "sso.account_not_in_org", "{body}");
+}
+
+/// A1 (revisão de segurança 2026-10-09) — depois do primeiro login SSO, a
+/// conta fica presa ao (issuer, subject) que a autenticou. Antes desta
+/// correcção, qualquer IdP que afirmasse o MESMO email reabria a conta --
+/// mesmo um segundo IdP, de outra organização ou reconfigurado sem aviso.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_callback_refuses_identity_not_already_bound(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("zeta.test").await;
+    let idp1 = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp1).await;
+
+    // Primeiro login: liga a conta a (issuer de idp1, sub).
+    let (st, sub, body) = sso_flow(&app, &idp1, "zeta.test", &admin.email).await;
+    assert_eq!(st, 302, "primeiro login SSO: {body}");
+    assert_eq!(sub.as_deref(), Some(admin.user_id.as_str()));
+
+    // Um SEGUNDO IdP -- a org trocou de fornecedor, ou alguém comprometeu a
+    // configuração -- afirma o MESMO email.
+    let idp2 = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp2).await;
+    let (st, sub, body) = sso_flow(&app, &idp2, "zeta.test", &admin.email).await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "segundo IdP reabriu a conta só pelo email: {body}"
+    );
+    assert_eq!(body["code"], "sso.identity_mismatch", "{body}");
+}
+
 /// R130 — O JIT criava conta para QUALQUER email, de qualquer domínio, e
 /// juntava-a à org. Uma org só pode criar contas do seu próprio domínio.
 #[sqlx::test(migrations = "./migrations")]
@@ -265,7 +352,25 @@ async fn sso_jit_only_creates_accounts_of_the_org_domain(db: sqlx::PgPool) {
     let idp = FakeIdp::start().await;
     wire_sso(&app, &admin, &idp).await;
 
-    // Controlo positivo: email NOVO do domínio da org → conta criada, membro.
+    // A3, raiz: domínio certo mas AINDA sem prova de posse por DNS TXT --
+    // o JIT recusa-se, não cria a conta.
+    let (st, sub, body) = sso_flow(&app, &idp, "gama.test", "nova@gama.test").await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "JIT antes de provar o domínio: {body}"
+    );
+    assert_eq!(body["code"], "sso.domain_not_verified", "{body}");
+    assert_eq!(
+        user_id_by_email(&app, "nova@gama.test").await,
+        None,
+        "conta criada sem o domínio provado"
+    );
+
+    app.verify_domain(admin.org()).await;
+
+    // Controlo positivo: email NOVO do domínio da org, já provado → conta
+    // criada, membro.
     let (st, sub, body) = sso_flow(&app, &idp, "gama.test", "nova@gama.test").await;
     assert_eq!(st, 302, "JIT do próprio domínio: {body}");
     let criada = user_id_by_email(&app, "nova@gama.test").await;
@@ -322,6 +427,88 @@ async fn sso_refuses_archived_member(db: sqlx::PgPool) {
         "arquivado entrou: {body}"
     );
     assert_eq!(body["code"], "sso.account_not_in_org", "{body}");
+}
+
+/// A2 (revisão de segurança, 2026-10-09) — o `state` anti-CSRF vivia na
+/// memória de UM processo. A produção corre várias réplicas sem afinidade
+/// de sessão: um `authorize` numa réplica e o `callback` a cair noutra
+/// (o caso normal, não um ataque) respondia 401 sem motivo nenhum visível
+/// para quem está a entrar. Duas instâncias de `TestApp` sobre a MESMA
+/// base simulam exactamente isso.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_callback_works_across_replicas_without_sticky_sessions(db: sqlx::PgPool) {
+    let app_a = TestApp::spawn_with(db.clone(), &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app_a.new_org("multireplica.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app_a, &admin, &idp).await;
+
+    // Uma SEGUNDA "réplica", mesma base de dados, porta diferente.
+    let app_b = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+
+    // authorize na réplica A.
+    let r = app_a
+        .raw(
+            reqwest::Method::GET,
+            "/api/auth/sso/authorize?domain=multireplica.test",
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 302, "sso/authorize em A: {}", r.text);
+    let location = url::Url::parse(&r.header("location").unwrap()).unwrap();
+    let q = |k: &str| {
+        location
+            .query_pairs()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.to_string())
+            .unwrap()
+    };
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.email = admin.email.clone();
+        a.nonce = q("nonce");
+    }
+
+    // callback na réplica B -- é o que um `DashMap` por processo nunca
+    // conseguia ver.
+    let r = app_b
+        .raw(
+            reqwest::Method::GET,
+            &format!(
+                "/api/auth/sso/callback?code=codigo-falso&state={}",
+                q("state")
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(
+        r.status, 302,
+        "callback na réplica B não viu o state emitido pela réplica A: {}",
+        r.text
+    );
+    let loc = r.header("location").unwrap();
+    assert!(loc.contains("token="), "{loc}");
+
+    // O state é de uso único: repetir o MESMO callback (em qualquer réplica)
+    // já não encontra nada -- prova que ficou mesmo em Postgres, não
+    // duplicado num DashMap por processo que o primeiro consumo não limpou.
+    let r = app_a
+        .raw(
+            reqwest::Method::GET,
+            &format!(
+                "/api/auth/sso/callback?code=codigo-falso&state={}",
+                q("state")
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(
+        r.status, 401,
+        "state reutilizável entre réplicas: {}",
+        r.text
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +810,7 @@ async fn login_rate_limit_applies_to_sso_enforced_accounts(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200, "{body}");
+    app.verify_domain(admin.org()).await;
 
     // Controlo positivo: a recusa do SSO exclusivo continua a ser dita.
     let (st, body) = app
@@ -652,4 +840,158 @@ async fn login_rate_limit_applies_to_sso_enforced_accounts(db: sqlx::PgPool) {
         ultimo, 429,
         "conta de domínio com SSO exclusivo sem travão por conta"
     );
+}
+
+/// A3 (revisão de segurança, 2026-10-09) — `enforce_sso` bloqueava o login
+/// por password de QUALQUER conta cujo email terminasse no domínio
+/// reivindicado, mesmo sem ela ter nada a ver com a organização que o
+/// impôs. Isto transformava um domínio de email em dono de toda a gente
+/// que o usasse: bastava uma org registar-se com um email desse domínio
+/// (o registo não o verifica -- aberto conhecido) e ligar o enforce_sso
+/// para trancar o login por password de uma conta de OUTRA organização,
+/// sem relação nenhuma com a que o activou.
+#[sqlx::test(migrations = "./migrations")]
+async fn enforce_sso_only_blocks_members_of_the_enforcing_org(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+
+    // A org "squat" reivindica o domínio (regista-se com um email dele) e
+    // liga enforce_sso -- exactamente o que um atacante faria.
+    let squat = app.new_org("squat.test").await;
+    let (st, body) = app
+        .put(
+            &format!("/api/orgs/{}/sso", squat.org()),
+            Some(&squat.token),
+            json!({"issuer_url": "https://idp.squat.test", "client_id": "cid",
+                   "client_secret": "segredo", "enforce_sso": true}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    // Este teste prova o gate de PERTENÇA (is_full_member), não o de posse
+    // do domínio (esse tem teste próprio) -- domínio já provado, para os
+    // dois não se confundirem.
+    app.verify_domain(squat.org()).await;
+
+    // A VÍTIMA é membro de uma organização COMPLETAMENTE DIFERENTE, sem
+    // SSO nenhum. `POST /members` recusa um email fora do domínio da
+    // própria org (prova em separado, noutro teste) -- por isso o email
+    // "estranho" entra como entraria numa conta LEGADA ou convertida antes
+    // da regra actual, directo na base: o que importa aqui é o estado da
+    // conta no momento do login, não o caminho que a lá pôs.
+    let outra = app.new_org("outra-empresa.test").await;
+    let vitima = app.add_member(&outra, "funcionaria", "member").await;
+    let vitima_email = "funcionaria@squat.test";
+    sqlx::query("UPDATE users SET email = $1 WHERE id = $2::uuid")
+        .bind(vitima_email)
+        .bind(&vitima.user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // Controlo positivo: o próprio squat continua travado (a correcção não
+    // parte o caso legítimo -- é o mesmo teste que
+    // sso_enforced_blocks_password_login em organization.rs).
+    let (st, body) = app
+        .post(
+            "/api/auth/login",
+            None,
+            json!({"email": squat.email, "password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(
+        st, 400,
+        "membro real da org que impõe SSO devia ficar travado: {body}"
+    );
+
+    // O ataque: a vítima, que nunca teve nada a ver com "squat", continua a
+    // conseguir entrar com a password da SUA organização.
+    let (st, body) = app
+        .post(
+            "/api/auth/login",
+            None,
+            json!({"email": vitima_email, "password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(
+        st, 200,
+        "conta de outra organização ficou bloqueada por um domínio que não é dela: {body}"
+    );
+}
+
+/// A4 (revisão de segurança, 2026-10-09) — o SSO emitia sessão directa mesmo
+/// para uma conta com um segundo factor LOCAL activo. O IdP ser "o" factor de
+/// quem administra a organização não é o mesmo que ser o segundo factor
+/// DESTA conta: quem activou TOTP aqui quer os dois, e o SSO não lho podia
+/// retirar em silêncio -- sobretudo depois de C1/A1 (identidade federada já
+/// ter sido o caminho de uma tomada de conta nesta mesma revisão).
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_callback_challenges_local_mfa_instead_of_issuing_a_session(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("mfa-sso.test").await;
+    let (secret, _) = enable_mfa(&app, &admin.token).await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+
+    let r = app
+        .raw(
+            reqwest::Method::GET,
+            "/api/auth/sso/authorize?domain=mfa-sso.test",
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 302, "{}", r.text);
+    let location = url::Url::parse(&r.header("location").unwrap()).unwrap();
+    let q = |k: &str| {
+        location
+            .query_pairs()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.to_string())
+            .unwrap()
+    };
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.email = admin.email.clone();
+        a.nonce = q("nonce");
+    }
+
+    let r = app
+        .raw(
+            reqwest::Method::GET,
+            &format!(
+                "/api/auth/sso/callback?code=codigo-falso&state={}",
+                q("state")
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 302, "{}", r.text);
+    let loc = r.header("location").unwrap();
+    // Nem sessão (sem cookie `dlx_refresh`) nem access token no fragmento --
+    // só o desafio, pelo mesmo caminho do login por password.
+    assert!(
+        loc.contains("/#/sso-mfa?mfa_token="),
+        "SSO com MFA local devia desafiar, não abrir sessão: {loc}"
+    );
+    assert!(
+        !r.headers.contains_key(reqwest::header::SET_COOKIE),
+        "cookie de sessão definido antes do segundo factor: {:?}",
+        r.headers
+    );
+    let mfa_token = loc.split("mfa_token=").nth(1).unwrap().to_string();
+
+    // O desafio é REAL: completa-se pelo mesmo endpoint do login por
+    // password, com o código TOTP desta conta. Passo SEGUINTE ao do
+    // `enable_mfa`: a ACTIVAÇÃO já consome o passo actual (`last_step`,
+    // anti-replay), e usar o mesmo aqui falhava por repetição, não pela
+    // correcção em teste.
+    let (st, body) = app
+        .post(
+            "/api/auth/login/mfa",
+            None,
+            json!({"mfa_token": mfa_token, "code": totp_at_step(&secret, current_step() + 1)}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["user"]["id"], admin.user_id);
 }

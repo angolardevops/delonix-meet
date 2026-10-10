@@ -529,6 +529,7 @@ async fn sso_enforced_blocks_password_login(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200);
+    app.verify_domain(a.org()).await; // A3, raiz: enforce_sso só tem teeth com o domínio provado
     let (st, body) = app
         .post(
             "/api/auth/login",
@@ -538,6 +539,86 @@ async fn sso_enforced_blocks_password_login(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 400, "{body}");
     assert!(body["error"].as_str().unwrap().contains("SSO"));
+}
+
+/// A3, raiz (revisão de segurança, 2026-10-09) — o registo TXT a publicar,
+/// o estado de verificação, e que só admin o vê/pede.
+#[sqlx::test(migrations = "./migrations")]
+async fn admin_domain_verification_crud(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa-dominio.test").await;
+    let membro = app.add_member(&a, "colega", "member").await;
+    let org = a.org().to_string();
+    let t = Some(a.token.as_str());
+
+    // Sem domínio nenhum: 412, não 404 -- a org existe, só falta o passo
+    // anterior (converter para empresa com um email próprio). Uma conta
+    // PESSOAL (sem org_name, email público) é exactamente esse caso.
+    let (st, _) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "pessoal@gmail.com", "username": "pessoal",
+                   "password": PASSWORD}),
+        )
+        .await;
+    assert!(st < 300, "registo particular: {st}");
+    let pessoal = app.login("pessoal@gmail.com").await;
+    let (_, orgs) = app.get("/api/orgs", Some(&pessoal.token)).await;
+    let org_pessoal = orgs[0]["id"].as_str().unwrap().to_string();
+    let (st, body) = app
+        .get(
+            &org_path(&org_pessoal, "domain-verification"),
+            Some(&pessoal.token),
+        )
+        .await;
+    assert_eq!(st, 422, "{body}");
+    assert_eq!(body["code"], "org.no_email_domain", "{body}");
+
+    let (st, body) = app.get(&org_path(&org, "domain-verification"), t).await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["domain"], "alfa-dominio.test");
+    assert_eq!(body["record_name"], "_delonix-challenge.alfa-dominio.test");
+    let token = body["record_value"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("delonix-domain-verification=")
+        .expect("o valor do TXT tem o prefixo esperado")
+        .to_string();
+    assert_eq!(token.len(), 32, "token: {token}");
+    assert_eq!(body["verified"], false);
+    assert!(body["verified_at"].is_null());
+
+    // Um membro sem papel de admin não vê o token de verificação de outrem.
+    let (st, body) = app
+        .get(&org_path(&org, "domain-verification"), Some(&membro.token))
+        .await;
+    assert_denied(
+        "membro lê verificação de domínio",
+        st,
+        &body,
+        "delonix-domain-verification",
+    );
+
+    // Checar agora: o registo DNS real não existe, por isso continua falso
+    // -- e não é um 500, é "ainda não".
+    let (st, body) = app
+        .post(
+            &format!("{}/check", org_path(&org, "domain-verification")),
+            t,
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["verified"], false, "{body}");
+
+    // Depois de provado (aqui, directo na base -- um registo DNS a sério não
+    // se publica num teste), o GET reflecte-o.
+    app.verify_domain(&org).await;
+    let (st, body) = app.get(&org_path(&org, "domain-verification"), t).await;
+    assert_eq!(st, 200);
+    assert_eq!(body["verified"], true, "{body}");
+    assert!(!body["verified_at"].is_null());
 }
 
 #[sqlx::test(migrations = "./migrations")]

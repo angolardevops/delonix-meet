@@ -20,6 +20,7 @@ mod diagrams;
 mod dial_outs;
 mod directory;
 mod dlp;
+mod domain_verify;
 mod error;
 mod extension_pin;
 mod extension_provisioning;
@@ -1086,6 +1087,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(org::get_sso_config)
                 .put(org::upsert_sso_config)
                 .delete(org::delete_sso_config),
+        )
+        .route(
+            "/api/orgs/{org_id}/domain-verification",
+            get(org::get_domain_verification),
+        )
+        .route(
+            "/api/orgs/{org_id}/domain-verification/check",
+            post(org::check_domain_verification),
         )
         .route("/api/orgs/{org_id}/storage-usage", get(usage::org_storage_usage))
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))

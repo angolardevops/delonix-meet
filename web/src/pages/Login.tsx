@@ -17,10 +17,19 @@ import FormularioEntrada from './auth/FormularioEntrada'
 import PainelValor from './auth/PainelValor'
 import SeletorLingua from './auth/SeletorLingua'
 
-export default function Login({ pendingRoom, onLogin }: { pendingRoom: string | null; onLogin: (u: User) => void }) {
+export default function Login({
+  pendingRoom,
+  onLogin,
+  initialMfaToken = null,
+}: {
+  pendingRoom: string | null
+  onLogin: (u: User) => void
+  /** Desafio já devolvido pelo SSO (A4) — ver `App.tsx`, rota `#/sso-mfa`. */
+  initialMfaToken?: string | null
+}) {
   const { t } = useTranslation()
   /** Desafio de segundo factor devolvido pelo login (JWT `typ: "mfa"`, 5 min). */
-  const [mfaToken, setMfaToken] = useState<string | null>(null)
+  const [mfaToken, setMfaToken] = useState<string | null>(initialMfaToken)
 
   return (
     <div className="auth">

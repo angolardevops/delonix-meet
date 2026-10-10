@@ -625,18 +625,34 @@ pub async fn login(
         return Err(ApiError::TooManyRequests);
     }
 
-    // Bloquear login por password se a organização exige SSO exclusivo.
-    if is_sso_enforced(&state.db, &email).await {
-        return Err(ApiError::BadRequest(
-            "Esta organização exige login via SSO — usa o botão «Entrar com SSO»".into(),
-        ));
-    }
     let row: Option<(Uuid, String, String, String, chrono::DateTime<Utc>)> = sqlx::query_as(
         "SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1",
     )
     .bind(&email)
     .fetch_optional(&state.db)
     .await?;
+
+    // Bloquear login por password se a organização exige SSO exclusivo.
+    //
+    // A3 (revisão de segurança, 2026-10-09): bloquear por DOMÍNIO sozinho
+    // trancava o login por password de QUALQUER conta desse domínio,
+    // mesmo quem nunca teve nada a ver com a organização que activou o
+    // `enforce_sso` -- bastava uma org estranha reivindicar o domínio
+    // (o registo não verifica o email) para bloquear plataforma inteira.
+    // Uma conta que já existe só é bloqueada se for membro de PLENO
+    // DIREITO da organização que o impõe. Quem ainda não tem conta
+    // continua a ser empurrado para SSO -- é o que evita um empregado
+    // novo criar uma conta de password à parte da empresa que já exige SSO.
+    let domain = email.rsplit_once('@').map(|(_, d)| d).unwrap_or("");
+    let sso_enforced = match &row {
+        Some((id, ..)) => sso_enforced_for_account(&state, *id, domain).await?,
+        None => is_sso_enforced(&state.db, &email).await,
+    };
+    if sso_enforced {
+        return Err(ApiError::BadRequest(
+            "Esta organização exige login via SSO — usa o botão «Entrar com SSO»".into(),
+        ));
+    }
 
     // Verify against a dummy hash when the user doesn't exist so timing
     // doesn't leak account existence.
@@ -962,22 +978,62 @@ pub async fn logout(
 
 // ---------- SSO / OIDC ----------
 
-use dashmap::DashMap;
-use std::time::Instant;
-
-/// Estado PKCE pendente: guardado em memória entre o redirect e o callback.
-/// TTL de 10 minutos — limpo no consumo ou por expiração passiva.
+/// Estado PKCE pendente entre o redirect e o callback. TTL de 10 minutos.
+///
+/// A2 (revisão de segurança, 2026-10-09): isto vivia num `DashMap` estático,
+/// na memória de UM processo. A instalação de produção corre várias réplicas
+/// sem afinidade de sessão -- um `authorize` numa réplica e o `callback` a
+/// cair noutra (o normal, sem sticky sessions) respondia 401 sem motivo
+/// nenhum visível para quem entra. Fica em Postgres, o ponto de encontro de
+/// todas as réplicas -- mesmo papel do `webauthn_ceremonies` (migração 0079)
+/// para o desafio WebAuthn.
 struct PkceEntry {
     verifier: String,
     org_id: Uuid,
     nonce: String,
-    created: Instant,
 }
 
-/// Cache global de estados OIDC pendentes (anti-CSRF `state` → PKCE verifier).
-/// Vive em memória: OK para single-node; em multi-node, migrar para Redis.
-static SSO_PENDING: std::sync::LazyLock<DashMap<String, PkceEntry>> =
-    std::sync::LazyLock::new(DashMap::new);
+/// Grava o estado pendente (chamado por `sso_login` a seguir a emitir o
+/// `state`). Único escritor: um `state` repetido é uma colisão de
+/// `CsrfToken::new_random` (impraticável) e fica melhor a dar erro do que a
+/// sobrescrever silenciosamente a entrada de outro login em curso.
+async fn sso_pending_insert(
+    db: &sqlx::PgPool,
+    state: &str,
+    entry: &PkceEntry,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO sso_pending_states (state, org_id, verifier, nonce) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(state)
+    .bind(entry.org_id)
+    .bind(&entry.verifier)
+    .bind(&entry.nonce)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Consome o estado pendente de uma só vez: o `DELETE ... RETURNING` é
+/// atómico, por isso duas réplicas a receber o MESMO callback em paralelo
+/// (replay do `code`+`state`) nunca conseguem as duas uma entrada válida --
+/// só a primeira apaga a linha. `created_at` fora da janela de 10 minutos
+/// conta como "não encontrado", o mesmo 401 de sempre.
+async fn sso_pending_take(db: &sqlx::PgPool, state: &str) -> Result<Option<PkceEntry>, ApiError> {
+    let row: Option<(Uuid, String, String)> = sqlx::query_as(
+        "DELETE FROM sso_pending_states
+          WHERE state = $1 AND created_at > now() - interval '10 minutes'
+          RETURNING org_id, verifier, nonce",
+    )
+    .bind(state)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|(org_id, verifier, nonce)| PkceEntry {
+        verifier,
+        org_id,
+        nonce,
+    }))
+}
 
 /// Resultado da verificação de SSO para um domínio de email.
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1136,19 +1192,17 @@ pub async fn sso_login(
         .set_pkce_challenge(pkce_challenge)
         .url();
 
-    // Guardar o verifier PKCE para validar no callback.
-    SSO_PENDING.insert(
-        csrf_token.secret().clone(),
-        PkceEntry {
+    // Guardar o verifier PKCE para validar no callback (Postgres: ver A2).
+    sso_pending_insert(
+        &state.db,
+        csrf_token.secret(),
+        &PkceEntry {
             verifier: pkce_verifier.secret().clone(),
             org_id,
             nonce: nonce.secret().clone(),
-            created: Instant::now(),
         },
-    );
-
-    // Limpar entradas expiradas (> 10 min) passivamente.
-    SSO_PENDING.retain(|_, v| v.created.elapsed().as_secs() < 600);
+    )
+    .await?;
 
     tracing::info!(%domain, %org_id, "SSO login redirect → IdP");
 
@@ -1172,7 +1226,7 @@ pub async fn sso_login(
         ("state" = String, Query, description = "State anti-CSRF emitido por `/api/auth/sso/authorize` (uso único, 10 min)."),
     ),
     responses(
-        (status = 302, description = "Redirecção para o frontend com o access token no fragmento. Define o cookie `dlx_refresh`."),
+        (status = 302, description = "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4)."),
         (status = 400, description = "`code`/`state` em falta, ou o IdP não devolveu email.", body = crate::openapi::ErrorBody),
         (status = 401, description = "State desconhecido, já consumido ou expirado.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Regra de pertença (R130): `sso.account_not_in_org` — a conta existe mas não é membro activo desta organização; `sso.email_domain_mismatch` — conta nova de um domínio que não é o da organização.", body = crate::openapi::ErrorBody),
@@ -1196,15 +1250,12 @@ pub async fn sso_callback(
         .get("state")
         .ok_or_else(|| ApiError::BadRequest("state is required".into()))?;
 
-    // Recuperar e consumir o PKCE entry (one-time use).
-    let (_, entry) = SSO_PENDING
-        .remove(csrf_state)
+    // Recuperar e consumir o PKCE entry (uso único, atómico — ver A2).
+    // A janela de 10 minutos já é parte da condição do DELETE: uma entrada
+    // vencida não é devolvida, conta como "não encontrada".
+    let entry = sso_pending_take(&state.db, csrf_state)
+        .await?
         .ok_or(ApiError::Unauthorized)?;
-
-    // Expirado?
-    if entry.created.elapsed().as_secs() > 600 {
-        return Err(ApiError::Unauthorized);
-    }
 
     // Recarregar config do IdP da org.
     let sso: (String, String, String) = sqlx::query_as(
@@ -1302,22 +1353,60 @@ pub async fn sso_callback(
 
     let account = match &existing {
         Some(u) => {
-            // Pertença decide-se em org.rs (catraca, regra 1): `role_in_org`
-            // já filtra `archived_at`.
-            let active = crate::org::role_in_org(&state, entry.org_id, u.id)
-                .await?
-                .is_some();
+            // Pertença decide-se em org.rs (catraca, regra 1): `is_full_member`
+            // já filtra `archived_at` E exclui `external_guest` -- um
+            // convidado externo desta org não abre, com o IdP dela, uma
+            // sessão completa da conta (que pode ser admin noutra org:
+            // achado C1 da revisão de 2026-10-09).
+            let active = crate::org::is_full_member(&state, entry.org_id, u.id).await?;
             Some(active)
         }
         None => None,
     };
+
+    // Identidade federada já ligada (achado A1): depois do primeiro login
+    // SSO, a conta fica presa ao (iss, sub) que a autenticou -- nunca ao
+    // email sozinho, que qualquer IdP (inclusive um de outra org) pode
+    // afirmar livremente. Sem isto, o IdP de uma segunda org "herdava" a
+    // conta na primeira vez que o email coincidisse.
+    if let Some(u) = &existing {
+        let bound: Option<(String, String)> =
+            sqlx::query_as("SELECT sso_provider, sso_subject FROM users WHERE id = $1")
+                .bind(u.id)
+                .fetch_optional(&state.db)
+                .await?;
+        if let Some((bound_provider, bound_subject)) = bound {
+            if !bound_provider.is_empty()
+                && (bound_provider != sso_provider || bound_subject != sso_subject)
+            {
+                tracing::warn!(
+                    %email, org_id = %entry.org_id, %sso_provider,
+                    "SSO recusado: identidade federada não corresponde à já ligada"
+                );
+                crate::audit::log(
+                    &state.db,
+                    Some(entry.org_id),
+                    u.id,
+                    "auth.sso_refused",
+                    &email,
+                )
+                .await;
+                return Err(ApiError::Domain(
+                    delonix_meet_core::DomainError::forbidden(SSO_IDENTITY_MISMATCH).with_message(
+                        "Esta conta já está ligada a outro fornecedor de identidade.",
+                    ),
+                ));
+            }
+        }
+    }
     let org_domain: String =
         sqlx::query_scalar("SELECT email_domain FROM organizations WHERE id = $1")
             .bind(entry.org_id)
             .fetch_one(&state.db)
             .await?;
+    let domain_verified = crate::org::email_domain_is_verified(&state, entry.org_id).await?;
 
-    match sso_login_decision(&email, &org_domain, account) {
+    match sso_login_decision(&email, &org_domain, account, domain_verified) {
         SsoLoginDecision::LogIn | SsoLoginDecision::Provision => {}
         SsoLoginDecision::Refuse(code) => {
             tracing::warn!(%email, org_id = %entry.org_id, code, "SSO recusado: fora da regra de pertença");
@@ -1332,6 +1421,11 @@ pub async fn sso_callback(
             let message = match code {
                 SSO_ACCOUNT_NOT_IN_ORG => {
                     "Esta conta não é membro activo desta organização — o SSO dela não a abre."
+                }
+                SSO_DOMAIN_NOT_VERIFIED => {
+                    "Esta organização ainda não provou a posse do domínio de email \
+                     (Definições → Domínio) — um admin tem de publicar o registo DNS TXT \
+                     antes de novas contas poderem entrar por SSO."
                 }
                 _ => "O email devolvido pelo IdP não é do domínio desta organização.",
             };
@@ -1399,6 +1493,39 @@ pub async fn sso_callback(
         }
     };
 
+    // A4 (revisão de segurança, 2026-10-09): o SSO emitia sessão directa,
+    // mesmo para uma conta com um segundo factor LOCAL activo -- ao
+    // contrário do login por password (acima, `factors.any()`), que nunca
+    // dá sessão sem ele. O IdP ser "o" factor de quem o administra não é o
+    // mesmo que ser o segundo factor DESTA conta: se alguém activou TOTP ou
+    // uma chave de acesso aqui, é porque quer os dois, e o SSO não lho pode
+    // retirar em silêncio -- sobretudo depois de C1/A1 (identidade federada
+    // já ter sido o caminho de uma tomada de conta nesta mesma revisão).
+    let factors = crate::mfa::factors(&state.db, user.id).await?;
+    if factors.any() {
+        crate::audit::log(
+            &state.db,
+            Some(entry.org_id),
+            user.id,
+            "auth.mfa_challenge",
+            &email,
+        )
+        .await;
+        let mfa_token = mfa_challenge_token(&state, user.id)?;
+        let redirect_url = state
+            .config
+            .cors_origins
+            .first()
+            .map(|o| format!("{o}/#/sso-mfa?mfa_token={mfa_token}"))
+            .unwrap_or_else(|| format!("https://localhost:5173/#/sso-mfa?mfa_token={mfa_token}"));
+        tracing::info!(%email, org_id = %entry.org_id, "SSO: desafio do segundo factor local");
+        return Ok((
+            [(header::LOCATION, redirect_url)],
+            axum::http::StatusCode::FOUND,
+        )
+            .into_response());
+    }
+
     // Emitir tokens nativos do Delonix e redirecionar para o frontend.
     let session = SessionMeta::fresh(&headers, ip, crate::sessions::AuthMethod::Sso);
     let pair = issue_tokens(&state, user, session).await?;
@@ -1438,6 +1565,14 @@ pub async fn sso_callback(
 pub(crate) const SSO_ACCOUNT_NOT_IN_ORG: &str = "sso.account_not_in_org";
 /// Código estável: conta nova de um domínio que não é o da org do IdP.
 pub(crate) const SSO_EMAIL_DOMAIN_MISMATCH: &str = "sso.email_domain_mismatch";
+/// Código estável: a conta já está ligada a um (issuer, subject) diferente
+/// do que este IdP afirmou -- nunca se re-liga por email sozinho (achado A1).
+pub(crate) const SSO_IDENTITY_MISMATCH: &str = "sso.identity_mismatch";
+/// Código estável: domínio ainda sem prova de posse (DNS TXT) -- JIT recusado
+/// até lá (achado A3, raiz). `enforce_sso` tem a mesma guarda, noutro sítio
+/// (`sso_enforced_for_account`), porque entra pelo login por password, não
+/// pelo callback.
+pub(crate) const SSO_DOMAIN_NOT_VERIFIED: &str = "sso.domain_not_verified";
 
 /// O que o callback SSO pode fazer com o email que o IdP afirmou.
 #[derive(Debug, PartialEq, Eq)]
@@ -1461,10 +1596,14 @@ pub(crate) enum SsoLoginDecision {
 ///   org tiver domínio (uma org sem domínio não cria contas por SSO).
 ///
 /// `account`: `None` = não há conta com este email; `Some(activo)`.
+/// `domain_verified`: a org já provou o domínio por DNS TXT (A3, raiz)?
+/// Só importa no ramo `None` -- o JIT é o que cria confiança do nada; o
+/// `LogIn` de uma conta já membro não precisa de prova nenhuma extra.
 pub(crate) fn sso_login_decision(
     email: &str,
     org_domain: &str,
     account: Option<bool>,
+    domain_verified: bool,
 ) -> SsoLoginDecision {
     match account {
         Some(true) => SsoLoginDecision::LogIn,
@@ -1475,10 +1614,12 @@ pub(crate) fn sso_login_decision(
                 Some((local, domain)) if !local.is_empty() => domain.to_lowercase(),
                 _ => String::new(),
             };
-            if !org_domain.is_empty() && email_domain == org_domain {
-                SsoLoginDecision::Provision
-            } else {
+            if org_domain.is_empty() || email_domain != org_domain {
                 SsoLoginDecision::Refuse(SSO_EMAIL_DOMAIN_MISMATCH)
+            } else if !domain_verified {
+                SsoLoginDecision::Refuse(SSO_DOMAIN_NOT_VERIFIED)
+            } else {
+                SsoLoginDecision::Provision
             }
         }
     }
@@ -1486,7 +1627,9 @@ pub(crate) fn sso_login_decision(
 
 /// `GET /api/auth/sso/enforce?domain=...`
 /// O handler de login local consulta isto para bloquear password quando
-/// a org exige SSO exclusivo.
+/// a org exige SSO exclusivo. Só conta se o domínio já tiver prova de posse
+/// por DNS TXT (A3, raiz) -- senão um domínio alheio reivindicado por uma
+/// org estranha empurrava gente sem conta nenhuma para o SSO de outrem.
 pub async fn is_sso_enforced(db: &sqlx::PgPool, email: &str) -> bool {
     let domain = email.split('@').nth(1).unwrap_or("");
     if domain.is_empty() {
@@ -1495,13 +1638,46 @@ pub async fn is_sso_enforced(db: &sqlx::PgPool, email: &str) -> bool {
     let row: Option<(bool,)> = sqlx::query_as(
         "SELECT s.enforce_sso FROM org_sso_configs s
          JOIN organizations o ON o.id = s.org_id
-         WHERE o.email_domain = $1 AND s.enforce_sso = TRUE",
+         WHERE o.email_domain = $1 AND s.enforce_sso = TRUE
+           AND o.email_domain_verified_at IS NOT NULL",
     )
     .bind(domain)
     .fetch_optional(db)
     .await
     .unwrap_or(None);
     row.is_some()
+}
+
+/// `true` se a CONTA `user_id` deve ser bloqueada do login por password,
+/// porque é membro de pleno direito (achado C1: nunca `external_guest`) de
+/// uma organização que exige SSO para o domínio do seu próprio email.
+///
+/// Ao contrário de `is_sso_enforced` (usada só para quem ainda não tem
+/// conta), esta NÃO basta o domínio bater certo com alguma organização --
+/// é a organização inteira que pode ter sido reivindicada por um estranho
+/// (achado A3). Uma conta só fica presa ao SSO da organização de que é
+/// realmente membro.
+async fn sso_enforced_for_account(
+    state: &AppState,
+    user_id: Uuid,
+    domain: &str,
+) -> Result<bool, ApiError> {
+    if domain.is_empty() {
+        return Ok(false);
+    }
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT o.id FROM org_sso_configs s
+         JOIN organizations o ON o.id = s.org_id
+         WHERE o.email_domain = $1 AND s.enforce_sso = TRUE
+           AND o.email_domain_verified_at IS NOT NULL",
+    )
+    .bind(domain)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((org_id,)) = row else {
+        return Ok(false);
+    };
+    crate::org::is_full_member(state, org_id, user_id).await
 }
 
 #[cfg(test)]
@@ -1513,27 +1689,35 @@ mod tests {
     fn sso_login_decision_is_the_most_restrictive_rule() {
         use SsoLoginDecision::*;
         // Membro activo entra; qualquer outra conta existente é recusada,
-        // mesmo com o email no domínio da org.
+        // mesmo com o email no domínio da org. `domain_verified` não entra
+        // nestes ramos -- por isso passa-se `false` de propósito, para
+        // provar que não muda o resultado.
         assert_eq!(
-            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(true)),
+            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(true), false),
             LogIn
         );
         assert_eq!(
-            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(false)),
+            sso_login_decision("ana@alfa.ao", "alfa.ao", Some(false), false),
             Refuse(SSO_ACCOUNT_NOT_IN_ORG)
         );
         assert_eq!(
-            sso_login_decision("admin@beta.ao", "alfa.ao", Some(false)),
+            sso_login_decision("admin@beta.ao", "alfa.ao", Some(false), false),
             Refuse(SSO_ACCOUNT_NOT_IN_ORG)
         );
-        // Conta nova: só do domínio da org, e só se a org tiver domínio.
+        // Conta nova: só do domínio da org, só se a org tiver domínio, e só
+        // com o domínio provado por DNS TXT (A3, raiz).
         assert_eq!(
-            sso_login_decision("nova@alfa.ao", "alfa.ao", None),
+            sso_login_decision("nova@alfa.ao", "alfa.ao", None, true),
             Provision
         );
         assert_eq!(
-            sso_login_decision("nova@alfa.ao", "Alfa.AO ", None),
+            sso_login_decision("nova@alfa.ao", "Alfa.AO ", None, true),
             Provision
+        );
+        assert_eq!(
+            sso_login_decision("nova@alfa.ao", "alfa.ao", None, false),
+            Refuse(SSO_DOMAIN_NOT_VERIFIED),
+            "domínio certo mas não verificado"
         );
         for (email, dom) in [
             ("nova@beta.ao", "alfa.ao"),
@@ -1543,8 +1727,10 @@ mod tests {
             ("sem-arroba", "alfa.ao"),
             ("x@evil.ao@alfa.ao", "evil.ao"),
         ] {
+            // O domínio errado vem SEMPRE antes da prova de posse: mesmo
+            // "verificado" (true) não abre a porta a quem nem domínio tem.
             assert_eq!(
-                sso_login_decision(email, dom, None),
+                sso_login_decision(email, dom, None, true),
                 Refuse(SSO_EMAIL_DOMAIN_MISMATCH),
                 "{email} em {dom:?}"
             );
