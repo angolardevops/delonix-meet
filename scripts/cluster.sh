@@ -23,7 +23,7 @@ cd "$(dirname "$0")/.."
 CLUSTER_NAME=${CLUSTER_NAME:-meet}
 MEET_HOST=${MEET_HOST:-meet.ngolacloud.local}
 IMAGE_TAG=${IMAGE_TAG:-latest}
-NS=delonix-meet
+NS=ngolacloud-meet
 INGRESS_NGINX_VERSION=${INGRESS_NGINX_VERSION:-controller-v1.12.1}
 LOCAL_PATH_VERSION=${LOCAL_PATH_VERSION:-v0.0.30}
 NODE="${CLUSTER_NAME}-control-plane"

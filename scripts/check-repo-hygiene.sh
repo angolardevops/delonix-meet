@@ -330,5 +330,29 @@ if [ -n "$pipes_q" ]; then
   fail=1
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; nenhum script a decidir por um pipe para «grep -q»; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros"
+# ---------------------------------------------------------------------------
+#  O namespace é `ngolacloud-meet` (ADR-0021). Sem referências ao antigo.
+#
+#  Esta catraca varre TODOS os ficheiros versionados (`git ls-files`) e NÃO
+#  uma lista de extensões — porque foi exactamente assim que o rename falhou
+#  duas vezes: a primeira passagem enumerou `*.yaml *.yml *.md *.sh Makefile
+#  *.conf` e deixou de fora as formas inline e os nomes DNS; a segunda deixou
+#  de fora os `*.j2`, e seis templates do Ansible ficaram a apontar para um
+#  namespace que já não existe. Um rename por lista de extensões é um rename
+#  que não acaba.
+#
+#  O que NÃO conta, e porquê: nomes de objectos e de crates (`delonix-meet-*`),
+#  o nome do chart, as imagens `delonix-meet/<algo>`, o realm do coturn, a
+#  string de derivação HMAC `delonix-meet/derive/` — essa última mudaria todas
+#  as chaves derivadas que existem — e o nome do Ingress do laboratório.
+# ---------------------------------------------------------------------------
+ns_velho=$(git ls-files -z -- . ':!scripts/check-repo-hygiene.sh' | xargs -0 grep -nE 'namespace: *delonix-meet([,} ]|$)|\.delonix-meet\.svc|-n +delonix-meet([ ,)]|$)|--namespace[= ]delonix-meet([ ,)]|$)|matchNames: *\[delonix-meet\]|namespace="delonix-meet"|namespace `?delonix-meet([` ,)]|$)' 2>/dev/null || true)
+if [ -n "$ns_velho" ]; then
+  echo "✗ higiene: referências ao namespace ANTIGO «delonix-meet» (o namespace é ngolacloud-meet, ADR-0021):"
+  echo "$ns_velho" | sed 's/^/     /' | head -20
+  echo '     Nomes de objectos, crates, imagens e a string de derivação HMAC NÃO contam — só namespaces e nomes DNS.'
+  fail=1
+fi
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; nenhum script a decidir por um pipe para «grep -q»; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros; nenhuma referência ao namespace antigo"
 exit $fail

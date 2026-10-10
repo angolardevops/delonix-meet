@@ -358,7 +358,7 @@
     kubectl create secret tls delonix-tls \
       --cert=/etc/ssl/delonix/fullchain.pem \
       --key=/etc/ssl/delonix/privkey.pem \
-      -n delonix-meet --dry-run=client -o yaml | kubectl apply -f -
+      -n ngolacloud-meet --dry-run=client -o yaml | kubectl apply -f -
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
@@ -397,7 +397,7 @@
 - name: Instalar Postgres standalone via Helm
   ansible.builtin.shell: |
     helm upgrade --install delonix-postgres bitnami/postgresql \
-      -n delonix-meet \
+      -n ngolacloud-meet \
       --set auth.database=delonix_meet \
       --set auth.username=delonix \
       --set auth.password="{{ postgres_password }}" \
@@ -412,7 +412,7 @@
 - name: Instalar Redis standalone via Helm
   ansible.builtin.shell: |
     helm upgrade --install delonix-redis bitnami/redis \
-      -n delonix-meet \
+      -n ngolacloud-meet \
       --set auth.enabled=false \
       --set architecture=standalone \
       --set master.resources.requests.memory=128Mi \
@@ -467,7 +467,7 @@
 # Recreate evita maxSurge em nó com poucos recursos (single-replica preprod)
 - name: Estratégia Recreate em single-replica
   ansible.builtin.command: >-
-    kubectl patch deployment {{ item }} -n delonix-meet
+    kubectl patch deployment {{ item }} -n ngolacloud-meet
     -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
@@ -479,7 +479,7 @@
 
 # Remover deployment Ollama quando desligado (pode ter ficado de deploy anterior)
 - name: Remover Ollama quando desligado
-  ansible.builtin.command: kubectl delete deployment delonix-ollama -n delonix-meet --ignore-not-found
+  ansible.builtin.command: kubectl delete deployment delonix-ollama -n ngolacloud-meet --ignore-not-found
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   when: not (ollama_enabled | bool)
@@ -487,14 +487,14 @@
 
 - name: Aguardar server rollout
   ansible.builtin.command: >-
-    kubectl rollout status deployment/delonix-server -n delonix-meet --timeout=600s
+    kubectl rollout status deployment/delonix-server -n ngolacloud-meet --timeout=600s
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false
 
 - name: Aguardar web rollout
   ansible.builtin.command: >-
-    kubectl rollout status deployment/delonix-web -n delonix-meet --timeout=300s
+    kubectl rollout status deployment/delonix-web -n ngolacloud-meet --timeout=300s
   environment:
     KUBECONFIG: "{{ kind_kubeconfig }}"
   changed_when: false

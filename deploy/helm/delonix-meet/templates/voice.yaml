@@ -442,10 +442,10 @@ metadata:
   labels:
     {{- include "dm.labels" . | nindent 4 }}
 data:
-  # O ficheiro do repo aponta o tronco para o bordo do namespace `delonix-meet`;
+  # O ficheiro do repo aponta o tronco para o bordo do namespace `ngolacloud-meet`;
   # aqui aponta para o bordo DESTA release.
   pjsip.conf: |
-    {{- .Files.Get "files/voice/pbx-cliente/pjsip.conf" | replace "kamailio.delonix-meet.svc.cluster.local" (printf "kamailio.%s.svc.cluster.local" $ns) | nindent 4 }}
+    {{- .Files.Get "files/voice/pbx-cliente/pjsip.conf" | replace "kamailio.ngolacloud-meet.svc.cluster.local" (printf "kamailio.%s.svc.cluster.local" $ns) | nindent 4 }}
   extensions.conf: |
     {{- .Files.Get "files/voice/pbx-cliente/extensions.conf" | nindent 4 }}
 ---

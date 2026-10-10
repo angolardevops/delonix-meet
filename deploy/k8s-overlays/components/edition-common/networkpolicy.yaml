@@ -22,7 +22,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: delonix-server
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   podSelector:
     matchLabels:

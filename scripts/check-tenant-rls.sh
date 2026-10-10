@@ -13,7 +13,7 @@
 RLS_TABLES="employee_groups"
 # ============================================================
 set -uo pipefail
-NS=delonix-meet
+NS=ngolacloud-meet
 PGPOD=delonix-postgres-postgresql-0
 
 command -v kubectl >/dev/null 2>&1 || { echo "· sem kubectl — skip check-tenant-rls"; exit 0; }

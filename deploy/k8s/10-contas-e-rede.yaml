@@ -19,17 +19,17 @@
 # ---------------------------------------------------------------------------
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: delonix-server, namespace: delonix-meet }
+metadata: { name: delonix-server, namespace: ngolacloud-meet }
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: delonix-web, namespace: delonix-meet }
+metadata: { name: delonix-web, namespace: ngolacloud-meet }
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: delonix-data, namespace: delonix-meet }
+metadata: { name: delonix-data, namespace: ngolacloud-meet }
 automountServiceAccountToken: false
 ---
 # Nada entra, salvo o que as regras seguintes abrirem. Sem isto, as políticas
@@ -38,7 +38,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: fecha-a-entrada
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   podSelector: {}
   policyTypes: [Ingress]
@@ -67,7 +67,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: delonix-server
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   podSelector:
     matchLabels:
@@ -113,7 +113,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: delonix-web
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   podSelector:
     matchLabels: { app: delonix-web }
@@ -128,7 +128,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: dados-so-de-dentro
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   podSelector:
     matchExpressions:

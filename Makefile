@@ -214,9 +214,9 @@ kill: nginx-dev-stop ## Para TUDO (processos locais + docker + k8s) — estado z
 	@$(call KILL_PORT,$(WEB_PORT),TERM)
 	@printf "$(C)▶ a parar docker compose (infra dev + voice)...$(Z)\n"
 	@docker compose down 2>/dev/null || true
-	@printf "$(C)▶ a escalar workloads k8s para 0 (namespace delonix-meet)...$(Z)\n"
-	@kubectl scale deployment --all -n delonix-meet --replicas=0 2>/dev/null || true
-	@kubectl scale statefulset --all -n delonix-meet --replicas=0 2>/dev/null || true
+	@printf "$(C)▶ a escalar workloads k8s para 0 (namespace ngolacloud-meet)...$(Z)\n"
+	@kubectl scale deployment --all -n ngolacloud-meet --replicas=0 2>/dev/null || true
+	@kubectl scale statefulset --all -n ngolacloud-meet --replicas=0 2>/dev/null || true
 	@printf "$(G)  ✓ TUDO parado. Nada corre até fazer 'make dev' (local) ou 'make stage' (k8s).$(Z)\n"
 
 .PHONY: logs logs-api logs-web logs-nginx
@@ -410,10 +410,10 @@ push: ## load das imagens no cluster + PIN da tag versionada nos Deployments
 .PHONY: pin
 pin: ## Fixa a tag $(IMAGE_TAG) nos Deployments e espera o rollout
 	@printf "$(C)▶ pin das imagens nos Deployments (tag $(IMAGE_TAG))$(Z)\n"
-	@kubectl -n delonix-meet set image deployment/delonix-server server=$(IMAGE_SERVER)
-	@kubectl -n delonix-meet set image deployment/delonix-web web=$(IMAGE_WEB)
-	@kubectl -n delonix-meet rollout status deployment/delonix-server --timeout=180s
-	@kubectl -n delonix-meet rollout status deployment/delonix-web --timeout=120s
+	@kubectl -n ngolacloud-meet set image deployment/delonix-server server=$(IMAGE_SERVER)
+	@kubectl -n ngolacloud-meet set image deployment/delonix-web web=$(IMAGE_WEB)
+	@kubectl -n ngolacloud-meet rollout status deployment/delonix-server --timeout=180s
+	@kubectl -n ngolacloud-meet rollout status deployment/delonix-web --timeout=120s
 	@printf "$(G)  ✓ cluster a correr $(IMAGE_SERVER) / $(IMAGE_WEB)$(Z)\n"
 
 .PHONY: image-push
@@ -442,10 +442,10 @@ freeswitch-image: ## Constrói a imagem FreeSWITCH do Meet ($(FS_IMAGE)) e corre
 infra-pull: ## Pré-carrega imagens Bitnami (Postgres single/Redis standalone) no cluster
 	@printf "$(C)▶ a extrair imagens da infra (charts de stage)...$(Z)\n"
 	@IMGS=$$(helm template delonix-postgres bitnami/postgresql \
-	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet 2>/dev/null \
+	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n ngolacloud-meet 2>/dev/null \
 	    | grep -E '^\s+image:' | awk '{gsub(/"/, "", $$2); print $$2}' | sort -u); \
 	 IMGS="$$IMGS $$(helm template delonix-redis bitnami/redis \
-	    -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet 2>/dev/null \
+	    -f deploy/k8s/helm-values/redis-stage-values.yaml -n ngolacloud-meet 2>/dev/null \
 	    | grep -E '^\s+image:' | awk '{gsub(/"/, "", $$2); print $$2}' | sort -u)"; \
 	 for img in $$IMGS; do \
 	   [ -z "$$img" ] && continue; \
@@ -496,7 +496,7 @@ metallb-kind: ## Instala MetalLB no kind e cria pool com IPs da rede docker kind
 .PHONY: stage
 # O Service do Postgres visto de dentro do cluster, para o DATABASE_URL do
 # Secret que scripts/k8s-app-secrets.sh monta a partir do .env.
-STAGE_DB_HOST ?= delonix-postgres-postgresql.delonix-meet.svc.cluster.local
+STAGE_DB_HOST ?= delonix-postgres-postgresql.ngolacloud-meet.svc.cluster.local
 # O `make prod` é LEGADO e não foi validado num cluster (plano de lacunas, O1):
 # este host é o que o 01-config.yaml antigo apontava, mantido tal e qual.
 PROD_DB_HOST  ?= $(STAGE_DB_HOST)
@@ -527,7 +527,7 @@ stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster
 	@kubectl create secret tls delonix-tls-secret \
 	  --cert=deploy/certs/wildcard.delonix.local.crt \
 	  --key=deploy/certs/wildcard.delonix.local.key \
-	  -n delonix-meet --dry-run=client -o yaml | kubectl apply -f -
+	  -n ngolacloud-meet --dry-run=client -o yaml | kubectl apply -f -
 	@printf "$(C)▶ Helm: Postgres (single-node) + Redis (standalone)...$(Z)\n"
 	@# Usa bitnami/postgresql em vez de postgresql-ha: o chart HA (pgpool +
 	@# postgresql-repmgr) removeu as imagens do Docker Hub em 2024; o chart
@@ -537,10 +537,10 @@ stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster
 	@# de valores versionado.
 	@set -a; . ./.env; set +a; \
 	  helm upgrade --install delonix-postgres bitnami/postgresql \
-	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet \
+	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n ngolacloud-meet \
 	    --set auth.password="$$POSTGRES_PASSWORD" --set auth.postgresPassword="$$POSTGRES_PASSWORD"
 	@helm upgrade --install delonix-redis bitnami/redis \
-	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet
+	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n ngolacloud-meet
 	@printf "$(C)▶ Aplicação Delonix (config + server + web + ingress + coturn)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
 	@bash scripts/k8s-app-secrets.sh $(STAGE_DB_HOST)
@@ -566,7 +566,7 @@ stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster
 	    printf "   $(Y)⚠ MetalLB ainda sem IP — adiciona manualmente ao /etc/hosts$(Z)\n"; \
 	  fi
 	@printf "   URL:  $(G)https://meet.delonix.local$(Z)\n"
-	@printf "   Pods: $(Y)kubectl get po -n delonix-meet$(Z)\n"
+	@printf "   Pods: $(Y)kubectl get po -n ngolacloud-meet$(Z)\n"
 
 DOMAIN ?= meet.delonix.local
 
@@ -575,10 +575,10 @@ DOMAIN ?= meet.delonix.local
 # (rodar = apagar o Secret e voltar a correr, e actualizar o FreeSWITCH).
 .PHONY: voice-secret-k8s
 voice-secret-k8s: ## Cria o Secret delonix-voice (VOICE_INTERNAL_SECRET aleatório) se não existir
-	@if kubectl -n delonix-meet get secret delonix-voice >/dev/null 2>&1; then \
+	@if kubectl -n ngolacloud-meet get secret delonix-voice >/dev/null 2>&1; then \
 	  printf "   delonix-voice já existe — mantido\n"; \
 	else \
-	  kubectl -n delonix-meet create secret generic delonix-voice \
+	  kubectl -n ngolacloud-meet create secret generic delonix-voice \
 	    --from-literal=VOICE_INTERNAL_SECRET="$$(openssl rand -hex 32)" >/dev/null && \
 	  printf "   $(G)✓ delonix-voice criado (VOICE_INTERNAL_SECRET aleatório, 64 hex)$(Z)\n"; \
 	fi
@@ -596,9 +596,9 @@ prod: env-file ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's 
 	@helm repo add bitnami https://charts.bitnami.com/bitnami
 	@helm repo update
 	@set -a; . ./.env; set +a; \
-	  helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n delonix-meet \
+	  helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n ngolacloud-meet \
 	    --set auth.password="$$POSTGRES_PASSWORD" --set auth.replicationPassword="$$POSTGRES_REPLICATION_PASSWORD"
-	@helm upgrade --install delonix-redis bitnami/redis -f deploy/k8s/helm-values/redis-values.yaml -n delonix-meet
+	@helm upgrade --install delonix-redis bitnami/redis -f deploy/k8s/helm-values/redis-values.yaml -n ngolacloud-meet
 	@printf "$(C)▶ Compilando e gerando Docker Image (Distroless Security)...$(Z)\n"
 	@docker build -t delonix-meet-server:latest -f Dockerfile.server .
 	@printf "$(C)▶ Fazendo deploy da Aplicação com Domínio $(DOMAIN)...$(Z)\n"
@@ -616,14 +616,14 @@ destroy: ## Faz backup do etcd, postgres e redis e destrói o cluster
 	@printf "$(C)▶ Iniciando o processo de destruição e backup do cluster...$(Z)\n"
 	@mkdir -p backups
 	@printf "$(C)  - A efetuar backup do PostgreSQL...$(Z)\n"
-	@kubectl exec -n delonix-meet -it delonix-postgres-postgresql-ha-postgresql-0 -- pg_dump -U postgres delonix > backups/postgres_backup.sql || true
+	@kubectl exec -n ngolacloud-meet -it delonix-postgres-postgresql-ha-postgresql-0 -- pg_dump -U postgres delonix > backups/postgres_backup.sql || true
 	@printf "$(C)  - A efetuar backup do Redis...$(Z)\n"
-	@kubectl exec -n delonix-meet -it delonix-redis-master-0 -- redis-cli SAVE || true
+	@kubectl exec -n ngolacloud-meet -it delonix-redis-master-0 -- redis-cli SAVE || true
 	@kubectl cp delonix-meet/delonix-redis-master-0:/data/dump.rdb backups/redis_dump.rdb || true
 	@printf "$(C)  - Destruindo Helm charts e Manifestos...$(Z)\n"
-	@helm uninstall delonix-postgres -n delonix-meet || true
-	@helm uninstall delonix-redis -n delonix-meet || true
-	@kubectl delete namespace delonix-meet || true
+	@helm uninstall delonix-postgres -n ngolacloud-meet || true
+	@helm uninstall delonix-redis -n ngolacloud-meet || true
+	@kubectl delete namespace ngolacloud-meet || true
 	@kind delete cluster --name delonix-stage || true
 	@printf "$(G)  ✓ Cluster destruído com sucesso. Backups em ./backups/$(Z)\n"
 
@@ -633,7 +633,7 @@ restore: ## Reconstrói o cluster e faz o restore das bases de dados
 	@$(MAKE) stage
 	@printf "$(C)  - A restaurar PostgreSQL...$(Z)\n"
 	@kubectl cp backups/postgres_backup.sql delonix-meet/delonix-postgres-postgresql-ha-postgresql-0:/tmp/backup.sql || true
-	@kubectl exec -n delonix-meet -it delonix-postgres-postgresql-ha-postgresql-0 -- psql -U postgres -d delonix -f /tmp/backup.sql || true
+	@kubectl exec -n ngolacloud-meet -it delonix-postgres-postgresql-ha-postgresql-0 -- psql -U postgres -d delonix -f /tmp/backup.sql || true
 	@printf "$(C)  - A restaurar Redis...$(Z)\n"
 	@kubectl cp backups/redis_dump.rdb delonix-meet/delonix-redis-master-0:/data/dump.rdb || true
 	@printf "$(G)  ✓ Cluster restaurado com sucesso.$(Z)\n"

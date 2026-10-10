@@ -15,7 +15,7 @@ passwords: uma password gerada por um script de instalação é uma password que
 anotou e que ninguém consegue rodar depois.
 
 ```bash
-NS=delonix-meet
+NS=ngolacloud-meet
 kubectl -n $NS create secret generic meet-pg-credenciais \
   --from-literal=username=delonix --from-literal=password="$(openssl rand -base64 32)"
 kubectl -n $NS create secret generic meet-redis-credenciais \

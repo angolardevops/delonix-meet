@@ -12,27 +12,37 @@
   dedicado) seriam um tecto inventado. Quem instala noutro sítio põe
   `quota.enabled: true` com os SEUS números.
 
-  A CONTA — medida no render de produção com voz, não estimada à mão (a
-  estimativa à mão ficou 10% curta por esquecer o perfil de voz e o Job de
-  migração):
+  UMA SÓ QUOTA NO NAMESPACE (D1, 2026-10-10). O Postgres (CNPG) e o Redis da
+  plataforma vivem no MESMO namespace, instalados pelo `deploy/k8s/plataforma/
+  instalar.sh` e não por este chart — e o Kubernetes aplica a quota a todos os
+  pods do namespace. Havia duas quotas (esta e a do `00-namespace.yaml`): com
+  duas, vale a mais restritiva, e esta deixava 8Gi de requests a um Postgres
+  que pede 12Gi sozinho. A do namespace saiu; esta conta a plataforma.
 
-    limites somados, com o HPA no máximo (8 réplicas do servidor):
-                                                  24,35 CPU   19,81 Gi   15 pods
-    o rollout acrescenta:  server maxSurge 1       + 2 CPU     + 2 Gi     +1 pod
-                           web maxSurge 25% de 3   + 0,25 CPU  + 0,25 Gi  +1 pod
-                           (coturn, voz e dados são `Recreate`: não somam)
-    pico real com rollout:                         26,60 CPU   22,06 Gi   17 pods
+  A CONTA — medida no render de produção com voz e nos ficheiros da
+  plataforma, não estimada à mão:
 
-  A quota leva ~20% de folga sobre o PICO COM ROLLOUT: 32 CPU, 27Gi, 40 pods.
-  Dimensionar sobre o pico sem rollout rebenta o primeiro deploy, que é o
-  momento exacto em que se descobre o erro.
+                                        limits         requests        pods  PVCs
+    chart, HPA no máximo, com rollout   26,60 CPU 22,06Gi   5,81 CPU  5,77Gi   17    1
+    Postgres: 3 instâncias              12    CPU 24   Gi   3    CPU 12   Gi    3    3
+    Redis: 3 × (redis+sentinel+exporter) 4,20 CPU  6,75Gi   0,60 CPU  1,88Gi    3    3
+    pico                                42,80 CPU 52,81Gi   9,41 CPU 19,64Gi   23    7
 
-  `requests` somados no mesmo pico: 5,8 CPU, 5,6 Gi — a quota de 8/8Gi é o que
-  reservamos ao scheduler do cluster partilhado.
+  (coturn, voz e dados do chart são `Recreate`; o CNPG e o StatefulSet do
+  Redis actualizam pod a pod: nenhum soma surge.)
 
-  QUEM MUDAR RÉPLICAS OU LIMITES REFAZ ESTA CONTA. Não é um pedido: o
-  `check-helm.sh` recalcula-a a partir do render e FALHA se a quota não cobrir
-  o pico com rollout.
+  A quota leva ~20% de folga sobre o pico: limits 52 CPU / 64Gi, requests
+  12 CPU / 24Gi, 40 pods, 10 PVCs. Dimensionar sobre o pico sem rollout
+  rebenta o primeiro deploy, que é o momento exacto em que se descobre o erro.
+
+  Os limits somam mais CPU do que os workers têm (~30): é sobre-subscrição de
+  limits, normal. O que reserva lugar ao scheduler são os requests — 12 CPU e
+  24Gi do cluster partilhado.
+
+  QUEM MUDAR RÉPLICAS, LIMITES OU A PLATAFORMA REFAZ ESTA CONTA. Não é um
+  pedido: o `check-helm.sh` recalcula-a a partir do render e dos ficheiros da
+  plataforma, e FALHA se a quota não cobrir o pico em requests, limits, pods
+  ou PVCs.
 */ -}}
 {{- $v := .Values }}
 {{- if $v.quota.enabled }}

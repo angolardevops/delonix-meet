@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: delonix-config
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 data:
   BIND_ADDR: "0.0.0.0:8180"
   # IP do LoadBalancer do coturn (51-coturn.yaml) — alcançável pelo SFU (pod)
@@ -17,7 +17,7 @@ data:
   RECORDINGS_DIR: "/var/lib/delonix/recordings"
   # LLM local (07-ollama.yaml): tradução de legendas + resumo da ata. Vazio
   # desliga a IA (MoM volta a ser por regras no cliente).
-  OLLAMA_URL: "http://delonix-ollama.delonix-meet.svc.cluster.local:11434"
+  OLLAMA_URL: "http://delonix-ollama.ngolacloud-meet.svc.cluster.local:11434"
   OLLAMA_MODEL_TRANSLATE: "qwen2.5:1.5b"
   OLLAMA_MODEL_SUMMARY: qwen2.5:7b
   # Estúdio (POST /api/orgs/{org_id}/ai/suggestions). Por omissão: o modelo do resumo,
@@ -26,7 +26,7 @@ data:
   # OLLAMA_TIMEOUT_SECS: "120"
   # AI_STUDIO_CONCURRENCY_PER_ORG: "1"
   # URL interno para a app interagir com Redis Sentinel (HA)
-  REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
+  REDIS_URL: "redis://delonix-redis-master.ngolacloud-meet.svc.cluster.local:6379"
 # O Secret `delonix-secrets` NÃO vive aqui.
 #
 # Esteve escrito neste ficheiro até 2026-10-04 (JWT_SECRET, TURN_SECRET,

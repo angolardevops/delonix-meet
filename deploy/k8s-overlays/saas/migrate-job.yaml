@@ -1,12 +1,12 @@
 # Migrações da edição SaaS — um Job, com a MESMA imagem do servidor.
 #
 #   kubectl apply -k deploy/k8s-overlays/saas
-#   kubectl -n delonix-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
+#   kubectl -n ngolacloud-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
 #
 # Um Job é imutável: aplicar uma imagem nova sobre um Job que ainda existe
 # falha com «field is immutable». O `ttlSecondsAfterFinished` apaga-o uma hora
 # depois de terminar; numa release seguida, apagar antes:
-#   kubectl -n delonix-meet delete job delonix-server-migrate --ignore-not-found
+#   kubectl -n ngolacloud-meet delete job delonix-server-migrate --ignore-not-found
 #
 # Ordem: o Deployment pode subir antes de o Job acabar. Com DELONIX_MIGRATE=0 o
 # servidor não migra; se o esquema ainda não estiver pronto, o startupProbe
@@ -16,7 +16,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: delonix-server-migrate
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels:
     app: delonix-server-migrate
 spec:

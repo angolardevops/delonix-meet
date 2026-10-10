@@ -21,8 +21,10 @@
 #      upstream-hash-by:$arg_room; ninguém liga DELONIX_ALLOW_INSECURE;
 #      FORCE_TURN_RELAY=1; readiness em /ready; drain maior que o do servidor;
 #   6. produção: NENHUM Secret renderizado, nenhuma imagem sem tag ou `latest`;
-#   7. produção: a quota do namespace cobre o pico COM ROLLOUT, recalculado do
-#      render (ADR-0021), e o `max` do LimitRange não rejeita os nossos pods;
+#   7. produção: a quota do namespace cobre o pico COM ROLLOUT do chart MAIS a
+#      plataforma que vive no mesmo namespace (Postgres e Redis, lidos de
+#      deploy/k8s/plataforma) — requests, limits, pods e PVCs — e o `max` do
+#      LimitRange não rejeita nenhum deles (ADR-0021, D1 de 2026-10-10);
 #   7b. a prioridade de agendamento é opcional (ninguém FIXA uma classe) e, quando
 #      dada, chega a TODOS os workloads — incluindo o Job de migração, que bloqueia
 #      o release;
@@ -103,7 +105,7 @@ lint local "${LOCAL[@]}"
 # ---- 3. recusas -------------------------------------------------------
 recusa() { # descrição, texto esperado, args…
   local desc=$1 esperado=$2; shift 2
-  if "$HELM" template meet "$CHART" -n delonix-meet "$@" >"$OUT/recusa.out" 2>"$OUT/recusa.err"; then
+  if "$HELM" template meet "$CHART" -n ngolacloud-meet "$@" >"$OUT/recusa.out" 2>"$OUT/recusa.err"; then
     erro "devia ter sido recusado e renderizou: $desc"
   elif ! grep -qF -- "$esperado" "$OUT/recusa.err"; then
     erro "recusado, mas sem a mensagem «$esperado»: $desc"
@@ -138,14 +140,14 @@ recusa "várias réplicas sem Redis" "REDIS_URL é obrigatório" \
 recusa "ponte telefone↔sala sem IPs do FreeSWITCH" "server.phoneBridge.freeswitchIPs" \
   "${LOCAL[@]}" --set server.phoneBridge.enabled=true
 recusa "ESL com o FreeSWITCH em hostNetwork e sem redes declaradas" "voice.freeswitch.eslCidrs: com server.telephony.eslAddr e o FreeSWITCH em hostNetwork" \
-  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 --set voice.freeswitch.hostNetwork=true
+  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 --set voice.freeswitch.hostNetwork=true
 recusa "ESL em produção sem política de rede nem redes declaradas" "server.telephony.eslAddr em produção" \
-  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 --set networkPolicy.enabled=false
+  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 --set networkPolicy.enabled=false
 
 # ---- 4. render --------------------------------------------------------
 render() { # nome, args…
   local nome=$1; shift
-  if "$HELM" template meet "$CHART" -n delonix-meet "$@" >"$OUT/$nome.yaml" 2>"$OUT/$nome.err"; then
+  if "$HELM" template meet "$CHART" -n ngolacloud-meet "$@" >"$OUT/$nome.yaml" 2>"$OUT/$nome.err"; then
     echo "  ✓ render $nome ($(grep -c '^kind:' "$OUT/$nome.yaml") recursos)"
   else
     erro "render falhou: $nome"; grep -v 'found symbolic link' "$OUT/$nome.err" | sed 's/^/    /' | head -20
@@ -153,8 +155,8 @@ render() { # nome, args…
 }
 render production "${PROD[@]}"
 render production-voz "${VOZ[@]}"
-render production-voz-esl "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021
-render production-voz-esl-cidrs "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.delonix-meet.svc.cluster.local:8021 \
+render production-voz-esl "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021
+render production-voz-esl-cidrs "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 \
   --set 'voice.freeswitch.eslCidrs={10.244.0.0/16}'
 render local "${LOCAL[@]}"
 render local-2 "${LOCAL[@]}"
@@ -488,35 +490,90 @@ if not faixa:
 if quota and faixa:
     hpa = {d["spec"]["scaleTargetRef"]["name"]: d["spec"]["maxReplicas"]
            for d in docs if d.get("kind") == "HorizontalPodAutoscaler"}
-    pico = {"cpu": 0.0, "mem": 0.0, "pods": 0}
+    pico = {"cpu": 0.0, "mem": 0.0, "req_cpu": 0.0, "req_mem": 0.0, "pods": 0, "pvcs": 0}
     maior = {"cpu": 0.0, "mem": 0.0}
     for d, spec in pod_specs(docs):
         n = 1 if d["kind"] == "Job" else hpa.get(d["metadata"]["name"],
                                                  (d.get("spec") or {}).get("replicas", 1))
+        if d["kind"] == "StatefulSet":
+            pico["pvcs"] += len(d["spec"].get("volumeClaimTemplates") or []) * n
         n += _surge(d, n)
         pico["pods"] += n
         for ct in spec.get("containers", []) + spec.get("initContainers", []):
-            lm = ((ct.get("resources") or {}).get("limits") or {})
+            res = ct.get("resources") or {}
+            lm, rq = res.get("limits") or {}, res.get("requests") or {}
             c, m = _cpu(lm.get("cpu", 0)), _mem(lm.get("memory", 0))
             pico["cpu"] += c * n
             pico["mem"] += m * n
+            pico["req_cpu"] += _cpu(rq.get("cpu", 0)) * n
+            pico["req_mem"] += _mem(rq.get("memory", 0)) * n
             maior["cpu"], maior["mem"] = max(maior["cpu"], c), max(maior["mem"], m)
+    pico["pvcs"] += sum(1 for d in docs if d.get("kind") == "PersistentVolumeClaim")
+
+    # A PLATAFORMA no mesmo namespace (D1, 2026-10-10). O `instalar.sh` de
+    # deploy/k8s/plataforma põe o Postgres (CNPG) e o Redis no namespace do
+    # Meet, fora do chart — e o Kubernetes aplica a quota a TODOS os pods do
+    # namespace. A quota do chart que só contava o chart deixava 8Gi de
+    # requests para um Postgres que pede 12Gi sozinho: recusado no primeiro
+    # `helm upgrade`. Lê-se dos próprios ficheiros, não de números copiados,
+    # para que mudar a plataforma refaça esta conta.
+    base = "deploy/k8s/plataforma"
+    def _soma(res, n, quem):
+        if not (res.get("requests") and res.get("limits")):
+            erros.append(f"[plataforma] {quem} sem requests/limits — um preset do chart externo "
+                         "não é medível aqui; declara-os")
+            return
+        pico["req_cpu"] += _cpu(res["requests"].get("cpu", 0)) * n
+        pico["req_mem"] += _mem(res["requests"].get("memory", 0)) * n
+        c, m = _cpu(res["limits"].get("cpu", 0)), _mem(res["limits"].get("memory", 0))
+        pico["cpu"] += c * n
+        pico["mem"] += m * n
+        maior["cpu"], maior["mem"] = max(maior["cpu"], c), max(maior["mem"], m)
+    pg = next(d for d in yaml.safe_load_all(open(f"{base}/cnpg-cluster.yaml"))
+              if d and d.get("kind") == "Cluster")
+    n = pg["spec"]["instances"]
+    # Sem surge: o CNPG actualiza instância a instância, no lugar. O Job de
+    # initdb/join corre ANTES da instância que cria, nunca ao lado de todas.
+    _soma(pg["spec"].get("resources") or {}, n, "o Postgres (cnpg-cluster.yaml)")
+    pico["pods"] += n
+    pico["pvcs"] += n * (2 if pg["spec"].get("walStorage") else 1)
+    rv = yaml.safe_load(open(f"{base}/redis-values.yaml"))
+    if not (rv.get("architecture") == "replication" and (rv.get("sentinel") or {}).get("enabled")):
+        erros.append("[plataforma] a conta do Redis assume replication + sentinel (um StatefulSet "
+                     "de replica.replicaCount pods) — o redis-values.yaml mudou de forma")
+    else:
+        n = rv["replica"]["replicaCount"]
+        _soma(rv["replica"].get("resources") or {}, n, "o Redis (replica)")
+        _soma(rv["sentinel"].get("resources") or {}, n, "o sentinel do Redis")
+        if (rv.get("metrics") or {}).get("enabled"):
+            _soma(rv["metrics"].get("resources") or {}, n, "o exporter do Redis")
+        pico["pods"] += n
+        if (rv["replica"].get("persistence") or {}).get("enabled"):
+            pico["pvcs"] += n
+
     dura = quota["spec"]["hard"]
     tecto = {"cpu": _cpu(dura["limits.cpu"]), "mem": _mem(dura["limits.memory"]),
-             "pods": float(dura["pods"])}
-    for eixo, unidade, div in (("cpu", "CPU", 1), ("mem", "Gi", 2**30), ("pods", "pods", 1)):
+             "req_cpu": _cpu(dura["requests.cpu"]), "req_mem": _mem(dura["requests.memory"]),
+             "pods": float(dura["pods"]), "pvcs": float(dura["persistentvolumeclaims"])}
+    for eixo, unidade, div in (("cpu", "CPU de limits", 1), ("mem", "Gi de limits", 2**30),
+                               ("req_cpu", "CPU de requests", 1), ("req_mem", "Gi de requests", 2**30),
+                               ("pods", "pods", 1), ("pvcs", "PVCs", 1)):
         if tecto[eixo] < pico[eixo]:
-            erros.append(f"[production-voz] a quota de {eixo} ({tecto[eixo]/div:.2f} {unidade}) "
-                         f"não cobre o pico COM ROLLOUT ({pico[eixo]/div:.2f} {unidade}) — "
-                         "refaz a conta no topo de templates/quota.yaml")
+            erros.append(f"[production-voz] a quota ({tecto[eixo]/div:.2f} {unidade}) "
+                         f"não cobre o pico COM ROLLOUT do chart + plataforma "
+                         f"({pico[eixo]/div:.2f} {unidade}) — refaz a conta no topo de "
+                         "templates/quota.yaml")
+    if os.environ.get("QUOTA_CONTA"):
+        print("  conta da quota (chart + plataforma): " + ", ".join(
+            f"{k}={v/(2**30) if 'mem' in k else v:.2f}" for k, v in pico.items()))
     # O `max` por contentor não pode rejeitar os nossos próprios pods.
     lim = faixa["spec"]["limits"][0]
     for eixo, chave, unidade, div in (("cpu", "cpu", "CPU", 1), ("mem", "memory", "Gi", 2**30)):
         f = _cpu(lim["max"][chave]) if eixo == "cpu" else _mem(lim["max"][chave])
         if f < maior[eixo]:
             erros.append(f"[production-voz] o LimitRange max.{chave} ({f/div:.2f} {unidade}) é menor "
-                         f"que o maior contentor do chart ({maior[eixo]/div:.2f} {unidade}) — a "
-                         "admissão rejeitava o nosso próprio pod")
+                         f"que o maior contentor do namespace ({maior[eixo]/div:.2f} {unidade}) — a "
+                         "admissão rejeitava o nosso próprio pod (ou o Postgres da plataforma)")
     # O default/defaultRequest é o que torna a quota aplicável. Tem de estar lá
     # E ser uma quantidade > 0: um `cpu: ""` renderiza, mas o API server
     # recusa-o — e só se via no cluster.

@@ -4,7 +4,7 @@
 #  Este ficheiro fixa a TOPOLOGIA. O que é próprio de cada instalação entra
 #  por --set ou por um ficheiro privado, e o chart FALHA se faltar:
 #
-#    helm upgrade --install meet deploy/helm/delonix-meet -n delonix-meet \
+#    helm upgrade --install meet deploy/helm/delonix-meet -n ngolacloud-meet \
 #      -f deploy/helm/delonix-meet/values-production.yaml \
 #      --set image.tag=<git describe> \
 #      --set secrets.existingSecret=<nome do Secret> \

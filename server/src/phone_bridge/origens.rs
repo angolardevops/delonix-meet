@@ -281,8 +281,8 @@ mod tests {
             Some(Origem::Nome("delonix-freeswitch".into()))
         );
         assert_eq!(
-            parse_origem("freeswitch.delonix-meet.svc"),
-            Some(Origem::Nome("freeswitch.delonix-meet.svc".into()))
+            parse_origem("freeswitch.ngolacloud-meet.svc"),
+            Some(Origem::Nome("freeswitch.ngolacloud-meet.svc".into()))
         );
         assert_eq!(
             parse_origem("freeswitch.ns.svc.cluster.local."),

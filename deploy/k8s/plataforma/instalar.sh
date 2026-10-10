@@ -17,7 +17,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-NS=${NS:-delonix-meet}
+NS=${NS:-ngolacloud-meet}
 g=$'\033[1;32m'; y=$'\033[1;33m'; z=$'\033[0m'
 ok() { printf "  %s✓%s %s\n" "$g" "$z" "$1"; }
 passo() { printf "\n%s▶ %s%s\n" "$y" "$1" "$z"; }

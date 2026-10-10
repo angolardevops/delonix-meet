@@ -7,8 +7,8 @@ Corre **depois** da plataforma: o Loki e o Tempo guardam no MinIO.
 kubectl -n observabilidade create secret generic meet-grafana-credenciais \
   --from-literal=admin-user=admin --from-literal=admin-password="$(openssl rand -base64 24)"
 # O Loki e o Tempo escrevem no MinIO com as mesmas credenciais do resto:
-kubectl -n delonix-meet get secret meet-minio-credenciais -o yaml \
-  | sed 's/namespace: delonix-meet/namespace: observabilidade/' | kubectl apply -f -
+kubectl -n ngolacloud-meet get secret meet-minio-credenciais -o yaml \
+  | sed 's/namespace: ngolacloud-meet/namespace: observabilidade/' | kubectl apply -f -
 
 bash deploy/k8s/observabilidade/instalar.sh
 ```

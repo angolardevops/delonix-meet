@@ -9,15 +9,15 @@
 #
 # Os NOMES DE SERVIÇO são deliberadamente iguais aos que os charts gerariam,
 # porque o `01-config.yaml` codifica-os no DATABASE_URL/REDIS_URL:
-#   delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432
-#   delonix-redis-master.delonix-meet.svc.cluster.local:6379
+#   delonix-postgres-postgresql.ngolacloud-meet.svc.cluster.local:5432
+#   delonix-redis-master.ngolacloud-meet.svc.cluster.local:6379
 # Mudar um nome aqui obriga a mudar a config — mantê-los evita esse acoplamento.
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: delonix-postgres-postgresql
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels: { app: delonix-postgres }
 spec:
   selector: { app: delonix-postgres }
@@ -28,7 +28,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: delonix-postgres
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   serviceName: delonix-postgres-postgresql
   replicas: 1
@@ -110,7 +110,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: delonix-redis-master
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels: { app: delonix-redis }
 spec:
   selector: { app: delonix-redis }
@@ -121,7 +121,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-redis
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   replicas: 1
   selector:

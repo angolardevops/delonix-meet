@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: delonix-ingress
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
@@ -59,7 +59,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: delonix-ws
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   annotations:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
@@ -89,7 +89,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: delonix-provisioning
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   annotations:
     nginx.ingress.kubernetes.io/enable-access-log: "false"
 spec:

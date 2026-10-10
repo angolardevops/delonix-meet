@@ -1,6 +1,6 @@
 # ADR-0020 — A produção do Meet em `meet.ngolacloud.com`
 
-**Estado:** Aceite · **Data:** 2026-10-06 · **Decisor:** o dono do produto
+**Estado:** Aceite · o **«onde»** (cluster próprio em VMs) sucedido pelo [ADR-0021](0021-a-producao-do-meet-partilha-o-cluster-ngola-lda.md) a 2026-10-07; o resto mantém-se · **Data:** 2026-10-06 · **Decisor:** o dono do produto
 
 ## Contexto
 

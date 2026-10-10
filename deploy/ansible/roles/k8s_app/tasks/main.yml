@@ -35,7 +35,7 @@
     cmd: >-
       helm upgrade --install delonix-postgres
       bitnami/{{ 'postgresql-ha' if k8s_postgres_ha else 'postgresql' }}
-      -n delonix-meet --create-namespace
+      -n ngolacloud-meet --create-namespace
       -f {{ _k8s_dir }}/helm-values/postgres-values.yaml
       --set {{ 'postgresql.username=delonix,postgresql.password=' ~ postgres_password ~ ',postgresql.database=delonix_meet' if k8s_postgres_ha else 'auth.username=delonix,auth.password=' ~ postgres_password ~ ',auth.database=delonix_meet' }}
   environment: { KUBECONFIG: "{{ _kubeconfig }}" }
@@ -44,7 +44,7 @@
   ansible.builtin.command:
     cmd: >-
       helm upgrade --install delonix-redis bitnami/redis
-      -n delonix-meet --create-namespace
+      -n ngolacloud-meet --create-namespace
       -f {{ _k8s_dir }}/helm-values/redis-values.yaml
       --set auth.enabled=false
       {{ '--set sentinel.enabled=true' if k8s_redis_sentinel else '--set architecture=standalone' }}
@@ -61,7 +61,7 @@
 
 - name: "Resolver o VIP do coturn (LoadBalancer)"
   ansible.builtin.command: >-
-    kubectl --kubeconfig={{ _kubeconfig }} get svc coturn -n delonix-meet --no-headers
+    kubectl --kubeconfig={{ _kubeconfig }} get svc coturn -n ngolacloud-meet --no-headers
     -o jsonpath={.status.loadBalancer.ingress[0].ip}
   register: _coturn_ip
   retries: 18
@@ -133,7 +133,7 @@
     - name: "Criar/atualizar Secret TLS"
       ansible.builtin.shell: >-
         kubectl --kubeconfig={{ _kubeconfig }} create secret tls delonix-tls-secret
-        --cert={{ _tmp }}/tls.crt --key={{ _tmp }}/tls.key -n delonix-meet
+        --cert={{ _tmp }}/tls.crt --key={{ _tmp }}/tls.key -n ngolacloud-meet
         --dry-run=client -o yaml | kubectl --kubeconfig={{ _kubeconfig }} apply -f -
       changed_when: false
 

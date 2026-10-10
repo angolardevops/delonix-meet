@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-web
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels:
     app: delonix-web
 spec:
@@ -77,7 +77,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: delonix-web
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   selector:
     app: delonix-web

@@ -17,7 +17,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: ngolacloud-engine
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   clusterIP: None
   ports:
@@ -27,7 +27,7 @@ apiVersion: v1
 kind: Endpoints
 metadata:
   name: ngolacloud-engine
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 subsets:
   - addresses: [{ ip: 172.30.0.1 }]
     ports: [{ name: https, port: 9443 }]
@@ -36,7 +36,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: delonix-pdf
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   clusterIP: None
   ports:
@@ -46,7 +46,7 @@ apiVersion: v1
 kind: Endpoints
 metadata:
   name: delonix-pdf
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 subsets:
   - addresses: [{ ip: 172.30.0.1 }]
     ports: [{ name: http, port: 3000 }]
@@ -55,7 +55,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: ngolacloud-ingress
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   annotations:
     # O engine fala TLS na 9443 (cert self-signed → sem verify, é dev).
     nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
@@ -82,7 +82,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: delonix-pdf-ingress
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "512m"
 spec:

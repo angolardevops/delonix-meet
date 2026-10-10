@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-server
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels:
     app: delonix-server
 spec:
@@ -167,7 +167,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: delonix-recordings
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -178,7 +178,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: delonix-server
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   selector:
     app: delonix-server
@@ -195,7 +195,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: delonix-server-ws
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   selector:
     app: delonix-server
@@ -210,7 +210,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: delonix-server
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   maxUnavailable: 1
   selector:
