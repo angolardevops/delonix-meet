@@ -21,6 +21,7 @@ mod dial_outs;
 mod directory;
 mod dlp;
 mod domain_verify;
+mod email_verification;
 mod error;
 mod extension_pin;
 mod extension_provisioning;
@@ -535,6 +536,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(search::saved::delete),
         )
         .route("/api/users/me", get(users::me).patch(users::update_me))
+        // Prova do endereço (D7): a pessoa pede o email com sessão; abre o
+        // link e a web entrega o token SEM sessão (pode ser outro aparelho).
+        .route(
+            "/api/users/me/email-verification",
+            get(email_verification::status).post(email_verification::request),
+        )
         // «A minha sala» (G2).
         .route(
             "/api/users/me/room",
@@ -973,6 +980,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/password-resets/accept",
             post(directory::accept_password_reset).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
+        .route(
+            "/api/email-verifications/accept",
+            post(email_verification::accept).layer(middleware::from_fn_with_state(
                 state.clone(),
                 rate_limit::auth_rate_limit,
             )),

@@ -11,6 +11,7 @@ import { getAppName, getLoginBg, setAppName, setLoginBg } from '../branding'
 import { currentLang, intlLocale, Lang, LANG_NAMES, LANGS, serverLocale, setLanguage } from '../i18n'
 import { applyTheme, storedTheme, Theme } from '../theme'
 import { Alert, Avatar, Button, Dialog, Field, Segmented, Tabs, TextInput, Toggle } from '../ui/kit'
+import EmailVerification from './EmailVerification'
 import MfaPanel from './MfaPanel'
 import MyExtensionPanel from './MyExtensionPanel'
 import SessionsPanel from './SessionsPanel'
@@ -172,6 +173,7 @@ function Conta({ user }: { user: User }) {
       <Field label={t('shell.def.email')}>
         <TextInput value={user.email} readOnly disabled />
       </Field>
+      <EmailVerification />
       <Field label={t('shell.def.nome')} htmlFor="set-name">
         <TextInput id="set-name" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="nickname" />
       </Field>

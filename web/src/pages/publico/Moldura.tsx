@@ -9,9 +9,9 @@ import { BrandLockup } from '../../components/BrandMark'
 import { cx } from '../../ui/kit'
 import '../../ui/publico.css'
 
-export type PaginaPublica = 'status' | 'api-docs' | 'legal' | 'share' | 'invite'
+export type PaginaPublica = 'status' | 'api-docs' | 'legal' | 'share' | 'invite' | 'verificar-email'
 
-const LIGACOES: { k: Exclude<PaginaPublica, 'share' | 'invite'>; chave: string }[] = [
+const LIGACOES: { k: Exclude<PaginaPublica, 'share' | 'invite' | 'verificar-email'>; chave: string }[] = [
   { k: 'status', chave: 'publico.comum.estado' },
   { k: 'api-docs', chave: 'publico.comum.api' },
   { k: 'legal', chave: 'publico.comum.legal' },

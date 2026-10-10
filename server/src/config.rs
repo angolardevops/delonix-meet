@@ -231,6 +231,14 @@ pub struct Config {
     /// `SMTP_STARTTLS=0` desliga o STARTTLS (1 por omissão). Só para um relay
     /// em `localhost`: sem isto a password da conta viaja em claro.
     pub smtp_starttls: bool,
+    /// O endereço público da web (`PUBLIC_URL`, p.ex. `https://meet.exemplo.ao`,
+    /// sem barra no fim). É de onde saem os links que o servidor escreve num
+    /// email (prova de endereço, reposição de password). NUNCA se tira do
+    /// cabeçalho `Host` do pedido: quem pede escolhia o domínio para onde vai o
+    /// token — o envenenamento de links de reposição. Sem ele, o correio que
+    /// leva um link recusa-se (`mail.public_url_missing`), como as chaves de
+    /// acesso sem `WEBAUTHN_RP_ORIGIN`.
+    pub public_url: Option<String>,
     /// URL do Ollama in-cluster (LLM local — soberania: o texto nunca sai do
     /// datacenter). Vazio => IA desligada, fail-open: o MoM fica por regras
     /// (cliente) e a tradução de legendas não aparece.
@@ -724,6 +732,16 @@ impl Config {
             smtp_password: opt("SMTP_PASSWORD"),
             smtp_from: opt("SMTP_FROM"),
             smtp_starttls: src.var("SMTP_STARTTLS").ok().as_deref() != Some("0"),
+            public_url: opt("PUBLIC_URL").map(|v| {
+                let v = v.trim().trim_end_matches('/').to_string();
+                // Fail-closed e em voz alta: um link de email para um esquema
+                // estranho (ou sem esquema) seria um link partido em todas as
+                // caixas de correio, e só se descobria quando alguém clicasse.
+                if !(v.starts_with("https://") || v.starts_with("http://")) {
+                    panic!("PUBLIC_URL: «{v}» tem de começar por https:// (ou http:// num laboratório)");
+                }
+                v
+            }),
             ollama_url: src.var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
             ollama_model_translate: src
                 .var("OLLAMA_MODEL_TRANSLATE")

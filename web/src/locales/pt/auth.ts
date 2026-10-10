@@ -1,4 +1,21 @@
 export default {
+  emailProva: {
+    paginaTitulo: 'Confirmar o endereço de email',
+    paginaExplica: 'Confirme que este endereço é seu. É para ele que vai, por exemplo, a reposição da palavra-passe.',
+    confirmar: 'Confirmar o endereço',
+    feito: 'O endereço {{email}} está confirmado.',
+    continuar: 'Continuar',
+    erroExpirado: 'Este link expirou. Peça outro nas definições da conta.',
+    erroMudou: 'A conta mudou de email depois deste pedido. Peça outro link nas definições da conta.',
+    erroInvalido: 'Este link não é válido ou já foi usado.',
+    erroMuitos: 'Demasiados pedidos. Aguarde um minuto e tente de novo.',
+    semCorreio: 'Este servidor não envia correio. Peça ao administrador da plataforma.',
+    provado: 'Endereço confirmado',
+    porProvar: 'Endereço por confirmar. Sem ele confirmado, não poderá repor a palavra-passe por email.',
+    enviado: 'Enviámos um link para {{email}}. É válido até {{ate}}.',
+    enviar: 'Enviar link de confirmação',
+    reenviar: 'Enviar outro link',
+  },
   aCompletarSso: 'A concluir a entrada pelo fornecedor de identidade…',
   mfa: {
     titulo: 'Verificação em dois passos',

@@ -48,6 +48,11 @@ describe('parseHash', () => {
     expect(parseHash('#/share/deadbeef00')).toEqual({ kind: 'share', token: 'deadbeef00' })
     // Um token de partilha é hexadecimal: o que não o é não é uma partilha.
     expect(parseHash('#/share/NAOHEX')).toEqual({ kind: 'desconhecida', endereco: '#/share/NAOHEX' })
+    // O link do email de prova do endereço: o token vem tal e qual.
+    expect(parseHash('#/verificar-email?token=dlxv_AbC09f')).toEqual({ kind: 'verificar-email', token: 'dlxv_AbC09f' })
+    // Sem token, ou com lixo depois dele, não é a página — não se entrega meio token.
+    expect(parseHash('#/verificar-email').kind).toBe('desconhecida')
+    expect(parseHash('#/verificar-email?token=dlxv_a&x=1').kind).toBe('desconhecida')
   })
 
   it('um nome de página casa por segmento, não por prefixo', () => {
@@ -119,7 +124,7 @@ describe('parseHash', () => {
     // Uma página de topo tem só o Início.
     expect(trilhoDe(parseHash('#/admin'))).toEqual([{ hash: '#/', chave: 'shell.nav.inicio' }])
     // E onde um trilho seria ruído, não há trilho.
-    for (const h of ['#/', '#/r/sala', '#/share/abc123', '#/invite/tok']) {
+    for (const h of ['#/', '#/r/sala', '#/share/abc123', '#/invite/tok', '#/verificar-email?token=t']) {
       expect(trilhoDe(parseHash(h))).toEqual([])
     }
   })

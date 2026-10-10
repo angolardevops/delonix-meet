@@ -1094,6 +1094,29 @@ export const acceptInvitation = (token: string) =>
     body: JSON.stringify({ token }),
   })
 
+// ---------- Prova do endereço de email (D7, migração 0111) ----------
+// O token NUNCA vem nestas respostas: só vai no email. Devolvê-lo provaria a
+// sessão de quem pede, não o endereço.
+
+export interface EmailVerificationStatus {
+  status: 'verified' | 'pending' | 'unverified' | 'sent'
+  email: string
+  expires_at?: string
+}
+
+export const emailVerificationStatus = () =>
+  request<EmailVerificationStatus>('/api/users/me/email-verification')
+
+export const requestEmailVerification = () =>
+  request<EmailVerificationStatus>('/api/users/me/email-verification', { method: 'POST', body: '{}' })
+
+/** Pública: o link do email pode abrir-se noutro aparelho, sem sessão. */
+export const acceptEmailVerification = (token: string) =>
+  request<{ email: string; verified_at: string }>('/api/email-verifications/accept', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+
 export interface DirectoryEntry {
   id: string
   kind: string
