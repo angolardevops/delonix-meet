@@ -6742,6 +6742,29 @@
         ],
         "type": "object"
       },
+      "PasswordRecoveryAccepted": {
+        "properties": {
+          "status": {
+            "description": "Sempre `accepted`, exista a conta ou não.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "PasswordRecoveryReq": {
+        "properties": {
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "type": "object"
+      },
       "PasswordStatus": {
         "properties": {
           "changed_at": {
@@ -31613,6 +31636,57 @@
           }
         },
         "summary": "Usa uma reposição de password. **Pública**: quem a usa está fora da conta.",
+        "tags": [
+          "directory"
+        ]
+      }
+    },
+    "/api/password-resets/request": {
+      "post": {
+        "operationId": "request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordRecoveryReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordRecoveryAccepted"
+                }
+              }
+            },
+            "description": "Sempre o mesmo, exista a conta ou não: se o endereço for de uma conta com o email provado, sai um link."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`mail.disabled` ou `mail.public_url_missing` — estado do SERVIDOR, igual para qualquer endereço"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "limite por IP"
+          }
+        },
+        "summary": "Pede um email de reposição. **Pública**: quem a usa está fora da conta.",
         "tags": [
           "directory"
         ]

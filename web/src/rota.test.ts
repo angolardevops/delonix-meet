@@ -53,6 +53,9 @@ describe('parseHash', () => {
     // Sem token, ou com lixo depois dele, não é a página — não se entrega meio token.
     expect(parseHash('#/verificar-email').kind).toBe('desconhecida')
     expect(parseHash('#/verificar-email?token=dlxv_a&x=1').kind).toBe('desconhecida')
+    // O link do email de reposição: a mesma regra.
+    expect(parseHash('#/repor-password?token=dlxr_09aF')).toEqual({ kind: 'repor-password', token: 'dlxr_09aF' })
+    expect(parseHash('#/repor-password').kind).toBe('desconhecida')
   })
 
   it('um nome de página casa por segmento, não por prefixo', () => {
@@ -124,7 +127,7 @@ describe('parseHash', () => {
     // Uma página de topo tem só o Início.
     expect(trilhoDe(parseHash('#/admin'))).toEqual([{ hash: '#/', chave: 'shell.nav.inicio' }])
     // E onde um trilho seria ruído, não há trilho.
-    for (const h of ['#/', '#/r/sala', '#/share/abc123', '#/invite/tok', '#/verificar-email?token=t']) {
+    for (const h of ['#/', '#/r/sala', '#/share/abc123', '#/invite/tok', '#/verificar-email?token=t', '#/repor-password?token=t']) {
       expect(trilhoDe(parseHash(h))).toEqual([])
     }
   })

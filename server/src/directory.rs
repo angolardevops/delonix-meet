@@ -3057,7 +3057,7 @@ pub struct AcceptedPasswordReset {
     pub sessions_revoked: u64,
 }
 
-fn reset_token_hash(token: &str) -> String {
+pub(crate) fn reset_token_hash(token: &str) -> String {
     delonix_meet_core::crypto::sha256_hex(token.trim())
 }
 
@@ -3177,7 +3177,9 @@ pub async fn accept_password_reset(
     // A busca É a comparação: a linha é encontrada PELO hash, que tem 256 bits
     // imprevisíveis. Não se compara o hash outra vez — seria comparar um valor
     // com ele próprio e fingir que isso é um controlo.
-    let row: Option<(Uuid, Uuid, Uuid, DateTime<Utc>)> = sqlx::query_as(
+    // `org_id` é `None` numa reposição pedida pela própria pessoa (E3, 0112):
+    // não age em nome de organização nenhuma.
+    let row: Option<(Uuid, Uuid, Option<Uuid>, DateTime<Utc>)> = sqlx::query_as(
         "SELECT id, user_id, org_id, expires_at FROM password_resets
           WHERE token_hash = $1 AND status = 'pending' FOR UPDATE",
     )
@@ -3226,7 +3228,7 @@ pub async fn accept_password_reset(
     let sessions_revoked = crate::sessions::revoke_all_except(&state, user_id, None).await?;
     crate::audit::log(
         &state.db,
-        Some(org_id),
+        org_id,
         user_id,
         "user.password_reset_used",
         &sessions_revoked.to_string(),

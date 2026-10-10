@@ -29,9 +29,12 @@ const SEM_SSO: EstadoSso = { dominio: null, activo: false, obrigatorio: false, a
 export default function FormularioEntrada({
   onLogin,
   onDesafio,
+  onEsqueci,
 }: {
   onLogin: (u: User) => void
   onDesafio: (mfaToken: string) => void
+  /** «Esqueci-me da palavra-passe» (E3). Sem ele, o link não aparece. */
+  onEsqueci?: () => void
 }) {
   const { t } = useTranslation()
   const [modo, setModo] = useState<Modo>('entrar')
@@ -212,6 +215,11 @@ export default function FormularioEntrada({
                 onChange={(e) => setPassword(e.target.value)}
               />
             </Field>
+            {!registo && onEsqueci && (
+              <button type="button" className="auth-link auth-link--muted" onClick={onEsqueci} data-testid="auth-esqueci">
+                {t('auth.reposicao.link')}
+              </button>
+            )}
 
             {erro && (
               <div className="auth-error">

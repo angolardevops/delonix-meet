@@ -39,6 +39,7 @@ pub mod net_guard;
 mod net_probe;
 pub mod nodes;
 mod notifications;
+mod password_recovery;
 // `pub` de propósito: o cliente está completo mas o gravador ainda não o chama
 // (ADR-0020). Deixá-lo privado dava `dead_code` em metade dos métodos, e a
 // resposta a isso seria um `#[allow]` — que é esconder, não resolver.
@@ -980,6 +981,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/password-resets/accept",
             post(directory::accept_password_reset).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
+        // E3: a própria pessoa pede o email de reposição. Pública (está fora da
+        // conta), mesmo limite por IP do `accept`, e a mesma resposta para
+        // toda a gente — ver `password_recovery`.
+        .route(
+            "/api/password-resets/request",
+            post(password_recovery::request).layer(middleware::from_fn_with_state(
                 state.clone(),
                 rate_limit::auth_rate_limit,
             )),
