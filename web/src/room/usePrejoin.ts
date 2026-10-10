@@ -178,6 +178,10 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
       cancelled = true
       // Handoff: a ENTRAR, o efeito de entrada assume o stream — não se param
       // as tracks. Só se descartam se se sair da pré-entrada sem entrar.
+      // O ESLint avisa que o ref «já mudou» quando isto corre: é o mecanismo,
+      // não um descuido — ler a intenção da renderização antiga parava a
+      // câmara de quem acabou de entrar.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (!joinIntentRef.current) {
         core.previewStreamRef.current?.getTracks().forEach((tr) => tr.stop())
         core.previewStreamRef.current = null
@@ -188,6 +192,11 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
         core.effectRef.current?.stop()
       }
     }
+    // O ESLint avisa que `joinIntentRef.current` «já mudou» quando o cleanup
+    // corre. É PRECISAMENTE isso que queremos: o cleanup tem de ler a intenção
+    // NO MOMENTO do desmonte para decidir entre entregar o stream ao efeito de
+    // entrada ou parar as tracks. Ler o valor da renderização antiga parava a
+    // câmara de quem acabou de entrar na sala.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active])
 

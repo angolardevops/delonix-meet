@@ -392,6 +392,10 @@ export function useCallSession(
       core.localStreamRef.current?.getTracks().forEach((tr) => tr.stop())
       core.localStreamRef.current = null
     }
+    // As três dependências identificam a TENTATIVA de chamada. Tudo o mais
+    // (`core`, `media`, os setters, o `bus`) muda durante a chamada, e pô-lo
+    // aqui corria este cleanup — que desliga a chamada e para todas as tracks —
+    // a meio de uma reunião a decorrer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, passTry, joinIntent])
 

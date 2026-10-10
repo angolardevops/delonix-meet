@@ -61,6 +61,10 @@ export function useLegendas(compRef: MutableRefObject<CompositorDeAula | null>, 
       window.clearTimeout(vigia)
       if (limpar.current) window.clearTimeout(limpar.current)
       tr.stop()
+      // O ref lê-se AGORA, no desmonte, de propósito: o que interessa limpar é
+      // a legenda do compositor ACTUAL. Se ele foi substituído, limpar o antigo
+      // não tira nada do ecrã — e deixava a legenda velha no novo.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (compRef.current) compRef.current.legenda = ''
     }
     // Recomeça quando a mistura monta: passa a ouvir o microfone escolhido.

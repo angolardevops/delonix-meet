@@ -112,6 +112,9 @@ export function useWhiteboard(core: RoomCore) {
       }),
     ]
     return () => offs.forEach((off) => off())
+    // Só `signal`, como no useLocalMedia. O `tocar` é um `useCallback` e o
+    // `core.peersRef` um ref — nenhum dos dois justifica remontar as
+    // subscrições do quadro, e `t` muito menos (perdia traços no intervalo).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal])
 

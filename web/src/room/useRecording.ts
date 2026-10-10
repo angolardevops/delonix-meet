@@ -103,6 +103,10 @@ export function useRecording(core: RoomCore, hooks: { onServerStopped: () => voi
       offs.forEach((off) => off())
       window.clearTimeout(rereadRef.current)
     }
+    // `refresh` fora das dependências porque é uma função recriada a CADA
+    // render: incluí-la remontava as subscrições em todos os renders. Ela fecha
+    // sobre `code`, que ESTÁ nas dependências — logo a que os handlers usam é
+    // sempre a da sala corrente.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal, code])
 

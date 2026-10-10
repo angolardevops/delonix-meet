@@ -159,6 +159,9 @@ export default function EditPanel({
     setPausas(null)
     setSeleccao(null)
     pr.criar(nome, brutas).catch((e) => setErro(apiErrorMessage(e, t('editor.erros.criar'))))
+    // Só `resultado`: o guarda por `ultimoResultado` faz isto correr UMA vez
+    // por gravação nova. Com `titulo` ou `t` nas dependências, escrever no
+    // título ou trocar de língua criaria um projecto novo por cada tecla.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resultado])
 
@@ -184,6 +187,9 @@ export default function EditPanel({
         setAAbrirGravacao(false)
       }
     },
+    // `pr.abrirGravacao` e não `pr`: o `useProjecto` devolve um objecto novo a
+    // cada mudança de estado do projecto, e depender dele refazia este callback
+    // (e os efeitos que o têm nas dependências) a cada edição de clipe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [pr.abrirGravacao, t],
   )
@@ -209,6 +215,9 @@ export default function EditPanel({
         if (e instanceof ApiError && e.status === 404) setErro(t('editor.biblioteca.naoEncontrada'))
         else setErro(apiErrorMessage(e, t('editor.biblioteca.erro')))
       })
+    // Só `pr.aCarregar`: isto reage ao PEDIDO de abrir uma gravação, não ao
+    // estado que o pedido vai produzir. Com `p?.fontes` nas dependências, a
+    // própria abertura (que acrescenta a fonte) disparava outra abertura.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pr.aCarregar])
 
@@ -219,6 +228,9 @@ export default function EditPanel({
     if (!p) return
     setTermosIA([])
     setSeleccao(clipsDaFaixa(p, 'V1')[0]?.id ?? null)
+    // `projectoId` e não `p`: isto é para quando se abre OUTRO projecto. Com
+    // `p`, qualquer edição de clipe voltava a saltar a selecção para o
+    // primeiro, por baixo das mãos de quem está a editar.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectoId])
 
@@ -244,6 +256,10 @@ export default function EditPanel({
     return () => {
       vivo = false
     }
+    // `ondas` está FORA das dependências de propósito: este efeito escreve-a
+    // (`setOndas`), e incluí-la era um ciclo infinito — cada onda calculada
+    // remontava o efeito. O `ondas.has(f.id)` acima é só o guarda de «já está
+    // feita», e lê o valor da renderização em que o efeito correu.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p?.fontes, pr.urls])
 

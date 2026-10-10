@@ -250,6 +250,9 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
   useEffect(() => {
     const at = Number(new URLSearchParams(location.hash.split('?')[1] ?? '').get('t'))
     if (Number.isFinite(at) && at > 0) queueSeek(at * 1000)
+    // `rec.id` e mais nada: o `queueSeek` está içado para uma const acima só
+    // para estreitar isto, mas o ESLint quer o `pb` inteiro — que muda a cada
+    // instante de reprodução, e saltaria para o `?t=` do URL outra vez.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rec.id])
 
