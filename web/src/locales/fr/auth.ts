@@ -1,4 +1,21 @@
 export default {
+  emailProva: {
+    paginaTitulo: 'Confirmer l’adresse e-mail',
+    paginaExplica: 'Confirmez que cette adresse est bien la vôtre. C’est là que sont envoyées, par exemple, les réinitialisations de mot de passe.',
+    confirmar: 'Confirmer l’adresse',
+    feito: 'L’adresse {{email}} est confirmée.',
+    continuar: 'Continuer',
+    erroExpirado: 'Ce lien a expiré. Demandez-en un autre dans les paramètres du compte.',
+    erroMudou: 'Le compte a changé d’e-mail après cette demande. Demandez un autre lien dans les paramètres du compte.',
+    erroInvalido: 'Ce lien n’est pas valide ou a déjà été utilisé.',
+    erroMuitos: 'Trop de demandes. Attendez une minute et réessayez.',
+    semCorreio: 'Ce serveur n’envoie pas d’e-mails. Demandez à l’administrateur de la plateforme.',
+    provado: 'Adresse confirmée',
+    porProvar: 'Adresse non confirmée. Tant qu’elle ne l’est pas, vous ne pourrez pas réinitialiser votre mot de passe par e-mail.',
+    enviado: 'Nous avons envoyé un lien à {{email}}. Il est valable jusqu’au {{ate}}.',
+    enviar: 'Envoyer le lien de confirmation',
+    reenviar: 'Envoyer un autre lien',
+  },
   aCompletarSso: "Finalisation de la connexion auprès du fournisseur d'identité…",
   mfa: {
     titulo: 'Vérification en deux étapes',

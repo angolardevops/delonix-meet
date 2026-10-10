@@ -28,6 +28,8 @@ export type Route =
   | { kind: 'telemovel'; code: string }
   | { kind: 'share'; token: string }
   | { kind: 'invite'; token: string }
+  /** O link do email de prova do endereço (`#/verificar-email?token=…`). */
+  | { kind: 'verificar-email'; token: string }
   | { kind: 'diagram'; id: string | null }
   | { kind: 'player'; id: string }
   /** O endereço não é nenhuma rota. Mostra-se e diz-se — não se finge o Início. */
@@ -83,6 +85,8 @@ export function parseHash(hash: string = location.hash): Route {
   if (share) return { kind: 'share', token: share[1] }
   const invite = h.match(/^#\/invite\/([A-Za-z0-9_-]+)(?:\?.*)?$/)
   if (invite) return { kind: 'invite', token: invite[1] }
+  const verificar = h.match(/^#\/verificar-email\?token=([A-Za-z0-9_-]+)$/)
+  if (verificar) return { kind: 'verificar-email', token: verificar[1] }
   const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
   if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
   const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
@@ -140,6 +144,7 @@ export function destinoNoRail(r: Route): NavKey | null {
     case 'telemovel':
     case 'share':
     case 'invite':
+    case 'verificar-email':
     case 'lobby':
     case 'desconhecida':
       return null
@@ -163,6 +168,7 @@ export function trilhoDe(r: Route): Degrau[] {
     case 'telemovel':
     case 'share':
     case 'invite':
+    case 'verificar-email':
       return []
     case 'player':
       return [inicio, { hash: '#/recordings', chave: NAV_I18N.recordings }]

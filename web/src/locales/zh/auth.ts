@@ -1,4 +1,21 @@
 export default {
+  emailProva: {
+    paginaTitulo: '确认电子邮件地址',
+    paginaExplica: '请确认此地址属于您。重置密码等邮件会发送到这里。',
+    confirmar: '确认地址',
+    feito: '地址 {{email}} 已确认。',
+    continuar: '继续',
+    erroExpirado: '此链接已过期。请在账户设置中重新申请。',
+    erroMudou: '在此请求之后账户更改了电子邮件。请在账户设置中重新申请链接。',
+    erroInvalido: '此链接无效或已被使用。',
+    erroMuitos: '请求过多。请等待一分钟后重试。',
+    semCorreio: '此服务器不发送电子邮件。请联系平台管理员。',
+    provado: '地址已确认',
+    porProvar: '地址尚未确认。确认之前，您无法通过电子邮件重置密码。',
+    enviado: '我们已向 {{email}} 发送了一个链接，有效期至 {{ate}}。',
+    enviar: '发送确认链接',
+    reenviar: '再发送一个链接',
+  },
   aCompletarSso: '正在通过身份提供商完成登录…',
   mfa: {
     titulo: '两步验证',

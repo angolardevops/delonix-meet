@@ -1,4 +1,21 @@
 export default {
+  emailProva: {
+    paginaTitulo: 'Confirm your email address',
+    paginaExplica: 'Confirm that this address is yours. It is where things like password resets are sent.',
+    confirmar: 'Confirm address',
+    feito: 'The address {{email}} is confirmed.',
+    continuar: 'Continue',
+    erroExpirado: 'This link has expired. Request another one in your account settings.',
+    erroMudou: 'The account changed its email after this request. Request another link in your account settings.',
+    erroInvalido: 'This link is not valid or has already been used.',
+    erroMuitos: 'Too many requests. Wait a minute and try again.',
+    semCorreio: 'This server does not send email. Ask the platform administrator.',
+    provado: 'Address confirmed',
+    porProvar: 'Address not confirmed yet. Until it is, you cannot reset your password by email.',
+    enviado: 'We sent a link to {{email}}. It is valid until {{ate}}.',
+    enviar: 'Send confirmation link',
+    reenviar: 'Send another link',
+  },
   aCompletarSso: 'Completing sign-in with the identity provider…',
   mfa: {
     titulo: 'Two-step verification',
