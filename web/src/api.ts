@@ -1117,6 +1117,23 @@ export const acceptEmailVerification = (token: string) =>
     body: JSON.stringify({ token }),
   })
 
+// ---------- Reposição de password pela própria pessoa (E3, migração 0112) ----------
+
+/** Pública. Responde o MESMO para qualquer endereço: só sai um email para uma
+ *  conta com o endereço provado, e a resposta não diz se foi o caso. */
+export const requestPasswordRecovery = (email: string) =>
+  request<{ status: 'accepted' }>('/api/password-resets/request', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+
+/** Pública: quem a usa está fora da conta. Termina TODAS as sessões. */
+export const acceptPasswordReset = (token: string, password: string) =>
+  request<{ sessions_revoked: number }>('/api/password-resets/accept', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
+  })
+
 export interface DirectoryEntry {
   id: string
   kind: string

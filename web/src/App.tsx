@@ -39,6 +39,7 @@ const ApiDocs = lazy(() => import('./pages/ApiDocs'))
 const Legal = lazy(() => import('./pages/Legal'))
 const SharePage = lazy(() => import('./pages/SharePage'))
 const VerificarEmail = lazy(() => import('./pages/VerificarEmail'))
+const ReporPassword = lazy(() => import('./pages/ReporPassword'))
 const Diagram = lazy(() => import('./pages/Diagram'))
 const RecordingPlayer = lazy(() => import('./pages/RecordingPlayer'))
 
@@ -164,6 +165,8 @@ export default function App() {
   if (route.kind === 'share') return <RouteFallback><SharePage token={route.token} /></RouteFallback>
   // A prova do email abre-se sem sessão: o link chega muitas vezes a outro aparelho.
   if (route.kind === 'verificar-email') return <RouteFallback><VerificarEmail token={route.token} /></RouteFallback>
+  // A reposição também: quem a usa está fora da conta.
+  if (route.kind === 'repor-password') return <RouteFallback><ReporPassword token={route.token} /></RouteFallback>
   if (!user) {
     const aoEntrar = (u: User) => {
       setUser(u)

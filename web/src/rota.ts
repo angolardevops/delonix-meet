@@ -30,6 +30,8 @@ export type Route =
   | { kind: 'invite'; token: string }
   /** O link do email de prova do endereço (`#/verificar-email?token=…`). */
   | { kind: 'verificar-email'; token: string }
+  /** O link do email de reposição de password (`#/repor-password?token=…`). */
+  | { kind: 'repor-password'; token: string }
   | { kind: 'diagram'; id: string | null }
   | { kind: 'player'; id: string }
   /** O endereço não é nenhuma rota. Mostra-se e diz-se — não se finge o Início. */
@@ -87,6 +89,8 @@ export function parseHash(hash: string = location.hash): Route {
   if (invite) return { kind: 'invite', token: invite[1] }
   const verificar = h.match(/^#\/verificar-email\?token=([A-Za-z0-9_-]+)$/)
   if (verificar) return { kind: 'verificar-email', token: verificar[1] }
+  const repor = h.match(/^#\/repor-password\?token=([A-Za-z0-9_-]+)$/)
+  if (repor) return { kind: 'repor-password', token: repor[1] }
   const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
   if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
   const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
@@ -145,6 +149,7 @@ export function destinoNoRail(r: Route): NavKey | null {
     case 'share':
     case 'invite':
     case 'verificar-email':
+    case 'repor-password':
     case 'lobby':
     case 'desconhecida':
       return null
@@ -169,6 +174,7 @@ export function trilhoDe(r: Route): Degrau[] {
     case 'share':
     case 'invite':
     case 'verificar-email':
+    case 'repor-password':
       return []
     case 'player':
       return [inicio, { hash: '#/recordings', chave: NAV_I18N.recordings }]
