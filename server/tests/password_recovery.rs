@@ -75,8 +75,12 @@ async fn provar_email(app: &TestApp, user_id: &str) {
 }
 
 async fn pedir(app: &TestApp, email: &str) -> (u16, serde_json::Value) {
-    app.post("/api/password-resets/request", None, json!({ "email": email }))
-        .await
+    app.post(
+        "/api/password-resets/request",
+        None,
+        json!({ "email": email }),
+    )
+    .await
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -87,7 +91,10 @@ async fn sem_correio_recusa_igual_para_qualquer_endereco(db: sqlx::PgPool) {
     let (st2, b2) = pedir(&app, "ninguem@nenhures.ao").await;
     assert_eq!((st1, st2), (422, 422), "{b1} {b2}");
     assert_eq!(b1["code"], "mail.disabled");
-    assert_eq!(b1["code"], b2["code"], "o estado do servidor não distingue contas");
+    assert_eq!(
+        b1["code"], b2["code"],
+        "o estado do servidor não distingue contas"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -103,7 +110,10 @@ async fn a_resposta_e_a_mesma_e_so_o_email_provado_recebe(db: sqlx::PgPool) {
     assert_eq!((st_a, st_b, st_c), (202, 202, 202));
     assert_eq!(a, b, "conta provada e por provar respondem igual");
     assert_eq!(a, c, "conta existente e inexistente respondem igual");
-    assert!(!a.to_string().contains("dlxr_"), "o token nunca vai na resposta: {a}");
+    assert!(
+        !a.to_string().contains("dlxr_"),
+        "o token nunca vai na resposta: {a}"
+    );
 
     assert_eq!(espera_emails(&app, &provada.email, 1).await, 1);
     assert!(
@@ -137,11 +147,19 @@ async fn o_link_repoe_a_password_e_termina_as_sessoes(db: sqlx::PgPool) {
 
     // A password antiga deixou de servir; a nova serve.
     let (st, _) = app
-        .post("/api/auth/login", None, json!({ "email": a.email, "password": PASSWORD }))
+        .post(
+            "/api/auth/login",
+            None,
+            json!({ "email": a.email, "password": PASSWORD }),
+        )
         .await;
     assert_eq!(st, 401, "a password antiga ainda abria a conta");
     let (st, _) = app
-        .post("/api/auth/login", None, json!({ "email": a.email, "password": nova }))
+        .post(
+            "/api/auth/login",
+            None,
+            json!({ "email": a.email, "password": nova }),
+        )
         .await;
     assert_eq!(st, 200);
 
@@ -195,7 +213,10 @@ async fn o_pedido_por_email_revoga_o_token_do_administrador(db: sqlx::PgPool) {
             json!({ "token": do_admin, "password": "Nova-Palavra-Passe-2026!" }),
         )
         .await;
-    assert_eq!(st, 404, "dois tokens válidos para a mesma conta eram duas portas");
+    assert_eq!(
+        st, 404,
+        "dois tokens válidos para a mesma conta eram duas portas"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -206,9 +227,16 @@ async fn um_segundo_pedido_no_mesmo_minuto_nao_envia(db: sqlx::PgPool) {
     pedir(&app, &a.email).await;
     assert_eq!(espera_emails(&app, &a.email, 1).await, 1);
     let (st, _) = pedir(&app, &a.email).await;
-    assert_eq!(st, 202, "a resposta não muda — não se diz que houve um pedido");
+    assert_eq!(
+        st, 202,
+        "a resposta não muda — não se diz que houve um pedido"
+    );
     tokio::time::sleep(Duration::from_millis(1500)).await;
-    assert_eq!(emails_para(&app, &a.email).await, 1, "o segundo não pode ter saído");
+    assert_eq!(
+        emails_para(&app, &a.email).await,
+        1,
+        "o segundo não pode ter saído"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -220,7 +248,10 @@ async fn uma_conta_nao_toca_na_de_outra_org(db: sqlx::PgPool) {
     provar_email(&app, &b.user_id).await;
     pedir(&app, &a.email).await;
     assert_eq!(espera_emails(&app, &a.email, 1).await, 1);
-    assert!(nada_saiu(&app, &b.email).await, "pedir para A não envia nada a B");
+    assert!(
+        nada_saiu(&app, &b.email).await,
+        "pedir para A não envia nada a B"
+    );
     let n_b: i64 =
         sqlx::query_scalar("SELECT count(*) FROM password_resets WHERE user_id = $1::uuid")
             .bind(&b.user_id)
@@ -237,7 +268,11 @@ async fn uma_conta_nao_toca_na_de_outra_org(db: sqlx::PgPool) {
     )
     .await;
     let (st, _) = app
-        .post("/api/auth/login", None, json!({ "email": b.email, "password": PASSWORD }))
+        .post(
+            "/api/auth/login",
+            None,
+            json!({ "email": b.email, "password": PASSWORD }),
+        )
         .await;
     assert_eq!(st, 200, "a password de B não podia ter mudado");
 }
