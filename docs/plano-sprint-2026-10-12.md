@@ -32,8 +32,8 @@ sessões faziam em paralelo sem se verem, e diz onde se tocavam.
 | #296 espinha do correio (ADR-0025, migração 0108) | **fundida** |
 | #297 assistência remota | **fundida** como **ADR-0026** (as duas PRs reclamavam o 0025); o título só ficou certo nesta PR |
 | #286 catraca do ESLint a zero | **fundida**, depois de juntar a `develop` (63 commits atrás; lint 0, `tsc` limpo, `vitest` 1191/1191, CI 7/7) |
-| SSO (C1, C2, A1–A4) no Meet | integrado em `integra/sso-identidade`: migrações **0109/0110**, `domain_verify.rs` no HARNESS, as duas rotas novas no `isolamento.mjs` |
-| SSO no Kaeso (O-1, O-2) | **por empurrar** — repo noutra organização do GitHub |
+| SSO (C1, C2, A1–A4) no Meet | PR **#299**, de `integra/sso-identidade` (1318 testes, 0 falhas): migrações **0109/0110**, `domain_verify.rs` no HARNESS, as duas rotas novas no `isolamento.mjs` |
+| SSO no Kaeso (O-1, O-2) | **empurrado** para `CompllexusDevelopers/Kaeso-Multicompany` (`feat/nk-delonix-meet-port`), sem PR |
 | #251 silêncio na pista (80 ms) | **fora do sprint** até decisão |
 | Worktrees fundidos | oito destruídos, com as branches locais e remotas |
 
