@@ -169,6 +169,9 @@ export default function Room({
     if (!fonte) return
     core.secondSourceRef.current = null
     void shareSource(fonte)
+    // Só `session.callState`: isto corre quando a media LIGA, uma vez. O
+    // `shareSource` está içado acima para estreitar as dependências; pô-lo aqui
+    // repartilhava a segunda fonte a cada render do painel de partilha.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.callState])
 

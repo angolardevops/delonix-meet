@@ -159,6 +159,9 @@ function SessaoDaSala({
     setNoPalco((s) => (([...s].every((id) => ids.has(id)) ? s : new Set([...s].filter((id) => ids.has(id))))))
     setPreEscuta((s) => (([...s].every((id) => ids.has(id)) ? s : new Set([...s].filter((id) => ids.has(id))))))
     if (programaId && !ids.has(programaId)) onPrograma(null)
+    // Só `core.peers`: isto reage a quem SAIU. Com `programaId` nas
+    // dependências, escolher um programa novo corria esta limpeza e tirava do
+    // ecrã quem acabara de entrar nele.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [core.peers])
 
@@ -210,6 +213,9 @@ function SessaoDaSala({
     const quality: Record<string, 'q' | 'h' | 'f'> = {}
     for (const p of convidados) quality[p.peerId] = noPalco.has(p.peerId) ? 'f' : 'q'
     core.signal.send({ type: 'video-interest', peers: convidados.map((p) => p.peerId), quality })
+    // `convidados` é derivado de `core.peers` (que ESTÁ aqui) e novo a cada
+    // render: incluí-lo mandava um `video-interest` por render, e o servidor
+    // trata cada um como uma mudança de qualidade.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ligada, core.topology, core.peers, noPalco])
 

@@ -141,6 +141,11 @@ export function useTranscription(core: RoomCore) {
       }),
     ]
     return () => offs.forEach((off) => off())
+    // Só `signal`, como no useLocalMedia. O `stamp` é recriado a cada render
+    // (fecha sobre o `locale`), e incluí-lo remontava as subscrições sempre.
+    // CUSTO ASSUMIDO: depois de trocar de língua, as horas das linhas já
+    // recebidas ficam no formato antigo até à próxima ligação. Trocámos isso
+    // por não perder legendas no intervalo de um reregisto.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal])
 
@@ -185,6 +190,10 @@ export function useTranscription(core: RoomCore) {
       transcriberRef.current = null
       setInterim('')
     }
+    // As dependências são o que decide LIGAR ou DESLIGAR a transcrição. O `t`,
+    // os setters e o `stamp` são lidos quando o transcritor reporta; incluí-los
+    // reiniciava o transcritor a meio de uma frase, e o que estava a ser
+    // reconhecido perdia-se.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ccOn, transcribing, sttLang, core.roomState, serverAsr])
 

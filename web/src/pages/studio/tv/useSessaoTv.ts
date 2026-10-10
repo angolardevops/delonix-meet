@@ -256,6 +256,9 @@ export function useSessaoTv(p: PropsDaSessao) {
       m.destruir()
       return null
     }
+    // Só `t`, para as mensagens de erro. Os `palco.microfone(s)` mudam quando
+    // alguém sobe ao palco, e recriar este callback aí desmontava a mesa de som
+    // da cena a decorrer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t])
 

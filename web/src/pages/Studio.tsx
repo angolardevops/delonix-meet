@@ -394,6 +394,9 @@ export default function Studio() {
   useEffect(() => {
     if (!online || !porEnviar.length) return
     void enviarFila()
+    // `enviarFila` é recriada a cada render: incluí-la tentava esvaziar a fila
+    // em todos os renders, e um upload em curso levava um segundo por cima. As
+    // duas dependências são a condição real — há rede E há coisas por enviar.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online, porEnviar.length])
 

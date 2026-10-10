@@ -82,6 +82,10 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
       }),
     ]
     return () => offs.forEach((off) => off())
+    // Só o que é estável: `core` inteiro nas dependências remontava estas
+    // subscrições a cada mudança de estado da sala (ver useLocalMedia para o
+    // custo disso). O `core.levelsRef` entra porque é um ref — estável — e é o
+    // único campo de `core` que estes handlers usam.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal, setPeers, core.levelsRef])
 

@@ -95,6 +95,11 @@ export function useLocalMedia(core: RoomCore) {
       signal.on('room-settings', (m) => setAllowUnmute(m.allow_unmute ?? true)),
     ]
     return () => offs.forEach((off) => off())
+    // Só `signal`: estes handlers registam-se uma vez por LIGAÇÃO e o cleanup
+    // tira-os. Com `t` ou `setStatus` nas dependências, trocar de língua a meio
+    // de uma chamada desmontava e reregistava todos os handlers — e os eventos
+    // que chegassem no intervalo perdiam-se. O `core.localStreamRef` é um ref:
+    // estável por definição, e o ESLint só o acusa por vir dentro de `core`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal])
 

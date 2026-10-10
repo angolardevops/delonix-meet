@@ -61,6 +61,9 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
       }),
     ]
     return () => offs.forEach((off) => off())
+    // Só `signal`, como no useLocalMedia: `t`, `setStatus` e `setPresentation`
+    // são lidos quando o evento chega, e pô-los nas dependências custava
+    // reregistar a partilha de ecrã inteira a cada mudança de língua.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal])
 
