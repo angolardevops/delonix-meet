@@ -1087,6 +1087,24 @@ export const revokeInvitation = (orgId: string, invitationId: string) =>
 /** O link que o admin copia: o token só existe na resposta que o criou. */
 export const invitationLink = (token: string) => `${location.origin}${location.pathname}#/invite/${token}`
 
+/** Reposição de password emitida por um administrador (#288). O `token` vem
+ *  UMA só vez, nesta resposta; a base guarda só o hash. */
+export interface IssuedPasswordReset {
+  id: string
+  user_id: string
+  expires_at: string
+  token: string
+  delivery_channel: string
+}
+
+export const issuePasswordReset = (orgId: string, userId: string) =>
+  request<IssuedPasswordReset>(`/api/orgs/${orgId}/users/${userId}/password-reset`, { method: 'POST', body: '{}' })
+
+/** O link que o administrador entrega: abre a mesma página pública da
+ *  reposição por email (`#/repor-password`). O token vai no FRAGMENTO. */
+export const passwordResetLink = (token: string) =>
+  `${location.origin}${location.pathname}#/repor-password?token=${token}`
+
 /** Quem tem sessão aceita o convite (o token é a credencial, de uso único). */
 export const acceptInvitation = (token: string) =>
   request<{ org_id: string; role_id: string; access_expires_at?: string | null }>('/api/invitations/accept', {
