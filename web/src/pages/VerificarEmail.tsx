@@ -8,7 +8,7 @@
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError, acceptEmailVerification } from '../api'
+import { ApiError, acceptEmailVerification, apiErrorCode } from '../api'
 import { Alert, Button, Card } from '../ui/kit'
 import Moldura from './publico/Moldura'
 
@@ -16,8 +16,7 @@ type Estado = { kind: 'inicio' } | { kind: 'feito'; email: string } | { kind: 'e
 
 /** O código do servidor → a frase que a pessoa lê. */
 function chaveDoErro(e: unknown): string {
-  const codigo = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined
-  switch (codigo) {
+  switch (apiErrorCode(e)) {
     case 'email_verification.expired':
       return 'auth.emailProva.erroExpirado'
     case 'email_verification.email_changed':

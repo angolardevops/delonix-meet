@@ -7,11 +7,11 @@
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError, type EmailVerificationStatus, emailVerificationStatus, requestEmailVerification } from '../api'
+import { ApiError, apiErrorCode, type EmailVerificationStatus, emailVerificationStatus, requestEmailVerification } from '../api'
 import { Alert, Button, StatusBadge } from '../ui/kit'
 
 function chaveDoErro(e: unknown): string {
-  const codigo = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined
+  const codigo = apiErrorCode(e)
   if (codigo === 'mail.disabled' || codigo === 'mail.public_url_missing') return 'auth.emailProva.semCorreio'
   if (e instanceof ApiError && e.status === 429) return 'auth.emailProva.erroMuitos'
   return 'ui.erroGenerico'

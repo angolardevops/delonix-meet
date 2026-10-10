@@ -58,7 +58,7 @@ async fn sem_correio_recusa_e_nao_cria_token(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 422, "{body}");
-    assert_eq!(body["error"], "mail.disabled", "{body}");
+    assert_eq!(body["code"], "mail.disabled", "{body}");
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM email_verifications")
         .fetch_one(&app.state.db)
         .await
@@ -83,7 +83,7 @@ async fn sem_public_url_recusa_em_vez_de_adivinhar_o_host(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 422, "{body}");
-    assert_eq!(body["error"], "mail.public_url_missing", "{body}");
+    assert_eq!(body["code"], "mail.public_url_missing", "{body}");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -141,7 +141,7 @@ async fn o_link_do_email_prova_o_endereco_uma_vez(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 404, "{again}");
-    assert_eq!(again["error"], "email_verification.not_found");
+    assert_eq!(again["code"], "email_verification.not_found");
     let (st, inventado) = app
         .post(
             "/api/email-verifications/accept",
@@ -149,7 +149,7 @@ async fn o_link_do_email_prova_o_endereco_uma_vez(db: sqlx::PgPool) {
             json!({ "token": "dlxv_00" }),
         )
         .await;
-    assert_eq!((st, &inventado["error"]), (404, &again["error"]));
+    assert_eq!((st, &inventado["code"]), (404, &again["code"]));
 
     // Já provado: pedir outra vez não envia nada.
     let (st, body) = app
@@ -278,7 +278,7 @@ async fn um_link_expirado_nao_prova_nada(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 422, "{body}");
-    assert_eq!(body["error"], "email_verification.expired");
+    assert_eq!(body["code"], "email_verification.expired");
     assert!(!verificado(&app, &a.user_id).await);
 }
 
