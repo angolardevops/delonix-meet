@@ -132,6 +132,13 @@ describe('parseHash', () => {
     }
   })
 
+  it('#/login é o ecrã de entrada — não «este endereço não existe»', () => {
+    expect(parseHash('#/login')).toEqual({ kind: 'login' })
+    expect(parseHash('#/login?sso_error=sso.domain_not_verified')).toEqual({ kind: 'login' })
+    expect(chaveDoTitulo(parseHash('#/login'))).toBe('auth.entrar.titulo')
+    expect(trilhoDe(parseHash('#/login'))).toEqual([])
+  })
+
   it('cada ecrã da consola tem nome para o separador do browser', () => {
     expect(chaveDoTitulo(parseHash('#/admin'))).toBe('shell.nav.administracao')
     expect(chaveDoTitulo(parseHash('#/recordings/3f2b1c4d-5e6f-7a8b-9c0d-ddddeeeeffff'))).toBe('shell.nav.gravacoes')
