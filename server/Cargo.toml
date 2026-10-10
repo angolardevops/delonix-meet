@@ -171,6 +171,7 @@ webauthn-rs = { version = "=0.5.5", features = ["danger-allow-state-serialisatio
 # Exportação «os meus dados»: um ZIP sem compressão (gravações vão como links;
 # o resto é texto pequeno). Sem `deflate`/`bzip2`/`aes`: menos código nativo.
 zip = { version = "2", default-features = false }
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "rustls-native-certs"] }
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

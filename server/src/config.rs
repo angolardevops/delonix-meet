@@ -155,6 +155,17 @@ pub struct Config {
     /// DENTRO da org (ver migração 0064); sem isto, o ramal "101" da Acme e o
     /// "101" da Zeta colidiriam no mesmo directório SIP.
     pub voice_ramais_domain_suffix: String,
+    /// Só laboratório e testes (ADR-0023): o URL do operador a que o servidor entrega o pedido de «acordar»
+    /// de um aparelho `lab`. Vazio = o fornecedor `lab` não está configurado (não acorda ninguém).
+    pub push_lab_url: Option<String>,
+    /// O serviço `delonix-push` (ADR-0023): URL base (`PUSH_DELONIX_URL`) e chave de servidor do projecto
+    /// (`PUSH_DELONIX_KEY`, segredo). Qualquer um ausente = o fornecedor `delonix` não está configurado.
+    pub push_delonix_url: Option<String>,
+    pub push_delonix_key: Option<String>,
+    /// Quantos segundos uma chamada que o SERVIDOR origina para um ramal sem registo espera que o aparelho acorde
+    /// (push) e se registe (ADR-0023). 0 (por omissão) desliga. É a contraparte, para chamadas do servidor, do
+    /// `DELONIX_PUSH_WAIT_SECS` do FreeSWITCH, que só vê as chamadas que passam pelo seu dialplan.
+    pub push_wait_secs: u32,
     /// Número curto RESERVADO que um ramal marca para entrar numa reunião
     /// (`VOICE_MEETING_ACCESS_NUMBER`, 3–5 dígitos sem zero à esquerda; por
     /// omissão `8000`). O FreeSWITCH não o conhece: pergunta-o ao servidor em
@@ -197,6 +208,29 @@ pub struct Config {
     /// media; sem relay-only o ICE liga por um par que passa o check mas fica
     /// preto. `FORCE_TURN_RELAY=1` exige coturn alcançável. Off em local.
     pub force_turn_relay: bool,
+    /// Relay de correio do operador (`SMTP_HOST`). Vazio => **o correio fica
+    /// desligado** e quem enfileira recebe-o dito, em vez de enfileirar
+    /// mensagens que ninguém envia. O D7 (2026-10-09, ADR-0025) escolheu o
+    /// relay primeiro: não há SMTP por organização, e por isso também não há
+    /// host escolhido pelo inquilino — o `net_guard` só guarda URLs HTTP e não
+    /// cobre uma ligação SMTP.
+    pub smtp_host: Option<String>,
+    /// Porta do relay (`SMTP_PORT`, 587, 1..=65535). 587 = submissão com
+    /// STARTTLS, que é o que o `smtp_starttls` assume.
+    pub smtp_port: u16,
+    /// Conta no relay (`SMTP_USERNAME`). Vazio => entrega sem autenticação,
+    /// que só faz sentido num relay da rede interna.
+    pub smtp_username: Option<String>,
+    /// Password no relay (`SMTP_PASSWORD`). Nunca aparece em log nem em
+    /// resposta de API.
+    pub smtp_password: Option<String>,
+    /// Remetente (`SMTP_FROM`), p.ex. `Delonix Meet <nao-responda@exemplo.ao>`.
+    /// Sem ele o correio fica desligado: uma mensagem sem remetente é recusada
+    /// por qualquer relay sério.
+    pub smtp_from: Option<String>,
+    /// `SMTP_STARTTLS=0` desliga o STARTTLS (1 por omissão). Só para um relay
+    /// em `localhost`: sem isto a password da conta viaja em claro.
+    pub smtp_starttls: bool,
     /// URL do Ollama in-cluster (LLM local — soberania: o texto nunca sai do
     /// datacenter). Vazio => IA desligada, fail-open: o MoM fica por regras
     /// (cliente) e a tradução de legendas não aparece.
@@ -606,6 +640,13 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
+            push_lab_url: opt("PUSH_LAB_URL"),
+            push_delonix_url: opt("PUSH_DELONIX_URL"),
+            push_delonix_key: opt("PUSH_DELONIX_KEY"),
+            push_wait_secs: opt("PUSH_WAIT_SECS")
+                .and_then(|v| v.parse().ok())
+                .filter(|n| *n <= 60)
+                .unwrap_or(0),
             voice_ramais_domain_suffix: opt("VOICE_RAMAIS_DOMAIN_SUFFIX")
                 .unwrap_or_else(|| "ramais.delonix.meet".into()),
             voice_meeting_access_number: {
@@ -677,6 +718,12 @@ impl Config {
                 65_535,
             ) as u16,
             force_turn_relay: src.var("FORCE_TURN_RELAY").ok().as_deref() == Some("1"),
+            smtp_host: opt("SMTP_HOST"),
+            smtp_port: bounded_env(src, "SMTP_PORT", 587, 1, 65_535) as u16,
+            smtp_username: opt("SMTP_USERNAME"),
+            smtp_password: opt("SMTP_PASSWORD"),
+            smtp_from: opt("SMTP_FROM"),
+            smtp_starttls: src.var("SMTP_STARTTLS").ok().as_deref() != Some("0"),
             ollama_url: src.var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
             ollama_model_translate: src
                 .var("OLLAMA_MODEL_TRANSLATE")

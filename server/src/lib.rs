@@ -26,6 +26,7 @@ mod extension_provisioning;
 mod fair_slots;
 pub mod grpc;
 mod guests;
+mod mail;
 mod media_probe;
 mod meetings;
 mod meetings_v1;
@@ -93,13 +94,30 @@ mod usage;
 mod users;
 mod voice;
 mod voice_caller;
+mod voice_devices;
 mod webhooks;
 mod whiteboards;
 
+/// A volta da fila do resumo da acta, exposta aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use ai::mom_summary_due;
 /// A fila das exportações e a sua reivindicação, expostas aos testes de
 /// integração sem abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
 pub use data_exports::run_queue as data_export_run_queue;
 pub use dial_outs::caller_of_call as dial_outs_caller_of_call;
+/// A espinha do correio, exposta aos testes de integração (D7, ADR-0025): a
+/// caixa de saída e as duas filas provam-se contra Postgres real, com um relay
+/// que não existe de propósito — o comportamento da fila não depende de haver
+/// correio a sair no CI.
+pub use mail::{
+    enabled as mail_enabled, enqueue as mail_enqueue, send_due as mail_send_due,
+    sweep as mail_sweep, Outgoing as MailOutgoing, Purpose as MailPurpose,
+};
+/// A varredura de lugares expirados (R91) e o aviso de sala vazia que ela
+/// dispara — exposta pelo mesmo motivo: `TestApp` não arranca o cron de
+/// `run()`, e esperar por um temporizador real tornaria os testes lentos e
+/// pouco deterministas.
+pub use meetings::sweep_expired_seats;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
@@ -115,6 +133,8 @@ pub use recording_chapters::auto_chapters_sweep;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
+/// O varredor que revoga no delonix-push os aparelhos de sessões terminadas, exposto aos testes (ADR-0023).
+pub use voice_devices::reconcile_delonix;
 /// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
 pub use webhooks::retry_due as webhook_retry_due;
 /// O registo transaccional das entregas e o tipo do evento, expostos aos testes
@@ -311,6 +331,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
         .route(
             "/internal/v1/voice/ivr/dialplan-did",
             post(ramais::ivr_dialplan_did),
+        )
+        // O FreeSWITCH pergunta se há aparelhos a acordar para um ramal sem registo, e o ramal só toca
+        // depois de se registar (`ramais_dial.lua`, S-02; ADR-0023).
+        .route(
+            "/internal/v1/voice/push/wake",
+            post(voice_devices::ivr_push_wake),
         )
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
         // `mod_xml_curl`. Mesmo segredo interno do IVR.
@@ -935,6 +961,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(directory::resend_invitation),
         )
         // O token é a credencial: rate-limit por IP como no login.
+        // Reposição de password: o administrador emite (autenticado,
+        // `admin.manage_accounts` e sem escalada), a pessoa usa SEM sessão —
+        // está fora da conta. A pública leva o mesmo limite por IP do
+        // `/api/invitations/accept`, pela mesma razão: é uma credencial.
+        .route(
+            "/api/orgs/{org_id}/users/{user_id}/password-reset",
+            post(directory::issue_password_reset),
+        )
+        .route(
+            "/api/password-resets/accept",
+            post(directory::accept_password_reset).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
         .route(
             "/api/invitations/accept",
             post(directory::accept_invitation).layer(middleware::from_fn_with_state(
@@ -1186,6 +1227,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/my-extension/provisioning-ticket",
             post(extension_provisioning::issue_my_ticket),
+        )
+        // Os aparelhos do ramal e o *wake* por push (ADR-0023, S-01): a pessoa regista e desliga os SEUS;
+        // o administrador lista e desliga os de qualquer ramal da organização.
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices",
+            get(voice_devices::list_my_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices/{device_id}",
+            axum::routing::put(voice_devices::put_my_device).delete(voice_devices::delete_my_device),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices",
+            get(voice_devices::list_extension_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices/{device_id}",
+            axum::routing::delete(voice_devices::delete_extension_device),
         )
         .route(
             "/api/orgs/{org_id}/extensions/{id}/provisioning-ticket",
@@ -1807,7 +1866,10 @@ pub async fn run() {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 ticker.tick().await;
-                let n = state.hub.expire_disconnected(janela);
+                // Também avisa `meetings::on_room_emptied` para cada sala que
+                // isto deixou vazia — sinal fiável de "a reunião acabou",
+                // independente de topologia/SFU.
+                let n = crate::meetings::sweep_expired_seats(&state, janela).await;
                 if n > 0 {
                     state
                         .metrics
@@ -1854,6 +1916,23 @@ pub async fn run() {
         Duration::from_secs(300),
         quarantine_stop.clone(),
     ));
+
+    // Cron: aparelhos de push (delonix-push) cuja sessão terminou ou expirou deixam de se poder ligar ao serviço
+    // (ADR-0023). Sem o serviço configurado não faz nada.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match voice_devices::reconcile_delonix(&state).await {
+                    0 => {}
+                    n => tracing::info!(revogados = n, "aparelhos revogados no delonix-push"),
+                }
+            }
+        });
+    }
 
     // Cron: retenção de gravações (DLP-lite) a cada hora — apaga as que
     // passaram do prazo configurado por organização.
@@ -2114,6 +2193,28 @@ pub async fn run() {
                 let a = dial_outs::finish_stale_all(&db).await?;
                 let b = telephony_service::finish_stale_all(&db).await?;
                 Ok((a + b) as usize)
+            }
+        });
+    }
+
+    // Correio (D7, ADR-0025): a cada 15 s manda o que está na caixa de saída e
+    // repete o que falhou. No-op sem `SMTP_HOST`/`SMTP_FROM` — o relay é do
+    // operador e um servidor sem ele simplesmente não envia.
+    {
+        let s = state.clone();
+        filas.levanta("mail_send", Duration::from_secs(15), move || {
+            let s = s.clone();
+            async move { mail::send_due(&s).await }
+        });
+    }
+    // As abandonadas (um processo que morreu a meio de um envio) e a retenção.
+    {
+        let db = state.db.clone();
+        filas.levanta("mail_sweep", Duration::from_secs(120), move || {
+            let db = db.clone();
+            async move {
+                let (reagendadas, apagadas) = mail::sweep(&db).await?;
+                Ok((reagendadas + apagadas) as usize)
             }
         });
     }

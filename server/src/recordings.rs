@@ -94,6 +94,7 @@ pub struct WebmBytes(Vec<u8>);
     components(schemas(
         Recording,
         RecordingItem,
+        RecordingSearchItem,
         RecordingPage,
         LibraryResponse,
         UpdateRecordingReq,
@@ -208,15 +209,27 @@ pub struct RecordingItem {
     pub snippet: Option<String>,
 }
 
+/// Um item da biblioteca com o acréscimo de pesquisa. Só documentação — a
+/// resposta é `search::SearchItem<RecordingItem>`, que achata o item e junta
+/// `search` quando há `q`. Os atributos serde são os MESMOS do `SearchItem`,
+/// para o documentado e o serializado não divergirem.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RecordingSearchItem {
+    #[serde(flatten)]
+    pub item: RecordingItem,
+    /// Só com `q`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search: Option<crate::search::ItemSearch>,
+}
+
 /// Página da biblioteca (com `page_size`, `page_token`, `filter`, `filters`,
 /// `group_by` ou `order_by`): o envelope do ADR-0007
 /// (`docs/reference/pesquisa.md` §2.3). Só documentação — a resposta é
-/// `search::SearchPage`, com cada item acompanhado de `search: {score,
-/// highlight}` quando há `q`. Continua a ter `items` e `next_page_token`, como a
+/// `search::SearchPage`. Continua a ter `items` e `next_page_token`, como a
 /// página de antes; `total`, `total_kind` e `groups` são acrescento.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RecordingPage {
-    pub items: Vec<RecordingItem>,
+    pub items: Vec<RecordingSearchItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_page_token: Option<String>,
     pub total: i64,

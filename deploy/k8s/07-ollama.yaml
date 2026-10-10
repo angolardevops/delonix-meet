@@ -4,8 +4,10 @@
 #
 # Em kind/dev corre em CPU com um modelo pequeno (qwen2.5:1.5b, ~1GB) — o pull
 # acontece no postStart e fica persistido no PVC. Em produção, subir o modelo
-# via OLLAMA_MODEL_* no configmap (ex.: qwen2.5:7b) e, com GPU, ver a variante
-# do role Ansible (ollama_gpu=true) que adiciona nvidia.com/gpu aos limits.
+# via OLLAMA_MODEL_* no configmap (ex.: qwen2.5:7b) e, com GPU, ligar o
+# componente kustomize deploy/k8s-overlays/components/ollama-gpu (ADR-0024) —
+# acrescenta nodeSelector/toleration/runtimeClassName/limits.nvidia.com/gpu
+# por patch declarativo. Desligado por omissão: sem hardware de GPU ainda.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -42,7 +44,9 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: ollama
-          image: ollama/ollama:latest
+          # Fixada por versão (não :latest — artefacto imutável, doutrina do
+          # repo). 0.40.2 é a última estável confirmada a 2026-10-09.
+          image: ollama/ollama:0.40.2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 11434

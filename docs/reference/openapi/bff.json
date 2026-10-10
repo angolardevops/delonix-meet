@@ -12,6 +12,21 @@
         ],
         "type": "object"
       },
+      "AcceptPasswordResetReq": {
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "type": "object"
+      },
       "AcceptedInvitation": {
         "properties": {
           "access_expires_at": {
@@ -33,6 +48,20 @@
         "required": [
           "org_id",
           "role_id"
+        ],
+        "type": "object"
+      },
+      "AcceptedPasswordReset": {
+        "properties": {
+          "sessions_revoked": {
+            "description": "Sessões terminadas pela reposição. Todas: a pessoa entra de novo.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessions_revoked"
         ],
         "type": "object"
       },
@@ -486,24 +515,6 @@
         ],
         "type": "object"
       },
-      "ApiCreateRoomReq": {
-        "properties": {
-          "e2ee": {
-            "type": "boolean"
-          },
-          "name": {
-            "description": "Omisso ⇒ «Reunião (API)»; cortado a 120 caracteres.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "waiting_room": {
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
       "ApiKeyInfo": {
         "description": "Chave de API como a lista a mostra. Nunca leva a chave nem o hash.",
         "properties": {
@@ -746,24 +757,6 @@
         ],
         "type": "object"
       },
-      "AtPdu": {
-        "description": "Um PDU pronto para `AT+CMGS=<tpdu_len>` seguido de `<hex>` e Ctrl-Z.",
-        "properties": {
-          "hex": {
-            "type": "string"
-          },
-          "tpdu_len": {
-            "description": "Octetos do TPDU, SEM o octeto do SMSC — é o número que o `AT+CMGS` pede.",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "hex",
-          "tpdu_len"
-        ],
-        "type": "object"
-      },
       "AttendanceLog": {
         "properties": {
           "available": {
@@ -826,23 +819,6 @@
         "required": [
           "access_token",
           "user"
-        ],
-        "type": "object"
-      },
-      "BalanceReport": {
-        "properties": {
-          "amount": {
-            "description": "Decimal (`\"2140.00\"`).",
-            "type": "string"
-          },
-          "currency": {
-            "description": "`AOA` | `USD`.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "amount",
-          "currency"
         ],
         "type": "object"
       },
@@ -1383,51 +1359,6 @@
         ],
         "type": "object"
       },
-      "ClaimResp": {
-        "properties": {
-          "messages": {
-            "items": {
-              "$ref": "#/components/schemas/ClaimedMessage"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "messages"
-        ],
-        "type": "object"
-      },
-      "ClaimedMessage": {
-        "properties": {
-          "body": {
-            "type": "string"
-          },
-          "device_key": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "pdus": {
-            "items": {
-              "$ref": "#/components/schemas/AtPdu"
-            },
-            "type": "array"
-          },
-          "to": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "device_key",
-          "to",
-          "body",
-          "pdus"
-        ],
-        "type": "object"
-      },
       "CodigoReq": {
         "properties": {
           "code": {
@@ -1478,31 +1409,6 @@
         "required": [
           "software"
         ],
-        "type": "object"
-      },
-      "ConcurrencyLimit": {
-        "properties": {
-          "max_concurrent_participants": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "ConcurrencyLimitReq": {
-        "properties": {
-          "max_concurrent_participants": {
-            "description": "Participantes concorrentes que a organização pode ter em cada nó de\nmedia. `null` = o valor por omissão do nó (`ORG_MAX_PARTICIPANTS`).",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        },
         "type": "object"
       },
       "ConflictCheckReq": {
@@ -2436,24 +2342,6 @@
         },
         "type": "object"
       },
-      "DeleteMeetingResp": {
-        "description": "Resposta de `DELETE /api/v1/meetings/{id}`.",
-        "properties": {
-          "ok": {
-            "description": "Sempre `true`.",
-            "type": "boolean"
-          },
-          "room_deleted": {
-            "description": "`false` quando a sala foi mantida por ter gravações (ou a reunião não\ntinha sala).",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "ok",
-          "room_deleted"
-        ],
-        "type": "object"
-      },
       "Delivery": {
         "properties": {
           "queued": {
@@ -2470,6 +2358,28 @@
         "required": [
           "queued",
           "skipped"
+        ],
+        "type": "object"
+      },
+      "DelonixPushGrant": {
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "device_secret": {
+            "description": "Credencial do aparelho para `GET {url}/v1/connect`. Não volta a ser mostrada.",
+            "type": "string"
+          },
+          "url": {
+            "description": "URL base do serviço delonix-push.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "device_id",
+          "device_secret"
         ],
         "type": "object"
       },
@@ -2563,6 +2473,29 @@
           "app_version"
         ],
         "type": "object"
+      },
+      "DeviceCreated": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DeviceInfo"
+          },
+          {
+            "properties": {
+              "delonix_push": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DelonixPushGrant"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "A resposta a um aparelho NOVO. Com o fornecedor `delonix` e o serviço configurado, traz o que a app precisa\npara se ligar ao delonix-push; **o segredo só aparece aqui, uma vez**."
       },
       "DeviceInfo": {
         "properties": {
@@ -2665,99 +2598,6 @@
         ],
         "type": "object"
       },
-      "DeviceReport": {
-        "properties": {
-          "balance": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/BalanceReport",
-                "description": "Saldo do SIM, se o agente o consulta (USSD). Ausente mantém o último."
-              }
-            ]
-          },
-          "battery_percent": {
-            "description": "Bateria de um telefone-gateway (0-100), se o agente a lê.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "capable": {
-            "type": "boolean"
-          },
-          "device_key": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "manufacturer": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "operator_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "port": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "product": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "product_id": {
-            "type": "string"
-          },
-          "reason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "serial": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "signal_percent": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "transport": {
-            "type": "string"
-          },
-          "vendor_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "device_key",
-          "vendor_id",
-          "product_id",
-          "kind",
-          "transport",
-          "capable"
-        ],
-        "type": "object"
-      },
       "DeviceReq": {
         "additionalProperties": false,
         "properties": {
@@ -2771,33 +2611,6 @@
             "type": "string"
           }
         },
-        "type": "object"
-      },
-      "DevicesReq": {
-        "properties": {
-          "devices": {
-            "items": {
-              "$ref": "#/components/schemas/DeviceReport"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "devices"
-        ],
-        "type": "object"
-      },
-      "DevicesResp": {
-        "properties": {
-          "poll_interval_secs": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "poll_interval_secs"
-        ],
         "type": "object"
       },
       "DiagramDetail": {
@@ -4561,39 +4374,6 @@
         ],
         "type": "object"
       },
-      "InviteeReq": {
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "email"
-        ],
-        "type": "object"
-      },
-      "InviteeResp": {
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "user_id": {
-            "format": "uuid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email",
-          "user_id"
-        ],
-        "type": "object"
-      },
       "InviteeResponse": {
         "properties": {
           "decline_reason": {
@@ -4626,6 +4406,38 @@
         ],
         "type": "object"
       },
+      "IssuedPasswordReset": {
+        "properties": {
+          "delivery_channel": {
+            "description": "`manual`: quem emite entrega o token. Quando o correio existir\n(D7), passa a poder ser `email`.",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "token": {
+            "description": "Aparece **uma só vez**, nesta resposta. A base guarda só o hash.",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "expires_at",
+          "token",
+          "delivery_channel"
+        ],
+        "type": "object"
+      },
       "ItemSearch": {
         "description": "O que acompanha um item quando há `q`.",
         "properties": {
@@ -4643,18 +4455,6 @@
         "required": [
           "score",
           "highlight"
-        ],
-        "type": "object"
-      },
-      "JoinBotReq": {
-        "properties": {
-          "bot_name": {
-            "description": "Nome mostrado na sala; vazio ⇒ «AI Assistant»; cortado a 40 caracteres.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "bot_name"
         ],
         "type": "object"
       },
@@ -4984,121 +4784,6 @@
         ],
         "type": "object"
       },
-      "MediaNode": {
-        "properties": {
-          "accepting_new_rooms": {
-            "description": "Este nó aceita salas NOVAS de QUALQUER inquilino agora: está a servir (nem\na drenar nem sem batimento) e abaixo do limite de ocupação\n(`NEW_ROOM_LOAD_PERCENT`). Acima dele só aceita as de quem ainda está\nabaixo da sua parte justa, e isso decide-se por pedido, não aqui.\nCalculado do último batimento, por isso pode atrasar até um intervalo\n(15 s) face ao que o nó decide à entrada.",
-            "type": "boolean"
-          },
-          "edition": {
-            "type": "string"
-          },
-          "hostname": {
-            "type": "string"
-          },
-          "last_seen_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "live_broadcasts": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "load": {
-            "description": "Ocupação 0–1 face à capacidade declarada; ausente sem capacidade.",
-            "format": "double",
-            "type": [
-              "number",
-              "null"
-            ]
-          },
-          "node_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "peer_capacity": {
-            "description": "Capacidade declarada (`NODE_PEER_CAPACITY`), se houver.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "peers": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "rooms": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "started_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "status": {
-            "description": "`serving` | `draining` | `unreachable` — derivado do último batimento.",
-            "type": "string"
-          },
-          "version": {
-            "type": "string"
-          },
-          "ws_connections": {
-            "format": "int32",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "node_id",
-          "hostname",
-          "version",
-          "edition",
-          "started_at",
-          "last_seen_at",
-          "status",
-          "rooms",
-          "peers",
-          "ws_connections",
-          "live_broadcasts",
-          "accepting_new_rooms"
-        ],
-        "type": "object"
-      },
-      "MediaNodeList": {
-        "properties": {
-          "draining": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/MediaNode"
-            },
-            "type": "array"
-          },
-          "peers": {
-            "description": "Participantes em nós que respondem.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "serving": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "unreachable": {
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "serving",
-          "draining",
-          "unreachable",
-          "peers"
-        ],
-        "type": "object"
-      },
       "Meeting": {
         "properties": {
           "created_at": {
@@ -5332,82 +5017,6 @@
           "invitee_count"
         ],
         "type": "object"
-      },
-      "MeetingResp": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/SessionOptions"
-          },
-          {
-            "properties": {
-              "duration_min": {
-                "format": "int32",
-                "type": "integer"
-              },
-              "existing": {
-                "description": "`true` quando o pedido reencontrou uma reunião já existente pela\n`external_ref` em vez de criar uma nova.",
-                "type": "boolean"
-              },
-              "external_ref": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "host_email": {
-                "type": "string"
-              },
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "invitees": {
-                "description": "Convidados efectivamente registados (email -> id do utilizador).",
-                "items": {
-                  "$ref": "#/components/schemas/InviteeResp"
-                },
-                "type": "array"
-              },
-              "join_url": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string"
-              },
-              "room_code": {
-                "type": "string"
-              },
-              "skipped": {
-                "description": "Emails NÃO registados e porquê. Nunca falha o pedido por causa de um\nconvidado — o link tem de sair na mesma.",
-                "items": {
-                  "$ref": "#/components/schemas/SkippedInvitee"
-                },
-                "type": "array"
-              },
-              "starts_at": {
-                "format": "date-time",
-                "type": "string"
-              },
-              "title": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "title",
-              "starts_at",
-              "duration_min",
-              "kind",
-              "room_code",
-              "join_url",
-              "host_email",
-              "invitees",
-              "skipped",
-              "existing"
-            ],
-            "type": "object"
-          }
-        ]
       },
       "MeetingRoom": {
         "properties": {
@@ -6053,31 +5662,6 @@
         ],
         "type": "object"
       },
-      "ObjectStoreView": {
-        "description": "O armazenamento de objectos, como o operador o pode ver: endereço e bucket,\n**nunca** as chaves. Vem do ambiente (Secret do cluster), não da tabela.",
-        "properties": {
-          "bucket": {
-            "type": "string"
-          },
-          "endpoint": {
-            "type": "string"
-          },
-          "region": {
-            "type": "string"
-          },
-          "used_for_recordings": {
-            "description": "Hoje é sempre `false`: as gravações continuam a ser escritas em disco e\nservidas de lá. O ADR-0020 diz porquê — ligar o gravador sem um MinIO\nreal onde medir deixaria o produto num estado que ninguém exercitou.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "endpoint",
-          "bucket",
-          "region",
-          "used_for_recordings"
-        ],
-        "type": "object"
-      },
       "OdooConfig": {
         "properties": {
           "odoo_admin_id": {
@@ -6148,40 +5732,6 @@
         },
         "required": [
           "odoo_enabled"
-        ],
-        "type": "object"
-      },
-      "OdooDirectoryUser": {
-        "description": "Membro da organização, como o Odoo o vê.",
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "odoo_uid": {
-            "description": "`null` se a conta não veio do Odoo.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "role": {
-            "description": "Papel na organização (`admin` | `member`).",
-            "type": "string"
-          },
-          "username": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "email",
-          "username",
-          "role"
         ],
         "type": "object"
       },
@@ -6261,57 +5811,6 @@
         ],
         "type": "object"
       },
-      "OdooUserEntry": {
-        "properties": {
-          "department_id": {
-            "description": "Departamento no Odoo (`hr.department`): o id e o nome.",
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "department_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "email": {
-            "type": "string"
-          },
-          "groups": {
-            "description": "Ids externos dos grupos (`modulo.nome`) — mapeiam papéis (ADR-0008 §9).\nAusente = não enviados: o papel não muda.",
-            "items": {
-              "type": "string"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "is_admin": {
-            "type": "boolean"
-          },
-          "mobile_phone": {
-            "description": "`hr.employee.mobile_phone` / `work_phone`. Aditivos à v1: ausentes não\nmexem no número; `false`/`\"\"` apagam o que veio do Odoo; um número\neditado à mão no Delonix nunca é sobrescrito (migração 0060)."
-          },
-          "name": {
-            "type": "string"
-          },
-          "odoo_uid": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "work_phone": {}
-        },
-        "required": [
-          "odoo_uid",
-          "name",
-          "email"
-        ],
-        "type": "object"
-      },
       "OperatorInfo": {
         "properties": {
           "configured": {
@@ -6336,199 +5835,6 @@
           "prefixes",
           "configured"
         ],
-        "type": "object"
-      },
-      "OperatorLoginSettings": {
-        "description": "Configuração de LOGIN da plataforma — a mesma forma no `GET` e no `PUT`.",
-        "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "hide_org_creation",
-          "hide_sso_button"
-        ],
-        "type": "object"
-      },
-      "OperatorLoginSettingsReq": {
-        "properties": {
-          "hide_org_creation": {
-            "type": "boolean"
-          },
-          "hide_sso_button": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "hide_org_creation",
-          "hide_sso_button"
-        ],
-        "type": "object"
-      },
-      "OperatorOrgDetail": {
-        "description": "Detalhe de uma organização para o operador: os tectos de plano MAIS o uso\nreal (lugares ocupados, bytes ocupados).",
-        "properties": {
-          "org": {
-            "$ref": "#/components/schemas/OperatorOrgSummary"
-          },
-          "seats": {
-            "$ref": "#/components/schemas/SeatSummary"
-          },
-          "storage": {
-            "$ref": "#/components/schemas/OrgStorageUsage"
-          }
-        },
-        "required": [
-          "org",
-          "seats",
-          "storage"
-        ],
-        "type": "object"
-      },
-      "OperatorOrgPage": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/OperatorOrgSummary"
-            },
-            "type": "array"
-          },
-          "next_page_token": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "OperatorOrgSummary": {
-        "description": "Uma organização vista pelo operador: identidade + os seis tectos de plano.\nSem uso agregado (lugares ocupados, bytes ocupados) — isso é só o\ndetalhe (`OperatorOrgDetail`).",
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "domain": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "max_concurrent_participants": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_groups": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_meetings": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_rooms": {
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_seats": {
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_storage_bytes": {
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "member_count": {
-            "description": "Membros activos (sem convites pendentes nem arquivados).",
-            "format": "int64",
-            "type": "integer"
-          },
-          "name": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "slug",
-          "domain",
-          "created_at",
-          "member_count"
-        ],
-        "type": "object"
-      },
-      "OperatorQuotasReq": {
-        "description": "Corpo de `PUT /api/operator/v1/organizations/{org_id}/quotas`.",
-        "properties": {
-          "max_groups": {
-            "description": "`null`/negativo = ilimitado.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_meetings": {
-            "description": "`null`/negativo = ilimitado.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_rooms": {
-            "description": "`null`/negativo = ilimitado.",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "voice_did_model": {
-            "description": "`'shared' | 'dedicated'`. Omisso ou fora do enum mantém o actual.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "voice_media_backend": {
-            "description": "`'freeswitch' | 'provider'`. Omisso ou fora do enum mantém o actual.",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
         "type": "object"
       },
       "OrgSettingsReq": {
@@ -7238,6 +6544,28 @@
         ],
         "type": "object"
       },
+      "ParticipantPage": {
+        "description": "Página de participantes — o `Page<Participant>` com nome, para o contrato\npoder referir a forma em vez de a descrever em prosa.\n\n`next_page_token` NÃO leva `skip_serializing_if`, ao contrário do\n`TrunkPage`: o `Page<T>` serializa-o sempre, e na última página sai `null`.\nTirá-lo mudava o fio para quem já lê estas duas rotas.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Participant"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "description": "Cursor da página seguinte; `null` na última.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "PasskeyChallengeReq": {
         "additionalProperties": false,
         "properties": {
@@ -7412,55 +6740,6 @@
           }
         },
         "type": "object"
-      },
-      "PatchMeetingReq": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/SessionOptionsPatch",
-            "description": "Opções de sessão; a ausente fica como está. Passam também à sala."
-          },
-          {
-            "properties": {
-              "description": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "duration_min": {
-                "format": "int32",
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "invitees": {
-                "description": "Se presente, **substitui** o conjunto de convidados. O estado de\nresposta (aceite/recusado) de quem se mantém é preservado.",
-                "items": {
-                  "$ref": "#/components/schemas/InviteeReq"
-                },
-                "type": [
-                  "array",
-                  "null"
-                ]
-              },
-              "starts_at": {
-                "format": "date-time",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "title": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "type": "object"
-          }
-        ]
       },
       "PatchRoomReq": {
         "additionalProperties": false,
@@ -7822,222 +7101,6 @@
         ],
         "type": "object"
       },
-      "ProvisionOrgReq": {
-        "properties": {
-          "email_domain": {
-            "description": "Domínio de email da org — necessário para o ``/api/auth/sso/authorize?domain=``\nresolver esta org. Opcional.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "key_name": {
-            "description": "Rótulo da chave de API emitida (default \"Integration\").",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "description": "Nome da organização (== nome da empresa no sistema chamador).",
-            "type": "string"
-          },
-          "odoo_company_id": {
-            "description": "Id da EMPRESA no Odoo (`res.company`). Com `odoo_db`, identifica a\norganização de forma estável — a mesma chave que o login por conta\nOdoo usa (`odoo_sso::ensure_org`).\n\nSem isto, provisionar uma empresa que já tinha entrado por SSO criava\numa SEGUNDA organização para a mesma empresa: os utilizadores ficavam\nnuma e a chave de API na outra, e a criação de reuniões respondia\n«o anfitrião pertence a outra organização» (409).",
-            "format": "int32",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "odoo_db": {
-            "description": "Base de dados Odoo da empresa.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "odoo_url": {
-            "description": "URL base da instância Odoo (ex.: `http://localhost:8090`).",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "scopes": {
-            "description": "Escopos da chave emitida (ver `CreateKeyReq::scopes`). **Omisso ⇒ o\ncatálogo inteiro** — é o que o módulo Odoo recebe hoje.",
-            "items": {
-              "type": "string"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "setup_odoo": {
-            "description": "Se `true`, activa a integração Odoo e devolve também um `dlxo_...` token\npronto a colar no módulo nk_delonix_meet. Requer `odoo_url` e `odoo_db`.",
-            "type": "boolean"
-          },
-          "sso": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ProvisionSso",
-                "description": "Config OIDC a aplicar (opcional)."
-              }
-            ]
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "ProvisionReq": {
-        "properties": {
-          "admin_email": {
-            "description": "Email do utilizador que fez a integração — será admin da org.",
-            "type": "string"
-          },
-          "company": {
-            "description": "Nome da empresa Odoo (actualiza o nome da org se a org ainda tem o nome\npadrão ou se force_name=true).",
-            "type": "string"
-          },
-          "full_directory": {
-            "description": "`true` = a lista é o directório COMPLETO: com «suspender ao sair do Odoo»\nactivo, quem não vem nela é suspenso (`odoo_exit`).",
-            "type": "boolean"
-          },
-          "users": {
-            "items": {
-              "$ref": "#/components/schemas/OdooUserEntry"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "company",
-          "admin_email"
-        ],
-        "type": "object"
-      },
-      "ProvisionResult": {
-        "properties": {
-          "created": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "org_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "phones_rejected": {
-            "description": "Membros sincronizados cujo telefone do Odoo NÃO foi gravado (ex.: número\nfora de Angola, que o encaminhamento de SMS não serve). Aditivo à v1.",
-            "items": {
-              "$ref": "#/components/schemas/SkippedUser"
-            },
-            "type": "array"
-          },
-          "role_changes": {
-            "description": "Papéis mudados por grupo do Odoo.",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "role_conflicts": {
-            "description": "Conflitos de papel criados (a decidir na consola).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "skipped": {
-            "description": "Entradas do directório que NÃO foram aplicadas, com a razão. Aditivo à\nv1: um integrador antigo ignora o campo, e continua a receber `created`\ne `updated` com o mesmo significado.",
-            "items": {
-              "$ref": "#/components/schemas/SkippedUser"
-            },
-            "type": "array"
-          },
-          "suspended": {
-            "description": "Suspensos por saída do Odoo (`full_directory`).",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "updated": {
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "org_id",
-          "created",
-          "updated",
-          "skipped",
-          "phones_rejected",
-          "role_changes",
-          "role_conflicts",
-          "suspended"
-        ],
-        "type": "object"
-      },
-      "ProvisionSso": {
-        "description": "Config OIDC opcional a aplicar à org acabada de criar — deixa o provisionador\n(Odoo) apontar a org ao seu próprio IdP num só passo, sem um segundo pedido\nautenticado por sessão de admin (que a org recém-criada ainda não tem).",
-        "properties": {
-          "client_id": {
-            "type": "string"
-          },
-          "client_secret": {
-            "type": "string"
-          },
-          "enforce_sso": {
-            "type": "boolean"
-          },
-          "issuer_url": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "issuer_url",
-          "client_id",
-          "client_secret"
-        ],
-        "type": "object"
-      },
-      "ProvisionedOrg": {
-        "properties": {
-          "api_key": {
-            "description": "A chave de API completa (`dlx_...`) — só devolvida AGORA, guarda-se o hash.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "odoo_token": {
-            "description": "Token de integração Odoo (`dlxo_...`) — presente só se `setup_odoo=true`.\nMostrar uma vez ao utilizador: o servidor guarda apenas o hash.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "org_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "sso_configured": {
-            "description": "True se uma config OIDC foi aplicada (fecha o SSO sem SQL manual).",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "org_id",
-          "slug",
-          "name",
-          "api_key",
-          "sso_configured"
-        ],
-        "type": "object"
-      },
       "Provisioning": {
         "properties": {
           "entry_rules": {
@@ -8233,6 +7296,34 @@
         },
         "required": [
           "vtt"
+        ],
+        "type": "object"
+      },
+      "PutDeviceReq": {
+        "properties": {
+          "app_version": {
+            "description": "Versão da app, só para diagnóstico.",
+            "type": "string"
+          },
+          "platform": {
+            "description": "`android` ou `ios`.",
+            "example": "android",
+            "type": "string"
+          },
+          "provider": {
+            "description": "`fcm` (Android), `apns_voip` (iOS), `delonix` (o serviço delonix-push, ambos) ou `lab` (só laboratório).",
+            "example": "fcm",
+            "type": "string"
+          },
+          "push_token": {
+            "description": "O token que o fornecedor deu à app. Guarda-se cifrado e não volta em nenhuma resposta. Com o fornecedor\n`delonix` e o serviço configurado, o servidor cunha o aparelho no delonix-push e **ignora** este valor.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "provider",
+          "push_token"
         ],
         "type": "object"
       },
@@ -9094,7 +8185,7 @@
         "type": "object"
       },
       "RecordingPage": {
-        "description": "Página da biblioteca (com `page_size`, `page_token`, `filter`, `filters`,\n`group_by` ou `order_by`): o envelope do ADR-0007\n(`docs/reference/pesquisa.md` §2.3). Só documentação — a resposta é\n`search::SearchPage`, com cada item acompanhado de `search: {score,\nhighlight}` quando há `q`. Continua a ter `items` e `next_page_token`, como a\npágina de antes; `total`, `total_kind` e `groups` são acrescento.",
+        "description": "Página da biblioteca (com `page_size`, `page_token`, `filter`, `filters`,\n`group_by` ou `order_by`): o envelope do ADR-0007\n(`docs/reference/pesquisa.md` §2.3). Só documentação — a resposta é\n`search::SearchPage`. Continua a ter `items` e `next_page_token`, como a\npágina de antes; `total`, `total_kind` e `groups` são acrescento.",
         "properties": {
           "groups": {
             "items": {
@@ -9107,7 +8198,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/RecordingLibraryItem"
+              "$ref": "#/components/schemas/RecordingSearchItem"
             },
             "type": "array"
           },
@@ -9145,6 +8236,30 @@
           "total_kind"
         ],
         "type": "object"
+      },
+      "RecordingSearchItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RecordingLibraryItem"
+          },
+          {
+            "properties": {
+              "search": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ItemSearch",
+                    "description": "Só com `q`."
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ],
+        "description": "Um item da biblioteca com o acréscimo de pesquisa. Só documentação — a\nresposta é `search::SearchItem<RecordingItem>`, que achata o item e junta\n`search` quando há `q`. Os atributos serde são os MESMOS do `SearchItem`,\npara o documentado e o serializado não divergirem."
       },
       "RecordingShareLink": {
         "description": "Link público de uma gravação. O hash da password nunca sai.",
@@ -9397,29 +8512,6 @@
         },
         "required": [
           "gateways"
-        ],
-        "type": "object"
-      },
-      "ResultReq": {
-        "properties": {
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "ok": {
-            "type": "boolean"
-          },
-          "provider_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "ok"
         ],
         "type": "object"
       },
@@ -10223,19 +9315,6 @@
         ],
         "type": "object"
       },
-      "SeatLimitReq": {
-        "properties": {
-          "max_seats": {
-            "description": "`null` = sem tecto.",
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
       "SeatSummary": {
         "description": "Resumo de lugares (ADR-0008 §7).",
         "properties": {
@@ -10435,36 +9514,6 @@
           },
           "waiting_room": {
             "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
-      "SessionOptionsPatch": {
-        "description": "Alteração parcial das opções de sessão: o campo ausente fica como está.",
-        "properties": {
-          "auto_record": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "format": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "record_quality": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "waiting_room": {
-            "type": [
-              "boolean",
-              "null"
-            ]
           }
         },
         "type": "object"
@@ -10709,21 +9758,6 @@
         ],
         "type": "object"
       },
-      "SkippedInvitee": {
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "reason": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "email",
-          "reason"
-        ],
-        "type": "object"
-      },
       "SkippedRecipient": {
         "properties": {
           "reason": {
@@ -10737,21 +9771,6 @@
         },
         "required": [
           "user_id",
-          "reason"
-        ],
-        "type": "object"
-      },
-      "SkippedUser": {
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "reason": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "email",
           "reason"
         ],
         "type": "object"
@@ -11364,134 +10383,6 @@
           "db",
           "uptime_secs",
           "version"
-        ],
-        "type": "object"
-      },
-      "StorageConfigReq": {
-        "properties": {
-          "nfs_path": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "nfs_server": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "storage_type": {
-            "description": "`local` | `nfs` | `webdav`.",
-            "type": "string"
-          },
-          "webdav_password": {
-            "description": "Novo valor; se omitido ou vazio mantém o valor actual (nunca apaga por engano).\nGuarda-se cifrado; não vazio sem `DATA_ENCRYPTION_KEYS` → `422`.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "webdav_path": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "webdav_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "webdav_user": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "storage_type"
-        ],
-        "type": "object"
-      },
-      "StorageConfigView": {
-        "description": "Leitura da configuração de armazenamento, com a password WebDAV substituída\npor `webdav_password_set`.",
-        "properties": {
-          "nfs_path": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "nfs_server": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "object_store": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ObjectStoreView",
-                "description": "Armazenamento de objectos visto pelo AMBIENTE do servidor, quando existe.\nNão é um `storage_type`: ver `ObjectStoreView`."
-              }
-            ]
-          },
-          "storage_type": {
-            "description": "`local` | `nfs` | `webdav` (`local` quando nunca foi configurado).",
-            "type": "string"
-          },
-          "webdav_password_set": {
-            "description": "Há password WebDAV guardada? (a password nunca é devolvida).",
-            "type": "boolean"
-          },
-          "webdav_path": {
-            "type": "string"
-          },
-          "webdav_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "webdav_user": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "storage_type",
-          "webdav_password_set",
-          "webdav_path"
-        ],
-        "type": "object"
-      },
-      "StorageTestResult": {
-        "description": "Resultado do teste de ligação ao armazenamento.",
-        "properties": {
-          "message": {
-            "type": "string"
-          },
-          "ok": {
-            "description": "Sempre `true` (as falhas são erros HTTP).",
-            "type": "boolean"
-          },
-          "type": {
-            "description": "`local` | `nfs` | `webdav`.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "ok",
-          "type",
-          "message"
         ],
         "type": "object"
       },
@@ -13263,262 +12154,6 @@
           "recordings",
           "whiteboards",
           "used_bytes"
-        ],
-        "type": "object"
-      },
-      "V1BotJoin": {
-        "description": "Credenciais de entrada de um bot numa sala.",
-        "properties": {
-          "room": {
-            "description": "A sala completa (`id`, `code`, `name`, `owner_id`, `topology`,\n`waiting_room`, `e2ee`, `format`, `created_at`).",
-            "type": "object"
-          },
-          "room_token": {
-            "description": "JWT `typ: \"room\"` com `is_bot: true`, atribuído ao criador da chave.",
-            "type": "string"
-          },
-          "ws_path": {
-            "description": "`/ws?token=<room_token>`.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "room",
-          "room_token",
-          "ws_path"
-        ],
-        "type": "object"
-      },
-      "V1MeetingList": {
-        "properties": {
-          "meetings": {
-            "items": {
-              "$ref": "#/components/schemas/V1MeetingSummary"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "meetings"
-        ],
-        "type": "object"
-      },
-      "V1MeetingNotes": {
-        "description": "Ata e transcrição de uma reunião.",
-        "properties": {
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "minutes": {
-            "description": "Ata (MoM).",
-            "type": "string"
-          },
-          "minutes_ai_at": {
-            "format": "date-time",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "transcript": {
-            "description": "Transcrição bruta.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "minutes",
-          "transcript"
-        ],
-        "type": "object"
-      },
-      "V1MeetingSummary": {
-        "description": "Reunião vista pelo sync de calendário v1.",
-        "properties": {
-          "auto_record": {
-            "type": "boolean"
-          },
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "duration_min": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "format": {
-            "description": "Opções de sessão (R184): `meeting|training|broadcast|hybrid`.",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "kind": {
-            "description": "`video` | `voice`.",
-            "type": "string"
-          },
-          "minutes_ai_at": {
-            "description": "Presente ⇒ a ata AI já foi gerada.",
-            "format": "date-time",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "record_quality": {
-            "description": "`2160p|1080p|720p|audio`.",
-            "type": "string"
-          },
-          "room_code": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "starts_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "waiting_room": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "description",
-          "kind",
-          "starts_at",
-          "duration_min",
-          "created_at",
-          "format",
-          "waiting_room",
-          "auto_record",
-          "record_quality"
-        ],
-        "type": "object"
-      },
-      "V1Org": {
-        "description": "Organização vista pela API v1.",
-        "properties": {
-          "domain": {
-            "description": "Domínio de produção dos links (vazio se não definido).",
-            "type": "string"
-          },
-          "email_domain": {
-            "description": "Domínio de email da organização (vazio se não definido).",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "members": {
-            "description": "Número de linhas de membro da organização.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "email_domain",
-          "domain",
-          "members"
-        ],
-        "type": "object"
-      },
-      "V1Recording": {
-        "description": "Gravação vista pela API v1.",
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "download_url": {
-            "description": "`/api/recordings/{id}/content` (rota da BFF, autenticada por sessão).",
-            "type": "string"
-          },
-          "filename": {
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "room_code": {
-            "type": "string"
-          },
-          "size_bytes": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "filename",
-          "size_bytes",
-          "created_at",
-          "room_code",
-          "download_url"
-        ],
-        "type": "object"
-      },
-      "V1RecordingList": {
-        "properties": {
-          "recordings": {
-            "items": {
-              "$ref": "#/components/schemas/V1Recording"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "recordings"
-        ],
-        "type": "object"
-      },
-      "V1RoomInfo": {
-        "description": "Sala vista pela API v1.",
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "e2ee": {
-            "type": "boolean"
-          },
-          "join_url": {
-            "description": "Link de entrada: absoluto com o domínio de produção da org, ou relativo\n(`/#/r/{code}`) se não houver domínio.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "waiting_room": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "code",
-          "name",
-          "e2ee",
-          "waiting_room",
-          "join_url"
         ],
         "type": "object"
       },
@@ -19673,6 +18308,168 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/extensions/{id}/devices": {
+      "get": {
+        "operationId": "list_extension_devices",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O ramal não existe NESTA organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O administrador lista os aparelhos activos de um ramal da organização.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/extensions/{id}/devices/{device_id}": {
+      "delete": {
+        "operationId": "delete_extension_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Ramal.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Aparelho.",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Aparelho desligado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O ramal ou o aparelho não existem NESTA organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O administrador desliga um aparelho de um ramal da organização («terminar o telemóvel»).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/extensions/{id}/did": {
       "delete": {
         "operationId": "unassign_extension_did",
@@ -21955,6 +20752,244 @@
           }
         ],
         "summary": "O ramal de quem pede nesta organização (qualquer membro activo).",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/devices": {
+      "get": {
+        "operationId": "list_my_devices",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceInfo"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, ou não tem ramal (`ramais.no_extension`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Os aparelhos activos do SEU ramal (no máximo oito: não há paginação). Nunca devolve o token.",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/my-extension/devices/{device_id}": {
+      "delete": {
+        "operationId": "delete_my_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Aparelho.",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Aparelho desligado: deixa de ser acordado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, não tem ramal, ou o aparelho não é seu (ou já está revogado)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A pessoa desliga um aparelho do SEU ramal.",
+        "tags": [
+          "voice"
+        ]
+      },
+      "put": {
+        "operationId": "put_my_device",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Identificador do aparelho, escolhido pela app (UUID).",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDeviceReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceInfo"
+                }
+              }
+            },
+            "description": "Aparelho já existia: token renovado."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceCreated"
+                }
+              }
+            },
+            "description": "Aparelho criado (com `delonix_push` se o fornecedor é `delonix`)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.platform_invalid`, `devices.provider_invalid`, `devices.provider_platform_mismatch`, `devices.token_invalid` ou `devices.app_version_invalid`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não é membro activo, não tem ramal (`ramais.no_extension`), ou o `id` é de outro aparelho."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.revoked` (usar um `id` novo) ou `devices.too_many`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`devices.needs_session` (token anterior às sessões) ou `ramais.extension_inactive`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A pessoa regista (ou renova) o aparelho do SEU ramal. O `id` é da app: repetir o pedido com o mesmo\n`id` renova o token em vez de criar outro aparelho. Um aparelho revogado não ressuscita: a app pede\ncom um `id` novo.",
         "tags": [
           "voice"
         ]
@@ -30954,6 +29989,92 @@
         ]
       }
     },
+    "/api/orgs/{org_id}/users/{user_id}/password-reset": {
+      "post": {
+        "operationId": "issue_password_reset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedPasswordReset"
+                }
+              }
+            },
+            "description": "O `token` vem preenchido UMA só vez."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sem `admin.manage_accounts`, fora do departamento, ou `authz.escalation`/`role.owner_assignment` (repor é tomar a conta)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a organização não existe, ou o alvo não é membro activo"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`account.managed_by_odoo`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Emite uma reposição de password para um membro da organização.",
+        "tags": [
+          "directory"
+        ]
+      }
+    },
     "/api/orgs/{org_id}/voice/billing": {
       "get": {
         "operationId": "billing_summary",
@@ -32104,6 +31225,87 @@
         "summary": "Método personalizado: volta a enviar o MESMO payload ao URL ACTUAL do\nwebhook (guarda anti-SSRF reaplicada), numa entrega nova com\n`redelivery_of`. Responde `202` com a entrega nova em `pending`; o\nresultado lê-se no `Location`.",
         "tags": [
           "webhooks"
+        ]
+      }
+    },
+    "/api/password-resets/accept": {
+      "post": {
+        "operationId": "accept_password_reset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptPasswordResetReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedPasswordReset"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "password fora da política"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`password_reset.not_found` — token errado, já usado ou revogado"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`account.managed_by_odoo`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`password_reset.expired`"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "limite por IP"
+          }
+        },
+        "summary": "Usa uma reposição de password. **Pública**: quem a usa está fora da conta.",
+        "tags": [
+          "directory"
         ]
       }
     },
@@ -34459,10 +33661,12 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
               }
             },
-            "description": "Página `{items: [Participant], next_page_token}`."
+            "description": "Por ordem de entrada (`joined_at`, `user_id`)."
           },
           "401": {
             "content": {
@@ -36572,10 +35776,12 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantPage"
+                }
               }
             },
-            "description": "Página `{items: [Participant], next_page_token}`."
+            "description": "Por ordem de entrada (`joined_at`, `user_id`)."
           },
           "401": {
             "content": {

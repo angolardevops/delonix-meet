@@ -160,13 +160,15 @@
     - name: "Aplicar Ollama"
       ansible.builtin.command: "kubectl --kubeconfig={{ _kubeconfig }} apply -f {{ _tmp }}/07-ollama.yaml"
       changed_when: false
-    # GPU (opcional): acrescenta nvidia.com/gpu ao deployment sem duplicar YAML.
-    - name: "Ollama em GPU (patch nvidia.com/gpu)"
-      when: ollama_gpu
-      ansible.builtin.command: >-
-        kubectl --kubeconfig={{ _kubeconfig }} -n delonix-meet patch deployment delonix-ollama
-        --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/resources/limits/nvidia.com~1gpu","value":"1"}]'
-      changed_when: false
+    # GPU: já NÃO é um `kubectl patch` imperativo aqui (corria DEPOIS do apply,
+    # fora do manifesto declarado — divergia em silêncio do próximo
+    # `kubectl apply -k`). O caminho declarativo é o componente kustomize
+    # deploy/k8s-overlays/components/ollama-gpu (ADR-0024): acrescenta UMA
+    # linha a components: na kustomization.yaml do ambiente quando a GPU
+    # existir. Este role (k8s_app, multi-host) nunca usou kustomize — aplica
+    # manifestos planos — por isso ligar o componente aqui, quando chegar a
+    # vez, é uma tarefa nova (`kubectl apply -k` com o overlay certo), não
+    # uma reactivação desta variável.
 
 # ---- Ingress (domínio + cert-manager quando LE) ----
 - name: "Render + aplicar Ingress"

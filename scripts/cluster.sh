@@ -194,7 +194,11 @@ up)
   ok "delonix-server:${IMAGE_TAG} e delonix-web:${IMAGE_TAG}"
 
   passo "servidor, web, coturn e ingress"
-  kubectl apply -f deploy/k8s/02-server.yaml -f deploy/k8s/03-web.yaml >/dev/null
+  # 10-contas-e-rede.yaml cria as ServiceAccounts que 02/03 referem — sem elas
+  # a ReplicaSet fica em FailedCreate («serviceaccount ... not found»). Está
+  # no kustomization.yaml (stage/prod) mas este script aplica manifestos à
+  # mão, não por -k, e tinha ficado esquecido desde a Frente 3 (#280/#283).
+  kubectl apply -f deploy/k8s/10-contas-e-rede.yaml -f deploy/k8s/02-server.yaml -f deploy/k8s/03-web.yaml >/dev/null
   kubectl -n "$NS" set image deployment/delonix-server "server=delonix-server:${IMAGE_TAG}" >/dev/null
   kubectl -n "$NS" set image deployment/delonix-web "web=delonix-web:${IMAGE_TAG}" >/dev/null
   # Com a mesma tag de antes (`latest`), o `set image` não muda nada: só um

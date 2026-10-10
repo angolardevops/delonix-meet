@@ -383,6 +383,9 @@ pub(crate) fn minutes_prompt(title: &str, transcript: &str) -> LlmPrompt {
     }
 }
 
+/// Tecto da chamada ao Ollama para o resumo da acta.
+const MOM_SUMMARY_TIMEOUT_SECS: u64 = 600;
+
 /// Resumo organizado da ata a partir da transcrição bruta (a "ata bruta" é a
 /// própria transcrição, que fica SEMPRE preservada na coluna `transcript`).
 pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) -> Option<String> {
@@ -391,7 +394,7 @@ pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) 
         state,
         &state.config.ollama_model_summary,
         &prompt,
-        Duration::from_secs(600),
+        Duration::from_secs(MOM_SUMMARY_TIMEOUT_SECS),
     )
     .await
 }
@@ -409,6 +412,23 @@ pub async fn summarize_minutes(state: &AppState, title: &str, transcript: &str) 
 /// `tenant_column: Some("owner_id")`: as `meetings` não têm organização
 /// (migração 0031), e o dono serve a justiça — quem fecha dez reuniões seguidas
 /// não empurra os outros para trás da fila do LLM.
+///
+/// `mom_running_at` (migração 0105) é a TRAVA que faltava: sem ela, uma
+/// reivindicação nova (`enqueue_mom_summary` chamado outra vez, ou só a
+/// varredura seguinte) reclamava a MESMA reunião enquanto a primeira ainda
+/// estava a meio da chamada ao Ollama — nada no `ready_when` nem no
+/// `claim_set` dizia "isto já está a correr". `mom_running_at IS NULL OR …
+/// < now() - interval '{STALE}'` só deixa reclamar uma linha sem marca, ou
+/// com uma marca mais velha do que o tecto da chamada mais a margem (a seguir
+/// um worker morto a meio, sem precisar de um varredor dedicado) — o mesmo
+/// desenho de `recording_chapter_generations` (migração 0076), sem a tabela
+/// à parte porque esta fila já usa o `claim` genérico.
+///
+/// O literal `660` = [`MOM_SUMMARY_TIMEOUT_SECS`] (600) + [`MOM_STALE_MARGIN_SECS`]
+/// (60): tem de ser um literal porque `ready_when` é montado SEM o `lease` do
+/// `claim` (`delonix_meet_store::jobs::select_sql` só substitui
+/// `{max_attempts}` aqui — ver o comentário em `substitui`), e a invariante
+/// fica presa em compile-time logo a seguir a esta fila, não só em comentário.
 const FILA_MOM: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
     name: "mom_summary",
     table: "meetings",
@@ -416,13 +436,26 @@ const FILA_MOM: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue 
     ready_when: "mom_queued_at IS NOT NULL AND minutes_ai_at IS NULL \
                  AND mom_attempts < {max_attempts} \
                  AND (mom_next_attempt_at IS NULL OR mom_next_attempt_at <= now()) \
-                 AND length(btrim(transcript)) >= 80",
-    claim_set: "mom_attempts = mom_attempts + 1, mom_next_attempt_at = NULL",
+                 AND length(btrim(transcript)) >= 80 \
+                 AND (mom_running_at IS NULL \
+                      OR mom_running_at < now() - interval '660 seconds')",
+    claim_set: "mom_attempts = mom_attempts + 1, mom_next_attempt_at = NULL, \
+                mom_running_at = now()",
     returning: "id, title, transcript",
     order_by: "mom_queued_at",
     tenant_column: Some("owner_id"),
     batch: 2,
 };
+
+/// Uma reivindicação "em execução" sem fechar há mais do que isto é lida como
+/// interrompida (o pod morreu a meio da chamada ao Ollama) — mesma margem e
+/// mesma razão dos capítulos (`recording_chapters::STALE_MARGIN_SECS`).
+const MOM_STALE_MARGIN_SECS: u64 = 60;
+
+/// Prende o literal `660` escrito em [`FILA_MOM`] aos dois nomes que o
+/// explicam: se um dia um dos dois mudar sem o outro, o build pára aqui em
+/// vez de a fila ficar trancada (ou destrancada cedo demais) em silêncio.
+const _: () = assert!(MOM_SUMMARY_TIMEOUT_SECS + MOM_STALE_MARGIN_SECS == 660);
 
 /// Três tentativas, 2 e 10 minutos. O LLM local é a causa provável de falha e
 /// recupera em minutos; ninguém está em frente ao ecrã à espera disto.
@@ -442,6 +475,16 @@ struct PorResumir {
 
 /// **Enfileira** o resumo. Chama-se na transacção de quem grava a ata, para que
 /// a ata e o pedido de resumo nasçam juntos.
+///
+/// `WHERE … mom_running_at IS NULL OR stale`: é a outra metade da correcção —
+/// sem isto, chamar duas vezes quase ao mesmo tempo (o botão manual "Guardar
+/// acta" e o `beforeunload`, por exemplo) reabria a reivindicação ZERANDO
+/// `mom_attempts` mesmo que um worker já tivesse a reunião a meio da chamada
+/// ao Ollama. Enquanto a reivindicação em curso não estiver "stale" (mesmo
+/// tecto de [`FILA_MOM`]), esta chamada não mexe em nada: a reivindicação a
+/// decorrer já vai escrever o resultado, e nada se perde — `mom_queued_at` já
+/// cá estava de uma chamada anterior. Uma reivindicação REALMENTE morta
+/// continua a destrancar-se sozinha, aqui como no `ready_when`.
 pub(crate) async fn enqueue_mom_summary(
     conn: &mut sqlx::PgConnection,
     meeting_id: Uuid,
@@ -449,7 +492,8 @@ pub(crate) async fn enqueue_mom_summary(
     sqlx::query(
         "UPDATE meetings
             SET mom_queued_at = now(), mom_attempts = 0, mom_next_attempt_at = NULL
-          WHERE id = $1",
+          WHERE id = $1
+            AND (mom_running_at IS NULL OR mom_running_at < now() - interval '660 seconds')",
     )
     .bind(meeting_id)
     .execute(conn)
@@ -478,7 +522,26 @@ pub async fn mom_summary_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error
         transcript,
     } in levadas
     {
-        resume_uma(state, id, &title, &transcript).await;
+        // A marca desta reivindicação: lida DEPOIS do `claim_set`. A escolha
+        // (`returning`) e a marca de posse são duas instruções da MESMA
+        // transacção do `claim` genérico — por isso `mom_running_at` não pode
+        // vir do `returning` (leria o valor de ANTES da marca) e lê-se aqui,
+        // pelo id, tal como a fila da transcrição lê o `lease_token` depois de
+        // reivindicar. É esta marca que a escrita final e os dois caminhos de
+        // falha exigem de volta antes de fechar — nunca uma reivindicação mais
+        // antiga a sobrepor-se a uma mais recente.
+        let running_at: Option<(chrono::DateTime<chrono::Utc>,)> =
+            sqlx::query_as("SELECT mom_running_at FROM meetings WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await?;
+        let Some((running_at,)) = running_at else {
+            // Não devia acontecer (o `claim_set` acabou de a escrever), mas se
+            // a linha desapareceu entretanto não há o que resumir.
+            tracing::warn!(meeting_id = %id, "MoM: reivindicada sem marca de posse");
+            continue;
+        };
+        resume_uma(state, id, &title, &transcript, running_at).await;
     }
     Ok(n)
 }
@@ -487,17 +550,32 @@ pub async fn mom_summary_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error
 /// reunião (o LLM em baixo). A lição é a dos capítulos: com o incremento cego,
 /// uma avaria do Ollama queimava as tentativas de TODAS as reuniões em fila e
 /// elas nunca mais teriam ata final — dano permanente por avaria temporária.
-async fn devolve_tentativa_mom(state: &AppState, id: Uuid) {
+///
+/// `WHERE … mom_running_at = $2`: só esta reivindicação pode largar a trava
+/// que ela própria pôs. Sem isto, uma reivindicação velha (já stale, já
+/// reivindicada de novo por outra) podia devolver uma tentativa que não é
+/// dela, ou destrancar uma corrida que está genuinamente a decorrer.
+async fn devolve_tentativa_mom(
+    state: &AppState,
+    id: Uuid,
+    running_at: chrono::DateTime<chrono::Utc>,
+) {
     let _ = sqlx::query(
-        "UPDATE meetings SET mom_attempts = GREATEST(mom_attempts - 1, 0) WHERE id = $1",
+        "UPDATE meetings SET mom_attempts = GREATEST(mom_attempts - 1, 0), mom_running_at = NULL
+          WHERE id = $1 AND mom_running_at = $2",
     )
     .bind(id)
+    .bind(running_at)
     .execute(&state.db)
     .await;
 }
 
-/// Adia a próxima tentativa pelo backoff da política, com espalhamento.
-async fn adia_mom(state: &AppState, id: Uuid) {
+/// Adia a próxima tentativa pelo backoff da política, com espalhamento, e
+/// larga a trava desta reivindicação (`mom_running_at = $ultimo`): o backoff
+/// (2 ou 10 min) é sempre mais curto do que a margem "stale" (11 min), por
+/// isso sem largar aqui a próxima tentativa ficaria bloqueada pela SUA PRÓPRIA
+/// trava até ela prescrever sozinha.
+async fn adia_mom(state: &AppState, id: Uuid, running_at: chrono::DateTime<chrono::Utc>) {
     let tentativas: i32 = sqlx::query_scalar("SELECT mom_attempts FROM meetings WHERE id = $1")
         .bind(id)
         .fetch_optional(&state.db)
@@ -506,7 +584,18 @@ async fn adia_mom(state: &AppState, id: Uuid) {
         .flatten()
         .unwrap_or(POLITICA_MOM.max_attempts);
     let Some(espera) = POLITICA_MOM.delay_after(tentativas) else {
-        return; // tentativas esgotadas: o `ready_when` já não a selecciona
+        // Tentativas esgotadas: o `ready_when` já não a selecciona por causa
+        // do `mom_attempts`, mas a trava larga-se na mesma — uma correcção
+        // manual (`request_mom_summary`) tem de poder reivindicar de novo sem
+        // esperar pela margem "stale".
+        let _ = sqlx::query(
+            "UPDATE meetings SET mom_running_at = NULL WHERE id = $1 AND mom_running_at = $2",
+        )
+        .bind(id)
+        .bind(running_at)
+        .execute(&state.db)
+        .await;
+        return;
     };
     let (lo, hi) = POLITICA_MOM.jitter_range();
     // Os `::float8` são obrigatórios: sem eles o Postgres não infere o tipo dos
@@ -514,13 +603,15 @@ async fn adia_mom(state: &AppState, id: Uuid) {
     if let Err(e) = sqlx::query(
         "UPDATE meetings
             SET mom_next_attempt_at = now() + make_interval(
-                    secs => $2::float8 * ($3::float8 + random() * $4::float8))
-          WHERE id = $1",
+                    secs => $2::float8 * ($3::float8 + random() * $4::float8)),
+                mom_running_at = NULL
+          WHERE id = $1 AND mom_running_at = $5",
     )
     .bind(id)
     .bind(espera.as_secs() as f64)
     .bind(lo)
     .bind(hi - lo)
+    .bind(running_at)
     .execute(&state.db)
     .await
     {
@@ -528,13 +619,19 @@ async fn adia_mom(state: &AppState, id: Uuid) {
     }
 }
 
-async fn resume_uma(state: &Arc<AppState>, meeting_id: Uuid, title: &str, transcript: &str) {
+async fn resume_uma(
+    state: &Arc<AppState>,
+    meeting_id: Uuid,
+    title: &str,
+    transcript: &str,
+    running_at: chrono::DateTime<chrono::Utc>,
+) {
     {
         let Some(summary) = summarize_minutes(state, title, transcript).await else {
             // O LLM em baixo NÃO é culpa desta reunião: a tentativa volta. A
             // ata por regras fica (nunca se perde nada), e a fila tenta outra
             // vez quando o Ollama voltar.
-            devolve_tentativa_mom(state, meeting_id).await;
+            devolve_tentativa_mom(state, meeting_id, running_at).await;
             tracing::warn!(%meeting_id, "MoM AI: Ollama indisponível — mantém ata por regras");
             return;
         };
@@ -543,7 +640,7 @@ async fn resume_uma(state: &Arc<AppState>, meeting_id: Uuid, title: &str, transc
         // versão final, e antes havia uma janela entre a gravar e a registar a
         // entrega em que um SIGTERM apagava o aviso sem deixar rasto. Ou saem
         // as duas, ou nenhuma.
-        match grava_ata_e_avisa(state, meeting_id, &summary).await {
+        match grava_ata_e_avisa(state, meeting_id, &summary, running_at).await {
             Ok(fila) => {
                 tracing::info!(%meeting_id, "MoM AI: ata resumida via Ollama");
                 // O envio vem DEPOIS do commit. O que falhar aqui fica
@@ -554,7 +651,7 @@ async fn resume_uma(state: &Arc<AppState>, meeting_id: Uuid, title: &str, transc
                 // A base falhou: pode passar sozinha. Adia pelo backoff em vez
                 // de repetir na volta seguinte.
                 tracing::error!(%meeting_id, error = %e, "MoM AI: a ata não ficou gravada");
-                adia_mom(state, meeting_id).await;
+                adia_mom(state, meeting_id, running_at).await;
             }
         }
     }
@@ -562,10 +659,19 @@ async fn resume_uma(state: &Arc<AppState>, meeting_id: Uuid, title: &str, transc
 
 /// Grava a ata resumida e REGISTA as entregas do `meeting.mom_ready` na mesma
 /// transacção. Devolve o que há a enviar depois do commit.
+///
+/// `WHERE … mom_running_at = $3`: só fecha ESTA reivindicação. Uma
+/// reivindicação antiga que acorda tarde (um worker preso, ou uma que ficou
+/// "stale" e foi retomada por outra volta) tem a marca que leu no `claim` —
+/// se já não bate com o que está gravado, outra reivindicação mais recente já
+/// assumiu esta reunião (ou já fechou), e esta escrita fica SEM efeito: nunca
+/// sobrescreve um resultado mais novo, nem envia um webhook por um resumo que
+/// não é o que ficou.
 async fn grava_ata_e_avisa(
     state: &Arc<AppState>,
     meeting_id: Uuid,
     summary: &str,
+    running_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<crate::webhooks::Enfileirada>, sqlx::Error> {
     let orgs_do_dono = {
         let owner: Option<(Uuid, String)> =
@@ -583,11 +689,24 @@ async fn grava_ata_e_avisa(
     let orgs = crate::org::orgs_of_user(state, owner_id).await;
 
     let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE meetings SET minutes = $1, minutes_ai_at = now() WHERE id = $2")
-        .bind(summary.chars().take(200_000).collect::<String>())
-        .bind(meeting_id)
-        .execute(&mut *tx)
-        .await?;
+    let fechou = sqlx::query(
+        "UPDATE meetings SET minutes = $1, minutes_ai_at = now(), mom_running_at = NULL
+          WHERE id = $2 AND mom_running_at = $3",
+    )
+    .bind(summary.chars().take(200_000).collect::<String>())
+    .bind(meeting_id)
+    .bind(running_at)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if fechou == 0 {
+        tx.rollback().await?;
+        tracing::warn!(
+            %meeting_id,
+            "MoM AI: a reivindicação já não era a actual — escrita descartada"
+        );
+        return Ok(Vec::new());
+    }
     let payload = serde_json::json!({ "meeting_id": meeting_id, "title": title });
     let mut fila = Vec::new();
     for org_id in orgs {

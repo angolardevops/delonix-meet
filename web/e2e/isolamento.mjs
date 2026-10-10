@@ -233,6 +233,12 @@ await recusado('A apaga um papel da org B', `/api/orgs/${B.orgId}/roles/${fantas
 await recusado('A duplica um papel da org B', `/api/orgs/${B.orgId}/roles/${fantasma}/duplicate`, {
   token: A.token, method: 'POST', body: {},
 })
+// Repor a password de alguém é TOMAR-LHE a conta: se isto não fosse recusado,
+// o isolamento entre organizações acabava aqui — nenhuma outra rota dá acesso
+// tão completo a uma conta alheia.
+await recusado('A repõe a password de um utilizador da org B', `/api/orgs/${B.orgId}/users/${B.userId}/password-reset`, {
+  token: A.token, method: 'POST',
+})
 await recusado('A atribui um papel a um membro da org B', `/api/orgs/${B.orgId}/members/${B.userId}/role`, {
   token: A.token, method: 'PUT', body: { role_id: fantasma },
 })
@@ -281,6 +287,19 @@ await recusado('A emite um QR do Linphone para um ramal da org B', `/api/orgs/${
 })
 await recusado('A emite um QR do Linphone para «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/provisioning-ticket`, {
   token: A.token, method: 'POST', body: {},
+})
+// Aparelhos do ramal e *wake* por push (ADR-0023): A não regista, lê nem desliga aparelhos na org B,
+// nem lista ou desliga os de um ramal da org B (o token de push é o que acorda o telemóvel de alguém).
+await recusado('A regista um aparelho em «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices/${fantasma}`, {
+  token: A.token, method: 'PUT', body: { platform: 'android', provider: 'lab', push_token: 'token-de-prova' },
+})
+await recusado('A lista os aparelhos de «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices`, { token: A.token })
+await recusado('A desliga um aparelho de «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices/${fantasma}`, {
+  token: A.token, method: 'DELETE',
+})
+await recusado('A lista os aparelhos de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/devices`, { token: A.token })
+await recusado('A desliga um aparelho de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/devices/${fantasma}`, {
+  token: A.token, method: 'DELETE',
 })
 
 // O segredo mais valioso desta família: com ele, qualquer um emite no canal
