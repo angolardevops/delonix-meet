@@ -346,7 +346,7 @@ fi
 #  string de derivação HMAC `delonix-meet/derive/` — essa última mudaria todas
 #  as chaves derivadas que existem — e o nome do Ingress do laboratório.
 # ---------------------------------------------------------------------------
-ns_velho=$(git ls-files -z | xargs -0 grep -nE 'namespace: *delonix-meet([,} ]|$)|\.delonix-meet\.svc|-n +delonix-meet([ ,)]|$)|--namespace[= ]delonix-meet([ ,)]|$)|matchNames: *\[delonix-meet\]' 2>/dev/null || true)
+ns_velho=$(git ls-files -z -- . ':!scripts/check-repo-hygiene.sh' | xargs -0 grep -nE 'namespace: *delonix-meet([,} ]|$)|\.delonix-meet\.svc|-n +delonix-meet([ ,)]|$)|--namespace[= ]delonix-meet([ ,)]|$)|matchNames: *\[delonix-meet\]|namespace="delonix-meet"|namespace `?delonix-meet([` ,)]|$)' 2>/dev/null || true)
 if [ -n "$ns_velho" ]; then
   echo "✗ higiene: referências ao namespace ANTIGO «delonix-meet» (o namespace é ngolacloud-meet, ADR-0021):"
   echo "$ns_velho" | sed 's/^/     /' | head -20

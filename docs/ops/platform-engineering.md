@@ -185,7 +185,7 @@ Passo-a-passo completo em [DEPLOYMENT.md](../../DEPLOYMENT.md). Resumo operacion
 
 ## 5. Produção multi-host (Kubernetes)
 
-### 5.1 Manifestos (fonte única — namespace `delonix-meet`)
+### 5.1 Manifestos (fonte única — namespace `ngolacloud-meet`)
 
 | Ficheiro | Papel |
 |---|---|

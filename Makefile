@@ -214,7 +214,7 @@ kill: nginx-dev-stop ## Para TUDO (processos locais + docker + k8s) — estado z
 	@$(call KILL_PORT,$(WEB_PORT),TERM)
 	@printf "$(C)▶ a parar docker compose (infra dev + voice)...$(Z)\n"
 	@docker compose down 2>/dev/null || true
-	@printf "$(C)▶ a escalar workloads k8s para 0 (namespace delonix-meet)...$(Z)\n"
+	@printf "$(C)▶ a escalar workloads k8s para 0 (namespace ngolacloud-meet)...$(Z)\n"
 	@kubectl scale deployment --all -n ngolacloud-meet --replicas=0 2>/dev/null || true
 	@kubectl scale statefulset --all -n ngolacloud-meet --replicas=0 2>/dev/null || true
 	@printf "$(G)  ✓ TUDO parado. Nada corre até fazer 'make dev' (local) ou 'make stage' (k8s).$(Z)\n"
@@ -623,7 +623,7 @@ destroy: ## Faz backup do etcd, postgres e redis e destrói o cluster
 	@printf "$(C)  - Destruindo Helm charts e Manifestos...$(Z)\n"
 	@helm uninstall delonix-postgres -n ngolacloud-meet || true
 	@helm uninstall delonix-redis -n ngolacloud-meet || true
-	@kubectl delete namespace delonix-meet || true
+	@kubectl delete namespace ngolacloud-meet || true
 	@kind delete cluster --name delonix-stage || true
 	@printf "$(G)  ✓ Cluster destruído com sucesso. Backups em ./backups/$(Z)\n"
 

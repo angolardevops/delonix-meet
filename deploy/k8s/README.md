@@ -4,7 +4,7 @@ Este diretório contém os manifestos e configurações para realizar o deploy d
 
 ## Estrutura dos Manifestos
 
-*   `00-namespace.yaml`: Define o namespace isolado `delonix-meet`.
+*   `00-namespace.yaml`: Define o namespace isolado `ngolacloud-meet`.
 *   `01-config.yaml`: Contém o `ConfigMap` com a configuração de ambiente (ex: `REDIS_URL`, `TURN_HOST`). O `Secret` `delonix-secrets` **não** vive no repositório: nasce do `.env` (`make bootstrap`) por `scripts/k8s-app-secrets.sh`, que o `make stage`, o `make prod` e o `make cluster` correm.
 *   `02-server.yaml`: Deployment do backend Rust (`delonix-server`) com 3 réplicas, health checks e limites de recursos bem definidos.
 *   `03-web.yaml`: Deployment do frontend React (servido via Nginx) com 3 réplicas e alocação leve de recursos.

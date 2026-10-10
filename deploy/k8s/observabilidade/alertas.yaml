@@ -40,7 +40,7 @@ spec:
             description: "Vivas: {{ $value }}. O serviço está a um pod de parar."
 
         - alert: MeetReiniciosEmCiclo
-          expr: increase(kube_pod_container_status_restarts_total{namespace="delonix-meet"}[15m]) > 3
+          expr: increase(kube_pod_container_status_restarts_total{namespace="ngolacloud-meet"}[15m]) > 3
           for: 5m
           labels: { severity: aviso }
           annotations:

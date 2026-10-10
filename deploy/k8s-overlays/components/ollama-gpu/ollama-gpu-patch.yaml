@@ -5,7 +5,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-ollama
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   template:
     spec:
