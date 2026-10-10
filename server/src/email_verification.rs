@@ -113,10 +113,9 @@ fn mensagem(locale: &str, email: &str, link: &str) -> (&'static str, String) {
     }
 }
 
+// Não vai no `UserPublic` de propósito: a resposta do login constrói-o à mão
+// e o seu JSON é contrato da web (`login_response_serializa_como_antes`).
 /// O estado da prova do endereço da própria conta.
-///
-/// Não vai no `UserPublic` de propósito: a resposta do login constrói-o à mão
-/// e o seu JSON é contrato da web (`login_response_serializa_como_antes`).
 #[utoipa::path(
     get, path = "/api/users/me/email-verification", tag = "users",
     security(("session" = [])),

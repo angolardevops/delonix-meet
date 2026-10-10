@@ -1,6 +1,17 @@
 {
   "components": {
     "schemas": {
+      "AcceptEmailVerificationReq": {
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
       "AcceptInvitationReq": {
         "properties": {
           "token": {
@@ -24,6 +35,22 @@
         "required": [
           "token",
           "password"
+        ],
+        "type": "object"
+      },
+      "AcceptedEmailVerification": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "verified_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "verified_at"
         ],
         "type": "object"
       },
@@ -3312,6 +3339,30 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "EmailVerificationStatus": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Quando o link enviado deixa de valer (`pending` e `sent`).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`verified` — o endereço está provado;\n`pending` — há um link enviado e ainda válido;\n`unverified` — nunca se provou, ou o último link já não vale;\n`sent` — (só no POST) saiu agora um email com o link.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "email"
+        ],
         "type": "object"
       },
       "EmissaoEstado": {
@@ -13847,6 +13898,77 @@
         "summary": "`PUT /api/diagrams/{diagram_id}` — grava (cria ou substitui).",
         "tags": [
           "diagrams"
+        ]
+      }
+    },
+    "/api/email-verifications/accept": {
+      "post": {
+        "operationId": "accept",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptEmailVerificationReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedEmailVerification"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`email_verification.not_found` — token errado, já usado ou revogado"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`email_verification.email_changed` — a conta mudou de email depois do pedido"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`email_verification.expired`"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "limite por IP"
+          }
+        },
+        "summary": "Usa o token do email. **Pública**: o link pode abrir-se noutro aparelho.",
+        "tags": [
+          "users"
         ]
       }
     },
@@ -37274,6 +37396,106 @@
         "summary": "Método personalizado: link temporário (15 min) para descarregar o ZIP.",
         "tags": [
           "account"
+        ]
+      }
+    },
+    "/api/users/me/email-verification": {
+      "get": {
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationStatus"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O estado da prova do endereço da própria conta.",
+        "tags": [
+          "users"
+        ]
+      },
+      "post": {
+        "operationId": "request",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationStatus"
+                }
+              }
+            },
+            "description": "`verified`: o endereço já estava provado e nada foi enviado."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationStatus"
+                }
+              }
+            },
+            "description": "`sent`: o email saiu para a fila. O token só vai no email."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`mail.disabled` (sem relay) ou `mail.public_url_missing` (sem `PUBLIC_URL`)"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "um pedido há menos de um minuto — `Retry-After` diz quanto falta"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Pede o email de prova do endereço da própria conta.",
+        "tags": [
+          "users"
         ]
       }
     },
