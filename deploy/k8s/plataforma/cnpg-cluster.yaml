@@ -64,7 +64,20 @@ spec:
 
   storage:
     size: 100Gi
-    storageClass: ""   # a por omissão do cluster
+    # `storageClass` OMITIDO, e não posto a "".
+    #
+    # Uma string VAZIA não significa «usa a classe por omissão» — significa o
+    # CONTRÁRIO: «não faças provisionamento dinâmico, liga só a um PV que já
+    # exista». Para herdar a omissão, o campo tem de não estar lá.
+    #
+    # MEDIDO a 2026-10-10 no `delonix-lda`, onde `longhorn` É a classe por
+    # omissão: o PVC ficava `Pending` para sempre com
+    #
+    #   no persistent volumes available for this claim and no storage class is set
+    #
+    # e o Cluster em «Setting up primary» — sem nada, nem no Cluster nem no pod,
+    # a apontar para a causa. Omitido o campo, o PVC ligou de imediato:
+    # `Bound 100Gi longhorn`.
 
   resources:
     requests: { cpu: "1", memory: 4Gi }
