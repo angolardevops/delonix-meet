@@ -1,4 +1,4 @@
-# ADR-0025 — Assistência remota: o agente é o consentimento, e a sessão vive no servidor
+# ADR-0026 — Assistência remota: o agente é o consentimento, e a sessão vive no servidor
 
 **Estado:** Proposto · **Data:** 2026-10-10 ·
 **Contexto:** um técnico de IT tem de assistir um utilizador num posto gerido —
