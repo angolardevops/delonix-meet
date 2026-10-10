@@ -11,7 +11,8 @@
  */
 import { FormEvent, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { addEmployee, Branch, Employee, removeEmployee, updateEmployee } from '../../api'
+import { addEmployee, Branch, Employee, issuePasswordReset, passwordResetLink, removeEmployee, updateEmployee } from '../../api'
+import { copiarTexto } from '../../ui/copy'
 import { Alert, Button, Dialog, Field, Select, TextInput } from '../../ui/kit'
 import { orgErrorMessage } from './orgShared'
 
@@ -286,6 +287,96 @@ export function RemoveMemberDialog({
       <div className="org-form">
         <p>{t('org.membro.removerTexto')}</p>
         {err && <Alert tone="danger">{err}</Alert>}
+      </div>
+    </Dialog>
+  )
+}
+
+/**
+ * Repor a password de um membro (#288, B5). Repor é TOMAR a conta: o servidor
+ * só deixa quem poderia nomear o papel do alvo (`ensure_can_assign`), e diz
+ * porquê quando recusa.
+ *
+ * O link aparece UMA vez — a base guarda só o hash — e o administrador entrega-o
+ * pelo canal que já usa. Ao ser usado, termina todas as sessões da pessoa.
+ */
+export function ResetPasswordDialog({
+  orgId,
+  member,
+  onClose,
+}: {
+  orgId: string
+  member: Employee
+  onClose: () => void
+}) {
+  const { t, i18n } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [emitido, setEmitido] = useState<{ link: string; ate: string } | null>(null)
+  const [copiado, setCopiado] = useState<boolean | null>(null)
+
+  async function emitir() {
+    setBusy(true)
+    setErr('')
+    try {
+      const r = await issuePasswordReset(orgId, member.user_id)
+      setEmitido({
+        link: passwordResetLink(r.token),
+        ate: new Date(r.expires_at).toLocaleString(i18n.language, { dateStyle: 'short', timeStyle: 'short' }),
+      })
+    } catch (x) {
+      setErr(orgErrorMessage(x, t, 'org.membro.reporErro'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function copiar() {
+    if (emitido) setCopiado(await copiarTexto(emitido.link))
+  }
+
+  return (
+    <Dialog
+      title={t('org.membro.reporTitulo', { nome: member.username })}
+      onClose={onClose}
+      footer={
+        emitido ? (
+          <Button variant="primary" onClick={onClose}>
+            {t('org.membro.reporFeito')}
+          </Button>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              {t('ui.cancelar')}
+            </Button>
+            <Button variant="primary" icon="key" busy={busy} onClick={() => void emitir()}>
+              {t('org.membro.reporEmitir')}
+            </Button>
+          </>
+        )
+      }
+    >
+      <div className="org-form">
+        {emitido ? (
+          <>
+            <Alert tone="warning">{t('org.membro.reporUmaVez', { ate: emitido.ate })}</Alert>
+            <Field label={t('org.membro.reporLink')} htmlFor="repor-link">
+              <TextInput id="repor-link" value={emitido.link} readOnly onFocus={(e) => e.currentTarget.select()} />
+            </Field>
+            <div>
+              <Button variant="secondary" size="sm" icon="copy" onClick={() => void copiar()}>
+                {t('org.membro.reporCopiar')}
+              </Button>
+            </div>
+            {copiado === true && <p className="dx-muted" role="status">{t('org.membro.reporCopiado')}</p>}
+            {copiado === false && <Alert tone="danger">{t('org.membro.reporNaoCopiou')}</Alert>}
+          </>
+        ) : (
+          <>
+            <p>{t('org.membro.reporTexto', { email: member.email })}</p>
+            {err && <Alert tone="danger">{err}</Alert>}
+          </>
+        )}
       </div>
     </Dialog>
   )

@@ -14,7 +14,7 @@ import { SearchBar, SearchResults } from '../../ui/search/SearchResults'
 import { useResourceSearch } from '../../ui/search/useResourceSearch'
 import CsvImportDialog from './CsvImportDialog'
 import InviteDialog from './InviteDialog'
-import { AddMemberDialog, EditMemberDialog, RemoveMemberDialog } from './MemberDialogs'
+import { AddMemberDialog, EditMemberDialog, RemoveMemberDialog, ResetPasswordDialog } from './MemberDialogs'
 import { formatAgo, orgErrorMessage, refusalAware, useLocaleTag } from './orgShared'
 import { membersFallback } from './search'
 
@@ -43,6 +43,7 @@ export default function MembersCard({
   const [busyId, setBusyId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Employee | null>(null)
   const [removing, setRemoving] = useState<Employee | null>(null)
+  const [resetting, setResetting] = useState<Employee | null>(null)
   const [notice, setNotice] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
@@ -295,6 +296,9 @@ export default function MembersCard({
                               />
                             )}
                             {!self && (
+                              <IconButton icon="key" bare label={t('org.membro.reporA', { nome: m.username })} onClick={() => setResetting(m)} />
+                            )}
+                            {!self && (
                               <IconButton icon="trash" bare label={t('org.membro.removerA', { nome: m.username })} onClick={() => setRemoving(m)} />
                             )}
                           </span>
@@ -404,6 +408,7 @@ export default function MembersCard({
           }}
         />
       )}
+      {resetting && <ResetPasswordDialog orgId={orgId} member={resetting} onClose={() => setResetting(null)} />}
       {inviting && roles.state.s === 'ready' && (
         <InviteDialog orgId={orgId} roles={roles.state.d.items} onClose={() => setInviting(false)} onInvited={() => invites.reload()} />
       )}
