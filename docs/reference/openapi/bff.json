@@ -3255,6 +3255,37 @@
         ],
         "type": "object"
       },
+      "DomainVerificationStatus": {
+        "properties": {
+          "domain": {
+            "type": "string"
+          },
+          "record_name": {
+            "description": "Nome e valor do registo TXT que o admin tem de publicar.",
+            "type": "string"
+          },
+          "record_value": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "verified_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "domain",
+          "record_name",
+          "record_value",
+          "verified"
+        ],
+        "type": "object"
+      },
       "DownloadLink": {
         "properties": {
           "expires_at": {
@@ -13435,7 +13466,7 @@
         ],
         "responses": {
           "302": {
-            "description": "Redirecção para o frontend com o access token no fragmento. Define o cookie `dlx_refresh`."
+            "description": "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4)."
           },
           "400": {
             "content": {
@@ -17586,6 +17617,162 @@
         "summary": "Muda o nome de um departamento manual.",
         "tags": [
           "directory"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/domain-verification": {
+      "get": {
+        "operationId": "get_domain_verification",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainVerificationStatus"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização não existe ou quem pede não é membro activo."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização ainda não tem domínio de email (`org.no_email_domain`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/orgs/:org_id/domain-verification` — o registo TXT a publicar e\nse já está verificado. Só admin.",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/domain-verification/check": {
+      "post": {
+        "operationId": "check_domain_verification",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainVerificationStatus"
+                }
+              }
+            },
+            "description": "`verified` diz se o TXT já batia certo nesta consulta."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem sessão."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Membro sem papel de admin."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização não existe ou quem pede não é membro activo."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização ainda não tem domínio de email (`org.no_email_domain`)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/orgs/:org_id/domain-verification/check` — consulta o DNS TXT\nagora e grava `email_domain_verified_at` se bater certo. Idempotente:\nrepetir depois de já verificado só confirma. Só admin.",
+        "tags": [
+          "orgs"
         ]
       }
     },
