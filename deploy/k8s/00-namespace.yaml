@@ -27,58 +27,14 @@ metadata:
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/audit: restricted
----
 # ---------------------------------------------------------------------------
-#  O tecto. Sem isto, um HPA a disparar ou uma fuga de memória no Meet come o
-#  cluster que serve o resto da plataforma — e o modo de falha seria pods de
-#  OUTRO namespace a morrer, que é o pior sítio para se ir procurar a causa.
+#  SEM ResourceQuota nem LimitRange aqui, de propósito (D1, 2026-10-10).
 #
-#  Números contra o medido a 2026-10-07: 5 workers Ready com 6 CPU e ~17,5 GiB
-#  alocáveis cada (~30 CPU, ~87 GiB), e o resto do cluster a pedir ~900m e
-#  ~600Mi por nó. O Meet em produção mínima pede ~4 CPU e ~6 GiB de requests;
-#  com o HPA nos 8 réplicas são 4 CPU só de server. O tecto dá folga para isso
-#  e pára bem antes de o cluster ficar sem onde pôr o `ngolacloud-system`.
+#  O tecto e o chão do namespace são do chart (`templates/quota.yaml`, ligado
+#  em produção), que conta o chart E a plataforma que vive aqui (Postgres e
+#  Redis). Duas quotas no mesmo namespace aplicam-se as duas, vale a mais
+#  restritiva, e o erro de admissão nomeia uma quota que não é a que se está a
+#  olhar: com esta e a do chart, o Postgres (12Gi de requests) era recusado.
+#  Um dono por recurso. Este ficheiro fica com o que o chart NÃO pode pôr: o
+#  Namespace e as etiquetas de Pod Security, que existem antes do release.
 # ---------------------------------------------------------------------------
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: ngolacloud-meet
-  namespace: ngolacloud-meet
-spec:
-  hard:
-    requests.cpu: "8"
-    requests.memory: 12Gi
-    limits.cpu: "24"
-    limits.memory: 32Gi
-    pods: "60"
-    persistentvolumeclaims: "12"
-    # A gama do MetalLB tem 28 endereços (192.168.1.73-100) para TODO o
-    # cluster. Dois LoadBalancers é o que o Meet precisa (coturn, e um de
-    # reserva); mais do que isso tira endereços a quem vem depois.
-    services.loadbalancers: "2"
----
-# ---------------------------------------------------------------------------
-#  O chão e o cabo. Duas funções distintas:
-#
-#  1. DEFAULTS — a maior parte dos manifests de `deploy/k8s/` não declara
-#     `resources`, e um pod sem requests é um pod que o scheduler acha que não
-#     pesa e que o kubelet mata primeiro sob pressão. Com isto nenhum pod entra
-#     sem conta.
-#  2. MÁXIMO por contentor — para um valor mal escrito não reservar meio nó.
-#     O tecto é 8 CPU / 16Gi e NÃO é arbitrário: é o que acomoda o limite mais
-#     alto declarado no repo (o worker de IA, 4 CPU / 12Gi) sem o rejeitar. Um
-#     máximo abaixo disso rejeitaria pods em silêncio, que é a maneira de a
-#     segurança parecer configuração e ser avaria.
-# ---------------------------------------------------------------------------
-apiVersion: v1
-kind: LimitRange
-metadata:
-  name: ngolacloud-meet
-  namespace: ngolacloud-meet
-spec:
-  limits:
-    - type: Container
-      defaultRequest: { cpu: 100m, memory: 128Mi }
-      default: { cpu: 500m, memory: 512Mi }
-      min: { cpu: 10m, memory: 16Mi }
-      max: { cpu: "8", memory: 16Gi }

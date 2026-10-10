@@ -376,14 +376,17 @@ otel:
 # `check-helm.sh` recalcula-a do render e falha se a quota não a cobrir.
 quota:
   enabled: false
+  # Chart + plataforma no mesmo namespace (Postgres e Redis do
+  # deploy/k8s/plataforma). A conta está no topo de templates/quota.yaml e o
+  # `check-helm.sh` refá-la a partir do render e dos ficheiros da plataforma.
   requests:
-    cpu: "8"
-    memory: 8Gi
+    cpu: "12"
+    memory: 24Gi
   limits:
-    cpu: "32"
-    memory: 27Gi
+    cpu: "52"
+    memory: 64Gi
   maxPods: "40"
-  maxPvcs: "8"
+  maxPvcs: "10"
   maxLoadBalancers: "2"
   container:
     # Para o que aterra no namespace SEM `resources` — um pod de depuração, um
@@ -391,9 +394,10 @@ quota:
     defaultRequest: { cpu: 100m, memory: 128Mi }
     defaultLimit: { cpu: "1", memory: 1Gi }
     # Barra por contentor: um zero a mais no `values` não esgota a quota num
-    # pod. Acima do maior que temos (o coturn, com 4 CPU) — se ficasse IGUAL, a
-    # admissão passava a rejeitar o coturn no primeiro aumento.
-    max: { cpu: "6", memory: 4Gi }
+    # pod. Acima do maior que temos — o coturn, com 4 CPU, e o Postgres da
+    # plataforma, com 8Gi — e se ficasse IGUAL, a admissão passava a rejeitar
+    # um deles no primeiro aumento.
+    max: { cpu: "6", memory: 10Gi }
 
 # Prioridade de agendamento dos pods — VAZIO por omissão, de propósito.
 #

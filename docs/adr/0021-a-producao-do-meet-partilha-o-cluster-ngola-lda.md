@@ -141,7 +141,10 @@ confirmações em vez de duas. Um quarto chassis, se vier, leva **só workers**.
 organizações; agora há uma camada acima dela — o Meet contra o resto da plataforma —, com
 control-plane, Longhorn e nós partilhados com o `delonix-system`. **Um namespace não é uma
 fronteira dura.** O mínimo para isto não ser uma promessa vazia é `ResourceQuota`,
-`LimitRange` e `NetworkPolicy` no `ngolacloud-meet`, e o chart só traz a última.
+`LimitRange` e `NetworkPolicy` no `ngolacloud-meet`. Os três vêm do chart, e a quota é
+UMA só (D1, 2026-10-10): conta o chart e a plataforma que vive no mesmo namespace — o
+Postgres e o Redis —, porque duas quotas no mesmo namespace aplicam-se as duas e a do chart,
+sozinha, recusava o Postgres. O `00-namespace.yaml` fica com o Namespace e o Pod Security.
 
 **O 0020 fica com uma parte morta e uma parte viva.** Morta: «um cluster Kubernetes
 próprio, em VMs no Proxmox». Viva: tudo o resto, incluindo a observabilidade própria, que

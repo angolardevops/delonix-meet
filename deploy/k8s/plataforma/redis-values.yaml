@@ -58,6 +58,12 @@ commonConfiguration: |-
 
 metrics:
   enabled: true
+  # Declarados, e não o preset do chart: o exporter vive no namespace do Meet
+  # e conta para a quota dele; o `check-helm.sh` soma-o a partir daqui, e um
+  # preset escondido no chart bitnami seria um número que ninguém vê.
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 128Mi }
   serviceMonitor:
     enabled: true
     namespace: observabilidade
