@@ -391,6 +391,9 @@ image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_T
 	@# (um dist stale foi a causa de "estilos perdidos" em stage — nunca reusar).
 	@export PATH="$(NODE_BIN):$$PATH"; \
 	  cd web && { [ -d node_modules ] || npm ci; } && npm run build
+	@# O backoffice vai na MESMA imagem, em /admin/ (Dockerfile.web.stage).
+	@export PATH="$(NODE_BIN):$$PATH"; \
+	  cd web-admin && { [ -d node_modules ] || npm ci; } && npm run build
 	@$(IMG_BUILD) -f $(SERVER_DOCKERFILE) -t $(IMAGE_SERVER) .
 	@printf "$(C)▶ build $(IMAGE_WEB) (dist local → nginx, rápido)$(Z)\n"
 	@$(IMG_BUILD) -f Dockerfile.web.stage -t $(IMAGE_WEB) .

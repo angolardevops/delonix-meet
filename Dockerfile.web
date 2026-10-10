@@ -36,8 +36,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 
 RUN npm run build
 
+# --- O backoffice de operador (`web-admin/`) ---
+# Bundle SEPARADO (o peso de IA/WASM/service worker do `web/` não entra nele),
+# servido pelo MESMO nginx em `/admin/`: o CORS do servidor não tem
+# `allow_credentials`, por isso a sessão por cookie só funciona no mesmo
+# origin da API. Um Deployment próprio daria o mesmo origin com Service, rota
+# e quota a mais e nada a ganhar.
+FROM node:22-bookworm-slim AS build-admin
+WORKDIR /web-admin
+COPY web-admin/package.json web-admin/package-lock.json ./
+RUN npm ci
+COPY web-admin ./
+RUN npm run build
+
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 # nginx-unprivileged já corre como uid 101 (não-root) e escuta em 8080.
 COPY deploy/k8s/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /web/dist /usr/share/nginx/html
+COPY --from=build-admin /web-admin/dist /usr/share/nginx/html/admin
 EXPOSE 8080
