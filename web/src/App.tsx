@@ -108,6 +108,11 @@ export default function App() {
     }
     document.getElementById('conteudo')?.focus()
   }, [route.kind])
+  // Já com sessão, `#/login` não é um ecrã: volta-se ao Início em vez de
+  // mostrar «este endereço não existe».
+  useEffect(() => {
+    if (user && route.kind === 'login') location.hash = '/'
+  }, [user, route.kind])
   useEffect(() => {
     const onHash = () => setRoute(parseHash())
     // Sessão expirada (a renovação falhou): volta-se ao ecrã de entrada.

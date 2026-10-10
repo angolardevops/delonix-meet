@@ -1,4 +1,14 @@
 export default {
+  ssoErro: {
+    dominioPorProvar: 'Your organisation has not yet proven ownership of its email domain. Until an administrator publishes the DNS record, only existing accounts can sign in with SSO.',
+    foraDaOrg: 'This account is not an active member of the organisation behind this identity provider.',
+    outroDominio: 'The email returned by the identity provider is not in this organisation’s domain.',
+    fornecedorEmBaixo: 'The organisation’s identity provider did not respond. Try again later, or contact the administrator.',
+    tokenRecusado: 'The identity provider’s response was not accepted. Contact the organisation administrator.',
+    expirou: 'The SSO sign-in expired or was already used. Try again.',
+    contaEmConflito: 'An account with this email or name already exists. Contact the administrator.',
+    generico: 'Could not sign in with SSO. Try again.',
+  },
   reposicao: {
     link: 'Forgot your password?',
     titulo: 'Reset your password',

@@ -13,7 +13,7 @@ import { apiErrorMessage, getPlatformSettings, login, registerOrg, ssoCheck, sso
 import { getAppName } from '../../branding'
 import { Alert, Button, Field, TextInput } from '../../ui/kit'
 import CampoPalavraPasse from './CampoPalavraPasse'
-import { dominioDoEmail, motivoDaRecusa } from './logica'
+import { chaveDoErroSso, dominioDoEmail, motivoDaRecusa, ssoErroDoEndereco } from './logica'
 
 type Modo = 'entrar' | 'registo'
 
@@ -48,6 +48,15 @@ export default function FormularioEntrada({
   // a criação de organização e o botão de SSO.
   const [esconderRegisto, setEsconderRegisto] = useState(false)
   const [esconderSso, setEsconderSso] = useState(false)
+
+  // O SSO volta aqui com `#/login?sso_error=<código>` quando recusa ou falha.
+  // Diz-se a frase, e o endereço fica limpo: um reload não a repete.
+  useEffect(() => {
+    const codigo = ssoErroDoEndereco(location.hash)
+    if (!codigo) return
+    setErro(t(chaveDoErroSso(codigo)))
+    history.replaceState(null, '', `${location.pathname}${location.search}#/login`)
+  }, [t])
 
   useEffect(() => {
     let vivo = true

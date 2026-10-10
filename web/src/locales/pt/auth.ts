@@ -1,4 +1,14 @@
 export default {
+  ssoErro: {
+    dominioPorProvar: 'A sua organização ainda não provou a posse do domínio de email. Até um administrador publicar o registo DNS, só as contas que já existem entram por SSO.',
+    foraDaOrg: 'Esta conta não é membro activo da organização deste fornecedor de identidade.',
+    outroDominio: 'O email devolvido pelo fornecedor de identidade não é do domínio desta organização.',
+    fornecedorEmBaixo: 'O fornecedor de identidade da organização não respondeu. Tente mais tarde, ou fale com o administrador.',
+    tokenRecusado: 'A resposta do fornecedor de identidade não foi aceite. Fale com o administrador da organização.',
+    expirou: 'A entrada por SSO expirou ou já foi usada. Tente de novo.',
+    contaEmConflito: 'Já existe uma conta com este email ou nome. Fale com o administrador.',
+    generico: 'Não foi possível entrar por SSO. Tente de novo.',
+  },
   reposicao: {
     link: 'Esqueci-me da palavra-passe',
     titulo: 'Repor a palavra-passe',

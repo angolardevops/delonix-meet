@@ -995,3 +995,180 @@ async fn sso_callback_challenges_local_mfa_instead_of_issuing_a_session(db: sqlx
     assert_eq!(st, 200, "{body}");
     assert_eq!(body["user"]["id"], admin.user_id);
 }
+
+// ---------------------------------------------------------------------------
+//  Achados do laboratório da Frente C (Odoo 16 + Meet reais, 2026-10-10):
+//  o endereço público, o fornecedor em baixo, a recusa que volta ao login, e
+//  a entrada que fica na trilha.
+// ---------------------------------------------------------------------------
+
+const PUBLICO: &str = "https://meet.publico.test";
+
+/// authorize → IdP → callback, devolvendo o estado e o `Location` do callback.
+/// Ao contrário do `sso_flow`, não interpreta: o que se mede aqui é o destino.
+async fn ida_e_volta(app: &TestApp, idp: &FakeIdp, domain: &str, email: &str) -> (u16, String) {
+    let r = app
+        .raw(
+            reqwest::Method::GET,
+            &format!("/api/auth/sso/authorize?domain={domain}"),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 302, "authorize: {}", r.text);
+    let location = url::Url::parse(&r.header("location").unwrap()).unwrap();
+    let q = |k: &str| {
+        location
+            .query_pairs()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.to_string())
+            .unwrap()
+    };
+    // O redirect_uri registado no IdP sai do PUBLIC_URL — não do CORS nem de
+    // localhost.
+    assert_eq!(
+        q("redirect_uri"),
+        format!("{PUBLICO}/api/auth/sso/callback")
+    );
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.email = email.to_string();
+        a.nonce = q("nonce");
+    }
+    let r = app
+        .raw(
+            reqwest::Method::GET,
+            &format!(
+                "/api/auth/sso/callback?code=codigo-falso&state={}",
+                q("state")
+            ),
+            &[],
+            None,
+        )
+        .await;
+    (r.status, r.header("location").unwrap_or_default())
+}
+
+async fn na_trilha(app: &TestApp, org: &str, action: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE org_id = $1::uuid AND action = $2")
+        .bind(org)
+        .bind(action)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// A recusa volta ao LOGIN com o código (era JSON cru no ecrã), o sucesso volta
+/// ao endereço público, e a entrada e a conta criada ficam na trilha (só a
+/// recusa ficava).
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_volta_ao_login_com_o_codigo_e_a_entrada_fica_na_trilha(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(
+        db,
+        &[
+            ("OUTBOUND_ALLOW_HOSTS", "127.0.0.1"),
+            ("PUBLIC_URL", PUBLICO),
+        ],
+    )
+    .await;
+    let admin = app.new_org("eta.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+
+    let (st, loc) = ida_e_volta(&app, &idp, "eta.test", "nova@eta.test").await;
+    assert_eq!(
+        (st, loc.as_str()),
+        (
+            302,
+            format!("{PUBLICO}/#/login?sso_error=sso.domain_not_verified").as_str()
+        ),
+        "a recusa tem de voltar ao login com o código"
+    );
+    assert_eq!(na_trilha(&app, admin.org(), "auth.sso_refused").await, 1);
+
+    app.verify_domain(admin.org()).await;
+    let (st, loc) = ida_e_volta(&app, &idp, "eta.test", "nova@eta.test").await;
+    assert_eq!(st, 302);
+    assert!(
+        loc.starts_with(&format!("{PUBLICO}/#/sso-complete?token=")),
+        "o sucesso volta ao endereço público: {loc}"
+    );
+    assert_eq!(
+        na_trilha(&app, admin.org(), "auth.sso_provisioned").await,
+        1
+    );
+    assert_eq!(na_trilha(&app, admin.org(), "auth.sso_login").await, 1);
+
+    // Uma segunda entrada da MESMA conta: entra outra vez, não cria outra.
+    let (st, _) = ida_e_volta(&app, &idp, "eta.test", "nova@eta.test").await;
+    assert_eq!(st, 302);
+    assert_eq!(
+        na_trilha(&app, admin.org(), "auth.sso_provisioned").await,
+        1
+    );
+    assert_eq!(na_trilha(&app, admin.org(), "auth.sso_login").await, 2);
+}
+
+/// O IdP em baixo é do LADO DELE: 503 com código próprio (era 500 «internal
+/// error»), e com o endereço público configurado volta ao login com esse código.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_com_o_fornecedor_em_baixo_diz_que_e_dele(db: sqlx::PgPool) {
+    let sem_url = TestApp::spawn_with(db.clone(), &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = sem_url.new_org("teta.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&sem_url, &admin, &idp).await;
+    // Um destino permitido onde nada responde.
+    sqlx::query(
+        "UPDATE org_sso_configs SET issuer_url = 'http://127.0.0.1:1' WHERE org_id = $1::uuid",
+    )
+    .bind(admin.org())
+    .execute(&sem_url.db)
+    .await
+    .unwrap();
+
+    let (st, body) = sem_url
+        .get("/api/auth/sso/authorize?domain=teta.test", None)
+        .await;
+    assert_eq!(st, 503, "{body}");
+    assert_eq!(body["code"], "sso.provider_unavailable", "{body}");
+
+    let com_url = TestApp::spawn_with(
+        db,
+        &[
+            ("OUTBOUND_ALLOW_HOSTS", "127.0.0.1"),
+            ("PUBLIC_URL", PUBLICO),
+        ],
+    )
+    .await;
+    let r = com_url
+        .raw(
+            reqwest::Method::GET,
+            "/api/auth/sso/authorize?domain=teta.test",
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(r.status, 302, "{}", r.text);
+    assert_eq!(
+        r.header("location").unwrap(),
+        format!("{PUBLICO}/#/login?sso_error=sso.provider_unavailable")
+    );
+}
+
+/// Em produção, sem PUBLIC_URL nem CORS_ORIGINS, o SSO RECUSA — até aqui
+/// mandava o browser para `localhost` em silêncio. E recusa antes de ir ao IdP.
+#[sqlx::test(migrations = "./migrations")]
+async fn em_producao_sem_endereco_publico_o_sso_recusa(db: sqlx::PgPool) {
+    let mut config = common::test_config(&[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]);
+    config.allow_insecure = false;
+    let app = TestApp::spawn_with_config(db, config).await;
+    let admin = app.new_org("iota.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+
+    let (st, body) = app
+        .get("/api/auth/sso/authorize?domain=iota.test", None)
+        .await;
+    assert_eq!(st, 422, "{body}");
+    assert_eq!(body["code"], "sso.public_url_missing", "{body}");
+}
