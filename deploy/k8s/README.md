@@ -45,18 +45,23 @@ Para cenários de produção, não recomendamos StatefulSets isolados. O `Makefi
 Os comandos estão integrados na raiz do projeto:
 
 *   `make stage`: Sobe um cluster Kubernetes local via `kind`, instala o Nginx Ingress Controller e aplica todos os manifestos (ideal para CI/CD ou testes robustos locais).
-*   `make prod`: Aplica os manifestos no contexto Kubernetes atualmente ativo na sua máquina (`kubectl config current-context`). **Exige `TURN_PUBLIC_IP`** e recusa sem ele, no `prod-preflight`, antes de escrever no cluster:
+*   `make prod`: Aplica os manifestos no contexto Kubernetes atualmente ativo na sua máquina (`kubectl config current-context`). **Exige `TURN_PUBLIC_IP` e `DOMAIN`** e recusa sem eles, no `prod-preflight`, antes de escrever no cluster:
 
     ```bash
-    make prod TURN_PUBLIC_IP=<ip-publico-do-relay> DOMAIN=<dominio>
+    make prod TURN_PUBLIC_IP=<ip-publico-do-relay> DOMAIN=<dominio-real>
     ```
 
-    O VIP que está nos manifestos (`KIND_TURN_VIP`) é um endereço da rede docker do
-    kind — correcto no `make stage`, inexistente num cluster a sério. Aplicá-lo em
-    produção deixava o relay de media sem caminho, e o sintoma é ecrã preto com a
-    sinalização toda a funcionar. O `prod` substitui-o no `TURN_HOST` (`01-config.yaml`)
-    e no `EXTERNAL_IP`/`loadBalancerIP` (`51-coturn.yaml`), que têm de bater uns com os
-    outros. Portão: `scripts/check-k8s-render.sh` (verificação 10).
+    Os manifestos levam **dois valores de laboratório**, ambos correctos no `make stage`
+    e inexistentes num cluster a sério:
+
+    | valor | onde vive | o que acontecia em produção |
+    |---|---|---|
+    | `KIND_TURN_VIP` (VIP MetalLB da rede docker do kind) | `TURN_HOST` (`01-config.yaml`), `EXTERNAL_IP` e `loadBalancerIP` (`51-coturn.yaml`) | o relay de media fica sem caminho — ecrã preto com a sinalização toda a funcionar |
+    | `LAB_DOMAIN` (`meet.delonix.local`) | `04-ingress.yaml` | o Ingress responde por um nome que ninguém resolve, e o cert-manager pede um certificado para um `.local`, que nunca é emitido |
+
+    O `prod` substitui os dois por `sed`; as três ocorrências do VIP têm de bater umas
+    com as outras. Portão: `scripts/check-k8s-render.sh` (verificação 10), que além de ler
+    o Makefile **corre** o `prod-preflight` para provar que ele recusa as omissões.
 
     > **Produção hoje não passa por aqui.** Medido a 2026-10-11 no `delonix-lda`: a
     > aplicação corre pelo **chart Helm** (release `meet`) e a plataforma por

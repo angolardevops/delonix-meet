@@ -571,7 +571,14 @@ stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster
 	@printf "   URL:  $(G)https://meet.delonix.local$(Z)\n"
 	@printf "   Pods: $(Y)kubectl get po -n ngolacloud-meet$(Z)\n"
 
-DOMAIN ?= meet.delonix.local
+# O domínio do laboratório, o que está escrito no 04-ingress.yaml. Em produção
+# tem de ser substituído: aplicá-lo num cluster a sério punha o Ingress a
+# responder por um nome que ninguém resolve, e o cert-manager a pedir um
+# certificado para um domínio .local — que nunca é emitido.
+LAB_DOMAIN := meet.delonix.local
+# Omissão de laboratório DE PROPÓSITO (o `make stage` e o `make dev` vivem
+# nela). O `make prod` recusa-a — ver `prod-preflight`.
+DOMAIN ?= $(LAB_DOMAIN)
 
 # O VIP do relay TURN que vive nos manifestos: um endereço da rede docker do
 # kind, correcto no laboratório (`make stage`) e inexistente num cluster a
@@ -617,6 +624,13 @@ prod-preflight:
 	  printf "$(Y)✗ TURN_PUBLIC_IP=$(KIND_TURN_VIP) é o VIP do kind — não serve em produção.$(Z)\n"; \
 	  exit 1; \
 	fi
+	@if [ -z "$(DOMAIN)" ] || [ "$(DOMAIN)" = "$(LAB_DOMAIN)" ]; then \
+	  printf "$(Y)✗ DOMAIN=$(DOMAIN) é o domínio do laboratório — não serve em produção.$(Z)\n"; \
+	  printf "  O Ingress responderia por um nome que ninguém resolve, e o cert-manager\n"; \
+	  printf "  pediria um certificado para um .local, que nunca é emitido.\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip-publico-do-LB> DOMAIN=<dominio-real>$(Z)\n"; \
+	  exit 1; \
+	fi
 	@printf "$(G)  ✓ preflight: relay em $(TURN_PUBLIC_IP), domínio $(DOMAIN)$(Z)\n"
 
 prod: env-file prod-preflight ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
@@ -642,7 +656,7 @@ prod: env-file prod-preflight ## Deploy de produção K8s (Ansible + Helm + Mani
 	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
-	@sed "s/meet.delonix.local/$(DOMAIN)/g" deploy/k8s/04-ingress.yaml | kubectl apply -f -
+	@sed "s/$(LAB_DOMAIN)/$(DOMAIN)/g" deploy/k8s/04-ingress.yaml | kubectl apply -f -
 	@# media relay (R4). O VIP do kind sai daqui: TURN_HOST (01-config) e
 	@# EXTERNAL_IP/loadBalancerIP (51-coturn) ficam todos em $(TURN_PUBLIC_IP).
 	@sed "s/$(KIND_TURN_VIP)/$(TURN_PUBLIC_IP)/g" deploy/k8s/51-coturn.yaml | kubectl apply -f -
