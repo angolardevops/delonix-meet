@@ -573,6 +573,15 @@ stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster
 
 DOMAIN ?= meet.delonix.local
 
+# O VIP do relay TURN que vive nos manifestos: um endereço da rede docker do
+# kind, correcto no laboratório (`make stage`) e inexistente num cluster a
+# sério. O `make prod` NÃO o pode aplicar — ver `prod-preflight`.
+KIND_TURN_VIP := 172.30.0.201
+# O endereço público do relay em produção. DE PROPÓSITO sem omissão: uma
+# omissão aqui era o VIP do kind a entrar em produção outra vez, e o sintoma
+# seria ecrã preto em todas as chamadas, com a sinalização a funcionar.
+TURN_PUBLIC_IP ?=
+
 # R154 — o segredo da API interna de IVR nasce aleatório no cluster e nunca
 # num ficheiro do repositório. Idempotente: se o Secret já existe, não o toca
 # (rodar = apagar o Secret e voltar a correr, e actualizar o FreeSWITCH).
@@ -587,7 +596,30 @@ voice-secret-k8s: ## Cria o Secret delonix-voice (VOICE_INTERNAL_SECRET aleatór
 	fi
 
 .PHONY: prod
-prod: env-file ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
+.PHONY: prod-preflight
+# RECUSA ANTES DE ESCREVER. Corre como dependência do `prod`, portanto antes do
+# Ansible, do Helm e do primeiro `kubectl apply`: um deploy que só se descobre
+# errado no passo 25 já mexeu no cluster.
+prod-preflight:
+	@if [ -z "$(TURN_PUBLIC_IP)" ]; then \
+	  printf "$(Y)✗ TURN_PUBLIC_IP não está definido.$(Z)\n"; \
+	  printf "  Os manifestos levam $(KIND_TURN_VIP), que é um VIP da rede docker do kind:\n"; \
+	  printf "  num cluster a sério esse endereço não existe, e o relay de media fica\n"; \
+	  printf "  sem caminho — ecrã preto com a sinalização toda a funcionar.\n\n"; \
+	  printf "  Dá-lhe o endereço público do relay:\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip-publico-do-LB> DOMAIN=<dominio>$(Z)\n\n"; \
+	  printf "  Produção hoje NÃO passa por aqui: o coturn do delonix-lda é do chart\n"; \
+	  printf "  Helm (release meet, hostNetwork + ClusterIP). Ver deploy/helm/delonix-meet/\n"; \
+	  printf "  e deploy/k8s/plataforma/README.md (ADR-0020/0021).\n"; \
+	  exit 1; \
+	fi
+	@if [ "$(TURN_PUBLIC_IP)" = "$(KIND_TURN_VIP)" ]; then \
+	  printf "$(Y)✗ TURN_PUBLIC_IP=$(KIND_TURN_VIP) é o VIP do kind — não serve em produção.$(Z)\n"; \
+	  exit 1; \
+	fi
+	@printf "$(G)  ✓ preflight: relay em $(TURN_PUBLIC_IP), domínio $(DOMAIN)$(Z)\n"
+
+prod: env-file prod-preflight ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@printf "$(C)▶ Provisionando Cluster K8s Bare-Metal via Ansible...$(Z)\n"
 	@ansible-playbook -i deploy/ansible/inventory.ini deploy/ansible/playbook.yml
 	@printf "$(C)▶ Instalando cert-manager (Let's Encrypt)...$(Z)\n"
@@ -605,13 +637,15 @@ prod: env-file ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's 
 	@printf "$(C)▶ Compilando e gerando Docker Image (Distroless Security)...$(Z)\n"
 	@docker build -t delonix-meet-server:latest -f Dockerfile.server .
 	@printf "$(C)▶ Fazendo deploy da Aplicação com Domínio $(DOMAIN)...$(Z)\n"
-	@kubectl apply -f deploy/k8s/01-config.yaml
+	@sed "s/$(KIND_TURN_VIP)/$(TURN_PUBLIC_IP)/g" deploy/k8s/01-config.yaml | kubectl apply -f -
 	@bash scripts/k8s-app-secrets.sh $(PROD_DB_HOST)
 	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
 	@sed "s/meet.delonix.local/$(DOMAIN)/g" deploy/k8s/04-ingress.yaml | kubectl apply -f -
-	@kubectl apply -f deploy/k8s/51-coturn.yaml   # media relay (R4). Prod: trocar VIP metallb por LB de cloud + IP público em 01-config/51-coturn
+	@# media relay (R4). O VIP do kind sai daqui: TURN_HOST (01-config) e
+	@# EXTERNAL_IP/loadBalancerIP (51-coturn) ficam todos em $(TURN_PUBLIC_IP).
+	@sed "s/$(KIND_TURN_VIP)/$(TURN_PUBLIC_IP)/g" deploy/k8s/51-coturn.yaml | kubectl apply -f -
 	@printf "$(G)  ✓ Deploy de Produção concluído! O Cert-Manager obterá os certificados para $(DOMAIN).$(Z)\n"
 
 .PHONY: destroy

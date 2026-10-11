@@ -25,6 +25,10 @@
 #   7. em TODOS: todo o Deployment com mais de uma réplica (ou com um HPA a
 #      mirá-lo) espalha-se por nó, com ScheduleAnyway. Réplicas todas no mesmo
 #      nó ficam `Available` num único ponto de falha, sem dar erro nenhum.
+#  10. o `make prod` não aplica endereços do laboratório: todo o manifesto que
+#      ele manda ao cluster e que leve o VIP do kind passa por um `sed` que o
+#      substitui, e o alvo depende do `prod-preflight`, que recusa sem
+#      `TURN_PUBLIC_IP`.
 #   9. o coturn: o relay TEM caminho (a rede do nó, ou o hairpin autorizado com
 #      `--allowed-peer-ip` == `--external-ip`), a gama de relay fica fora dos
 #      NodePort e dos portos efémeros quando está na rede do nó, e a
@@ -408,6 +412,61 @@ for f in deploy/k8s/plataforma/*-values.yaml; do
 done
 if [ "$img_fail" = 0 ]; then
   echo "✓ imagens da plataforma: sem latest e sem bitnami/* público (só bitnamilegacy, com tag fixa)"
+else
+  fail=1
+fi
+
+# ---------------------------------------------------------------------------
+#  O `make prod` não pode aplicar endereços do laboratório.
+#
+#  Os manifestos de deploy/k8s levam o VIP do MetalLB da rede docker do kind,
+#  que é o CERTO no laboratório e não existe num cluster a sério. O `make prod`
+#  aplica os MESMOS ficheiros, e durante muito tempo aplicava-os com o VIP lá
+#  dentro: o relay de media ficava sem caminho e o sintoma era ecrã preto com a
+#  sinalização toda a funcionar — o pior que há, porque parece estar de pé.
+#
+#  Isto lê o alvo `prod` do Makefile e exige duas coisas: que ele dependa do
+#  `prod-preflight` (a recusa que corre ANTES de escrever no cluster), e que
+#  todo o manifesto que ele aplique e que contenha o VIP seja substituído por
+#  `sed` na própria linha.
+# ---------------------------------------------------------------------------
+KIND_TURN_VIP=$(/usr/bin/grep -E '^KIND_TURN_VIP *:?= *' Makefile | head -1 | sed 's/.*= *//')
+prod_fail=0
+if [ -z "$KIND_TURN_VIP" ]; then
+  echo "✗ Makefile: falta o KIND_TURN_VIP — é dele que este portão tira o VIP do laboratório"
+  prod_fail=1
+else
+  receita=$(awk '/^prod: /{f=1} f&&/^\t/{print} f&&!/^\t/&&!/^prod: /{exit}' Makefile)
+  if ! /usr/bin/grep -qE '^prod: .*prod-preflight' Makefile; then
+    echo "✗ Makefile: o alvo prod não depende do prod-preflight — a recusa tem de correr ANTES do primeiro apply"
+    prod_fail=1
+  fi
+  while IFS= read -r linha; do
+    case "$linha" in *deploy/k8s/*) ;; *) continue ;; esac
+    for m in $(printf '%s\n' "$linha" | /usr/bin/grep -oE 'deploy/k8s/[A-Za-z0-9_.-]+\.yaml'); do
+      [ -f "$m" ] || continue
+      /usr/bin/grep -qF "$KIND_TURN_VIP" "$m" || continue
+      #  Vale o literal ou a variável: o Makefile usa $(KIND_TURN_VIP).
+      substitui=0
+      case "$linha" in
+        *sed*"$KIND_TURN_VIP"*|*sed*KIND_TURN_VIP*) substitui=1 ;;
+      esac
+      case "$substitui" in
+        1) ;;
+        *)
+          echo "✗ Makefile (prod): «$m» leva o VIP do laboratório $KIND_TURN_VIP e é aplicado sem o substituir."
+          echo "    Em produção esse endereço não existe: o relay de media fica sem caminho e dá ecrã"
+          echo "    preto com a sinalização a funcionar. Aplica-o com"
+          echo "    sed \"s/\$(KIND_TURN_VIP)/\$(TURN_PUBLIC_IP)/g\" $m | kubectl apply -f -"
+          prod_fail=1 ;;
+      esac
+    done
+  done <<EOF
+$receita
+EOF
+fi
+if [ "$prod_fail" = 0 ]; then
+  echo "✓ make prod: depende do preflight e não aplica o VIP do laboratório"
 else
   fail=1
 fi

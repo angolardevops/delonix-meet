@@ -17,9 +17,12 @@
 #     PRODUÇÃO NÃO PASSA POR AQUI. Medido a 2026-10-11 no `delonix-lda`: o
 #     coturn em produção é do chart Helm (release `meet`, `managed-by: Helm`),
 #     com `hostNetwork: true`, gama 20000-20300, `--total-quota=300` e Service
-#     ClusterIP — ver deploy/helm/delonix-meet/ e o `_helpers.tpl`. O alvo
-#     `make prod` ainda aplica este ficheiro, e o VIP 172.30.0.201 é um
-#     endereço da rede docker do kind: num cluster a sério não existe.
+#     ClusterIP — ver deploy/helm/delonix-meet/ e o `_helpers.tpl`.
+#     O `make prod` ainda aplica este ficheiro, mas já NÃO leva o VIP do kind:
+#     exige `TURN_PUBLIC_IP` (recusa sem ele, no `prod-preflight`, antes de
+#     escrever no cluster) e substitui-o aqui e no TURN_HOST do 01-config.
+#     Por isso o VIP não deve aparecer literal em mais nenhum comentário deste
+#     ficheiro: o sed trocá-lo-ia-lá também e o comentário sairia falso.
 #     CRÍTICO: `--external-ip` E `--allowed-peer-ip` = o IP do LoadBalancer.
 #       - external-ip: o coturn anuncia os candidatos relay nesse IP.
 #       - allowed-peer-ip: em relay-only nos DOIS lados, o "peer" de cada
@@ -81,7 +84,9 @@ spec:
             # o VIP (que é o único peer real em relay-only): metadata cloud
             # (169.254) e loopback. O CIDR de pods (10.244) NÃO pode ser negado — o
             # próprio relay do coturn vive num IP de pod (hairpin). NÃO negar RFC1918 em
-            # bloco — o VIP 172.30.0.201 é 172.16/12 e partiria a media.
+            # bloco — no laboratório o VIP do MetalLB cai em 172.16/12 e negá-lo
+            # partia a media. (Sem o literal do VIP de propósito: o `make prod`
+            # substitui-o por sed, e num comentário o literal saía trocado.)
             # total-quota + range largo de portas evitam esgotamento (DoS
             # cross-tenant). Ajustar o denied de pods se o podCIDR do cluster
             # não for 10.244.0.0/16.

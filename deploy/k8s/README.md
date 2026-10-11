@@ -45,6 +45,22 @@ Para cenários de produção, não recomendamos StatefulSets isolados. O `Makefi
 Os comandos estão integrados na raiz do projeto:
 
 *   `make stage`: Sobe um cluster Kubernetes local via `kind`, instala o Nginx Ingress Controller e aplica todos os manifestos (ideal para CI/CD ou testes robustos locais).
-*   `make prod`: Aplica os manifestos no contexto Kubernetes atualmente ativo na sua máquina (`kubectl config current-context`).
+*   `make prod`: Aplica os manifestos no contexto Kubernetes atualmente ativo na sua máquina (`kubectl config current-context`). **Exige `TURN_PUBLIC_IP`** e recusa sem ele, no `prod-preflight`, antes de escrever no cluster:
+
+    ```bash
+    make prod TURN_PUBLIC_IP=<ip-publico-do-relay> DOMAIN=<dominio>
+    ```
+
+    O VIP que está nos manifestos (`KIND_TURN_VIP`) é um endereço da rede docker do
+    kind — correcto no `make stage`, inexistente num cluster a sério. Aplicá-lo em
+    produção deixava o relay de media sem caminho, e o sintoma é ecrã preto com a
+    sinalização toda a funcionar. O `prod` substitui-o no `TURN_HOST` (`01-config.yaml`)
+    e no `EXTERNAL_IP`/`loadBalancerIP` (`51-coturn.yaml`), que têm de bater uns com os
+    outros. Portão: `scripts/check-k8s-render.sh` (verificação 10).
+
+    > **Produção hoje não passa por aqui.** Medido a 2026-10-11 no `delonix-lda`: a
+    > aplicação corre pelo **chart Helm** (release `meet`) e a plataforma por
+    > [`plataforma/instalar.sh`](plataforma/README.md) (ADR-0020/0021). Este alvo fica
+    > para um cluster dedicado sem o chart.
 
 > O `make dev` mantém-se inalterado, correndo a stack via `docker-compose` para o fluxo rápido de desenvolvimento.
