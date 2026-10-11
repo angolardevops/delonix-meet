@@ -25,11 +25,12 @@
 #   7. em TODOS: todo o Deployment com mais de uma réplica (ou com um HPA a
 #      mirá-lo) espalha-se por nó, com ScheduleAnyway. Réplicas todas no mesmo
 #      nó ficam `Available` num único ponto de falha, sem dar erro nenhum.
-#  10. o `make prod` não aplica VALORES de laboratório — nem o VIP do kind
-#      (`KIND_TURN_VIP`) nem o domínio .local (`LAB_DOMAIN`): todo o manifesto
-#      que ele manda ao cluster e que leve um deles passa por um `sed` que o
-#      substitui, o alvo depende do `prod-preflight`, e o preflight é CORRIDO
-#      para provar que recusa as omissões e aceita valores reais.
+#  10. o `make prod` não aplica os valores COZIDOS nos manifestos — o VIP do
+#      kind (`KIND_TURN_VIP`), o domínio .local (`LAB_DOMAIN`) e o contacto do
+#      ACME (`PLACEHOLDER_ACME_EMAIL`): todo o manifesto que ele manda ao
+#      cluster e que leve um deles passa por um `sed` que o substitui, o alvo
+#      depende do `prod-preflight`, e o preflight é CORRIDO para provar que
+#      recusa as omissões e aceita valores reais.
 #   9. o coturn: o relay TEM caminho (a rede do nó, ou o hairpin autorizado com
 #      `--allowed-peer-ip` == `--external-ip`), a gama de relay fica fora dos
 #      NodePort e dos portos efémeros quando está na rede do nó, e a
@@ -420,16 +421,19 @@ fi
 # ---------------------------------------------------------------------------
 #  O `make prod` não pode aplicar valores do laboratório.
 #
-#  Os manifestos de deploy/k8s levam dois valores de laboratório: o VIP MetalLB
-#  da rede docker do kind (`KIND_TURN_VIP`) e o domínio `.local`
-#  (`LAB_DOMAIN`). Ambos são os CERTOS no `make stage` e nenhum existe num
-#  cluster a sério. O `make prod` aplica os MESMOS ficheiros, e durante muito
-#  tempo aplicava-os com os valores lá dentro:
+#  Os manifestos de deploy/k8s levam TRÊS valores cozidos: o VIP MetalLB da
+#  rede docker do kind (`KIND_TURN_VIP`), o domínio `.local` (`LAB_DOMAIN`) e o
+#  contacto do ACME (`PLACEHOLDER_ACME_EMAIL`). Os dois primeiros são os CERTOS
+#  no `make stage`; o terceiro não é de ninguém. O `make prod` aplica os MESMOS
+#  ficheiros, e durante muito tempo aplicava-os com os valores lá dentro:
 #
 #    * com o VIP do kind, o relay de media fica sem caminho — ecrã preto com a
 #      sinalização toda a funcionar, o pior sintoma que há;
 #    * com o domínio .local, o Ingress responde por um nome que ninguém resolve
-#      e o cert-manager pede um certificado que nunca é emitido.
+#      e o cert-manager pede um certificado que nunca é emitido;
+#    * com o contacto do ACME, a conta Let's Encrypt fica registada noutro nome
+#      e os avisos de validade vão para a caixa errada — dá-se por isso no dia
+#      em que o certificado expira.
 #
 #  Três exigências. Primeiro, estáticas: o alvo `prod` depende do
 #  `prod-preflight`, e todo o manifesto que ele aplique e que contenha um valor
@@ -441,12 +445,13 @@ fi
 mkvar() { /usr/bin/grep -E "^$1 *:?= *" Makefile | head -1 | sed 's/.*= *//'; }
 KIND_TURN_VIP=$(mkvar KIND_TURN_VIP)
 LAB_DOMAIN=$(mkvar LAB_DOMAIN)
+PLACEHOLDER_ACME_EMAIL=$(mkvar PLACEHOLDER_ACME_EMAIL)
 prod_fail=0
 
-for v in KIND_TURN_VIP LAB_DOMAIN; do
+for v in KIND_TURN_VIP LAB_DOMAIN PLACEHOLDER_ACME_EMAIL; do
   eval "valor=\$$v"
   if [ -z "$valor" ]; then
-    echo "✗ Makefile: falta o $v — é dele que este portão tira o valor de laboratório"
+    echo "✗ Makefile: falta o $v — é dele que este portão tira o valor cozido"
     prod_fail=1
   fi
 done
@@ -462,14 +467,14 @@ if [ "$prod_fail" = 0 ]; then
     case "$linha" in *deploy/k8s/*) ;; *) continue ;; esac
     for m in $(printf '%s\n' "$linha" | /usr/bin/grep -oE 'deploy/k8s/[A-Za-z0-9_.-]+\.yaml'); do
       [ -f "$m" ] || continue
-      for v in KIND_TURN_VIP LAB_DOMAIN; do
+      for v in KIND_TURN_VIP LAB_DOMAIN PLACEHOLDER_ACME_EMAIL; do
         eval "valor=\$$v"
         /usr/bin/grep -qF "$valor" "$m" || continue
         #  Vale o literal ou a variável: o Makefile usa $(KIND_TURN_VIP)/$(LAB_DOMAIN).
         substitui=0
         case "$linha" in *sed*"$valor"*|*sed*"$v"*) substitui=1 ;; esac
         if [ "$substitui" = 0 ]; then
-          echo "✗ Makefile (prod): «$m» leva o valor de laboratório $v=$valor e é aplicado sem o substituir."
+          echo "✗ Makefile (prod): «$m» leva o valor cozido $v=$valor e é aplicado sem o substituir."
           echo "    Em produção esse valor não serve. Aplica-o com"
           echo "    sed \"s/\$($v)/<o valor real>/g\" $m | kubectl apply -f -"
           prod_fail=1
@@ -485,28 +490,39 @@ fi
 #  isso corre-se aqui sem risco. IP e domínio de exemplo, nunca aplicados.
 if [ "$prod_fail" = 0 ]; then
   pf() { make --no-print-directory prod-preflight "$@" >/dev/null 2>&1; }
+  #  Os três reais, que servem de base: nenhum é aplicado, o preflight só imprime.
+  OK_IP=198.51.100.10; OK_DOM=exemplo.ao; OK_MAIL=ops@exemplo.ao
   if pf; then
-    echo "✗ make prod-preflight PASSA sem TURN_PUBLIC_IP nem DOMAIN — tinha de recusar"; prod_fail=1
+    echo "✗ make prod-preflight PASSA sem argumento nenhum — tinha de recusar"; prod_fail=1
   fi
-  if pf TURN_PUBLIC_IP=198.51.100.10; then
+  if pf TURN_PUBLIC_IP="$OK_IP"; then
     echo "✗ make prod-preflight PASSA com o DOMAIN no laboratório ($LAB_DOMAIN) — tinha de recusar"; prod_fail=1
   fi
-  if pf DOMAIN=exemplo.ao; then
+  if pf DOMAIN="$OK_DOM" ACME_EMAIL="$OK_MAIL"; then
     echo "✗ make prod-preflight PASSA sem TURN_PUBLIC_IP — tinha de recusar"; prod_fail=1
   fi
-  if pf TURN_PUBLIC_IP="$KIND_TURN_VIP" DOMAIN=exemplo.ao; then
+  if pf TURN_PUBLIC_IP="$KIND_TURN_VIP" DOMAIN="$OK_DOM" ACME_EMAIL="$OK_MAIL"; then
     echo "✗ make prod-preflight PASSA com o VIP do kind ($KIND_TURN_VIP) — tinha de recusar"; prod_fail=1
   fi
-  if pf TURN_PUBLIC_IP=198.51.100.10 DOMAIN="$LAB_DOMAIN"; then
+  if pf TURN_PUBLIC_IP="$OK_IP" DOMAIN="$LAB_DOMAIN" ACME_EMAIL="$OK_MAIL"; then
     echo "✗ make prod-preflight PASSA com o domínio do laboratório — tinha de recusar"; prod_fail=1
   fi
-  if ! pf TURN_PUBLIC_IP=198.51.100.10 DOMAIN=exemplo.ao; then
+  if pf TURN_PUBLIC_IP="$OK_IP" DOMAIN="$OK_DOM"; then
+    echo "✗ make prod-preflight PASSA sem ACME_EMAIL — tinha de recusar"; prod_fail=1
+  fi
+  if pf TURN_PUBLIC_IP="$OK_IP" DOMAIN="$OK_DOM" ACME_EMAIL="$PLACEHOLDER_ACME_EMAIL"; then
+    echo "✗ make prod-preflight PASSA com o email do manifesto ($PLACEHOLDER_ACME_EMAIL) — tinha de recusar"; prod_fail=1
+  fi
+  if pf TURN_PUBLIC_IP="$OK_IP" DOMAIN="$OK_DOM" ACME_EMAIL=naoeemail; then
+    echo "✗ make prod-preflight PASSA com um ACME_EMAIL que não é email — tinha de recusar"; prod_fail=1
+  fi
+  if ! pf TURN_PUBLIC_IP="$OK_IP" DOMAIN="$OK_DOM" ACME_EMAIL="$OK_MAIL"; then
     echo "✗ make prod-preflight RECUSA valores reais — a válvula ficou fechada de vez"; prod_fail=1
   fi
 fi
 
 if [ "$prod_fail" = 0 ]; then
-  echo "✓ make prod: depende do preflight, substitui o VIP e o domínio do laboratório, e o preflight recusa as omissões (corrido)"
+  echo "✓ make prod: depende do preflight, substitui o VIP, o domínio e o email do ACME, e o preflight recusa as omissões (corrido)"
 else
   fail=1
 fi

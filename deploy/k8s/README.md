@@ -45,23 +45,29 @@ Para cenários de produção, não recomendamos StatefulSets isolados. O `Makefi
 Os comandos estão integrados na raiz do projeto:
 
 *   `make stage`: Sobe um cluster Kubernetes local via `kind`, instala o Nginx Ingress Controller e aplica todos os manifestos (ideal para CI/CD ou testes robustos locais).
-*   `make prod`: Aplica os manifestos no contexto Kubernetes atualmente ativo na sua máquina (`kubectl config current-context`). **Exige `TURN_PUBLIC_IP` e `DOMAIN`** e recusa sem eles, no `prod-preflight`, antes de escrever no cluster:
+*   `make prod`: Aplica os manifestos no contexto Kubernetes atualmente ativo na sua máquina (`kubectl config current-context`). **Exige `TURN_PUBLIC_IP`, `DOMAIN` e `ACME_EMAIL`** e recusa sem eles, no
+    `prod-preflight`, antes de escrever no cluster:
 
     ```bash
-    make prod TURN_PUBLIC_IP=<ip-publico-do-relay> DOMAIN=<dominio-real>
+    make prod TURN_PUBLIC_IP=<ip-publico-do-relay> DOMAIN=<dominio-real> ACME_EMAIL=<quem-recebe>
     ```
 
-    Os manifestos levam **dois valores de laboratório**, ambos correctos no `make stage`
-    e inexistentes num cluster a sério:
+    Os manifestos levam **três valores cozidos**. Os dois primeiros são os correctos no
+    `make stage` e não existem num cluster a sério; o terceiro não é de ninguém:
 
     | valor | onde vive | o que acontecia em produção |
     |---|---|---|
     | `KIND_TURN_VIP` (VIP MetalLB da rede docker do kind) | `TURN_HOST` (`01-config.yaml`), `EXTERNAL_IP` e `loadBalancerIP` (`51-coturn.yaml`) | o relay de media fica sem caminho — ecrã preto com a sinalização toda a funcionar |
     | `LAB_DOMAIN` (`meet.delonix.local`) | `04-ingress.yaml` | o Ingress responde por um nome que ninguém resolve, e o cert-manager pede um certificado para um `.local`, que nunca é emitido |
+    | `PLACEHOLDER_ACME_EMAIL` (`admin@delonix.app`) | `05-cert-manager.yaml` | a conta Let's Encrypt fica registada noutro nome e os avisos de validade vão para a caixa errada — dá-se por isso no dia em que o certificado expira |
 
-    O `prod` substitui os dois por `sed`; as três ocorrências do VIP têm de bater umas
-    com as outras. Portão: `scripts/check-k8s-render.sh` (verificação 10), que além de ler
-    o Makefile **corre** o `prod-preflight` para provar que ele recusa as omissões.
+    O `prod` substitui os três por `sed`; as três ocorrências do VIP têm de bater umas com
+    as outras. Portão: `scripts/check-k8s-render.sh` (verificação 10), que além de ler o
+    Makefile **corre** o `prod-preflight` para provar que ele recusa as omissões.
+
+    > O `ACME_EMAIL` aqui é o equivalente do `tls.acme_email` do `config.yml`, que o
+    > Ansible do `site.yml` já exige e já põe num template (`k8s_app`). Este alvo era o
+    > único caminho que ainda levava o contacto escrito no ficheiro.
 
     > **Produção hoje não passa por aqui.** Medido a 2026-10-11 no `delonix-lda`: a
     > aplicação corre pelo **chart Helm** (release `meet`) e a plataforma por

@@ -580,6 +580,15 @@ LAB_DOMAIN := meet.delonix.local
 # nela). O `make prod` recusa-a — ver `prod-preflight`.
 DOMAIN ?= $(LAB_DOMAIN)
 
+# O email do ACME que está escrito no 05-cert-manager.yaml. É um contacto de
+# ninguém em particular: é a conta Let's Encrypt que fica registada e a caixa
+# onde caem os avisos de validade. Aplicá-lo em produção é mandar os avisos de
+# expiração do certificado para o sítio errado — e dá-se por isso no dia em que
+# o certificado expira. O Ansible do `site.yml` já faz isto bem, pelo
+# `tls.acme_email` do config.yml; este alvo passa a exigir o mesmo.
+PLACEHOLDER_ACME_EMAIL := admin@delonix.app
+ACME_EMAIL ?=
+
 # O VIP do relay TURN que vive nos manifestos: um endereço da rede docker do
 # kind, correcto no laboratório (`make stage`) e inexistente num cluster a
 # sério. O `make prod` NÃO o pode aplicar — ver `prod-preflight`.
@@ -614,7 +623,7 @@ prod-preflight:
 	  printf "  num cluster a sério esse endereço não existe, e o relay de media fica\n"; \
 	  printf "  sem caminho — ecrã preto com a sinalização toda a funcionar.\n\n"; \
 	  printf "  Dá-lhe o endereço público do relay:\n"; \
-	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip-publico-do-LB> DOMAIN=<dominio>$(Z)\n\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip-publico-do-LB> DOMAIN=<dominio> ACME_EMAIL=<quem-recebe>$(Z)\n\n"; \
 	  printf "  Produção hoje NÃO passa por aqui: o coturn do delonix-lda é do chart\n"; \
 	  printf "  Helm (release meet, hostNetwork + ClusterIP). Ver deploy/helm/delonix-meet/\n"; \
 	  printf "  e deploy/k8s/plataforma/README.md (ADR-0020/0021).\n"; \
@@ -631,7 +640,30 @@ prod-preflight:
 	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip-publico-do-LB> DOMAIN=<dominio-real>$(Z)\n"; \
 	  exit 1; \
 	fi
-	@printf "$(G)  ✓ preflight: relay em $(TURN_PUBLIC_IP), domínio $(DOMAIN)$(Z)\n"
+	@if [ -z "$(ACME_EMAIL)" ]; then \
+	  printf "$(Y)✗ ACME_EMAIL não está definido.$(Z)\n"; \
+	  printf "  O manifesto leva $(PLACEHOLDER_ACME_EMAIL), que é o contacto de ninguém.\n"; \
+	  printf "  É a conta Let's Encrypt que fica registada e a caixa onde caem os avisos\n"; \
+	  printf "  de validade. Com o do manifesto, os avisos vão para o sítio errado e\n"; \
+	  printf "  dá-se por isso no dia em que o certificado expira.\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip> DOMAIN=<dominio> ACME_EMAIL=<quem-recebe>$(Z)\n"; \
+	  exit 1; \
+	fi
+	@if [ "$(ACME_EMAIL)" = "$(PLACEHOLDER_ACME_EMAIL)" ]; then \
+	  printf "$(Y)✗ ACME_EMAIL=$(PLACEHOLDER_ACME_EMAIL) é o contacto escrito no manifesto.$(Z)\n"; \
+	  printf "  É a conta Let's Encrypt que fica registada e a caixa onde caem os avisos\n"; \
+	  printf "  de validade. Com o do manifesto, os avisos vão para o sítio errado e\n"; \
+	  printf "  dá-se por isso no dia em que o certificado expira.\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip> DOMAIN=<dominio> ACME_EMAIL=<quem-recebe>$(Z)\n"; \
+	  exit 1; \
+	fi
+	@case "$(ACME_EMAIL)" in \
+	  *@*.*) ;; \
+	  *) printf "$(Y)✗ ACME_EMAIL=$(ACME_EMAIL) não parece um email.$(Z)\n"; \
+	     printf "  O Let's Encrypt recusa o registo da conta e nenhum certificado é emitido.\n"; \
+	     exit 1 ;; \
+	esac
+	@printf "$(G)  ✓ preflight: relay em $(TURN_PUBLIC_IP), domínio $(DOMAIN), avisos de TLS para $(ACME_EMAIL)$(Z)\n"
 
 prod: env-file prod-preflight ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@printf "$(C)▶ Provisionando Cluster K8s Bare-Metal via Ansible...$(Z)\n"
@@ -639,7 +671,7 @@ prod: env-file prod-preflight ## Deploy de produção K8s (Ansible + Helm + Mani
 	@printf "$(C)▶ Instalando cert-manager (Let's Encrypt)...$(Z)\n"
 	@kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
 	@kubectl wait --namespace cert-manager --for=condition=ready pod --selector=app.kubernetes.io/instance=cert-manager --timeout=120s
-	@kubectl apply -f deploy/k8s/05-cert-manager.yaml
+	@sed "s/$(PLACEHOLDER_ACME_EMAIL)/$(ACME_EMAIL)/g" deploy/k8s/05-cert-manager.yaml | kubectl apply -f -
 	@printf "$(C)▶ Deploy da Infra (Namespace + Helm Postgres/Redis)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/00-namespace.yaml
 	@helm repo add bitnami https://charts.bitnami.com/bitnami
