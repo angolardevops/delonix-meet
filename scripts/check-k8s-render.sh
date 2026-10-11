@@ -25,6 +25,11 @@
 #   7. em TODOS: todo o Deployment com mais de uma réplica (ou com um HPA a
 #      mirá-lo) espalha-se por nó, com ScheduleAnyway. Réplicas todas no mesmo
 #      nó ficam `Available` num único ponto de falha, sem dar erro nenhum.
+#   9. o coturn: o relay TEM caminho (a rede do nó, ou o hairpin autorizado com
+#      `--allowed-peer-ip` == `--external-ip`), a gama de relay fica fora dos
+#      NodePort e dos portos efémeros quando está na rede do nó, e a
+#      `--total-quota` não promete mais alocações do que a gama tem portas. São
+#      as mesmas três recusas que o `_helpers.tpl` faz no chart.
 #   8. os manifestos OPT-IN de deploy/k8s (os que a kustomization NÃO inclui, e
 #      que se aplicam com `kubectl apply -f`) têm recursos, largam as
 #      capacidades, não permitem escalada e correm non-root. Nenhum render os
@@ -87,7 +92,7 @@ fi
 python3 scripts/k8s-optin-higiene.py deploy/k8s || fail=1
 
 OUT="$OUT" HPA_SRC=deploy/k8s/21-server-hpa.yaml python3 - <<'PYEOF' || fail=1
-import os, sys, yaml
+import os, re, sys, yaml
 
 out = os.environ["OUT"]
 erros = []
@@ -163,6 +168,110 @@ for nome in ("base", "saas", "enterprise"):
             erros.append(f"[{nome}] o Deployment {quem} usa DoNotSchedule em {duros} — num cluster "
                          "de um nó (o laboratório) isso deixa pods `Pending` sem explicação; "
                          "usa ScheduleAnyway, como o chart de produção")
+
+    # 9. O RELAY DO COTURN TEM DE TER CAMINHO — as três recusas que o
+    #    `_helpers.tpl` já faz no chart, agora também nos manifestos crus.
+    #
+    #    O TURN tem duas pernas. O cliente fala com a porta de CONTROLO (3478) e
+    #    recebe um endereço de RELAY numa porta da gama min-max. Um Service do
+    #    Kubernetes só programa regras para as portas que DECLARA, e declarar
+    #    centenas de portas num Service não é caminho. Há exactamente DUAS
+    #    formas de dar caminho ao relay, e uma delas tem de estar presente:
+    #
+    #      (a) a REDE DO NÓ (`hostNetwork`), que é o que produção usa desde
+    #          2026-10-11 (chart, release `meet`: hostNetwork=true, 20000-20300);
+    #      (b) o HAIRPIN autorizado — `--allowed-peer-ip` igual ao
+    #          `--external-ip`. Em relay-only dos DOIS lados o «peer» de cada
+    #          alocação é o próprio endereço que o coturn anuncia, logo o
+    #          relay-a-relay nunca sai do pod e o cliente só precisa da 3478.
+    #          É a topologia MEDIDA do laboratório kind (R4: 0% de perda com
+    #          dois browsers, 2026-07-11) — e é por isso que esta guarda a
+    #          aceita em vez de exigir `hostNetwork` em todo o sítio.
+    #
+    #    Sem (a) nem (b): o Allocate chega, o coturn anuncia um relay, e os
+    #    pacotes de media não têm regra nenhuma por onde entrar. O sintoma é o
+    #    pior que há — sinalização a funcionar, sala a abrir, participantes na
+    #    lista, e ECRÃ PRETO.
+    EFEMEROS = (32768, 60999)   # /proc/sys/net/ipv4/ip_local_port_range, lido nos workers a 2026-10-11
+    NODEPORT = (30000, 32767)   # a gama de NodePort do Kubernetes
+
+    def sobrepoe(a, b):
+        return a[0] <= b[1] and b[0] <= a[1]
+
+    def flags_do_turnserver(container):
+        """Os `--flag=valor` da linha de comando do turnserver, sem as aspas."""
+        texto = " ".join(container.get("args") or [])
+        return {m.group(1): m.group(2).strip('"')
+                for m in re.finditer(r"--([a-z][a-z-]*)=(\S+)", texto)}
+
+    for dep in (d for d in docs
+                if d.get("kind") == "Deployment" and d["metadata"]["name"] == "coturn"):
+        pspec = dep["spec"]["template"]["spec"]
+        cs = [x for x in pspec.get("containers", []) if x["name"] == "coturn"]
+        if not cs:
+            erros.append(f"[{nome}] o Deployment coturn não tem container `coturn`")
+            continue
+        f = flags_do_turnserver(cs[0])
+        na_rede_do_no = bool(pspec.get("hostNetwork"))
+        hairpin = ("allowed-peer-ip" in f
+                   and f.get("allowed-peer-ip") == f.get("external-ip"))
+
+        # --- recusa 1: «relay sem rede do nó» -------------------------------
+        if not na_rede_do_no and not hairpin:
+            erros.append(
+                f"[{nome}] coturn: o relay não tem caminho — sem `hostNetwork` e sem hairpin "
+                "autorizado (`--allowed-peer-ip` igual a `--external-ip`). O Service só expõe a "
+                "porta de controlo e a gama de relay (min-max) não tem regra nenhuma: o Allocate "
+                "chega, a media morre, e o sintoma é ecrã preto com a sinalização toda a "
+                "funcionar. Dá-lhe a rede do nó (como produção) ou autoriza o hairpin (como o "
+                "laboratório kind, R4). Declarar centenas de portas num Service não é caminho")
+        #  O hairpin só cobre o relay-a-relay. Se a media NÃO for relay-only
+        #  dos dois lados, um cliente atrás de NAT difícil recebe um endereço
+        #  de relay que, sem a rede do nó, continua sem regra por onde entrar —
+        #  e volta o ecrã preto, agora só para esse cliente. Por isso a via (b)
+        #  exige o `FORCE_TURN_RELAY=1` que o ConfigMap da base já leva.
+        if not na_rede_do_no and hairpin:
+            cm = um(docs, "ConfigMap", "delonix-config")
+            if (cm or {}).get("data", {}).get("FORCE_TURN_RELAY") != "1":
+                erros.append(
+                    f"[{nome}] coturn: o relay vive do hairpin (sem `hostNetwork`) mas o "
+                    "FORCE_TURN_RELAY do delonix-config não é \"1\" — o hairpin só cobre o "
+                    "relay-a-relay. Sem relay-only dos dois lados, um cliente atrás de NAT "
+                    "difícil recebe um endereço de relay sem caminho, e fica com ecrã preto "
+                    "só ele. Ou liga o relay-only, ou dá ao coturn a rede do nó")
+        if na_rede_do_no and pspec.get("dnsPolicy") != "ClusterFirstWithHostNet":
+            erros.append(
+                f"[{nome}] coturn: `hostNetwork` sem `dnsPolicy: ClusterFirstWithHostNet` — na rede "
+                "do nó o pod herda o resolv.conf do nó e deixa de resolver nomes do cluster")
+        if na_rede_do_no:
+            svc = um(docs, "Service", "coturn")
+            if svc and svc["spec"].get("type") == "LoadBalancer":
+                erros.append(
+                    f"[{nome}] coturn: na rede do nó, um Service LoadBalancer gasta um endereço do "
+                    "MetalLB para nada — o relay já entra pelo endereço do nó. Usa ClusterIP")
+
+        # --- recusa 2: «gama nos portos efémeros» ---------------------------
+        #  Só conta na rede do nó: em netns de POD o espaço de portas é privado
+        #  do pod e não disputa nada (é a mesma condição do `_helpers.tpl`).
+        if "min-port" in f and "max-port" in f:
+            gama = (int(f["min-port"]), int(f["max-port"]))
+            if na_rede_do_no and (sobrepoe(gama, NODEPORT) or sobrepoe(gama, EFEMEROS)):
+                erros.append(
+                    f"[{nome}] coturn: a gama de relay {gama[0]}-{gama[1]} entra na dos NodePort "
+                    f"({NODEPORT[0]}-{NODEPORT[1]}) e/ou nos portos efémeros do kernel "
+                    f"({EFEMEROS[0]}-{EFEMEROS[1]}, lidos nos workers a 2026-10-11). Na rede do nó "
+                    "isso disputa portas com o que o nó já abre, e a colisão aparece como uma "
+                    "alocação que falha de vez em quando — nunca como um erro no arranque")
+
+            # --- recusa 3: «quota acima das portas» -------------------------
+            #  Sem condição de topologia: cada alocação UDP gasta UMA porta.
+            portas = gama[1] - gama[0] + 1
+            if "total-quota" in f and int(f["total-quota"]) > portas:
+                erros.append(
+                    f"[{nome}] coturn: --total-quota={f['total-quota']} com {portas} portas de relay "
+                    f"({gama[0]}-{gama[1]}): cada alocação UDP gasta uma, logo a quota promete mais "
+                    "do que a gama dá. O limite real apareceria como uma alocação recusada sem razão "
+                    "visível, não como quota esgotada — alinha os dois")
 
     if nome == "base":
         continue
