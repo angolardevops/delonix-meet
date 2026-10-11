@@ -615,18 +615,48 @@ if quota and faixa:
     pico["pods"] += n
     pico["pvcs"] += n * (2 if pg["spec"].get("walStorage") else 1)
     rv = yaml.safe_load(open(f"{base}/redis-values.yaml"))
-    if not (rv.get("architecture") == "replication" and (rv.get("sentinel") or {}).get("enabled")):
-        erros.append("[plataforma] a conta do Redis assume replication + sentinel (um StatefulSet "
-                     "de replica.replicaCount pods) — o redis-values.yaml mudou de forma")
+
+    # O SENTINEL FICA DESLIGADO ATÉ O CLIENTE O FALAR.
+    #
+    # Com sentinel, o chart 28.3.1 publica um Service `redis` sobre os três nós
+    # e nenhum Service só do master, e o cliente tem de perguntar a :26379 quem
+    # é. O `server/src/pubsub.rs` não pergunta: liga-se directamente a
+    # `REDIS_URL`. MEDIDO a 2026-10-11 pelo Service `redis`: 4 de 6 escritas
+    # responderam `READONLY`, e um PUBLISH numa réplica não chega aos
+    # subscritores do master. Com `server.replicas: 3` isso perde presença e,
+    # pior, perde a REVOGAÇÃO DE SESSÃO noutros pods — em silêncio.
+    #
+    # A recusa cai no dia em que o `pubsub.rs` usar `redis::sentinel`, ou em
+    # que o Redis passar para um operador com Service de master. Até lá, ligar
+    # o sentinel aqui é reintroduzir um defeito já medido.
+    if (rv.get("sentinel") or {}).get("enabled"):
+        cliente = "server/src/pubsub.rs"
+        fala_sentinel = (os.path.exists(cliente)
+                         and "redis::sentinel" in open(cliente, encoding="utf-8").read())
+        if not fala_sentinel:
+            erros.append("[plataforma] sentinel.enabled com um cliente que não fala Sentinel: o "
+                         "Service `redis` do chart 28.3.1 cobre master E réplicas, e o pubsub.rs "
+                         "liga-se directo a REDIS_URL — medido a 2026-10-11, 4 de 6 escritas "
+                         "`READONLY` e um PUBLISH numa réplica invisível ao master, o que perde a "
+                         "revogação de sessão nos outros pods. Usa `redis::sentinel` no pubsub.rs "
+                         "(ou um operador com Service de master) ANTES de ligar isto")
+
+    if rv.get("architecture") != "replication" or (rv.get("sentinel") or {}).get("enabled"):
+        erros.append("[plataforma] a conta do Redis assume replication SEM sentinel (1 master + "
+                     "replica.replicaCount réplicas, cada pod com redis + exporter) — o "
+                     "redis-values.yaml mudou de forma")
     else:
-        n = rv["replica"]["replicaCount"]
-        _soma(rv["replica"].get("resources") or {}, n, "o Redis (replica)")
-        _soma(rv["sentinel"].get("resources") or {}, n, "o sentinel do Redis")
+        n_rep = rv["replica"]["replicaCount"]
+        n = 1 + n_rep                      # o master é um pod, e é o que escreve
+        _soma(rv["master"].get("resources") or {}, 1, "o Redis (master)")
+        _soma(rv["replica"].get("resources") or {}, n_rep, "o Redis (replica)")
         if (rv.get("metrics") or {}).get("enabled"):
             _soma(rv["metrics"].get("resources") or {}, n, "o exporter do Redis")
         pico["pods"] += n
+        if (rv["master"].get("persistence") or {}).get("enabled"):
+            pico["pvcs"] += 1
         if (rv["replica"].get("persistence") or {}).get("enabled"):
-            pico["pvcs"] += n
+            pico["pvcs"] += n_rep
 
     dura = quota["spec"]["hard"]
     tecto = {"cpu": _cpu(dura["limits.cpu"]), "mem": _mem(dura["limits.memory"]),

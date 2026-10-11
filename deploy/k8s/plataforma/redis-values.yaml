@@ -24,7 +24,7 @@ image:
   repository: bitnamilegacy/redis
   tag: 8.2.1-debian-12-r0
 # ---------------------------------------------------------------------------
-#  O Redis do Meet — Sentinel, três nós (ADR-0020, fase 3).
+#  O Redis do Meet — replicação, três nós (ADR-0020, fase 3).
 #
 #  O Redis guarda presença, pub/sub entre réplicas, sessões, estado de sala e
 #  os lugares reservados. Não é cache: perdê-lo tira pessoas de salas.
@@ -32,35 +32,72 @@ image:
 #  COM AUTENTICAÇÃO, que hoje não tem. Um Redis sem password dentro do cluster
 #  está a uma NetworkPolicy mal escrita de ser aberto — e a NetworkPolicy é
 #  defesa em profundidade, não a única porta.
+#
+#  SENTINEL DESLIGADO, E ESTA É A PARTE QUE CUSTOU UMA MEDIÇÃO
+#
+#  Com `sentinel.enabled: true` o chart 28.3.1 publica UM Service `redis` que
+#  selecciona os três nós — master e réplicas — e não cria nenhum Service só
+#  para o master. Nesta versão os pods também não levam um rótulo `isMaster`
+#  que permitisse criar um. O cliente é, portanto, obrigado a falar Sentinel
+#  (perguntar a :26379 quem é o master), e o `server/src/pubsub.rs` NÃO o faz:
+#  abre uma ligação directa a `REDIS_URL`.
+#
+#  MEDIDO a 2026-10-11 contra esta instalação, pelo Service `redis`:
+#
+#    * SADD num conjunto: 4 de 6 ligações responderam
+#      `READONLY You can't write against a read only replica`;
+#    * PUBLISH no master chega aos subscritores do master E das réplicas;
+#      PUBLISH numa réplica chega SÓ aos subscritores dessa réplica.
+#
+#  O que isso faz ao produto, com `server.replicas: 3`: o `dlx:online` fica
+#  errado (as escritas falham), e um pod ligado a uma réplica publica presença,
+#  sinalização de sala e REVOGAÇÃO DE SESSÃO que nenhum outro pod recebe. A
+#  revogação é caminho de segurança: uma sessão terminada continuaria viva nos
+#  outros nós, sem um único erro no log.
+#
+#  O que se perde ao desligar: o failover automático. O master passa a ser um
+#  Service de nome estável (`redis-master`) e promover uma réplica é um passo
+#  do OPERADOR. É um compromisso consciente: perder escritas em silêncio é um
+#  defeito no caminho do cliente, um failover manual é trabalho de quem opera.
+#
+#  O caminho de volta, pela ordem certa: tornar o `pubsub.rs` ciente de
+#  Sentinel (a crate `redis` tem `sentinel` desde a 0.25), ou passar o Redis
+#  para um operador que mantenha um Service de master com failover automático
+#  — que é o que o Postgres já tem com o CloudNativePG. Até um dos dois, o
+#  `check-helm.sh` recusa voltar a ligar o sentinel.
 # ---------------------------------------------------------------------------
 architecture: replication
 
 auth:
   enabled: true
-  sentinel: true
   # A password vem de um Secret criado fora (ver README): não há sítio aqui
   # onde a pôr, de propósito.
   existingSecret: meet-redis-credenciais
   existingSecretPasswordKey: REDIS_PASSWORD
 
 sentinel:
-  enabled: true
-  image:
-    registry: docker.io
-    repository: bitnamilegacy/redis-sentinel
-    tag: 8.2.1-debian-12-r0
-  quorum: 2
-  # 5 s para dar um nó por morto. Mais baixo e um pico de carga provoca
-  # failovers que ninguém pediu; mais alto e uma sala fica muda à espera.
-  downAfterMilliseconds: 5000
-  failoverTimeout: 18000
+  enabled: false
+
+# O master: UM pod, e é o único que aceita escritas. O `REDIS_URL` da
+# aplicação aponta para o Service `redis-master` — nunca para `redis-replicas`
+# nem para o `redis-headless`, que servem leituras.
+master:
+  persistence:
+    enabled: true
+    size: 8Gi
+  # Declarados, e não o preset do chart: o `check-helm.sh` soma-os à quota do
+  # namespace, e um preset escondido no chart bitnami seria um número que
+  # ninguém vê.
   resources:
-    requests: { cpu: 50m, memory: 64Mi }
-    limits: { cpu: 200m, memory: 128Mi }
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "1", memory: 2Gi }
 
 replica:
-  replicaCount: 3
-  # Um por nó: três réplicas no mesmo worker morrem as três com ele.
+  # DUAS, e não três: com o master são três pods — os mesmos três de antes.
+  # Com `replicaCount: 3` seriam quatro, e o quarto refaria a conta da quota
+  # sem que ninguém o tivesse pedido.
+  replicaCount: 2
+  # Um por nó: duas réplicas no mesmo worker morrem as duas com ele.
   podAntiAffinityPreset: hard
   persistence:
     enabled: true
@@ -68,11 +105,6 @@ replica:
   resources:
     requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: "1", memory: 2Gi }
-
-master:
-  persistence:
-    enabled: true
-    size: 8Gi
 
 commonConfiguration: |-
   # AOF com fsync por segundo: o compromisso usual entre perder um segundo de
