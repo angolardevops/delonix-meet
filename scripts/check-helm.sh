@@ -125,6 +125,14 @@ recusa "produção com segredos gerados" "secrets.create=true é só para labora
   "${PROD[@]}" --set secrets.create=true
 recusa "produção sem IP público do relay" "coturn.externalIP" \
   "${PROD[@]}" --set coturn.externalIP=
+# As três do CAMINHO de media. A primeira é a que faltava a 2026-10-11: o
+# render de produção passava o portão com o relay sem caminho nenhum.
+recusa "produção com o relay sem rede do nó" "coturn.hostNetwork" \
+  "${PROD[@]}" --set coturn.hostNetwork=false
+recusa "gama de relay nos portos efémeros do kernel" "coturn.relayPorts" \
+  "${PROD[@]}" --set coturn.relayPorts.max=59152
+recusa "quota do relay acima das portas que existem" "coturn.totalQuota" \
+  "${PROD[@]}" --set coturn.totalQuota=5000
 # O perfil de produção serve por Gateway API, logo este caso tem de LIGAR o
 # Ingress para o alcançar — um Ingress desligado não precisa de TLS nenhum.
 recusa "produção sem TLS no ingress" "ingress.tls" \
