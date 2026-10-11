@@ -31,6 +31,11 @@
 #      cluster e que leve um deles passa por um `sed` que o substitui, o alvo
 #      depende do `prod-preflight`, e o preflight é CORRIDO para provar que
 #      recusa as omissões e aceita valores reais.
+#  11. o `instalar.sh` da plataforma não registra a conta do ACME com o
+#      contacto que está no clusterissuer.yaml: exige `ACME_EMAIL` em modo
+#      `dedicado`, recusa o contacto cozido e o que não tem forma de email, e
+#      substitui-o no apply. As recusas são CORRIDAS — valem antes de qualquer
+#      kubectl, por isso provam-se sem tocar em cluster nenhum.
 #   9. o coturn: o relay TEM caminho (a rede do nó, ou o hairpin autorizado com
 #      `--allowed-peer-ip` == `--external-ip`), a gama de relay fica fora dos
 #      NodePort e dos portos efémeros quando está na rede do nó, e a
@@ -523,6 +528,83 @@ fi
 
 if [ "$prod_fail" = 0 ]; then
   echo "✓ make prod: depende do preflight, substitui o VIP, o domínio e o email do ACME, e o preflight recusa as omissões (corrido)"
+else
+  fail=1
+fi
+
+# ---------------------------------------------------------------------------
+#  A conta do ACME da plataforma tem de ser escolhida, não herdada.
+#
+#  O `clusterissuer.yaml` leva um contacto escrito no ficheiro. Quem o aplicasse
+#  tal e qual ficava com a conta Let's Encrypt registada no nome de outra pessoa
+#  e os avisos de validade a ir para uma caixa que ninguém lê — e dá-se por isso
+#  no dia em que o certificado expira.
+#
+#  Só o modo `dedicado` aplica este ficheiro (em `partilhado` o emissor é de
+#  quem é dono do cluster), por isso é só nesse modo que a exigência vale.
+#
+#  As três recusas do `instalar.sh` correm ANTES do helm, do kubectl e do
+#  `create ns`: são variáveis, não precisam de cluster. É isso que permite
+#  prová-las aqui a correr o script a sério, com KUBECONFIG=/dev/null para que
+#  um erro de ordem apareça como «não fala com cluster nenhum» em vez de ir
+#  escrever em algum.
+# ---------------------------------------------------------------------------
+INST=deploy/k8s/plataforma/instalar.sh
+ISSUER=deploy/k8s/plataforma/clusterissuer.yaml
+acme_fail=0
+if [ ! -f "$INST" ] || [ ! -f "$ISSUER" ]; then
+  echo "✗ falta o $INST ou o $ISSUER — este portão julga-os aos dois"
+  acme_fail=1
+else
+  EMAIL_COZIDO=$(/usr/bin/grep -E '^EMAIL_COZIDO=' "$INST" | head -1 | sed 's/.*=//')
+  if [ -z "$EMAIL_COZIDO" ]; then
+    echo "✗ $INST: falta o EMAIL_COZIDO — é dele que este portão tira o contacto escrito no ficheiro"
+    acme_fail=1
+  elif ! /usr/bin/grep -qF "$EMAIL_COZIDO" "$ISSUER"; then
+    echo "✗ $INST: EMAIL_COZIDO=$EMAIL_COZIDO não está no $ISSUER — o sed não substituiria nada"
+    acme_fail=1
+  elif ! /usr/bin/grep -qE 'sed .*EMAIL_COZIDO.*ACME_EMAIL.*clusterissuer\.yaml|sed .*EMAIL_COZIDO.*clusterissuer\.yaml' "$INST"; then
+    echo "✗ $INST: o clusterissuer.yaml é aplicado sem substituir o $EMAIL_COZIDO —"
+    echo "    a conta Let's Encrypt ficaria registada no contacto do ficheiro"
+    acme_fail=1
+  fi
+
+  #  E agora a prova de comportamento. Nada aqui escreve: as recusas vêm antes
+  #  de qualquer kubectl, e o KUBECONFIG=/dev/null garante-o.
+  if [ "$acme_fail" = 0 ]; then
+    #  O script SAI 1 nas recusas (é o que se quer), e com `pipefail` um
+    #  `inst … | grep -q` herdava esse 1 e decidia sempre mal. Por isso
+    #  captura-se a saída e julga-se o TEXTO — é também o que a higiene do repo
+    #  exige («nenhum script a decidir por um pipe para grep -q»).
+    inst() { KUBECONFIG=/dev/null MODO="$1" ACME_EMAIL="${2-}" bash "$INST" 2>&1 || true; }
+    falou_do_email() { case "$1" in *ACME_EMAIL*) return 0 ;; *) return 1 ;; esac; }
+
+    if ! falou_do_email "$(inst dedicado)"; then
+      echo "✗ $INST: em dedicado SEM ACME_EMAIL não recusa (ou recusa por outra razão) — tinha de parar aqui"
+      acme_fail=1
+    fi
+    if ! falou_do_email "$(inst dedicado "$EMAIL_COZIDO")"; then
+      echo "✗ $INST: aceita ACME_EMAIL=$EMAIL_COZIDO, o contacto do ficheiro — tinha de recusar"
+      acme_fail=1
+    fi
+    if ! falou_do_email "$(inst dedicado naoeemail)"; then
+      echo "✗ $INST: aceita um ACME_EMAIL sem forma de email — o Let's Encrypt recusaria o registo da conta"
+      acme_fail=1
+    fi
+    if falou_do_email "$(inst dedicado avisos@exemplo.ao)"; then
+      echo "✗ $INST: RECUSA um ACME_EMAIL real — a válvula ficou fechada de vez"
+      acme_fail=1
+    fi
+    #  Em partilhado o script não cria emissor: exigir o email ali era uma
+    #  barreira sem razão.
+    if falou_do_email "$(inst partilhado)"; then
+      echo "✗ $INST: exige ACME_EMAIL em modo partilhado, onde não cria emissor nenhum"
+      acme_fail=1
+    fi
+  fi
+fi
+if [ "$acme_fail" = 0 ]; then
+  echo "✓ plataforma: o instalar.sh exige o contacto do ACME em dedicado e substitui-o (recusas corridas)"
 else
   fail=1
 fi

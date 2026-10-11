@@ -1,5 +1,17 @@
-# O emissor dos certificados de meet.ngolacloud.com. O chart já pede
-# `letsencrypt-prod` pelo nome (values-production.yaml) — é este.
+# O emissor dos certificados de meet.ngolacloud.com, no modo `dedicado`.
+#
+# APLICADO SÓ EM `dedicado` — é o único modo em que o `instalar.sh` cria
+# emissores. Em `partilhado` o cert-manager e o emissor são de quem é dono do
+# cluster e este ficheiro não é aplicado. Medido a 2026-10-11 no `delonix-lda`
+# (que é `partilhado`): o único ClusterIssuer é o `delonix-letsencrypt`, e o
+# cluster não tem IngressClass nenhuma — serve por Gateway API. O
+# `values-production.yaml` do chart pede `letsencrypt-prod` pelo nome, que ali
+# não existe: em `partilhado` o caminho de entrada é do operador, e nenhum
+# Certificate foi emitido por este nome.
+#
+# O contacto do ACME NÃO se edita aqui: o `instalar.sh` exige `ACME_EMAIL` e
+# substitui-o nos dois emissores. O valor abaixo é o que ele procura, por isso
+# não deve aparecer em comentário nenhum — o sed trocá-lo-ia lá também.
 #
 # O desafio é HTTP-01 pelo ingress: exige que o 80 de meet.ngolacloud.com
 # chegue a este cluster de fora. Se o domínio ainda não apontar para cá, o
@@ -12,7 +24,6 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    # Trocar pelo email de quem recebe os avisos de expiração.
     email: ops@ngolacloud.com
     privateKeySecretRef:
       name: letsencrypt-prod-conta
