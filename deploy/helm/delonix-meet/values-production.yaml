@@ -85,11 +85,56 @@ recordings:
 web:
   replicas: 3
 
+# ------------------------------------------------------------
+#  A ENTRADA — Gateway API, e não Ingress.
+#
+#  O ADR-0021 pôs esta produção no `ngola-lda`, e esse cluster NÃO TEM
+#  IngressClass nenhuma: serve por Envoy Gateway, GatewayClass `delonix`
+#  (medido a 2026-10-11: `kubectl get ingressclass` devolve «No resources
+#  found»). Um Ingress aqui criava um objecto que nada programa — e o sintoma
+#  seria um host que não responde, sem erro em sítio nenhum.
+# ------------------------------------------------------------
 ingress:
-  className: nginx
-  tls:
-    clusterIssuer: letsencrypt-prod
-    secretName: meet-ngolacloud-com-tls
+  enabled: false
+  # Lido pelo `gateway.yaml` mesmo com o Ingress desligado: com nome, o /asr é
+  # encaminhado para o serviço de transcrição. Vazio = sem rota /asr.
+  asr:
+    serviceName: ""
+
+gateway:
+  enabled: true
+  # `attach` E NÃO `own`, e a razão é o router e não o Kubernetes.
+  #
+  # Com `own` o Gateway pede um IP à gama do MetalLB (`192.168.1.73-100`) e
+  # recebe o seguinte livre — o `.74`. O router da instalação encaminha 80/443
+  # para UM endereço, e esse endereço é o `.73` do Gateway da plataforma: o
+  # `.74` nunca vê tráfego de fora. Um Gateway próprio ficaria PROGRAMMED,
+  # verde, e invisível da internet.
+  #
+  # Colar-se ao `.73` exige que ESSE Gateway aceite rotas deste namespace: ele
+  # nasce em `allowedRoutes: from: Same` e o role `gateway_api` do
+  # `delonix-deploy` passou-o a um selector por rótulo. Sem isso as HTTPRoutes
+  # ficam `Accepted=False` com `NotAllowedByListeners` — visível em
+  # `kubectl -n ngolacloud-meet describe httproute delonix-meet`.
+  mode: attach
+  parentRef:
+    name: delonix
+    namespace: delonix-system
+  # Sem `tls` nenhum, de propósito: quem termina o TLS é o listener do Gateway
+  # da plataforma, com o certificado `delonix-wildcard-tls` — que já cobre
+  # `meet.ngolacloud.com` e `meet.ngolacloud.ao` (18 nomes, verificado a
+  # 2026-10-11). Pedir aqui um certificado novo era um segundo desafio ACME
+  # para um nome que já está emitido.
+  affinity:
+    # A `BackendTrafficPolicy` com ConsistentHash por `room` — é o que mantém
+    # a invariante do ADR-0001 e o portão recusa `none` em produção.
+    implementation: envoy
+  # R278 reconhecido: em Gateway API o registo de acessos é do GATEWAY e não da
+  # rota, logo o `/api/public/extension-provisioning` — que leva um bilhete de
+  # uso único — entra no log do Gateway da plataforma. O Ingress tinha uma rota
+  # dedicada só para o desligar e isso não tem equivalente aqui. Fica DITO em
+  # vez de perdido em silêncio.
+  acceptProvisioningInAccessLog: true
 
 networkPolicy:
   enabled: true
