@@ -4,6 +4,12 @@ import { intlLocale } from '../i18n'
 import type { TFunction } from 'i18next'
 import { accessTokenValue, saveMinutesByRoom, translateCaption } from '../api'
 import { participanteLocal } from '../convidado'
+import {
+  asrDoServidorPreferido,
+  guardaAsrDoServidor,
+  guardaLegendas,
+  legendasLigadasPorOmissao,
+} from '../legendasPref'
 import { Transcriber } from '../media'
 import type { RoomCore } from './useRoomCore'
 
@@ -48,9 +54,11 @@ export function useTranscription(core: RoomCore) {
   const locale = intlLocale(i18n.language)
   const me = participanteLocal().username
 
-  const [ccOn, setCcOn] = useState(false)
+  // LIGADAS À ENTRADA (decisão do dono, 2026-10-13). A omissão e a razão
+  // estão em `legendasPref.ts`; aqui só se lê.
+  const [ccOn, setCcOn] = useState(legendasLigadasPorOmissao)
   const [caption, setCaption] = useState<{ who: string; text: string } | null>(null)
-  const [serverAsr, setServerAsrState] = useState(() => localStorage.getItem('dx_asr_server') === '1')
+  const [serverAsr, setServerAsrState] = useState(asrDoServidorPreferido)
   const [ccLang, setCcLang] = useState(() => localStorage.getItem('dx_cc_lang') ?? '')
   const [sttLang, setSttLangState] = useState(() => localStorage.getItem('dx_stt_lang') ?? 'pt-PT')
   const [transcribing, setTranscribing] = useState(false)
@@ -180,6 +188,10 @@ export function useTranscription(core: RoomCore) {
         transcriberRef.current?.stop()
         transcriberRef.current = null
         setTranscribing(false)
+        // Desliga AGORA mas NÃO guarda: uma permissão de microfone negada ou
+        // um microfone desligado são desta vez. Guardar aqui deixava as
+        // legendas desligadas para sempre neste browser por causa de um
+        // acidente, e quem as desligou não foi o utilizador.
         setCcOn(false)
       }
       tr.start(sttLang, core.localStreamRef.current)
@@ -272,9 +284,20 @@ export function useTranscription(core: RoomCore) {
       .catch(() => {})
   }
 
+  /**
+   * O botão das legendas. A escolha GUARDA-SE — é a única forma de uma omissão
+   * «ligadas» não ser teimosia: quem as desliga não as vê voltar na sala
+   * seguinte.
+   */
+  function toggleCc() {
+    const novo = !ccOnRef.current
+    guardaLegendas(novo)
+    setCcOn(novo)
+  }
+
   return {
     ccOn,
-    toggleCc: () => setCcOn((v) => !v),
+    toggleCc,
     caption,
     ccLang,
     setCcLang,
@@ -286,7 +309,7 @@ export function useTranscription(core: RoomCore) {
     serverAsr,
     setServerAsr: (on: boolean) => {
       setServerAsrState(on)
-      localStorage.setItem('dx_asr_server', on ? '1' : '0')
+      guardaAsrDoServidor(on)
     },
     transcribing,
     scribeBy,

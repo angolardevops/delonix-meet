@@ -1809,6 +1809,22 @@ export interface StudioAiStatus {
 export const studioAiStatus = (orgId: string, signal?: AbortSignal) =>
   request<StudioAiStatus>(`/api/orgs/${orgId}/ai/status`, { signal })
 
+/**
+ * A IA local está realmente utilizável?
+ *
+ * Os três têm de valer: `configured` (o servidor tem OLLAMA_URL — sem ele a IA
+ * está desligada e nem tenta), `reachable` (o Ollama responde) e um modelo
+ * instalado. O `model_installed !== false` e não `=== true` de propósito:
+ * `null` quer dizer «não se conseguiu saber», e isso não é um «não».
+ *
+ * Existe para não haver duas versões desta conta: o Estúdio decidia-a numa
+ * linha sua e a consola de IA mostrava «activa» em código fixo — que em
+ * produção, de 10 a 13 de Outubro de 2026, era falso.
+ */
+export function studioAiDisponivel(s: StudioAiStatus | null | undefined): boolean {
+  return !!s && s.configured && s.reachable && s.model_installed !== false
+}
+
 export type StudioAiTask = 'summary' | 'publication' | 'fillers'
 
 export interface StudioAiRequest {

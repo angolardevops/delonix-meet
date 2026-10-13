@@ -22,12 +22,14 @@
  */
 import { ReactNode, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorMessage, translateCaption } from '../api'
+import { apiErrorMessage, studioAiDisponivel, studioAiStatus, translateCaption } from '../api'
+import { useShell } from '../components/shellContext'
 import { useAsync } from '../components/AsyncSection'
 import PageBar from '../components/PageBar'
 import { Icon } from '../ui/icons'
 import { Button, Toggle } from '../ui/kit'
 import '../ui/ai.css'
+import { asrDoServidorPreferido, guardaAsrDoServidor, motorDaTranscricao } from '../legendasPref'
 
 const MODEL_BASE = '/models/Xenova/whisper-tiny'
 const MODEL_FILES = ['onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx']
@@ -152,25 +154,46 @@ export default function Intelligence() {
   const { t, i18n } = useTranslation()
   const locale = i18n.language
   const model = useAsync(probeBrowserModel, [])
-  const [serverAsr, setServerAsr] = useState(() => readPref('dx_asr_server') === '1')
+  // A MESMA omissão da sala (`legendasPref.ts`): esta página diz qual é o
+  // motor activo, e dizer «Chrome» quando a sala usa o servidor era a pior
+  // forma de errar.
+  const [serverAsr, setServerAsr] = useState(asrDoServidorPreferido)
+  // O ESTADO MEDIDO do LLM do cluster, não uma afirmação. As duas
+  // funcionalidades que dependem dele diziam «activa» em código fixo — e em
+  // produção, de 10 a 13 de Outubro de 2026, o servidor corria SEM OLLAMA_URL:
+  // a tradução das legendas respondia 503 e a ata de IA nunca foi escrita. É
+  // uma chamada barata (lista modelos, não gera texto), ao contrário do botão
+  // «testar» aqui ao lado, que faz uma tradução de verdade.
+  const { org } = useShell()
+  const orgId = org?.id
+  const estadoLlm = useAsync(
+    (signal) => (orgId ? studioAiStatus(orgId, signal) : Promise.resolve(null)),
+    [orgId],
+  )
+  const llmPronto = estadoLlm.state.s === 'ready' ? studioAiDisponivel(estadoLlm.state.d) : null
   const [asrProbe, setAsrProbe] = useState<Probe>({ s: 'idle' })
   const [llmProbe, setLlmProbe] = useState<Probe>({ s: 'idle' })
-  // A mesma verificação de media.ts (speechSupported), sem trazer media.ts para este chunk.
+  // A verificação é a mesma de media.ts; a ORDEM dos motores vem da função
+  // partilhada em `legendasPref.ts`, que não arrasta o media.ts para este chunk.
   const hasWebSpeech = useMemo(() => 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window, [])
   const sttLang = readPref('dx_stt_lang') ?? 'pt-PT'
   const ccLang = readPref('dx_cc_lang') ?? ''
 
   function chooseServerAsr(on: boolean) {
     setServerAsr(on)
-    try {
-      localStorage.setItem('dx_asr_server', on ? '1' : '0')
-    } catch {
-      /* navegação privada: a escolha vale só nesta página */
-    }
+    guardaAsrDoServidor(on)
+  }
+
+  /**
+   * O subtítulo de uma funcionalidade que depende do LLM do cluster: a sua
+   * descrição quando está (ou quando ainda não se sabe), a razão quando não.
+   */
+  function llmEstado(base: string) {
+    return llmPronto === false ? t('consola.ia.llmIndisponivel') : base
   }
 
   // O motor que a sala usa NESTE browser, pela mesma ordem do Transcriber.
-  const active: 'server' | 'webspeech' | 'wasm' = serverAsr ? 'server' : hasWebSpeech ? 'webspeech' : 'wasm'
+  const active = motorDaTranscricao({ asrDoServidor: serverAsr, temWebSpeech: hasWebSpeech })
   const local = active !== 'webspeech'
 
   const names = useMemo(() => {
@@ -220,7 +243,7 @@ export default function Intelligence() {
               <h2 id="ai-onde">{t('consola.ia.ondeCorre')}</h2>
               <span className="dx-num dx-muted">{t('consola.ia.motores', { count: 4 })}</span>
             </header>
-            <ul className="ai-engines" role="list" data-testid="ai-active" aria-label={active === 'server' ? t('consola.ia.activoServer') : active === 'webspeech' ? t('consola.ia.activoWebspeech') : t('consola.ia.activoWasm')}>
+            <ul className="ai-engines" role="list" data-testid="ai-active" aria-label={active === 'servidor' ? t('consola.ia.activoServer') : active === 'webspeech' ? t('consola.ia.activoWebspeech') : t('consola.ia.activoWasm')}>
               <EngineRow
                 active={active === 'wasm'}
                 title={t('consola.ia.wasm')}
@@ -261,7 +284,7 @@ export default function Intelligence() {
                 }
               />
               <EngineRow
-                active={active === 'server'}
+                active={active === 'servidor'}
                 title={t('consola.ia.whisperServer')}
                 where={t('consola.ia.whisperServerOnde')}
                 badge={<span className="ai-tag">{serverAsr ? t('consola.ia.preferido') : t('consola.ia.desligadoAqui')}</span>}
@@ -360,8 +383,16 @@ export default function Intelligence() {
             </header>
             <ul className="ai-features" role="list">
               <Feature title={t('consola.ia.fLegendas')} state={t('consola.ia.fLegendasEstado')} on />
-              <Feature title={t('consola.ia.fTraducaoLegendas')} state={t('consola.ia.fTraducaoLegendasEstado')} on />
-              <Feature title={t('consola.ia.fResumo')} state={t('consola.ia.fResumoEstado')} on />
+              <Feature
+                title={t('consola.ia.fTraducaoLegendas')}
+                state={llmEstado(t('consola.ia.fTraducaoLegendasEstado'))}
+                on={llmPronto !== false}
+              />
+              <Feature
+                title={t('consola.ia.fResumo')}
+                state={llmEstado(t('consola.ia.fResumoEstado'))}
+                on={llmPronto !== false}
+              />
               <Feature title={t('consola.ia.fSilencios')} state={t('consola.ia.fSilenciosEstado')} on />
               <Feature title={t('consola.ia.fChat')} state={t('consola.ia.fChatEstado')} on={false} />
             </ul>

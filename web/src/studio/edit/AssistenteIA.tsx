@@ -13,7 +13,15 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError, apiErrorMessage, isAbort, studioAi, studioAiStatus, updateRecording } from '../../api'
+import {
+  ApiError,
+  apiErrorMessage,
+  isAbort,
+  studioAi,
+  studioAiDisponivel,
+  studioAiStatus,
+  updateRecording,
+} from '../../api'
 import type { StudioAiFillers, StudioAiPublication, StudioAiStatus, StudioAiSummary, StudioAiTask } from '../../api'
 import { useShell } from '../../components/shellContext'
 import { Button, Dialog, TextArea, TextInput } from '../../ui/kit'
@@ -72,7 +80,7 @@ export default function AssistenteIA({
   const cues = p.legendas?.cues ?? []
   const temTranscricao = cues.some((c) => c.texto.trim())
   const s = estado.fase === 'pronto' ? estado.s : null
-  const disponivel = !!s && s.configured && s.reachable && s.model_installed !== false
+  const disponivel = studioAiDisponivel(s)
 
   async function pedir(tarefa: StudioAiTask) {
     if (!orgId || !p.legendas) return
