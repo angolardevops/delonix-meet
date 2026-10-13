@@ -128,6 +128,7 @@ openssl rand -hex 24   # → password do Postgres
 | `JWT_SECRET` | ≥ 32 bytes. **Trocá-la invalida todas as sessões.** |
 | `DATA_ENCRYPTION_KEYS` | Chaves que cifram os segredos guardados na base (segredos de integração, chaves de emissão, credenciais de tronco). `kid:base64` de 32 bytes: `echo "k1:$(openssl rand -base64 32)"`; várias separadas por vírgula para rodar (a primeira cifra, todas decifram). **Sem ela o servidor não arranca** (desde 2026-10-04, R285; antes arrancava e cada escrita de um segredo dava `422`). Perdê-la é perder todos os segredos que cifrou — guarda-se FORA da base e nunca se regenera. |
 | `TURN_HOST` | `turn.meet.example.com:3478` — host **alcançável pelos clientes** |
+| `TURN_HOST_BY_HOST` | Opcional. `site=turn:porta` separados por vírgulas (`meet.example.ao=turn.example.ao:3478`): quem entra por esse site recebe esse nome de TURN; os outros, o `TURN_HOST`. Um nome por pessoa — dois URLs para o mesmo relay são duas alocações por browser |
 | `TURN_SECRET` | ≥ 16 bytes, **idêntico** ao `--static-auth-secret` do coturn |
 
 ### Rede e serviço

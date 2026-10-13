@@ -65,6 +65,11 @@ server:
   # resolve para o IP público (medido a 2026-10-13); cá dentro, o chart
   # aponta-o para `coturn.privateIP` — ver `turnHost` no values.yaml.
   turnHost: "turn.ngolacloud.com:3478"
+  # Por domínio (decisão de 2026-10-13): quem entra pelo `.ao` recebe o TURN do
+  # `.ao`. Os dois nomes resolvem para o mesmo IP público e o mesmo relay
+  # (medido nos autoritativos de `ngolacloud.ao` a 2026-10-13).
+  turnHostBySite:
+    meet.ngolacloud.ao: "turn.ngolacloud.ao:3478"
   replicas: 3
   migrations:
     mode: job

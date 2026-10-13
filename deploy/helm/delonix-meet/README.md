@@ -397,6 +397,12 @@ Só em `mode: attach`. O certificado é do Gateway a que as rotas se colam e é 
 de cobrir todos os nomes; em `mode: own` e no Ingress o chart pede um certificado para um
 nome, e recusa a lista.
 
+O TURN acompanha o nome: com `server.turnHostBySite`, quem entra por um dos
+`extraHosts` recebe o TURN desse site (`meet.ngolacloud.ao` → `turn.ngolacloud.ao:3478`).
+Um nome por pessoa, e não os dois a toda a gente — um browser com dois URLs de TURN para o
+mesmo relay faz duas alocações, e a gama de relay é finita. O chart recusa um par cujo site
+a instalação não serve.
+
 O que um segundo nome **não** faz: a sessão e as chaves de acesso (WebAuthn) são por
 origem, e o SSO devolve o browser à primeira origem do `CORS_ORIGINS` — quem entra por
 SSO no `.ao` acaba no `.com`.

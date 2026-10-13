@@ -123,6 +123,15 @@ server:
   # `hostAliases` desse nome para o IP privado, e o SFU fala com o relay por
   # dentro enquanto o browser lhe chega pelo IP público.
   turnHost: ""
+  # O nome do TURN por nome do SITE: quem entra por um dos `extraHosts` recebe
+  # o TURN desse site em vez do `turnHost` (`meet.exemplo.ao` →
+  # `turn.exemplo.ao:3478`). As chaves têm de ser nomes que a instalação serve
+  # (`host` ou `extraHosts`). Os nomes resolvem todos para o MESMO relay.
+  #
+  # Um nome por pessoa, e não todos a toda a gente: um browser com dois URLs
+  # de TURN para o mesmo relay faz duas alocações (medido), e a gama de relay
+  # é finita. O SFU usa sempre o `turnHost`.
+  turnHostBySite: {}
   # Media em Kubernetes é relay-only: o IP do pod não é alcançável de fora.
   forceTurnRelay: true
 

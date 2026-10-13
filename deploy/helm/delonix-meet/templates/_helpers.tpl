@@ -234,6 +234,14 @@ capabilities:
 {{- if and $v.coturn.enabled $prod (not $v.coturn.externalIP) -}}
 {{- $e = append $e "coturn.externalIP: falta o IP público do relay (o do LoadBalancer). É o que o coturn anuncia e o que o TURN_HOST do servidor leva" -}}
 {{- end -}}
+{{- range $site, $turn := $v.server.turnHostBySite -}}
+{{- if not (has $site (include "dm.hosts" $ | fromJsonArray)) -}}
+{{- $e = append $e (printf "server.turnHostBySite: «%s» não é um nome que esta instalação serve (host ou extraHosts) — o par nunca seria escolhido, e quem entra por esse site ficava com o turnHost sem ninguém o ter decidido" $site) -}}
+{{- end -}}
+{{- if not $turn -}}
+{{- $e = append $e (printf "server.turnHostBySite.%s: falta o host:porta do TURN desse site" $site) -}}
+{{- end -}}
+{{- end -}}
 {{- $privado := "^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)" -}}
 {{- if and $v.coturn.enabled $prod $v.coturn.externalIP (regexMatch $privado $v.coturn.externalIP) (not $v.coturn.lanOnly) -}}
 {{- $e = append $e (printf "coturn.externalIP=%s é um endereço PRIVADO: é o que o browser recebe como TURN, e quem está fora dessa rede entra na sala e fica sem áudio nem vídeo, sem um erro (medido em produção a 2026-10-13). Indica o IP público e, se o relay está atrás de NAT, o do nó em coturn.privateIP; ou coturn.lanOnly=true se a instalação é só para a rede local" $v.coturn.externalIP) -}}

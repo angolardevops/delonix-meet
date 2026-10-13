@@ -242,7 +242,7 @@ pub async fn guest_join(
         &state.config.jwt_secret,
         &guest_claims(&room, guest_id, &name, Utc::now().timestamp(), ttl),
     )?;
-    let ice_servers = crate::rooms::ice_config(&state)?;
+    let ice_servers = crate::rooms::ice_config(&state, &headers)?;
 
     crate::audit::log_guest(
         &state.db,

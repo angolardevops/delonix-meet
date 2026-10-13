@@ -138,6 +138,8 @@ recusa "relay atrás de NAT com o TURN_HOST em IP (o SFU dependia do hairpin)" "
   "${PROD[@]}" --set coturn.privateIP=10.0.0.32 --set server.turnHost=203.0.113.10:3478
 recusa "IP privado do relay igual ao público" "coturn.privateIP: só faz sentido" \
   "${PROD[@]}" --set coturn.privateIP=203.0.113.10
+recusa "TURN por site para um nome que a instalação não serve" "não é um nome que esta instalação serve" \
+  "${PROD[@]}" --set 'server.turnHostBySite.meet\.outro\.ao=turn.outro.ao:3478'
 recusa "produção com o relay sem rede do nó" "coturn.hostNetwork" \
   "${PROD[@]}" --set coturn.hostNetwork=false
 recusa "gama de relay nos portos efémeros do kernel" "coturn.relayPorts" \
@@ -204,8 +206,11 @@ render prioridade "${VOZ[@]}" "${LIMPA[@]}" --set priorityClassName=prova-priori
 # Gateway próprio neste namespace — para que as duas continuem renderizadas.
 # `extraHosts=null`: o perfil de produção traz um segundo nome, e um Gateway
 # próprio só tem certificado para um (a recusa disso mede-se logo abaixo).
+# E sem o segundo nome não há TURN por site para ele: o chart recusa um par
+# cujo site a instalação não serve.
 GW=("${PROD[@]}" --set gateway.mode=own --set gateway.className=delonix
-    --set gateway.tls.clusterIssuer=delonix-letsencrypt --set extraHosts=null)
+    --set gateway.tls.clusterIssuer=delonix-letsencrypt --set extraHosts=null
+    --set server.turnHostBySite=null)
 
 recusa "ingress e gateway ao mesmo tempo" "são exclusivos" \
   "${PROD[@]}" --set ingress.enabled=true
@@ -265,6 +270,17 @@ if '--external-ip="$EXTERNAL_IP" ' not in args or 'PRIVATE_IP' in env or alias:
     erros.append(f"[production] sem privateIP o relay tem de ficar como era: alias={alias} env={sorted(env)}")
 if turn != 'turn.ngolacloud.com:3478':
     erros.append(f"[production] o TURN_HOST do perfil não é o nome público: {turn!r}")
+# Por domínio: quem entra pelo `.ao` recebe o TURN do `.ao`. O par tem de
+# casar com um nome que as rotas servem — senão nunca é escolhido.
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1], encoding='utf-8')) if d]
+cm = next(d for d in docs if d.get('kind') == 'ConfigMap' and 'TURN_HOST' in (d.get('data') or {}))
+por_site = dict(p.split('=', 1) for p in (cm['data'].get('TURN_HOST_BY_HOST') or '').split(',') if p)
+if por_site != {'meet.ngolacloud.ao': 'turn.ngolacloud.ao:3478'}:
+    erros.append(f"[production] TURN_HOST_BY_HOST não é o par do `.ao`: {por_site}")
+servidos = {h for d in docs if d.get('kind') == 'HTTPRoute' for h in d['spec'].get('hostnames') or []}
+for site in por_site:
+    if site not in servidos:
+        erros.append(f"[production] o TURN por site nomeia «{site}», que nenhuma rota serve")
 
 args, env, alias, turn = ler(sys.argv[2])
 # O par é o que faz dois relays do mesmo coturn falarem-se sem o router no
