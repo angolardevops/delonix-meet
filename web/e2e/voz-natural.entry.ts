@@ -11,7 +11,7 @@
 //
 // Um só RNNoise alimenta todas as cadeias: o que as distingue é o que vem
 // DEPOIS dele, e assim nenhuma diferença pode vir de dois estados do RNNoise.
-import { audioConstraints, withNativeNoiseSuppression } from '../src/media'
+import { audioConstraints, Denoiser, withNativeNoiseSuppression } from '../src/media'
 import { buildVoiceChain, createVoiceGate, loadVoiceChain, VOICE_GATE, type VoiceGateParams } from '../src/voiceChain'
 import gateAntigoUrl from './voz-natural-gate-antigo.js?url'
 
@@ -52,6 +52,22 @@ interface Recuo {
   factos: { idealComPistaViva: boolean | undefined; exactComPistaViva: string }
 }
 
+/** O `Denoiser` do produto, em tempo real, sobre o microfone falso. */
+interface AoVivo {
+  activo: boolean
+  estado: string
+  amostras: number
+  taxa: number
+  pico: number
+  /** Depois do `stop()`: o microfone continua nas mãos de quem o abriu. */
+  microfoneVivo: boolean
+}
+
+// O TS do repo ainda não traz este construtor do Chromium nos tipos do DOM.
+declare const MediaStreamTrackProcessor: new (init: { track: MediaStreamTrack }) => {
+  readable: ReadableStream<{ numberOfFrames: number; sampleRate: number; copyTo(d: Float32Array, o: { planeIndex: number; format: string }): void; close(): void }>
+}
+
 declare global {
   interface Window {
     __voz: {
@@ -59,6 +75,7 @@ declare global {
       erro: string | null
       render: (sinalB64: string, cadeias: PedidoDeCadeia[], esperaMs: number) => Promise<Resultado>
       recuo: () => Promise<Recuo>
+      aoVivo: (segundos: number) => Promise<AoVivo>
     }
   }
 }
@@ -201,6 +218,40 @@ async function recuo(): Promise<Recuo> {
   return r
 }
 
-window.__voz = { pronto: true, erro: null, render, recuo }
+/**
+ * A classe `Denoiser` do produto — `AudioContext` a sério, fonte e destino de
+ * `MediaStream` — sobre o microfone falso: monta-se, a pista que devolve leva
+ * amostras em tempo real, e o `stop()` larga tudo. O quadro mede o GRAFO
+ * offline; isto prova que a classe que a sala usa o monta e ele anda.
+ */
+async function aoVivo(segundos: number): Promise<AoVivo> {
+  const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(undefined, false) })
+  const crua = s.getAudioTracks()[0]
+  const d = new Denoiser()
+  const limpa = await d.process(crua)
+  const activo = d.active
+  const leitor = new MediaStreamTrackProcessor({ track: limpa }).readable.getReader()
+  let amostras = 0
+  let taxa = 0
+  let pico = 0
+  const ate = performance.now() + segundos * 1000
+  while (performance.now() < ate) {
+    const { value: f, done } = await leitor.read()
+    if (done || !f) break
+    taxa = f.sampleRate
+    const x = new Float32Array(f.numberOfFrames)
+    f.copyTo(x, { planeIndex: 0, format: 'f32-planar' })
+    for (let i = 0; i < x.length; i++) pico = Math.max(pico, Math.abs(x[i]))
+    amostras += x.length
+    f.close()
+  }
+  const estado = limpa.readyState
+  d.stop()
+  const r: AoVivo = { activo, estado, amostras, taxa, pico, microfoneVivo: crua.readyState === 'live' }
+  crua.stop()
+  return r
+}
+
+window.__voz = { pronto: true, erro: null, render, recuo, aoVivo }
 const log = document.getElementById('log')
 if (log) log.textContent = 'pronto'

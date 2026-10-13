@@ -1020,6 +1020,7 @@ const vite = await arrancarVite()
 const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] })
 let r
 let recuo
+let aoVivo
 try {
   r = await renderizar(browser, vite.url, x, CADEIAS)
   const pagina = await browser.newPage()
@@ -1027,6 +1028,7 @@ try {
   await pagina.waitForFunction(() => window.__voz?.pronto === true, null, { timeout: 60_000 })
   recuo = await pagina.evaluate(() => window.__voz.recuo()).catch((e) => ({ erro: String(e) }))
   recuo.versao = browser.version()
+  aoVivo = await pagina.evaluate(() => window.__voz.aoVivo(2)).catch((e) => ({ erro: String(e) }))
 } finally {
   await browser.close()
 }
@@ -1098,6 +1100,17 @@ if (recuo.erro) {
       `noiseSuppression=${recuo.factos.idealComPistaViva} («ideal») e «${recuo.factos.exactComPistaViva}» (\`exact\`)`,
   )
   ok(recuo.antigaParada && recuo.mudoPreservado, 'RECUO: a pista antiga fica parada e o mute escolhido passa para a nova', recuo.reabriu ? 'reabriu o microfone (o Chromium não muda uma pista viva)' : 'mudou a pista em vivo')
+}
+
+// ── A classe do produto, em tempo real. ──
+console.log('\nO `Denoiser` DO PRODUTO AO VIVO (AudioContext a sério, microfone falso, 2 s)')
+if (aoVivo.erro) {
+  ok(false, 'o Denoiser montou-se', aoVivo.erro)
+} else {
+  ok(aoVivo.activo && aoVivo.estado === 'live', 'monta a cadeia e devolve uma pista viva')
+  ok(aoVivo.amostras >= aoVivo.taxa && aoVivo.pico > 0, 'a pista leva som em tempo real', `${(aoVivo.amostras / Math.max(1, aoVivo.taxa)).toFixed(2)} s a ${aoVivo.taxa} Hz, pico ${f1(db(aoVivo.pico))} dBFS`)
+  ok(aoVivo.microfoneVivo, 'o `stop()` larga a cadeia sem parar o microfone de quem o abriu')
+  if (aoVivo.pico > 1) nota(`SEM LIMITADOR: a saída passou de 0 dBFS (${sinalado(db(aoVivo.pico))} dBFS) — o microfone falso é um tom a fundo de escala, e o que passa de 0 é cortado pelo codificador`)
 }
 
 // ── Limiares: o que faz esta prova falhar se a cadeia regredir. ──
