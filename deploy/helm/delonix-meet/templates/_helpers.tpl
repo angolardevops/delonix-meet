@@ -163,6 +163,28 @@ capabilities:
 {{- if and $v.coturn.enabled $prod (not $v.coturn.externalIP) -}}
 {{- $e = append $e "coturn.externalIP: falta o IP público do relay (o do LoadBalancer). É o que o coturn anuncia e o que o TURN_HOST do servidor leva" -}}
 {{- end -}}
+
+{{- /* O RELAY TEM DE TER CAMINHO, e um Service não lho dá.
+
+   O TURN tem duas pernas: o cliente fala com a porta de CONTROLO (3478) e
+   recebe um endereço de RELAY numa porta da gama min-max; a media vai para
+   essa porta. Um Service só programa regras para as portas que DECLARA, e o
+   chart declara apenas a de controlo. Sem `hostNetwork`, o Allocate chega, o
+   relay é anunciado, e os pacotes de media não têm por onde entrar.
+
+   O sintoma é o pior que há: sinalização a funcionar, sala a abrir,
+   participantes na lista — e ecrã preto. Medido no render de produção de
+   2026-10-11, quando `FORCE_TURN_RELAY=1` já punha TODA a media por aqui. */ -}}
+{{- if and $v.coturn.enabled $prod (not $v.coturn.hostNetwork) -}}
+{{- $e = append $e "coturn.hostNetwork: em produção o relay precisa da rede do nó. O Service só expõe a porta de controlo e a gama de relay (min-max) não tem regra nenhuma no LoadBalancer: o Allocate chega, a media morre, e o sintoma é ecrã preto com a sinalização toda a funcionar. Declarar centenas de portas num Service não é caminho" -}}
+{{- end -}}
+{{- $span := add (sub (int $v.coturn.relayPorts.max) (int $v.coturn.relayPorts.min)) 1 -}}
+{{- if and $v.coturn.enabled $v.coturn.hostNetwork (gt (int $v.coturn.relayPorts.max) 29999) -}}
+{{- $e = append $e (printf "coturn.relayPorts: a gama %d-%d entra na dos NodePort (30000-32767) e/ou nos portos efémeros do kernel (32768-60999, lidos nos workers a 2026-10-11). Na rede do nó isso disputa portas com o que o nó já abre, e a colisão aparece como uma alocação que falha de vez em quando — não como um erro no arranque" (int $v.coturn.relayPorts.min) (int $v.coturn.relayPorts.max)) -}}
+{{- end -}}
+{{- if and $v.coturn.enabled (gt (int $v.coturn.totalQuota) $span) -}}
+{{- $e = append $e (printf "coturn.totalQuota=%d com %d portas de relay: cada alocação UDP gasta uma porta, logo a quota promete mais do que a gama dá. O limite real apareceria como uma alocação recusada sem razão visível, não como quota esgotada — alinha os dois" (int $v.coturn.totalQuota) $span) -}}
+{{- end -}}
 {{- if and (not $v.coturn.enabled) (not $v.server.turnHost) -}}
 {{- $e = append $e "server.turnHost: sem o coturn do chart, indica o host:porta do TURN externo (media em Kubernetes é relay-only)" -}}
 {{- end -}}

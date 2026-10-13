@@ -134,7 +134,7 @@ helm upgrade --install minio bitnami/minio \
   -n minio --create-namespace -f minio-values.yaml "${SM_EXTRA[@]}" --wait --timeout 15m
 ok "MinIO, com os buckets meet-gravacoes e meet-backups"
 
-passo "Redis (Sentinel, COM autenticação)"
+passo "Redis (replicação, 1 master + 2 réplicas, COM autenticação)"
 # O `redis-values.yaml` também pede `metrics.serviceMonitor.enabled: true` — o
 # mesmo CRD em falta que o MinIO. A primeira passagem desliga-o igualmente.
 helm upgrade --install redis bitnami/redis \
@@ -170,7 +170,10 @@ fi
 printf "\n%s✓ plataforma instalada (modo %s)%s\n" "$g" "$MODO" "$z"
 printf "  Postgres (escrita): meet-pg-rw.%s.svc.cluster.local:5432\n" "$NS"
 printf "  Postgres (leitura): meet-pg-ro.%s.svc.cluster.local:5432\n" "$NS"
-printf "  Redis:              redis.%s.svc.cluster.local:6379 (Sentinel: redis-headless)\n" "$NS"
+# O `redis-master` e NÃO o `redis`: sem sentinel o chart publica um Service só
+# do master, e é o único que aceita escritas. O `redis-replicas` serve leituras.
+printf "  Redis (escrita):    redis-master.%s.svc.cluster.local:6379\n" "$NS"
+printf "  Redis (leitura):    redis-replicas.%s.svc.cluster.local:6379\n" "$NS"
 printf "  MinIO:              minio.minio.svc.cluster.local:9000\n"
 printf "\n  O DATABASE_URL e o REDIS_URL do Secret da aplicação apontam para estes.\n"
 if [ ${#SM_EXTRA[@]} -gt 0 ]; then

@@ -75,7 +75,7 @@ O chart não traz nenhum valor. Em produção lê **um** Secret criado fora dele
 | `DATA_ENCRYPTION_KEYS` | sim | Cifra de segredos em repouso: `kid:base64` de 32 bytes, vários separados por vírgula | Malformada → não arranca. (Sem ela o servidor arrancaria e recusaria com 422 o que guarda segredos; o chart exige-a) |
 | `VOICE_INTERNAL_SECRET` | com `voice.enabled` | Cabeçalho `X-Voice-Secret` entre o FreeSWITCH e o servidor | Vazio, menos de 32 caracteres, ou um valor já publicado no repo → as rotas de IVR respondem 503 |
 | `PROVISIONING_SECRET` | não | Autoriza a provisão de organizações (`/api/operator/v1/organizations`) | Vazio → endpoint desligado |
-| `REDIS_URL` | com `externalRedis.fromSecret` | Redis com password (`redis://:pass@host:6379`) | — |
+| `REDIS_URL` | com `externalRedis.fromSecret` | Redis com password (`redis://:pass@host:6379`). **O host tem de aceitar ESCRITAS**: em produção é o `redis-master`, nunca o Service que cobre as réplicas — o `dlx:online` é um `SADD` e um `PUBLISH` numa réplica não chega aos outros pods | — |
 | `TELEPHONY_ESL_PASSWORD` | com `server.telephony.eslAddr` | Password do ESL do FreeSWITCH (ADR-0009) | `TELEPHONY_ESL_ADDR` sem ela → não arranca |
 
 Outros Secrets, por nome:

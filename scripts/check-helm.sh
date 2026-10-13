@@ -125,8 +125,19 @@ recusa "produção com segredos gerados" "secrets.create=true é só para labora
   "${PROD[@]}" --set secrets.create=true
 recusa "produção sem IP público do relay" "coturn.externalIP" \
   "${PROD[@]}" --set coturn.externalIP=
+# As três do CAMINHO de media. A primeira é a que faltava a 2026-10-11: o
+# render de produção passava o portão com o relay sem caminho nenhum.
+recusa "produção com o relay sem rede do nó" "coturn.hostNetwork" \
+  "${PROD[@]}" --set coturn.hostNetwork=false
+recusa "gama de relay nos portos efémeros do kernel" "coturn.relayPorts" \
+  "${PROD[@]}" --set coturn.relayPorts.max=59152
+recusa "quota do relay acima das portas que existem" "coturn.totalQuota" \
+  "${PROD[@]}" --set coturn.totalQuota=5000
+# O perfil de produção serve por Gateway API, logo este caso tem de LIGAR o
+# Ingress para o alcançar — um Ingress desligado não precisa de TLS nenhum.
 recusa "produção sem TLS no ingress" "ingress.tls" \
-  "${PROD[@]}" --set ingress.tls.clusterIssuer=
+  "${PROD[@]}" --set gateway.enabled=false --set ingress.enabled=true \
+  --set ingress.tls.clusterIssuer=
 recusa "produção com o Postgres do chart" "postgresql.enabled" \
   "${PROD[@]}" --set postgresql.enabled=true
 recusa "produção com o PBX de laboratório" "voice.labPbx.enabled" \
@@ -177,72 +188,91 @@ render prioridade "${VOZ[@]}" "${LIMPA[@]}" --set priorityClassName=prova-priori
 # --- Gateway API (ADR-0021) ------------------------------------------------
 # O chart ganhou um segundo caminho de entrada. Estas recusas existem porque
 # cada uma delas, se passasse, perdia algo em silêncio.
-GW=("${PROD[@]}" --set ingress.enabled=false --set gateway.enabled=true
-    --set gateway.className=delonix --set gateway.tls.clusterIssuer=delonix-letsencrypt
-    --set gateway.acceptProvisioningInAccessLog=true)
+# O perfil de produção JÁ É Gateway API em `mode: attach` (ADR-0021: o
+# `ngola-lda` não tem IngressClass nenhuma). O `GW` cobre a OUTRA forma — um
+# Gateway próprio neste namespace — para que as duas continuem renderizadas.
+GW=("${PROD[@]}" --set gateway.mode=own --set gateway.className=delonix
+    --set gateway.tls.clusterIssuer=delonix-letsencrypt)
 
 recusa "ingress e gateway ao mesmo tempo" "são exclusivos" \
-  "${PROD[@]}" --set gateway.enabled=true --set gateway.className=delonix
+  "${PROD[@]}" --set ingress.enabled=true
 recusa "gateway em mode=own sem GatewayClass" "gateway.className" \
-  "${PROD[@]}" --set ingress.enabled=false --set gateway.enabled=true
+  "${PROD[@]}" --set gateway.mode=own
 recusa "gateway em produção sem TLS" "gateway.tls:" \
-  "${PROD[@]}" --set ingress.enabled=false --set gateway.enabled=true \
-  --set gateway.className=delonix --set gateway.acceptProvisioningInAccessLog=true
+  "${PROD[@]}" --set gateway.mode=own --set gateway.className=delonix
 recusa "gateway sem afinidade por sala em produção (R3)" "regressão R3" \
-  "${GW[@]}" --set gateway.affinity.implementation=none
+  "${PROD[@]}" --set gateway.affinity.implementation=none
 recusa "gateway sem reconhecer o bilhete no access log (R278)" "acceptProvisioningInAccessLog" \
-  "${PROD[@]}" --set ingress.enabled=false --set gateway.enabled=true \
-  --set gateway.className=delonix --set gateway.tls.clusterIssuer=x
+  "${PROD[@]}" --set gateway.acceptProvisioningInAccessLog=false
 recusa "nem ingress nem gateway em produção" "sem um deles o host não é servido" \
-  "${PROD[@]}" --set ingress.enabled=false
+  "${PROD[@]}" --set gateway.enabled=false
 recusa "gateway em mode=attach sem parentRef" "gateway.parentRef.name" \
-  "${GW[@]}" --set gateway.mode=attach
+  "${PROD[@]}" --set gateway.parentRef.name=
 
-render production-gateway "${GW[@]}"
+render production-gateway-own "${GW[@]}"
 
 # A invariante do ADR-0001 no caminho NOVO. No Ingress era a anotação
 # `upstream-hash-by: $arg_room`; aqui é uma BackendTrafficPolicy com
 # ConsistentHash por parâmetro de query. Se isto se perder, os pares de uma
 # sala caem em pods diferentes e o SFU em memória parte-se — sem um erro.
-python3 - "$OUT/production-gateway.yaml" <<'PYGW' || fail=1
+# As DUAS formas de Gateway: a de produção (`attach`, ao Gateway da
+# plataforma) e a de um Gateway próprio. As invariantes do ADR-0001 e do
+# ADR-0006 são as mesmas nas duas, e antes só a segunda era medida.
+python3 - "$OUT/production.yaml" "$OUT/production-voz.yaml" \
+         "$OUT/production-voz-esl.yaml" "$OUT/production-gateway-own.yaml" <<'PYGW' || fail=1
 import sys, yaml
-docs = [d for d in yaml.safe_load_all(open(sys.argv[1], encoding='utf-8')) if d]
 erros = []
-pol = [d for d in docs if d.get('kind') == 'BackendTrafficPolicy']
-rotas = {d['metadata']['name']: d for d in docs if d.get('kind') == 'HTTPRoute'}
+for caminho in sys.argv[1:]:
+    forma = caminho.rsplit("/", 1)[-1].removesuffix(".yaml")
+    docs = [d for d in yaml.safe_load_all(open(caminho, encoding='utf-8')) if d]
+    pol = [d for d in docs if d.get('kind') == 'BackendTrafficPolicy']
+    rotas = {d['metadata']['name']: d for d in docs if d.get('kind') == 'HTTPRoute'}
 
-if not pol:
-    erros.append("R3: sem BackendTrafficPolicy — não há hash(room)→mesmo pod")
-else:
-    ch = (pol[0].get('spec', {}).get('loadBalancer') or {}).get('consistentHash') or {}
-    if ch.get('type') != 'QueryParams':
-        erros.append(f"R3: consistentHash.type={ch.get('type')}, esperado QueryParams")
-    if [q.get('name') for q in ch.get('queryParams') or []] != ['room']:
-        erros.append(f"R3: o hash não é por `room`: {ch.get('queryParams')}")
-    alvos = [(t.get('kind'), t.get('name')) for t in pol[0]['spec'].get('targetRefs') or []]
-    if ('HTTPRoute', 'delonix-ws') not in alvos:
-        erros.append(f"R3: a política não se cola à rota do /ws: {alvos}")
+    def erro(m):
+        erros.append(f"[{forma}] {m}")
 
-ws = rotas.get('delonix-ws')
-if not ws:
-    erros.append("R3: falta a HTTPRoute dedicada ao /ws")
-else:
-    destinos = [b.get('name') for r in ws['spec']['rules'] for b in r.get('backendRefs') or []]
-    if destinos != ['delonix-server-ws']:
-        erros.append(f"R3: o /ws não usa o Service dedicado: {destinos}")
+    if not pol:
+        erro("R3: sem BackendTrafficPolicy — não há hash(room)→mesmo pod")
+    else:
+        ch = (pol[0].get('spec', {}).get('loadBalancer') or {}).get('consistentHash') or {}
+        if ch.get('type') != 'QueryParams':
+            erro(f"R3: consistentHash.type={ch.get('type')}, esperado QueryParams")
+        if [q.get('name') for q in ch.get('queryParams') or []] != ['room']:
+            erro(f"R3: o hash não é por `room`: {ch.get('queryParams')}")
+        alvos = [(t.get('kind'), t.get('name')) for t in pol[0]['spec'].get('targetRefs') or []]
+        if ('HTTPRoute', 'delonix-ws') not in alvos:
+            erro(f"R3: a política não se cola à rota do /ws: {alvos}")
 
-ger = rotas.get('delonix-meet')
-if ger:
-    caminhos = [m['path']['value'] for r in ger['spec']['rules'] for m in r.get('matches') or []]
-    if '/ws' in caminhos:
-        erros.append("R3: o /ws entrou na rota geral — a política de afinidade não se lhe aplica")
-    if '/api/public/extension-provisioning' not in caminhos:
-        erros.append("R278: falta o caminho do resgate do QR")
-    # ADR-0006 §3: as portas internas nunca são servidas de fora
-    portas = [b.get('port') for r in ger['spec']['rules'] for b in r.get('backendRefs') or []]
-    for proibida in (8181, 9180):
-        if proibida in portas:
-            erros.append(f"ADR-0006 §3: a porta interna {proibida} está exposta na rota")
+    ws = rotas.get('delonix-ws')
+    if not ws:
+        erro("R3: falta a HTTPRoute dedicada ao /ws")
+    else:
+        destinos = [b.get('name') for r in ws['spec']['rules'] for b in r.get('backendRefs') or []]
+        if destinos != ['delonix-server-ws']:
+            erro(f"R3: o /ws não usa o Service dedicado: {destinos}")
+
+    ger = rotas.get('delonix-meet')
+    if ger:
+        caminhos = [m['path']['value'] for r in ger['spec']['rules'] for m in r.get('matches') or []]
+        if '/ws' in caminhos:
+            erro("R3: o /ws entrou na rota geral — a política de afinidade não se lhe aplica")
+        if '/api/public/extension-provisioning' not in caminhos:
+            erro("R278: falta o caminho do resgate do QR")
+        # ADR-0006 §3: as portas internas nunca são servidas de fora
+        portas = [b.get('port') for r in ger['spec']['rules'] for b in r.get('backendRefs') or []]
+        for proibida in (8181, 9180):
+            if proibida in portas:
+                erro(f"ADR-0006 §3: a porta interna {proibida} está exposta na rota")
+
+    # Uma rota sem pai não se cola a nada: fica `Accepted=False` e o host não
+    # é servido — e nada no render o diz, porque o objecto é válido.
+    for nome, r in rotas.items():
+        pais = [pr.get('name') for pr in r['spec'].get('parentRefs') or []]
+        if not [n for n in pais if n]:
+            erro(f"a HTTPRoute {nome} não tem parentRef com nome")
+
+    if not rotas:
+        erro("nenhuma HTTPRoute no render — a entrada por Gateway não saiu")
 
 for e in erros:
     print("✗ " + e)
@@ -354,8 +384,20 @@ for nome in ("production", "production-voz", "local"):
             erros.append(f"[{nome}] o Service {n} expõe uma porta interna")
 
     # 5. afinidade por sala (ADR-0001)
+    #
+    # DUAS FORMAS DE ENTRADA, e as asserções abaixo são da forma Ingress:
+    # `upstream-hash-by` e `enable-access-log` são anotações do ingress-nginx e
+    # não existem em Gateway API, onde o equivalente é a BackendTrafficPolicy
+    # (medida no bloco PYGW). Por isso só correm quando o render TEM Ingress —
+    # e o render que não tem nem um nem outro é recusado logo aqui, para que
+    # «sem Ingress» não se torne a maneira de calar o portão.
+    ingressos = [d for d in docs if d.get("kind") == "Ingress"]
+    rotas_http = [d for d in docs if d.get("kind") == "HTTPRoute"]
+    if not ingressos and not rotas_http:
+        erros.append(f"[{nome}] nem Ingress nem HTTPRoute: o host não é servido de fora")
+
     ws_ok, api_svcs = False, set()
-    for ing in (d for d in docs if d.get("kind") == "Ingress"):
+    for ing in ingressos:
         ann = ing["metadata"].get("annotations") or {}
         for path, b in backends(ing):
             svc, _ = svc_ref(b)
@@ -364,7 +406,7 @@ for nome in ("production", "production-voz", "local"):
                          and ann.get("nginx.ingress.kubernetes.io/upstream-hash-by") == "$arg_room")
             else:
                 api_svcs.add(svc)
-    if not ws_ok:
+    if ingressos and not ws_ok:
         erros.append(f"[{nome}] /ws não vai para delonix-server-ws com upstream-hash-by:$arg_room (ADR-0001, R3)")
     if "delonix-server-ws" in api_svcs:
         erros.append(f"[{nome}] o Service do /ws é partilhado com outro caminho — o ingress-nginx descarta o hash")
@@ -374,15 +416,19 @@ for nome in ("production", "production-voz", "local"):
     # 5b. o resgate do QR do Linphone não fica no registo de acessos (R278): o
     #    caminho leva o bilhete, e só o Ingress dedicado, com o registo
     #    desligado, o pode servir.
+    #    Em Gateway API o registo de acessos é do Gateway e não da rota: não há
+    #    equivalente, e o chart exige por isso o reconhecimento explícito
+    #    (`gateway.acceptProvisioningInAccessLog`, recusado em produção sem
+    #    ele). Logo esta asserção é, também ela, da forma Ingress.
     qr_ok = False
-    for ing in (d for d in docs if d.get("kind") == "Ingress"):
+    for ing in ingressos:
         ann = (ing["metadata"].get("annotations") or {})
         for path, b in backends(ing):
             if path == "/api/public/extension-provisioning":
                 svc, _ = svc_ref(b)
                 qr_ok = (svc == "delonix-server"
                          and ann.get("nginx.ingress.kubernetes.io/enable-access-log") == "false")
-    if not qr_ok:
+    if ingressos and not qr_ok:
         erros.append(f"[{nome}] /api/public/extension-provisioning não tem Ingress próprio com "
                      "enable-access-log:false — o bilhete do QR ficava no registo do ingress (R278)")
 
@@ -615,18 +661,48 @@ if quota and faixa:
     pico["pods"] += n
     pico["pvcs"] += n * (2 if pg["spec"].get("walStorage") else 1)
     rv = yaml.safe_load(open(f"{base}/redis-values.yaml"))
-    if not (rv.get("architecture") == "replication" and (rv.get("sentinel") or {}).get("enabled")):
-        erros.append("[plataforma] a conta do Redis assume replication + sentinel (um StatefulSet "
-                     "de replica.replicaCount pods) — o redis-values.yaml mudou de forma")
+
+    # O SENTINEL FICA DESLIGADO ATÉ O CLIENTE O FALAR.
+    #
+    # Com sentinel, o chart 28.3.1 publica um Service `redis` sobre os três nós
+    # e nenhum Service só do master, e o cliente tem de perguntar a :26379 quem
+    # é. O `server/src/pubsub.rs` não pergunta: liga-se directamente a
+    # `REDIS_URL`. MEDIDO a 2026-10-11 pelo Service `redis`: 4 de 6 escritas
+    # responderam `READONLY`, e um PUBLISH numa réplica não chega aos
+    # subscritores do master. Com `server.replicas: 3` isso perde presença e,
+    # pior, perde a REVOGAÇÃO DE SESSÃO noutros pods — em silêncio.
+    #
+    # A recusa cai no dia em que o `pubsub.rs` usar `redis::sentinel`, ou em
+    # que o Redis passar para um operador com Service de master. Até lá, ligar
+    # o sentinel aqui é reintroduzir um defeito já medido.
+    if (rv.get("sentinel") or {}).get("enabled"):
+        cliente = "server/src/pubsub.rs"
+        fala_sentinel = (os.path.exists(cliente)
+                         and "redis::sentinel" in open(cliente, encoding="utf-8").read())
+        if not fala_sentinel:
+            erros.append("[plataforma] sentinel.enabled com um cliente que não fala Sentinel: o "
+                         "Service `redis` do chart 28.3.1 cobre master E réplicas, e o pubsub.rs "
+                         "liga-se directo a REDIS_URL — medido a 2026-10-11, 4 de 6 escritas "
+                         "`READONLY` e um PUBLISH numa réplica invisível ao master, o que perde a "
+                         "revogação de sessão nos outros pods. Usa `redis::sentinel` no pubsub.rs "
+                         "(ou um operador com Service de master) ANTES de ligar isto")
+
+    if rv.get("architecture") != "replication" or (rv.get("sentinel") or {}).get("enabled"):
+        erros.append("[plataforma] a conta do Redis assume replication SEM sentinel (1 master + "
+                     "replica.replicaCount réplicas, cada pod com redis + exporter) — o "
+                     "redis-values.yaml mudou de forma")
     else:
-        n = rv["replica"]["replicaCount"]
-        _soma(rv["replica"].get("resources") or {}, n, "o Redis (replica)")
-        _soma(rv["sentinel"].get("resources") or {}, n, "o sentinel do Redis")
+        n_rep = rv["replica"]["replicaCount"]
+        n = 1 + n_rep                      # o master é um pod, e é o que escreve
+        _soma(rv["master"].get("resources") or {}, 1, "o Redis (master)")
+        _soma(rv["replica"].get("resources") or {}, n_rep, "o Redis (replica)")
         if (rv.get("metrics") or {}).get("enabled"):
             _soma(rv["metrics"].get("resources") or {}, n, "o exporter do Redis")
         pico["pods"] += n
+        if (rv["master"].get("persistence") or {}).get("enabled"):
+            pico["pvcs"] += 1
         if (rv["replica"].get("persistence") or {}).get("enabled"):
-            pico["pvcs"] += n
+            pico["pvcs"] += n_rep
 
     dura = quota["spec"]["hard"]
     tecto = {"cpu": _cpu(dura["limits.cpu"]), "mem": _mem(dura["limits.memory"]),
