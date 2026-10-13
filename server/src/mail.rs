@@ -376,7 +376,7 @@ pub async fn send_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
         // O relay desta organização, ou o do operador. A ordem é esta de
         // propósito: quem configurou o seu próprio SMTP quer que o correio dele
         // saia por lá, não pelo nosso.
-        if !relays.contains_key(&m.org_id) {
+        if let std::collections::hash_map::Entry::Vacant(vaga) = relays.entry(m.org_id) {
             let escolhido = match m.org_id {
                 Some(org) => match org_relay(state, org).await {
                     Some(r) => Some(r),
@@ -395,7 +395,7 @@ pub async fn send_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
                 },
                 None => None,
             };
-            relays.insert(m.org_id, pronto);
+            vaga.insert(pronto);
         }
         let Some(Some((from, tp))) = relays.get(&m.org_id) else {
             // Sem relay utilizável: a configuração está errada, não o destino.

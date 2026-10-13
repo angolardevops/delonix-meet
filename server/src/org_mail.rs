@@ -161,7 +161,7 @@ pub async fn get_settings(
     request_body = PutOrgMailSettingsReq,
     responses(
         (status = 200, body = OrgMailSettings),
-        (status = 400, body = crate::openapi::ErrorBody, description = "`org_mail_settings.invalid_from`, `org_mail_settings.plaintext_not_confirmed`, ou `egress.*` se o host for recusado pela guarda de saída"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`org_mail_settings.invalid_from`, `org_mail_settings.plaintext_not_confirmed`, `org_mail_settings.host_refused` (a guarda de saída recusou o destino)"),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 422, body = crate::openapi::ErrorBody, description = "`secrets.encryption_unconfigured` — sem `DATA_ENCRYPTION_KEYS` não se guarda uma password"),
@@ -201,7 +201,16 @@ pub async fn put_settings(
     state
         .outbound
         .check_tenant_host_port(req.host.trim(), req.port)
-        .await?;
+        .await
+        .map_err(|e| -> ApiError {
+            // Código estável e próprio, como os troncos SIP fazem
+            // (`telephony.trunk_host_refused`): quem configura precisa de
+            // distinguir «o host foi recusado pela guarda» de qualquer outro
+            // erro de validação, e o `invalid_argument` genérico não o diz.
+            DomainError::invalid("org_mail_settings.host_refused", e.to_string())
+                .with_field("host", "destino interno ou inválido")
+                .into()
+        })?;
 
     let antiga_selada: Option<String> =
         sqlx::query_scalar("SELECT password_sealed FROM org_mail_settings WHERE org_id = $1")
