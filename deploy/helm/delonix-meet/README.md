@@ -173,6 +173,20 @@ O `JWT_SECRET` do Whisper vem do Secret por chave: o `/asr` valida o mesmo
 access token do `/rtc` e, sem a chave, é fail-closed — recusa todas as
 ligações e o browser cai em silêncio para o motor local.
 
+**Espelha a imagem do Ollama no registo da instalação.** São 3,5GB do Docker
+Hub, e o prazo que o Kubernetes dá a um Deployment para progredir (`progress
+DeadlineSeconds`) acaba antes: medido a 2026-10-13, o release foi dado por
+`failed` com tudo aplicado e o pod a puxar por trás. O chart leva o prazo a
+2700 s para isso não acontecer, mas o espelho é o que resolve a causa — a
+mesma instalação puxou 1,18GB do registo da rede em 1m24s.
+
+```bash
+podman pull ollama/ollama:0.40.2
+podman tag  ollama/ollama:0.40.2 <registo>/ollama/ollama:0.40.2
+podman push --tls-verify=false   <registo>/ollama/ollama:0.40.2
+helm upgrade … --set ollama.image.repository=<registo>/ollama/ollama
+```
+
 Sem GPU, o primeiro arranque do Ollama puxa gigabytes e isso **não** é
 condição de prontidão: até o modelo chegar, a fila da ata devolve a tentativa
 (nada se perde, mas também não há ata). Com GPU, `ollama.nodeSelector`,
