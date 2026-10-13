@@ -52,6 +52,16 @@ const ARGS_LEGENDA: &str = r#"{"type":"object","properties":{"recording_id":{"ty
 /// Pedir uma tradução de legendas para uma língua.
 const ARGS_TRADUZIR: &str = r#"{"type":"object","properties":{"recording_id":{"type":"string","format":"uuid","description":"A gravação."},"lang":{"type":"string","description":"Língua de DESTINO, BCP-47."},"source":{"type":"string","enum":["transcript","translation"],"description":"`transcript` constrói da transcrição na língua dela; `translation` traduz segmento a segmento com o LLM local."}},"required":["recording_id","lang","source"],"additionalProperties":false}"#;
 
+/// Pedir um recorte (ou um *short*) de uma gravação.
+///
+/// `captions_lang` produz um WebVTT **ao lado** do ficheiro; não queima nada na
+/// imagem — o ffmpeg desta imagem não tem libass
+/// (`delonix_meet_domain::content::clip`).
+const ARGS_RECORTE: &str = r#"{"type":"object","properties":{"recording_id":{"type":"string","format":"uuid","description":"A gravação de origem."},"kind":{"type":"string","enum":["clip","short"],"description":"`clip` até 15 min; `short` vertical 9:16 até 3 min."},"label":{"type":"string","description":"Nome do recorte, 1 a 120 caracteres."},"start_ms":{"type":"integer","description":"Início, em milissegundos da gravação."},"end_ms":{"type":"integer","description":"Fim, em milissegundos. end_ms − start_ms ≥ 1000."},"focus":{"type":"string","enum":["center","left","right"],"description":"Só no short: que parte da largura fica. Omissão: center."},"captions_lang":{"type":"string","description":"Produz um .vtt ao lado, nesta língua (BCP-47). NÃO queima legendas na imagem."}},"required":["recording_id","kind","label","start_ms","end_ms"],"additionalProperties":false}"#;
+
+/// Um recorte de uma gravação.
+const ARGS_UM_RECORTE: &str = r#"{"type":"object","properties":{"recording_id":{"type":"string","format":"uuid","description":"A gravação."},"clip_id":{"type":"string","format":"uuid","description":"O recorte."}},"required":["recording_id","clip_id"],"additionalProperties":false}"#;
+
 /// Sugestões de edição a partir de uma transcrição que o cliente já tem.
 ///
 /// Os nomes dos campos são os do serviço (`ai_studio::StudioReq`), não nomes
@@ -172,6 +182,31 @@ impl Tool {
             capability: None,
             read_only: true,
             input_schema: ARGS_GRAVACAO,
+        },
+        // ---- recortes e shorts ----
+        Tool {
+            name: "recording_clip_create",
+            summary: "Pede um recorte de uma gravação. Devolve o recorte na fila — não espera pelo ffmpeg.",
+            scope: McpScope::ClipsWrite,
+            capability: Some(Capability::StudioEditTimeline),
+            read_only: false,
+            input_schema: ARGS_RECORTE,
+        },
+        Tool {
+            name: "recording_clips_list",
+            summary: "Os recortes e shorts de uma gravação, com o estado de cada um.",
+            scope: McpScope::RecordingsRead,
+            capability: None,
+            read_only: true,
+            input_schema: ARGS_GRAVACAO,
+        },
+        Tool {
+            name: "recording_clip_status",
+            summary: "O estado de um recorte: na fila, a compor (com progresso), pronto, ou falhado e porquê.",
+            scope: McpScope::RecordingsRead,
+            capability: None,
+            read_only: true,
+            input_schema: ARGS_UM_RECORTE,
         },
         Tool {
             name: "edit_suggestions",

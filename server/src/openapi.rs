@@ -179,6 +179,7 @@ fn parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::recording_meta::ApiDoc::openapi(),
         crate::recording_captions::ApiDoc::openapi(),
         crate::recording_chapters::ApiDoc::openapi(),
+        crate::recording_clips::ApiDoc::openapi(),
     ]
 }
 

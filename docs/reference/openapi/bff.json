@@ -1492,6 +1492,130 @@
         ],
         "type": "object"
       },
+      "Clip": {
+        "properties": {
+          "attempts": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "captions_lang": {
+            "description": "Língua do WebVTT que sai ao lado, quando se pediu.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "duration_ms": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error_code": {
+            "description": "Código ESTÁVEL da falha (contrato), p. ex. `clip.ffmpeg_failed`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "focus": {
+            "description": "Enquadramento do *short*: `center`, `left` ou `right`.",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`clip` ou `short`.",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "progress": {
+            "description": "0 a 1. Lido do `-progress` do ffmpeg.",
+            "format": "double",
+            "type": "number"
+          },
+          "ready_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recording_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "size_bytes": {
+            "description": "Tamanho do ficheiro, quando está pronto.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "description": "`queued`, `processing`, `ready` ou `failed`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recording_id",
+          "created_by",
+          "kind",
+          "label",
+          "start_ms",
+          "end_ms",
+          "focus",
+          "status",
+          "progress",
+          "attempts",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ClipPage": {
+        "description": "Uma página de recortes.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Clip"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "CodigoReq": {
         "properties": {
           "code": {
@@ -1676,6 +1800,46 @@
         },
         "required": [
           "name"
+        ],
+        "type": "object"
+      },
+      "CreateClipReq": {
+        "properties": {
+          "captions_lang": {
+            "description": "Produz um WebVTT ao lado, nesta língua. **Não queima** nada na imagem.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "focus": {
+            "description": "Só do *short*: que parte da largura fica. Omissão: `center`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "description": "`clip` (até 15 min) ou `short` (vertical 9:16, até 3 min).",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "start_ms": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "start_ms",
+          "end_ms"
         ],
         "type": "object"
       },
@@ -34551,6 +34715,454 @@
           }
         ],
         "summary": "`PATCH /api/recordings/{id}/chapters/{chapter_id}` — corrigir um capítulo\ntorna-o manual (a próxima geração automática já não lhe toca). Um corpo\nsem `t_ms` nem `title` não corrige nada e deixa a origem como está.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/clips": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "1–100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/clips` — os recortes desta gravação.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "parameters": [
+          {
+            "description": "Gravação de origem.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateClipReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Clip"
+                }
+              }
+            },
+            "description": "Na fila. O estado e o progresso lêem-se no recorte."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`clip.invalid_range`, `clip.too_long`, `clip.unknown_kind`, `clip.invalid_label`, `clip.unknown_focus`, `clip.invalid_language`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Vê a gravação mas não a gere."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe — ou é de outra organização."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`recording.processing` ou `recording.no_file`: ainda não há ficheiro para recortar."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/recordings/{id}/clips` — pede um recorte. `202`: a composição é\nem segundo plano, e o estado lê-se no próprio recorte.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/clips/{clip_id}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Recorte.",
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Apagado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/recordings/{id}/clips/{clip_id}` — apaga o recorte e o ficheiro.",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "get": {
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Recorte.",
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Clip"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/clips/{clip_id}` — um recorte, com o estado.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/clips/{clip_id}/captions.vtt": {
+      "get": {
+        "operationId": "captions",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Recorte.",
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/vtt": {}
+            },
+            "description": "WebVTT com as deixas da janela, a começar em zero."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "O recorte não pediu legendas, ou ainda não está pronto."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/clips/{clip_id}/captions.vtt` — as legendas do\nrecorte, quando se pediram.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/clips/{clip_id}/content": {
+      "get": {
+        "operationId": "content",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Recorte.",
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "video/webm": {}
+            },
+            "description": "O WebM do recorte."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`clip.not_ready` ainda a compor, `clip.failed` falhou."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{id}/clips/{clip_id}/content` — o ficheiro.",
         "tags": [
           "recordings"
         ]

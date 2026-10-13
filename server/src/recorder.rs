@@ -1245,7 +1245,7 @@ impl Drop for GaugeGuard<'_> {
 /// future perdia o lugar na fila. As vagas repartem-se por inquilino
 /// (`fair_slots`): uma organização com muitas composições à espera não deixa as
 /// outras atrás de si.
-async fn wait_for_slot<F, Fut>(
+pub(crate) async fn wait_for_slot<F, Fut>(
     slots: crate::fair_slots::FairSlots,
     tenant: Uuid,
     beat_every: std::time::Duration,
@@ -1632,7 +1632,7 @@ async fn run_bounded(
 /// `run_bounded` que, com `progress`, lê o `-progress pipe:1` do ffmpeg e
 /// publica cada `out_time_us` (em ms). O stdout é lido até ao fim: um pipe
 /// que ninguém esvazia bloqueia o processo.
-async fn run_bounded_progress(
+pub(crate) async fn run_bounded_progress(
     cmd: &mut tokio::process::Command,
     limit: std::time::Duration,
     progress: Option<tokio::sync::watch::Sender<i64>>,

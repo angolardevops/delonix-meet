@@ -620,6 +620,33 @@ async fn executar(
             )
             .unwrap_or(Value::Null))
         }
+        "recording_clip_create" => {
+            let id = uuid_de(args, "recording_id")?;
+            let req = serde_json::from_value(args.clone())
+                .map_err(|e| Executar::Args(format!("argumentos inválidos: {e}")))?;
+            let (_, Json(clip)) =
+                crate::recording_clips::create(st, user, Path(id), Json(req)).await?;
+            Ok(serde_json::to_value(clip).unwrap_or(Value::Null))
+        }
+        "recording_clips_list" => {
+            let id = uuid_de(args, "recording_id")?;
+            Ok(serde_json::to_value(
+                crate::recording_clips::list(st, user, Path(id), Query(Default::default()))
+                    .await?
+                    .0,
+            )
+            .unwrap_or(Value::Null))
+        }
+        "recording_clip_status" => {
+            let rec = uuid_de(args, "recording_id")?;
+            let clip = uuid_de(args, "clip_id")?;
+            Ok(serde_json::to_value(
+                crate::recording_clips::get_one(st, user, Path((rec, clip)))
+                    .await?
+                    .0,
+            )
+            .unwrap_or(Value::Null))
+        }
         "edit_suggestions" => {
             let req = serde_json::from_value(args.clone())
                 .map_err(|e| Executar::Args(format!("argumentos inválidos: {e}")))?;

@@ -556,6 +556,73 @@ async fn as_tools_que_escrevem_chamam_o_llm_local(db: PgPool) {
 }
 
 #[sqlx::test]
+async fn as_tools_de_recorte_pedem_e_acompanham(db: PgPool) {
+    let c = cenario(db, Reply::Answer("x".into())).await;
+    let t = token_de_agente(&c.app, &c.a, TODOS).await;
+    // A gravação precisa de ficheiro para se poder recortar: o portão é o da
+    // gravação, e sem ficheiro recusa (`recording.processing`).
+    sqlx::query("UPDATE recordings SET status = 'ready' WHERE id = $1::uuid")
+        .bind(&c.rec)
+        .execute(&c.app.db)
+        .await
+        .unwrap();
+
+    let v = conteudo(
+        &chamar(
+            &c.app,
+            &t,
+            "recording_clip_create",
+            json!({"recording_id": c.rec, "kind": "short", "label": "Kilamba",
+                   "start_ms": 1_000, "end_ms": 9_000, "focus": "left"}),
+        )
+        .await,
+        "recording_clip_create",
+    );
+    assert_eq!(v["status"], "queued", "não espera pelo ffmpeg: {v}");
+    assert_eq!(v["kind"], "short", "{v}");
+    let clip_id = v["id"].as_str().unwrap().to_string();
+
+    let v = conteudo(
+        &chamar(
+            &c.app,
+            &t,
+            "recording_clips_list",
+            json!({"recording_id": c.rec}),
+        )
+        .await,
+        "recording_clips_list",
+    );
+    assert!(v["items"].as_array().map(|a| a.len()) == Some(1), "{v}");
+
+    let v = conteudo(
+        &chamar(
+            &c.app,
+            &t,
+            "recording_clip_status",
+            json!({"recording_id": c.rec, "clip_id": clip_id}),
+        )
+        .await,
+        "recording_clip_status",
+    );
+    assert_eq!(v["id"], clip_id, "{v}");
+    assert!(v["progress"].is_number(), "{v}");
+
+    // Um pedido sem sentido é recusado pelo servidor, com o código estável.
+    let texto = recusa(
+        &chamar(
+            &c.app,
+            &t,
+            "recording_clip_create",
+            json!({"recording_id": c.rec, "kind": "short", "label": "longo",
+                   "start_ms": 0, "end_ms": 500_000}),
+        )
+        .await,
+        "recording_clip_create",
+    );
+    assert!(texto.contains("clip.too_long"), "{texto}");
+}
+
+#[sqlx::test]
 async fn com_um_token_de_outra_organizacao_nada_disto_existe(db: PgPool) {
     let c = cenario(db, Reply::Answer("x".into())).await;
     // O MESMO cenário, visto por um agente autorizado pelo admin da org B.

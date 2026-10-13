@@ -61,6 +61,7 @@ mod rate_limit;
 mod recorder;
 mod recording_captions;
 mod recording_chapters;
+mod recording_clips;
 mod recording_meta;
 mod recordings;
 mod redis_state;
@@ -136,6 +137,9 @@ pub use recorder::{
 /// A varredura dos capítulos automáticos, exposta aos testes de integração sem
 /// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
 pub use recording_chapters::auto_chapters_sweep;
+/// Uma volta da fila dos recortes. Exportada para a prova de integração a
+/// poder correr sem levantar o `run()` inteiro — como a do resumo da acta.
+pub use recording_clips::render_due as recording_clip_render_due;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
@@ -867,6 +871,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(recordings::get_chapter)
                 .patch(recording_chapters::patch)
                 .delete(recordings::delete_chapter),
+        )
+        // ---- Recortes e shorts (plano do MCP; regras em `content::clip`) ----
+        .route(
+            "/api/recordings/{recording_id}/clips",
+            get(recording_clips::list).post(recording_clips::create),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}",
+            get(recording_clips::get_one).delete(recording_clips::delete),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}/content",
+            get(recording_clips::content),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}/captions.vtt",
+            get(recording_clips::captions),
         )
         .route(
             "/api/recordings/{recording_id}/chapters/generate",
@@ -2318,6 +2339,18 @@ pub async fn run() {
                 let (reagendadas, apagadas) = mail::sweep(&db).await?;
                 Ok((reagendadas + apagadas) as usize)
             }
+        });
+    }
+
+    // Os recortes e os shorts: a cada 20 s, dois por volta. A espera pelo
+    // ffmpeg é das vagas do gravador (`fair_slots`), não deste ritmo — um
+    // agente a pedir vinte recortes não afoga as composições de outra
+    // organização.
+    {
+        let s = state.clone();
+        filas.levanta("recording_clip", Duration::from_secs(20), move || {
+            let s = s.clone();
+            async move { recording_clips::render_due(&s).await }
         });
     }
 
