@@ -158,6 +158,14 @@ recusa "quota do relay acima das portas que existem" "coturn.totalQuota" \
 recusa "produção sem TLS no ingress" "ingress.tls" \
   "${PROD[@]}" --set gateway.enabled=false --set ingress.enabled=true \
   --set ingress.tls.clusterIssuer=
+# O perfil de produção é `attach`: os campos de TLS do gateway só são lidos em
+# `own`, por isso um emissor pedido aqui nunca chegava a template nenhum — foi
+# assim que o `clusterIssuer: letsencrypt-prod` viveu num cluster que só tem o
+# `delonix-letsencrypt`.
+recusa "emissor pedido em gateway.mode=attach (ignorado em silêncio)" "gateway.tls em mode=attach" \
+  "${PROD[@]}" --set gateway.tls.clusterIssuer=letsencrypt-prod
+recusa "certificado pedido em gateway.mode=attach (ignorado em silêncio)" "gateway.tls em mode=attach" \
+  "${PROD[@]}" --set gateway.tls.certificateRefName=delonix-meet-tls
 recusa "produção com o Postgres do chart" "postgresql.enabled" \
   "${PROD[@]}" --set postgresql.enabled=true
 recusa "produção com o PBX de laboratório" "voice.labPbx.enabled" \
