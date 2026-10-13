@@ -24,6 +24,11 @@ data:
   # tecto de 120 s (5..900) e 1 tarefa em simultâneo por organização (1..8).
   # OLLAMA_MODEL_STUDIO: qwen2.5:7b
   # OLLAMA_TIMEOUT_SECS: "120"
+  # A ata: a janela de transcrição no prompt (caracteres) e o tecto da
+  # chamada. A janela decide o `num_ctx` pedido ao Ollama — sem ele, o Ollama
+  # corta o prompt em silêncio (medido: 2 050 tokens de 4 835).
+  # MOM_WINDOW_CHARS: "24000"
+  # MOM_SUMMARY_TIMEOUT_SECS: "600"
   # AI_STUDIO_CONCURRENCY_PER_ORG: "1"
   # URL interno para a app interagir com Redis Sentinel (HA)
   REDIS_URL: "redis://delonix-redis-master.ngolacloud-meet.svc.cluster.local:6379"

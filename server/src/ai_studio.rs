@@ -429,7 +429,14 @@ pub(crate) async fn run_task(
     input: &StudioInput,
 ) -> Result<serde_json::Value, LlmError> {
     let prompt = build_prompt(input);
-    let answer = ai::ollama_generate(client, base_url, model, &prompt, timeout, true).await?;
+    // A janela PEDIDA ao modelo sai do orçamento do prompt: o Estúdio tinha o
+    // mesmo defeito da ata — mandava até PROMPT_BUDGET_CHARS e não pedia
+    // janela, pelo que o Ollama cortava o início em silêncio.
+    let limits = ai::LlmLimits {
+        timeout,
+        num_ctx: Some(ai::num_ctx_para(PROMPT_BUDGET_CHARS)),
+    };
+    let answer = ai::ollama_generate(client, base_url, model, &prompt, limits, true).await?;
     match input.task {
         StudioTask::Summary => parse_summary(&answer, input),
         StudioTask::Publication => parse_publication(&answer),

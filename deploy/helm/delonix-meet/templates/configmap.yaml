@@ -81,6 +81,8 @@ data:
   OLLAMA_MODEL_STUDIO: {{ . | quote }}
   {{- end }}
   OLLAMA_TIMEOUT_SECS: {{ $v.ollama.timeoutSeconds | quote }}
+  MOM_WINDOW_CHARS: {{ $v.ollama.momWindowChars | quote }}
+  MOM_SUMMARY_TIMEOUT_SECS: {{ $v.ollama.momSummaryTimeoutSeconds | quote }}
   {{- end }}
   {{- range $k, $val := $v.server.config }}
   {{ $k }}: {{ $val | toString | quote }}
