@@ -45,7 +45,14 @@ async fn create_meeting_success_and_shape(db: sqlx::PgPool) {
     assert_eq!(m["kind"], "video", "kind por omissão");
     assert_eq!(m["duration_min"], 30, "duração por omissão");
     assert_eq!(m["owner_id"], a.user_id.as_str());
-    assert!(m["room_code"].is_null(), "a sala só nasce no start");
+    // A sala nasce COM a reunião (migração 0114): é isso que dá um link para
+    // partilhar antes de ela começar. O que distingue «agendada» de «a
+    // decorrer» é o `started_at`, não a existência de sala.
+    assert!(
+        m["room_code"].as_str().is_some_and(|c| !c.is_empty()),
+        "a reunião nasceu sem sala: {m}"
+    );
+    assert!(m["started_at"].is_null(), "nasceu já começada: {m}");
     assert_eq!(m["minutes"], "");
     assert!(m["recurrence_freq"].is_null());
     assert_eq!(m["recurrence_interval"], 1);
@@ -374,9 +381,13 @@ async fn start_meeting_creates_room_once(db: sqlx::PgPool) {
     let m = app.new_meeting(&a, "Arranque", &[&c.user_id]).await;
     let path = format!("/api/meetings/{}/start", m["id"].as_str().unwrap());
 
-    // O convidado não arranca antes do anfitrião.
+    // O convidado não arranca antes do anfitrião — e o 422 traz código, que é
+    // o que o ecrã de espera lê para mostrar a contagem em vez de um erro
+    // (antes era um 400 com uma frase, que o cliente não podia distinguir de
+    // qualquer outra recusa).
     let (st, body) = app.post(&path, Some(&c.token), json!({})).await;
-    assert_eq!(st, 400, "{body}");
+    assert_eq!(st, 422, "{body}");
+    assert_eq!(body["code"], "meeting.not_started_yet", "{body}");
     // Um colega não convidado: para ele a reunião não existe (R153).
     let (st, _) = app.post(&path, Some(&d.token), json!({})).await;
     assert_eq!(st, 404);
@@ -1016,7 +1027,9 @@ async fn cross_org_meeting_routes_are_denied(db: sqlx::PgPool) {
     let (_, list) = app.get("/api/meetings", Some(&b.token)).await;
     assert_eq!(ids(&list), vec![id]);
     assert_eq!(list[0]["minutes"], "");
-    assert!(list[0]["room_code"].is_null(), "A não arrancou a reunião");
+    // A sala existe desde o agendamento; o que prova que a A não conseguiu
+    // arrancar a reunião da B é o `started_at` continuar vazio.
+    assert!(list[0]["started_at"].is_null(), "A arrancou a reunião da B");
     let (_, agenda) = app
         .get(&format!("/api/meetings/{id}/agenda-items"), Some(&b.token))
         .await;

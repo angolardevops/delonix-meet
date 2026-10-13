@@ -24,6 +24,11 @@ pub struct Meeting {
     pub starts_at: DateTime<Utc>,
     pub duration_min: i32,
     pub room_code: Option<String>,
+    /// Instante em que o anfitrião arrancou a reunião, ou `null` se ainda não
+    /// arrancou. Desde a migração 0114 a sala nasce com a reunião, por isso
+    /// `room_code` já não distingue «agendada» de «a decorrer» — esta coluna
+    /// é que distingue.
+    pub started_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub room_ref: Option<Uuid>,
     #[serde(default)]
@@ -97,7 +102,7 @@ pub struct ApiDoc;
 /// e mais um em `meetings_v1.rs`. Um só lugar, uma só vez (ADR-0004, Fase 3).
 pub const MEETING_COLUMNS: &str =
     "id, owner_id, title, description, kind, starts_at, duration_min, \
-     room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
+     room_code, started_at, created_at, room_ref, minutes, transcript, recurrence_freq, \
      recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
      recurrence_parent_id, org_id";
 
@@ -113,6 +118,9 @@ pub struct MeetingItem {
     pub starts_at: DateTime<Utc>,
     pub duration_min: i32,
     pub room_code: Option<String>,
+    /// `null` enquanto o anfitrião não arrancar. A consola usa-o para saber se
+    /// mostra «entrar» ou a contagem até à hora (migração 0114).
+    pub started_at: Option<DateTime<Utc>>,
     pub is_owner: bool,
     pub minutes: String,
     pub room_ref: Option<Uuid>,
@@ -646,14 +654,24 @@ pub async fn create(
         )));
     }
 
+    // A SALA NASCE AQUI, antes da transacção (migração 0114). Era criada só no
+    // `start`, e por isso uma reunião agendada não tinha link nenhum para
+    // partilhar: nem botão de copiar, nem URL no `.ics`, nem `join_url`
+    // utilizável na v1. Fica fora da transacção porque `insert_room` recebe a
+    // pool; o pior caso de a transacção abortar a seguir é uma sala vazia sem
+    // reunião, que não é alcançável por ninguém (o código nunca foi dado) e
+    // que nada no sistema confunde com uma sala a decorrer.
+    let room = criar_sala_da_reuniao(&state, auth.user_id, title, &req.options).await?;
+
     // ANTES da transacção: as consultas do dono usam a pool.
     let dono = dono_do_evento(&state, auth.user_id).await;
     let mut tx = state.db.begin().await?;
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
-                               format, waiting_room, auto_record, record_quality, sms_reminder_min, org_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                               format, waiting_room, auto_record, record_quality, sms_reminder_min, org_id,
+                               room_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
          RETURNING {MEETING_COLUMNS}"
     ))
     .bind(auth.user_id)
@@ -674,6 +692,7 @@ pub async fn create(
     .bind(&req.options.record_quality)
     .bind(req.sms_reminder_min)
     .bind(creator_org_id)
+    .bind(&room.code)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -908,8 +927,16 @@ pub(crate) async fn on_room_emptied(state: Arc<AppState>, room_id: Uuid) {
         .flatten();
     let Some((code,)) = code else { return };
 
+    // `started_at IS NOT NULL` é o que impede o falso `meeting.ended`: desde a
+    // migração 0114 a sala existe assim que a reunião é agendada, por isso
+    // alguém que abra o link na véspera, espreite e saia esvazia uma sala cuja
+    // reunião ainda nem começou. E `ORDER BY started_at DESC` desempata as
+    // ocorrências de uma série, que PARTILHAM o código da sala: a que acabou é
+    // a última que começou.
     let meeting: Option<Meeting> = sqlx::query_as(&format!(
-        "SELECT {MEETING_COLUMNS} FROM meetings WHERE room_code = $1"
+        "SELECT {MEETING_COLUMNS} FROM meetings
+          WHERE room_code = $1 AND started_at IS NOT NULL
+          ORDER BY started_at DESC LIMIT 1"
     ))
     .bind(&code)
     .fetch_optional(&state.db)
@@ -1130,7 +1157,7 @@ pub async fn list(
             SELECT meeting_id FROM meeting_invitees WHERE user_id = $1
         )
         SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
-               m.kind, m.starts_at, m.duration_min, m.room_code,
+               m.kind, m.starts_at, m.duration_min, m.room_code, m.started_at,
                (m.owner_id = $1) AS is_owner, m.minutes,
                m.room_ref, mr.name AS room_name,
                CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,
@@ -1375,9 +1402,14 @@ pub async fn save_minutes_by_room(
     // delegado `save_minutes` autoriza —, mas o 200 e a razão já eram resposta
     // a mais.
     let meeting: Option<(Uuid,)> = sqlx::query_as(
+        // A ordem não é enfeite: numa SÉRIE as ocorrências partilham o código
+        // da sala (migração 0114), e sem ela a acta caía numa ocorrência à
+        // sorte — provavelmente a de daqui a três meses. A acta é da que está
+        // a decorrer, isto é, a última que arrancou.
         "SELECT m.id FROM meetings m
          LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $2
-         WHERE m.room_code = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)",
+         WHERE m.room_code = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)
+         ORDER BY m.started_at DESC NULLS LAST, m.starts_at DESC LIMIT 1",
     )
     .bind(&code)
     .bind(auth.user_id)
@@ -1428,8 +1460,10 @@ pub async fn notes_by_room(
         return Err(ApiError::NotFound);
     }
     let row: Option<(String, String, String)> = sqlx::query_as(
+        // Mesma razão da `save_minutes_by_room`: numa série, a que interessa é
+        // a que arrancou por último, não a mais distante no calendário.
         "SELECT title, minutes, transcript FROM meetings WHERE room_code = $1
-         ORDER BY starts_at DESC LIMIT 1",
+         ORDER BY started_at DESC NULLS LAST, starts_at DESC LIMIT 1",
     )
     .bind(&code)
     .fetch_optional(&state.db)
@@ -1457,17 +1491,61 @@ pub struct StartResp {
     pub record_quality: String,
 }
 
-/// Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.
-/// Reuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.
+/// Cria a sala de uma reunião com as opções agendadas (R184): sala de espera,
+/// formato (a videoaula abre salas de grupo), gravação automática e a
+/// qualidade que o gravador do servidor tem de cumprir. Uma só definição para
+/// os dois caminhos que a podem criar — a criação da reunião (desde a migração
+/// 0114) e o `start` de uma reunião agendada ANTES dessa migração, que nasceu
+/// sem sala.
+async fn criar_sala_da_reuniao(
+    state: &AppState,
+    owner_id: Uuid,
+    title: &str,
+    opts: &SessionOptions,
+) -> Result<crate::rooms::Room, ApiError> {
+    let room = crate::rooms::insert_room(
+        &state.db,
+        owner_id,
+        title,
+        "sfu",
+        opts.waiting_room,
+        false,
+        crate::rooms::room_format_for_meeting(&opts.format),
+    )
+    .await?;
+    crate::rooms::set_recording_options(
+        &state.db,
+        room.id,
+        opts.auto_record,
+        Some(&opts.record_quality),
+    )
+    .await?;
+    Ok(room)
+}
+
+async fn sala_existe(state: &AppState, code: &str) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
+            .bind(code)
+            .fetch_optional(&state.db)
+            .await?
+            .is_some(),
+    )
+}
+
+/// Arranca a reunião: marca o início, toca aos convidados e devolve o código
+/// da sala — que existe desde que a reunião foi agendada (migração 0114).
+/// Reuniões de voz têm sala na mesma: o cliente entra sem vídeo.
 #[utoipa::path(
     post, path = "/api/meetings/{meeting_id}/start", tag = "meetings",
     security(("session" = [])),
     params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = StartResp),
-        (status = 400, body = crate::openapi::ErrorBody, description = "um convidado tentou arrancar antes do anfitrião"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "reunião agendada antes da migração 0114, sem sala, e quem pede não é o anfitrião"),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`meeting.not_started_yet`: um convidado pediu a sala antes da hora marcada e o anfitrião ainda não arrancou. O cliente mostra o ecrã de espera."),
     )
 )]
 pub async fn start(
@@ -1483,15 +1561,14 @@ pub async fn start(
     .await?;
 
     // Só dono ou convidado pode arrancar/entrar; para os outros não existe.
+    // (Quem recebeu o LINK e não está na lista entra pela porta da sala —
+    // `rooms::join_room` ou `guests::guest_join` —, não por aqui.)
     if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         return Err(ApiError::NotFound);
     }
 
-    // As opções agendadas passam à sala: sala de espera, formato (videoaula
-    // abre salas de grupo; emissão e híbrida marcam as gravações) e o que o
-    // gravador do servidor tem de cumprir. Antes era sempre 'normal', sem
-    // sala de espera. Lidas já aqui porque também vão na resposta — reutilizar
-    // a sala (abaixo) ou criá-la de novo devolvem as mesmas opções ao cliente.
+    // As opções agendadas passam à sala. Lidas já aqui porque também vão na
+    // resposta — a sala criada ao agendar e a criada agora devolvem as mesmas.
     let opts: SessionOptions = sqlx::query_as(
         "SELECT format, waiting_room, auto_record, record_quality FROM meetings WHERE id = $1",
     )
@@ -1499,94 +1576,99 @@ pub async fn start(
     .fetch_one(&state.db)
     .await?;
 
-    // Se já foi arrancada, reutiliza a sala.
-    if let Some(code) = meeting.room_code.clone() {
-        if sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
-            .bind(&code)
-            .fetch_optional(&state.db)
-            .await?
-            .is_some()
-        {
-            return Ok(Json(StartResp {
-                code,
-                kind: meeting.kind,
-                format: opts.format,
-                waiting_room: opts.waiting_room,
-                auto_record: opts.auto_record,
-                record_quality: opts.record_quality,
-            }));
+    // A sala nasce com a reunião desde a migração 0114. Só as agendadas ANTES
+    // dela chegam aqui sem sala — e essas só o dono as pode abrir.
+    let code = match meeting.room_code.clone() {
+        Some(code) if sala_existe(&state, &code).await? => code,
+        _ => {
+            if meeting.owner_id != auth.user_id {
+                return Err(ApiError::BadRequest(
+                    "a reunião ainda não foi iniciada pelo anfitrião".into(),
+                ));
+            }
+            let room = criar_sala_da_reuniao(&state, auth.user_id, &meeting.title, &opts).await?;
+            sqlx::query("UPDATE meetings SET room_code = $1 WHERE id = $2")
+                .bind(&room.code)
+                .bind(id)
+                .execute(&state.db)
+                .await?;
+            room.code
         }
+    };
+
+    // Quem não é o anfitrião não abre a reunião antes da hora: a sala existe,
+    // mas entrar nela às 9h uma reunião das 15h é entrar numa sala vazia. O
+    // cliente lê este código e mostra o ecrã de espera com a contagem.
+    if meeting.owner_id != auth.user_id
+        && meeting.started_at.is_none()
+        && Utc::now() < meeting.starts_at
+    {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "meeting.not_started_yet",
+            "a reunião ainda não começou",
+        )
+        .into());
     }
 
-    // O dono cria a sala; um convidado que chegue antes recebe erro amigável.
-    if meeting.owner_id != auth.user_id {
-        return Err(ApiError::BadRequest(
-            "a reunião ainda não foi iniciada pelo anfitrião".into(),
-        ));
-    }
-    let room = crate::rooms::insert_room(
-        &state.db,
-        auth.user_id,
-        &meeting.title,
-        "sfu",
-        opts.waiting_room,
-        false,
-        crate::rooms::room_format_for_meeting(&opts.format),
-    )
-    .await?;
-    crate::rooms::set_recording_options(
-        &state.db,
-        room.id,
-        opts.auto_record,
-        Some(&opts.record_quality),
-    )
-    .await?;
-    // O `room_code` e o registo do `meeting.started` numa transacção
-    // (trabalho nº3): o aviso diz que a reunião começou E onde, e as duas
-    // coisas são a mesma verdade.
-    let dono = dono_do_evento(&state, auth.user_id).await;
-    let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE meetings SET room_code = $1 WHERE id = $2")
-        .bind(&room.code)
+    // Arrancar acontece UMA vez, e é o anfitrião que arranca. O `WHERE
+    // started_at IS NULL` é o que garante o «uma vez» quando dois
+    // separadores do mesmo anfitrião carregam ao mesmo tempo: só um escreve,
+    // e só esse toca aos convidados e dispara o `meeting.started`.
+    if meeting.owner_id == auth.user_id && meeting.started_at.is_none() {
+        let dono = dono_do_evento(&state, auth.user_id).await;
+        let mut tx = state.db.begin().await?;
+        let marcou = sqlx::query(
+            "UPDATE meetings SET started_at = now() WHERE id = $1 AND started_at IS NULL",
+        )
         .bind(id)
         .execute(&mut *tx)
-        .await?;
-    let mut started_meeting = meeting.clone();
-    started_meeting.room_code = Some(room.code.clone());
-    let fila = match dono {
-        Some(d) => {
-            let ctx = monta_meeting_webhook(d, &started_meeting, "meeting.started");
-            enqueue_meeting_webhook(&mut tx, ctx, "meeting.started").await?
-        }
-        None => Vec::new(),
-    };
-    tx.commit().await?;
-    crate::webhooks::envia(&state, "meeting.started", fila).await;
+        .await?
+        .rows_affected()
+            == 1;
+        if marcou {
+            let mut started_meeting = meeting.clone();
+            started_meeting.room_code = Some(code.clone());
+            started_meeting.started_at = Some(Utc::now());
+            let fila = match dono {
+                Some(d) => {
+                    let ctx = monta_meeting_webhook(d, &started_meeting, "meeting.started");
+                    enqueue_meeting_webhook(&mut tx, ctx, "meeting.started").await?
+                }
+                None => Vec::new(),
+            };
+            tx.commit().await?;
+            crate::webhooks::envia(&state, "meeting.started", fila).await;
 
-    // Estilo Teams: a reunião começou → "desperta" os convidados. Quem está
-    // online recebe a chamada a tocar (aceitar entra na sala); quem não está
-    // fica com chamada perdida. Quem recusou o convite não é incomodado.
-    let targets = invitees_to_ring(&state, id, auth.user_id, &room.code).await;
-    if !targets.is_empty() {
-        let caller_name: (String,) = sqlx::query_as("SELECT username FROM users WHERE id = $1")
-            .bind(auth.user_id)
-            .fetch_one(&state.db)
-            .await?;
-        let (ringing, offline) = register_and_ring(
-            &state,
-            &room.code,
-            auth.user_id,
-            &caller_name.0,
-            targets,
-            &meeting.kind,
-            &meeting.title,
-        )
-        .await;
-        tracing::info!(meeting = %id, ringing = ringing.len(), offline = offline.len(), "meeting start ring");
+            // Estilo Teams: a reunião começou → "desperta" os convidados. Quem
+            // está online recebe a chamada a tocar (aceitar entra na sala);
+            // quem não está fica com chamada perdida. Quem recusou o convite
+            // não é incomodado.
+            let targets = invitees_to_ring(&state, id, auth.user_id, &code).await;
+            if !targets.is_empty() {
+                let caller_name: (String,) =
+                    sqlx::query_as("SELECT username FROM users WHERE id = $1")
+                        .bind(auth.user_id)
+                        .fetch_one(&state.db)
+                        .await?;
+                let (ringing, offline) = register_and_ring(
+                    &state,
+                    &code,
+                    auth.user_id,
+                    &caller_name.0,
+                    targets,
+                    &meeting.kind,
+                    &meeting.title,
+                )
+                .await;
+                tracing::info!(meeting = %id, ringing = ringing.len(), offline = offline.len(), "meeting start ring");
+            }
+        } else {
+            tx.rollback().await?;
+        }
     }
 
     Ok(Json(StartResp {
-        code: room.code,
+        code,
         kind: meeting.kind,
         format: opts.format,
         waiting_room: opts.waiting_room,
@@ -1723,21 +1805,63 @@ pub async fn ics(
             .replace('\n', "\\n")
     };
     let dt = |t: &chrono::DateTime<Utc>| t.format("%Y%m%dT%H%M%SZ").to_string();
+    // O LINK, não só o código: um `.ics` sem `URL:` obriga quem o recebeu a
+    // procurar o link noutro lado. Vai nas duas formas porque os clientes de
+    // calendário não concordam — o Google e o Outlook lêem `URL:`, muitos
+    // telemóveis só mostram a descrição.
+    //
+    // ABSOLUTO ou nenhum. O `room_link` cai para um caminho relativo
+    // (`/#/r/<código>`) quando a organização não declara domínio — serve numa
+    // resposta de API, que o cliente resolve contra o host a que chamou, e NÃO
+    // serve aqui: um `.ics` é lido noutro programa, dias depois, e um URL
+    // relativo lá dentro não aponta para lado nenhum. Medido a 2026-10-13
+    // contra um servidor real: saía `URL:/#/r/zqc-ghvp-eie`.
+    //
+    // A ordem é a do produto: o domínio da organização primeiro (é o endereço
+    // por que os convidados dela conhecem o serviço), o `PUBLIC_URL` a seguir,
+    // e nada em último. Nunca o cabeçalho `Host` do pedido — pela mesma razão
+    // que os links de reposição de password não o usam.
+    let link = match &meeting.room_code {
+        None => None,
+        Some(code) => {
+            let por_org = match crate::org::orgs_of_user(&state, meeting.owner_id)
+                .await
+                .first()
+                .copied()
+            {
+                Some(org_id) => Some(crate::apikeys::room_link(&state, org_id, code).await),
+                None => None,
+            };
+            match por_org {
+                Some(l) if l.starts_with("http") => Some(l),
+                _ => state
+                    .config
+                    .public_url
+                    .as_deref()
+                    .map(|base| format!("{base}/#/r/{code}")),
+            }
+        }
+    };
     let mut desc = meeting.description.clone();
-    if let Some(code) = &meeting.room_code {
+    if let Some(link) = &link {
         if !desc.is_empty() {
             desc.push('\n');
         }
-        desc.push_str(&format!("Delonix Meet — código da sala: {code}"));
+        desc.push_str(&format!("Delonix Meet — entrar: {link}"));
     }
+    let url_line = match &link {
+        Some(link) => format!("URL:{link}\r\n"),
+        None => String::new(),
+    };
     let body = format!(
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Delonix Meet//PT\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{id}@delonix-meet\r\nDTSTAMP:{now}\r\nDTSTART:{start}\r\nDURATION:PT{dur}M\r\nSUMMARY:{title}\r\nDESCRIPTION:{desc}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Delonix Meet//PT\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{id}@delonix-meet\r\nDTSTAMP:{now}\r\nDTSTART:{start}\r\nDURATION:PT{dur}M\r\nSUMMARY:{title}\r\nDESCRIPTION:{desc}\r\n{url_line}END:VEVENT\r\nEND:VCALENDAR\r\n",
         id = meeting.id,
         now = dt(&Utc::now()),
         start = dt(&meeting.starts_at),
         dur = meeting.duration_min,
         title = esc(&meeting.title),
         desc = esc(&desc),
+        url_line = url_line,
     );
     Ok(axum::response::Response::builder()
         .header("Content-Type", "text/calendar; charset=utf-8")
@@ -2062,8 +2186,8 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         let child_id: Option<(Uuid,)> = sqlx::query_as(
             "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                    recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                                   recurrence_byday, recurrence_parent_id, org_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                                   recurrence_byday, recurrence_parent_id, org_id, room_code)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT DO NOTHING
              RETURNING id",
         )
@@ -2083,6 +2207,12 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         // A ocorrência herda a organização da reunião-mãe (migração 0104) —
         // a mesma organização, nunca uma inferida de novo.
         .bind(parent.org_id)
+        // E herda a SALA: uma série semanal tem UM link, como no Zoom e no
+        // Teams. Criar uma sala por ocorrência daria 26 códigos diferentes
+        // para a mesma reunião de equipa — e 26 salas que ninguém abriria.
+        // Quem desempata a ocorrência que acabou é o `started_at`
+        // (`on_room_emptied`).
+        .bind(&parent.room_code)
         .fetch_optional(db)
         .await
         .ok()
@@ -2263,7 +2393,7 @@ pub async fn ring_upcoming_meetings(state: &Arc<AppState>) {
 /// listagem (`list`), para a forma da pesquisa (`search`) não divergir.
 const MEETING_ITEM_SELECT: &str = r#"
 SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
-       m.kind, m.starts_at, m.duration_min, m.room_code,
+       m.kind, m.starts_at, m.duration_min, m.room_code, m.started_at,
        (m.owner_id = $1) AS is_owner, m.minutes,
        m.room_ref, mr.name AS room_name,
        CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,

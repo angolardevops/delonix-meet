@@ -261,6 +261,7 @@
                 "type": "array"
               },
               "join_url": {
+                "description": "Link de entrada da sala. Vazio só numa reunião agendada antes da\nmigração 0114, que nasceu sem sala — nunca um link incompleto.",
                 "type": "string"
               },
               "kind": {

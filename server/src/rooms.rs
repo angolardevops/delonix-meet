@@ -61,6 +61,7 @@ pub const ROOM_COLUMNS: &str =
         list_my_rooms,
         create_room,
         get_room,
+        room_entrance,
         delete_room,
         patch_room,
         join_room,
@@ -72,6 +73,7 @@ pub const ROOM_COLUMNS: &str =
     ),
     components(schemas(
         Room,
+        RoomEntrance,
         RoomPage,
         CreateRoomReq,
         PatchRoomReq,
@@ -631,6 +633,99 @@ pub async fn get_room(
     // ao vivo faz-se no join_room (não-membros vão para a sala de espera).
     let _ = auth;
     Ok(Json(room))
+}
+
+/// O que a porta de uma sala mostra a quem chega com o link e ainda não tem
+/// sessão nenhuma.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RoomEntrance {
+    pub code: String,
+    /// Nome da sala — que numa sala de reunião é o título da reunião.
+    pub name: String,
+    pub allow_guests: bool,
+    pub waiting_room: bool,
+    pub e2ee: bool,
+    /// Hora marcada, quando a sala pertence a uma reunião agendada. `null`
+    /// numa sala ad-hoc, que não tem hora nenhuma e está sempre aberta.
+    pub starts_at: Option<DateTime<Utc>>,
+    pub duration_min: Option<i32>,
+    /// `true` quando se pode entrar já: sala ad-hoc, anfitrião já arrancou, ou
+    /// a hora marcada chegou. `false` é o que faz o cliente mostrar a contagem
+    /// em vez da sala.
+    pub open: bool,
+}
+
+/// A porta de uma sala, ANTES de qualquer sessão: é o que um ecrã de espera
+/// precisa de saber para dizer «esta reunião começa às 15:00» a quem abriu o
+/// link na véspera, e para decidir entre pedir o nome (convidado) ou mandar
+/// autenticar.
+///
+/// Pública por construção — quem abre um link partilhado não tem conta, que é
+/// precisamente o ponto do link. O que sai daqui é o mínimo da porta: nome,
+/// hora e se está aberta. Nunca o dono, os convidados, a organização, nem nada
+/// de dentro da sala. O código É a credencial (capability, estilo Meet) e vale
+/// o mesmo que já valia em `guest-join`; o travão por IP é o que torna caro
+/// adivinhar códigos por aqui.
+#[utoipa::path(
+    get, path = "/api/rooms/{room_code}/entrance", tag = "rooms",
+    params(("room_code" = String, Path, description = "Código da sala (`abc-defg-hij`).")),
+    responses(
+        (status = 200, body = RoomEntrance),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "travão por IP; `Retry-After` em segundos"),
+    )
+)]
+pub async fn room_entrance(
+    State(state): State<Arc<AppState>>,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Path(code): Path<String>,
+) -> Result<Json<RoomEntrance>, ApiError> {
+    // Travão ANTES de qualquer leitura, como em `guest_join`: é o que torna
+    // caro varrer o espaço de códigos por esta rota.
+    let ip = crate::rate_limit::client_ip(&headers, addr.ip(), state.config.trusted_proxy_hops);
+    state
+        .room_entrance_limiter
+        .acquire(&ip)
+        .map_err(|_| ApiError::RateLimited {
+            retry_after_secs: 60,
+        })?;
+    let room = find_room(&state.db, &code)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    // A reunião desta sala, se houver. Numa série, as ocorrências partilham o
+    // código: interessa a que ainda não acabou — a próxima.
+    let agendada: Option<(DateTime<Utc>, i32, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT starts_at, duration_min, started_at FROM meetings
+          WHERE room_code = $1
+            AND starts_at + make_interval(mins => duration_min) > now()
+          ORDER BY starts_at ASC LIMIT 1",
+    )
+    .bind(&room.code)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (starts_at, duration_min, open) = match agendada {
+        // Sala ad-hoc (ou reunião cuja última ocorrência já passou): sempre aberta.
+        None => (None, None, true),
+        Some((starts_at, duration_min, started_at)) => (
+            Some(starts_at),
+            Some(duration_min),
+            started_at.is_some() || Utc::now() >= starts_at,
+        ),
+    };
+
+    Ok(Json(RoomEntrance {
+        code: room.code,
+        name: room.name,
+        allow_guests: room.allow_guests,
+        waiting_room: room.waiting_room,
+        e2ee: room.e2ee,
+        starts_at,
+        duration_min,
+        open,
+    }))
 }
 
 /// Resultado da verificação de acesso a uma sala.

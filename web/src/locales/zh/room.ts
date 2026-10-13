@@ -1,4 +1,14 @@
 export default {
+  agendada: {
+    hoje: '今天',
+    faltamDias_one: '{{count}} 天后开始',
+    faltamDias_other: '{{count}} 天后开始',
+    faltamHoras: '{{horas}} 小时 {{minutos}} 分钟后开始',
+    faltamMinutos_one: '{{count}} 分钟后开始',
+    faltamMinutos_other: '{{count}} 分钟后开始',
+    abreSozinho: '到了预定时间这个页面会自动进入，可以一直开着。',
+    entrarMesmoAssim: '仍要进入',
+  },
   preEntrada: {
     titulo: '入会前准备',
     sala: '会议室 {{code}}',

@@ -1,0 +1,49 @@
+/* O ecrã de espera de uma sala agendada (EsperaDaSala). Um cartão ao centro e
+   mais nada: quem chega cedo tem uma coisa para ler, não um painel. */
+.espera {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--s-4);
+  background: var(--surface);
+  color: var(--text);
+}
+.espera__card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: 420px;
+  width: 100%;
+  padding: 32px 24px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--raised);
+}
+.espera__icone {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--accent) 12%, var(--raised));
+  color: var(--accent);
+}
+.espera__titulo {
+  margin: 0;
+  font-size: var(--t-lg);
+}
+.espera__quando {
+  margin: 0;
+  color: var(--muted);
+}
+.espera__contagem {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.espera__nota {
+  margin: 0 0 6px;
+  font-size: var(--t-sm);
+}

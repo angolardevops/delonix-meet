@@ -1,4 +1,14 @@
 export default {
+  agendada: {
+    hoje: 'Hoje',
+    faltamDias_one: 'Começa daqui a {{count}} dia',
+    faltamDias_other: 'Começa daqui a {{count}} dias',
+    faltamHoras: 'Começa daqui a {{horas}} h {{minutos}} min',
+    faltamMinutos_one: 'Começa daqui a {{count}} minuto',
+    faltamMinutos_other: 'Começa daqui a {{count}} minutos',
+    abreSozinho: 'Esta página abre sozinha à hora marcada — podes deixá-la aberta.',
+    entrarMesmoAssim: 'Entrar mesmo assim',
+  },
   preEntrada: {
     titulo: 'Pré-entrada',
     sala: 'sala {{code}}',

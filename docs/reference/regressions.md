@@ -3708,3 +3708,31 @@ Dois danos colaterais do mesmo sítio: o `remove_dir_all` só corria no caminho 
 - **O que o drain espera é o que o drain conhece.** Contar peers e chamar-lhe «drenado» é dizer que o resto não existe.
 
 **Guardado por** `server/tests/recording_compose_retoma.rs` (a máquina de estados: quem é reivindicado, quem é poupado, quem é fechado e com que causa) e pelos testes de `delonix_meet_domain::content::composition`. O que esses testes **não** guardam, e tem de ser medido à mão: a composição a chegar a `ready` numa retoma, porque isso precisa de ffmpeg e **o CI não o tem**.
+
+### R310 — A sala só nascia quando o anfitrião entrava, e por isso não havia nada para partilhar
+
+**2026-10-13.** Reportado em produção, com três sintomas que pareciam três defeitos e eram um: «agendei uma reunião e não consigo copiar o link para partilhar com a equipa, e quem tentar entrar devia ver uma tela de espera do horário».
+
+`meetings.room_code` era `NULL` até ao `POST /api/meetings/{id}/start`. Daí saía tudo o resto:
+
+| O que falhava | Onde |
+|---|---|
+| Nada para copiar na Início nem no detalhe | o botão só se desenhava com `room_code` |
+| `.ics` sem `URL:` | `meetings::ics` punha o código na descrição, e só se já existisse |
+| `join_url` da v1 **partida** | `build_resp` fazia `unwrap_or_default()` e construía `https://<org>/#/r/` |
+| Um convidado antes do anfitrião | `400 "a reunião ainda não foi iniciada"`, sem código que o cliente pudesse distinguir |
+
+O link partido é o pior dos quatro porque **saía na resposta com ar de bom**: uma integração que o publicasse num convite mandava toda a gente para uma página que não abre, e nada no sistema se queixava.
+
+**Porque passou.** O `room_code` carregava DOIS factos — «tem sala» e «já começou» — e era o segundo que justificava a criação tardia: era ele que garantia que se tocava aos convidados e se disparava `meeting.started` uma vez só. Enquanto os dois factos partilharam coluna, antecipar a sala parecia impossível sem partir o arranque. Separá-los (`started_at`, migração 0114) é o que destranca os quatro sintomas de uma vez.
+
+E ninguém reparou porque a prova existente **fixava o defeito**: `scheduling.rs` tinha, à letra, `assert!(m["room_code"].is_null(), "a sala só nasce no start")`. Um teste verde a guardar uma decisão que já não servia o produto.
+
+**Regra.**
+- **Um recurso que o cliente tem de PARTILHAR nasce quando ele o agenda, não quando alguém o usa.** Se o link só existe depois de a reunião começar, não há como convidar para ela.
+- **Uma coluna que carrega dois factos acaba por impedir os dois.** Quando «existe» passa a significar também «aconteceu», antecipar a criação torna-se impossível — e a resposta não é adiar a criação, é dar coluna ao segundo facto.
+- **Um link construído a partir de um campo vazio é pior do que campo vazio.** `unwrap_or_default()` num pedaço de URL fabrica um endereço que não abre e devolve-o como se fosse bom; sem valor, o campo sai vazio e quem o lê sabe.
+- **Criar o recurso cedo muda quem o pode esvaziar.** Com a sala a existir na véspera, quem a abra e saia esvazia-a: o `meeting.ended` passou a exigir `started_at IS NOT NULL`.
+- **Partilhar o recurso entre irmãos obriga a desempatar.** As ocorrências de uma série partilham a sala (um link por série, como no Zoom); tudo o que procurava a reunião pelo código da sala passou a ordenar por `started_at`, ou escrevia a acta na ocorrência errada.
+
+**Guardado por** `server/tests/reuniao_tem_sala_ao_agendar.rs` (seis provas: a sala nasce com a reunião, a porta pública diz a hora e não deixa escapar dono nem organização, arrancar duas vezes não arranca duas vezes, o convidado antes da hora recebe `meeting.not_started_yet`, passada a hora entra sem o anfitrião, o `.ics` leva `URL:`, e uma série tem um código só) e pelas asserções corrigidas em `scheduling.rs`. O que **não** está guardado por teste automático: o ecrã de espera em si (`web/src/pages/EsperaDaSala.tsx`) — a contagem e a abertura automática à hora foram medidas no browser, não há e2e que as corra.

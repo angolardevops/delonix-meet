@@ -6,6 +6,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, deleteMeeting, downloadMeetingIcs, Meeting, meetingInvitees } from '../../api'
+import { roomLink } from '../../roomCode'
+import { useCopiar } from '../../ui/copy'
 import type { Occurrence } from './occurrence'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Icon } from '../../ui/icons'
@@ -71,6 +73,7 @@ export default function MeetingDialog({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState('')
+  const { copiar, copiado } = useCopiar()
 
   if (!meeting) {
     return (
@@ -170,6 +173,26 @@ export default function MeetingDialog({
           </div>
         </div>
       </div>
+
+      {/* O link existe desde que a reunião é agendada (migração 0114) — é o
+          que se dá à equipa. Só falta nas reuniões criadas antes dela. */}
+      {m.room_code && (
+        <section className="cal-detail__link">
+          <h3 className="dx-eyebrow">{t('schedule.detalhe.ligacaoTitulo')}</h3>
+          <div className="cal-detail__link-row">
+            <code className="dx-num cal-detail__link-url">{roomLink(m.room_code)}</code>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={copiado === m.room_code ? 'check' : 'copy'}
+              onClick={() => void copiar(roomLink(m.room_code!), m.room_code!)}
+            >
+              {copiado === m.room_code ? t('consola.inicio.copiada') : t('schedule.detalhe.copiarLigacao')}
+            </Button>
+          </div>
+          <small className="dx-muted">{t('schedule.detalhe.ligacaoDica')}</small>
+        </section>
+      )}
 
       {err && <Alert tone="danger">{err}</Alert>}
 
