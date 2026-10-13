@@ -167,6 +167,10 @@ export default {
     sondagensTitulo: 'Sondagens',
   },
   tile: {
+    camaraDesligada: 'Câmara desligada',
+    semImagem: 'Sem imagem',
+    imagemParada: 'Imagem parada',
+    aLigarVideo: 'A ligar o vídeo…',
     duploCliqueFixa: 'Duplo clique fixa no palco; botão direito abre as acções',
     accoes: 'Acções de {{nome}}',
     mao: 'Mão',

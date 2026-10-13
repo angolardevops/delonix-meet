@@ -167,6 +167,10 @@ export default {
     sondagensTitulo: 'Polls',
   },
   tile: {
+    camaraDesligada: 'Camera off',
+    semImagem: 'No picture',
+    imagemParada: 'Picture frozen',
+    aLigarVideo: 'Connecting video…',
     duploCliqueFixa: 'Double-click to pin to the stage; right-click for actions',
     accoes: 'Actions for {{nome}}',
     mao: 'Hand',
