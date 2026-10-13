@@ -29,6 +29,7 @@ mod fair_slots;
 pub mod grpc;
 mod guests;
 mod mail;
+mod mcp;
 mod media_probe;
 mod meetings;
 mod meetings_v1;
@@ -45,6 +46,7 @@ mod password_recovery;
 // resposta a isso seria um `#[allow]` — que é esconder, não resolver.
 mod invitation_mail;
 mod jobs;
+mod oauth;
 pub mod objectos;
 mod odoo;
 mod odoo_sso;
@@ -60,6 +62,7 @@ mod rate_limit;
 mod recorder;
 mod recording_captions;
 mod recording_chapters;
+mod recording_clips;
 mod recording_meta;
 mod recordings;
 mod redis_state;
@@ -135,6 +138,9 @@ pub use recorder::{
 /// A varredura dos capítulos automáticos, exposta aos testes de integração sem
 /// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
 pub use recording_chapters::auto_chapters_sweep;
+/// Uma volta da fila dos recortes. Exportada para a prova de integração a
+/// poder correr sem levantar o `run()` inteiro — como a do resumo da acta.
+pub use recording_clips::render_due as recording_clip_render_due;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
@@ -488,6 +494,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             rate_limit::ip_rate_limit,
         ));
 
+    // ---- OAuth 2.1 para clientes MCP (ADR-0028) ----
+    // Pública por desenho: o cliente ainda não existe (`register`), ou a prova
+    // é o código mais o PKCE (`token`, `revoke`). O ecrã de consentimento é da
+    // web e exige sessão — as duas rotas que decidem (`authorization-info` e
+    // `authorizations`) levam `AuthUser` e estão no BFF, não aqui.
+    let oauth_routes = Router::new()
+        .route("/register", post(oauth::register))
+        .route("/authorize", get(oauth::authorize))
+        .route("/token", post(oauth::token))
+        .route("/revoke", post(oauth::revoke))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::auth_rate_limit,
+        ));
+
     // ---- Integração Odoo (módulo nk_delonix_meet, token `dlxo_`) ----
     let odoo_integration_routes = Router::new()
         .route("/provision", post(odoo::provision))
@@ -516,6 +537,32 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/openapi.json", get(openapi::v1_json))
         .route("/api/operator/v1/openapi.json", get(openapi::operator_json))
         .route("/api/integrations/openapi.json", get(openapi::integrations_json))
+        // RFC 8414 e RFC 9728: os clientes MCP procuram-nos na RAIZ, não
+        // debaixo de /api — o caminho é parte do contrato.
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth::as_metadata),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth::resource_metadata),
+        )
+        // ---- MCP: a superfície dos agentes (ADR-0027) ----
+        // O caminho é literal e não aninhado de propósito: `nest` com uma rota
+        // `/` monta `/api/mcp/`, e o contrato (e o portão do OpenAPI) falam de
+        // `/api/mcp`. O limite por IP vai no `MethodRouter`, que é o que
+        // permite um travão só nesta rota.
+        .route(
+            "/api/mcp",
+            post(mcp::post)
+                .get(mcp::get)
+                .delete(mcp::delete)
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    rate_limit::ip_rate_limit,
+                )),
+        )
+        .nest("/api/oauth", oauth_routes)
         .nest("/api/auth", auth_routes)
         .nest("/api/v1", v1_routes)
         .nest("/api/operator/v1", operator_routes)
@@ -543,6 +590,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(search::saved::delete),
         )
         .route("/api/users/me", get(users::me).patch(users::update_me))
+        // O ecrã de consentimento e a lista de agentes a que a pessoa disse
+        // sim (ADR-0028 §5 e §7). Levam sessão: é a pessoa que decide.
+        .route(
+            "/api/oauth/authorization-info",
+            get(oauth::authorization_info),
+        )
+        .route("/api/oauth/authorizations", post(oauth::decide))
+        .route("/api/users/me/oauth-grants", get(oauth::my_grants))
+        .route(
+            "/api/users/me/oauth-grants/{grant_id}",
+            axum::routing::delete(oauth::revoke_my_grant),
+        )
         // Prova do endereço (D7): a pessoa pede o email com sessão; abre o
         // link e a web entrega o token SEM sessão (pode ser outro aparelho).
         .route(
@@ -779,7 +838,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
         .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
-        .route("/api/meetings/{meeting_id}/minutes", axum::routing::put(meetings::save_minutes))
+        .route(
+            "/api/meetings/{meeting_id}/minutes",
+            get(meetings::minutes).put(meetings::save_minutes),
+        )
         // Pede (ou repete) o resumo da acta pelo LLM — `202` com o estado da
         // fila. Custom method sob o sub-recurso `minutes`, como a checklist da
         // `delonix-meet-api` manda para uma acção que não é CRUD.
@@ -828,6 +890,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(recordings::get_chapter)
                 .patch(recording_chapters::patch)
                 .delete(recordings::delete_chapter),
+        )
+        // ---- Recortes e shorts (plano do MCP; regras em `content::clip`) ----
+        .route(
+            "/api/recordings/{recording_id}/clips",
+            get(recording_clips::list).post(recording_clips::create),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}",
+            get(recording_clips::get_one).delete(recording_clips::delete),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}/content",
+            get(recording_clips::content),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}/captions.vtt",
+            get(recording_clips::captions),
         )
         .route(
             "/api/recordings/{recording_id}/chapters/generate",
@@ -2279,6 +2358,18 @@ pub async fn run() {
                 let (reagendadas, apagadas) = mail::sweep(&db).await?;
                 Ok((reagendadas + apagadas) as usize)
             }
+        });
+    }
+
+    // Os recortes e os shorts: a cada 20 s, dois por volta. A espera pelo
+    // ffmpeg é das vagas do gravador (`fair_slots`), não deste ritmo — um
+    // agente a pedir vinte recortes não afoga as composições de outra
+    // organização.
+    {
+        let s = state.clone();
+        filas.levanta("recording_clip", Duration::from_secs(20), move || {
+            let s = s.clone();
+            async move { recording_clips::render_due(&s).await }
         });
     }
 

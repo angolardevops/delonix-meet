@@ -203,6 +203,9 @@ jobs:
       - name: Autorização de rotas (nenhuma rota aberta por esquecimento)
         run: bash scripts/check-route-auth.sh
 
+      - name: Tools MCP (declaradas, ligadas, exercitadas, e sem org do cliente)
+        run: bash scripts/check-mcp-tools.sh
+
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
 

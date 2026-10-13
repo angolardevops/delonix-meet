@@ -62,6 +62,36 @@ pub fn prefixed_token(prefix: &str) -> String {
     format!("{prefix}{}", random_hex(32))
 }
 
+/// Base64url **sem padding** (RFC 4648 §5), que é a codificação que o OAuth e
+/// o JOSE usam em todo o lado.
+pub fn base64url_nopad(data: impl AsRef<[u8]>) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    URL_SAFE_NO_PAD.encode(data)
+}
+
+/// Verifica um `code_verifier` de PKCE contra o `code_challenge` guardado,
+/// pelo método `S256` (RFC 7636 §4.6): `challenge == base64url(sha256(verifier))`.
+///
+/// Vive aqui, e não no domínio, porque é uma primitiva: o `sha256` tem um só
+/// dono neste repositório e a catraca da arquitectura conta as cópias
+/// (`primitivas_cripto_espalhadas=0`). A comparação é em tempo constante — o
+/// challenge não é secreto, mas comparar assim custa zero e não abre discussão.
+///
+/// **Só `S256`.** O método `plain` do RFC 7636 é recusado por quem chama: o
+/// OAuth 2.1 não o permite num cliente público, e aceitá-lo tornaria o
+/// verifier um segredo em claro no pedido de autorização.
+pub fn pkce_s256_matches(challenge: &str, verifier: &str) -> bool {
+    // O RFC fixa o tamanho do verifier entre 43 e 128 caracteres. Um verifier
+    // curto é força bruta disfarçada de pedido válido.
+    if !(43..=128).contains(&verifier.len()) {
+        return false;
+    }
+    ct_eq(
+        base64url_nopad(sha256(verifier)).as_bytes(),
+        challenge.as_bytes(),
+    )
+}
+
 /// Comparação em tempo constante (para o tamanho dado). Não abre um oráculo de
 /// temporização sobre segredos partilhados.
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
@@ -142,6 +172,31 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a.len(), 4 + 64);
         assert_eq!(random_hex(16).len(), 32);
+    }
+
+    #[test]
+    fn pkce_s256_aceita_o_par_certo_e_recusa_tudo_o_resto() {
+        // Vector do RFC 7636 Appendix B.
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+        assert!(pkce_s256_matches(challenge, verifier));
+        assert!(!pkce_s256_matches(
+            challenge,
+            "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXl"
+        ));
+        // `plain` não passa por aqui: o challenge igual ao verifier é recusado.
+        assert!(!pkce_s256_matches(verifier, verifier));
+        // Verifier curto (menos de 43 caracteres) é sempre recusado.
+        assert!(!pkce_s256_matches(
+            &base64url_nopad(sha256("curto")),
+            "curto"
+        ));
+    }
+
+    #[test]
+    fn base64url_nao_leva_padding() {
+        assert_eq!(base64url_nopad([0u8, 1, 2]), "AAEC");
+        assert!(!base64url_nopad([0u8; 10]).contains('='));
     }
 
     #[test]

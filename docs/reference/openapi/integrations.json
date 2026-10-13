@@ -461,6 +461,12 @@
         "scheme": "bearer",
         "type": "http"
       },
+      "mcp": {
+        "bearerFormat": "JWT",
+        "description": "Access token de um agente (OAuth 2.1, ADR-0028): `typ: \"mcp\"` e `aud` do recurso. NÃO abre as rotas do BFF.",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "session": {
         "bearerFormat": "JWT",
         "description": "Access token da sessão (15 min), renovado por /api/auth/refresh.",

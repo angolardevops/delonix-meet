@@ -5,6 +5,7 @@ pub mod authorization;
 pub mod data_export;
 pub mod factors;
 pub mod join_preferences;
+pub mod oauth;
 pub mod profile;
 pub mod registration;
 pub mod session;

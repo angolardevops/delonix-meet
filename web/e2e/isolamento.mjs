@@ -773,6 +773,16 @@ if (gravB) {
     token: A.token, method: 'PUT', body: { vtt: 'WEBVTT\n', publish: true },
   })
   await recusadoNaPorta('A gera legendas na B', `/api/recordings/${gravB}/captions/generate`, { token: A.token, method: 'POST', body: {} })
+  // Recortes e shorts (migração 0116): um recorte é um artefacto da gravação e
+  // herda-lhe o acesso — não há segunda porta (a lição da R304).
+  await recusadoNaPorta('A lista os recortes da B', `/api/recordings/${gravB}/clips`, { token: A.token })
+  await recusadoNaPorta('A pede um recorte da B', `/api/recordings/${gravB}/clips`, {
+    token: A.token, method: 'POST', body: { kind: 'clip', label: 'intruso', start_ms: 0, end_ms: 2000 },
+  })
+  await recusadoNaPorta('A lê um recorte da B', `/api/recordings/${gravB}/clips/${inventado}`, { token: A.token })
+  await recusadoNaPorta('A APAGA um recorte da B', `/api/recordings/${gravB}/clips/${inventado}`, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A descarrega um recorte da B', `/api/recordings/${gravB}/clips/${inventado}/content`, { token: A.token })
+  await recusadoNaPorta('A lê as legendas de um recorte da B', `/api/recordings/${gravB}/clips/${inventado}/captions.vtt`, { token: A.token })
   const pub = await req('/api/recordings?scope=published', { token: A.token })
   if (Array.isArray(pub.json) && !pub.json.some((r) => r.id === gravB)) ok('a gravação da B não aparece nas publicadas da A')
   else nok('a gravação da B não aparece nas publicadas da A', JSON.stringify(pub.json).slice(0, 160))

@@ -248,6 +248,11 @@ pub struct Config {
     /// leva um link recusa-se (`mail.public_url_missing`), como as chaves de
     /// acesso sem `WEBAUTHN_RP_ORIGIN`.
     pub public_url: Option<String>,
+    /// Registo dinâmico de clientes OAuth (RFC 7591, ADR-0028 §3). Ligado por
+    /// omissão porque é o que um cliente MCP precisa para se apresentar sem
+    /// ninguém o pré-registar; `OAUTH_DYNAMIC_REGISTRATION=off` fecha-o para
+    /// quem quiser lista fechada.
+    pub oauth_dynamic_registration: bool,
     /// URL do Ollama in-cluster (LLM local — soberania: o texto nunca sai do
     /// datacenter). Vazio => IA desligada, fail-open: o MoM fica por regras
     /// (cliente) e a tradução de legendas não aparece.
@@ -785,6 +790,11 @@ impl Config {
                 }
                 v
             }),
+            oauth_dynamic_registration: src
+                .var("OAUTH_DYNAMIC_REGISTRATION")
+                .ok()
+                .map(|v| !matches!(v.trim(), "off" | "0" | "false"))
+                .unwrap_or(true),
             ollama_url: src.var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
             ollama_model_translate: src
                 .var("OLLAMA_MODEL_TRANSLATE")

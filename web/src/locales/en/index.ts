@@ -11,6 +11,7 @@ import salas from './salas'
 import studio from './studio'
 import recordings from './recordings'
 import boards from './boards'
+import oauth from './oauth'
 import org from './org'
 import analytics from './analytics'
 import integrations from './integrations'
@@ -27,4 +28,4 @@ import tour from './tour'
 import tv from './tv'
 import telecom from './telecom'
 
-export default { ui, shell, auth, home, schedule, room, salas, studio, recordings, boards, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search, rbac, telemovel, tour, tv, telecom }
+export default { ui, shell, auth, home, schedule, room, salas, studio, recordings, boards, oauth, org, analytics, integrations, publico, consola, diagrams, editor, player, nitidez, search, rbac, telemovel, tour, tv, telecom }

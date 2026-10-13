@@ -83,7 +83,13 @@ impl Claims {
     }
 }
 
-pub fn sign_jwt(secret: &str, claims: &Claims) -> Result<String, ApiError> {
+/// Assina um conjunto de claims qualquer com o segredo do servidor.
+///
+/// Existe para que um token com OUTRA forma — o do agente MCP, que leva
+/// público e escopos (ADR-0028 §4) — não precise de copiar o `encode`/`decode`
+/// e o segredo para outro módulo. [`sign_jwt`] é a especialização para
+/// [`Claims`].
+pub(crate) fn sign_claims<T: Serialize>(secret: &str, claims: &T) -> Result<String, ApiError> {
     encode(
         &Header::default(),
         claims,
@@ -92,17 +98,37 @@ pub fn sign_jwt(secret: &str, claims: &Claims) -> Result<String, ApiError> {
     .map_err(ApiError::internal)
 }
 
-pub fn verify_jwt(secret: &str, token: &str, expected_typ: &str) -> Result<Claims, ApiError> {
-    let data = decode::<Claims>(
+/// Verifica a assinatura e a expiração, e devolve as claims desenhadas por
+/// quem chama. **Não verifica o `typ` nem o `aud`**: quem conhece a forma é
+/// que os confere, e nenhum extractor deve aceitar um token sem o fazer.
+pub(crate) fn verify_claims<T: serde::de::DeserializeOwned>(
+    secret: &str,
+    token: &str,
+) -> Result<T, ApiError> {
+    let mut validation = Validation::default();
+    // O `aud` é conferido por quem chama (o nosso é um identificador de
+    // recurso, RFC 8707); deixá-lo aqui a `None` com validação ligada recusava
+    // todo o token que o traga.
+    validation.validate_aud = false;
+    decode::<T>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
+        &validation,
     )
-    .map_err(|_| ApiError::Unauthorized)?;
-    if data.claims.typ != expected_typ {
+    .map(|d| d.claims)
+    .map_err(|_| ApiError::Unauthorized)
+}
+
+pub fn sign_jwt(secret: &str, claims: &Claims) -> Result<String, ApiError> {
+    sign_claims(secret, claims)
+}
+
+pub fn verify_jwt(secret: &str, token: &str, expected_typ: &str) -> Result<Claims, ApiError> {
+    let claims: Claims = verify_claims(secret, token)?;
+    if claims.typ != expected_typ {
         return Err(ApiError::Unauthorized);
     }
-    Ok(data.claims)
+    Ok(claims)
 }
 
 pub fn access_token(state: &AppState, user_id: Uuid, sid: Uuid) -> Result<String, ApiError> {

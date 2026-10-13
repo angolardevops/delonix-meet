@@ -1178,12 +1178,26 @@ struct SessionRow {
     ip_address: Option<String>,
     session_started_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
-    token_hash: String,
+    /// O hash do refresh token VIVO desta sessão, quando é um refresh de
+    /// browser. `None` numa sessão de agente (o refresh dela vive noutra
+    /// tabela, e nunca viaja num cookie): aí o «sou eu» decide-se pelo `sid`.
+    token_hash: Option<String>,
 }
 
-/// Lista as sessões activas (uma por `session_id` não revogado e não
-/// expirado) — cada refresh roda o `token_hash`, mas mantém o `session_id`,
-/// por isso há exactamente uma linha viva por dispositivo ligado.
+/// Lista as sessões activas — uma linha por sessão viva, seja de um browser ou
+/// de um agente.
+///
+/// **Lê-se de `user_sessions`** (a identidade e o estado da sessão, migração
+/// 0078) e não de `refresh_tokens`, como até aqui. A razão é concreta: uma
+/// autorização OAuth (ADR-0028) abre sessão em `user_sessions` mas guarda o
+/// refresh em `oauth_refresh_tokens` — a lista antiga não a mostrava, e «o
+/// agente aparece em Sessões activas» era uma afirmação sem código por trás.
+/// Apanhado pelo teste `oauth_mcp::o_agente_e_uma_sessao_e_terminar_a_sessao_mata_o`.
+///
+/// O `EXISTS` sobre as DUAS tabelas de refresh preserva a semântica que havia:
+/// só aparece quem tem uma credencial de renovação viva. Sem ele, uma sessão
+/// cujo refresh expirou ficaria na lista para sempre (`user_sessions` não tem
+/// validade própria).
 #[utoipa::path(
     get, path = "/api/users/me/sessions", tag = "users",
     security(("session" = [])),
@@ -1199,10 +1213,24 @@ pub async fn list_sessions(
 ) -> Result<Json<Vec<SessionInfo>>, ApiError> {
     let current_hash = current_session_hash(&headers);
     let rows: Vec<SessionRow> = sqlx::query_as(
-        "SELECT session_id, user_agent, ip_address, session_started_at, created_at, token_hash
-             FROM refresh_tokens
-             WHERE user_id = $1 AND NOT revoked AND expires_at > now()
-             ORDER BY created_at DESC",
+        "SELECT s.id AS session_id,
+                NULLIF(s.user_agent, '') AS user_agent,
+                NULLIF(s.ip, '')         AS ip_address,
+                s.created_at             AS session_started_at,
+                s.last_seen_at           AS created_at,
+                (SELECT r.token_hash FROM refresh_tokens r
+                   WHERE r.session_id = s.id AND r.user_id = s.user_id
+                     AND NOT r.revoked AND r.expires_at > now()
+                   ORDER BY r.created_at DESC LIMIT 1) AS token_hash
+           FROM user_sessions s
+          WHERE s.user_id = $1 AND s.revoked_at IS NULL
+            AND (EXISTS (SELECT 1 FROM refresh_tokens r
+                          WHERE r.session_id = s.id AND r.user_id = s.user_id
+                            AND NOT r.revoked AND r.expires_at > now())
+                 OR EXISTS (SELECT 1 FROM oauth_refresh_tokens o
+                             WHERE o.session_id = s.id AND o.user_id = s.user_id
+                               AND o.revoked_at IS NULL AND o.expires_at > now()))
+          ORDER BY s.last_seen_at DESC",
     )
     .bind(auth.user_id)
     .fetch_all(&state.db)
@@ -1218,7 +1246,7 @@ pub async fn list_sessions(
                 last_used_at: r.created_at,
                 // O cookie de refresh só viaja para `/api/auth`; o `sid` do
                 // access token diz qual é a sessão deste pedido.
-                current: current_hash.as_deref() == Some(r.token_hash.as_str())
+                current: (current_hash.is_some() && current_hash == r.token_hash)
                     || auth.session_id == Some(r.session_id),
             })
             .collect(),
