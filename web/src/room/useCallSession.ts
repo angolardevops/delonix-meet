@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, isAbort, postTimings } from '../api'
 import { entrarNaSala, participanteLocal } from '../convidado'
-import { audioConstraints, LevelWatcher, listDevices, videoConstraints } from '../media'
+import { audioConstraints, facingOf, LevelWatcher, listDevices, videoConstraints } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Signaling } from '../signaling'
 import { MeshCall, SfuCall } from '../webrtc'
@@ -125,6 +125,9 @@ export function useCallSession(
             media.setDevices(d)
             media.setMicId(initMicId || stream.getAudioTracks()[0]?.getSettings().deviceId || '')
             media.setCamId(stream.getVideoTracks()[0]?.getSettings().deviceId ?? '')
+            // O lado para que a câmara aponta só se sabe DEPOIS da permissão —
+            // é por isso que o botão de virar não pode ser decidido antes.
+            media.setFacing(facingOf(stream.getVideoTracks()[0]))
           })
           .catch(() => {})
         navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange)

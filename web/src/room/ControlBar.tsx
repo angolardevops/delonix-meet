@@ -257,6 +257,23 @@ export function ControlBar(p: ControlBarProps) {
               </PopoverPanel>
             )}
           </div>
+          {/*
+            VIRAR A CÂMARA. Aparece só quando o browser diz para que lado a
+            câmara actual aponta — ou seja, num telemóvel. No computador uma
+            webcam não tem «frente» nem «trás», e lá o selector de câmara do
+            painel é que serve; um botão de virar seria um botão que não faz
+            nada.
+            O lado só se sabe DEPOIS da permissão, e é por isso que isto não
+            podia ser decidido na pré-entrada.
+          */}
+          {media.facing && media.hasLocalVideo && (
+            <Ctrl
+              icon="refresh"
+              label={media.facing === 'user' ? t('room.controlos.virarParaTras') : t('room.controlos.virarParaFrente')}
+              caption={t('room.controlos.rotuloVirar')}
+              onClick={() => void media.flipCam()}
+            />
+          )}
           <div className="rm-split" ref={camPop.wrapRef}>
             <Ctrl icon={media.camOn && media.hasLocalVideo ? 'video' : 'videoOff'} label={camLabel} atalho="camara" caption={t('room.controlos.rotuloVideo')} off={!media.camOn || !media.hasLocalVideo} onClick={() => void media.toggleCam()} pressed={!media.camOn} />
             <button
