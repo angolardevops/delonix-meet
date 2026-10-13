@@ -38,6 +38,13 @@ data:
   {{- with include "dm.turnHost" . }}
   TURN_HOST: {{ . | quote }}
   {{- end }}
+  {{- with $v.server.turnHostBySite }}
+  {{- $pares := list -}}
+  {{- range $site := keys . | sortAlpha -}}
+  {{- $pares = append $pares (printf "%s=%s" $site (index $v.server.turnHostBySite $site)) -}}
+  {{- end }}
+  TURN_HOST_BY_HOST: {{ join "," $pares | quote }}
+  {{- end }}
   {{- with include "dm.redisUrl" . }}
   REDIS_URL: {{ . | quote }}
   {{- end }}

@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header::HOST, HeaderMap, StatusCode},
     Json,
 };
 use base64::Engine;
@@ -974,13 +974,24 @@ pub async fn join_room(
 pub async fn ice_servers(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Ok(Json(ice_config(&state)?))
+    Ok(Json(ice_config(&state, &headers)?))
 }
 
 /// A configuração ICE (STUN + TURN com credenciais de 1 h). Partilhada pelo
 /// `/api/ice` e pela entrada de convidado, que não tem sessão para o chamar.
-pub(crate) fn ice_config(state: &AppState) -> Result<serde_json::Value, ApiError> {
+//
+// O nome do TURN é o do SITE por onde o pedido entrou (`TURN_HOST_BY_HOST`):
+// quem abre a sala no `.ao` recebe o TURN do `.ao`. Um nome por pessoa — dois
+// URLs para o mesmo relay são duas alocações por browser.
+pub(crate) fn ice_config(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<serde_json::Value, ApiError> {
+    let turn_host = state
+        .config
+        .turn_host_for(headers.get(HOST).and_then(|h| h.to_str().ok()));
     let expiry = Utc::now().timestamp() + 3600;
     let username = expiry.to_string();
     let mut mac = Hmac::<Sha1>::new_from_slice(state.config.turn_secret.as_bytes())
@@ -999,9 +1010,9 @@ pub(crate) fn ice_config(state: &AppState) -> Result<serde_json::Value, ApiError
     // candidates (explosão de ICE) que inundam o WS e derrubam a ligação.
     let mut cfg = json!({
         "iceServers": [
-            { "urls": [format!("stun:{}", state.config.turn_host)] },
+            { "urls": [format!("stun:{turn_host}")] },
             {
-                "urls": [format!("turn:{}", state.config.turn_host)],
+                "urls": [format!("turn:{turn_host}")],
                 "username": username,
                 "credential": credential,
             }

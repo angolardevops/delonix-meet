@@ -59,6 +59,15 @@ pub struct Config {
     pub bind_addr: String,
     pub jwt_secret: String,
     pub turn_host: String,
+    /// O nome do TURN por nome do SITE (`TURN_HOST_BY_HOST`, csv de
+    /// `site=turn:porta`, p.ex. `meet.exemplo.ao=turn.exemplo.ao:3478`). Quem
+    /// entra por um site da lista recebe o TURN desse par; os outros, o
+    /// `TURN_HOST`. O SFU usa sempre o `TURN_HOST`.
+    ///
+    /// Um nome por pessoa, e não os dois a toda a gente: um browser que recebe
+    /// dois URLs de TURN para o mesmo relay faz DUAS alocações (medido num
+    /// Chromium contra um coturn, 2026-10-13), e a gama de relay é finita.
+    pub turn_host_by_host: Vec<(String, String)>,
     pub turn_secret: String,
     pub access_ttl_secs: i64,
     pub refresh_ttl_secs: i64,
@@ -608,6 +617,17 @@ impl Config {
             turn_host: src
                 .var("TURN_HOST")
                 .unwrap_or_else(|_| "localhost:3478".into()),
+            turn_host_by_host: csv_env(src, "TURN_HOST_BY_HOST")
+                .into_iter()
+                .map(|par| {
+                    let (site, turn) = par.split_once('=').unwrap_or((par.as_str(), ""));
+                    let (site, turn) = (normalize_site_host(site), turn.trim().to_string());
+                    if site.is_empty() || turn.is_empty() {
+                        panic!("TURN_HOST_BY_HOST: «{par}» não é `site=turn:porta`");
+                    }
+                    (site, turn)
+                })
+                .collect(),
             turn_secret: secret(src, "TURN_SECRET", DEV_TURN, insecure, 16),
             access_ttl_secs: 15 * 60,
             refresh_ttl_secs: 30 * 24 * 3600,
@@ -951,6 +971,37 @@ fn ip_env(src: &Source, var: &str) -> Option<std::net::IpAddr> {
     }
 }
 
+/// O nome de um site como se compara: minúsculas, sem porta, sem o ponto final
+/// de um FQDN. `Meet.Exemplo.AO:443` e `meet.exemplo.ao.` são o mesmo site.
+fn normalize_site_host(host: &str) -> String {
+    let host = host.trim().trim_end_matches('.');
+    // Um literal IPv6 (`[::1]:8443`) tem dois-pontos que não são da porta.
+    let host = match host.strip_prefix('[') {
+        Some(resto) => resto.split(']').next().unwrap_or(resto),
+        None => host.split(':').next().unwrap_or(host),
+    };
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+impl Config {
+    /// O TURN que ESTE pedido recebe, pelo nome do site por onde entrou (o
+    /// cabeçalho `Host`). O cabeçalho é do cliente, e por isso só ESCOLHE entre
+    /// valores que a instalação configurou: um nome que não está na lista, ou
+    /// nenhum, dá o `TURN_HOST`.
+    pub fn turn_host_for(&self, request_host: Option<&str>) -> &str {
+        let Some(site) = request_host
+            .map(normalize_site_host)
+            .filter(|s| !s.is_empty())
+        else {
+            return &self.turn_host;
+        };
+        self.turn_host_by_host
+            .iter()
+            .find(|(s, _)| *s == site)
+            .map_or(self.turn_host.as_str(), |(_, turn)| turn.as_str())
+    }
+}
+
 fn csv_env(src: &Source, var: &str) -> Vec<String> {
     src.var(var)
         .ok()
@@ -1125,6 +1176,73 @@ mod tests {
             };
         }
         Config::from_map(&vars)
+    }
+
+    #[test]
+    fn each_site_gets_its_own_turn_and_the_rest_get_the_default() {
+        let c = production(&[
+            ("TURN_HOST", Some("turn.exemplo.com:3478")),
+            (
+                "TURN_HOST_BY_HOST",
+                Some(
+                    " Meet.Exemplo.AO = turn.exemplo.ao:3478 , outro.exemplo.ao=turn.outro.ao:3479",
+                ),
+            ),
+        ]);
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.ao")),
+            "turn.exemplo.ao:3478"
+        );
+        // Como o browser e o proxy o escrevem: maiúsculas, porta, ponto final.
+        assert_eq!(
+            c.turn_host_for(Some("MEET.exemplo.ao:443")),
+            "turn.exemplo.ao:3478"
+        );
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.ao.")),
+            "turn.exemplo.ao:3478"
+        );
+        assert_eq!(
+            c.turn_host_for(Some("outro.exemplo.ao")),
+            "turn.outro.ao:3479"
+        );
+        // Fora da lista, ou sem cabeçalho: o TURN_HOST.
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.com")),
+            "turn.exemplo.com:3478"
+        );
+        assert_eq!(c.turn_host_for(None), "turn.exemplo.com:3478");
+        assert_eq!(c.turn_host_for(Some("")), "turn.exemplo.com:3478");
+        // O cabeçalho é do cliente: não se devolve o que ele escreveu, nem um
+        // sufixo ou um prefixo de um nome da lista chega para casar.
+        assert_eq!(
+            c.turn_host_for(Some("atacante.example")),
+            "turn.exemplo.com:3478"
+        );
+        assert_eq!(
+            c.turn_host_for(Some("x.meet.exemplo.ao")),
+            "turn.exemplo.com:3478"
+        );
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.ao.atacante.example")),
+            "turn.exemplo.com:3478"
+        );
+    }
+
+    #[test]
+    fn without_the_list_everyone_gets_the_default() {
+        let c = production(&[("TURN_HOST", Some("turn.exemplo.com:3478"))]);
+        assert!(c.turn_host_by_host.is_empty());
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.ao")),
+            "turn.exemplo.com:3478"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "TURN_HOST_BY_HOST")]
+    fn a_pair_without_a_turn_does_not_start() {
+        production(&[("TURN_HOST_BY_HOST", Some("meet.exemplo.ao"))]);
     }
 
     /// Controlo positivo: sem ele, os `should_panic` abaixo podiam estar a
