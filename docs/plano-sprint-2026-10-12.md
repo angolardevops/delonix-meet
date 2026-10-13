@@ -1,7 +1,7 @@
 # Sprint 3 — produção no `ngola-lda`, identidade provada e correio a sair
 
 **Datas:** 2026-10-12 a 2026-10-23 (duas semanas) · **Estado medido a 2026-10-13** contra
-`origin/develop` @ `7b992902` e contra o cluster `delonix-lda` (só leitura) · **Origem:** consolidação das seis sessões de trabalho abertas no
+`origin/develop` @ `4bf279e1` e contra o cluster `delonix-lda` (só leitura) · **Origem:** consolidação das seis sessões de trabalho abertas no
 Meet a 2026-10-10 — produção (ADR-0020/0021), integração Odoo e revisão do SSO, specs
 OpenAPI, DelonixPhone e `delonix-push`, Frente 1 (filas e correio), separação
 frontoffice/backoffice.
@@ -19,7 +19,7 @@ sessões faziam em paralelo sem se verem, e diz onde se tocavam.
 |---|---|---|
 | **Dia 0** | **fechado** | — |
 | **A — produção** | código **fundido** (A1, A2, A3, A7); **instalada no `delonix-lda` mas a NÃO servir** | pôr a rota a ser aceite, sarar o Postgres e o release; A4, A5, A6, A8 |
-| **B — identidade** | **fundida** no Meet (B1, B3, B4, B5) | B2: a PR do Kaeso (#346) por fundir |
+| **B — identidade** | **fundida** no Meet (B1, B3–B7) | B2: a PR do Kaeso (#346) por fundir |
 | **C — Odoo** | C1, C2, C3 **provadas em laboratório** (Odoo 16 + Meet reais) | C4, e repetir contra o Odoo de produção (D4) |
 
 ### A produção, medida hoje no cluster (só leitura)
@@ -96,7 +96,7 @@ Postgres (12Gi) é recusado pela do chart (8Gi).
 | B4 | Reposição pela própria pessoa (E3) | **fundida** (#304): migração 0112; a mesma resposta para qualquer endereço; só endereços provados |
 | B5 | Botão de reposição na consola | **fundida** (#305); provada no browser de ponta a ponta |
 | B6 | Achados do SSO vindos do laboratório (novo) | **fundida** (#306): endereço público, IdP em baixo, recusa de volta ao login, auditoria |
-| B7 | A provisão pelo operador dá o domínio por provado (novo, decisão D6) | PR **aberta** (#309), migração 0113 |
+| B7 | A provisão pelo operador dá o domínio por provado (novo, decisão D6) | **fundida** (#309), migração 0113 |
 
 Nenhum email saiu de facto: sem a D3 o correio está desligado, e a B3 e a B4 respondem
 `mail.disabled`.
@@ -108,7 +108,7 @@ do Meet, ambos reais, em bases novas. Falta repeti-la contra o Odoo de produçã
 
 | # | Trabalho | Estado (2026-10-13) |
 |---|---|---|
-| C1 | Login por SSO a partir de um Odoo real | **provada** no browser: conta do Odoo entra no Meet por JIT. O domínio foi dado por provado à mão (`.test` não tem DNS) — a #309 fecha esse passo |
+| C1 | Login por SSO a partir de um Odoo real | **provada** no browser: conta do Odoo entra no Meet por JIT. O domínio foi dado por provado à mão (`.test` não tem DNS) — a #309, já fundida, fecha esse passo |
 | C2 | Provisão da organização pelo `nk_delonix_meet` | **provada**: org criada com o domínio e a config SSO num só pedido |
 | C3 | A acta a chegar ao Odoo | **provada** depois de corrigir o addon: pedia `/notes`, que o Meet renomeou para `/minutes` a 2026-09-17. A acta em si foi simulada na base |
 | C4 | Dois utilizadores pelo túnel | **por fazer** — precisa de TURN público (A6) |
