@@ -61,6 +61,17 @@ spec:
   # Recreate e não RollingUpdate: o PVC é RWO, e duas réplicas num rollout
   # ficariam presas no attach do volume (a segunda em `Pending`, para sempre).
   strategy: { type: Recreate }
+  # MEDIDO NA PRIMEIRA INSTALAÇÃO EM PRODUÇÃO, 2026-10-13: o `progressDeadlineSeconds`
+  # por omissão são 600 s, e o nó ainda NÃO tinha acabado de puxar a imagem de
+  # 3,5GB do Docker Hub quando esse prazo passou. O Deployment ficou
+  # `Progressing=False ProgressDeadlineExceeded`, e o `helm upgrade --wait`
+  # desistiu com o release em `failed` — com tudo aplicado e o pod a puxar,
+  # tranquilamente, por trás. O prazo não é um tecto de paciência do operador;
+  # é o que decide se o release é dado por falhado.
+  #
+  # Este é o único workload do chart cuja imagem se mede em gigabytes, por isso
+  # é o único que precisa disto.
+  progressDeadlineSeconds: {{ $v.ollama.progressDeadlineSeconds }}
   selector:
     matchLabels:
       app: delonix-ollama

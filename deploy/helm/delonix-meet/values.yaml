@@ -464,6 +464,16 @@ ollama:
   # contrário). Custa memória: é o que os 8Gi de limit abaixo cobrem.
   maxLoadedModels: 2
   keepAlive: 30m
+  # Quanto tempo o Kubernetes dá ao Deployment para progredir antes de o dar
+  # por falhado. A omissão (600 s) NÃO chega: medido a 2026-10-13 na primeira
+  # instalação em produção, o nó não acabou de puxar os 3,5GB da imagem nesse
+  # prazo e o `helm upgrade --wait` desistiu com o release em `failed` — com
+  # tudo aplicado e o pod a puxar por trás. 2700 s = 45 minutos, que cobre uma
+  # ligação má sem esconder uma avaria a sério.
+  #
+  # Quem serve a imagem de um registo na própria rede (recomendado, e é o que o
+  # `delonix-server` e a `delonix-web` já fazem) pode baixar isto.
+  progressDeadlineSeconds: 2700
   # Tentativas do puxão no arranque, de 10 em 10 s. 60 = 10 minutos de rede
   # intermitente antes de desistir (sem matar o pod: ver templates/ai.yaml).
   pullRetries: 60
