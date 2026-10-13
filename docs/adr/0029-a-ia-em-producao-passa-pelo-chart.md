@@ -58,7 +58,11 @@ o que resumir.
      `load average` 22 em 32 CPU). O primeiro pedido levou 9,3 s porque
      inclui carregar o modelo. Isto NÃO é tempo real: a legenda original
      aparece já e a traduzida substitui-a segundos depois;
-   * a acta é trabalho em lote no fim da reunião e aguenta o CPU;
+   * a acta é trabalho em lote no fim da reunião e aguenta o CPU: **257,6 s**
+     (4m18s) para um prompt de 1 873 tokens e 305 de saída, e saiu com as
+     quatro secções pedidas e as acções atribuídas. O tecto do servidor
+     (`MOM_SUMMARY_TIMEOUT_SECS`) é 600 s, logo uma reunião curta cabe com
+     folga;
    * o puxão dos modelos (~5,5GB) **não** é condição de prontidão. Até
      chegarem, o servidor responde `ModelMissing`, a fila da acta devolve a
      tentativa e nada se perde: a acta nasce quando o modelo chegar. É também
@@ -98,6 +102,40 @@ o que resumir.
 * O ADR-0024 continua a valer no que decidiu (imagem fixada por versão,
   caminho declarativo para a GPU). O que este corrige é a sua premissa de
   abertura: o caminho de produção é o chart.
+
+## Um limite que esta medição descobriu, e que fica ABERTO
+
+O `minutes_prompt` janela a transcrição em **24 000 caracteres** (~6 500
+tokens) e o `ollama_generate` manda apenas `temperature` — **não fixa
+`num_ctx`**. Medido a 2026-10-13 com o `qwen2.5:7b` em 4 CPU, sobre uma
+transcrição de 17 719 caracteres (4 835 tokens) com uma agulha no PRINCÍPIO:
+
+| `num_ctx` | tokens avaliados | tempo | achou a agulha? |
+|---|---|---|---|
+| por omissão (o que o `ai.rs` faz hoje) | **2 050** de 4 835 | 118,3 s | **não** |
+| `8192` | 4 835 | 220,5 s | **sim** |
+
+Ou seja: a acta é escrita a partir de cerca de **2 048 tokens** (~7 500
+caracteres) e não dos 24 000 que o código pensa estar a enviar.
+
+**Duas ressalvas que esta mesma medição impõe, e sem as quais o achado ficaria
+maior do que é:**
+
+1. **o que se perde é o INÍCIO da janela, e o `minutes_prompt` já preferia o
+   FIM** («decisões e ações tendem a acontecer no fecho da reunião»). O corte
+   acaba por ficar alinhado com a intenção — por acidente, não por desenho;
+2. **as instruções SOBREVIVEM.** No ensaio truncado o modelo obedeceu à
+   instrução do `system` («responde SEM CÓDIGO se não estiver na fala»), o que
+   mostra que o prompt de sistema não foi descartado. A acta não sai
+   desformatada; sai assente em menos transcrição do que se acredita.
+
+**Porque não se corrige nesta mudança:** fixar `num_ctx` tem um custo medido —
+a avaliação do prompt quase duplicou (118 → 220 s) para 2,4× os tokens. Com a
+janela inteira de 24 000 caracteres, a conta aponta para perto dos 600 s do
+tecto do próprio servidor, ou seja trocar-se-ia uma acta com menos contexto por
+uma acta que não chega. A decisão — janela maior e tecto maior, janela menor e
+acta mais rápida, ou resumir em pedaços — é do dono e tem de ser medida com o
+tecto ao lado. Fica anotada aqui para não se perder.
 
 ## Alternativas consideradas
 
