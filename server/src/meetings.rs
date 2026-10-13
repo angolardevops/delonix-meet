@@ -60,6 +60,7 @@ pub struct Meeting {
         patch,
         create,
         check_conflicts,
+        reschedule,
         delete,
         start,
         ics,
@@ -73,6 +74,7 @@ pub struct Meeting {
         notes_by_room
     ),
     components(schemas(
+        RescheduleMeetingReq,
         Meeting,
         MeetingItem,
         SessionOptions,
@@ -1867,32 +1869,28 @@ pub struct RescheduleMeetingReq {
     pub duration_min: Option<i32>,
 }
 
+// PORQUE É UMA ROTA PRÓPRIA, e não um campo do PATCH: o
+// `PATCH /api/meetings/{id}` responde `SessionOptions` e existe para as opções
+// de sessão. A hora não é uma opção — mudá-la avisa gente, repõe o lembrete e
+// sobe a revisão do calendário. Isso atrás de um contrato de opções era
+// esconder um efeito grande.
+//
+// O LEMBRETE POR SMS é reposto a zero (`sms_reminder_done_at = NULL`): se já
+// tinha saído para a hora antiga, tem de sair outra vez para a nova — senão
+// remarcar para mais tarde comia-o.
+//
+// A REVISÃO DO CALENDÁRIO sobe (`sequence + 1`, RFC 5545 §3.8.7.4). Sem isso o
+// `.ics` exportado depois de remarcar era silenciosamente ignorado pelo Outlook
+// e pelo Google Calendar: a hora mudava aqui e não mudava na agenda de ninguém.
+//
+// E uma recorrente é recusada porque remarcar uma série precisa de semântica
+// própria («esta ocorrência» ou «todas»), e escolher por adivinhação era pior
+// do que recusar com razão.
 /// Método personalizado: **remarcar** uma reunião. Só o anfitrião.
 ///
-/// **PORQUE É UMA ROTA PRÓPRIA.** O `PATCH /api/meetings/{id}` responde
-/// `SessionOptions` e existe para as opções de sessão; a hora não é uma opção —
-/// mudá-la avisa gente, mexe no lembrete e sobe a revisão do calendário. Pôr
-/// isso num PATCH que devolve opções era esconder um efeito grande atrás de um
-/// contrato pequeno.
-///
-/// **O que recusa, e porquê:**
-///
-/// - **uma reunião recorrente** (pai ou instância) — remarcar uma série precisa
-///   de semântica própria («esta ocorrência» ou «todas»), e escolher por
-///   adivinhação era pior do que recusar com razão;
-/// - **uma reunião que já começou** — a hora de início de algo a decorrer não
-///   é uma marcação, é história;
-/// - **uma hora no passado** — o único efeito seria avisar os convidados de uma
-///   reunião que já não vai acontecer.
-///
-/// **O lembrete por SMS é reposto a zero** (`sms_reminder_done_at = NULL`): se
-/// já tinha saído para a hora antiga, tem de sair outra vez para a nova — senão
-/// remarcar para mais tarde comia o lembrete.
-///
-/// **A revisão do calendário sobe** (`sequence + 1`, RFC 5545 §3.8.7.4). Sem
-/// isso o `.ics` exportado depois de remarcar era silenciosamente ignorado pelo
-/// Outlook e pelo Google Calendar: a hora mudava aqui e não mudava na agenda de
-/// ninguém.
+/// Recusa uma reunião recorrente, uma que já começou, e uma hora no passado.
+/// Repõe o lembrete por SMS e sobe o `SEQUENCE` do `.ics`, para o calendário de
+/// quem já tem o evento aceitar a versão nova.
 #[utoipa::path(
     post, path = "/api/meetings/{meeting_id}/reschedule", tag = "meetings",
     security(("session" = [])),
