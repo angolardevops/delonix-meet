@@ -250,6 +250,16 @@ def ler(caminho):
     return (" ".join(c['args']), {e['name']: e.get('value') for e in c['env']},
             dep['delonix-server']['spec']['template']['spec'].get('hostAliases'), cm['data']['TURN_HOST'])
 
+# A sonda de vida é um `turnutils_stunclient`: com o RFC 5780 ligado ele segue
+# para os testes de descoberta de NAT contra o endereço alternativo — que, atrás
+# de NAT, é o IP público. Foi o que pôs o relay de produção a reiniciar de 70 em
+# 70 s (2026-10-13). Nas TRÊS formas: a sonda é a mesma em todas.
+for caminho in sys.argv[1:]:
+    a, _, _, _ = ler(caminho)
+    if '--no-rfc5780' not in a.split():
+        erros.append(f"[{caminho.rsplit('/', 1)[-1]}] o coturn corre com o RFC 5780 ligado: a sonda de vida "
+                     "passa a depender de chegar ao endereço alternativo e reinicia o relay quando não chega")
+
 args, env, alias, turn = ler(sys.argv[1])
 if '--external-ip="$EXTERNAL_IP" ' not in args or 'PRIVATE_IP' in env or alias:
     erros.append(f"[production] sem privateIP o relay tem de ficar como era: alias={alias} env={sorted(env)}")

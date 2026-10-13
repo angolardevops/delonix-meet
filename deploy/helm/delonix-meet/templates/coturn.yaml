@@ -91,6 +91,7 @@ spec:
               --fingerprint --stale-nonce=3600
               --relay-threads={{ $c.relayThreads }}
               --no-tcp-relay --no-tls --no-dtls
+              --no-rfc5780
               --prometheus
           ports:
             - { name: turn-udp, containerPort: {{ $c.port }}, protocol: UDP }
@@ -100,6 +101,17 @@ spec:
             initialDelaySeconds: 2
             periodSeconds: 10
           # Um STUN binding a sério: apanha o turnserver preso com o socket aberto.
+          #
+          # UM pedido e UMA resposta, e é por isso que o coturn corre com
+          # `--no-rfc5780`. Sem ele, o servidor anuncia um endereço alternativo
+          # (OTHER-ADDRESS) e o `turnutils_stunclient` continua com os testes de
+          # descoberta de NAT. Com o relay atrás de NAT esse endereço é o IP
+          # PÚBLICO na porta seguinte: em produção, a 2026-10-13, a sonda recebeu
+          # a primeira resposta, ficou pendurada nos testes seguintes, expirou
+          # aos 5 s, e o kubelet reiniciou o relay de 70 em 70 segundos — a
+          # derrubar todas as alocações. O WebRTC não usa a descoberta de NAT do
+          # RFC 5780; desligá-la tira à sonda a dependência de um endereço a
+          # que o nó pode não chegar.
           livenessProbe:
             exec:
               command: ["sh", "-c", "turnutils_stunclient -p {{ $c.port }} 127.0.0.1 >/dev/null 2>&1"]
