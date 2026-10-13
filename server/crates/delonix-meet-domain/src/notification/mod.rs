@@ -35,6 +35,11 @@ pub const ALL_RETENTION_DAYS: i64 = 180;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     MeetingInvited,
+    /// A hora da reunião mudou. Nasce com o produtor que a dispara (a rota de
+    /// remarcar): num trabalho anterior escrevi este tipo e tive de o reverter
+    /// porque nada podia mudar o `starts_at` — era um valor num catálogo
+    /// público para um evento impossível.
+    MeetingRescheduled,
     MeetingStarting,
     MeetingCancelled,
     CallMissed,
@@ -43,8 +48,9 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [
+    pub const ALL: [Kind; 7] = [
         Kind::MeetingInvited,
+        Kind::MeetingRescheduled,
         Kind::MeetingStarting,
         Kind::MeetingCancelled,
         Kind::CallMissed,
@@ -55,6 +61,7 @@ impl Kind {
     pub fn as_str(self) -> &'static str {
         match self {
             Kind::MeetingInvited => "meeting.invited",
+            Kind::MeetingRescheduled => "meeting.rescheduled",
             Kind::MeetingStarting => "meeting.starting",
             Kind::MeetingCancelled => "meeting.cancelled",
             Kind::CallMissed => "call.missed",
@@ -165,6 +172,31 @@ pub fn meeting_starting(meeting_id: Uuid, meeting_title: &str, room_code: &str) 
         format!("A começar: {meeting_title}"),
         format!("A reunião «{meeting_title}» está a começar."),
         room_path(room_code),
+    )
+}
+
+/// A hora mudou. Leva as DUAS horas — a antiga e a nova —, porque quem recebe
+/// precisa de saber o que SAI da agenda e não só o que entra.
+///
+/// A chave de dedupe inclui a hora nova: remarcar duas vezes avisa duas vezes,
+/// e é isso que se quer — cada mudança é uma notícia diferente.
+pub fn meeting_rescheduled(
+    meeting_id: Uuid,
+    meeting_title: &str,
+    host_name: &str,
+    was_at: DateTime<Utc>,
+    starts_at: DateTime<Utc>,
+) -> Draft {
+    Draft::new(
+        Kind::MeetingRescheduled,
+        &format!("{meeting_id}:{}", starts_at.timestamp()),
+        format!("Nova hora: {meeting_title}"),
+        format!(
+            "{host_name} mudou «{meeting_title}» de {} para {}.",
+            when(was_at),
+            when(starts_at)
+        ),
+        "/#/calendar".to_string(),
     )
 }
 

@@ -837,6 +837,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(meetings::delete),
         )
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
+        // Remarcar: método personalizado, e não um campo do PATCH das opções —
+        // mudar a hora avisa gente, repõe o lembrete e sobe a revisão do .ics.
+        .route(
+            "/api/meetings/{meeting_id}/reschedule",
+            post(meetings::reschedule),
+        )
         .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
         .route(
             "/api/meetings/{meeting_id}/minutes",

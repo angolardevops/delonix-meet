@@ -515,6 +515,27 @@ pub(crate) async fn meeting_cancelled(state: &AppState, audience: Option<Meeting
     }
 }
 
+/// A hora de uma reunião mudou: avisa quem foi convidado, **nunca o anfitrião**
+/// — foi ele que a mudou. Mesma audiência do cancelamento.
+pub(crate) async fn meeting_rescheduled(
+    state: &AppState,
+    audience: Option<MeetingAudience>,
+    was_at: chrono::DateTime<chrono::Utc>,
+) {
+    let Some(a) = audience else { return };
+    if a.invitees.is_empty() {
+        return;
+    }
+    let host = username(state, a.host_id).await;
+    let data = serde_json::json!({
+        "meeting_id": a.meeting_id, "starts_at": a.starts_at, "was_at": was_at,
+    });
+    for uid in a.invitees {
+        let draft = rules::meeting_rescheduled(a.meeting_id, &a.title, &host, was_at, a.starts_at);
+        notify(state, uid, draft, data.clone()).await;
+    }
+}
+
 /// A reunião agendada está a começar (auto-ring). Coalescida por reunião.
 pub(crate) async fn meeting_starting(
     state: &AppState,

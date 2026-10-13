@@ -1841,6 +1841,157 @@ pub async fn patch(
     patch_session_options(&state, id, &patch).await.map(Json)
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RescheduleMeetingReq {
+    /// A hora nova. Tem de estar no futuro.
+    pub starts_at: DateTime<Utc>,
+    /// Nova duração em minutos (5–1440). Omissa = mantém a que está.
+    #[serde(default)]
+    pub duration_min: Option<i32>,
+}
+
+/// Método personalizado: **remarcar** uma reunião. Só o anfitrião.
+///
+/// **PORQUE É UMA ROTA PRÓPRIA.** O `PATCH /api/meetings/{id}` responde
+/// `SessionOptions` e existe para as opções de sessão; a hora não é uma opção —
+/// mudá-la avisa gente, mexe no lembrete e sobe a revisão do calendário. Pôr
+/// isso num PATCH que devolve opções era esconder um efeito grande atrás de um
+/// contrato pequeno.
+///
+/// **O que recusa, e porquê:**
+///
+/// - **uma reunião recorrente** (pai ou instância) — remarcar uma série precisa
+///   de semântica própria («esta ocorrência» ou «todas»), e escolher por
+///   adivinhação era pior do que recusar com razão;
+/// - **uma reunião que já começou** — a hora de início de algo a decorrer não
+///   é uma marcação, é história;
+/// - **uma hora no passado** — o único efeito seria avisar os convidados de uma
+///   reunião que já não vai acontecer.
+///
+/// **O lembrete por SMS é reposto a zero** (`sms_reminder_done_at = NULL`): se
+/// já tinha saído para a hora antiga, tem de sair outra vez para a nova — senão
+/// remarcar para mais tarde comia o lembrete.
+///
+/// **A revisão do calendário sobe** (`sequence + 1`, RFC 5545 §3.8.7.4). Sem
+/// isso o `.ics` exportado depois de remarcar era silenciosamente ignorado pelo
+/// Outlook e pelo Google Calendar: a hora mudava aqui e não mudava na agenda de
+/// ninguém.
+#[utoipa::path(
+    post, path = "/api/meetings/{meeting_id}/reschedule", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    request_body = RescheduleMeetingReq,
+    responses(
+        (status = 200, body = Meeting, description = "A reunião com a hora nova e o `sequence` já subido."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`meeting.starts_in_past` ou duração fora de 5–1440"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host` — é convidado, não anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou quem pede não é dono nem convidado"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`meeting.already_started` ou `meeting.recurring_unsupported`"),
+    )
+)]
+pub async fn reschedule(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<RescheduleMeetingReq>,
+) -> Result<Json<Meeting>, ApiError> {
+    let atual: Option<(
+        Uuid,
+        DateTime<Utc>,
+        Option<DateTime<Utc>>,
+        Option<String>,
+        Option<Uuid>,
+    )> = sqlx::query_as(
+        "SELECT owner_id, starts_at, started_at, recurrence_freq, recurrence_parent_id
+               FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((owner_id, was_at, started_at, freq, parent)) = atual else {
+        return Err(ApiError::NotFound);
+    };
+    if owner_id != auth.user_id {
+        // Um convidado fica a saber que a reunião existe (já o sabia); quem não
+        // é nem dono nem convidado não fica.
+        return Err(
+            if is_owner_or_invitee(&state, id, owner_id, auth.user_id).await? {
+                delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                    .with_message("só o anfitrião remarca a reunião")
+                    .into()
+            } else {
+                ApiError::NotFound
+            },
+        );
+    }
+    if freq.is_some() || parent.is_some() {
+        return Err(delonix_meet_core::DomainError::conflict(
+            "meeting.recurring_unsupported",
+            "remarcar uma reunião recorrente ainda não existe: cancele a série e marque outra",
+        )
+        .into());
+    }
+    if started_at.is_some() {
+        return Err(delonix_meet_core::DomainError::conflict(
+            "meeting.already_started",
+            "a reunião já começou: a hora de início deixou de ser uma marcação",
+        )
+        .into());
+    }
+    if req.starts_at <= Utc::now() {
+        return Err(ApiError::BadRequest(
+            "meeting.starts_in_past: a hora nova tem de estar no futuro".into(),
+        ));
+    }
+    if let Some(d) = req.duration_min {
+        if !(5..=1440).contains(&d) {
+            return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
+        }
+    }
+
+    sqlx::query(
+        "UPDATE meetings
+            SET starts_at = $2,
+                duration_min = COALESCE($3, duration_min),
+                sequence = sequence + 1,
+                -- O lembrete que já saiu para a hora antiga tem de sair outra
+                -- vez para a nova.
+                sms_reminder_done_at = NULL
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(req.starts_at)
+    .bind(req.duration_min)
+    .execute(&state.db)
+    .await?;
+
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "meeting.rescheduled",
+        &serde_json::json!({"meeting_id": id, "was_at": was_at, "starts_at": req.starts_at})
+            .to_string(),
+    )
+    .await;
+
+    // A audiência lê-se DEPOIS do UPDATE: traz a hora nova, e a antiga vai à
+    // parte — quem recebe precisa de saber o que sai da agenda, não só o que
+    // entra.
+    let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
+    crate::notifications::meeting_rescheduled(&state, audience, was_at).await;
+
+    let m: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(m))
+}
+
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
 /// reunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.
 #[utoipa::path(
@@ -1864,6 +2015,14 @@ pub async fn ics(
     .bind(id)
     .fetch_one(&state.db)
     .await?;
+    // O `sequence` lê-se à parte e NÃO entra no `MEETING_COLUMNS`: aquela lista
+    // é o contrato de várias respostas da API, e a revisão do calendário só
+    // interessa ao `.ics`.
+    let seq: i32 = sqlx::query_scalar("SELECT sequence FROM meetings WHERE id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
     if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         // Quem não é dono nem convidado não fica a saber que a reunião existe.
         return Err(ApiError::NotFound);
@@ -1925,9 +2084,14 @@ pub async fn ics(
         None => String::new(),
     };
     let body = format!(
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Delonix Meet//PT\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{id}@delonix-meet\r\nDTSTAMP:{now}\r\nDTSTART:{start}\r\nDURATION:PT{dur}M\r\nSUMMARY:{title}\r\nDESCRIPTION:{desc}\r\n{url_line}END:VEVENT\r\nEND:VCALENDAR\r\n",
+        // O `SEQUENCE` (RFC 5545 §3.8.7.4) é a revisão do evento: um cliente de
+        // calendário só aceita uma versão nova de um evento que já conhece se
+        // este número SUBIR. Sem ele, o `.ics` exportado depois de remarcar era
+        // silenciosamente ignorado pelo Outlook e pelo Google Calendar.
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Delonix Meet//PT\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{id}@delonix-meet\r\nDTSTAMP:{now}\r\nSEQUENCE:{seq}\r\nDTSTART:{start}\r\nDURATION:PT{dur}M\r\nSUMMARY:{title}\r\nDESCRIPTION:{desc}\r\n{url_line}END:VEVENT\r\nEND:VCALENDAR\r\n",
         id = meeting.id,
         now = dt(&Utc::now()),
+        seq = seq,
         start = dt(&meeting.starts_at),
         dur = meeting.duration_min,
         title = esc(&meeting.title),
