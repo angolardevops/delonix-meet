@@ -18,28 +18,50 @@ sessões faziam em paralelo sem se verem, e diz onde se tocavam.
 | Frente | Estado | O que falta |
 |---|---|---|
 | **Dia 0** | **fechado** | — |
-| **A — produção** | código **fundido** (A1, A2, A3, A7); **instalada no `delonix-lda` mas a NÃO servir** | pôr a rota a ser aceite, sarar o Postgres e o release; A4, A5, A6, A8 |
+| **A — produção** | código **fundido** (A1, A2, A3, A7); **a servir** desde 2026-10-13 em `meet.ngolacloud.com` e `meet.ngolacloud.ao`, só por HTTPS | abrir uma sala num browser; sarar o Postgres; `PUBLIC_URL`, HSTS, imagem nova; A4, A5, A6, A8 |
 | **B — identidade** | **fundida** no Meet (B1, B3–B7) | B2: a PR do Kaeso (#346) por fundir |
 | **C — Odoo** | C1, C2, C3 **provadas em laboratório** (Odoo 16 + Meet reais) | C4, e repetir contra o Odoo de produção (D4) |
 
-### A produção, medida hoje no cluster (só leitura)
+### A produção, medida a 2026-10-13
 
-O namespace `ngolacloud-meet` existe desde 2026-10-10T18:38Z, com 3 `delonix-server`, 3
-`delonix-web`, o coturn, o Postgres (CNPG) e o Redis. **Não está a servir:**
+De manhã a instalação existia e **não servia**: `https://meet.ngolacloud.com/` dava 404, as
+HTTPRoutes estavam `Accepted=False` (`NotAllowedByListeners`) e o release Helm `failed`.
+À tarde **serve**. O que mudou, por ordem:
 
-| O que se mediu | Valor | O que significa |
+| Passo | Onde | O que fez |
 |---|---|---|
-| `https://meet.ngolacloud.com/` | **404** (TLS válido, do Gateway partilhado) | quem abre o endereço não chega ao Meet |
-| HTTPRoute `delonix-meet` → Gateway `delonix-system/delonix` | `Accepted=False`, `NotAllowedByListeners` | o Gateway do vizinho só aceita rotas do próprio namespace — o caso que a #300 documentou; o modo certo é o Gateway próprio (`own`) |
-| release Helm `meet` | **`failed`** | o último `helm upgrade` não fechou |
-| Postgres `meet-pg` | 2 de 3 prontas; primário `meet-pg-2`; `meet-pg-1` falha o `pg_rewind` desde 2026-10-12 | sem a terceira instância, a próxima falha fica sem folga |
-| pod `delonix-server-…-nrzph` | 102 reinícios, o último a 2026-10-11T21:06Z: `PoolTimedOut` ao Postgres | o servidor entra em pânico no arranque quando não chega à base, em vez de esperar por ela |
-| etiquetas de Pod Security do namespace | **ausentes** | as etiquetas do `00-namespace.yaml` (#269) não estão no namespace que existe |
-| quota `delonix-meet-quota` | 24Gi de requests, 16,2Gi usados | a quota única (D1) está em vigor e cabe |
+| O Gateway da plataforma aceita o namespace do Meet | angolardevops/delonix-deploy#224 e #247, aplicadas com `--tags gateway` | `allowedRoutes` dos listeners `http` e `https` passou de `Same` a um selector com `delonix-system` e `ngolacloud-meet`. É o único `192.168.1.73` para onde o router encaminha 80/443 — um Gateway próprio (`own`) ficava noutro endereço, sem entrada da Internet |
+| A entrada do Meet cola-se a esse Gateway | #307 | `gateway.mode: attach`; Redis sem Sentinel |
+| Os dois domínios | #311 | `extraHosts`: `meet.ngolacloud.com` (canónico) e `meet.ngolacloud.ao` |
+| Só HTTPS | #312 | as rotas presas ao listener `https`; antes disso a aplicação respondia 200 em `http://` |
 
-A instalação é de outra sessão — é o que as PRs #302, #307 e #308 indicam (a #307 diz-se «medida contra a instalação de produção»). **Antes de mexer no
-cluster, combina-se com ela**: duas sessões a corrigir a mesma instalação é como as três
-`0105`.
+Medido depois do último `helm upgrade` (release `meet`, revisão 3, `deployed`):
+
+| O que se mediu | Valor |
+|---|---|
+| `https://meet.ngolacloud.com/` e `https://meet.ngolacloud.ao/` | **200**, a aplicação; `/healthz` 200; `/admin/` 200 |
+| `http://` nos dois nomes | **301** para `https://` |
+| HTTPRoutes `delonix-meet` e `delonix-ws` | `Accepted=True`, os dois nomes, `sectionName: https` |
+| a plataforma, antes e depois | `api` e `console` 200, `admin` 403 — iguais |
+| `delonix-server` | 3 pods `Running`, sem reinícios (o dos 102 reinícios saiu no rolling) |
+| Postgres `meet-pg` | **2 de 3** prontas; primário `meet-pg-2` |
+| etiquetas de Pod Security do namespace | **ausentes** |
+| quota `delonix-meet-quota` | 24Gi de requests, 16 192Mi usados |
+| imagem | `7b992902` — atrás da `develop` |
+
+**Não validado:** uma sala aberta num browser (o `/ws`, a media, o TURN). É o que separa
+«a página abre» de «o produto funciona».
+
+**Três defeitos que só a medição apanhou**, e que valem como regra:
+
+1. O template do Gateway rendia bem em Jinja2 simples e mal no Ansible (`trim_blocks`): saía
+   sem `apiVersion` e com os dois namespaces numa linha. O teste do role usava o ambiente
+   errado. Apanhado a renderizar com o inventário de produção e `kubectl diff` **antes** de
+   aplicar.
+2. `--tags gateway` sozinho saía 0 sem tocar em nada (`skipping: no hosts matched`). Uma
+   tag «própria» só está provada quando corre sozinha.
+3. O Meet respondia em claro no `:80`: uma HTTPRoute sem `sectionName` cola-se a todos os
+   listeners do Gateway a que se liga.
 
 ## 0. Onde as sessões se tocavam
 
@@ -82,7 +104,7 @@ Postgres (12Gi) é recusado pela do chart (8Gi).
 | A6 | TURN público | **em curso noutra sessão**: #308 (o relay do coturn nos manifestos), aberta |
 | A7 | `web-admin` no mesmo host | **fundida** (#301): na imagem `web`, em `/admin/`; provada no browser contra um servidor real |
 | A8 | Relay SMTP de produção | **por fazer** — depende da D3 |
-| A9 | **Sarar a instalação** (novo) | **por fazer**: rota aceite, release `deployed`, `meet-pg` 3/3, Pod Security no namespace, e o servidor a esperar pela base em vez de morrer. A #307 (aberta, de outra sessão) trata do Redis e da entrada |
+| A9 | **Sarar a instalação** (novo) | **em parte**: rota aceite e release `deployed` (2026-10-13, deploy#224/#247, #307, #311, #312). **Por fazer**: `meet-pg` 3/3, Pod Security no namespace, o servidor a esperar pela base em vez de morrer, `PUBLIC_URL` (as ligações dos e-mails dependem dela), HSTS, e publicar uma imagem da `develop` |
 
 **Prazo escrito:** o `barmanObjectStore` desaparece no CNPG 1.31.0 e o operador é 1.30.1.
 
@@ -140,9 +162,11 @@ Belledonne do DelonixPhone (ADR-0022) · #251.
 | D4 | URL e base do Odoo para a validação | por dar |
 | D5 | Sprint de duas semanas a partir de 2026-10-12 | **sim** (2026-10-10) |
 | D6 | A provisão pelo operador dá o domínio da organização por provado | **sim** (2026-10-10), na #309 |
-| D7 | Quem gere o DNS de `ngolacloud.com` (para o DNS-01 da A4) | por dar |
+| D7 | Quem gere o DNS de `ngolacloud.com` (para o DNS-01 da A4) | **deixou de bloquear** (2026-10-13): o certificado é o do Gateway da plataforma, que já cobre os dois nomes |
 | D8 | As imagens do MinIO e do Redis só existem de graça em `bitnamilegacy`, sem correcções de segurança: subscrição, outro chart ou imagens próprias | por dar |
 | D9 | A allowlist de modelos do Kaeso deve cobrir os `nk.oidc.*` (hoje só cobre o ciclo People) | por dar |
+| D10 | A produção serve os dois domínios, com o `.com` canónico | **sim** (2026-10-13), na #311 |
+| D11 | Quem é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`) — sem isso ninguém entra no `/admin/` | por dar |
 
 ## 8. Como se fecha um item
 
