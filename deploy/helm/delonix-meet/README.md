@@ -134,8 +134,50 @@ Postgres não é apagado pelo `helm uninstall`.
 | Voz | Kamailio, FreeSWITCH, ConfigMaps, Services `kamailio`, `kamailio-border`, `freeswitch` | desligada por omissão |
 | NetworkPolicy | `delonix-server` | opcional; `:8181`, `:9180` e a ponte só para o FreeSWITCH |
 
-Não são instalados: whisper, ollama, open-webui, o worker de IA, o gateway de
-SMS e o `ClusterIssuer` (é do cluster, não de uma release).
+| IA | `delonix-ollama` (Deployment, PVC `ollama-models`, Service), `delonix-whisper` (Deployment, Service) | desligados por omissão; ver abaixo |
+
+Não são instalados: open-webui, o worker de transcrição das GRAVAÇÕES
+(`ai-worker/`, que é outra coisa do ASR em tempo real), o gateway de SMS e o
+`ClusterIssuer` (é do cluster, não de uma release).
+
+### A IA in-cluster
+
+Duas peças independentes, as duas desligadas por omissão:
+
+| Valor | O que instala | Para quê |
+|---|---|---|
+| `ollama.enabled` | LLM local (`ollama/ollama`) + PVC dos modelos | a ata da reunião (MoM) e a tradução das legendas |
+| `whisper.enabled` | ASR soberano (`whisper-server/`) + rota `/asr` | as legendas da sala sem passar pela Web Speech do Chrome |
+
+O que o chart garante, e são as três maneiras conhecidas de isto se partir:
+
+* **`OLLAMA_URL` é derivado**, não escrito. Com `ollama.enabled` o ConfigMap
+  aponta para o Service do chart. Pôr a chave à mão com o Ollama desligado é
+  recusado pelo portão: seria um 503 por cada legenda e por cada ata.
+* **os modelos pedidos são os puxados.** `ollama.modelSummary` e
+  `ollama.modelTranslate` têm de estar em `ollama.models` — se não, o chart
+  recusa. Divergir dava um 404 por resumo (`LlmError::ModelMissing`).
+* **a rota `/asr` sai de `whisper.enabled`**, e é exclusiva de
+  `ingress.asr.serviceName` (um serviço de transcrição de fora).
+
+A imagem do ASR **não sai do `make image`**: embute o modelo (~2GB) e
+constrói-se à parte, com tag própria.
+
+```bash
+BUILD_WHISPER=1 REGISTRY=<registo> TAG=<tag> deploy/build-images.sh
+helm upgrade … --set whisper.image.repository=<registo>/delonix-whisper \
+               --set whisper.image.tag=<tag>
+```
+
+O `JWT_SECRET` do Whisper vem do Secret por chave: o `/asr` valida o mesmo
+access token do `/rtc` e, sem a chave, é fail-closed — recusa todas as
+ligações e o browser cai em silêncio para o motor local.
+
+Sem GPU, o primeiro arranque do Ollama puxa gigabytes e isso **não** é
+condição de prontidão: até o modelo chegar, a fila da ata devolve a tentativa
+(nada se perde, mas também não há ata). Com GPU, `ollama.nodeSelector`,
+`ollama.tolerations`, `ollama.runtimeClassName` e `nvidia.com/gpu` nos limits
+— ADR-0024.
 
 ### Portas internas
 
