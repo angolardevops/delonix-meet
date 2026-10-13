@@ -1189,12 +1189,19 @@ mod tests {
         assert!(num_ctx_para(24_000) > 4_096);
     }
 
-    /// O tecto por configuração nunca passa a margem da fila. Se passasse, um
-    /// segundo worker reivindicava uma reunião cuja chamada ao Ollama ainda
-    /// corria — a corrida que a migração 0105 fechou.
+    /// O SQL da fila e as constantes que o explicam não divergem.
+    ///
+    /// A SOMA (`MOM_TIMEOUT_MAX_SECS + MOM_STALE_MARGIN_SECS == 1860`) não se
+    /// verifica aqui: já está presa em compile-time pelo `const _: () =
+    /// assert!(…)` ao lado da fila, que é melhor do que um teste — pára o
+    /// build em vez de falhar depois. O que SOBRA para verificar em tempo de
+    /// execução é o que o compilador não vê: que o literal está mesmo escrito
+    /// na string do SQL, e que o backoff cabe na margem.
+    ///
+    /// Se passasse, um segundo worker reivindicava uma reunião cuja chamada ao
+    /// Ollama ainda corria — a corrida que a migração 0105 fechou.
     #[test]
-    fn o_tecto_configuravel_cabe_na_margem_da_fila() {
-        assert!(MOM_TIMEOUT_MAX_SECS + MOM_STALE_MARGIN_SECS <= 1_860);
+    fn o_sql_da_fila_e_as_constantes_nao_divergem() {
         assert!(
             FILA_MOM.ready_when.contains("1860 seconds"),
             "o SQL da fila e a constante divergiram"
