@@ -4598,6 +4598,15 @@ fn breakouts_close(state: &Arc<AppState>, room_id: Uuid) {
     }
 }
 
+/// Silêncio ABSOLUTO do cliente (nem Pong, nem mensagem) a partir do qual se
+/// dá a sessão por terminada, em milissegundos.
+///
+/// São dois Pings de 25 s falhados mais folga. Não é um valor de rede: um
+/// cliente saudável responde ao Ping sozinho — o browser fá-lo sem a página
+/// saber —, por isso 70 s calado é um cliente que já lá não está. O que isto
+/// substitui é esperar pelo TCP, que em sockets meio-abertos demora MINUTOS.
+const SILENCIO_MAXIMO_MS: u64 = 70_000;
+
 /// Consome o socket até fechar (ou o cliente desistir) enquanto espera admissão.
 async fn drain_while_waiting(stream: &mut SplitStream<WebSocket>) {
     while let Some(Ok(msg)) = stream.next().await {
@@ -4740,10 +4749,31 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // entrada sai pelo caminho ordenado de sempre.
     let _session_guard = session_id.map(|sid| state.session_kills.register(sid, shutdown.clone()));
 
+    // ÚLTIMO SINAL DE VIDA do cliente, partilhado entre o leitor e o escritor.
+    // Guarda-se em milissegundos desde `base` porque um `Instant` não é
+    // atómico, e isto é lido e escrito nos dois lados sem lock.
+    let base = std::time::Instant::now();
+    let visto_em = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let visto_escritor = visto_em.clone();
+    let shutdown_escritor = shutdown.clone();
+
     // Outbound: hub -> websocket. Um Ping periódico mantém a ligação viva
     // (proxies fecham WebSockets ociosos): sem tráfego, o socket cairia e —
     // como não há renegociação sem sinalização — a partilha de ecrã, o quadro
     // branco e o estado de media deixariam de chegar aos participantes.
+    //
+    // E o Ping passou a ter CONSEQUÊNCIA. Mandava-se um de 25 em 25 s e nunca
+    // se olhava para o Pong: a única forma de descobrir um cliente ido era o
+    // `send` falhar — e num socket meio-aberto (portátil a adormecer,
+    // telemóvel a bloquear, rede a engolir pacotes sem avisar) o TCP ainda
+    // retransmite MINUTOS antes de desistir. Só aí começavam os 45 s de
+    // `RECONNECT_GRACE_SECS`. Quem ficava na sala via o mosaico do ausente
+    // durante todo esse tempo (reportado de uma chamada a 2026-10-13).
+    //
+    // O limite é generoso de propósito: 70 s são dois Pings falhados mais
+    // folga. Um cliente saudável responde sozinho ao Ping — o browser fá-lo
+    // sem a página saber — por isso 70 s de silêncio ABSOLUTO (nem Pong, nem
+    // mensagem) é um cliente que já não está lá.
     let writer = tokio::spawn(async move {
         let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(25));
         keepalive.tick().await; // consome o tick imediato
@@ -4760,6 +4790,16 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                     }
                 }
                 _ = keepalive.tick() => {
+                    let calado_ms = base.elapsed().as_millis() as u64
+                        - visto_escritor.load(std::sync::atomic::Ordering::Relaxed);
+                    if calado_ms > SILENCIO_MAXIMO_MS {
+                        tracing::info!(
+                            calado_ms,
+                            "cliente sem dar sinal de vida — a terminar a sessão em vez de esperar pelo TCP"
+                        );
+                        shutdown_escritor.notify_waiters();
+                        break;
+                    }
                     if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
                         break;
                     }
@@ -4966,7 +5006,14 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         // deixar um peer na sala com o caminho de saída morto.
         let msg = tokio::select! {
             incoming = stream.next() => match incoming {
-                Some(Ok(m)) => m,
+                Some(Ok(m)) => {
+                    // QUALQUER quadro conta como sinal de vida — incluindo o
+                    // Pong, que o browser envia sozinho em resposta ao Ping.
+                    // É isto que o escritor lê para decidir se vale a pena
+                    // continuar a falar para o vazio.
+                    visto_em.store(base.elapsed().as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
+                    m
+                }
                 _ => break,
             },
             _ = shutdown.notified() => {
