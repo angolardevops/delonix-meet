@@ -1,8 +1,21 @@
-// Consentement d'un agent (ADR-0028 §5). Le texte de CHAQUE portée vient du
-// serveur (`McpScope::describes`) : ajouter une portée ne doit jamais laisser
-// une phrase non traduite sur un écran où l'on accorde des permissions.
+// Consentement d'un agent (ADR-0028 §5). Le texte de chaque portée est traduit
+// ICI ; celui du serveur (`McpScope::describes`) sert de repli pour une portée
+// pas encore traduite — le premier parcours de bout en bout a montré l'écran en
+// anglais avec les portées en portugais, ce qui ne convient pas à un écran de
+// permissions.
 export default {
   consent: {
+    escopos: {
+      'meet.read': 'Voir les réunions, salles et participants auxquels vous avez déjà accès',
+      'minutes.read': 'Lire le compte rendu et la transcription de ces réunions',
+      'minutes.write': 'Générer et enregistrer le compte rendu d’une réunion',
+      'recordings.read': 'Voir votre bibliothèque d’enregistrements, avec sous-titres et chapitres',
+      'captions.write': 'Générer et traduire les sous-titres d’un enregistrement',
+      'chapters.write': 'Générer et modifier les chapitres d’un enregistrement',
+      'clips.write': 'Créer des extraits et des vidéos courtes à partir d’un enregistrement',
+      'shorts.publish': 'Publier une vidéo courte vers une destination de l’organisation',
+      'live.translate': 'Activer et configurer la traduction en direct dans une de vos salles',
+    },
     titulo: 'Autoriser un agent',
     pedido: '{{cliente}} demande l’accès à votre compte dans l’organisation {{organizacao}}.',
     registoProprio: 'Ce client s’est enregistré lui-même et renvoie l’accès vers {{destino}}. Personne ne l’a approuvé avant vous — vérifiez qu’il s’agit bien du programme que vous utilisez.',

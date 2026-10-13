@@ -10,9 +10,13 @@
  * - **em que organização** o agente vai agir;
  * - **cada escopo** com o que abre, separando o que só lê do que mexe.
  *
- * Não desenha os escopos: o texto de cada um vem do servidor
- * (`McpScope::describes`), para que acrescentar um escopo não deixe uma frase
- * por traduzir num ecrã onde a pessoa está a dar permissões.
+ * **O texto de cada escopo é traduzido aqui, com recuo para o do servidor.**
+ * Durante o primeiro percurso ponta-a-ponta viu-se o ecrã em inglês com os
+ * escopos em português: o servidor (`McpScope::describes`) só sabe uma língua.
+ * Num ecrã de permissões isso não serve. A regra passa a ser: se a chave
+ * `oauth.consent.escopos.<nome>` existir, usa-se a tradução; se não existir
+ * (um escopo acrescentado e ainda por traduzir), usa-se o texto do servidor —
+ * que é honesto e nunca deixa uma linha vazia.
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -21,6 +25,7 @@ import {
   oauthDecide,
   type OAuthConsentInfo,
   type OAuthRequestParams,
+  type OAuthScopeInfo,
 } from '../api'
 import { Alert, Button, Card, Spinner } from '../ui/kit'
 import { Icon } from '../ui/icons'
@@ -66,10 +71,28 @@ function destino(uri: string): string {
 
 export default function OAuthConsent() {
   const { t } = useTranslation()
-  const [params] = useState<OAuthRequestParams | null>(paramsDoEndereco)
+  /** O texto de um escopo na língua da pessoa, com recuo para o do servidor. */
+  const descreve = (s: OAuthScopeInfo) =>
+    t(`oauth.consent.escopos.${s.scope}`, { defaultValue: '' }) || s.describes
+  // Lido do endereço, e **relido quando o endereço muda**.
+  //
+  // Com `useState` sozinho ficava preso ao primeiro pedido: um segundo
+  // `authorize` com esta página já aberta só muda o FRAGMENTO, e mudar o
+  // fragmento não recarrega o documento — o React mantém a instância, e a
+  // pessoa autorizava o pedido ANTERIOR a olhar para um ecrã que parecia o
+  // novo. Com dois clientes diferentes isso é dar a um o que se quis dar ao
+  // outro. Apanhado a fazer o percurso duas vezes seguidas: o cliente recusou
+  // o retorno com «state trocado».
+  const [params, setParams] = useState<OAuthRequestParams | null>(paramsDoEndereco)
   const [info, setInfo] = useState<OAuthConsentInfo | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const [busy, setBusy] = useState<'nenhum' | 'aprovar' | 'negar'>('nenhum')
+
+  useEffect(() => {
+    const aoMudar = () => setParams(paramsDoEndereco())
+    window.addEventListener('hashchange', aoMudar)
+    return () => window.removeEventListener('hashchange', aoMudar)
+  }, [])
 
   useEffect(() => {
     if (!params) {
@@ -151,7 +174,7 @@ export default function OAuthConsent() {
               <ul className="oauth-consent__escopos">
                 {escrita.map((s) => (
                   <li key={s.scope}>
-                    <Icon name="alert" /> <strong>{s.describes}</strong>{' '}
+                    <Icon name="alert" /> <strong>{descreve(s)}</strong>{' '}
                     <code className="dx-muted">{s.scope}</code>
                   </li>
                 ))}
@@ -165,7 +188,7 @@ export default function OAuthConsent() {
               <ul className="oauth-consent__escopos">
                 {leitura.map((s) => (
                   <li key={s.scope}>
-                    {s.describes} <code className="dx-muted">{s.scope}</code>
+                    {descreve(s)} <code className="dx-muted">{s.scope}</code>
                   </li>
                 ))}
               </ul>

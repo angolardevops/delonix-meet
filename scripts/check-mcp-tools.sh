@@ -100,6 +100,46 @@ for nome in nomes:
         print(f'✗ mcp: a tool `{nome}` não é exercitada por {PROVA}')
         falha = True
 
+# (f) a DESCOBERTA tem de ser encaminhada para a API em todos os sítios que
+#     encaminham tráfego. Este é o defeito que fundiu sem ninguém ver: as rotas
+#     `/.well-known/oauth-*` existiam no router, e nem o nginx, nem a HTTPRoute,
+#     nem o Ingress, nem o dev server as levavam ao servidor — o documento caía
+#     na regra do `/` e era servido pela WEB. Um cliente MCP recebia HTML e
+#     nunca encontrava o servidor de autorização. Nada no render o dizia,
+#     porque todos os objectos eram válidos.
+PRE = '/.well-known/oauth-'
+ENCAMINHADORES = [
+    ('deploy/k8s/nginx.conf', 'o nginx da imagem web'),
+    ('deploy/nginx-delonix.conf', 'o nginx do deploy clássico'),
+    ('deploy/compose/edge.conf', 'o nginx do compose'),
+    ('deploy/helm/delonix-meet/templates/gateway.yaml', 'a HTTPRoute do chart'),
+    ('deploy/helm/delonix-meet/templates/ingress.yaml', 'o Ingress do chart'),
+    ('web/vite.config.ts', 'o dev server'),
+]
+for caminho, o_que in ENCAMINHADORES:
+    try:
+        texto = open(caminho, encoding='utf-8').read()
+    except FileNotFoundError:
+        continue
+    if PRE not in texto:
+        print(f'✗ mcp: {o_que} ({caminho}) não encaminha `{PRE}*` para a API — '
+              'a descoberta do OAuth cai na regra do `/` e é servida pela web')
+        falha = True
+# E o contrário: levar o `/.well-known/` INTEIRO roubaria o acme-challenge ao
+# cert-manager e partia a emissão de certificados por HTTP-01.
+import re
+for caminho, o_que in ENCAMINHADORES:
+    try:
+        texto = open(caminho, encoding='utf-8').read()
+    except FileNotFoundError:
+        continue
+    for linha in texto.splitlines():
+        nua = linha.split('#')[0]
+        if '/.well-known/' in nua and 'oauth-' not in nua:
+            print(f'✗ mcp: {o_que} ({caminho}) encaminha `/.well-known/` inteiro: '
+                  f'isso rouba o acme-challenge ao cert-manager — «{linha.strip()[:90]}»')
+            falha = True
+
 # (e) o adaptador é um ADAPTADOR: sem SQL e sem prompts.
 for padrao, o_que in ((r'sqlx::query', 'uma consulta SQL'), (r'\bprompt\b', 'um prompt de LLM')):
     if re.search(padrao, codigo):
@@ -107,6 +147,7 @@ for padrao, o_que in ((r'sqlx::query', 'uma consulta SQL'), (r'\bprompt\b', 'um 
         falha = True
 
 if not falha:
-    print(f'✓ mcp: {len(nomes)} tools — todas declaradas, ligadas e exercitadas; nenhuma aceita a organização do cliente')
+    print(f'✓ mcp: {len(nomes)} tools — todas declaradas, ligadas e exercitadas; nenhuma aceita a '
+          'organização do cliente; e a descoberta do OAuth é encaminhada nos seis sítios')
 sys.exit(1 if falha else 0)
 PYEOF
