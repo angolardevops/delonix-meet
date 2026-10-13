@@ -187,6 +187,7 @@ export default {
     erro: '人员搜索失败。',
   },
   conflitos: {
+    horaJaPassou: '这个时间已经过去：会议会保存下来，但不会出现在“即将开始的会议”里。',
     titulo: '冲突与容量',
     aVerificar: '正在检查日程…',
     erro: '无法检查冲突。',

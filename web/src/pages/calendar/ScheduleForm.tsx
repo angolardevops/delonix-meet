@@ -33,7 +33,7 @@ import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
 import { Alert, Avatar, cx, Field, IconButton, Segmented, Select, Spinner, TextArea, TextInput, Toggle } from '../../ui/kit'
 import WeekView from './WeekView'
-import { addDays, fmtDayMonth, fmtTime, groupByDay, hhmm, localeOf, mondayOf, parseYmd, tzShort, weekdayNames, ymd } from './dates'
+import { addDays, fmtDayMonth, fmtTime, groupByDay, hhmm, jaAcabou, localeOf, mondayOf, parseYmd, tzShort, weekdayNames, ymd } from './dates'
 
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180]
 const BYDAY = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'] as const
@@ -450,15 +450,32 @@ export default function ScheduleForm({
             {t('schedule.form.outrasReunioes')}
           </span>
         </div>
-        <ConflictsCard check={check} room={room} people={invitees.length + 1} locale={locale} />
+        <ConflictsCard check={check} room={room} people={invitees.length + 1} locale={locale} start={start} duration={duration} />
       </aside>
     </div>
   )
 }
 
-function ConflictsCard({ check, room, people, locale }: { check: Check; room: MeetingRoom | null; people: number; locale: string }) {
+function ConflictsCard({
+  check,
+  room,
+  people,
+  locale,
+  start,
+  duration,
+}: {
+  check: Check
+  room: MeetingRoom | null
+  people: number
+  locale: string
+  start: Date | null
+  duration: number
+}) {
   const { t } = useTranslation()
   const lines: { tone: 'warning' | 'success' | 'danger'; text: string }[] = []
+  if (jaAcabou(start, duration)) {
+    lines.push({ tone: 'warning', text: t('schedule.conflitos.horaJaPassou') })
+  }
   if (check.s === 'ready') {
     for (const c of check.d.room) {
       lines.push({ tone: 'danger', text: t('schedule.conflitos.salaOcupada', { titulo: c.meeting_title, hora: fmtTime(new Date(c.starts_at), locale) }) })
