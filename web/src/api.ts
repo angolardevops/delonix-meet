@@ -633,6 +633,16 @@ export const checkConflicts = (body: {
 
 export const deleteMeeting = (id: string) => request(`/api/meetings/${id}`, { method: 'DELETE' })
 
+/**
+ * Remarca uma reunião. Só o anfitrião, e o servidor recusa uma recorrente, uma
+ * que já começou e uma hora no passado (`meeting.recurring_unsupported`,
+ * `meeting.already_started`, `meeting.starts_in_past`).
+ *
+ * `duration_min` omisso = mantém a duração que está.
+ */
+export const rescheduleMeeting = (id: string, body: { starts_at: string; duration_min?: number }) =>
+  request<Meeting>(`/api/meetings/${id}/reschedule`, { method: 'POST', body: JSON.stringify(body) })
+
 export const startMeeting = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' }>(`/api/meetings/${id}/start`, { method: 'POST' })
 

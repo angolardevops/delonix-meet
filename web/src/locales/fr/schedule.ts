@@ -48,6 +48,18 @@ export default {
     confirmarRecusa: "Refuser l'invitation",
     erro: "Impossible d'envoyer la réponse.",
   },
+  remarcar: {
+    botao: 'Reprogrammer',
+    titulo: 'Nouvelle date et heure',
+    confirmar: 'Reprogrammer',
+    duracao: 'Durée (minutes)',
+    duracaoLimite: 'Entre 5 et 1440.',
+    horaPassada: "Cette heure est déjà passée. Choisissez-en une dans le futur.",
+    avisoConvidados: "Les invités sont prévenus du changement, avec l'ancienne et la nouvelle heure.",
+    naoJaComecou: "Cette réunion a déjà commencé : son heure de début ne peut plus être modifiée.",
+    naoRecorrente: "Les réunions récurrentes ne se reprogramment pas encore ici. Annulez la série et planifiez-en une autre.",
+    erro: 'Impossible de reprogrammer.',
+  },
   detalhe: {
     separadores: 'Sections de la réunion',
     tabDetalhes: 'Détails',

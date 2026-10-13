@@ -48,6 +48,18 @@ export default {
     confirmarRecusa: 'Recusar convite',
     erro: 'Não foi possível enviar a resposta.',
   },
+  remarcar: {
+    botao: 'Remarcar',
+    titulo: 'Nova data e hora',
+    confirmar: 'Remarcar',
+    duracao: 'Duração (minutos)',
+    duracaoLimite: 'Entre 5 e 1440.',
+    horaPassada: 'Essa hora já passou. Escolha uma no futuro.',
+    avisoConvidados: 'Os convidados são avisados da mudança, com a hora antiga e a nova.',
+    naoJaComecou: 'Esta reunião já começou: a hora de início deixou de se poder mudar.',
+    naoRecorrente: 'Reuniões que se repetem ainda não se remarcam aqui. Cancele a série e marque outra.',
+    erro: 'Não foi possível remarcar.',
+  },
   detalhe: {
     separadores: 'Secções da reunião',
     tabDetalhes: 'Detalhes',
