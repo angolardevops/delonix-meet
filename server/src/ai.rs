@@ -571,10 +571,19 @@ const FILA_MOM: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue 
 /// mesma razão dos capítulos (`recording_chapters::STALE_MARGIN_SECS`).
 const MOM_STALE_MARGIN_SECS: u64 = 60;
 
-/// Prende o literal `1860` escrito em [`FILA_MOM`] aos dois nomes que o
-/// explicam: se um dia um dos dois mudar sem o outro, o build pára aqui em
-/// vez de a fila ficar trancada (ou destrancada cedo demais) em silêncio.
-const _: () = assert!(MOM_TIMEOUT_MAX_SECS + MOM_STALE_MARGIN_SECS == 1860);
+/// Ao fim de quanto tempo uma reivindicação "em execução" é lida como
+/// interrompida. É a soma dos dois acima, e é **pública** por uma razão
+/// aprendida: o teste de integração da trava
+/// (`tests/mom_summary_fila_trava.rs`) tinha o valor escrito num `interval`
+/// seu, e quando a margem subiu de 660 para 1860 o teste passou a simular um
+/// worker morto que já não era stale — falhou no CI, não aqui. Agora o teste
+/// deriva o intervalo DESTA constante e não há segundo sítio para divergir.
+pub const MOM_STALE_AFTER_SECS: u64 = MOM_TIMEOUT_MAX_SECS + MOM_STALE_MARGIN_SECS;
+
+/// Prende o literal `1860` escrito em [`FILA_MOM`] ao nome que o explica: se um
+/// dia um dos dois mudar sem o outro, o build pára aqui em vez de a fila ficar
+/// trancada (ou destrancada cedo demais) em silêncio.
+const _: () = assert!(MOM_STALE_AFTER_SECS == 1860);
 
 /// Três tentativas, 2 e 10 minutos. O LLM local é a causa provável de falha e
 /// recupera em minutos; ninguém está em frente ao ecrã à espera disto.
