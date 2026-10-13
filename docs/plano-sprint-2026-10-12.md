@@ -71,9 +71,21 @@ Medido nos dois domínios, a 2026-10-13, com a configuração ainda só de LAN:
 rede a pessoa entrava na sala e não ouvia nem via ninguém, sem um erro. Foi o que a #320 e a
 #324 corrigiram.
 
-**Depois do TURN público:** a media a partir de fora foi confirmada pelo dono com uma chamada
-real. Não há ainda uma medição automática de fora — a sonda que se usou era um ramo temporário
-e foi apagada; só mede que a 3478 responde, não que há media.
+**Depois do TURN público**, a mesma prova repetida da LAN, nos dois domínios, passou outra
+vez — e desta vez diz mais do que antes:
+
+| O que o browser mostrou | Antes | Depois |
+|---|---|---|
+| servidores ICE recebidos | `turn:192.168.1.32:3478` | `turn:turn.ngolacloud.com:3478` |
+| par escolhido | `relay → relay 192.168.1.32` | `relay → relay 197.148.40.67` |
+
+O candidato remoto é o relay do SFU, e está no IP **público**: o servidor alocou no coturn
+pelo nome (o `hostAliases` resolve), o coturn anunciou o público, e os dois relays
+falaram-se — o caminho que a #320 desenhou, medido em produção.
+
+A media a partir de **fora** foi confirmada pelo dono com uma chamada real. Não há ainda uma
+medição automática de fora — a sonda que se usou era um ramo temporário e foi apagada; só
+media que a 3478 responde, não que há media.
 
 **Por fechar:** o TCP 3478 de fora (só conta para redes que bloqueiam UDP); um 403 na consola
 do anfitrião e seis 401 na do convidado durante a prova, que não impediram nada e não foram
