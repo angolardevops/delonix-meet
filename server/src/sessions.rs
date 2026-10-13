@@ -38,6 +38,9 @@ pub enum AuthMethod {
     Passkey,
     Sso,
     Odoo,
+    /// Autorização de um agente por OAuth 2.1 (ADR-0028). É uma sessão como as
+    /// outras de propósito: aparece na lista, e «terminar» mata o agente.
+    Oauth,
     Legacy,
 }
 
@@ -49,6 +52,7 @@ impl AuthMethod {
             AuthMethod::Passkey => "passkey",
             AuthMethod::Sso => "sso",
             AuthMethod::Odoo => "odoo",
+            AuthMethod::Oauth => "oauth",
             AuthMethod::Legacy => "legacy",
         }
     }

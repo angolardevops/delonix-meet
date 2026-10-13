@@ -803,21 +803,28 @@ async fn emit_pair(
     }))
 }
 
-/// Abre a linha em `user_sessions`. O nome do cliente vai no `user_agent`: é
-/// o que a pessoa lê na lista de sessões activas, e sem isso «terminar» seria
-/// adivinhar qual é o agente.
+/// Abre a sessão do agente.
+///
+/// Chama o helper canónico (`sessions::upsert`) e não um `INSERT` próprio: a
+/// sessão é uma só coisa neste sistema, e uma segunda escrita na mesma tabela
+/// é a cópia que a catraca da arquitectura persegue. O nome do cliente vai no
+/// `user_agent` — é o que a pessoa lê na lista de sessões activas, e sem isso
+/// «terminar» seria adivinhar qual é o agente.
 async fn open_agent_session(
     state: &AppState,
     user_id: Uuid,
     client_name: &str,
 ) -> Result<Uuid, ApiError> {
-    let (id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO user_sessions (user_id, auth_method, user_agent, ip)
-         VALUES ($1, 'oauth', $2, '') RETURNING id",
+    let id = Uuid::new_v4();
+    crate::sessions::upsert(
+        state,
+        id,
+        user_id,
+        Some(crate::sessions::AuthMethod::Oauth),
+        &format!("Agente MCP — {client_name}"),
+        "",
+        Utc::now(),
     )
-    .bind(user_id)
-    .bind(format!("Agente MCP — {client_name}"))
-    .fetch_one(&state.db)
     .await?;
     Ok(id)
 }
