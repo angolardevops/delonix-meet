@@ -448,7 +448,7 @@ pub async fn list_messages(
                 "mail_messages.unknown_status",
                 format!("estado desconhecido: {st}"),
             )
-            .with_field("status", &ESTADOS.join(" | "))
+            .with_field("status", ESTADOS.join(" | "))
             .into());
         }
     }

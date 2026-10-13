@@ -4720,6 +4720,89 @@
           }
         ]
       },
+      "MailMessage": {
+        "description": "Uma mensagem da caixa de saída. **SEM O CORPO**, e isso é deliberado:\n\no corpo de um convite leva o **token do convite**, e o de uma notificação\nleva o título da reunião. Devolver corpos numa listagem era espalhar\ncredenciais por uma rota de diagnóstico que ninguém precisa de ler assim —\nquem quer o token de um convite pede o convite, onde a autorização é a\nprópria.\n\nPela mesma razão não há rota para UMA mensagem com o corpo: não houve\npergunta que a justificasse, e acrescentá-la depois é mais fácil do que\nretirar uma que já exista.",
+        "properties": {
+          "attempt": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "description": "A razão da última falha, quando houve — é para isto que esta rota serve.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "purpose": {
+            "description": "`invitation` | `notification` | … (ver `mail::Purpose`).",
+            "type": "string"
+          },
+          "retry_at": {
+            "description": "Quando a repetição está agendada. `null` = não há mais.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sent_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "`pending` | `sending` | `sent` | `failed`.",
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "to_address": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "purpose",
+          "to_address",
+          "subject",
+          "status",
+          "attempt",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "MailMessagePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MailMessage"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "MailRelayCheck": {
         "description": "O resultado de uma verificação: ligou-se ao relay e falou SMTP com ele\n(autenticação incluída), **sem mandar mensagem nenhuma**.",
         "properties": {
@@ -20306,6 +20389,123 @@
         "summary": "Reenvia: roda o token (o anterior deixa de servir) e renova a validade.",
         "tags": [
           "directory"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/mail-messages": {
+      "get": {
+        "description": "**Para que serve:** até aqui, uma mensagem que falhava deixava o erro numa\nlinha que a API não expunha — quem configurou um relay descobria o problema\npor um email que nunca chegou. A verificação do relay\n(`POST …/mail-settings/check`) diz se a ligação está boa; isto diz o que\naconteceu a cada mensagem.\n\n**O que NÃO aparece aqui:** o correio que não é da organização. A reposição\nde password e a prova de endereço enfileiram com `org_id` nulo de propósito\n(são da pessoa, não da empresa), e por isso nunca entram nesta listagem —\nnem o seu token de uso único, que vai no corpo.",
+        "operationId": "list_messages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "1–100, omissão 50.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Só neste estado: `pending` | `sending` | `sent` | `failed`.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Só deste propósito: `invitation` | `notification` | …",
+            "in": "query",
+            "name": "purpose",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailMessagePage"
+                }
+              }
+            },
+            "description": "Sem corpos: o do convite leva o token."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`mail_messages.unknown_status` ou `mail_messages.unknown_purpose`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é administrador desta organização"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "A caixa de saída desta organização, mais recentes primeiro.",
+        "tags": [
+          "org"
         ]
       }
     },
