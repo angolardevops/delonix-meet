@@ -39,6 +39,12 @@ spec:
             pathType: Prefix
             backend:
               service: { name: delonix-server, port: { number: 8180 } }
+          # Descoberta do OAuth (ADR-0028 §2): os RFC 8414 e 9728 põem-na na
+          # RAIZ. Só o prefixo `oauth-` — o `acme-challenge` é do cert-manager.
+          - path: /.well-known/oauth-
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
           {{- with include "dm.asrService" . }}
           - path: /asr
             pathType: Prefix

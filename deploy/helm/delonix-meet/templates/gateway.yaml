@@ -86,6 +86,16 @@ spec:
     - matches:
         - path: { type: PathPrefix, value: /api }
         - path: { type: PathPrefix, value: /rtc }
+        # A descoberta do OAuth (ADR-0028 §2) vive na RAIZ porque os RFC 8414 e
+        # 9728 a põem lá — é parte do contrato, não uma escolha nossa. Sem esta
+        # linha o documento caía na regra do `/` e era servido pela web: um
+        # cliente MCP recebia HTML e nunca encontrava o servidor de
+        # autorização.
+        #
+        # `oauth-` e não `/.well-known/` inteiro, de propósito: o
+        # `/.well-known/acme-challenge/` é do cert-manager, e levá-lo para a
+        # API partia a emissão de certificados por HTTP-01.
+        - path: { type: PathPrefix, value: /.well-known/oauth- }
       backendRefs:
         - { name: delonix-server, port: 8180 }
     {{- with include "dm.asrService" . }}

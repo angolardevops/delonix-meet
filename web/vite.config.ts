@@ -174,6 +174,12 @@ export default defineConfig(({ command }) => {
         // log do backend. Foi assim que o directo pareceu recusado quando na
         // verdade nunca foi tentado (R78).
         '/api': { target: `http://${apiHost}:${apiPort}`, changeOrigin: true, ws: true },
+        // A descoberta do OAuth dos clientes MCP (ADR-0028 §2) vive na RAIZ,
+        // não debaixo de `/api`: é onde os RFC 8414 e 9728 a põem. Sem esta
+        // linha o dev server respondia com o index.html da aplicação e o
+        // percurso do agente não se podia experimentar sem um cluster —
+        // exactamente a mesma falta que havia no nginx e no chart.
+        '/.well-known/oauth-': { target: `http://${apiHost}:${apiPort}`, changeOrigin: true },
         '/ws': { target: `ws://${apiHost}:${apiPort}`, ws: true, changeOrigin: true },
         '/rtc': { target: `ws://${apiHost}:${apiPort}`, ws: true, changeOrigin: true },
       },
