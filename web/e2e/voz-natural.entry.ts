@@ -11,6 +11,7 @@
 //
 // Um só RNNoise alimenta todas as cadeias: o que as distingue é o que vem
 // DEPOIS dele, e assim nenhuma diferença pode vir de dois estados do RNNoise.
+import { audioConstraints, withNativeNoiseSuppression } from '../src/media'
 import { buildVoiceChain, createVoiceGate, loadVoiceChain, VOICE_GATE, type VoiceGateParams } from '../src/voiceChain'
 import gateAntigoUrl from './voz-natural-gate-antigo.js?url'
 
@@ -34,12 +35,30 @@ interface Resultado {
   crossOriginIsolated: boolean
 }
 
+/** O que o recuo do produto fez a um microfone (falso) aberto sem a supressão nativa. */
+interface Recuo {
+  abertoSemSupressao: boolean
+  /** Pedir o estado que já tem devolve a MESMA pista — no caminho normal nada se reabre. */
+  semMudancaEAMesma: boolean
+  /** Pedir a supressão de volta: como ficou a pista devolvida. */
+  supressao: boolean | undefined
+  eco: boolean | undefined
+  ganho: boolean | undefined
+  reabriu: boolean
+  antigaParada: boolean
+  viva: boolean
+  mudoPreservado: boolean
+  /** Os factos do browser em que o recuo assenta, medidos aqui e não lembrados. */
+  factos: { idealComPistaViva: boolean | undefined; exactComPistaViva: string }
+}
+
 declare global {
   interface Window {
     __voz: {
       pronto: boolean
       erro: string | null
       render: (sinalB64: string, cadeias: PedidoDeCadeia[], esperaMs: number) => Promise<Resultado>
+      recuo: () => Promise<Recuo>
     }
   }
 }
@@ -136,6 +155,52 @@ async function render(sinalB64: string, cadeias: PedidoDeCadeia[], esperaMs: num
   }
 }
 
-window.__voz = { pronto: true, erro: null, render }
+/**
+ * O RECUO, com o código do produto: um microfone aberto como a cadeia de voz
+ * o pede (sem a supressão nativa) tem de poder voltar a tê-la — é o que
+ * acontece quando o RNNoise não carrega. Corre sobre o microfone falso do
+ * Chromium; o que se prova é o `withNativeNoiseSuppression` de `src/media.ts`.
+ */
+async function recuo(): Promise<Recuo> {
+  // Primeiro os factos: com uma pista do microfone VIVA (sem supressão), o que
+  // devolve um pedido novo com a supressão ligada — «ideal» e `exact`?
+  const viva = (await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(undefined, false) })).getAudioTracks()[0]
+  const id = viva.getSettings().deviceId
+  const outra = (await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(id, true) })).getAudioTracks()[0]
+  const idealComPistaViva = outra.getSettings().noiseSuppression
+  outra.stop()
+  let exactComPistaViva = 'aceite'
+  try {
+    const e = await navigator.mediaDevices.getUserMedia({ audio: { ...audioConstraints(id, true), noiseSuppression: { exact: true } } })
+    e.getTracks().forEach((t) => t.stop())
+  } catch (e) {
+    exactComPistaViva = e instanceof Error ? e.name : String(e)
+  }
+  viva.stop()
+
+  const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(undefined, false) })
+  const crua = s.getAudioTracks()[0]
+  crua.enabled = false // o mute escolhido tem de sobreviver à reabertura
+  const abertoSemSupressao = crua.getSettings().noiseSuppression === false
+  const mesma = await withNativeNoiseSuppression(crua, false)
+  const reposta = await withNativeNoiseSuppression(crua, true)
+  const st = reposta.getSettings()
+  const r: Recuo = {
+    abertoSemSupressao,
+    semMudancaEAMesma: mesma === crua,
+    supressao: st.noiseSuppression,
+    eco: st.echoCancellation,
+    ganho: st.autoGainControl,
+    reabriu: reposta !== crua,
+    antigaParada: reposta === crua || crua.readyState === 'ended',
+    viva: reposta.readyState === 'live',
+    mudoPreservado: reposta.enabled === false,
+    factos: { idealComPistaViva, exactComPistaViva },
+  }
+  reposta.stop()
+  return r
+}
+
+window.__voz = { pronto: true, erro: null, render, recuo }
 const log = document.getElementById('log')
 if (log) log.textContent = 'pronto'

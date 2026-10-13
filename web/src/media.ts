@@ -51,8 +51,22 @@ export function audioConstraints(deviceId?: string, noiseSuppression = true): Me
  * `noiseSuppression` trocado RESOLVE e o `getSettings()` fica como estava. O
  * Firefox muda em vivo, e por isso tenta-se primeiro.
  *
- * Nunca rejeita: se não conseguir, devolve a pista que recebeu — um microfone
- * com a supressão errada ainda é um microfone.
+ * Porque é que PÁRA A PISTA ANTES de reabrir: o Chromium tem UMA fonte por
+ * microfone, com o processamento com que foi aberta, e enquanto houver uma
+ * pista viva dela qualquer pedido novo recebe essa mesma fonte. Medido pelo
+ * arnês, que apanhou as duas primeiras versões disto: com a antiga viva, um
+ * pedido «ideal» devolve outra pista com a supressão exactamente como estava
+ * (reabria e ficava na mesma), e um pedido `exact` é recusado
+ * (`OverconstrainedError`). Só largando a fonte é que ela reabre diferente.
+ *
+ * Daí o único risco desta função: se a reabertura falhar, a pista antiga já
+ * está parada. Tenta-se então reabrir como estava; se nem isso der, devolve-se
+ * a pista parada e o aviso fica na consola — não rejeita, porque quem chama
+ * está a meio de montar uma chamada e um erro aqui deitava-a abaixo.
+ *
+ * O que NÃO resolve: outra pista do MESMO microfone viva noutro sítio da
+ * página (um clone, um medidor que abriu o seu) prende a fonte. Nesse caso a
+ * pista devolvida vem com a supressão antiga, e isso lê-se no `getSettings()`.
  */
 export async function withNativeNoiseSuppression(track: MediaStreamTrack, wanted: boolean): Promise<MediaStreamTrack> {
   const estado = () => track.getSettings().noiseSuppression
@@ -67,17 +81,23 @@ export async function withNativeNoiseSuppression(track: MediaStreamTrack, wanted
   if (desconhecido || estado() === wanted) return track
   const deviceId = track.getSettings().deviceId
   if (!deviceId) return track
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId, wanted) })
-    const reaberta = s.getAudioTracks()[0]
-    if (!reaberta) return track
-    reaberta.enabled = track.enabled
-    track.stop()
-    return reaberta
-  } catch (e) {
-    console.warn(`[mic] não foi possível reabrir o microfone com noiseSuppression=${wanted}`, e)
-    return track
+  const ligada = track.enabled
+  track.stop()
+  for (const pedido of [wanted, !wanted]) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId, pedido) })
+      const reaberta = s.getAudioTracks()[0]
+      if (!reaberta) continue
+      reaberta.enabled = ligada
+      if (reaberta.getSettings().noiseSuppression !== wanted) {
+        console.warn(`[mic] o microfone reabriu com noiseSuppression=${reaberta.getSettings().noiseSuppression} (pedido: ${wanted})`)
+      }
+      return reaberta
+    } catch (e) {
+      console.warn(`[mic] não foi possível reabrir o microfone com noiseSuppression=${pedido}`, e)
+    }
   }
+  return track
 }
 
 /**

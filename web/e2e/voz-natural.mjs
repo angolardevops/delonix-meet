@@ -31,6 +31,13 @@
 //   (e) ataque, mediana dos primeiros 30 ms: +6,2  → −0,3 dB;  pior frase −202 → −34
 //   (f) latência acrescentada:               32,7  → 50,7 ms     ← PIOROU
 //
+// E PROVA, com o código do produto sobre o microfone falso do Chromium, a regra
+// «uma só supressão de ruído»: o microfone abre-se sem a nativa quando o
+// RNNoise vai tratar dele, e o RECUO (`withNativeNoiseSuppression`) devolve um
+// microfone com a nativa ligada. Foi esta prova que apanhou duas versões do
+// recuo que «reabriam» e ficavam na mesma: o Chromium tem uma fonte por
+// microfone, e só a larga quando a última pista dela pára.
+//
 // O QUE CONTRARIOU O DESENHO, e ficou assim:
 //   · «menos latência» é falso: os compressores custavam 12 ms e a antecipação
 //     do gate custa 30;
@@ -63,7 +70,10 @@
 //   · teclados a sério: as teclas são sintéticas, e três sons do sistema não
 //     são uma amostra. Uma batida ou um som de 50 ms passa — dura como uma sílaba;
 //   · um microfone, uma sala, outro browser. O modo APM usa o processamento do
-//     Chromium sobre um microfone FALSO (um ficheiro), sem altifalante.
+//     Chromium sobre um microfone FALSO (um ficheiro), sem altifalante;
+//   · os caminhos da SALA (`room/useLocalMedia.ts`, `denoiseMic`): prova-se a
+//     função do recuo, não os hooks de React que a chamam, nem o Firefox
+//     (que muda a pista em vivo) nem o Safari.
 //
 // MODO APM (variável APM, em tempo real, ~2 min; mede e não afirma): o mesmo
 // sinal como microfone falso do Chromium, com o pedido de HOJE (supressão e
@@ -1005,10 +1015,18 @@ const CADEIAS = [
 ]
 
 const vite = await arrancarVite()
-const browser = await chromium.launch()
+// Microfone FALSO: a renderização offline não o usa; serve para provar o recuo
+// do produto (`withNativeNoiseSuppression`) sobre uma pista de dispositivo.
+const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] })
 let r
+let recuo
 try {
   r = await renderizar(browser, vite.url, x, CADEIAS)
+  const pagina = await browser.newPage()
+  await pagina.goto(`${vite.url}/e2e/voz-natural.html`, { waitUntil: 'load' })
+  await pagina.waitForFunction(() => window.__voz?.pronto === true, null, { timeout: 60_000 })
+  recuo = await pagina.evaluate(() => window.__voz.recuo()).catch((e) => ({ erro: String(e) }))
+  recuo.versao = browser.version()
 } finally {
   await browser.close()
 }
@@ -1062,6 +1080,25 @@ if (fala.real) {
 }
 ok(A.duros.tecla >= N.duros.tecla + 10, 'C1 a ANTIGA deixa passar teclas com corpo que a NOVA segura', `pico ${f1(A.duros.tecla)} contra ${f1(N.duros.tecla)} dBFS`)
 ok(S.duros.tecla >= N.duros.tecla + 10, 'C2 sem a rejeição de transitórios, a NOVA deixa passar as teclas', `pico ${f1(S.duros.tecla)} contra ${f1(N.duros.tecla)} dBFS`)
+
+// ── Uma só supressão, e o recuo: o código do produto sobre um microfone falso. ──
+console.log(`\nUMA SÓ SUPRESSÃO DE RUÍDO (Chromium ${recuo.versao}, microfone falso)`)
+if (recuo.erro) {
+  ok(false, 'o recuo correu', recuo.erro)
+} else {
+  ok(recuo.abertoSemSupressao, 'o microfone abre-se SEM a supressão nativa quando a cadeia de voz o vai tratar (`audioConstraints(id, false)`)')
+  ok(recuo.semMudancaEAMesma, 'no caminho normal nada se reabre: pedir o estado que a pista já tem devolve a mesma pista')
+  ok(
+    recuo.supressao === true && recuo.eco === true && recuo.ganho === true && recuo.viva,
+    'RECUO: se o RNNoise falhar, o microfone volta a ter a supressão nativa (com eco e ganho)',
+    `noiseSuppression=${recuo.supressao}, echoCancellation=${recuo.eco}, autoGainControl=${recuo.ganho}`,
+  )
+  nota(
+    `porque é que o recuo PÁRA a pista antes de reabrir — com uma pista viva sem supressão, um pedido novo de supressão ligada devolve ` +
+      `noiseSuppression=${recuo.factos.idealComPistaViva} («ideal») e «${recuo.factos.exactComPistaViva}» (\`exact\`)`,
+  )
+  ok(recuo.antigaParada && recuo.mudoPreservado, 'RECUO: a pista antiga fica parada e o mute escolhido passa para a nova', recuo.reabriu ? 'reabriu o microfone (o Chromium não muda uma pista viva)' : 'mudou a pista em vivo')
+}
 
 // ── Limiares: o que faz esta prova falhar se a cadeia regredir. ──
 console.log('\nLIMIARES DA CADEIA NOVA')

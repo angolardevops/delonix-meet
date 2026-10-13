@@ -254,19 +254,27 @@ export function useLocalMedia(core: RoomCore) {
       // Escolher UM microfone desfaz a mistura de dois da pré-entrada.
       core.micMixRef.current?.stop()
       core.micMixRef.current = null
-      // Com a cadeia de voz (`ns`), o microfone abre-se SEM a supressão nativa.
+      // Com a cadeia de voz (`ns`), o microfone pede-se SEM a supressão nativa.
+      // Se for o MESMO microfone que já está aberto, o Chromium devolve-o com
+      // o processamento que tinha (uma fonte por microfone) — quem acerta é o
+      // `denoiseMic`, a seguir.
       const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId || undefined, !ns) })
       const raw = s.getAudioTracks()[0]
       raw.enabled = micOn
       // O deviceId lê-se ANTES do denoise: a track limpa não o tem.
       const devId = raw.getSettings().deviceId ?? deviceId
-      const sendTrack = await denoiseMic(raw, ns)
-      sendTrack.enabled = micOn
+      // A pista que se estava a enviar pára ANTES de acertar a nova, e não
+      // depois: sem RNNoise ela É a pista do microfone, e enquanto viver
+      // prende-lhe o processamento — a nova reabria com a supressão antiga.
+      // Só se pára depois de o microfone novo ter aberto (acima): se o pedido
+      // falhar, a chamada fica com o microfone que tinha.
       const old = core.localStreamRef.current?.getAudioTracks()[0]
       if (old) {
         core.localStreamRef.current?.removeTrack(old)
         old.stop()
       }
+      const sendTrack = await denoiseMic(raw, ns)
+      sendTrack.enabled = micOn
       core.localStreamRef.current?.addTrack(sendTrack)
       await core.callRef.current?.replaceAudioTrack(sendTrack)
       if (core.localStreamRef.current) core.levelsRef.current?.watch('me', core.localStreamRef.current)
