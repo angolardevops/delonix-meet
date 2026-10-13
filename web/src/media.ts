@@ -4,6 +4,7 @@
  */
 import { accessTokenValue } from './api'
 import { asrDoServidorPreferido, motorDaTranscricao } from './legendasPref'
+import { buildVoiceChain, loadVoiceChain, type VoiceChain } from './voiceChain'
 
 export interface DeviceSets {
   mics: MediaDeviceInfo[]
@@ -20,7 +21,14 @@ export async function listDevices(): Promise<DeviceSets> {
   }
 }
 
-/** Constraints de áudio com supressão de ruído opcional. */
+/**
+ * Restrições do microfone. `noiseSuppression` é a supressão de ruído NATIVA do
+ * browser — o cancelamento de eco e o ganho automático pedem-se sempre.
+ *
+ * UMA SÓ SUPRESSÃO: quando a cadeia de voz da app (RNNoise, ver `Denoiser`)
+ * vai tratar o microfone, pede-se aqui `false`. Duas supressões em série não
+ * limpam o dobro — a segunda trabalha sobre os artefactos da primeira.
+ */
 export function audioConstraints(deviceId?: string, noiseSuppression = true): MediaTrackConstraints {
   return {
     ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
@@ -31,35 +39,92 @@ export function audioConstraints(deviceId?: string, noiseSuppression = true): Me
 }
 
 /**
- * Cadeia de voz "estúdio": RNNoise → noise gate → nivelador → limitador.
+ * Devolve uma pista deste microfone com a supressão NATIVA no estado pedido —
+ * a mesma, se já estiver; outra, reaberta, se não houver maneira de a mudar.
  *
- * RNNoise (IA via AudioWorklet WASM) remove teclado, ventoinha, ruído de
- * fundo muito melhor que a supressão nativa do browser — mas não zera o
- * chão de ruído residual entre frases. O `noise-gate-processor`
- * (noiseGateWorklet.js) corta esse chão a silêncio a sério quando ninguém
- * fala. O nivelador (`DynamicsCompressorNode`, ratio moderado) aproxima o
- * volume de quem fala baixo e alto — o "som de podcast" nivelado. O
- * limitador (ratio muito alto, threshold perto de 0 dB) é a rede de
- * segurança final contra picos que saturariam o codificador Opus.
+ * Existe por causa do RECUO: o microfone abre-se sem supressão nativa quando
+ * o RNNoise vai tratar dele, e se o RNNoise não carregar a pista não pode
+ * ficar sem supressão NENHUMA.
  *
- * Ordem importa: o gate vem ANTES do nivelador — nivelar primeiro
- * amplificaria o ruído residual durante o silêncio, que é exactamente o
- * chão que o gate existe para cortar.
+ * Porque é que reabre: o Chromium não muda o processamento de uma pista viva.
+ * Medido no 151 (`e2e/voz-natural.mjs`, modo APM): `applyConstraints` com
+ * `noiseSuppression` trocado RESOLVE e o `getSettings()` fica como estava. O
+ * Firefox muda em vivo, e por isso tenta-se primeiro.
+ *
+ * Porque é que PÁRA A PISTA ANTES de reabrir: o Chromium tem UMA fonte por
+ * microfone, com o processamento com que foi aberta, e enquanto houver uma
+ * pista viva dela qualquer pedido novo recebe essa mesma fonte. Medido pelo
+ * arnês, que apanhou as duas primeiras versões disto: com a antiga viva, um
+ * pedido «ideal» devolve outra pista com a supressão exactamente como estava
+ * (reabria e ficava na mesma), e um pedido `exact` é recusado
+ * (`OverconstrainedError`). Só largando a fonte é que ela reabre diferente.
+ *
+ * Daí o único risco desta função: se a reabertura falhar, a pista antiga já
+ * está parada. Tenta-se então reabrir como estava; se nem isso der, devolve-se
+ * a pista parada e o aviso fica na consola — não rejeita, porque quem chama
+ * está a meio de montar uma chamada e um erro aqui deitava-a abaixo.
+ *
+ * O que NÃO resolve: outra pista do MESMO microfone viva noutro sítio da
+ * página (um clone, um medidor que abriu o seu) prende a fonte. Nesse caso a
+ * pista devolvida vem com a supressão antiga, e isso lê-se no `getSettings()`.
+ */
+export async function withNativeNoiseSuppression(track: MediaStreamTrack, wanted: boolean): Promise<MediaStreamTrack> {
+  const estado = () => track.getSettings().noiseSuppression
+  if (estado() === wanted) return track
+  // Um browser que não diz o estado não deixa saber se mudou: pede-se, e fica.
+  const desconhecido = estado() === undefined
+  try {
+    await track.applyConstraints(audioConstraints(undefined, wanted))
+  } catch {
+    /* este browser não muda uma pista viva */
+  }
+  if (desconhecido || estado() === wanted) return track
+  const deviceId = track.getSettings().deviceId
+  if (!deviceId) return track
+  const ligada = track.enabled
+  track.stop()
+  for (const pedido of [wanted, !wanted]) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId, pedido) })
+      const reaberta = s.getAudioTracks()[0]
+      if (!reaberta) continue
+      reaberta.enabled = ligada
+      if (reaberta.getSettings().noiseSuppression !== wanted) {
+        console.warn(`[mic] o microfone reabriu com noiseSuppression=${reaberta.getSettings().noiseSuppression} (pedido: ${wanted})`)
+      }
+      return reaberta
+    } catch (e) {
+      console.warn(`[mic] não foi possível reabrir o microfone com noiseSuppression=${pedido}`, e)
+    }
+  }
+  return track
+}
+
+/**
+ * A cadeia de voz da chamada sobre uma pista de microfone:
+ * `microfone → RNNoise → gate de voz` (o grafo está em `voiceChain.ts`).
+ *
+ * RNNoise (IA via AudioWorklet WASM) tira o ruído de fundo. O gate
+ * (`noiseGateWorklet.js`) baixa o que sobra entre frases para um chão — não
+ * para silêncio — e não abre para um estalo curto, como uma tecla.
+ *
+ * Já NÃO tem nivelador nem limitador: o ganho de compensação do
+ * `DynamicsCompressorNode` subia a cauda da sala e o eco residual (era o «eco»
+ * que se ouvia) e os agudos da fala. Quem nivela é o `autoGainControl` do
+ * browser. As medidas estão no cabeçalho do `e2e/voz-natural.mjs`.
  *
  * Recebe a track do microfone e devolve uma track "limpa" para enviar à
- * chamada.
+ * chamada. Quem abre o microfone para isto pede-o SEM a supressão nativa
+ * (`audioConstraints(id, false)`).
  */
 export class Denoiser {
   private ctx: AudioContext | null = null
-  private node: import('@sapphi-red/web-noise-suppressor').RnnoiseWorkletNode | null = null
-  private gate: AudioWorkletNode | null = null
-  private leveler: DynamicsCompressorNode | null = null
-  private limiter: DynamicsCompressorNode | null = null
+  private chain: VoiceChain | null = null
   private source: MediaStreamAudioSourceNode | null = null
   private dest: MediaStreamAudioDestinationNode | null = null
 
   get active(): boolean {
-    return !!this.node
+    return !!this.chain
   }
 
   // Se o AudioContext for suspenso (política de autoplay, tab em 2º plano), a
@@ -71,67 +136,38 @@ export class Denoiser {
 
   /** Encaminha a track do mic pela cadeia; devolve a track processada. */
   async process(track: MediaStreamTrack): Promise<MediaStreamTrack> {
-    const [{ loadRnnoise, RnnoiseWorkletNode }, wasmUrl, wasmSimdUrl, workletUrl, gateWorkletUrl] = await Promise.all([
-      import('@sapphi-red/web-noise-suppressor'),
-      import('@sapphi-red/web-noise-suppressor/rnnoise.wasm?url').then((m) => m.default),
-      import('@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url').then((m) => m.default),
-      import('@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url').then((m) => m.default),
-      import('./noiseGateWorklet.js?url').then((m) => m.default),
-    ])
     // RNNoise trabalha a 48 kHz — fixa a taxa para não reamostrar mal.
-    this.ctx = new AudioContext({ sampleRate: 48000 })
-    const wasmBinary = await loadRnnoise({ url: wasmUrl, simdUrl: wasmSimdUrl })
-    await Promise.all([
-      this.ctx.audioWorklet.addModule(workletUrl),
-      this.ctx.audioWorklet.addModule(gateWorkletUrl),
-    ])
-    this.source = this.ctx.createMediaStreamSource(new MediaStream([track]))
-    this.node = new RnnoiseWorkletNode(this.ctx, { maxChannels: 1, wasmBinary })
-    this.gate = new AudioWorkletNode(this.ctx, 'noise-gate-processor')
-
-    this.leveler = this.ctx.createDynamicsCompressor()
-    this.leveler.threshold.value = -24
-    this.leveler.knee.value = 12
-    this.leveler.ratio.value = 3
-    this.leveler.attack.value = 0.01
-    this.leveler.release.value = 0.25
-
-    this.limiter = this.ctx.createDynamicsCompressor()
-    this.limiter.threshold.value = -3
-    this.limiter.knee.value = 0
-    this.limiter.ratio.value = 20
-    this.limiter.attack.value = 0.003
-    this.limiter.release.value = 0.1
-
-    this.dest = this.ctx.createMediaStreamDestination()
-    this.source.connect(this.node).connect(this.gate).connect(this.leveler).connect(this.limiter).connect(this.dest)
+    const ctx = new AudioContext({ sampleRate: 48000 })
+    this.ctx = ctx
+    try {
+      const modules = await loadVoiceChain(ctx)
+      this.source = ctx.createMediaStreamSource(new MediaStream([track]))
+      this.chain = buildVoiceChain(ctx, modules)
+      this.dest = ctx.createMediaStreamDestination()
+      this.source.connect(this.chain.input)
+      this.chain.output.connect(this.dest)
+    } catch (e) {
+      // Sem isto, um RNNoise que não carregasse deixava um AudioContext aberto
+      // por cada tentativa — e o browser só dá meia dúzia.
+      this.stop()
+      throw e
+    }
     // Garante que arranca a processar (contextos criados sem gesto começam
     // 'suspended') e mantém-no vivo se o browser o suspender.
-    await this.ctx.resume().catch(() => {})
-    this.ctx.onstatechange = this.resume
+    await ctx.resume().catch(() => {})
+    ctx.onstatechange = this.resume
     document.addEventListener('visibilitychange', this.resume)
     return this.dest.stream.getAudioTracks()[0]
   }
 
   stop() {
     document.removeEventListener('visibilitychange', this.resume)
-    try {
-      this.node?.destroy()
-    } catch {
-      /* já destruído */
-    }
     this.source?.disconnect()
-    this.node?.disconnect()
-    this.gate?.disconnect()
-    this.leveler?.disconnect()
-    this.limiter?.disconnect()
+    this.chain?.destroy()
     if (this.ctx) this.ctx.onstatechange = null
-    void this.ctx?.close()
+    void this.ctx?.close().catch(() => {})
     this.ctx = null
-    this.node = null
-    this.gate = null
-    this.leveler = null
-    this.limiter = null
+    this.chain = null
     this.source = null
     this.dest = null
   }

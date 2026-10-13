@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, currentUser, getRoom, isAbort, listMeetingsWithOptions, netProbe, roomWaiting, type RecordQuality, type WaitingPeer } from '../api'
 import { SONDAGENS, type AmostraRede } from './qualidadePrevista'
-import { audioConstraints, listDevices, videoConstraints } from '../media'
+import { audioConstraints, listDevices, videoConstraints, withNativeNoiseSuppression } from '../media'
 import { MicMix } from './micMix'
 import { reuniaoMaisProxima } from './salaInfo'
 import type { LocalMedia } from './useLocalMedia'
@@ -146,8 +146,13 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
           else if (e?.name === 'NotFoundError' && !permErr) permErr = 'missing'
           throw e
         })
-      const stream = await getMedia({ audio: audioConstraints(), video: videoConstraints() })
-        .catch(() => getMedia({ audio: audioConstraints() }))
+      // O microfone abre-se já no estado em que vai para a sala: SEM a
+      // supressão nativa do browser se a cadeia de voz estiver escolhida (uma
+      // só supressão — ver `denoiseMic`). Se a caixa mudar depois, quem acerta
+      // é o `denoiseMic`, à entrada; aqui só há um medidor de nível a ouvir.
+      const audio = audioConstraints(undefined, !media.noiseSuppression)
+      const stream = await getMedia({ audio, video: videoConstraints() })
+        .catch(() => getMedia({ audio }))
         .catch(() => new MediaStream())
       if (cancelled) {
         stream.getTracks().forEach((tr) => tr.stop())
@@ -262,7 +267,7 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
     if (kind === 'cam' && second?.deviceId === deviceId) stopSecond()
     try {
       const ns = await navigator.mediaDevices.getUserMedia(
-        kind === 'mic' ? { audio: audioConstraints(deviceId) } : { video: videoConstraints(deviceId) },
+        kind === 'mic' ? { audio: audioConstraints(deviceId, !media.noiseSuppression) } : { video: videoConstraints(deviceId) },
       )
       const nt = kind === 'mic' ? ns.getAudioTracks()[0] : ns.getVideoTracks()[0]
       const old = kind === 'mic' ? s.getAudioTracks()[0] : s.getVideoTracks()[0]
@@ -320,15 +325,21 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
     }
     if (core.micMixRef.current) unmix()
     const s = core.previewStreamRef.current
-    const primary = s?.getAudioTracks()[0]
-    if (!s || !primary || !deviceId || deviceId === media.micId) return
+    const original = s?.getAudioTracks()[0]
+    if (!s || !original || !deviceId || deviceId === media.micId) return
     try {
       const ns = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId) })
       const extra = ns.getAudioTracks()[0]
+      // A MISTURA leva sempre a supressão nativa nas duas entradas, haja ou
+      // não RNNoise por cima: a saída dela não é um dispositivo, e por isso
+      // não há o que reabrir se a opção mudar ou o RNNoise falhar — sem isto
+      // podia ficar um microfone sem supressão nenhuma. O primeiro microfone
+      // pode ter sido aberto sem ela (ver o efeito acima); aqui volta a tê-la.
+      const primary = await withNativeNoiseSuppression(original, true)
       const m = new MicMix([primary, extra])
       m.output.enabled = primary.enabled
       primary.enabled = true
-      s.removeTrack(primary)
+      s.removeTrack(original)
       s.addTrack(m.output)
       core.micMixRef.current = m
       setMix({ deviceId, mix: m })

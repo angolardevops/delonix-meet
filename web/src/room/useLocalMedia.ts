@@ -12,6 +12,7 @@ import {
   playTestTone,
   presetBackgrounds,
   videoConstraints,
+  withNativeNoiseSuppression,
 } from '../media'
 import type { RoomCore } from './useRoomCore'
 
@@ -43,7 +44,7 @@ export function useLocalMedia(core: RoomCore) {
   const [speakerId, setSpeakerId] = useState('')
   // Supressão de ruído por IA (RNNoise) — LIGADA por omissão, ou o que a
   // pessoa escolheu em Definições ➜ Conta ➜ Preferências ao entrar. Se
-  // falhar, fica a track crua com a supressão nativa do browser.
+  // falhar, o microfone volta à supressão nativa do browser (ver `denoiseMic`).
   const [noiseSuppression, setNoiseSuppression] = useState(() => readJoinPrefs().noiseSuppression)
 
   const [bgMode, setBgMode] = useState<BgMode>(() => (readJoinPrefs().blurByDefault ? 'blur' : 'none'))
@@ -118,24 +119,47 @@ export function useLocalMedia(core: RoomCore) {
     if (core.roomState === 'in') signal.send({ type: 'media', cam: (camOn && hasLocalVideo) || meshSharing, mic: micOn })
   }, [camOn, micOn, hasLocalVideo, core.sharing, core.roomState, core.topology, signal])
 
-  /** Aplica (ou retira) a supressão por IA e devolve a track a enviar. */
+  /**
+   * Aplica (ou retira) a cadeia de voz e devolve a track a ENVIAR.
+   *
+   * É a ÚNICA porta por onde um microfone chega à chamada, e garante que há
+   * sempre UMA supressão de ruído — nem duas, nem nenhuma:
+   *
+   *  - `ns` ligado: o RNNoise trata do ruído e a supressão nativa do browser
+   *    sai (duas em série não limpam o dobro). Se o RNNoise não carregar, a
+   *    nativa VOLTA — é o recuo, e é o que impede um microfone sem supressão;
+   *  - `ns` desligado: o processamento nativo do browser, como sempre.
+   *
+   * Quem abre o microfone pede-o já no estado certo
+   * (`audioConstraints(id, !ns)`), e por isso no caminho normal nada se reabre.
+   * Quando não bate certo (a opção mudou na pré-entrada depois de o microfone
+   * estar aberto, ou o RNNoise falhou), o `withNativeNoiseSuppression` reabre
+   * o microfone — e a track devolvida pode ser OUTRA que não a recebida.
+   *
+   * `source: 'mix'` é a mistura de dois microfones: não tem dispositivo que se
+   * possa reabrir, e as duas entradas já vêm com a supressão nativa ligada
+   * (ver `toggleSecondMic` na pré-entrada).
+   */
   const denoiseMic = useCallback(
-    async (rawTrack: MediaStreamTrack, ns: boolean): Promise<MediaStreamTrack> => {
+    async (rawTrack: MediaStreamTrack, ns: boolean, source: 'device' | 'mix' = 'device'): Promise<MediaStreamTrack> => {
       core.denoiserRef.current?.stop()
       core.denoiserRef.current = null
       core.rawMicRef.current?.stop()
       core.rawMicRef.current = null
-      if (!ns) return rawTrack
+      const native = (track: MediaStreamTrack, on: boolean) =>
+        source === 'mix' ? Promise.resolve(track) : withNativeNoiseSuppression(track, on)
+      if (!ns) return native(rawTrack, true)
+      const raw = await native(rawTrack, false)
       try {
         const d = new Denoiser()
-        const clean = await d.process(rawTrack)
-        clean.enabled = rawTrack.enabled
+        const clean = await d.process(raw)
+        clean.enabled = raw.enabled
         core.denoiserRef.current = d
-        core.rawMicRef.current = rawTrack // mantém-se viva: alimenta o denoiser
+        core.rawMicRef.current = raw // mantém-se viva: alimenta o denoiser
         return clean
       } catch (e) {
         console.warn('[denoise] RNNoise indisponível — supressão nativa do browser', e)
-        return rawTrack
+        return native(raw, true)
       }
     },
     [core.denoiserRef, core.rawMicRef],
@@ -155,15 +179,21 @@ export function useLocalMedia(core: RoomCore) {
       setMicOn(track.enabled)
       return
     }
-    // Sem track (espectador ou mic negado à entrada): adquire agora.
+    // Sem track (espectador ou mic negado à entrada): adquire agora — e pela
+    // MESMA cadeia de voz que os outros caminhos. Este entrava com a track
+    // crua mesmo com a supressão por IA ligada: quem ligava o microfone tarde
+    // soava diferente de quem entrava com ele.
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(micId || undefined) })
-      const newTrack = s.getAudioTracks()[0]
-      if (!newTrack) throw new Error('sem microfone')
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(micId || undefined, !noiseSuppression) })
+      const raw = s.getAudioTracks()[0]
+      if (!raw) throw new Error('sem microfone')
+      // O deviceId lê-se ANTES do denoise: a track limpa não o tem.
+      const devId = raw.getSettings().deviceId ?? ''
+      const newTrack = await denoiseMic(raw, noiseSuppression)
       core.localStreamRef.current?.addTrack(newTrack)
       await core.callRef.current?.replaceAudioTrack(newTrack)
       if (core.localStreamRef.current) core.levelsRef.current?.watch('me', core.localStreamRef.current)
-      setMicId(newTrack.getSettings().deviceId ?? '')
+      setMicId(devId)
       setMicOn(true)
     } catch {
       setStatus(t('room.estado.semAcessoMicrofone'))
@@ -224,18 +254,27 @@ export function useLocalMedia(core: RoomCore) {
       // Escolher UM microfone desfaz a mistura de dois da pré-entrada.
       core.micMixRef.current?.stop()
       core.micMixRef.current = null
-      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId || undefined) })
+      // Com a cadeia de voz (`ns`), o microfone pede-se SEM a supressão nativa.
+      // Se for o MESMO microfone que já está aberto, o Chromium devolve-o com
+      // o processamento que tinha (uma fonte por microfone) — quem acerta é o
+      // `denoiseMic`, a seguir.
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId || undefined, !ns) })
       const raw = s.getAudioTracks()[0]
       raw.enabled = micOn
       // O deviceId lê-se ANTES do denoise: a track limpa não o tem.
       const devId = raw.getSettings().deviceId ?? deviceId
-      const sendTrack = await denoiseMic(raw, ns)
-      sendTrack.enabled = micOn
+      // A pista que se estava a enviar pára ANTES de acertar a nova, e não
+      // depois: sem RNNoise ela É a pista do microfone, e enquanto viver
+      // prende-lhe o processamento — a nova reabria com a supressão antiga.
+      // Só se pára depois de o microfone novo ter aberto (acima): se o pedido
+      // falhar, a chamada fica com o microfone que tinha.
       const old = core.localStreamRef.current?.getAudioTracks()[0]
       if (old) {
         core.localStreamRef.current?.removeTrack(old)
         old.stop()
       }
+      const sendTrack = await denoiseMic(raw, ns)
+      sendTrack.enabled = micOn
       core.localStreamRef.current?.addTrack(sendTrack)
       await core.callRef.current?.replaceAudioTrack(sendTrack)
       if (core.localStreamRef.current) core.levelsRef.current?.watch('me', core.localStreamRef.current)
@@ -313,7 +352,7 @@ export function useLocalMedia(core: RoomCore) {
     // Com dois microfones misturados, reprocessa-se a MISTURA — voltar a pedir
     // um só microfone desfazia a escolha da pré-entrada sem aviso.
     try {
-      const sendTrack = await denoiseMic(mix.freshOutput(), next)
+      const sendTrack = await denoiseMic(mix.freshOutput(), next, 'mix')
       sendTrack.enabled = micOn
       const old = core.localStreamRef.current?.getAudioTracks()[0]
       if (old) {

@@ -3736,3 +3736,32 @@ E ninguém reparou porque a prova existente **fixava o defeito**: `scheduling.rs
 - **Partilhar o recurso entre irmãos obriga a desempatar.** As ocorrências de uma série partilham a sala (um link por série, como no Zoom); tudo o que procurava a reunião pelo código da sala passou a ordenar por `started_at`, ou escrevia a acta na ocorrência errada.
 
 **Guardado por** `server/tests/reuniao_tem_sala_ao_agendar.rs` (seis provas: a sala nasce com a reunião, a porta pública diz a hora e não deixa escapar dono nem organização, arrancar duas vezes não arranca duas vezes, o convidado antes da hora recebe `meeting.not_started_yet`, passada a hora entra sem o anfitrião, o `.ics` leva `URL:`, e uma série tem um código só) e pelas asserções corrigidas em `scheduling.rs`. O que **não** está guardado por teste automático: o ecrã de espera em si (`web/src/pages/EsperaDaSala.tsx`) — a contagem e a abertura automática à hora foram medidas no browser, não há e2e que as corra.
+
+### R311 — A cadeia de voz amplificava o eco e subia os agudos, e nunca tinha sido ouvida
+
+**2026-10-13.** Reportado em produção, numa chamada real: «um eco no som, um pouco agudo».
+
+A cadeia de voz ligada por omissão era `RNNoise → gate → nivelador → limitador` (94f74208). O nivelador e o limitador são `DynamicsCompressorNode`, e o compressor do Web Audio aplica **ganho de compensação automático, que não se desliga**: tudo o que ficava abaixo do limiar saía mais alto. O que fica abaixo do limiar de um microfone numa sala é a cauda da reverberação e o eco que o cancelador deixa passar.
+
+Medido pelo arnês `web/e2e/voz-natural.mjs` (Chromium headless, `OfflineAudioContext`, o WASM do RNNoise e o gate a sério, o mesmo sinal pelas duas cadeias):
+
+| | cadeia antiga | cadeia nova |
+|---|---|---|
+| eco residual sozinho (fala a −30 dB) | **+7,1 dB** | −1,1 dB |
+| nível da fala | +5,4 dB | 0,0 dB |
+| agudos da fala (4–8 kHz sobre 300–3400 Hz) | **+3,1 dB** | +0,1 dB |
+| tecla com corpo a −10 dBFS, pico à saída | −12,4 dBFS | **−38,6 dBFS** |
+| latência acrescentada | 32,7 ms | **50,7 ms** (piorou) |
+
+A cadeia nova é `RNNoise → gate de voz`: sem compressores, com um gate que atenua para um chão em vez de cortar para silêncio digital, e que **não abre para um estalo curto** — só abre quando a energia se mantém, e um atraso de 30 ms deixa-o abrir antes do ataque da sílaba. Quem nivela é o `autoGainControl` do browser.
+
+**Porque passou.** O commit que a introduziu dizia-o: «Não verificado: o efeito real na chamada ao vivo — precisa de microfone real e ouvido humano». O único teste era sobre o gate, isolado. E a prova de sala que existe mede que os bytes de áudio crescem nos dois sentidos — o que uma cadeia que estraga o timbre também cumpre.
+
+**O que a medição contrariou, do que se supunha:** o «agudo» não vinha de duas supressões de ruído em série (a do Chromium, sozinha, mexe −0,2 dB) — vinha do nivelador; e a cadeia nova **não** tem menos latência, tem mais.
+
+**Regra.**
+- **Um `DynamicsCompressorNode` sobe o que está abaixo do limiar.** Numa cadeia de microfone isso é o eco e a sala. Quem o usar mede o ganho sobre um sinal baixo, não só sobre a fala.
+- **Processamento de áudio que «não foi ouvido» não está feito — e quando não se pode ouvir, mede-se contra o que havia antes**, sobre o mesmo sinal, com um controlo que prove que a régua vê o defeito.
+- **«Há áudio nos dois sentidos» não diz como soa.** A prova de sala não substitui uma medição do sinal.
+
+**Não validado:** ninguém ouviu a cadeia nova numa chamada; a fala do ensaio são oito frases curtas de uma voz; o eco é fala atenuada posta no sinal, não o que um altifalante devolve a um microfone.
