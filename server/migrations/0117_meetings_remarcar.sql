@@ -19,3 +19,23 @@
 
 ALTER TABLE meetings
   ADD COLUMN IF NOT EXISTS sequence INT NOT NULL DEFAULT 0;
+
+-- ════════════════════════════════════════════════════════════════════════
+--  E o catálogo de tipos de notificação, que é FECHADO na base.
+--
+--  A `notifications.kind` tem um CHECK com os seis tipos que existiam, e o
+--  `notifications::notify` ENGOLE o erro do INSERT com um `tracing::warn!`
+--  («notificação não gravada (a operação de origem segue)») — de propósito,
+--  para uma notificação falhada não derrubar a operação que a originou.
+--
+--  O resultado é que um tipo novo no código, sem o CHECK aberto, desaparece em
+--  SILÊNCIO: foi o que aconteceu ao escrever isto, e só o teste do convidado
+--  avisado o apanhou. Quem acrescentar um `Kind` tem de vir aqui.
+-- ════════════════════════════════════════════════════════════════════════
+
+ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_kind_check;
+ALTER TABLE notifications
+  ADD CONSTRAINT notifications_kind_check CHECK (kind IN (
+      'meeting.invited', 'meeting.rescheduled', 'meeting.starting',
+      'meeting.cancelled', 'call.missed', 'recording.ready',
+      'transcription.ready'));

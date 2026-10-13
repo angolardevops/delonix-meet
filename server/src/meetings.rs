@@ -1841,6 +1841,22 @@ pub async fn patch(
     patch_session_options(&state, id, &patch).await.map(Json)
 }
 
+/// O que se precisa de saber da reunião ANTES de a remarcar. Tem nome próprio
+/// porque a tupla de cinco era «very complex type» para o clippy — e porque os
+/// cinco campos são as cinco perguntas que a rota faz.
+#[derive(sqlx::FromRow)]
+struct EstadoParaRemarcar {
+    owner_id: Uuid,
+    /// A hora que SAI da agenda: vai na notificação, ao lado da nova.
+    starts_at: DateTime<Utc>,
+    /// Não-nulo = já começou, e aí a hora de início é história.
+    started_at: Option<DateTime<Utc>>,
+    /// Não-nulo = é o pai de uma série.
+    recurrence_freq: Option<String>,
+    /// Não-nulo = é uma instância de uma série.
+    recurrence_parent_id: Option<Uuid>,
+}
+
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RescheduleMeetingReq {
@@ -1897,22 +1913,17 @@ pub async fn reschedule(
     Path(id): Path<Uuid>,
     Json(req): Json<RescheduleMeetingReq>,
 ) -> Result<Json<Meeting>, ApiError> {
-    let atual: Option<(
-        Uuid,
-        DateTime<Utc>,
-        Option<DateTime<Utc>>,
-        Option<String>,
-        Option<Uuid>,
-    )> = sqlx::query_as(
+    let atual: Option<EstadoParaRemarcar> = sqlx::query_as(
         "SELECT owner_id, starts_at, started_at, recurrence_freq, recurrence_parent_id
-               FROM meetings WHERE id = $1",
+           FROM meetings WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await?;
-    let Some((owner_id, was_at, started_at, freq, parent)) = atual else {
+    let Some(m0) = atual else {
         return Err(ApiError::NotFound);
     };
+    let (owner_id, was_at) = (m0.owner_id, m0.starts_at);
     if owner_id != auth.user_id {
         // Um convidado fica a saber que a reunião existe (já o sabia); quem não
         // é nem dono nem convidado não fica.
@@ -1926,14 +1937,14 @@ pub async fn reschedule(
             },
         );
     }
-    if freq.is_some() || parent.is_some() {
+    if m0.recurrence_freq.is_some() || m0.recurrence_parent_id.is_some() {
         return Err(delonix_meet_core::DomainError::conflict(
             "meeting.recurring_unsupported",
             "remarcar uma reunião recorrente ainda não existe: cancele a série e marque outra",
         )
         .into());
     }
-    if started_at.is_some() {
+    if m0.started_at.is_some() {
         return Err(delonix_meet_core::DomainError::conflict(
             "meeting.already_started",
             "a reunião já começou: a hora de início deixou de ser uma marcação",
