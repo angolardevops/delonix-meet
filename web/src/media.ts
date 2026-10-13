@@ -138,9 +138,40 @@ export class Denoiser {
 }
 
 /** Pede a resolução máxima da câmara (o browser dá o melhor que o hardware tiver). */
-export function videoConstraints(deviceId?: string): MediaTrackConstraints {
+/** Para que lado a câmara aponta. É o que o telemóvel entende. */
+export type Facing = 'user' | 'environment'
+
+/**
+ * A câmara ACTUAL aponta para que lado, se o browser o disser.
+ *
+ * No telemóvel, `facingMode` vem nas settings da pista; no computador, não vem
+ * (uma webcam não tem «frente» nem «trás») e isto devolve `undefined`. É assim
+ * que se sabe se vale a pena oferecer o botão de virar.
+ */
+export function facingOf(track?: MediaStreamTrack | null): Facing | undefined {
+  const f = track?.getSettings().facingMode
+  return f === 'user' || f === 'environment' ? f : undefined
+}
+
+/**
+ * Restrições de vídeo.
+ *
+ * **Porque é que o `facing` existe aqui.** Até agora a única forma de escolher
+ * câmara era por `deviceId: { exact }`, e no telemóvel isso não serve:
+ *
+ * - antes de a permissão ser dada, o `enumerateDevices` não dá etiquetas úteis
+ *   (no Safari do iOS vêm vazias), logo não há como saber qual é a frontal;
+ * - os `deviceId` rodam entre sessões em alguns browsers, e um `exact` com um
+ *   id antigo **falha** em vez de cair para outra câmara.
+ *
+ * O `facingMode` resolve as duas coisas, e vai como `ideal` e não `exact`: num
+ * computador com uma só webcam, um `exact` fazia o `getUserMedia` falhar e o
+ * vídeo ficava preto.
+ */
+export function videoConstraints(deviceId?: string, facing?: Facing): MediaTrackConstraints {
   return {
     ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    ...(!deviceId && facing ? { facingMode: { ideal: facing } } : {}),
     width: { ideal: 3840 },
     height: { ideal: 2160 },
     // Só `ideal` (nunca `min`): pedir 60fps quando a câmara aguenta, mas SEM

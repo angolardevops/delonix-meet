@@ -6,6 +6,8 @@ import {
   BackgroundEffect,
   Denoiser,
   DeviceSets,
+  type Facing,
+  facingOf,
   HeadTracker,
   playTestTone,
   presetBackgrounds,
@@ -32,6 +34,12 @@ export function useLocalMedia(core: RoomCore) {
   const [devices, setDevices] = useState<DeviceSets>({ mics: [], cams: [], speakers: [] })
   const [micId, setMicId] = useState('')
   const [camId, setCamId] = useState('')
+  /**
+   * Para que lado a câmara actual aponta, quando o browser o diz. `undefined`
+   * num computador — e é por isso que serve para decidir se o botão de virar
+   * aparece: só faz sentido onde há frente e trás.
+   */
+  const [facing, setFacing] = useState<Facing | undefined>(undefined)
   const [speakerId, setSpeakerId] = useState('')
   // Supressão de ruído por IA (RNNoise) — LIGADA por omissão, ou o que a
   // pessoa escolheu em Definições ➜ Conta ➜ Preferências ao entrar. Se
@@ -186,13 +194,19 @@ export function useLocalMedia(core: RoomCore) {
       return
     }
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(camId || undefined) })
+      // Sem `camId` ainda (primeira vez), pede-se o lado que a pessoa tinha —
+      // ou nenhum, e o browser escolhe. No telemóvel é aqui que o `facing`
+      // fica a saber-se.
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints(camId || undefined, facing),
+      })
       const track = s.getVideoTracks()[0]
       track.contentHint = 'motion'
       core.cameraTrackRef.current = track
       core.localStreamRef.current?.addTrack(track)
       setHasLocalVideo(true)
       setCamOn(true)
+      setFacing(facingOf(track))
       let sendTrack = track
       if (bgMode !== 'none' && core.effectRef.current) sendTrack = await core.effectRef.current.start(track)
       await core.callRef.current?.enableVideo(sendTrack, core.localStreamRef.current ?? s)
@@ -231,9 +245,19 @@ export function useLocalMedia(core: RoomCore) {
     }
   }
 
-  async function switchCam(deviceId: string) {
+  /**
+   * Troca a câmara por `deviceId`, ou — quando o `deviceId` vem vazio e há um
+   * `facing` — pelo LADO para que ela aponta.
+   *
+   * O caminho do lado existe para o telemóvel: lá, o `deviceId` não é de
+   * confiança (etiquetas vazias antes da permissão, ids que rodam entre
+   * sessões) e o `facingMode` é o que o browser sabe responder.
+   */
+  async function switchCam(deviceId: string, facing?: Facing) {
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(deviceId || undefined) })
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints(deviceId || undefined, facing),
+      })
       const newTrack = s.getVideoTracks()[0]
       newTrack.contentHint = 'motion'
       newTrack.enabled = camOn
@@ -258,9 +282,24 @@ export function useLocalMedia(core: RoomCore) {
         }
       }
       setCamId(newTrack.getSettings().deviceId ?? deviceId)
+      setFacing(facingOf(newTrack))
     } catch {
       setStatus(t('room.estado.naoMudouCamara'))
     }
+  }
+
+  /**
+   * Vira a câmara: frontal ↔ traseira. É o gesto que falta no telemóvel, e a
+   * razão de ele não existir antes é que o código só sabia escolher câmaras por
+   * `deviceId` — que no telemóvel não diz para onde elas apontam.
+   *
+   * Pede o lado CONTRÁRIO ao da pista actual. Se o browser não disser o lado
+   * (um computador), assume-se que se está na frontal e pede-se a traseira: no
+   * pior caso o `ideal` devolve a mesma câmara e nada se estraga.
+   */
+  async function flipCam() {
+    const actual = facingOf(core.cameraTrackRef.current) ?? 'user'
+    await switchCam('', actual === 'user' ? 'environment' : 'user')
   }
 
   async function toggleNoiseSuppression() {
@@ -417,6 +456,9 @@ export function useLocalMedia(core: RoomCore) {
     toggleCam,
     switchMic,
     switchCam,
+    flipCam,
+    facing,
+    setFacing,
     toggleNoiseSuppression,
     testSpeaker: () => void playTestTone(speakerId),
     bgMode,
