@@ -58,8 +58,23 @@ describe('videoConstraints', () => {
 
   it('não mexe no resto das restrições', () => {
     const c = videoConstraints(undefined, 'user')
-    expect(c.width).toEqual({ ideal: 3840 })
-    expect(c.frameRate).toEqual({ ideal: 60 })
+    expect(c.width).toEqual({ ideal: 1920 })
+    expect(c.frameRate).toEqual({ ideal: 30 })
+  })
+
+  // 1080p30 não é um número ao acaso: pedia-se 4K60, e o simulcast codifica
+  // TRÊS camadas a partir do que a câmara dá. Medido em produção a 2026-10-13,
+  // numa sala de três pessoas: a ligação de quem publicava caiu quatro vezes, e
+  // com a câmara dele desligada as quedas pararam. O retrato de uma reunião
+  // nunca é desenhado a 4K — a máquina pagava-o em cada quadro, à toa.
+  it('pede 1080p30, e NUNCA como obrigatório: uma câmara fraca continua a servir', () => {
+    const c = videoConstraints()
+    expect(c.width).toEqual({ ideal: 1920 })
+    expect(c.height).toEqual({ ideal: 1080 })
+    expect(c.frameRate).toEqual({ ideal: 30 })
+    // Um `min` faria o getUserMedia falhar numa câmara que não garanta isto →
+    // caía para áudio-só, com o vídeo preto e o microfone a PARECER mudo.
+    expect(JSON.stringify(c)).not.toContain('"min"')
   })
 })
 

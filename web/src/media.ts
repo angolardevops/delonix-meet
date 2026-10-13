@@ -172,13 +172,25 @@ export function videoConstraints(deviceId?: string, facing?: Facing): MediaTrack
   return {
     ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
     ...(!deviceId && facing ? { facingMode: { ideal: facing } } : {}),
-    width: { ideal: 3840 },
-    height: { ideal: 2160 },
-    // Só `ideal` (nunca `min`): pedir 60fps quando a câmara aguenta, mas SEM
-    // restrição obrigatória — um `min` fazia o getUserMedia falhar em câmaras
+    // 1080p30 e NÃO 4K60. Pedia-se 3840×2160 a 60 fps, e o simulcast codifica
+    // TRÊS camadas a partir daí ao mesmo tempo — o retrato de uma reunião nunca
+    // é desenhado a 4K, mas a máquina pagava-o na mesma, em cada quadro.
+    //
+    // Medido numa chamada de produção a 2026-10-13 (sala axj-kxfd-tvj, três
+    // pessoas): a ligação de um participante caiu e voltou QUATRO vezes, com 37
+    // mudanças de camada à volta das quedas, e a imagem dos outros dois a
+    // travar. Com a câmara dele desligada as quedas pararam — ou seja, era o
+    // ENVIO dele a sufocar a ligação —, mas as mudanças de camada continuaram
+    // (8 em 10 minutos, a saltar `q`→`f`, de 0,3 para 6 Mbps).
+    //
+    // 60 fps também sai: numa reunião a diferença entre 30 e 60 não se vê, e
+    // dobra o trabalho do codificador nas três camadas.
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    // Só `ideal` (nunca `min`): um `min` fazia o getUserMedia falhar em câmaras
     // que não garantem o framerate (pouca luz/driver) → caía para áudio-só,
     // deixando o vídeo preto e o mic aparentemente "muted".
-    frameRate: { ideal: 60 },
+    frameRate: { ideal: 30 },
   }
 }
 
