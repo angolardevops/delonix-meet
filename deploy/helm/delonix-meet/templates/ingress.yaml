@@ -39,11 +39,11 @@ spec:
             pathType: Prefix
             backend:
               service: { name: delonix-server, port: { number: 8180 } }
-          {{- if $v.ingress.asr.serviceName }}
+          {{- with include "dm.asrService" . }}
           - path: /asr
             pathType: Prefix
             backend:
-              service: { name: {{ $v.ingress.asr.serviceName }}, port: { number: {{ $v.ingress.asr.servicePort }} } }
+              service: { name: {{ . }}, port: { number: {{ include "dm.asrPort" $ }} } }
           {{- end }}
           - path: /
             pathType: Prefix

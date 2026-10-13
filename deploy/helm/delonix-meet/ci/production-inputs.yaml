@@ -6,3 +6,7 @@ secrets:
   existingSecret: delonix-meet-secrets
 coturn:
   externalIP: 203.0.113.10
+whisper:
+  image:
+    repository: exemplo.invalid/delonix-whisper
+    tag: asr-v0.0.0-portao

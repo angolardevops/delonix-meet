@@ -88,11 +88,11 @@ spec:
         - path: { type: PathPrefix, value: /rtc }
       backendRefs:
         - { name: delonix-server, port: 8180 }
-    {{- with $v.ingress.asr.serviceName }}
+    {{- with include "dm.asrService" . }}
     - matches:
         - path: { type: PathPrefix, value: /asr }
       backendRefs:
-        - { name: {{ . | quote }}, port: {{ $v.ingress.asr.servicePort }} }
+        - { name: {{ . | quote }}, port: {{ include "dm.asrPort" $ }} }
     {{- end }}
     - matches:
         - path: { type: PathPrefix, value: / }

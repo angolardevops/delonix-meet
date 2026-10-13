@@ -10,7 +10,12 @@
 #      --set secrets.existingSecret=<nome do Secret> \
 #      --set coturn.externalIP=<IP público do relay> \
 #      --set server.image.repository=<registo>/delonix-server \
-#      --set web.image.repository=<registo>/delonix-web
+#      --set web.image.repository=<registo>/delonix-web \
+#      --set whisper.image.repository=<registo>/delonix-whisper \
+#      --set whisper.image.tag=<tag da imagem do ASR>
+#
+#  A imagem do ASR tem tag PRÓPRIA: embute o modelo (~2GB) e não se reconstrói
+#  a cada commit (`BUILD_WHISPER=1 deploy/build-images.sh`).
 #
 #  Não há aqui nenhum segredo, nenhum IP real e nenhuma tag.
 # ============================================================
@@ -158,6 +163,31 @@ networkPolicy:
   # alertas sobre métricas do servidor ficavam sem dados — a falhar em silêncio,
   # que é a pior maneira de uma observabilidade falhar.
   metricsNamespace: observabilidade
+
+# ------------------------------------------------------------
+#  A IA in-cluster — LIGADA (decisão do dono, 2026-10-13).
+#
+#  O que isto resolve, e foi medido na produção viva nesse dia: o
+#  `delonix-config` não tinha `OLLAMA_URL`, logo o servidor corria com a IA
+#  desligada e a ata de IA nunca foi escrita; e as legendas da sala passavam
+#  pela Web Speech do Chrome, que envia o áudio dos clientes para a Google.
+#
+#  SEM GPU: nenhum dos 8 nós do `delonix-lda` anuncia `nvidia.com/gpu`
+#  (medido). O cabeçalho do `templates/ai.yaml` diz o que isso custa — a ata
+#  em lote leva minutos, a tradução da legenda fica no limite. Com hardware,
+#  o ADR-0024 diz o que se liga aqui.
+# ------------------------------------------------------------
+ollama:
+  enabled: true
+  # O par escolhido pelo dono: 7b escreve a ata, 1.5b traduz a legenda.
+  models: ["qwen2.5:1.5b", "qwen2.5:7b"]
+  modelSummary: "qwen2.5:7b"
+  modelTranslate: "qwen2.5:1.5b"
+
+whisper:
+  enabled: true
+  # A imagem e a tag vêm do `--set` (ver o cabeçalho): o registo é da
+  # instalação e a tag não acompanha a do servidor.
 
 # Rastos por OTLP (ADR-0020, fase 5). Vazio = o servidor arranca sem rastos,
 # exactamente como antes. Com endereço, exporta para o colector — e se ele

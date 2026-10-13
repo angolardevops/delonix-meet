@@ -16,6 +16,11 @@
 #      `helm template` falha com a mensagem certa; `latest` é recusada em
 #      produção; o PBX de laboratório e o Postgres do chart também;
 #   4. os três perfis renderizam (produção, produção com voz, laboratório);
+#   5b. a IA in-cluster está ligada a si mesma: Ollama instalado ⇒ OLLAMA_URL no
+#      ConfigMap a apontar para o SEU Service, com PVC, e os modelos que o
+#      servidor pede são os que o pod puxa; OLLAMA_URL sem Ollama é recusado;
+#   5c. o ASR: Whisper instalado ⇒ /asr encaminhado para ele, e o JWT_SECRET por
+#      secretKeyRef (sem a chave o /asr recusa tudo em silêncio);
 #   5. em todos: nenhum Ingress chega ao Service interno nem às portas
 #      8181/9180; o /ws vai para o Service dedicado com
 #      upstream-hash-by:$arg_room; ninguém liga DELONIX_ALLOW_INSECURE;
@@ -543,6 +548,70 @@ for nome in ("production", "production-voz", "local"):
         pvc = um(docs, "PersistentVolumeClaim", "delonix-recordings")
         if pvc and pvc["spec"]["accessModes"] == ["ReadWriteOnce"]:
             erros.append(f"[{nome}] gravações ReadWriteOnce com várias réplicas")
+
+    # 5b. A IA IN-CLUSTER LIGADA A SI MESMA.
+    #
+    #     Porque é um portão e não uma revisão: a produção correu de
+    #     2026-10-10 a 2026-10-13 com a ata de IA DESLIGADA e ninguém viu. O
+    #     código do resumo estava fundido, a fila levantada, o webhook pronto
+    #     — faltava uma chave no ConfigMap, e a falha é silenciosa por desenho
+    #     (`Config.ollama_url = None` desliga a IA sem um erro). Um teste de
+    #     Rust não apanha isto: o defeito está entre o chart e o servidor.
+    ollama_dep = um(docs, "Deployment", "delonix-ollama")
+    url = (cm.get("data") or {}).get("OLLAMA_URL", "")
+    if ollama_dep:
+        if not url:
+            erros.append(f"[{nome}] o Ollama é instalado mas o ConfigMap não leva OLLAMA_URL — "
+                         "o servidor arranca com a IA desligada e a ata de IA nunca nasce, sem erro")
+        elif "delonix-ollama" not in url:
+            erros.append(f"[{nome}] OLLAMA_URL «{url}» não aponta para o Service do chart")
+        if not um(docs, "Service", "delonix-ollama"):
+            erros.append(f"[{nome}] o Ollama sem Service: o OLLAMA_URL não resolve")
+        if not um(docs, "PersistentVolumeClaim", "ollama-models"):
+            erros.append(f"[{nome}] o Ollama sem PVC: ~5,5GB de modelos puxados outra vez a cada reinício")
+        # Os modelos pedidos ao servidor são os que o pod puxa. Divergir aqui
+        # dá um 404 por resumo (LlmError::ModelMissing) e nada na ata.
+        oc = ollama_dep["spec"]["template"]["spec"]["containers"][0]
+        puxa = ((oc.get("lifecycle") or {}).get("postStart") or {}).get("exec", {}).get("command", [])
+        puxados = " ".join(puxa)
+        for chave in ("OLLAMA_MODEL_SUMMARY", "OLLAMA_MODEL_TRANSLATE", "OLLAMA_MODEL_STUDIO"):
+            modelo = (cm.get("data") or {}).get(chave)
+            if modelo and f"ollama pull {modelo!r}".replace("'", '"') not in puxados.replace("'", '"'):
+                erros.append(f"[{nome}] {chave}={modelo} não está entre os modelos que o pod puxa "
+                             "— o Ollama responderia 404 a cada pedido")
+    elif url:
+        erros.append(f"[{nome}] o ConfigMap leva OLLAMA_URL «{url}» mas o render não instala Ollama "
+                     "nenhum: cada legenda traduzida e cada ata seriam um 503 contra um Service que "
+                     "não existe. Vale `ollama.enabled`, não a chave à mão")
+
+    # 5c. O ASR: pod com rota, rota com pod, e a chave do token do Secret.
+    whisper = um(docs, "Deployment", "delonix-whisper")
+    destinos = set()
+    for d in docs:
+        if d.get("kind") == "HTTPRoute":
+            for r in d["spec"].get("rules", []):
+                if any(m.get("path", {}).get("value") == "/asr" for m in r.get("matches", [])):
+                    destinos |= {b["name"] for b in r.get("backendRefs", [])}
+        if d.get("kind") == "Ingress":
+            for r in d["spec"].get("rules", []):
+                for path in (r.get("http") or {}).get("paths", []):
+                    if path.get("path") == "/asr":
+                        destinos.add(path["backend"]["service"]["name"])
+    if whisper and "delonix-whisper" not in destinos:
+        erros.append(f"[{nome}] o Whisper é instalado mas nada encaminha /asr para ele — "
+                     "um pod a carregar o modelo que browser nenhum alcança")
+    if destinos and not whisper and destinos != {s for s in destinos if s != "delonix-whisper"}:
+        erros.append(f"[{nome}] /asr aponta para delonix-whisper e o render não o instala")
+    if whisper:
+        wc = whisper["spec"]["template"]["spec"]["containers"][0]
+        chave = [e for e in wc.get("env", []) if e["name"] == "JWT_SECRET"]
+        if not chave or not (chave[0].get("valueFrom") or {}).get("secretKeyRef"):
+            erros.append(f"[{nome}] o Whisper tem de receber JWT_SECRET por secretKeyRef: o /asr "
+                         "valida o access token do /rtc e sem a chave é fail-closed — recusa TODAS "
+                         "as ligações e o browser cai em silêncio para o motor do Chrome")
+        if any("configMapRef" in e for e in wc.get("envFrom", [])):
+            erros.append(f"[{nome}] o Whisper lê um ConfigMap por envFrom — foi assim que o "
+                         "09-whisper.yaml ficou sem JWT_SECRET quando ele saiu do ConfigMap (2026-10-04)")
 
     # 8b. nenhum segredo conhecido no render (em claro ou em base64)
     valores = []

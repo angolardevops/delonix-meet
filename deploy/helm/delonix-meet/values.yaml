@@ -223,8 +223,10 @@ ingress:
     clusterIssuer: ""
     existingSecret: ""
     secretName: delonix-tls-secret
-  # Serviço de transcrição (não é instalado por este chart). Com nome, o
-  # /asr é encaminhado para ele.
+  # Serviço de transcrição de FORA do chart. Com `whisper.enabled` isto fica
+  # vazio e a rota `/asr` sai do Service do chart (o render é o mesmo, o
+  # destino é o `delonix-whisper`): são exclusivos, e o chart recusa os dois.
+  # Lido pelo `gateway.yaml` mesmo com o Ingress desligado.
   asr:
     serviceName: ""
     servicePort: 8000
@@ -421,6 +423,99 @@ voice:
       requests: { cpu: 100m, memory: 128Mi }
       limits: { cpu: "1", memory: 512Mi }
 
+# ------------------------------------------------------------
+#  A IA in-cluster (templates/ai.yaml).
+#
+#  DESLIGADOS os dois por omissão: nem um laboratório nem uma instalação de
+#  terceiros têm de carregar um LLM de 5,5GB e um ASR de 2GB para o Meet
+#  servir reuniões. Sem eles o produto degrada por desenho, e diz a verdade:
+#  a ata fica pela versão por regras (feita no cliente) e as legendas pelo
+#  motor do browser.
+# ------------------------------------------------------------
+
+# LLM local — resumo da ata (MoM) e tradução das legendas. `server/src/ai.rs`.
+#
+# Ligado, o chart escreve o OLLAMA_URL no ConfigMap e aponta-o a este Service:
+# o servidor nunca fala com um LLM de fora do cluster.
+ollama:
+  enabled: false
+  image:
+    repository: ollama/ollama
+    # Fixada por versão: artefacto imutável (doutrina do repo). A 0.40.2 é a
+    # última estável confirmada a 2026-10-09 (ADR-0024).
+    tag: "0.40.2"
+    pullPolicy: IfNotPresent
+  # Os modelos que o pod puxa no arranque, e os que o servidor pede.
+  #
+  # O par de 2026-10-13, decidido pelo dono SEM GPU no cluster: o 7b escreve a
+  # ata (trabalho em lote, minutos em CPU, ninguém à espera) e o 1.5b traduz a
+  # legenda (tempo real, no limite em CPU). Mudar aqui muda o que se puxa E o
+  # que o servidor pede: são a mesma lista.
+  models: ["qwen2.5:1.5b", "qwen2.5:7b"]
+  modelSummary: "qwen2.5:7b"
+  modelTranslate: "qwen2.5:1.5b"
+  # Tarefas do Estúdio. Vazio = o mesmo do resumo (server/src/config.rs).
+  modelStudio: ""
+  # Tecto de uma tarefa do Estúdio em segundos (OLLAMA_TIMEOUT_SECS, 5..900).
+  # Em CPU, 120 s não chegam a um resumo do 7b: 600 dá-lhe margem.
+  timeoutSeconds: 600
+  # Quantos modelos ficam carregados ao mesmo tempo. 2 = o da ata e o da
+  # legenda, para que uma legenda não descarregue o modelo da ata (e o
+  # contrário). Custa memória: é o que os 8Gi de limit abaixo cobrem.
+  maxLoadedModels: 2
+  keepAlive: 30m
+  # Tentativas do puxão no arranque, de 10 em 10 s. 60 = 10 minutos de rede
+  # intermitente antes de desistir (sem matar o pod: ver templates/ai.yaml).
+  pullRetries: 60
+  # ~5,5GB de modelos (1,0 + 4,7) mais margem para trocar de modelo sem
+  # reinstalar. O PVC é RWO e há UM pod.
+  storage: 10Gi
+  storageClassName: ""
+  # Uid não privilegiado qualquer: a imagem não tem utilizador próprio, e o
+  # volume chega-lhe pelo fsGroup (ver templates/ai.yaml).
+  runAsUser: 1000
+  resources:
+    # O request é baixo de propósito: fora de uma reunião o Ollama não faz
+    # nada, e num cluster partilhado reservar 4 CPU para esperar é tirá-los a
+    # quem os usa. O limit é o tecto de quando está a gerar.
+    requests: { cpu: 250m, memory: 2Gi }
+    limits: { cpu: "4", memory: 8Gi }
+  priorityClassName: ""
+  # GPU (ADR-0024): com hardware, é aqui que ele entra — nodeSelector,
+  # toleration e runtimeClass. Os limits de `nvidia.com/gpu` põem-se em
+  # `resources.limits`. Vazio = CPU, que é o que o cluster tem hoje.
+  nodeSelector: {}
+  tolerations: []
+  runtimeClassName: ""
+
+# ASR soberano (`whisper-server/`) — as legendas da sala sem passar pela Web
+# Speech do Chrome, que envia o áudio para a Google.
+#
+# A IMAGEM NÃO SAI DO `make image`: embute o modelo (~2GB) e constrói-se com
+# `BUILD_WHISPER=1 deploy/build-images.sh`. Por isso tem repositório e tag
+# PRÓPRIOS — não acompanham a tag do servidor e da web, que mudam a cada
+# commit.
+whisper:
+  enabled: false
+  replicas: 1
+  image:
+    repository: delonix-whisper
+    tag: ""
+    pullPolicy: IfNotPresent
+  # base|small|medium|large-v3 — tem de ser o modelo EMBUTIDO na imagem
+  # (`--build-arg MODEL=`). `small` int8 é o aceitável em CPU.
+  model: small
+  device: cpu
+  compute: int8
+  # O uid do `whisper-server/Dockerfile`.
+  runAsUser: 65532
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: "4", memory: 4Gi }
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+
 # Rastos por OTLP (ADR-0020, fase 5). Vazio = desligado, que é o que um
 # laboratório quer: sem colector, nada a exportar.
 otel:
@@ -434,7 +529,7 @@ otel:
 # cluster PARTILHADO e sem quota um pico do Meet come o que é dos vizinhos.
 #
 # A conta está escrita no topo do `templates/quota.yaml`: é o pico com o HPA no
-# máximo MAIS o surge do rollout (26,6 CPU / 22,1 Gi medidos no render), com
+# máximo MAIS o surge do rollout (34,6 CPU / 34,1 Gi medidos no render), com
 # ~20% de folga. QUEM MUDAR RÉPLICAS OU LIMITES REFAZ A CONTA — e o
 # `check-helm.sh` recalcula-a do render e falha se a quota não a cobrir.
 quota:
@@ -443,13 +538,20 @@ quota:
   # deploy/k8s/plataforma). A conta está no topo de templates/quota.yaml e o
   # `check-helm.sh` refá-la a partir do render e dos ficheiros da plataforma.
   requests:
-    cpu: "12"
-    memory: 24Gi
+    cpu: "13"
+    memory: 28Gi
   limits:
-    cpu: "52"
-    memory: 64Gi
+    cpu: "62"
+    memory: 80Gi
   maxPods: "40"
-  maxPvcs: "10"
+  # 12 e não 9 (os 8 da conta + 1): a 2026-10-13 o namespace de produção tinha
+  # 10 PVCs vivos, e TRÊS deles — `redis-data-redis-node-0/1/2` — são órfãos
+  # da topologia de Sentinel que saiu a 2026-10-11 (os pods são
+  # `redis-master-0` e `redis-replicas-0/1`). Com o tecto em 10, o PVC do
+  # Ollama era RECUSADO pela admissão, e o sintoma seria o pod em Pending.
+  # Quem apagar os órfãos pode baixar isto; apagar um PVC em produção é ordem
+  # do dono, não efeito secundário de um upgrade.
+  maxPvcs: "12"
   maxLoadBalancers: "2"
   container:
     # Para o que aterra no namespace SEM `resources` — um pod de depuração, um
