@@ -54,6 +54,18 @@ imagePullSecrets:
 {{- end }}
 
 {{/*
+  O nome pelo qual o SFU chega ao relay POR DENTRO, quando o relay está atrás
+  de NAT (`coturn.privateIP`) e o TURN_HOST é um nome e não um IP. Vazio nos
+  outros casos — um IP não se pode apontar para outro sítio com `hostAliases`.
+*/}}
+{{- define "dm.turnAlias" -}}
+{{- $h := regexReplaceAll ":[0-9]+$" (include "dm.turnHost" .) "" -}}
+{{- if and .Values.coturn.enabled .Values.coturn.privateIP $h (not (regexMatch "^[0-9.]+$" $h)) (not (hasPrefix "[" $h)) -}}
+{{- $h -}}
+{{- end -}}
+{{- end }}
+
+{{/*
   O Service que serve o `/asr` (transcrição em tempo real): o Whisper deste
   chart, ou um serviço de transcrição de fora.
 
@@ -221,6 +233,16 @@ capabilities:
 {{- /* media */ -}}
 {{- if and $v.coturn.enabled $prod (not $v.coturn.externalIP) -}}
 {{- $e = append $e "coturn.externalIP: falta o IP público do relay (o do LoadBalancer). É o que o coturn anuncia e o que o TURN_HOST do servidor leva" -}}
+{{- end -}}
+{{- $privado := "^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)" -}}
+{{- if and $v.coturn.enabled $prod $v.coturn.externalIP (regexMatch $privado $v.coturn.externalIP) (not $v.coturn.lanOnly) -}}
+{{- $e = append $e (printf "coturn.externalIP=%s é um endereço PRIVADO: é o que o browser recebe como TURN, e quem está fora dessa rede entra na sala e fica sem áudio nem vídeo, sem um erro (medido em produção a 2026-10-13). Indica o IP público e, se o relay está atrás de NAT, o do nó em coturn.privateIP; ou coturn.lanOnly=true se a instalação é só para a rede local" $v.coturn.externalIP) -}}
+{{- end -}}
+{{- if and $v.coturn.enabled $v.coturn.privateIP (or (not $v.coturn.externalIP) (eq $v.coturn.privateIP $v.coturn.externalIP)) -}}
+{{- $e = append $e "coturn.privateIP: só faz sentido ao lado de um coturn.externalIP DIFERENTE (o público que o router encaminha). Sem NAT pelo meio, deixa-o vazio" -}}
+{{- end -}}
+{{- if and $v.coturn.enabled $prod $v.coturn.privateIP $v.coturn.externalIP (ne $v.coturn.privateIP $v.coturn.externalIP) (not (include "dm.turnAlias" .)) -}}
+{{- $e = append $e "server.turnHost: com coturn.privateIP indica um NOME (p.ex. turn.exemplo.ao:3478) e não um IP. O TURN_HOST é o mesmo para o browser e para o SFU; com um nome, o chart aponta-o por dentro para o IP privado (hostAliases) e o SFU não depende do hairpin do router para chegar ao relay" -}}
 {{- end -}}
 
 {{- /* O RELAY TEM DE TER CAMINHO, e um Service não lho dá.

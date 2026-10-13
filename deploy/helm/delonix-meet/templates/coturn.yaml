@@ -65,6 +65,10 @@ spec:
               {{- else }}
               valueFrom: { fieldRef: { fieldPath: {{ ternary "status.hostIP" "status.podIP" $c.hostNetwork }} } }
               {{- end }}
+            {{- if $c.privateIP }}
+            - name: PRIVATE_IP
+              value: {{ $c.privateIP | quote }}
+            {{- end }}
           command: ["/bin/sh", "-c"]
           args:
             # allowed-peer-ip autoriza o hairpin (sem ele: 403 Forbidden IP e
@@ -73,8 +77,13 @@ spec:
             - >
               exec turnserver -n --no-cli --log-file=stdout --simple-log
               --use-auth-secret --static-auth-secret="$TURN_SECRET"
+              {{- if $c.privateIP }}
+              --realm={{ $c.realm }} --external-ip="$EXTERNAL_IP/$PRIVATE_IP"
+              --allowed-peer-ip="$EXTERNAL_IP" --allowed-peer-ip="$PRIVATE_IP"
+              {{- else }}
               --realm={{ $c.realm }} --external-ip="$EXTERNAL_IP"
               --allowed-peer-ip="$EXTERNAL_IP"
+              {{- end }}
               --denied-peer-ip=169.254.0.0-169.254.255.255
               --no-multicast-peers
               --listening-port={{ $c.port }} --min-port={{ $c.relayPorts.min }} --max-port={{ $c.relayPorts.max }}

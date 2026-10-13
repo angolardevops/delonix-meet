@@ -132,6 +132,12 @@ recusa "produção sem IP público do relay" "coturn.externalIP" \
   "${PROD[@]}" --set coturn.externalIP=
 # As três do CAMINHO de media. A primeira é a que faltava a 2026-10-11: o
 # render de produção passava o portão com o relay sem caminho nenhum.
+recusa "produção com um IP privado anunciado como público (media só na LAN)" "é um endereço PRIVADO" \
+  "${PROD[@]}" --set coturn.externalIP=192.168.1.32
+recusa "relay atrás de NAT com o TURN_HOST em IP (o SFU dependia do hairpin)" "server.turnHost: com coturn.privateIP indica um NOME" \
+  "${PROD[@]}" --set coturn.privateIP=10.0.0.32 --set server.turnHost=203.0.113.10:3478
+recusa "IP privado do relay igual ao público" "coturn.privateIP: só faz sentido" \
+  "${PROD[@]}" --set coturn.privateIP=203.0.113.10
 recusa "produção com o relay sem rede do nó" "coturn.hostNetwork" \
   "${PROD[@]}" --set coturn.hostNetwork=false
 recusa "gama de relay nos portos efémeros do kernel" "coturn.relayPorts" \
@@ -225,6 +231,57 @@ recusa "segundo nome com Ingress (um certificado, um nome)" "extraHosts: com ing
   --set ingress.tls.secretName=x --set 'extraHosts={meet.exemplo.ao}'
 
 render production-gateway-own "${GW[@]}"
+
+# --- o relay atrás de NAT (2026-10-13) --------------------------------------
+# Três formas, e as três têm de continuar a renderizar: o relay com IP público
+# seu (a de sempre), o relay atrás de um router (público/privado), e a
+# instalação que é SÓ da rede local e o diz.
+render production-turn-nat "${PROD[@]}" --set coturn.privateIP=10.0.0.32
+render production-turn-lan "${PROD[@]}" --set coturn.externalIP=192.168.1.32 --set coturn.lanOnly=true \
+  --set server.turnHost=
+python3 - "$OUT/production.yaml" "$OUT/production-turn-nat.yaml" "$OUT/production-turn-lan.yaml" <<'PYTURN' || fail=1
+import sys, yaml
+erros = []
+def ler(caminho):
+    docs = [d for d in yaml.safe_load_all(open(caminho, encoding='utf-8')) if d]
+    dep = {d['metadata']['name']: d for d in docs if d.get('kind') == 'Deployment'}
+    cm = next(d for d in docs if d.get('kind') == 'ConfigMap' and 'TURN_HOST' in (d.get('data') or {}))
+    c = dep['coturn']['spec']['template']['spec']['containers'][0]
+    return (" ".join(c['args']), {e['name']: e.get('value') for e in c['env']},
+            dep['delonix-server']['spec']['template']['spec'].get('hostAliases'), cm['data']['TURN_HOST'])
+
+args, env, alias, turn = ler(sys.argv[1])
+if '--external-ip="$EXTERNAL_IP" ' not in args or 'PRIVATE_IP' in env or alias:
+    erros.append(f"[production] sem privateIP o relay tem de ficar como era: alias={alias} env={sorted(env)}")
+if turn != 'turn.ngolacloud.com:3478':
+    erros.append(f"[production] o TURN_HOST do perfil não é o nome público: {turn!r}")
+
+args, env, alias, turn = ler(sys.argv[2])
+# O par é o que faz dois relays do mesmo coturn falarem-se sem o router no
+# meio (medido: 60/60 com o mapa, 0/60 sem ele).
+if '--external-ip="$EXTERNAL_IP/$PRIVATE_IP"' not in args:
+    erros.append("[turn-nat] o coturn não anuncia público/privado")
+for ip in ('"$EXTERNAL_IP"', '"$PRIVATE_IP"'):
+    if f'--allowed-peer-ip={ip}' not in args:
+        erros.append(f"[turn-nat] falta --allowed-peer-ip={ip}")
+if env.get('PRIVATE_IP') != '10.0.0.32' or env.get('EXTERNAL_IP') != '203.0.113.10':
+    erros.append(f"[turn-nat] os dois endereços não chegam ao coturn: {env}")
+# O SFU e o browser lêem o MESMO TURN_HOST. Sem o alias o servidor ia ao IP
+# público para falar com um vizinho de cluster — depende do hairpin do router.
+if alias != [{'ip': '10.0.0.32', 'hostnames': ['turn.ngolacloud.com']}]:
+    erros.append(f"[turn-nat] o servidor não resolve o nome do TURN para o IP privado: {alias}")
+if turn != 'turn.ngolacloud.com:3478':
+    erros.append(f"[turn-nat] o browser não recebe o nome público: {turn!r}")
+
+args, env, alias, turn = ler(sys.argv[3])
+if turn != '192.168.1.32:3478' or alias or 'PRIVATE_IP' in env:
+    erros.append(f"[turn-lan] a instalação só-LAN mudou de forma: TURN_HOST={turn!r} alias={alias}")
+
+for e in erros:
+    print("✗ " + e)
+sys.exit(1 if erros else 0)
+PYTURN
+[ "$fail" = 0 ] && echo "  ✓ relay: público seu, atrás de NAT (público/privado + alias no servidor) e só-LAN reconhecida"
 
 # A invariante do ADR-0001 no caminho NOVO. No Ingress era a anotação
 # `upstream-hash-by: $arg_room`; aqui é uma BackendTrafficPolicy com

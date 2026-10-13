@@ -45,6 +45,14 @@ spec:
       {{- end }}
       serviceAccountName: delonix-server
       automountServiceAccountToken: false
+      {{- with include "dm.turnAlias" . }}
+      # Relay atrás de NAT: o nome do TURN resolve, cá dentro, para o IP
+      # PRIVADO do relay. O browser recebe o mesmo nome e chega-lhe pelo
+      # público; o SFU não sai pelo router para falar com o vizinho.
+      hostAliases:
+        - ip: {{ $v.coturn.privateIP | quote }}
+          hostnames: [{{ . | quote }}]
+      {{- end }}
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       # O SFU é em memória por pod: o SIGTERM abre o drain (o /ready passa a
       # 503, as salas são avisadas) e o SIGKILL só pode chegar depois dele.
