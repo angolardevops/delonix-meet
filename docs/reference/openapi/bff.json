@@ -4391,11 +4391,11 @@
           {
             "properties": {
               "delivery_channel": {
-                "description": "Sempre `manual`: o servidor não envia correio (medido: zero SMTP).",
+                "description": "`email` quando o convite entrou na fila do correio; `manual` quando não\nhá relay configurado, falta o `PUBLIC_URL`, ou a fila recusou — nesse\ncaso o convite vale e entrega-se à mão, como antes de haver correio.",
                 "type": "string"
               },
               "token": {
-                "description": "A credencial do convite, mostrada esta única vez. Não há envio de correio\nno servidor: a UI entrega-a (link ou código).",
+                "description": "A credencial do convite, mostrada esta única vez. Vem **sempre**, mesmo\nquando o email sai: a consola oferece «copiar link» e quem convida pode\nquerer entregá-la à mão de qualquer forma.",
                 "type": "string"
               }
             },
