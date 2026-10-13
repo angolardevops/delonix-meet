@@ -864,16 +864,25 @@ mod tests {
         let vf = &a[a.iter().position(|x| x == "-vf").unwrap() + 1];
         assert_eq!(vf, "crop=404:720:438:0,scale=404:720");
         // E uma origem grande reduz-se a 1920 de altura.
+        //
+        // 1078 e não 1080, de propósito: 2160 × 9/16 = 1215, que é ÍMPAR, e o
+        // VP9 recusa lados ímpares — o corte fica em 1214. Reduzi-lo a 1920 de
+        // altura dá 1078, e a saída guarda a proporção do CORTE em vez de
+        // esticar dois pixels para fingir um 9:16 exacto. É a promessa do
+        // módulo: corta, nunca estica.
         let grande = rules::vertical_crop(3840, 2160, rules::Focus::Left);
         let a = args(Some(grande));
         let vf = &a[a.iter().position(|x| x == "-vf").unwrap() + 1];
-        assert!(vf.ends_with(",scale=1080:1920"), "{vf}");
         assert!(vf.starts_with("crop=1214:2160:0:0"), "{vf}");
+        assert!(vf.ends_with(",scale=1078:1920"), "{vf}");
     }
 
     #[test]
     fn o_nome_do_ficheiro_nao_sai_do_sitio() {
-        assert_eq!(sanitiza("Troço do Kilamba"), "Tro-o-do-Kilamba");
+        // `char::is_alphanumeric` é de UNICODE: o `ç` fica, e é melhor assim —
+        // o nome do ficheiro continua legível em português. O que não fica é o
+        // que mexe com caminhos e com o cabeçalho.
+        assert_eq!(sanitiza("Troço do Kilamba"), "Troço-do-Kilamba");
         assert_eq!(sanitiza("../../etc/passwd"), "etc-passwd");
         assert_eq!(sanitiza(""), "recorte");
         assert_eq!(sanitiza("---"), "recorte");
