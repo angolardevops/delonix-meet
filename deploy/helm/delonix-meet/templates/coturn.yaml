@@ -112,9 +112,26 @@ spec:
           # derrubar todas as alocações. O WebRTC não usa a descoberta de NAT do
           # RFC 5780; desligá-la tira à sonda a dependência de um endereço a
           # que o nó pode não chegar.
+          #
+          # E É POR ISSO QUE A SONDA DEIXOU DE SER ESSE PEDIDO. O `--no-rfc5780`
+          # é necessário e NÃO foi suficiente: a 2026-10-13, com a flag
+          # confirmada nos argumentos do processo em produção (`kubectl get pod
+          # -o jsonpath` sobre os `args`), a sonda continuou a receber
+          # `Other addr: <público>:3479` e a expirar, e o relay continuou a
+          # reiniciar — 4 reinícios em 3 minutos, até ao `helm rollback`. Duas
+          # tentativas de reproduzir o bloqueio em laboratório falharam (com o
+          # alternativo sem rota E com o alternativo silencioso, a sonda saiu
+          # com 0 em milissegundos), por isso a causa exacta continua POR
+          # EXPLICAR.
+          #
+          # Daí esta sonda: a vida do relay passa a ser medida por uma coisa que
+          # NÃO atravessa a rede. Uma sonda de liveness que faz uma ida e volta
+          # para fora do pod é uma sonda que mata um servidor saudável quando um
+          # caminho alheio está lento — e foi exactamente isso que aconteceu.
+          # O que ela prova é menor (o processo vive e tem o porto preso) e é o
+          # que a de readiness já provava; o que ela ganha é não poder pendurar.
           livenessProbe:
-            exec:
-              command: ["sh", "-c", "turnutils_stunclient -p {{ $c.port }} 127.0.0.1 >/dev/null 2>&1"]
+            tcpSocket: { port: {{ $c.port }} }
             initialDelaySeconds: 10
             periodSeconds: 20
             timeoutSeconds: 5
