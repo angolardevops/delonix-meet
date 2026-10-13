@@ -268,6 +268,9 @@ await recusado('A apaga o SMTP da org B', `/api/orgs/${B.orgId}/mail-settings`, 
 await recusado('A verifica o relay da org B', `/api/orgs/${B.orgId}/mail-settings/check`, {
   token: A.token, method: 'POST',
 })
+// A caixa de saída de uma organização diz a quem ela escreveu e com que
+// assunto — o directório de contactos dela, por outras palavras.
+await recusado('A lê a caixa de saída da org B', `/api/orgs/${B.orgId}/mail-messages`, { token: A.token })
 await recusado('A lista os ramais da org B', `/api/orgs/${B.orgId}/extensions`, { token: A.token })
 await recusado('A cria um ramal na org B', `/api/orgs/${B.orgId}/extensions`, {
   token: A.token, method: 'POST', body: { extension: '9001', display_name: 'intruso' },

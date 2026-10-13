@@ -77,6 +77,26 @@ impl Purpose {
             Purpose::Notification => "notification",
         }
     }
+
+    /// O catálogo FECHADO, para quem valida um filtro. Fica ao lado do
+    /// `as_str` de propósito: acrescentar um propósito sem o pôr aqui faz o
+    /// `match` abaixo não compilar.
+    pub const TODOS: [&'static str; 4] = [
+        "password_reset",
+        "invitation",
+        "email_verification",
+        "notification",
+    ];
+
+    pub fn parse(s: &str) -> Option<Purpose> {
+        Some(match s {
+            "password_reset" => Purpose::PasswordReset,
+            "invitation" => Purpose::Invitation,
+            "email_verification" => Purpose::EmailVerification,
+            "notification" => Purpose::Notification,
+            _ => return None,
+        })
+    }
 }
 
 /// Uma mensagem a enfileirar.

@@ -763,6 +763,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}/mail-settings/check",
             post(org_mail::check_settings),
         )
+        // A caixa de saída, para diagnóstico: sem corpos (o do convite leva o
+        // token).
+        .route(
+            "/api/orgs/{org_id}/mail-messages",
+            get(org_mail::list_messages),
+        )
         .route("/api/meetings", get(meetings::list).post(meetings::create))
         .route("/api/meetings/check-conflicts", post(meetings::check_conflicts))
         .route(
