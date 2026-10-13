@@ -9238,6 +9238,28 @@
         ],
         "type": "object"
       },
+      "RescheduleMeetingReq": {
+        "additionalProperties": false,
+        "properties": {
+          "duration_min": {
+            "description": "Nova duração em minutos (5–1440). Omissa = mantém a que está.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "description": "A hora nova. Tem de estar no futuro.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "starts_at"
+        ],
+        "type": "object"
+      },
       "ResolveConflictReq": {
         "properties": {
           "decision": {
@@ -16653,6 +16675,105 @@
           }
         ],
         "summary": "Pede (ou repete) o resumo da acta pelo LLM local.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/reschedule": {
+      "post": {
+        "description": "Recusa uma reunião recorrente, uma que já começou, e uma hora no passado.\nRepõe o lembrete por SMS e sobe o `SEQUENCE` do `.ics`, para o calendário de\nquem já tem o evento aceitar a versão nova.",
+        "operationId": "reschedule",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RescheduleMeetingReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Meeting"
+                }
+              }
+            },
+            "description": "A reunião com a hora nova e o `sequence` já subido."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.starts_in_past` ou duração fora de 5–1440"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.not_host` — é convidado, não anfitrião"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe, ou quem pede não é dono nem convidado"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.already_started` ou `meeting.recurring_unsupported`"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Método personalizado: **remarcar** uma reunião. Só o anfitrião.",
         "tags": [
           "meetings"
         ]

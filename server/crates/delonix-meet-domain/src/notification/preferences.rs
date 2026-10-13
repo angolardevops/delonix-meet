@@ -84,6 +84,7 @@ pub fn default_enabled(kind: Kind, channel: Channel) -> bool {
         Channel::Email => matches!(
             kind,
             Kind::MeetingInvited
+                | Kind::MeetingRescheduled
                 | Kind::MeetingCancelled
                 | Kind::MeetingStarting
                 | Kind::RecordingReady

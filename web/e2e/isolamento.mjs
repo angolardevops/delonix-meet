@@ -649,6 +649,12 @@ if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   await recusado('A APAGA a reunião da org B', `/api/meetings/${m}`, {
     token: A.token, method: 'DELETE',
   })
+  // Remarcar é mandar na agenda de outra empresa: mudava a hora e avisava os
+  // convidados dela em nome de quem não é o anfitrião.
+  await recusado('A REMARCA a reunião da org B', `/api/meetings/${m}/reschedule`, {
+    token: A.token, method: 'POST',
+    body: { starts_at: new Date(Date.now() + 864e5).toISOString() },
+  })
   await recusado('A escreve a ACTA da reunião da B', `/api/meetings/${m}/minutes`, {
     token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
   })

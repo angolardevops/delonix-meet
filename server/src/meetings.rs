@@ -60,6 +60,7 @@ pub struct Meeting {
         patch,
         create,
         check_conflicts,
+        reschedule,
         delete,
         start,
         ics,
@@ -73,6 +74,7 @@ pub struct Meeting {
         notes_by_room
     ),
     components(schemas(
+        RescheduleMeetingReq,
         Meeting,
         MeetingItem,
         SessionOptions,
@@ -1841,6 +1843,164 @@ pub async fn patch(
     patch_session_options(&state, id, &patch).await.map(Json)
 }
 
+/// O que se precisa de saber da reunião ANTES de a remarcar. Tem nome próprio
+/// porque a tupla de cinco era «very complex type» para o clippy — e porque os
+/// cinco campos são as cinco perguntas que a rota faz.
+#[derive(sqlx::FromRow)]
+struct EstadoParaRemarcar {
+    owner_id: Uuid,
+    /// A hora que SAI da agenda: vai na notificação, ao lado da nova.
+    starts_at: DateTime<Utc>,
+    /// Não-nulo = já começou, e aí a hora de início é história.
+    started_at: Option<DateTime<Utc>>,
+    /// Não-nulo = é o pai de uma série.
+    recurrence_freq: Option<String>,
+    /// Não-nulo = é uma instância de uma série.
+    recurrence_parent_id: Option<Uuid>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RescheduleMeetingReq {
+    /// A hora nova. Tem de estar no futuro.
+    pub starts_at: DateTime<Utc>,
+    /// Nova duração em minutos (5–1440). Omissa = mantém a que está.
+    #[serde(default)]
+    pub duration_min: Option<i32>,
+}
+
+// PORQUE É UMA ROTA PRÓPRIA, e não um campo do PATCH: o
+// `PATCH /api/meetings/{id}` responde `SessionOptions` e existe para as opções
+// de sessão. A hora não é uma opção — mudá-la avisa gente, repõe o lembrete e
+// sobe a revisão do calendário. Isso atrás de um contrato de opções era
+// esconder um efeito grande.
+//
+// O LEMBRETE POR SMS é reposto a zero (`sms_reminder_done_at = NULL`): se já
+// tinha saído para a hora antiga, tem de sair outra vez para a nova — senão
+// remarcar para mais tarde comia-o.
+//
+// A REVISÃO DO CALENDÁRIO sobe (`sequence + 1`, RFC 5545 §3.8.7.4). Sem isso o
+// `.ics` exportado depois de remarcar era silenciosamente ignorado pelo Outlook
+// e pelo Google Calendar: a hora mudava aqui e não mudava na agenda de ninguém.
+//
+// E uma recorrente é recusada porque remarcar uma série precisa de semântica
+// própria («esta ocorrência» ou «todas»), e escolher por adivinhação era pior
+// do que recusar com razão.
+/// Método personalizado: **remarcar** uma reunião. Só o anfitrião.
+///
+/// Recusa uma reunião recorrente, uma que já começou, e uma hora no passado.
+/// Repõe o lembrete por SMS e sobe o `SEQUENCE` do `.ics`, para o calendário de
+/// quem já tem o evento aceitar a versão nova.
+#[utoipa::path(
+    post, path = "/api/meetings/{meeting_id}/reschedule", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    request_body = RescheduleMeetingReq,
+    responses(
+        (status = 200, body = Meeting, description = "A reunião com a hora nova e o `sequence` já subido."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`meeting.starts_in_past` ou duração fora de 5–1440"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host` — é convidado, não anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou quem pede não é dono nem convidado"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`meeting.already_started` ou `meeting.recurring_unsupported`"),
+    )
+)]
+pub async fn reschedule(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<RescheduleMeetingReq>,
+) -> Result<Json<Meeting>, ApiError> {
+    let atual: Option<EstadoParaRemarcar> = sqlx::query_as(
+        "SELECT owner_id, starts_at, started_at, recurrence_freq, recurrence_parent_id
+           FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(m0) = atual else {
+        return Err(ApiError::NotFound);
+    };
+    let (owner_id, was_at) = (m0.owner_id, m0.starts_at);
+    if owner_id != auth.user_id {
+        // Um convidado fica a saber que a reunião existe (já o sabia); quem não
+        // é nem dono nem convidado não fica.
+        return Err(
+            if is_owner_or_invitee(&state, id, owner_id, auth.user_id).await? {
+                delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                    .with_message("só o anfitrião remarca a reunião")
+                    .into()
+            } else {
+                ApiError::NotFound
+            },
+        );
+    }
+    if m0.recurrence_freq.is_some() || m0.recurrence_parent_id.is_some() {
+        return Err(delonix_meet_core::DomainError::conflict(
+            "meeting.recurring_unsupported",
+            "remarcar uma reunião recorrente ainda não existe: cancele a série e marque outra",
+        )
+        .into());
+    }
+    if m0.started_at.is_some() {
+        return Err(delonix_meet_core::DomainError::conflict(
+            "meeting.already_started",
+            "a reunião já começou: a hora de início deixou de ser uma marcação",
+        )
+        .into());
+    }
+    if req.starts_at <= Utc::now() {
+        return Err(ApiError::BadRequest(
+            "meeting.starts_in_past: a hora nova tem de estar no futuro".into(),
+        ));
+    }
+    if let Some(d) = req.duration_min {
+        if !(5..=1440).contains(&d) {
+            return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
+        }
+    }
+
+    sqlx::query(
+        "UPDATE meetings
+            SET starts_at = $2,
+                duration_min = COALESCE($3, duration_min),
+                sequence = sequence + 1,
+                -- O lembrete que já saiu para a hora antiga tem de sair outra
+                -- vez para a nova.
+                sms_reminder_done_at = NULL
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(req.starts_at)
+    .bind(req.duration_min)
+    .execute(&state.db)
+    .await?;
+
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "meeting.rescheduled",
+        &serde_json::json!({"meeting_id": id, "was_at": was_at, "starts_at": req.starts_at})
+            .to_string(),
+    )
+    .await;
+
+    // A audiência lê-se DEPOIS do UPDATE: traz a hora nova, e a antiga vai à
+    // parte — quem recebe precisa de saber o que sai da agenda, não só o que
+    // entra.
+    let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
+    crate::notifications::meeting_rescheduled(&state, audience, was_at).await;
+
+    let m: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(m))
+}
+
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
 /// reunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.
 #[utoipa::path(
@@ -1864,6 +2024,14 @@ pub async fn ics(
     .bind(id)
     .fetch_one(&state.db)
     .await?;
+    // O `sequence` lê-se à parte e NÃO entra no `MEETING_COLUMNS`: aquela lista
+    // é o contrato de várias respostas da API, e a revisão do calendário só
+    // interessa ao `.ics`.
+    let seq: i32 = sqlx::query_scalar("SELECT sequence FROM meetings WHERE id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
     if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         // Quem não é dono nem convidado não fica a saber que a reunião existe.
         return Err(ApiError::NotFound);
@@ -1925,9 +2093,14 @@ pub async fn ics(
         None => String::new(),
     };
     let body = format!(
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Delonix Meet//PT\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{id}@delonix-meet\r\nDTSTAMP:{now}\r\nDTSTART:{start}\r\nDURATION:PT{dur}M\r\nSUMMARY:{title}\r\nDESCRIPTION:{desc}\r\n{url_line}END:VEVENT\r\nEND:VCALENDAR\r\n",
+        // O `SEQUENCE` (RFC 5545 §3.8.7.4) é a revisão do evento: um cliente de
+        // calendário só aceita uma versão nova de um evento que já conhece se
+        // este número SUBIR. Sem ele, o `.ics` exportado depois de remarcar era
+        // silenciosamente ignorado pelo Outlook e pelo Google Calendar.
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Delonix Meet//PT\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{id}@delonix-meet\r\nDTSTAMP:{now}\r\nSEQUENCE:{seq}\r\nDTSTART:{start}\r\nDURATION:PT{dur}M\r\nSUMMARY:{title}\r\nDESCRIPTION:{desc}\r\n{url_line}END:VEVENT\r\nEND:VCALENDAR\r\n",
         id = meeting.id,
         now = dt(&Utc::now()),
+        seq = seq,
         start = dt(&meeting.starts_at),
         dur = meeting.duration_min,
         title = esc(&meeting.title),
