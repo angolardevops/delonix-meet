@@ -16,6 +16,14 @@
  * supressão de eco e nivelamento são restrições do `getUserMedia` e trocam-se
  * pedindo o microfone outra vez.
  *
+ * Duas coisas que mudaram por baixo desta mesa a 2026-10-13 sem ela mudar:
+ * a PORTA é o gate SEM parâmetros, que continua a ser a porta clássica de
+ * sempre (preso por teste, `noiseGateWorklet.test.ts`); a REDUÇÃO DE RUÍDO é
+ * a cadeia de voz da chamada, que deixou de trazer um nivelador e um
+ * limitador próprios (o canal já tem os seus) e passou a trazer um gate de
+ * voz com 30 ms de antecipação — um canal com a redução ligada sai cerca de
+ * 51 ms atrás do som cru (eram 33). Nenhuma das duas foi ouvida numa emissão.
+ *
  * O SOLO é pré-escuta: mexe no retorno de auscultadores, não no programa —
  * numa mesa real, carregar em solo a meio de uma emissão não pode calar o ar.
  */

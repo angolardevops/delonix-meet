@@ -201,9 +201,11 @@ export class CompositorDeAula {
   private ganhoVideo: GainNode | null = null
   /**
    * Nivelador + limitador da MISTURA inteira (os três barramentos somados),
-   * não de uma fonte só — os mesmos valores do `Denoiser` (media.ts), a única
-   * cadeia de dinâmica já revista neste código, aplicados aqui para nenhum
-   * barramento sozinho conseguir saturar o que se grava ou emite.
+   * não de uma fonte só — os valores que o `Denoiser` (media.ts) usava até
+   * 2026-10-13, aplicados aqui para nenhum barramento sozinho conseguir
+   * saturar o que se grava ou emite. O `Denoiser` da chamada deixou de os ter
+   * (o ganho de compensação do compressor subia o eco residual e os agudos —
+   * medido em `e2e/voz-natural.mjs`); ESTA mistura não foi medida.
    */
   private compressorMestre: DynamicsCompressorNode | null = null
   private limiterMestre: DynamicsCompressorNode | null = null
@@ -791,8 +793,9 @@ export class CompositorDeAula {
     this.ganhoMusica.gain.value = this.mistura.musica
     this.ganhoVideo.gain.value = this.mistura.video
 
-    // Valores iguais aos do `Denoiser` (media.ts) — nivelador suave, depois
-    // um limitador com o cotovelo a zero mesmo antes do tecto (-3 dBFS).
+    // Os valores que o `Denoiser` (media.ts) tinha até 2026-10-13 — nivelador
+    // suave, depois um limitador com o cotovelo a zero mesmo antes do tecto
+    // (-3 dBFS).
     this.compressorMestre = this.audioCtx.createDynamicsCompressor()
     this.compressorMestre.threshold.value = -24
     this.compressorMestre.knee.value = 12

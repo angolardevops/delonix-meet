@@ -77,10 +77,13 @@ export function useCallSession(
         const handoff = retomado ?? core.previewStreamRef.current
         core.previewStreamRef.current = null
         if (handoff && !retomado) permErr = core.prejoinPermErrRef.current
+        // Com a cadeia de voz ligada, o microfone abre-se SEM a supressão
+        // nativa do browser — uma só supressão (ver `denoiseMic`).
+        const audio = audioConstraints(undefined, !media.noiseSuppression)
         const stream =
           handoff ??
-          (await getMedia(voiceOnly ? { audio: audioConstraints() } : { audio: audioConstraints(), video: videoConstraints() })
-            .catch(() => getMedia({ audio: audioConstraints() }))
+          (await getMedia(voiceOnly ? { audio } : { audio, video: videoConstraints() })
+            .catch(() => getMedia({ audio }))
             .catch(() => new MediaStream()))
         stream.getVideoTracks().forEach((tr) => (tr.contentHint = 'motion'))
         if (cancelled) {
@@ -100,11 +103,15 @@ export function useCallSession(
         core.localStreamRef.current = stream
         core.cameraTrackRef.current = stream.getVideoTracks()[0] ?? null
 
-        // RNNoise ANTES de a chamada começar. Fallback: mantém a crua.
+        // A cadeia de voz ANTES de a chamada começar. Passa-se SEMPRE por
+        // aqui, com a opção ligada ou não: é o `denoiseMic` que acerta a
+        // supressão nativa com a escolha (a caixa da pré-entrada pode ter
+        // mudado depois de o microfone estar aberto) e que a repõe se o
+        // RNNoise não carregar. A track que volta pode ser outra.
         const initRaw = stream.getAudioTracks()[0]
         const initMicId = initRaw?.getSettings().deviceId ?? ''
-        if (initRaw && media.noiseSuppression && !retomado) {
-          const clean = await media.denoiseMic(initRaw, true)
+        if (initRaw && !retomado) {
+          const clean = await media.denoiseMic(initRaw, media.noiseSuppression, core.micMixRef.current ? 'mix' : 'device')
           if (clean !== initRaw) {
             clean.enabled = initRaw.enabled // preserva o mute da pré-entrada
             stream.removeTrack(initRaw)
