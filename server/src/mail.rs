@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use uuid::Uuid;
 
@@ -97,10 +98,26 @@ pub struct Outgoing<'a> {
     pub dedupe_key: Option<&'a str>,
 }
 
-/// O correio está configurado? Quem enfileira deve perguntar ANTES de prometer
-/// à pessoa que a mensagem vai sair.
+/// O relay DO OPERADOR está configurado?
+///
+/// É a resposta para o correio que não pertence a organização nenhuma. Para uma
+/// mensagem de uma organização, a pergunta certa é [`enabled_for`]: desde o
+/// SMTP por organização (ADR-0025), uma org com o seu próprio relay manda
+/// correio mesmo que o operador não tenha nenhum.
 pub fn enabled(state: &AppState) -> bool {
     state.config.smtp_host.is_some() && state.config.smtp_from.is_some()
+}
+
+/// O correio está configurado **para esta organização**: o relay dela, ou o do
+/// operador.
+pub async fn enabled_for(state: &AppState, org_id: Option<Uuid>) -> bool {
+    if enabled(state) {
+        return true;
+    }
+    match org_id {
+        Some(org) => org_relay(state, org).await.is_some(),
+        None => false,
+    }
 }
 
 /// Enfileira uma mensagem. **Não envia**: o worker envia.
@@ -115,7 +132,7 @@ pub fn enabled(state: &AppState) -> bool {
 /// mandado esta mensagem a este endereço — que não é um erro: é a defesa a
 /// funcionar.
 pub async fn enqueue(state: &AppState, msg: Outgoing<'_>) -> Result<Option<Uuid>, ApiError> {
-    if !enabled(state) {
+    if !enabled_for(state, msg.org_id).await {
         return Err(DomainError::precondition(
             "mail.disabled",
             "o correio não está configurado neste servidor",
@@ -142,26 +159,151 @@ pub async fn enqueue(state: &AppState, msg: Outgoing<'_>) -> Result<Option<Uuid>
     Ok(id)
 }
 
-/// O transporte, construído a partir da configuração do operador.
-///
-/// STARTTLS por omissão. `SMTP_STARTTLS=0` cai para uma ligação em claro e só
-/// serve um relay em `localhost`: sem TLS, a password da conta viaja à vista.
-fn transport(state: &AppState) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
-    let host = state.config.smtp_host.as_deref().ok_or("sem SMTP_HOST")?;
-    let mut b = if state.config.smtp_starttls {
-        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host).map_err(|e| e.to_string())?
+/// Por onde uma mensagem sai: o relay do operador, ou o da organização.
+#[derive(Clone)]
+pub(crate) struct Relay {
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub starttls: bool,
+    pub from: String,
+    /// `true` quando o host foi escrito por um CLIENTE. Decide se a ligação
+    /// passa pela guarda de saída: o relay do operador não precisa dela (ele
+    /// declarou-o), o de uma organização precisa sempre.
+    pub do_inquilino: bool,
+}
+
+/// O relay do operador, se estiver configurado.
+pub(crate) fn operator_relay(state: &AppState) -> Option<Relay> {
+    Some(Relay {
+        host: state.config.smtp_host.clone()?,
+        port: state.config.smtp_port,
+        username: state.config.smtp_username.clone(),
+        password: state.config.smtp_password.clone(),
+        starttls: state.config.smtp_starttls,
+        from: state.config.smtp_from.clone()?,
+        do_inquilino: false,
+    })
+}
+
+/// O relay desta organização, se tiver um LIGADO. A password abre-se aqui e
+/// não sai deste módulo.
+pub(crate) async fn org_relay(state: &AppState, org_id: Uuid) -> Option<Relay> {
+    relay_da_org(state, org_id, true).await
+}
+
+/// O mesmo, **mesmo que esteja desligado**: serve a rota de verificação, que
+/// existe para se provar uma configuração ANTES de a ligar.
+pub(crate) async fn org_relay_any(state: &AppState, org_id: Uuid) -> Option<Relay> {
+    relay_da_org(state, org_id, false).await
+}
+
+async fn relay_da_org(state: &AppState, org_id: Uuid, so_ligado: bool) -> Option<Relay> {
+    let row: Option<(String, i32, String, String, bool, String)> = sqlx::query_as(
+        "SELECT host, port, username, password_sealed, starttls, from_address
+           FROM org_mail_settings WHERE org_id = $1 AND (enabled OR NOT $2)",
+    )
+    .bind(org_id)
+    .bind(so_ligado)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let (host, port, username, sealed, starttls, from) = row?;
+    let password = if sealed.is_empty() {
+        None
     } else {
-        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
+        // Se a abertura falhar (chave rodada sem resselar), o relay fica
+        // INUTILIZÁVEL em vez de tentar sem password: tentar sem ela seria
+        // entregar a mensagem a um relay aberto, se houver.
+        match crate::secrets_at_rest::open(&state.config, &sealed, &aad(org_id)) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::warn!(%org_id, error = ?e,
+                    "SMTP da organização: a password não abriu — o relay dela não é usado");
+                return None;
+            }
+        }
+    };
+    Some(Relay {
+        host,
+        port: port.clamp(1, u16::MAX as i32) as u16,
+        username: Some(username).filter(|u| !u.is_empty()),
+        password,
+        starttls,
+        from,
+        do_inquilino: true,
+    })
+}
+
+/// O AAD da password selada: preso ao `org_id`, para uma linha copiada para
+/// outra organização não se abrir. Pelo helper da casa, não por um `format!`
+/// próprio — o formato do AAD é uma regra e tem um só dono.
+pub(crate) fn aad(org_id: Uuid) -> String {
+    crate::secrets_at_rest::aad("org_mail_settings", "password_sealed", org_id)
+}
+
+/// Constrói o transporte para um relay.
+///
+/// **A diferença que importa está no `do_inquilino`.** Para o relay de uma
+/// organização, o host foi escrito por um cliente, e por isso:
+///
+/// 1. passa pela guarda de saída (`resolve_tenant_target`), que resolve o nome
+///    e aprova UM endereço;
+/// 2. a ligação é feita a esse **endereço**, não ao nome — é isto que fecha a
+///    janela do DNS rebinding, pela mesma razão que o `GuardedResolver` existe
+///    para o HTTP;
+/// 3. o certificado continua a ser validado contra o **NOME**, por
+///    `TlsParameters::builder(nome)`. Ligar a um IP e validar o nome é o que dá
+///    as duas garantias ao mesmo tempo.
+///
+/// O `builder_dangerous` tem esse nome por não pôr TLS sozinho; aqui o TLS é
+/// posto explicitamente a seguir, excepto quando o relay o dispensa.
+async fn transport(
+    state: &AppState,
+    r: &Relay,
+) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
+    let mut b = if r.do_inquilino {
+        let alvo = state
+            .outbound
+            .resolve_tenant_target(&r.host, r.port)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(alvo.ip().to_string())
+            .port(alvo.port());
+        if r.starttls {
+            let params = TlsParameters::builder(r.host.clone())
+                .build()
+                .map_err(|e| e.to_string())?;
+            b.tls(Tls::Required(params))
+        } else {
+            b
+        }
+    } else if r.starttls {
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&r.host)
+            .map_err(|e| e.to_string())?
+            .port(r.port)
+    } else {
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&r.host).port(r.port)
     }
-    .port(state.config.smtp_port)
     .timeout(Some(Duration::from_secs(20)));
-    if let (Some(u), Some(p)) = (
-        state.config.smtp_username.as_deref(),
-        state.config.smtp_password.as_deref(),
-    ) {
+    if let (Some(u), Some(p)) = (r.username.as_deref(), r.password.as_deref()) {
         b = b.credentials(Credentials::new(u.to_string(), p.to_string()));
     }
     Ok(b.build())
+}
+
+/// Liga-se ao relay e faz o diálogo de SMTP (incluindo a autenticação) **sem
+/// mandar mensagem nenhuma**. É o que a rota de verificação usa: quem configura
+/// um relay tem de poder saber se está certo sem esperar por um email perdido.
+pub(crate) async fn test_relay(state: &AppState, r: &Relay) -> Result<(), String> {
+    let tp = transport(state, r).await?;
+    match tp.test_connection().await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("o relay não respondeu ao diálogo de SMTP".into()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// A fila, declarada uma vez.
@@ -182,7 +324,7 @@ const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
     ready_when: "status = 'pending' \
                  OR (status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now())",
     claim_set: "status = 'sending', claimed_at = now(), retry_at = NULL",
-    returning: "id, to_address, subject, body_text, attempt",
+    returning: "id, org_id, to_address, subject, body_text, attempt",
     order_by: "created_at",
     tenant_column: Some("org_id"),
     batch: BATCH,
@@ -192,6 +334,9 @@ const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
 #[derive(sqlx::FromRow)]
 struct PorEnviar {
     id: Uuid,
+    /// Decide por que relay a mensagem sai: o da organização, se tiver um
+    /// ligado; senão o do operador.
+    org_id: Option<Uuid>,
     to_address: String,
     subject: String,
     body_text: String,
@@ -205,9 +350,11 @@ struct PorEnviar {
 /// vez»: se o processo morrer entre o envio e a escrita do resultado, a
 /// mensagem pode sair duas vezes — preferível a não sair.
 pub async fn send_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
-    if !enabled(state) {
-        return Ok(0);
-    }
+    // NÃO se sai cedo por o operador não ter relay: desde o SMTP por
+    // organização, uma org com o seu próprio relay manda correio num servidor
+    // em que o operador não configurou nenhum. Quem não tem por onde sair
+    // descobre-o por mensagem, abaixo.
+
     let mut tx = state.db.begin().await?;
     let due: Vec<PorEnviar> =
         delonix_meet_store::jobs::claim_in(&mut tx, &FILA, &RETRY, None).await?;
@@ -216,34 +363,55 @@ pub async fn send_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
         return Ok(0);
     }
 
-    let from = state
-        .config
-        .smtp_from
-        .as_deref()
-        .unwrap_or_default()
-        .to_string();
-    let tp = match transport(state) {
-        Ok(tp) => tp,
-        Err(e) => {
-            // A configuração está errada, não o destino: marca todas como
-            // falhadas sem gastar tentativas numa coisa que não melhora
-            // sozinha.
-            for m in &due {
-                falhou(
-                    state,
-                    m.id,
-                    m.attempt,
-                    &format!("configuração: {e}"),
-                    PERMANENTE,
-                )
-                .await;
-            }
-            return Ok(0);
-        }
-    };
+    // UM transporte por organização, não por mensagem: construir o de um
+    // inquilino custa uma consulta de DNS, e um lote traz muitas mensagens da
+    // mesma organização. `None` no valor = esta organização não tem por onde
+    // sair, e já ficou registado porquê.
+    type Pronto = (String, AsyncSmtpTransport<Tokio1Executor>);
+    let mut relays: std::collections::HashMap<Option<Uuid>, Option<Pronto>> =
+        std::collections::HashMap::new();
 
     let mut enviadas = 0usize;
     for m in due {
+        // O relay desta organização, ou o do operador. A ordem é esta de
+        // propósito: quem configurou o seu próprio SMTP quer que o correio dele
+        // saia por lá, não pelo nosso.
+        if let std::collections::hash_map::Entry::Vacant(vaga) = relays.entry(m.org_id) {
+            let escolhido = match m.org_id {
+                Some(org) => match org_relay(state, org).await {
+                    Some(r) => Some(r),
+                    None => operator_relay(state),
+                },
+                None => operator_relay(state),
+            };
+            let pronto = match escolhido {
+                Some(r) => match transport(state, &r).await {
+                    Ok(tp) => Some((r.from.clone(), tp)),
+                    Err(e) => {
+                        tracing::warn!(org = ?m.org_id, error = %e,
+                            "correio: o relay desta organização não serve");
+                        None
+                    }
+                },
+                None => None,
+            };
+            vaga.insert(pronto);
+        }
+        let Some(Some((from, tp))) = relays.get(&m.org_id) else {
+            // Sem relay utilizável: a configuração está errada, não o destino.
+            // Falha PERMANENTE — insistir não a corrige, e gastaria as
+            // tentativas que servem para um relay em baixo.
+            falhou(
+                state,
+                m.id,
+                m.attempt,
+                "sem relay utilizável para esta organização",
+                PERMANENTE,
+            )
+            .await;
+            continue;
+        };
+
         let built = Message::builder()
             .from(match from.parse() {
                 Ok(f) => f,
@@ -252,7 +420,7 @@ pub async fn send_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
                         state,
                         m.id,
                         m.attempt,
-                        &format!("SMTP_FROM: {e}"),
+                        &format!("remetente: {e}"),
                         PERMANENTE,
                     )
                     .await;

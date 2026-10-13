@@ -1,7 +1,8 @@
 -- OAuth 2.1 para clientes MCP (ADR-0028).
 --
--- NUMERAÇÃO: 0114 quando se escreveu, 0115 depois da #318 (`sala_ao_agendar`),
--- e 0116 depois da #321 (`mail_dedupe`). Três renumerações numa tarde é a
+-- NUMERAÇÃO: 0114 quando se escreveu, e depois 0115, 0116 e 0117 à medida que
+-- a #318 (`sala_ao_agendar`), a #321 (`mail_dedupe`) e a #325
+-- (`org_mail_settings`) fundiram primeiro. Quatro renumerações numa tarde é a
 -- lição das três 0105 em paralelo (#292) levada ao extremo: o número de uma
 -- migração não é dela até a PR fundir.
 --

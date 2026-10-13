@@ -492,16 +492,14 @@ async fn check_host(state: &AppState, host: &str, port: i32) -> Result<(), ApiEr
     // O FreeSWITCH vai ligar a este host em nome do inquilino: a mesma guarda
     // de um URL escrito pelo cliente (sem destinos internos, salvo
     // OUTBOUND_ALLOW_HOSTS). Um nome que ainda não resolve é aceite.
-    let url = if host.contains(':') && !host.starts_with('[') {
-        format!("https://[{host}]:{port}/")
-    } else {
-        format!("https://{host}:{port}/")
-    };
+    //
+    // O embrulho do host num URL vivia aqui e passou para o `net_guard`, que é
+    // o dono dos pedidos de saída: o SMTP por organização precisava do mesmo e
+    // duas cópias da mesma regra é o que a catraca persegue.
     state
         .outbound
-        .check_tenant_config_url(&url)
+        .check_tenant_host_port(host, port.clamp(1, u16::MAX as i32) as u16)
         .await
-        .map(|_| ())
         .map_err(|e| {
             DomainError::invalid("telephony.trunk_host_refused", e.to_string())
                 .with_field("host", "destino interno ou inválido")

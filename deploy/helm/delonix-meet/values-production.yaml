@@ -13,7 +13,20 @@
 #      --set web.image.repository=<registo>/delonix-web \
 #      --set whisper.enabled=true \
 #      --set whisper.image.repository=<registo>/delonix-whisper \
-#      --set whisper.image.tag=<tag da imagem do ASR>
+#      --set whisper.image.tag=<tag da imagem do ASR> \
+#      --set ollama.image.repository=<registo>/ollama/ollama
+#
+#  A ÚLTIMA é opcional mas MEDIDA: o `ollama/ollama:0.40.2` são 3,5GB, e a
+#  2026-10-13 o nó não os acabou de puxar do Docker Hub em 600 s — o prazo que
+#  o Kubernetes dá por omissão — e o `helm upgrade --wait` deu o release por
+#  falhado com tudo aplicado e o pod a progredir por trás. A mesma instalação
+#  puxou 1,18GB do registo da rede em 1m24s. Espelhar a imagem no registo onde
+#  já vivem o servidor e a web troca um puxão de dezenas de minutos por um de
+#  minuto:
+#
+#    podman pull ollama/ollama:0.40.2
+#    podman tag  ollama/ollama:0.40.2 <registo>/ollama/ollama:0.40.2
+#    podman push --tls-verify=false   <registo>/ollama/ollama:0.40.2
 #
 #  As três últimas ligam o ASR soberano (as legendas da sala sem passar pela
 #  Google). A sua imagem tem tag PRÓPRIA: embute o modelo (~2GB) e não se

@@ -5095,6 +5095,25 @@
           }
         ]
       },
+      "MailRelayCheck": {
+        "description": "O resultado de uma verificação: ligou-se ao relay e falou SMTP com ele\n(autenticação incluída), **sem mandar mensagem nenhuma**.",
+        "properties": {
+          "error": {
+            "description": "A razão, quando não deu. Vem do relay ou da guarda de saída.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      },
       "ManagedBy": {
         "description": "De onde vêm os campos só de leitura.",
         "properties": {
@@ -6342,6 +6361,58 @@
           "label",
           "prefixes",
           "configured"
+        ],
+        "type": "object"
+      },
+      "OrgMailSettings": {
+        "description": "A configuração, como a API a conta. **Sem password.**",
+        "properties": {
+          "enabled": {
+            "description": "`false` = guardada mas a dormir; o correio sai pelo relay do operador.",
+            "type": "boolean"
+          },
+          "from_address": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "password_configured": {
+            "description": "Há password gravada? O valor dela **nunca** sai daqui.",
+            "type": "boolean"
+          },
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "starttls": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "port",
+          "username",
+          "password_configured",
+          "starttls",
+          "from_address",
+          "enabled",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -7914,6 +7985,52 @@
         },
         "required": [
           "preferences"
+        ],
+        "type": "object"
+      },
+      "PutOrgMailSettingsReq": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_plaintext": {
+            "description": "A confirmação por escrito de que se quer uma ligação em claro. Sem ela,\n`starttls: false` é recusado — a password do cliente viajaria à vista e\nisso não pode ser um descuido de um campo.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "from_address": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "password": {
+            "description": "Omissa numa alteração = **mantém** a que está. `\"\"` apaga-a.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "starttls": {
+            "description": "Por omissão `true`. Pôr `false` exige `allow_plaintext: true`.",
+            "type": "boolean"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "host",
+          "port",
+          "from_address"
         ],
         "type": "object"
       },
@@ -21469,6 +21586,274 @@
         "summary": "Reenvia: roda o token (o anterior deixa de servir) e renova a validade.",
         "tags": [
           "directory"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/mail-settings": {
+      "delete": {
+        "operationId": "delete_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Apagado, ou já não existia."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Apaga o SMTP próprio: o correio desta organização volta ao relay do\noperador.",
+        "tags": [
+          "org"
+        ]
+      },
+      "get": {
+        "operationId": "get_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgMailSettings"
+                }
+              }
+            },
+            "description": "A password nunca vem; só `password_configured`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é administrador desta organização"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a organização não configurou SMTP próprio"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "O SMTP desta organização. `404` quando ela não configurou nenhum — e aí o\ncorreio dela sai pelo relay do operador.",
+        "tags": [
+          "org"
+        ]
+      },
+      "put": {
+        "operationId": "put_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutOrgMailSettingsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgMailSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`org_mail_settings.invalid_from`, `org_mail_settings.plaintext_not_confirmed`, `org_mail_settings.host_refused` (a guarda de saída recusou o destino)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`secrets.encryption_unconfigured` — sem `DATA_ENCRYPTION_KEYS` não se guarda uma password"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Grava (ou substitui) o SMTP desta organização.",
+        "tags": [
+          "org"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/mail-settings/check": {
+      "post": {
+        "description": "Existe porque sem isto quem configura um relay só descobre que está errado\nquando um email se perde — e o erro fica numa linha da caixa de saída que a\nAPI não expõe.\n\nA ligação passa pela MESMA guarda de saída do envio: um host interno é\nrecusado aqui também, e por isso isto não serve de sonda da rede.",
+        "operationId": "check_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailRelayCheck"
+                }
+              }
+            },
+            "description": "`ok: false` com a razão é uma resposta, não um erro: a configuração é que está má."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "a organização não configurou SMTP próprio"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Verifica o relay desta organização: liga-se, fala SMTP (autenticação\nincluída) e **não manda mensagem nenhuma**.",
+        "tags": [
+          "org"
         ]
       }
     },
