@@ -473,10 +473,13 @@ const INVITATION_FROM: &str =
 pub struct InvitationWithToken {
     #[serde(flatten)]
     pub invitation: Invitation,
-    /// A credencial do convite, mostrada esta única vez. Não há envio de correio
-    /// no servidor: a UI entrega-a (link ou código).
+    /// A credencial do convite, mostrada esta única vez. Vem **sempre**, mesmo
+    /// quando o email sai: a consola oferece «copiar link» e quem convida pode
+    /// querer entregá-la à mão de qualquer forma.
     pub token: String,
-    /// Sempre `manual`: o servidor não envia correio (medido: zero SMTP).
+    /// `email` quando o convite entrou na fila do correio; `manual` quando não
+    /// há relay configurado, falta o `PUBLIC_URL`, ou a fila recusou — nesse
+    /// caso o convite vale e entrega-se à mão, como antes de haver correio.
     pub delivery_channel: &'static str,
 }
 
@@ -850,6 +853,14 @@ pub async fn create_invitation(
     )
     .await?;
     let invitation = load_invitation(&state, org_id, id).await?;
+    // As horas que o texto do email anuncia saem do convite JÁ gravado, não do
+    // pedido: o `expires_in_hours` é opcional e a validade real pode vir do
+    // tecto dos convidados externos.
+    let hours = (invitation.expires_at - Utc::now()).num_hours().max(1);
+    let channel = crate::invitation_mail::send_best_effort(
+        &state, org_id, &req.email, &token, delivery, hours,
+    )
+    .await;
     Ok((
         StatusCode::CREATED,
         [(
@@ -859,7 +870,7 @@ pub async fn create_invitation(
         Json(InvitationWithToken {
             invitation,
             token,
-            delivery_channel: "manual",
+            delivery_channel: channel,
         }),
     )
         .into_response())
@@ -1015,7 +1026,7 @@ async fn resend_inner(
     org_id: Uuid,
     actor: Uuid,
     inv: &Invitation,
-) -> Result<String, ApiError> {
+) -> Result<(String, i64), ApiError> {
     if !matches!(inv.status.as_str(), "pending" | "expired") {
         return Err(DomainError::conflict(
             "invitation.not_pending",
@@ -1060,7 +1071,7 @@ async fn resend_inner(
         &serde_json::json!({"invitation_id": inv.id, "expires_in_hours": hours}).to_string(),
     )
     .await;
-    Ok(token)
+    Ok((token, hours))
 }
 
 /// Reenvia: roda o token (o anterior deixa de servir) e renova a validade.
@@ -1078,11 +1089,19 @@ pub async fn resend_invitation(
     Path((org_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<InvitationWithToken>, ApiError> {
     let inv = invitation_in_scope(&state, org_id, auth.user_id, id).await?;
-    let token = resend_inner(&state, org_id, auth.user_id, &inv).await?;
+    let (token, hours) = resend_inner(&state, org_id, auth.user_id, &inv).await?;
     Ok(Json(InvitationWithToken {
         invitation: load_invitation(&state, org_id, id).await?,
+        delivery_channel: crate::invitation_mail::send_best_effort(
+            &state,
+            org_id,
+            &inv.email,
+            &token,
+            &inv.delivery,
+            hours,
+        )
+        .await,
         token,
-        delivery_channel: "manual",
     }))
 }
 
@@ -1418,7 +1437,13 @@ async fn invitation_action(
 ) -> Result<(bool, Option<String>), ApiError> {
     let inv = invitation_in_scope(state, org_id, actor, id).await?;
     match req.action.as_str() {
-        "resend_invitation" => Ok((true, Some(resend_inner(state, org_id, actor, &inv).await?))),
+        // Em massa não se manda email: são até centenas de convites por pedido,
+        // e a fila do correio não é o sítio para uma rajada que ninguém pediu
+        // explicitamente. Quem quer o email reenvia um a um.
+        "resend_invitation" => Ok((
+            true,
+            Some(resend_inner(state, org_id, actor, &inv).await?.0),
+        )),
         "revoke_invitation" => {
             revoke_inner(state, org_id, actor, id).await?;
             Ok((true, None))
