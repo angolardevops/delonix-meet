@@ -468,7 +468,16 @@ async fn run_generation(
         state,
         &state.config.ollama_model_summary,
         prompt,
-        GENERATE_TIMEOUT,
+        // A janela PEDIDA ao modelo sai do orçamento do prompt. Era o terceiro
+        // sítio com o mesmo defeito (a ata e o Estúdio eram os outros dois):
+        // mandava-se até PROMPT_BUDGET_CHARS e não se pedia janela, pelo que o
+        // Ollama cortava o INÍCIO em silêncio — e aqui isso é pior do que na
+        // ata, porque o primeiro capítulo TEM de começar em 00:00:00 e o
+        // início da transcrição é exactamente o que se perdia.
+        crate::ai::LlmLimits {
+            timeout: GENERATE_TIMEOUT,
+            num_ctx: Some(crate::ai::num_ctx_para(PROMPT_BUDGET_CHARS)),
+        },
     )
     .await
     else {

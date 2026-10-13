@@ -253,6 +253,29 @@ pub struct Config {
     /// Tecto de uma tarefa do Estúdio (`OLLAMA_TIMEOUT_SECS`, 120, 5..=900).
     /// O pedido é síncrono: o ecrã espera pela resposta ou pelo erro.
     pub ollama_timeout_secs: u64,
+    /// Caracteres de transcrição que entram no prompt da ata
+    /// (`MOM_WINDOW_CHARS`, 24 000, 2 000..=[`crate::ai::MOM_WINDOW_CHARS_MAX`]
+    /// — hoje 110 488) — o FIM da transcrição, porque é lá que estão as
+    /// decisões.
+    ///
+    /// O máximo NÃO é redondo de propósito: é o tecto do `num_ctx` que pedimos
+    /// menos a reserva, convertido em caracteres. Um máximo maior aceitava uma
+    /// janela que o contexto não cobre, e o corte silencioso voltava.
+    ///
+    /// É configurável por uma razão medida: em CPU sem AVX2 o modelo processa
+    /// prompt a 0,59 tokens/s (produção, 2026-10-13), e a essa velocidade
+    /// 24 000 caracteres não cabem em tecto nenhum. Encurtar a janela é a
+    /// única maneira de a ata existir nesse hardware — pior do que a ata
+    /// completa, melhor do que nenhuma.
+    pub mom_window_chars: usize,
+    /// Tecto da chamada ao Ollama para o resumo da ata
+    /// (`MOM_SUMMARY_TIMEOUT_SECS`, 600, 60..=1800). Ninguém está à espera: é
+    /// trabalho em lote no fim da reunião.
+    ///
+    /// O máximo é o da fila, não um número redondo: a margem «em execução»
+    /// (`FILA_MOM`) tem de o cobrir, ou um segundo worker reivindicava uma
+    /// reunião cuja chamada ainda corre.
+    pub mom_summary_timeout_secs: u64,
     /// Tarefas do Estúdio em simultâneo POR ORGANIZAÇÃO
     /// (`AI_STUDIO_CONCURRENCY_PER_ORG`, 1, 1..=8). O modelo local é um só e
     /// partilhado: sem este tecto, uma organização monopolizava-o.
@@ -749,6 +772,20 @@ impl Config {
             ollama_model_summary: ollama_model_summary.clone(),
             ollama_model_studio: opt("OLLAMA_MODEL_STUDIO").unwrap_or(ollama_model_summary),
             ollama_timeout_secs: bounded_env(src, "OLLAMA_TIMEOUT_SECS", 120, 5, 900) as u64,
+            mom_window_chars: bounded_env(
+                src,
+                "MOM_WINDOW_CHARS",
+                24_000,
+                2_000,
+                crate::ai::MOM_WINDOW_CHARS_MAX,
+            ),
+            mom_summary_timeout_secs: bounded_env(
+                src,
+                "MOM_SUMMARY_TIMEOUT_SECS",
+                600,
+                60,
+                crate::ai::MOM_TIMEOUT_MAX_SECS as usize,
+            ) as u64,
             ai_studio_concurrency_per_org: bounded_env(
                 src,
                 "AI_STUDIO_CONCURRENCY_PER_ORG",

@@ -478,6 +478,20 @@ ollama:
   # Tecto de uma tarefa do Estúdio em segundos (OLLAMA_TIMEOUT_SECS, 5..900).
   # Em CPU, 120 s não chegam a um resumo do 7b: 600 dá-lhe margem.
   timeoutSeconds: 600
+  # A ATA (MoM): a janela de transcrição que entra no prompt, em caracteres, e
+  # o tecto da chamada. A janela DECIDE o `num_ctx` que o servidor pede — são
+  # a mesma decisão (`ai.rs::num_ctx_para`), e separá-las era o defeito: sem
+  # `num_ctx`, o Ollama cortava o prompt em silêncio e a ata saía de ~2 048
+  # tokens dos ~6 900 que a janela de 24 000 caracteres produz.
+  #
+  # ENCURTAR A JANELA É A MAÇANETA DE UM CPU LENTO, e o número que a justifica
+  # é medido: as VMs desta produção vêem um vCPU `x86-64-v2` (sem AVX2, ver
+  # `delonix-deploy/tofu/modules/vm/main.tf`) e o modelo processa prompt a
+  # **0,59 tokens/s**. A 24 000 caracteres são mais de três horas só para ler
+  # o prompt — a ata expira sempre. Com GPU, ou com vCPU `v3`, isto volta ao
+  # que é: a janela cheia em minutos.
+  momWindowChars: 24000
+  momSummaryTimeoutSeconds: 600
   # Quantos modelos ficam carregados ao mesmo tempo. 2 = o da ata e o da
   # legenda, para que uma legenda não descarregue o modelo da ata (e o
   # contrário). Custa memória: é o que os 8Gi de limit abaixo cobrem.

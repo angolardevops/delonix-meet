@@ -172,13 +172,18 @@ async fn reivindicacao_presa_fica_stale_e_e_retomada(db: sqlx::PgPool) {
     let r = setup(db, Reply::Answer(RESUMO.into())).await;
     let (app, id) = (&r.app, r.meeting_id.clone());
 
-    // Simula um worker morto a meio: reivindicada há mais do que o tecto da
-    // chamada (600 s) mais a margem (60 s) — 11 minutos e um segundo.
-    sqlx::query(
+    // Simula um worker morto a meio: reivindicada há mais do que a margem que
+    // o servidor usa. O intervalo vem da CONSTANTE e não de um literal — este
+    // teste tinha «11 minutos e 1 segundo» escrito à mão, e quando a margem
+    // subiu de 660 para 1860 s passou a simular um worker morto que já não era
+    // stale. Falhou no CI, e com razão.
+    sqlx::query(&format!(
         "UPDATE meetings
-            SET mom_attempts = 1, mom_running_at = now() - interval '11 minutes 1 second'
+            SET mom_attempts = 1,
+                mom_running_at = now() - interval '{} seconds'
           WHERE id = $1::uuid",
-    )
+        delonix_server::MOM_STALE_AFTER_SECS + 1
+    ))
     .bind(&id)
     .execute(&app.db)
     .await
