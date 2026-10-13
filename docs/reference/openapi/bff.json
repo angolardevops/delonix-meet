@@ -4951,6 +4951,14 @@
               "null"
             ]
           },
+          "started_at": {
+            "description": "Instante em que o anfitrião arrancou a reunião, ou `null` se ainda não\narrancou. Desde a migração 0114 a sala nasce com a reunião, por isso\n`room_code` já não distingue «agendada» de «a decorrer» — esta coluna\né que distingue.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "starts_at": {
             "format": "date-time",
             "type": "string"
@@ -5063,6 +5071,14 @@
           },
           "room_ref": {
             "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "description": "`null` enquanto o anfitrião não arrancar. A consola usa-o para saber se\nmostra «entrar» ou a contagem até à hora (migração 0114).",
+            "format": "date-time",
             "type": [
               "string",
               "null"
@@ -9195,6 +9211,55 @@
           "meeting_id",
           "meeting_title",
           "starts_at"
+        ],
+        "type": "object"
+      },
+      "RoomEntrance": {
+        "description": "O que a porta de uma sala mostra a quem chega com o link e ainda não tem\nsessão nenhuma.",
+        "properties": {
+          "allow_guests": {
+            "type": "boolean"
+          },
+          "code": {
+            "type": "string"
+          },
+          "duration_min": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "e2ee": {
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Nome da sala — que numa sala de reunião é o título da reunião.",
+            "type": "string"
+          },
+          "open": {
+            "description": "`true` quando se pode entrar já: sala ad-hoc, anfitrião já arrancou, ou\na hora marcada chegou. `false` é o que faz o cliente mostrar a contagem\nem vez da sala.",
+            "type": "boolean"
+          },
+          "starts_at": {
+            "description": "Hora marcada, quando a sala pertence a uma reunião agendada. `null`\nnuma sala ad-hoc, que não tem hora nenhuma e está sempre aberta.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting_room": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "allow_guests",
+          "waiting_room",
+          "e2ee",
+          "open"
         ],
         "type": "object"
       },
@@ -15579,7 +15644,7 @@
                 }
               }
             },
-            "description": "um convidado tentou arrancar antes do anfitrião"
+            "description": "reunião agendada antes da migração 0114, sem sala, e quem pede não é o anfitrião"
           },
           "401": {
             "content": {
@@ -15600,6 +15665,16 @@
               }
             },
             "description": "não existe, ou não és dono nem convidado"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.not_started_yet`: um convidado pediu a sala antes da hora marcada e o anfitrião ainda não arrancou. O cliente mostra o ecrã de espera."
           }
         },
         "security": [
@@ -15607,7 +15682,7 @@
             "session": []
           }
         ],
-        "summary": "Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.\nReuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.",
+        "summary": "Arranca a reunião: marca o início, toca aos convidados e devolve o código\nda sala — que existe desde que a reunião foi agendada (migração 0114).\nReuniões de voz têm sala na mesma: o cliente entra sem vídeo.",
         "tags": [
           "meetings"
         ]
@@ -35507,6 +35582,59 @@
         "summary": "Cancela enquanto toca, ou desliga em chamada. Idempotente: um pedido já\nterminado devolve-se como está.",
         "tags": [
           "dial-outs"
+        ]
+      }
+    },
+    "/api/rooms/{room_code}/entrance": {
+      "get": {
+        "description": "Pública por construção — quem abre um link partilhado não tem conta, que é\nprecisamente o ponto do link. O que sai daqui é o mínimo da porta: nome,\nhora e se está aberta. Nunca o dono, os convidados, a organização, nem nada\nde dentro da sala. O código É a credencial (capability, estilo Meet) e vale\no mesmo que já valia em `guest-join`; o travão por IP é o que torna caro\nadivinhar códigos por aqui.",
+        "operationId": "room_entrance",
+        "parameters": [
+          {
+            "description": "Código da sala (`abc-defg-hij`).",
+            "in": "path",
+            "name": "room_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomEntrance"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "travão por IP; `Retry-After` em segundos"
+          }
+        },
+        "summary": "A porta de uma sala, ANTES de qualquer sessão: é o que um ecrã de espera\nprecisa de saber para dizer «esta reunião começa às 15:00» a quem abriu o\nlink na véspera, e para decidir entre pedir o nome (convidado) ou mandar\nautenticar.",
+        "tags": [
+          "rooms"
         ]
       }
     },

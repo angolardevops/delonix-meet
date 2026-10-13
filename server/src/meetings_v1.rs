@@ -126,6 +126,8 @@ pub struct MeetingResp {
     #[serde(flatten)]
     pub options: SessionOptions,
     pub room_code: String,
+    /// Link de entrada da sala. Vazio só numa reunião agendada antes da
+    /// migração 0114, que nasceu sem sala — nunca um link incompleto.
     pub join_url: String,
     pub host_email: String,
     /// Convidados efectivamente registados (email -> id do utilizador).
@@ -495,7 +497,17 @@ async fn build_resp(
     skipped: Vec<SkippedInvitee>,
     existing: bool,
 ) -> Result<MeetingResp, ApiError> {
+    // Sem sala não há link. Até à migração 0114 uma reunião nascia sem
+    // `room_code` e isto construía `https://<org>/#/r/` — um link partido que
+    // saía na resposta como se fosse bom. Hoje a sala nasce com a reunião e o
+    // caso só sobra para as reuniões agendadas antes dessa migração: essas
+    // levam `join_url` vazia, que é verdade, em vez de um link que não abre.
     let room_code = meeting.room_code.clone().unwrap_or_default();
+    let join_url = if room_code.is_empty() {
+        String::new()
+    } else {
+        crate::apikeys::room_link(state, org_id, &room_code).await
+    };
     Ok(MeetingResp {
         id: meeting.id,
         external_ref: external_ref_of(state, meeting.id).await,
@@ -504,7 +516,7 @@ async fn build_resp(
         duration_min: meeting.duration_min,
         kind: meeting.kind.clone(),
         options: crate::meetings::load_session_options(&state.db, meeting.id).await?,
-        join_url: crate::apikeys::room_link(state, org_id, &room_code).await,
+        join_url,
         room_code,
         host_email,
         invitees: invitees_of(state, meeting.id).await?,

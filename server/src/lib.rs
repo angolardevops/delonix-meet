@@ -224,6 +224,10 @@ pub struct AppState {
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
     /// Entradas de convidado sem conta, por IP e por sala (ver `guests.rs`).
+    /// Travão da porta pública de uma sala (`GET /api/rooms/{code}/entrance`),
+    /// por IP. Separado do `guest_ip_limiter` de propósito: ver a porta não
+    /// pode gastar o orçamento de ENTRAR por ela.
+    pub room_entrance_limiter: RateLimiter,
     pub guest_ip_limiter: RateLimiter,
     pub guest_room_limiter: RateLimiter,
     /// Envios de SMS por utilizador dentro de uma org (chave `org:user`). Com a
@@ -682,6 +686,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Convidado SEM conta (público por desenho — ver guests.rs e
         // scripts/rotas-publicas.txt): só produz um token de sala que passa
         // SEMPRE pela sala de espera.
+        .route(
+            "/api/rooms/{room_code}/entrance",
+            get(rooms::room_entrance),
+        )
         .route(
             "/api/rooms/{room_code}/guest-join",
             post(guests::guest_join),
@@ -1640,6 +1648,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        room_entrance_limiter: RateLimiter::new(60, Duration::from_secs(60)),
         guest_ip_limiter: RateLimiter::new(
             config.guest_join_per_ip_per_min as u32,
             Duration::from_secs(60),
