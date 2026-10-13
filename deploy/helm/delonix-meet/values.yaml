@@ -116,6 +116,12 @@ server:
 
   # O que o BROWSER usa para chegar ao TURN (`host:porta`). Vazio = o
   # `coturn.externalIP` e a porta do coturn deste chart.
+  #
+  # É UM valor para dois leitores: o browser recebe-o, e o SFU usa-o para as
+  # suas próprias alocações. Com `coturn.privateIP` (relay atrás de NAT) põe
+  # aqui um NOME (`turn.exemplo.ao:3478`): o chart dá aos pods do servidor um
+  # `hostAliases` desse nome para o IP privado, e o SFU fala com o relay por
+  # dentro enquanto o browser lhe chega pelo IP público.
   turnHost: ""
   # Media em Kubernetes é relay-only: o IP do pod não é alcançável de fora.
   forceTurnRelay: true
@@ -254,6 +260,19 @@ coturn:
   # ou o do nó em hostNetwork). Obrigatório em produção. Fora de produção,
   # vazio = o IP do nó (hostNetwork) ou do pod.
   externalIP: ""
+  # RELAY ATRÁS DE NAT: o IP do nó (ou do pod) onde o coturn ESCUTA, quando o
+  # `externalIP` é um endereço público que não é dele — o do router que lhe
+  # encaminha a 3478 e a gama de relay. O coturn passa a correr com
+  # `--external-ip=<externalIP>/<privateIP>`: anuncia o público e sabe que é o
+  # privado. Sem isto, dois relays do mesmo coturn só se falam se o router
+  # fizer hairpin (medido em 2026-10-13 num coturn 4.6: com o mapa, 60 de 60
+  # mensagens entre dois relays; sem ele, 0 de 60).
+  privateIP: ""
+  # Reconhecimento explícito de uma instalação SÓ PARA A REDE LOCAL: em
+  # produção o chart recusa um `externalIP` privado (10/8, 172.16/12,
+  # 192.168/16), porque quem está fora dessa rede junta-se à sala e fica sem
+  # áudio nem vídeo — sem um erro. `true` diz que é isso que se quer.
+  lanOnly: false
   realm: delonix
   port: 3478
   relayPorts: { min: 49152, max: 59152 }

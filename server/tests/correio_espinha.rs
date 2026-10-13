@@ -24,6 +24,9 @@ fn msg<'a>(to: &'a str) -> MailOutgoing<'a> {
         to,
         subject: "Reposição de password",
         body: "Use este código para repor a password.",
+        // Pedido à mão: sem dedupe. Os testes do dedupe estão no ficheiro das
+        // notificações por correio, que é quem o usa.
+        dedupe_key: None,
     }
 }
 

@@ -806,7 +806,9 @@ pub(crate) async fn load_notification_preferences(
             .iter()
             .map(|c| NotificationChannelStatus {
                 channel: c.as_str().into(),
-                delivery: np::delivery(*c).as_str().into(),
+                delivery: np::delivery(*c, crate::mail::enabled(state))
+                    .as_str()
+                    .into(),
             })
             .collect(),
         items: Kind::ALL
@@ -824,17 +826,33 @@ pub(crate) async fn load_notification_preferences(
 /// O canal `in_app` está ligado para este tipo? (o produtor pergunta antes de
 /// criar a notificação)
 pub(crate) async fn in_app_enabled(db: &sqlx::PgPool, user_id: Uuid, kind: Kind) -> bool {
+    channel_enabled(db, user_id, kind, np::Channel::InApp).await
+}
+
+/// A preferência de um par (tipo, canal), com a omissão do domínio quando a
+/// pessoa nunca a mexeu.
+///
+/// Existe genérica porque o correio passou a entregar (ADR-0025) e precisava da
+/// MESMA pergunta para outro canal — copiar a consulta era a cópia que a
+/// catraca da arquitectura persegue.
+pub(crate) async fn channel_enabled(
+    db: &sqlx::PgPool,
+    user_id: Uuid,
+    kind: Kind,
+    channel: np::Channel,
+) -> bool {
     sqlx::query_scalar::<_, bool>(
         "SELECT enabled FROM user_notification_preferences
-          WHERE user_id = $1 AND kind = $2 AND channel = 'in_app'",
+          WHERE user_id = $1 AND kind = $2 AND channel = $3",
     )
     .bind(user_id)
     .bind(kind.as_str())
+    .bind(channel.as_str())
     .fetch_optional(db)
     .await
     .ok()
     .flatten()
-    .unwrap_or_else(|| np::default_enabled(kind, np::Channel::InApp))
+    .unwrap_or_else(|| np::default_enabled(kind, channel))
 }
 
 /// As minhas preferências de notificação, por tipo e canal, e o estado de

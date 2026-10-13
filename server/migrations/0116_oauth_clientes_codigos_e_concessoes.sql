@@ -1,9 +1,9 @@
 -- OAuth 2.1 para clientes MCP (ADR-0028).
 --
--- NUMERAÇÃO: escolhida ao abrir a PR, contra a develop desse momento. Era a
--- 0114 quando se escreveu; a #318 (`sala_ao_agendar`) entrou primeiro e esta
--- renumerou-se para 0115. É exactamente a lição das três 0105 em paralelo
--- (#292) — e a razão de o número se escolher no fim, não no início.
+-- NUMERAÇÃO: 0114 quando se escreveu, 0115 depois da #318 (`sala_ao_agendar`),
+-- e 0116 depois da #321 (`mail_dedupe`). Três renumerações numa tarde é a
+-- lição das três 0105 em paralelo (#292) levada ao extremo: o número de uma
+-- migração não é dela até a PR fundir.
 --
 -- O que isto NÃO faz, e é a decisão central do ADR: não cria uma segunda vida
 -- de credenciais. A sessão do agente é uma linha em `user_sessions` como as

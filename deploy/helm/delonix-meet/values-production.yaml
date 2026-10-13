@@ -48,6 +48,10 @@ server:
   # O caminho da chamada: desalojar o SFU derruba reuniões a decorrer.
   # O Job de migração herda esta classe (bloqueia o release).
   priorityClassName: meet-critico
+  # O nome do TURN, igual para o browser e para o SFU. `turn.ngolacloud.com`
+  # resolve para o IP público (medido a 2026-10-13); cá dentro, o chart
+  # aponta-o para `coturn.privateIP` — ver `turnHost` no values.yaml.
+  turnHost: "turn.ngolacloud.com:3478"
   replicas: 3
   migrations:
     mode: job
@@ -252,12 +256,29 @@ coturn:
   # visível, não como quota esgotada.
   totalQuota: 300
 
-  # OBRIGATÓRIO por --set: coturn.externalIP — o endereço por onde o CLIENTE
-  # chega ao nó do coturn. É o que o coturn anuncia (`--external-ip`) e o que o
-  # `TURN_HOST` do servidor leva. Na LAN é o IP do nó; da internet é o endereço
-  # público para onde o router encaminha as portas acima. Um só valor: trocá-lo
-  # é um `--set` e um `helm upgrade`.
+  # OBRIGATÓRIOS por --set, e são DOIS endereços, não um:
+  #
+  #   coturn.externalIP — o IP PÚBLICO, o do router que encaminha a 3478 para
+  #                       o nó (UDP; e TCP, para redes que bloqueiam UDP);
+  #   coturn.privateIP  — o IP do NÓ onde o coturn escuta (hostNetwork).
+  #
+  # Com os dois, o coturn corre com `--external-ip=público/privado` e a media
+  # entre o relay do browser e o relay do SFU não sai do nó: num ensaio com um
+  # coturn 4.6 e um IP público inalcançável, dois relays trocaram 60 de 60
+  # mensagens (0 de 60 sem o mapa). Por isso o browser só precisa de chegar à
+  # 3478; a gama de relay acima NÃO foi precisa nesse ensaio. Encaminhá-la não
+  # faz mal — só não se confirmou em produção que se pode dispensar.
+  #
+  # A instalação de 2026-10-11 pôs o IP do nó (192.168.1.32) no `externalIP`.
+  # Medido a 2026-10-13: dentro da LAN a sala tem áudio e vídeo nos dois
+  # sentidos; fora dela o browser recebe `turn:192.168.1.32:3478` com
+  # `iceTransportPolicy: relay`, um endereço a que não chega, e a pessoa entra
+  # na sala e não ouve nem vê ninguém. O chart agora recusa esse valor.
+  #
+  # ORDEM: primeiro o router (sem o encaminhamento, o IP público não responde e
+  # nem a LAN fica com media), só depois o `helm upgrade` com os dois valores.
   externalIP: ""
+  privateIP: ""
 
   # Fixar o nó também vem por --set (`coturn.nodeSelector`), e é próprio da
   # instalação. Em `hostNetwork` o endereço do relay É o do nó: sem fixar, um
