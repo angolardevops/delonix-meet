@@ -50,6 +50,7 @@ mod odoo;
 mod odoo_sso;
 pub mod openapi;
 mod org;
+mod org_mail;
 mod passkeys;
 mod phone_bridge;
 mod presence;
@@ -750,6 +751,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Tradução de legendas em tempo real via LLM local (ai.rs / Ollama).
         .route("/api/ai/translations", post(ai::translate_caption))
         // ---- Reuniões, agenda e plano de acção 5W2H ----
+        // SMTP da própria organização (ADR-0025): o host é escrito por um
+        // cliente, logo passa pela guarda de saída ao gravar E ao ligar.
+        .route(
+            "/api/orgs/{org_id}/mail-settings",
+            get(org_mail::get_settings)
+                .put(org_mail::put_settings)
+                .delete(org_mail::delete_settings),
+        )
+        .route(
+            "/api/orgs/{org_id}/mail-settings/check",
+            post(org_mail::check_settings),
+        )
         .route("/api/meetings", get(meetings::list).post(meetings::create))
         .route("/api/meetings/check-conflicts", post(meetings::check_conflicts))
         .route(

@@ -252,6 +252,22 @@ await recusado('A repõe a password de um utilizador da org B', `/api/orgs/${B.o
 await recusado('A atribui um papel a um membro da org B', `/api/orgs/${B.orgId}/members/${B.userId}/role`, {
   token: A.token, method: 'PUT', body: { role_id: fantasma },
 })
+// O SMTP de uma organização é a credencial de um relay DELA: host, conta e
+// password selada. Ler, gravar ou verificar o da org B a partir da A seria
+// entregar-lhe o caminho de saída do correio de outra empresa — e a
+// verificação, pior, fá-lo-ia LIGAR-SE a um destino escolhido por quem não é
+// dono dele.
+await recusado('A lê o SMTP da org B', `/api/orgs/${B.orgId}/mail-settings`, { token: A.token })
+await recusado('A grava o SMTP da org B', `/api/orgs/${B.orgId}/mail-settings`, {
+  token: A.token, method: 'PUT',
+  body: { host: 'smtp.exemplo.ao', port: 587, from_address: 'nao-responda@exemplo.ao' },
+})
+await recusado('A apaga o SMTP da org B', `/api/orgs/${B.orgId}/mail-settings`, {
+  token: A.token, method: 'DELETE',
+})
+await recusado('A verifica o relay da org B', `/api/orgs/${B.orgId}/mail-settings/check`, {
+  token: A.token, method: 'POST',
+})
 await recusado('A lista os ramais da org B', `/api/orgs/${B.orgId}/extensions`, { token: A.token })
 await recusado('A cria um ramal na org B', `/api/orgs/${B.orgId}/extensions`, {
   token: A.token, method: 'POST', body: { extension: '9001', display_name: 'intruso' },
