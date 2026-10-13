@@ -139,3 +139,29 @@ salas novas dos outros.
   sem a regra, num host livre.
 - **Não testado:** o utilizador individual (sem organização) como inquilino, e um dono em várias
   organizações; está no código mas não num teste.
+
+## Ligado no deploy — 2026-10-13
+
+Esta decisão esteve **oito dias no código e desligada na instalação**: o levantamento de
+2026-10-13 mediu que `NODE_PEER_CAPACITY` não aparecia em nenhum ficheiro de `deploy/`, logo
+`config.node_peer_capacity` era `None`, nada se recusava, e o alerta
+`MeetSalasRecusadasPorCapacidade` não podia disparar. Um mecanismo testado que nunca corre é
+uma capacidade afirmada e não provada — a mesma falha que o `check-capability-claims.sh`
+persegue na documentação.
+
+O que mudou:
+
+- **Produção declara 50 participantes por nó** (`values-production.yaml`), derivados do limite
+  de memória do pod — ~73 MB de RSS por participante, medido em
+  [`docs/ops/teste-de-carga-2026-10-05.md`](../ops/teste-de-carga-2026-10-05.md) — e **40** de
+  tecto por organização (80% da capacidade) para quem não tem tecto próprio.
+- **O chart recusa `nodePeerCapacity: 0` em produção** (`_helpers.tpl`), com controlo negativo
+  em `scripts/check-helm.sh`: não declarar capacidade deixou de ser uma omissão silenciosa.
+  O laboratório fica em 25, que é o tecto do pod pequeno.
+- **Os limites do pod subiram para 4 CPU / 4Gi**, porque a capacidade declarada tem de caber
+  no pod: com os 2Gi anteriores o OOM chegava aos ~27 participantes, e com 1Gi (o que o chart
+  tinha por omissão e o `deploy/k8s` ainda tinha) aos ~11.
+
+**Continua sem prova, como antes:** que a regra evita o colapso medido — isso pede o `loadgen`
+no mesmo nó, com e sem a regra. E agora também: que 50 é o número certo em Kubernetes, porque
+a medição que o derivou foi feita em metal, em loopback, sem TURN e sem browsers.

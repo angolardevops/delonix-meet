@@ -138,18 +138,26 @@ spec:
           # 4 = a dimensão dos workers de referência (docs/ops/platform-engineering.md
           # §2.3); acima disso o limite não passa do que o nó tem. Os tectos de CPU
           # por tarefa (`FFMPEG_MAX_CONCURRENT`, `FFMPEG_THREADS`, `MAX_DIRECTOS`)
-          # existem por causa deste limite: se o subires, revê-los. A memória NÃO foi
-          # medida com carga e fica como estava.
+          # existem por causa deste limite: se o subires, revê-los.
+          #
+          # A MEMÓRIA, essa, ficou por medir até 2026-10-13 — e era o tecto a
+          # sério: a repetição da carga em metal (docs/ops/teste-de-carga-2026-10-05.md)
+          # mediu ~73 MB de RSS por participante (201 MB a 8 pessoas, 1 100 MB a
+          # 24, 2 929 MB a 40). Com `limits.memory: 1Gi` o pod era morto por OOM
+          # à volta dos 11 participantes, e com a afinidade por sala do ADR-0001
+          # isso não derruba uma sala: derruba TODAS as salas do pod. 4Gi
+          # emparelha com os 4 CPU: (4096 − ~200 de base) ÷ 73 ≈ 53 participantes,
+          # que é a capacidade declarada no 01-config.yaml.
           #
           # O Rust não precisa de `worker_threads`: o `tokio` usa
           # `available_parallelism`, que respeita a quota do cgroup.
           resources:
             requests:
               cpu: "1"
-              memory: 256Mi
+              memory: 1Gi
             limits:
               cpu: "4"
-              memory: 1Gi
+              memory: 4Gi
           volumeMounts:
             # Gravações PARTILHADAS entre as réplicas e persistentes a restarts.
             # kind = nó único → RWO serve (todos os pods no mesmo nó partilham o

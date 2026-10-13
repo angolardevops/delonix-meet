@@ -23,10 +23,18 @@
   plataforma, não estimada à mão:
 
                                         limits         requests        pods  PVCs
-    chart, HPA no máximo, com rollout   34,60 CPU 34,06Gi   6,56 CPU  8,76Gi   19    2
+    chart, HPA no máximo, com rollout   44,60 CPU 44,06Gi   7,31 CPU 11,26Gi   17    2
     Postgres: 3 instâncias              12    CPU 24   Gi   3    CPU 12   Gi    3    3
     Redis: 3 × (redis+exporter)          3,60 CPU  6,38Gi   0,45 CPU  1,69Gi    3    3
-    pico                                50,20 CPU 64,44Gi  10,01 CPU 22,45Gi   25    8
+    pico                                60,20 CPU 74,44Gi  10,76 CPU 24,95Gi   23    8
+
+  A SUBIDA DE 2026-10-13 (segunda do dia) é o servidor alinhado com a medição:
+  4 CPU / 4Gi de limits por pod em vez de 2 / 2Gi, e o HPA a 6 réplicas em vez de
+  8. Dez CPU e 10Gi de limits a mais, DOIS pods a menos, e a capacidade declarada
+  do conjunto sobe de ~200 para ~300 participantes (`nodePeerCapacity: 50` por
+  pod). O que estava antes punha o tecto do pod cinco vezes abaixo da sala de 40
+  pessoas medida em metal (11,17 núcleos, 2 929 MB —
+  docs/ops/teste-de-carga-2026-10-05.md).
 
   A SUBIDA DE 2026-10-13 é a IA in-cluster (templates/ai.yaml): o Ollama
   (4 CPU / 8Gi de limits, 250m / 2Gi de requests, 1 pod, 1 PVC) e o Whisper
@@ -42,13 +50,13 @@
   (coturn, voz e dados do chart são `Recreate`; o CNPG e o StatefulSet do
   Redis actualizam pod a pod: nenhum soma surge.)
 
-  A quota leva ~20% de folga sobre o pico: limits 62 CPU / 80Gi, requests
-  13 CPU / 28Gi, 40 pods, 12 PVCs. Dimensionar sobre o pico sem rollout
+  A quota leva ~20% de folga sobre o pico: limits 72 CPU / 90Gi, requests
+  13 CPU / 30Gi, 40 pods, 12 PVCs. Dimensionar sobre o pico sem rollout
   rebenta o primeiro deploy, que é o momento exacto em que se descobre o erro.
 
-  OS 80Gi DE LIMITS SÃO MAIS MEMÓRIA DO QUE OS WORKERS TÊM (~82Gi somados, e
+  OS 90Gi DE LIMITS SÃO MAIS MEMÓRIA DO QUE OS WORKERS TÊM (~82Gi somados, e
   o maior tem 17,5Gi): é sobre-subscrição de LIMITS, como nos CPU. O que
-  reserva lugar ao scheduler são os 28Gi de requests — pouco mais de um terço
+  reserva lugar ao scheduler são os 30Gi de requests — pouco mais de um terço
   do cluster partilhado. Quem aumentar os limits sem olhar aos requests não
   está a pedir mais nada ao cluster; quem aumentar os requests está.
 

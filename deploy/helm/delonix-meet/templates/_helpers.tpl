@@ -354,6 +354,12 @@ capabilities:
 {{- if not (has $v.gateway.affinity.implementation (list "envoy" "none")) -}}
 {{- $e = append $e (printf "gateway.affinity.implementation=%s: é «envoy» ou «none»" $v.gateway.affinity.implementation) -}}
 {{- end -}}
+{{- if and $prod (le (int $v.server.nodePeerCapacity) 0) -}}
+{{- $e = append $e "server.nodePeerCapacity: 0 em produção. Sem capacidade declarada o nó NÃO recusa salas novas (ADR-0017): aceita até degradar, e o alerta MeetSalasRecusadasPorCapacidade nunca dispara. Foi o que esteve em produção até 2026-10-13. Declara os participantes que o pod aguenta — para o limite de memória do pod, é (limite − base) ÷ 73 MB por participante (docs/ops/teste-de-carga-2026-10-05.md)" -}}
+{{- end -}}
+{{- if and (gt (int $v.server.orgMaxParticipants) 0) (gt (int $v.server.orgMaxParticipants) (int $v.server.nodePeerCapacity)) (gt (int $v.server.nodePeerCapacity) 0) -}}
+{{- $e = append $e (printf "server.orgMaxParticipants (%d) acima de server.nodePeerCapacity (%d): o tecto da organização nunca morde, porque o nó recusa primeiro" (int $v.server.orgMaxParticipants) (int $v.server.nodePeerCapacity)) -}}
+{{- end -}}
 {{- if and $prod (eq $v.gateway.affinity.implementation "none") -}}
 {{- $e = append $e "gateway.affinity.implementation=none em produção: sem a BackendTrafficPolicy não há hash(room)→mesmo pod, os pares de uma sala caem em pods diferentes e o SFU em memória parte-se — é a regressão R3, «media num só sentido» (ADR-0001). Com outra implementação de Gateway API, arranja o equivalente ANTES de pôr isto a none" -}}
 {{- end -}}
