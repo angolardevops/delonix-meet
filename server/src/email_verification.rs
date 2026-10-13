@@ -260,6 +260,8 @@ pub async fn request(
             to: &email,
             subject,
             body: &body,
+            // Pedido à mão: quem pede outra vez QUER outra mensagem.
+            dedupe_key: None,
         },
     )
     .await?;

@@ -61,6 +61,10 @@ pub enum Purpose {
     Invitation,
     /// Confirmação de endereço de email (pré-requisito do E3).
     EmailVerification,
+    /// Uma notificação do centro de notificações (G8) entregue por correio:
+    /// convite para reunião, hora mudada, «a começar», gravação pronta. O que
+    /// sai depende da preferência da pessoa por tipo e canal.
+    Notification,
 }
 
 impl Purpose {
@@ -69,6 +73,7 @@ impl Purpose {
             Purpose::PasswordReset => "password_reset",
             Purpose::Invitation => "invitation",
             Purpose::EmailVerification => "email_verification",
+            Purpose::Notification => "notification",
         }
     }
 }
@@ -82,6 +87,14 @@ pub struct Outgoing<'a> {
     pub to: &'a str,
     pub subject: &'a str,
     pub body: &'a str,
+    /// Chave de dedupe, para quem enfileira a partir de um produtor
+    /// **repetível** — o lembrete de reunião é um passo de varrimento e uma
+    /// notificação pode nascer outra vez depois de um reinício. Com chave, a
+    /// segunda tentativa para o mesmo endereço **não** cria mensagem nova.
+    ///
+    /// `None` para tudo o que é pedido à mão (reposição de password, convite,
+    /// prova de endereço): aí quem pede outra vez QUER outra mensagem.
+    pub dedupe_key: Option<&'a str>,
 }
 
 /// O correio está configurado? Quem enfileira deve perguntar ANTES de prometer
@@ -98,7 +111,10 @@ pub fn enabled(state: &AppState) -> bool {
 ///
 /// Com o correio desligado devolve `mail.disabled` em vez de enfileirar
 /// mensagens que ninguém vai enviar.
-pub async fn enqueue(state: &AppState, msg: Outgoing<'_>) -> Result<Uuid, ApiError> {
+/// Devolve o id da mensagem criada, ou `None` quando a `dedupe_key` já tinha
+/// mandado esta mensagem a este endereço — que não é um erro: é a defesa a
+/// funcionar.
+pub async fn enqueue(state: &AppState, msg: Outgoing<'_>) -> Result<Option<Uuid>, ApiError> {
     if !enabled(state) {
         return Err(DomainError::precondition(
             "mail.disabled",
@@ -106,16 +122,22 @@ pub async fn enqueue(state: &AppState, msg: Outgoing<'_>) -> Result<Uuid, ApiErr
         )
         .into());
     }
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO mail_messages (org_id, purpose, to_address, subject, body_text)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    // Mesmo mecanismo da tabela `notifications`: com `dedupe_key`, a segunda
+    // tentativa para o mesmo endereço não cria linha. O `fetch_optional` é o
+    // que distingue «não criei porque já existia» de um erro.
+    let id: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO mail_messages (org_id, purpose, to_address, subject, body_text, dedupe_key)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (to_address, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+         RETURNING id",
     )
     .bind(msg.org_id)
     .bind(msg.purpose.as_str())
     .bind(msg.to)
     .bind(msg.subject)
     .bind(msg.body)
-    .fetch_one(&state.db)
+    .bind(msg.dedupe_key)
+    .fetch_optional(&state.db)
     .await?;
     Ok(id)
 }
