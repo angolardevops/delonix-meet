@@ -232,12 +232,24 @@ O que a produção em `meet.ngolacloud.com` precisa e o chart não cria:
    dele; outro controlador ignora-a e o SFU fica em split-brain.
 3. **cert-manager** e o `ClusterIssuer` de `ingress.tls.clusterIssuer`, ou um
    Secret TLS já emitido.
-4. **IP público para o coturn**: um LoadBalancer que aceite UDP e um IP fixo,
-   posto em `coturn.externalIP` (e em `coturn.service.loadBalancerIP`, ou nas
-   anotações do fornecedor). Portas: **UDP 3478**. A gama de relay
-   (49152–59152) não precisa de ser exposta — em relay-only dos dois lados o
-   relay-a-relay é interno ao coturn. O IP tem de ser alcançável pelos browsers
-   **e** pelos pods do servidor.
+4. **IP público para o coturn**, posto em `coturn.externalIP`. Portas: **UDP 3478**
+   (e TCP 3478 para redes que bloqueiam UDP). Duas formas:
+   - *o relay tem o IP público* (um LoadBalancer que aceite UDP, com IP fixo em
+     `coturn.service.loadBalancerIP` ou nas anotações do fornecedor);
+   - *o relay está atrás de um router* (o caso do `ngola-lda`): o router encaminha a
+     3478 para o nó, `coturn.externalIP` é o IP público do router, `coturn.privateIP`
+     o IP do nó, e `server.turnHost` um **nome** que resolve para o público. O coturn
+     passa a anunciar `público/privado`, e o chart aponta esse nome, dentro dos pods do
+     servidor, para o IP privado — o SFU não sai pelo router para falar com o relay.
+
+   Em relay-only dos dois lados o relay-a-relay é interno ao coturn, e a gama de relay
+   não precisa de ser exposta — **desde que o coturn saiba que o IP público é ele**: é
+   para isso o par `público/privado` (medido: 60 de 60 mensagens entre dois relays com
+   o par, 0 de 60 sem ele).
+
+   O chart recusa em produção um `coturn.externalIP` privado: é o endereço que o browser
+   recebe, e quem está fora dessa rede entra na sala e fica sem áudio nem vídeo, sem um
+   erro. Uma instalação só para a rede local di-lo com `coturn.lanOnly=true`.
 5. **Postgres e Redis** (acima).
 6. **StorageClass ReadWriteMany** para as gravações (abaixo).
 7. **Registo de imagens** com `delonix-server`, `delonix-web` e a imagem do
