@@ -24,10 +24,13 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::{DateTime, Utc};
-use delonix_meet_core::DomainError;
+use delonix_meet_core::{
+    page::{Page, PageRequest},
+    DomainError,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -342,5 +345,153 @@ pub async fn check_settings(
             ok: false,
             error: Some(e),
         },
+    }))
+}
+
+/* ------------------------------------------------------------------ */
+/* A caixa de saída, vista por quem administra a organização           */
+/* ------------------------------------------------------------------ */
+
+/// Uma mensagem da caixa de saída. **SEM O CORPO**, e isso é deliberado:
+///
+/// o corpo de um convite leva o **token do convite**, e o de uma notificação
+/// leva o título da reunião. Devolver corpos numa listagem era espalhar
+/// credenciais por uma rota de diagnóstico que ninguém precisa de ler assim —
+/// quem quer o token de um convite pede o convite, onde a autorização é a
+/// própria.
+///
+/// Pela mesma razão não há rota para UMA mensagem com o corpo: não houve
+/// pergunta que a justificasse, e acrescentá-la depois é mais fácil do que
+/// retirar uma que já exista.
+#[derive(Serialize, utoipa::ToSchema, sqlx::FromRow)]
+pub struct MailMessage {
+    pub id: Uuid,
+    /// `invitation` | `notification` | … (ver `mail::Purpose`).
+    pub purpose: String,
+    pub to_address: String,
+    pub subject: String,
+    /// `pending` | `sending` | `sent` | `failed`.
+    pub status: String,
+    pub attempt: i32,
+    /// A razão da última falha, quando houve — é para isto que esta rota serve.
+    pub error: Option<String>,
+    /// Quando a repetição está agendada. `null` = não há mais.
+    pub retry_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub sent_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct MailMessagePage {
+    pub items: Vec<MailMessage>,
+    pub next_page_token: Option<String>,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct MailListQuery {
+    /// 1–100, omissão 50.
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+    /// Só neste estado: `pending` | `sending` | `sent` | `failed`.
+    pub status: Option<String>,
+    /// Só deste propósito: `invitation` | `notification` | …
+    pub purpose: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MailCursor {
+    at: DateTime<Utc>,
+    id: Uuid,
+}
+
+const COLUNAS_MSG: &str = "id, purpose, to_address, subject, status, attempt, error, retry_at, \
+                           created_at, sent_at";
+
+/// A caixa de saída desta organização, mais recentes primeiro.
+///
+/// **Para que serve:** até aqui, uma mensagem que falhava deixava o erro numa
+/// linha que a API não expunha — quem configurou um relay descobria o problema
+/// por um email que nunca chegou. A verificação do relay
+/// (`POST …/mail-settings/check`) diz se a ligação está boa; isto diz o que
+/// aconteceu a cada mensagem.
+///
+/// **O que NÃO aparece aqui:** o correio que não é da organização. A reposição
+/// de password e a prova de endereço enfileiram com `org_id` nulo de propósito
+/// (são da pessoa, não da empresa), e por isso nunca entram nesta listagem —
+/// nem o seu token de uso único, que vai no corpo.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/mail-messages", tag = "org",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), MailListQuery),
+    responses(
+        (status = 200, body = MailMessagePage, description = "Sem corpos: o do convite leva o token."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`mail_messages.unknown_status` ou `mail_messages.unknown_purpose`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador desta organização"),
+    )
+)]
+pub async fn list_messages(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Query(q): Query<MailListQuery>,
+) -> Result<Json<MailMessagePage>, ApiError> {
+    crate::org::require_admin_pub(&state, org_id, auth.user_id).await?;
+
+    // Catálogos fechados: um filtro escrito à toa devolveria uma página vazia
+    // e pareceria «não há mensagens», que é a resposta mais enganadora de
+    // todas numa rota de diagnóstico.
+    const ESTADOS: [&str; 4] = ["pending", "sending", "sent", "failed"];
+    if let Some(st) = q.status.as_deref() {
+        if !ESTADOS.contains(&st) {
+            return Err(DomainError::invalid(
+                "mail_messages.unknown_status",
+                format!("estado desconhecido: {st}"),
+            )
+            .with_field("status", &ESTADOS.join(" | "))
+            .into());
+        }
+    }
+    if let Some(pp) = q.purpose.as_deref() {
+        if crate::mail::Purpose::parse(pp).is_none() {
+            return Err(DomainError::invalid(
+                "mail_messages.unknown_purpose",
+                format!("propósito desconhecido: {pp}"),
+            )
+            .with_field("purpose", crate::mail::Purpose::TODOS.join(" | "))
+            .into());
+        }
+    }
+
+    let page = PageRequest {
+        page_size: q.page_size,
+        page_token: q.page_token,
+    };
+    let size = page.size();
+    let cursor: Option<MailCursor> = page.cursor()?;
+    let rows: Vec<MailMessage> = sqlx::query_as(&format!(
+        "SELECT {COLUNAS_MSG} FROM mail_messages
+          WHERE org_id = $1
+            AND ($2::text IS NULL OR status = $2)
+            AND ($3::text IS NULL OR purpose = $3)
+            AND ($4::timestamptz IS NULL OR (created_at, id) < ($4, $5))
+          ORDER BY created_at DESC, id DESC
+          LIMIT $6"
+    ))
+    .bind(org_id)
+    .bind(q.status.as_deref())
+    .bind(q.purpose.as_deref())
+    .bind(cursor.as_ref().map(|c| c.at))
+    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
+    .bind(size as i64 + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let p = Page::from_overfetch(rows, size, |m: &MailMessage| MailCursor {
+        at: m.created_at,
+        id: m.id,
+    });
+    Ok(Json(MailMessagePage {
+        items: p.items,
+        next_page_token: p.next_page_token,
     }))
 }
