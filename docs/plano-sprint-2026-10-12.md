@@ -18,7 +18,7 @@ sessões faziam em paralelo sem se verem, e diz onde se tocavam.
 | Frente | Estado | O que falta |
 |---|---|---|
 | **Dia 0** | **fechado** | — |
-| **A — produção** | código **fundido** (A1, A2, A3, A7); **a servir** desde 2026-10-13 em `meet.ngolacloud.com` e `meet.ngolacloud.ao`, só por HTTPS | abrir uma sala num browser; sarar o Postgres; `PUBLIC_URL`, HSTS, imagem nova; A4, A5, A6, A8 |
+| **A — produção** | código **fundido** (A1, A2, A3, A7); **a servir** desde 2026-10-13 em `meet.ngolacloud.com` e `meet.ngolacloud.ao`, só por HTTPS, **com sala provada e media dentro e fora da LAN** | TCP 3478 no router; sarar o Postgres; `PUBLIC_URL`, HSTS; A4, A5, A6, A8 |
 | **B — identidade** | **fundida** no Meet (B1, B3–B7) | B2: a PR do Kaeso (#346) por fundir |
 | **C — Odoo** | C1, C2, C3 **provadas em laboratório** (Odoo 16 + Meet reais) | C4, e repetir contra o Odoo de produção (D4) |
 
@@ -34,8 +34,9 @@ HTTPRoutes estavam `Accepted=False` (`NotAllowedByListeners`) e o release Helm `
 | A entrada do Meet cola-se a esse Gateway | #307 | `gateway.mode: attach`; Redis sem Sentinel |
 | Os dois domínios | #311 | `extraHosts`: `meet.ngolacloud.com` (canónico) e `meet.ngolacloud.ao` |
 | Só HTTPS | #312 | as rotas presas ao listener `https`; antes disso a aplicação respondia 200 em `http://` |
+| Media fora da LAN | #320, #324, e o router | o relay anuncia o IP público sabendo que é o privado (`--external-ip=público/privado`); o browser recebe `turn.ngolacloud.com:3478`; o servidor chega ao relay por dentro (`hostAliases`); o router encaminha a 3478 para o nó |
 
-Medido depois do último `helm upgrade` (release `meet`, revisão 3, `deployed`):
+Medido depois do último `helm upgrade` meu (release `meet`, revisão 14, `deployed`):
 
 | O que se mediu | Valor |
 |---|---|
@@ -43,16 +44,42 @@ Medido depois do último `helm upgrade` (release `meet`, revisão 3, `deployed`)
 | `http://` nos dois nomes | **301** para `https://` |
 | HTTPRoutes `delonix-meet` e `delonix-ws` | `Accepted=True`, os dois nomes, `sectionName: https` |
 | a plataforma, antes e depois | `api` e `console` 200, `admin` 403 — iguais |
-| `delonix-server` | 3 pods `Running`, sem reinícios (o dos 102 reinícios saiu no rolling) |
+| `delonix-server` | 3 pods prontos, sem reinícios, com o alias de `turn.ngolacloud.com` |
+| relay (coturn) | `TURN_HOST=turn.ngolacloud.com:3478`; 0 reinícios em 5 minutos de vigia; a sonda de vida sai em 12 ms |
+| relay visto de fora (um runner do GitHub) | **UDP 3478 responde**; TCP 3478 dá timeout |
 | Postgres `meet-pg` | **2 de 3** prontas; primário `meet-pg-2` |
 | etiquetas de Pod Security do namespace | **ausentes** |
-| quota `delonix-meet-quota` | 24Gi de requests, 16 192Mi usados |
-| imagem | `7b992902` — atrás da `develop` |
+| quota `delonix-meet-quota` | 28Gi de requests, 19 264Mi usados |
+| imagem | `47d192ae` — 13 commits atrás da `develop` |
+| Whisper e Ollama | ligados por outra sessão (revisões 4–13 do release), os dois `1/1` |
 
-**Não validado:** uma sala aberta num browser (o `/ws`, a media, o TURN). É o que separa
-«a página abre» de «o produto funciona».
+### A sala, aberta a sério
 
-**Três defeitos que só a medição apanhou**, e que valem como regra:
+Dois Chromium com câmara e microfone falsos, pela interface: o anfitrião com conta, um
+convidado **sem conta** que abre o link, dá um nome, fica na sala de espera e é admitido.
+Medido nos dois domínios, a 2026-10-13, com a configuração ainda só de LAN:
+
+| O que se mediu | `.com` | `.ao` |
+|---|---|---|
+| `/ws` aberto e a receber, dos dois lados | ✓ | ✓ |
+| WebRTC `connected`, par `relay → relay` | ✓ | ✓ |
+| áudio e vídeo a crescer nos dois sentidos, em 6 s | ✓ | ✓ |
+| um retrato remoto em cada ecrã | ✓ | ✓ |
+
+**O que esta prova não dizia, e era o principal:** corria na LAN do cluster. O browser recebia
+`turn:192.168.1.32:3478` com `iceTransportPolicy: relay` — um endereço privado. Fora dessa
+rede a pessoa entrava na sala e não ouvia nem via ninguém, sem um erro. Foi o que a #320 e a
+#324 corrigiram.
+
+**Depois do TURN público:** a media a partir de fora foi confirmada pelo dono com uma chamada
+real. Não há ainda uma medição automática de fora — a sonda que se usou era um ramo temporário
+e foi apagada; só mede que a 3478 responde, não que há media.
+
+**Por fechar:** o TCP 3478 de fora (só conta para redes que bloqueiam UDP); um 403 na consola
+do anfitrião e seis 401 na do convidado durante a prova, que não impediram nada e não foram
+investigados.
+
+**Cinco defeitos que só a medição apanhou**, e que valem como regra:
 
 1. O template do Gateway rendia bem em Jinja2 simples e mal no Ansible (`trim_blocks`): saía
    sem `apiVersion` e com os dois namespaces numa linha. O teste do role usava o ambiente
@@ -62,6 +89,14 @@ Medido depois do último `helm upgrade` (release `meet`, revisão 3, `deployed`)
    tag «própria» só está provada quando corre sozinha.
 3. O Meet respondia em claro no `:80`: uma HTTPRoute sem `sectionName` cola-se a todos os
    listeners do Gateway a que se liga.
+4. A sala «funcionava» porque quem a provava estava na LAN. Uma prova de media diz de ONDE
+   foi feita, e o que o browser recebeu como TURN.
+5. A #320 pôs o relay de produção a reiniciar de 70 em 70 s durante cerca de quatro minutos,
+   até ao `helm rollback`: com o par público/privado, a sonda de vida (`turnutils_stunclient`)
+   ficava pendurada nos testes do RFC 5780 contra o IP público. Passou na CI e no
+   `helm --wait`. Um `--wait` verde não prova uma sonda de vida — ela só falha passado o
+   atraso inicial mais três períodos; depois de um upgrade vigia-se o `restartCount`, e antes
+   dele corre-se o comando e a sonda **tal como o chart os renderiza**.
 
 ## 0. Onde as sessões se tocavam
 
@@ -104,7 +139,7 @@ Postgres (12Gi) é recusado pela do chart (8Gi).
 | A6 | TURN público | **em curso noutra sessão**: #308 (o relay do coturn nos manifestos), aberta |
 | A7 | `web-admin` no mesmo host | **fundida** (#301): na imagem `web`, em `/admin/`; provada no browser contra um servidor real |
 | A8 | Relay SMTP de produção | **por fazer** — depende da D3 |
-| A9 | **Sarar a instalação** (novo) | **em parte**: rota aceite e release `deployed` (2026-10-13, deploy#224/#247, #307, #311, #312). **Por fazer**: `meet-pg` 3/3, Pod Security no namespace, o servidor a esperar pela base em vez de morrer, `PUBLIC_URL` (as ligações dos e-mails dependem dela), HSTS, e publicar uma imagem da `develop` |
+| A9 | **Sarar a instalação** (novo) | **em parte**: rota aceite, release `deployed`, sala provada e media fora da LAN (2026-10-13: deploy#224/#247, #307, #311, #312, #320, #324). **Por fazer**: `meet-pg` 3/3, Pod Security no namespace, o servidor a esperar pela base em vez de morrer, `PUBLIC_URL` (as ligações dos e-mails dependem dela), HSTS, o TCP 3478 no router, e uma prova de sala que corra de fora sem ser à mão |
 
 **Prazo escrito:** o `barmanObjectStore` desaparece no CNPG 1.31.0 e o operador é 1.30.1.
 
