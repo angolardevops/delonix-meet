@@ -272,7 +272,9 @@ export default function MeetingDialog({
               step={300}
               value={novaHora}
               onChange={(e) => setNovaHora(e.target.value)}
-              aria-label={t('schedule.form.hora')}
+              // A chave leva o fuso: sem ele, a etiqueta mostrava «Hora · {{fuso}}»
+              // por interpolar — apanhado a ver o ecrã no browser.
+              aria-label={t('schedule.form.hora', { fuso: tzShort(locale) })}
               className="dx-num"
             />
           </div>
