@@ -1402,9 +1402,14 @@ pub async fn save_minutes_by_room(
     // delegado `save_minutes` autoriza —, mas o 200 e a razão já eram resposta
     // a mais.
     let meeting: Option<(Uuid,)> = sqlx::query_as(
+        // A ordem não é enfeite: numa SÉRIE as ocorrências partilham o código
+        // da sala (migração 0114), e sem ela a acta caía numa ocorrência à
+        // sorte — provavelmente a de daqui a três meses. A acta é da que está
+        // a decorrer, isto é, a última que arrancou.
         "SELECT m.id FROM meetings m
          LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $2
-         WHERE m.room_code = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)",
+         WHERE m.room_code = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)
+         ORDER BY m.started_at DESC NULLS LAST, m.starts_at DESC LIMIT 1",
     )
     .bind(&code)
     .bind(auth.user_id)
@@ -1455,8 +1460,10 @@ pub async fn notes_by_room(
         return Err(ApiError::NotFound);
     }
     let row: Option<(String, String, String)> = sqlx::query_as(
+        // Mesma razão da `save_minutes_by_room`: numa série, a que interessa é
+        // a que arrancou por último, não a mais distante no calendário.
         "SELECT title, minutes, transcript FROM meetings WHERE room_code = $1
-         ORDER BY starts_at DESC LIMIT 1",
+         ORDER BY started_at DESC NULLS LAST, starts_at DESC LIMIT 1",
     )
     .bind(&code)
     .fetch_optional(&state.db)
@@ -1802,18 +1809,38 @@ pub async fn ics(
     // procurar o link noutro lado. Vai nas duas formas porque os clientes de
     // calendário não concordam — o Google e o Outlook lêem `URL:`, muitos
     // telemóveis só mostram a descrição.
+    //
+    // ABSOLUTO ou nenhum. O `room_link` cai para um caminho relativo
+    // (`/#/r/<código>`) quando a organização não declara domínio — serve numa
+    // resposta de API, que o cliente resolve contra o host a que chamou, e NÃO
+    // serve aqui: um `.ics` é lido noutro programa, dias depois, e um URL
+    // relativo lá dentro não aponta para lado nenhum. Medido a 2026-10-13
+    // contra um servidor real: saía `URL:/#/r/zqc-ghvp-eie`.
+    //
+    // A ordem é a do produto: o domínio da organização primeiro (é o endereço
+    // por que os convidados dela conhecem o serviço), o `PUBLIC_URL` a seguir,
+    // e nada em último. Nunca o cabeçalho `Host` do pedido — pela mesma razão
+    // que os links de reposição de password não o usam.
     let link = match &meeting.room_code {
+        None => None,
         Some(code) => {
-            let org = crate::org::orgs_of_user(&state, meeting.owner_id)
+            let por_org = match crate::org::orgs_of_user(&state, meeting.owner_id)
                 .await
                 .first()
-                .copied();
-            match org {
+                .copied()
+            {
                 Some(org_id) => Some(crate::apikeys::room_link(&state, org_id, code).await),
-                None => Some(format!("/#/r/{code}")),
+                None => None,
+            };
+            match por_org {
+                Some(l) if l.starts_with("http") => Some(l),
+                _ => state
+                    .config
+                    .public_url
+                    .as_deref()
+                    .map(|base| format!("{base}/#/r/{code}")),
             }
         }
-        None => None,
     };
     let mut desc = meeting.description.clone();
     if let Some(link) = &link {

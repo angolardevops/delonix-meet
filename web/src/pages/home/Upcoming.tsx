@@ -4,9 +4,11 @@
  *
  * Nas que organizo, o número de participantes e as iniciais vêm de
  * /meetings/{id}/invitees (o servidor só os dá ao dono — nas outras não se
- * mostra número nenhum). O código da sala aparece quando já existe (a sala
- * nasce ao iniciar) e com ele «Copiar ligação». A mais próxima diz quanto
- * falta, entra «só com áudio» e testa câmara e microfone antes.
+ * mostra número nenhum). O código da sala aparece com «Copiar ligação»: desde
+ * a migração 0114 a sala nasce com a reunião, por isso há link para partilhar
+ * logo ao agendar — só as reuniões criadas antes dessa migração continuam sem
+ * ele. A mais próxima diz quanto falta, entra «só com áudio» e testa câmara e
+ * microfone antes.
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
