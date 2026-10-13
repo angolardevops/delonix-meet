@@ -191,8 +191,10 @@ render prioridade "${VOZ[@]}" "${LIMPA[@]}" --set priorityClassName=prova-priori
 # O perfil de produção JÁ É Gateway API em `mode: attach` (ADR-0021: o
 # `ngola-lda` não tem IngressClass nenhuma). O `GW` cobre a OUTRA forma — um
 # Gateway próprio neste namespace — para que as duas continuem renderizadas.
+# `extraHosts=null`: o perfil de produção traz um segundo nome, e um Gateway
+# próprio só tem certificado para um (a recusa disso mede-se logo abaixo).
 GW=("${PROD[@]}" --set gateway.mode=own --set gateway.className=delonix
-    --set gateway.tls.clusterIssuer=delonix-letsencrypt)
+    --set gateway.tls.clusterIssuer=delonix-letsencrypt --set extraHosts=null)
 
 recusa "ingress e gateway ao mesmo tempo" "são exclusivos" \
   "${PROD[@]}" --set ingress.enabled=true
@@ -208,6 +210,12 @@ recusa "nem ingress nem gateway em produção" "sem um deles o host não é serv
   "${PROD[@]}" --set gateway.enabled=false
 recusa "gateway em mode=attach sem parentRef" "gateway.parentRef.name" \
   "${PROD[@]}" --set gateway.parentRef.name=
+
+recusa "segundo nome com Gateway próprio (um certificado, um nome)" "extraHosts: em gateway.mode=own" \
+  "${GW[@]}" --set 'extraHosts={meet.exemplo.ao}'
+recusa "segundo nome com Ingress (um certificado, um nome)" "extraHosts: com ingress.enabled" \
+  "${PROD[@]}" --set gateway.enabled=false --set ingress.enabled=true \
+  --set ingress.tls.secretName=x --set 'extraHosts={meet.exemplo.ao}'
 
 render production-gateway-own "${GW[@]}"
 
@@ -274,11 +282,32 @@ for caminho in sys.argv[1:]:
     if not rotas:
         erro("nenhuma HTTPRoute no render — a entrada por Gateway não saiu")
 
+    # Os nomes públicos. As DUAS rotas têm de responder pelos MESMOS nomes: a
+    # geral com dois e a do /ws com um dá uma página que abre e uma sala que
+    # nunca liga — o browser pede `wss://<segundo nome>/ws` e leva 404 do
+    # Gateway, sem um erro do nosso lado. E o CORS segue a mesma lista, com o
+    # canónico primeiro (é para onde o SSO devolve o browser).
+    nomes = {n: r['spec'].get('hostnames') or [] for n, r in rotas.items()}
+    if len({tuple(v) for v in nomes.values()}) > 1:
+        erro(f"as rotas não respondem pelos mesmos nomes: {nomes}")
+    cm = next((d for d in docs if d.get('kind') == 'ConfigMap'
+               and 'CORS_ORIGINS' in (d.get('data') or {})), None)
+    if cm and rotas:
+        esperado = ",".join("https://" + h for h in next(iter(nomes.values())))
+        if cm['data']['CORS_ORIGINS'] != esperado:
+            erro(f"CORS_ORIGINS={cm['data']['CORS_ORIGINS']!r} não segue os nomes das rotas ({esperado!r})")
+    if forma == "production":
+        # O perfil de produção serve os dois domínios (decisão de 2026-10-13).
+        quer = ["meet.ngolacloud.com", "meet.ngolacloud.ao"]
+        for n, hs in nomes.items():
+            if hs != quer:
+                erro(f"a HTTPRoute {n} responde por {hs}, esperado {quer} (o .com canónico, primeiro)")
+
 for e in erros:
     print("✗ " + e)
 sys.exit(1 if erros else 0)
 PYGW
-[ "$fail" = 0 ] && echo "  ✓ Gateway API: afinidade por sala por ConsistentHash(room), /ws em Service dedicado, portas internas fora"
+[ "$fail" = 0 ] && echo "  ✓ Gateway API: afinidade por sala por ConsistentHash(room), /ws em Service dedicado, portas internas fora, as duas rotas e o CORS com os mesmos nomes"
 
 [ "$fail" = 0 ] || exit 1
 

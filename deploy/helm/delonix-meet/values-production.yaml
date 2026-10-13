@@ -16,6 +16,12 @@
 # ============================================================
 production: true
 host: meet.ngolacloud.com
+# O `.ao` responde ao lado do `.com` (decisão de 2026-10-13). O certificado é do
+# Gateway da plataforma — `delonix-wildcard-tls-dns01` cobre `*.ngolacloud.ao` e
+# o `delonix-wildcard-tls` traz `meet.ngolacloud.com` entre os SAN. O `.com`
+# fica canónico: ver `extraHosts` no values.yaml para o que isso quer dizer.
+extraHosts:
+  - meet.ngolacloud.ao
 edition: saas
 
 # OBRIGATÓRIO por --set: a tag `git describe` das imagens publicadas.

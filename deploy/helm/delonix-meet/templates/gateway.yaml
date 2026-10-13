@@ -75,7 +75,7 @@ metadata:
 spec:
   parentRefs:
     - {{- toYaml $parent | nindent 6 }}
-  hostnames: [{{ $v.host | quote }}]
+  hostnames: {{ include "dm.hosts" . }}
   rules:
     # O prefixo mais longo ganha por especificação: esta regra apanha o resgate
     # do QR antes do `/api` abaixo, sem precisar de objecto separado.
@@ -112,7 +112,7 @@ metadata:
 spec:
   parentRefs:
     - {{- toYaml $parent | nindent 6 }}
-  hostnames: [{{ $v.host | quote }}]
+  hostnames: {{ include "dm.hosts" . }}
   rules:
     - matches:
         - path: { type: PathPrefix, value: /ws }
