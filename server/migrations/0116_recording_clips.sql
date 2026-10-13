@@ -1,6 +1,6 @@
 -- Recortes de uma gravação, e o short vertical (ADR-0027, plano do MCP).
 --
--- NUMERAÇÃO: escolhida ao abrir a PR. A última era a 0114 (OAuth).
+-- NUMERAÇÃO: escolhida ao abrir a PR. A 0115 é a do OAuth, desta mesma série.
 --
 -- Uma tabela para os dois: um short é um recorte com enquadramento 9:16 e,
 -- se se pedir, legendas queimadas. O que muda é o que o render faz, não o que
