@@ -103,9 +103,67 @@ server:
   replicas: 2
   # Tem de ser MAIOR que DRAIN_GRACE_SECS (40) + DRAIN_READINESS_SECS (12).
   terminationGracePeriodSeconds: 60
+  # DIMENSIONADO PELA MEDIÇÃO, não pelo hábito (docs/ops/teste-de-carga-2026-10-05.md,
+  # repetida em metal: Ryzen 9, loopback, 720p sem simulcast):
+  #
+  #   8 pessoas numa sala  0,46 núcleos   201 MB
+  #  16                    1,91           577 MB
+  #  24                    3,28         1 100 MB
+  #  30                    7,01         1 807 MB
+  #  40                   11,17         2 929 MB
+  #
+  # Dois custos diferentes: a MEMÓRIA cresce ~73 MB por participante e não
+  # depende da forma da sala; o CPU é O(N²) DENTRO de uma sala (0,06 núcleos por
+  # participante até aos 24, ~0,28 marginais entre os 30 e os 40) e quase linear
+  # em muitas salas pequenas (160 pessoas em salas de 4 deram 4,8 núcleos,
+  # docs/ops/teste-de-carga-2026-09-17.md).
+  #
+  # Por isso o que estava aqui — `cpu: "1", memory: 1Gi` — era um tecto a sério e
+  # invisível: 1Gi é o RSS de ~11 participantes, e `limits.cpu: 1` dá ao tokio UM
+  # worker para todas as bombas de RTP de todas as salas do pod (o
+  # deploy/k8s/02-server.yaml já tinha escrito que com 1000m «o CFS estrangulava o
+  # processo», e estrangular media em tempo real é jitter e perda).
+  #
+  # Estes valores são para um laboratório ou uma instalação pequena; produção tem
+  # os seus (values-production.yaml). O `requests.memory` não é 256Mi por capricho:
+  # é o que o scheduler reserva, e com um limite de 2Gi um pod que cresça num nó
+  # cheio é despejado — metade do limite é o mínimo honesto.
   resources:
-    requests: { cpu: 250m, memory: 256Mi }
-    limits: { cpu: "1", memory: 1Gi }
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: "2", memory: 2Gi }
+
+  # ADMISSÃO POR CAPACIDADE (ADR-0017). Participantes que ESTE nó aguenta,
+  # declarados pelo operador a partir dos SEUS testes de carga. Com isto:
+  #   - abaixo de 85% da capacidade, o nó aceita salas novas de todos;
+  #   - entre 85% e 100%, recusa (503) só o inquilino que já usa a sua parte
+  #     justa (capacidade ÷ inquilinos activos);
+  #   - na capacidade, recusa salas novas a todos.
+  # Uma sala que JÁ está no nó admite sempre: não pode mudar de pod (ADR-0001).
+  #
+  # `0` = não declarada, e então NADA se recusa: o nó aceita até degradar, e o
+  # alerta `MeetSalasRecusadasPorCapacidade` nunca pode disparar. Foi o que
+  # esteve em produção até 2026-10-13. Em produção o chart passou a RECUSAR 0
+  # (ver _helpers.tpl): declarar a capacidade é uma decisão do operador, mas
+  # não declarar nenhuma deixou de ser uma omissão silenciosa.
+  #
+  # Como escolher: pelo limite que morde primeiro, e para um pod de 2Gi/2 CPU é
+  # a memória — (2048 − ~200 de base) ÷ 73 ≈ 25 participantes.
+  #
+  # SE ESTÁS A MEDIR O TECTO, PÕE 0. Uma recusa a meio de uma rampa de carga
+  # aparece como «a sala não abre» e parece um defeito do SFU — não é, é esta
+  # linha. O `server/examples/loadgen.rs` fala com o binário e não com o chart,
+  # por isso só te morde se medires através do cluster.
+  nodePeerCapacity: 25
+
+  # Tecto de participantes concorrentes de UMA organização, NESTE nó, quando o
+  # operador não lhe fixou um à parte (`PUT /api/operator/v1/organizations/{id}/concurrency`,
+  # migração 0097). Recusa com 429 — «tu já tens o teu», não «este nó não serve».
+  # `0` = sem tecto por omissão (uma org sem tecto próprio é ilimitada).
+  #
+  # É um limite de PLANO, e por isso aqui fica generoso: 80% da capacidade do nó.
+  # Serve de travão ao vizinho ruidoso, não de grade comercial — quem vende
+  # planos põe o número por organização, pela API do operador.
+  orgMaxParticipants: 20
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
@@ -581,20 +639,26 @@ otel:
 # cluster PARTILHADO e sem quota um pico do Meet come o que é dos vizinhos.
 #
 # A conta está escrita no topo do `templates/quota.yaml`: é o pico com o HPA no
-# máximo MAIS o surge do rollout (34,6 CPU / 34,1 Gi medidos no render), com
-# ~20% de folga. QUEM MUDAR RÉPLICAS OU LIMITES REFAZ A CONTA — e o
-# `check-helm.sh` recalcula-a do render e falha se a quota não a cobrir.
+# máximo MAIS o surge do rollout, com ~20% de folga. QUEM MUDAR RÉPLICAS OU
+# LIMITES REFAZ A CONTA — e o `check-helm.sh` recalcula-a do render e falha se a
+# quota não a cobrir (`QUOTA_CONTA=1` imprime o pico que ele mediu).
 quota:
   enabled: false
   # Chart + plataforma no mesmo namespace (Postgres e Redis do
   # deploy/k8s/plataforma). A conta está no topo de templates/quota.yaml e o
   # `check-helm.sh` refá-la a partir do render e dos ficheiros da plataforma.
+  #
+  # Refeita a 2026-10-13, quando o servidor passou a 4 CPU / 4Gi com o HPA a 6:
+  # pico medido no render 60,20 CPU / 74,44Gi de limits e 10,76 CPU / 24,95Gi de
+  # requests. Com os 62 CPU anteriores a folga caía para 3% — e o sítio onde isso
+  # aparece é o primeiro deploy, com a admissão a recusar um pod a meio do
+  # rollout.
   requests:
     cpu: "13"
-    memory: 28Gi
+    memory: 30Gi
   limits:
-    cpu: "62"
-    memory: 80Gi
+    cpu: "72"
+    memory: 90Gi
   maxPods: "40"
   # 12 e não 9 (os 8 da conta + 1): a 2026-10-13 o namespace de produção tinha
   # 10 PVCs vivos, e TRÊS deles — `redis-data-redis-node-0/1/2` — são órfãos

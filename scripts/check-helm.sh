@@ -144,6 +144,13 @@ recusa "produção com o relay sem rede do nó" "coturn.hostNetwork" \
   "${PROD[@]}" --set coturn.hostNetwork=false
 recusa "gama de relay nos portos efémeros do kernel" "coturn.relayPorts" \
   "${PROD[@]}" --set coturn.relayPorts.max=59152
+# ADR-0017: a admissão por capacidade esteve no código e desligada no deploy até
+# 2026-10-13. Uma capacidade não declarada em produção é um nó que aceita salas
+# novas até degradar — e o alerta de recusa que nunca dispara.
+recusa "produção sem capacidade declarada (ADR-0017)" "server.nodePeerCapacity" \
+  "${PROD[@]}" --set server.nodePeerCapacity=0
+recusa "tecto da organização acima da capacidade do nó" "server.orgMaxParticipants" \
+  "${PROD[@]}" --set server.orgMaxParticipants=99
 recusa "quota do relay acima das portas que existem" "coturn.totalQuota" \
   "${PROD[@]}" --set coturn.totalQuota=5000
 # O perfil de produção serve por Gateway API, logo este caso tem de LIGAR o

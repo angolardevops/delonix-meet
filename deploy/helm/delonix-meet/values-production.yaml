@@ -76,10 +76,59 @@ server:
   autoscaling:
     enabled: true
     minReplicas: 3
-    maxReplicas: 8
+    # Desceu de 8 para 6 a 2026-10-13, e isto AUMENTA a capacidade em vez de a
+    # reduzir: cada pod passou de 2 para 4 CPU e de 2 para 4Gi, logo de ~25 para
+    # ~50 participantes declarados (ver `nodePeerCapacity`). 6 × 50 = 300 contra
+    # 8 × 25 = 200 — e com menos pressão na quota do namespace, que é partilhada
+    # com outras equipas (ADR-0021). O número de réplicas é o que multiplica a
+    # quota, não o que serve as salas: uma sala vive num pod só (ADR-0001).
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  # ALINHADO COM A MEDIÇÃO a 2026-10-13. O que estava aqui (`2 CPU / 2Gi`) ficava
+  # 5× abaixo do que a sala de 40 pessoas medida em metal consumiu — 11,17 núcleos
+  # e 2 929 MB (docs/ops/teste-de-carga-2026-10-05.md) — e metade do que o
+  # deploy/k8s/02-server.yaml já justificava por escrito para o CPU.
+  #
+  # 4Gi de limite ⇒ (4096 − ~200 de base) ÷ 73 MB por participante ≈ 53, e é a
+  # memória que manda: não depende da forma da sala. O CPU é O(N²) dentro de uma
+  # sala, por isso 4 núcleos NÃO fazem uma sala de 50 — fazem ~25 a 30 numa só
+  # sala (0,28 núcleos marginais aos 40) e bem mais em salas pequenas (160
+  # pessoas em salas de 4 deram 4,8 núcleos). A capacidade abaixo é em
+  # PARTICIPANTES do nó, que é o que a admissão conta.
+  #
+  # `requests.memory` sobe de 512Mi para 1Gi: é o que reserva lugar ao scheduler,
+  # e um pod com 512Mi reservado que cresce para 4Gi num nó cheio é despejado a
+  # meio das reuniões que serve. Não sobe mais do que isto porque os requests são
+  # a parte do cluster partilhado que fica tirada aos vizinhos (a conta da quota
+  # está no topo de templates/quota.yaml).
   resources:
-    requests: { cpu: 500m, memory: 512Mi }
-    limits: { cpu: "2", memory: 2Gi }
+    requests: { cpu: 750m, memory: 1Gi }
+    limits: { cpu: "4", memory: 4Gi }
+
+  # ADMISSÃO LIGADA (ADR-0017), 2026-10-13. Até aqui nenhum ficheiro de deploy
+  # declarava capacidade: o mecanismo existia no código (`signaling.rs`,
+  # `operations::media_node::admit_new_room`), estava testado
+  # (`server/tests/node_admission.rs`) e NUNCA corria — o nó aceitava salas novas
+  # até degradar, e o alerta `MeetSalasRecusadasPorCapacidade`
+  # (deploy/k8s/observabilidade/alertas.yaml) não podia disparar.
+  #
+  # 50 = o tecto de memória do pod acima, arredondado para baixo. A 85% (42
+  # participantes) o nó entra na zona de margem e passa a recusar salas NOVAS do
+  # inquilino que já usa a sua parte justa; aos 50 recusa a todos. Quem já está
+  # numa sala deste pod nunca é recusado.
+  #
+  # O QUE ISTO NÃO PROTEGE, dito de propósito: uma sala única que cresça até aos
+  # 50 neste pod degrada por CPU muito antes (O(N²) dentro da sala). O travão
+  # dessa é o tecto por sala, que ainda não está medido em Kubernetes — é a
+  # medição seguinte, e é a que se põe num contrato.
+  nodePeerCapacity: 50
+
+  # 80% da capacidade do nó: uma organização sozinha não fecha o pod às outras,
+  # e continua a poder ter 40 participantes AQUI (o tecto é por nó, logo 6 × 40
+  # no conjunto). É um limite de plano e o operador sobrepõe-no por organização
+  # em `PUT /api/operator/v1/organizations/{id}/concurrency` — este é só a
+  # omissão para quem não tem tecto próprio.
+  orgMaxParticipants: 40
   # Armazenamento de OBJECTOS (ADR-0020, D2). Entra pelo ambiente e não pela
   # tabela `platform_storage`: as chaves são um Secret do cluster, e guardá-las
   # na base da aplicação é o que a S5 mandou parar de fazer.

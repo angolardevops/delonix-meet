@@ -35,6 +35,18 @@ data:
   # Media relay-only pelo coturn: o IP do pod não é alcançável de fora.
   FORCE_TURN_RELAY: {{ ternary "1" "0" $v.server.forceTurnRelay | quote }}
   SFU_EXTERNAL_IP: ""
+  {{- /*
+    Admissão por capacidade (ADR-0017). SÓ entram quando declaradas: o servidor
+    entra em pânico com um valor que não seja inteiro POSITIVO
+    (`config.rs`: «NODE_PEER_CAPACITY: «0» não é um inteiro positivo»), por isso
+    `0` aqui significa «não declarada» e não se renderiza nada.
+  */}}
+  {{- if gt (int $v.server.nodePeerCapacity) 0 }}
+  NODE_PEER_CAPACITY: {{ $v.server.nodePeerCapacity | quote }}
+  {{- end }}
+  {{- if gt (int $v.server.orgMaxParticipants) 0 }}
+  ORG_MAX_PARTICIPANTS: {{ $v.server.orgMaxParticipants | quote }}
+  {{- end }}
   {{- with include "dm.turnHost" . }}
   TURN_HOST: {{ . | quote }}
   {{- end }}

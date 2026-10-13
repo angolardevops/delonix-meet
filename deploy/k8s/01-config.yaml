@@ -13,6 +13,18 @@ data:
   # de candidatos ICE num host multi-homed). Exige coturn com --allowed-peer-ip.
   FORCE_TURN_RELAY: "1"
   SFU_EXTERNAL_IP: ""
+  # ADMISSÃO POR CAPACIDADE (ADR-0017). Participantes que este nó aguenta: com
+  # 4Gi de limite e ~73 MB de RSS por participante (medido,
+  # docs/ops/teste-de-carga-2026-10-05.md) são ~53, declarados 50.
+  # A 85% (42) o nó passa a recusar salas NOVAS de quem já usa a sua parte justa;
+  # aos 50 recusa a todos. Quem já está numa sala deste nó entra sempre.
+  # SEM esta variável nada se recusa — o nó aceita até degradar, que é como a
+  # produção esteve até 2026-10-13.
+  NODE_PEER_CAPACITY: "50"
+  # Tecto por organização NESTE nó quando o operador não lhe fixou um
+  # (`PUT /api/operator/v1/organizations/{id}/concurrency`): 80% da capacidade,
+  # para que uma organização sozinha não feche o nó às outras. 429, não 503.
+  ORG_MAX_PARTICIPANTS: "40"
   # Gravações no PVC partilhado (montado em 02-server.yaml).
   RECORDINGS_DIR: "/var/lib/delonix/recordings"
   # LLM local (07-ollama.yaml): tradução de legendas + resumo da ata. Vazio
