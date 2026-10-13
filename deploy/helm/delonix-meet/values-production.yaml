@@ -11,11 +11,13 @@
 #      --set coturn.externalIP=<IP público do relay> \
 #      --set server.image.repository=<registo>/delonix-server \
 #      --set web.image.repository=<registo>/delonix-web \
+#      --set whisper.enabled=true \
 #      --set whisper.image.repository=<registo>/delonix-whisper \
 #      --set whisper.image.tag=<tag da imagem do ASR>
 #
-#  A imagem do ASR tem tag PRÓPRIA: embute o modelo (~2GB) e não se reconstrói
-#  a cada commit (`BUILD_WHISPER=1 deploy/build-images.sh`).
+#  As três últimas ligam o ASR soberano (as legendas da sala sem passar pela
+#  Google). A sua imagem tem tag PRÓPRIA: embute o modelo (~2GB) e não se
+#  reconstrói a cada commit — `BUILD_WHISPER=1 deploy/build-images.sh`.
 #
 #  Não há aqui nenhum segredo, nenhum IP real e nenhuma tag.
 # ============================================================
@@ -184,10 +186,17 @@ ollama:
   modelSummary: "qwen2.5:7b"
   modelTranslate: "qwen2.5:1.5b"
 
-whisper:
-  enabled: true
-  # A imagem e a tag vêm do `--set` (ver o cabeçalho): o registo é da
-  # instalação e a tag não acompanha a do servidor.
+# O ASR soberano NÃO se liga aqui, e a razão é a imagem: embute o modelo
+# (~2GB), constrói-se à parte (`BUILD_WHISPER=1 deploy/build-images.sh`) e tem
+# tag PRÓPRIA — este ficheiro não pode saber qual é, e inventar uma era pior do
+# que não a ter (em produção o chart recusa `latest`). Ligar com dois `--set`,
+# como o registo do servidor e da web:
+#
+#   --set whisper.enabled=true \
+#   --set whisper.image.repository=<registo>/delonix-whisper \
+#   --set whisper.image.tag=<tag>
+#
+# Com `whisper.enabled` a rota `/asr` sai sozinha — não há segunda maçaneta.
 
 # Rastos por OTLP (ADR-0020, fase 5). Vazio = o servidor arranca sem rastos,
 # exactamente como antes. Com endereço, exporta para o colector — e se ele

@@ -37,8 +37,11 @@ o que resumir.
 ## Decisão
 
 1. **O chart instala a IA, e é ele a fonte.** `templates/ai.yaml` ganha o
-   Ollama (com PVC dos modelos) e o Whisper; desligados por omissão, ligados
-   no `values-production.yaml`. O caminho kustomize continua a existir para
+   Ollama (com PVC dos modelos) e o Whisper, os dois desligados por omissão.
+   O `values-production.yaml` liga o Ollama; o Whisper liga-se por `--set`,
+   porque a sua imagem embute o modelo, tem tag própria e este ficheiro não
+   pode saber qual é — e inventar uma era pior do que não a ter. A quota conta
+   os dois de qualquer forma. O caminho kustomize continua a existir para
    laboratório e diz, no cabeçalho, que não é o de produção.
 2. **O que estava solto passa a ser derivado.** O `OLLAMA_URL` sai do Service
    do chart e não de um valor escrito à mão — foi exactamente aí que a
