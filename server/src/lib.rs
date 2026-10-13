@@ -45,6 +45,7 @@ mod password_recovery;
 // resposta a isso seria um `#[allow]` — que é esconder, não resolver.
 mod invitation_mail;
 mod jobs;
+mod oauth;
 pub mod objectos;
 mod odoo;
 mod odoo_sso;
@@ -487,6 +488,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             rate_limit::ip_rate_limit,
         ));
 
+    // ---- OAuth 2.1 para clientes MCP (ADR-0028) ----
+    // Pública por desenho: o cliente ainda não existe (`register`), ou a prova
+    // é o código mais o PKCE (`token`, `revoke`). O ecrã de consentimento é da
+    // web e exige sessão — as duas rotas que decidem (`authorization-info` e
+    // `authorizations`) levam `AuthUser` e estão no BFF, não aqui.
+    let oauth_routes = Router::new()
+        .route("/register", post(oauth::register))
+        .route("/authorize", get(oauth::authorize))
+        .route("/token", post(oauth::token))
+        .route("/revoke", post(oauth::revoke))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::auth_rate_limit,
+        ));
+
     // ---- Integração Odoo (módulo nk_delonix_meet, token `dlxo_`) ----
     let odoo_integration_routes = Router::new()
         .route("/provision", post(odoo::provision))
@@ -515,6 +531,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/openapi.json", get(openapi::v1_json))
         .route("/api/operator/v1/openapi.json", get(openapi::operator_json))
         .route("/api/integrations/openapi.json", get(openapi::integrations_json))
+        // RFC 8414 e RFC 9728: os clientes MCP procuram-nos na RAIZ, não
+        // debaixo de /api — o caminho é parte do contrato.
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth::as_metadata),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth::resource_metadata),
+        )
+        .nest("/api/oauth", oauth_routes)
         .nest("/api/auth", auth_routes)
         .nest("/api/v1", v1_routes)
         .nest("/api/operator/v1", operator_routes)
@@ -542,6 +569,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(search::saved::delete),
         )
         .route("/api/users/me", get(users::me).patch(users::update_me))
+        // O ecrã de consentimento e a lista de agentes a que a pessoa disse
+        // sim (ADR-0028 §5 e §7). Levam sessão: é a pessoa que decide.
+        .route(
+            "/api/oauth/authorization-info",
+            get(oauth::authorization_info),
+        )
+        .route("/api/oauth/authorizations", post(oauth::decide))
+        .route("/api/users/me/oauth-grants", get(oauth::my_grants))
+        .route(
+            "/api/users/me/oauth-grants/{grant_id}",
+            axum::routing::delete(oauth::revoke_my_grant),
+        )
         // Prova do endereço (D7): a pessoa pede o email com sessão; abre o
         // link e a web entrega o token SEM sessão (pode ser outro aparelho).
         .route(

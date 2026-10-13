@@ -690,6 +690,70 @@
         ],
         "type": "object"
       },
+      "AsMetadata": {
+        "properties": {
+          "authorization_endpoint": {
+            "type": "string"
+          },
+          "code_challenge_methods_supported": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "grant_types_supported": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "registration_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_types_supported": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "revocation_endpoint": {
+            "type": "string"
+          },
+          "scopes_supported": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "token_endpoint": {
+            "type": "string"
+          },
+          "token_endpoint_auth_methods_supported": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "issuer",
+          "authorization_endpoint",
+          "token_endpoint",
+          "revocation_endpoint",
+          "scopes_supported",
+          "response_types_supported",
+          "grant_types_supported",
+          "code_challenge_methods_supported",
+          "token_endpoint_auth_methods_supported"
+        ],
+        "type": "object"
+      },
       "AssignExtensionDidReq": {
         "properties": {
           "did_id": {
@@ -846,6 +910,48 @@
         "required": [
           "access_token",
           "user"
+        ],
+        "type": "object"
+      },
+      "AuthorizeQueryBody": {
+        "description": "O mesmo que [`AuthorizeQuery`], em corpo JSON. Duplicado como tipo e não\ncomo validação: a validação é uma só ([`validate_request`]).",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "code_challenge": {
+            "type": "string"
+          },
+          "code_challenge_method": {
+            "type": "string"
+          },
+          "redirect_uri": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "response_type": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "response_type",
+          "client_id",
+          "redirect_uri",
+          "scope",
+          "code_challenge",
+          "code_challenge_method",
+          "resource"
         ],
         "type": "object"
       },
@@ -1488,6 +1594,74 @@
         "required": [
           "participants",
           "room"
+        ],
+        "type": "object"
+      },
+      "ConsentDecision": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AuthorizeQueryBody"
+          },
+          {
+            "properties": {
+              "approve": {
+                "description": "`false` devolve `access_denied` ao cliente, como o RFC manda.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "approve"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConsentInfo": {
+        "properties": {
+          "already_granted": {
+            "description": "A pessoa já tinha consentido estes escopos (ou mais) a este cliente.",
+            "type": "boolean"
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "organization_name": {
+            "type": "string"
+          },
+          "registered_dynamically": {
+            "description": "`true` quando o cliente se registou a si mesmo (RFC 7591) — quem\nconsente tem direito a saber que ninguém o pré-aprovou.",
+            "type": "boolean"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "client_name",
+          "registered_dynamically",
+          "organization_id",
+          "organization_name",
+          "scopes",
+          "already_granted"
+        ],
+        "type": "object"
+      },
+      "ConsentResp": {
+        "properties": {
+          "redirect_to": {
+            "description": "Onde a web manda o browser a seguir. Leva o código (ou o erro) e o\n`state` do cliente.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "redirect_to"
         ],
         "type": "object"
       },
@@ -4024,6 +4198,43 @@
           "took_ms",
           "groups",
           "skipped"
+        ],
+        "type": "object"
+      },
+      "GrantRow": {
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "client_id",
+          "client_name",
+          "scopes",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -8541,6 +8752,47 @@
         ],
         "type": "object"
       },
+      "RegisterResp": {
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "grant_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "response_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "token_endpoint_auth_method": {
+            "description": "Fixo em `none`: não emitimos segredo, e um cliente que espere um\nrecebe-o explicitamente ausente em vez de o procurar.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_name",
+          "redirect_uris",
+          "token_endpoint_auth_method",
+          "grant_types",
+          "response_types"
+        ],
+        "type": "object"
+      },
       "ReleaseSeatsReq": {
         "properties": {
           "dry_run": {
@@ -8604,6 +8856,38 @@
         },
         "required": [
           "decision"
+        ],
+        "type": "object"
+      },
+      "ResourceMetadata": {
+        "properties": {
+          "authorization_servers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "bearer_methods_supported": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "scopes_supported": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "resource",
+          "authorization_servers",
+          "scopes_supported",
+          "bearer_methods_supported"
         ],
         "type": "object"
       },
@@ -8671,6 +8955,17 @@
           "domain",
           "username",
           "password"
+        ],
+        "type": "object"
+      },
+      "RevokeReq": {
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
         ],
         "type": "object"
       },
@@ -9463,6 +9758,26 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "ScopeInfo": {
+        "properties": {
+          "describes": {
+            "description": "O que este escopo abre, em linguagem de pessoa.",
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "describes",
+          "read_only"
         ],
         "type": "object"
       },
@@ -10940,6 +11255,79 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "TokenReq": {
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code_verifier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grant_type": {
+            "type": "string"
+          },
+          "redirect_uri": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refresh_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resource": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "grant_type",
+          "client_id"
+        ],
+        "type": "object"
+      },
+      "TokenResp": {
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "expires_in": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "refresh_token",
+          "scope"
+        ],
         "type": "object"
       },
       "TotpStatus": {
@@ -13043,6 +13431,68 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "operationId": "as_metadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsMetadata"
+                }
+              }
+            },
+            "description": "Metadata do servidor de autorização (RFC 8414)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem PUBLIC_URL o OAuth está fechado."
+          }
+        },
+        "summary": "RFC 8414. O cliente MCP lê isto para saber onde autorizar.",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "operationId": "resource_metadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceMetadata"
+                }
+              }
+            },
+            "description": "Metadata do recurso protegido (RFC 9728)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "RFC 9728, exigido pela especificação MCP: diz ao cliente QUEM autoriza\neste recurso. É o primeiro pedido de um cliente que recebeu `401`.",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
     "/api/ai/translations": {
       "post": {
         "operationId": "translate_caption",
@@ -15793,6 +16243,438 @@
         ],
         "tags": [
           "platform"
+        ]
+      }
+    },
+    "/api/oauth/authorization-info": {
+      "get": {
+        "operationId": "authorization_info",
+        "parameters": [
+          {
+            "description": "Só `code`.",
+            "in": "query",
+            "name": "response_type",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Cliente registado.",
+            "in": "query",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Um dos registados.",
+            "in": "query",
+            "name": "redirect_uri",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Escopos pedidos.",
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "PKCE S256.",
+            "in": "query",
+            "name": "code_challenge",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Só `S256`.",
+            "in": "query",
+            "name": "code_challenge_method",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Identificador canónico do recurso.",
+            "in": "query",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaco para nós.",
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentInfo"
+                }
+              }
+            },
+            "description": "O que o ecrã de consentimento mostra."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A conta não pertence a nenhuma organização activa."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/oauth/authorization-info` — o que o ecrã de consentimento mostra.\nExige sessão: é informação sobre a organização de quem está a decidir.",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/oauth/authorizations": {
+      "post": {
+        "operationId": "decide",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentResp"
+                }
+              }
+            },
+            "description": "Para onde a web manda o browser (com o código ou com o erro)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/oauth/authorizations` — a decisão da pessoa. **A única rota\ndeste módulo que emite um código**, e exige sessão.",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/oauth/authorize": {
+      "get": {
+        "description": "Valida e **redirecciona para a web**, que desenha o ecrã de consentimento\ncom sessão. Não devolve HTML: um servidor de API que começa a desenhar\npáginas de login é um servidor com duas caras.\n\nEm erro, a resposta depende de uma coisa só: se já se sabe que o\n`redirect_uri` é **daquele** cliente. Se sim, devolve-se o erro ao cliente\npelo redirect, como o RFC manda; se não, devolve-se o erro a quem pediu —\nmandar um código de erro para um endereço não verificado é um redirector\naberto com a nossa assinatura.",
+        "operationId": "authorize",
+        "parameters": [
+          {
+            "description": "Só `code`.",
+            "in": "query",
+            "name": "response_type",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Cliente registado.",
+            "in": "query",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Um dos registados, literalmente.",
+            "in": "query",
+            "name": "redirect_uri",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Escopos do catálogo MCP, separados por espaços.",
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "PKCE S256, base64url de 32 bytes.",
+            "in": "query",
+            "name": "code_challenge",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Só `S256`.",
+            "in": "query",
+            "name": "code_challenge_method",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "RFC 8707: o identificador canónico do recurso.",
+            "in": "query",
+            "name": "resource",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Devolvido ao cliente tal e qual.",
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirecciona para o ecrã de consentimento (ou devolve o erro ao cliente)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Pedido inválido e redirect_uri não provado."
+          }
+        },
+        "summary": "`GET /api/oauth/authorize` — pública e anterior a qualquer sessão.",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/oauth/register": {
+      "post": {
+        "operationId": "register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResp"
+                }
+              }
+            },
+            "description": "Cliente registado (RFC 7591)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "redirect_uri ou nome inválidos."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Registo dinâmico desligado."
+          }
+        },
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/oauth/revoke": {
+      "post": {
+        "description": "Só revoga refresh tokens. Um access token de MCP vive 15 minutos e é\nverificado contra a sessão em cada pedido — quem quer cortar JÁ termina a\nsessão, que é a porta que existe para isso.",
+        "operationId": "revoke",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Revogado — ou nunca existiu; a resposta é a mesma (RFC 7009)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "`POST /api/oauth/revoke` (RFC 7009). Responde `200` sempre, também a um\ntoken que não conhece: dizer «esse não existe» é um oráculo de tokens.",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/oauth/token": {
+      "post": {
+        "description": "Aceita JSON e `application/x-www-form-urlencoded`, que é o que o RFC manda\ne o que os clientes MCP enviam.",
+        "operationId": "token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResp"
+                }
+              }
+            },
+            "description": "Par de tokens; o refresh é rotativo."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`oauth.invalid_grant` cobre código desconhecido, expirado, já gasto, de outro cliente ou com PKCE errado."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "`POST /api/oauth/token` — pública: a prova é o código mais o PKCE.",
+        "tags": [
+          "oauth"
         ]
       }
     },
@@ -38464,6 +39346,97 @@
         "summary": "Marca como lida ou não lida. Marcar como lida o que já está lido mantém a\ndata da primeira leitura.",
         "tags": [
           "notifications"
+        ]
+      }
+    },
+    "/api/users/me/oauth-grants": {
+      "get": {
+        "operationId": "my_grants",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrantRow"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Agentes a que esta pessoa disse sim."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/users/me/oauth-grants` — a que agentes esta pessoa disse sim.",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/me/oauth-grants/{grant_id}": {
+      "delete": {
+        "description": "Revogar não é só apagar a linha: **termina as sessões** que a concessão\nabriu, para o agente morrer no mesmo instante. Uma concessão de outra\npessoa dá a mesma resposta que uma inexistente (`404`).",
+        "operationId": "revoke_my_grant",
+        "parameters": [
+          {
+            "description": "Concessão a revogar.",
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Consentimento retirado e sessões do agente terminadas."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Inexistente — ou de outra pessoa; a resposta é a mesma."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`DELETE /api/users/me/oauth-grants/{grant_id}` — retira o consentimento.",
+        "tags": [
+          "users"
         ]
       }
     },

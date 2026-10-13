@@ -40,6 +40,7 @@ const ApiDocs = lazy(() => import('./pages/ApiDocs'))
 const Legal = lazy(() => import('./pages/Legal'))
 const SharePage = lazy(() => import('./pages/SharePage'))
 const VerificarEmail = lazy(() => import('./pages/VerificarEmail'))
+const OAuthConsent = lazy(() => import('./pages/OAuthConsent'))
 const ReporPassword = lazy(() => import('./pages/ReporPassword'))
 const Diagram = lazy(() => import('./pages/Diagram'))
 const RecordingPlayer = lazy(() => import('./pages/RecordingPlayer'))
@@ -192,6 +193,17 @@ export default function App() {
         onLogin={aoEntrar}
         initialMfaToken={ssoMfaToken}
       />
+    )
+  }
+
+  // Consentimento de um agente: precisa de sessão, e é a pessoa que decide
+  // (ADR-0028 §5). Sem sessão o bloco acima manda ao login e o endereço fica —
+  // o fluxo retoma aqui com os parâmetros intactos.
+  if (route.kind === 'oauth-consent') {
+    return (
+      <RouteFallback>
+        <OAuthConsent />
+      </RouteFallback>
     )
   }
 

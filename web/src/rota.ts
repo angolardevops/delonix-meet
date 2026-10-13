@@ -34,6 +34,13 @@ export type Route =
   | { kind: 'verificar-email'; token: string }
   /** O link do email de reposição de password (`#/repor-password?token=…`). */
   | { kind: 'repor-password'; token: string }
+  /**
+   * Consentimento de um agente (`#/oauth/consent?…`, ADR-0028 §5). Os
+   * parâmetros do fluxo NÃO entram na rota: são sete, opacos para nós, e
+   * copiá-los para aqui era convidar a validá-los no cliente. A página lê-os
+   * do endereço e o servidor é que decide.
+   */
+  | { kind: 'oauth-consent' }
   | { kind: 'diagram'; id: string | null }
   | { kind: 'player'; id: string }
   /** O endereço não é nenhuma rota. Mostra-se e diz-se — não se finge o Início. */
@@ -94,6 +101,7 @@ export function parseHash(hash: string = location.hash): Route {
   if (verificar) return { kind: 'verificar-email', token: verificar[1] }
   const repor = h.match(/^#\/repor-password\?token=([A-Za-z0-9_-]+)$/)
   if (repor) return { kind: 'repor-password', token: repor[1] }
+  if (/^#\/oauth\/consent(?:\?.*)?$/.test(h)) return { kind: 'oauth-consent' }
   const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
   if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
   const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
@@ -154,6 +162,7 @@ export function destinoNoRail(r: Route): NavKey | null {
     case 'login':
     case 'verificar-email':
     case 'repor-password':
+    case 'oauth-consent':
     case 'lobby':
     case 'desconhecida':
       return null
@@ -180,6 +189,7 @@ export function trilhoDe(r: Route): Degrau[] {
     case 'login':
     case 'verificar-email':
     case 'repor-password':
+    case 'oauth-consent':
       return []
     case 'player':
       return [inicio, { hash: '#/recordings', chave: NAV_I18N.recordings }]

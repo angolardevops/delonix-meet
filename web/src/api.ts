@@ -3303,3 +3303,65 @@ export const listCallRecords = (orgId: string, f?: CallRecordFilter, signal?: Ab
 /** `month` em `YYYY-MM`; sem ele, o mês corrente no fuso do servidor. */
 export const getTelephonyUsage = (orgId: string, month?: string, signal?: AbortSignal) =>
   request<TelephonyUsage>(tel(orgId, `/usage${query({ month })}`), { signal })
+
+// ---------------------------------------------------------------------------
+//  OAuth 2.1 — o consentimento de um agente (ADR-0028)
+//
+//  O ecrã de consentimento é da web de propósito: o servidor valida e
+//  redirecciona, mas quem desenha e quem pergunta é esta aplicação, com
+//  sessão. As três funções abaixo são tudo o que ele precisa.
+// ---------------------------------------------------------------------------
+
+/** Os parâmetros do fluxo, tal como chegam no endereço. Opacos para nós. */
+export interface OAuthRequestParams {
+  response_type: string
+  client_id: string
+  redirect_uri: string
+  scope: string
+  code_challenge: string
+  code_challenge_method: string
+  resource: string
+  state?: string
+}
+
+export interface OAuthScopeInfo {
+  scope: string
+  /** O que este escopo abre, em linguagem de pessoa. Vem do servidor. */
+  describes: string
+  read_only: boolean
+}
+
+export interface OAuthConsentInfo {
+  client_name: string
+  /** O cliente registou-se a si mesmo (RFC 7591) — quem consente deve sabê-lo. */
+  registered_dynamically: boolean
+  organization_id: string
+  organization_name: string
+  scopes: OAuthScopeInfo[]
+  already_granted: boolean
+}
+
+export interface OAuthGrant {
+  id: string
+  client_id: string
+  client_name: string
+  scopes: string[]
+  created_at: string
+  updated_at: string
+}
+
+export const oauthConsentInfo = (p: OAuthRequestParams, signal?: AbortSignal) =>
+  request<OAuthConsentInfo>(`/api/oauth/authorization-info${query({ ...p })}`, { signal })
+
+/** Devolve para onde o browser vai a seguir — com o código, ou com `access_denied`. */
+export const oauthDecide = (p: OAuthRequestParams, approve: boolean) =>
+  request<{ redirect_to: string }>('/api/oauth/authorizations', {
+    method: 'POST',
+    body: JSON.stringify({ ...p, approve }),
+  })
+
+export const listOauthGrants = () => request<OAuthGrant[]>('/api/users/me/oauth-grants')
+
+/** Retirar o consentimento TERMINA as sessões do agente — morre no mesmo instante. */
+export const revokeOauthGrant = (grantId: string) =>
+  request<void>(`/api/users/me/oauth-grants/${encodeURIComponent(grantId)}`, { method: 'DELETE' })
