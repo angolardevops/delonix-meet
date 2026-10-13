@@ -38,7 +38,13 @@ export type DowngradeReason = 'saver' | 'battery' | 'loss' | 'rtt' | 'cpu' | 'up
 
 /** Banda de envio abaixo da qual 1080p nítido não é sustentável (kbps). */
 export const SHARP_MIN_UPLINK_KBPS = 2500
-/** Tecto da camada alta no perfil nítido (bps). O normal é 6 Mbps. */
+/**
+ * Tecto da camada alta no perfil nítido (bps). O normal é **2,5 Mbps** — o
+ * mesmo número que o `SHARP_MIN_UPLINK_KBPS` acima dá como necessário para
+ * 1080p sustentado. Aqui sobe-se bem acima disso de propósito: é o modo em que
+ * se troca fluidez por detalhe, e só se entra nele depois de a banda ser
+ * MEDIDA. (Era 6 Mbps no normal até 2026-10-13, com a câmara pedida a 4K60.)
+ */
 export const SHARP_TOP_BITRATE = 8_000_000
 /** Uma condição má tem de durar isto antes de se desistir do perfil. */
 export const DEGRADE_AFTER_MS = 4000

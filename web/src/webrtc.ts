@@ -63,7 +63,21 @@ function pcConfig(base: RTCConfiguration, crypto?: FrameCrypto): RTCConfiguratio
 export const SIMULCAST_ENCODINGS: readonly RTCRtpEncodingParameters[] = [
   { rid: 'q', scaleResolutionDownBy: 4, maxBitrate: 300_000 },
   { rid: 'h', scaleResolutionDownBy: 2, maxBitrate: 1_200_000 },
-  { rid: 'f', maxBitrate: 6_000_000 },
+  // 2,5 Mbps e não 6. O tecto de 6 vinha de uma captura a 4K60 (ver
+  // `videoConstraints`), e numa sala de até quatro pessoas o servidor pede a
+  // camada `f` a toda a gente — com dois publicadores são DOZE Mbps de descida
+  // pedidos a cada participante. Quando a ligação não os leva, a perda sobe, o
+  // `shift` do SFU desce de camada, e **cada mudança de camada exige um
+  // keyframe: é nesse intervalo que a imagem trava**.
+  //
+  // Medido em produção a 2026-10-13: 8 mudanças de camada em 10 minutos numa
+  // chamada de três pessoas, a saltar `q`→`f` (0,3 → 6 Mbps, vinte vezes) e a
+  // cair outra vez. O coturn não perdia nada (9 pacotes em 2 milhões): a perda
+  // era do caminho, não do relay.
+  //
+  // Com 1080p30 à entrada, a escada fica 0,3 / 1,2 / 2,5 — passos de pouco mais
+  // do dobro, e um tecto que uma ligação real carrega.
+  { rid: 'f', maxBitrate: 2_500_000 },
 ]
 
 function addSimulcastVideo(pc: RTCPeerConnection, track: MediaStreamTrack, stream: MediaStream): RTCRtpSender {
