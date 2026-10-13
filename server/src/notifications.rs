@@ -280,8 +280,13 @@ pub(crate) async fn notify(
     draft: Draft,
     data: serde_json::Value,
 ) -> Option<Notification> {
+    // O CORREIO VEM PRIMEIRO E É INDEPENDENTE DO `in_app`. Quem desliga a
+    // caixa de entrada para um tipo e deixa o correio ligado quer o email —
+    // se isto viesse depois do `return None` abaixo, essa escolha ficava
+    // calada e a API prometia um canal que nunca entregava.
+    email_best_effort(state, user_id, &draft).await;
     // Preferência da pessoa: sem `in_app` para este tipo, a notificação não
-    // nasce (é o único canal com entrega; ver `domain::notification::preferences`).
+    // nasce na caixa de entrada (ver `domain::notification::preferences`).
     if !crate::account::in_app_enabled(&state.db, user_id, draft.kind).await {
         return None;
     }
@@ -322,6 +327,99 @@ pub(crate) async fn notify(
                 "notificação não gravada (a operação de origem segue)");
             None
         }
+    }
+}
+
+/// Entrega a notificação por correio, se tudo isto for verdade: há relay, a
+/// pessoa tem o canal `email` ligado para este tipo, e **o endereço está
+/// provado**.
+///
+/// **Só endereços provados.** Um corpo de notificação leva o título da reunião
+/// e o link da sala; mandá-lo para um endereço que ninguém confirmou era
+/// entregar o que se passa numa organização a quem tiver aquela caixa. É a
+/// mesma regra que a recuperação de password aplica (`password_recovery`), e é
+/// por isso que a prova de endereço entrou ANTES disto.
+///
+/// **Nunca falha**: uma notificação que não consegue sair por email não pode
+/// derrubar a operação que a originou (marcar uma reunião, acabar uma
+/// gravação). Os erros ficam no registo.
+///
+/// O dedupe é o da própria notificação: os produtores são repetíveis de
+/// propósito (o lembrete é um passo de varrimento), e sem chave um reinício
+/// mandava o mesmo email outra vez.
+async fn email_best_effort(state: &AppState, user_id: Uuid, draft: &Draft) {
+    if !crate::mail::enabled(state) {
+        return;
+    }
+    if !crate::account::channel_enabled(
+        &state.db,
+        user_id,
+        draft.kind,
+        delonix_meet_domain::notification::preferences::Channel::Email,
+    )
+    .await
+    {
+        return;
+    }
+    let conta: Option<(String, String, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT email, COALESCE(locale, 'pt'), email_verified_at FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some((email, locale, Some(_provado))) = conta else {
+        // Sem conta, ou endereço não provado: não se manda. Em silêncio — não
+        // é um erro, é a regra.
+        return;
+    };
+
+    let corpo = corpo_do_email(&locale, draft, state.config.public_url.as_deref());
+    if let Err(e) = crate::mail::enqueue(
+        state,
+        crate::mail::Outgoing {
+            org_id: crate::org::orgs_of_user(state, user_id)
+                .await
+                .first()
+                .copied(),
+            purpose: crate::mail::Purpose::Notification,
+            to: &email,
+            subject: &draft.title,
+            body: &corpo,
+            // `notif:` para a chave da notificação não poder colidir com a de
+            // outro propósito que venha a usar dedupe.
+            dedupe_key: Some(&format!("notif:{}", draft.dedupe_key)),
+        },
+    )
+    .await
+    {
+        tracing::warn!(%user_id, kind = draft.kind.as_str(), error = ?e,
+            "notificação não entrou na fila do correio (a operação de origem segue)");
+    }
+}
+
+/// O corpo: o texto da notificação, o link absoluto quando há `PUBLIC_URL`, e
+/// uma linha a dizer onde se desliga isto — um email que não diz como parar é
+/// um email que se marca como spam.
+fn corpo_do_email(locale: &str, draft: &Draft, public_url: Option<&str>) -> String {
+    let link = match (public_url, draft.link.is_empty()) {
+        (Some(base), false) => format!("\n\n{base}{}\n", draft.link),
+        _ => String::new(),
+    };
+    if locale.starts_with("en") {
+        format!(
+            "{}{link}\nYou are receiving this because email notifications are on for \
+             this event type. You can turn them off in your notification settings.\n",
+            draft.body
+        )
+    } else {
+        format!(
+            "{}{link}\nRecebe esta mensagem porque tem as notificações por correio \
+             ligadas para este tipo de evento. Pode desligá-las nas suas preferências \
+             de notificação.\n",
+            draft.body
+        )
     }
 }
 
