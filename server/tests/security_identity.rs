@@ -1172,3 +1172,123 @@ async fn em_producao_sem_endereco_publico_o_sso_recusa(db: sqlx::PgPool) {
     assert_eq!(st, 422, "{body}");
     assert_eq!(body["code"], "sso.public_url_missing", "{body}");
 }
+
+// ---------------------------------------------------------------------------
+//  A provisão pelo operador dá o domínio por provado (decisão do dono,
+//  2026-10-10) — e o domínio que muda sem prova perde-a (migração 0113).
+// ---------------------------------------------------------------------------
+
+/// O caso que o laboratório da Frente C mediu: uma org provisionada pelo Odoo
+/// recusava o JIT de todas as contas novas até alguém publicar um TXT. Agora o
+/// operador responde pelo domínio na provisão, e a conta nova entra à primeira.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_org_provisionada_pelo_operador_tem_o_dominio_provado(db: sqlx::PgPool) {
+    let segredo = "segredo-de-plataforma-de-teste";
+    let app = TestApp::spawn_with(
+        db,
+        &[
+            ("OUTBOUND_ALLOW_HOSTS", "127.0.0.1"),
+            ("PROVISIONING_SECRET", segredo),
+        ],
+    )
+    .await;
+    let idp = FakeIdp::start().await;
+    let r = app
+        .raw(
+            reqwest::Method::POST,
+            "/api/operator/v1/organizations",
+            &[("X-Provisioning-Secret", segredo)],
+            Some(json!({"name": "Kapa SA", "email_domain": "kapa.test",
+                        "sso": {"issuer_url": idp.issuer, "client_id": CLIENT_ID,
+                                "client_secret": "segredo", "enforce_sso": false}})),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let org = r.json()["org_id"].as_str().unwrap().to_string();
+
+    let provado: bool = sqlx::query_scalar(
+        "SELECT email_domain_verified_at IS NOT NULL FROM organizations WHERE id = $1::uuid",
+    )
+    .bind(&org)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        provado,
+        "o domínio provisionado pelo operador tinha de ficar provado"
+    );
+    let na_trilha: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_logs WHERE org_id = $1::uuid
+           AND action = 'organization.email_domain_vouched_by_operator' AND target = 'kapa.test'",
+    )
+    .bind(&org)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(na_trilha, 1, "fica na trilha quem respondeu pelo domínio");
+
+    // A conta nova do domínio entra por JIT à primeira — sem TXT nenhum.
+    let (st, sub, body) = sso_flow(&app, &idp, "kapa.test", "nova@kapa.test").await;
+    assert_eq!(st, 302, "JIT numa org provisionada: {body}");
+    assert_eq!(sub, user_id_by_email(&app, "nova@kapa.test").await);
+
+    // E o domínio provado não se estende a outro: email de outro domínio
+    // continua recusado.
+    let (st, _, body) = sso_flow(&app, &idp, "kapa.test", "alguem@lambda.test").await;
+    assert_eq!(st, 403, "{body}");
+    assert_eq!(body["code"], "sso.email_domain_mismatch", "{body}");
+}
+
+/// Migração 0113: mudar o domínio SEM provar o novo na mesma escrita anula a
+/// prova; mudá-lo provando-o (o que a provisão faz) mantém-na.
+#[sqlx::test(migrations = "./migrations")]
+async fn o_dominio_que_muda_sem_prova_perde_a_prova(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let admin = app.new_org("mu.test").await;
+    app.verify_domain(admin.org()).await;
+    let provado = |app: &TestApp, org: String| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT email_domain_verified_at IS NOT NULL FROM organizations WHERE id = $1::uuid",
+            )
+            .bind(org)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert!(provado(&app, admin.org().to_string()).await);
+
+    // Só o domínio: perde a prova.
+    sqlx::query("UPDATE organizations SET email_domain = 'nu.test' WHERE id = $1::uuid")
+        .bind(admin.org())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(
+        !provado(&app, admin.org().to_string()).await,
+        "um domínio novo que ninguém provou herdou a prova do antigo"
+    );
+
+    // Domínio E prova na mesma escrita (a provisão): fica provado.
+    sqlx::query(
+        "UPDATE organizations SET email_domain = 'xi.test', email_domain_verified_at = now()
+          WHERE id = $1::uuid",
+    )
+    .bind(admin.org())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(provado(&app, admin.org().to_string()).await);
+
+    // Uma escrita que não muda o domínio não mexe na prova.
+    sqlx::query(
+        "UPDATE organizations SET email_domain = email_domain, name = 'Outro' WHERE id = $1::uuid",
+    )
+    .bind(admin.org())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(provado(&app, admin.org().to_string()).await);
+}
