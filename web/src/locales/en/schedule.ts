@@ -48,6 +48,18 @@ export default {
     confirmarRecusa: 'Decline invite',
     erro: 'Could not send the reply.',
   },
+  remarcar: {
+    botao: 'Reschedule',
+    titulo: 'New date and time',
+    confirmar: 'Reschedule',
+    duracao: 'Duration (minutes)',
+    duracaoLimite: 'Between 5 and 1440.',
+    horaPassada: 'That time has already passed. Pick one in the future.',
+    avisoConvidados: 'Guests are notified of the change, with both the old and the new time.',
+    naoJaComecou: 'This meeting has already started: its start time can no longer be changed.',
+    naoRecorrente: 'Repeating meetings cannot be rescheduled here yet. Cancel the series and schedule another.',
+    erro: 'Could not reschedule.',
+  },
   detalhe: {
     separadores: 'Meeting sections',
     tabDetalhes: 'Details',

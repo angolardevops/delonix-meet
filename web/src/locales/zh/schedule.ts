@@ -48,6 +48,18 @@ export default {
     confirmarRecusa: '拒绝邀请',
     erro: '无法发送回复。',
   },
+  remarcar: {
+    botao: '改期',
+    titulo: '新的日期和时间',
+    confirmar: '改期',
+    duracao: '时长（分钟）',
+    duracaoLimite: '介于 5 到 1440 之间。',
+    horaPassada: '该时间已过去。请选择将来的时间。',
+    avisoConvidados: '系统会通知受邀者此变更，并同时显示原时间与新时间。',
+    naoJaComecou: '此会议已开始：开始时间不能再更改。',
+    naoRecorrente: '重复会议暂不支持在此改期。请取消该系列并另行安排。',
+    erro: '无法改期。',
+  },
   detalhe: {
     separadores: '会议分区',
     tabDetalhes: '详情',

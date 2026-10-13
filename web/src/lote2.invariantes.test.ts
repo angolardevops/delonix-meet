@@ -36,6 +36,22 @@ function listarTsx(dir: string): string[] {
   return out
 }
 
+/** Todo o código da app (`.tsx` e `.ts`), fora os testes e os dicionários.
+ *  Derivado da árvore, pela mesma razão do `listarTsx`. */
+function listarCodigo(dir: string): string[] {
+  const out: string[] = []
+  for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`
+    if (e.isDirectory()) {
+      if (e.name !== 'locales') out.push(...listarCodigo(p))
+    } else if ((e.name.endsWith('.tsx') || e.name.endsWith('.ts')) && !e.name.includes('.test.')) {
+      out.push(p)
+    }
+  }
+  return out
+}
+const ficheirosDeCodigo = () => listarCodigo('web/src')
+
 /** As áreas (namespaces) de um dicionário: um ficheiro por área em
  *  `locales/<língua>/`, fora o `index.ts` que as compõe. */
 function areasDeLocale(loc: string): string[] {
@@ -525,6 +541,26 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
       }
     }
     expect(vazios).toEqual([])
+  })
+
+  it('quem chama uma chave com {{…}} passa-lhe o parâmetro', () => {
+    // O caso real (2026-10-13, ecrã de remarcar): `t('schedule.form.hora')` sem
+    // o `{ fuso }` pôs «Hora · {{fuso}}» na etiqueta do campo, à vista. Não
+    // falha o build, não falha o tsc, não falha nenhum teste — só se vê no
+    // browser, e só se alguém lá for.
+    //
+    // Compara-se pela chave COMPLETA: pela última parte, 524 chamadas
+    // inocentes pareciam culpadas (um `erro` noutro sítio tem `{{…}}`).
+    const pt = mapaDeLocale('pt')
+    const exigemParam = new Set(Object.entries(pt).filter(([, v]) => v.includes('{{')).map(([k]) => k))
+    const maus: string[] = []
+    for (const f of ficheirosDeCodigo()) {
+      const txt = read(f)
+      for (const m of txt.matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'\s*\)/g)) {
+        if (exigemParam.has(m[1])) maus.push(`${f}: ${m[1]}`)
+      }
+    }
+    expect(maus).toEqual([])
   })
 
   it('os placeholders {{…}} de cada tradução são os mesmos do português', () => {
