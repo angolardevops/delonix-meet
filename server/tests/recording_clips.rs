@@ -13,6 +13,14 @@
 //! 5. **o ficheiro só se descarrega quando está pronto** (`clip.not_ready`);
 //! 6. **a fila fecha com a posse certa** — uma reivindicação velha não fecha um
 //!    render que já é de outra.
+//!
+//! **O que corre onde.** As quatro provas que COMPÕEM (1, 2, 3 e a de apagar)
+//! precisam de ffmpeg e saltam sem ele — é o padrão do `recorder.rs`, e o CI
+//! desta casa não instala ffmpeg. As outras quatro (portões, contrato do
+//! pedido, descarregar antes de estar pronto, posse da fila) correm sempre:
+//! a origem é um ficheiro de fachada, que é tudo o que elas precisam.
+//! Consequência honesta: **o render só está provado na máquina de quem
+//! desenvolve**, com ffmpeg a sério, não no CI.
 mod common;
 
 use common::{Account, TestApp};
@@ -37,8 +45,18 @@ fn tem_ffmpeg() -> bool {
         .unwrap_or(false)
 }
 
-/// Um webm de `segundos` com vídeo 640×360 e áudio — a origem dos recortes.
-fn fonte(dst: &FsPath, segundos: u32, largura: u32, altura: u32) {
+/// A origem dos recortes: um webm de `segundos` com vídeo e áudio.
+///
+/// **Sem ffmpeg na máquina escreve um ficheiro de fachada** e devolve `false`.
+/// É o que permite às provas de PORTÃO e de contrato (que nunca compõem nada)
+/// correr no CI, onde não há ffmpeg: elas só precisam que a gravação tenha
+/// ficheiro para o `require_file()` passar. As que compõem de verdade saltam
+/// pelo seu próprio `tem_ffmpeg()`.
+fn fonte(dst: &FsPath, segundos: u32, largura: u32, altura: u32) -> bool {
+    if !tem_ffmpeg() {
+        std::fs::write(dst, b"nao-e-um-webm").expect("escrever a fachada");
+        return false;
+    }
     let out = std::process::Command::new(ffmpeg_bin())
         .args(["-y", "-loglevel", "error", "-nostdin"])
         .args([
@@ -59,6 +77,7 @@ fn fonte(dst: &FsPath, segundos: u32, largura: u32, altura: u32) {
         "a fonte não se gerou: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    true
 }
 
 /// Duração das PISTAS (ms), medida pacote a pacote — não a do contentor.
@@ -132,7 +151,17 @@ struct Cenario {
 }
 
 async fn cenario(db: PgPool, segundos: u32, largura: u32, altura: u32) -> Cenario {
-    let app = TestApp::spawn(db).await;
+    cenario_com(db, segundos, largura, altura, &[]).await
+}
+
+async fn cenario_com(
+    db: PgPool,
+    segundos: u32,
+    largura: u32,
+    altura: u32,
+    extra: &[(&str, &str)],
+) -> Cenario {
+    let app = TestApp::spawn_with(db, extra).await;
     let a = app.new_org("alfa-clip.test").await;
     let b = app.new_org("beta-clip.test").await;
     let carla = app.add_member(&a, "carla", "member").await;
@@ -149,7 +178,7 @@ async fn cenario(db: PgPool, segundos: u32, largura: u32, altura: u32) -> Cenari
     let dir = app.state.config.recordings_dir.clone();
     tokio::fs::create_dir_all(&dir).await.unwrap();
     let src = dir.join(format!("{rec}.webm"));
-    fonte(&src, segundos, largura, altura);
+    let _real = fonte(&src, segundos, largura, altura);
     let tamanho = std::fs::metadata(&src).unwrap().len() as i64;
     sqlx::query(
         "UPDATE recordings SET status = 'ready', size_bytes = $2, duration_ms = $3,
@@ -520,13 +549,18 @@ async fn uma_reivindicacao_velha_nao_fecha_um_render_de_outra(db: PgPool) {
         .unwrap();
     assert_eq!(n, 1, "um render com o prazo vencido tem de voltar à fila");
 
-    // E um `processing` SEM prazo escrito (uma linha de antes desta coluna, ou
-    // um pod que morreu entre a marca e o prazo) também volta: deixá-lo preso
-    // seria perder o recorte para sempre.
+    // E um `processing` sem prazo escrito (uma linha de antes desta coluna, ou
+    // um pod que morreu entre a marca e o prazo) volta: deixá-lo preso seria
+    // perder o recorte para sempre.
+    //
+    // O estado põe-se por inteiro — incluindo limpar o recuo que a volta
+    // anterior possa ter escrito. Este teste é sobre a POSSE, e não pode
+    // depender de o render ter passado ou falhado (o que muda com a máquina
+    // ter ffmpeg ou não). A falha tem o seu próprio teste, logo abaixo.
     sqlx::query(
         "UPDATE recording_clips
             SET status = 'processing', attempts = 0, running_at = now(),
-                lease_expires_at = NULL
+                lease_expires_at = NULL, next_attempt_at = NULL
           WHERE id = $1::uuid",
     )
     .bind(&id)
@@ -537,6 +571,83 @@ async fn uma_reivindicacao_velha_nao_fecha_um_render_de_outra(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(n, 1, "um processing sem prazo tem de voltar à fila");
+}
+
+#[sqlx::test]
+async fn uma_falha_de_render_deixa_o_codigo_estavel_e_respeita_o_recuo(db: PgPool) {
+    // O ffmpeg do SERVIDOR aponta para onde não existe: a falha é a mesma em
+    // qualquer máquina, com ou sem ffmpeg instalado. É o que torna esta prova
+    // determinística — e é também o caso real de uma instalação incompleta.
+    let c = cenario_com(db, 6, 320, 180, &[("FFMPEG_BIN", "/nao/existe/ffmpeg")]).await;
+    let (st, clip) = c
+        .app
+        .post(
+            &format!("/api/recordings/{}/clips", c.rec),
+            Some(&c.a.token),
+            json!({"kind": "clip", "label": "x", "start_ms": 0, "end_ms": 2_000}),
+        )
+        .await;
+    assert_eq!(st, 202, "{clip}");
+    let id = clip["id"].as_str().unwrap().to_string();
+
+    let n = delonix_server::recording_clip_render_due(&c.app.state)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+
+    // Com tentativas a sobrar volta a `queued`, COM recuo e com o código
+    // estável — e nunca se apaga o que havia.
+    let (status, code, espera, tentativas): (
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        i32,
+    ) = sqlx::query_as(
+        "SELECT status, error_code, next_attempt_at, attempts
+           FROM recording_clips WHERE id = $1::uuid",
+    )
+    .bind(&id)
+    .fetch_one(&c.app.db)
+    .await
+    .unwrap();
+    assert_eq!(status, "queued", "com tentativas a sobrar, volta à fila");
+    assert_eq!(
+        code.as_deref(),
+        Some("clip.ffmpeg_missing"),
+        "o código é contrato"
+    );
+    assert_eq!(tentativas, 1);
+    assert!(espera.is_some(), "uma falha tem de deixar recuo escrito");
+
+    // E o recuo respeita-se: sem isto, uma avaria do ffmpeg era repetida a cada
+    // 20 segundos para sempre — a lição que os capítulos e a acta já
+    // aprenderam.
+    let n = delonix_server::recording_clip_render_due(&c.app.state)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "a fila não pode levar um recorte antes do recuo");
+
+    // Esgotadas as tentativas, fica `failed` — e o cliente vê porquê.
+    sqlx::query("UPDATE recording_clips SET next_attempt_at = now() - interval '1 minute' WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&c.app.db)
+        .await
+        .unwrap();
+    let n = delonix_server::recording_clip_render_due(&c.app.state)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let (st, final_) = c
+        .app
+        .get(
+            &format!("/api/recordings/{}/clips/{id}", c.rec),
+            Some(&c.a.token),
+        )
+        .await;
+    assert_eq!(st, 200, "{final_}");
+    assert_eq!(final_["status"], "failed", "{final_}");
+    assert_eq!(final_["error_code"], "clip.ffmpeg_missing", "{final_}");
+    assert_eq!(final_["attempts"], 2, "{final_}");
 }
 
 #[sqlx::test]
