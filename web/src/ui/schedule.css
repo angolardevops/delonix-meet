@@ -461,6 +461,35 @@ button.cal-week__day:hover {
   margin-top: 6px;
   font-size: var(--t-sm);
 }
+/* A ligação da reunião: existe desde que ela é agendada, e é o que se dá à
+   equipa. O URL encolhe antes do botão — numa janela estreita, quem tem de
+   caber é o botão de copiar. */
+.cal-detail__link {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--raised);
+}
+.cal-detail__link h3 {
+  margin: 0;
+}
+.cal-detail__link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cal-detail__link-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-sm);
+}
+
 .cal-detail__desc {
   margin: 0;
   white-space: pre-wrap;

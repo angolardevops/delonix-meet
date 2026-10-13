@@ -17,6 +17,7 @@ import { useTrabalhoEmCurso } from './trabalhoEmCurso'
 // ---------------------------------------------------------------------------
 import Login from './pages/Login'
 import PortaDeConvidado from './pages/PortaDeConvidado'
+import EsperaDaSala from './pages/EsperaDaSala'
 import Home from './pages/Home'
 
 const Room = lazy(() => import('./pages/Room'))
@@ -179,7 +180,12 @@ export default function App() {
     }
     // Um link de SALA sem sessão é a entrada de convidado: um nome, e o
     // anfitrião admite. A moderação e o telemóvel-câmara continuam a pedir conta.
-    if (route.kind === 'room') return <PortaDeConvidado key={route.code} code={route.code} voice={route.voice} onLogin={aoEntrar} />
+    if (route.kind === 'room')
+      return (
+        <EsperaDaSala key={route.code} code={route.code}>
+          <PortaDeConvidado code={route.code} voice={route.voice} onLogin={aoEntrar} />
+        </EsperaDaSala>
+      )
     return (
       <Login
         pendingRoom={route.kind === 'lobby' || route.kind === 'telemovel' ? route.code : null}
@@ -226,6 +232,10 @@ export default function App() {
         >
         {route.kind === 'room' ? (
           <RouteFallback>
+            {/* O ecrã de espera vale para quem tem sessão como para quem não
+                tem: a sala de uma reunião da tarde existe de manhã (migração
+                0114), e entrar nela de manhã é entrar numa sala vazia. */}
+            <EsperaDaSala key={route.code} code={route.code}>
             <Room
               key={route.code}
               code={route.code}
@@ -233,6 +243,7 @@ export default function App() {
               onLeave={() => (location.hash = '/')}
               onSwitch={(c) => enterRoom(c)}
             />
+            </EsperaDaSala>
           </RouteFallback>
         ) : route.kind === 'telemovel' ? (
           <RouteFallback>

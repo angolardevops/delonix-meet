@@ -19,6 +19,7 @@ import { calendarHash, fmtDayMonth, fmtTime, localeOf, meetingEnd, meetingStart,
 import Respond, { InviteStatus } from '../calendar/Respond'
 import DeviceCheck from './DeviceCheck'
 import { copiarTexto } from '../../ui/copy'
+import { roomLink } from '../../roomCode'
 
 /** Três linhas, como no template; o resto está a um clique em «Ver agenda». */
 const MAX = 3
@@ -30,10 +31,6 @@ type Row = { m: Meeting; invitees: InviteeResponse[] | null }
 /** Minutos que faltam (negativo: já começou). */
 export function minutesUntil(start: Date, now: number): number {
   return Math.round((start.getTime() - now) / 60_000)
-}
-
-export function roomLink(code: string, origin = location.origin): string {
-  return `${origin}/#/r/${code}`
 }
 
 function useNow(ms = 30_000): number {

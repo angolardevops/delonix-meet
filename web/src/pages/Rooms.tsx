@@ -39,6 +39,7 @@ import { Alert, Button, Checkbox, cx, Dialog, Empty, Field, Select, StatusBadge,
 import { Menu, useMenuDeContexto, type AccaoDeMenu, type EventoDePonteiro } from '../ui/Menu'
 import '../ui/salas.css'
 import { copiarTexto } from '../ui/copy'
+import { roomLink } from '../roomCode'
 
 type Formato = 'normal' | 'training'
 
@@ -64,10 +65,6 @@ function razaoDaRecusa(e: unknown, t: (k: string) => string): string | null {
 }
 
 /** O endereço completo de uma sala — é isto que se cola num convite. */
-function enderecoDaSala(code: string): string {
-  return `${location.origin}/#/r/${code}`
-}
-
 export default function Rooms() {
   const { t, i18n } = useTranslation()
   const { enterRoom } = useShell()
@@ -110,7 +107,7 @@ export default function Rooms() {
 
   const copiar = useCallback(async (code: string) => {
     try {
-      if (!(await copiarTexto(enderecoDaSala(code)))) return
+      if (!(await copiarTexto(roomLink(code)))) return
       setCopiada(code)
       setTimeout(() => setCopiada((c) => (c === code ? null : c)), 2000)
     } catch {

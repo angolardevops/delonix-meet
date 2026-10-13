@@ -348,6 +348,8 @@ export interface Meeting {
   starts_at: string
   duration_min: number
   room_code: string | null
+  /** `null` enquanto o anfitrião não arrancar (migração 0114). */
+  started_at?: string | null
   is_owner: boolean
   minutes?: string
   room_ref?: string | null
@@ -2881,6 +2883,32 @@ export async function guestJoin(code: string, displayName: string): Promise<Gues
     const ra = Number(res.headers.get('retry-after'))
     throw new GuestJoinError(res.status, body, guestJoinFailure(res.status), Number.isFinite(ra) && ra > 0 ? ra : null)
   }
+  return res.json()
+}
+
+export interface RoomEntrance {
+  code: string
+  name: string
+  allow_guests: boolean
+  waiting_room: boolean
+  e2ee: boolean
+  /** Hora marcada, quando a sala é de uma reunião agendada. */
+  starts_at: string | null
+  duration_min: number | null
+  /** `true` quando já se pode entrar: sala ad-hoc, anfitrião arrancou, ou a hora chegou. */
+  open: boolean
+}
+
+/**
+ * `GET /api/rooms/{code}/entrance`. PÚBLICO, como o `guest-join`: é o que o
+ * ecrã de entrada precisa de saber ANTES de haver sessão nenhuma — quem abre
+ * um link partilhado pode não ter conta. Vai sem `Authorization` de propósito
+ * (a resposta é a mesma com ou sem ela) e um erro aqui nunca dispara renovação
+ * de sessão.
+ */
+export async function roomEntrance(code: string, signal?: AbortSignal): Promise<RoomEntrance> {
+  const res = await fetch(`/api/rooms/${encodeURIComponent(code)}/entrance`, { credentials: 'omit', signal })
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null), 'room_entrance')
   return res.json()
 }
 

@@ -1,4 +1,14 @@
 export default {
+  agendada: {
+    hoje: 'Today',
+    faltamDias_one: 'Starts in {{count}} day',
+    faltamDias_other: 'Starts in {{count}} days',
+    faltamHoras: 'Starts in {{horas}} h {{minutos}} min',
+    faltamMinutos_one: 'Starts in {{count}} minute',
+    faltamMinutos_other: 'Starts in {{count}} minutes',
+    abreSozinho: 'This page opens by itself at the scheduled time — you can leave it open.',
+    entrarMesmoAssim: 'Join anyway',
+  },
   preEntrada: {
     titulo: 'Pre-join',
     sala: 'room {{code}}',

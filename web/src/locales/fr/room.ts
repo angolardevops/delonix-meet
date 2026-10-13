@@ -1,4 +1,14 @@
 export default {
+  agendada: {
+    hoje: 'Aujourd’hui',
+    faltamDias_one: 'Commence dans {{count}} jour',
+    faltamDias_other: 'Commence dans {{count}} jours',
+    faltamHoras: 'Commence dans {{horas}} h {{minutos}} min',
+    faltamMinutos_one: 'Commence dans {{count}} minute',
+    faltamMinutos_other: 'Commence dans {{count}} minutes',
+    abreSozinho: 'Cette page s’ouvre d’elle-même à l’heure prévue — vous pouvez la laisser ouverte.',
+    entrarMesmoAssim: 'Entrer quand même',
+  },
   preEntrada: {
     titulo: 'Avant de rejoindre',
     sala: 'salle {{code}}',
