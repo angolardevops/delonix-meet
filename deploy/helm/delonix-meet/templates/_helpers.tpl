@@ -269,6 +269,9 @@ capabilities:
 {{- if and (eq $v.gateway.mode "attach") (not $v.gateway.parentRef.name) -}}
 {{- $e = append $e "gateway.parentRef.name: em mode=attach indica o Gateway a que as rotas se colam — e confirma que ele aceita rotas deste namespace (allowedRoutes), senão as rotas ficam Accepted=False sem servir nada" -}}
 {{- end -}}
+{{- if and $prod (eq $v.gateway.mode "attach") (not $v.gateway.parentRef.sectionName) -}}
+{{- $e = append $e "gateway.parentRef.sectionName: em produção e mode=attach indica o listener HTTPS do Gateway (no ngola-lda chama-se «https») — sem ele as rotas colam-se a todos os listeners, o de :80 incluído, e a aplicação é servida em claro por cima do redireccionamento da plataforma" -}}
+{{- end -}}
 {{- if and $prod (eq $v.gateway.mode "own") (not $v.gateway.tls.certificateRefName) (not $v.gateway.tls.clusterIssuer) -}}
 {{- $e = append $e "gateway.tls: em produção indica gateway.tls.clusterIssuer (cert-manager com --enable-gateway-api) ou gateway.tls.certificateRefName — sem um deles o Gateway só tem listener HTTP" -}}
 {{- end -}}

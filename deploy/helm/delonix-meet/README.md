@@ -310,6 +310,13 @@ namespace**. Medido a 2026-10-07: o Gateway do `ngolacloud-system` está em `fro
 Gateway que não nos aceita, as rotas ficam `Accepted=False` e não servem nada, sem erro
 na instalação.
 
+### Em `attach`, as rotas dizem a que listener se colam
+
+`gateway.parentRef.sectionName` é obrigatório em produção com `mode: attach` (o perfil traz
+`https`). Sem ele as rotas colam-se a **todos** os listeners do Gateway, o de `:80` incluído,
+e ganham ao redireccionamento genérico da plataforma por terem nome próprio. Medido a
+2026-10-13: `http://meet.ngolacloud.com/` devolvia 200 com a aplicação, em claro.
+
 ### Mais do que um nome (`extraHosts`)
 
 `host` é o nome canónico; `extraHosts` são outros nomes pelos quais a mesma instalação

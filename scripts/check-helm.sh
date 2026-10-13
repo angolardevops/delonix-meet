@@ -210,6 +210,8 @@ recusa "nem ingress nem gateway em produção" "sem um deles o host não é serv
   "${PROD[@]}" --set gateway.enabled=false
 recusa "gateway em mode=attach sem parentRef" "gateway.parentRef.name" \
   "${PROD[@]}" --set gateway.parentRef.name=
+recusa "gateway em mode=attach sem listener (servia em claro no :80)" "gateway.parentRef.sectionName" \
+  "${PROD[@]}" --set gateway.parentRef.sectionName=
 
 recusa "segundo nome com Gateway próprio (um certificado, um nome)" "extraHosts: em gateway.mode=own" \
   "${GW[@]}" --set 'extraHosts={meet.exemplo.ao}'
@@ -278,6 +280,18 @@ for caminho in sys.argv[1:]:
         pais = [pr.get('name') for pr in r['spec'].get('parentRefs') or []]
         if not [n for n in pais if n]:
             erro(f"a HTTPRoute {nome} não tem parentRef com nome")
+
+    # Colada a um Gateway alheio (`attach`), a rota tem de dizer A QUE LISTENER.
+    # Sem `sectionName` cola-se a todos, o de :80 incluído, e a aplicação sai
+    # em claro por cima do redireccionamento da plataforma (medido em produção
+    # a 2026-10-13: 200 em `http://`). Num Gateway próprio os listeners são os
+    # nossos e levam o nosso nome — aí não há a quem ganhar.
+    if forma != "production-gateway-own":
+        for nome, r in rotas.items():
+            for pr in r['spec'].get('parentRefs') or []:
+                if pr.get('sectionName') != 'https':
+                    erro(f"a HTTPRoute {nome} não está presa ao listener «https» "
+                         f"(sectionName={pr.get('sectionName')!r}) — seria servida também no :80")
 
     if not rotas:
         erro("nenhuma HTTPRoute no render — a entrada por Gateway não saiu")

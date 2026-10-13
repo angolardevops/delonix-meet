@@ -126,6 +126,14 @@ gateway:
   parentRef:
     name: delonix
     namespace: delonix-system
+    # SÓ o listener de :443. Sem `sectionName` as rotas colam-se a TODOS os
+    # listeners do Gateway, o de :80 incluído, e como o nosso nome é mais
+    # específico do que o redireccionamento genérico da plataforma
+    # (`delonix-http-para-https`, sem hostnames), ganha-lhe: medido a
+    # 2026-10-13, `http://meet.ngolacloud.com/` devolvia 200 com a aplicação,
+    # em claro, enquanto `http://console.ngolacloud.ao/` devolvia 301. Preso ao
+    # `https`, o :80 volta a ser do redireccionamento da plataforma.
+    sectionName: https
   # Sem `tls` nenhum, de propósito: quem termina o TLS é o listener do Gateway
   # da plataforma, com o certificado `delonix-wildcard-tls` — que já cobre
   # `meet.ngolacloud.com` e `meet.ngolacloud.ao` (18 nomes, verificado a
