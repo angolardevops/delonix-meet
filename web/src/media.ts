@@ -3,6 +3,7 @@
  * medidores de nível de voz e gravação composta da reunião.
  */
 import { accessTokenValue } from './api'
+import { asrDoServidorPreferido, motorDaTranscricao } from './legendasPref'
 
 export interface DeviceSets {
   mics: MediaDeviceInfo[]
@@ -692,6 +693,8 @@ class WhisperEngine {
  */
 export class ServerWhisperEngine {
   private ws: WebSocket | null = null
+  /** Fomos nós que fechámos: um `onclose` nosso não é uma falha do serviço. */
+  private fechadoPorNos = false
   private ctx: AudioContext | null = null
   private proc: ScriptProcessorNode | null = null
   private source: MediaStreamAudioSourceNode | null = null
@@ -724,6 +727,23 @@ export class ServerWhisperEngine {
       }
     }
     this.ws.onerror = () => this.onError?.('Transcrição do servidor indisponível — a usar o motor local.')
+    // O `onerror` cobre o que falha no HANDSHAKE — e é por aí que vem a recusa
+    // de autorização: o `/asr` fecha com 1008 ANTES do `accept`, e o servidor
+    // ASGI entrega isso como um 403 à ligação (medido a 2026-10-13 contra o
+    // whisper-server real: três tokens inválidos, três 403 no handshake).
+    //
+    // O que o `onerror` NÃO cobre é a ligação que JÁ estava aberta e cai a
+    // meio da reunião — o pod do ASR a reiniciar, um drain, a rede. Isso chega
+    // como `onclose`, e sem isto a captura morria em silêncio: sem legenda,
+    // sem erro e sem recuo para o motor local.
+    this.ws.onclose = (e) => {
+      if (this.fechadoPorNos) return
+      this.onError?.(
+        e.code === 1008
+          ? 'Transcrição do servidor recusou a sessão — a usar o motor local.'
+          : 'Transcrição do servidor interrompida — a usar o motor local.',
+      )
+    }
 
     let audio = stream
     if (!audio || audio.getAudioTracks().length === 0) {
@@ -752,6 +772,7 @@ export class ServerWhisperEngine {
   }
 
   stop() {
+    this.fechadoPorNos = true
     this.proc?.disconnect()
     this.source?.disconnect()
     void this.ctx?.close()
@@ -780,6 +801,17 @@ export class Transcriber {
   private lang = 'pt-PT'
   private stream?: MediaStream | null
   private usedWhisper = false
+  /**
+   * O ASR do servidor já falhou nesta sessão — não se tenta outra vez.
+   *
+   * SEM ISTO ERA UM CICLO INFINITO, e passou a importar no dia em que o ASR
+   * do servidor se tornou a omissão: o `onError` do motor do servidor chamava
+   * `start()` outra vez, o `start()` voltava a ler a preferência (ainda
+   * «servidor»), abria outro WebSocket, falhava — sem recuo nenhum e com uma
+   * ligação nova por volta. O comentário prometia «degrada para Web Speech»;
+   * o código recursava.
+   */
+  private asrDoServidorEmBaixo = false
   onFinal: ((text: string) => void) | null = null
   onInterim: ((text: string) => void) | null = null
   /** Erro legível (permissão negada, sem microfone, etc.). */
@@ -797,27 +829,38 @@ export class Transcriber {
     this.lang = lang
     this.stream = stream
     this.running = true
-    // Whisper SERVER-SIDE (opt-in, `dx_asr_server`): precisão muito superior ao
-    // WASM local, soberano (áudio só vai ao teu servidor). Cai para o motor
-    // seguinte em erro (serviço em baixo / não implantado).
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('dx_asr_server') === '1') {
+    const Ctor = ((window as unknown as { webkitSpeechRecognition?: SpeechRecognitionCtor; SpeechRecognition?: SpeechRecognitionCtor })
+      .webkitSpeechRecognition ??
+      (window as unknown as { SpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition) as SpeechRecognitionCtor | undefined
+    const motor = motorDaTranscricao({
+      asrDoServidor: asrDoServidorPreferido(),
+      asrDoServidorEmBaixo: this.asrDoServidorEmBaixo,
+      temWebSpeech: !!Ctor,
+      preferirLocal: preferLocal,
+    })
+    if (motor === 'servidor') {
+      // Whisper SERVER-SIDE (`dx_asr_server`, a OMISSÃO desde 2026-10-13):
+      // precisão muito superior ao WASM local e soberano — o áudio vai ao
+      // nosso servidor e a mais nenhum. Cai para o motor seguinte em erro
+      // (serviço em baixo, ou um servidor que não instalou o Whisper).
       const sw = new ServerWhisperEngine()
       sw.onFinal = (t) => this.onFinal?.(t)
       sw.onInterim = (t) => this.onInterim?.(t)
-      sw.onError = () => {
-        // Serviço indisponível → degrada para Web Speech / WASM local.
+      sw.onError = (mensagem) => {
+        // Serviço indisponível → degrada para Web Speech / WASM local. A
+        // marca é o que impede o `start()` de voltar aqui em ciclo.
+        this.asrDoServidorEmBaixo = true
         this.serverWhisper?.stop()
         this.serverWhisper = null
-        if (this.running) this.start(lang, stream, preferLocal)
+        if (!this.running) return
+        this.onInterim?.(mensagem)
+        this.start(lang, stream, preferLocal)
       }
       void sw.start(this.lang, this.stream)
       this.serverWhisper = sw
       return true
     }
-    const Ctor = ((window as unknown as { webkitSpeechRecognition?: SpeechRecognitionCtor; SpeechRecognition?: SpeechRecognitionCtor })
-      .webkitSpeechRecognition ??
-      (window as unknown as { SpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition) as SpeechRecognitionCtor | undefined
-    if (!Ctor || preferLocal) {
+    if (motor === 'wasm' || !Ctor) {
       // Sem Web Speech (Firefox) ou modo 100% local: Whisper WASM.
       this.startWhisper()
       return true
