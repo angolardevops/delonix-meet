@@ -184,6 +184,7 @@ export default {
     erro: 'La recherche de personnes a échoué.',
   },
   conflitos: {
+    horaJaPassou: 'Cette heure est déjà passée : la réunion est enregistrée, mais elle n’apparaîtra pas dans « Prochaines réunions ».',
     titulo: 'Conflits et capacité',
     aVerificar: 'Vérification des agendas…',
     erro: 'Impossible de vérifier les conflits.',

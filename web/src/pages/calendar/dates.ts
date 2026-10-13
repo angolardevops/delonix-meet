@@ -44,6 +44,22 @@ export function fmtDayMonth(d: Date, locale: string): string {
 export const meetingStart = (m: Meeting) => new Date(m.starts_at)
 export const meetingEnd = (m: Meeting) => new Date(new Date(m.starts_at).getTime() + m.duration_min * 60_000)
 
+/**
+ * `true` quando a sessão a marcar já ACABOU no momento em que se marca.
+ *
+ * Existe por um caso real (2026-10-13): às 10:24 marcou-se uma reunião para as
+ * 08:00 do mesmo dia — clicar numa faixa já passada da coluna de hoje
+ * pré-preenche essa hora, e nada no caminho dizia nada. A reunião foi gravada
+ * e NUNCA apareceu, porque «Próximas reuniões» só mostra o que ainda não
+ * acabou. Do lado de quem marcou, isso é indistinguível de se ter perdido.
+ *
+ * Marcar no passado não se PROÍBE: lançar uma reunião que já aconteceu, para
+ * lhe guardar a acta, é legítimo. Avisa-se.
+ */
+export function jaAcabou(start: Date | null, duracaoMin: number, agora = Date.now()): boolean {
+  return start !== null && start.getTime() + duracaoMin * 60_000 < agora
+}
+
 export function fmtTime(d: Date, locale: string) {
   return d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
 }

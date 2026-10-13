@@ -184,6 +184,7 @@ export default {
     erro: 'A pesquisa de pessoas falhou.',
   },
   conflitos: {
+    horaJaPassou: 'Esta hora já passou: a reunião fica guardada, mas não aparece em «Próximas reuniões».',
     titulo: 'Conflitos e capacidade',
     aVerificar: 'A verificar a agenda…',
     erro: 'Não foi possível verificar conflitos.',

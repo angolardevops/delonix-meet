@@ -184,6 +184,7 @@ export default {
     erro: 'People search failed.',
   },
   conflitos: {
+    horaJaPassou: 'This time has already passed: the meeting is saved, but it will not show under “Upcoming meetings”.',
     titulo: 'Conflicts and capacity',
     aVerificar: 'Checking calendars…',
     erro: 'Could not check for conflicts.',
