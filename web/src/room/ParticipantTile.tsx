@@ -5,6 +5,7 @@ import { avatarTone, cx, initials } from '../ui/kit'
 import { Menu, useMenuDeContexto, type AccaoDeMenu, type EventoDePonteiro } from '../ui/Menu'
 import type { Role } from '../signaling'
 import type { RemotePeer } from './useRoomCore'
+import { useFluxoDeVideo } from './useFluxoDeVideo'
 
 /** Rótulo do papel num retrato; `null` para quem assiste. */
 export function rotuloPapel(t: (k: string) => string, role: Role): string | null {
@@ -158,6 +159,11 @@ export function ParticipantTileBase({
   }, [peer.stream])
   // Vídeo só com track E câmara ligada: uma track desactivada chega como preto.
   const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
+  // ...e, mesmo com as duas, pode não chegar um único quadro. Medido em
+  // produção a 2026-10-13 com um participante em macOS: faixa publicada,
+  // câmara anunciada ligada, e o retrato preto do princípio ao fim.
+  const fluxo = useFluxoDeVideo(ref, hasVideo)
+  const comImagem = hasVideo && fluxo === 'a-chegar'
   const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
   const role = rotuloPapel(t, peer.host ? 'host' : peer.role)
 
@@ -208,8 +214,23 @@ export function ParticipantTileBase({
         {nome}
       </Menu>
       {/* O <video> nunca desmonta: esconde-se, para não perder o srcObject. */}
-      <video ref={ref} autoPlay playsInline muted className={cx('rm-tile__video', !hasVideo && 'is-hidden')} />
-      {!hasVideo && <TileAvatar name={peer.username} />}
+      <video ref={ref} autoPlay playsInline muted className={cx('rm-tile__video', !comImagem && 'is-hidden')} />
+      {!comImagem && <TileAvatar name={peer.username} />}
+      {/* Dizer QUAL dos três casos é. «Câmara desligada» é o único que sabemos
+          de certeza (vem anunciado por quem publica); chamar-lhe isso quando a
+          câmara está ligada e a imagem é que não chega seria informação falsa
+          sobre o estado de outra pessoa. */}
+      {!comImagem && (
+        <span className="rm-tile__semimagem">
+          {!peer.camOn
+            ? t('room.tile.camaraDesligada')
+            : fluxo === 'parado'
+              ? t('room.tile.imagemParada')
+              : fluxo === 'sem-imagem'
+                ? t('room.tile.semImagem')
+                : t('room.tile.aLigarVideo')}
+        </span>
+      )}
       <div className="rm-tile__flags">
         {peer.hand && (
           <span className="rm-flag rm-flag--live">

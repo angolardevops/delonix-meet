@@ -167,6 +167,10 @@ export default {
     sondagensTitulo: 'Sondages',
   },
   tile: {
+    camaraDesligada: 'Caméra éteinte',
+    semImagem: 'Pas d’image',
+    imagemParada: 'Image figée',
+    aLigarVideo: 'Connexion de la vidéo…',
     duploCliqueFixa: 'Double-clic pour épingler sur la scène ; clic droit pour les actions',
     accoes: 'Actions de {{nome}}',
     mao: 'Main',

@@ -167,6 +167,10 @@ export default {
     sondagensTitulo: '投票',
   },
   tile: {
+    camaraDesligada: '摄像头已关闭',
+    semImagem: '无画面',
+    imagemParada: '画面已静止',
+    aLigarVideo: '正在连接视频…',
     duploCliqueFixa: '双击固定到舞台；右键打开操作',
     accoes: '{{nome}} 的操作',
     mao: '举手',

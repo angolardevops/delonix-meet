@@ -368,6 +368,27 @@ div.rm-only-narrow,
   letter-spacing: 0;
   text-transform: none;
 }
+/* Porque é que o retrato não tem imagem: por baixo das iniciais, discreto.
+   Antes o retrato ficava simplesmente preto e quem via não tinha como saber se
+   a câmara do outro estava desligada, se a imagem não chegava, ou se a avaria
+   era nossa. */
+.rm-tile__semimagem {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, 44px);
+  max-width: 90%;
+  padding: 2px 8px;
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--muted);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 .rm-tile__foot {
   position: absolute;
   left: 8px;
