@@ -62,6 +62,26 @@ data:
   {{- with $v.server.telephony.kamailioRpcUrl }}
   TELEPHONY_KAMAILIO_RPC_URL: {{ . | quote }}
   {{- end }}
+  {{- /*
+    A IA local. O URL é DERIVADO do Service do chart e não um valor que o
+    operador escreve: era exactamente aí que a produção se perdia — o Ollama
+    existia no caminho kustomize, o `OLLAMA_URL` vivia noutro ficheiro, e o
+    ConfigMap que foi para o cluster partilhado não o levava. Sem a chave, o
+    servidor desliga a IA em silêncio (`Config.ollama_url = None`) e a ata de
+    IA nunca nasce.
+
+    Os nomes dos modelos saem da MESMA lista que o pod puxa (`ollama.models`),
+    por isso não podem divergir dela.
+  */}}
+  {{- if $v.ollama.enabled }}
+  OLLAMA_URL: {{ printf "http://delonix-ollama.%s.svc.cluster.local:11434" .Release.Namespace | quote }}
+  OLLAMA_MODEL_SUMMARY: {{ $v.ollama.modelSummary | quote }}
+  OLLAMA_MODEL_TRANSLATE: {{ $v.ollama.modelTranslate | quote }}
+  {{- with $v.ollama.modelStudio }}
+  OLLAMA_MODEL_STUDIO: {{ . | quote }}
+  {{- end }}
+  OLLAMA_TIMEOUT_SECS: {{ $v.ollama.timeoutSeconds | quote }}
+  {{- end }}
   {{- range $k, $val := $v.server.config }}
   {{ $k }}: {{ $val | toString | quote }}
   {{- end }}

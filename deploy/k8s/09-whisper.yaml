@@ -5,8 +5,12 @@
 # CPU por defeito (modelo `small` int8 — aceitável em CPU). Em produção com GPU,
 # ver o role Ansible (whisper_gpu=true) ou trocar image/env por CUDA + large-v3.
 #
-# Build: docker build -t delonix-whisper:<tag> whisper-server/ && kind load ...
-# (o `make image-push` NÃO constrói esta imagem — é opt-in; ver docs).
+# Build: `BUILD_WHISPER=1 deploy/build-images.sh` (o `make image` NÃO constrói
+# esta imagem — embute o modelo, ~2GB).
+#
+# EM PRODUÇÃO NÃO É ESTE O CAMINHO: a produção é servida pelo chart Helm
+# (ADR-0021), onde isto é `whisper.enabled` e a rota /asr sai do mesmo valor —
+# `deploy/helm/delonix-meet/templates/ai.yaml`.
 #
 # O modelo vem EMBUTIDO na imagem (o cluster kind é offline: os pods não têm
 # DNS/internet, logo o download do modelo no arranque falharia). Sem PVC — a
@@ -47,14 +51,21 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
-          # JWT_SECRET vem do configmap partilhado com o server Rust — o /asr
-          # passou a validar o mesmo access token do /rtc (auth.rs), porque
-          # está no mesmo ingress público e antes aceitava qualquer ligação
-          # sem autenticação nenhuma.
-          envFrom:
-            - configMapRef:
-                name: delonix-config
           env:
+            # O /asr valida o MESMO access token do /rtc (auth.rs, HS256),
+            # porque está no mesmo ingress público e antes aceitava qualquer
+            # ligação sem autenticação nenhuma.
+            #
+            # A CHAVE VEM DO SECRET, por chave. Até 2026-10-13 estava escrito
+            # aqui `envFrom: configMapRef: delonix-config` — e os segredos
+            # saíram desse ConfigMap a 2026-10-04 (ver o cabeçalho do
+            # 01-config.yaml). O whisper ficava com JWT_SECRET vazio e, por
+            # ser fail-closed (`whisper-server/app.py:46`), RECUSAVA todas as
+            # ligações: o browser caía em silêncio para o motor local e
+            # ninguém via um erro.
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef: { name: delonix-secrets, key: JWT_SECRET }
             - { name: WHISPER_MODEL, value: "small" }   # base|small|medium|large-v3
             - { name: WHISPER_DEVICE, value: "cpu" }     # cuda em GPU
             - { name: WHISPER_COMPUTE, value: "int8" }   # float16 em GPU

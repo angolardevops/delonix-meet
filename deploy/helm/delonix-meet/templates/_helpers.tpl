@@ -53,6 +53,26 @@ imagePullSecrets:
 {{- end -}}
 {{- end }}
 
+{{/*
+  O Service que serve o `/asr` (transcrição em tempo real): o Whisper deste
+  chart, ou um serviço de transcrição de fora.
+
+  PORQUE É DERIVADO: `whisper.enabled` sem rota é um pod a arder CPU que
+  browser nenhum alcança, e uma rota sem pod é um 503. Eram duas maçanetas
+  independentes para uma só decisão.
+*/}}
+{{- define "dm.asrService" -}}
+{{- if .Values.whisper.enabled -}}
+delonix-whisper
+{{- else -}}
+{{- .Values.ingress.asr.serviceName -}}
+{{- end -}}
+{{- end }}
+
+{{- define "dm.asrPort" -}}
+{{- if .Values.whisper.enabled -}}8000{{- else -}}{{ .Values.ingress.asr.servicePort }}{{- end -}}
+{{- end }}
+
 {{/* Contexto de segurança de um contentor sem privilégios. */}}
 {{- define "dm.restricted" -}}
 allowPrivilegeEscalation: false
@@ -129,6 +149,8 @@ capabilities:
 {{- if $v.voice.labPbx.enabled -}}{{- $_ := set $imgs "voice.labPbx.image" $v.voice.labPbx.image.tag -}}{{- end -}}
 {{- end -}}
 {{- if $v.postgresql.enabled -}}{{- $_ := set $imgs "postgresql.image" $v.postgresql.image.tag -}}{{- end -}}
+{{- if $v.ollama.enabled -}}{{- $_ := set $imgs "ollama.image" $v.ollama.image.tag -}}{{- end -}}
+{{- if $v.whisper.enabled -}}{{- $_ := set $imgs "whisper.image" $v.whisper.image.tag -}}{{- end -}}
 {{- if $v.redis.enabled -}}{{- $_ := set $imgs "redis.image" $v.redis.image.tag -}}{{- end -}}
 {{- range $nome, $tag := $imgs -}}
 {{- if not $tag -}}
@@ -173,6 +195,27 @@ capabilities:
 {{- end -}}
 {{- if and $v.ingress.tls.clusterIssuer $v.ingress.tls.existingSecret -}}
 {{- $e = append $e "ingress.tls.clusterIssuer e ingress.tls.existingSecret são exclusivos" -}}
+{{- end -}}
+
+{{- /* IA in-cluster */ -}}
+{{- if $v.ollama.enabled -}}
+{{- range $m := (list $v.ollama.modelSummary $v.ollama.modelTranslate) -}}
+{{- if and $m (not (has $m $v.ollama.models)) -}}
+{{- $e = append $e (printf "ollama.models: «%s» é pedido ao servidor mas não está na lista que o pod puxa. O ConfigMap apontaria para um modelo que não existe, e o Ollama responderia 404 a cada resumo (LlmError::ModelMissing) — acrescenta-o a ollama.models" $m) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $v.ollama.modelSummary -}}
+{{- $e = append $e "ollama.modelSummary: sem modelo de resumo a ata de IA nunca nasce" -}}
+{{- end -}}
+{{- end -}}
+{{- if and $v.whisper.enabled $v.ingress.asr.serviceName -}}
+{{- $e = append $e "whisper.enabled e ingress.asr.serviceName são exclusivos: o /asr tem um destino só. Usa o Whisper do chart, ou aponta o ingress.asr a um serviço de fora" -}}
+{{- end -}}
+{{- /* O /asr valida o access token com o JWT_SECRET do Secret (o app.py é
+   fail-closed sem ele): sem Secret, o Whisper recusa TODAS as ligações e o
+   browser cai em silêncio para o motor local — pior do que não o instalar. */ -}}
+{{- if and $v.whisper.enabled (not $v.secrets.existingSecret) (not $v.secrets.create) -}}
+{{- $e = append $e "whisper.enabled exige um Secret com a chave JWT_SECRET: o /asr valida o mesmo access token do /rtc e sem a chave recusa todas as ligações (fail-closed)" -}}
 {{- end -}}
 
 {{- /* media */ -}}
