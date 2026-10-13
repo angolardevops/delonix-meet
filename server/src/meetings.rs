@@ -63,6 +63,7 @@ pub struct Meeting {
         delete,
         start,
         ics,
+        minutes,
         save_minutes,
         request_mom_summary,
         invitees,
@@ -82,6 +83,7 @@ pub struct Meeting {
         RoomConflict,
         Conflicts,
         MinutesReq,
+        MeetingMinutes,
         MomSummaryState,
         RoomNotes,
         StartResp,
@@ -1312,6 +1314,75 @@ pub async fn request_mom_summary(
             summarized_at,
         }),
     ))
+}
+
+#[derive(sqlx::FromRow)]
+struct MinutesRow {
+    owner_id: Uuid,
+    title: String,
+    minutes: String,
+    transcript: String,
+    minutes_ai_at: Option<DateTime<Utc>>,
+}
+
+/// A acta (MoM) e a transcrição de uma reunião.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct MeetingMinutes {
+    pub id: Uuid,
+    pub title: String,
+    /// Acta (MoM). Vazia enquanto ninguém a gravar.
+    pub minutes: String,
+    /// Transcrição bruta.
+    pub transcript: String,
+    /// Presente quando a acta já é a versão final do LLM local.
+    pub minutes_ai_at: Option<DateTime<Utc>>,
+}
+
+/// Lê a acta de uma reunião que ESTA pessoa alcança.
+///
+/// Não existia: o BFF tinha `PUT` da acta e a leitura só por CÓDIGO DE SALA
+/// (`notes_by_room`); por `meeting_id` a única leitura era a da v1
+/// (`apikeys::v1_meeting_notes`), com o `SELECT` dentro do handler e âmbito de
+/// ORGANIZAÇÃO — a chave `dlx_` age pela org, e vê qualquer reunião dela.
+///
+/// Reaproveitar essa consulta para um agente seria dar-lhe MAIS do que a
+/// pessoa tem. Aqui o portão é o mesmo do resto do BFF: dono ou convidado
+/// (`is_owner_or_invitee`), e o que não se alcança dá `404`.
+#[utoipa::path(
+    get, path = "/api/meetings/{meeting_id}/minutes", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = MeetingMinutes),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não é dono nem convidado"),
+    )
+)]
+pub async fn minutes(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<MeetingMinutes>, ApiError> {
+    let row: Option<MinutesRow> = sqlx::query_as(
+        "SELECT owner_id, title, minutes, transcript, minutes_ai_at
+           FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(r) = row else {
+        return Err(ApiError::NotFound);
+    };
+    if !is_owner_or_invitee(&state, id, r.owner_id, auth.user_id).await? {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(MeetingMinutes {
+        id,
+        title: r.title,
+        minutes: r.minutes,
+        transcript: r.transcript,
+        minutes_ai_at: r.minutes_ai_at,
+    }))
 }
 
 /// Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.

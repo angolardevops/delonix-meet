@@ -5327,6 +5327,41 @@
         ],
         "type": "object"
       },
+      "MeetingMinutes": {
+        "description": "A acta (MoM) e a transcrição de uma reunião.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "minutes": {
+            "description": "Acta (MoM). Vazia enquanto ninguém a gravar.",
+            "type": "string"
+          },
+          "minutes_ai_at": {
+            "description": "Presente quando a acta já é a versão final do LLM local.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "transcript": {
+            "description": "Transcrição bruta.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "minutes",
+          "transcript"
+        ],
+        "type": "object"
+      },
       "MeetingRoom": {
         "properties": {
           "capacity": {
@@ -9630,6 +9665,26 @@
         ],
         "type": "object"
       },
+      "RpcRequest": {
+        "description": "Uma mensagem JSON-RPC 2.0. Documentada para o contrato ser legível, mas o\nhandler lê o corpo como texto: a mensagem pode ser uma notificação (sem\n`id`) e um extractor tipado responderia `422` a algo que é válido.",
+        "properties": {
+          "id": {
+            "description": "Ausente numa **notificação** — e uma notificação não leva resposta."
+          },
+          "jsonrpc": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "params": {}
+        },
+        "required": [
+          "jsonrpc",
+          "method"
+        ],
+        "type": "object"
+      },
       "SavedQuery": {
         "description": "A consulta guardada, na forma dos parâmetros da lista.",
         "properties": {
@@ -13413,6 +13468,12 @@
         "scheme": "bearer",
         "type": "http"
       },
+      "mcp": {
+        "bearerFormat": "JWT",
+        "description": "Access token de um agente (OAuth 2.1, ADR-0028): `typ: \"mcp\"` e `aud` do recurso. NÃO abre as rotas do BFF.",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "session": {
         "bearerFormat": "JWT",
         "description": "Access token da sessão (15 min), renovado por /api/auth/refresh.",
@@ -14578,6 +14639,122 @@
         "summary": "Aceita um convite. O token é a credencial (uso único, com expiração); o\ncorreio da sessão tem de ser o do convite como defesa em profundidade.",
         "tags": [
           "directory"
+        ]
+      }
+    },
+    "/api/mcp": {
+      "delete": {
+        "operationId": "delete",
+        "responses": {
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "405": {
+            "description": "Não há sessão MCP para terminar: quem corta o agente termina a SESSÃO em «A minha conta», ou retira o consentimento."
+          }
+        },
+        "security": [
+          {
+            "mcp": []
+          }
+        ],
+        "summary": "`DELETE /api/mcp` — terminar a sessão MCP.",
+        "tags": [
+          "mcp"
+        ]
+      },
+      "get": {
+        "operationId": "get",
+        "responses": {
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "405": {
+            "description": "Não há fluxo: nenhuma tool emite notificações por iniciativa do servidor."
+          }
+        },
+        "security": [
+          {
+            "mcp": []
+          }
+        ],
+        "summary": "`GET /api/mcp` — o fluxo de eventos do servidor para o cliente.",
+        "tags": [
+          "mcp"
+        ]
+      },
+      "post": {
+        "operationId": "post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RpcRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A resposta JSON-RPC. Um erro da CHAMADA vem aqui com `error` (ou, numa tool, com `isError: true`): o estado HTTP diz que a mensagem chegou."
+          },
+          "202": {
+            "description": "Era uma notificação (sem `id`): não leva corpo."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem token de agente, com outro `typ`/`aud`, ou com a sessão terminada. Leva `WWW-Authenticate` com o endereço da metadata do recurso."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem `PUBLIC_URL` o MCP está fechado."
+          }
+        },
+        "security": [
+          {
+            "mcp": []
+          }
+        ],
+        "summary": "`POST /api/mcp` — uma mensagem JSON-RPC por pedido.",
+        "tags": [
+          "mcp"
         ]
       }
     },
@@ -15931,6 +16108,63 @@
       }
     },
     "/api/meetings/{meeting_id}/minutes": {
+      "get": {
+        "description": "Não existia: o BFF tinha `PUT` da acta e a leitura só por CÓDIGO DE SALA\n(`notes_by_room`); por `meeting_id` a única leitura era a da v1\n(`apikeys::v1_meeting_notes`), com o `SELECT` dentro do handler e âmbito de\nORGANIZAÇÃO — a chave `dlx_` age pela org, e vê qualquer reunião dela.\n\nReaproveitar essa consulta para um agente seria dar-lhe MAIS do que a\npessoa tem. Aqui o portão é o mesmo do resto do BFF: dono ou convidado\n(`is_owner_or_invitee`), e o que não se alcança dá `404`.",
+        "operationId": "minutes",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingMinutes"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe, ou não é dono nem convidado"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Lê a acta de uma reunião que ESTA pessoa alcança.",
+        "tags": [
+          "meetings"
+        ]
+      },
       "put": {
         "operationId": "save_minutes",
         "parameters": [
@@ -40551,6 +40785,7 @@
     },
     "/api/users/me/sessions": {
       "get": {
+        "description": "**Lê-se de `user_sessions`** (a identidade e o estado da sessão, migração\n0078) e não de `refresh_tokens`, como até aqui. A razão é concreta: uma\nautorização OAuth (ADR-0028) abre sessão em `user_sessions` mas guarda o\nrefresh em `oauth_refresh_tokens` — a lista antiga não a mostrava, e «o\nagente aparece em Sessões activas» era uma afirmação sem código por trás.\nApanhado pelo teste `oauth_mcp::o_agente_e_uma_sessao_e_terminar_a_sessao_mata_o`.\n\nO `EXISTS` sobre as DUAS tabelas de refresh preserva a semântica que havia:\nsó aparece quem tem uma credencial de renovação viva. Sem ele, uma sessão\ncujo refresh expirou ficaria na lista para sempre (`user_sessions` não tem\nvalidade própria).",
         "operationId": "list_sessions",
         "responses": {
           "200": {
@@ -40582,7 +40817,7 @@
             "session": []
           }
         ],
-        "summary": "Lista as sessões activas (uma por `session_id` não revogado e não\nexpirado) — cada refresh roda o `token_hash`, mas mantém o `session_id`,\npor isso há exactamente uma linha viva por dispositivo ligado.",
+        "summary": "Lista as sessões activas — uma linha por sessão viva, seja de um browser ou\nde um agente.",
         "tags": [
           "users"
         ]

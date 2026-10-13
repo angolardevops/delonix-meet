@@ -29,6 +29,7 @@ mod fair_slots;
 pub mod grpc;
 mod guests;
 mod mail;
+mod mcp;
 mod media_probe;
 mod meetings;
 mod meetings_v1;
@@ -541,6 +542,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/.well-known/oauth-protected-resource",
             get(oauth::resource_metadata),
         )
+        // ---- MCP: a superfície dos agentes (ADR-0027) ----
+        // O caminho é literal e não aninhado de propósito: `nest` com uma rota
+        // `/` monta `/api/mcp/`, e o contrato (e o portão do OpenAPI) falam de
+        // `/api/mcp`. O limite por IP vai no `MethodRouter`, que é o que
+        // permite um travão só nesta rota.
+        .route(
+            "/api/mcp",
+            post(mcp::post)
+                .get(mcp::get)
+                .delete(mcp::delete)
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    rate_limit::ip_rate_limit,
+                )),
+        )
         .nest("/api/oauth", oauth_routes)
         .nest("/api/auth", auth_routes)
         .nest("/api/v1", v1_routes)
@@ -799,7 +815,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
         .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
-        .route("/api/meetings/{meeting_id}/minutes", axum::routing::put(meetings::save_minutes))
+        .route(
+            "/api/meetings/{meeting_id}/minutes",
+            get(meetings::minutes).put(meetings::save_minutes),
+        )
         // Pede (ou repete) o resumo da acta pelo LLM — `202` com o estado da
         // fila. Custom method sob o sub-recurso `minutes`, como a checklist da
         // `delonix-meet-api` manda para uma acção que não é CRUD.

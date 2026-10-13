@@ -21,7 +21,12 @@ MAIN = 'server/src/lib.rs'  # o router vive na biblioteca (ADR-0004 §6 passo 1)
 PUBLICAS = 'scripts/rotas-publicas.txt'
 
 # Autenticação por EXTRACTOR na assinatura.
-EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth')
+# `McpAuth` (ADR-0027) é o da superfície dos agentes: verifica o `typ: "mcp"`,
+# o `aud` do recurso (RFC 8707) e o estado da sessão, e a sua recusa escreve o
+# `WWW-Authenticate` que a especificação MCP exige. É um extractor a sério
+# (`FromRequestParts`) exactamente para caber aqui — autenticar no corpo do
+# handler deixava esta superfície fora do portão.
+EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth', 'McpAuth')
 # Autenticação por GUARDA chamada no corpo. Nem tudo pode ser um extractor: a
 # API interna da voz autentica por segredo partilhado em header, e isso lê-se
 # do `HeaderMap`, não de um tipo.

@@ -968,7 +968,11 @@ pub async fn list(
 }
 
 /// O que a biblioteca tem além dos parâmetros uniformes de `search::SearchParams`.
-#[derive(Deserialize)]
+///
+/// `Default` (todos os campos vazios) é a biblioteca de sempre — é o que a
+/// tool `recordings_list` do MCP pede, e dizê-lo aqui poupa a quem chama
+/// montar um pedido vazio à mão.
+#[derive(Deserialize, Default)]
 pub struct LibraryQuery {
     /// `mine` (omissão) = a biblioteca de sempre: carregou, participou, ou
     /// foram-lhe partilhadas. `published` = as publicadas para a organização
@@ -2019,7 +2023,7 @@ pub struct CreateChapterReq {
     pub title: String,
 }
 
-#[derive(Deserialize, utoipa::IntoParams)]
+#[derive(Deserialize, Default, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct PageQuery {
     /// 1-100, omissão 50.

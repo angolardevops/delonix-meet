@@ -83,24 +83,37 @@ legendas, capítulos nem Estúdio. Seria copiar uma regra em vez de a chamar, qu
 
 ### 2. Transporte: Streamable HTTP, JSON-RPC 2.0, sem stdio
 
-- `POST /api/mcp` — uma mensagem JSON-RPC por pedido; resposta `application/json`
-  ou `text/event-stream` quando a tool emite progresso.
-- `GET /api/mcp` — fluxo de eventos do servidor para notificações; sem sessão
-  aberta responde `405`, que o protocolo permite.
-- `DELETE /api/mcp` — termina a sessão MCP.
-- `Mcp-Session-Id` identifica a sessão MCP. **O estado dela não vive na memória
-  do nó**: o servidor corre com três réplicas (ADR-0001), e estado entre dois
-  pedidos HTTP vive em Redis, como a presença e os lugares já fazem.
+- `POST /api/mcp` — uma mensagem JSON-RPC por pedido. Uma **notificação** (sem
+  `id`) responde `202` sem corpo, como o transporte manda.
+- `GET /api/mcp` e `DELETE /api/mcp` — `405`. Não há fluxo de eventos porque
+  nenhuma tool emite notificações por iniciativa do servidor, e um fluxo aberto
+  que nunca escreve custa uma ligação por agente em cada réplica.
+- **Sem estado, e por isso sem `Mcp-Session-Id`.** O token já diz quem é, em
+  que organização e com que escopos; uma sessão MCP acrescentaria estado
+  partilhado entre três réplicas (ADR-0001) para guardar o que já vem em cada
+  pedido. O protocolo permite-o: um servidor que não devolve o cabeçalho não o
+  recebe de volta. Quem quer cortar o agente termina a **sessão** (ADR-0028
+  §4) — que é a porta que existe para isso.
 - Nada de stdio: uma ponte local obrigaria o segredo a viver no portátil e
   deixaria de fora quem usa o cliente na web.
 
 ### 3. Uma tool chama a mesma função que o handler HTTP chama
 
 Regra de desenho, e é a que a revisão vai medir: **uma tool nunca lê a base de
-dados nem chama o LLM directamente.** Chama a função de serviço que o handler do
-BFF chama, e por isso herda a autorização, o DLP, os limites e a auditoria sem
-os repetir. Uma tool que precise de lógica nova obriga a extrair essa lógica
-para onde o handler também a chame — nunca a duplicá-la.
+dados nem chama o LLM directamente.** Chama o **próprio handler** do BFF —
+monta o `State`, o `AuthUser` desta pessoa e os extractores a partir dos
+argumentos — e por isso herda a autorização, o DLP, os limites e a auditoria
+sem os repetir. Construir o `AuthUser` à mão é sólido porque o extractor desta
+superfície já confirmou a sessão (`sessions::ensure_active`), que é a mesma
+pergunta que o do BFF faz.
+
+Uma tool que precise de lógica que não existe obriga a escrevê-la onde o
+handler também a use. Já aconteceu nesta PR: ler a acta por `meeting_id` não
+tinha caminho de pessoa (só o da v1, com o `SELECT` no handler e âmbito de
+ORGANIZAÇÃO — uma chave `dlx_` vê qualquer reunião da org). Reaproveitá-lo
+daria ao agente **mais** do que a pessoa tem, por isso entrou
+`GET /api/meetings/{id}/minutes` com o portão do resto do BFF (dono ou
+convidado), e a tool chama-o.
 
 Consequência prática: `server/src/mcp/` é um **adaptador**, da mesma natureza
 que `server/src/lib.rs` é para o BFF. Se um ficheiro em `mcp/` tiver uma query
@@ -141,7 +154,7 @@ org do `ai_studio` — um agente não é um caminho para furar nenhum dos dois.
 |---|---|
 | `check-route-auth.sh` | as rotas `/api/mcp` têm extractor próprio (`McpAuth`), não ficam públicas |
 | `check-isolamento-cobertura.sh` + `isolamento.mjs` | cada tool com escopo de organização é exercitada com um token da **outra** org |
-| **`check-mcp-tools.sh`** (novo) | toda a tool do catálogo: (a) está no documento OpenAPI/descritor commitado, (b) declara capacidade e escopo, (c) não tem `org_id`/`user_id` no esquema de entrada, (d) é exercitada pelo teste de isolamento |
+| **`check-mcp-tools.sh`** | toda a tool do catálogo: (a) declara escopo, capacidade, resumo e esquema, (b) **está ligada** ao `match` do adaptador — e nada ligado está fora do catálogo, (c) não tem `org_id`/`user_id` no esquema de entrada, (d) é exercitada por `server/tests/mcp_tools.rs`, (e) o adaptador não tem SQL nem prompts |
 | `cargo test --release` | um teste de duas organizações por família de tool (a regra de multi-tenant a 100%) |
 
 ### 8. Auditoria: um agente é tão rastreável como a pessoa

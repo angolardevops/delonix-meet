@@ -180,11 +180,17 @@ mod tests {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
         assert!(pkce_s256_matches(challenge, verifier));
-        assert!(!pkce_s256_matches(challenge, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXl"));
+        assert!(!pkce_s256_matches(
+            challenge,
+            "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXl"
+        ));
         // `plain` não passa por aqui: o challenge igual ao verifier é recusado.
         assert!(!pkce_s256_matches(verifier, verifier));
         // Verifier curto (menos de 43 caracteres) é sempre recusado.
-        assert!(!pkce_s256_matches(&base64url_nopad(sha256("curto")), "curto"));
+        assert!(!pkce_s256_matches(
+            &base64url_nopad(sha256("curto")),
+            "curto"
+        ));
     }
 
     #[test]

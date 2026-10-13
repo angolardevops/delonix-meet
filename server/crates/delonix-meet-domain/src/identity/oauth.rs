@@ -71,7 +71,9 @@ impl McpScope {
             McpScope::MeetRead => "Ver as reuniões, salas e participantes a que já tens acesso",
             McpScope::MinutesRead => "Ler a acta e a transcrição dessas reuniões",
             McpScope::MinutesWrite => "Gerar e gravar a acta de uma reunião",
-            McpScope::RecordingsRead => "Ver a tua biblioteca de gravações, com legendas e capítulos",
+            McpScope::RecordingsRead => {
+                "Ver a tua biblioteca de gravações, com legendas e capítulos"
+            }
             McpScope::CaptionsWrite => "Gerar e traduzir legendas de uma gravação",
             McpScope::ChaptersWrite => "Gerar e editar capítulos de uma gravação",
             McpScope::ClipsWrite => "Criar recortes e vídeos curtos a partir de uma gravação",
@@ -182,10 +184,11 @@ pub fn refresh_expires_at(now: DateTime<Utc>) -> DateTime<Utc> {
 pub fn validate_client_name(raw: &str) -> Result<String, DomainError> {
     let name = raw.trim();
     if name.is_empty() {
-        return Err(
-            DomainError::invalid("oauth.invalid_client_metadata", "o cliente tem de ter nome")
-                .with_field("client_name", "1 a 120 caracteres"),
-        );
+        return Err(DomainError::invalid(
+            "oauth.invalid_client_metadata",
+            "o cliente tem de ter nome",
+        )
+        .with_field("client_name", "1 a 120 caracteres"));
     }
     if name.chars().count() > 120 {
         return Err(DomainError::invalid(
@@ -288,11 +291,10 @@ pub fn ensure_response_type(raw: &str) -> Result<(), DomainError> {
     if raw == "code" {
         return Ok(());
     }
-    Err(DomainError::invalid(
-        "oauth.unsupported_response_type",
-        "só `code` é suportado",
+    Err(
+        DomainError::invalid("oauth.unsupported_response_type", "só `code` é suportado")
+            .with_field("response_type", "code"),
     )
-    .with_field("response_type", "code"))
 }
 
 /// Só `S256`. O `plain` do RFC 7636 fica fora: o OAuth 2.1 não o permite num
@@ -301,11 +303,10 @@ pub fn ensure_code_challenge_method(raw: &str) -> Result<(), DomainError> {
     if raw == "S256" {
         return Ok(());
     }
-    Err(DomainError::invalid(
-        "oauth.invalid_request",
-        "só o método PKCE `S256` é aceite",
+    Err(
+        DomainError::invalid("oauth.invalid_request", "só o método PKCE `S256` é aceite")
+            .with_field("code_challenge_method", "S256"),
     )
-    .with_field("code_challenge_method", "S256"))
 }
 
 /// O `code_challenge` tem a forma de base64url sem padding de 32 bytes: 43
@@ -407,10 +408,17 @@ mod tests {
     fn catalogo_fechado_sem_curinga() {
         assert_eq!(McpScope::ALL.len(), 9);
         assert!(McpScope::parse("*").is_none());
-        assert!(McpScope::parse("rooms:read").is_none(), "não é o catálogo dlx_");
+        assert!(
+            McpScope::parse("rooms:read").is_none(),
+            "não é o catálogo dlx_"
+        );
         for s in McpScope::ALL {
             assert_eq!(McpScope::parse(s.as_str()), Some(s));
-            assert!(!s.describes().is_empty(), "{} sem texto de consentimento", s.as_str());
+            assert!(
+                !s.describes().is_empty(),
+                "{} sem texto de consentimento",
+                s.as_str()
+            );
         }
     }
 
@@ -501,7 +509,10 @@ mod tests {
 
     #[test]
     fn nome_de_cliente_sem_controlo() {
-        assert_eq!(validate_client_name("  Claude Desktop ").unwrap(), "Claude Desktop");
+        assert_eq!(
+            validate_client_name("  Claude Desktop ").unwrap(),
+            "Claude Desktop"
+        );
         assert!(validate_client_name("").is_err());
         assert!(validate_client_name("a\nb").is_err());
         assert!(validate_client_name(&"x".repeat(121)).is_err());

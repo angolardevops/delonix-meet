@@ -59,6 +59,18 @@ impl Modify for Security {
             ),
         );
         components.add_security_scheme(
+            "mcp",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .description(Some(
+                        "Access token de um agente (OAuth 2.1, ADR-0028): `typ: \"mcp\"` e `aud` do recurso. NÃO abre as rotas do BFF.",
+                    ))
+                    .build(),
+            ),
+        );
+        components.add_security_scheme(
             "api_key",
             SecurityScheme::Http(
                 HttpBuilder::new()
@@ -144,6 +156,7 @@ fn parts() -> Vec<utoipa::openapi::OpenApi> {
         crate::odoo::ApiDoc::openapi(),
         crate::auth::ApiDoc::openapi(),
         crate::oauth::ApiDoc::openapi(),
+        crate::mcp::ApiDoc::openapi(),
         crate::mfa::ApiDoc::openapi(),
         crate::sessions::ApiDoc::openapi(),
         crate::passkeys::ApiDoc::openapi(),
