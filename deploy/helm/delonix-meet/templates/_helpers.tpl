@@ -79,6 +79,14 @@ capabilities:
 {{- end }}
 
 {{/*
+  Todos os nomes públicos, o canónico PRIMEIRO e sem repetidos. Devolve JSON
+  (`fromJsonArray` do lado de quem chama): um `include` só devolve texto.
+*/}}
+{{- define "dm.hosts" -}}
+{{- prepend (.Values.extraHosts | default list) .Values.host | uniq | toJson -}}
+{{- end -}}
+
+{{/*
   As recusas do chart. Juntam-se TODAS e falha-se uma vez, para o operador não
   descobrir os erros um por instalação.
 */}}
@@ -88,6 +96,14 @@ capabilities:
 {{- $prod := $v.production -}}
 {{- if not $v.host -}}
 {{- $e = append $e "host: falta o nome público (p.ex. --set host=meet.ngolacloud.com)" -}}
+{{- end -}}
+{{- if $v.extraHosts -}}
+{{- if $v.ingress.enabled -}}
+{{- $e = append $e "extraHosts: com ingress.enabled o chart pede um certificado para UM nome (host) — o segundo nome seria servido com o certificado do primeiro. Usa gateway.mode=attach, onde o certificado é do Gateway" -}}
+{{- end -}}
+{{- if and $v.gateway.enabled (eq $v.gateway.mode "own") -}}
+{{- $e = append $e "extraHosts: em gateway.mode=own os listeners e o certificado são de UM nome (host). Usa gateway.mode=attach, e confirma que o certificado do Gateway cobre todos os nomes" -}}
+{{- end -}}
 {{- end -}}
 
 {{- /* segredos */ -}}

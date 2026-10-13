@@ -310,6 +310,22 @@ namespace**. Medido a 2026-10-07: o Gateway do `ngolacloud-system` está em `fro
 Gateway que não nos aceita, as rotas ficam `Accepted=False` e não servem nada, sem erro
 na instalação.
 
+### Mais do que um nome (`extraHosts`)
+
+`host` é o nome canónico; `extraHosts` são outros nomes pelos quais a mesma instalação
+responde. O perfil de produção serve `meet.ngolacloud.com` (canónico) e
+`meet.ngolacloud.ao`. Os nomes entram, pela mesma ordem, nas **duas** HTTPRoutes e no
+`CORS_ORIGINS` — o portão recusa uma rota do `/ws` com menos nomes do que a geral, que
+daria uma página que abre e uma sala que nunca liga.
+
+Só em `mode: attach`. O certificado é do Gateway a que as rotas se colam e é ele que tem
+de cobrir todos os nomes; em `mode: own` e no Ingress o chart pede um certificado para um
+nome, e recusa a lista.
+
+O que um segundo nome **não** faz: a sessão e as chaves de acesso (WebAuthn) são por
+origem, e o SSO devolve o browser à primeira origem do `CORS_ORIGINS` — quem entra por
+SSO no `.ao` acaba no `.com`.
+
 ### As duas coisas que mudam de forma, e a que se perde
 
 **A afinidade por sala continua, por outro mecanismo.** No Ingress era

@@ -25,7 +25,12 @@ data:
   TENANCY_MODE: {{ . | quote }}
   {{- end }}
   DELONIX_MIGRATE: {{ ternary "0" "1" (eq $v.server.migrations.mode "job") | quote }}
-  CORS_ORIGINS: {{ printf "https://%s" $v.host | quote }}
+  {{- /* O canónico primeiro: é a origem para onde o SSO devolve o browser. */}}
+  {{- $origens := list -}}
+  {{- range include "dm.hosts" . | fromJsonArray -}}
+  {{- $origens = append $origens (printf "https://%s" .) -}}
+  {{- end }}
+  CORS_ORIGINS: {{ join "," $origens | quote }}
   RECORDINGS_DIR: /var/lib/delonix/recordings
   # Media relay-only pelo coturn: o IP do pod não é alcançável de fora.
   FORCE_TURN_RELAY: {{ ternary "1" "0" $v.server.forceTurnRelay | quote }}

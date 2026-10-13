@@ -24,6 +24,22 @@ production: true
 # O nome público. Entra no Ingress, no CORS_ORIGINS e no certificado.
 host: ""
 
+# Outros nomes pelos quais a MESMA instalação responde (p.ex. o `.ao` ao lado
+# do `.com`). Entram nas HTTPRoutes e no CORS_ORIGINS, DEPOIS do `host`.
+#
+# O `host` continua a ser o nome CANÓNICO, e isso tem consequências que um
+# segundo nome não apaga:
+#   * a primeira origem do CORS_ORIGINS é para onde o SSO devolve o browser
+#     (`sso_configured_origin`) — quem entra por SSO num nome extra acaba no
+#     canónico;
+#   * a sessão e as chaves de acesso (WebAuthn) são POR ORIGEM: quem entra num
+#     nome não está autenticado no outro.
+# Só em `gateway.mode: attach`: o certificado é do Gateway a que as rotas se
+# colam, e é ele que tem de cobrir todos os nomes. Em `mode: own` e no Ingress
+# o chart pede UM certificado para UM nome, e recusa a lista em vez de servir
+# o segundo nome com o certificado do primeiro.
+extraHosts: []
+
 imagePullSecrets: []
 
 # Tag partilhada pelo servidor e pela web (saem do mesmo commit: `make image`
