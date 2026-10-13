@@ -727,10 +727,15 @@ export class ServerWhisperEngine {
       }
     }
     this.ws.onerror = () => this.onError?.('Transcrição do servidor indisponível — a usar o motor local.')
-    // O `onerror` NÃO cobre tudo: um 1008 do /asr (token recusado) e uma
-    // queda a meio da reunião (o pod do ASR a reiniciar, um drain) chegam ao
-    // browser como `onclose`. Sem isto, a captura morria em silêncio — sem
-    // legenda, sem erro, e sem recuo para o motor local.
+    // O `onerror` cobre o que falha no HANDSHAKE — e é por aí que vem a recusa
+    // de autorização: o `/asr` fecha com 1008 ANTES do `accept`, e o servidor
+    // ASGI entrega isso como um 403 à ligação (medido a 2026-10-13 contra o
+    // whisper-server real: três tokens inválidos, três 403 no handshake).
+    //
+    // O que o `onerror` NÃO cobre é a ligação que JÁ estava aberta e cai a
+    // meio da reunião — o pod do ASR a reiniciar, um drain, a rede. Isso chega
+    // como `onclose`, e sem isto a captura morria em silêncio: sem legenda,
+    // sem erro e sem recuo para o motor local.
     this.ws.onclose = (e) => {
       if (this.fechadoPorNos) return
       this.onError?.(
