@@ -10,8 +10,18 @@ e, para o cluster partilhado, no [ADR-0021](../../../docs/adr/0021-a-producao-do
 export KUBECONFIG=~/.kube/config-delonix-lda
 
 MODO=partilhado bash deploy/k8s/plataforma/instalar.sh   # o cluster tem OUTROS inquilinos
-MODO=dedicado   bash deploy/k8s/plataforma/instalar.sh   # (omissão) o cluster é só do Meet
+ACME_EMAIL=<quem-recebe> MODO=dedicado bash deploy/k8s/plataforma/instalar.sh   # o cluster é só do Meet
 ```
+
+O **`dedicado` exige `ACME_EMAIL`** e recusa-se a correr sem ele — antes do helm, do
+kubectl e do `create ns`, porque falhar numa variável é de graça. É a conta Let's Encrypt
+que fica registada e a caixa onde caem os avisos de validade: com o contacto que está
+escrito no `clusterissuer.yaml`, os avisos vão para uma caixa que ninguém lê e dá-se por
+isso no dia em que o certificado expira. Recusa também o próprio contacto do ficheiro e um
+endereço sem forma de email (o Let's Encrypt recusaria o registo da conta). O
+`partilhado` **não** o pede: nesse modo o emissor é de quem é dono do cluster e este
+script não lhe toca. Portão: `scripts/check-k8s-render.sh` (verificação 11), que corre as
+recusas a sério.
 
 | | `dedicado` | `partilhado` |
 |---|---|---|

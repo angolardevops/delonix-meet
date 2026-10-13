@@ -33,6 +33,14 @@ cd "$(dirname "$0")"
 
 NS=${NS:-ngolacloud-meet}
 MODO=${MODO:-dedicado}
+# O contacto do ACME. SEM omissão de propósito: é a conta Let's Encrypt que fica
+# registada e a caixa onde caem os avisos de validade. Uma omissão aqui era o
+# email que está no clusterissuer.yaml a ficar registado no nome de outra
+# pessoa, com os avisos de expiração a ir para uma caixa que ninguém lê — e
+# dá-se por isso no dia em que o certificado expira.
+ACME_EMAIL=${ACME_EMAIL:-}
+# O que está escrito no ficheiro, e que este script substitui.
+EMAIL_COZIDO=ops@ngolacloud.com
 g=$'\033[1;32m'; y=$'\033[1;33m'; z=$'\033[0m'
 ok() { printf "  %s✓%s %s\n" "$g" "$z" "$1"; }
 salta() { printf "  %s·%s saltado: %s\n" "$y" "$z" "$1"; }
@@ -43,6 +51,27 @@ case "$MODO" in
   dedicado|partilhado) ;;
   *) morre "MODO=$MODO não existe. É «dedicado» ou «partilhado» — ver o cabeçalho." ;;
 esac
+
+# O ACME_EMAIL só é preciso em «dedicado»: é o único modo em que este script
+# cria os ClusterIssuer. Em «partilhado» o cert-manager e o emissor são de quem
+# é dono do cluster, e este script não lhes toca.
+#
+# A recusa vem AQUI, antes do helm, do kubectl e do `create ns`: é uma variável,
+# não precisa de cluster, e falhar antes de escrever é de graça. É também o que
+# deixa o portão provar esta recusa sem tocar em cluster nenhum.
+if [ "$MODO" = dedicado ]; then
+  [ -n "$ACME_EMAIL" ] \
+    || morre "falta o ACME_EMAIL — é a conta Let's Encrypt e a caixa dos avisos de validade.
+    O clusterissuer.yaml leva $EMAIL_COZIDO, que é o contacto de ninguém: registá-lo
+    manda os avisos de expiração para uma caixa que ninguém lê, e dá-se por isso no dia
+    em que o certificado expira. Corre:  ACME_EMAIL=<quem-recebe> MODO=dedicado $0"
+  [ "$ACME_EMAIL" != "$EMAIL_COZIDO" ] \
+    || morre "ACME_EMAIL=$EMAIL_COZIDO é o contacto escrito no clusterissuer.yaml — dá o de quem recebe os avisos."
+  case "$ACME_EMAIL" in
+    *@*.*) ;;
+    *) morre "ACME_EMAIL=$ACME_EMAIL não parece um email. O Let's Encrypt recusa o registo da conta e nenhum certificado é emitido." ;;
+  esac
+fi
 
 command -v helm >/dev/null || morre "falta o helm"
 command -v kubectl >/dev/null || morre "falta o kubectl"
@@ -80,8 +109,8 @@ if [ "$MODO" = dedicado ]; then
   helm repo add jetstack https://charts.jetstack.io >/dev/null
   helm upgrade --install cert-manager jetstack/cert-manager \
     -n cert-manager --create-namespace --set crds.enabled=true --wait --timeout 10m
-  kubectl apply -f clusterissuer.yaml
-  ok "cert-manager e os dois ClusterIssuer"
+  sed "s/$EMAIL_COZIDO/$ACME_EMAIL/g" clusterissuer.yaml | kubectl apply -f -
+  ok "cert-manager e os dois ClusterIssuer (avisos para $ACME_EMAIL)"
 else
   passo "ingress e certificados (modo partilhado)"
   salta "ingress-nginx — o cluster já tem Envoy Gateway; dois controladores competiam e gastava um IP do MetalLB"
