@@ -36,6 +36,7 @@ import {
   planoDe,
   porEmPrevia,
   quadroDaMesa,
+  tallyDe,
   type TipoDeTransicao,
 } from '../../../studio/tv/mesa'
 import { MesaDeSom } from '../../../studio/tv/mesaDeSom'
@@ -383,6 +384,19 @@ export function useSessaoTv(p: PropsDaSessao) {
       window.removeEventListener('keydown', r, true)
     }
   }, [som])
+
+  // SEGUIR A IMAGEM: o canal que o pede abre quando a fonte dele entra no ar e
+  // cala quando sai. É o outro sentido do corte por voz — e a razão de o
+  // selector «fonte do canal» existir: até 2026-10-14 ele só servia o corte por
+  // voz, e ligar um canal a uma fonte não fazia mais nada.
+  useEffect(() => {
+    if (!som) return
+    for (const c of som.lista()) {
+      if (!c.seguirImagem || !c.fonte) continue
+      const mudo = tallyDe(mesa, c.fonte) !== 'programa'
+      if (c.mudo !== mudo) som.mudar(c.id, { mudo })
+    }
+  }, [som, versaoSom, mesa])
 
   // ------------------------------------------------------------ corte por voz
   const [vozLigada, setVozLigada] = useState(false)

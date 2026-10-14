@@ -50,6 +50,13 @@ export interface EstadoDoCanal {
   tipo: TipoDeCanal
   /** A fonte da mesa de corte a que este canal pertence (para o corte por voz). */
   fonte: string | null
+  /**
+   * SEGUIR A IMAGEM (audio-follow-video): o canal abre quando a fonte dele
+   * entra no ar e cala quando sai. Desligado de origem — numa emissão, um
+   * canal que se cala sozinho sem ninguém ter pedido é pior do que um canal
+   * esquecido aberto.
+   */
+  seguirImagem: boolean
   ganhoDb: number
   /**
    * Atraso de ENTRADA, em ms (0–200): alinha o som com a imagem. O caso normal
@@ -313,6 +320,7 @@ export class MesaDeSom {
       nome,
       tipo,
       fonte,
+      seguirImagem: false,
       ganhoDb: 0,
       atrasoMs: 0,
       fader: 0.75,

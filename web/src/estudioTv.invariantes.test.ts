@@ -243,6 +243,24 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     expect(mesa).toMatch(/n\.atraso\.delayTime\.setValueAtTime/)
   })
 
+  it('a ligação canal↔fonte faz alguma coisa: tally na tira e seguir a imagem', () => {
+    // EST-E: o selector «fonte de imagem» existia e só servia o corte por voz
+    // — ligar um canal a uma fonte não mudava nada no que se via nem no que se
+    // ouvia. Agora a tira mostra o tally dessa fonte, e o canal pode seguir a
+    // imagem (abrir no ar, calar fora dele).
+    const ecra = read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')
+    expect(ecra).toContain('const e = tallyDe(s.mesa, canal.fonte)')
+    expect(ecra).toContain('data-tv="tally-do-canal"')
+    // Desligar o «seguir» tem de LARGAR o mudo: senão um canal calado pelo
+    // automatismo ficava calado para sempre, e sem ninguém o ter calado.
+    expect(ecra).toContain('{ seguirImagem: v, ...(v ? {} : { mudo: false }) }')
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toContain("const mudo = tallyDe(mesa, c.fonte) !== 'programa'")
+    // E não vem ligado de origem: numa emissão, um canal que se cala sozinho
+    // sem ninguém ter pedido é pior do que um canal esquecido aberto.
+    expect(read('web/src/studio/tv/mesaDeSom.ts')).toContain('seguirImagem: false,')
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas

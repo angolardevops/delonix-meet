@@ -2002,3 +2002,20 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* O tally de uma tira da mesa de som: a fonte deste canal está no ar ou em pré. */
+.tv-tira__tally {
+  padding: 1px 5px;
+  border-radius: var(--r-2);
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+}
+.tv-tira__tally.is-pgm {
+  background: var(--record);
+}
+.tv-tira__tally.is-pre {
+  background: var(--success);
+}

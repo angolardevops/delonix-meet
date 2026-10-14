@@ -10,6 +10,7 @@ import { curvaDoEq, EQ_GANHO_MAXIMO, alturaDoMedidor, faderParaDb, formatarDb, t
 import { ATRASO_MAXIMO_MS, type EstadoDoCanal } from '../../../studio/tv/mesaDeSom'
 import { Icon, type IconName } from '../../../ui/icons'
 import { cx } from '../../../ui/kit'
+import { tallyDe } from '../../../studio/tv/mesa'
 import { type PropsDoEcra, SelosDoAr } from './comum'
 import { BotaoTv, Cabeca, Cartao, Deslizador, Espaco, Fader, Interruptor, Medidor, TopoTv, useTique } from './pecas'
 
@@ -227,6 +228,7 @@ function Tira({ s, canal, n, escolhido, onEscolher }: { s: PropsDoEcra['s']; can
         <Icon name={ICONE[canal.tipo]} />
       </span>
       <span className="tv-tira__nome">{canal.nome}</span>
+      <Tally s={s} canal={canal} />
       <span className="tv-botao-knob" style={{ '--rot': `${rot}deg` } as CSSProperties}>
         <input
           type="range"
@@ -277,6 +279,25 @@ function Tira({ s, canal, n, escolhido, onEscolher }: { s: PropsDoEcra['s']; can
         </button>
       </span>
     </div>
+  )
+}
+
+/**
+ * O tally da tira: a fonte deste canal está no ar, em pré, ou nenhuma delas.
+ *
+ * Uma mesa de som sem tally obriga o operador a olhar para dois ecrãs para
+ * saber se o fader que vai levantar é o de quem está no ar. Um canal sem fonte
+ * não mostra nada — não há verdade para mostrar.
+ */
+function Tally({ s, canal }: { s: PropsDoEcra['s']; canal: EstadoDoCanal }) {
+  const { t } = useTranslation()
+  if (!canal.fonte || !s.registo.obter(canal.fonte)) return null
+  const e = tallyDe(s.mesa, canal.fonte)
+  if (e === 'livre') return null
+  return (
+    <span className={cx('tv-tira__tally', e === 'programa' ? 'is-pgm' : 'is-pre')} data-tv="tally-do-canal" data-tally={e}>
+      {t(`tv.tally.${e}`)}
+    </span>
   )
 }
 
@@ -331,6 +352,20 @@ function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal;
         data-tv="atraso"
       />
       <p className="tv-nota">{t('tv.som.atrasoDica')}</p>
+
+      <Cabeca>
+        <span className="tv-mono-85">{t('tv.som.seguirImagem')}</span>
+        <Cabeca como="span" className="tv-dir" style={{ gap: 6 }}>
+          <span className={cx('tv-mono-85', canal.seguirImagem && 'tv-ok')}>{canal.seguirImagem ? t('tv.estado.ligado') : t('tv.estado.desligado')}</span>
+          <Interruptor
+            pequeno
+            ligado={canal.seguirImagem}
+            rotulo={t('tv.som.seguirImagem')}
+            onChange={(v) => som.mudar(canal.id, { seguirImagem: v, ...(v ? {} : { mudo: false }) })}
+          />
+        </Cabeca>
+      </Cabeca>
+      <p className="tv-nota">{canal.fonte ? t('tv.som.seguirImagemDica') : t('tv.som.seguirImagemSemFonte')}</p>
 
       <Cartao como="section" aria-label={t('tv.som.equalizador')}>
         <Cabeca>
