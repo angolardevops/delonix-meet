@@ -57,7 +57,11 @@ fn body(title: &str, starts_at: &str, duration_min: i32, link: Option<&str>) -> 
 ///
 /// **Nunca falha para quem chama.** Um convite que não consegue sair por email
 /// não pode derrubar a criação da reunião.
-pub(crate) async fn send_best_effort(state: &AppState, meeting: &Meeting, email: &str) -> &'static str {
+pub(crate) async fn send_best_effort(
+    state: &AppState,
+    meeting: &Meeting,
+    email: &str,
+) -> &'static str {
     let org_id = crate::org::orgs_of_user(state, meeting.owner_id)
         .await
         .first()
@@ -116,7 +120,12 @@ mod tests {
 
     #[test]
     fn o_corpo_diz_a_hora_a_duracao_e_que_nao_precisa_de_conta() {
-        let t = body("Revisão trimestral", "20/10/2026 14:30", 45, Some("https://meet.exemplo.ao/#/r/abc"));
+        let t = body(
+            "Revisão trimestral",
+            "20/10/2026 14:30",
+            45,
+            Some("https://meet.exemplo.ao/#/r/abc"),
+        );
         assert!(t.contains("«Revisão trimestral»"), "{t}");
         assert!(t.contains("20/10/2026 14:30 (UTC)"), "{t}");
         assert!(t.contains("45 minutos"), "{t}");

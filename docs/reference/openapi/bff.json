@@ -2034,6 +2034,13 @@
                 "format": "int32",
                 "type": "integer"
               },
+              "external_emails": {
+                "description": "Endereços de email de convidados **sem conta aqui**. Cada um recebe o\nseu convite com o `.ics`; entram pela porta de convidado (nome + sala de\nespera), como manda a R290. Máximo 50 por reunião.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "invitee_ids": {
                 "items": {
                   "format": "uuid",
@@ -4137,6 +4144,51 @@
         "required": [
           "range_start",
           "range_end"
+        ],
+        "type": "object"
+      },
+      "ExternalInvitee": {
+        "description": "Um convidado externo de uma reunião: um endereço, sem conta aqui.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ExternalInviteeReq": {
+        "properties": {
+          "email": {
+            "description": "O endereço a convidar. Normalizado e validado como em qualquer outro\nsítio da casa (`identity::validation`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "type": "object"
+      },
+      "ExternalInviteeResp": {
+        "properties": {
+          "delivery_channel": {
+            "description": "`email` se o convite entrou na fila do correio, `manual` se não há por\nonde sair (sem relay ou sem `PUBLIC_URL`) — e aí o anfitrião entrega o\nlink à mão, como no convite de organização.",
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "delivery_channel"
         ],
         "type": "object"
       },
@@ -16339,6 +16391,233 @@
           }
         ],
         "summary": "Exportação iCalendar (roadmap \"Google e Outlook Calendar\"): um .ics por\nreunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/external-invitees": {
+      "get": {
+        "operationId": "external_invitees",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExternalInvitee"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.not_host`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não existe, ou nada tem a ver com ela"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Os convidados externos de uma reunião (só o anfitrião vê).",
+        "tags": [
+          "meetings"
+        ]
+      },
+      "post": {
+        "operationId": "add_external_invitee",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalInviteeReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalInviteeResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.invalid_external_email` ou `meeting.too_many_external_invitees`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.not_host`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Convida um endereço externo para uma reunião que já existe, e manda-lhe o\nconvite com o `.ics`.",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/meetings/{meeting_id}/external-invitees/{email}": {
+      "delete": {
+        "operationId": "remove_external_invitee",
+        "parameters": [
+          {
+            "description": "Id da reunião",
+            "in": "path",
+            "name": "meeting_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "O endereço a tirar",
+            "in": "path",
+            "name": "email",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "tirado (ou já não estava)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`meeting.not_host`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Tira um endereço externo da reunião. **Não desconvida quem já recebeu o\nemail** — o que isto impede é ele voltar a receber (uma hora nova, por\nexemplo). Dito aqui porque é a pergunta seguinte de quem clica.",
         "tags": [
           "meetings"
         ]

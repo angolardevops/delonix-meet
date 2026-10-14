@@ -56,7 +56,13 @@ async fn convidar_de_fora_manda_email_com_o_calendario(db: sqlx::PgPool) {
     let app = TestApp::spawn_with(db, RELAY).await;
     let dono = app.new_org("interna.ao").await;
 
-    nova_reuniao_com_externo(&app, &dono, "Revisão trimestral", &["Maria@Outra-Empresa.AO"]).await;
+    nova_reuniao_com_externo(
+        &app,
+        &dono,
+        "Revisão trimestral",
+        &["Maria@Outra-Empresa.AO"],
+    )
+    .await;
 
     let msgs = caixa(&app).await;
     assert_eq!(msgs.len(), 1, "uma mensagem, para o externo: {msgs:?}");
@@ -86,9 +92,7 @@ async fn so_o_anfitriao_convida_de_fora(db: sqlx::PgPool) {
     let membro = app.add_member(&dono, "bruno", "member").await;
     let estranho = app.new_org("outra-casa.ao").await;
 
-    let reuniao = app
-        .new_meeting(&dono, "Conselho", &[&membro.user_id])
-        .await;
+    let reuniao = app.new_meeting(&dono, "Conselho", &[&membro.user_id]).await;
     let id = reuniao["id"].as_str().unwrap().to_string();
 
     let (st, body) = app
@@ -99,7 +103,7 @@ async fn so_o_anfitriao_convida_de_fora(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 403, "o convidado não convida: {body}");
-    assert_eq!(body["error"], "meeting.not_host", "{body}");
+    assert_eq!(body["code"], "meeting.not_host", "{body}");
 
     let (st, body) = app
         .post(
@@ -129,7 +133,7 @@ async fn endereco_mal_formado_recusado_antes_de_escrever(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 400, "{body}");
-    assert_eq!(body["error"], "meeting.invalid_external_email", "{body}");
+    assert_eq!(body["code"], "meeting.invalid_external_email", "{body}");
 
     // A reunião NÃO ficou criada: a validação é antes de escrever.
     let quantas: i64 = sqlx::query_scalar("SELECT count(*) FROM meetings")

@@ -2028,13 +2028,12 @@ pub async fn reschedule(
     // uma hora diferente sai, e a mesma hora não sai duas vezes. É este segundo
     // `REQUEST` — mesmo UID, `SEQUENCE` maior — que SUBSTITUI o evento na agenda
     // de quem está de fora, em vez de lhe deixar dois.
-    let externos: Vec<String> = sqlx::query_scalar(
-        "SELECT email FROM meeting_external_invitees WHERE meeting_id = $1",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let externos: Vec<String> =
+        sqlx::query_scalar("SELECT email FROM meeting_external_invitees WHERE meeting_id = $1")
+            .bind(id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
 
     let m: Meeting = sqlx::query_as(&format!(
         "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
@@ -2285,9 +2284,10 @@ pub(crate) fn normalize_external_emails(brutos: &[String]) -> Result<Vec<String>
     for bruto in brutos {
         let email = normalize_email(bruto);
         validate_email(&email).map_err(|m| {
-            ApiError::from(
-                delonix_meet_core::DomainError::invalid("meeting.invalid_external_email", m),
-            )
+            ApiError::from(delonix_meet_core::DomainError::invalid(
+                "meeting.invalid_external_email",
+                m,
+            ))
         })?;
         if !out.contains(&email) {
             out.push(email);
@@ -2336,9 +2336,11 @@ async fn require_host(state: &AppState, id: Uuid, user_id: Uuid) -> Result<Meeti
         return Ok(meeting);
     }
     if is_owner_or_invitee(state, id, meeting.owner_id, user_id).await? {
-        return Err(delonix_meet_core::DomainError::forbidden("meeting.not_host")
-            .with_message("só o anfitrião convida de fora")
-            .into());
+        return Err(
+            delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                .with_message("só o anfitrião convida de fora")
+                .into(),
+        );
     }
     Err(ApiError::NotFound)
 }
@@ -2398,12 +2400,11 @@ pub async fn add_external_invitee(
         .ok_or_else(|| ApiError::BadRequest("email em falta".into()))?;
     // O tecto conta a lista INTEIRA, não só o que chega agora: senão
     // acrescentava-se um a um até não haver tecto nenhum.
-    let quantos: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM meeting_external_invitees WHERE meeting_id = $1",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
+    let quantos: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM meeting_external_invitees WHERE meeting_id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
     if quantos as usize >= MAX_EXTERNAL_INVITEES {
         return Err(delonix_meet_core::DomainError::invalid(
             "meeting.too_many_external_invitees",
