@@ -312,7 +312,9 @@ A Fase 0 é mesmo primeiro. **Três das decisões desta RFC dependem de factos q
 nenhuma linha de Rust os antecipa.
 
 A lista de compras da Fase 0, com preços datados e os comandos que respondem às três perguntas,
-está em [fase0-compras.md](fase0-compras.md).
+está em [fase0-compras.md](fase0-compras.md) e o guião que as mede — com o script
+[`scripts/tv-fase0-medir.sh`](../../scripts/tv-fase0-medir.sh) — em
+[fase0-guiao.md](fase0-guiao.md).
 
 ## 14. Critérios de aceitação
 
