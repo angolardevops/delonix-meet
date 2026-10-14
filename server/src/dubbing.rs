@@ -131,10 +131,10 @@ pub fn pcm_de_wav(bytes: &[u8]) -> Option<Vec<i16>> {
         let corpo = i + 8;
         if id == b"data" {
             let fim = corpo.saturating_add(tam).min(bytes.len());
+            let n = (fim - corpo) / 2;
             return Some(
-                bytes[corpo..fim]
-                    .chunks_exact(2)
-                    .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                (0..n)
+                    .map(|i| i16::from_le_bytes([bytes[corpo + 2 * i], bytes[corpo + 2 * i + 1]]))
                     .collect(),
             );
         }
@@ -165,18 +165,14 @@ pub fn quadros(pcm: &[i16]) -> Vec<Vec<i16>> {
 }
 
 /// A fila de uma língua numa sala: recebe frases já traduzidas e di-las.
+///
+/// Largar isto fecha a fila, e o SFU retira a publicação sozinho — é assim que
+/// desligar uma língua liberta a vaga de imediato.
 pub struct Pista {
+    /// O envio clona-se para dentro da tarefa que traduz: a frase só entra na
+    /// fila DEPOIS do LLM responder, e segurar uma referência à `Pista` através
+    /// desse `await` prendia o mapa das salas enquanto se espera pela rede.
     pub(crate) tx: mpsc::Sender<Fala>,
-}
-
-impl Pista {
-    /// Põe uma frase a caminho. Se a fila estiver cheia, a frase **cai** e
-    /// fica no log — ver a decisão 1.
-    pub fn diz(&self, texto: String) {
-        if self.tx.try_send(Fala { texto }).is_err() {
-            tracing::warn!("dobragem: fila cheia, frase descartada (a síntese não acompanha)");
-        }
-    }
 }
 
 /// Arranca a cadeia de uma língua: devolve a ponta por onde se lhe dão frases.
@@ -281,7 +277,7 @@ impl Registo {
     /// `publicar` é o que devolve a fila de RTP (na prática,
     /// `Sfu::publish_dub_audio`), e recebe-se como argumento para esta peça
     /// não ter de conhecer o SFU.
-    pub async fn liga<F, Fut>(
+    pub(crate) async fn liga<F, Fut>(
         &self,
         state: Arc<AppState>,
         room_id: Uuid,

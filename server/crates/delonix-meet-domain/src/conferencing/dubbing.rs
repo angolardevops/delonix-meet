@@ -161,9 +161,11 @@ mod tests {
     }
 
     #[test]
-    fn uma_lingua_sem_voz_e_recusada_ANTES_do_tecto() {
-        // Quem pede uma língua que nunca vamos ter não pode ser mandado tirar
-        // outra: a recusa tem de ser «não há voz», não «não cabem mais».
+    fn uma_lingua_sem_voz_e_recusada_antes_do_tecto() {
+        // A ordem importa e é o que este teste fixa: quem pede uma língua que
+        // nunca vamos ter não pode ser mandado tirar outra para lhe abrir
+        // espaço. A recusa tem de ser «não há voz», e ANTES de «não cabem
+        // mais».
         let cheia = v(&["en-US", "fr-FR", "es-ES"]);
         let e = pode_acrescentar(&cheia, "en-GB", "ja-JP").unwrap_err();
         assert_eq!(e.code, "dubbing.no_voice");

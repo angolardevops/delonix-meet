@@ -7617,7 +7617,7 @@ mod b1_sala_tests {
     /// mascarou fica mascarado na voz.
     #[tokio::test]
     async fn a_dobragem_recebe_a_frase_ja_limpa_pelo_dlp() {
-        let mut s = sala();
+        let s = sala();
         let dob = Arc::new(DobragemFalsa::default());
         let _ = s.hub.dub.set(dob.clone() as Arc<dyn DubControl>);
 

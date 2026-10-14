@@ -2177,9 +2177,7 @@ fn recordable_codec(publication: &Arc<Publication>) -> bool {
     // Uma pista de dobragem é Opus como as outras — e `ends_with("audio")` não
     // a apanha, o que a faria passar por VÍDEO e disparar o erro «codec não
     // gravável» a cada sala com dobragem ligada.
-    if dub_lang(&publication.kind).is_some() {
-        mime == "audio/opus"
-    } else if publication.kind.ends_with("audio") {
+    if dub_lang(&publication.kind).is_some() || publication.kind.ends_with("audio") {
         mime == "audio/opus"
     } else {
         mime == "video/vp8"
