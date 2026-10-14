@@ -2019,3 +2019,95 @@
 .tv-tira__tally.is-pre {
   background: var(--success);
 }
+
+/* As teclas de efeito, ao pé das tiras da mesa. */
+.tv-efeitos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  min-width: 190px;
+  align-self: flex-start;
+}
+.tv-efeitos__teclas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.tv-tecla {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 56px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  overflow: hidden;
+}
+.tv-tecla.is-livre {
+  border-style: dashed;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px;
+  cursor: pointer;
+}
+.tv-tecla.is-livre input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.tv-tecla.is-on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.tv-tecla__disparo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 6px 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tv-tecla__atalho {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.tv-tecla__nome {
+  font-size: 10px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tv-tecla__pe {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 4px 4px 6px;
+}
+.tv-tecla__ciclo {
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  padding: 1px 5px;
+  cursor: pointer;
+}
+.tv-tecla__ciclo.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+}

@@ -67,6 +67,17 @@ vi.mock('./tv/useSessaoTv', async () => {
     vozLigada: false,
     setVozLigada: nada,
     canaisComFonte: new Set<string>(),
+    // As quatro teclas de efeito: vazias, que é o estado de arranque e o que
+    // mostra o «tecla livre» em vez de o esconder atrás de uma dobra optimista.
+    efeitos: [null, null, null, null],
+    porEfeito: async () => undefined,
+    tirarEfeito: nada,
+    dispararEfeito: nada,
+    mudarCicloDoEfeito: nada,
+    duckLigado: true,
+    setDuckLigado: nada,
+    microfoneDaFonte: () => null,
+    levarSomDaFonteAMesa: async () => undefined,
     macros: [],
     progressoMacro: null,
     correrMacroDaTecla: () => false,
