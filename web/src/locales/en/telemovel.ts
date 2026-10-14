@@ -16,6 +16,11 @@ export default {
   exposicao: 'Exposure',
   lanterna: 'Torch',
   bloquearAeAf: 'Lock AE/AF',
+  microfoneLigado: "Mic on",
+  microfoneDesligado: "Mic off",
+  retornoLigado: "Hearing the studio",
+  retornoDesligado: "Hear the studio",
+  retornoNota: "Use headphones: on the speaker, the sound returns through the mic and goes on air.",
   emparelhar: {
     titulo: "Join as a camera",
     nota: "Scan the QR from the Studio, or type the eight-character code it shows.",

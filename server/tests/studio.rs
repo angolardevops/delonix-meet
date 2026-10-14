@@ -68,6 +68,37 @@ async fn new_code(app: &TestApp, a: &common::Account, studio_id: &str, body: Val
     c
 }
 
+/// A sala de um estúdio não se apaga pela porta das salas.
+///
+/// O `studios_room_id_fkey` é ON DELETE CASCADE: sem esta guarda, apagar a
+/// sala levava atrás o estúdio, os códigos e TODAS as câmaras emparelhadas,
+/// em silêncio. Aconteceu a 2026-10-14 numa arrumação de salas.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_sala_de_um_estudio_nao_se_apaga_pela_porta_das_salas(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.ao").await;
+    let s = create_studio(&app, &a).await;
+    let code = s["room_code"].as_str().unwrap().to_string();
+
+    let (st, body) = app.delete(&format!("/api/rooms/{code}"), Some(&a.token)).await;
+    assert_eq!(st, 409, "{body}");
+    assert_eq!(body["code"], "room.has_studio");
+
+    // E continua lá: a recusa não é cosmética.
+    let (st, _) = app
+        .get(&format!("/api/orgs/{}/studios/{}", a.org(), s["id"].as_str().unwrap()), Some(&a.token))
+        .await;
+    assert_eq!(st, 200, "o estúdio sobreviveu à tentativa");
+
+    // Apagado o estúdio, a sala já se apaga — a guarda não prende a sala para sempre.
+    let (st, _) = app
+        .delete(&format!("/api/orgs/{}/studios/{}", a.org(), s["id"].as_str().unwrap()), Some(&a.token))
+        .await;
+    assert_eq!(st, 204);
+    let (st, body) = app.delete(&format!("/api/rooms/{code}"), Some(&a.token)).await;
+    assert_eq!(st, 204, "{body}");
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn studio_crud_and_who_can(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;

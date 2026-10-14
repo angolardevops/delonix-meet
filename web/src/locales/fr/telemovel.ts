@@ -16,6 +16,11 @@ export default {
   exposicao: 'Exposition',
   lanterna: 'Torche',
   bloquearAeAf: 'Verrouiller AE/AF',
+  microfoneLigado: "Micro activé",
+  microfoneDesligado: "Micro coupé",
+  retornoLigado: "Écoute du studio",
+  retornoDesligado: "Écouter le studio",
+  retornoNota: "Avec un casque : sur le haut-parleur, le son revient par le micro et part à l'antenne.",
   emparelhar: {
     titulo: "Rejoindre comme caméra",
     nota: "Scannez le QR du Studio, ou saisissez le code à huit caractères affiché.",

@@ -16,6 +16,11 @@ export default {
   exposicao: '曝光',
   lanterna: '手电筒',
   bloquearAeAf: '锁定 AE/AF',
+  microfoneLigado: "麦克风开",
+  microfoneDesligado: "麦克风关",
+  retornoLigado: "正在监听导播台",
+  retornoDesligado: "监听导播台",
+  retornoNota: "请使用耳机：外放时声音会被麦克风拾取并播出。",
   emparelhar: {
     titulo: "作为摄像机加入",
     nota: "扫描导播台的二维码，或输入它显示的八位代码。",

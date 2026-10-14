@@ -16,6 +16,11 @@ export default {
   exposicao: 'Exposição',
   lanterna: 'Lanterna',
   bloquearAeAf: 'Bloquear AE/AF',
+  microfoneLigado: "Microfone ligado",
+  microfoneDesligado: "Microfone desligado",
+  retornoLigado: "A ouvir o estúdio",
+  retornoDesligado: "Ouvir o estúdio",
+  retornoNota: "Com auscultadores: no altifalante, o som volta pelo microfone e vai ao ar.",
   emparelhar: {
     titulo: "Entrar como câmara",
     nota: "Lê o QR do Estúdio, ou escreve o código de oito caracteres que ele mostra.",
