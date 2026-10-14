@@ -329,6 +329,9 @@ fora deste repo, não aqui).
 
 ## Parte VI — O que fazer, por ondas, com portão
 
+> As ondas 2 e 3 desta parte estão desdobradas em onze épicos, com definição de pronto e
+> prova, no [plano de paridade de 2026-10-13](plano-paridade-2026-10-13.md).
+
 Cada item nomeia a prova que o fecha. A ordem é por estrago, não por esforço.
 
 ### Onda 1 — tirar os tectos acidentais (dias, não semanas)

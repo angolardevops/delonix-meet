@@ -2,6 +2,8 @@
 
 *Documento vivo. Atualizar sempre que lançarmos ou os concorrentes lançarem funcionalidades relevantes.*
 
+> **Re-medido a 2026-10-13** ([levantamento](levantamento-2026-10-13-concorrencia-escala-stack.md)): quatro linhas deste documento estavam desactualizadas e foram corrigidas no lugar — o correio, os «canais», o tecto de uma sala e a app móvel. O que fazer com o que falta está no [plano de paridade](plano-paridade-2026-10-13.md).
+
 ---
 
 ## O que Zoom, Teams e Meet fazem de melhor
@@ -77,7 +79,7 @@ Os três grandes processam dados em servidores americanos (sujeitos ao CLOUD Act
 - Meet: E2EE em trânsito (TLS), não E2EE de ponta-a-ponta real
 
 **Delonix:** E2EE via Insertable Streams AES-256-GCM, **opcional por sala**
-(`rooms.e2ee: bool`, `server/src/rooms.rs:32`) — não «sempre activo»; gravação com key delegation (anfitrião cede chave explicitamente, servidor decifra só para gravar, chave nunca persiste).
+(`rooms.e2ee: bool`, `server/src/rooms.rs:37`) — não «sempre activo»; gravação com key delegation (anfitrião cede chave explicitamente, servidor decifra só para gravar, chave nunca persiste).
 
 ### 4. Backend em Rust — sem GC, sem pausas
 Os backends de Zoom/Teams/Meet incluem Java, Go e código C++ legado com GC. Pausas de GC causam jitter de áudio/vídeo em picos de carga.
@@ -120,8 +122,8 @@ Cada linha foi medida na árvore (`develop`, mais a PR das salas), não recordad
 
 | # | O que falta | Zoom | Teams | O que existe hoje, medido |
 |---|---|---|---|---|
-| 1 | **Aplicação móvel nativa** | ✅ | ✅ | **Zero projectos nativos no repositório.** Há PWA, e a PWA não recebe uma chamada com a aplicação fechada — é o que mata a adopção de quem vive no telemóvel, que é o caso do nosso mercado |
-| 2 | **Convidar por correio** | ✅ | ✅ | O servidor **não envia correio**: não há SMTP em `server/src`. Um convite é um token que alguém tem de entregar à mão. O Teams manda o convite do Outlook sem a pessoa pensar nisso |
+| 1 | **Aplicação móvel nativa** | ✅ | ✅ | **Corrigido a 2026-10-13: existe `mobile/delonixphone/`** (Flutter, 38 ficheiros Dart) — mas é um **softphone SIP** (`pubspec.yaml:2`) e não entra numa reunião: não há `flutter_webrtc` nas dependências. Há PWA, e a PWA não recebe uma chamada com a aplicação fechada — é o que mata a adopção de quem vive no telemóvel, que é o caso do nosso mercado |
+| 2 | **Convidar por correio** | ✅ | ✅ | **Fechado a 2026-10-13 (ADR-0025):** o servidor envia correio (`mail.rs`, fila durável com retry e dedupe), SMTP por organização (`org_mail.rs`), e o convite de organização sai por email (`directory.rs:860`). **Falta:** convidar um endereço EXTERNO para uma reunião (`meeting_invitees` só tem `user_id`, `0004_library_and_calendar.sql:35`) e o anexo `.ics` no corpo (`mail.rs:466` é texto simples) — por isso o convite ainda não aterra em calendário nenhum. É o P2 do [plano de paridade](plano-paridade-2026-10-13.md) |
 | 3 | **Calendário externo (Outlook, Google)** | ✅ | ✅ (nativo) | Nenhum: `grep` por `graph.microsoft`, `googleapis` e `caldav` em `server/src` não dá nada. Há agenda própria e ICS, e a integração com o **Odoo**. Quem vive no Outlook tem de copiar o link à mão |
 | 4 | **SAML e SCIM** | ✅ | ✅ | Há **OIDC** a sério (`auth.rs`, `org_sso_configs`). SAML não existe, e sem SCIM a entrada e a saída de pessoas é manual — é a primeira pergunta de qualquer empresa com mais de 200 colaboradores |
 
@@ -130,7 +132,7 @@ Cada linha foi medida na árvore (`develop`, mais a PR das salas), não recordad
 | # | O que falta | Zoom | Teams | O que existe hoje, medido |
 |---|---|---|---|---|
 | 5 | **Modo webinar** (anfitrião + painel contra audiência que só assiste) | ✅ | ✅ | Não existe código nenhum: `webinar` só aparece em documentos. Há sala de espera, sondagens, perguntas e directo RTMP — as peças, não o modo |
-| 6 | **Canais persistentes com histórico** | ⚠️ | ✅ (é o produto) | O chat é **por sala**, e morre com o contexto da sala. A migração `0086_room_channels.sql` existe e **não tem consumidor**: nenhum código em `server/src` lê ou escreve essas tabelas (está escrito no topo da própria migração). O Teams vende-se por isto |
+| 6 | **Canais persistentes com histórico** | ⚠️ | ✅ (é o produto) | O chat é **por sala**, e morre com o contexto da sala. **Esta prova estava trocada** (corrigida a 2026-10-13): a `0086_room_channels.sql` não é de canais de equipa — cria `room_dial_outs`, `room_phone_pins` e `org_whatsapp_configs` («acrescentar à sala por número»), e as duas primeiras já têm consumidor (`dial_outs.rs:103,390`). A lacuna é maior do que parecia: não há canal nenhum, **e o chat da sala é apagado ao fim do dia por desenho** (`room_chat.rs:220`). O Teams vende-se por isto |
 | 7 | **Central telefónica a sério** (filas, atendedor automático, correio de voz) | ✅ Zoom Phone | ✅ Teams Phone | `grep` por `call_queue`, `voicemail` e `auto_attendant` não dá nada. Existe: entrada por telefone com PIN e IVR, ramais, troncos, plano de marcação e CDR (#130/#136). Falta a camada que transforma isso num PBX |
 | 8 | **Retenção legal e eDiscovery** | ⚠️ | ✅ | Existe retenção por dias com varredura, auditoria imutável e DLP estreito (`dlp.rs`: três expressões e palavrões). Não existe *legal hold*, nem pesquisa transversal para um regulador, nem política de DLP por organização |
 | 9 | **Salas de hardware e sistemas SIP de sala** | ✅ | ✅ | Nenhum: nem H.323 nem perfil de endpoint de sala. Um telefone entra; uma Poly da sala de reuniões não |
@@ -141,7 +143,7 @@ Cada linha foi medida na árvore (`develop`, mais a PR das salas), não recordad
 | # | Onde eles ganham | Porquê |
 |---|---|---|
 | 11 | **Rede má** | O Zoom não usa WebRTC puro: o protocolo próprio dá-lhe FEC e recuperação que o browser não deixa fazer. Nós temos simulcast e escolha de camada; num 3G instável a diferença nota-se, e não se fecha com código nosso enquanto formos browser-first |
-| 12 | **Escala de uma sala** | Nenhum dos dois tem o nosso problema: o tecto de participantes por sala **não está medido nem documentado** neste repositório. Até estar, «quantas pessoas aguenta?» não tem resposta honesta |
+| 12 | **Escala de uma sala** | **Já está medido** (e esta linha estava errada no dia em que foi escrita): 40 pessoas numa sala dão 1560/1560 fluxos a 11,17 núcleos e 0,03% de perda, sem encontrar o tecto (`docs/ops/teste-de-carga-2026-10-05.md`). Mas em metal, em loopback, sem TURN nem browsers — e o pod de produção (4 CPU/4Gi desde a #341) dá ~25 câmaras numa só sala. O número que se põe num contrato ainda não existe |
 | 13 | **IA na reunião** | O Copilot e o AI Companion resumem, procuram e respondem durante a chamada. Nós geramos acta e tarefas com o Ollama local — melhor em privacidade, atrás em capacidade |
 | 14 | **Polimento do que já temos** | Enquadramento automático por software, galeria de reacções completa, *live components* do Teams. Nada disto bloqueia nada; é a distância que se sente ao usar |
 
@@ -159,7 +161,7 @@ de verificação. Estas estão feitas e medidas.
 |---|---|---|---|---|
 | Entrada de convidado SEM conta | ✅ | ✅ | ✅ | **Existe** (R290): quem abre o link de uma sala sem sessão escreve um nome e pede para entrar; passa SEMPRE pela sala de espera, e o anfitrião admite. Nunca anfitrião, sem acesso a gravações nem à consola; a sala pode recusar convidados (`allow_guests`). Medido no browser por `web/e2e/convidado-ecra.mjs`. Falta: convite por email com o link (não há correio — plano de lacunas, E2) |
 | PSTN dial-in | ✅ | ✅ | ✅ | **Existe** desde o #130: um telefone entra na reunião e ouve e é ouvido ([ADR-0010](adr/0010-ponte-telefone-sala.md), R221/R222), medido contra um FreeSWITCH real. Falta a cadeia com operadora e Kamailio. Os troncos, o plano de marcação e o CDR estão no servidor (#136), mas a configuração que o compose, o cluster e o chart distribuem **não os liga** — só `voice/freeswitch/telefonia-prova/` (plano de lacunas, T1) |
-| App mobile nativa | ✅ | ✅ | ✅ | **Não existe neste repositório** (zero projectos nativos, medido a 2026-10-04). Há PWA, sem notificações com a aplicação fechada |
+| App mobile nativa | ✅ | ✅ | ✅ | **Existe `mobile/delonixphone/`** (Flutter), mas é softphone SIP e **não entra numa reunião** (medido a 2026-10-13). Há PWA, sem notificações com a aplicação fechada |
 | SSO OIDC | ✅ | ✅ | ✅ | **Implementado** (`auth.rs`, rotas `/sso/discovery\|authorize\|callback`, tabela `org_sso_configs`) — não é stub |
 | SAML | ✅ | ✅ | ✅ | Não existe |
 | SCIM provisioning | ✅ | ✅ | ✅ | Roadmap |
