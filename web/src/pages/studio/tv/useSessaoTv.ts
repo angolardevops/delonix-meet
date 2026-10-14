@@ -290,6 +290,34 @@ export function useSessaoTv(p: PropsDaSessao) {
     for (const c of som.lista()) if (c.tipo === 'participante' && !ids.has(c.id)) som.remover(c.id)
   }, [som, p.participantes])
 
+  // A MESA NASCE COM A SESSÃO, não com o ecrã dela. Até 2026-10-14 o
+  // `ligarSom()` estava no `useEffect` de montagem da Mesa de som e da Cena
+  // completa: quem fosse ao ar sem passar por um desses dois ecrãs emitia pelo
+  // microfone cru do compositor — com `echoCancellation` e `noiseSuppression`
+  // ligados, que é o certo numa reunião e errado numa emissão — e sem EQ,
+  // porta, compressor nem medidor. O que vai ao ar passa pela mesa.
+  //
+  // Espera-se por um gesto porque um `AudioContext` criado sem ele nasce
+  // suspenso, e porque pedir o microfone é um pedido ao browser: faz-se quando
+  // a pessoa já está a mexer no estúdio, não no primeiro `render`.
+  useEffect(() => {
+    if (somRef.current) return
+    const abrir = () => void ligarSom()
+    // Quem chegou aqui a clicar já deu o gesto: abre já, para quem entra pelo
+    // endereço directo (`?vista=tv&ecra=mesa-de-som`) não ver «a ligar…» à
+    // espera de um clique que não tem razão de ser.
+    if (navigator.userActivation?.hasBeenActive) {
+      abrir()
+      return
+    }
+    window.addEventListener('pointerdown', abrir, { capture: true, once: true })
+    window.addEventListener('keydown', abrir, { capture: true, once: true })
+    return () => {
+      window.removeEventListener('pointerdown', abrir, true)
+      window.removeEventListener('keydown', abrir, true)
+    }
+  }, [ligarSom])
+
   // O AudioContext nasce suspenso sem gesto: qualquer toque na mesa retoma-o.
   useEffect(() => {
     if (!som) return

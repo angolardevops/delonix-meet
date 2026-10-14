@@ -175,6 +175,21 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     expect(pagina()).toContain('?vista=tv&ecra=')
   })
 
+  it('a mesa de som nasce com a SESSÃO, não com o ecrã dela', () => {
+    // O que estava partido (EST-D da auditoria de 2026-10-14): o `ligarSom`
+    // vivia no `useEffect` de montagem da Mesa de som e da Cena completa.
+    // Quem fosse ao ar sem passar por um desses dois ecrãs emitia pelo
+    // microfone cru do compositor, sem EQ, porta, compressor nem medidor — e
+    // com o cancelamento de eco do browser ligado, que é o certo numa reunião
+    // e errado numa emissão.
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toContain('const abrir = () => void ligarSom()')
+    for (const f of FICHEIROS) {
+      if (f.endsWith('useSessaoTv.ts')) continue
+      expect(read(f), `${f} não pode ligar a mesa por si`).not.toContain('ligarSom()')
+    }
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas

@@ -4,7 +4,7 @@
  * auscultadores, e o inspector do canal escolhido (EQ de 4 bandas com o
  * espectro medido, dinâmica, limpeza automática).
  */
-import { CSSProperties, useEffect, useRef, useState } from 'react'
+import { CSSProperties, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { curvaDoEq, EQ_GANHO_MAXIMO, alturaDoMedidor, faderParaDb, formatarDb, type LeituraDeSonoridade } from '../../../studio/tv/som'
 import type { EstadoDoCanal } from '../../../studio/tv/mesaDeSom'
@@ -25,12 +25,6 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
   const canal = canais.find((x) => x.id === escolhido) ?? canais[0] ?? null
   const noAr = c.directo.fase === 'no-ar'
   const lang = i18n.language
-
-  // A mesa liga-se à primeira visita (é um clique: o AudioContext pode arrancar).
-  useEffect(() => {
-    if (!som) void s.ligarSom()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const microfonesLivres = s.microfones.filter((m) => !canais.some((x) => x.id === `mic:${m.deviceId || 'omissao'}`))
   const info = som?.info()
