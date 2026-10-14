@@ -311,6 +311,9 @@ Ditas uma vez, para a decisão ser do dono e não ficar implícita:
 A Fase 0 é mesmo primeiro. **Três das decisões desta RFC dependem de factos que só o hardware dá**, e
 nenhuma linha de Rust os antecipa.
 
+A lista de compras da Fase 0, com preços datados e os comandos que respondem às três perguntas,
+está em [fase0-compras.md](fase0-compras.md).
+
 ## 14. Critérios de aceitação
 
 1. Uma entrada identificada pelo caminho físico sobrevive a reinício da caixa e a religar a *dock*
@@ -324,8 +327,9 @@ nenhuma linha de Rust os antecipa.
 
 ## 15. Decisões pendentes (do dono do produto)
 
-1. **Que hardware se compra** para a Fase 0 — capturador (MS2130 a ~20 USD vs placa com entrada
-   dedicada), *dock* alimentada, e se entra um adaptador USB-CEC ou um emissor IR.
+1. **Que hardware se compra** para a Fase 0 — orçamentado em
+   [fase0-compras.md](fase0-compras.md): ~45 USD pelo caminho IR, ~70 USD pelo caminho CEC. Falta
+   o «compra» dele, e a escolha do caminho de sintonia (a recomendação é IR primeiro).
 2. **Encode no agente ou no Channel Engine** — decide-se com o número da Fase 0, não antes.
 3. **Âmbito de distribuição por mercado** (§12.2): sala interna, ou grelha para espectadores.
 4. **O actor de sistema** para uma emissão sem pessoa (`live_sessions.started_by`), que esta RFC
