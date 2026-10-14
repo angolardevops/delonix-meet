@@ -21,6 +21,7 @@ mod dial_outs;
 mod directory;
 mod dlp;
 mod domain_verify;
+mod dubbing;
 mod email_verification;
 mod error;
 mod extension_pin;
@@ -71,6 +72,7 @@ mod roles;
 mod room_chat;
 mod room_tools;
 mod rooms;
+mod scim;
 mod search;
 pub mod secrets_at_rest;
 mod sessions;
@@ -214,6 +216,9 @@ pub struct AppState {
     pub db: sqlx::PgPool,
     pub hub: SignalingHub,
     pub sfu: Arc<sfu::SfuState>,
+    /// As línguas de dobragem activas por sala (ADR-0030). Vazio é o estado
+    /// normal: sem `TTS_URL` nunca se liga nenhuma.
+    pub dub: Arc<dubbing::Registo>,
     /// Emissões em directo a decorrer neste pod (ADR-0003).
     pub directos: Arc<broadcast::Registo>,
     /// Estúdio de TV: fontes, tally e comandos das salas deste pod (ADR-0014).
@@ -440,6 +445,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ));
 
     // ---- Operador: quem opera a plataforma (fora do SDK do inquilino) ----
+    // SCIM 2.0 (RFC 7644). Superfície PRÓPRIA, com token próprio (`dlxs_`): a
+    // R142 ensinou que um token emitido para uma superfície não pode abrir
+    // outra. O caminho base é o que a norma manda, e é o que se dá ao Entra ID
+    // ou ao Okta.
+    let scim_routes = Router::new()
+        .route("/ServiceProviderConfig", get(scim::service_provider_config))
+        .route("/ResourceTypes", get(scim::resource_types))
+        .route("/Schemas", get(scim::schemas))
+        .route("/Users", get(scim::list_users).post(scim::create_user))
+        .route(
+            "/Users/{user_id}",
+            get(scim::get_user)
+                .patch(scim::patch_user)
+                .put(scim::replace_user)
+                .delete(scim::delete_user),
+        );
+
     let operator_routes = Router::new()
         // Provisão de org — segredo de plataforma (a org ainda não existe).
         .route("/organizations", post(apikeys::v1_provision_org))
@@ -566,6 +588,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/api/oauth", oauth_routes)
         .nest("/api/auth", auth_routes)
         .nest("/api/v1", v1_routes)
+        .nest("/scim/v2", scim_routes)
         .nest("/api/operator/v1", operator_routes)
         .nest("/api/integrations/odoo/v1", odoo_integration_routes)
         .nest("/api/integrations/sms-agent/v1", sms_agent_routes)
@@ -1307,6 +1330,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(odoo::get_config).put(odoo::save_config),
         )
         .route(
+            "/api/orgs/{org_id}/scim/rotate-token",
+            post(scim::rotate_token),
+        )
+        .route(
             "/api/orgs/{org_id}/integrations/odoo/rotate-token",
             post(odoo::rotate_token),
         )
@@ -1743,6 +1770,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         directos: Arc::new(broadcast::Registo::default()),
         studio: studio_realtime::StudioHub::default(),
         studio_pairing_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        dub: Arc::new(dubbing::Registo::default()),
         sfu: Arc::new(sfu::SfuState::new(
             sfu::IceConfig {
                 external_ip: config.sfu_external_ip.clone(),
@@ -2057,6 +2085,24 @@ pub async fn run() {
             .hub
             .stage
             .set(Arc::new(PalcoNoSfu(state.sfu.clone())) as Arc<dyn signaling::StageControl>);
+    }
+
+    // A dobragem ao vivo (ADR-0030): a frase final que a sala já difundiu
+    // chega à voz por aqui. Sem `TTS_URL` o registo fica sempre vazio e isto
+    // não faz nada — é a mesma forma fail-closed do resto da IA.
+    {
+        struct DobragemNoRegisto(Arc<AppState>);
+        impl signaling::DubControl for DobragemNoRegisto {
+            fn say(&self, room_id: uuid::Uuid, text: &str) {
+                // Não bloqueia: quem chama está a tratar uma mensagem do
+                // WebSocket, e a tradução e a síntese são pedidos de rede.
+                self.0.dub.diz(self.0.clone(), room_id, text);
+            }
+        }
+        let _ = state
+            .hub
+            .dub
+            .set(Arc::new(DobragemNoRegisto(state.clone())) as Arc<dyn signaling::DubControl>);
     }
 
     // Ponte telefone↔sala (ADR-0010): o UA SIP que atende a segunda perna que

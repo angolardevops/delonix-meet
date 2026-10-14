@@ -1,6 +1,8 @@
 # ADR-0030 — Dobragem ao vivo: uma pista por LÍNGUA, voz sintética de licença permissiva, e o nome certo para o que é
 
-**Estado:** Proposto — **precisa de duas decisões do dono** (§Decisões por dar) ·
+**Estado:** **Aceite** a 2026-10-14 — as três decisões do dono estão dadas:
+voz `pt_PT-tugão` anunciada como de Portugal, GPL-3.0 do motor confinada a uma
+imagem própria (molde da D3), e **tecto de 3 línguas activas por sala**. ·
 **Revisto a 2026-10-13** depois de medir as licenças: o Piper **não é MIT**, e
 não existe voz pt-AO. ·
 **Numeração:** era 0029 quando se escreveu; a `develop` ganhou entretanto a sua
@@ -60,13 +62,55 @@ O caminho é uma soma de etapas, e cada uma tem o seu tempo:
 |---|---|
 | VAD + ASR até à `final` | a frase tem de acabar — é o maior termo, e não se encurta sem partir frases a meio |
 | tradução pelo LLM local | um pedido por frase |
-| síntese | proporcional ao texto |
+| síntese | **medido: ~2 % da duração do áudio** (ver abaixo) |
 | publicar no SFU e chegar ao ouvido | o de sempre |
 
 Somado, a voz traduzida chega **segundos** depois do original. Chamar-lhe
 «tempo real» é vender outra coisa: um intérprete humano sobrepõe-se ao orador,
 isto não. O contrato escrito é **dobragem com atraso**, o atraso é **medido** e
 mostrado na sala, e nenhum texto de produto diz o contrário.
+
+**A síntese não é o termo que pesa — medido, não suposto.** Com o
+`pt_PT-tugão-medium` a correr em **CPU**, na máquina de desenvolvimento e com o
+anfitrião a `load average` 52 (ou seja, em condições más):
+
+| Caracteres | Síntese | Áudio produzido | Face ao tempo real |
+|---:|---:|---:|---:|
+| 16 | 0,03 s | 0,89 s | **27×** |
+| 74 | 0,08 s | 3,18 s | **42×** |
+| 89 | 0,08 s | 3,89 s | **49×** |
+
+Carregar a voz custa 1,2 s — **uma vez**, não por pedido (63 MB não se lêem a
+cada frase). Oitenta milissegundos para quase quatro segundos de fala é ruído
+ao lado de esperar que a frase acabe.
+
+Duas consequências honestas: o atraso que a pessoa sente é **do ASR e do LLM**,
+e é aí que vale a pena trabalhar se um dia incomodar; e o tecto de três línguas
+(§Decisões) **não existe por causa da síntese** — existe por causa das três
+cadeias ASR→LLM que correm atrás dela.
+
+### A cadeia inteira, medida no laboratório (2026-10-14)
+
+Com os serviços a sério — Ollama `qwen2.5:1.5b` e o `tts-server` com o
+`pt_PT-tugão` —, numa máquina de desenvolvimento em CPU e com o anfitrião a
+`load average` 48:
+
+| Etapa | Frio | Quente |
+|---|---:|---:|
+| tradução (LLM local) | **19,03 s** | 0,26 – 1,31 s (mediana **0,48 s**) |
+| síntese (pelo HTTP do serviço) | 2,19 s | 0,09 – 1,53 s |
+
+**O achado que mudou código: 19 segundos na primeira frase.** O modelo frio
+leva-os a carregar, e sem remédio a primeira frase de cada sala chegaria vinte
+segundos atrasada — que não é «dobragem com atraso», é uma avaria com outro
+nome. Ligar uma língua passa a **aquecer o modelo** com um pedido despachado
+(`dub_language`), para que a primeira frase a sério já o apanhe quente.
+
+O que a cadeia acrescenta, quente, ao tempo de esperar que a frase acabe:
+**meio a três segundos**. É isso, e não outra coisa, que o produto promete.
+
+*Não medido:* com GPU (ADR-0024), com as três línguas em paralelo, e numa
+máquina sem mais nada a correr.
 
 ### 2. Uma pista por LÍNGUA, nunca por ouvinte
 
@@ -137,7 +181,7 @@ e um crachá na sala di-lo, para ninguém confundir a voz com a pessoa.
   (ADR-0027 §9). E **não entra no catálogo antes do código** — é a segunda
   regra da casa.
 
-## Decisões por dar (são do dono, não de quem escreve a tool)
+## Decisões do dono — todas dadas a 2026-10-14
 
 1. **A licença do MOTOR, não das vozes.** As vozes estavam a ser o problema
    errado: medidas a 2026-10-13, as cinco vozes portuguesas do catálogo
@@ -149,24 +193,64 @@ e um crachá na sala di-lo, para ninguém confundir a voz com a pessoa.
    G2P não-GPL ainda por verificar.
 
    **E não existe voz pt-AO.** O `pt/` do catálogo oficial só tem `pt_BR` e
-   `pt_PT` — nenhuma voz angolana, em lado nenhum que se tenha encontrado. As
-   opções são três, e nenhuma é «escolher uma voz»:
-   - **usar o `pt_PT-tugão`** e dizer que é português de Portugal. Inteligível
-     em Angola, com o sotaque errado;
-   - **encomendar uma voz pt-AO**: 2 a 3 horas de gravação limpa de um locutor
-     angolano, com cessão de direitos escrita, e afinar a partir de um modelo
-     existente (foi assim que a `faber` nasceu). O custo é **humano** — estúdio
-     e locutor em Luanda —, não de software: é aí que há uma cotação a pedir, e
-     é a um estúdio, não a um fornecedor de TTS;
-   - **não oferecer pt-AO**, que continua a ser melhor do que uma voz de pt-BR
-     a fingir que é de Luanda.
-2. **O tecto de inferência que se aceita por sala.** Cinco línguas numa sala de
-   uma hora é uma conta de CPU (ou de GPU, ADR-0024) que alguém paga. Sem um
-   tecto decidido, a primeira sala com oito línguas descobre-o em produção.
+   `pt_PT` — nenhuma voz angolana, em lado nenhum que se tenha encontrado.
 
-Até as duas serem dadas, **nada disto se constrói** — e a família «tradução de
-áudio ao vivo» continua a ter, no produto, só o que existe de verdade: legendas
-traduzidas por ouvinte.
+   ### ✅ DECIDIDO a 2026-10-14 pelo dono: `pt_PT-tugão`, e o produto diz que é de Portugal
+
+   Das três opções que estavam em cima da mesa — usar a de Portugal e dizê-lo,
+   encomendar a gravação de um locutor angolano, ou não oferecer português —
+   fica a **primeira**. Três coisas passam a estar decididas com ela, e duas
+   não são óbvias:
+
+   **a) Escolher o `tugão` é escolher o Piper, e portanto a GPL-3.0.** O
+   `tugão` é uma voz do catálogo do Piper; não existe fora dele. Logo a
+   dobragem herda o motor da tabela acima e **o `tts-server` nasce como imagem
+   própria com a sua oferta de código**, no molde da D3. Isto não é um
+   corolário administrativo: é a razão pela qual a decisão da licença deixa de
+   estar em aberto para o caso do português.
+
+   **b) O rótulo é parte da decisão, não um detalhe de interface.** Onde a
+   pessoa escolhe a língua lê-se **«Português (Portugal)»** — nunca
+   «Português» sozinho. Num produto angolano, «Português» sem qualificação é
+   lido como o daqui, e a voz não é daqui: deixar o rótulo nu seria vender
+   sotaque de Lisboa como se fosse de Luanda. O crachá da sala diz as **duas**
+   coisas: que a voz é sintética (§4) e que é de Portugal.
+
+   **c) pt-AO fica por oferecer, e isso diz-se.** Não aparece na lista como se
+   estivesse a caminho, nem se substitui por pt-BR. O desenho já deixa a porta
+   aberta — a pista é **por língua** (§2), e `pt-AO` seria mais uma entrada no
+   dia em que houver voz. A encomenda de uma voz angolana (2–3 h de gravação
+   limpa, cessão de direitos escrita, afinação a partir de um modelo existente)
+   continua a ser a via para lá chegar, e a cotação é de um **estúdio em
+   Luanda**, não de um fornecedor de TTS.
+
+   O `pt_PT-tugão` entra como qualquer artefacto de terceiros: **fixado por
+   versão e por SHA-256**, com o `MODEL_CARD` (CC0, afinada da `lessac` média)
+   registado ao lado.
+2. **O tecto de inferência que se aceita por sala.**
+
+   ### ✅ DECIDIDO a 2026-10-14 pelo dono: **no máximo 3 línguas por sala**
+
+   O tecto é **3**, e é um limite por SALA, não por organização nem por pessoa:
+   é a sala que paga a conta, porque é nela que as cadeias ASR→LLM→TTS correm
+   em paralelo. Um quarto pedido é **recusado com um erro que diz porquê** —
+   nunca aceite e depois calado, que é a avaria que a §Consequências nomeia
+   como a pior desta frente.
+
+   O que o número governa, e que fica preso por asserção no código:
+
+   - **3 publicadores sintéticos no máximo** numa sala, um por língua (§2);
+   - a quarta língua não entra em fila de espera: entrar em fila seria prometer
+     uma dobragem que não começa, e quem está à espera não sabe disso;
+   - **tirar uma língua liberta a vaga** de imediato — o tecto é de línguas
+     ACTIVAS, não de línguas já pedidas alguma vez na sessão;
+   - a língua de origem **não conta** para o tecto: ela já está na sala, e não
+     é sintetizada.
+
+**As três decisões estão dadas** (2026-10-14): a voz é o `pt_PT-tugão` anunciado
+como de Portugal, a GPL-3.0 do motor aceita-se confinada a uma imagem própria no
+molde da D3, e o tecto é de 3 línguas activas por sala. Este ADR passa a
+**Aceite** e a dobragem pode ser construída.
 
 ## Consequências
 

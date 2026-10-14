@@ -354,5 +354,24 @@ if [ -n "$ns_velho" ]; then
   fail=1
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; nenhum script a decidir por um pipe para «grep -q»; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros; nenhuma referência ao namespace antigo"
+# ---------------------------------------------------------------------------
+# Um documento seguido NÃO pode estar vazio.
+#
+# Isto custou um plano inteiro: um script de edição escreveu 0 bytes por cima
+# de `docs/plano-mcp-2026-10-13.md` (9335 → 0) e o ficheiro foi commitado e
+# fundido assim. NENHUM portão deu por isso — o drift compara nomes de módulos
+# e migrações, não o conteúdo —, e só se viu dias depois, ao tentar editá-lo.
+# Um `.md` vazio nunca é intencional: ou tem texto, ou não devia estar seguido.
+# ---------------------------------------------------------------------------
+vazios=$(git ls-files -z -- '*.md' '*.sql' '*.sh' | while IFS= read -r -d "" f; do
+  [ -f "$f" ] && [ ! -s "$f" ] && echo "$f"
+done)
+if [ -n "$vazios" ]; then
+  echo "✗ higiene: ficheiros seguidos VAZIOS (0 bytes) — provavelmente escritos por engano:"
+  echo "$vazios" | sed 's/^/     /'
+  echo "     Repõe o conteúdo (git show <commit>:<ficheiro>) ou deixa de o seguir."
+  fail=1
+fi
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; nenhum script a decidir por um pipe para «grep -q»; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros; nenhuma referência ao namespace antigo; nenhum documento seguido a zero bytes"
 exit $fail
