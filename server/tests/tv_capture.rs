@@ -18,6 +18,20 @@ const AUDIO_P3: &str = "pci-0000:00:14.0-usb-0:3:1.2";
 const VIDEO_P4: &str = "pci-0000:00:14.0-usb-0:4:1.0";
 const AUDIO_P4: &str = "pci-0000:00:14.0-usb-0:4:1.2";
 
+/// Um relatório do agente, com o áudio da porta 3 sempre presente.
+async fn relatar(
+    app: &TestApp,
+    token: &str,
+    inputs: serde_json::Value,
+) -> (u16, serde_json::Value) {
+    app.put(
+        "/api/integrations/tv-agent/v1/inputs",
+        Some(token),
+        json!({"audio": [{"device_path": AUDIO_P3, "node": "hw:1"}], "inputs": inputs}),
+    )
+    .await
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn contrato_da_caixa_e_token_que_sai_uma_vez(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
@@ -215,21 +229,14 @@ async fn uma_entrada_que_desaparece_perde_o_sinal_e_nao_a_configuracao(db: sqlx:
         .post(&agentes(a.org()), Some(&a.token), json!({"name": "Caixa"}))
         .await;
     let token = caixa["token"].as_str().unwrap().to_string();
-    let relatar = |inputs: serde_json::Value| {
-        let token = token.clone();
-        async move {
-            app.put(
-                "/api/integrations/tv-agent/v1/inputs",
-                Some(&token),
-                json!({"audio": [{"device_path": AUDIO_P3, "node": "hw:1"}], "inputs": inputs}),
-            )
-            .await
-        }
-    };
-    let (st, resp) = relatar(json!([
-        {"device_path": VIDEO_P3, "signal": "live"},
-        {"device_path": VIDEO_P4, "signal": "live"}
-    ]))
+    let (st, resp) = relatar(
+        &app,
+        &token,
+        json!([
+            {"device_path": VIDEO_P3, "signal": "live"},
+            {"device_path": VIDEO_P4, "signal": "live"}
+        ]),
+    )
     .await;
     assert_eq!(st, 200, "{resp}");
     let id_p3 = resp["inputs"]
@@ -265,7 +272,12 @@ async fn uma_entrada_que_desaparece_perde_o_sinal_e_nao_a_configuracao(db: sqlx:
     assert_eq!(ligada["tuner_kind"], "ir");
 
     // Cabo solto: a entrada deixa de vir no relatório.
-    let (st, _) = relatar(json!([{"device_path": VIDEO_P4, "signal": "live"}])).await;
+    let (st, _) = relatar(
+        &app,
+        &token,
+        json!([{"device_path": VIDEO_P4, "signal": "live"}]),
+    )
+    .await;
     assert_eq!(st, 200);
     let (_, depois) = app.get(&entrada, Some(&a.token)).await;
     assert_eq!(depois["signal"], "no_signal", "perdeu o sinal");
@@ -278,10 +290,14 @@ async fn uma_entrada_que_desaparece_perde_o_sinal_e_nao_a_configuracao(db: sqlx:
     );
 
     // Volta a aparecer: o mesmo id, porque a chave é a porta.
-    let (_, outra_vez) = relatar(json!([
-        {"device_path": VIDEO_P3, "signal": "live"},
-        {"device_path": VIDEO_P4, "signal": "live"}
-    ]))
+    let (_, outra_vez) = relatar(
+        &app,
+        &token,
+        json!([
+            {"device_path": VIDEO_P3, "signal": "live"},
+            {"device_path": VIDEO_P4, "signal": "live"}
+        ]),
+    )
     .await;
     let voltou = outra_vez["inputs"]
         .as_array()
