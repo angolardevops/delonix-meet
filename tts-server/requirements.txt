@@ -1,0 +1,7 @@
+# A versão está FIXA, e o SHA-256 do sdist está em LICENCAS.md: é com ele que a
+# oferta de código da GPL-3.0 se cumpre (o Dockerfile acompanha a fonte).
+piper-tts==1.8.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+PyJWT==2.10.1

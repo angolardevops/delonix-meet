@@ -62,13 +62,32 @@ O caminho é uma soma de etapas, e cada uma tem o seu tempo:
 |---|---|
 | VAD + ASR até à `final` | a frase tem de acabar — é o maior termo, e não se encurta sem partir frases a meio |
 | tradução pelo LLM local | um pedido por frase |
-| síntese | proporcional ao texto |
+| síntese | **medido: ~2 % da duração do áudio** (ver abaixo) |
 | publicar no SFU e chegar ao ouvido | o de sempre |
 
 Somado, a voz traduzida chega **segundos** depois do original. Chamar-lhe
 «tempo real» é vender outra coisa: um intérprete humano sobrepõe-se ao orador,
 isto não. O contrato escrito é **dobragem com atraso**, o atraso é **medido** e
 mostrado na sala, e nenhum texto de produto diz o contrário.
+
+**A síntese não é o termo que pesa — medido, não suposto.** Com o
+`pt_PT-tugão-medium` a correr em **CPU**, na máquina de desenvolvimento e com o
+anfitrião a `load average` 52 (ou seja, em condições más):
+
+| Caracteres | Síntese | Áudio produzido | Face ao tempo real |
+|---:|---:|---:|---:|
+| 16 | 0,03 s | 0,89 s | **27×** |
+| 74 | 0,08 s | 3,18 s | **42×** |
+| 89 | 0,08 s | 3,89 s | **49×** |
+
+Carregar a voz custa 1,2 s — **uma vez**, não por pedido (63 MB não se lêem a
+cada frase). Oitenta milissegundos para quase quatro segundos de fala é ruído
+ao lado de esperar que a frase acabe.
+
+Duas consequências honestas: o atraso que a pessoa sente é **do ASR e do LLM**,
+e é aí que vale a pena trabalhar se um dia incomodar; e o tecto de três línguas
+(§Decisões) **não existe por causa da síntese** — existe por causa das três
+cadeias ASR→LLM que correm atrás dela.
 
 ### 2. Uma pista por LÍNGUA, nunca por ouvinte
 
