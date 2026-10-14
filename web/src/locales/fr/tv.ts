@@ -163,6 +163,18 @@ export default {
     duckDica: 'La musique et les effets baissent de 12 dB pendant que quelqu’un parle.',
     duckDesligado: 'La musique et les effets restent au niveau du fader.',
   },
+  fisica: {
+    titulo: 'Surface de contrôle',
+    dica: 'Branche une surface MIDI (faders, boutons) pour piloter cette console.',
+    procurar: 'Chercher la surface',
+    aProcurar: 'recherche…',
+    recusado: "Le navigateur a refusé l'accès MIDI. Accorde-le et réessaie.",
+    semSuporte: 'Ce navigateur ne parle pas MIDI — utilise Chrome ou Edge.',
+    ligadas_one: '{{count}} connectée',
+    ligadas_other: '{{count}} connectées',
+    mapa: 'Faders 1–8 sur les canaux, boutons en mute et solo, 4 touches d’effet, et la coupe.',
+    ultima: 'dernier : {{msg}}',
+  },
   som: {
     titulo: 'Mélangeur audio',
     canais: 'Voies de la table',

@@ -2111,3 +2111,24 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* A mesa física, por baixo das teclas de efeito. */
+.tv-fisica {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+}
+.tv-fisica__lista {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 600;
+}

@@ -78,6 +78,9 @@ vi.mock('./tv/useSessaoTv', async () => {
     setDuckLigado: nada,
     microfoneDaFonte: () => null,
     levarSomDaFonteAMesa: async () => undefined,
+    // A mesa física por ligar: é o estado de arranque, e é o que mostra o
+    // botão «procurar» em vez de o esconder.
+    mesaFisica: { suportado: true, dispositivos: [], ultima: '', erro: '', aLigar: false, ligar: async () => undefined },
     macros: [],
     progressoMacro: null,
     correrMacroDaTecla: () => false,
