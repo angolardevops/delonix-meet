@@ -156,6 +156,13 @@ export default {
       nota: 'Cartão, silêncio, 3 s e termina a emissão e a gravação',
     },
   },
+  bastidores: {
+    titulo: 'Bastidores',
+    falar: 'Falar com os bastidores',
+    aFalar: 'A falar — fora do ar',
+    selo: 'BASTIDORES',
+    nota: 'Premir e segurar (T): a tua voz sai do ar e fica só para quem está na sala.',
+  },
   efeitos: {
     titulo: 'Teclas de efeito',
     livre: 'tecla livre',

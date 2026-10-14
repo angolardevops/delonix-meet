@@ -89,7 +89,7 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
   return (
     <div className="dx-stage tv tv--palco" data-tv-ecra="cena">
       <TopoTv titulo={t('tv.cena.titulo')} onVoltar={() => c.onNavegar(null)}>
-        <SelosDoAr c={c} />
+        <SelosDoAr c={c} bastidores={s.aFalarComBastidores} />
         <Espaco />
         <span className="tv-meta" data-tv="carga">
           <span ref={custo} />

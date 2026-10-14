@@ -49,7 +49,7 @@ export default function Fontes({ s, c }: PropsDoEcra) {
         <span className="tv-chip" data-tv="contagem-fontes">
           {t('tv.fontes.contagem', { count: lista.length, noAr: noAr.size })}
         </span>
-        <SelosDoAr c={c} destinosNoSelo={false} />
+        <SelosDoAr c={c} destinosNoSelo={false} bastidores={s.aFalarComBastidores} />
         <Espaco />
         <BotaoTv disabled={aProcurar} data-tv="procurar" onClick={() => void procurar()}>
           {t('tv.fontes.procurar')}
