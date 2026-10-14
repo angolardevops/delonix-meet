@@ -290,6 +290,18 @@ export function useSessaoTv(p: PropsDaSessao) {
     else if (som.lista().some((c) => c.id === 'ecra')) som.remover('ecra')
   }, [som, compRef, p.temEcra, versaoFontes, t])
 
+  // A música também é um canal: até 2026-10-14 vivia num barramento do
+  // compositor que a mesa não via — não tinha fader, nem medidor, nem forma de
+  // a baixar sob a voz sem ir a outro ecrã. Só existe com um fluxo montado
+  // (gravação ou directo): fora disso o grafo de áudio do compositor não
+  // existe e a música toca pelo volume do elemento.
+  useEffect(() => {
+    if (!som) return
+    const audio = (palco.musica ? (compRef.current?.fluxoDeMusica ?? null) : null)?.getAudioTracks() ?? []
+    if (audio.length) som.adicionarFluxo('musica', palco.musica?.nome || t('tv.som.tipos.musica'), 'musica', new MediaStream(audio), null)
+    else if (som.lista().some((c) => c.id === 'musica')) som.remover('musica')
+  }, [som, compRef, palco.musica, p.gravando, p.noAr, t])
+
   // Participantes com áudio entram como canais; quem sai, sai.
   useEffect(() => {
     if (!som) return

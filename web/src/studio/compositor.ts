@@ -223,6 +223,8 @@ export class CompositorDeAula {
   private somExternoFonte: MediaStreamAudioSourceNode | null = null
   private micFonte: MediaStreamAudioSourceNode | null = null
   private ecraFonte: MediaStreamAudioSourceNode | null = null
+  /** A saída do barramento de música, quando é a mesa de som a levá-lo. */
+  private destinoMedia: MediaStreamAudioDestinationNode | null = null
   /** Microfone escolhido; vazio = o de omissão do sistema. */
   microfoneId = ''
   /** Câmara escolhida; vazio = a de omissão do sistema. */
@@ -811,10 +813,11 @@ export class CompositorDeAula {
     this.analiserMestre = this.audioCtx.createAnalyser()
     this.analiserMestre.fftSize = 512
 
-    for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.compressorMestre)
+    for (const g of [this.ganhoPalco, this.ganhoVideo]) g.connect(this.compressorMestre)
     this.compressorMestre.connect(this.limiterMestre)
     this.limiterMestre.connect(this.destino)
     this.limiterMestre.connect(this.analiserMestre)
+    this.ligarBarramentoDeMusica()
 
     if (micDeviceId !== undefined) this.microfoneId = micDeviceId
     await this.ligarMicrofone()
@@ -866,8 +869,36 @@ export class CompositorDeAula {
       void this.ligarMicrofone()
       for (const c of this.convidados.values()) this.ligarConvidadoAoGrafo(c)
     }
-    // O ecrã segue o microfone e os convidados: ou é da mesa, ou é daqui.
+    // O ecrã e a música seguem o microfone e os convidados: ou são da mesa,
+    // ou são daqui.
     this.ligarSomDoEcra()
+    this.ligarBarramentoDeMusica()
+  }
+
+  /**
+   * O barramento de MÚSICA como fluxo, para a mesa de som o ter como canal —
+   * com fader, medidor e EQ, como qualquer outra fonte. `null` fora de uma
+   * gravação ou emissão: o grafo de áudio do compositor só existe com um fluxo
+   * montado, e sem ele a música toca pelo volume do próprio elemento.
+   */
+  get fluxoDeMusica(): MediaStream | null {
+    return this.destinoMedia?.stream ?? null
+  }
+
+  /**
+   * A música vai ao MESTRE ou à MESA — nunca aos dois, que a somaria consigo
+   * própria.
+   *
+   * O deslizador de música do palco (`mistura.musica`) continua a mexer no
+   * `ganhoMusica`, logo passa a ser um TRIM de entrada da mesa: quem manda no
+   * nível que vai ao ar é o fader do canal. Tirar-lhe o efeito seria deixar no
+   * ecrã um controlo que não controla nada.
+   */
+  private ligarBarramentoDeMusica(): void {
+    if (!this.audioCtx || !this.ganhoMusica || !this.compressorMestre) return
+    this.destinoMedia ??= this.audioCtx.createMediaStreamDestination()
+    this.ganhoMusica.disconnect()
+    this.ganhoMusica.connect(this.somExterno ? this.destinoMedia : this.compressorMestre)
   }
 
   private ligarSomExterno(): void {
@@ -1141,6 +1172,7 @@ export class CompositorDeAula {
     this.ganhoPalco = null
     this.ganhoMusica = null
     this.ganhoVideo = null
+    this.destinoMedia = null
     this.compressorMestre?.disconnect()
     this.compressorMestre = null
     this.limiterMestre?.disconnect()

@@ -199,6 +199,7 @@ export default {
       microfone: 'Microphone',
       participante: 'Guest',
       ecra: 'Screen',
+      musica: 'Music',
     },
     fonteDoCanal: 'Picture source',
     semFonte: 'No source',

@@ -200,7 +200,18 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     const comp = read('web/src/studio/compositor.ts')
     expect(comp).toMatch(/private ligarSomDoEcra\(\): void \{[\s\S]*?if \(this\.somExterno\) return/)
     // E a troca de dono tem de reavaliar o ecrã, nos dois sentidos.
-    expect(comp).toMatch(/definirSomExterno[\s\S]*?this\.ligarSomDoEcra\(\)\n  \}/)
+    expect(comp).toMatch(/definirSomExterno\(s: MediaStream \| null\): void \{[\s\S]*?this\.ligarSomDoEcra\(\)/)
+  })
+
+  it('e a música também tem UM dono — o mestre, ou a mesa', () => {
+    // EST-C: a música vivia num barramento que a mesa não via. Agora é canal,
+    // e o barramento vai a UM destino de cada vez — somá-la consigo própria
+    // seria pior do que não a ter na mesa.
+    expect(read('web/src/pages/studio/tv/useSessaoTv.ts')).toMatch(/som\.adicionarFluxo\('musica'/)
+    const comp = read('web/src/studio/compositor.ts')
+    expect(comp).toMatch(/this\.ganhoMusica\.connect\(this\.somExterno \? this\.destinoMedia : this\.compressorMestre\)/)
+    // O mestre deixa de a receber directamente: quem a liga é o barramento.
+    expect(comp).not.toMatch(/for \(const g of \[this\.ganhoPalco, this\.ganhoMusica/)
   })
 
   it('cada um dos cinco ecrãs tem quem o abra', () => {

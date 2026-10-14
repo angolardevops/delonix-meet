@@ -30,7 +30,7 @@
 import { Denoiser } from '../../media'
 import { type Banda, dbParaGanho, EQ_INICIAL, faderParaDb, type LeituraDeSonoridade, MedidorDeSonoridade, nivelDoBloco } from './som'
 
-export type TipoDeCanal = 'microfone' | 'participante' | 'ecra'
+export type TipoDeCanal = 'microfone' | 'participante' | 'ecra' | 'musica'
 
 export interface DinamicaDoCanal {
   porta: { ligada: boolean; limiarDb: number }

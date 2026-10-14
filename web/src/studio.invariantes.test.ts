@@ -182,7 +182,12 @@ describe('a mistura tem faders de verdade', () => {
     expect(c().match(/this\.audioCtx\.createGain\(\)/g)?.length).toBe(4)
     // Os três barramentos já não vão direitos ao destino: passam pelo
     // nivelador/limitador mestre primeiro (ver o teste da dinâmica, abaixo).
-    expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.compressorMestre)')
+    // A MÚSICA é a excepção desde 2026-10-14: vai ao mestre OU à mesa de som,
+    // que a leva como canal — por isso quem a liga é o `ligarBarramentoDeMusica`
+    // e não este laço. Continuam a ser três barramentos e todos acabam no
+    // mestre; a música é que escolhe o caminho.
+    expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoVideo]) g.connect(this.compressorMestre)')
+    expect(c()).toContain('this.ganhoMusica.connect(this.somExterno ? this.destinoMedia : this.compressorMestre)')
   })
 
   it('a dinâmica mestre fica entre os barramentos e o destino, com um medidor na saída', () => {

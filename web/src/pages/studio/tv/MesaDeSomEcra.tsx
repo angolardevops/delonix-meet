@@ -13,7 +13,7 @@ import { cx } from '../../../ui/kit'
 import { type PropsDoEcra, SelosDoAr } from './comum'
 import { BotaoTv, Cabeca, Cartao, Deslizador, Espaco, Fader, Interruptor, Medidor, TopoTv, useTique } from './pecas'
 
-const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen' }
+const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen', musica: 'speaker' }
 export const ALVO_LUFS = -16
 
 export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {

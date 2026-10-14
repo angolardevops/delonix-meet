@@ -204,6 +204,7 @@ export default {
       microfone: 'Microfone',
       participante: 'Convidado',
       ecra: 'Ecrã',
+      musica: 'Música',
     },
     fonteDoCanal: 'Fonte de imagem',
     semFonte: 'Sem fonte',

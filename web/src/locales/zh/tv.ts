@@ -199,6 +199,7 @@ export default {
       microfone: '话筒',
       participante: '嘉宾',
       ecra: '屏幕',
+      musica: '音乐',
     },
     fonteDoCanal: '画面来源',
     semFonte: '无来源',
