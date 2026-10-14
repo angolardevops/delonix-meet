@@ -80,22 +80,40 @@ async fn a_sala_de_um_estudio_nao_se_apaga_pela_porta_das_salas(db: sqlx::PgPool
     let s = create_studio(&app, &a).await;
     let code = s["room_code"].as_str().unwrap().to_string();
 
-    let (st, body) = app.delete(&format!("/api/rooms/{code}"), Some(&a.token)).await;
+    let (st, body) = app
+        .delete(&format!("/api/rooms/{code}"), Some(&a.token))
+        .await;
     assert_eq!(st, 409, "{body}");
     assert_eq!(body["code"], "room.has_studio");
 
     // E continua lá: a recusa não é cosmética.
     let (st, _) = app
-        .get(&format!("/api/orgs/{}/studios/{}", a.org(), s["id"].as_str().unwrap()), Some(&a.token))
+        .get(
+            &format!(
+                "/api/orgs/{}/studios/{}",
+                a.org(),
+                s["id"].as_str().unwrap()
+            ),
+            Some(&a.token),
+        )
         .await;
     assert_eq!(st, 200, "o estúdio sobreviveu à tentativa");
 
     // Apagado o estúdio, a sala já se apaga — a guarda não prende a sala para sempre.
     let (st, _) = app
-        .delete(&format!("/api/orgs/{}/studios/{}", a.org(), s["id"].as_str().unwrap()), Some(&a.token))
+        .delete(
+            &format!(
+                "/api/orgs/{}/studios/{}",
+                a.org(),
+                s["id"].as_str().unwrap()
+            ),
+            Some(&a.token),
+        )
         .await;
     assert_eq!(st, 204);
-    let (st, body) = app.delete(&format!("/api/rooms/{code}"), Some(&a.token)).await;
+    let (st, body) = app
+        .delete(&format!("/api/rooms/{code}"), Some(&a.token))
+        .await;
     assert_eq!(st, 204, "{body}");
 }
 
@@ -291,21 +309,32 @@ async fn source_token_is_minimal_and_single_use(db: sqlx::PgPool) {
         .as_array()
         .unwrap_or_else(|| panic!("o resgate tem de trazer ice_servers: {p}"));
     assert!(
-        ice.iter().any(|e| e["urls"][0].as_str().is_some_and(|u| u.starts_with("stun:"))),
+        ice.iter().any(|e| e["urls"][0]
+            .as_str()
+            .is_some_and(|u| u.starts_with("stun:"))),
         "falta o STUN: {p}"
     );
     // O TURN só existe se a configuração o tiver; quando existe, traz
     // credencial de vida curta — nunca um URL de relay sem credencial.
     for e in ice {
-        if e["urls"][0].as_str().is_some_and(|u| u.starts_with("turn:")) {
-            assert!(e["username"].is_string() && e["credential"].is_string(), "TURN sem credencial: {e}");
+        if e["urls"][0]
+            .as_str()
+            .is_some_and(|u| u.starts_with("turn:"))
+        {
+            assert!(
+                e["username"].is_string() && e["credential"].is_string(),
+                "TURN sem credencial: {e}"
+            );
         }
     }
 
     // E a prova de que isto NÃO é só o token a dar jeito: a mesma fonte não
     // alcança o `/api/ice-servers`, que é o caminho de quem tem sessão.
     let (st, _) = app.get("/api/ice-servers", Some(token)).await;
-    assert_eq!(st, 401, "o token de fonte não serve para pedir ICE pela REST");
+    assert_eq!(
+        st, 401,
+        "o token de fonte não serve para pedir ICE pela REST"
+    );
 
     // Uso único.
     let (st, _) = app
