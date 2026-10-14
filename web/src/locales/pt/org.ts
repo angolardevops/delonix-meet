@@ -278,6 +278,7 @@ export default {
     titulo: 'Caixa de saída',
     eyebrow: 'Correio enviado',
     actualizar: 'Actualizar',
+    verMais: 'Ver mais',
     vazia: 'Ainda não saiu correio desta organização.',
     semCorpos: 'Os corpos não são mostrados: o de um convite leva o token do convite. O correio pessoal (reposição de password, prova de endereço) não pertence à organização e não aparece aqui.',
     filtrarEstado: 'Filtrar por estado',

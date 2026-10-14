@@ -278,6 +278,7 @@ export default {
     titulo: 'Boîte d\'envoi',
     eyebrow: 'Courrier envoyé',
     actualizar: 'Actualiser',
+    verMais: 'Voir plus',
     vazia: "Aucun courrier n'est encore parti pour cette organisation.",
     semCorpos: "Les corps ne sont pas affichés : celui d'une invitation contient le jeton d'invitation. Le courrier personnel (réinitialisation de mot de passe, preuve d'adresse) n'appartient pas à l'organisation et n'apparaît pas ici.",
     filtrarEstado: 'Filtrer par état',
