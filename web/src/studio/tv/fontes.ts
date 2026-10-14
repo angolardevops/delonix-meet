@@ -35,6 +35,13 @@ export interface FonteDaMesa {
   stream: MediaStream | null
   elemento: ImagemDeFonte
   deviceId?: string
+  /**
+   * O GRUPO de hardware do dispositivo (`MediaDeviceInfo.groupId`): é ele que
+   * diz qual é o microfone DESTA câmara. Uma capturadora HDMI e uma webcam com
+   * microfone expõem duas entradas — uma de vídeo e uma de áudio — com o mesmo
+   * grupo, e sem ele não há forma de saber que o som pertence àquela imagem.
+   */
+  groupId?: string
 }
 
 interface Viva extends FonteDaMesa {
@@ -117,6 +124,20 @@ function medirVideo(v: VideoComFrames, medidas: MedidasDaFonte): () => void {
     vivo = false
     v.cancelVideoFrameCallback?.(h)
   }
+}
+
+/**
+ * O microfone que pertence a um GRUPO de hardware — o da câmara, o da
+ * capturadora, o da mesa ligada por USB.
+ *
+ * Um grupo VAZIO não casa com nada, e é a metade que importa: antes de a
+ * pessoa dar permissão, o browser devolve `groupId: ''` em todos os
+ * dispositivos, e uma comparação ingénua devolvia o PRIMEIRO microfone do
+ * sistema como se fosse o da câmara.
+ */
+export function microfoneDoGrupo<T extends { groupId?: string }>(microfones: readonly T[], groupId: string | undefined): T | null {
+  if (!groupId) return null
+  return microfones.find((m) => m.groupId === groupId) ?? null
 }
 
 export class RegistoDeFontes implements FontesParaDesenho {
@@ -262,7 +283,7 @@ export class RegistoDeFontes implements FontesParaDesenho {
   }
 
   /** Liga uma câmara local. Rejeita se o browser recusar (a razão vem no erro). */
-  async ligarCamara(deviceId: string, rotulo: string): Promise<string> {
+  async ligarCamara(deviceId: string, rotulo: string, groupId?: string): Promise<string> {
     const id = `camara:${deviceId}`
     if (this.fontes.has(id)) return id
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -279,7 +300,7 @@ export class RegistoDeFontes implements FontesParaDesenho {
     await v.play().catch(() => {})
     const track = stream.getVideoTracks()[0]
     const nome = rotulo || track?.label || ''
-    this.adicionar({ id, tipo: 'camara', nome, dispositivo: track?.label ?? rotulo, stream, elemento: v, deviceId })
+    this.adicionar({ id, tipo: 'camara', nome, dispositivo: track?.label ?? rotulo, stream, elemento: v, deviceId, groupId: groupId || track?.getSettings().groupId })
     track?.addEventListener('ended', () => this.desligar(id))
     this.aoMudar?.()
     return id

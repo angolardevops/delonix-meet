@@ -18,7 +18,7 @@ import type { Fonte } from '../../../room/compositor'
 import type { CompositorDeAula } from '../../../studio/compositor'
 import type { Palco } from '../../../studio/usePalco'
 import { accaoDaTecla } from '../../../studio/tv/atalhos'
-import { RegistoDeFontes } from '../../../studio/tv/fontes'
+import { microfoneDoGrupo, RegistoDeFontes } from '../../../studio/tv/fontes'
 import { correrMacro, dbParaLinear, esperar, type Macro, MACROS_INICIAIS, macroDaTecla, type Passo, type ProgressoDaMacro, type ResultadoDoPasso, type Sobreposicao } from '../../../studio/tv/macros'
 import {
   auto,
@@ -48,6 +48,8 @@ export { ECRAS_TV } from '../../../studio/tv/ecras'
 export interface DispositivoDeVideo {
   deviceId: string
   nome: string
+  /** O grupo de hardware: é ele que casa uma câmara com o microfone dela. */
+  groupId?: string
 }
 
 export interface PropsDaSessao {
@@ -89,9 +91,9 @@ export function useSessaoTv(p: PropsDaSessao) {
   const procurarDispositivos = useCallback(async () => {
     const d = await listDevices().catch(() => null)
     if (!d) return
-    setCamaras(d.cams.map((c, i) => ({ deviceId: c.deviceId, nome: c.label || t('tv.fontes.camaraN', { n: i + 1 }) })))
-    setMicrofones(d.mics.map((c, i) => ({ deviceId: c.deviceId, nome: c.label || t('tv.som.microfoneN', { n: i + 1 }) })))
-    setSaidas(d.speakers.map((x, i) => ({ deviceId: x.deviceId, nome: x.label || t('tv.som.saidaN', { n: i + 1 }) })))
+    setCamaras(d.cams.map((c, i) => ({ deviceId: c.deviceId, groupId: c.groupId, nome: c.label || t('tv.fontes.camaraN', { n: i + 1 }) })))
+    setMicrofones(d.mics.map((c, i) => ({ deviceId: c.deviceId, groupId: c.groupId, nome: c.label || t('tv.som.microfoneN', { n: i + 1 }) })))
+    setSaidas(d.speakers.map((x, i) => ({ deviceId: x.deviceId, groupId: x.groupId, nome: x.label || t('tv.som.saidaN', { n: i + 1 }) })))
   }, [t])
 
   useEffect(() => {
@@ -106,7 +108,7 @@ export function useSessaoTv(p: PropsDaSessao) {
     async (d: DispositivoDeVideo) => {
       setErroFonte('')
       try {
-        await registo.ligarCamara(d.deviceId, d.nome)
+        await registo.ligarCamara(d.deviceId, d.nome, d.groupId)
         // Com permissão dada, os nomes dos dispositivos passam a vir preenchidos.
         void procurarDispositivos()
       } catch (e) {
@@ -187,6 +189,22 @@ export function useSessaoTv(p: PropsDaSessao) {
     return () => cancelAnimationFrame(raf)
   }, [emCurso])
 
+  /**
+   * O microfone QUE PERTENCE a esta fonte, pelo grupo de hardware — ou `null`.
+   *
+   * Uma câmara entra sem som de propósito (`getUserMedia({audio:true})` com um
+   * `deviceId` de vídeo devolve o microfone POR OMISSÃO do sistema, não o da
+   * câmara: seriam dois dispositivos diferentes a fingir ser um). O que casa os
+   * dois é o `groupId`. Até 2026-10-14 não havia forma de saber qual dos
+   * microfones da lista era o da capturadora HDMI que acabou de ser ligada.
+   */
+  const microfoneDaFonte = useCallback(
+    (id: string): DispositivoDeVideo | null => {
+      return microfoneDoGrupo(microfones, registo.obter(id)?.groupId)
+    },
+    [registo, microfones],
+  )
+
   const planoDoNumero = useCallback((n: number): Plano | null => {
     const id = registo.idDoNumero(n)
     return id ? planoDe(id) : null
@@ -261,6 +279,17 @@ export function useSessaoTv(p: PropsDaSessao) {
     // da cena a decorrer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t])
+
+  /** Leva o som de uma fonte à mesa — abrindo-a, se ainda não estiver aberta. */
+  const levarSomDaFonteAMesa = useCallback(
+    async (id: string): Promise<void> => {
+      const mic = microfoneDaFonte(id)
+      if (!mic) return
+      const mesa = somRef.current ?? (await ligarSom())
+      await mesa?.adicionarMicrofone(mic.deviceId, mic.nome).catch(() => undefined)
+    },
+    [microfoneDaFonte, ligarSom],
+  )
 
   useEffect(
     () => () => {
@@ -507,6 +536,8 @@ export function useSessaoTv(p: PropsDaSessao) {
     saidas,
     procurarDispositivos,
     ligarCamara,
+    microfoneDaFonte,
+    levarSomDaFonteAMesa,
     erroFonte,
     mesa,
     mesaRef,

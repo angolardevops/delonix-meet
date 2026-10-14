@@ -357,6 +357,7 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
               </span>
             </div>
           )}
+          {f.tipo === 'camara' && <SomDaCamara s={s} id={id} />}
           {!local && f.tipo === 'participante' && (
             <div className="tv-kv">
               <span>{t('tv.fontes.estadoTelefone')}</span>
@@ -375,6 +376,38 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
         </div>
       </Cartao>
     </>
+  )
+}
+
+/**
+ * O som DESTA câmara: a linha que faltava entre as Fontes e a mesa de som.
+ *
+ * Uma capturadora HDMI, uma webcam com microfone ou uma mesa de som ligada por
+ * USB expõem duas entradas com o mesmo `groupId` — uma de imagem e uma de som.
+ * A imagem entrava pelas Fontes e o som ficava para trás: a mesa listava todos
+ * os microfones do sistema sem dizer qual era o daquela câmara.
+ *
+ * Leva-se à mesa por um clique, não sozinho: abrir um microfone é um pedido ao
+ * browser e é som que passa a ir ao ar.
+ */
+function SomDaCamara({ s, id }: { s: PropsDoEcra['s']; id: string }) {
+  const { t } = useTranslation()
+  const mic = s.microfoneDaFonte(id)
+  if (!mic) return null
+  const naMesa = !!s.som?.lista().some((c) => c.id === `mic:${mic.deviceId || 'omissao'}`)
+  return (
+    <div className="tv-kv">
+      <span>{t('tv.fontes.somDaCamara')}</span>
+      {naMesa ? (
+        <span className="tv-ok" data-tv="som-da-camara-na-mesa">
+          {t('tv.fontes.somNaMesa')}
+        </span>
+      ) : (
+        <BotaoTv mini data-tv="som-da-camara" onClick={() => void s.levarSomDaFonteAMesa(id)}>
+          {t('tv.fontes.levarSomAMesa')}
+        </BotaoTv>
+      )}
+    </div>
   )
 }
 
