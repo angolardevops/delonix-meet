@@ -647,6 +647,16 @@ export default {
     transcricaoServidor: 'Transcription sur le serveur',
     transcricaoServidorDica: "Plus précise : l'audio va uniquement au serveur de l'organisation.",
   },
+  dobragem: {
+    'titulo': 'Doublage en direct',
+    'ouvir': 'Écouter doublé en',
+    'original': 'Original (sans doublage)',
+    'dica': 'Voix de synthèse, avec quelques secondes de retard. Le choix n’appartient qu’à vous.',
+    'crachaSintetica': 'Vous entendez une voix de synthèse, pas la personne. Elle arrive avec quelques secondes de retard.',
+    'lingua_pt-PT': 'Portugais (Portugal)',
+    'lingua_en-US': 'Anglais (États-Unis)',
+    'lingua_fr-FR': 'Français (France)',
+  },
   notas: {
     explicacao: "Transcription partagée : quand l'hôte l'active, chaque participant transcrit son propre micro.",
     aTuaFalaCaptada: 'Transcription activée par {{nome}} : vos paroles sont transcrites.',

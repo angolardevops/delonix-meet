@@ -73,6 +73,24 @@ pub enum ClientMsg {
     Hand {
         raised: bool,
     },
+    /// Que língua de DOBRAGEM este cliente quer ouvir (`None` = só o original).
+    ///
+    /// É por ouvinte, não por sala: na mesma sala uma pessoa ouve o inglês,
+    /// outra o francês e a maioria não ouve dobragem nenhuma. Quem escolhe uma
+    /// língua baixa o original no seu lado — por isso o servidor nunca
+    /// substitui uma frase por outra coisa quando a tradução falha (ADR-0030).
+    DubListen {
+        lang: Option<String>,
+    },
+    /// O ANFITRIÃO liga ou desliga uma língua na sala.
+    ///
+    /// Distinta da `DubListen` de propósito: ligar uma língua gasta inferência
+    /// da organização (uma cadeia ASR→LLM→TTS), e é por isso uma decisão da
+    /// sessão — como a gravação. Escolher ouvi-la não gasta nada.
+    DubLanguage {
+        lang: String,
+        on: bool,
+    },
     /// De que participantes este cliente quer receber VÍDEO (a página da
     /// grelha visível). O SFU deixa de enviar o resto — ver
     /// `SfuState::set_video_interest`. Áudio nunca depende disto.
@@ -457,6 +475,17 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ServerMsg {
+    /// As línguas de DOBRAGEM activas na sala, e o porquê de uma recusa.
+    ///
+    /// Vai a toda a gente: quem ouve precisa de saber o que pode escolher, e
+    /// quem pediu uma língua que não entrou precisa de saber que não entrou.
+    /// `error` é o código do domínio (`dubbing.too_many_languages`,
+    /// `dubbing.no_voice`), que o cliente traduz.
+    DubLanguages {
+        langs: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     Joined {
         peer_id: Uuid,
         peers: Vec<PeerInfo>,
@@ -1717,6 +1746,17 @@ pub trait StageControl: Send + Sync {
     fn set_pinned(&self, room_id: Uuid, publisher: Uuid, on: bool);
 }
 
+/// A dobragem ao vivo, vista de quem trata as mensagens da sala (ADR-0030).
+///
+/// Existe pela mesma razão que o [`StageControl`]: o `signaling` não conhece o
+/// SFU, e esta é a costura por onde uma frase difundida chega à voz. **Não
+/// bloqueia** — o caminho do WebSocket é quente e a síntese não é.
+pub trait DubControl: Send + Sync {
+    /// Uma frase final, já limpa pelo DLP, para as línguas activas da sala.
+    /// Sem línguas activas não faz nada (que é o caso normal).
+    fn say(&self, room_id: Uuid, text: &str);
+}
+
 #[derive(Default)]
 pub struct SignalingHub {
     pub(crate) rooms: DashMap<Uuid, Room>,
@@ -1726,6 +1766,9 @@ pub struct SignalingHub {
     /// O SFU, para o palco valer de facto (R225). `OnceLock` pela mesma razão:
     /// quando se registam, o `Hub` já está dentro do `AppState`.
     pub stage: std::sync::OnceLock<Arc<dyn StageControl>>,
+    /// A dobragem ao vivo. `None` enquanto ninguém a registar — e ficar `None`
+    /// é o estado normal de uma instalação sem `TTS_URL`.
+    pub dub: std::sync::OnceLock<Arc<dyn DubControl>>,
     pub bus: Option<Arc<crate::pubsub::PubSubBus>>,
     /// Escrita do chat na base de dados, FORA do caminho quente (fila
     /// limitada consumida por uma tarefa própria). `None` em testes.
@@ -3576,6 +3619,13 @@ impl SignalingHub {
                 }
                 // Limpeza: PII (DLP) + máscara de palavrões antes de difundir.
                 let text = crate::dlp::clean_caption(&text);
+                // A DOBRAGEM diz esta frase nas línguas activas da sala
+                // (ADR-0030) — e di-la **já limpa**: o que o DLP mascarou na
+                // legenda fica mascarado na voz. É por isto que a dobragem
+                // entra aqui e não num ASR próprio.
+                if let Some(d) = self.dub.get() {
+                    d.say(room_id, &text);
+                }
                 let username = self
                     .username_of(room_id, peer_id)
                     .unwrap_or_else(|| "?".into());
@@ -3900,6 +3950,10 @@ impl SignalingHub {
             | ClientMsg::ServerRecord { .. }
             | ClientMsg::ScreenShare { .. }
             | ClientMsg::VideoInterest { .. }
+            // A dobragem também: mexe no SFU e na rede (tradução e síntese),
+            // logo trata-se na camada assíncrona, não aqui.
+            | ClientMsg::DubListen { .. }
+            | ClientMsg::DubLanguage { .. }
             | ClientMsg::BreakoutsBroadcast { .. }
             | ClientMsg::StudioTally { .. }
             | ClientMsg::StudioCommand { .. }
@@ -4573,6 +4627,59 @@ fn breakout_move_user(state: &Arc<AppState>, room_id: Uuid, name: &str, target_c
 }
 
 /// Fecha os grupos: devolve toda a gente à sala principal.
+/// O anfitrião liga ou desliga uma língua de dobragem na sala (ADR-0030).
+///
+/// Difunde o resultado a toda a gente — **incluindo a recusa**. Quem pediu a
+/// quarta língua tem de saber que não entrou e porquê; o silêncio aqui seria a
+/// avaria que o ADR nomeia como a pior desta frente (ligar e nunca se ouvir).
+async fn dub_language(state: &Arc<AppState>, room_id: Uuid, lang: &str, on: bool) {
+    if !on {
+        state.dub.desliga(room_id, lang);
+        state.sfu.end_dub(room_id, lang).await;
+        anuncia_dobragem(state, room_id, None);
+        return;
+    }
+    // AQUECER o modelo antes da primeira frase, e não por elegância: medido no
+    // laboratório a 2026-10-14, a primeira tradução com o modelo FRIO levou
+    // **19 segundos** (carregamento), contra 0,48 s de mediana depois dele
+    // quente. Sem isto, a primeira frase de cada sala chegava vinte segundos
+    // atrasada — que não é «dobragem com atraso», é uma avaria com outro nome.
+    //
+    // Despachado: ligar a língua não espera pelo modelo. A pista nasce já, e
+    // se a primeira frase ainda apanhar o modelo a carregar, é UMA frase.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _ = crate::ai::translate(&state, "ok", "en-US").await;
+        });
+    }
+
+    // A língua de ORIGEM da sala. Por ora é a da instalação — quando houver
+    // uma escolha por sala, é aqui que ela entra, e nada mais muda.
+    let origem = "pt-PT";
+    let sfu = state.sfu.clone();
+    let erro = state
+        .dub
+        .liga(state.clone(), room_id, origem, lang, |id, lang| async move {
+            sfu.publish_dub_audio(room_id, id, &lang).await
+        })
+        .await
+        .err();
+    anuncia_dobragem(state, room_id, erro.as_ref().map(|e| e.code));
+}
+
+/// Diz à sala que línguas estão activas (e, se houve recusa, com que código).
+fn anuncia_dobragem(state: &Arc<AppState>, room_id: Uuid, erro: Option<&'static str>) {
+    let langs = state.dub.activas(room_id);
+    state.hub.broadcast_all(
+        room_id,
+        ServerMsg::DubLanguages {
+            langs,
+            error: erro.map(|c| c.to_string()),
+        },
+    );
+}
+
 fn breakouts_close(state: &Arc<AppState>, room_id: Uuid) {
     if let Some((_, set)) = state.breakouts.remove(&room_id) {
         for c in &set.children {
@@ -5112,6 +5219,15 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                 }
                 Ok(ClientMsg::BreakoutsClose) if is_host => {
                     breakouts_close(&state, room_id);
+                }
+                Ok(ClientMsg::DubListen { lang }) if sfu_mode => {
+                    // Quem OUVE escolhe sozinho — não precisa de ser anfitrião.
+                    // Pedir uma língua que a sala não tem ligada não é erro:
+                    // simplesmente não há pista, e o cliente fica no original.
+                    state.sfu.set_dub_language(room_id, peer_id, lang).await;
+                }
+                Ok(ClientMsg::DubLanguage { lang, on }) if sfu_mode && is_host => {
+                    dub_language(&state, room_id, &lang, on).await;
                 }
                 Ok(ClientMsg::VideoInterest { peers, quality }) if sfu_mode => {
                     // Limite defensivo: o cliente não define quantas
@@ -7480,6 +7596,70 @@ mod b1_sala_tests {
         fn set_pinned(&self, _room_id: Uuid, publisher: Uuid, on: bool) {
             self.0.lock().unwrap().push((publisher, on));
         }
+    }
+
+    /// Grava as frases que a dobragem recebeu (ADR-0030).
+    #[derive(Default)]
+    struct DobragemFalsa(std::sync::Mutex<Vec<String>>);
+
+    impl DubControl for DobragemFalsa {
+        fn say(&self, _room_id: Uuid, text: &str) {
+            self.0.lock().unwrap().push(text.to_string());
+        }
+    }
+
+    /// A frase final chega à dobragem **já limpa pelo DLP** — e é essa a razão
+    /// de a dobragem entrar aqui e não num ASR próprio: o que a legenda
+    /// mascarou fica mascarado na voz.
+    #[tokio::test]
+    async fn a_dobragem_recebe_a_frase_ja_limpa_pelo_dlp() {
+        let mut s = sala();
+        let dob = Arc::new(DobragemFalsa::default());
+        let _ = s.hub.dub.set(dob.clone() as Arc<dyn DubControl>);
+
+        // Um número de cartão no meio da frase: o DLP mascara-o na legenda.
+        let crua = "paga no cartão 4111 1111 1111 1111 por favor";
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::Transcript { text: crua.into() },
+            None,
+        );
+
+        let ditas = dob.0.lock().unwrap().clone();
+        assert_eq!(ditas.len(), 1, "a frase final tem de chegar à dobragem");
+        assert_eq!(
+            ditas[0],
+            crate::dlp::clean_caption(crua),
+            "a dobragem recebe o MESMO texto que a legenda — limpo"
+        );
+        assert!(
+            !ditas[0].contains("4111 1111 1111 1111"),
+            "o número não pode sobreviver até à voz: {}",
+            ditas[0]
+        );
+    }
+
+    /// Sem dobragem registada (o caso normal: sem `TTS_URL`), o caminho da
+    /// legenda não muda nada — nem sequer tenta.
+    #[tokio::test]
+    async fn sem_dobragem_registada_a_legenda_segue_igual() {
+        let mut s = sala();
+        assert!(s.hub.dub.get().is_none());
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::Transcript {
+                text: "bom dia".into(),
+            },
+            None,
+        );
+        // A difusão continua a acontecer — é o que esta sala toda prova.
+        let vistas = recolher(&mut s.rx_a);
+        assert!(
+            vistas.iter().any(|m| matches!(m, ServerMsg::Transcript { text, .. } if text == "bom dia")),
+            "a legenda tem de continuar a chegar aos outros"
+        );
     }
 
     fn chat(text: &str, reply_to: Option<Uuid>, client_id: Option<&str>) -> ClientMsg {

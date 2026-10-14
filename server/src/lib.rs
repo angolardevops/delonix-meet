@@ -20,6 +20,7 @@ mod diagrams;
 mod dial_outs;
 mod directory;
 mod dlp;
+mod dubbing;
 mod domain_verify;
 mod email_verification;
 mod error;
@@ -213,6 +214,9 @@ pub struct AppState {
     pub db: sqlx::PgPool,
     pub hub: SignalingHub,
     pub sfu: Arc<sfu::SfuState>,
+    /// As línguas de dobragem activas por sala (ADR-0030). Vazio é o estado
+    /// normal: sem `TTS_URL` nunca se liga nenhuma.
+    pub dub: Arc<dubbing::Registo>,
     /// Emissões em directo a decorrer neste pod (ADR-0003).
     pub directos: Arc<broadcast::Registo>,
     /// Estúdio de TV: fontes, tally e comandos das salas deste pod (ADR-0014).
@@ -1734,6 +1738,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         directos: Arc::new(broadcast::Registo::default()),
         studio: studio_realtime::StudioHub::default(),
         studio_pairing_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        dub: Arc::new(dubbing::Registo::default()),
         sfu: Arc::new(sfu::SfuState::new(
             sfu::IceConfig {
                 external_ip: config.sfu_external_ip.clone(),
@@ -2048,6 +2053,24 @@ pub async fn run() {
             .hub
             .stage
             .set(Arc::new(PalcoNoSfu(state.sfu.clone())) as Arc<dyn signaling::StageControl>);
+    }
+
+    // A dobragem ao vivo (ADR-0030): a frase final que a sala já difundiu
+    // chega à voz por aqui. Sem `TTS_URL` o registo fica sempre vazio e isto
+    // não faz nada — é a mesma forma fail-closed do resto da IA.
+    {
+        struct DobragemNoRegisto(Arc<AppState>);
+        impl signaling::DubControl for DobragemNoRegisto {
+            fn say(&self, room_id: uuid::Uuid, text: &str) {
+                // Não bloqueia: quem chama está a tratar uma mensagem do
+                // WebSocket, e a tradução e a síntese são pedidos de rede.
+                self.0.dub.diz(self.0.clone(), room_id, text);
+            }
+        }
+        let _ = state
+            .hub
+            .dub
+            .set(Arc::new(DobragemNoRegisto(state.clone())) as Arc<dyn signaling::DubControl>);
     }
 
     // Ponte telefone↔sala (ADR-0010): o UA SIP que atende a segunda perna que

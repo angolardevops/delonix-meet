@@ -4,8 +4,7 @@ Um pedido, uma frase, uma onda PCM. Não guarda nada, não sai da infraestrutura
 
 Protocolo (HTTP):
   · `POST /synthesize` {"text": "...", "lang": "pt-PT"} → `audio/wav`
-    (PCM 16-bit mono, à taxa nativa da voz — o consumidor reamostra e
-    codifica Opus, que é o que o SFU já sabe fazer);
+    (PCM 16-bit mono a **48 kHz**);
   · `GET /health` → a voz carregada, a versão do motor e a licença.
 
 **Esta imagem é GPL-3.0-or-later** e vive sozinha por isso — ver `LICENCAS.md`,
@@ -14,6 +13,9 @@ que também fixa a voz por revisão e por SHA-256.
 import io
 import os
 import wave
+
+import numpy as np
+import soxr
 
 import jwt
 from fastapi import FastAPI, Header, HTTPException
@@ -39,6 +41,13 @@ VOZES = {
 # um pedido gigante só pode vir de um erro ou de um abuso, e em qualquer dos
 # casos segura a fila de toda a gente.
 MAX_CHARS = 1_000
+
+# A taxa de SAÍDA é 48 kHz, e não a nativa da voz (22 050 Hz), porque o Opus só
+# aceita 8/12/16/24/48 kHz — 22 050 não é uma delas. A reamostragem fica AQUI, e
+# não no Rust, por duas razões: é onde o áudio já está em memória, e o `soxr`
+# faz um trabalho melhor do que uma interpolação linear escrita à mão (que em
+# fala se ouve como um sibilo nos «s»).
+TAXA_SAIDA = 48_000
 
 app = FastAPI(title="Delonix TTS", docs_url=None, redoc_url=None)
 _vozes_carregadas = {}
@@ -99,13 +108,25 @@ def synthesize(p: Pedido, authorization: str | None = Header(default=None)):
         raise HTTPException(status_code=413, detail="tts.too_long")
 
     voz = _voz(VOZES[p.lang])
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
+    bruto = io.BytesIO()
+    with wave.open(bruto, "wb") as w:
         voz.synthesize_wav(texto, w)
-    return _wav(buf.getvalue())
 
+    bruto.seek(0)
+    with wave.open(bruto) as w:
+        taxa = w.getframerate()
+        amostras = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
 
-def _wav(dados: bytes):
+    if taxa != TAXA_SAIDA:
+        amostras = soxr.resample(amostras, taxa, TAXA_SAIDA, quality="HQ").astype(np.int16)
+
+    saida = io.BytesIO()
+    with wave.open(saida, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(TAXA_SAIDA)
+        w.writeframes(amostras.tobytes())
+
     from fastapi.responses import Response
 
-    return Response(content=dados, media_type="audio/wav")
+    return Response(content=saida.getvalue(), media_type="audio/wav")

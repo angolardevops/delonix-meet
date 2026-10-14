@@ -13,11 +13,20 @@ const CC_LANGS = ['', 'pt', 'en', 'fr', 'es', 'de'] as const
 export function SettingsPanel({
   media,
   transcription,
+  dobragem,
   localVideo,
   children,
 }: {
   media: LocalMedia
   transcription: Transcription
+  /** A dobragem ao vivo (ADR-0030). Ausente = a sala não tem nenhuma ligada. */
+  dobragem?: {
+    /** Línguas que o ANFITRIÃO ligou nesta sala. */
+    activas: string[]
+    /** A que este dispositivo está a ouvir (`''` = só o original). */
+    ouvir: string
+    setOuvir: (lang: string) => void
+  }
   localVideo: HTMLVideoElement | null
   /** Secções extra no fim (nitidez e palco imersivo — `room/enhance`). */
   children?: ReactNode
@@ -172,6 +181,38 @@ export function SettingsPanel({
           onChange={(e) => transcription.setServerAsr(e.target.checked)}
         />
       </Bloco>
+
+      {/* A DOBRAGEM só aparece quando a sala tem alguma língua ligada: um
+          selector vazio prometeria uma coisa que não está lá. */}
+      {dobragem && dobragem.activas.length > 0 && (
+        <Bloco icon="captions" titulo={t('room.dobragem.titulo')}>
+          <Field
+            label={t('room.dobragem.ouvir')}
+            htmlFor="rm-set-dub"
+            hint={t('room.dobragem.dica')}
+          >
+            <Select
+              id="rm-set-dub"
+              value={dobragem.ouvir}
+              onChange={(e) => dobragem.setOuvir(e.target.value)}
+            >
+              <option value="">{t('room.dobragem.original')}</option>
+              {dobragem.activas.map((l) => (
+                <option key={l} value={l}>
+                  {/* O ROTULO diz sempre o país — «Português (Portugal)»,
+                      nunca «Português» sozinho. Num produto angolano,
+                      «Português» sem qualificação lê-se como o daqui, e a voz
+                      não é daqui (ADR-0030). */}
+                  {t(`room.dobragem.lingua_${l}`, { defaultValue: l })}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {dobragem.ouvir !== '' && (
+            <p className="dx-muted dx-small">{t('room.dobragem.crachaSintetica')}</p>
+          )}
+        </Bloco>
+      )}
       {children}
     </div>
   )

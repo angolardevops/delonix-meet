@@ -89,6 +89,29 @@ e é aí que vale a pena trabalhar se um dia incomodar; e o tecto de três líng
 (§Decisões) **não existe por causa da síntese** — existe por causa das três
 cadeias ASR→LLM que correm atrás dela.
 
+### A cadeia inteira, medida no laboratório (2026-10-14)
+
+Com os serviços a sério — Ollama `qwen2.5:1.5b` e o `tts-server` com o
+`pt_PT-tugão` —, numa máquina de desenvolvimento em CPU e com o anfitrião a
+`load average` 48:
+
+| Etapa | Frio | Quente |
+|---|---:|---:|
+| tradução (LLM local) | **19,03 s** | 0,26 – 1,31 s (mediana **0,48 s**) |
+| síntese (pelo HTTP do serviço) | 2,19 s | 0,09 – 1,53 s |
+
+**O achado que mudou código: 19 segundos na primeira frase.** O modelo frio
+leva-os a carregar, e sem remédio a primeira frase de cada sala chegaria vinte
+segundos atrasada — que não é «dobragem com atraso», é uma avaria com outro
+nome. Ligar uma língua passa a **aquecer o modelo** com um pedido despachado
+(`dub_language`), para que a primeira frase a sério já o apanhe quente.
+
+O que a cadeia acrescenta, quente, ao tempo de esperar que a frase acabe:
+**meio a três segundos**. É isso, e não outra coisa, que o produto promete.
+
+*Não medido:* com GPU (ADR-0024), com as três línguas em paralelo, e numa
+máquina sem mais nada a correr.
+
 ### 2. Uma pista por LÍNGUA, nunca por ouvinte
 
 O servidor publica **um publicador sintético por língua activa** na sala

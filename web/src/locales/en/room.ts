@@ -647,6 +647,16 @@ export default {
     transcricaoServidor: 'Server transcription',
     transcricaoServidorDica: "More accurate: audio goes only to the organisation's server.",
   },
+  dobragem: {
+    'titulo': 'Live dubbing',
+    'ouvir': 'Listen dubbed in',
+    'original': 'Original (no dubbing)',
+    'dica': 'A synthetic voice, a few seconds behind. The choice is yours alone.',
+    'crachaSintetica': 'You are hearing a synthetic voice, not the person. It arrives a few seconds late.',
+    'lingua_pt-PT': 'Portuguese (Portugal)',
+    'lingua_en-US': 'English (US)',
+    'lingua_fr-FR': 'French (France)',
+  },
   notas: {
     explicacao: 'Shared transcription: when the host turns it on, each participant transcribes their own microphone.',
     aTuaFalaCaptada: 'Transcription turned on by {{nome}}: your speech is being transcribed.',
