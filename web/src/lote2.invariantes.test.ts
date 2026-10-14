@@ -362,6 +362,12 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     const soltos: string[] = []
     for (const f of listarTsx('web/src')) {
       for (const l of read(f).split('\n')) {
+        // Despe `//` E os comentários de BLOCO: uma linha de `/** … */` com
+        // crases — `` (`GET /api/orgs/{id}/…`) `` — era apanhada como prosa
+        // solta. Um comentário não é texto de interface, e um portão que
+        // obriga a escrever comentários piores não protege nada.
+        const t = l.trim()
+        if (t.startsWith('*') || t.startsWith('/*')) continue
         const semComentario = l.replace(/\/\/.*$/, '')
         for (const m of semComentario.matchAll(/`([^`]{4,300})`/g)) {
           const prosa = m[1].replace(/\$\{[^{}]*\}/g, '').replace(/\s+/g, ' ').trim()
