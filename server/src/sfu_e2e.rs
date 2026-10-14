@@ -707,6 +707,137 @@ impl TestClient {
     }
 }
 
+/// **Duas pessoas, duas línguas** — a prova que o ADR-0030 pede, com WebRTC a
+/// sério: a pista de dobragem chega a quem a pediu e **não chega a quem não a
+/// pediu**.
+///
+/// É o teste que nenhum unitário substitui. Os unitários provam a tabela de
+/// verdade do filtro; este prova que o filtro está mesmo no caminho do RTP —
+/// que foi exactamente o que faltou à descoberta do OAuth (#333).
+///
+/// A sala tem três: A fala, B pediu inglês, C não pediu nada.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dobragem_chega_a_quem_a_pediu_e_nao_a_quem_nao_pediu() {
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    // Os três publicam microfone, como na sala a sério: mesmo calado, o
+    // browser publica a track. Um peer que nunca oferece também nunca negocia
+    // — e o `reevaluate_peer` sai cedo sem SDP remoto, que foi exactamente o
+    // que esta prova mostrou à primeira tentativa (`ice=New, tracks=[]`).
+    let a = TestClient::join(&sfu, room).await;
+    a.publish(OPUS, "a-audio").await;
+    let b = TestClient::join(&sfu, room).await;
+    b.publish(OPUS, "b-audio").await;
+    let c = TestClient::join(&sfu, room).await;
+    c.publish(OPUS, "c-audio").await;
+
+    // O anfitrião ligou o inglês: nasce um publicador SINTÉTICO, um por língua
+    // e não por ouvinte.
+    let lang = "en-US";
+    let dub = crate::dubbing::dub_id(room, lang);
+    let tx = sfu.publish_dub_audio(room, dub, lang).await;
+
+    // B escolhe ouvir inglês. C não escolhe nada — é a maioria das pessoas.
+    sfu.set_dub_language(room, b.id, Some(lang.into())).await;
+
+    // A voz a sair: Opus de 20 ms, como o `dubbing::arranca` produz.
+    let bombeia = tokio::spawn(async move {
+        let mut enc = opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
+        let mut saida = vec![0u8; 1500];
+        let (mut seq, mut ts) = (0u16, 0u32);
+        for i in 0..500u32 {
+            let pcm: Vec<f32> = (0..960)
+                .map(|k| {
+                    let n = (i * 960 + k) as f32;
+                    0.3 * (2.0 * std::f32::consts::PI * 440.0 * n / 48_000.0).sin()
+                })
+                .collect();
+            let n = enc.encode(&pcm, 960, &mut saida).unwrap();
+            let packet = webrtc::rtp::packet::Packet {
+                header: webrtc::rtp::header::Header {
+                    version: 2,
+                    marker: seq == 0,
+                    payload_type: 111,
+                    sequence_number: seq,
+                    timestamp: ts,
+                    ssrc: 0x0D0B_0000,
+                    ..Default::default()
+                },
+                payload: bytes::Bytes::copy_from_slice(&saida[..n]),
+            };
+            seq = seq.wrapping_add(1);
+            ts = ts.wrapping_add(960);
+            if tx
+                .send(crate::sfu::BridgePacket { packet, level: 40 })
+                .await
+                .is_err()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+
+    // O stream da dobragem tem nome próprio — é assim que o cliente a liga a um
+    // `<audio>` só dela, e é por ele que este teste a reconhece.
+    let fluxo = format!("dub-{lang}");
+
+    eventually_com_diagnostico(
+        "B recebe a pista de dobragem que pediu",
+        prazo(30),
+        || {
+            let b = b.clone();
+            let fluxo = fluxo.clone();
+            async move { b.streams_seen().await.iter().any(|(s, _)| *s == fluxo) }
+        },
+        || format!("B[{}] · C[{}]", b.retrato(), c.retrato()),
+    )
+    .await;
+
+    eventually("RTP real da dobragem a chegar a B", prazo(30), || {
+        let b = b.clone();
+        let fluxo = fluxo.clone();
+        async move { b.rtp_seen.lock().await.get(&fluxo).copied().unwrap_or(0) > 0 }
+    })
+    .await;
+
+    // E o áudio REAL de A continua a chegar: a dobragem acrescenta, não
+    // substitui.
+    eventually("o áudio de A chega a C", prazo(30), || {
+        let c = c.clone();
+        let a_id = a.id.to_string();
+        async move { c.rtp_seen.lock().await.get(&a_id).copied().unwrap_or(0) > 0 }
+    })
+    .await;
+
+    // **A asserção que justifica esta frente inteira.** C nunca pediu inglês:
+    // não pode ter visto a pista nem recebido um pacote dela. Sem o filtro do
+    // `reevaluate_peer`, toda a sala ouviria uma segunda voz por cima do
+    // orador — e ninguém saberia porquê.
+    let c_viu = c
+        .streams_seen()
+        .await
+        .iter()
+        .filter(|(s, _)| *s == fluxo)
+        .count();
+    let c_rtp = c.rtp_seen.lock().await.get(&fluxo).copied().unwrap_or(0);
+    let b_rtp = b.rtp_seen.lock().await.get(&fluxo).copied().unwrap_or(0);
+    eprintln!(
+        "dobragem: B recebeu {b_rtp} pacotes de «{fluxo}»; C viu {c_viu} tracks e {c_rtp} pacotes"
+    );
+    assert!(b_rtp > 0, "B pediu a dobragem e não a recebeu");
+    assert_eq!(c_viu, 0, "a pista VAZOU para quem não a pediu");
+    assert_eq!(c_rtp, 0, "chegou RTP de dobragem a quem não a pediu");
+
+    // Desligar a língua retira a pista.
+    sfu.end_dub(room, lang).await;
+    bombeia.abort();
+    sfu.remove_peer(room, a.id).await;
+    sfu.remove_peer(room, b.id).await;
+    sfu.remove_peer(room, c.id).await;
+}
+
 /// Caminho feliz: dois participantes, media a fluir nos DOIS sentidos.
 ///
 /// Cobre a cadeia toda — oferta do cliente, resposta do SFU, subscrição,

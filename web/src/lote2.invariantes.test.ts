@@ -518,8 +518,13 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
         const abre = t.match(/^([A-Za-z0-9_]+):\s*\{$/)
         if (abre) { pilha.push(abre[1]); continue }
         if (t.startsWith('}')) { pilha.pop(); continue }
-        const par = t.match(/^([A-Za-z0-9_]+):\s*(['"])((?:\\.|(?!\2).)*)\2\s*,?$/)
-        if (par) out[[...pilha, par[1]].join('.')] = par[3]
+        // A chave pode vir ENTRE ASPAS — e tem de vir, quando leva um hífen
+        // (`'lingua_pt-PT'`). Sem este ramo, uma chave aspada era invisível
+        // para os dois invariantes deste bloco: a paridade não a comparava
+        // entre línguas e o teste do `t()` não a encontrava. Foi assim que
+        // cinco chaves da dobragem passaram ao lado (2026-10-14).
+        const par = t.match(/^(?:([A-Za-z0-9_]+)|'([^']+)'|"([^"]+)"):\s*(['"])((?:\\.|(?!\4).)*)\4\s*,?$/)
+        if (par) out[[...pilha, par[1] ?? par[2] ?? par[3]].join('.')] = par[5]
       }
     }
     return out

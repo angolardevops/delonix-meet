@@ -3036,6 +3036,126 @@ pub(crate) async fn reactivate_member_tx(
 
 /// Junta (ou devolve) alguém à org por convite, com papel, departamento e
 /// lugares. Uma pertença arquivada é reactivada com o papel do convite.
+/// Uma linha de membro na forma que o SCIM publica: a conta mais o estado da
+/// pertença NESTA organização.
+///
+/// **Porque vive aqui e não no `scim.rs`:** é `org_members`, e a pertença
+/// decide-se em `org.rs` (regra 1 do ADR-0004, que a catraca conta). O `scim.rs`
+/// transforma isto no recurso da norma; quem decide quem é membro é este módulo.
+#[derive(sqlx::FromRow)]
+pub(crate) struct ScimMemberRow {
+    pub id: Uuid,
+    pub email: String,
+    pub username: String,
+    pub scim_external_id: Option<String>,
+    /// `archived_at IS NULL` na pertença desta organização.
+    pub active: bool,
+}
+
+const SCIM_MEMBER_COLUMNS: &str = "u.id, u.email, u.username, u.scim_external_id,
+                                   (m.archived_at IS NULL) AS active";
+
+/// Um membro desta organização, por id. `None` quando não é desta organização —
+/// é o que faz o SCIM responder 404 em vez de revelar que a conta existe.
+pub(crate) async fn scim_member(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<ScimMemberRow>, ApiError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
+           JOIN org_members m ON m.user_id = u.id
+          WHERE u.id = $1 AND m.org_id = $2"
+    ))
+    .bind(user_id)
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
+/// Os membros desta organização, ou só o de um email (o filtro que os
+/// provedores de SCIM mandam para reconciliar).
+pub(crate) async fn scim_members(
+    state: &AppState,
+    org_id: Uuid,
+    email: Option<&str>,
+    limite: i64,
+) -> Result<Vec<ScimMemberRow>, ApiError> {
+    Ok(match email {
+        Some(email) => {
+            sqlx::query_as(&format!(
+                "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
+               JOIN org_members m ON m.user_id = u.id
+              WHERE m.org_id = $1 AND u.email = $2"
+            ))
+            .bind(org_id)
+            .bind(email)
+            .fetch_all(&state.db)
+            .await?
+        }
+        None => {
+            sqlx::query_as(&format!(
+                "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
+               JOIN org_members m ON m.user_id = u.id
+              WHERE m.org_id = $1 ORDER BY u.email LIMIT $2"
+            ))
+            .bind(org_id)
+            .bind(limite)
+            .fetch_all(&state.db)
+            .await?
+        }
+    })
+}
+
+/// Readmite quem o PRÓPRIO directório tinha tirado.
+///
+/// **Porque não serve o `reactivate_member_tx`:** ele recusa de propósito uma
+/// saída de directório (`REACTIVATABLE` não tem `odoo_exit` nem `scim_exit`,
+/// ADR-0008 §7) — «uma saída dessas volta por convite ou pela sincronização,
+/// não por reactivar». O botão de um administrador não desfaz uma decisão do
+/// directório da empresa. **Isto é a sincronização**: a autoridade que arquivou
+/// é a que desarquiva.
+///
+/// Por isso só aceita o motivo DELA: um membro que um administrador suspendeu
+/// (`suspended`) não é revivido pelo directório às escondidas — devolve
+/// `member.not_reactivatable`, como devolveria ao contrário.
+///
+/// O tecto de lugares continua a valer: quem volta ocupa um lugar.
+pub(crate) async fn reactivate_from_directory_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    user_id: Uuid,
+    motivo_esperado: &str,
+) -> Result<bool, ApiError> {
+    let Some(cur) = member_state(&mut **tx, org_id, user_id).await? else {
+        return Err(DomainError::not_found("member.not_found").into());
+    };
+    if cur.archived_at.is_none() {
+        return Ok(false);
+    }
+    if cur.archived_reason.as_deref() != Some(motivo_esperado) {
+        return Err(DomainError::precondition(
+            "member.not_reactivatable",
+            "esta saída não foi feita pelo directório, por isso não é o directório que a desfaz",
+        )
+        .into());
+    }
+    let (used, limit) = seat_usage_tx(tx, org_id, true).await?;
+    let occupies = cur.system_key.as_deref() != Some("external_guest");
+    delonix_meet_domain::organization::seats::check_activation(used, i64::from(occupies), limit)?;
+    sqlx::query(
+        "UPDATE org_members SET archived_at = NULL, archived_by = NULL, archived_reason = NULL
+          WHERE org_id = $1 AND user_id = $2",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(map_member_write_error)?;
+    crate::approvals::invalidate_for(tx, org_id, user_id).await?;
+    Ok(true)
+}
+
 pub(crate) async fn activate_membership_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org_id: Uuid,
@@ -3755,6 +3875,103 @@ pub(crate) async fn apply_odoo_attributes(
 
 /// «Suspender ao sair do Odoo»: contas geridas por ESTA org, activas, que não
 /// estão na lista COMPLETA que o Odoo acabou de devolver. Nunca o último dono.
+/// Pode ESTA organização reclamar a conta deste email, e como?
+///
+/// **É a regra que a R142 ensinou, com uma diferença que importa.** O Odoo
+/// recusa qualquer conta que já exista — mesmo local — porque o
+/// `odoo_org_id` decide DEPOIS onde a password é validada: reclamar uma conta
+/// alheia era passar a autenticá-la num Odoo escolhido por quem reclamou
+/// (tomada de conta completa, ver `odoo_sso::upsert_member`).
+///
+/// O SCIM **não é autoridade de autenticação**: gere PERTENÇA. Por isso a
+/// regra aqui é outra, e mais útil sem deixar de ser segura:
+///
+/// - não existe conta → cria-se;
+/// - existe e **já é membro desta organização** (activo ou arquivado) → adopta-se;
+///   a organização já tinha autoridade sobre essa pertença, e marcar
+///   `scim_managed` não muda por onde a pessoa entra;
+/// - existe e **não é membro desta organização** → recusa-se. Saber o endereço
+///   de alguém não pode trazê-lo para dentro, seja ele de outra organização ou
+///   uma conta local que nunca pediu nada.
+pub(crate) enum EmailClaim {
+    /// Não existe conta com este email.
+    Nova,
+    /// Existe e já pertence a esta organização: adopta-se este id.
+    DestaOrg(Uuid),
+    /// Existe e não pertence a esta organização. Não se reclama.
+    DeFora,
+}
+
+pub(crate) async fn claim_for_org_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    email: &str,
+) -> Result<EmailClaim, ApiError> {
+    let email = email.trim().to_lowercase();
+    let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+        "SELECT u.id, m.org_id FROM users u
+           LEFT JOIN org_members m ON m.user_id = u.id AND m.org_id = $2
+          WHERE u.email = $1",
+    )
+    .bind(&email)
+    .bind(org_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(match row {
+        None => EmailClaim::Nova,
+        Some((id, Some(_))) => EmailClaim::DestaOrg(id),
+        Some((_, None)) => EmailClaim::DeFora,
+    })
+}
+
+/// Garante que existe uma conta com este email, dentro de uma transacção.
+///
+/// **É O HELPER CANÓNICO de «criar utilizador por email»** — a auditoria de
+/// 2026-09-16 mediu SEIS cópias desta regra, das quais só duas recusavam a
+/// conta de outra organização. Não se refazem as antigas aqui (é o refactor
+/// cego que a Regra 0 proíbe), mas **código novo chama isto**.
+///
+/// A password é inutilizável de propósito: uma conta criada por um directório
+/// entra por SSO, não por password. É o mesmo que o caminho JIT do OIDC faz.
+///
+/// Devolve o id e se foi criada agora.
+pub(crate) async fn ensure_user_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    email: &str,
+    display_name: &str,
+) -> Result<(Uuid, bool), ApiError> {
+    let email = email.trim().to_lowercase();
+    if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>("SELECT id FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_optional(&mut **tx)
+        .await?
+    {
+        return Ok((id, false));
+    }
+    let nome = Some(display_name.trim())
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&email)
+        .chars()
+        .take(80)
+        .collect::<String>();
+    let inutilizavel = crate::auth::hash_password(&Uuid::new_v4().to_string())?;
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(&email)
+    .bind(&nome)
+    .bind(&inutilizavel)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| match &e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            ApiError::Conflict("email ou username já em uso".into())
+        }
+        _ => e.into(),
+    })?;
+    Ok((id, true))
+}
+
 pub(crate) async fn suspend_odoo_leavers(
     state: &AppState,
     org_id: Uuid,
