@@ -34,6 +34,8 @@ def a_correr():
     return bool(adb("shell", "pidof", PACOTE))
 
 def ecra():
+    # Apaga antes: se o dump falhar (ecrã desligado, sistema ocupado) lê-se vazio, e não o ecrã de uma corrida antiga.
+    adb("shell", "rm", "-f", "/sdcard/u.xml")
     adb("shell", "uiautomator", "dump", "/sdcard/u.xml")
     return adb("shell", "cat", "/sdcard/u.xml")
 
@@ -196,6 +198,9 @@ def main():
         # 1. a app configura-se por intent de debug: provisiona, entra no Meet, regista o aparelho lab, arranca o motor
         adb("shell", "am", "force-stop", PACOTE); adb("shell", "pm", "clear", PACOTE)
         adb("shell", "pm", "grant", PACOTE, "android.permission.RECORD_AUDIO")
+        # O `pm clear` repõe as permissões: sem notificações e sem ecrã inteiro a chamada não abre a Activity.
+        adb("shell", "pm", "grant", PACOTE, "android.permission.POST_NOTIFICATIONS")
+        adb("shell", "appops", "set", PACOTE, "USE_FULL_SCREEN_INTENT", "allow")
         adb("shell", "am", "start", "-n", f"{PACOTE}/.MainActivity", "--es", "dlx_configurar_url", ticket, "--es", "dlx_email", email, "--es", "dlx_senha", senha, "--es", "dlx_push", "delonix")
         registou = esperar(lambda: aor in lab.fs("sofia status profile internal reg"), 90)
         aparelhos = lab.api("GET", f"/api/orgs/{lab.org['id']}/extensions/{ext['id']}/devices")
@@ -221,27 +226,41 @@ def main():
               "o processo morreu, o serviço renasceu e voltou a ligar-se ao delonix-push; o ramal está sem registo SIP")
         # 3. a chamada, feita por um telefone SIP de papel (TLS, SRTP, PCMU). Ecrã desligado: é o caso das chamadas.
         lab.fs("global_setvar delonix_push_wake_url="); lab.fs("global_setvar delonix_push_wait_secs=40")
-        adb("shell", "input", "keyevent", "KEYCODE_SLEEP"); time.sleep(1)
+        def acordado():
+            return "Awake" in adb("shell", "dumpsys", "power") .split("mWakefulness=")[-1][:12]
+        for _ in range(10):
+            adb("shell", "input", "keyevent", "KEYCODE_SLEEP"); time.sleep(1.5)
+            if not acordado():
+                break
+        print("   ecrã apagado antes da chamada:", "sim" if not acordado() else "NÃO (o ecrã inteiro só abre a Activity com o ecrã apagado)")
+        entregues0 = int(psql(a.push_db, "SELECT count(*) FROM messages WHERE state = 'delivered'") or 0)
         ch = Chamador(lab, chamador, senha_chamador, lab.dominio)
         t0 = time.time()
         th = threading.Thread(target=lambda: ch.ligar(numero, 70)); th.start()
         visto = []
         def a_toca():
-            adb("shell", "wm", "dismiss-keyguard")
-            x = ecra()
-            visto.append((round(time.time() - t0, 1), [t for t in re.findall(r'(?:text|content-desc)="([^"]*)"', x) if t][:6], [c for c, _ in ch.estados]))
+            reg0 = aor in lab.fs("sofia status profile internal reg")
+            if reg0:
+                adb("shell", "input", "keyevent", "KEYCODE_WAKEUP"); adb("shell", "wm", "dismiss-keyguard")
+            x = ecra() if reg0 else ""
+            reg = aor in lab.fs("sofia status profile internal reg")
+            topo = adb("shell", "dumpsys", "activity", "activities")
+            topo = next((l.strip()[:90] for l in topo.splitlines() if "topResumedActivity" in l), "?")
+            visto.append((round(time.time() - t0, 1), "registado" if reg else "sem registo", topo[-60:], [t for t in re.findall(r'(?:text|content-desc)="([^"]*)"', x) if t][:4], [c for c, _ in ch.estados]))
             return ha_texto(x, "Chamada a entrar") or ha_texto(x, "Atender")
         a_tocar = esperar(a_toca, 60, 1.5)
-        for v in visto[::3]:
-            print("   t=%ss ecrã=%s chamador=%s" % v)
         t_toca = time.time() - t0
+        for v in visto[::2]:
+            print("   t=%ss FS=%s topo=%s ecrã=%s chamador=%s" % v)
         entregues = psql(a.push_db, "SELECT count(*) FROM messages WHERE state = 'delivered'")
-        linha(entregues == "1", "o delonix-push entregou a mensagem à app e a app confirmou (ack)", f"entregues={entregues}")
+        linha(int(entregues or 0) - entregues0 == 1, "o delonix-push entregou a mensagem à app e a app confirmou (ack)", f"entregues nesta chamada={int(entregues or 0) - entregues0}")
         linha(a_correr() and bool(a_tocar), "a app acordou pelo push, registou-se por SIP e mostra «Chamada a entrar»", f"{t_toca:.1f}s" if a_tocar else "o ecrã nunca mostrou a chamada")
         if not a_tocar:
             textos = re.findall(r'(?:text|content-desc)="([^"]+)"', ecra())
             print("   ecrã:", [t for t in textos if t][:10])
             print("   estados vistos pelo chamador:", [c for c, _ in ch.estados])
+            log = adb("logcat", "-d", "-v", "time")
+            print("   logcat (app):", [l[:160] for l in log.splitlines() if PACOTE in l or "DelonixPush" in l or "linphone" in l.lower()][-12:])
             ch.desligar(); th.join(timeout=5); return
         linha(180 in [c for c, _ in ch.estados], "o chamador ouve «180 Ringing» enquanto a app toca", str([c for c, _ in ch.estados]))
         # 4. atende-se no ecrã

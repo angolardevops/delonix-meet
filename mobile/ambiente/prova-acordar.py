@@ -34,6 +34,8 @@ def a_correr():
     return bool(adb("shell", "pidof", PACOTE))
 
 def ecra():
+    # Apaga antes: se o dump falhar (ecrã desligado, sistema ocupado) lê-se vazio, e não o ecrã de uma corrida antiga.
+    adb("shell", "rm", "-f", "/sdcard/u.xml")
     adb("shell", "uiautomator", "dump", "/sdcard/u.xml")
     return adb("shell", "cat", "/sdcard/u.xml")
 
