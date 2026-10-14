@@ -29,6 +29,18 @@ LOCAL_PATH_VERSION=${LOCAL_PATH_VERSION:-v0.0.30}
 NODE="${CLUSTER_NAME}-control-plane"
 # Onde o host alcança o que o cluster publica.
 HOST_IP=127.0.0.1
+# LAN_IP=<ip desta máquina na rede local> expõe os RAMAIS a um softphone da
+# mesma rede, como o `make compose-up LAN_IP=…` já fazia. Sem ele, tudo fica em
+# loopback — que é o que se quer por omissão.
+#
+# PORQUE É UM NÚMERO PEQUENO DE PORTAS DE ÁUDIO: o `delonix net ingress publish`
+# aceita `hostPort:containerPort[/proto]` e mais nada — nem endereço de
+# anfitrião, nem GAMAS (ao contrário do compose, que faz `${LAN_IP}:5070:5070/udp`).
+# Cada porta é uma chamada. As 101 do compose seriam 101 chamadas a cada
+# arranque; 20 chegam para 10 chamadas em simultâneo, que é um laboratório.
+LAN_IP=${LAN_IP:-}
+RTP_BASE=${RTP_BASE:-20000}
+RTP_PORTS=${RTP_PORTS:-20}
 export PATH="$PWD/.tools/bin:$PATH"
 mkdir -p .dev
 export KUBECONFIG="$PWD/.dev/cluster-${CLUSTER_NAME}.kubeconfig"
@@ -143,6 +155,32 @@ up)
   fi
   [ -n "$TURN_PORT" ] && ok "TURN publicado em ${HOST_IP}:${TURN_PORT}/udp"
 
+  # ---- RAMAIS na rede local (LAN_IP) ----
+  # O telefone não resolve `meet.ngolacloud.local` (mDNS) nem alcança o
+  # loopback desta máquina: sem isto, o cluster instala a voz toda e nenhum
+  # softphone se consegue registar nele.
+  if [ -n "$LAN_IP" ]; then
+    passo "ramais na rede local (${LAN_IP})"
+    falhadas=0
+    publica 5070:5070/udp || { falhadas=$((falhadas + 1)); avisa "não consegui publicar 5070/udp — o softphone não se regista"; }
+    publica 5070:5070/tcp || { falhadas=$((falhadas + 1)); avisa "não consegui publicar 5070/tcp"; }
+    for i in $(seq 0 $((RTP_PORTS - 1))); do
+      publica "$((RTP_BASE + i)):$((RTP_BASE + i))/udp" || falhadas=$((falhadas + 1))
+    done
+    if [ "$falhadas" -gt 0 ]; then
+      avisa "${falhadas} de ${RTP_PORTS} portas de áudio não publicaram — chamadas a mais ficam sem som"
+    else
+      ok "SIP em 5070 (udp+tcp) e áudio em ${RTP_BASE}–$((RTP_BASE + RTP_PORTS - 1))/udp"
+    fi
+    # MEDIDO a 2026-10-07: o `delonix net ingress publish` liga em 127.0.0.1
+    # (slirp4netns), NÃO no endereço da LAN — tal como a 443 do ingress. Dizer
+    # «SIP em ${LAN_IP}:5070» seria mentira: o telefone não lá chega.
+    if ss -lunp 2>/dev/null | grep -qE "127\\.0\\.0\\.1:5070"; then
+      avisa "as portas ficaram em LOOPBACK (127.0.0.1), não em ${LAN_IP}: um softphone da rede NÃO se regista aqui"
+      avisa "para voz na rede local usa o compose (make compose-up LAN_IP=${LAN_IP}), que publica por endereço"
+    fi
+  fi
+
   passo "namespace, TLS e configuração (a partir do .env)"
   kubectl apply -f deploy/k8s/00-namespace.yaml >/dev/null
   kubectl -n "$NS" create secret tls delonix-tls-secret \
@@ -152,10 +190,10 @@ up)
     --from-literal=BIND_ADDR=0.0.0.0:8180 \
     --from-literal=TURN_HOST="${MEET_HOST}:${TURN_PORT:-3478}" \
     --from-literal=FORCE_TURN_RELAY=1 \
-    --from-literal=SFU_EXTERNAL_IP= \
+    --from-literal=SFU_EXTERNAL_IP="${LAN_IP}" \
     --from-literal=RECORDINGS_DIR=/var/lib/delonix/recordings \
     --from-literal=CORS_ORIGINS="https://${MEET_HOST}" \
-    --from-literal=VOICE_RAMAIS_PUBLIC_HOST="${MEET_HOST}" \
+    --from-literal=VOICE_RAMAIS_PUBLIC_HOST="${LAN_IP:-$MEET_HOST}" \
     --from-literal=VOICE_RAMAIS_PUBLIC_PORT=5070 \
     --from-literal=VOICE_RAMAIS_PUBLIC_TRANSPORT=udp \
     --from-literal=TELEPHONY_ESL_ADDR="freeswitch.${NS}.svc.cluster.local:8021" \

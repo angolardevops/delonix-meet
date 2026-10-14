@@ -854,8 +854,11 @@ voice-images: ## Imagens de voz para o cluster local: FreeSWITCH (importado) + P
 	@printf "$(G)  ✓ imagens de voz prontas$(Z)\n"
 
 .PHONY: cluster cluster-status cluster-reset-db cluster-down
-cluster: ## Stack completo num cluster local + contas de validação (demo@ngolacloud.ao) — https://$(MEET_HOST)
-	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) IMAGE_TAG=$(IMAGE_TAG) bash scripts/cluster.sh up
+# LAN_IP=<ip desta máquina na rede local> expõe os RAMAIS do cluster a um
+# softphone da mesma rede (make cluster LAN_IP=192.168.1.120), como já fazia o
+# `compose-up`. Sem ele, tudo fica em loopback — que é o que se quer por omissão.
+cluster: ## Stack completo num cluster local + contas de validação (demo@ngolacloud.ao) — https://$(MEET_HOST); LAN_IP=<ip> expõe os ramais à rede local
+	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) IMAGE_TAG=$(IMAGE_TAG) LAN_IP=$(LAN_IP) bash scripts/cluster.sh up
 cluster-status: ## Estado do cluster local: nós, pods, ingress e a prova de fumo
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh status
 cluster-reset-db: ## Apaga a base de dados do cluster local (depois: make cluster para a recriar)
