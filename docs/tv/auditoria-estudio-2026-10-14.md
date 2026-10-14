@@ -113,11 +113,18 @@ Existe mais do que parece: a sala do estúdio cria a sala com **sala de espera l
 convidados, «Pôr no palco», chat, perguntas e sondagens (`SalaDoEstudio.tsx:1-14,63`). Um convidado
 externo entra por código de sala e, com áudio, torna-se canal da mesa sozinho.
 
-Falta, por ordem: **bastidores** (um convidado admitido que ainda não está no ar, a ser ouvido e
-dirigido — `git grep -i bastidores|backstage` = 0), **intercomunicação** (falar com ele sem ir ao ar,
-TV6), **mix-minus por convidado** (ouvir o programa sem se ouvir a si; só a ponte telefónica o tem),
-**convite por ligação com papel** (hoje é o código de sala, o mesmo de uma reunião) e **tally para quem
-está remoto** (saber que está no ar).
+**Os BASTIDORES existem — retratado a 2026-10-14.** Escrevi que faltavam porque
+`git grep -i "bastidores|backstage"` deu 0. **A palavra é que não existe, a coisa existe:** um convidado
+admitido fica na sala fora do palco, e o botão «pré-escuta» (`SalaDoEstudio.tsx:355-364`) deixa o
+estúdio ouvi-lo sem ele ir ao ar. É a segunda vez neste documento que procurei por um NOME em vez de
+procurar pela função — a primeira foi o EST-02.
+
+Falta, por ordem: **intercomunicação** (falar com o convidado de bastidores sem a voz ir ao ar, TV6 —
+possível porque a voz do estúdio viaja por DOIS caminhos independentes: um `getUserMedia` próprio para
+a sala, em `useLigacaoDoEstudio.ts:63`, e o canal da mesa para o ar), **mix-minus por convidado** (ouvir
+o PROGRAMA — música, efeitos, ficheiros — sem se ouvir a si; só a ponte telefónica o tem, e fazê-lo a
+sério obriga a uma mistura por convidado no SFU), **convite por ligação com papel** (hoje é o código de
+sala, o mesmo de uma reunião) e **tally para quem está remoto** (saber que está no ar).
 
 ## 7. OBS: o que tem de melhor, e o que vale trazer
 
@@ -186,8 +193,9 @@ RFC-0001 e no ADR-0015, à espera de decisão.
   confirma-se versão a versão.
 - **Não se auditou** o editor (`studio/edit/`), as legendas, nem a estação de TV do servidor
   (`tv_channels.rs`, `tv_broadcasts.rs`) — essa está na auditoria de 2026-10-03 e no TV13.
-- **Um achado desta auditoria já foi retratado** no mesmo dia: o EST-02. A ausência media-se pelo nome
+- **Dois achados desta auditoria já foram retratados** no mesmo dia: o EST-02 e os bastidores do §6. A ausência media-se pelo nome
   do MÓDULO (`git grep net_guard` num ficheiro) e a chamada era por método — o guarda existia. Os
   restantes «= 0» deste documento (`createDelay`, `bufferedAmount`, `requestMIDI`, `soundboard`) foram
   medidos pelo nome da API que teria de aparecer, não pelo do módulo; valem mais por isso, mas a lição
-  é a mesma: **antes de agir sobre uma ausência, procura também o CHAMADOR.**
+  é a mesma: **antes de agir sobre uma ausência, procura também o CHAMADOR — e, quando o que se procura
+  é uma FUNÇÃO e não uma API, procura o que ela faria, não como se chamaria.**
