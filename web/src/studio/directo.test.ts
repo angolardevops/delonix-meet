@@ -111,7 +111,11 @@ describe('o fluxo composto é partilhado, não duplicado', () => {
     // A gravação e o directo precisam do mesmo. Duas montagens divergiriam à
     // primeira correcção feita só numa — e o áudio é onde isso doeria.
     expect(c()).toContain('async montarFluxo(')
-    expect(c().match(/createMediaStreamDestination\(\)/g)?.length).toBe(1)
+    // DOIS destinos, e só dois: o do fluxo composto (gravação e directo) e o
+    // do barramento de música, que existe para a mesa de som o levar como
+    // canal. Um terceiro seria uma segunda montagem a nascer.
+    expect(c().match(/createMediaStreamDestination\(\)/g)?.length).toBe(2)
+    expect(c()).toContain('this.destinoMedia ??= this.audioCtx.createMediaStreamDestination()')
   })
 
   it('e só se desmonta quando o ÚLTIMO consumidor larga', () => {

@@ -18,7 +18,7 @@ import type { Fonte } from '../../../room/compositor'
 import type { CompositorDeAula } from '../../../studio/compositor'
 import type { Palco } from '../../../studio/usePalco'
 import { accaoDaTecla } from '../../../studio/tv/atalhos'
-import { RegistoDeFontes } from '../../../studio/tv/fontes'
+import { microfoneDoGrupo, RegistoDeFontes } from '../../../studio/tv/fontes'
 import { correrMacro, dbParaLinear, esperar, type Macro, MACROS_INICIAIS, macroDaTecla, type Passo, type ProgressoDaMacro, type ResultadoDoPasso, type Sobreposicao } from '../../../studio/tv/macros'
 import {
   auto,
@@ -36,10 +36,25 @@ import {
   planoDe,
   porEmPrevia,
   quadroDaMesa,
+  tallyDe,
   type TipoDeTransicao,
 } from '../../../studio/tv/mesa'
 import { MesaDeSom } from '../../../studio/tv/mesaDeSom'
+import {
+  apagarEfeito,
+  DUCK_DB,
+  type Efeito,
+  efeitoDaTecla,
+  guardarEfeito,
+  haVoz,
+  idDoEfeito,
+  indiceDoEfeito,
+  lerEfeitos,
+  MAX_EFEITOS,
+} from '../../../studio/tv/efeitos'
+import type { AccaoFisica } from '../../../studio/tv/mesaFisica'
 import { CORTE_DE_VOZ_ZERO, decidirCorteDeVoz } from '../../../studio/tv/vozCorte'
+import { useMesaFisica } from './useMesaFisica'
 import { isTypingTarget } from '../../../ui/hotkeys'
 
 export type { EcraTv } from '../../../studio/tv/ecras'
@@ -48,6 +63,8 @@ export { ECRAS_TV } from '../../../studio/tv/ecras'
 export interface DispositivoDeVideo {
   deviceId: string
   nome: string
+  /** O grupo de hardware: é ele que casa uma câmara com o microfone dela. */
+  groupId?: string
 }
 
 export interface PropsDaSessao {
@@ -89,9 +106,9 @@ export function useSessaoTv(p: PropsDaSessao) {
   const procurarDispositivos = useCallback(async () => {
     const d = await listDevices().catch(() => null)
     if (!d) return
-    setCamaras(d.cams.map((c, i) => ({ deviceId: c.deviceId, nome: c.label || t('tv.fontes.camaraN', { n: i + 1 }) })))
-    setMicrofones(d.mics.map((c, i) => ({ deviceId: c.deviceId, nome: c.label || t('tv.som.microfoneN', { n: i + 1 }) })))
-    setSaidas(d.speakers.map((x, i) => ({ deviceId: x.deviceId, nome: x.label || t('tv.som.saidaN', { n: i + 1 }) })))
+    setCamaras(d.cams.map((c, i) => ({ deviceId: c.deviceId, groupId: c.groupId, nome: c.label || t('tv.fontes.camaraN', { n: i + 1 }) })))
+    setMicrofones(d.mics.map((c, i) => ({ deviceId: c.deviceId, groupId: c.groupId, nome: c.label || t('tv.som.microfoneN', { n: i + 1 }) })))
+    setSaidas(d.speakers.map((x, i) => ({ deviceId: x.deviceId, groupId: x.groupId, nome: x.label || t('tv.som.saidaN', { n: i + 1 }) })))
   }, [t])
 
   useEffect(() => {
@@ -106,7 +123,7 @@ export function useSessaoTv(p: PropsDaSessao) {
     async (d: DispositivoDeVideo) => {
       setErroFonte('')
       try {
-        await registo.ligarCamara(d.deviceId, d.nome)
+        await registo.ligarCamara(d.deviceId, d.nome, d.groupId)
         // Com permissão dada, os nomes dos dispositivos passam a vir preenchidos.
         void procurarDispositivos()
       } catch (e) {
@@ -125,6 +142,29 @@ export function useSessaoTv(p: PropsDaSessao) {
     registo.definirQuadro(compRef.current?.quadro ?? null, t('tv.fontes.quadro'))
   }, [registo, compRef, t])
   useEffect(() => registo.definirParticipantes(p.participantes), [registo, p.participantes])
+
+  /**
+   * Um ficheiro de vídeo como fonte — o «rolar o VT». Nasce em pausa e no
+   * princípio; quem o corta ao ar decide quando começa.
+   */
+  const adicionarFicheiro = useCallback((f: File) => registo.adicionarFicheiro(f), [registo])
+
+  /** O transporte de um ficheiro. `null` para o que não é ficheiro. */
+  const comandarFicheiro = useCallback(
+    (id: string, accao: 'tocar' | 'pausar' | 'inicio' | 'ciclo') => {
+      const v = registo.video(id)
+      if (!v) return
+      if (accao === 'tocar') void v.play().catch(() => undefined)
+      else if (accao === 'pausar') v.pause()
+      else if (accao === 'ciclo') v.loop = !v.loop
+      else {
+        v.currentTime = 0
+        v.pause()
+      }
+      setVersaoFontes((x) => x + 1)
+    },
+    [registo],
+  )
 
   // ------------------------------------------------------------ mesa de corte
   const mesaRef = useRef<EstadoDaMesa>(MESA_INICIAL)
@@ -186,6 +226,22 @@ export function useSessaoTv(p: PropsDaSessao) {
     raf = requestAnimationFrame(passo)
     return () => cancelAnimationFrame(raf)
   }, [emCurso])
+
+  /**
+   * O microfone QUE PERTENCE a esta fonte, pelo grupo de hardware — ou `null`.
+   *
+   * Uma câmara entra sem som de propósito (`getUserMedia({audio:true})` com um
+   * `deviceId` de vídeo devolve o microfone POR OMISSÃO do sistema, não o da
+   * câmara: seriam dois dispositivos diferentes a fingir ser um). O que casa os
+   * dois é o `groupId`. Até 2026-10-14 não havia forma de saber qual dos
+   * microfones da lista era o da capturadora HDMI que acabou de ser ligada.
+   */
+  const microfoneDaFonte = useCallback(
+    (id: string): DispositivoDeVideo | null => {
+      return microfoneDoGrupo(microfones, registo.obter(id)?.groupId)
+    },
+    [registo, microfones],
+  )
 
   const planoDoNumero = useCallback((n: number): Plano | null => {
     const id = registo.idDoNumero(n)
@@ -262,6 +318,17 @@ export function useSessaoTv(p: PropsDaSessao) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t])
 
+  /** Leva o som de uma fonte à mesa — abrindo-a, se ainda não estiver aberta. */
+  const levarSomDaFonteAMesa = useCallback(
+    async (id: string): Promise<void> => {
+      const mic = microfoneDaFonte(id)
+      if (!mic) return
+      const mesa = somRef.current ?? (await ligarSom())
+      await mesa?.adicionarMicrofone(mic.deviceId, mic.nome).catch(() => undefined)
+    },
+    [microfoneDaFonte, ligarSom],
+  )
+
   useEffect(
     () => () => {
       compRef.current?.definirSomExterno(null)
@@ -277,6 +344,47 @@ export function useSessaoTv(p: PropsDaSessao) {
     compRef.current?.definirSomExterno(som && canaisDeSom > 0 ? som.saida : null)
   }, [compRef, som, canaisDeSom])
 
+  // O som do separador partilhado é um CANAL da mesa — com fader, medidor, EQ e
+  // porta — e não um barramento escondido do compositor. Até 2026-10-14 o tipo
+  // de canal `'ecra'` existia e NADA o criava: partilhar um vídeo punha-o no ar
+  // sem fader nem medidor, e a única forma de o baixar era o deslizador de
+  // mistura do palco, noutro ecrã. Enquanto a mesa o tem, o compositor larga-o
+  // (`ligarSomDoEcra`), senão o mesmo som entrava duas vezes.
+  useEffect(() => {
+    if (!som) return
+    const audio = (p.temEcra ? (compRef.current?.fluxoDoEcra ?? null) : null)?.getAudioTracks() ?? []
+    if (audio.length) som.adicionarFluxo('ecra', t('tv.fontes.ecra'), 'ecra', new MediaStream(audio), 'ecra')
+    else if (som.lista().some((c) => c.id === 'ecra')) som.remover('ecra')
+  }, [som, compRef, p.temEcra, versaoFontes, t])
+
+  // A música também é um canal: até 2026-10-14 vivia num barramento do
+  // compositor que a mesa não via — não tinha fader, nem medidor, nem forma de
+  // a baixar sob a voz sem ir a outro ecrã. Só existe com um fluxo montado
+  // (gravação ou directo): fora disso o grafo de áudio do compositor não
+  // existe e a música toca pelo volume do elemento.
+  useEffect(() => {
+    if (!som) return
+    const audio = (palco.musica ? (compRef.current?.fluxoDeMusica ?? null) : null)?.getAudioTracks() ?? []
+    if (audio.length) som.adicionarFluxo('musica', palco.musica?.nome || t('tv.som.tipos.musica'), 'musica', new MediaStream(audio), null)
+    else if (som.lista().some((c) => c.id === 'musica')) som.remover('musica')
+  }, [som, compRef, palco.musica, p.gravando, p.noAr, t])
+
+  // O som de um FICHEIRO é um canal, e o canal tem o id da fonte: assim o
+  // tally da tira e o «seguir a imagem» funcionam sem mais nada — o canal já
+  // sabe de que imagem é.
+  useEffect(() => {
+    if (!som) return
+    const ids = new Set<string>()
+    for (const f of registo.lista()) {
+      if (f.tipo !== 'ficheiro') continue
+      const el = registo.video(f.id)
+      if (!el) continue
+      ids.add(f.id)
+      som.adicionarElemento(f.id, f.nome, el, f.id)
+    }
+    for (const c of som.lista()) if (c.tipo === 'media' && !ids.has(c.id)) som.remover(c.id)
+  }, [som, registo, versaoFontes])
+
   // Participantes com áudio entram como canais; quem sai, sai.
   useEffect(() => {
     if (!som) return
@@ -290,6 +398,34 @@ export function useSessaoTv(p: PropsDaSessao) {
     for (const c of som.lista()) if (c.tipo === 'participante' && !ids.has(c.id)) som.remover(c.id)
   }, [som, p.participantes])
 
+  // A MESA NASCE COM A SESSÃO, não com o ecrã dela. Até 2026-10-14 o
+  // `ligarSom()` estava no `useEffect` de montagem da Mesa de som e da Cena
+  // completa: quem fosse ao ar sem passar por um desses dois ecrãs emitia pelo
+  // microfone cru do compositor — com `echoCancellation` e `noiseSuppression`
+  // ligados, que é o certo numa reunião e errado numa emissão — e sem EQ,
+  // porta, compressor nem medidor. O que vai ao ar passa pela mesa.
+  //
+  // Espera-se por um gesto porque um `AudioContext` criado sem ele nasce
+  // suspenso, e porque pedir o microfone é um pedido ao browser: faz-se quando
+  // a pessoa já está a mexer no estúdio, não no primeiro `render`.
+  useEffect(() => {
+    if (somRef.current) return
+    const abrir = () => void ligarSom()
+    // Quem chegou aqui a clicar já deu o gesto: abre já, para quem entra pelo
+    // endereço directo (`?vista=tv&ecra=mesa-de-som`) não ver «a ligar…» à
+    // espera de um clique que não tem razão de ser.
+    if (navigator.userActivation?.hasBeenActive) {
+      abrir()
+      return
+    }
+    window.addEventListener('pointerdown', abrir, { capture: true, once: true })
+    window.addEventListener('keydown', abrir, { capture: true, once: true })
+    return () => {
+      window.removeEventListener('pointerdown', abrir, true)
+      window.removeEventListener('keydown', abrir, true)
+    }
+  }, [ligarSom])
+
   // O AudioContext nasce suspenso sem gesto: qualquer toque na mesa retoma-o.
   useEffect(() => {
     if (!som) return
@@ -301,6 +437,119 @@ export function useSessaoTv(p: PropsDaSessao) {
       window.removeEventListener('keydown', r, true)
     }
   }, [som])
+
+  // SEGUIR A IMAGEM: o canal que o pede abre quando a fonte dele entra no ar e
+  // cala quando sai. É o outro sentido do corte por voz — e a razão de o
+  // selector «fonte do canal» existir: até 2026-10-14 ele só servia o corte por
+  // voz, e ligar um canal a uma fonte não fazia mais nada.
+  useEffect(() => {
+    if (!som) return
+    for (const c of som.lista()) {
+      if (!c.seguirImagem || !c.fonte) continue
+      const mudo = tallyDe(mesa, c.fonte) !== 'programa'
+      if (c.mudo !== mudo) som.mudar(c.id, { mudo })
+    }
+  }, [som, versaoSom, mesa])
+
+  // ------------------------------------------------------------ efeitos
+  //
+  // As quatro teclas (⌥5–⌥8). Cada uma é um CANAL da mesa — com fader,
+  // medidor, EQ e limitador —, não um `<audio>` solto: um genérico que saísse
+  // por fora da mesa era exactamente o som que ninguém controla. Os ficheiros
+  // vivem em IndexedDB e voltam ao abrir o estúdio; o som descodificado vive
+  // só nesta sessão, porque é do `AudioContext` dela.
+  const [efeitos, setEfeitos] = useState<(Efeito | null)[]>(() => Array(MAX_EFEITOS).fill(null))
+  const buffers = useRef(new Map<string, AudioBuffer>())
+
+  const carregarEfeito = useCallback(
+    async (indice: number, nome: string, ficheiro: Blob, emCiclo: boolean, mesa?: MesaDeSom | null) => {
+      const id = idDoEfeito(indice)
+      const m = mesa ?? somRef.current
+      if (m) {
+        try {
+          buffers.current.set(id, await m.ctx.decodeAudioData(await ficheiro.arrayBuffer()))
+        } catch {
+          // Um ficheiro que o browser não sabe ler não fica meio carregado: a
+          // tecla continua livre e a pessoa percebe porquê ao tentar outra vez.
+          return false
+        }
+        m.adicionarEfeito(id, nome)
+      }
+      setEfeitos((a) => a.map((e, i) => (i === indice ? { id, nome, emCiclo } : e)))
+      return true
+    },
+    [],
+  )
+
+  /** Põe um ficheiro numa tecla: guarda-o, descodifica-o e cria o canal. */
+  const porEfeito = useCallback(
+    async (indice: number, ficheiro: File) => {
+      const nome = ficheiro.name.replace(/\.[^.]+$/, '').slice(0, 40) || t('tv.efeitos.semNome')
+      const ok = await carregarEfeito(indice, nome, ficheiro, false)
+      if (ok) await guardarEfeito({ id: idDoEfeito(indice), nome, emCiclo: false, ficheiro }).catch(() => undefined)
+    },
+    [carregarEfeito, t],
+  )
+
+  const tirarEfeito = useCallback((indice: number) => {
+    const id = idDoEfeito(indice)
+    somRef.current?.remover(id)
+    buffers.current.delete(id)
+    setEfeitos((a) => a.map((e, i) => (i === indice ? null : e)))
+    void apagarEfeito(id).catch(() => undefined)
+  }, [])
+
+  const dispararEfeito = useCallback((indice: number) => {
+    const e = efeitos[indice]
+    const m = somRef.current
+    const b = e && buffers.current.get(e.id)
+    if (!e || !m || !b) return
+    if (m.aToca(e.id)) m.pararEfeito(e.id)
+    else m.tocarEfeito(e.id, b, e.emCiclo)
+  }, [efeitos])
+
+  const mudarCicloDoEfeito = useCallback(
+    (indice: number, emCiclo: boolean) => {
+      const e = efeitos[indice]
+      if (!e) return
+      setEfeitos((a) => a.map((x, i) => (x && i === indice ? { ...x, emCiclo } : x)))
+      void lerEfeitos().then((todos) => {
+        const g = todos.find((x) => x.id === e.id)
+        if (g) void guardarEfeito({ ...g, emCiclo }).catch(() => undefined)
+      })
+    },
+    [efeitos],
+  )
+
+  // Os ficheiros guardados voltam assim que a mesa existe (é ela que
+  // descodifica, no contexto dela).
+  const efeitosCarregados = useRef(false)
+  useEffect(() => {
+    if (!som || efeitosCarregados.current) return
+    efeitosCarregados.current = true
+    void lerEfeitos().then(async (todos) => {
+      for (const g of todos) {
+        const i = indiceDoEfeito(g.id)
+        if (i !== null) await carregarEfeito(i, g.nome, g.ficheiro, g.emCiclo, som)
+      }
+    })
+  }, [som, carregarEfeito])
+
+  // DUCKING: a música e os efeitos baixam enquanto alguém fala. A decisão é do
+  // `haVoz` (puro, com teste); aqui só se mede e se aplica.
+  const [duckLigado, setDuckLigado] = useState(true)
+  useEffect(() => {
+    if (!som) return
+    if (!duckLigado) {
+      som.aplicarDuck(0)
+      return
+    }
+    const t0 = window.setInterval(() => som.aplicarDuck(haVoz(som.niveisDeVoz()) ? DUCK_DB : 0), 100)
+    return () => {
+      window.clearInterval(t0)
+      som.aplicarDuck(0)
+    }
+  }, [som, duckLigado])
 
   // ------------------------------------------------------------ corte por voz
   const [vozLigada, setVozLigada] = useState(false)
@@ -399,6 +648,50 @@ export function useSessaoTv(p: PropsDaSessao) {
   )
   useEffect(() => () => macroEmCurso.current?.abort(), [])
 
+  // ------------------------------------------------------------ mesa física
+  //
+  // Os faders e os botões de uma superfície MIDI mexem nos MESMOS objectos que
+  // o rato: não há um caminho de controlo à parte, e por isso não há dois
+  // estados a divergir. O que a superfície não souber fazer, faz-se no ecrã.
+  const refExecutar = useRef<(a: AccaoFisica) => void>(() => undefined)
+  refExecutar.current = (a: AccaoFisica) => {
+    const m = somRef.current
+    const canais = m?.lista() ?? []
+    switch (a.tipo) {
+      case 'fader': {
+        const c = canais[a.canal]
+        if (c && m) m.mudar(c.id, { fader: a.posicao })
+        break
+      }
+      case 'mestre':
+        m?.mudarMestre(a.posicao)
+        break
+      case 'mudo': {
+        const c = canais[a.canal]
+        if (c && m) m.mudar(c.id, { mudo: !c.mudo })
+        break
+      }
+      case 'solo': {
+        const c = canais[a.canal]
+        if (c && m) m.mudar(c.id, { solo: !c.solo })
+        break
+      }
+      case 'efeito':
+        dispararEfeito(a.indice)
+        break
+      case 'cortar':
+        setMesa((e) => cortar(e, Date.now()))
+        break
+      case 'misturar':
+        setMesa((e) => auto(e, Date.now(), 'misturar'))
+        break
+    }
+  }
+  const mesaFisica = useMesaFisica({
+    executar: (a) => refExecutar.current(a),
+    luzes: () => (somRef.current?.lista() ?? []).map((c) => ({ mudo: c.mudo, solo: c.solo })),
+  })
+
   // ------------------------------------------------------------ atalhos
   useEffect(() => {
     if (!p.atalhosActivos) return
@@ -437,6 +730,11 @@ export function useSessaoTv(p: PropsDaSessao) {
           if (q && (q !== 'sondagem' || p.haSondagem)) definirSobreposicao(q, !sobreposicaoLigada(q))
           break
         }
+        case 'efeito': {
+          const i = efeitoDaTecla(a.n)
+          if (i !== null) dispararEfeito(i)
+          break
+        }
         case 'macro':
           correrMacroDaTecla(a.n)
           break
@@ -444,7 +742,7 @@ export function useSessaoTv(p: PropsDaSessao) {
     }
     window.addEventListener('keydown', aoTeclar, true)
     return () => window.removeEventListener('keydown', aoTeclar, true)
-  }, [p.atalhosActivos, p.haSondagem, accoes, planoDoNumero, definirSobreposicao, sobreposicaoLigada, correrMacroDaTecla])
+  }, [p.atalhosActivos, p.haSondagem, accoes, planoDoNumero, definirSobreposicao, sobreposicaoLigada, correrMacroDaTecla, dispararEfeito])
 
   return {
     registo,
@@ -454,6 +752,10 @@ export function useSessaoTv(p: PropsDaSessao) {
     saidas,
     procurarDispositivos,
     ligarCamara,
+    adicionarFicheiro,
+    comandarFicheiro,
+    microfoneDaFonte,
+    levarSomDaFonteAMesa,
     erroFonte,
     mesa,
     mesaRef,
@@ -467,6 +769,14 @@ export function useSessaoTv(p: PropsDaSessao) {
     vozLigada,
     setVozLigada,
     canaisComFonte,
+    efeitos,
+    porEfeito,
+    tirarEfeito,
+    dispararEfeito,
+    mudarCicloDoEfeito,
+    duckLigado,
+    setDuckLigado,
+    mesaFisica,
     macros,
     progressoMacro,
     correrMacroDaTecla,

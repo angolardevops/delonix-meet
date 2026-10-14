@@ -74,14 +74,6 @@ export default function CenaCompleta({ s, c }: PropsDoEcra) {
   const [confirmar, setConfirmar] = useState(false)
   const [aTerminar, setATerminar] = useState(false)
 
-  useEffect(() => {
-    if (!s.som) void s.ligarSom()
-    // `[]` de propósito: ligar o som é um gesto de ARRANQUE da cena. Com `s`
-    // nas dependências, cada mudança da sessão de TV tentava ligar o som
-    // outra vez — e o segundo `ligarSom` cria um AudioContext a mais.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   useTique((agora) => {
     if (agora - ultimo.current < 500 || !custo.current) return
     ultimo.current = agora

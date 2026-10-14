@@ -4,16 +4,19 @@
  * auscultadores, e o inspector do canal escolhido (EQ de 4 bandas com o
  * espectro medido, dinâmica, limpeza automática).
  */
-import { CSSProperties, useEffect, useRef, useState } from 'react'
+import { CSSProperties, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { curvaDoEq, EQ_GANHO_MAXIMO, alturaDoMedidor, faderParaDb, formatarDb, type LeituraDeSonoridade } from '../../../studio/tv/som'
-import type { EstadoDoCanal } from '../../../studio/tv/mesaDeSom'
+import { ATRASO_MAXIMO_MS, type EstadoDoCanal } from '../../../studio/tv/mesaDeSom'
+import { teclaDoEfeito } from '../../../studio/tv/efeitos'
+import { teclaDeSobreposicao } from '../../../studio/tv/atalhos'
 import { Icon, type IconName } from '../../../ui/icons'
-import { cx } from '../../../ui/kit'
+import { cx, IconButton } from '../../../ui/kit'
+import { tallyDe } from '../../../studio/tv/mesa'
 import { type PropsDoEcra, SelosDoAr } from './comum'
 import { BotaoTv, Cabeca, Cartao, Deslizador, Espaco, Fader, Interruptor, Medidor, TopoTv, useTique } from './pecas'
 
-const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen' }
+const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen', musica: 'speaker', efeito: 'sparkles', media: 'film' }
 export const ALVO_LUFS = -16
 
 export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
@@ -25,12 +28,6 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
   const canal = canais.find((x) => x.id === escolhido) ?? canais[0] ?? null
   const noAr = c.directo.fase === 'no-ar'
   const lang = i18n.language
-
-  // A mesa liga-se à primeira visita (é um clique: o AudioContext pode arrancar).
-  useEffect(() => {
-    if (!som) void s.ligarSom()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const microfonesLivres = s.microfones.filter((m) => !canais.some((x) => x.id === `mic:${m.deviceId || 'omissao'}`))
   const info = som?.info()
@@ -174,6 +171,11 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
           )}
         </section>
 
+        <div className="tv-col" style={{ gap: 9, minWidth: 190, alignSelf: 'flex-start' }}>
+          <Efeitos s={s} />
+          <MesaFisica s={s} />
+        </div>
+
         <aside className="tv-col tv-col--dir" aria-label={t('tv.som.inspector')}>
           {som && canal ? <Inspector s={s} canal={canal} n={canais.indexOf(canal) + 1} /> : <div className="tv-vazio">{t('tv.som.escolheCanal')}</div>}
         </aside>
@@ -233,6 +235,7 @@ function Tira({ s, canal, n, escolhido, onEscolher }: { s: PropsDoEcra['s']; can
         <Icon name={ICONE[canal.tipo]} />
       </span>
       <span className="tv-tira__nome">{canal.nome}</span>
+      <Tally s={s} canal={canal} />
       <span className="tv-botao-knob" style={{ '--rot': `${rot}deg` } as CSSProperties}>
         <input
           type="range"
@@ -286,6 +289,153 @@ function Tira({ s, canal, n, escolhido, onEscolher }: { s: PropsDoEcra['s']; can
   )
 }
 
+/**
+ * A MESA FÍSICA: a superfície MIDI que comanda o estúdio.
+ *
+ * O acesso pede-se a UM CLIQUE e não sozinho: o `requestMIDIAccess` levanta um
+ * pedido de permissão, e um estúdio que o levanta ao abrir ensina a pessoa a
+ * recusar sem ler.
+ *
+ * A última mensagem recebida fica à vista de propósito. O mapa é fixo nesta
+ * versão, e quem tiver uma superfície com outra numeração precisa de saber o
+ * que ela manda para o poder pedir — é isso, e não um ecrã bonito, que torna
+ * esta caixa útil a quem não tem a mesa do exemplo.
+ */
+function MesaFisica({ s }: { s: PropsDoEcra['s'] }) {
+  const { t } = useTranslation()
+  const m = s.mesaFisica
+  return (
+    <section className="tv-fisica" data-tv="mesa-fisica" aria-label={t('tv.fisica.titulo')}>
+      <Cabeca>
+        <span className="tv-mono-85">{t('tv.fisica.titulo')}</span>
+        {m.dispositivos.length > 0 && (
+          <span className="tv-dir tv-ok tv-mono-9" data-tv="fisica-ligada">
+            {t('tv.fisica.ligadas', { count: m.dispositivos.length })}
+          </span>
+        )}
+      </Cabeca>
+      {!m.suportado ? (
+        <p className="tv-nota">{t('tv.fisica.semSuporte')}</p>
+      ) : m.dispositivos.length === 0 ? (
+        <>
+          <p className="tv-nota">{m.erro === 'recusado' ? t('tv.fisica.recusado') : t('tv.fisica.dica')}</p>
+          <BotaoTv mini data-tv="ligar-mesa-fisica" disabled={m.aLigar} onClick={() => void m.ligar()}>
+            {m.aLigar ? t('tv.fisica.aProcurar') : t('tv.fisica.procurar')}
+          </BotaoTv>
+        </>
+      ) : (
+        <>
+          <ul className="tv-fisica__lista">
+            {m.dispositivos.map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+          </ul>
+          <p className="tv-nota">{t('tv.fisica.mapa')}</p>
+        </>
+      )}
+      {m.ultima && (
+        <span className="tv-mono-9 tv-dir" data-tv="fisica-ultima">
+          {t('tv.fisica.ultima', { msg: m.ultima })}
+        </span>
+      )}
+    </section>
+  )
+}
+
+/**
+ * As TECLAS DE EFEITO (⌥5–⌥8): genérico, aplauso, vinheta, buzina.
+ *
+ * Cada tecla é um canal da mesa, com fader e medidor como qualquer outra fonte
+ * — e é por isso que o painel vive aqui e não num ecrã à parte. Um efeito que
+ * saísse por fora da mesa era o som que ninguém controla.
+ *
+ * O ducking fica ao lado porque é a outra metade do mesmo trabalho: a música e
+ * os efeitos baixam enquanto alguém fala.
+ */
+function Efeitos({ s }: { s: PropsDoEcra['s'] }) {
+  const { t } = useTranslation()
+  const som = s.som
+  return (
+    <section className="tv-efeitos" data-tv="efeitos" aria-label={t('tv.efeitos.titulo')}>
+      <Cabeca>
+        <span className="tv-mono-85">{t('tv.efeitos.titulo')}</span>
+        <Cabeca como="span" className="tv-dir" style={{ gap: 6 }}>
+          <span className={cx('tv-mono-85', s.duckLigado && 'tv-ok')}>{t('tv.efeitos.duck')}</span>
+          <Interruptor pequeno ligado={s.duckLigado} rotulo={t('tv.efeitos.duck')} onChange={s.setDuckLigado} />
+        </Cabeca>
+      </Cabeca>
+      <p className="tv-nota">{s.duckLigado ? t('tv.efeitos.duckDica') : t('tv.efeitos.duckDesligado')}</p>
+      <div className="tv-efeitos__teclas">
+        {s.efeitos.map((e, i) => (
+          <Tecla key={i} s={s} efeito={e} indice={i} aToca={!!(e && som?.aToca(e.id))} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function Tecla({ s, efeito, indice, aToca }: { s: PropsDoEcra['s']; efeito: { id: string; nome: string; emCiclo: boolean } | null; indice: number; aToca: boolean }) {
+  const { t } = useTranslation()
+  const tecla = teclaDeSobreposicao() + teclaDoEfeito(indice)
+  if (!efeito) {
+    return (
+      <label className={cx('tv-tecla', 'is-livre')} data-tv="tecla-livre">
+        <span className="tv-tecla__atalho">{tecla}</span>
+        <span className="tv-tecla__nome">{t('tv.efeitos.livre')}</span>
+        <input
+          type="file"
+          accept="audio/*"
+          aria-label={t('tv.efeitos.escolher', { tecla })}
+          onChange={(ev) => {
+            const f = ev.target.files?.[0]
+            ev.target.value = ''
+            if (f) void s.porEfeito(indice, f)
+          }}
+        />
+      </label>
+    )
+  }
+  return (
+    <div className={cx('tv-tecla', aToca && 'is-on')} data-tv="tecla" data-a-tocar={aToca ? 'sim' : 'nao'}>
+      <button type="button" className="tv-tecla__disparo" onClick={() => s.dispararEfeito(indice)} aria-pressed={aToca}>
+        <span className="tv-tecla__atalho">{tecla}</span>
+        <span className="tv-tecla__nome">{efeito.nome}</span>
+      </button>
+      <div className="tv-tecla__pe">
+        <button
+          type="button"
+          className={cx('tv-tecla__ciclo', efeito.emCiclo && 'is-on')}
+          aria-pressed={efeito.emCiclo}
+          title={t('tv.efeitos.cicloDica')}
+          onClick={() => s.mudarCicloDoEfeito(indice, !efeito.emCiclo)}
+        >
+          {t('tv.efeitos.ciclo')}
+        </button>
+        <IconButton icon="x" bare label={t('tv.efeitos.tirar', { nome: efeito.nome })} onClick={() => s.tirarEfeito(indice)} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * O tally da tira: a fonte deste canal está no ar, em pré, ou nenhuma delas.
+ *
+ * Uma mesa de som sem tally obriga o operador a olhar para dois ecrãs para
+ * saber se o fader que vai levantar é o de quem está no ar. Um canal sem fonte
+ * não mostra nada — não há verdade para mostrar.
+ */
+function Tally({ s, canal }: { s: PropsDoEcra['s']; canal: EstadoDoCanal }) {
+  const { t } = useTranslation()
+  if (!canal.fonte || !s.registo.obter(canal.fonte)) return null
+  const e = tallyDe(s.mesa, canal.fonte)
+  if (e === 'livre') return null
+  return (
+    <span className={cx('tv-tira__tally', e === 'programa' ? 'is-pgm' : 'is-pre')} data-tv="tally-do-canal" data-tally={e}>
+      {t(`tv.tally.${e}`)}
+    </span>
+  )
+}
+
 function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal; n: number }) {
   const { t, i18n } = useTranslation()
   const som = s.som!
@@ -324,6 +474,33 @@ function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal;
           ))}
         </select>
       </label>
+
+      <Deslizador
+        rotulo={t('tv.som.atraso')}
+        valor={canal.atrasoMs}
+        min={0}
+        max={ATRASO_MAXIMO_MS}
+        passo={5}
+        texto={canal.atrasoMs ? t('tv.unidades.ms', { v: canal.atrasoMs }) : t('tv.som.semAtraso')}
+        onChange={(v) => som.mudar(canal.id, { atrasoMs: v })}
+        larguraRotulo={76}
+        data-tv="atraso"
+      />
+      <p className="tv-nota">{t('tv.som.atrasoDica')}</p>
+
+      <Cabeca>
+        <span className="tv-mono-85">{t('tv.som.seguirImagem')}</span>
+        <Cabeca como="span" className="tv-dir" style={{ gap: 6 }}>
+          <span className={cx('tv-mono-85', canal.seguirImagem && 'tv-ok')}>{canal.seguirImagem ? t('tv.estado.ligado') : t('tv.estado.desligado')}</span>
+          <Interruptor
+            pequeno
+            ligado={canal.seguirImagem}
+            rotulo={t('tv.som.seguirImagem')}
+            onChange={(v) => som.mudar(canal.id, { seguirImagem: v, ...(v ? {} : { mudo: false }) })}
+          />
+        </Cabeca>
+      </Cabeca>
+      <p className="tv-nota">{canal.fonte ? t('tv.som.seguirImagemDica') : t('tv.som.seguirImagemSemFonte')}</p>
 
       <Cartao como="section" aria-label={t('tv.som.equalizador')}>
         <Cabeca>
