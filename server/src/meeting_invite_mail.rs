@@ -78,7 +78,7 @@ pub(crate) async fn send_best_effort(
     );
     // O `.ics` com o ATTENDEE DESTE endereço: é o que faz o cliente de
     // calendário mostrar «aceitar» em nome de quem recebeu.
-    let ics = crate::meetings::ics_for(state, meeting, IcsMethod::Request, Some(email)).await;
+    let ics = crate::meetings::ics_for(state, meeting, IcsMethod::Request, &[email]).await;
     let assunto = format!("Convite: {}", meeting.title);
     // Com chave de dedupe: criar a reunião e logo remarcá-la não manda dois
     // convites iguais ao mesmo endereço. A hora entra na chave, por isso uma
