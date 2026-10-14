@@ -1,6 +1,8 @@
 # ADR-0030 — Dobragem ao vivo: uma pista por LÍNGUA, voz sintética de licença permissiva, e o nome certo para o que é
 
-**Estado:** Proposto — **precisa de duas decisões do dono** (§Decisões por dar) ·
+**Estado:** Proposto — **falta UMA decisão do dono** (o tecto de inferência por
+sala). A voz ficou decidida a 2026-10-14: `pt_PT-tugão`, anunciada como
+português de Portugal. ·
 **Revisto a 2026-10-13** depois de medir as licenças: o Piper **não é MIT**, e
 não existe voz pt-AO. ·
 **Numeração:** era 0029 quando se escreveu; a `develop` ganhou entretanto a sua
@@ -149,17 +151,40 @@ e um crachá na sala di-lo, para ninguém confundir a voz com a pessoa.
    G2P não-GPL ainda por verificar.
 
    **E não existe voz pt-AO.** O `pt/` do catálogo oficial só tem `pt_BR` e
-   `pt_PT` — nenhuma voz angolana, em lado nenhum que se tenha encontrado. As
-   opções são três, e nenhuma é «escolher uma voz»:
-   - **usar o `pt_PT-tugão`** e dizer que é português de Portugal. Inteligível
-     em Angola, com o sotaque errado;
-   - **encomendar uma voz pt-AO**: 2 a 3 horas de gravação limpa de um locutor
-     angolano, com cessão de direitos escrita, e afinar a partir de um modelo
-     existente (foi assim que a `faber` nasceu). O custo é **humano** — estúdio
-     e locutor em Luanda —, não de software: é aí que há uma cotação a pedir, e
-     é a um estúdio, não a um fornecedor de TTS;
-   - **não oferecer pt-AO**, que continua a ser melhor do que uma voz de pt-BR
-     a fingir que é de Luanda.
+   `pt_PT` — nenhuma voz angolana, em lado nenhum que se tenha encontrado.
+
+   ### ✅ DECIDIDO a 2026-10-14 pelo dono: `pt_PT-tugão`, e o produto diz que é de Portugal
+
+   Das três opções que estavam em cima da mesa — usar a de Portugal e dizê-lo,
+   encomendar a gravação de um locutor angolano, ou não oferecer português —
+   fica a **primeira**. Três coisas passam a estar decididas com ela, e duas
+   não são óbvias:
+
+   **a) Escolher o `tugão` é escolher o Piper, e portanto a GPL-3.0.** O
+   `tugão` é uma voz do catálogo do Piper; não existe fora dele. Logo a
+   dobragem herda o motor da tabela acima e **o `tts-server` nasce como imagem
+   própria com a sua oferta de código**, no molde da D3. Isto não é um
+   corolário administrativo: é a razão pela qual a decisão da licença deixa de
+   estar em aberto para o caso do português.
+
+   **b) O rótulo é parte da decisão, não um detalhe de interface.** Onde a
+   pessoa escolhe a língua lê-se **«Português (Portugal)»** — nunca
+   «Português» sozinho. Num produto angolano, «Português» sem qualificação é
+   lido como o daqui, e a voz não é daqui: deixar o rótulo nu seria vender
+   sotaque de Lisboa como se fosse de Luanda. O crachá da sala diz as **duas**
+   coisas: que a voz é sintética (§4) e que é de Portugal.
+
+   **c) pt-AO fica por oferecer, e isso diz-se.** Não aparece na lista como se
+   estivesse a caminho, nem se substitui por pt-BR. O desenho já deixa a porta
+   aberta — a pista é **por língua** (§2), e `pt-AO` seria mais uma entrada no
+   dia em que houver voz. A encomenda de uma voz angolana (2–3 h de gravação
+   limpa, cessão de direitos escrita, afinação a partir de um modelo existente)
+   continua a ser a via para lá chegar, e a cotação é de um **estúdio em
+   Luanda**, não de um fornecedor de TTS.
+
+   O `pt_PT-tugão` entra como qualquer artefacto de terceiros: **fixado por
+   versão e por SHA-256**, com o `MODEL_CARD` (CC0, afinada da `lessac` média)
+   registado ao lado.
 2. **O tecto de inferência que se aceita por sala.** Cinco línguas numa sala de
    uma hora é uma conta de CPU (ou de GPU, ADR-0024) que alguém paga. Sem um
    tecto decidido, a primeira sala com oito línguas descobre-o em produção.
