@@ -39,7 +39,7 @@ import { AVATAR_INICIAL, CompositorDeAula, EstadoDaImagem, EstadoDoAvatar, IMAGE
 import Cronometro from '../studio/Cronometro'
 import { useDebito } from '../studio/debito'
 import type { SondagemNoPalco } from '../studio/desenho'
-import { Destino, Directo, directoSuportado, EstadoDoDestino, EstadoDoDirecto } from '../studio/directo'
+import { AUDIO_BPS, debitoDoDirecto, Destino, Directo, directoSuportado, EstadoDoDestino, EstadoDoDirecto, type Rede, REDE_ZERO } from '../studio/directo'
 import EditPanel, { Gravado, VistaDoEditor } from '../studio/EditPanel'
 import { cortesSuportados } from '../studio/editor'
 import LayoutsPanel from '../studio/LayoutsPanel'
@@ -184,6 +184,7 @@ export default function Studio() {
 
   const [directo, setDirecto] = useState<EstadoDoDirecto>({ fase: 'parado' })
   const [porDestino, setPorDestino] = useState<EstadoDoDestino[]>([])
+  const [rede, setRede] = useState<Rede>(REDE_ZERO)
   const kbps = useDebito(directo)
   // A sala ligada ao Estúdio: pedida pela pessoa, carregada por `lazy`.
   const [salaAberta, setSalaAberta] = useState(false)
@@ -581,8 +582,14 @@ export default function Studio() {
       const d = new Directo()
       d.aoMudar = setDirecto
       d.aoMudarDestinos = setPorDestino
+      d.aoMudarRede = setRede
       directoRef.current = d
-      await d.comecar(fluxo, codigo, token, destinos.filter((dest) => dest.chave.trim()))
+      // O débito sai do PERFIL da imagem: o mesmo estúdio a compor 2160p50 e a
+      // compor 1080p30 não pode emitir com o mesmo número.
+      await d.comecar(fluxo, codigo, token, destinos.filter((dest) => dest.chave.trim()), {
+        bitrate: debitoDoDirecto(c.perfil),
+        audioBitrate: AUDIO_BPS,
+      })
     } catch (e) {
       // A razão vem do servidor («esta sala tem cifra ponta-a-ponta…») e
       // mostra-se tal como foi escrita, no PAINEL, ao pé do botão que a causou.
@@ -786,6 +793,11 @@ export default function Studio() {
 
         <span className="st-top__meta dx-num" data-studio="topo-meta">
           {noAr && <span>{t('studio.topo.enc', { kbps: kbps.toLocaleString(i18n.language) })} · </span>}
+          {noAr && rede.saude !== 'ok' && (
+            <span className="st-top__rede" data-studio="topo-rede" data-saude={rede.saude} title={t('studio.directo.stats.conselho')}>
+              {t(`studio.directo.stats.${rede.saude}`)} ·{' '}
+            </span>
+          )}
           <Relogio />
         </span>
 
@@ -1018,6 +1030,8 @@ export default function Studio() {
             suportado={directoSuportado()}
             destinos={destinos}
             porDestino={porDestino}
+            rede={rede}
+            kbps={kbps}
             localAGravar={aGravar}
             maximo={MAX_DESTINOS}
             estado={directo}

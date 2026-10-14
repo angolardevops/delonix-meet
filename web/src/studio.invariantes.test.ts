@@ -380,6 +380,29 @@ describe('o corte degrada em vez de arrastar', () => {
   })
 })
 
+describe('as estatísticas da emissão dizem a verdade em quatro línguas', () => {
+  // As duas chaves de saúde são escolhidas por um literal de template
+  // (`studio.directo.stats.${rede.saude}`), e o i18next DEVOLVE A CHAVE quando
+  // ela não existe: «studio.directo.stats.a-acumular» no ecrã, sem nada ficar
+  // vermelho. A chave do meio é a que leva o hífen, que é a que se esquece.
+  for (const loc of ['pt', 'en', 'fr', 'zh']) {
+    it(loc, () => {
+      const s = read(`web/src/locales/${loc}/studio.ts`)
+      for (const k of ['stats: {', 'apertada:', "'a-acumular':", 'conselho:', 'fila:', 'pedido:']) {
+        expect(s, `${loc}: falta ${k}`).toContain(k)
+      }
+      // Os plurais contam-se como o i18next os resolve.
+      for (const k of ['tentativas_one:', 'tentativas_other:']) expect(s).toContain(k)
+    })
+  }
+
+  it('e o painel só aparece no ar', () => {
+    // Fora do ar não há nada verdadeiro para mostrar, e um painel com zeros
+    // parece avariado.
+    expect(readCodigo('web/src/studio/LivePanel.tsx')).toContain('{noAr && <Estatisticas')
+  })
+})
+
 describe('as três línguas têm as chaves do estúdio', () => {
   // Os dicionários passaram a um ficheiro por área: o bloco `studio` é
   // `locales/<língua>/studio.ts`, composto no `index.ts`, e a entrada do rail

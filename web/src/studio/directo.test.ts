@@ -347,7 +347,7 @@ describe('Directo · o ciclo de vida', () => {
 // (`server/src/broadcast.rs`); aqui guarda-se a leitura, que tem de ser
 // tolerante: um servidor mais novo não pode partir um cliente mais velho, nem
 // um destino malformado esconder os outros.
-import { lerMensagemDoDirecto, resumirDestinos } from './directo'
+import { DEBITO_MAXIMO, DEBITO_MINIMO, debitoDoDirecto, lerMensagemDoDirecto, resumirDestinos, saudeDaFila } from './directo'
 
 const destinoDoServidor = {
   dest: 0,
@@ -535,5 +535,42 @@ describe('Directo · estado por destino', () => {
     expect(d.destinos).toEqual([])
     criados[1].onclose?.()
     expect(d.estado).toEqual({ fase: 'erro', motivo: 'a ligação ao servidor caiu' })
+  })
+})
+
+describe('o débito de emissão sai do perfil', () => {
+  it('cresce com o tamanho e com os fps, e tem tecto e chão', () => {
+    // Até 2026-10-14 eram 4,5 Mbps para tudo: o 2160p50 emitia com o débito
+    // do 1080p30 (imagem desfeita em movimento) e o 1080p30 gastava o mesmo
+    // que o 4K.
+    const p = (largura: number, altura: number, fps: number) => debitoDoDirecto({ largura, altura, fps })
+    expect(p(1920, 1080, 30)).toBe(4_976_640)
+    expect(p(1920, 1080, 50)).toBeGreaterThan(p(1920, 1080, 30))
+    expect(p(3840, 2160, 30)).toBeGreaterThan(p(1920, 1080, 50))
+    // O tecto é de EMISSÃO, não de gravação: o perfil 2160p50 grava a 35 Mbps
+    // e nenhum uplink destes emite isso.
+    expect(p(3840, 2160, 50)).toBe(DEBITO_MAXIMO)
+    expect(p(320, 240, 10)).toBe(DEBITO_MINIMO)
+  })
+})
+
+describe('a fila do socket diz a saúde da rede', () => {
+  const alvo = 5_000_000 // 625 000 bytes/s
+
+  it('vazia é saudável', () => {
+    expect(saudeDaFila(0, alvo)).toMatchObject({ saude: 'ok', segundos: 0 })
+  })
+
+  it('mais de um segundo de emissão à espera é apertado, mais de três é acumular', () => {
+    expect(saudeDaFila(625_000, alvo).saude).toBe('ok') // exactamente 1 s
+    expect(saudeDaFila(700_000, alvo).saude).toBe('apertada')
+    expect(saudeDaFila(1_875_000, alvo).saude).toBe('apertada') // exactamente 3 s
+    expect(saudeDaFila(2_500_000, alvo)).toMatchObject({ saude: 'a-acumular', segundos: 4 })
+  })
+
+  it('um alvo ausente ou absurdo não dá segundos infinitos', () => {
+    // Divisão por zero aqui dava `Infinity` no ecrã, em vez de um aviso.
+    expect(Number.isFinite(saudeDaFila(1000, 0).segundos)).toBe(true)
+    expect(saudeDaFila(-5, alvo).fila).toBe(0)
   })
 })
