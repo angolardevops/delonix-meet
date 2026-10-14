@@ -118,7 +118,7 @@ export function Tag({ tone, children, plain }: { tone?: 'live' | 'accent' | 'suc
   return <span className={cx('dx-tag', tone && `dx-tag--${tone}`, plain && 'dx-tag--plain')}>{children}</span>
 }
 
-export type BadgeTone = 'record' | 'live' | 'warning' | 'success' | 'neutral'
+export type BadgeTone = 'record' | 'live' | 'warning' | 'danger' | 'success' | 'neutral'
 
 /** Badge de estado: cor + forma (ponto, triângulo, ícone) + texto. */
 export function StatusBadge({ tone, children, icon }: { tone: BadgeTone; children: ReactNode; icon?: IconName }) {

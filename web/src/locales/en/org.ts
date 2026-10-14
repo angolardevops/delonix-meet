@@ -284,6 +284,7 @@ export default {
     titulo: 'Outbox',
     eyebrow: 'Mail sent',
     actualizar: 'Refresh',
+    verMais: 'Show more',
     vazia: 'No mail has gone out for this organisation yet.',
     semCorpos: 'Bodies are not shown: an invitation body carries the invitation token. Personal mail (password reset, address proof) does not belong to the organisation and does not appear here.',
     filtrarEstado: 'Filter by status',

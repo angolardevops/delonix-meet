@@ -284,6 +284,7 @@ export default {
     titulo: '发件箱',
     eyebrow: '已发邮件',
     actualizar: '刷新',
+    verMais: '查看更多',
     vazia: '此组织尚未发出任何邮件。',
     semCorpos: '不显示正文：邀请邮件的正文含有邀请令牌。个人邮件（密码重置、地址验证）不属于组织，不会出现在此处。',
     filtrarEstado: '按状态筛选',
