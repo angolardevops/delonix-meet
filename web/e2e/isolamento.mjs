@@ -665,6 +665,18 @@ if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   })
   await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda-items`, { token: A.token })
   await recusado('A lê os convidados da reunião da B', `/api/meetings/${m}/invitees`, { token: A.token })
+  // Os convidados de FORA são endereços de email de gente que não tem conta
+  // aqui: ler a lista é ler a lista de contactos externos de outra empresa, e
+  // acrescentar é mandar um convite em nome dela.
+  await recusado('A lê os convidados de FORA da reunião da B', `/api/meetings/${m}/external-invitees`, {
+    token: A.token,
+  })
+  await recusado('A convida um endereço de fora para a reunião da B', `/api/meetings/${m}/external-invitees`, {
+    token: A.token, method: 'POST', body: { email: 'intruso@fora.ao' },
+  })
+  await recusado('A tira um convidado de fora da reunião da B', `/api/meetings/${m}/external-invitees/alguem@fora.ao`, {
+    token: A.token, method: 'DELETE',
+  })
   await recusado('A lê o plano de acção da reunião da B', `/api/meetings/${m}/action-plan`, { token: A.token })
   await recusado('A descarrega o ICS da reunião da B', `/api/meetings/${m}/calendar.ics`, { token: A.token })
   await recusado('A responde ao convite da reunião da B', `/api/meetings/${m}/invitees/me`, {

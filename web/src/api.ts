@@ -616,6 +616,13 @@ export const createMeeting = (m: {
   starts_at: string
   duration_min: number
   invitee_ids: string[]
+  /**
+   * Endereços de email de convidados SEM conta aqui (no máximo 50). Cada um
+   * recebe o seu convite com o `.ics`, e entra pela porta de convidado — nome e
+   * sala de espera (R290). O servidor normaliza e valida
+   * (`meeting.invalid_external_email`, `meeting.too_many_external_invitees`).
+   */
+  external_emails?: string[]
   room_ref?: string | null
   recurrence_freq?: RecurrenceFreq | null
   recurrence_interval?: number
@@ -2057,6 +2064,25 @@ export const createMeetingWithOptions = (
     method: 'POST',
     body: JSON.stringify(m),
   })
+
+/** Os convidados externos de uma reunião (só o anfitrião). */
+export const listExternalInvitees = (id: string) =>
+  request<{ email: string; created_at: string }[]>(`/api/meetings/${id}/external-invitees`)
+
+/**
+ * Convida um endereço externo para uma reunião que já existe e manda-lhe o
+ * convite. `delivery_channel` é `email` ou `manual` (sem relay configurado,
+ * quem convida entrega o link à mão).
+ */
+export const addExternalInvitee = (id: string, email: string) =>
+  request<{ email: string; delivery_channel: 'email' | 'manual' }>(
+    `/api/meetings/${id}/external-invitees`,
+    { method: 'POST', body: JSON.stringify({ email }) },
+  )
+
+/** Tira da lista. NÃO desconvida quem já recebeu — impede o próximo convite. */
+export const removeExternalInvitee = (id: string, email: string) =>
+  request(`/api/meetings/${id}/external-invitees/${encodeURIComponent(email)}`, { method: 'DELETE' })
 
 export const startMeetingWithOptions = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' } & MeetingSessionOptions>(`/api/meetings/${id}/start`, {
