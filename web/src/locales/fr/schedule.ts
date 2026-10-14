@@ -198,6 +198,16 @@ export default {
     remover: 'Retirer {{nome}}',
     erro: 'La recherche de personnes a échoué.',
   },
+  externos: {
+    titulo: 'Invités externes',
+    ajuda: "Adresses sans compte ici. Chacune reçoit une invitation avec l'événement d'agenda.",
+    placeholder: 'maria@autre-entreprise.ao',
+    adicionar: 'Ajouter un invité externe',
+    remover: 'Retirer {{email}}',
+    invalido: "Cette adresse ne ressemble pas à un e-mail.",
+    repetido: 'Cette adresse est déjà dans la liste.',
+    demasiados: 'Au maximum {{max}} invités externes par réunion.',
+  },
   conflitos: {
     horaJaPassou: 'Cette heure est déjà passée : la réunion est enregistrée, mais elle n’apparaîtra pas dans « Prochaines réunions ».',
     titulo: 'Conflits et capacité',

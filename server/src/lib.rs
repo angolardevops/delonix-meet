@@ -31,6 +31,7 @@ mod guests;
 mod mail;
 mod mcp;
 mod media_probe;
+mod meeting_invite_mail;
 mod meetings;
 mod meetings_v1;
 mod metrics;
@@ -856,6 +857,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::post(meetings::request_mom_summary),
         )
         .route("/api/meetings/{meeting_id}/invitees", get(meetings::invitees))
+        .route(
+            "/api/meetings/{meeting_id}/external-invitees",
+            get(meetings::external_invitees).post(meetings::add_external_invitee),
+        )
+        .route(
+            "/api/meetings/{meeting_id}/external-invitees/{email}",
+            axum::routing::delete(meetings::remove_external_invitee),
+        )
         .route("/api/meetings/{meeting_id}/invitees/me", axum::routing::put(meetings::respond))
         .route(
             "/api/meetings/{meeting_id}/agenda-items",
