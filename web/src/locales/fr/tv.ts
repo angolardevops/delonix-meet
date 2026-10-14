@@ -151,6 +151,13 @@ export default {
       nota: "Carton, silence, 3 s puis fin de la diffusion et de l'enregistrement",
     },
   },
+  bastidores: {
+    titulo: 'Coulisses',
+    falar: 'Parler aux coulisses',
+    aFalar: 'En parole — hors antenne',
+    selo: 'COULISSES',
+    nota: "Maintiens la touche (T) : ta voix quitte l'antenne et reste pour les personnes de la salle.",
+  },
   efeitos: {
     titulo: "Touches d'effet",
     livre: 'touche libre',

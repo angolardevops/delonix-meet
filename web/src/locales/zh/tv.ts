@@ -151,6 +151,13 @@ export default {
       nota: '画面、静音、3 秒后结束直播与录制',
     },
   },
+  bastidores: {
+    titulo: '后台',
+    falar: '与后台通话',
+    aFalar: '通话中——已下播',
+    selo: '后台',
+    nota: '按住 (T)：你的声音离开直播，只留给房间内的人。',
+  },
   efeitos: {
     titulo: '音效键',
     livre: '空闲键',

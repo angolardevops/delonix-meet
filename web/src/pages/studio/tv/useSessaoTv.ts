@@ -551,6 +551,58 @@ export function useSessaoTv(p: PropsDaSessao) {
     }
   }, [som, duckLigado])
 
+  // ------------------------------------------------------------ bastidores
+  //
+  // FALAR COM OS BASTIDORES. A voz do estúdio viaja por DOIS caminhos
+  // independentes: um `getUserMedia` próprio publicado na sala (os convidados
+  // ouvem-no, estejam no palco ou não — `useLigacaoDoEstudio.ts`) e o canal da
+  // mesa, que é o que vai ao ar. Falar só com os bastidores é, portanto,
+  // CALAR a mesa e deixar a sala a tocar — e é tudo o que é preciso.
+  //
+  // É PREMIR E SEGURAR, nunca um interruptor: numa emissão, um interruptor de
+  // «estou fora do ar» que alguém deixa ligado é um programa em silêncio sem
+  // ninguém perceber porquê. Enquanto está premido, o selo do topo diz-lo.
+  const [aFalarComBastidores, setAFalar] = useState(false)
+  const mudosAntes = useRef<string[] | null>(null)
+
+  const falarComBastidores = useCallback((ligar: boolean) => {
+    const m = somRef.current
+    if (!m) return
+    if (ligar) {
+      if (mudosAntes.current) return
+      // Guarda-se QUEM já estava mudo: largar o botão não pode abrir um
+      // microfone que o operador tinha fechado de propósito.
+      const mics = m.lista().filter((c) => c.tipo === 'microfone')
+      mudosAntes.current = mics.filter((c) => c.mudo).map((c) => c.id)
+      for (const c of mics) if (!c.mudo) m.mudar(c.id, { mudo: true })
+      setAFalar(true)
+      return
+    }
+    const antes = mudosAntes.current
+    mudosAntes.current = null
+    if (antes) {
+      for (const c of m.lista()) {
+        if (c.tipo === 'microfone' && !antes.includes(c.id) && c.mudo) m.mudar(c.id, { mudo: false })
+      }
+    }
+    setAFalar(false)
+  }, [])
+
+  // Soltar por fora: trocar de separador ou de janela com o botão premido
+  // deixava o estúdio fora do ar para sempre.
+  useEffect(() => {
+    if (!aFalarComBastidores) return
+    const largar = () => falarComBastidores(false)
+    window.addEventListener('blur', largar)
+    document.addEventListener('visibilitychange', largar)
+    window.addEventListener('pointerup', largar)
+    return () => {
+      window.removeEventListener('blur', largar)
+      document.removeEventListener('visibilitychange', largar)
+      window.removeEventListener('pointerup', largar)
+    }
+  }, [aFalarComBastidores, falarComBastidores])
+
   // ------------------------------------------------------------ corte por voz
   const [vozLigada, setVozLigada] = useState(false)
   const vozRef = useRef(CORTE_DE_VOZ_ZERO)
@@ -693,6 +745,29 @@ export function useSessaoTv(p: PropsDaSessao) {
   })
 
   // ------------------------------------------------------------ atalhos
+  // A tecla dos bastidores é à parte das outras porque precisa do LARGAR, e o
+  // `accaoDaTecla` só conhece o premir.
+  useEffect(() => {
+    if (!p.atalhosActivos) return
+    const livre = (e: KeyboardEvent) =>
+      e.code === 'KeyT' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !isTypingTarget(e.target) && !isTypingTarget(document.activeElement)
+    const baixo = (e: KeyboardEvent) => {
+      if (!livre(e) || e.repeat) return
+      e.preventDefault()
+      falarComBastidores(true)
+    }
+    const cima = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyT') return
+      falarComBastidores(false)
+    }
+    window.addEventListener('keydown', baixo, true)
+    window.addEventListener('keyup', cima, true)
+    return () => {
+      window.removeEventListener('keydown', baixo, true)
+      window.removeEventListener('keyup', cima, true)
+    }
+  }, [p.atalhosActivos, falarComBastidores])
+
   useEffect(() => {
     if (!p.atalhosActivos) return
     const aoTeclar = (e: KeyboardEvent) => {
@@ -776,6 +851,8 @@ export function useSessaoTv(p: PropsDaSessao) {
     mudarCicloDoEfeito,
     duckLigado,
     setDuckLigado,
+    aFalarComBastidores,
+    falarComBastidores,
     mesaFisica,
     macros,
     progressoMacro,

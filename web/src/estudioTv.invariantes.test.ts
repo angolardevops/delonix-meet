@@ -333,6 +333,41 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     }
   })
 
+  it('os painéis do estúdio vivem DENTRO da coluna do inspector', () => {
+    // Medido no browser a 2026-10-14, e invisível para um teste de markup: a
+    // grelha da mesa de som tem DUAS colunas (`minmax(0,1fr) 300px`). Com os
+    // painéis como terceira filha, o INSPECTOR — o EQ, a dinâmica, a limpeza —
+    // era empurrado para uma segunda linha, com 1072 px de largo e 64 px de
+    // alto, por baixo das tiras. A coluna da direita leva-os por cima do
+    // inspector, e é ela que rola.
+    const ecra = read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')
+    const coluna = ecra.slice(ecra.indexOf('tv-col tv-col--dir'), ecra.indexOf('</aside>'))
+    for (const painel of ['<Bastidores s={s} />', '<Efeitos s={s} />', '<MesaFisica s={s} />']) {
+      expect(coluna, `${painel} tem de estar dentro da coluna da direita`).toContain(painel)
+    }
+    expect(ecra.indexOf('<Inspector s={s}')).toBeGreaterThan(ecra.indexOf('<MesaFisica s={s} />'))
+    expect(read('web/src/ui/studio-tv.css')).toMatch(/\.tv-som \.tv-col--dir \{\s*overflow-y: auto;/)
+  })
+
+  it('falar com os bastidores é PREMIR E SEGURAR, e solta-se por fora', () => {
+    // Um interruptor de «estou fora do ar» que alguém deixa ligado é um
+    // programa em silêncio sem ninguém perceber porquê. E trocar de separador
+    // com o botão premido deixava o estúdio fora do ar para sempre.
+    const ecra = read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')
+    expect(ecra).toContain('onPointerDown={() => s.falarComBastidores(true)}')
+    expect(ecra).toContain('onPointerUp={() => s.falarComBastidores(false)}')
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    // O `addEventListener` inteiro, não só o par: a primeira versão deste
+    // teste passava com a linha apagada, porque o `removeEventListener` da
+    // limpeza também contém `'blur', largar`.
+    expect(sessao, 'falta soltar ao sair da janela').toContain("window.addEventListener('blur', largar)")
+    expect(sessao, 'falta soltar ao trocar de separador').toContain("document.addEventListener('visibilitychange', largar)")
+    expect(sessao, 'falta soltar ao largar o rato fora do botão').toContain("window.addEventListener('pointerup', largar)")
+    // E largar não pode ABRIR um microfone que o operador tinha fechado.
+    expect(sessao).toContain('mudosAntes.current = mics.filter((c) => c.mudo).map((c) => c.id)')
+    expect(sessao).toContain('!antes.includes(c.id)')
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas

@@ -151,6 +151,13 @@ export default {
       nota: 'Card, silence, 3 s and it ends the broadcast and the recording',
     },
   },
+  bastidores: {
+    titulo: 'Backstage',
+    falar: 'Talk to backstage',
+    aFalar: 'Talking — off air',
+    selo: 'BACKSTAGE',
+    nota: 'Press and hold (T): your voice leaves the air and stays only for the people in the room.',
+  },
   efeitos: {
     titulo: 'Effect keys',
     livre: 'free key',
