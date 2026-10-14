@@ -549,6 +549,12 @@ struct SfuPeer {
     /// ver). `None` = todos — é o default e o comportamento de clientes antigos.
     /// Áudio e ecrã partilhado nunca dependem disto.
     video_interest: Mutex<Option<std::collections::HashSet<Uuid>>>,
+    /// A língua de dobragem que ESTE peer escolheu ouvir, se escolheu alguma.
+    ///
+    /// É por peer e não por sala porque a escolha é de quem ouve: na mesma sala
+    /// uma pessoa ouve o inglês, outra o francês e a maioria não ouve dobragem
+    /// nenhuma. `None` é o caso normal — só o original.
+    dub_lang: Mutex<Option<String>>,
     /// Camada sugerida pelo cliente por publicador (ver `wanted_rid`). Vazio =
     /// sem sugestão, e decide-se pelo tamanho da sala como sempre.
     quality_hints: Mutex<HashMap<Uuid, String>>,
@@ -999,6 +1005,96 @@ impl SfuState {
         tx
     }
 
+    /// Publica a pista de DOBRAGEM de uma língua: um publicador sintético por
+    /// língua, não por ouvinte (ADR-0030 §2).
+    ///
+    /// Dez pessoas a ouvir inglês são UMA síntese. A tradução de TEXTO pode ser
+    /// por ouvinte — e é, no browser — porque custa uma frase de LLM; a de voz
+    /// multiplicaria a inferência pelo número de pessoas.
+    ///
+    /// Mecanicamente é o mesmo que a ponte do telefone: Opus empurrado por uma
+    /// fila, sem PeerConnection do publicador, logo sem PLI nem RTCP de volta.
+    /// Largar o `Sender` retira a pista da sala.
+    ///
+    /// **Quem a ouve é só quem pediu a língua** ([`Sfu::set_dub_language`]) — o
+    /// filtro está no `reevaluate_peer`, e é a diferença entre dobrar para
+    /// alguém e impor uma segunda voz a toda a gente.
+    pub(crate) async fn publish_dub_audio(
+        self: &Arc<Self>,
+        room_id: Uuid,
+        dub_id: Uuid,
+        lang: &str,
+    ) -> mpsc::Sender<BridgePacket> {
+        let room = self
+            .rooms
+            .entry(room_id)
+            .or_insert_with(|| Arc::new(SfuRoom::default()))
+            .clone();
+        let (tx, rx) = mpsc::channel(64);
+        let publication = Arc::new(Publication {
+            publisher: dub_id,
+            kind: format!("dub:{lang}"),
+            rid: "f".to_string(),
+            subscribers: Mutex::new(HashMap::new()),
+            subs_version: AtomicU64::new(0),
+            source: PubSource::Bridge {
+                codec: bridge_opus_codec(),
+                rx: Mutex::new(rx),
+            },
+            rec: Mutex::new(None),
+            last_pli: std::sync::Mutex::new(None),
+            audio_level_id: 0,
+            audio: AudioMeter::default(),
+            forwarding: AtomicBool::new(true),
+            _vivo: Vivo::new(&self.census.publications),
+            // FALSO de propósito: com `level_measured` a pista entraria no
+            // seletor de oradores e roubaria o lugar a quem está mesmo a falar
+            // — o crachá de «quem fala» passaria a apontar para a dobragem.
+            // (O seletor também já a exclui por olhar só para `kind == "audio"`;
+            // são duas razões, e é bom que sejam.)
+            level_measured: false,
+            pinned: AtomicBool::new(false),
+        });
+        tracing::info!(%room_id, dub = %dub_id, %lang, "dobragem: pista publicada");
+        crate::metrics::Metrics::bump(&self.metrics.sfu_publications_total);
+        self.clone()
+            .activate_publication(room_id, room, publication)
+            .await;
+        tx
+    }
+
+    /// Retira a pista de uma língua da sala.
+    ///
+    /// Fecha a fila pelo lado do SFU e tira a publicação; os peers que a
+    /// ouviam voltam ao original na reavaliação seguinte — sem um intervalo
+    /// em que não se ouça nada.
+    pub async fn end_dub(self: &Arc<Self>, room_id: Uuid, lang: &str) {
+        let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) else {
+            return;
+        };
+        let alvo = format!("dub:{lang}");
+        room.publications.lock().await.retain(|p| p.kind != alvo);
+        self.reevaluate_room_except(room_id, None).await;
+        tracing::info!(%room_id, %lang, "dobragem: pista retirada");
+    }
+
+    /// A língua que ESTE peer quer ouvir dobrada (`None` = só o original).
+    ///
+    /// Trocar de língua é desligar a anterior e ligar a nova na mesma
+    /// reavaliação: não há um instante em que se oiçam as duas.
+    pub async fn set_dub_language(
+        self: &Arc<Self>,
+        room_id: Uuid,
+        peer_id: Uuid,
+        lang: Option<String>,
+    ) {
+        let Some(peer) = self.peer(room_id, peer_id).await else {
+            return;
+        };
+        *peer.dub_lang.lock().await = lang;
+        self.clone().reevaluate_peer(room_id, peer_id).await;
+    }
+
     /// A chamada terminou: a sala deixa de a contar para existir. A publicação
     /// sai sozinha quando a fila devolvida por `publish_bridge_audio` fecha.
     pub(crate) async fn end_bridge(self: &Arc<Self>, room_id: Uuid, leg_id: Uuid) {
@@ -1140,6 +1236,7 @@ impl SfuState {
             subscribed: Mutex::new(HashMap::new()),
             quality: Quality::default(),
             video_interest: Mutex::new(None),
+            dub_lang: Mutex::new(None),
             quality_hints: Mutex::new(HashMap::new()),
             close_done,
             _vivo: Vivo::new(&self.census.peers),
@@ -1417,7 +1514,15 @@ impl SfuState {
                     "codec não gravável — track EXCLUÍDA da gravação (ver recordable_codec)"
                 );
             } else if rec_guard.is_some() {
-                let attach = if publication.kind == "audio" || publication.kind == "screen-audio" {
+                let attach = if dub_lang(&publication.kind).is_some() {
+                    // A dobragem NÃO se grava. Gravar as duas vozes na mesma
+                    // pista deixava a gravação com o orador e o dobrador por
+                    // cima um do outro — e a gravação é do que SE PASSOU na
+                    // sala, não de uma tradução que só alguns ouviram. Se um
+                    // dia se quiser guardar a dobragem, é uma pista própria,
+                    // com decisão própria.
+                    false
+                } else if publication.kind == "audio" || publication.kind == "screen-audio" {
                     true
                 } else if publication.kind == "video" && publication.rid == "q" {
                     false
@@ -1472,7 +1577,14 @@ impl SfuState {
         // Bomba de RTP: remota -> todas as tracks locais subscritas
         // (+ tee para o writer de gravação, se ativo).
         let this = self.clone();
-        let is_audio = kind == "audio";
+        // A dobragem é Opus como o resto do áudio e precisa do mesmo caminho
+        // de escrita (e da numeração própria, por causa da supressão do
+        // seletor).
+        let is_audio = kind == "audio" || dub_lang(&kind).is_some();
+        // Mas só um MICROFONE alimenta a mistura que o telefone ouve: mandar a
+        // dobragem para lá punha quem está ao telefone a ouvir as duas vozes
+        // sobrepostas, sem nada no ecrã dele a explicar porquê.
+        let is_mic = kind == "audio";
 
         let vivo = Vivo::new(&self.census.rtp_pumps);
         tokio::spawn(async move {
@@ -1511,7 +1623,7 @@ impl SfuState {
                         if rec_wants_keyframe {
                             request_keyframe(&publication, &this.metrics).await;
                         }
-                        if is_audio {
+                        if is_mic {
                             this.feed_bridges(room_id, publisher, &packet);
                         }
 
@@ -1629,13 +1741,24 @@ impl SfuState {
             }
             let current = peer.subscribed.lock().await.clone();
             let interest = peer.video_interest.lock().await.clone();
+            let dub = peer.dub_lang.lock().await.clone();
             let hints = peer.quality_hints.lock().await.clone();
             for (key, layers) in groups {
                 // Vídeo de câmara fora da página que o cliente está a ver: se
                 // estava ligado, DESLIGA (é aqui que a paginação poupa banda a
                 // sério). Áudio e ecrã partilhado passam sempre.
-                let wanted_by_client =
-                    key.1 != "video" || interest.as_ref().is_none_or(|set| set.contains(&key.0));
+                // Uma pista de DOBRAGEM só vai a quem pediu AQUELA língua. É
+                // a razão de este filtro existir para áudio: sem isto a voz
+                // traduzida ia para a sala inteira — toda a gente a ouvir uma
+                // segunda voz por cima do orador, e ninguém a perceber porquê
+                // (ADR-0030: «a pista traduzida não vaza para quem não a
+                // pediu»). O áudio REAL continua a passar sempre.
+                let wanted_by_client = match dub_lang(&key.1) {
+                    Some(lang) => dub.as_deref() == Some(lang),
+                    None => {
+                        key.1 != "video" || interest.as_ref().is_none_or(|set| set.contains(&key.0))
+                    }
+                };
                 if !wanted_by_client {
                     if let Some((_, sender)) = current.get(&key) {
                         let _ = peer.pc.remove_track(sender).await;
@@ -1918,6 +2041,11 @@ impl SfuState {
                 );
                 continue;
             }
+            if dub_lang(&p.kind).is_some() {
+                // Ver a razão em `activate_publication`: a dobragem não entra
+                // na gravação.
+                continue;
+            }
             if p.kind == "audio" {
                 if let Some(w) = session.open_track("audio", self.rec_cap(), self.metrics.clone()) {
                     *p.rec.lock().await = Some(w);
@@ -2033,9 +2161,23 @@ impl SfuState {
 /// lixo e o ficheiro sai corrompido — **sem** erro em lado nenhum, porque o
 /// ffmpeg compõe na mesma e a gravação entra na biblioteca. Melhor não gravar
 /// a track e dizê-lo alto no log.
+/// A língua de uma pista de DOBRAGEM, ou nada se a publicação não é uma.
+///
+/// O `kind` de uma pista de dobragem é `dub:<etiqueta>` (`dub:en-US`). Carregar
+/// a língua no próprio `kind` — em vez de num registo à parte — faz com que ela
+/// apareça sozinha na linha de `tracing` do fan-out e no agrupamento por
+/// `(publicador, kind)`, que é o que impede duas línguas do mesmo publicador de
+/// colidirem.
+pub(crate) fn dub_lang(kind: &str) -> Option<&str> {
+    kind.strip_prefix("dub:")
+}
+
 fn recordable_codec(publication: &Arc<Publication>) -> bool {
     let mime = publication.codec().mime_type.to_ascii_lowercase();
-    if publication.kind.ends_with("audio") {
+    // Uma pista de dobragem é Opus como as outras — e `ends_with("audio")` não
+    // a apanha, o que a faria passar por VÍDEO e disparar o erro «codec não
+    // gravável» a cada sala com dobragem ligada.
+    if dub_lang(&publication.kind).is_some() || publication.kind.ends_with("audio") {
         mime == "audio/opus"
     } else {
         mime == "video/vp8"
@@ -2210,7 +2352,12 @@ async fn subscribe_layer(
     // stream_id = peer_id do publisher (o cliente mapeia a track ao
     // participante); a partilha de ecrã (vídeo E áudio do sistema) vai num
     // stream "<peer>-screen" — o mesmo elemento <video> reproduz ambos.
-    let stream_id = if publication.kind == "screen" || publication.kind == "screen-audio" {
+    let stream_id = if let Some(lang) = dub_lang(&publication.kind) {
+        // Um stream próprio, e não o do publicador sintético: o cliente liga-o
+        // a um `<audio>` só dele (para o poder baixar ou calar sem mexer no
+        // original) e sabe de que língua é sem perguntar a ninguém.
+        format!("dub-{lang}")
+    } else if publication.kind == "screen" || publication.kind == "screen-audio" {
         format!("{}-screen", publication.publisher)
     } else {
         publication.publisher.to_string()
@@ -2649,6 +2796,70 @@ async fn run_renegotiation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// O `kind` de uma pista de dobragem carrega a língua, e só ele.
+    #[test]
+    fn so_uma_pista_de_dobragem_tem_lingua() {
+        assert_eq!(dub_lang("dub:en-US"), Some("en-US"));
+        assert_eq!(dub_lang("dub:pt-PT"), Some("pt-PT"));
+        // Nada do que já existia passa a ser dobragem por acidente.
+        for k in ["audio", "video", "screen", "screen-audio"] {
+            assert_eq!(dub_lang(k), None, "«{k}» não é dobragem");
+        }
+    }
+
+    /// **A regra que esta frente existe para garantir**: a pista traduzida vai
+    /// SÓ a quem pediu aquela língua, e o áudio real continua a ir a todos.
+    ///
+    /// Reproduz a decisão do `reevaluate_peer` (o `wanted_by_client`) sem
+    /// precisar de uma sala a sério: é a MESMA expressão, e o que se afirma
+    /// aqui é a tabela de verdade dela.
+    #[test]
+    fn a_dobragem_so_vai_a_quem_pediu_aquela_lingua() {
+        fn quer(kind: &str, escolha: Option<&str>) -> bool {
+            match dub_lang(kind) {
+                Some(lang) => escolha == Some(lang),
+                None => true, // áudio e ecrã passam sempre (vídeo tem o seu filtro)
+            }
+        }
+        // Quem não pediu dobragem nenhuma ouve só o original.
+        assert!(quer("audio", None));
+        assert!(!quer("dub:en-US", None), "sem escolha NÃO se ouve dobragem");
+
+        // Quem pediu inglês ouve o inglês — e não o francês.
+        assert!(quer("dub:en-US", Some("en-US")));
+        assert!(
+            !quer("dub:fr-FR", Some("en-US")),
+            "não vaza para outra língua"
+        );
+
+        // E continua a ouvir quem está mesmo a falar.
+        assert!(quer("audio", Some("en-US")));
+        assert!(quer("screen-audio", Some("en-US")));
+    }
+
+    /// A dobragem é Opus e **não** pode ser tomada por vídeo — era o que o
+    /// `ends_with("audio")` fazia, e dava um erro «codec não gravável» por
+    /// cada sala com dobragem ligada.
+    #[test]
+    fn a_dobragem_classifica_se_como_audio_e_nao_como_video() {
+        // O `recordable_codec` decide pelo mime; o que se prova aqui é o RAMO
+        // em que uma pista de dobragem cai.
+        assert!(dub_lang("dub:en-US").is_some());
+        assert!(
+            !"dub:en-US".ends_with("audio"),
+            "é exactamente por isto que o ramo próprio tem de existir"
+        );
+    }
+
+    /// O seletor de oradores olha para `kind == "audio"`: a dobragem fica de
+    /// fora, e tem de ficar — senão o crachá de «quem está a falar» passava a
+    /// apontar para a voz sintética em vez de para a pessoa.
+    #[test]
+    fn a_dobragem_nao_entra_no_seletor_de_oradores() {
+        assert_ne!("dub:en-US", "audio");
+        assert!(dub_lang("audio").is_none());
+    }
 
     /// A camada base depende do tamanho da sala — e o `shift` (perda de
     /// pacotes reportada pelo subscritor) desce-a mais. Antes do `shift`, um
