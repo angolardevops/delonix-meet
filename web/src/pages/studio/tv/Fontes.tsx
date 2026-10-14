@@ -18,6 +18,7 @@ import { cx, IconButton } from '../../../ui/kit'
 import { type PropsDoEcra, SelosDoAr } from './comum'
 import { bloquearAeAf, ControlosDaCamara, podeBloquear, podeFocarUmaVez } from './ControlosDaCamara'
 import { ehDireita, GEOMETRIA_NEUTRA, rodar } from '../../../studio/tv/geometria'
+import { Emparelhar } from './Emparelhar'
 import { BotaoTv, Cabeca, Cartao, Espaco, Miniatura, TopoTv, useTique } from './pecas'
 
 export default function Fontes({ s, c }: PropsDoEcra) {
@@ -95,14 +96,7 @@ export default function Fontes({ s, c }: PropsDoEcra) {
               {s.erroFonte && <p className="tv-erro">{s.erroFonte}</p>}
             </section>
 
-            <section className="tv-ligacao" data-tv="ligacao-app">
-              <div className="tv-ligacao__titulo">
-                <Icon name="phone" />
-                <span>{t('tv.fontes.app')}</span>
-                <span className="tv-dir tv-mono-85">{t('tv.aguardarServidorCurto')}</span>
-              </div>
-              <p className="tv-nota">{t('tv.fontes.appNota')}</p>
-            </section>
+            <Emparelhar />
 
             <section className={cx('tv-ligacao', participantes > 0 && 'is-on')}>
               <div className="tv-ligacao__titulo">

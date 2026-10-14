@@ -24,6 +24,7 @@ const Room = lazy(() => import('./pages/Room'))
 const Lobby = lazy(() => import('./pages/Lobby'))
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'))
 const PhoneCamera = lazy(() => import('./pages/PhoneCamera'))
+const EmparelharTelefone = lazy(() => import('./pages/EmparelharTelefone'))
 const Calendar = lazy(() => import('./pages/Calendar'))
 const Rooms = lazy(() => import('./pages/Rooms'))
 const Analytics = lazy(() => import('./pages/Analytics'))
@@ -256,6 +257,10 @@ export default function App() {
               onSwitch={(c) => enterRoom(c)}
             />
             </EsperaDaSala>
+          </RouteFallback>
+        ) : route.kind === 'emparelhar' ? (
+          <RouteFallback>
+            <EmparelharTelefone code={route.code} />
           </RouteFallback>
         ) : route.kind === 'telemovel' ? (
           <RouteFallback>
