@@ -1,8 +1,8 @@
 # ADR-0030 — Dobragem ao vivo: uma pista por LÍNGUA, voz sintética de licença permissiva, e o nome certo para o que é
 
-**Estado:** Proposto — **falta UMA decisão do dono** (o tecto de inferência por
-sala). A voz ficou decidida a 2026-10-14: `pt_PT-tugão`, anunciada como
-português de Portugal. ·
+**Estado:** **Aceite** a 2026-10-14 — as três decisões do dono estão dadas:
+voz `pt_PT-tugão` anunciada como de Portugal, GPL-3.0 do motor confinada a uma
+imagem própria (molde da D3), e **tecto de 3 línguas activas por sala**. ·
 **Revisto a 2026-10-13** depois de medir as licenças: o Piper **não é MIT**, e
 não existe voz pt-AO. ·
 **Numeração:** era 0029 quando se escreveu; a `develop` ganhou entretanto a sua
@@ -139,7 +139,7 @@ e um crachá na sala di-lo, para ninguém confundir a voz com a pessoa.
   (ADR-0027 §9). E **não entra no catálogo antes do código** — é a segunda
   regra da casa.
 
-## Decisões por dar (são do dono, não de quem escreve a tool)
+## Decisões do dono — todas dadas a 2026-10-14
 
 1. **A licença do MOTOR, não das vozes.** As vozes estavam a ser o problema
    errado: medidas a 2026-10-13, as cinco vozes portuguesas do catálogo
@@ -185,13 +185,30 @@ e um crachá na sala di-lo, para ninguém confundir a voz com a pessoa.
    O `pt_PT-tugão` entra como qualquer artefacto de terceiros: **fixado por
    versão e por SHA-256**, com o `MODEL_CARD` (CC0, afinada da `lessac` média)
    registado ao lado.
-2. **O tecto de inferência que se aceita por sala.** Cinco línguas numa sala de
-   uma hora é uma conta de CPU (ou de GPU, ADR-0024) que alguém paga. Sem um
-   tecto decidido, a primeira sala com oito línguas descobre-o em produção.
+2. **O tecto de inferência que se aceita por sala.**
 
-Até as duas serem dadas, **nada disto se constrói** — e a família «tradução de
-áudio ao vivo» continua a ter, no produto, só o que existe de verdade: legendas
-traduzidas por ouvinte.
+   ### ✅ DECIDIDO a 2026-10-14 pelo dono: **no máximo 3 línguas por sala**
+
+   O tecto é **3**, e é um limite por SALA, não por organização nem por pessoa:
+   é a sala que paga a conta, porque é nela que as cadeias ASR→LLM→TTS correm
+   em paralelo. Um quarto pedido é **recusado com um erro que diz porquê** —
+   nunca aceite e depois calado, que é a avaria que a §Consequências nomeia
+   como a pior desta frente.
+
+   O que o número governa, e que fica preso por asserção no código:
+
+   - **3 publicadores sintéticos no máximo** numa sala, um por língua (§2);
+   - a quarta língua não entra em fila de espera: entrar em fila seria prometer
+     uma dobragem que não começa, e quem está à espera não sabe disso;
+   - **tirar uma língua liberta a vaga** de imediato — o tecto é de línguas
+     ACTIVAS, não de línguas já pedidas alguma vez na sessão;
+   - a língua de origem **não conta** para o tecto: ela já está na sala, e não
+     é sintetizada.
+
+**As três decisões estão dadas** (2026-10-14): a voz é o `pt_PT-tugão` anunciado
+como de Portugal, a GPL-3.0 do motor aceita-se confinada a uma imagem própria no
+molde da D3, e o tecto é de 3 línguas activas por sala. Este ADR passa a
+**Aceite** e a dobragem pode ser construída.
 
 ## Consequências
 
