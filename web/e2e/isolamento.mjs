@@ -160,6 +160,11 @@ await recusado('A cria uma sala de voz na org B', `/api/orgs/${B.orgId}/voice/ro
 await recusado('A roda o token Odoo da org B', `/api/orgs/${B.orgId}/integrations/odoo/rotate-token`, {
   token: A.token, method: 'POST', body: {},
 })
+// O token do SCIM é o que deixa o directório da empresa reescrever membros: se
+// A o puder rodar na org B, passa a provisionar lá dentro.
+await recusado('A roda o token SCIM da org B', `/api/orgs/${B.orgId}/scim/rotate-token`, {
+  token: A.token, method: 'POST', body: {},
+})
 await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/members/${B.userId}`, {
   token: A.token, method: 'DELETE',
 })
