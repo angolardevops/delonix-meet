@@ -15,9 +15,9 @@ e os convidados da sala; não vê as câmaras, o ecrã partilhado, a música, os
 fontes do estúdio do servidor. E só entra no caminho do ar quando alguém abre o ecrã «Mesa de som» ou
 «Cena completa» — uma emissão feita sem passar por lá vai ao ar pelo microfone cru do compositor.
 
-Dos oito defeitos abaixo, **dois cortam o serviço** (EST-01 impede a emissão com destinos guardados;
-EST-02 é SSRF, já conhecido como B2 e ainda aberto) e os restantes degradam o som ou mentem no número
-que mostram. Nenhum deles precisa de arquitectura nova: são da ordem das dezenas de linhas, à excepção
+Dos oito defeitos abaixo, **um corta o serviço** — o EST-01, que impede a emissão com destinos
+guardados — e os restantes degradam o som ou mentem no número que mostram. O EST-02 foi **retratado a
+2026-10-14**: estava fechado, e esta auditoria mediu-o mal (ver a linha dele). Nenhum deles precisa de arquitectura nova: são da ordem das dezenas de linhas, à excepção
 do EST-07 (contrapressão) e do EST-08 (faixas ISO).
 
 ## 2. Porque é que a mesa parece desligada do estúdio
@@ -50,7 +50,7 @@ Severidade: **C** corta o serviço · **G** degrada · **M** mente no que mostra
 | # | Sev | Defeito | Evidência | Correcção |
 |---|---|---|---|---|
 | EST-01 `[NOVO]` | C | **Um destino guardado nunca vai ao ar.** O botão habilita-se com `temChave` (chave escrita **ou** `temChaveGuardada`), e o arranque filtra por `dest.chave.trim()`. Um destino da organização, cuja chave vive cifrada no servidor e nunca volta ao browser — o caminho SEGURO, o do B8/TV2 — é descartado antes de sair. Com todos os destinos guardados, o pedido vai sem destinos e o servidor recusa com `SemDestino`: a pessoa vê «sem destino» num ecrã que lista destinos com chave. Mesma linha, mesmo defeito, no directo multicâmara da sala. | `Studio.tsx:585` vs `:682,686`; `destinosGuardados.ts:98`; `broadcast.rs:233`; `room/useMulticam.ts:98` | trocar o filtro por `temChaveDoDestino` nos dois sítios |
-| EST-02 (=B2) | C | **SSRF por RTMP continua aberto.** `rtmp_url_is_valid` olha o esquema e o host não vazio; `net_guard` não aparece no `broadcast.rs` nem no `stream_destinations.rs`. O `ffmpeg` do servidor liga a qualquer host que o browser escrever — rede interna incluída. | `broadcast.rs:194`; `git grep net_guard -- server/src/broadcast.rs` = vazio | passar o URL pelo `net_guard` (existe e é usado nos webhooks) |
+| ~~EST-02~~ (=B2) | — | **RETRATADO a 2026-10-14: estava fechado.** Afirmei que o SSRF por RTMP continuava aberto porque `git grep net_guard -- server/src/broadcast.rs` devolveu vazio. **A medição é que estava errada:** a chamada é `state.outbound.check_tenant_stream_url(…)` e o nome do módulo não aparece na linha. O guarda existe, corre à entrada E antes de cada reinício do `ffmpeg` (`StreamUrlGuard`, R289), e os destinos guardados passam pelo `check_tenant_stream_config_url` ao gravar. Fica a janela entre a resposta do guarda e a resolução do próprio `ffmpeg`, que o `net_guard.rs:218-223` declara por escrito. **Lição: um `grep` pelo nome do MÓDULO não mede uma chamada por método.** | `broadcast.rs:1733,1799`; `stream_destinations.rs:219,325`; `net_guard.rs:216-242` | nada a fazer |
 | EST-03 `[NOVO]` | M | **O LUFS mostrado não é o que sai.** A captura de sonoridade está no mestre da mesa; depois dela o som ainda passa pelo `ganhoPalco`, pela música, pelo vídeo e pelo **limitador mestre do compositor**. O número do cabeçalho («−14.0 · alvo −16») descreve um sinal que não é o emitido. | `mesaDeSom.ts:150-184`; `compositor.ts:816` | medir no fim da cadeia (TV5) |
 | EST-04 `[NOVO]` | G | **Tudo em mono.** As restrições de canal pedem `channelCount: { ideal: 1 }`. Uma mesa física, um leitor de música ou um retorno de programa estéreo são dobrados para mono à entrada. | `mesaDeSom.ts:325` | `ideal: 2` por canal, com *pan* na tira |
 | EST-05 (=TV5) | G | **Sem atraso por canal.** `git grep createDelay -- web/src` = 0. Não há como alinhar um som que chega antes da imagem (o caso normal: a câmara atrasa, o microfone não), nem compensar os ~51 ms do canal com redução de ruído ligada contra um canal cru. | `git grep createDelay` = vazio | `DelayNode` por canal, ±200 ms |
@@ -125,7 +125,8 @@ A coluna «OBS» é conhecimento público do produto, **não medido neste repo**
 
 | Capacidade do OBS | Nós, hoje | Vale trazer? |
 |---|---|---|
-| Débito dinâmico por congestão + reconexão automática | nada (EST-07) | **Sim, primeiro** |
+| Débito dinâmico por congestão | nada (EST-07) | **Sim, primeiro** |
+| Reconexão automática do destino | **temos**: backoff 1 s→30 s com tecto de tentativas (`broadcast.rs:460,1049`) | — |
 | Painel de estatísticas (frames perdidos, atraso do codificador, congestão) | débito enviado, e por destino o que o servidor reporta | **Sim**, barato |
 | Atraso de áudio por fonte (lip-sync) | nada (EST-05) | **Sim**, barato |
 | Monitorização: desligada / só monitor / monitor e ar | AUX + solo PFL | já lá está, falta o terceiro modo |
@@ -160,8 +161,9 @@ cinco primeiras linhas da tabela), não a do catálogo de plugins.
 | A5 | EST-E: tally na tira e audio-follow-video opcional | fonte que entra no ar abre o canal; prova no e2e do estúdio |
 
 **Onda B — a emissão não mente e não entope**
-B1 EST-07 (contrapressão + débito adaptativo + perfil, com aviso no ecrã) · B2 painel de estatísticas ·
-B3 EST-02 (`net_guard`) · B4 reconexão automática de destino.
+B1 EST-07 (contrapressão + débito adaptativo + perfil, com aviso no ecrã) · B2 painel de estatísticas.
+**O B3 e o B4 desta lista caíram a 2026-10-14, medidos outra vez: o `net_guard` dos destinos já existe
+(EST-02 retratado) e a reconexão com backoff também.** A onda B é só o codificador e o que ele mostra.
 
 **Onda C — estúdio a sério**
 C1 painel de efeitos com ducking · C2 bastidores + intercom + mix-minus por convidado (TV6) ·
@@ -184,3 +186,8 @@ RFC-0001 e no ADR-0015, à espera de decisão.
   confirma-se versão a versão.
 - **Não se auditou** o editor (`studio/edit/`), as legendas, nem a estação de TV do servidor
   (`tv_channels.rs`, `tv_broadcasts.rs`) — essa está na auditoria de 2026-10-03 e no TV13.
+- **Um achado desta auditoria já foi retratado** no mesmo dia: o EST-02. A ausência media-se pelo nome
+  do MÓDULO (`git grep net_guard` num ficheiro) e a chamada era por método — o guarda existia. Os
+  restantes «= 0» deste documento (`createDelay`, `bufferedAmount`, `requestMIDI`, `soundboard`) foram
+  medidos pelo nome da API que teria de aparecer, não pelo do módulo; valem mais por isso, mas a lição
+  é a mesma: **antes de agir sobre uma ausência, procura também o CHAMADOR.**
