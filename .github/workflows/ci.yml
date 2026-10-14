@@ -221,6 +221,9 @@ jobs:
       - name: ffmpeg do servidor é LGPL, com versão e SHA-256 fixados (docs/tv/b3-ffmpeg-lgpl-2026-10-04.md)
         run: bash scripts/check-ffmpeg-licenca.sh
 
+      - name: a GPL do Piper fica confinada à imagem do tts-server, com a fonte acompanhada (ADR-0030)
+        run: bash scripts/check-tts-licenca.sh
+
       - name: O bordo SIP anuncia um endereço real (R277 — sem ele, todas as chamadas caem aos 32 s)
         run: bash scripts/check-bordo-anuncia.sh
 

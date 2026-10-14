@@ -20,6 +20,7 @@ import { PollsPanel } from '../room/PollsPanel'
 import { Prejoin } from '../room/Prejoin'
 import { QaPanel } from '../room/QaPanel'
 import { SettingsPanel } from '../room/SettingsPanel'
+import { useDobragem } from '../room/useDobragem'
 import { Stage } from '../room/Stage'
 import { CaptionOverlay, ReactionsLayer, ReadyCard, SpotlightQuestion, WaitingOverlay, WinnerOverlay } from '../room/StageOverlays'
 import { EndedScreen, PassphraseScreen } from '../room/StateScreens'
@@ -89,6 +90,7 @@ export default function Room({
   const chat = useChat(core, chrome.panel === 'chat')
   const reactions = useReactions(core)
   const transcription = useTranscription(core)
+  const dobragem = useDobragem(core)
   const recording = useRecording(
     core,
     {
@@ -578,7 +580,12 @@ export default function Room({
                 />
               )}
               {chrome.panel === 'settings' && (
-                <SettingsPanel media={media} transcription={transcription} localVideo={core.localVideoRef.current}>
+                <SettingsPanel
+                  media={media}
+                  transcription={transcription}
+                  dobragem={dobragem}
+                  localVideo={core.localVideoRef.current}
+                >
                   <EnhancementSettings enh={enhancements} viewMode={layout.effectiveViewMode} onSpeakerView={() => layout.setViewMode('stage')} />
                 </SettingsPanel>
               )}
