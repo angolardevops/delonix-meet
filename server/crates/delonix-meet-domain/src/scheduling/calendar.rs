@@ -64,10 +64,17 @@ pub struct Event<'a> {
     /// Quem organiza (endereço). Num `REQUEST` sem organizador, o Outlook e o
     /// Gmail mostram o evento mas não mostram «aceitar».
     pub organizer: Option<&'a str>,
-    /// A quem se pede resposta (endereço). Um por mensagem: cada pessoa recebe
-    /// o seu convite, e assim um destinatário não fica a saber a lista dos
-    /// outros.
-    pub attendee: Option<&'a str>,
+    /// Quem participa (endereços).
+    ///
+    /// **Quantos entram aqui é decisão de QUEM CHAMA, não deste módulo.** Um
+    /// convite por correio leva UM — cada pessoa recebe o seu, e assim um
+    /// destinatário não fica a saber a lista dos outros. A descarga do `.ics`
+    /// leva TODOS, porque quem a pede já pode ler a lista de convidados pela
+    /// API (o mesmo guarda serve as duas rotas) e um evento de calendário com
+    /// os participantes é metade da utilidade dele.
+    ///
+    /// Vazio = nenhum `ATTENDEE`, que era o comportamento antes disto existir.
+    pub attendees: &'a [&'a str],
 }
 
 /// Escapa um valor de texto (RFC 5545 §3.3.11).
@@ -117,7 +124,7 @@ pub fn ics(event: &Event<'_>, method: Method) -> String {
         out.push_str(organizer);
         out.push_str("\r\n");
     }
-    if let Some(attendee) = event.attendee {
+    for attendee in event.attendees {
         // `RSVP=TRUE` só num convite: num `PUBLISH` ninguém responde, e num
         // `CANCEL` pedir resposta não faz sentido.
         out.push_str(match method {
@@ -153,7 +160,7 @@ mod tests {
             description: "Delonix Meet — entrar: https://meet.exemplo.ao/#/r/abc-defg-hij",
             url: Some("https://meet.exemplo.ao/#/r/abc-defg-hij"),
             organizer: None,
-            attendee: None,
+            attendees: &[],
         }
     }
 
@@ -177,7 +184,7 @@ mod tests {
     fn o_convite_pede_resposta_e_diz_quem_organiza() {
         let mut e = evento();
         e.organizer = Some("ana@exemplo.ao");
-        e.attendee = Some("maria@outra.ao");
+        e.attendees = &["maria@outra.ao"];
         let s = ics(&e, Method::Request);
         assert!(s.contains("METHOD:REQUEST\r\n"), "{s}");
         assert!(s.contains("ORGANIZER:mailto:ana@exemplo.ao\r\n"), "{s}");
@@ -191,7 +198,7 @@ mod tests {
     #[test]
     fn o_cancelamento_tira_o_evento_da_agenda_e_nao_pede_resposta() {
         let mut e = evento();
-        e.attendee = Some("maria@outra.ao");
+        e.attendees = &["maria@outra.ao"];
         let s = ics(&e, Method::Cancel);
         assert!(s.contains("METHOD:CANCEL\r\n"), "{s}");
         assert!(s.contains("STATUS:CANCELLED\r\n"), "{s}");
