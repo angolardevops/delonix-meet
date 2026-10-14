@@ -136,6 +136,8 @@ recusa "produção com um IP privado anunciado como público (media só na LAN)"
   "${PROD[@]}" --set coturn.externalIP=192.168.1.32
 recusa "relay atrás de NAT com o TURN_HOST em IP (o SFU dependia do hairpin)" "server.turnHost: com coturn.privateIP indica um NOME" \
   "${PROD[@]}" --set coturn.privateIP=10.0.0.32 --set server.turnHost=203.0.113.10:3478
+recusa "endereço público sem https em produção" "publicUrl=http://meet.ngolacloud.com: tem de começar por https://" \
+  "${PROD[@]}" --set publicUrl=http://meet.ngolacloud.com
 recusa "IP privado do relay igual ao público" "coturn.privateIP: só faz sentido" \
   "${PROD[@]}" --set coturn.privateIP=203.0.113.10
 recusa "TURN por site para um nome que a instalação não serve" "não é um nome que esta instalação serve" \
@@ -277,6 +279,16 @@ if '--external-ip="$EXTERNAL_IP" ' not in args or 'PRIVATE_IP' in env or alias:
     erros.append(f"[production] sem privateIP o relay tem de ficar como era: alias={alias} env={sorted(env)}")
 if turn != 'turn.ngolacloud.com:3478':
     erros.append(f"[production] o TURN_HOST do perfil não é o nome público: {turn!r}")
+# O PUBLIC_URL: sem ele o servidor não escreve links de email e o OAuth do MCP
+# responde 503 (medido em produção a 2026-10-14). É o nome CANÓNICO — o mesmo
+# que vai à frente no CORS_ORIGINS —, nunca o segundo domínio.
+cm_pu = next(d for d in [x for x in yaml.safe_load_all(open(sys.argv[1], encoding='utf-8')) if x]
+             if d.get('kind') == 'ConfigMap' and 'TURN_HOST' in (d.get('data') or {}))
+pu = cm_pu['data'].get('PUBLIC_URL')
+if pu != 'https://meet.ngolacloud.com':
+    erros.append(f"[production] PUBLIC_URL={pu!r}, esperado o nome canónico https://meet.ngolacloud.com")
+if pu and cm_pu['data'].get('CORS_ORIGINS', '').split(',')[0] != pu:
+    erros.append(f"[production] o PUBLIC_URL não é a primeira origem do CORS: {cm_pu['data'].get('CORS_ORIGINS')!r}")
 # Por domínio: quem entra pelo `.ao` recebe o TURN do `.ao`. O par tem de
 # casar com um nome que as rotas servem — senão nunca é escolhido.
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1], encoding='utf-8')) if d]
