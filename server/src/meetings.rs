@@ -2086,14 +2086,16 @@ pub(crate) async fn room_link_absolute(state: &AppState, meeting: &Meeting) -> O
 /// reunião: o handler da descarga pela posse ou pelo convite, o correio pela
 /// audiência que a notificação já resolveu.
 ///
-/// O `attendee` é o endereço de QUEM recebe esta mensagem, um por mensagem: num
-/// convite ele faz o cliente de calendário mostrar «aceitar», e manter um só
-/// evita que um destinatário fique a saber a lista dos outros.
+/// Os `attendees` são quem participa, e **quantos entram é decisão de quem
+/// chama**: um convite por correio leva UM (o destinatário daquela mensagem,
+/// para ele não ficar a saber a lista dos outros), a descarga do `.ics` leva
+/// TODOS — quem a pede já pode ler a lista pela API, porque o mesmo guarda
+/// (`is_owner_or_invitee`) serve as duas rotas.
 pub(crate) async fn ics_for(
     state: &AppState,
     meeting: &Meeting,
     method: IcsMethod,
-    attendee: Option<&str>,
+    attendees: &[&str],
 ) -> String {
     // O `sequence` lê-se à parte e NÃO entra no `MEETING_COLUMNS`: aquela lista
     // é o contrato de várias respostas da API, e a revisão do calendário só
@@ -2114,17 +2116,19 @@ pub(crate) async fn ics_for(
         }
         desc.push_str(&format!("Delonix Meet — entrar: {link}"));
     }
-    // O organizador é o anfitrião, e só entra onde serve: num `PUBLISH` ninguém
-    // responde, e a descarga tem de continuar a sair igual ao que saía.
-    let organizer: Option<String> = match method {
-        IcsMethod::Publish => None,
-        _ => sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
-            .bind(meeting.owner_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten(),
-    };
+    // O organizador é o anfitrião, e entra SEMPRE — também num `PUBLISH`.
+    //
+    // Entrava só no convite, para a descarga sair byte a byte igual ao que saía
+    // antes de o módulo existir. Mas um evento de calendário sem organizador
+    // não diz de quem é a reunião: o Outlook e o Google mostram-no vazio, e
+    // quem o importa fica sem saber a quem responder. O `ORGANIZER` num
+    // `PUBLISH` não pede resposta a ninguém — só diz de quem é.
+    let organizer: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+        .bind(meeting.owner_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
     calendar::ics(
         &calendar::Event {
             uid: &format!("{}@delonix-meet", meeting.id),
@@ -2136,7 +2140,7 @@ pub(crate) async fn ics_for(
             description: &desc,
             url: link.as_deref(),
             organizer: organizer.as_deref(),
-            attendee,
+            attendees,
         },
         method,
     )
@@ -2144,6 +2148,10 @@ pub(crate) async fn ics_for(
 
 /// O mesmo, para quem só tem o id (o correio). `None` quando a reunião já não
 /// existe — apagar uma reunião não pode fazer uma notificação falhar.
+///
+/// Aqui o `attendee` é UM: é o endereço de quem recebe aquela mensagem, e é
+/// esta função (não o domínio) que impõe a regra de um destinatário não ficar
+/// a saber a lista dos outros.
 pub(crate) async fn ics_by_id(
     state: &AppState,
     meeting_id: Uuid,
@@ -2158,7 +2166,8 @@ pub(crate) async fn ics_by_id(
     .await
     .ok()
     .flatten()?;
-    Some(ics_for(state, &meeting, method, attendee).await)
+    let um: Vec<&str> = attendee.into_iter().collect();
+    Some(ics_for(state, &meeting, method, &um).await)
 }
 
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
@@ -2191,7 +2200,22 @@ pub async fn ics(
     // A descarga é um `PUBLISH` sem destinatário: não pede resposta a ninguém.
     // O texto sai do mesmo construtor que o convite por correio usa
     // (`scheduling::calendar`), e um teste prende-o byte a byte.
-    let body = ics_for(&state, &meeting, IcsMethod::Publish, None).await;
+    // A DESCARGA leva todos os participantes: quem a pede já pode ler a lista
+    // de convidados pela API (`/invitees` tem o mesmo guarda que isto), por
+    // isso não se expõe nada de novo — e um evento de calendário sem
+    // participantes esconde metade do que ele é.
+    let emails: Vec<String> = sqlx::query_scalar(
+        "SELECT u.email FROM meeting_invitees mi
+           JOIN users u ON u.id = mi.user_id
+          WHERE mi.meeting_id = $1 AND mi.status <> 'declined'
+          ORDER BY u.email",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let refs: Vec<&str> = emails.iter().map(String::as_str).collect();
+    let body = ics_for(&state, &meeting, IcsMethod::Publish, &refs).await;
     Ok(axum::response::Response::builder()
         .header("Content-Type", "text/calendar; charset=utf-8")
         .header(
