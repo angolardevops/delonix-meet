@@ -253,6 +253,29 @@ async fn source_token_is_minimal_and_single_use(db: sqlx::PgPool) {
     assert!(claims.get("owner").is_none());
     assert!(p["ws_path"].as_str().unwrap().contains("&room="));
 
+    // Os servidores ICE vêm NO RESGATE. Uma fonte não tem conta, e o
+    // `/api/ice-servers` exige sessão: sem isto, um telefone emparelhado só se
+    // ligava a quem estivesse na mesma rede — sem relay para atravessar NAT.
+    let ice = p["ice_servers"]["iceServers"]
+        .as_array()
+        .unwrap_or_else(|| panic!("o resgate tem de trazer ice_servers: {p}"));
+    assert!(
+        ice.iter().any(|e| e["urls"][0].as_str().is_some_and(|u| u.starts_with("stun:"))),
+        "falta o STUN: {p}"
+    );
+    // O TURN só existe se a configuração o tiver; quando existe, traz
+    // credencial de vida curta — nunca um URL de relay sem credencial.
+    for e in ice {
+        if e["urls"][0].as_str().is_some_and(|u| u.starts_with("turn:")) {
+            assert!(e["username"].is_string() && e["credential"].is_string(), "TURN sem credencial: {e}");
+        }
+    }
+
+    // E a prova de que isto NÃO é só o token a dar jeito: a mesma fonte não
+    // alcança o `/api/ice-servers`, que é o caminho de quem tem sessão.
+    let (st, _) = app.get("/api/ice-servers", Some(token)).await;
+    assert_eq!(st, 401, "o token de fonte não serve para pedir ICE pela REST");
+
     // Uso único.
     let (st, _) = app
         .post("/api/studio-pairings", None, json!({"code": c["code"]}))
