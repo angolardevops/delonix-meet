@@ -816,8 +816,13 @@ pub async fn agent_put_inputs(
                 .filter(|v| !v.is_empty()),
             vendor_id: rules::validate_ident(i.vendor_id.as_deref().unwrap_or(""))?,
             product_id: rules::validate_ident(i.product_id.as_deref().unwrap_or(""))?,
-            serial: rules::validate_label(i.serial.as_deref().unwrap_or(""))
-                .map(|s| if s.is_empty() { None } else { Some(s) })?,
+            serial: rules::validate_label(i.serial.as_deref().unwrap_or("")).map(|s| {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            })?,
             signal: rules::Signal::parse(&i.signal)?,
             capabilities: i
                 .capabilities
@@ -875,7 +880,18 @@ pub async fn agent_put_inputs(
             .execute(&mut *tx)
             .await?;
     }
-    let inputs: Vec<AgentInputView> = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Option<Uuid>, String, serde_json::Value)>(
+    let inputs: Vec<AgentInputView> = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Option<Uuid>,
+            String,
+            serde_json::Value,
+        ),
+    >(
         "SELECT id, device_path, label, audio_node, channel_id, tuner_kind, tuner_config
            FROM tv_capture_inputs WHERE agent_id = $1 ORDER BY device_path",
     )
@@ -883,15 +899,19 @@ pub async fn agent_put_inputs(
     .fetch_all(&mut *tx)
     .await?
     .into_iter()
-    .map(|(id, device_path, label, audio_node, channel_id, tuner_kind, tuner_config)| AgentInputView {
-        id,
-        device_path,
-        label,
-        audio_node,
-        channel_id,
-        tuner_kind,
-        tuner_config,
-    })
+    .map(
+        |(id, device_path, label, audio_node, channel_id, tuner_kind, tuner_config)| {
+            AgentInputView {
+                id,
+                device_path,
+                label,
+                audio_node,
+                channel_id,
+                tuner_kind,
+                tuner_config,
+            }
+        },
+    )
     .collect();
     tx.commit().await?;
 

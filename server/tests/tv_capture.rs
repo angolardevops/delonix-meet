@@ -199,10 +199,7 @@ async fn o_servidor_emparelha_o_audio_pela_porta(db: sqlx::PgPool) {
     assert_eq!(items[0]["serial"], items[1]["serial"]);
     assert_ne!(items[0]["device_path"], items[1]["device_path"]);
     // O HDCP tem nome próprio, e não se disfarça de avaria.
-    let protegida = items
-        .iter()
-        .find(|i| i["device_path"] == VIDEO_P4)
-        .unwrap();
+    let protegida = items.iter().find(|i| i["device_path"] == VIDEO_P4).unwrap();
     assert_eq!(protegida["signal"], "protected");
     assert!(
         protegida["last_signal_at"].is_null(),
@@ -385,7 +382,11 @@ async fn outra_org_membro_simples_e_token_revogado_sao_recusados(db: sqlx::PgPoo
     let a = app.new_org("alfa.ao").await;
     let b = app.new_org("beta.ao").await;
     let (_, caixa_b) = app
-        .post(&agentes(b.org()), Some(&b.token), json!({"name": "Caixa da B"}))
+        .post(
+            &agentes(b.org()),
+            Some(&b.token),
+            json!({"name": "Caixa da B"}),
+        )
         .await;
     let id_b = caixa_b["id"].as_str().unwrap();
     let token_b = caixa_b["token"].as_str().unwrap().to_string();
@@ -403,7 +404,11 @@ async fn outra_org_membro_simples_e_token_revogado_sao_recusados(db: sqlx::PgPoo
         common::assert_denied(&caminho, st, &body, id_b);
     }
     let (st, _) = app
-        .post(&agentes(b.org()), Some(&a.token), json!({"name": "intrusa"}))
+        .post(
+            &agentes(b.org()),
+            Some(&a.token),
+            json!({"name": "intrusa"}),
+        )
         .await;
     assert!(st == 403 || st == 404, "criar na org B: {st}");
     let (st, _) = app

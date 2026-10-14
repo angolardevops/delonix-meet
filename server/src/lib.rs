@@ -159,7 +159,7 @@ use axum::{
     http::HeaderValue,
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -527,7 +527,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     // O agente de captura de TV (RFC-0002, ADR-0031): token `dlxtv_`, reporta o
     // inventário da caixa onde os capturadores HDMI estão ligados.
-    let tv_agent_routes = Router::new().route("/inputs", axum::routing::put(tv_capture::agent_put_inputs));
+    let tv_agent_routes = Router::new().route("/inputs", put(tv_capture::agent_put_inputs));
 
     Router::new()
         // LIVENESS: o processo está vivo? Responde `ok` mesmo a drenar — um

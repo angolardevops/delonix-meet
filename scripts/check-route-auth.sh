@@ -26,7 +26,10 @@ PUBLICAS = 'scripts/rotas-publicas.txt'
 # `WWW-Authenticate` que a especificação MCP exige. É um extractor a sério
 # (`FromRequestParts`) exactamente para caber aqui — autenticar no corpo do
 # handler deixava esta superfície fora do portão.
-EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth', 'McpAuth')
+# `TvAgentAuth` (RFC-0002, ADR-0031) é o do agente de captura de TV: token
+# `dlxtv_` da caixa, verificado contra o `token_hash` e a revogação, como o
+# `SmsGatewayAuth` já fazia para o agente de SMS.
+EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth', 'TvAgentAuth', 'McpAuth')
 # Autenticação por GUARDA chamada no corpo. Nem tudo pode ser um extractor: a
 # API interna da voz autentica por segredo partilhado em header, e isso lê-se
 # do `HeaderMap`, não de um tipo.
