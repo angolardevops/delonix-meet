@@ -385,6 +385,15 @@ na instalação.
 e ganham ao redireccionamento genérico da plataforma por terem nome próprio. Medido a
 2026-10-13: `http://meet.ngolacloud.com/` devolvia 200 com a aplicação, em claro.
 
+### O endereço público (`publicUrl`)
+
+O `PUBLIC_URL` sai de `publicUrl`, ou, vazio, de `https://<host>`. O servidor usa-o para os
+links que escreve num email (prova de endereço, convites, reposição de password) e para o
+emissor e o recurso do OAuth do servidor MCP — e **nunca** o tira do cabeçalho `Host`. Sem
+ele, esses emails recusam-se (`mail.public_url_missing`) e o OAuth responde 503. Medido em
+produção a 2026-10-14, antes de o chart o pôr: `/.well-known/oauth-authorization-server`
+devolvia «OAuth desligado: sem PUBLIC_URL» nos dois domínios.
+
 ### Mais do que um nome (`extraHosts`)
 
 `host` é o nome canónico; `extraHosts` são outros nomes pelos quais a mesma instalação

@@ -129,6 +129,11 @@ capabilities:
 {{- if not $v.host -}}
 {{- $e = append $e "host: falta o nome público (p.ex. --set host=meet.ngolacloud.com)" -}}
 {{- end -}}
+{{- with $v.publicUrl -}}
+{{- if not (or (hasPrefix "https://" .) (and (not $prod) (hasPrefix "http://" .))) -}}
+{{- $e = append $e (printf "publicUrl=%s: tem de começar por https:// (http:// só fora de produção). O servidor recusava arrancar com ele; aqui recusa-se antes do rollout" .) -}}
+{{- end -}}
+{{- end -}}
 {{- if $v.extraHosts -}}
 {{- if $v.ingress.enabled -}}
 {{- $e = append $e "extraHosts: com ingress.enabled o chart pede um certificado para UM nome (host) — o segundo nome seria servido com o certificado do primeiro. Usa gateway.mode=attach, onde o certificado é do Gateway" -}}

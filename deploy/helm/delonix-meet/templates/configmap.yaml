@@ -31,6 +31,7 @@ data:
   {{- $origens = append $origens (printf "https://%s" .) -}}
   {{- end }}
   CORS_ORIGINS: {{ join "," $origens | quote }}
+  PUBLIC_URL: {{ $v.publicUrl | default (printf "https://%s" $v.host) | trimSuffix "/" | quote }}
   RECORDINGS_DIR: /var/lib/delonix/recordings
   # Media relay-only pelo coturn: o IP do pod não é alcançável de fora.
   FORCE_TURN_RELAY: {{ ternary "1" "0" $v.server.forceTurnRelay | quote }}

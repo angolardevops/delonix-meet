@@ -40,6 +40,15 @@ host: ""
 # o segundo nome com o certificado do primeiro.
 extraHosts: []
 
+# O endereço público da instalação (`PUBLIC_URL`), sem barra no fim. Vazio =
+# `https://<host>`, o nome canónico. É de onde o servidor tira os links que
+# escreve num email (prova de endereço, convites, reposição de password) e o
+# emissor e o recurso do OAuth do servidor MCP. O servidor NUNCA o deriva do
+# cabeçalho `Host` (era o envenenamento de links de reposição), e sem ele
+# recusa: os emails com link saem com `mail.public_url_missing` e o OAuth
+# responde 503. Medido em produção a 2026-10-14: era exactamente esse o estado.
+publicUrl: ""
+
 imagePullSecrets: []
 
 # Tag partilhada pelo servidor e pela web (saem do mesmo commit: `make image`
