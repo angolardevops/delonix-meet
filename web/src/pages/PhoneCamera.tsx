@@ -103,12 +103,33 @@ function OperadorDeCamara({
   // aponta para fora (traseira) e a orientação real é que interessa.
   const [espelhado, setEspelhado] = useState(true)
   const [aeAfBloqueado, setAeAfBloqueado] = useState(false)
+  const [aVirar, setAVirar] = useState(false)
   const [bateria, setBateria] = useState<{ nivel: number; aCarregar: boolean } | null>(null)
   const [gravando, setGravando] = useState(false)
   const [ficheiroSeguranca, setFicheiroSeguranca] = useState<{ url: string; nome: string } | null>(null)
   const [erro, setErro] = useState('')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+
+  /**
+   * Trocar de lente é pedir OUTRA pista ao aparelho, por isso o espelho tem de
+   * a acompanhar: a frontal quer-se espelhada (o operador vê-se como num
+   * espelho) e a traseira não, senão o que está escrito na cena aparece ao
+   * contrário. Quem quiser o contrário continua a ter o botão ao lado.
+   */
+  const virarLente = async () => {
+    if (aVirar) return
+    setAVirar(true)
+    // O lado ALVO calcula-se antes: o `media.facing` é estado do React e, lido
+    // logo a seguir ao `await`, ainda traz o valor velho.
+    const alvo = media.facing === 'user' ? 'environment' : 'user'
+    try {
+      await media.flipCam()
+      setEspelhado(alvo === 'user')
+    } finally {
+      setAVirar(false)
+    }
+  }
 
   useEffect(() => {
     const track = core.cameraTrackRef.current
@@ -267,6 +288,11 @@ function OperadorDeCamara({
         {capacidades?.exposureMode?.includes('manual') && capacidades?.focusMode?.includes('manual') && (
           <Button variant={aeAfBloqueado ? 'primary' : 'secondary'} size="sm" onClick={alternarAeAfBloqueado}>
             {t('telemovel.bloquearAeAf')}
+          </Button>
+        )}
+        {media.facing && (
+          <Button variant="secondary" size="sm" disabled={aVirar} onClick={() => void virarLente()}>
+            {media.facing === 'user' ? t('telemovel.virarParaTras') : t('telemovel.virarParaFrente')}
           </Button>
         )}
         <Button variant={espelhado ? 'primary' : 'secondary'} size="sm" onClick={() => setEspelhado((v) => !v)}>

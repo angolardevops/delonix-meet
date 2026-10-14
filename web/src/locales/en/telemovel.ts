@@ -16,6 +16,8 @@ export default {
   exposicao: 'Exposure',
   lanterna: 'Torch',
   bloquearAeAf: 'Lock AE/AF',
+  virarParaTras: "Switch to back",
+  virarParaFrente: "Switch to front",
   espelhar: 'Mirror',
   semControlosAvancados: 'This device or browser does not expose advanced camera controls (zoom, focus, exposure).',
   erroControlo: 'Could not apply the adjustment.',

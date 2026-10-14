@@ -16,6 +16,8 @@ export default {
   exposicao: 'Exposição',
   lanterna: 'Lanterna',
   bloquearAeAf: 'Bloquear AE/AF',
+  virarParaTras: "Virar para trás",
+  virarParaFrente: "Virar para a frente",
   espelhar: 'Espelhar',
   semControlosAvancados: 'Este aparelho ou browser não expõe controlos de câmara avançados (zoom, foco, exposição).',
   erroControlo: 'Não foi possível aplicar o ajuste.',

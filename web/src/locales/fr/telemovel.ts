@@ -16,6 +16,8 @@ export default {
   exposicao: 'Exposition',
   lanterna: 'Torche',
   bloquearAeAf: 'Verrouiller AE/AF',
+  virarParaTras: "Caméra arrière",
+  virarParaFrente: "Caméra avant",
   espelhar: 'Miroir',
   semControlosAvancados: "Cet appareil ou ce navigateur n'expose pas de contrôles de caméra avancés (zoom, mise au point, exposition).",
   erroControlo: "Impossible d'appliquer le réglage.",
