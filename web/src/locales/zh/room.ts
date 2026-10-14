@@ -647,6 +647,16 @@ export default {
     transcricaoServidor: '服务器转写',
     transcricaoServidorDica: '更准确：音频仅发送到组织的服务器。',
   },
+  dobragem: {
+    titulo: '实时配音',
+    ouvir: '收听配音语言',
+    original: '原声（不配音）',
+    dica: '合成语音，会延迟几秒。该选择仅对你生效。',
+    crachaSintetica: '你听到的是合成语音，不是本人，并且会延迟几秒。',
+    'lingua_pt-PT': '葡萄牙语（葡萄牙）',
+    'lingua_en-US': '英语（美国）',
+    'lingua_fr-FR': '法语（法国）',
+  },
   notas: {
     explicacao: '共享转写：主持人开启后，每位参会者会转写各自麦克风的内容。',
     aTuaFalaCaptada: '{{nome}} 已开启转写：你的发言正在被转写。',

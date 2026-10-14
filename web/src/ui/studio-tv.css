@@ -2132,3 +2132,29 @@
   font-size: 10px;
   font-weight: 600;
 }
+
+/* Escolher um ficheiro de vídeo como fonte, e o transporte dele. */
+.tv-ficheiro {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-2);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tv-ficheiro input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.tv-transporte {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 4px;
+}

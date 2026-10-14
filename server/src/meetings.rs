@@ -69,6 +69,9 @@ pub struct Meeting {
         save_minutes,
         request_mom_summary,
         invitees,
+        external_invitees,
+        add_external_invitee,
+        remove_external_invitee,
         respond,
         quarantine_analytics,
         save_minutes_by_room,
@@ -92,6 +95,9 @@ pub struct Meeting {
         StartResp,
         ConflictCheckReq,
         InviteeResponse,
+        ExternalInvitee,
+        ExternalInviteeReq,
+        ExternalInviteeResp,
         RespondReq,
         QuarantineRow
     ))
@@ -326,6 +332,11 @@ pub struct CreateMeetingReq {
     pub duration_min: i32,
     #[serde(default)]
     pub invitee_ids: Vec<Uuid>,
+    /// Endereços de email de convidados **sem conta aqui**. Cada um recebe o
+    /// seu convite com o `.ics`; entram pela porta de convidado (nome + sala de
+    /// espera), como manda a R290. Máximo 50 por reunião.
+    #[serde(default)]
+    pub external_emails: Vec<String>,
     #[serde(default)]
     pub room_ref: Option<Uuid>,
     // Recorrência
@@ -572,6 +583,9 @@ pub async fn create(
     if !(5..=1440).contains(&req.duration_min) {
         return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
     }
+    // Os endereços externos validam-se ANTES de escrever: um endereço mal
+    // formado no meio da lista não pode deixar meia reunião criada.
+    let externos = normalize_external_emails(&req.external_emails)?;
     // `sessions.create` (ADR-0008 §1): o poder de criar, avaliado sobre o dono.
     crate::org::require_session_create(&state, auth.user_id, None).await?;
     req.options.validate()?;
@@ -712,6 +726,18 @@ pub async fn create(
         .await?;
     }
 
+    for email in &externos {
+        sqlx::query(
+            "INSERT INTO meeting_external_invitees (meeting_id, email, invited_by)
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+        )
+        .bind(meeting.id)
+        .bind(email)
+        .bind(auth.user_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
     // A reunião, os convidados e o registo do `meeting.created`: uma
     // transacção (trabalho nº3). Fecha a janela em que um SIGTERM apagava o
     // aviso sem deixar rasto, E de passagem torna atómico o que já não era —
@@ -740,6 +766,12 @@ pub async fn create(
     }
     crate::webhooks::envia(&state, "meeting.created", fila).await;
     crate::notifications::meeting_invited(&state, &meeting, auth.user_id, &req.invitee_ids).await;
+    // Os externos não passam pelo centro de notificações (não têm conta nem
+    // preferências): é um email directo, best-effort, com o `.ics` deste
+    // endereço. Depois do commit, como o resto do que sai para fora.
+    for email in &externos {
+        crate::meeting_invite_mail::send_best_effort(&state, &meeting, email).await;
+    }
 
     let sms = match sms_org {
         None => None,
@@ -1992,6 +2024,16 @@ pub async fn reschedule(
     // entra.
     let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
     crate::notifications::meeting_rescheduled(&state, audience, was_at).await;
+    // Os externos recebem convite NOVO: a chave de dedupe leva a hora, por isso
+    // uma hora diferente sai, e a mesma hora não sai duas vezes. É este segundo
+    // `REQUEST` — mesmo UID, `SEQUENCE` maior — que SUBSTITUI o evento na agenda
+    // de quem está de fora, em vez de lhe deixar dois.
+    let externos: Vec<String> =
+        sqlx::query_scalar("SELECT email FROM meeting_external_invitees WHERE meeting_id = $1")
+            .bind(id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
 
     let m: Meeting = sqlx::query_as(&format!(
         "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
@@ -1999,7 +2041,42 @@ pub async fn reschedule(
     .bind(id)
     .fetch_one(&state.db)
     .await?;
+    // Com a reunião já na hora NOVA: é essa que tem de ir no `.ics`.
+    for email in &externos {
+        crate::meeting_invite_mail::send_best_effort(&state, &m, email).await;
+    }
     Ok(Json(m))
+}
+
+/// O link da sala, **absoluto ou nada**.
+///
+/// Um `.ics` e um email são lidos noutro programa, dias depois: um caminho
+/// relativo lá dentro não aponta para lado nenhum (medido a 2026-10-13 contra um
+/// servidor real — saía `URL:/#/r/zqc-ghvp-eie`). O `room_link` cai para
+/// relativo quando a organização não declara domínio, e isso serve numa resposta
+/// de API, que o cliente resolve contra o host a que chamou; aqui não serve.
+///
+/// A ordem é a do produto: o domínio da organização primeiro (é o endereço por
+/// que os convidados dela conhecem o serviço), o `PUBLIC_URL` a seguir, e nada
+/// em último. **Nunca o cabeçalho `Host` do pedido** — pela mesma razão que os
+/// links de reposição de password não o usam.
+pub(crate) async fn room_link_absolute(state: &AppState, meeting: &Meeting) -> Option<String> {
+    let code = meeting.room_code.as_ref()?;
+    let org_id = crate::org::orgs_of_user(state, meeting.owner_id)
+        .await
+        .first()
+        .copied();
+    if let Some(org_id) = org_id {
+        let l = crate::apikeys::room_link(state, org_id, code).await;
+        if l.starts_with("http") {
+            return Some(l);
+        }
+    }
+    state
+        .config
+        .public_url
+        .as_deref()
+        .map(|base| format!("{base}/#/r/{code}"))
 }
 
 /// O texto iCalendar de uma reunião — para descarregar (`PUBLISH`) ou para
@@ -2026,43 +2103,10 @@ pub(crate) async fn ics_for(
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
-    // O LINK, não só o código: um `.ics` sem `URL:` obriga quem o recebeu a
-    // procurar o link noutro lado. Vai nas duas formas porque os clientes de
-    // calendário não concordam — o Google e o Outlook lêem `URL:`, muitos
+    // O link vai nas duas formas (`URL:` e na descrição) porque os clientes de
+    // calendário não concordam: o Google e o Outlook lêem `URL:`, muitos
     // telemóveis só mostram a descrição.
-    //
-    // ABSOLUTO ou nenhum. O `room_link` cai para um caminho relativo
-    // (`/#/r/<código>`) quando a organização não declara domínio — serve numa
-    // resposta de API, que o cliente resolve contra o host a que chamou, e NÃO
-    // serve aqui: um `.ics` é lido noutro programa, dias depois, e um URL
-    // relativo lá dentro não aponta para lado nenhum. Medido a 2026-10-13
-    // contra um servidor real: saía `URL:/#/r/zqc-ghvp-eie`.
-    //
-    // A ordem é a do produto: o domínio da organização primeiro (é o endereço
-    // por que os convidados dela conhecem o serviço), o `PUBLIC_URL` a seguir,
-    // e nada em último. Nunca o cabeçalho `Host` do pedido — pela mesma razão
-    // que os links de reposição de password não o usam.
-    let org_id = crate::org::orgs_of_user(state, meeting.owner_id)
-        .await
-        .first()
-        .copied();
-    let link = match &meeting.room_code {
-        None => None,
-        Some(code) => {
-            let por_org = match org_id {
-                Some(org_id) => Some(crate::apikeys::room_link(state, org_id, code).await),
-                None => None,
-            };
-            match por_org {
-                Some(l) if l.starts_with("http") => Some(l),
-                _ => state
-                    .config
-                    .public_url
-                    .as_deref()
-                    .map(|base| format!("{base}/#/r/{code}")),
-            }
-        }
-    };
+    let link = room_link_absolute(state, meeting).await;
     let mut desc = meeting.description.clone();
     if let Some(link) = &link {
         if !desc.is_empty() {
@@ -2215,6 +2259,205 @@ pub struct InviteeResponse {
     pub status: String,
     pub decline_reason: String,
     pub responded_at: Option<DateTime<Utc>>,
+}
+
+/// Quantos endereços externos uma reunião aceita. Não é um número redondo por
+/// gosto: cada um é um email a sair e um `.ics` a construir, e uma lista sem
+/// tecto era um caminho para mandar correio em nome desta instalação.
+pub(crate) const MAX_EXTERNAL_INVITEES: usize = 50;
+
+/// Normaliza e valida a lista de endereços externos, **sem repetidos**.
+///
+/// A regra do que é um email válido NÃO se escreve aqui: vem de
+/// `identity::validation`, que é quem a tem para os convites de organização e
+/// para o registo. Copiá-la era a cópia que a catraca persegue.
+pub(crate) fn normalize_external_emails(brutos: &[String]) -> Result<Vec<String>, ApiError> {
+    use delonix_meet_domain::identity::validation::{normalize_email, validate_email};
+    if brutos.len() > MAX_EXTERNAL_INVITEES {
+        return Err(delonix_meet_core::DomainError::invalid(
+            "meeting.too_many_external_invitees",
+            format!("no máximo {MAX_EXTERNAL_INVITEES} endereços externos por reunião"),
+        )
+        .into());
+    }
+    let mut out: Vec<String> = Vec::with_capacity(brutos.len());
+    for bruto in brutos {
+        let email = normalize_email(bruto);
+        validate_email(&email).map_err(|m| {
+            ApiError::from(delonix_meet_core::DomainError::invalid(
+                "meeting.invalid_external_email",
+                m,
+            ))
+        })?;
+        if !out.contains(&email) {
+            out.push(email);
+        }
+    }
+    Ok(out)
+}
+
+/// Um convidado externo de uma reunião: um endereço, sem conta aqui.
+#[derive(serde::Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct ExternalInvitee {
+    pub email: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct ExternalInviteeReq {
+    /// O endereço a convidar. Normalizado e validado como em qualquer outro
+    /// sítio da casa (`identity::validation`).
+    pub email: String,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct ExternalInviteeResp {
+    pub email: String,
+    /// `email` se o convite entrou na fila do correio, `manual` se não há por
+    /// onde sair (sem relay ou sem `PUBLIC_URL`) — e aí o anfitrião entrega o
+    /// link à mão, como no convite de organização.
+    pub delivery_channel: String,
+}
+
+/// Só o anfitrião mexe nos convidados externos; um convidado com conta recebe
+/// 403 e quem não tem nada a ver com a reunião recebe 404 — a mesma escada do
+/// `invitees`, para não revelar que a reunião existe.
+async fn require_host(state: &AppState, id: Uuid, user_id: Uuid) -> Result<Meeting, ApiError> {
+    let meeting: Option<Meeting> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(meeting) = meeting else {
+        return Err(ApiError::NotFound);
+    };
+    if meeting.owner_id == user_id {
+        return Ok(meeting);
+    }
+    if is_owner_or_invitee(state, id, meeting.owner_id, user_id).await? {
+        return Err(
+            delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                .with_message("só o anfitrião convida de fora")
+                .into(),
+        );
+    }
+    Err(ApiError::NotFound)
+}
+
+/// Os convidados externos de uma reunião (só o anfitrião vê).
+#[utoipa::path(
+    get, path = "/api/meetings/{meeting_id}/external-invitees", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Vec<ExternalInvitee>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou nada tem a ver com ela"),
+    )
+)]
+pub async fn external_invitees(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ExternalInvitee>>, ApiError> {
+    require_host(&state, id, auth.user_id).await?;
+    let rows: Vec<ExternalInvitee> = sqlx::query_as(
+        "SELECT email, created_at FROM meeting_external_invitees
+          WHERE meeting_id = $1 ORDER BY email",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows))
+}
+
+/// Convida um endereço externo para uma reunião que já existe, e manda-lhe o
+/// convite com o `.ics`.
+#[utoipa::path(
+    post, path = "/api/meetings/{meeting_id}/external-invitees", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    request_body = ExternalInviteeReq,
+    responses(
+        (status = 200, body = ExternalInviteeResp),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`meeting.invalid_external_email` ou `meeting.too_many_external_invitees`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn add_external_invitee(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ExternalInviteeReq>,
+) -> Result<Json<ExternalInviteeResp>, ApiError> {
+    let meeting = require_host(&state, id, auth.user_id).await?;
+    let email = normalize_external_emails(std::slice::from_ref(&req.email))?
+        .pop()
+        .ok_or_else(|| ApiError::BadRequest("email em falta".into()))?;
+    // O tecto conta a lista INTEIRA, não só o que chega agora: senão
+    // acrescentava-se um a um até não haver tecto nenhum.
+    let quantos: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM meeting_external_invitees WHERE meeting_id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
+    if quantos as usize >= MAX_EXTERNAL_INVITEES {
+        return Err(delonix_meet_core::DomainError::invalid(
+            "meeting.too_many_external_invitees",
+            format!("no máximo {MAX_EXTERNAL_INVITEES} endereços externos por reunião"),
+        )
+        .into());
+    }
+    sqlx::query(
+        "INSERT INTO meeting_external_invitees (meeting_id, email, invited_by)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+    )
+    .bind(id)
+    .bind(&email)
+    .bind(auth.user_id)
+    .execute(&state.db)
+    .await?;
+    let channel = crate::meeting_invite_mail::send_best_effort(&state, &meeting, &email).await;
+    Ok(Json(ExternalInviteeResp {
+        email,
+        delivery_channel: channel.to_string(),
+    }))
+}
+
+/// Tira um endereço externo da reunião. **Não desconvida quem já recebeu o
+/// email** — o que isto impede é ele voltar a receber (uma hora nova, por
+/// exemplo). Dito aqui porque é a pergunta seguinte de quem clica.
+#[utoipa::path(
+    delete, path = "/api/meetings/{meeting_id}/external-invitees/{email}", tag = "meetings",
+    security(("session" = [])),
+    params(
+        ("meeting_id" = Uuid, Path, description = "Id da reunião"),
+        ("email" = String, Path, description = "O endereço a tirar"),
+    ),
+    responses(
+        (status = 204, description = "tirado (ou já não estava)"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn remove_external_invitee(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, email)): Path<(Uuid, String)>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    require_host(&state, id, auth.user_id).await?;
+    let email = delonix_meet_domain::identity::validation::normalize_email(&email);
+    sqlx::query("DELETE FROM meeting_external_invitees WHERE meeting_id = $1 AND email = $2")
+        .bind(id)
+        .bind(&email)
+        .execute(&state.db)
+        .await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Lista as respostas dos convidados (só o anfitrião vê tudo).

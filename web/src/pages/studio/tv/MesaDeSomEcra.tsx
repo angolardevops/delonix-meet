@@ -16,7 +16,7 @@ import { tallyDe } from '../../../studio/tv/mesa'
 import { type PropsDoEcra, SelosDoAr } from './comum'
 import { BotaoTv, Cabeca, Cartao, Deslizador, Espaco, Fader, Interruptor, Medidor, TopoTv, useTique } from './pecas'
 
-const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen', musica: 'speaker', efeito: 'sparkles' }
+const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen', musica: 'speaker', efeito: 'sparkles', media: 'film' }
 export const ALVO_LUFS = -16
 
 export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {

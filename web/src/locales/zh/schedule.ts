@@ -198,6 +198,16 @@ export default {
     remover: '移除{{nome}}',
     erro: '人员搜索失败。',
   },
+  externos: {
+    titulo: '外部来宾',
+    ajuda: '这里没有账号的邮箱地址。每个地址都会收到带日历事件的邀请。',
+    placeholder: 'maria@other-company.ao',
+    adicionar: '添加外部来宾',
+    remover: '移除 {{email}}',
+    invalido: '该地址看起来不是邮箱。',
+    repetido: '该地址已在列表中。',
+    demasiados: '每场会议最多 {{max}} 位外部来宾。',
+  },
   conflitos: {
     horaJaPassou: '这个时间已经过去：会议会保存下来，但不会出现在“即将开始的会议”里。',
     titulo: '冲突与容量',

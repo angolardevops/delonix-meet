@@ -647,6 +647,16 @@ export default {
     transcricaoServidor: 'Transcrição no servidor',
     transcricaoServidorDica: 'Mais precisa: o áudio vai só ao servidor da organização.',
   },
+  dobragem: {
+    titulo: 'Dobragem ao vivo',
+    ouvir: 'Ouvir dobrado em',
+    original: 'Original (sem dobragem)',
+    dica: 'Voz sintética, com alguns segundos de atraso. A escolha é só tua.',
+    crachaSintetica: 'Estás a ouvir uma voz sintética, não a pessoa. Chega com alguns segundos de atraso.',
+    'lingua_pt-PT': 'Português (Portugal)',
+    'lingua_en-US': 'Inglês (EUA)',
+    'lingua_fr-FR': 'Francês (França)',
+  },
   notas: {
     explicacao: 'Transcrição partilhada: quando o anfitrião a liga, cada participante transcreve o próprio microfone.',
     aTuaFalaCaptada: 'Transcrição ligada por {{nome}}: a tua fala está a ser transcrita.',

@@ -257,6 +257,11 @@ pub struct Config {
     /// datacenter). Vazio => IA desligada, fail-open: o MoM fica por regras
     /// (cliente) e a tradução de legendas não aparece.
     pub ollama_url: Option<String>,
+    /// URL do `tts-server` in-cluster (dobragem ao vivo, ADR-0030). Vazio =>
+    /// dobragem DESLIGADA, fail-closed: sem voz não se oferece a língua, em vez
+    /// de a oferecer e calar. A imagem é GPL-3.0 e vive à parte — é por isso
+    /// que é um serviço e não uma biblioteca (`tts-server/LICENCAS.md`).
+    pub tts_url: Option<String>,
     /// Modelo para tradução das legendas (rápido; ex.: qwen2.5:1.5b).
     pub ollama_model_translate: String,
     /// Modelo para o resumo da ata (qualidade; ex.: qwen2.5:7b em prod).
@@ -796,6 +801,7 @@ impl Config {
                 .map(|v| !matches!(v.trim(), "off" | "0" | "false"))
                 .unwrap_or(true),
             ollama_url: src.var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
+            tts_url: src.var("TTS_URL").ok().filter(|s| !s.is_empty()),
             ollama_model_translate: src
                 .var("OLLAMA_MODEL_TRANSLATE")
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),

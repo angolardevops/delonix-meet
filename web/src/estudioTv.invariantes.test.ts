@@ -307,6 +307,32 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     expect(read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')).toContain('data-tv="ligar-mesa-fisica"')
   })
 
+  it('um ficheiro é fonte E canal, com o MESMO id', () => {
+    // O id partilhado é o que faz o tally da tira e o «seguir a imagem»
+    // funcionarem sem mais nada: o canal já sabe de que imagem é.
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toContain('som.adicionarElemento(f.id, f.nome, el, f.id)')
+    // E o som entra pelo grafo, não pelo elemento: senão ouvia-se duas vezes
+    // (uma pelo altifalante, outra pela mesa) e o fader só mexia numa delas.
+    expect(read('web/src/studio/tv/mesaDeSom.ts')).toContain('this.ctx.createMediaElementSource(el)')
+  })
+
+  it('e o `blob:` de um ficheiro é libertado ao tirar a fonte', () => {
+    // Sem isto, uma tarde a trocar de genérico deixava os megabytes todos
+    // presos na memória do separador.
+    expect(read('web/src/studio/tv/fontes.ts')).toContain('URL.revokeObjectURL(f.elemento.src)')
+  })
+
+  it('e o ecrã DIZ que uma página web não pode ser fonte', () => {
+    // O OBS tem «browser source» porque embute um Chromium. Nós somos o
+    // browser: desenhar outro sítio no quadro é o que ele impede, e prometer
+    // isso era anunciar uma capacidade que não existe.
+    expect(read('web/src/pages/studio/tv/Fontes.tsx')).toContain('data-tv="sem-fonte-de-browser"')
+    for (const l of ['pt', 'en', 'fr', 'zh']) {
+      expect(read(`web/src/locales/${l}/tv.ts`)).toContain('semFonteDeBrowser:')
+    }
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas
