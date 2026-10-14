@@ -374,6 +374,52 @@ if (canalB.status === 201 && canalB.json?.id) {
   else nok('e o canal da B CONTINUA LÁ, inalterado', `${depoisC.status}: ${JSON.stringify(depoisC.json).slice(0, 120)}`)
 } else nok('B cria um canal de TV', `${canalB.status}: ${JSON.stringify(canalB.json).slice(0, 160)}`)
 
+console.log('\n--- caixas de captura de TV da org B (RFC-0002) ---')
+// Uma caixa de captura é hardware de uma organização, e o inventário dela diz
+// o que está ligado onde. A não a lista, lê, altera, apaga, revoga, nem vê as
+// entradas — e o TOKEN do agente da B não abre a consola de A nem a de B.
+const caixaB = await req(`/api/orgs/${B.orgId}/tv/capture-agents`, {
+  token: B.token, method: 'POST', body: { name: 'Caixa da B', location: 'sala técnica' },
+})
+if (caixaB.status === 201 && caixaB.json?.id && typeof caixaB.json?.token === 'string') {
+  ok('B cria uma caixa de captura → 201 (com o token uma vez)')
+  const g = `/api/orgs/${B.orgId}/tv/capture-agents/${caixaB.json.id}`
+  const tokenAgenteB = caixaB.json.token
+  await recusadoNaPorta('A lista as caixas de captura da org B', `/api/orgs/${B.orgId}/tv/capture-agents`, { token: A.token })
+  await recusadoNaPorta('A lê uma caixa de captura da org B', g, { token: A.token })
+  await recusadoNaPorta('A altera uma caixa de captura da org B', g, { token: A.token, method: 'PATCH', body: { name: 'roubada' } })
+  await recusadoNaPorta('A revoga o token da caixa da org B', `/api/orgs/${B.orgId}/tv/capture-agents/${caixaB.json.id}/revoke`, { token: A.token, method: 'POST', body: {} })
+  await recusadoNaPorta('A lista as entradas da caixa da org B', `/api/orgs/${B.orgId}/tv/capture-agents/${caixaB.json.id}/inputs`, { token: A.token })
+  await recusadoNaPorta('A apaga a caixa de captura da org B', g, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A cria uma caixa de captura na org B', `/api/orgs/${B.orgId}/tv/capture-agents`, {
+    token: A.token, method: 'POST', body: { name: 'intrusa' },
+  })
+  // Pelo caminho da PRÓPRIA org A, com o id da B.
+  await recusado('A lê a caixa da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/capture-agents/${caixaB.json.id}`, { token: A.token })
+  // O agente da B reporta uma entrada; ela é da B e de mais ninguém.
+  const relato = await req('/api/integrations/tv-agent/v1/inputs', {
+    token: tokenAgenteB, method: 'PUT',
+    body: {
+      agent_version: '0.1.0',
+      audio: [{ device_path: `pci-0000:00:14.0-usb-0:3:1.2`, node: 'hw:1' }],
+      inputs: [{ device_path: `pci-0000:00:14.0-usb-0:3:1.0`, video_node: '/dev/video0', signal: 'live' }],
+    },
+  })
+  if (relato.status === 200 && relato.json?.inputs?.length === 1 && relato.json.inputs[0].audio_node === 'hw:1') {
+    ok('o agente da B reporta o inventário, e o servidor emparelha o áudio pela porta')
+    const entradaB = relato.json.inputs[0].id
+    await recusado('A lê a entrada da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/capture-inputs/${entradaB}`, { token: A.token })
+    await recusadoNaPorta('A lê a entrada da B pelo caminho da org B', `/api/orgs/${B.orgId}/tv/capture-inputs/${entradaB}`, { token: A.token })
+    await recusado('A altera a entrada da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/capture-inputs/${entradaB}`, { token: A.token, method: 'PATCH', body: { version: 1, label: 'roubada' } })
+  } else nok('o agente da B reporta o inventário', `${relato.status}: ${JSON.stringify(relato.json).slice(0, 200)}`)
+  // O token do AGENTE é só para a superfície de integração: não é sessão.
+  await recusado('o token do agente da B abre a consola da B', `/api/orgs/${B.orgId}/tv/capture-agents`, { token: tokenAgenteB })
+  await recusado('o token do agente da B abre a consola da A', `/api/orgs/${A.orgId}/tv/capture-agents`, { token: tokenAgenteB })
+  const depoisG = await req(g, { token: B.token })
+  if (depoisG.status === 200 && depoisG.json?.name === 'Caixa da B' && depoisG.json?.revoked_at === null) ok('e a caixa da B CONTINUA LÁ, activa e inalterada')
+  else nok('e a caixa da B CONTINUA LÁ, activa e inalterada', `${depoisG.status}: ${JSON.stringify(depoisG.json).slice(0, 120)}`)
+} else nok('B cria uma caixa de captura', `${caixaB.status}: ${JSON.stringify(caixaB.json).slice(0, 160)}`)
+
 console.log('\n--- destinos de directo guardados da org B ---')
 await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/stream-destinations`, { token: A.token })
 const CHAVE_DESTINO_B = `chave-secreta-da-b-${marca}`
