@@ -7093,6 +7093,9 @@
             "format": "date-time",
             "type": "string"
           },
+          "ice_servers": {
+            "description": "STUN e TURN com credenciais de uma hora, como o `/api/ice-servers` dá."
+          },
           "label": {
             "description": "`CAM 2 · telefone da Ana`.",
             "type": "string"
@@ -7128,7 +7131,8 @@
           "room_code",
           "source_token",
           "expires_at",
-          "ws_path"
+          "ws_path",
+          "ice_servers"
         ],
         "type": "object"
       },

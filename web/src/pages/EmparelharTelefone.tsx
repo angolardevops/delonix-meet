@@ -17,10 +17,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorCode, redeemPairingCode } from '../api'
+import { guardarFonte } from '../fonteDoEstudio'
 import { Alert, Button, Spinner } from '../ui/kit'
-
-/** Onde o token de fonte fica até a página da câmara o ler. */
-export const CHAVE_FONTE = 'dx_studio_source'
 
 /** `XXXX-XXXX` em Crockford base32 — o que o servidor aceita. */
 const FORMATO = /^[0-9A-HJKMNP-TV-Z]{4}-?[0-9A-HJKMNP-TV-Z]{4}$/i
@@ -49,10 +47,18 @@ export default function EmparelharTelefone({ code }: { code?: string }) {
         model: navigator.userAgent.slice(0, 64),
         platform: navigator.platform || 'web',
       })
-      sessionStorage.setItem(
-        CHAVE_FONTE,
-        JSON.stringify({ token: p.source_token, source_id: p.source_id, label: p.label, number: p.number }),
-      )
+      // Guardado ANTES de mudar o endereço: a página da câmara lê-o ao
+      // arrancar, e é isto que a faz entrar como FONTE e não como convidado.
+      guardarFonte({
+        code: p.room_code,
+        roomToken: p.source_token,
+        iceServers: p.ice_servers,
+        sourceId: p.source_id,
+        studioId: p.studio_id,
+        number: p.number,
+        label: p.label,
+        expiraEm: new Date(p.expires_at).getTime(),
+      })
       location.hash = `/telemovel/${p.room_code}`
     } catch (e) {
       const c = apiErrorCode(e)

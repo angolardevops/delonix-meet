@@ -3531,6 +3531,8 @@ export interface Pairing {
   room_code: string
   source_token: string
   expires_at: string
+  /** STUN/TURN: uma fonte não tem conta para pedir `/api/ice-servers`. */
+  ice_servers: RTCConfiguration
 }
 
 /** Devolve o ENVELOPE (`{items}`), como as outras listagens — não um array. */
