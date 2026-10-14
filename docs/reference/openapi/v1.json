@@ -35,6 +35,13 @@
                 "format": "int32",
                 "type": "integer"
               },
+              "external_emails": {
+                "description": "Endereços de email de convidados **sem conta aqui**. Cada um recebe o\nseu convite com o `.ics`; entram pela porta de convidado (nome + sala de\nespera), como manda a R290. Máximo 50 por reunião.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "invitee_ids": {
                 "items": {
                   "format": "uuid",

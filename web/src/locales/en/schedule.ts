@@ -198,6 +198,16 @@ export default {
     remover: 'Remove {{nome}}',
     erro: 'People search failed.',
   },
+  externos: {
+    titulo: 'Guests from outside',
+    ajuda: 'Addresses without an account here. Each one gets an invitation with the calendar event.',
+    placeholder: 'maria@other-company.ao',
+    adicionar: 'Add outside guest',
+    remover: 'Remove {{email}}',
+    invalido: 'That address does not look like an email.',
+    repetido: 'That address is already on the list.',
+    demasiados: 'At most {{max}} outside guests per meeting.',
+  },
   conflitos: {
     horaJaPassou: 'This time has already passed: the meeting is saved, but it will not show under “Upcoming meetings”.',
     titulo: 'Conflicts and capacity',
