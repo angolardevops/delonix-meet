@@ -683,6 +683,8 @@ export interface OrgSummary {
   member_count: number
   domain?: string
   retention_days?: number
+  /** Dias de retenção do chat. `null`/ausente = fica até alguém mandar apagar. */
+  chat_retention_days?: number | null
   max_groups?: number | null
   max_rooms?: number | null
   max_meetings?: number | null
@@ -772,10 +774,25 @@ export interface Webhook {
 // volta): são o plano que a PLATAFORMA vende, não política de tenant — ver
 // `OrgSettingsReq` em `server/src/org.rs`. `OrgSummary` continua a devolvê-los
 // para leitura (o cartão de definições mostra-os só como texto).
-export const updateOrgSettings = (orgId: string, domain: string, retentionDays: number) =>
+/**
+ * `chatRetentionDays`: dias que o chat das salas fica guardado.
+ * **`null` = fica até alguém mandar apagar** (a omissão desde 2026-10-14; antes
+ * disso a varredura apagava ao fim do dia). `0` apaga na varredura seguinte, que
+ * é o efémero de quem o escolhe.
+ */
+export const updateOrgSettings = (
+  orgId: string,
+  domain: string,
+  retentionDays: number,
+  chatRetentionDays: number | null = null,
+) =>
   request(`/api/orgs/${orgId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ domain, retention_days: retentionDays }),
+    body: JSON.stringify({
+      domain,
+      retention_days: retentionDays,
+      chat_retention_days: chatRetentionDays,
+    }),
   })
 
 /** Busca autenticada de um recurso binário → object URL (para <img>). */
