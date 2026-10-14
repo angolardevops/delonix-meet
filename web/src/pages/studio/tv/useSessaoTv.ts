@@ -277,6 +277,19 @@ export function useSessaoTv(p: PropsDaSessao) {
     compRef.current?.definirSomExterno(som && canaisDeSom > 0 ? som.saida : null)
   }, [compRef, som, canaisDeSom])
 
+  // O som do separador partilhado é um CANAL da mesa — com fader, medidor, EQ e
+  // porta — e não um barramento escondido do compositor. Até 2026-10-14 o tipo
+  // de canal `'ecra'` existia e NADA o criava: partilhar um vídeo punha-o no ar
+  // sem fader nem medidor, e a única forma de o baixar era o deslizador de
+  // mistura do palco, noutro ecrã. Enquanto a mesa o tem, o compositor larga-o
+  // (`ligarSomDoEcra`), senão o mesmo som entrava duas vezes.
+  useEffect(() => {
+    if (!som) return
+    const audio = (p.temEcra ? (compRef.current?.fluxoDoEcra ?? null) : null)?.getAudioTracks() ?? []
+    if (audio.length) som.adicionarFluxo('ecra', t('tv.fontes.ecra'), 'ecra', new MediaStream(audio), 'ecra')
+    else if (som.lista().some((c) => c.id === 'ecra')) som.remover('ecra')
+  }, [som, compRef, p.temEcra, versaoFontes, t])
+
   // Participantes com áudio entram como canais; quem sai, sai.
   useEffect(() => {
     if (!som) return

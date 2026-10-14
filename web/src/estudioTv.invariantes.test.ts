@@ -190,6 +190,19 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     }
   })
 
+  it('o som do ecrã partilhado tem UM dono: a mesa, ou o compositor', () => {
+    // EST-B da auditoria de 2026-10-14: o tipo de canal `'ecra'` existia e
+    // nada o criava — o som de um vídeo partilhado ia ao ar sem fader, sem
+    // medidor e sem porta. Agora é canal da mesa; e o compositor TEM de o
+    // largar enquanto ela o tem, senão o mesmo som entra duas vezes.
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toMatch(/som\.adicionarFluxo\('ecra'.*'ecra'/)
+    const comp = read('web/src/studio/compositor.ts')
+    expect(comp).toMatch(/private ligarSomDoEcra\(\): void \{[\s\S]*?if \(this\.somExterno\) return/)
+    // E a troca de dono tem de reavaliar o ecrã, nos dois sentidos.
+    expect(comp).toMatch(/definirSomExterno[\s\S]*?this\.ligarSomDoEcra\(\)\n  \}/)
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas

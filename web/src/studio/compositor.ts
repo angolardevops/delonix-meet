@@ -866,6 +866,8 @@ export class CompositorDeAula {
       void this.ligarMicrofone()
       for (const c of this.convidados.values()) this.ligarConvidadoAoGrafo(c)
     }
+    // O ecrã segue o microfone e os convidados: ou é da mesa, ou é daqui.
+    this.ligarSomDoEcra()
   }
 
   private ligarSomExterno(): void {
@@ -910,10 +912,16 @@ export class CompositorDeAula {
     }
   }
 
+  /**
+   * O som do separador partilhado entra na mistura — EXCEPTO quando a mesa de
+   * som o tomou como canal (`somExterno`). Sem esta excepção o mesmo som
+   * entrava duas vezes: uma pela mesa e outra por aqui.
+   */
   private ligarSomDoEcra(): void {
     if (!this.audioCtx || !this.ganhoVideo) return
     this.ecraFonte?.disconnect()
     this.ecraFonte = null
+    if (this.somExterno) return
     if (this.ecraStream && this.ecraStream.getAudioTracks().length) {
       this.ecraFonte = this.audioCtx.createMediaStreamSource(new MediaStream(this.ecraStream.getAudioTracks()))
       this.ecraFonte.connect(this.ganhoVideo)
