@@ -20,6 +20,7 @@
  * sinal de erro era um email que nunca chegou.
  */
 import { FormEvent, useState } from 'react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import {
   ApiError,
@@ -32,6 +33,30 @@ import {
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Alert, Button, Card, Confirm, Field, StatusBadge, TextInput, Toggle } from '../../ui/kit'
 import { formatDateTime, orgErrorMessage, refusalAware, useLocaleTag } from './orgShared'
+
+/**
+ * A razão de uma recusa, traduzida pelo CÓDIGO.
+ *
+ * O servidor manda a razão em português — todas as mensagens dele são — e numa
+ * interface em inglês isso aparecia como «o URL aponta para um endereço
+ * interno/privado». Os códigos destas três recusas são estáveis (foram criados
+ * para isto, no #325), por isso traduzem-se; qualquer outra coisa cai na
+ * mensagem do servidor, que é melhor do que uma genérica.
+ */
+function razaoTraduzida(e: unknown, t: TFunction): string | null {
+  if (!(e instanceof ApiError)) return null
+  const code = (e.body as { code?: string } | null)?.code
+  switch (code) {
+    case 'org_mail_settings.host_refused':
+      return t('org.correio.recusaHost')
+    case 'org_mail_settings.invalid_from':
+      return t('org.correio.recusaRemetente')
+    case 'org_mail_settings.plaintext_not_confirmed':
+      return t('org.correio.recusaSemTls')
+    default:
+      return null
+  }
+}
 
 /** Um rascunho do formulário. A password é só de ESCRITA: vazia = manter. */
 interface Rascunho {
@@ -131,7 +156,7 @@ export default function MailCard({ orgId }: { orgId: string }) {
     } catch (e2) {
       // A razão vem do servidor — `host_refused`, `invalid_from`,
       // `plaintext_not_confirmed` — e não se reescreve aqui.
-      setErr(orgErrorMessage(e2, t, 'org.correio.erroGuardar'))
+      setErr(razaoTraduzida(e2, t) ?? orgErrorMessage(e2, t, 'org.correio.erroGuardar'))
     } finally {
       setGuardando(false)
     }

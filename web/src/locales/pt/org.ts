@@ -267,6 +267,9 @@ export default {
     confirmarSemTls: 'Confirmo que quero uma ligação em claro',
     activo: 'Usar este relay',
     dicaDesligado: 'Desligado, a configuração fica guardada e o correio sai pelo relay do operador.',
+    recusaHost: 'Esse servidor é um destino interno ou privado e foi recusado pela guarda de saída.',
+    recusaRemetente: 'O remetente tem de ser um endereço de correio.',
+    recusaSemTls: 'Confirme a ligação em claro antes de guardar.',
     erroGuardar: 'Não foi possível guardar.',
     erroApagar: 'Não foi possível apagar.',
     erroVerificar: 'Não foi possível verificar.',
@@ -274,6 +277,7 @@ export default {
   caixaSaida: {
     titulo: 'Caixa de saída',
     eyebrow: 'Correio enviado',
+    actualizar: 'Actualizar',
     vazia: 'Ainda não saiu correio desta organização.',
     semCorpos: 'Os corpos não são mostrados: o de um convite leva o token do convite. O correio pessoal (reposição de password, prova de endereço) não pertence à organização e não aparece aqui.',
     filtrarEstado: 'Filtrar por estado',

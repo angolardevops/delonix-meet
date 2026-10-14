@@ -549,6 +549,27 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     expect(vazios).toEqual([])
   })
 
+  it('toda a chave chamada por t() EXISTE no dicionário', () => {
+    // O caso real (2026-10-14, cartão da caixa de saída): `t('ui.actualizar')`
+    // — chave inventada, nunca existiu. O i18next não falha: devolve a CHAVE,
+    // e o botão ficou a dizer «ui.actualizar» à vista de toda a gente.
+    // Compila, passa o lint, passa a bateria. Só se vê no browser.
+    //
+    // Os PLURAIS contam-se como o i18next os resolve: `votos` existe se
+    // existir `votos_one` ou `votos_other`. Sem isto, 153 chamadas inocentes
+    // apareciam como culpadas.
+    const pt = mapaDeLocale('pt')
+    const SUFIXOS = ['_one', '_other', '_zero', '_two', '_few', '_many']
+    const existe = (k: string) => pt[k] !== undefined || SUFIXOS.some((s) => pt[k + s] !== undefined)
+    const maus: string[] = []
+    for (const f of ficheirosDeCodigo()) {
+      for (const m of read(f).matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'/g)) {
+        if (!existe(m[1])) maus.push(`${f}: ${m[1]}`)
+      }
+    }
+    expect(maus).toEqual([])
+  })
+
   it('quem chama uma chave com {{…}} passa-lhe o parâmetro', () => {
     // O caso real (2026-10-13, ecrã de remarcar): `t('schedule.form.hora')` sem
     // o `{ fuso }` pôs «Hora · {{fuso}}» na etiqueta do campo, à vista. Não

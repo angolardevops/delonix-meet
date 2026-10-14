@@ -267,6 +267,9 @@ export default {
     confirmarSemTls: 'Je confirme vouloir une connexion en clair',
     activo: 'Utiliser ce relais',
     dicaDesligado: "Désactivé, la configuration est conservée et le courrier passe par le relais de l'opérateur.",
+    recusaHost: "Ce serveur est une destination interne ou privée et a été refusé par la garde de sortie.",
+    recusaRemetente: "L'expéditeur doit être une adresse e-mail.",
+    recusaSemTls: 'Confirmez la connexion en clair avant d\'enregistrer.',
     erroGuardar: 'Enregistrement impossible.',
     erroApagar: 'Suppression impossible.',
     erroVerificar: 'Test impossible.',
@@ -274,6 +277,7 @@ export default {
   caixaSaida: {
     titulo: 'Boîte d\'envoi',
     eyebrow: 'Courrier envoyé',
+    actualizar: 'Actualiser',
     vazia: "Aucun courrier n'est encore parti pour cette organisation.",
     semCorpos: "Les corps ne sont pas affichés : celui d'une invitation contient le jeton d'invitation. Le courrier personnel (réinitialisation de mot de passe, preuve d'adresse) n'appartient pas à l'organisation et n'apparaît pas ici.",
     filtrarEstado: 'Filtrer par état',

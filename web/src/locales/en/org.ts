@@ -267,6 +267,9 @@ export default {
     confirmarSemTls: 'I confirm I want a plaintext connection',
     activo: 'Use this relay',
     dicaDesligado: 'Turned off, the configuration is kept and mail goes out through the operator relay.',
+    recusaHost: 'That server is an internal or private destination and was refused by the egress guard.',
+    recusaRemetente: 'The from address must be an email address.',
+    recusaSemTls: 'Confirm the plaintext connection before saving.',
     erroGuardar: 'Could not save.',
     erroApagar: 'Could not delete.',
     erroVerificar: 'Could not test.',
@@ -274,6 +277,7 @@ export default {
   caixaSaida: {
     titulo: 'Outbox',
     eyebrow: 'Mail sent',
+    actualizar: 'Refresh',
     vazia: 'No mail has gone out for this organisation yet.',
     semCorpos: 'Bodies are not shown: an invitation body carries the invitation token. Personal mail (password reset, address proof) does not belong to the organisation and does not appear here.',
     filtrarEstado: 'Filter by status',

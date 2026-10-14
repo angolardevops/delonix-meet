@@ -96,7 +96,7 @@ export default function MailOutboxCard({ orgId }: { orgId: string }) {
             ))}
           </Select>
           <Button size="sm" variant="ghost" icon="refresh" onClick={lista.reload}>
-            {t('ui.actualizar')}
+            {t('org.caixaSaida.actualizar')}
           </Button>
         </div>
 

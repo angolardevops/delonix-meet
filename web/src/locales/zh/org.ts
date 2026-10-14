@@ -267,6 +267,9 @@ export default {
     confirmarSemTls: '我确认要使用明文连接',
     activo: '使用此中继',
     dicaDesligado: '关闭后配置仍会保留，邮件通过运营商中继发送。',
+    recusaHost: '该服务器属于内部或私有目标，已被出站防护拒绝。',
+    recusaRemetente: '发件地址必须是一个邮件地址。',
+    recusaSemTls: '保存前请确认使用明文连接。',
     erroGuardar: '无法保存。',
     erroApagar: '无法删除。',
     erroVerificar: '无法测试。',
@@ -274,6 +277,7 @@ export default {
   caixaSaida: {
     titulo: '发件箱',
     eyebrow: '已发邮件',
+    actualizar: '刷新',
     vazia: '此组织尚未发出任何邮件。',
     semCorpos: '不显示正文：邀请邮件的正文含有邀请令牌。个人邮件（密码重置、地址验证）不属于组织，不会出现在此处。',
     filtrarEstado: '按状态筛选',
