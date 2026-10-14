@@ -27,12 +27,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use lettre::message::header::ContentType;
+use lettre::message::MessageBuilder;
+use lettre::message::{MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use uuid::Uuid;
 
 use delonix_meet_core::DomainError;
+/// O `METHOD` de um calendário é definido no domínio (`scheduling::calendar`);
+/// aqui só se re-exporta, para quem enfileira não precisar de dois caminhos.
+pub use delonix_meet_domain::scheduling::calendar::Method as CalendarMethod;
 
 use crate::{error::ApiError, AppState};
 
@@ -99,6 +105,21 @@ impl Purpose {
     }
 }
 
+/// Um calendário a viajar DENTRO da mensagem.
+///
+/// Sem isto, um convite nosso é um link que alguém tem de copiar para a agenda à
+/// mão — e é a razão número 2 por que se perde a comparação com o Teams
+/// (levantamento de 2026-10-13). Com isto, o Outlook e o Google mostram
+/// «aceitar/recusar» e, no remarcar, SUBSTITUEM o evento em vez de criar outro.
+pub struct Calendar<'a> {
+    /// O texto iCalendar já construído (`scheduling::calendar::ics`).
+    pub ics: &'a str,
+    /// O `METHOD` de dentro do texto. Vai TAMBÉM no `Content-Type` da parte,
+    /// porque é de lá que os clientes de correio o lêem — um `REQUEST` sem ele
+    /// é tratado como um anexo qualquer.
+    pub method: CalendarMethod,
+}
+
 /// Uma mensagem a enfileirar.
 pub struct Outgoing<'a> {
     /// A organização em cujo nome se envia, quando há uma. `None` para correio
@@ -116,6 +137,9 @@ pub struct Outgoing<'a> {
     /// `None` para tudo o que é pedido à mão (reposição de password, convite,
     /// prova de endereço): aí quem pede outra vez QUER outra mensagem.
     pub dedupe_key: Option<&'a str>,
+    /// Um convite de calendário a anexar. `None` na esmagadora maioria das
+    /// mensagens — só as de reunião o levam.
+    pub calendar: Option<Calendar<'a>>,
 }
 
 /// O relay DO OPERADOR está configurado?
@@ -163,8 +187,9 @@ pub async fn enqueue(state: &AppState, msg: Outgoing<'_>) -> Result<Option<Uuid>
     // tentativa para o mesmo endereço não cria linha. O `fetch_optional` é o
     // que distingue «não criei porque já existia» de um erro.
     let id: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO mail_messages (org_id, purpose, to_address, subject, body_text, dedupe_key)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        "INSERT INTO mail_messages (org_id, purpose, to_address, subject, body_text, dedupe_key,
+                                    calendar_ics, calendar_method)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (to_address, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
          RETURNING id",
     )
@@ -174,6 +199,8 @@ pub async fn enqueue(state: &AppState, msg: Outgoing<'_>) -> Result<Option<Uuid>
     .bind(msg.subject)
     .bind(msg.body)
     .bind(msg.dedupe_key)
+    .bind(msg.calendar.as_ref().map(|c| c.ics))
+    .bind(msg.calendar.as_ref().map(|c| c.method.as_str()))
     .fetch_optional(&state.db)
     .await?;
     Ok(id)
@@ -344,11 +371,54 @@ const FILA: delonix_meet_core::jobs::Queue = delonix_meet_core::jobs::Queue {
     ready_when: "status = 'pending' \
                  OR (status = 'failed' AND retry_at IS NOT NULL AND retry_at <= now())",
     claim_set: "status = 'sending', claimed_at = now(), retry_at = NULL",
-    returning: "id, org_id, to_address, subject, body_text, attempt",
+    returning: "id, org_id, to_address, subject, body_text, calendar_ics, calendar_method, attempt",
     order_by: "created_at",
     tenant_column: Some("org_id"),
     batch: BATCH,
 };
+
+/// Põe o corpo na mensagem: texto simples, ou `multipart/alternative` com o
+/// texto E o `text/calendar` quando a mensagem leva um convite.
+///
+/// **O `method` vai no `Content-Type` da parte**, e não só dentro do `.ics`: é
+/// de lá que os clientes de correio o lêem. Um `REQUEST` sem ele é tratado como
+/// um anexo qualquer — o convite aparece como ficheiro para descarregar em vez
+/// de «aceitar/recusar», que é precisamente o que se está a corrigir.
+///
+/// A ordem das partes não é indiferente: num `multipart/alternative` o cliente
+/// mostra a ÚLTIMA que entende, por isso o calendário vem depois do texto.
+fn com_corpo(
+    builder: MessageBuilder,
+    body: &str,
+    ics: Option<&str>,
+    method: Option<&str>,
+) -> Result<Message, lettre::error::Error> {
+    let Some(ics) = ics else {
+        return builder.body(body.to_owned());
+    };
+    // Vem da nossa própria base, mas escolhe-se de uma lista fechada: um valor
+    // inesperado não vai montar um cabeçalho estranho.
+    let method = match method {
+        Some("PUBLISH") => "PUBLISH",
+        Some("CANCEL") => "CANCEL",
+        _ => "REQUEST",
+    };
+    let calendario = ContentType::parse(&format!("text/calendar; charset=utf-8; method={method}"))
+        .expect("o Content-Type do calendário é construído de uma lista fechada");
+    builder.multipart(
+        MultiPart::alternative()
+            .singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_PLAIN)
+                    .body(body.to_owned()),
+            )
+            .singlepart(
+                SinglePart::builder()
+                    .header(calendario)
+                    .body(ics.to_owned()),
+            ),
+    )
+}
 
 /// Uma mensagem reivindicada para enviar.
 #[derive(sqlx::FromRow)]
@@ -360,6 +430,10 @@ struct PorEnviar {
     to_address: String,
     subject: String,
     body_text: String,
+    /// O convite de calendário, quando a mensagem leva um.
+    calendar_ics: Option<String>,
+    /// O `METHOD` de dentro do `.ics`, para o pôr no `Content-Type` da parte.
+    calendar_method: Option<String>,
     attempt: i32,
 }
 
@@ -462,8 +536,13 @@ pub async fn send_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
                     continue;
                 }
             })
-            .subject(&m.subject)
-            .body(m.body_text.clone());
+            .subject(&m.subject);
+        let built = com_corpo(
+            built,
+            &m.body_text,
+            m.calendar_ics.as_deref(),
+            m.calendar_method.as_deref(),
+        );
         let built = match built {
             Ok(b) => b,
             Err(e) => {
@@ -571,4 +650,74 @@ pub async fn sweep(db: &sqlx::PgPool) -> Result<(u64, u64), sqlx::Error> {
     .await?
     .rows_affected();
     Ok((reagendadas, apagadas))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn builder() -> MessageBuilder {
+        Message::builder()
+            .from("Delonix <nao-responder@exemplo.ao>".parse().unwrap())
+            .to("maria@outra.ao".parse().unwrap())
+            .subject("Convite: Revisão trimestral")
+    }
+
+    const ICS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n";
+
+    fn texto(m: &Message) -> String {
+        String::from_utf8_lossy(&m.formatted()).to_string()
+    }
+
+    #[test]
+    fn sem_calendario_a_mensagem_sai_como_saia() {
+        let m = com_corpo(builder(), "olá", None, None).unwrap();
+        let s = texto(&m);
+        assert!(!s.contains("multipart"), "{s}");
+        assert!(!s.contains("text/calendar"), "{s}");
+    }
+
+    /// O `method` no `Content-Type` é o que distingue um convite de um anexo:
+    /// é de lá que os clientes de correio o lêem.
+    #[test]
+    fn com_calendario_sai_multipart_com_o_method_no_content_type() {
+        let m = com_corpo(builder(), "olá", Some(ICS), Some("REQUEST")).unwrap();
+        let s = texto(&m);
+        assert!(s.contains("multipart/alternative"), "{s}");
+        assert!(s.contains("text/plain"), "{s}");
+        assert!(
+            s.contains("text/calendar; charset=utf-8; method=REQUEST"),
+            "{s}"
+        );
+        assert!(s.contains("BEGIN:VCALENDAR"), "{s}");
+    }
+
+    #[test]
+    fn o_cancelamento_leva_o_seu_method() {
+        let s = texto(&com_corpo(builder(), "olá", Some(ICS), Some("CANCEL")).unwrap());
+        assert!(s.contains("method=CANCEL"), "{s}");
+    }
+
+    /// A coluna é texto, por isso um valor inesperado é possível — e não pode
+    /// montar um cabeçalho estranho nem fazer o envio entrar em pânico.
+    #[test]
+    fn um_method_desconhecido_cai_em_request() {
+        for valor in [None, Some(""), Some("lixo; charset=x"), Some("REPLY")] {
+            let s = texto(&com_corpo(builder(), "olá", Some(ICS), valor).unwrap());
+            assert!(s.contains("method=REQUEST"), "{valor:?}: {s}");
+            assert!(!s.contains("lixo"), "{valor:?}: {s}");
+        }
+    }
+
+    /// Num `multipart/alternative` o cliente mostra a ÚLTIMA parte que entende.
+    /// Com a ordem trocada, o convite perdia para o texto e voltava a ser um
+    /// link que alguém copia à mão.
+    #[test]
+    fn o_calendario_vem_depois_do_texto() {
+        let s = texto(&com_corpo(builder(), "olá", Some(ICS), Some("REQUEST")).unwrap());
+        assert!(
+            s.find("text/plain").unwrap() < s.find("text/calendar").unwrap(),
+            "{s}"
+        );
+    }
 }

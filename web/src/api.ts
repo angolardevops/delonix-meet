@@ -908,6 +908,87 @@ export interface AuditEntry {
   created_at: string
 }
 /** Registos de auditoria da organização (só admins). */
+/* ---------------- Correio da organização (ADR-0025) ---------------- */
+
+/** O SMTP próprio de uma organização. **Nunca traz a password**, só se existe. */
+export interface OrgMailSettings {
+  host: string
+  port: number
+  username: string
+  password_configured: boolean
+  starttls: boolean
+  from_address: string
+  /** `false` = guardado mas a dormir; o correio sai pelo relay do operador. */
+  enabled: boolean
+  updated_by: string | null
+  updated_at: string
+}
+
+export interface PutOrgMailSettings {
+  host: string
+  port: number
+  username?: string
+  /** Omissa = MANTÉM a que está. `''` apaga-a. */
+  password?: string
+  from_address: string
+  starttls: boolean
+  /** Obrigatório quando `starttls` é `false`: sem TLS a password viaja à vista. */
+  allow_plaintext?: boolean
+  enabled: boolean
+}
+
+/** `404` quando a organização não configurou SMTP próprio — e aí o correio dela
+ *  sai pelo relay do operador. */
+export const getOrgMailSettings = (orgId: string, signal?: AbortSignal) =>
+  request<OrgMailSettings>(`/api/orgs/${orgId}/mail-settings`, { signal })
+
+export const putOrgMailSettings = (orgId: string, body: PutOrgMailSettings) =>
+  request<OrgMailSettings>(`/api/orgs/${orgId}/mail-settings`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+
+export const deleteOrgMailSettings = (orgId: string) =>
+  request(`/api/orgs/${orgId}/mail-settings`, { method: 'DELETE' })
+
+/** Liga-se ao relay e fala SMTP (autenticação incluída) **sem mandar
+ *  mensagem**. `ok: false` com razão é uma resposta, não um erro. */
+export const checkOrgMailRelay = (orgId: string) =>
+  request<{ ok: boolean; error: string | null }>(`/api/orgs/${orgId}/mail-settings/check`, {
+    method: 'POST',
+  })
+
+export type MailStatus = 'pending' | 'sending' | 'sent' | 'failed'
+
+/** Uma mensagem da caixa de saída. **Sem corpo**: o de um convite leva o token. */
+export interface MailMessage {
+  id: string
+  purpose: string
+  to_address: string
+  subject: string
+  status: MailStatus
+  attempt: number
+  /** A razão da última falha — é para isto que a listagem serve. */
+  error: string | null
+  retry_at: string | null
+  created_at: string
+  sent_at: string | null
+}
+
+export const listOrgMailMessages = (
+  orgId: string,
+  f: { status?: MailStatus; purpose?: string } & PageParams = {},
+  signal?: AbortSignal,
+) => {
+  const q = new URLSearchParams()
+  if (f.status) q.set('status', f.status)
+  if (f.purpose) q.set('purpose', f.purpose)
+  if (f.page_size) q.set('page_size', String(f.page_size))
+  if (f.page_token) q.set('page_token', f.page_token)
+  const s = q.toString()
+  return request<Page<MailMessage>>(`/api/orgs/${orgId}/mail-messages${s ? `?${s}` : ''}`, { signal })
+}
+
 export const listAudit = (orgId: string, limit = 100) =>
   request<AuditEntry[]>(`/api/orgs/${orgId}/audit-events?limit=${limit}`)
 export const createOrg = (name: string) =>

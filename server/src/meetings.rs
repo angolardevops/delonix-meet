@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, Utc};
+use delonix_meet_domain::scheduling::calendar::{self, Method as IcsMethod};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -2001,6 +2002,121 @@ pub async fn reschedule(
     Ok(Json(m))
 }
 
+/// O texto iCalendar de uma reunião — para descarregar (`PUBLISH`) ou para
+/// anexar a um convite por correio (`REQUEST`) e a um corte (`CANCEL`).
+///
+/// **Não autoriza nada.** Quem chama já decidiu que esta pessoa pode saber da
+/// reunião: o handler da descarga pela posse ou pelo convite, o correio pela
+/// audiência que a notificação já resolveu.
+///
+/// O `attendee` é o endereço de QUEM recebe esta mensagem, um por mensagem: num
+/// convite ele faz o cliente de calendário mostrar «aceitar», e manter um só
+/// evita que um destinatário fique a saber a lista dos outros.
+pub(crate) async fn ics_for(
+    state: &AppState,
+    meeting: &Meeting,
+    method: IcsMethod,
+    attendee: Option<&str>,
+) -> String {
+    // O `sequence` lê-se à parte e NÃO entra no `MEETING_COLUMNS`: aquela lista
+    // é o contrato de várias respostas da API, e a revisão do calendário só
+    // interessa ao `.ics`.
+    let seq: i32 = sqlx::query_scalar("SELECT sequence FROM meetings WHERE id = $1")
+        .bind(meeting.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+    // O LINK, não só o código: um `.ics` sem `URL:` obriga quem o recebeu a
+    // procurar o link noutro lado. Vai nas duas formas porque os clientes de
+    // calendário não concordam — o Google e o Outlook lêem `URL:`, muitos
+    // telemóveis só mostram a descrição.
+    //
+    // ABSOLUTO ou nenhum. O `room_link` cai para um caminho relativo
+    // (`/#/r/<código>`) quando a organização não declara domínio — serve numa
+    // resposta de API, que o cliente resolve contra o host a que chamou, e NÃO
+    // serve aqui: um `.ics` é lido noutro programa, dias depois, e um URL
+    // relativo lá dentro não aponta para lado nenhum. Medido a 2026-10-13
+    // contra um servidor real: saía `URL:/#/r/zqc-ghvp-eie`.
+    //
+    // A ordem é a do produto: o domínio da organização primeiro (é o endereço
+    // por que os convidados dela conhecem o serviço), o `PUBLIC_URL` a seguir,
+    // e nada em último. Nunca o cabeçalho `Host` do pedido — pela mesma razão
+    // que os links de reposição de password não o usam.
+    let org_id = crate::org::orgs_of_user(state, meeting.owner_id)
+        .await
+        .first()
+        .copied();
+    let link = match &meeting.room_code {
+        None => None,
+        Some(code) => {
+            let por_org = match org_id {
+                Some(org_id) => Some(crate::apikeys::room_link(state, org_id, code).await),
+                None => None,
+            };
+            match por_org {
+                Some(l) if l.starts_with("http") => Some(l),
+                _ => state
+                    .config
+                    .public_url
+                    .as_deref()
+                    .map(|base| format!("{base}/#/r/{code}")),
+            }
+        }
+    };
+    let mut desc = meeting.description.clone();
+    if let Some(link) = &link {
+        if !desc.is_empty() {
+            desc.push('\n');
+        }
+        desc.push_str(&format!("Delonix Meet — entrar: {link}"));
+    }
+    // O organizador é o anfitrião, e só entra onde serve: num `PUBLISH` ninguém
+    // responde, e a descarga tem de continuar a sair igual ao que saía.
+    let organizer: Option<String> = match method {
+        IcsMethod::Publish => None,
+        _ => sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+            .bind(meeting.owner_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten(),
+    };
+    calendar::ics(
+        &calendar::Event {
+            uid: &format!("{}@delonix-meet", meeting.id),
+            dtstamp: Utc::now(),
+            sequence: seq,
+            starts_at: meeting.starts_at,
+            duration_min: meeting.duration_min,
+            title: &meeting.title,
+            description: &desc,
+            url: link.as_deref(),
+            organizer: organizer.as_deref(),
+            attendee,
+        },
+        method,
+    )
+}
+
+/// O mesmo, para quem só tem o id (o correio). `None` quando a reunião já não
+/// existe — apagar uma reunião não pode fazer uma notificação falhar.
+pub(crate) async fn ics_by_id(
+    state: &AppState,
+    meeting_id: Uuid,
+    method: IcsMethod,
+    attendee: Option<&str>,
+) -> Option<String> {
+    let meeting: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(meeting_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+    Some(ics_for(state, &meeting, method, attendee).await)
+}
+
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
 /// reunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.
 #[utoipa::path(
@@ -2024,89 +2140,14 @@ pub async fn ics(
     .bind(id)
     .fetch_one(&state.db)
     .await?;
-    // O `sequence` lê-se à parte e NÃO entra no `MEETING_COLUMNS`: aquela lista
-    // é o contrato de várias respostas da API, e a revisão do calendário só
-    // interessa ao `.ics`.
-    let seq: i32 = sqlx::query_scalar("SELECT sequence FROM meetings WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0);
     if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         // Quem não é dono nem convidado não fica a saber que a reunião existe.
         return Err(ApiError::NotFound);
     }
-
-    let esc = |s: &str| {
-        s.replace('\\', "\\\\")
-            .replace(';', "\\;")
-            .replace(',', "\\,")
-            .replace('\n', "\\n")
-    };
-    let dt = |t: &chrono::DateTime<Utc>| t.format("%Y%m%dT%H%M%SZ").to_string();
-    // O LINK, não só o código: um `.ics` sem `URL:` obriga quem o recebeu a
-    // procurar o link noutro lado. Vai nas duas formas porque os clientes de
-    // calendário não concordam — o Google e o Outlook lêem `URL:`, muitos
-    // telemóveis só mostram a descrição.
-    //
-    // ABSOLUTO ou nenhum. O `room_link` cai para um caminho relativo
-    // (`/#/r/<código>`) quando a organização não declara domínio — serve numa
-    // resposta de API, que o cliente resolve contra o host a que chamou, e NÃO
-    // serve aqui: um `.ics` é lido noutro programa, dias depois, e um URL
-    // relativo lá dentro não aponta para lado nenhum. Medido a 2026-10-13
-    // contra um servidor real: saía `URL:/#/r/zqc-ghvp-eie`.
-    //
-    // A ordem é a do produto: o domínio da organização primeiro (é o endereço
-    // por que os convidados dela conhecem o serviço), o `PUBLIC_URL` a seguir,
-    // e nada em último. Nunca o cabeçalho `Host` do pedido — pela mesma razão
-    // que os links de reposição de password não o usam.
-    let link = match &meeting.room_code {
-        None => None,
-        Some(code) => {
-            let por_org = match crate::org::orgs_of_user(&state, meeting.owner_id)
-                .await
-                .first()
-                .copied()
-            {
-                Some(org_id) => Some(crate::apikeys::room_link(&state, org_id, code).await),
-                None => None,
-            };
-            match por_org {
-                Some(l) if l.starts_with("http") => Some(l),
-                _ => state
-                    .config
-                    .public_url
-                    .as_deref()
-                    .map(|base| format!("{base}/#/r/{code}")),
-            }
-        }
-    };
-    let mut desc = meeting.description.clone();
-    if let Some(link) = &link {
-        if !desc.is_empty() {
-            desc.push('\n');
-        }
-        desc.push_str(&format!("Delonix Meet — entrar: {link}"));
-    }
-    let url_line = match &link {
-        Some(link) => format!("URL:{link}\r\n"),
-        None => String::new(),
-    };
-    let body = format!(
-        // O `SEQUENCE` (RFC 5545 §3.8.7.4) é a revisão do evento: um cliente de
-        // calendário só aceita uma versão nova de um evento que já conhece se
-        // este número SUBIR. Sem ele, o `.ics` exportado depois de remarcar era
-        // silenciosamente ignorado pelo Outlook e pelo Google Calendar.
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Delonix Meet//PT\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{id}@delonix-meet\r\nDTSTAMP:{now}\r\nSEQUENCE:{seq}\r\nDTSTART:{start}\r\nDURATION:PT{dur}M\r\nSUMMARY:{title}\r\nDESCRIPTION:{desc}\r\n{url_line}END:VEVENT\r\nEND:VCALENDAR\r\n",
-        id = meeting.id,
-        now = dt(&Utc::now()),
-        seq = seq,
-        start = dt(&meeting.starts_at),
-        dur = meeting.duration_min,
-        title = esc(&meeting.title),
-        desc = esc(&desc),
-        url_line = url_line,
-    );
+    // A descarga é um `PUBLISH` sem destinatário: não pede resposta a ninguém.
+    // O texto sai do mesmo construtor que o convite por correio usa
+    // (`scheduling::calendar`), e um teste prende-o byte a byte.
+    let body = ics_for(&state, &meeting, IcsMethod::Publish, None).await;
     Ok(axum::response::Response::builder()
         .header("Content-Type", "text/calendar; charset=utf-8")
         .header(

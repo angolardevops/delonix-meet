@@ -85,6 +85,11 @@ pub struct Draft {
     /// Chave de coalescência: por destinatário, no máximo uma notificação
     /// com esta chave.
     pub dedupe_key: String,
+    /// A reunião de que esta notificação fala, quando fala de uma. Serve para
+    /// o correio lhe anexar o convite de calendário (`.ics`): sem ela, quem
+    /// envia tinha de adivinhar o id a partir da chave de dedupe, que é texto
+    /// e muda de forma entre tipos.
+    pub meeting_id: Option<Uuid>,
 }
 
 impl Draft {
@@ -100,7 +105,16 @@ impl Draft {
                 "/".to_string()
             },
             dedupe_key: format!("{}:{entity}", kind.as_str()),
+            meeting_id: None,
         }
+    }
+}
+
+impl Draft {
+    /// Diz de que reunião esta notificação fala. Encadeia-se no construtor.
+    fn about_meeting(mut self, meeting_id: Uuid) -> Self {
+        self.meeting_id = Some(meeting_id);
+        self
     }
 }
 
@@ -163,6 +177,7 @@ pub fn meeting_invited(
         ),
         "/#/calendar".to_string(),
     )
+    .about_meeting(meeting_id)
 }
 
 pub fn meeting_starting(meeting_id: Uuid, meeting_title: &str, room_code: &str) -> Draft {
@@ -173,6 +188,7 @@ pub fn meeting_starting(meeting_id: Uuid, meeting_title: &str, room_code: &str) 
         format!("A reunião «{meeting_title}» está a começar."),
         room_path(room_code),
     )
+    .about_meeting(meeting_id)
 }
 
 /// A hora mudou. Leva as DUAS horas — a antiga e a nova —, porque quem recebe
@@ -198,6 +214,7 @@ pub fn meeting_rescheduled(
         ),
         "/#/calendar".to_string(),
     )
+    .about_meeting(meeting_id)
 }
 
 pub fn meeting_cancelled(
@@ -216,6 +233,7 @@ pub fn meeting_cancelled(
         ),
         "/#/calendar".to_string(),
     )
+    .about_meeting(meeting_id)
 }
 
 /// Uma chamada que tocou várias vezes na mesma sala é UMA chamada perdida.

@@ -32,6 +32,8 @@ import { RetentionCard, StorageCard } from './admin/PolicyCards'
 import { refusalAware, useOrgSelection } from './admin/orgShared'
 import RolesCard from './admin/RolesCard'
 import SettingsCard from './admin/SettingsCard'
+import MailCard from './admin/MailCard'
+import MailOutboxCard from './admin/MailOutboxCard'
 import SmsGatewayCard from './admin/SmsGatewayCard'
 import SmsSendCard from './admin/SmsSendCard'
 import { BranchesCard, GroupsCard, RoomsCard } from './admin/StructureCards'
@@ -153,6 +155,10 @@ function AdminBody({
           <ExtensionsCard orgId={org.id} people={peopleList} />
           <SmsGatewayCard orgId={org.id} />
           <SmsSendCard orgId={org.id} />
+          {/* O correio ao lado dos outros canais de entrega: configurar o
+              relay, e logo abaixo ver o que saiu por ele. */}
+          <MailCard orgId={org.id} />
+          <MailOutboxCard orgId={org.id} />
         </div>
         <div className="org-admin__side">
           <StorageCard stats={stats.state} />

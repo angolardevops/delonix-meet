@@ -27,6 +27,7 @@ fn msg<'a>(to: &'a str) -> MailOutgoing<'a> {
         // Pedido à mão: sem dedupe. Os testes do dedupe estão no ficheiro das
         // notificações por correio, que é quem o usa.
         dedupe_key: None,
+        calendar: None,
     }
 }
 
