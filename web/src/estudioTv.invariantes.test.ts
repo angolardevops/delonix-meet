@@ -214,6 +214,35 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     expect(comp).not.toMatch(/for \(const g of \[this\.ganhoPalco, this\.ganhoMusica/)
   })
 
+  it('a mesa limita no mestre, e a sonoridade mede-se DEPOIS disso', () => {
+    // EST-03 e EST-06 da auditoria de 2026-10-14: a mesa não tinha limitador
+    // de mestre, e o número de sonoridade do cabeçalho era medido no fader —
+    // antes de qualquer limitação, aqui e no compositor. Um número que não
+    // descreve o que sai é pior do que não ter número.
+    const mesa = read('web/src/studio/tv/mesaDeSom.ts')
+    expect(mesa).toContain('this.mestre.connect(this.limitadorMestre)')
+    expect(mesa).toContain('this.limitadorMestre.connect(this.destino)')
+    expect(mesa).not.toContain('this.mestre.connect(this.destino)')
+    // A captura da sonoridade pendura-se no limitador, não no fader.
+    expect(mesa).toContain('this.limitadorMestre.connect(n)')
+    // E o tecto é o MESMO do cinto de segurança do compositor: a mesa limita
+    // primeiro, e o de baixo quase nunca morde.
+    expect(mesa).toContain('this.limitadorMestre.threshold.value = -3')
+    expect(read('web/src/studio/compositor.ts')).toContain('this.limiterMestre.threshold.value = -3')
+  })
+
+  it('e cada canal tem atraso próprio e entrada estéreo', () => {
+    // EST-04 e EST-05: sem atraso não há como alinhar o som com a imagem (a
+    // câmara atrasa, o microfone não), e `channelCount: 1` dobrava para mono
+    // uma mesa física ou um leitor ligados por USB.
+    const mesa = read('web/src/studio/tv/mesaDeSom.ts')
+    expect(mesa).toContain('const atraso = c.createDelay(ATRASO_MAXIMO_MS / 1000)')
+    expect(mesa).toContain('entrada.connect(atraso)')
+    expect(mesa).toContain('channelCount: { ideal: 2 }')
+    // O atraso muda sem rampa: uma rampa num atraso varre a altura do som.
+    expect(mesa).toMatch(/n\.atraso\.delayTime\.setValueAtTime/)
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas

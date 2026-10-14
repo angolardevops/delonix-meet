@@ -186,14 +186,19 @@ describe('a mistura tem faders de verdade', () => {
     // que a leva como canal — por isso quem a liga é o `ligarBarramentoDeMusica`
     // e não este laço. Continuam a ser três barramentos e todos acabam no
     // mestre; a música é que escolhe o caminho.
-    expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoVideo]) g.connect(this.compressorMestre)')
+    expect(c()).toContain('this.ganhoVideo.connect(this.compressorMestre)')
+    // E o PALCO escolhe: sem mesa de som vai ao nivelador, com mesa salta-o e
+    // entra no limitador — porque a mesa já tem a dinâmica dela e o nivelador
+    // daqui (−24 dBFS, 3:1) morde em material normal. O limitador fica sempre.
+    expect(c()).toContain('this.ganhoPalco.connect(this.somExterno ? this.limiterMestre : this.compressorMestre)')
     expect(c()).toContain('this.ganhoMusica.connect(this.somExterno ? this.destinoMedia : this.compressorMestre)')
   })
 
   it('a dinâmica mestre fica entre os barramentos e o destino, com um medidor na saída', () => {
     // Um barramento sozinho não pode saturar o que se grava/emite — por
-    // isso a cadeia é OBRIGATÓRIA entre a soma dos três e o `destino`, não
-    // opcional nem contornável por um caminho directo.
+    // isso o LIMITADOR é obrigatório entre a soma dos três e o `destino`, não
+    // opcional nem contornável por um caminho directo. (O nivelador é que
+    // pode saltar, e só para quem tem mesa de som: ver o teste acima.)
     expect(c()).not.toMatch(/this\.(ganhoPalco|ganhoMusica|ganhoVideo)\.connect\(this\.destino\)/)
     expect(c()).toContain('this.compressorMestre.connect(this.limiterMestre)')
     expect(c()).toContain('this.limiterMestre.connect(this.destino)')

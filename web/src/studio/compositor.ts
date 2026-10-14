@@ -813,11 +813,12 @@ export class CompositorDeAula {
     this.analiserMestre = this.audioCtx.createAnalyser()
     this.analiserMestre.fftSize = 512
 
-    for (const g of [this.ganhoPalco, this.ganhoVideo]) g.connect(this.compressorMestre)
+    this.ganhoVideo.connect(this.compressorMestre)
     this.compressorMestre.connect(this.limiterMestre)
     this.limiterMestre.connect(this.destino)
     this.limiterMestre.connect(this.analiserMestre)
     this.ligarBarramentoDeMusica()
+    this.ligarBarramentoDoPalco()
 
     if (micDeviceId !== undefined) this.microfoneId = micDeviceId
     await this.ligarMicrofone()
@@ -873,6 +874,27 @@ export class CompositorDeAula {
     // ou são daqui.
     this.ligarSomDoEcra()
     this.ligarBarramentoDeMusica()
+    this.ligarBarramentoDoPalco()
+  }
+
+  /**
+   * O palco vai ao nivelador/limitador mestre — EXCEPTO quando a mesa de som o
+   * alimenta: a mesa tem a sua dinâmica por canal e o seu limitador de mestre,
+   * e duas dinâmicas em série tiram ao operador o controlo do que faz. Pior:
+   * com o limitador daqui (tecto a −3 dBFS) a morder abaixo do da mesa (−2), a
+   * sonoridade que a mesa mede nunca descreveria o que sai — e é precisamente
+   * o número que ela mostra ao operador.
+   *
+   * Quem NÃO tem mesa — o Estúdio clássico, com o microfone e os convidados a
+   * irem direitos ao palco — continua a ter a dinâmica daqui. E o LIMITADOR
+   * fica sempre no caminho, com mesa ou sem ela: o que salta é o nivelador.
+   */
+  private ligarBarramentoDoPalco(): void {
+    if (!this.audioCtx || !this.ganhoPalco || !this.compressorMestre || !this.limiterMestre) return
+    // Salta o NIVELADOR, nunca o limitador: o cinto de segurança do que se
+    // grava e se emite fica sempre no caminho.
+    this.ganhoPalco.disconnect()
+    this.ganhoPalco.connect(this.somExterno ? this.limiterMestre : this.compressorMestre)
   }
 
   /**

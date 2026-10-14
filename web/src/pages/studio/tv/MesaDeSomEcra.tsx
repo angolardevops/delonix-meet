@@ -7,7 +7,7 @@
 import { CSSProperties, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { curvaDoEq, EQ_GANHO_MAXIMO, alturaDoMedidor, faderParaDb, formatarDb, type LeituraDeSonoridade } from '../../../studio/tv/som'
-import type { EstadoDoCanal } from '../../../studio/tv/mesaDeSom'
+import { ATRASO_MAXIMO_MS, type EstadoDoCanal } from '../../../studio/tv/mesaDeSom'
 import { Icon, type IconName } from '../../../ui/icons'
 import { cx } from '../../../ui/kit'
 import { type PropsDoEcra, SelosDoAr } from './comum'
@@ -318,6 +318,19 @@ function Inspector({ s, canal, n }: { s: PropsDoEcra['s']; canal: EstadoDoCanal;
           ))}
         </select>
       </label>
+
+      <Deslizador
+        rotulo={t('tv.som.atraso')}
+        valor={canal.atrasoMs}
+        min={0}
+        max={ATRASO_MAXIMO_MS}
+        passo={5}
+        texto={canal.atrasoMs ? t('tv.unidades.ms', { v: canal.atrasoMs }) : t('tv.som.semAtraso')}
+        onChange={(v) => som.mudar(canal.id, { atrasoMs: v })}
+        larguraRotulo={76}
+        data-tv="atraso"
+      />
+      <p className="tv-nota">{t('tv.som.atrasoDica')}</p>
 
       <Cartao como="section" aria-label={t('tv.som.equalizador')}>
         <Cabeca>
