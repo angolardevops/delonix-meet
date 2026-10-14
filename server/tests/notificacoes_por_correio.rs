@@ -61,6 +61,14 @@ async fn caixa_de_saida(app: &TestApp) -> Vec<(String, String, String, Option<St
     .unwrap()
 }
 
+/// O calendário que viajou com a mensagem: o texto iCalendar e o `METHOD`.
+async fn calendario(app: &TestApp) -> Vec<(Option<String>, Option<String>)> {
+    sqlx::query_as("SELECT calendar_ics, calendar_method FROM mail_messages ORDER BY created_at")
+        .fetch_all(&app.state.db)
+        .await
+        .unwrap()
+}
+
 /// O convite para uma reunião sai por correio: o canal está ligado por omissão
 /// para este tipo, o endereço está provado, e há relay.
 #[sqlx::test(migrations = "./migrations")]
@@ -96,6 +104,35 @@ async fn convite_de_reuniao_sai_por_correio(db: sqlx::PgPool) {
         dedupe.as_deref().unwrap_or_default().starts_with("notif:"),
         "a mensagem tinha de levar chave de dedupe: {dedupe:?}"
     );
+
+    // O CONVITE DE CALENDÁRIO. Sem ele, isto é um email com um link que a
+    // pessoa tem de copiar para a agenda à mão.
+    let cal = calendario(&app).await;
+    let (ics, metodo) = &cal[0];
+    let ics = ics.as_deref().expect("a mensagem tinha de levar o .ics");
+    assert_eq!(
+        metodo.as_deref(),
+        Some("REQUEST"),
+        "é um convite, não um aviso"
+    );
+    assert!(ics.starts_with("BEGIN:VCALENDAR\r\n"), "{ics}");
+    assert!(ics.contains("METHOD:REQUEST\r\n"), "{ics}");
+    assert!(ics.contains("SUMMARY:Conselho de direcção\r\n"), "{ics}");
+    // O endereço de quem recebe, para o cliente mostrar «aceitar».
+    assert!(
+        ics.contains(&format!(
+            "ATTENDEE;RSVP=TRUE;PARTSTAT=NEEDS-ACTION:mailto:{}",
+            convidado.email
+        )),
+        "{ics}"
+    );
+    // E quem organiza: sem ORGANIZER o Outlook mostra o evento e não mostra o botão.
+    assert!(
+        ics.contains(&format!("ORGANIZER:mailto:{}", dono.email)),
+        "{ics}"
+    );
+    // O link da sala vai no URL, absoluto — um .ics é lido noutro programa.
+    assert!(ics.contains("URL:https://meet.exemplo.ao/#/r/"), "{ics}");
 }
 
 /// **O DEFEITO QUE ISTO GUARDA.** O correio é independente do `in_app`: quem
@@ -203,6 +240,7 @@ async fn a_mesma_chave_nao_manda_dois_emails(db: sqlx::PgPool) {
         subject: "A começar: Operações",
         body: "corpo",
         dedupe_key: chave,
+        calendar: None,
     };
 
     let primeira = delonix_server::mail_enqueue(&app.state, msg(Some("notif:m1")))

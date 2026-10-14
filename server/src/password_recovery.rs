@@ -200,6 +200,7 @@ async fn emitir(state: &AppState, email: &str, public_url: &str) -> Result<bool,
             body: &body,
             // Pedido à mão: quem pede outra vez QUER outra mensagem.
             dedupe_key: None,
+            calendar: None,
         },
     )
     .await?;

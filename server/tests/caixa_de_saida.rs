@@ -115,6 +115,7 @@ async fn o_correio_pessoal_nao_aparece_na_caixa_da_org(db: sqlx::PgPool) {
             subject: "Reposição de password",
             body: "https://meet.exemplo.ao/#/repor-password?token=SEGREDO-DE-USO-UNICO",
             dedupe_key: None,
+            calendar: None,
         },
     )
     .await

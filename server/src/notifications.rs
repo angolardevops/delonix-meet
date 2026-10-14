@@ -23,6 +23,9 @@
 //! O cliente web actual ignora tipos que não conhece (`default: break` no
 //! `PresenceProvider.tsx`), por isso a mensagem nova é compatível para trás.
 
+/// O `METHOD` do calendário vem do domínio e passa pelo correio; o alias deixa
+/// claro, aqui, que quem o consome é o `mail::Outgoing`.
+use crate::mail::CalendarMethod as MailCalendarMethod;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -30,7 +33,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use delonix_meet_core::page::{Page, PageRequest};
-use delonix_meet_domain::notification::{self as rules, Draft};
+use delonix_meet_domain::notification::{self as rules, Draft, Kind};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -376,6 +379,43 @@ async fn email_best_effort(state: &AppState, user_id: Uuid, draft: &Draft) {
     };
 
     let corpo = corpo_do_email(&locale, draft, state.config.public_url.as_deref());
+    // O CONVITE DE CALENDÁRIO. Sem isto, um convite nosso é um link que a pessoa
+    // tem de copiar para a agenda à mão — a lacuna nº2 do levantamento de
+    // 2026-10-13. Com `METHOD:REQUEST` e o mesmo UID, o Outlook e o Google
+    // mostram «aceitar/recusar» e, no remarcar, SUBSTITUEM o evento (o
+    // `SEQUENCE` da reunião sobe no #336).
+    //
+    // Só os tipos que falam de uma hora na agenda. O `meeting.starting` fica de
+    // fora de propósito: é um lembrete minutos antes, e mandar outro convite
+    // com o mesmo UID não acrescenta nada à agenda de ninguém.
+    let metodo = match draft.kind {
+        Kind::MeetingInvited | Kind::MeetingRescheduled => Some(MailCalendarMethod::Request),
+        // `meeting.cancelled` NÃO leva calendário, e não é esquecimento: quando
+        // esta notificação corre, a linha da reunião JÁ FOI APAGADA — o
+        // `meetings::delete` apaga primeiro e notifica depois
+        // (`meetings.rs`, a audiência é capturada antes do DELETE, de propósito).
+        // Um `METHOD:CANCEL` precisa do `SEQUENCE` actual para o Outlook o
+        // aceitar (um número menor que o conhecido é ignorado), e isso já não
+        // existe para se ler. Fazê-lo bem é alargar a audiência à duração, ao
+        // código da sala e à sequência, e construir o `.ics` ANTES do DELETE —
+        // está nomeado no plano de paridade (P2) e o construtor já tem o
+        // `Method::Cancel` testado à espera.
+        //
+        // Enquanto não tiver, o cancelamento sai por email sem tirar o evento
+        // da agenda de quem o recebeu. Dito aqui para não voltar a parecer que
+        // basta ligar o ramo.
+        _ => None,
+    };
+    let convite: Option<(String, MailCalendarMethod)> = match (metodo, draft.meeting_id) {
+        (Some(metodo), Some(meeting_id)) => {
+            crate::meetings::ics_by_id(state, meeting_id, metodo, Some(&email))
+                .await
+                .map(|ics| (ics, metodo))
+        }
+        // Sem reunião nenhuma (ou um tipo que não é de agenda) a mensagem sai
+        // como saía: texto simples.
+        _ => None,
+    };
     if let Err(e) = crate::mail::enqueue(
         state,
         crate::mail::Outgoing {
@@ -390,6 +430,10 @@ async fn email_best_effort(state: &AppState, user_id: Uuid, draft: &Draft) {
             // `notif:` para a chave da notificação não poder colidir com a de
             // outro propósito que venha a usar dedupe.
             dedupe_key: Some(&format!("notif:{}", draft.dedupe_key)),
+            calendar: convite.as_ref().map(|(ics, metodo)| crate::mail::Calendar {
+                ics,
+                method: *metodo,
+            }),
         },
     )
     .await
