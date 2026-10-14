@@ -30,7 +30,7 @@
 import { Denoiser } from '../../media'
 import { type Banda, dbParaGanho, EQ_INICIAL, faderParaDb, type LeituraDeSonoridade, MedidorDeSonoridade, nivelDoBloco } from './som'
 
-export type TipoDeCanal = 'microfone' | 'participante' | 'ecra' | 'musica' | 'efeito'
+export type TipoDeCanal = 'microfone' | 'participante' | 'ecra' | 'musica' | 'efeito' | 'media'
 
 export interface DinamicaDoCanal {
   porta: { ligada: boolean; limiarDb: number }
@@ -135,6 +135,8 @@ export class MesaDeSom {
   private canais = new Map<string, CanalVivo>()
   /** O disparo a tocar em cada canal de efeito. */
   private disparos = new Map<string, AudioBufferSourceNode>()
+  /** Um elemento de media só pode ser ligado ao grafo UMA vez, para sempre. */
+  private elementos = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>()
   private ordem: string[] = []
   private pgm: GainNode
   private mestre: GainNode
@@ -395,6 +397,41 @@ export class MesaDeSom {
     }
     this.registar(estado, stream, true, deviceId)
     return id
+  }
+
+  /**
+   * Um ELEMENTO de media (o ficheiro de vídeo das fontes) como canal.
+   *
+   * `createMediaElementSource` tira ao elemento a saída directa para os
+   * altifalantes e põe-na no grafo: sem isto o clipe ouvia-se duas vezes — uma
+   * pelo elemento, outra pela mesa — e o fader só mexia numa delas. Um
+   * elemento só pode ser ligado UMA vez, e é por isso que se guarda a ligação.
+   */
+  adicionarElemento(id: string, nome: string, el: HTMLMediaElement, fonte: string | null): void {
+    const existe = this.canais.get(id)
+    if (existe) {
+      if (existe.estado.nome !== nome) {
+        existe.estado = { ...existe.estado, nome }
+        this.aoMudar?.()
+      }
+      return
+    }
+    let no: MediaElementAudioSourceNode
+    try {
+      no = this.elementos.get(el) ?? this.ctx.createMediaElementSource(el)
+    } catch {
+      // Já ligado a outro contexto (uma mesa anterior desta sessão): o som
+      // continua a sair pelo elemento, e o canal não se cria a fingir.
+      return
+    }
+    this.elementos.set(el, no)
+    const vivo: CanalVivo = { estado: this.estadoInicial(id, nome, 'media', fonte), nos: this.criarNos(), bruto: new MediaStream(), deviceId: undefined, denoiser: null, proprio: false }
+    vivo.nos.fonte = no
+    no.connect(vivo.nos.entrada)
+    this.canais.set(id, vivo)
+    if (!this.ordem.includes(id)) this.ordem.push(id)
+    this.aplicarNos(vivo)
+    this.aoMudar?.()
   }
 
   /** Um fluxo que já existe (participante, ecrã) como canal. */

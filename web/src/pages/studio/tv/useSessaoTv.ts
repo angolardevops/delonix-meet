@@ -143,6 +143,29 @@ export function useSessaoTv(p: PropsDaSessao) {
   }, [registo, compRef, t])
   useEffect(() => registo.definirParticipantes(p.participantes), [registo, p.participantes])
 
+  /**
+   * Um ficheiro de vídeo como fonte — o «rolar o VT». Nasce em pausa e no
+   * princípio; quem o corta ao ar decide quando começa.
+   */
+  const adicionarFicheiro = useCallback((f: File) => registo.adicionarFicheiro(f), [registo])
+
+  /** O transporte de um ficheiro. `null` para o que não é ficheiro. */
+  const comandarFicheiro = useCallback(
+    (id: string, accao: 'tocar' | 'pausar' | 'inicio' | 'ciclo') => {
+      const v = registo.video(id)
+      if (!v) return
+      if (accao === 'tocar') void v.play().catch(() => undefined)
+      else if (accao === 'pausar') v.pause()
+      else if (accao === 'ciclo') v.loop = !v.loop
+      else {
+        v.currentTime = 0
+        v.pause()
+      }
+      setVersaoFontes((x) => x + 1)
+    },
+    [registo],
+  )
+
   // ------------------------------------------------------------ mesa de corte
   const mesaRef = useRef<EstadoDaMesa>(MESA_INICIAL)
   const [mesa, setMesaEstado] = useState<EstadoDaMesa>(MESA_INICIAL)
@@ -345,6 +368,22 @@ export function useSessaoTv(p: PropsDaSessao) {
     if (audio.length) som.adicionarFluxo('musica', palco.musica?.nome || t('tv.som.tipos.musica'), 'musica', new MediaStream(audio), null)
     else if (som.lista().some((c) => c.id === 'musica')) som.remover('musica')
   }, [som, compRef, palco.musica, p.gravando, p.noAr, t])
+
+  // O som de um FICHEIRO é um canal, e o canal tem o id da fonte: assim o
+  // tally da tira e o «seguir a imagem» funcionam sem mais nada — o canal já
+  // sabe de que imagem é.
+  useEffect(() => {
+    if (!som) return
+    const ids = new Set<string>()
+    for (const f of registo.lista()) {
+      if (f.tipo !== 'ficheiro') continue
+      const el = registo.video(f.id)
+      if (!el) continue
+      ids.add(f.id)
+      som.adicionarElemento(f.id, f.nome, el, f.id)
+    }
+    for (const c of som.lista()) if (c.tipo === 'media' && !ids.has(c.id)) som.remover(c.id)
+  }, [som, registo, versaoFontes])
 
   // Participantes com áudio entram como canais; quem sai, sai.
   useEffect(() => {
@@ -713,6 +752,8 @@ export function useSessaoTv(p: PropsDaSessao) {
     saidas,
     procurarDispositivos,
     ligarCamara,
+    adicionarFicheiro,
+    comandarFicheiro,
     microfoneDaFonte,
     levarSomDaFonteAMesa,
     erroFonte,

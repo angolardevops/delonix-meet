@@ -16,7 +16,7 @@ import { CorrectorDeImagem } from '../../media/correccaoGl'
 import { type CorreccaoDeImagem, CORRECCAO_NEUTRA, ehNeutra, sanearCorreccao } from './correccao'
 import type { FontesParaDesenho, ImagemDeFonte } from './desenhoDaMesa'
 
-export type TipoDeFonte = 'camara' | 'ecra' | 'quadro' | 'participante'
+export type TipoDeFonte = 'camara' | 'ecra' | 'quadro' | 'participante' | 'ficheiro'
 
 export interface MedidasDaFonte {
   largura: number
@@ -54,7 +54,7 @@ interface Viva extends FonteDaMesa {
 
 export const MAX_BARRAMENTO = 6
 
-const PRIORIDADE: Record<TipoDeFonte, number> = { camara: 0, participante: 1, ecra: 2, quadro: 3 }
+const PRIORIDADE: Record<TipoDeFonte, number> = { camara: 0, participante: 1, ficheiro: 2, ecra: 3, quadro: 4 }
 
 const CHAVE_CORRECCOES = 'dx_studio_tv_correccoes'
 
@@ -193,7 +193,10 @@ export class RegistoDeFontes implements FontesParaDesenho {
 
   ajuste(id: string): 'cover' | 'contain' {
     const t = this.fontes.get(id)?.tipo
-    return t === 'ecra' || t === 'quadro' ? 'contain' : 'cover'
+    // Um ficheiro vê-se INTEIRO: um clipe 4:3 num programa 16:9 cortado nos
+    // lados perde metade do que lá está, e ninguém filmou aquilo para ser
+    // cortado.
+    return t === 'ecra' || t === 'quadro' || t === 'ficheiro' ? 'contain' : 'cover'
   }
 
   /** A imagem SEM correcção — o «antes» da iluminação. */
@@ -241,7 +244,12 @@ export class RegistoDeFontes implements FontesParaDesenho {
   }
 
   private chave(f: FonteDaMesa): string {
-    return f.tipo === 'camara' ? `camara:${f.deviceId ?? f.dispositivo}` : f.tipo === 'participante' ? `p:${f.nome}` : f.tipo
+    if (f.tipo === 'camara') return `camara:${f.deviceId ?? f.dispositivo}`
+    if (f.tipo === 'participante') return `p:${f.nome}`
+    // Um ficheiro guarda a correcção pelo NOME: o mesmo genérico amanhã volta
+    // com a mesma cor, e dois ficheiros diferentes não a partilham.
+    if (f.tipo === 'ficheiro') return `ficheiro:${f.nome}`
+    return f.tipo
   }
 
   // ------------------------------------------------------------ escrita
@@ -277,6 +285,13 @@ export class RegistoDeFontes implements FontesParaDesenho {
     if (f.elemento instanceof HTMLVideoElement && f.tipo !== 'ecra') {
       f.elemento.pause()
       f.elemento.srcObject = null
+      // Um ficheiro vive num `blob:` que não se liberta sozinho: sem isto, uma
+      // tarde a trocar de genérico deixava os megabytes todos presos.
+      if (f.elemento.src.startsWith('blob:')) {
+        URL.revokeObjectURL(f.elemento.src)
+        f.elemento.removeAttribute('src')
+        f.elemento.load()
+      }
     }
     this.fontes.delete(id)
     this.ordem = this.ordem.filter((x) => x !== id)
@@ -304,6 +319,37 @@ export class RegistoDeFontes implements FontesParaDesenho {
     track?.addEventListener('ended', () => this.desligar(id))
     this.aoMudar?.()
     return id
+  }
+
+  /**
+   * Um FICHEIRO de vídeo como fonte — o «rolar o VT» de qualquer programa.
+   *
+   * O som NÃO vem daqui: o elemento entra na mesa de som pelo
+   * `createMediaElementSource`, que lhe tira a saída directa para os
+   * altifalantes e a põe no grafo. Sem isso, o clipe ouvia-se duas vezes (uma
+   * pelo elemento, outra pela mesa) e o fader da mesa só mexia numa delas.
+   *
+   * Nasce EM PAUSA e no princípio: uma fonte que começa a tocar ao ser
+   * escolhida já perdeu os primeiros segundos quando alguém a corta ao ar.
+   */
+  adicionarFicheiro(ficheiro: File): string {
+    const id = `ficheiro:${this.quadroN}:${ficheiro.name}`
+    const v = novoVideo()
+    v.autoplay = false
+    v.muted = false
+    v.src = URL.createObjectURL(ficheiro)
+    v.load()
+    const nome = ficheiro.name.replace(/\.[^.]+$/, '').slice(0, 40) || ficheiro.name
+    this.adicionar({ id, tipo: 'ficheiro', nome, dispositivo: '', stream: null, elemento: v })
+    v.addEventListener('ended', () => this.aoMudar?.())
+    this.aoMudar?.()
+    return id
+  }
+
+  /** O elemento de um ficheiro, para o transporte (tocar, parar, procurar). */
+  video(id: string): HTMLVideoElement | null {
+    const f = this.fontes.get(id)
+    return f?.tipo === 'ficheiro' && f.elemento instanceof HTMLVideoElement ? f.elemento : null
   }
 
   desligar(id: string): void {
