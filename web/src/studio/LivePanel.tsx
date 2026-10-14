@@ -20,7 +20,7 @@ import { temChave as temChaveDoDestino } from './destinosGuardados'
 import { contagemDosDestinos, estadoDoCartao, ORDEM_DA_CONTAGEM } from './destinosLocais'
 import type { EstadoDoCartao } from './destinosLocais'
 import { plataformaDoUrl } from './palco'
-import type { Destino, EstadoDoDestino, EstadoDoDirecto } from './directo'
+import type { Destino, EstadoDoDestino, EstadoDoDirecto, Rede } from './directo'
 
 const CHAVE_DO_ESTADO: Record<EstadoDoCartao, string> = {
   'sem-chave': 'semChave',
@@ -189,10 +189,75 @@ function CartaoDoDestino({
  * A coluna direita do DelonixStudio: «Destinos simultâneos», a gravação local
  * (`children`) e, no fundo, «Adicionar destino» e «Parar emissão».
  */
+/**
+ * As ESTATÍSTICAS da emissão a decorrer — o que o OBS põe num painel próprio e
+ * o estúdio não mostrava em lado nenhum: o que este browser envia, o que está
+ * à espera de sair, e o que o servidor diz de cada destino.
+ *
+ * Só aparece no ar. Fora dele não há nada verdadeiro para mostrar, e um painel
+ * com zeros parece avariado.
+ */
+function Estatisticas({
+  rede,
+  kbps,
+  porDestino,
+  destinos,
+}: {
+  rede: Rede
+  kbps: number
+  porDestino: EstadoDoDestino[]
+  destinos: Destino[]
+}) {
+  const { t, i18n } = useTranslation()
+  const num = (v: number, casas = 0) => v.toLocaleString(i18n.language, { maximumFractionDigits: casas })
+  return (
+    <section className="st-stats" data-studio="estatisticas" aria-label={t('studio.directo.stats.titulo')}>
+      <div className="st-stats__linha dx-num">
+        <span>{t('studio.directo.stats.enviado', { kbps: num(kbps) })}</span>
+        <span data-studio="debito">
+          {rede.adaptativo
+            ? t('studio.directo.stats.debito', { mbps: num(rede.debito / 1_000_000, 1) })
+            : t('studio.directo.stats.pedido', { mbps: num(rede.alvo / 1_000_000, 1) })}
+        </span>
+        <span data-studio="fila">{t('studio.directo.stats.fila', { s: num(rede.segundos, 1) })}</span>
+        {rede.descartados > 0 && <span className="st-stats__mau">{t('studio.directo.stats.descartados', { n: num(rede.descartados) })}</span>}
+      </div>
+      {rede.saude !== 'ok' && (
+        <div
+          className={cx('dx-alert', rede.saude === 'a-acumular' ? 'dx-alert--danger' : 'dx-alert--warning')}
+          role="status"
+          data-studio="rede-apertada"
+          data-saude={rede.saude}
+        >
+          <span>
+            <strong>{t(`studio.directo.stats.${rede.saude}`)}</strong> —{' '}
+            {rede.adaptativo ? t('studio.directo.stats.aAdaptar') : t('studio.directo.stats.conselho')}
+          </span>
+        </div>
+      )}
+      {porDestino.length > 0 && (
+        <ul className="st-stats__dests dx-num">
+          {porDestino.map((d) => (
+            <li key={d.dest}>
+              <span className="st-stats__nome">{d.rotulo || destinos[d.dest]?.rotulo || d.platform}</span>
+              <span>{t('studio.directo.stats.destKbps', { kbps: num(d.kbps) })}</span>
+              {d.perdas > 0 && <span className="st-stats__mau">{t('studio.directo.stats.perdas', { pct: num(d.perdas, 1) })}</span>}
+              {d.framesDescartados > 0 && <span className="st-stats__mau">{t('studio.directo.stats.frames', { n: num(d.framesDescartados) })}</span>}
+              {d.tentativas > 0 && <span className="st-stats__mau">{t('studio.directo.stats.tentativas', { count: d.tentativas })}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 export default function LivePanel({
   suportado,
   destinos,
   porDestino,
+  rede,
+  kbps,
   localAGravar,
   maximo,
   estado,
@@ -208,6 +273,10 @@ export default function LivePanel({
   destinos: Destino[]
   /** Último estado por destino que o servidor mandou (`directo.aoMudarDestinos`). */
   porDestino: EstadoDoDestino[]
+  /** A saúde do envio deste browser (`directo.aoMudarRede`). */
+  rede: Rede
+  /** Débito que este browser está a ENVIAR, medido pelos bytes (`useDebito`). */
+  kbps: number
   /** A gravação local está mesmo a decorrer — só então a nota de recuperação faz sentido. */
   localAGravar: boolean
   maximo: number
@@ -273,6 +342,7 @@ export default function LivePanel({
             </ul>
             {/* Marca para os e2e: a emissão foi aceite. */}
             {noAr && <span data-studio="no-ar" hidden />}
+            {noAr && <Estatisticas rede={rede} kbps={kbps} porDestino={porDestino} destinos={destinos} />}
             {emRecuperacao && (
               <div className="dx-alert dx-alert--warning" role="status" data-studio="modo-recuperacao">
                 <span>
