@@ -144,6 +144,9 @@ pub use recording_chapters::auto_chapters_sweep;
 /// Uma volta da fila dos recortes. Exportada para a prova de integração a
 /// poder correr sem levantar o `run()` inteiro — como a do resumo da acta.
 pub use recording_clips::render_due as recording_clip_render_due;
+/// A varredura da retenção do chat, para os testes a poderem correr à mão (o
+/// que acontece em produção é o ciclo de fundo do `run()`).
+pub use room_chat::retention_sweep as room_chat_retention_sweep;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
