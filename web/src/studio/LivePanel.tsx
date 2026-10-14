@@ -214,8 +214,13 @@ function Estatisticas({
     <section className="st-stats" data-studio="estatisticas" aria-label={t('studio.directo.stats.titulo')}>
       <div className="st-stats__linha dx-num">
         <span>{t('studio.directo.stats.enviado', { kbps: num(kbps) })}</span>
-        <span>{t('studio.directo.stats.pedido', { mbps: num(rede.alvo / 1_000_000, 1) })}</span>
+        <span data-studio="debito">
+          {rede.adaptativo
+            ? t('studio.directo.stats.debito', { mbps: num(rede.debito / 1_000_000, 1) })
+            : t('studio.directo.stats.pedido', { mbps: num(rede.alvo / 1_000_000, 1) })}
+        </span>
         <span data-studio="fila">{t('studio.directo.stats.fila', { s: num(rede.segundos, 1) })}</span>
+        {rede.descartados > 0 && <span className="st-stats__mau">{t('studio.directo.stats.descartados', { n: num(rede.descartados) })}</span>}
       </div>
       {rede.saude !== 'ok' && (
         <div
@@ -225,7 +230,8 @@ function Estatisticas({
           data-saude={rede.saude}
         >
           <span>
-            <strong>{t(`studio.directo.stats.${rede.saude}`)}</strong> — {t('studio.directo.stats.conselho')}
+            <strong>{t(`studio.directo.stats.${rede.saude}`)}</strong> —{' '}
+            {rede.adaptativo ? t('studio.directo.stats.aAdaptar') : t('studio.directo.stats.conselho')}
           </span>
         </div>
       )}

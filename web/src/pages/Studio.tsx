@@ -587,6 +587,9 @@ export default function Studio() {
       // O débito sai do PERFIL da imagem: o mesmo estúdio a compor 2160p50 e a
       // compor 1080p30 não pode emitir com o mesmo número.
       await d.comecar(fluxo, codigo, token, destinos.filter((dest) => dest.chave.trim()), {
+        largura: c.perfil.largura,
+        altura: c.perfil.altura,
+        fps: c.perfil.fps,
         bitrate: debitoDoDirecto(c.perfil),
         audioBitrate: AUDIO_BPS,
       })

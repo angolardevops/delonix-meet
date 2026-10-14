@@ -380,6 +380,58 @@ describe('o corte degrada em vez de arrastar', () => {
   })
 })
 
+describe('o codificador adaptativo não muda o contrato com o servidor', () => {
+  const cod = () => readCodigo('web/src/studio/codificadorDoDirecto.ts')
+
+  it('continua a sair Matroska com H.264 e Opus', () => {
+    // O servidor declara `-f matroska` e copia o vídeo sem reencodificar
+    // (`-c:v copy`, R76). Trocar o muxer do browser pelo nosso só é possível
+    // porque o que sai é o MESMO: mudar qualquer uma destas linhas sem mudar
+    // o `broadcast.rs` parte o directo.
+    expect(cod()).toContain("const CODEC_VIDEO_MATROSKA = 'V_MPEG4/ISO/AVC'")
+    expect(cod()).toContain("const CODEC_AUDIO_MATROSKA = 'A_OPUS'")
+    expect(cod()).toContain("type: 'matroska'")
+    // `streaming`: escreve só para a frente, que é o que um socket aceita.
+    expect(cod()).toContain('streaming: true')
+    // E o que se declara ao servidor no URL não muda.
+    expect(read('web/src/studio/directo.ts')).toContain("export const CODEC_DIRECTO = 'video/h264'")
+  })
+
+  it('descarta frames ANTES de codificar, nunca pedaços já muxados', () => {
+    // A diferença que torna isto seguro: um frame que nunca entrou no fluxo
+    // não deixa buraco; um pedaço de Matroska saltado parte o ficheiro, e o
+    // `ffmpeg` do servidor não o sabe remendar.
+    expect(cod()).toContain('if (enc.encodeQueueSize > FILA_MAXIMA_DO_CODIFICADOR)')
+    expect(cod()).toContain('this.framesDescartados++')
+    // O envio não tem caminho nenhum que salte um pedaço por causa da fila.
+    const d = readCodigo('web/src/studio/directo.ts')
+    expect(d).not.toMatch(/bufferedAmount[^)]*\)\s*(>|>=)[^{]*\{\s*return/)
+  })
+
+  it('e a imagem e o som partilham o MESMO zero', () => {
+    // Os tempos de um `MediaStreamTrackProcessor` contam a idade do
+    // documento. Pôr cada faixa a zero pela primeira amostra DELA (o
+    // `firstTimestampBehavior: 'offset'` do muxer) desalinha o som da imagem
+    // pela diferença entre os dois arranques, para sempre.
+    expect(cod()).toContain("firstTimestampBehavior: 'permissive'")
+    expect(cod()).toContain('private relativo(timestamp: number): number')
+    expect(cod()).toContain('this.relativo(chunk.timestamp)')
+  })
+
+  it('e mudar o débito pede um frame-chave', () => {
+    // Sem ele o descodificador do outro lado arrasta artefactos do débito
+    // antigo até ao próximo frame-chave, que pode estar a dois segundos.
+    expect(cod()).toMatch(/mudarDebito\([\s\S]*?this\.pedirChave = true/)
+  })
+
+  it('e o recuo para o MediaRecorder acontece ANTES do ar', () => {
+    // Uma emissão não é sítio para descobrir que o browser não tem WebCodecs.
+    const d = readCodigo('web/src/studio/directo.ts')
+    expect(d).toContain('codificadorAdaptativoSuportado()')
+    expect(d).toMatch(/if \(arrancou\) \{[\s\S]*?\} else \{[\s\S]*?new MediaRecorder\(/)
+  })
+})
+
 describe('as estatísticas da emissão dizem a verdade em quatro línguas', () => {
   // As duas chaves de saúde são escolhidas por um literal de template
   // (`studio.directo.stats.${rede.saude}`), e o i18next DEVOLVE A CHAVE quando

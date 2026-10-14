@@ -14,6 +14,8 @@
  * isto, e é a razão de os dois o dizerem por escrito.
  */
 
+import { CodificadorDoDirecto, codificadorAdaptativoSuportado } from './codificadorDoDirecto'
+
 /** O contrato com o servidor. Mudar isto sem mudar o `broadcast.rs` parte o directo. */
 export const MIME_DIRECTO = 'video/webm;codecs=h264,opus'
 /** O que se declara ao servidor, para ele poder recusar ANTES de gastar um ffmpeg. */
@@ -132,6 +134,42 @@ export function resumirDestinos(destinos: readonly EstadoDoDestino[]): Record<Fa
   return r
 }
 
+/**
+ * Quanto tempo se espera antes de MEXER no débito outra vez. Baixa-se depressa
+ * (a fila a crescer é um problema a acontecer) e sobe-se devagar (subir cedo
+ * de mais devolve a emissão ao estado que a fez encher).
+ */
+export const INTERVALO_DESCIDA_MS = 3000
+export const INTERVALO_SUBIDA_MS = 15000
+
+/**
+ * O próximo débito de vídeo, dado o actual, o pedido pelo perfil e a saúde da
+ * rede. PURA de propósito: é a regra que decide o que o espectador vê numa
+ * ligação fraca, e uma regra dessas não se lê dentro de um `setInterval`.
+ *
+ * Desce 30% quando a fila está a acumular e 15% quando está apertada; sobe 10%
+ * de cada vez, e só depois de 15 segundos saudáveis, até ao pedido pelo
+ * perfil. Nunca abaixo do `DEBITO_MINIMO`: abaixo disso a imagem deixa de
+ * valer a emissão, e quem está no limite dos 1 Mbps tem um problema que não é
+ * de codificação.
+ */
+export function proximoDebito(
+  actual: number,
+  alvo: number,
+  saude: SaudeDaRede,
+  agora: number,
+  ultimaMudanca: number,
+): number {
+  const desde = agora - ultimaMudanca
+  const limitar = (v: number) => Math.round(Math.min(alvo, Math.max(DEBITO_MINIMO, v)))
+  if (saude === 'ok') {
+    if (actual >= alvo || desde < INTERVALO_SUBIDA_MS) return actual
+    return limitar(actual * 1.1)
+  }
+  if (desde < INTERVALO_DESCIDA_MS) return actual
+  return limitar(actual * (saude === 'a-acumular' ? 0.7 : 0.85))
+}
+
 export type EstadoDoDirecto =
   | { fase: 'parado' }
   | { fase: 'a-ligar' }
@@ -191,6 +229,10 @@ export function pedidoDeInicio(destinos: Destino[]): string {
 const ESPERA_DO_ACEITE_MS = 2000
 
 export interface OpcoesDoDirecto {
+  /** O perfil da imagem composta: decide o codec, o nível H.264 e o débito. */
+  largura?: number
+  altura?: number
+  fps?: number
   /** Débito de vídeo. Omisso: `DEBITO_OMISSAO`. Ver `debitoDoDirecto`. */
   bitrate?: number
   /** Débito de áudio. Omisso: `AUDIO_BPS`. */
@@ -257,6 +299,12 @@ export type SaudeDaRede = 'ok' | 'apertada' | 'a-acumular'
 export interface Rede {
   /** Bytes à espera no socket na última fatia. */
   fila: number
+  /** Débito que o codificador tem AGORA (bits/s). Igual ao alvo sem adaptação. */
+  debito: number
+  /** Quadros que o codificador não aceitou por não acompanhar. */
+  descartados: number
+  /** A emissão está a adaptar-se à rede (WebCodecs), ou é débito fixo. */
+  adaptativo: boolean
   /** A fila em segundos de emissão, ao débito pedido. */
   segundos: number
   saude: SaudeDaRede
@@ -264,13 +312,13 @@ export interface Rede {
   alvo: number
 }
 
-export const REDE_ZERO: Rede = { fila: 0, segundos: 0, saude: 'ok', alvo: 0 }
+export const REDE_ZERO: Rede = { fila: 0, debito: 0, descartados: 0, adaptativo: false, saude: 'ok', segundos: 0, alvo: 0 }
 
 export function saudeDaFila(fila: number, alvoBps: number): Rede {
   const alvo = alvoBps > 0 ? alvoBps : DEBITO_OMISSAO
   const segundos = (Math.max(0, fila) * 8) / alvo
   const saude: SaudeDaRede = segundos > 3 ? 'a-acumular' : segundos > 1 ? 'apertada' : 'ok'
-  return { fila: Math.max(0, fila), segundos, saude, alvo }
+  return { fila: Math.max(0, fila), debito: alvo, descartados: 0, adaptativo: false, segundos, saude, alvo }
 }
 
 /**
@@ -300,6 +348,9 @@ export class Directo {
   /** A saúde do envio, lida a cada fatia. Ver `saudeDaFila`. */
   rede: Rede = REDE_ZERO
   aoMudarRede: ((r: Rede) => void) | null = null
+  private codificador: CodificadorDoDirecto | null = null
+  private relogioDaRede: ReturnType<typeof setInterval> | null = null
+  private ultimaMudancaDeDebito = 0
   /** A razão que o servidor deu antes de fechar, para o fecho a poder mostrar. */
   private motivoDoServidor: string | null = null
 
@@ -384,46 +435,111 @@ export class Directo {
 
     const video = opcoes.bitrate ?? DEBITO_OMISSAO
     const audio = opcoes.audioBitrate ?? AUDIO_BPS
-    const gravador = new MediaRecorder(stream, {
-      mimeType: MIME_DIRECTO,
-      videoBitsPerSecond: video,
-      audioBitsPerSecond: audio,
-    })
-    this.gravador = gravador
-    gravador.ondataavailable = (e) => {
-      if (!e.data.size || socket.readyState !== WebSocket.OPEN) return
-      this.bytes += e.data.size
-      void e.data.arrayBuffer().then((b) => {
-        // Entre o `then` e aqui o socket pode ter fechado.
-        if (socket.readyState === WebSocket.OPEN) socket.send(b)
-      })
-      // A FILA do socket, a cada fatia. Os pedaços enviam-se sempre: um
-      // pedaço saltado é um buraco no Matroska, e o `ffmpeg` do servidor não
-      // o sabe remendar. O que se faz com a fila é DIZÊ-LA.
-      this.medirRede(socket, video + audio)
-      if (this.estado.fase === 'no-ar') {
-        this.anunciar({ fase: 'no-ar', desde: this.desde, bytes: this.bytes })
-      }
-    }
     this.desde = Date.now()
     this.bytes = 0
+    this.ultimaMudancaDeDebito = this.desde
     this.rede = saudeDaFila(0, video + audio)
-    gravador.start(opcoes.fatia ?? 500)
+
+    // O codificador ADAPTATIVO primeiro, com recuo para o `MediaRecorder`: é a
+    // única forma de baixar o débito a meio sem partir o Matroska. O recuo
+    // acontece ANTES do ar — uma emissão não é sítio para descobrir que o
+    // browser não tem WebCodecs.
+    const adaptativo = codificadorAdaptativoSuportado()
+      ? new CodificadorDoDirecto(
+          (dados) => this.enviar(socket, dados),
+          (razao) => this.terminarPorFora(razao),
+        )
+      : null
+    const arrancou =
+      adaptativo !== null &&
+      (await adaptativo
+        .comecar(stream, {
+          largura: opcoes.largura ?? 1920,
+          altura: opcoes.altura ?? 1080,
+          fps: opcoes.fps ?? 30,
+          bitrate: video,
+          audioBitrate: audio,
+        })
+        .catch(() => false))
+    if (arrancou) {
+      this.codificador = adaptativo
+    } else {
+      await adaptativo?.parar()
+      const gravador = new MediaRecorder(stream, {
+        mimeType: MIME_DIRECTO,
+        videoBitsPerSecond: video,
+        audioBitsPerSecond: audio,
+      })
+      this.gravador = gravador
+      gravador.ondataavailable = (e) => {
+        if (!e.data.size) return
+        void e.data.arrayBuffer().then((b) => this.enviar(socket, new Uint8Array(b)))
+      }
+      gravador.start(opcoes.fatia ?? 500)
+    }
+
+    // A FILA do socket, uma vez por segundo. Os pedaços enviam-se SEMPRE: um
+    // pedaço saltado é um buraco no Matroska e o `ffmpeg` do servidor não o
+    // sabe remendar. O que se faz com a fila é baixar o débito — quando há
+    // codificador que o aceite — e dizê-la, sempre.
+    this.relogioDaRede = setInterval(() => this.medirRede(socket, video, audio), 1000)
     this.anunciar({ fase: 'no-ar', desde: this.desde, bytes: 0 })
   }
 
-  private medirRede(socket: WebSocket, alvoBps: number): void {
-    const r = saudeDaFila(socket.bufferedAmount, alvoBps)
+  /** Um pedaço de Matroska para o socket, venha ele de onde vier. */
+  private enviar(socket: WebSocket, dados: Uint8Array | ArrayBuffer): void {
+    if (socket.readyState !== WebSocket.OPEN) return
+    const n = dados instanceof Uint8Array ? dados.byteLength : dados.byteLength
+    this.bytes += n
+    socket.send(dados)
+    if (this.estado.fase === 'no-ar') {
+      this.anunciar({ fase: 'no-ar', desde: this.desde, bytes: this.bytes })
+    }
+  }
+
+  private medirRede(socket: WebSocket, alvoVideo: number, alvoAudio: number): void {
+    const cod = this.codificador
+    const debito = cod?.debito ?? alvoVideo
+    const r = saudeDaFila(socket.bufferedAmount, debito + alvoAudio)
+    r.debito = debito
+    r.descartados = cod?.framesDescartados ?? 0
+    r.adaptativo = !!cod
+    // Adaptar: a regra está no `proximoDebito`, pura e com teste. Aqui só se
+    // executa o que ela decide.
+    if (cod) {
+      const agora = Date.now()
+      const novo = proximoDebito(debito, alvoVideo, r.saude, agora, this.ultimaMudancaDeDebito)
+      if (novo !== debito) {
+        cod.mudarDebito(novo)
+        this.ultimaMudancaDeDebito = agora
+        r.debito = cod.debito
+      }
+    }
     const antes = this.rede
     this.rede = r
-    // Só se anuncia o que muda alguma coisa no ecrã: a saúde, ou um décimo de
-    // segundo de fila. A cada 500 ms, anunciar sempre era uma renderização por
-    // fatia para mostrar o mesmo número.
-    if (r.saude !== antes.saude || Math.abs(r.segundos - antes.segundos) >= 0.1) this.aoMudarRede?.(r)
+    // Só se anuncia o que muda alguma coisa no ecrã: a saúde, o débito, os
+    // quadros descartados, ou um décimo de segundo de fila.
+    if (
+      r.saude !== antes.saude ||
+      r.debito !== antes.debito ||
+      r.descartados !== antes.descartados ||
+      Math.abs(r.segundos - antes.segundos) >= 0.1
+    ) {
+      this.aoMudarRede?.(r)
+    }
+  }
+
+  private pararRelogio(): void {
+    if (this.relogioDaRede !== null) clearInterval(this.relogioDaRede)
+    this.relogioDaRede = null
   }
 
   /** Fim pedido pelo utilizador. */
   async parar(): Promise<void> {
+    this.pararRelogio()
+    const c = this.codificador
+    this.codificador = null
+    await c?.parar()
     const g = this.gravador
     this.gravador = null
     if (g && g.state !== 'inactive') {
@@ -442,12 +558,16 @@ export class Directo {
   /** Fim imposto de fora (socket caiu, servidor fechou). */
   private terminarPorFora(motivo: string) {
     if (this.estado.fase === 'parado') return
+    this.pararRelogio()
     try {
       this.gravador?.stop()
     } catch {
       /* já parado */
     }
     this.gravador = null
+    const c = this.codificador
+    this.codificador = null
+    void c?.parar()
     this.socket = null
     this.rede = REDE_ZERO
     this.aoMudarRede?.(this.rede)
