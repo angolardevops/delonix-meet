@@ -261,6 +261,31 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     expect(read('web/src/studio/tv/mesaDeSom.ts')).toContain('seguirImagem: false,')
   })
 
+  it('um efeito é um CANAL da mesa, não um `<audio>` solto', () => {
+    // Um genérico que saísse por fora da mesa era exactamente o som que
+    // ninguém controla: sem fader, sem medidor, sem limitador — e a mesa a
+    // mostrar um nível que não é o que vai ao ar.
+    const mesa = read('web/src/studio/tv/mesaDeSom.ts')
+    expect(mesa).toContain("adicionarEfeito(id: string, nome: string): void")
+    expect(mesa).toContain('fonte.connect(c.nos.fonte)')
+    // E o disparo não se soma a si próprio: duas vezes na mesma tecla é um
+    // engano, não um coro.
+    expect(mesa).toMatch(/tocarEfeito\([\s\S]*?this\.pararEfeito\(id\)/)
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).not.toMatch(/new Audio\(/)
+  })
+
+  it('o ducking mexe num ganho PRÓPRIO, nunca no fader do operador', () => {
+    // Mexer no fader seria o automatismo a apagar o que ele pôs — e ao largar
+    // ficava no sítio errado, sem ninguém lhe ter tocado.
+    const mesa = read('web/src/studio/tv/mesaDeSom.ts')
+    expect(mesa).toContain('fader.connect(duck)')
+    expect(mesa).toContain('duck.connect(mudo)')
+    expect(mesa).toMatch(/aplicarDuck\(reduzDb: number\): void \{[\s\S]*?c\.nos\.duck\.gain/)
+    // E a decisão é da função pura, não de um `setInterval` com a regra dentro.
+    expect(read('web/src/pages/studio/tv/useSessaoTv.ts')).toContain('haVoz(som.niveisDeVoz()) ? DUCK_DB : 0')
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas

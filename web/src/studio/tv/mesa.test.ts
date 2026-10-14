@@ -130,10 +130,24 @@ describe('atalhos da mesa', () => {
     expect(accaoDaTecla(tecla({ key: 'w', code: 'KeyW' }))).toEqual({ tipo: 'limpar' })
     expect(accaoDaTecla(tecla({ key: 's', code: 'KeyS' }))).toEqual({ tipo: 'stinger' })
   })
+  it('⌥5–⌥8 disparam efeitos — a mesma fila das sobreposições', () => {
+    // Quatro efeitos e não oito: 1–6 e ⇧1–⇧6 são da mesa de corte, F1–F6 são
+    // macros, e o F11/F12 são do browser. ⌥5–⌥8 é a fila que sobra, e fica ao
+    // lado das sobreposições em ⌥1–⌥4.
+    expect(accaoDaTecla(tecla({ key: '5', code: 'Digit5', altKey: true }))).toEqual({ tipo: 'efeito', n: 5 })
+    expect(accaoDaTecla(tecla({ key: '8', code: 'Digit8', ctrlKey: true }))).toEqual({ tipo: 'efeito', n: 8 })
+    // ⌥9 não é de ninguém, e ⇧⌥5 também não — senão um engano disparava um
+    // genérico no ar.
+    expect(accaoDaTecla(tecla({ key: '9', code: 'Digit9', altKey: true }))).toBeNull()
+    expect(accaoDaTecla(tecla({ key: '5', code: 'Digit5', altKey: true, shiftKey: true }))).toBeNull()
+  })
+
   it('⌘/Ctrl/Alt 1–4 são sobreposições; F1–F6 macros; repetição ignorada', () => {
     expect(accaoDaTecla(tecla({ key: '2', code: 'Digit2', metaKey: true }))).toEqual({ tipo: 'sobreposicao', n: 2 })
     expect(accaoDaTecla(tecla({ key: '¡', code: 'Digit4', altKey: true }))).toEqual({ tipo: 'sobreposicao', n: 4 })
-    expect(accaoDaTecla(tecla({ key: '5', code: 'Digit5', ctrlKey: true }))).toBeNull()
+    // O 5 com modificador era nada até 2026-10-14; agora é o primeiro efeito
+    // (ver o teste acima). O que continua a não ser de ninguém é o 9.
+    expect(accaoDaTecla(tecla({ key: '9', code: 'Digit9', ctrlKey: true }))).toBeNull()
     expect(accaoDaTecla(tecla({ key: 'F6', code: 'F6' }))).toEqual({ tipo: 'macro', n: 6 })
     expect(accaoDaTecla(tecla({ key: ' ', code: 'Space', repeat: true }))).toBeNull()
   })

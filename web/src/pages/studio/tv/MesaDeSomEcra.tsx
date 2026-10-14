@@ -8,13 +8,15 @@ import { CSSProperties, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { curvaDoEq, EQ_GANHO_MAXIMO, alturaDoMedidor, faderParaDb, formatarDb, type LeituraDeSonoridade } from '../../../studio/tv/som'
 import { ATRASO_MAXIMO_MS, type EstadoDoCanal } from '../../../studio/tv/mesaDeSom'
+import { teclaDoEfeito } from '../../../studio/tv/efeitos'
+import { teclaDeSobreposicao } from '../../../studio/tv/atalhos'
 import { Icon, type IconName } from '../../../ui/icons'
-import { cx } from '../../../ui/kit'
+import { cx, IconButton } from '../../../ui/kit'
 import { tallyDe } from '../../../studio/tv/mesa'
 import { type PropsDoEcra, SelosDoAr } from './comum'
 import { BotaoTv, Cabeca, Cartao, Deslizador, Espaco, Fader, Interruptor, Medidor, TopoTv, useTique } from './pecas'
 
-const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen', musica: 'speaker' }
+const ICONE: Record<EstadoDoCanal['tipo'], IconName> = { microfone: 'mic', participante: 'people', ecra: 'screen', musica: 'speaker', efeito: 'sparkles' }
 export const ALVO_LUFS = -16
 
 export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
@@ -169,6 +171,8 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
           )}
         </section>
 
+        <Efeitos s={s} />
+
         <aside className="tv-col tv-col--dir" aria-label={t('tv.som.inspector')}>
           {som && canal ? <Inspector s={s} canal={canal} n={canais.indexOf(canal) + 1} /> : <div className="tv-vazio">{t('tv.som.escolheCanal')}</div>}
         </aside>
@@ -278,6 +282,81 @@ function Tira({ s, canal, n, escolhido, onEscolher }: { s: PropsDoEcra['s']; can
           {t('tv.som.s')}
         </button>
       </span>
+    </div>
+  )
+}
+
+/**
+ * As TECLAS DE EFEITO (⌥5–⌥8): genérico, aplauso, vinheta, buzina.
+ *
+ * Cada tecla é um canal da mesa, com fader e medidor como qualquer outra fonte
+ * — e é por isso que o painel vive aqui e não num ecrã à parte. Um efeito que
+ * saísse por fora da mesa era o som que ninguém controla.
+ *
+ * O ducking fica ao lado porque é a outra metade do mesmo trabalho: a música e
+ * os efeitos baixam enquanto alguém fala.
+ */
+function Efeitos({ s }: { s: PropsDoEcra['s'] }) {
+  const { t } = useTranslation()
+  const som = s.som
+  return (
+    <section className="tv-efeitos" data-tv="efeitos" aria-label={t('tv.efeitos.titulo')}>
+      <Cabeca>
+        <span className="tv-mono-85">{t('tv.efeitos.titulo')}</span>
+        <Cabeca como="span" className="tv-dir" style={{ gap: 6 }}>
+          <span className={cx('tv-mono-85', s.duckLigado && 'tv-ok')}>{t('tv.efeitos.duck')}</span>
+          <Interruptor pequeno ligado={s.duckLigado} rotulo={t('tv.efeitos.duck')} onChange={s.setDuckLigado} />
+        </Cabeca>
+      </Cabeca>
+      <p className="tv-nota">{s.duckLigado ? t('tv.efeitos.duckDica') : t('tv.efeitos.duckDesligado')}</p>
+      <div className="tv-efeitos__teclas">
+        {s.efeitos.map((e, i) => (
+          <Tecla key={i} s={s} efeito={e} indice={i} aToca={!!(e && som?.aToca(e.id))} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function Tecla({ s, efeito, indice, aToca }: { s: PropsDoEcra['s']; efeito: { id: string; nome: string; emCiclo: boolean } | null; indice: number; aToca: boolean }) {
+  const { t } = useTranslation()
+  const tecla = teclaDeSobreposicao() + teclaDoEfeito(indice)
+  if (!efeito) {
+    return (
+      <label className={cx('tv-tecla', 'is-livre')} data-tv="tecla-livre">
+        <span className="tv-tecla__atalho">{tecla}</span>
+        <span className="tv-tecla__nome">{t('tv.efeitos.livre')}</span>
+        <input
+          type="file"
+          accept="audio/*"
+          aria-label={t('tv.efeitos.escolher', { tecla })}
+          onChange={(ev) => {
+            const f = ev.target.files?.[0]
+            ev.target.value = ''
+            if (f) void s.porEfeito(indice, f)
+          }}
+        />
+      </label>
+    )
+  }
+  return (
+    <div className={cx('tv-tecla', aToca && 'is-on')} data-tv="tecla" data-a-tocar={aToca ? 'sim' : 'nao'}>
+      <button type="button" className="tv-tecla__disparo" onClick={() => s.dispararEfeito(indice)} aria-pressed={aToca}>
+        <span className="tv-tecla__atalho">{tecla}</span>
+        <span className="tv-tecla__nome">{efeito.nome}</span>
+      </button>
+      <div className="tv-tecla__pe">
+        <button
+          type="button"
+          className={cx('tv-tecla__ciclo', efeito.emCiclo && 'is-on')}
+          aria-pressed={efeito.emCiclo}
+          title={t('tv.efeitos.cicloDica')}
+          onClick={() => s.mudarCicloDoEfeito(indice, !efeito.emCiclo)}
+        >
+          {t('tv.efeitos.ciclo')}
+        </button>
+        <IconButton icon="x" bare label={t('tv.efeitos.tirar', { nome: efeito.nome })} onClick={() => s.tirarEfeito(indice)} />
+      </div>
     </div>
   )
 }

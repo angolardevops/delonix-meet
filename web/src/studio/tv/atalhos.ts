@@ -8,6 +8,7 @@
  *   W / S     limpar / stinger
  *   ⌥1–⌥4     liga e desliga sobreposições (Alt fora do Mac); ⌘1–⌘4 e
  *             Ctrl+1–4 também, onde o browser os deixa chegar à página
+ *   ⌥5–⌥8     dispara os efeitos sonoros — a mesma fila, o mesmo modificador
  *   F1–F6     macros
  *
  * Os números lêem-se do `code` (`Digit1`), não da `key`: com ⇧ carregado a
@@ -27,6 +28,7 @@ export type AccaoDaMesa =
   | { tipo: 'limpar' }
   | { tipo: 'stinger' }
   | { tipo: 'sobreposicao'; n: number }
+  | { tipo: 'efeito'; n: number }
   | { tipo: 'macro'; n: number }
 
 export interface TeclaDaMesa {
@@ -50,7 +52,9 @@ export function accaoDaTecla(e: TeclaDaMesa): AccaoDaMesa | null {
   if (f && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) return { tipo: 'macro', n: Number(f[1]) }
   const n = digito(e.code)
   if (e.metaKey || e.ctrlKey || e.altKey) {
-    if (n >= 1 && n <= 4 && !e.shiftKey) return { tipo: 'sobreposicao', n }
+    if (e.shiftKey) return null
+    if (n >= 1 && n <= 4) return { tipo: 'sobreposicao', n }
+    if (n >= 5 && n <= 8) return { tipo: 'efeito', n }
     return null
   }
   if (n >= 1 && n <= 6) return e.shiftKey ? { tipo: 'ar', n } : { tipo: 'previa', n }

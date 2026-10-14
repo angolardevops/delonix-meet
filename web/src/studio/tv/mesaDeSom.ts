@@ -30,7 +30,7 @@
 import { Denoiser } from '../../media'
 import { type Banda, dbParaGanho, EQ_INICIAL, faderParaDb, type LeituraDeSonoridade, MedidorDeSonoridade, nivelDoBloco } from './som'
 
-export type TipoDeCanal = 'microfone' | 'participante' | 'ecra' | 'musica'
+export type TipoDeCanal = 'microfone' | 'participante' | 'ecra' | 'musica' | 'efeito'
 
 export interface DinamicaDoCanal {
   porta: { ligada: boolean; limiarDb: number }
@@ -102,6 +102,12 @@ interface NosDoCanal {
   compressor: DynamicsCompressorNode
   limitador: DynamicsCompressorNode
   fader: GainNode
+  /**
+   * O DUCK: baixa este canal enquanto alguém fala. Vive à parte do fader de
+   * propósito — mexer no fader do operador seria o automatismo a apagar o que
+   * ele pôs, e ao largar ficava no sítio errado.
+   */
+  duck: GainNode
   mudo: GainNode
   medidor: AnalyserNode
   espectro: AnalyserNode
@@ -127,6 +133,8 @@ const buf = (n: number) => new Float32Array(new ArrayBuffer(n))
 export class MesaDeSom {
   readonly ctx: AudioContext
   private canais = new Map<string, CanalVivo>()
+  /** O disparo a tocar em cada canal de efeito. */
+  private disparos = new Map<string, AudioBufferSourceNode>()
   private ordem: string[] = []
   private pgm: GainNode
   private mestre: GainNode
@@ -277,6 +285,7 @@ export class MesaDeSom {
     const compressor = c.createDynamicsCompressor()
     const limitador = c.createDynamicsCompressor()
     const fader = c.createGain()
+    const duck = c.createGain()
     const mudo = c.createGain()
     const medidor = c.createAnalyser()
     medidor.fftSize = 1024
@@ -305,12 +314,13 @@ export class MesaDeSom {
     no.connect(compressor)
     compressor.connect(limitador)
     limitador.connect(fader)
-    fader.connect(mudo)
+    fader.connect(duck)
+    duck.connect(mudo)
     mudo.connect(medidor)
     mudo.connect(this.pgm)
     mudo.connect(envioAux)
     envioAux.connect(this.aux)
-    return { fonte: null, entrada, atraso, eq, porta, compressor, limitador, fader, mudo, medidor, espectro, preMedidor, envioAux }
+    return { fonte: null, entrada, atraso, eq, porta, compressor, limitador, fader, duck, mudo, medidor, espectro, preMedidor, envioAux }
   }
 
   private estadoInicial(id: string, nome: string, tipo: TipoDeCanal, fonte: string | null): EstadoDoCanal {
@@ -401,9 +411,107 @@ export class MesaDeSom {
     this.registar(this.estadoInicial(id, nome, tipo, fonte), stream, false)
   }
 
+  /**
+   * Um canal de EFEITO: nasce vazio, com um ganho próprio onde os disparos se
+   * ligam. Tem a cadeia inteira como qualquer outro — um efeito que saísse por
+   * fora do fader e do limitador era exactamente o som que ninguém controla.
+   */
+  adicionarEfeito(id: string, nome: string): void {
+    if (this.canais.has(id)) {
+      const c = this.canais.get(id)!
+      if (c.estado.nome !== nome) {
+        c.estado = { ...c.estado, nome }
+        this.aoMudar?.()
+      }
+      return
+    }
+    const estado = this.estadoInicial(id, nome, 'efeito', null)
+    const vivo: CanalVivo = { estado, nos: this.criarNos(), bruto: new MediaStream(), deviceId: undefined, denoiser: null, proprio: false }
+    // A «fonte» de um efeito é um ganho onde cada disparo se liga e de onde se
+    // desliga sozinho ao acabar: sem ele, cada disparo teria de reconstruir a
+    // cadeia do canal, e o fader voltava à posição inicial a cada tecla.
+    const entrada = this.ctx.createGain()
+    vivo.nos.fonte = entrada
+    entrada.connect(vivo.nos.entrada)
+    this.canais.set(id, vivo)
+    if (!this.ordem.includes(id)) this.ordem.push(id)
+    this.aplicarNos(vivo)
+    this.aoMudar?.()
+  }
+
+  /**
+   * Dispara um efeito. Um segundo toque PÁRA o anterior em vez de o somar:
+   * numa emissão, carregar duas vezes na mesma tecla é um engano, não um coro.
+   */
+  tocarEfeito(id: string, buffer: AudioBuffer, emCiclo: boolean): void {
+    const c = this.canais.get(id)
+    if (!c?.nos.fonte) return
+    this.pararEfeito(id)
+    const fonte = this.ctx.createBufferSource()
+    fonte.buffer = buffer
+    fonte.loop = emCiclo
+    fonte.connect(c.nos.fonte)
+    fonte.onended = () => {
+      if (this.disparos.get(id) === fonte) {
+        this.disparos.delete(id)
+        this.aoMudar?.()
+      }
+      try {
+        fonte.disconnect()
+      } catch {
+        /* já desligado */
+      }
+    }
+    this.disparos.set(id, fonte)
+    fonte.start()
+    this.aoMudar?.()
+  }
+
+  pararEfeito(id: string): void {
+    const f = this.disparos.get(id)
+    if (!f) return
+    this.disparos.delete(id)
+    try {
+      f.stop()
+    } catch {
+      /* já parado */
+    }
+    this.aoMudar?.()
+  }
+
+  aToca(id: string): boolean {
+    return this.disparos.has(id)
+  }
+
+  /**
+   * DUCKING: baixa (ou larga) os canais que não são voz, em dB.
+   *
+   * A rampa é assimétrica de propósito, como numa mesa de rádio: fecha
+   * depressa (30 ms — a música tem de sair de debaixo da primeira sílaba) e
+   * abre devagar (400 ms), senão sobe entre as palavras e fica a abanar.
+   */
+  aplicarDuck(reduzDb: number): void {
+    const alvo = dbParaGanho(Math.min(0, reduzDb))
+    for (const c of this.canais.values()) {
+      const baixar = c.estado.tipo === 'musica' || c.estado.tipo === 'efeito'
+      const v = baixar ? alvo : 1
+      const g = c.nos.duck.gain
+      if (Math.abs(g.value - v) < 0.001) continue
+      g.setTargetAtTime(v, this.ctx.currentTime, v < g.value ? 0.03 : 0.4)
+    }
+  }
+
+  /** Os níveis PRÉ-fader dos microfones não-mudos — o que decide o ducking. */
+  niveisDeVoz(): number[] {
+    return this.lista()
+      .filter((c) => c.tipo === 'microfone' && !c.mudo)
+      .map((c) => this.nivelPre(c.id).rmsDb)
+  }
+
   remover(id: string): void {
     const c = this.canais.get(id)
     if (!c) return
+    this.pararEfeito(id)
     c.denoiser?.stop()
     c.nos.fonte?.disconnect()
     c.nos.mudo.disconnect()

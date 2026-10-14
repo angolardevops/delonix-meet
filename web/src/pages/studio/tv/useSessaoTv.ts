@@ -40,6 +40,18 @@ import {
   type TipoDeTransicao,
 } from '../../../studio/tv/mesa'
 import { MesaDeSom } from '../../../studio/tv/mesaDeSom'
+import {
+  apagarEfeito,
+  DUCK_DB,
+  type Efeito,
+  efeitoDaTecla,
+  guardarEfeito,
+  haVoz,
+  idDoEfeito,
+  indiceDoEfeito,
+  lerEfeitos,
+  MAX_EFEITOS,
+} from '../../../studio/tv/efeitos'
 import { CORTE_DE_VOZ_ZERO, decidirCorteDeVoz } from '../../../studio/tv/vozCorte'
 import { isTypingTarget } from '../../../ui/hotkeys'
 
@@ -398,6 +410,106 @@ export function useSessaoTv(p: PropsDaSessao) {
     }
   }, [som, versaoSom, mesa])
 
+  // ------------------------------------------------------------ efeitos
+  //
+  // As quatro teclas (⌥5–⌥8). Cada uma é um CANAL da mesa — com fader,
+  // medidor, EQ e limitador —, não um `<audio>` solto: um genérico que saísse
+  // por fora da mesa era exactamente o som que ninguém controla. Os ficheiros
+  // vivem em IndexedDB e voltam ao abrir o estúdio; o som descodificado vive
+  // só nesta sessão, porque é do `AudioContext` dela.
+  const [efeitos, setEfeitos] = useState<(Efeito | null)[]>(() => Array(MAX_EFEITOS).fill(null))
+  const buffers = useRef(new Map<string, AudioBuffer>())
+
+  const carregarEfeito = useCallback(
+    async (indice: number, nome: string, ficheiro: Blob, emCiclo: boolean, mesa?: MesaDeSom | null) => {
+      const id = idDoEfeito(indice)
+      const m = mesa ?? somRef.current
+      if (m) {
+        try {
+          buffers.current.set(id, await m.ctx.decodeAudioData(await ficheiro.arrayBuffer()))
+        } catch {
+          // Um ficheiro que o browser não sabe ler não fica meio carregado: a
+          // tecla continua livre e a pessoa percebe porquê ao tentar outra vez.
+          return false
+        }
+        m.adicionarEfeito(id, nome)
+      }
+      setEfeitos((a) => a.map((e, i) => (i === indice ? { id, nome, emCiclo } : e)))
+      return true
+    },
+    [],
+  )
+
+  /** Põe um ficheiro numa tecla: guarda-o, descodifica-o e cria o canal. */
+  const porEfeito = useCallback(
+    async (indice: number, ficheiro: File) => {
+      const nome = ficheiro.name.replace(/\.[^.]+$/, '').slice(0, 40) || t('tv.efeitos.semNome')
+      const ok = await carregarEfeito(indice, nome, ficheiro, false)
+      if (ok) await guardarEfeito({ id: idDoEfeito(indice), nome, emCiclo: false, ficheiro }).catch(() => undefined)
+    },
+    [carregarEfeito, t],
+  )
+
+  const tirarEfeito = useCallback((indice: number) => {
+    const id = idDoEfeito(indice)
+    somRef.current?.remover(id)
+    buffers.current.delete(id)
+    setEfeitos((a) => a.map((e, i) => (i === indice ? null : e)))
+    void apagarEfeito(id).catch(() => undefined)
+  }, [])
+
+  const dispararEfeito = useCallback((indice: number) => {
+    const e = efeitos[indice]
+    const m = somRef.current
+    const b = e && buffers.current.get(e.id)
+    if (!e || !m || !b) return
+    if (m.aToca(e.id)) m.pararEfeito(e.id)
+    else m.tocarEfeito(e.id, b, e.emCiclo)
+  }, [efeitos])
+
+  const mudarCicloDoEfeito = useCallback(
+    (indice: number, emCiclo: boolean) => {
+      const e = efeitos[indice]
+      if (!e) return
+      setEfeitos((a) => a.map((x, i) => (x && i === indice ? { ...x, emCiclo } : x)))
+      void lerEfeitos().then((todos) => {
+        const g = todos.find((x) => x.id === e.id)
+        if (g) void guardarEfeito({ ...g, emCiclo }).catch(() => undefined)
+      })
+    },
+    [efeitos],
+  )
+
+  // Os ficheiros guardados voltam assim que a mesa existe (é ela que
+  // descodifica, no contexto dela).
+  const efeitosCarregados = useRef(false)
+  useEffect(() => {
+    if (!som || efeitosCarregados.current) return
+    efeitosCarregados.current = true
+    void lerEfeitos().then(async (todos) => {
+      for (const g of todos) {
+        const i = indiceDoEfeito(g.id)
+        if (i !== null) await carregarEfeito(i, g.nome, g.ficheiro, g.emCiclo, som)
+      }
+    })
+  }, [som, carregarEfeito])
+
+  // DUCKING: a música e os efeitos baixam enquanto alguém fala. A decisão é do
+  // `haVoz` (puro, com teste); aqui só se mede e se aplica.
+  const [duckLigado, setDuckLigado] = useState(true)
+  useEffect(() => {
+    if (!som) return
+    if (!duckLigado) {
+      som.aplicarDuck(0)
+      return
+    }
+    const t0 = window.setInterval(() => som.aplicarDuck(haVoz(som.niveisDeVoz()) ? DUCK_DB : 0), 100)
+    return () => {
+      window.clearInterval(t0)
+      som.aplicarDuck(0)
+    }
+  }, [som, duckLigado])
+
   // ------------------------------------------------------------ corte por voz
   const [vozLigada, setVozLigada] = useState(false)
   const vozRef = useRef(CORTE_DE_VOZ_ZERO)
@@ -533,6 +645,11 @@ export function useSessaoTv(p: PropsDaSessao) {
           if (q && (q !== 'sondagem' || p.haSondagem)) definirSobreposicao(q, !sobreposicaoLigada(q))
           break
         }
+        case 'efeito': {
+          const i = efeitoDaTecla(a.n)
+          if (i !== null) dispararEfeito(i)
+          break
+        }
         case 'macro':
           correrMacroDaTecla(a.n)
           break
@@ -540,7 +657,7 @@ export function useSessaoTv(p: PropsDaSessao) {
     }
     window.addEventListener('keydown', aoTeclar, true)
     return () => window.removeEventListener('keydown', aoTeclar, true)
-  }, [p.atalhosActivos, p.haSondagem, accoes, planoDoNumero, definirSobreposicao, sobreposicaoLigada, correrMacroDaTecla])
+  }, [p.atalhosActivos, p.haSondagem, accoes, planoDoNumero, definirSobreposicao, sobreposicaoLigada, correrMacroDaTecla, dispararEfeito])
 
   return {
     registo,
@@ -565,6 +682,13 @@ export function useSessaoTv(p: PropsDaSessao) {
     vozLigada,
     setVozLigada,
     canaisComFonte,
+    efeitos,
+    porEfeito,
+    tirarEfeito,
+    dispararEfeito,
+    mudarCicloDoEfeito,
+    duckLigado,
+    setDuckLigado,
     macros,
     progressoMacro,
     correrMacroDaTecla,
