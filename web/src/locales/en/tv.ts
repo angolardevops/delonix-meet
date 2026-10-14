@@ -163,6 +163,18 @@ export default {
     duckDica: 'Music and effects drop 12 dB while someone is speaking.',
     duckDesligado: 'Music and effects stay at the fader level.',
   },
+  fisica: {
+    titulo: 'Control surface',
+    dica: 'Connect a MIDI surface (faders, buttons) to drive this desk.',
+    procurar: 'Find surface',
+    aProcurar: 'searching…',
+    recusado: 'The browser refused MIDI access. Grant it and try again.',
+    semSuporte: 'This browser does not speak MIDI — use Chrome or Edge.',
+    ligadas_one: '{{count}} connected',
+    ligadas_other: '{{count}} connected',
+    mapa: 'Faders 1–8 on the channels, buttons on mute and solo, 4 effect keys, and the cut.',
+    ultima: 'last: {{msg}}',
+  },
   som: {
     titulo: 'Audio mixer',
     canais: 'Mixer channels',

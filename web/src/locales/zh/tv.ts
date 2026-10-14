@@ -163,6 +163,18 @@ export default {
     duckDica: '有人说话时，音乐和音效降低 12 dB。',
     duckDesligado: '音乐和音效保持在推子电平。',
   },
+  fisica: {
+    titulo: '实体控制台',
+    dica: '连接 MIDI 控制面（推子、按键）来操控这台调音台。',
+    procurar: '搜索设备',
+    aProcurar: '搜索中…',
+    recusado: '浏览器拒绝了 MIDI 访问。请授权后重试。',
+    semSuporte: '此浏览器不支持 MIDI——请使用 Chrome 或 Edge。',
+    ligadas_one: '已连接 {{count}} 台',
+    ligadas_other: '已连接 {{count}} 台',
+    mapa: '推子 1–8 对应声道，按键为静音与独奏，4 个音效键，以及切换。',
+    ultima: '最近：{{msg}}',
+  },
   som: {
     titulo: '调音台',
     canais: '调音台通道',

@@ -168,6 +168,18 @@ export default {
     duckDica: 'A música e os efeitos baixam 12 dB enquanto alguém fala.',
     duckDesligado: 'A música e os efeitos ficam no nível do fader.',
   },
+  fisica: {
+    titulo: 'Mesa física',
+    dica: 'Liga uma superfície MIDI (faders, botões) para comandar esta mesa.',
+    procurar: 'Procurar mesa',
+    aProcurar: 'a procurar…',
+    recusado: 'O browser recusou o acesso MIDI. Dá a permissão e tenta outra vez.',
+    semSuporte: 'Este browser não fala MIDI — usa o Chrome ou o Edge.',
+    ligadas_one: '{{count}} ligada',
+    ligadas_other: '{{count}} ligadas',
+    mapa: 'Faders 1–8 nos canais, botões em mudo e solo, 4 teclas de efeito, e o corte.',
+    ultima: 'última: {{msg}}',
+  },
   som: {
     titulo: 'Mesa de som',
     canais: 'Canais da mesa',

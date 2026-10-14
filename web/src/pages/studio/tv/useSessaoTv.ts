@@ -52,7 +52,9 @@ import {
   lerEfeitos,
   MAX_EFEITOS,
 } from '../../../studio/tv/efeitos'
+import type { AccaoFisica } from '../../../studio/tv/mesaFisica'
 import { CORTE_DE_VOZ_ZERO, decidirCorteDeVoz } from '../../../studio/tv/vozCorte'
+import { useMesaFisica } from './useMesaFisica'
 import { isTypingTarget } from '../../../ui/hotkeys'
 
 export type { EcraTv } from '../../../studio/tv/ecras'
@@ -607,6 +609,50 @@ export function useSessaoTv(p: PropsDaSessao) {
   )
   useEffect(() => () => macroEmCurso.current?.abort(), [])
 
+  // ------------------------------------------------------------ mesa física
+  //
+  // Os faders e os botões de uma superfície MIDI mexem nos MESMOS objectos que
+  // o rato: não há um caminho de controlo à parte, e por isso não há dois
+  // estados a divergir. O que a superfície não souber fazer, faz-se no ecrã.
+  const refExecutar = useRef<(a: AccaoFisica) => void>(() => undefined)
+  refExecutar.current = (a: AccaoFisica) => {
+    const m = somRef.current
+    const canais = m?.lista() ?? []
+    switch (a.tipo) {
+      case 'fader': {
+        const c = canais[a.canal]
+        if (c && m) m.mudar(c.id, { fader: a.posicao })
+        break
+      }
+      case 'mestre':
+        m?.mudarMestre(a.posicao)
+        break
+      case 'mudo': {
+        const c = canais[a.canal]
+        if (c && m) m.mudar(c.id, { mudo: !c.mudo })
+        break
+      }
+      case 'solo': {
+        const c = canais[a.canal]
+        if (c && m) m.mudar(c.id, { solo: !c.solo })
+        break
+      }
+      case 'efeito':
+        dispararEfeito(a.indice)
+        break
+      case 'cortar':
+        setMesa((e) => cortar(e, Date.now()))
+        break
+      case 'misturar':
+        setMesa((e) => auto(e, Date.now(), 'misturar'))
+        break
+    }
+  }
+  const mesaFisica = useMesaFisica({
+    executar: (a) => refExecutar.current(a),
+    luzes: () => (somRef.current?.lista() ?? []).map((c) => ({ mudo: c.mudo, solo: c.solo })),
+  })
+
   // ------------------------------------------------------------ atalhos
   useEffect(() => {
     if (!p.atalhosActivos) return
@@ -689,6 +735,7 @@ export function useSessaoTv(p: PropsDaSessao) {
     mudarCicloDoEfeito,
     duckLigado,
     setDuckLigado,
+    mesaFisica,
     macros,
     progressoMacro,
     correrMacroDaTecla,

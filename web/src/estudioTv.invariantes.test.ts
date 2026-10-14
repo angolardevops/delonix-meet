@@ -286,6 +286,27 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     expect(read('web/src/pages/studio/tv/useSessaoTv.ts')).toContain('haVoz(som.niveisDeVoz()) ? DUCK_DB : 0')
   })
 
+  it('a mesa física mexe nos MESMOS objectos que o rato', () => {
+    // Um caminho de controlo à parte dava dois estados a divergir: o fader do
+    // ecrã numa posição e o da superfície noutra, e o ar a seguir um deles sem
+    // se saber qual.
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toContain('const mesaFisica = useMesaFisica({')
+    expect(sessao).toMatch(/case 'fader': \{[\s\S]*?m\.mudar\(c\.id, \{ fader: a\.posicao \}\)/)
+    expect(sessao).toMatch(/case 'cortar':[\s\S]*?setMesa\(\(e\) => cortar\(e, Date\.now\(\)\)\)/)
+  })
+
+  it('e o acesso MIDI pede-se a um CLIQUE, nunca ao abrir', () => {
+    // Um estúdio que levanta um pedido de permissão ao abrir ensina a pessoa a
+    // recusar sem ler.
+    const hook = read('web/src/pages/studio/tv/useMesaFisica.ts')
+    expect(hook).toContain('const ligar = useCallback(async () => {')
+    expect(hook).toContain('await navigator.requestMIDIAccess({ sysex: false })')
+    // O pedido não pode viver num efeito de montagem.
+    expect(hook).not.toMatch(/useEffect\([^)]*\{[\s\S]{0,200}requestMIDIAccess/)
+    expect(read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')).toContain('data-tv="ligar-mesa-fisica"')
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas

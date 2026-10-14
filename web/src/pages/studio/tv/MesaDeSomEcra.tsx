@@ -171,7 +171,10 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
           )}
         </section>
 
-        <Efeitos s={s} />
+        <div className="tv-col" style={{ gap: 9, minWidth: 190, alignSelf: 'flex-start' }}>
+          <Efeitos s={s} />
+          <MesaFisica s={s} />
+        </div>
 
         <aside className="tv-col tv-col--dir" aria-label={t('tv.som.inspector')}>
           {som && canal ? <Inspector s={s} canal={canal} n={canais.indexOf(canal) + 1} /> : <div className="tv-vazio">{t('tv.som.escolheCanal')}</div>}
@@ -283,6 +286,59 @@ function Tira({ s, canal, n, escolhido, onEscolher }: { s: PropsDoEcra['s']; can
         </button>
       </span>
     </div>
+  )
+}
+
+/**
+ * A MESA FÍSICA: a superfície MIDI que comanda o estúdio.
+ *
+ * O acesso pede-se a UM CLIQUE e não sozinho: o `requestMIDIAccess` levanta um
+ * pedido de permissão, e um estúdio que o levanta ao abrir ensina a pessoa a
+ * recusar sem ler.
+ *
+ * A última mensagem recebida fica à vista de propósito. O mapa é fixo nesta
+ * versão, e quem tiver uma superfície com outra numeração precisa de saber o
+ * que ela manda para o poder pedir — é isso, e não um ecrã bonito, que torna
+ * esta caixa útil a quem não tem a mesa do exemplo.
+ */
+function MesaFisica({ s }: { s: PropsDoEcra['s'] }) {
+  const { t } = useTranslation()
+  const m = s.mesaFisica
+  return (
+    <section className="tv-fisica" data-tv="mesa-fisica" aria-label={t('tv.fisica.titulo')}>
+      <Cabeca>
+        <span className="tv-mono-85">{t('tv.fisica.titulo')}</span>
+        {m.dispositivos.length > 0 && (
+          <span className="tv-dir tv-ok tv-mono-9" data-tv="fisica-ligada">
+            {t('tv.fisica.ligadas', { count: m.dispositivos.length })}
+          </span>
+        )}
+      </Cabeca>
+      {!m.suportado ? (
+        <p className="tv-nota">{t('tv.fisica.semSuporte')}</p>
+      ) : m.dispositivos.length === 0 ? (
+        <>
+          <p className="tv-nota">{m.erro === 'recusado' ? t('tv.fisica.recusado') : t('tv.fisica.dica')}</p>
+          <BotaoTv mini data-tv="ligar-mesa-fisica" disabled={m.aLigar} onClick={() => void m.ligar()}>
+            {m.aLigar ? t('tv.fisica.aProcurar') : t('tv.fisica.procurar')}
+          </BotaoTv>
+        </>
+      ) : (
+        <>
+          <ul className="tv-fisica__lista">
+            {m.dispositivos.map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+          </ul>
+          <p className="tv-nota">{t('tv.fisica.mapa')}</p>
+        </>
+      )}
+      {m.ultima && (
+        <span className="tv-mono-9 tv-dir" data-tv="fisica-ultima">
+          {t('tv.fisica.ultima', { msg: m.ultima })}
+        </span>
+      )}
+    </section>
   )
 }
 
