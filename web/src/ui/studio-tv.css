@@ -2158,3 +2158,50 @@
   gap: 5px;
   padding-top: 4px;
 }
+
+/* Falar com os bastidores: premir e segurar. */
+.tv-bastidores {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+}
+.tv-bastidores.is-on {
+  border-color: var(--warning, var(--accent));
+  background: color-mix(in srgb, var(--warning, var(--accent)) 12%, var(--surface-2));
+}
+.tv-bastidores__botao {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+.tv-bastidores__botao svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+.tv-bastidores__botao .tv-mono-9 {
+  margin-left: auto;
+  color: var(--muted);
+}
+.tv-bastidores.is-on .tv-bastidores__botao {
+  border-color: var(--warning, var(--accent));
+  color: var(--warning, var(--accent));
+}
+.tv-selo--bastidores {
+  background: var(--warning, var(--accent));
+  color: #000;
+}

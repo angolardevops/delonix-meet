@@ -333,6 +333,25 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     }
   })
 
+  it('falar com os bastidores é PREMIR E SEGURAR, e solta-se por fora', () => {
+    // Um interruptor de «estou fora do ar» que alguém deixa ligado é um
+    // programa em silêncio sem ninguém perceber porquê. E trocar de separador
+    // com o botão premido deixava o estúdio fora do ar para sempre.
+    const ecra = read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')
+    expect(ecra).toContain('onPointerDown={() => s.falarComBastidores(true)}')
+    expect(ecra).toContain('onPointerUp={() => s.falarComBastidores(false)}')
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    // O `addEventListener` inteiro, não só o par: a primeira versão deste
+    // teste passava com a linha apagada, porque o `removeEventListener` da
+    // limpeza também contém `'blur', largar`.
+    expect(sessao, 'falta soltar ao sair da janela').toContain("window.addEventListener('blur', largar)")
+    expect(sessao, 'falta soltar ao trocar de separador').toContain("document.addEventListener('visibilitychange', largar)")
+    expect(sessao, 'falta soltar ao largar o rato fora do botão').toContain("window.addEventListener('pointerup', largar)")
+    // E largar não pode ABRIR um microfone que o operador tinha fechado.
+    expect(sessao).toContain('mudosAntes.current = mics.filter((c) => c.mudo).map((c) => c.id)')
+    expect(sessao).toContain('!antes.includes(c.id)')
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas

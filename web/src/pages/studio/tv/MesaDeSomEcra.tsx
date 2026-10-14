@@ -38,7 +38,7 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
         <span className="tv-chip" data-tv="canais">
           {t('tv.som.contagem', { count: canais.length })}
         </span>
-        <SelosDoAr c={c} destinosNoSelo={false} />
+        <SelosDoAr c={c} destinosNoSelo={false} bastidores={s.aFalarComBastidores} />
         <Espaco />
         {som?.temSonoridade && <Sonoridade s={s} />}
         <BotaoTv
@@ -172,6 +172,7 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
         </section>
 
         <div className="tv-col" style={{ gap: 9, minWidth: 190, alignSelf: 'flex-start' }}>
+          <Bastidores s={s} />
           <Efeitos s={s} />
           <MesaFisica s={s} />
         </div>
@@ -286,6 +287,41 @@ function Tira({ s, canal, n, escolhido, onEscolher }: { s: PropsDoEcra['s']; can
         </button>
       </span>
     </div>
+  )
+}
+
+/**
+ * FALAR COM OS BASTIDORES: premir e segurar.
+ *
+ * A voz do estúdio viaja por dois caminhos independentes — um para a SALA (os
+ * convidados ouvem-na) e o canal da mesa, que é o que vai ao AR. Falar só com
+ * os bastidores é calar a mesa e deixar a sala a tocar.
+ *
+ * Premir e segurar, nunca um interruptor: numa emissão, um «estou fora do ar»
+ * que alguém deixa ligado é um programa em silêncio sem ninguém perceber
+ * porquê.
+ */
+function Bastidores({ s }: { s: PropsDoEcra['s'] }) {
+  const { t } = useTranslation()
+  const activo = s.aFalarComBastidores
+  return (
+    <section className={cx('tv-bastidores', activo && 'is-on')} data-tv="bastidores" aria-label={t('tv.bastidores.titulo')}>
+      <button
+        type="button"
+        className="tv-bastidores__botao"
+        data-tv="falar-bastidores"
+        aria-pressed={activo}
+        disabled={!s.som}
+        onPointerDown={() => s.falarComBastidores(true)}
+        onPointerUp={() => s.falarComBastidores(false)}
+        onPointerLeave={() => s.falarComBastidores(false)}
+      >
+        <Icon name="mic" />
+        <span>{activo ? t('tv.bastidores.aFalar') : t('tv.bastidores.falar')}</span>
+        <span className="tv-mono-9">T</span>
+      </button>
+      <p className="tv-nota">{t('tv.bastidores.nota')}</p>
+    </section>
   )
 }
 
