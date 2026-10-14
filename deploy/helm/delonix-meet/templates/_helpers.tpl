@@ -350,6 +350,22 @@ capabilities:
 {{- if and $prod (eq $v.gateway.mode "attach") (not $v.gateway.parentRef.sectionName) -}}
 {{- $e = append $e "gateway.parentRef.sectionName: em produção e mode=attach indica o listener HTTPS do Gateway (no ngola-lda chama-se «https») — sem ele as rotas colam-se a todos os listeners, o de :80 incluído, e a aplicação é servida em claro por cima do redireccionamento da plataforma" -}}
 {{- end -}}
+{{- /* TLS EM `attach` É DE QUEM TEM O LISTENER, e pedi-lo aqui não dá erro.
+
+   Em `attach` o `gateway.yaml` emite HTTPRoutes e MAIS NADA: o bloco do
+   Gateway, com os `certificateRefs`, está todo dentro de `if eq mode "own"`.
+   Logo um `tls.clusterIssuer` ou um `tls.certificateRefName` postos aqui são
+   lidos por ninguém — ficam no values a parecer que o TLS está tratado.
+
+   Foi exactamente este o defeito do perfil de produção até ao `0c6d6b1f`:
+   pedia `clusterIssuer: letsencrypt-prod`, um emissor que o cluster não tem
+   (re-medido a 2026-10-13: o `delonix-lda` só tem o `delonix-letsencrypt`, do
+   operador). Ninguém deu por isso porque o valor nunca chegou a template
+   nenhum. Quem termina o TLS é o listener do Gateway a que nos colamos, com os
+   certificados DELE. */ -}}
+{{- if and (eq $v.gateway.mode "attach") (or $v.gateway.tls.clusterIssuer $v.gateway.tls.certificateRefName) -}}
+{{- $e = append $e "gateway.tls em mode=attach: o certificado é do listener do Gateway a que te colas, e estes campos só são lidos em mode=own — ficariam no values a dar a impressão de que o TLS está tratado, sem chegar a template nenhum. Tira-os, e confirma que o listener (parentRef.sectionName) cobre os teus nomes" -}}
+{{- end -}}
 {{- if and $prod (eq $v.gateway.mode "own") (not $v.gateway.tls.certificateRefName) (not $v.gateway.tls.clusterIssuer) -}}
 {{- $e = append $e "gateway.tls: em produção indica gateway.tls.clusterIssuer (cert-manager com --enable-gateway-api) ou gateway.tls.certificateRefName — sem um deles o Gateway só tem listener HTTP" -}}
 {{- end -}}

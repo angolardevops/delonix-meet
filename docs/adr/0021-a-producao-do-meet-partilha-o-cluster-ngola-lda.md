@@ -101,6 +101,25 @@ confirmações em vez de duas. Um quarto chassis, se vier, leva **só workers**.
 
 ## O que isto NÃO decide, e os limites que ficam escritos
 
+> **Dois destes limites fecharam desde então — 2026-10-13.** O texto abaixo fica como
+> estava, porque é o que se media no dia da decisão; isto diz o que mudou.
+>
+> - **O caminho de entrada existe.** O `values-production.yaml` deixou de pedir
+>   `ingress.className: nginx` (`ingress.enabled: false`) e passou a Gateway API:
+>   `gateway.mode: attach` ao Gateway `delonix` de `delonix-system`, `sectionName: https`.
+> - **O TLS público funciona, e o emissor não é problema de nomes.** O listener `https`
+>   desse Gateway leva dois `certificateRefs` — `delonix-wildcard-tls` (8 nomes `.com`,
+>   `meet.ngolacloud.com` incluído) e `delonix-wildcard-tls-dns01` (`*.ngolacloud.ao`,
+>   `ngolacloud.ao`) — ambos `Ready=True` e ambos emitidos pelo `delonix-letsencrypt`
+>   (DNS-01 rfc2136 para o `.ao`, HTTP-01 por `gatewayHTTPRoute` para o resto). O chart
+>   **não pede emissor nenhum** neste perfil: o `clusterIssuer: letsencrypt-prod` saiu no
+>   `0c6d6b1f`. Logo a pergunta «qual dos dois nomes é o certo» não tem de ser decidida —
+>   o `letsencrypt-prod` é do modo `dedicado` (que o cria) e o `delonix-letsencrypt` é do
+>   operador do cluster, e nenhum dos dois é pedido pelo outro.
+>
+> Os outros limites — etcd lento a escrever e ponto único na porta da API — **continuam
+> abertos**.
+
 - **O caminho de entrada não existe.** O cluster **não tem IngressClass nenhuma**, e o
   chart do Meet pede `ingress.className: nginx`. Há Envoy Gateway com a GatewayClass
   `delonix` aceite e Gateways em `delonix-system` (`.73`) e `ngolacloud-stage` (`.99`),
