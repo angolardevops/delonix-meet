@@ -333,6 +333,22 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     }
   })
 
+  it('os painéis do estúdio vivem DENTRO da coluna do inspector', () => {
+    // Medido no browser a 2026-10-14, e invisível para um teste de markup: a
+    // grelha da mesa de som tem DUAS colunas (`minmax(0,1fr) 300px`). Com os
+    // painéis como terceira filha, o INSPECTOR — o EQ, a dinâmica, a limpeza —
+    // era empurrado para uma segunda linha, com 1072 px de largo e 64 px de
+    // alto, por baixo das tiras. A coluna da direita leva-os por cima do
+    // inspector, e é ela que rola.
+    const ecra = read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')
+    const coluna = ecra.slice(ecra.indexOf('tv-col tv-col--dir'), ecra.indexOf('</aside>'))
+    for (const painel of ['<Bastidores s={s} />', '<Efeitos s={s} />', '<MesaFisica s={s} />']) {
+      expect(coluna, `${painel} tem de estar dentro da coluna da direita`).toContain(painel)
+    }
+    expect(ecra.indexOf('<Inspector s={s}')).toBeGreaterThan(ecra.indexOf('<MesaFisica s={s} />'))
+    expect(read('web/src/ui/studio-tv.css')).toMatch(/\.tv-som \.tv-col--dir \{\s*overflow-y: auto;/)
+  })
+
   it('falar com os bastidores é PREMIR E SEGURAR, e solta-se por fora', () => {
     // Um interruptor de «estou fora do ar» que alguém deixa ligado é um
     // programa em silêncio sem ninguém perceber porquê. E trocar de separador

@@ -171,13 +171,10 @@ export default function MesaDeSomEcra({ s, c }: PropsDoEcra) {
           )}
         </section>
 
-        <div className="tv-col" style={{ gap: 9, minWidth: 190, alignSelf: 'flex-start' }}>
+        <aside className="tv-col tv-col--dir" aria-label={t('tv.som.inspector')}>
           <Bastidores s={s} />
           <Efeitos s={s} />
           <MesaFisica s={s} />
-        </div>
-
-        <aside className="tv-col tv-col--dir" aria-label={t('tv.som.inspector')}>
           {som && canal ? <Inspector s={s} canal={canal} n={canais.indexOf(canal) + 1} /> : <div className="tv-vazio">{t('tv.som.escolheCanal')}</div>}
         </aside>
       </div>

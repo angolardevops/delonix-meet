@@ -2159,6 +2159,16 @@
   padding-top: 4px;
 }
 
+/* A coluna da direita da mesa de som leva, por cima do inspector, os painéis
+   do estúdio (bastidores, efeitos, mesa física). São MAIS ALTOS do que o ecrã
+   quando há um canal escolhido, por isso esta coluna — e só esta — rola.
+   Medido no browser a 2026-10-14: com os painéis como TERCEIRA coluna da
+   grelha (que só tem duas), o INSPECTOR era empurrado para uma segunda linha,
+   1072 px de largo e 64 px de alto, por baixo das tiras. */
+.tv-som .tv-col--dir {
+  overflow-y: auto;
+}
+
 /* Falar com os bastidores: premir e segurar. */
 .tv-bastidores {
   display: flex;
