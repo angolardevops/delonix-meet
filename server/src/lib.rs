@@ -71,6 +71,7 @@ mod roles;
 mod room_chat;
 mod room_tools;
 mod rooms;
+mod scim;
 mod search;
 pub mod secrets_at_rest;
 mod sessions;
@@ -440,6 +441,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ));
 
     // ---- Operador: quem opera a plataforma (fora do SDK do inquilino) ----
+    // SCIM 2.0 (RFC 7644). Superfície PRÓPRIA, com token próprio (`dlxs_`): a
+    // R142 ensinou que um token emitido para uma superfície não pode abrir
+    // outra. O caminho base é o que a norma manda, e é o que se dá ao Entra ID
+    // ou ao Okta.
+    let scim_routes = Router::new()
+        .route("/ServiceProviderConfig", get(scim::service_provider_config))
+        .route("/ResourceTypes", get(scim::resource_types))
+        .route("/Schemas", get(scim::schemas))
+        .route("/Users", get(scim::list_users).post(scim::create_user))
+        .route(
+            "/Users/{user_id}",
+            get(scim::get_user)
+                .patch(scim::patch_user)
+                .put(scim::replace_user)
+                .delete(scim::delete_user),
+        );
+
     let operator_routes = Router::new()
         // Provisão de org — segredo de plataforma (a org ainda não existe).
         .route("/organizations", post(apikeys::v1_provision_org))
@@ -566,6 +584,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/api/oauth", oauth_routes)
         .nest("/api/auth", auth_routes)
         .nest("/api/v1", v1_routes)
+        .nest("/scim/v2", scim_routes)
         .nest("/api/operator/v1", operator_routes)
         .nest("/api/integrations/odoo/v1", odoo_integration_routes)
         .nest("/api/integrations/sms-agent/v1", sms_agent_routes)
@@ -1305,6 +1324,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/integrations/odoo",
             get(odoo::get_config).put(odoo::save_config),
+        )
+        .route(
+            "/api/orgs/{org_id}/scim/rotate-token",
+            post(scim::rotate_token),
         )
         .route(
             "/api/orgs/{org_id}/integrations/odoo/rotate-token",

@@ -10254,6 +10254,28 @@
         ],
         "type": "object"
       },
+      "ScimTokenResp": {
+        "properties": {
+          "base_url": {
+            "description": "O caminho base a dar ao provedor.",
+            "type": "string"
+          },
+          "prefix": {
+            "description": "Os primeiros 12 caracteres, o que fica visível na configuração.",
+            "type": "string"
+          },
+          "token": {
+            "description": "Em claro, **uma vez só**. Depois disto só existe o hash.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "prefix",
+          "base_url"
+        ],
+        "type": "object"
+      },
       "ScopeInfo": {
         "properties": {
           "describes": {
@@ -24932,6 +24954,64 @@
         "summary": "Duplica um papel (de sistema ou personalizado) num personalizado novo.",
         "tags": [
           "authorization"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/scim/rotate-token": {
+      "post": {
+        "description": "Invalida o anterior e LIGA a superfície no mesmo passo: rodar a chave numa\norganização desligada dava um token que nunca autenticava (o defeito que o\nOdoo já teve).",
+        "operationId": "rotate_token",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScimTokenResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "sessão inválida, ou membro sem papel de admin"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "não é membro da organização"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/orgs/{org_id}/scim/rotate-token` — gera ou roda o token do SCIM.",
+        "tags": [
+          "scim"
         ]
       }
     },
