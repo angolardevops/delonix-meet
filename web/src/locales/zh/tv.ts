@@ -238,6 +238,8 @@ export default {
   },
   emparelhar: {
     nota: "手机扫描二维码即可作为摄像机加入。代码有效十分钟，首次使用后失效。",
+    ligada: "已连接",
+    desligada: "离线",
     emitir: "生成代码",
     umaVez: "代码仅在此刻显示——数据库只保存其摘要。",
     expiraEm: "剩余",

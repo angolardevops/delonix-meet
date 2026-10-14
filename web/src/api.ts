@@ -3542,6 +3542,33 @@ export const listStudios = (orgId: string) =>
 export const createStudio = (orgId: string, name: string) =>
   request<Studio>(`/api/orgs/${orgId}/studios`, { method: 'POST', body: JSON.stringify({ name }) })
 
+/** Uma câmara emparelhada: existe na base mesmo com o telefone desligado. */
+export interface StudioSource {
+  id: string
+  studio_id: string
+  number: number
+  label: string
+  /** `phone_app` — por agora o único. */
+  kind: string
+  device: { model: string; platform: string; app_version: string }
+  paired_at: string
+  revoked_at: string | null
+  last_seen_at: string | null
+  /** `true` enquanto o `/ws` da fonte estiver aberto. */
+  connected: boolean
+  tally: string
+}
+
+export const listStudioSources = (orgId: string, studioId: string) =>
+  request<{ items: StudioSource[]; next_page_token?: string }>(
+    `/api/orgs/${orgId}/studios/${studioId}/sources`,
+  )
+
+export const revokeStudioSource = (orgId: string, studioId: string, sourceId: string) =>
+  requestEmpty(`/api/orgs/${orgId}/studios/${studioId}/sources/${encodeURIComponent(sourceId)}`, {
+    method: 'DELETE',
+  })
+
 export const listPairingCodes = (orgId: string, studioId: string) =>
   request<{ items: PairingCode[]; next_page_token?: string }>(
     `/api/orgs/${orgId}/studios/${studioId}/pairing-codes`,

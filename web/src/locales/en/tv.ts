@@ -238,6 +238,8 @@ export default {
   },
   emparelhar: {
     nota: "The phone scans the QR and joins as a camera. The code lasts ten minutes and is spent on first use.",
+    ligada: "connected",
+    desligada: "offline",
     emitir: "Issue code",
     umaVez: "The code is shown only now — the database keeps just its digest.",
     expiraEm: "Expires in",

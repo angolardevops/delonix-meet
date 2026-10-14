@@ -238,6 +238,8 @@ export default {
   },
   emparelhar: {
     nota: "Le téléphone scanne le QR et rejoint comme caméra. Le code dure dix minutes et sert une seule fois.",
+    ligada: "connectée",
+    desligada: "hors ligne",
     emitir: "Émettre un code",
     umaVez: "Le code n'apparaît que maintenant — la base ne garde que son empreinte.",
     expiraEm: "Expire dans",

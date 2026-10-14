@@ -243,6 +243,8 @@ export default {
   },
   emparelhar: {
     nota: "O telefone lê o QR e entra como câmara. O código vive dez minutos e gasta-se à primeira leitura.",
+    ligada: "ligada",
+    desligada: "desligada",
     emitir: "Emitir código",
     umaVez: "O código só aparece agora — a base guarda só o seu resumo.",
     expiraEm: "Expira em",

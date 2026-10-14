@@ -15,6 +15,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, createRoom } from '../../api'
+import { estudioActual } from '../../studio/estudio'
 import type { Fonte } from '../../room/compositor'
 import { ChatPanel } from '../../room/ChatPanel'
 import { PollsPanel } from '../../room/PollsPanel'
@@ -53,6 +54,25 @@ export default function SalaDoEstudio(props: PropsDaSala) {
   const [escrito, setEscrito] = useState('')
   const [aCriar, setACriar] = useState(false)
   const [erro, setErro] = useState('')
+  const [salaDoRegisto, setSalaDoRegisto] = useState('')
+
+  /**
+   * A sala do ESTÚDIO — a do registo (`studios.room_code`), não uma criada na
+   * hora. É esta que o código de emparelhamento promete ao telefone: com uma
+   * sala efémera, a fonte ligava-se (`connected = true` no servidor) a uma sala
+   * que o Estúdio não estava a ver, e não aparecia em lado nenhum.
+   */
+  useEffect(() => {
+    let cancelado = false
+    estudioActual(props.titulo.trim() || t('studio.semTitulo'))
+      .then((a) => !cancelado && a && setSalaDoRegisto(a.estudio.room_code))
+      .catch(() => {
+        /* sem estúdio no servidor continua a dar para criar uma sala à mão */
+      })
+    return () => {
+      cancelado = true
+    }
+  }, [props.titulo, t])
 
   async function criar() {
     setACriar(true)
@@ -104,10 +124,27 @@ export default function SalaDoEstudio(props: PropsDaSala) {
       </h2>
       <p className="st-note">{t('studio.sala.explicacao')}</p>
       <div className="st-actions">
-        <Button variant="primary" size="sm" icon="userPlus" busy={aCriar} data-studio="sala-criar" onClick={() => void criar()}>
+        {salaDoRegisto && (
+          <Button variant="primary" size="sm" icon="userPlus" data-studio="sala-do-estudio" onClick={() => setCodigo(salaDoRegisto)}>
+            {t('studio.sala.abrirDoEstudio')}
+          </Button>
+        )}
+        <Button
+          variant={salaDoRegisto ? 'secondary' : 'primary'}
+          size="sm"
+          icon="userPlus"
+          busy={aCriar}
+          data-studio="sala-criar"
+          onClick={() => void criar()}
+        >
           {t('studio.sala.criar')}
         </Button>
       </div>
+      {salaDoRegisto && (
+        <p className="st-note">
+          {t('studio.sala.notaDoEstudio')} <span className="dx-num">{salaDoRegisto}</span>
+        </p>
+      )}
       <form className="st-sala-join" onSubmit={entrar}>
         <TextInput
           value={escrito}

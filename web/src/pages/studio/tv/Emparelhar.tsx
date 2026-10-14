@@ -19,14 +19,15 @@ import { useTranslation } from 'react-i18next'
 import {
   apiErrorCode,
   createPairingCode,
-  createStudio,
   listPairingCodes,
-  listStudios,
-  myOrgs,
+  listStudioSources,
   type NewPairingCode,
   type PairingCode,
   revokePairingCode,
+  type StudioSource,
 } from '../../../api'
+import { estudioActual } from '../../../studio/estudio'
+import { cx } from '../../../ui/kit'
 import { Icon } from '../../../ui/icons'
 import { BotaoTv, Cabeca, Cartao } from './pecas'
 
@@ -57,6 +58,7 @@ export function Emparelhar() {
   const [orgId, setOrgId] = useState('')
   const [studioId, setStudioId] = useState('')
   const [codigos, setCodigos] = useState<PairingCode[]>([])
+  const [fontes, setFontes] = useState<StudioSource[]>([])
   const [novo, setNovo] = useState<NewPairingCode | null>(null)
   const [qr, setQr] = useState('')
   const [erro, setErro] = useState('')
@@ -67,16 +69,16 @@ export function Emparelhar() {
   // diz porquê. Quando houver mais do que um, isto passa a selector.
   const carregar = useCallback(async () => {
     try {
-      const orgs = await myOrgs()
-      const org = orgs[0]
-      if (!org) return setErro(t('tv.emparelhar.semOrg'))
-      setOrgId(org.id)
-      // `items`, não um array: com o envelope lido como array, o `[0]` era
-      // sempre `undefined` e isto criava um estúdio NOVO a cada carregamento.
-      const estudios = (await listStudios(org.id)).items
-      const estudio = estudios[0] ?? (await createStudio(org.id, t('tv.emparelhar.nomeEstudio')))
-      setStudioId(estudio.id)
-      setCodigos((await listPairingCodes(org.id, estudio.id)).items)
+      const actual = await estudioActual(t('tv.emparelhar.nomeEstudio'))
+      if (!actual) return setErro(t('tv.emparelhar.semOrg'))
+      setOrgId(actual.orgId)
+      setStudioId(actual.estudio.id)
+      const [cods, fs] = await Promise.all([
+        listPairingCodes(actual.orgId, actual.estudio.id),
+        listStudioSources(actual.orgId, actual.estudio.id),
+      ])
+      setCodigos(cods.items)
+      setFontes(fs.items.filter((f) => !f.revoked_at))
     } catch (e) {
       setErro(apiErrorCode(e) ?? t('tv.emparelhar.falhou'))
     }
@@ -84,6 +86,11 @@ export function Emparelhar() {
 
   useEffect(() => {
     void carregar()
+    // O telefone liga-se DEPOIS de alguém ler o QR, e quem sabe quando é o
+    // servidor: sem relermos, o cartão ficava a dizer que não há ninguém com
+    // uma câmara já ligada do outro lado.
+    const id = setInterval(() => void carregar(), 5000)
+    return () => clearInterval(id)
   }, [carregar])
 
   const emitir = async () => {
@@ -164,6 +171,21 @@ export function Emparelhar() {
             <span className="tv-nota">{urlDoTelefone(novo.code)}</span>
           </div>
         </div>
+      )}
+
+      {fontes.length > 0 && (
+        <ul className="tv-lista" data-tv="fontes-emparelhadas">
+          {fontes.map((f) => (
+            <li key={f.id} className="tv-kv">
+              <span>
+                <span className="tv-tag">CAM {f.number}</span> {f.label}
+              </span>
+              <span className={cx('tv-dir tv-mono-85', f.connected ? 'tv-ok' : 'tv-muted')}>
+                {f.connected ? t('tv.emparelhar.ligada') : t('tv.emparelhar.desligada')}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
 
       {activos.length > 0 && (

@@ -302,6 +302,8 @@ export default {
     abrir: 'Ligar a uma sala',
     aCarregar: 'A carregar a sala…',
     semRede: 'Precisa de rede.',
+    abrirDoEstudio: "Abrir a sala do estúdio",
+    notaDoEstudio: "É a sala que os códigos de emparelhamento prometem ao telefone:",
     criar: 'Criar sala de convidados',
     codigo: 'Código da sala',
     codigoPh: 'Código ou convite',

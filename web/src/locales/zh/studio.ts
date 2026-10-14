@@ -302,6 +302,8 @@ export default {
     abrir: '连接会议室',
     aCarregar: '正在加载会议室…',
     semRede: '需要网络连接。',
+    abrirDoEstudio: "打开导播台房间",
+    notaDoEstudio: "这是配对码向手机承诺的房间：",
     criar: '创建嘉宾会议室',
     codigo: '会议室代码',
     codigoPh: '代码或邀请链接',
