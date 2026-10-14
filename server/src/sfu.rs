@@ -1756,8 +1756,7 @@ impl SfuState {
                 let wanted_by_client = match dub_lang(&key.1) {
                     Some(lang) => dub.as_deref() == Some(lang),
                     None => {
-                        key.1 != "video"
-                            || interest.as_ref().is_none_or(|set| set.contains(&key.0))
+                        key.1 != "video" || interest.as_ref().is_none_or(|set| set.contains(&key.0))
                     }
                 };
                 if !wanted_by_client {
@@ -2831,7 +2830,10 @@ mod tests {
 
         // Quem pediu inglês ouve o inglês — e não o francês.
         assert!(quer("dub:en-US", Some("en-US")));
-        assert!(!quer("dub:fr-FR", Some("en-US")), "não vaza para outra língua");
+        assert!(
+            !quer("dub:fr-FR", Some("en-US")),
+            "não vaza para outra língua"
+        );
 
         // E continua a ouvir quem está mesmo a falar.
         assert!(quer("audio", Some("en-US")));

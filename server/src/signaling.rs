@@ -4660,9 +4660,13 @@ async fn dub_language(state: &Arc<AppState>, room_id: Uuid, lang: &str, on: bool
     let sfu = state.sfu.clone();
     let erro = state
         .dub
-        .liga(state.clone(), room_id, origem, lang, |id, lang| async move {
-            sfu.publish_dub_audio(room_id, id, &lang).await
-        })
+        .liga(
+            state.clone(),
+            room_id,
+            origem,
+            lang,
+            |id, lang| async move { sfu.publish_dub_audio(room_id, id, &lang).await },
+        )
         .await
         .err();
     anuncia_dobragem(state, room_id, erro.as_ref().map(|e| e.code));
@@ -7657,7 +7661,9 @@ mod b1_sala_tests {
         // A difusão continua a acontecer — é o que esta sala toda prova.
         let vistas = recolher(&mut s.rx_a);
         assert!(
-            vistas.iter().any(|m| matches!(m, ServerMsg::Transcript { text, .. } if text == "bom dia")),
+            vistas
+                .iter()
+                .any(|m| matches!(m, ServerMsg::Transcript { text, .. } if text == "bom dia")),
             "a legenda tem de continuar a chegar aos outros"
         );
     }

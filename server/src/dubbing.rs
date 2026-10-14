@@ -106,7 +106,10 @@ fn ficha_de_servico(state: &AppState) -> Option<String> {
         + 60;
     encode(
         &JwtHeader::default(),
-        &Claims { typ: "service", exp },
+        &Claims {
+            typ: "service",
+            exp,
+        },
         &EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
     )
     .ok()
@@ -304,7 +307,10 @@ impl Registo {
         let ssrc = u32::from_be_bytes(id.as_bytes()[0..4].try_into().unwrap_or([0; 4]));
         let rtp = publicar(id, lang.to_string()).await;
         let pista = arranca(state, lang.to_string(), rtp, ssrc);
-        self.salas.entry(room_id).or_default().insert(lang.into(), pista);
+        self.salas
+            .entry(room_id)
+            .or_default()
+            .insert(lang.into(), pista);
         tracing::info!(%room_id, %lang, "dobragem: língua ligada");
         Ok(())
     }
@@ -348,9 +354,10 @@ impl Registo {
         let texto = texto.to_string();
         let salas = &self.salas;
         for lang in langs {
-            let Some(pista) = salas.get(&room_id).and_then(|m| {
-                m.get(&lang).map(|p| p.tx.clone())
-            }) else {
+            let Some(pista) = salas
+                .get(&room_id)
+                .and_then(|m| m.get(&lang).map(|p| p.tx.clone()))
+            else {
                 continue;
             };
             let state = state.clone();
