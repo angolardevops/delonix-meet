@@ -5,6 +5,11 @@
 Marca **[a verificar]** tudo o que depende de versão, licença ou desempenho de componente externo que
 ainda não foi medido; nenhum desses valores deve ser copiado como facto.
 
+**Caso simétrico, noutra RFC:** esta trata dos canais que **nós produzimos**. Os canais que
+**entram já produzidos** de um descodificador externo, por captura HDMI, estão na
+[RFC-0002](rfc-0002-tv-por-captura-hdmi.md) — que reutiliza os canais, o plano de controlo e o
+ingest desenhados aqui, e acrescenta só o lado da fonte.
+
 ## 1. Problema e objectivos
 
 O Meet serve reuniões. O pedido é um segundo produto sobre a mesma fundação: realizar programas com
