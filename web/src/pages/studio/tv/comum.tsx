@@ -124,7 +124,7 @@ export function CartaoDoBarramento({
       onDoubleClick={onAr}
     >
       <span className="tv-mini__img">
-        <Miniatura imagem={() => s.registo.imagem(fonte.id)} ajuste={s.registo.ajuste(fonte.id)} geometria={s.registo.geometria(fonte.id)} />
+        <Miniatura imagem={() => s.registo.imagem(fonte.id)} ajuste={s.registo.ajuste(fonte.id)} geometria={() => s.registo.geometria(fonte.id)} />
         <span className="tv-mini__num">{numero}</span>
         <span className="tv-mini__tally">{tally.texto}</span>
       </span>

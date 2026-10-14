@@ -3533,7 +3533,9 @@ export interface Pairing {
   expires_at: string
 }
 
-export const listStudios = (orgId: string) => request<Studio[]>(`/api/orgs/${orgId}/studios`)
+/** Devolve o ENVELOPE (`{items}`), como as outras listagens — não um array. */
+export const listStudios = (orgId: string) =>
+  request<{ items: Studio[]; next_page_token?: string }>(`/api/orgs/${orgId}/studios`)
 
 export const createStudio = (orgId: string, name: string) =>
   request<Studio>(`/api/orgs/${orgId}/studios`, { method: 'POST', body: JSON.stringify({ name }) })

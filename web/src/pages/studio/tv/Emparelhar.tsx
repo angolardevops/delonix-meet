@@ -71,7 +71,9 @@ export function Emparelhar() {
       const org = orgs[0]
       if (!org) return setErro(t('tv.emparelhar.semOrg'))
       setOrgId(org.id)
-      const estudios = await listStudios(org.id)
+      // `items`, não um array: com o envelope lido como array, o `[0]` era
+      // sempre `undefined` e isto criava um estúdio NOVO a cada carregamento.
+      const estudios = (await listStudios(org.id)).items
       const estudio = estudios[0] ?? (await createStudio(org.id, t('tv.emparelhar.nomeEstudio')))
       setStudioId(estudio.id)
       setCodigos((await listPairingCodes(org.id, estudio.id)).items)

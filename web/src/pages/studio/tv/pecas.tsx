@@ -205,7 +205,13 @@ export function Miniatura({
   ajuste?: 'cover' | 'contain'
   largura?: number
   altura?: number
-  geometria?: GeometriaDaFonte
+  /**
+   * Função, não valor: o desenho corre a cada quadro e o cartão da fonte não
+   * volta a renderizar quando o painel de detalhe muda a rotação. Com um valor
+   * de prop, a miniatura ficava a desenhar a geometria velha — era o que
+   * fazia a rotação «não funcionar» mesmo com o estado certo guardado.
+   */
+  geometria?: () => GeometriaDaFonte
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const ultimo = useRef(0)
@@ -213,7 +219,7 @@ export function Miniatura({
     if (agora - ultimo.current < 66) return
     ultimo.current = agora
     const c = ref.current?.getContext('2d')
-    if (c) desenharImagem(c, imagem(), { x: 0, y: 0, w: largura, h: altura }, ajuste, geometria)
+    if (c) desenharImagem(c, imagem(), { x: 0, y: 0, w: largura, h: altura }, ajuste, geometria?.())
   })
   return <canvas ref={ref} width={largura} height={altura} className="tv-mini__imagem" aria-hidden="true" />
 }

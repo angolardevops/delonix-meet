@@ -238,7 +238,7 @@ function CartaoDaFonte({
       }}
     >
       <span className="tv-fonte__img">
-        <Miniatura imagem={() => s.registo.imagem(id)} ajuste={s.registo.ajuste(id)} geometria={s.registo.geometria(id)} largura={384} altura={216} />
+        <Miniatura imagem={() => s.registo.imagem(id)} ajuste={s.registo.ajuste(id)} geometria={() => s.registo.geometria(id)} largura={384} altura={216} />
         <span className="tv-mini__num">{numero <= 6 ? numero : ''}</span>
         <span className="tv-mini__tally">{t(`tv.tally.${tally}`)}</span>
         <span className="tv-fonte__medidas">
