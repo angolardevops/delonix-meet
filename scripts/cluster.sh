@@ -175,7 +175,11 @@ up)
     # MEDIDO a 2026-10-07: o `delonix net ingress publish` liga em 127.0.0.1
     # (slirp4netns), NÃO no endereço da LAN — tal como a 443 do ingress. Dizer
     # «SIP em ${LAN_IP}:5070» seria mentira: o telefone não lá chega.
-    if ss -lunp 2>/dev/null | grep -qE "127\\.0\\.0\\.1:5070"; then
+    # Lê-se para uma variável antes de decidir: com `pipefail`, um `grep -q`
+    # que fecha o pipe cedo manda SIGPIPE ao `ss` e o estado do pipeline dava
+    # um falso «não encontrado» (portão de higiene, R303).
+    escutas=$(ss -lunp 2>/dev/null || true)
+    if grep -qE "127\\.0\\.0\\.1:5070" <<<"$escutas"; then
       avisa "as portas ficaram em LOOPBACK (127.0.0.1), não em ${LAN_IP}: um softphone da rede NÃO se regista aqui"
       avisa "para voz na rede local usa o compose (make compose-up LAN_IP=${LAN_IP}), que publica por endereço"
     fi
