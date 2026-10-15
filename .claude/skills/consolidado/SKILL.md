@@ -60,7 +60,6 @@ partir da `main`** — apagava 630 commits.
 | #343 | `integra/emissor-nomes` | o emissor de produção não é conflito de nomes; o chart recusa `attach` |
 | #366 | `plano/desempenho-producao` | porque é que a IA é 28× mais lenta, e o que se decide |
 | #365 | `paridade/chat-retencao` | sem retenção definida, o chat da sala fica (P3 fase 1) |
-| — | `ics/participantes` | **salvo do não commitado**: a descarga do `.ics` leva TODOS os participantes, o convite por correio leva UM; o `ORGANIZER` passa a entrar sempre |
 | — | `ui/correio-polimento` | **salvo**: cartão da fila de saída do correio, nas quatro línguas |
 | — | `delonix-meet-devops/laboratorio-na-develop` | **salvo**: `make cluster LAN_IP=<ip>` publica os ramais, e mede que ficam em loopback |
 | — | `delonix-meet-devops/laboratorio-develop` | **salvo**: prova de acordar o telefone mais honesta, e `Dockerfile.server.lab` |
@@ -81,11 +80,23 @@ quem entrar primeiro obriga o outro a rebase. **A decisão de quem cede é do do
 | #356 | `integra/camara-telefone` | a cadeia onda-c (#362/#363) | `web/src/pages/studio/tv/Fontes.tsx` |
 | #352 | `fix/destino-guardado-no-ar` | #357 (`onda-b/codificador-do-directo`) | `web/src/pages/Studio.tsx` |
 | #359 | `tv/inventario-captura` | a develop já mudada | `HARNESS.md`, `scripts/check-route-auth.sh` |
+| — | `ics/participantes` | **a premissa é falsa** (ver abaixo) | — |
 
 E uma por decisão anterior:
 
 - **#251** `integra/silencio-na-pista` — **rascunho**, com os 80 ms antes do
   silêncio por decidir. Fica rascunho até essa decisão.
+
+- **`ics/participantes`** — esteve dentro e **saiu**, por um teste do próprio
+  autor. Fazia a descarga do `.ics` levar TODOS os participantes com esta
+  justificação escrita no código: «quem a pede já pode ler a lista pela API, com
+  o mesmo guarda». **Medido no CI: é falso** —
+  `GET /api/meetings/{id}/invitees` devolve **403 `meeting.not_host`** a um
+  convidado. A descarga passaria a ser uma **segunda porta para a lista de
+  endereços de toda a gente**, a qualquer convidado. Não é um teste a corrigir:
+  é um desenho a decidir — ou o `/invitees` abre ao convidado, ou a descarga
+  leva só quem a pede. O ramo continua empurrado, com o teste que documenta o
+  problema.
 
 Fora do consolidado mas **empurrado e seguro**: `plano/plano-critico`,
 `validacao/estudio-2026-10-14` (28 commits de validação), `estudio/camara-telefone`
@@ -128,7 +139,7 @@ Nada disto é opcional: sem isto, mede-se o ambiente em vez do código.
 | **Chat e retenção** (#365) | dentro do consolidado | fase 1 de 3 do P3 |
 | **Desempenho da IA em produção** (#366) | dentro do consolidado | a acta é **impossível neste CPU** (piso ~1 640 s, 0,34 tok/s) até aos 16 GiB do Lenovo |
 | **Gravação: silêncio na pista** (#251) | **rascunho** | decidir os 80 ms antes do silêncio |
-| **`.ics` com participantes** | `ics/participantes`, dentro | os testes novos **nunca correram** |
+| **`.ics` com participantes** | `ics/participantes`, **FORA** | decidir se o `/invitees` abre ao convidado ou se a descarga leva só quem a pede |
 | **Correio: cartão da fila** | `ui/correio-polimento`, dentro | **nunca foi visto num browser** |
 | **Laboratório na LAN** | dois ramos, dentro | o `delonix net ingress publish` liga em **127.0.0.1**, não na LAN: para voz na rede local usa-se o compose |
 
