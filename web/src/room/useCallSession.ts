@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, isAbort, postTimings } from '../api'
-import { entrarNaSala, participanteLocal } from '../convidado'
+import { entrarNaSala, participanteLocal, souConvidado } from '../convidado'
 import { audioConstraints, facingOf, LevelWatcher, listDevices, videoConstraints } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Signaling } from '../signaling'
@@ -314,7 +314,8 @@ export function useCallSession(
             // o separador a meio é justamente a cauda que interessa medir.
             if (st === 'connected' && !temposEnviados.current && tempos.vale_reportar()) {
               temposEnviados.current = true
-              void postTimings(code, tempos.resumo()).catch(() => {})
+              // Um convidado não reporta tempos: a rota pede conta.
+              if (!souConvidado()) void postTimings(code, tempos.resumo()).catch(() => {})
             }
             if (st === 'degraded') setStatus(t('room.estado.mediaInstavel'))
             else if (st === 'reconnecting' || st === 'recovering') setStatus(t('room.estado.aRestabelecer'))
