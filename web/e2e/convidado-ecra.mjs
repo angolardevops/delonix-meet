@@ -61,6 +61,18 @@ const pedidosComSessao = []
 convidado.on('request', (r) => {
   if (r.url().includes('/api/') && r.headers()['authorization']) pedidosComSessao.push(r.url())
 })
+// E o outro lado da mesma moeda: um pedido que corretamente NÃO leva
+// credenciais, e que o servidor corretamente recusa, é invisível à asserção de
+// cima — ela mede o que se envia, não o que se pede. Medidos sete 401 assim num
+// convidado (a fila de espera a cada cinco segundos, a sonda de rede, a info da
+// sala, o histórico do chat, os tempos e as amostras de qualidade): a reunião
+// funcionava e nada na bateria dava por isso.
+const recusados = new Map()
+convidado.on('response', (r) => {
+  if (r.status() !== 401) return
+  const p = new URL(r.url()).pathname
+  recusados.set(p, (recusados.get(p) ?? 0) + 1)
+})
 await convidado.goto(`${APP}/#/r/${codigo}`, { waitUntil: 'domcontentloaded', timeout: 120000 })
 const entrada = convidado.locator('[data-testid=convidado-entrada]')
 await entrada.waitFor({ timeout: 60000 }).catch(() => {})
@@ -124,6 +136,11 @@ ok(!rotulos.some((r) => r === 'gravar' || r.startsWith('gravar ')), 'o convidado
 const rotulosDoAnfitriao = await anfitriao.evaluate(() => [...document.querySelectorAll('button')].map((b) => (b.getAttribute('aria-label') || b.textContent || '').trim().toLowerCase()))
 ok(rotulosDoAnfitriao.some((r) => r === 'gravar' || r.startsWith('gravar ')), 'controlo: o anfitrião TEM o botão de gravar', 'se isto falhar, a asserção de cima mede nada')
 ok(pedidosComSessao.length === 0, 'nenhum pedido do convidado levou credenciais de conta', pedidosComSessao.slice(0, 2).join(' '))
+ok(
+  recusados.size === 0,
+  'e nenhum pedido dele foi recusado por falta de conta (zero 401)',
+  [...recusados].map(([p, n]) => `${n}× ${p}`).join(', ') || 'nenhum',
+)
 ok((await convidado.evaluate(() => localStorage.getItem('dx_user'))) === null, 'e o browser dele não ficou com sessão nenhuma')
 
 // ---- 5. F5: volta à sala sem nova espera -----------------------------------
