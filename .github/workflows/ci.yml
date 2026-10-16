@@ -209,6 +209,12 @@ jobs:
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
 
+      # O `?token=` do /ws é a credencial: um access_log guarda-a em claro, e
+      # o token de FONTE de um estúdio vive 12 h. Dois dos quatro nginx do
+      # repo registavam-no — medido a 2026-10-16, na revisão do #356.
+      - name: O /ws não escreve o token no access log
+        run: bash scripts/check-ws-sem-access-log.sh
+
       # O Lua 5.2 é o que o mod_lua da imagem liga (liblua5.2).
       - name: Sintaxe dos scripts Lua do FreeSWITCH (R223 — o IVR está no caminho de quem liga)
         run: |
