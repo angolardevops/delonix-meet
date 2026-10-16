@@ -8,6 +8,7 @@ import { Icon } from './ui/icons'
 import { Empty, Spinner } from './ui/kit'
 import { getAppName } from './branding'
 import { chaveDoTitulo, destinoNoRail, parseHash, type Route } from './rota'
+import { fonteDe } from './fonteDoEstudio'
 import { useTrabalhoEmCurso } from './trabalhoEmCurso'
 
 // ---------------------------------------------------------------------------
@@ -175,6 +176,23 @@ export default function App() {
   if (route.kind === 'verificar-email') return <RouteFallback><VerificarEmail token={route.token} /></RouteFallback>
   // A reposição também: quem a usa está fora da conta.
   if (route.kind === 'repor-password') return <RouteFallback><ReporPassword token={route.token} /></RouteFallback>
+  // O EMPARELHAMENTO do telefone é anónimo de propósito (ADR-0014 §2.1): quem
+  // lê o QR do Estúdio não tem conta nenhuma, e a credencial é o código. Tem
+  // de vir ANTES do portão — com ele à frente, quem lia o QR caía no ecrã de
+  // entrada sem uma palavra sobre emparelhamento, e o `pendingRoom` não cobre
+  // esta rota, por isso nem regressava.
+  if (route.kind === 'emparelhar')
+    return <RouteFallback><EmparelharTelefone code={route.code} /></RouteFallback>
+  // Resgatado, o telefone segue para a câmara — e continua sem conta. O que o
+  // autoriza é o bilhete de FONTE guardado para AQUELA sala (`fonteDe`), não
+  // uma sessão: sem esta linha, o salto do emparelhamento para a câmara batia
+  // no mesmo portão e o percurso morria no último passo.
+  if (route.kind === 'telemovel' && fonteDe(route.code))
+    return (
+      <RouteFallback>
+        <PhoneCamera key={route.code} code={route.code} onLeave={() => (location.hash = '/emparelhar')} />
+      </RouteFallback>
+    )
   if (!user) {
     const aoEntrar = (u: User) => {
       setUser(u)
@@ -257,10 +275,6 @@ export default function App() {
               onSwitch={(c) => enterRoom(c)}
             />
             </EsperaDaSala>
-          </RouteFallback>
-        ) : route.kind === 'emparelhar' ? (
-          <RouteFallback>
-            <EmparelharTelefone code={route.code} />
           </RouteFallback>
         ) : route.kind === 'telemovel' ? (
           <RouteFallback>

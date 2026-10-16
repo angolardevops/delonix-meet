@@ -571,3 +571,61 @@ describe('as duas maneiras de acrescentar uma fonte coexistem no painel', () => 
     expect(vezes('data-tv="ligacao-ficheiro"')).toBe(1)
   })
 })
+
+/**
+ * O PERCURSO do telefone, que a revisão do #356 apanhou partido em dois sítios.
+ *
+ * Os dois defeitos compunham-se de forma cruel: para um telefone SEM conta a
+ * funcionalidade era inalcançável (a rota caía no portão de sessão), e para
+ * quem TINHA conta o link punha-lhe câmara e microfone no ar de outra
+ * organização sem um único clique — o `useEffect` resgatava e o `PhoneCamera`
+ * entrava sozinho com `micOn`/`camOn` a `true`.
+ *
+ * Nada na bateria o via: o typecheck, 1342 testes e sete jobs do CI passavam
+ * todos, porque nenhum deles abre um browser nesta rota.
+ */
+describe('o telefone chega ao estúdio, e só publica quando quer', () => {
+  const app = () => readCodigo('web/src/App.tsx')
+  const ecra = () => readCodigo('web/src/pages/EmparelharTelefone.tsx')
+
+  it('a rota de emparelhamento é tratada ANTES do portão de sessão', () => {
+    const f = app()
+    const i = f.indexOf("route.kind === 'emparelhar'")
+    const portao = f.indexOf('if (!user)')
+    expect(i).toBeGreaterThan(0)
+    expect(portao).toBeGreaterThan(0)
+    expect(i).toBeLessThan(portao)
+  })
+
+  it('e o salto para a câmara também, quando há bilhete de FONTE para a sala', () => {
+    // Sem isto o percurso morria no último passo: resgatava-se o código e o
+    // `/telemovel/<sala>` batia no mesmo portão.
+    const f = app()
+    const i = f.indexOf("route.kind === 'telemovel' && fonteDe(")
+    expect(i).toBeGreaterThan(0)
+    expect(i).toBeLessThan(f.indexOf('if (!user)'))
+  })
+
+  it('abrir o link NÃO resgata: o código pré-preenche e o resgate exige um clique', () => {
+    const f = ecra()
+    // O campo já vem preenchido do URL — é isso que mantém a comodidade do QR.
+    expect(f).toMatch(/useState\(code \? normalizar\(code\) : ''\)/)
+    // E nenhum efeito o resgata por iniciativa própria.
+    expect(f).not.toMatch(/useEffect\([^)]*\)\s*=>\s*\{[^}]*resgatar\(/s)
+    expect(f).not.toMatch(/void resgatar\(code\)/)
+  })
+
+  it('e o resgate não entra na sala: diz primeiro o que vai ao ar', () => {
+    const f = ecra()
+    // O `location.hash` do percurso vive num onClick, não no corpo do resgate.
+    expect(f).toMatch(/onClick=\{\(\) => \(location\.hash = `\/telemovel\/\$\{pronto\.room_code\}`\)\}/)
+    expect(f).toMatch(/telemovel\.emparelhar\.vaiAoAr/)
+  })
+
+  it('o aviso do que vai ao ar existe nas QUATRO línguas', () => {
+    for (const loc of ['pt', 'en', 'fr', 'zh']) {
+      const s = read(`web/src/locales/${loc}/telemovel.ts`)
+      for (const k of ['vaiAoAr:', 'comecar:', 'aEntrar:']) expect(s).toContain(k)
+    }
+  })
+})

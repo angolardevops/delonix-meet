@@ -14,10 +14,11 @@
  * pela página de câmara que já existe (`#/telemovel/<sala>`). O token vale 12
  * horas, uma sessão de estúdio inteira.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiErrorCode, redeemPairingCode } from '../api'
 import { guardarFonte } from '../fonteDoEstudio'
+import type { Pairing } from '../api'
 import { Alert, Button, Spinner } from '../ui/kit'
 
 /** `XXXX-XXXX` em Crockford base32 — o que o servidor aceita. */
@@ -32,10 +33,9 @@ export default function EmparelharTelefone({ code }: { code?: string }) {
   const { t } = useTranslation()
   const [valor, setValor] = useState(code ? normalizar(code) : '')
   const [aResgatar, setAResgatar] = useState(false)
+  /** Resgatado, à espera do consentimento para ir ao ar. */
+  const [pronto, setPronto] = useState<Pairing | null>(null)
   const [erro, setErro] = useState('')
-  // O código do URL resgata-se UMA vez: sem isto, um erro de rede que mude o
-  // estado voltava a disparar o efeito e queimava tentativas do código.
-  const jaTentou = useRef(false)
 
   const resgatar = useCallback(async (bruto: string) => {
     const codigo = normalizar(bruto)
@@ -59,7 +59,11 @@ export default function EmparelharTelefone({ code }: { code?: string }) {
         label: p.label,
         expiraEm: new Date(p.expires_at).getTime(),
       })
-      location.hash = `/telemovel/${p.room_code}`
+      // NÃO se entra aqui. Quem abriu este URL pode ser uma PESSOA a quem
+      // mandaram o link, não um aparelho de estúdio: publicar câmara e
+      // microfone sem um clique era pôr alguém no ar de uma organização que
+      // nem lhe foi nomeada. O passo seguinte é dela.
+      setPronto(p)
     } catch (e) {
       const c = apiErrorCode(e)
       setErro(
@@ -74,14 +78,6 @@ export default function EmparelharTelefone({ code }: { code?: string }) {
     }
   }, [t])
 
-  useEffect(() => {
-    // O `jaTentou` é que garante a tentativa ÚNICA, não a lista de
-    // dependências: um código do URL resgatado duas vezes queima tentativas.
-    if (!code || jaTentou.current) return
-    jaTentou.current = true
-    void resgatar(code)
-  }, [code, resgatar])
-
   return (
     <div className="dx-centro" style={{ display: 'grid', gap: 12, padding: 16, maxWidth: 360, margin: '0 auto' }}>
       <h1 className="dx-h2">{t('telemovel.emparelhar.titulo')}</h1>
@@ -89,8 +85,22 @@ export default function EmparelharTelefone({ code }: { code?: string }) {
 
       {erro && <Alert tone="danger">{erro}</Alert>}
 
-      {aResgatar ? (
-        <Spinner />
+      {pronto ? (
+        /*
+         * O passo que faltava. Diz o que vai acontecer ANTES de acontecer:
+         * que câmara se é no estúdio, e que a câmara e o microfone deste
+         * telefone vão ao ar. O nome do estúdio não está aqui porque o resgate
+         * não o devolve — está nomeado como a lacuna que resta.
+         */
+        <>
+          <Alert tone="warning">{t('telemovel.emparelhar.vaiAoAr')}</Alert>
+          <p className="dx-num">{pronto.label}</p>
+          <Button variant="primary" onClick={() => (location.hash = `/telemovel/${pronto.room_code}`)}>
+            {t('telemovel.emparelhar.comecar')}
+          </Button>
+        </>
+      ) : aResgatar ? (
+        <Spinner label={t('telemovel.emparelhar.aEntrar')} />
       ) : (
         <>
           <input
