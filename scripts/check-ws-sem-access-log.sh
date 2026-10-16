@@ -41,10 +41,15 @@ fail=0
 #
 # Fora da lista de propósito: `deploy/nginx-dev.conf.template`, que não tem
 # location do `/ws` (o `location /` apanha tudo) e registra por escolha.
-NGINX="deploy/compose/edge.conf:1
-deploy/k8s/nginx.conf:1
-deploy/nginx-delonix.conf:1
-deploy/ansible/roles/single_host/templates/nginx-delonix.conf.j2:1"
+#
+# DUAS por ficheiro: a do `/ws`|`/rtc`, e a do `/api/rooms/{code}/live` — o
+# directo (ADR-0003) é outro WebSocket e leva o room token E a CHAVE RTMP do
+# canal na query. Ele caía no `location /api`, que registava; nos nginx de
+# host nem o upgrade passava, logo o directo não ligava por lá.
+NGINX="deploy/compose/edge.conf:2
+deploy/k8s/nginx.conf:2
+deploy/nginx-delonix.conf:2
+deploy/ansible/roles/single_host/templates/nginx-delonix.conf.j2:2"
 
 # Os manifests onde o `/ws` passa pelo INGRESS, e não por um nginx nosso.
 INGRESS="deploy/k8s/04-ingress.yaml
@@ -64,7 +69,7 @@ while IFS=: read -r f esperadas; do
   # `RS` e lia-os com `read`, que é linha a linha — cada linha sem
   # `access_log off` virava uma falha, e o portão cuspia dezenas delas.
   veredictos=$(awk '
-    /^[[:space:]]*location[^{]*(\/|\()(ws|rtc)([|)\/ $]|$)/ && !dentro {
+    /^[[:space:]]*location[^{]*((\/|\()(ws|rtc)([|)\/ $]|$)|\/live)/ && !dentro {
       dentro=1; prof=0; inicio=NR; tem=0
     }
     dentro {
