@@ -41,7 +41,16 @@ export interface PropsDoEcra {
 }
 
 /** Relógio, REC e AO VIVO do topo — só aparecem quando são verdade. */
-export function SelosDoAr({ c, destinosNoSelo = true }: { c: ContextoDoEstudio; destinosNoSelo?: boolean }) {
+export function SelosDoAr({
+  c,
+  destinosNoSelo = true,
+  bastidores = false,
+}: {
+  c: ContextoDoEstudio
+  destinosNoSelo?: boolean
+  /** O estúdio está a falar com os bastidores (vem da sessão, não do contexto). */
+  bastidores?: boolean
+}) {
   const { t } = useTranslation()
   const gravando = c.gravacao.estado !== 'parado'
   const noAr = c.directo.fase === 'no-ar'
@@ -61,6 +70,11 @@ export function SelosDoAr({ c, destinosNoSelo = true }: { c: ContextoDoEstudio; 
       {gravando && (
         <span className="tv-selo tv-selo--rec" data-tv="selo-rec">
           {c.gravacao.estado === 'pausa' ? t('tv.topo.pausa') : c.gravacao.e4k ? t('tv.topo.rec4k') : t('tv.topo.rec')}
+        </span>
+      )}
+      {bastidores && (
+        <span className="tv-selo tv-selo--bastidores" data-tv="selo-bastidores">
+          {t('tv.bastidores.selo')}
         </span>
       )}
       {noAr && (

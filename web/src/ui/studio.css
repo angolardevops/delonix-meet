@@ -672,3 +672,50 @@
     display: none;
   }
 }
+
+/* Estatísticas da emissão: o que se envia, o que está à espera, e cada destino. */
+.st-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  font-size: 11px;
+}
+.st-stats__linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+}
+.st-stats__dests {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.st-stats__dests li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--muted);
+}
+.st-stats__nome {
+  font-weight: 600;
+  color: var(--text);
+}
+.st-stats__mau {
+  color: var(--warning, var(--record));
+}
+.st-top__rede[data-saude='a-acumular'] {
+  color: var(--record);
+  font-weight: 600;
+}
+.st-top__rede[data-saude='apertada'] {
+  color: var(--warning, var(--record));
+}

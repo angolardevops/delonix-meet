@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, currentUser, getRoom, isAbort, listMeetingsWithOptions, netProbe, roomWaiting, type RecordQuality, type WaitingPeer } from '../api'
+import { souConvidado } from '../convidado'
 import { SONDAGENS, type AmostraRede } from './qualidadePrevista'
 import { audioConstraints, listDevices, videoConstraints, withNativeNoiseSuppression } from '../media'
 import { MicMix } from './micMix'
@@ -32,6 +33,19 @@ export interface PrejoinInfo {
  * em `core.effectRef`), a segunda fonte de vídeo (`core.secondSourceRef`) e a
  * mistura de dois microfones (`core.micMixRef`).
  */
+/**
+ * Uma recusa que não vale a pena repetir, na sondagem da fila de espera.
+ *
+ * 403/404: esta pessoa não admite — era o que já estava. O **401** juntou-se
+ * depois de se MEDIR um convidado na pré-entrada: a rota pede conta, ele não
+ * tem nenhuma, e como a recusa não parava o intervalo saía um pedido a cada
+ * cinco segundos enquanto ele lá estivesse. Uma recusa de identidade é tão
+ * definitiva como uma de permissão.
+ */
+export function recusaDefinitiva(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 401 || e.status === 403 || e.status === 404)
+}
+
 export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { current: boolean }) {
   const { t } = useTranslation()
   const { setStatus, code } = core
@@ -49,7 +63,8 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   const [waiting, setWaiting] = useState<WaitingPeer[] | null>(null)
 
   useEffect(() => {
-    if (!active) return
+    // Um convidado não sonda: a rota pede conta, e o que ele levava era 401.
+    if (!active || souConvidado()) return
     const ctrl = new AbortController()
     let cancelado = false
     setRede({ amostras: [], estado: 'a-medir' })
@@ -76,7 +91,8 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   }, [active, medicao])
 
   useEffect(() => {
-    if (!active) return
+    // A fila é de quem ADMITE, e um convidado nunca admite.
+    if (!active || souConvidado()) return
     let parar = false
     let id = 0
     const espreitar = () => {
@@ -85,8 +101,7 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
           if (!parar) setWaiting(l)
         })
         .catch((e) => {
-          // 403/404: esta pessoa não admite — não se volta a perguntar.
-          if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+          if (recusaDefinitiva(e)) {
             parar = true
             window.clearInterval(id)
           }
@@ -104,7 +119,9 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   // A sessão: nome, dono, topologia e hora marcada. Melhor esforço — sem isto
   // a pré-entrada continua a servir, só com menos contexto.
   useEffect(() => {
-    if (!active) return
+    // A sala, para um convidado, é a que o bilhete descreve; e a agenda da
+    // organização não é dele. Ambas as rotas pedem conta.
+    if (!active || souConvidado()) return
     const ctrl = new AbortController()
     let cancelled = false
     void getRoom(code)

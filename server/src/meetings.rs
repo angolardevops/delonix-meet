@@ -8,7 +8,8 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, Utc};
-use delonix_meet_domain::scheduling::calendar::{self, Method as IcsMethod};
+use delonix_meet_domain::scheduling::calendar;
+pub(crate) use delonix_meet_domain::scheduling::calendar::Method as IcsMethod;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -1238,7 +1239,10 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<axum::http::StatusCode, ApiError> {
-    let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
+    // ANTES do DELETE, e com o que o `.ics` de cancelamento precisa: depois
+    // dele não há `SEQUENCE`, nem sala, nem endereços externos para ler.
+    let audience =
+        crate::notifications::meeting_audience_for_cancel(&state, id, auth.user_id).await;
     let res = sqlx::query("DELETE FROM meetings WHERE id = $1 AND owner_id = $2")
         .bind(id)
         .bind(auth.user_id)
@@ -2089,31 +2093,30 @@ pub(crate) async fn room_link_absolute(state: &AppState, meeting: &Meeting) -> O
 /// O `attendee` é o endereço de QUEM recebe esta mensagem, um por mensagem: num
 /// convite ele faz o cliente de calendário mostrar «aceitar», e manter um só
 /// evita que um destinatário fique a saber a lista dos outros.
-pub(crate) async fn ics_for(
+/// O que o `.ics` precisa da base de dados: a revisão, o link da sala e o
+/// organizador. Lê-se À PARTE do `Meeting` porque o cancelamento tem de o ler
+/// ANTES do `DELETE` — depois já não existe nada para ler.
+pub(crate) struct IcsContext {
+    pub sequence: i32,
+    pub link: Option<String>,
+    pub organizer: Option<String>,
+}
+
+/// Lê o contexto do `.ics` da base. Ver `IcsContext`.
+pub(crate) async fn ics_context(
     state: &AppState,
     meeting: &Meeting,
     method: IcsMethod,
-    attendee: Option<&str>,
-) -> String {
+) -> IcsContext {
     // O `sequence` lê-se à parte e NÃO entra no `MEETING_COLUMNS`: aquela lista
     // é o contrato de várias respostas da API, e a revisão do calendário só
     // interessa ao `.ics`.
-    let seq: i32 = sqlx::query_scalar("SELECT sequence FROM meetings WHERE id = $1")
+    let sequence: i32 = sqlx::query_scalar("SELECT sequence FROM meetings WHERE id = $1")
         .bind(meeting.id)
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
-    // O link vai nas duas formas (`URL:` e na descrição) porque os clientes de
-    // calendário não concordam: o Google e o Outlook lêem `URL:`, muitos
-    // telemóveis só mostram a descrição.
     let link = room_link_absolute(state, meeting).await;
-    let mut desc = meeting.description.clone();
-    if let Some(link) = &link {
-        if !desc.is_empty() {
-            desc.push('\n');
-        }
-        desc.push_str(&format!("Delonix Meet — entrar: {link}"));
-    }
     // O organizador é o anfitrião, e só entra onde serve: num `PUBLISH` ninguém
     // responde, e a descarga tem de continuar a sair igual ao que saía.
     let organizer: Option<String> = match method {
@@ -2125,21 +2128,56 @@ pub(crate) async fn ics_for(
             .ok()
             .flatten(),
     };
+    IcsContext {
+        sequence,
+        link,
+        organizer,
+    }
+}
+
+/// O `.ics`, sem tocar na base. É esta metade que o cancelamento usa depois de
+/// a reunião já não existir.
+pub(crate) fn ics_with_context(
+    meeting: &Meeting,
+    ctx: &IcsContext,
+    method: IcsMethod,
+    attendee: Option<&str>,
+) -> String {
+    // O link vai nas duas formas (`URL:` e na descrição) porque os clientes de
+    // calendário não concordam: o Google e o Outlook lêem `URL:`, muitos
+    // telemóveis só mostram a descrição.
+    let mut desc = meeting.description.clone();
+    if let Some(link) = &ctx.link {
+        if !desc.is_empty() {
+            desc.push('\n');
+        }
+        desc.push_str(&format!("Delonix Meet — entrar: {link}"));
+    }
     calendar::ics(
         &calendar::Event {
             uid: &format!("{}@delonix-meet", meeting.id),
             dtstamp: Utc::now(),
-            sequence: seq,
+            sequence: ctx.sequence,
             starts_at: meeting.starts_at,
             duration_min: meeting.duration_min,
             title: &meeting.title,
             description: &desc,
-            url: link.as_deref(),
-            organizer: organizer.as_deref(),
+            url: ctx.link.as_deref(),
+            organizer: ctx.organizer.as_deref(),
             attendee,
         },
         method,
     )
+}
+
+pub(crate) async fn ics_for(
+    state: &AppState,
+    meeting: &Meeting,
+    method: IcsMethod,
+    attendee: Option<&str>,
+) -> String {
+    let ctx = ics_context(state, meeting, method).await;
+    ics_with_context(meeting, &ctx, method, attendee)
 }
 
 /// O mesmo, para quem só tem o id (o correio). `None` quando a reunião já não

@@ -90,12 +90,20 @@ pub struct Draft {
     /// envia tinha de adivinhar o id a partir da chave de dedupe, que é texto
     /// e muda de forma entre tipos.
     pub meeting_id: Option<Uuid>,
+    /// O `.ics` JÁ CONSTRUÍDO, para quando não se pode ir buscá-lo pelo id.
+    ///
+    /// É o caso do CANCELAMENTO: quando a notificação corre, a linha da reunião
+    /// já foi apagada (`meetings::delete` apaga primeiro e notifica depois), e
+    /// um `METHOD:CANCEL` sem o `SEQUENCE` actual é ignorado pelo Outlook. Quem
+    /// apaga constrói o `.ics` ANTES e entrega-o aqui.
+    pub calendar_ics: Option<String>,
 }
 
 impl Draft {
     fn new(kind: Kind, entity: &str, title: String, body: String, link: String) -> Self {
         Draft {
             kind,
+            calendar_ics: None,
             title: clip(&title, MAX_TITLE),
             body: clip(&body, MAX_BODY),
             link: if is_safe_link(&link) {
@@ -114,6 +122,12 @@ impl Draft {
     /// Diz de que reunião esta notificação fala. Encadeia-se no construtor.
     fn about_meeting(mut self, meeting_id: Uuid) -> Self {
         self.meeting_id = Some(meeting_id);
+        self
+    }
+
+    /// Anexa um `.ics` já construído (ver `calendar_ics`).
+    pub fn with_calendar(mut self, ics: String) -> Self {
+        self.calendar_ics = Some(ics);
         self
     }
 }

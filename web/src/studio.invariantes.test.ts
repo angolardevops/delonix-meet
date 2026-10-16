@@ -182,13 +182,23 @@ describe('a mistura tem faders de verdade', () => {
     expect(c().match(/this\.audioCtx\.createGain\(\)/g)?.length).toBe(4)
     // Os três barramentos já não vão direitos ao destino: passam pelo
     // nivelador/limitador mestre primeiro (ver o teste da dinâmica, abaixo).
-    expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.compressorMestre)')
+    // A MÚSICA é a excepção desde 2026-10-14: vai ao mestre OU à mesa de som,
+    // que a leva como canal — por isso quem a liga é o `ligarBarramentoDeMusica`
+    // e não este laço. Continuam a ser três barramentos e todos acabam no
+    // mestre; a música é que escolhe o caminho.
+    expect(c()).toContain('this.ganhoVideo.connect(this.compressorMestre)')
+    // E o PALCO escolhe: sem mesa de som vai ao nivelador, com mesa salta-o e
+    // entra no limitador — porque a mesa já tem a dinâmica dela e o nivelador
+    // daqui (−24 dBFS, 3:1) morde em material normal. O limitador fica sempre.
+    expect(c()).toContain('this.ganhoPalco.connect(this.somExterno ? this.limiterMestre : this.compressorMestre)')
+    expect(c()).toContain('this.ganhoMusica.connect(this.somExterno ? this.destinoMedia : this.compressorMestre)')
   })
 
   it('a dinâmica mestre fica entre os barramentos e o destino, com um medidor na saída', () => {
     // Um barramento sozinho não pode saturar o que se grava/emite — por
-    // isso a cadeia é OBRIGATÓRIA entre a soma dos três e o `destino`, não
-    // opcional nem contornável por um caminho directo.
+    // isso o LIMITADOR é obrigatório entre a soma dos três e o `destino`, não
+    // opcional nem contornável por um caminho directo. (O nivelador é que
+    // pode saltar, e só para quem tem mesa de som: ver o teste acima.)
     expect(c()).not.toMatch(/this\.(ganhoPalco|ganhoMusica|ganhoVideo)\.connect\(this\.destino\)/)
     expect(c()).toContain('this.compressorMestre.connect(this.limiterMestre)')
     expect(c()).toContain('this.limiterMestre.connect(this.destino)')
@@ -377,6 +387,81 @@ describe('o corte degrada em vez de arrastar', () => {
     // versão deste teste fazia (medido: 2 ocorrências com, 1 sem).
     const n = e().match(/codec: 'vp8', bitrate: 2_000_000/g)?.length ?? 0
     expect(n).toBe(2)
+  })
+})
+
+describe('o codificador adaptativo não muda o contrato com o servidor', () => {
+  const cod = () => readCodigo('web/src/studio/codificadorDoDirecto.ts')
+
+  it('continua a sair Matroska com H.264 e Opus', () => {
+    // O servidor declara `-f matroska` e copia o vídeo sem reencodificar
+    // (`-c:v copy`, R76). Trocar o muxer do browser pelo nosso só é possível
+    // porque o que sai é o MESMO: mudar qualquer uma destas linhas sem mudar
+    // o `broadcast.rs` parte o directo.
+    expect(cod()).toContain("const CODEC_VIDEO_MATROSKA = 'V_MPEG4/ISO/AVC'")
+    expect(cod()).toContain("const CODEC_AUDIO_MATROSKA = 'A_OPUS'")
+    expect(cod()).toContain("type: 'matroska'")
+    // `streaming`: escreve só para a frente, que é o que um socket aceita.
+    expect(cod()).toContain('streaming: true')
+    // E o que se declara ao servidor no URL não muda.
+    expect(read('web/src/studio/directo.ts')).toContain("export const CODEC_DIRECTO = 'video/h264'")
+  })
+
+  it('descarta frames ANTES de codificar, nunca pedaços já muxados', () => {
+    // A diferença que torna isto seguro: um frame que nunca entrou no fluxo
+    // não deixa buraco; um pedaço de Matroska saltado parte o ficheiro, e o
+    // `ffmpeg` do servidor não o sabe remendar.
+    expect(cod()).toContain('if (enc.encodeQueueSize > FILA_MAXIMA_DO_CODIFICADOR)')
+    expect(cod()).toContain('this.framesDescartados++')
+    // O envio não tem caminho nenhum que salte um pedaço por causa da fila.
+    const d = readCodigo('web/src/studio/directo.ts')
+    expect(d).not.toMatch(/bufferedAmount[^)]*\)\s*(>|>=)[^{]*\{\s*return/)
+  })
+
+  it('e a imagem e o som partilham o MESMO zero', () => {
+    // Os tempos de um `MediaStreamTrackProcessor` contam a idade do
+    // documento. Pôr cada faixa a zero pela primeira amostra DELA (o
+    // `firstTimestampBehavior: 'offset'` do muxer) desalinha o som da imagem
+    // pela diferença entre os dois arranques, para sempre.
+    expect(cod()).toContain("firstTimestampBehavior: 'permissive'")
+    expect(cod()).toContain('private relativo(timestamp: number): number')
+    expect(cod()).toContain('this.relativo(chunk.timestamp)')
+  })
+
+  it('e mudar o débito pede um frame-chave', () => {
+    // Sem ele o descodificador do outro lado arrasta artefactos do débito
+    // antigo até ao próximo frame-chave, que pode estar a dois segundos.
+    expect(cod()).toMatch(/mudarDebito\([\s\S]*?this\.pedirChave = true/)
+  })
+
+  it('e o recuo para o MediaRecorder acontece ANTES do ar', () => {
+    // Uma emissão não é sítio para descobrir que o browser não tem WebCodecs.
+    const d = readCodigo('web/src/studio/directo.ts')
+    expect(d).toContain('codificadorAdaptativoSuportado()')
+    expect(d).toMatch(/if \(arrancou\) \{[\s\S]*?\} else \{[\s\S]*?new MediaRecorder\(/)
+  })
+})
+
+describe('as estatísticas da emissão dizem a verdade em quatro línguas', () => {
+  // As duas chaves de saúde são escolhidas por um literal de template
+  // (`studio.directo.stats.${rede.saude}`), e o i18next DEVOLVE A CHAVE quando
+  // ela não existe: «studio.directo.stats.a-acumular» no ecrã, sem nada ficar
+  // vermelho. A chave do meio é a que leva o hífen, que é a que se esquece.
+  for (const loc of ['pt', 'en', 'fr', 'zh']) {
+    it(loc, () => {
+      const s = read(`web/src/locales/${loc}/studio.ts`)
+      for (const k of ['stats: {', 'apertada:', "'a-acumular':", 'conselho:', 'fila:', 'pedido:']) {
+        expect(s, `${loc}: falta ${k}`).toContain(k)
+      }
+      // Os plurais contam-se como o i18next os resolve.
+      for (const k of ['tentativas_one:', 'tentativas_other:']) expect(s).toContain(k)
+    })
+  }
+
+  it('e o painel só aparece no ar', () => {
+    // Fora do ar não há nada verdadeiro para mostrar, e um painel com zeros
+    // parece avariado.
+    expect(readCodigo('web/src/studio/LivePanel.tsx')).toContain('{noAr && <Estatisticas')
   })
 })
 

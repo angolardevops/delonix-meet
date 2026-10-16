@@ -175,6 +175,199 @@ describe('os ecrãs do estúdio de TV são alcançáveis', () => {
     expect(pagina()).toContain('?vista=tv&ecra=')
   })
 
+  it('a mesa de som nasce com a SESSÃO, não com o ecrã dela', () => {
+    // O que estava partido (EST-D da auditoria de 2026-10-14): o `ligarSom`
+    // vivia no `useEffect` de montagem da Mesa de som e da Cena completa.
+    // Quem fosse ao ar sem passar por um desses dois ecrãs emitia pelo
+    // microfone cru do compositor, sem EQ, porta, compressor nem medidor — e
+    // com o cancelamento de eco do browser ligado, que é o certo numa reunião
+    // e errado numa emissão.
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toContain('const abrir = () => void ligarSom()')
+    for (const f of FICHEIROS) {
+      if (f.endsWith('useSessaoTv.ts')) continue
+      expect(read(f), `${f} não pode ligar a mesa por si`).not.toContain('ligarSom()')
+    }
+  })
+
+  it('o som do ecrã partilhado tem UM dono: a mesa, ou o compositor', () => {
+    // EST-B da auditoria de 2026-10-14: o tipo de canal `'ecra'` existia e
+    // nada o criava — o som de um vídeo partilhado ia ao ar sem fader, sem
+    // medidor e sem porta. Agora é canal da mesa; e o compositor TEM de o
+    // largar enquanto ela o tem, senão o mesmo som entra duas vezes.
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toMatch(/som\.adicionarFluxo\('ecra'.*'ecra'/)
+    const comp = read('web/src/studio/compositor.ts')
+    expect(comp).toMatch(/private ligarSomDoEcra\(\): void \{[\s\S]*?if \(this\.somExterno\) return/)
+    // E a troca de dono tem de reavaliar o ecrã, nos dois sentidos.
+    expect(comp).toMatch(/definirSomExterno\(s: MediaStream \| null\): void \{[\s\S]*?this\.ligarSomDoEcra\(\)/)
+  })
+
+  it('e a música também tem UM dono — o mestre, ou a mesa', () => {
+    // EST-C: a música vivia num barramento que a mesa não via. Agora é canal,
+    // e o barramento vai a UM destino de cada vez — somá-la consigo própria
+    // seria pior do que não a ter na mesa.
+    expect(read('web/src/pages/studio/tv/useSessaoTv.ts')).toMatch(/som\.adicionarFluxo\('musica'/)
+    const comp = read('web/src/studio/compositor.ts')
+    expect(comp).toMatch(/this\.ganhoMusica\.connect\(this\.somExterno \? this\.destinoMedia : this\.compressorMestre\)/)
+    // O mestre deixa de a receber directamente: quem a liga é o barramento.
+    expect(comp).not.toMatch(/for \(const g of \[this\.ganhoPalco, this\.ganhoMusica/)
+  })
+
+  it('a mesa limita no mestre, e a sonoridade mede-se DEPOIS disso', () => {
+    // EST-03 e EST-06 da auditoria de 2026-10-14: a mesa não tinha limitador
+    // de mestre, e o número de sonoridade do cabeçalho era medido no fader —
+    // antes de qualquer limitação, aqui e no compositor. Um número que não
+    // descreve o que sai é pior do que não ter número.
+    const mesa = read('web/src/studio/tv/mesaDeSom.ts')
+    expect(mesa).toContain('this.mestre.connect(this.limitadorMestre)')
+    expect(mesa).toContain('this.limitadorMestre.connect(this.destino)')
+    expect(mesa).not.toContain('this.mestre.connect(this.destino)')
+    // A captura da sonoridade pendura-se no limitador, não no fader.
+    expect(mesa).toContain('this.limitadorMestre.connect(n)')
+    // E o tecto é o MESMO do cinto de segurança do compositor: a mesa limita
+    // primeiro, e o de baixo quase nunca morde.
+    expect(mesa).toContain('this.limitadorMestre.threshold.value = -3')
+    expect(read('web/src/studio/compositor.ts')).toContain('this.limiterMestre.threshold.value = -3')
+  })
+
+  it('e cada canal tem atraso próprio e entrada estéreo', () => {
+    // EST-04 e EST-05: sem atraso não há como alinhar o som com a imagem (a
+    // câmara atrasa, o microfone não), e `channelCount: 1` dobrava para mono
+    // uma mesa física ou um leitor ligados por USB.
+    const mesa = read('web/src/studio/tv/mesaDeSom.ts')
+    expect(mesa).toContain('const atraso = c.createDelay(ATRASO_MAXIMO_MS / 1000)')
+    expect(mesa).toContain('entrada.connect(atraso)')
+    expect(mesa).toContain('channelCount: { ideal: 2 }')
+    // O atraso muda sem rampa: uma rampa num atraso varre a altura do som.
+    expect(mesa).toMatch(/n\.atraso\.delayTime\.setValueAtTime/)
+  })
+
+  it('a ligação canal↔fonte faz alguma coisa: tally na tira e seguir a imagem', () => {
+    // EST-E: o selector «fonte de imagem» existia e só servia o corte por voz
+    // — ligar um canal a uma fonte não mudava nada no que se via nem no que se
+    // ouvia. Agora a tira mostra o tally dessa fonte, e o canal pode seguir a
+    // imagem (abrir no ar, calar fora dele).
+    const ecra = read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')
+    expect(ecra).toContain('const e = tallyDe(s.mesa, canal.fonte)')
+    expect(ecra).toContain('data-tv="tally-do-canal"')
+    // Desligar o «seguir» tem de LARGAR o mudo: senão um canal calado pelo
+    // automatismo ficava calado para sempre, e sem ninguém o ter calado.
+    expect(ecra).toContain('{ seguirImagem: v, ...(v ? {} : { mudo: false }) }')
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toContain("const mudo = tallyDe(mesa, c.fonte) !== 'programa'")
+    // E não vem ligado de origem: numa emissão, um canal que se cala sozinho
+    // sem ninguém ter pedido é pior do que um canal esquecido aberto.
+    expect(read('web/src/studio/tv/mesaDeSom.ts')).toContain('seguirImagem: false,')
+  })
+
+  it('um efeito é um CANAL da mesa, não um `<audio>` solto', () => {
+    // Um genérico que saísse por fora da mesa era exactamente o som que
+    // ninguém controla: sem fader, sem medidor, sem limitador — e a mesa a
+    // mostrar um nível que não é o que vai ao ar.
+    const mesa = read('web/src/studio/tv/mesaDeSom.ts')
+    expect(mesa).toContain("adicionarEfeito(id: string, nome: string): void")
+    expect(mesa).toContain('fonte.connect(c.nos.fonte)')
+    // E o disparo não se soma a si próprio: duas vezes na mesma tecla é um
+    // engano, não um coro.
+    expect(mesa).toMatch(/tocarEfeito\([\s\S]*?this\.pararEfeito\(id\)/)
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).not.toMatch(/new Audio\(/)
+  })
+
+  it('o ducking mexe num ganho PRÓPRIO, nunca no fader do operador', () => {
+    // Mexer no fader seria o automatismo a apagar o que ele pôs — e ao largar
+    // ficava no sítio errado, sem ninguém lhe ter tocado.
+    const mesa = read('web/src/studio/tv/mesaDeSom.ts')
+    expect(mesa).toContain('fader.connect(duck)')
+    expect(mesa).toContain('duck.connect(mudo)')
+    expect(mesa).toMatch(/aplicarDuck\(reduzDb: number\): void \{[\s\S]*?c\.nos\.duck\.gain/)
+    // E a decisão é da função pura, não de um `setInterval` com a regra dentro.
+    expect(read('web/src/pages/studio/tv/useSessaoTv.ts')).toContain('haVoz(som.niveisDeVoz()) ? DUCK_DB : 0')
+  })
+
+  it('a mesa física mexe nos MESMOS objectos que o rato', () => {
+    // Um caminho de controlo à parte dava dois estados a divergir: o fader do
+    // ecrã numa posição e o da superfície noutra, e o ar a seguir um deles sem
+    // se saber qual.
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toContain('const mesaFisica = useMesaFisica({')
+    expect(sessao).toMatch(/case 'fader': \{[\s\S]*?m\.mudar\(c\.id, \{ fader: a\.posicao \}\)/)
+    expect(sessao).toMatch(/case 'cortar':[\s\S]*?setMesa\(\(e\) => cortar\(e, Date\.now\(\)\)\)/)
+  })
+
+  it('e o acesso MIDI pede-se a um CLIQUE, nunca ao abrir', () => {
+    // Um estúdio que levanta um pedido de permissão ao abrir ensina a pessoa a
+    // recusar sem ler.
+    const hook = read('web/src/pages/studio/tv/useMesaFisica.ts')
+    expect(hook).toContain('const ligar = useCallback(async () => {')
+    expect(hook).toContain('await navigator.requestMIDIAccess({ sysex: false })')
+    // O pedido não pode viver num efeito de montagem.
+    expect(hook).not.toMatch(/useEffect\([^)]*\{[\s\S]{0,200}requestMIDIAccess/)
+    expect(read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')).toContain('data-tv="ligar-mesa-fisica"')
+  })
+
+  it('um ficheiro é fonte E canal, com o MESMO id', () => {
+    // O id partilhado é o que faz o tally da tira e o «seguir a imagem»
+    // funcionarem sem mais nada: o canal já sabe de que imagem é.
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    expect(sessao).toContain('som.adicionarElemento(f.id, f.nome, el, f.id)')
+    // E o som entra pelo grafo, não pelo elemento: senão ouvia-se duas vezes
+    // (uma pelo altifalante, outra pela mesa) e o fader só mexia numa delas.
+    expect(read('web/src/studio/tv/mesaDeSom.ts')).toContain('this.ctx.createMediaElementSource(el)')
+  })
+
+  it('e o `blob:` de um ficheiro é libertado ao tirar a fonte', () => {
+    // Sem isto, uma tarde a trocar de genérico deixava os megabytes todos
+    // presos na memória do separador.
+    expect(read('web/src/studio/tv/fontes.ts')).toContain('URL.revokeObjectURL(f.elemento.src)')
+  })
+
+  it('e o ecrã DIZ que uma página web não pode ser fonte', () => {
+    // O OBS tem «browser source» porque embute um Chromium. Nós somos o
+    // browser: desenhar outro sítio no quadro é o que ele impede, e prometer
+    // isso era anunciar uma capacidade que não existe.
+    expect(read('web/src/pages/studio/tv/Fontes.tsx')).toContain('data-tv="sem-fonte-de-browser"')
+    for (const l of ['pt', 'en', 'fr', 'zh']) {
+      expect(read(`web/src/locales/${l}/tv.ts`)).toContain('semFonteDeBrowser:')
+    }
+  })
+
+  it('os painéis do estúdio vivem DENTRO da coluna do inspector', () => {
+    // Medido no browser a 2026-10-14, e invisível para um teste de markup: a
+    // grelha da mesa de som tem DUAS colunas (`minmax(0,1fr) 300px`). Com os
+    // painéis como terceira filha, o INSPECTOR — o EQ, a dinâmica, a limpeza —
+    // era empurrado para uma segunda linha, com 1072 px de largo e 64 px de
+    // alto, por baixo das tiras. A coluna da direita leva-os por cima do
+    // inspector, e é ela que rola.
+    const ecra = read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')
+    const coluna = ecra.slice(ecra.indexOf('tv-col tv-col--dir'), ecra.indexOf('</aside>'))
+    for (const painel of ['<Bastidores s={s} />', '<Efeitos s={s} />', '<MesaFisica s={s} />']) {
+      expect(coluna, `${painel} tem de estar dentro da coluna da direita`).toContain(painel)
+    }
+    expect(ecra.indexOf('<Inspector s={s}')).toBeGreaterThan(ecra.indexOf('<MesaFisica s={s} />'))
+    expect(read('web/src/ui/studio-tv.css')).toMatch(/\.tv-som \.tv-col--dir \{\s*overflow-y: auto;/)
+  })
+
+  it('falar com os bastidores é PREMIR E SEGURAR, e solta-se por fora', () => {
+    // Um interruptor de «estou fora do ar» que alguém deixa ligado é um
+    // programa em silêncio sem ninguém perceber porquê. E trocar de separador
+    // com o botão premido deixava o estúdio fora do ar para sempre.
+    const ecra = read('web/src/pages/studio/tv/MesaDeSomEcra.tsx')
+    expect(ecra).toContain('onPointerDown={() => s.falarComBastidores(true)}')
+    expect(ecra).toContain('onPointerUp={() => s.falarComBastidores(false)}')
+    const sessao = read('web/src/pages/studio/tv/useSessaoTv.ts')
+    // O `addEventListener` inteiro, não só o par: a primeira versão deste
+    // teste passava com a linha apagada, porque o `removeEventListener` da
+    // limpeza também contém `'blur', largar`.
+    expect(sessao, 'falta soltar ao sair da janela').toContain("window.addEventListener('blur', largar)")
+    expect(sessao, 'falta soltar ao trocar de separador').toContain("document.addEventListener('visibilitychange', largar)")
+    expect(sessao, 'falta soltar ao largar o rato fora do botão').toContain("window.addEventListener('pointerup', largar)")
+    // E largar não pode ABRIR um microfone que o operador tinha fechado.
+    expect(sessao).toContain('mudosAntes.current = mics.filter((c) => c.mudo).map((c) => c.id)')
+    expect(sessao).toContain('!antes.includes(c.id)')
+  })
+
   it('cada um dos cinco ecrãs tem quem o abra', () => {
     // A `cena` não tinha caminho nenhum e as `fontes` só se alcançavam por um
     // lugar VAZIO do barramento: com seis fontes ligadas ficavam ambas
