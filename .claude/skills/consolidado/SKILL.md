@@ -15,6 +15,55 @@ when_to_use: >-
 
 # Consolidado de 2026-10-14 — retomar o Delonix Meet
 
+> ## FUNDIDO a 2026-10-16 — e com prova, que o de 14/10 não tinha
+>
+> O `consolidado/2026-10-14` entrou na linha da `develop` pelo ramo
+> **`consolida/develop-2026-10-16`**, partido da `origin/develop` de hoje
+> (`6866c702`, já com as PRs #369 e #370). **Merge limpo, zero conflitos:**
+> 67 ficheiros, +4 914/−130.
+>
+> **Isto fecha o aviso que esta skill deixava:** dos quatro «salvo» dizia-se
+> «nenhum deles foi construído nem corrido depois de commitado». Agora foram:
+>
+> | portão | resultado |
+> |---|---|
+> | `tsc -p tsconfig.json --noEmit` | **limpo** |
+> | `vitest run` | **110 ficheiros, 1 331 testes, 0 falhas** |
+> | `npm run build` (compila o SCSS, R54) | **verde**, 10,1 s |
+> | `cargo test --test room_chat` (o único alvo Rust que o lote acrescenta) | **3/3** — `sem_retencao_definida_o_chat_fica`, `com_retencao_definida_apaga_como_sempre`, `a_conversa_directa_so_volta_ao_par` |
+>
+> **O que NÃO foi provado:** o `make test` completo não correu — ele pede
+> `cargo test --release --workspace` e o `test-ai-worker`; correu-se em **debug**
+> e sem o worker de IA. Quem precisar do verde completo corre `make test` com a
+> Postgres na 5435 e o Redis na 6379.
+>
+> **A `main` não entra nisto, e a razão é medida:** `git rev-list --count
+> --no-merges origin/develop..origin/main` dá **0** — a `main` não tem conteúdo
+> próprio nenhum. Os dois commits que pareciam faltar são merges da `develop`
+> PARA a `main` (PRs #200 e #176). O «a develop não contém a main» é artefacto
+> de alcançabilidade, não trabalho a trazer.
+>
+> ### O que continua por fundir, e porquê (medido a 2026-10-16)
+>
+> As três PRs (#352, #356, #359) e o rascunho #251 continuam exactamente como
+> esta skill os descreve — são **decisão do dono**, não trabalho meu.
+>
+> E as forquilhas antigas de Setembro, que esta skill chamava «lixo já fundido»
+> sem as nomear: medi-as uma a uma com merge de ensaio sobre a árvore de hoje.
+>
+> | ramo | gémeos | conflitos num merge de ensaio |
+> |---|---|---|
+> | `fix/container-engine-facts` | **33/34** | — já aterrou |
+> | `integra/validacao-v2` | 15/35 | **302 ficheiros** |
+> | `frontend/v5-quadros-seleccao` | 2/9 | **45** |
+> | `delonix-meet-backend/v3-canais` | 1/20 | **41** |
+> | `delonix-meet-backend/v3-conta` | — | **32** |
+> | `delonix-meet-backend/v3-telecom` | 1/13 | **31** |
+>
+> Trinta a trezentos ficheiros em conflito contra uma `develop` que andou ~600
+> commits **não é consolidar, é reimplementar** — e isso decide-se, não se faz
+> de passagem. Os ramos continuam empurrados.
+
 ## O que isto é
 
 Um ponto único de retoma. A 2026-10-14 havia **20 worktrees vivos, 15 PRs
