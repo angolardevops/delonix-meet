@@ -20,12 +20,61 @@ const read = (p: string) => readFileSync(join(root, p), 'utf8')
  * foi comentada: o `toContain` encontrava a string dentro do comentário e dava
  * verde a código morto. Um teste que aceita a linha comentada não guarda nada.
  */
-const readCodigo = (p: string) =>
-  read(p)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((l) => !l.trimStart().startsWith('//'))
-    .join('\n')
+const readCodigo = (p: string) => semComentarios(read(p))
+
+/**
+ * Tira comentários SEM tocar no que está dentro de uma string.
+ *
+ * A primeira versão era um `replace(/\/\*[\s\S]*?\*\//g, '')`, e isso tem um
+ * furo medido: o `Fontes.tsx` tem `accept="video/*,audio/*"`. Esse `/*` abre um
+ * «comentário» que só fecha no `*\/` do JSDoc seguinte, e o regex **engolia
+ * 1 844 caracteres do ficheiro** — entre eles o `data-tv="escolher-ficheiro"`,
+ * que passava a não existir para quem o procurasse. Nove ficheiros do `web/src`
+ * têm `/*` dentro de uma string, por isso não era um caso isolado.
+ *
+ * Um ajudante destes a esconder código é pior do que não existir: é o gate a
+ * dar verde sobre o que não leu, que é exactamente o que ele foi escrito para
+ * evitar. Por isso agora percorre-se o texto a saber onde começa e acaba uma
+ * string, uma template literal e uma expressão regular.
+ */
+function semComentarios(src: string): string {
+  let fora = ''
+  let i = 0
+  while (i < src.length) {
+    const c = src[i]
+    const d = src[i + 1]
+    if (c === '/' && d === '/') {
+      while (i < src.length && src[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && d === '*') {
+      i += 2
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const fim = c
+      fora += c
+      i++
+      while (i < src.length && src[i] !== fim) {
+        if (src[i] === '\\') {
+          fora += src[i] + (src[i + 1] ?? '')
+          i += 2
+          continue
+        }
+        fora += src[i]
+        i++
+      }
+      fora += fim
+      i++
+      continue
+    }
+    fora += c
+    i++
+  }
+  return fora
+}
 
 describe('o ecrã é capturado para GRAVAR, não para partilhar', () => {
   it('pede 30 fps, não os 5 da partilha em chamada', () => {
@@ -478,4 +527,47 @@ describe('as três línguas têm as chaves do estúdio', () => {
       for (const k of ['gravar:', 'regiao:', 'posicao:', 'guardar:']) expect(s).toContain(k)
     })
   }
+})
+
+describe('as duas maneiras de acrescentar uma fonte coexistem no painel', () => {
+  // Esta é a resolução de uma COLISÃO, e é por isso que é um invariante.
+  //
+  // A #356 (telemóvel como câmara) e a cadeia onda-c (#362/#363, ficheiro como
+  // fonte) tocaram a MESMA zona do `Fontes.tsx`: a #356 substituiu o bloco
+  // estático «à espera do servidor» (`data-tv="ligacao-app"`) pelo componente
+  // `<Emparelhar />`, e a onda-c acrescentou ao lado um bloco novo
+  // (`data-tv="ligacao-ficheiro"`). São independentes — o certo é ter os dois.
+  //
+  // Nenhum teste tocava esta zona: a suite inteira passava com um dos lados
+  // apagado. Este fecha-o, e falha se um merge futuro escolher um lado.
+  const fontes = () => readCodigo('web/src/pages/studio/tv/Fontes.tsx')
+
+  it('o emparelhamento do telefone é um componente, não um aviso estático', () => {
+    const f = fontes()
+    expect(f).toContain('<Emparelhar />')
+    // O bloco antigo dizia «aguardar servidor» e não ligava nada. Se voltar,
+    // é porque a #356 foi desfeita.
+    expect(f).not.toContain('data-tv="ligacao-app"')
+  })
+
+  it('e o ficheiro como fonte continua lá, com o que o browser NÃO faz dito', () => {
+    const f = fontes()
+    expect(f).toContain('data-tv="ligacao-ficheiro"')
+    expect(f).toContain('data-tv="escolher-ficheiro"')
+    expect(f).toContain('data-tv="sem-fonte-de-browser"')
+  })
+
+  it('o telefone vem primeiro, que é a ordem que os dois lados implicavam', () => {
+    // A onda-c inseriu o bloco do ficheiro DEPOIS do que a #356 substitui. O
+    // `rerere` desta árvore trocava-os; a ordem aqui é a intenção, não o acaso.
+    const f = fontes()
+    expect(f.indexOf('<Emparelhar />')).toBeLessThan(f.indexOf('data-tv="ligacao-ficheiro"'))
+  })
+
+  it('e cada lado entra UMA vez — uma união não é uma duplicação', () => {
+    const f = fontes()
+    const vezes = (s: string) => f.split(s).length - 1
+    expect(vezes('<Emparelhar />')).toBe(1)
+    expect(vezes('data-tv="ligacao-ficheiro"')).toBe(1)
+  })
 })
