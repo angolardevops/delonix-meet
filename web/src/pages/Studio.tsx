@@ -46,7 +46,7 @@ import LayoutsPanel from '../studio/LayoutsPanel'
 import LivePanel from '../studio/LivePanel'
 import LocalPanel from '../studio/LocalPanel'
 import { estadoDoCartao } from '../studio/destinosLocais'
-import { accaoDeGuardar, deDestinoGuardado, temChave as temChaveDoDestino } from '../studio/destinosGuardados'
+import { accaoDeGuardar, deDestinoGuardado, paraOAr, temChave as temChaveDoDestino } from '../studio/destinosGuardados'
 import { eh4k, plataformaDoUrl, type Qualidade, QUALIDADES, rotuloDaQualidade } from '../studio/palco'
 import { ECRA_TV_INICIAL, type EcraTv, ecraTvDoValor } from '../studio/tv/ecras'
 import QuadroLocal from '../studio/QuadroLocal'
@@ -586,7 +586,7 @@ export default function Studio() {
       directoRef.current = d
       // O débito sai do PERFIL da imagem: o mesmo estúdio a compor 2160p50 e a
       // compor 1080p30 não pode emitir com o mesmo número.
-      await d.comecar(fluxo, codigo, token, destinos.filter((dest) => dest.chave.trim()), {
+      await d.comecar(fluxo, codigo, token, paraOAr(destinos), {
         largura: c.perfil.largura,
         altura: c.perfil.altura,
         fps: c.perfil.fps,
