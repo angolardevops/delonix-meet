@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { StreamDestination } from '../api'
-import { accaoDeGuardar, deDestinoGuardado, kindDoUrl, temChave } from './destinosGuardados'
+import { accaoDeGuardar, deDestinoGuardado, kindDoUrl, paraOAr, temChave } from './destinosGuardados'
 
 const guardado = (over: Partial<StreamDestination> = {}): StreamDestination => ({
   id: 'd1',
@@ -75,5 +75,26 @@ describe('destinos guardados', () => {
       actualizar: { url: 'rtmp://b/live' },
       rotarChave: 'nova',
     })
+  })
+
+  it('um destino guardado VAI AO AR — e é por isso que a regra é uma só', () => {
+    const guardados = [deDestinoGuardado(guardado()), deDestinoGuardado(guardado({ id: 'd2', has_key: false }))]
+    const alvos = paraOAr(guardados)
+    // O que estava partido: o arranque filtrava por `chave.trim()` e a chave de
+    // um destino guardado não volta ao browser — com todos guardados, o pedido
+    // saía vazio e o servidor recusava com `SemDestino`.
+    expect(alvos).toHaveLength(1)
+    expect(alvos[0].id).toBe('d1')
+    expect(guardados.filter((d) => d.chave.trim())).toHaveLength(0)
+    // Controlo negativo: a regra tem de ser EXACTAMENTE a do botão.
+    expect(paraOAr(guardados)).toEqual(guardados.filter(temChave))
+  })
+
+  it('uma chave escrita agora continua a ir ao ar, e um destino vazio não', () => {
+    const escritos = [
+      { url: 'rtmp://a/live', chave: 'k' },
+      { url: 'rtmp://b/live', chave: '  ' },
+    ]
+    expect(paraOAr(escritos).map((d) => d.url)).toEqual(['rtmp://a/live'])
   })
 })

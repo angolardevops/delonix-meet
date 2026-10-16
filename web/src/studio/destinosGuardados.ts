@@ -96,3 +96,17 @@ export function accaoDeGuardar(antes: Destino | undefined, agora: Destino): Acca
  * para o ar» ficava desligado com tudo configurado.
  */
 export const temChave = (d: Destino): boolean => !!d.chave.trim() || !!d.temChaveGuardada
+
+/**
+ * Os destinos que VÃO AO AR, dado o que o ecrã tem. É a mesma regra do
+ * `temChave`, e é essa a razão de existir: o botão habilitava-se com `temChave`
+ * e o arranque filtrava por `chave.trim()`, portanto um destino GUARDADO — o
+ * caminho seguro, com a chave cifrada no servidor e o `id` a viajar em vez dela
+ * — era descartado antes de sair do browser. Com todos os destinos guardados, o
+ * pedido ia vazio e o servidor recusava com `SemDestino` (`broadcast.rs:233`):
+ * «sem destino» num ecrã que listava destinos com chave.
+ *
+ * Quem decide o que se pode emitir e quem decide o que se emite têm de ser a
+ * mesma função.
+ */
+export const paraOAr = (destinos: readonly Destino[]): Destino[] => destinos.filter(temChave)

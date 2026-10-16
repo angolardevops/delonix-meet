@@ -68,6 +68,11 @@ pub enum Purpose {
     Invitation,
     /// Confirmação de endereço de email (pré-requisito do E3).
     EmailVerification,
+    /// Convite de uma REUNIÃO para um endereço externo, que não tem conta aqui
+    /// (`meeting_invite_mail`). Não passa pelo centro de notificações de
+    /// propósito: esse exige conta, preferência por canal e endereço provado —
+    /// e um convidado de fora não tem nenhuma das três.
+    MeetingInvitation,
     /// Uma notificação do centro de notificações (G8) entregue por correio:
     /// convite para reunião, hora mudada, «a começar», gravação pronta. O que
     /// sai depende da preferência da pessoa por tipo e canal.
@@ -79,6 +84,7 @@ impl Purpose {
         match self {
             Purpose::PasswordReset => "password_reset",
             Purpose::Invitation => "invitation",
+            Purpose::MeetingInvitation => "meeting_invitation",
             Purpose::EmailVerification => "email_verification",
             Purpose::Notification => "notification",
         }

@@ -34,7 +34,7 @@ export default function MesaDeCorte({ s, c }: PropsDoEcra) {
   return (
     <div className="dx-stage tv tv--palco" data-tv-ecra="mesa-de-corte">
       <TopoTv titulo={t('tv.corte.titulo')} onVoltar={() => c.onNavegar(null)}>
-        <SelosDoAr c={c} />
+        <SelosDoAr c={c} bastidores={s.aFalarComBastidores} />
         <Espaco />
         {noAr && c.kbps > 0 && (
           <span className="tv-meta" data-tv="bitrate">

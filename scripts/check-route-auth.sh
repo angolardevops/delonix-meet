@@ -29,7 +29,12 @@ PUBLICAS = 'scripts/rotas-publicas.txt'
 # `TvAgentAuth` (RFC-0002, ADR-0031) é o do agente de captura de TV: token
 # `dlxtv_` da caixa, verificado contra o `token_hash` e a revogação, como o
 # `SmsGatewayAuth` já fazia para o agente de SMS.
-EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth', 'TvAgentAuth', 'McpAuth')
+#
+# `ScimAuth` chegou pela `develop` ao mesmo tempo. Os dois ficam, e não é
+# arrumação: esta lista é o que decide se uma rota CONTA como autenticada
+# (`:141`), logo tirar um deles punha o portão a acusar rotas reais de não
+# terem autenticação — falhas falsas, e do género que se aprende a ignorar.
+EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth', 'TvAgentAuth', 'McpAuth', 'ScimAuth')
 # Autenticação por GUARDA chamada no corpo. Nem tudo pode ser um extractor: a
 # API interna da voz autentica por segredo partilhado em header, e isso lê-se
 # do `HeaderMap`, não de um tipo.

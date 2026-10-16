@@ -105,7 +105,16 @@ EXCLUIDAS = {'/ws', '/rtc', '/api/rooms/{room_code}/live', '/health', '/ready', 
              # segunda responde texto, que é o que o `http_client` lê.
              '/internal/v1/voice/ivr/validate-central', '/internal/v1/telephony/edge/sip-account',
              '/api/openapi.json', '/api/v1/openapi.json', '/api/operator/v1/openapi.json',
-             '/api/integrations/openapi.json'}
+             '/api/integrations/openapi.json',
+             # SCIM 2.0: o contrato é a RFC 7643/7644 E a descoberta que a
+             # própria superfície serve (`/ServiceProviderConfig`,
+             # `/ResourceTypes`, `/Schemas`) — é de lá que o Entra ID e o Okta
+             # aprendem o que esta instalação suporta, não de um spec nosso.
+             # Mesma razão do IVR, cujo contrato é o .proto. A rota de
+             # ADMINISTRAÇÃO (`/api/orgs/{org_id}/scim/rotate-token`) NÃO está
+             # aqui: essa é da BFF e leva OpenAPI como qualquer outra.
+             '/scim/v2/ServiceProviderConfig', '/scim/v2/ResourceTypes', '/scim/v2/Schemas',
+             '/scim/v2/Users', '/scim/v2/Users/{user_id}'}
 
 def chamadas_route(src):
     """(caminho, corpo) de cada `.route("…", corpo)`, com o corpo lido por

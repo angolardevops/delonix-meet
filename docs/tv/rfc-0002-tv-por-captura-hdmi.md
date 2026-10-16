@@ -314,7 +314,7 @@ Ditas uma vez, para a decisão ser do dono e não ficar implícita:
 |---|---|---|---|
 | **0 — hardware na mesa** (sem código) | um capturador + um descodificador | `v4l2-ctl --list-formats-ext` com os modos reais; `ffmpeg -f v4l2` a gravar 60 s com áudio ALSA do mesmo aparelho; HDCP: vê-se imagem ou preto; CEC: o descodificador responde ou não | tudo o resto |
 | **1 — o sinal chega** | `tv_capture_agents`, `tv_capture_inputs`, rotas de consola e de agente, agente mínimo (inventário + publicar 1 entrada), Fase A na sala | duas orgs isoladas (teste), e uma sala com o canal visível ≥ 30 min sem queda | zapping, HLS, quotas |
-| ↳ **1a — o plano de controlo do inventário** (entregue a 2026-10-14, sem hardware) | migração 0121, `domain::content::tv_capture`, `server/src/tv_capture.rs`, as rotas acima, e o emparelhamento do áudio **no servidor** | testes contra Postgres (contrato, token uma vez, áudio pela porta, entrada que desaparece, duas orgs) e `check-isolamento-cobertura` | media: publicar, sintonizar |
+| ↳ **1a — o plano de controlo do inventário** (entregue a 2026-10-14, sem hardware) | migração 0123, `domain::content::tv_capture`, `server/src/tv_capture.rs`, as rotas acima, e o emparelhamento do áudio **no servidor** | testes contra Postgres (contrato, token uma vez, áudio pela porta, entrada que desaparece, duas orgs) e `check-isolamento-cobertura` | media: publicar, sintonizar |
 | **2 — vários e com dono** | N entradas, par vídeo+áudio reportado, quotas, estado `protected` na interface | tecto de entradas por *dock* medido e escrito; `make fitness` + os dois portões do CI | grelha |
 | **3 — sintonia** | `tv_tuner_commands` na peça comum, executor CEC e executor IR | um comando pedido na consola muda o canal **no aparelho**, filmado ou medido; e o estado diz «pedido», não «mudado» | confirmação automática do canal |
 | **4 — grelha e player** | Channel Engine + MediaMTX (fecha o ADR-0015), ecrã de TV, HLS | latência p50/p95 com amostra ≥ 30 min, CPU por canal, leitores reais | anúncios, DRM |
@@ -323,7 +323,9 @@ A Fase 0 é mesmo primeiro. **Três das decisões desta RFC dependem de factos q
 nenhuma linha de Rust os antecipa.
 
 A lista de compras da Fase 0, com preços datados e os comandos que respondem às três perguntas,
-está em [fase0-compras.md](fase0-compras.md).
+está em [fase0-compras.md](fase0-compras.md) e o guião que as mede — com o script
+[`scripts/tv-fase0-medir.sh`](../../scripts/tv-fase0-medir.sh) — em
+[fase0-guiao.md](fase0-guiao.md).
 
 ## 14. Critérios de aceitação
 

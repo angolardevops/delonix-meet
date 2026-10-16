@@ -616,6 +616,13 @@ export const createMeeting = (m: {
   starts_at: string
   duration_min: number
   invitee_ids: string[]
+  /**
+   * Endereços de email de convidados SEM conta aqui (no máximo 50). Cada um
+   * recebe o seu convite com o `.ics`, e entra pela porta de convidado — nome e
+   * sala de espera (R290). O servidor normaliza e valida
+   * (`meeting.invalid_external_email`, `meeting.too_many_external_invitees`).
+   */
+  external_emails?: string[]
   room_ref?: string | null
   recurrence_freq?: RecurrenceFreq | null
   recurrence_interval?: number
@@ -676,6 +683,8 @@ export interface OrgSummary {
   member_count: number
   domain?: string
   retention_days?: number
+  /** Dias de retenção do chat. `null`/ausente = fica até alguém mandar apagar. */
+  chat_retention_days?: number | null
   max_groups?: number | null
   max_rooms?: number | null
   max_meetings?: number | null
@@ -765,10 +774,25 @@ export interface Webhook {
 // volta): são o plano que a PLATAFORMA vende, não política de tenant — ver
 // `OrgSettingsReq` em `server/src/org.rs`. `OrgSummary` continua a devolvê-los
 // para leitura (o cartão de definições mostra-os só como texto).
-export const updateOrgSettings = (orgId: string, domain: string, retentionDays: number) =>
+/**
+ * `chatRetentionDays`: dias que o chat das salas fica guardado.
+ * **`null` = fica até alguém mandar apagar** (a omissão desde 2026-10-14; antes
+ * disso a varredura apagava ao fim do dia). `0` apaga na varredura seguinte, que
+ * é o efémero de quem o escolhe.
+ */
+export const updateOrgSettings = (
+  orgId: string,
+  domain: string,
+  retentionDays: number,
+  chatRetentionDays: number | null = null,
+) =>
   request(`/api/orgs/${orgId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ domain, retention_days: retentionDays }),
+    body: JSON.stringify({
+      domain,
+      retention_days: retentionDays,
+      chat_retention_days: chatRetentionDays,
+    }),
   })
 
 /** Busca autenticada de um recurso binário → object URL (para <img>). */
@@ -2057,6 +2081,25 @@ export const createMeetingWithOptions = (
     method: 'POST',
     body: JSON.stringify(m),
   })
+
+/** Os convidados externos de uma reunião (só o anfitrião). */
+export const listExternalInvitees = (id: string) =>
+  request<{ email: string; created_at: string }[]>(`/api/meetings/${id}/external-invitees`)
+
+/**
+ * Convida um endereço externo para uma reunião que já existe e manda-lhe o
+ * convite. `delivery_channel` é `email` ou `manual` (sem relay configurado,
+ * quem convida entrega o link à mão).
+ */
+export const addExternalInvitee = (id: string, email: string) =>
+  request<{ email: string; delivery_channel: 'email' | 'manual' }>(
+    `/api/meetings/${id}/external-invitees`,
+    { method: 'POST', body: JSON.stringify({ email }) },
+  )
+
+/** Tira da lista. NÃO desconvida quem já recebeu — impede o próximo convite. */
+export const removeExternalInvitee = (id: string, email: string) =>
+  request(`/api/meetings/${id}/external-invitees/${encodeURIComponent(email)}`, { method: 'DELETE' })
 
 export const startMeetingWithOptions = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' } & MeetingSessionOptions>(`/api/meetings/${id}/start`, {

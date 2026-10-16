@@ -390,6 +390,11 @@ async fn email_best_effort(state: &AppState, user_id: Uuid, draft: &Draft) {
     // com o mesmo UID não acrescenta nada à agenda de ninguém.
     let metodo = match draft.kind {
         Kind::MeetingInvited | Kind::MeetingRescheduled => Some(MailCalendarMethod::Request),
+        // O cancelamento leva `METHOD:CANCEL`, e o `.ics` vem JÁ CONSTRUÍDO no
+        // `draft.calendar_ics`: quando isto corre a reunião já foi apagada, e
+        // um `CANCEL` sem o `SEQUENCE` actual é ignorado pelo Outlook. Quem
+        // apaga constrói-o antes (`meetings::delete` → `meeting_audience`).
+        Kind::MeetingCancelled => Some(MailCalendarMethod::Cancel),
         // `meeting.cancelled` NÃO leva calendário, e não é esquecimento: quando
         // esta notificação corre, a linha da reunião JÁ FOI APAGADA — o
         // `meetings::delete` apaga primeiro e notifica depois
@@ -407,6 +412,11 @@ async fn email_best_effort(state: &AppState, user_id: Uuid, draft: &Draft) {
         _ => None,
     };
     let convite: Option<(String, MailCalendarMethod)> = match (metodo, draft.meeting_id) {
+        // Já construído por quem sabia (o cancelamento): não se vai à base,
+        // que é precisamente onde a linha já não está.
+        (Some(metodo), _) if draft.calendar_ics.is_some() => {
+            draft.calendar_ics.clone().map(|ics| (ics, metodo))
+        }
         (Some(metodo), Some(meeting_id)) => {
             crate::meetings::ics_by_id(state, meeting_id, metodo, Some(&email))
                 .await
@@ -512,6 +522,16 @@ pub(crate) struct MeetingAudience {
     starts_at: DateTime<Utc>,
     host_id: Uuid,
     invitees: Vec<Uuid>,
+    /// A reunião inteira e o contexto do `.ics`, lidos ANTES do `DELETE`. É o
+    /// que permite emitir um `METHOD:CANCEL` com o `SEQUENCE` certo quando a
+    /// linha já não existe — sem isto, o email saía e o evento ficava na agenda
+    /// de quem o recebeu.
+    cancel: Option<(crate::meetings::Meeting, crate::meetings::IcsContext)>,
+    /// Endereços sem conta aqui. Vão em cascata com a reunião, logo não há como
+    /// os reler depois de a apagar.
+    externals: Vec<String>,
+    /// A reunião lida, de passagem para o `meeting_audience_for_cancel`.
+    meeting: Option<crate::meetings::Meeting>,
 }
 
 pub(crate) async fn meeting_audience(
@@ -519,15 +539,20 @@ pub(crate) async fn meeting_audience(
     meeting_id: Uuid,
     host_id: Uuid,
 ) -> Option<MeetingAudience> {
-    let row: Option<(String, DateTime<Utc>)> =
-        sqlx::query_as("SELECT title, starts_at FROM meetings WHERE id = $1 AND owner_id = $2")
-            .bind(meeting_id)
-            .bind(host_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    let (title, starts_at) = row?;
+    // A reunião INTEIRA, e não só o título e a hora: o `.ics` de cancelamento
+    // precisa da duração, da descrição e do dono, e isto corre antes do DELETE.
+    let meeting: Option<crate::meetings::Meeting> = sqlx::query_as(&format!(
+        "SELECT {} FROM meetings WHERE id = $1 AND owner_id = $2",
+        crate::meetings::MEETING_COLUMNS
+    ))
+    .bind(meeting_id)
+    .bind(host_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let meeting = meeting?;
+    let (title, starts_at) = (meeting.title.clone(), meeting.starts_at);
     let invitees: Vec<Uuid> = sqlx::query_scalar(
         "SELECT user_id FROM meeting_invitees
           WHERE meeting_id = $1 AND user_id <> $2 AND status <> 'declined'",
@@ -543,19 +568,123 @@ pub(crate) async fn meeting_audience(
         starts_at,
         host_id,
         invitees,
+        // Só o cancelamento precisa disto — ver `meeting_audience_for_cancel`.
+        // O remarcar lê a audiência DEPOIS do `UPDATE` e vai buscar o `.ics`
+        // pelo id, que ainda existe: carregá-lo aqui era trabalho a mais em
+        // cada remarcação.
+        cancel: None,
+        externals: Vec::new(),
+        meeting: Some(meeting),
     })
+}
+
+/// A audiência MAIS o que faz um `METHOD:CANCEL` válido: a reunião, o contexto
+/// do `.ics` e os endereços sem conta. Tem de correr **antes** do `DELETE` —
+/// depois dele não há `SEQUENCE` para ler, e um `CANCEL` sem ele é ignorado.
+pub(crate) async fn meeting_audience_for_cancel(
+    state: &AppState,
+    meeting_id: Uuid,
+    host_id: Uuid,
+) -> Option<MeetingAudience> {
+    let mut a = meeting_audience(state, meeting_id, host_id).await?;
+    let meeting = a.meeting.take()?;
+    a.externals =
+        sqlx::query_scalar("SELECT email FROM meeting_external_invitees WHERE meeting_id = $1")
+            .bind(meeting_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+    let ctx = crate::meetings::ics_context(state, &meeting, MailCalendarMethod::Cancel).await;
+    a.cancel = Some((meeting, ctx));
+    Some(a)
 }
 
 pub(crate) async fn meeting_cancelled(state: &AppState, audience: Option<MeetingAudience>) {
     let Some(a) = audience else { return };
-    if a.invitees.is_empty() {
+    // Os externos contam: uma reunião só com gente de fora tinha a lista de
+    // convidados vazia, e o `return` daqui calava o cancelamento todo.
+    if a.invitees.is_empty() && a.externals.is_empty() {
         return;
     }
     let host = username(state, a.host_id).await;
     let data = serde_json::json!({ "meeting_id": a.meeting_id, "starts_at": a.starts_at });
-    for uid in a.invitees {
-        let draft = rules::meeting_cancelled(a.meeting_id, &a.title, &host, a.starts_at);
-        notify(state, uid, draft, data.clone()).await;
+    for uid in &a.invitees {
+        let mut draft = rules::meeting_cancelled(a.meeting_id, &a.title, &host, a.starts_at);
+        // O `.ics` com o ATTENDEE DESTE endereço, como no convite: é o que
+        // identifica a inscrição que o cliente tem de retirar.
+        if let Some((meeting, ctx)) = &a.cancel {
+            let email: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+                .bind(uid)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+            draft = draft.with_calendar(crate::meetings::ics_with_context(
+                meeting,
+                ctx,
+                MailCalendarMethod::Cancel,
+                email.as_deref(),
+            ));
+        }
+        notify(state, *uid, draft, data.clone()).await;
+    }
+    // Quem não tem conta não passa pelo centro de notificações (não tem caixa
+    // de entrada nem preferências): vai directo ao correio, como no convite.
+    if let Some((meeting, ctx)) = &a.cancel {
+        for email in &a.externals {
+            cancel_externo_best_effort(state, meeting, ctx, email).await;
+        }
+    }
+}
+
+/// O cancelamento para um endereço SEM conta. Espelha o
+/// `meeting_invite_mail::send_best_effort`, com `METHOD:CANCEL` e a mesma
+/// chave de dedupe do convite com a hora — para o cancelamento de uma reunião
+/// remarcada não ser engolido como repetido do convite dela.
+async fn cancel_externo_best_effort(
+    state: &AppState,
+    meeting: &crate::meetings::Meeting,
+    ctx: &crate::meetings::IcsContext,
+    email: &str,
+) {
+    let org_id = crate::org::orgs_of_user(state, meeting.owner_id)
+        .await
+        .first()
+        .copied();
+    if !crate::mail::enabled_for(state, org_id).await {
+        return;
+    }
+    let ics =
+        crate::meetings::ics_with_context(meeting, ctx, MailCalendarMethod::Cancel, Some(email));
+    let assunto = format!("Cancelada: {}", meeting.title);
+    let corpo = format!(
+        "«{}», marcada para {}, foi cancelada.",
+        meeting.title,
+        meeting.starts_at.format("%d/%m/%Y %H:%M")
+    );
+    let chave = format!(
+        "meeting-ext-cancel:{}:{}",
+        meeting.id,
+        meeting.starts_at.timestamp()
+    );
+    if let Err(e) = crate::mail::enqueue(
+        state,
+        crate::mail::Outgoing {
+            org_id,
+            purpose: crate::mail::Purpose::MeetingInvitation,
+            to: email,
+            subject: &assunto,
+            body: &corpo,
+            dedupe_key: Some(&chave),
+            calendar: Some(crate::mail::Calendar {
+                ics: &ics,
+                method: MailCalendarMethod::Cancel,
+            }),
+        },
+    )
+    .await
+    {
+        tracing::warn!(meeting = %meeting.id, error = ?e, "cancelamento externo não foi para a fila");
     }
 }
 

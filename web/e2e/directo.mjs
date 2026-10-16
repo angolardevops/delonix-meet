@@ -7,6 +7,11 @@
 // é que o servidor ACEITA a ligação e arranca o processo, o que é o limite do
 // que se pode afirmar sem uma plataforma externa.
 //
+// E NÃO se prova o codificador. O runner do CI não tem ffmpeg: o servidor
+// recusa a emissão ANTES de o codificador arrancar, portanto nada do caminho
+// de codificação corre aqui. Mede-se só qual dos dois seria escolhido (ver a
+// nota «codificador:» na saída).
+//
 // Uso:  BASE=http://127.0.0.1:5180 node e2e/directo.mjs
 import { chromium } from '@playwright/test'
 import { criarConta, entrar } from './sessao.mjs'
@@ -36,6 +41,32 @@ const painel = page.locator('[data-studio="directo"]')
 ok('o painel do directo aparece', (await painel.count()) > 0 && texto('directo.titulo').test((await painel.textContent()) ?? ''))
 ok('o browser sabe codificar H.264',
    await page.evaluate(() => MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')))
+
+// QUAL dos dois codificadores este browser usaria. O adaptativo (WebCodecs) é
+// o que baixa o débito quando a rede aperta; o `MediaRecorder` é o recuo.
+//
+// Isto MEDE-SE e não se assume, porque o resto deste teste não o prova: o
+// runner do CI não tem ffmpeg, o servidor recusa a emissão antes de o
+// codificador chegar a arrancar, e um «tudo verde» aqui não diz nada sobre o
+// caminho novo. O que esta linha diz é se ele SERIA tomado — nem mais.
+const codec = await page.evaluate(async () => {
+  const g = globalThis
+  if (typeof g.VideoEncoder !== 'function' || typeof g.AudioEncoder !== 'function' || typeof g.MediaStreamTrackProcessor !== 'function') {
+    return { api: false, codec: '' }
+  }
+  for (const c of ['avc1.640028', 'avc1.4d4028', 'avc1.42e028']) {
+    try {
+      const r = await g.VideoEncoder.isConfigSupported({
+        codec: c, width: 1920, height: 1080, framerate: 30, bitrate: 5_000_000, latencyMode: 'realtime', avc: { format: 'avc' },
+      })
+      if (r.supported) return { api: true, codec: c }
+    } catch { /* uma configuração que não sabe descrever é «não» */ }
+  }
+  return { api: true, codec: '' }
+})
+console.log(`  nota  codificador: WebCodecs ${codec.api ? 'presente' : 'AUSENTE'}` +
+            `, H.264 ${codec.codec || 'nenhum perfil aceite — recua para o MediaRecorder'}`)
+ok('o browser diz qual dos dois codificadores usaria', typeof codec.api === 'boolean')
 
 // Os destinos são da ORGANIZAÇÃO e vêm do servidor (ADR em `destinosGuardados.ts`):
 // uma organização nova não tem nenhum, e é o anfitrião que cria o primeiro.

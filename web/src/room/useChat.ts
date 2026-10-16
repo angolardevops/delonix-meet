@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { roomChatHistory } from '../api'
-import { participanteLocal } from '../convidado'
+import { participanteLocal, souConvidado } from '../convidado'
 import { comConfirmada, comEnviada, comHistorico, comReaccoes, comRecebida, type ChatMsg, type HistoricoChat } from './chatState'
 import type { RoomCore } from './useRoomCore'
 
@@ -49,6 +49,9 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
       // Histórico ao entrar (as ÚLTIMAS 200, com fios e reacções): melhor
       // esforço, não bloqueia a sala.
       signal.on('joined', () => {
+        // Um convidado não lê o histórico guardado (a rota pede conta): vê o
+        // que passar ao vivo a partir do momento em que entrou.
+        if (souConvidado()) return
         void roomChatHistory(code)
           .then((history) => setMessages((live) => comHistorico(live, history as HistoricoChat[], participanteLocal().id ?? undefined)))
           .catch(() => {})

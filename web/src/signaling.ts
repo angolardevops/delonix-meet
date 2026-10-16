@@ -70,6 +70,8 @@ export type ServerMsg =
   | { type: 'recording'; from: string; username: string; active: boolean }
   | { type: 'transcript'; from: string; username: string; text: string }
   | { type: 'transcript-interim'; from: string; username: string; text: string }
+  /** Línguas de dobragem activas na sala, e o código de uma recusa (ADR-0030). */
+  | { type: 'dub-languages'; langs: string[]; error?: string }
   | { type: 'transcription'; on: boolean; by: string }
   | { type: 'waiting' }
   | { type: 'waiting-join'; peer: PeerInfo }
@@ -120,6 +122,10 @@ export type ClientMsg =
   | { type: 'recording'; active: boolean }
   | { type: 'transcript'; text: string }
   | { type: 'transcript-interim'; text: string }
+  /** Que língua de dobragem ESTE dispositivo quer ouvir (`null` = original). */
+  | { type: 'dub-listen'; lang: string | null }
+  /** Só o anfitrião: liga ou desliga uma língua NA SALA. */
+  | { type: 'dub-language'; lang: string; on: boolean }
   | { type: 'transcription-toggle'; on: boolean }
   | { type: 'admit'; to: string }
   | { type: 'deny'; to: string }

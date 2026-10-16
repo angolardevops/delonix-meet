@@ -1,5 +1,5 @@
 //! Inventário de captura de TV por HDMI (RFC-0002, Fase 1; ADR-0031; migração
-//! 0121) — adaptador HTTP + Postgres. As regras de forma, e a identidade de
+//! 0123) — adaptador HTTP + Postgres. As regras de forma, e a identidade de
 //! uma entrada, estão em `delonix_meet_domain::content::tv_capture`.
 //!
 //! Duas superfícies, dois públicos (ADR-0004 §4):

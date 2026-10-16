@@ -198,6 +198,16 @@ export default {
     remover: 'Remover {{nome}}',
     erro: 'A pesquisa de pessoas falhou.',
   },
+  externos: {
+    titulo: 'Convidados de fora',
+    ajuda: 'Endereços sem conta aqui. Cada um recebe um convite com o evento para a agenda.',
+    placeholder: 'maria@outra-empresa.ao',
+    adicionar: 'Adicionar convidado de fora',
+    remover: 'Tirar {{email}}',
+    invalido: 'Esse endereço não parece um email.',
+    repetido: 'Esse endereço já está na lista.',
+    demasiados: 'No máximo {{max}} convidados de fora por reunião.',
+  },
   conflitos: {
     horaJaPassou: 'Esta hora já passou: a reunião fica guardada, mas não aparece em «Próximas reuniões».',
     titulo: 'Conflitos e capacidade',
