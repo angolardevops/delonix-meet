@@ -7,9 +7,19 @@
 //! Fila cheia: descarta-se e conta-se (`chat_persist_dropped_total`). A sala
 //! recebeu a mensagem na mesma; perde-se só o histórico.
 //!
-//! Retenção: a migração 0018 promete o chat «até ao fim do dia (UTC) após a
-//! última mensagem». Até aqui nada escrevia na tabela; agora que escreve, a
-//! varredura (`retention_sweep`) cumpre essa promessa.
+//! **Retenção — mudou a 2026-10-14, por decisão do dono.** A migração 0018
+//! prometia o chat «até ao fim do dia (UTC) após a última mensagem», e era isso
+//! que a varredura fazia quando a organização não definia nada. Agora **sem
+//! retenção definida o chat FICA**: a omissão deixou de apagar.
+//!
+//! Porquê: um chat que morre ao fim do dia não serve de histórico, e sem
+//! histórico não há canais persistentes (P3 do plano de paridade) — era a
+//! lacuna nº6 do levantamento de 2026-10-13, e a que o Teams usa para vender.
+//!
+//! **O efémero continua a existir, explícito:** `organizations.chat_retention_days`
+//! (0 a 3650) manda sempre, e a consola passou a oferecê-lo — `0` apaga na
+//! varredura seguinte, `1` ao fim de um dia. Quem queria o comportamento antigo
+//! põe o número; o que mudou foi só o que acontece a quem nunca escolheu.
 
 use std::sync::Arc;
 
@@ -200,15 +210,11 @@ pub async fn retention_sweep(state: &crate::AppState) -> Result<u64, sqlx::Error
         };
         let expirou = match dias {
             Some(d) => last_at + chrono::Duration::days(d as i64) <= agora,
-            None => {
-                let fim_do_dia = last_at
-                    .date_naive()
-                    .and_hms_opt(0, 0, 0)
-                    .expect("meia-noite existe sempre")
-                    .and_utc()
-                    + chrono::Duration::days(1);
-                fim_do_dia <= agora
-            }
+            // SEM RETENÇÃO DEFINIDA NÃO SE APAGA (2026-10-14). Era aqui que
+            // estava o «fim do dia» da migração 0018: a varredura decidia por
+            // quem nunca escolheu, e isso tornava o chat inútil como histórico.
+            // Apagar passa a ser sempre uma escolha escrita.
+            None => false,
         };
         if expirou {
             a_apagar.push(room_id);

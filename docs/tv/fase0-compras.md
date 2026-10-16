@@ -78,6 +78,10 @@ echo 'scan' | cec-client -s -d 1          # o descodificador responde?
 #     (python-broadlink: `broadlink_cli --learn`, depois `--send`)
 ```
 
+Os comandos acima estão automatizados em [`scripts/tv-fase0-medir.sh`](../../scripts/tv-fase0-medir.sh),
+com o protocolo em [fase0-guiao.md](fase0-guiao.md) — incluindo os três passos que o script não pode
+dar (olhar a amostra, trocar de porta, filmar o zapping).
+
 **Resultado da Fase 0 a escrever aqui mesmo, em `docs/tv/`:** marca e modelo do descodificador, se
 dá imagem, se responde à sintonia e por que caminho, os modos reais do capturador, e quantas
 entradas simultâneas antes de perder frames. Sem esses cinco números, as Fases 1–4 não arrancam.

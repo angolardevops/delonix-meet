@@ -2002,3 +2002,216 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* O tally de uma tira da mesa de som: a fonte deste canal está no ar ou em pré. */
+.tv-tira__tally {
+  padding: 1px 5px;
+  border-radius: var(--r-2);
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+}
+.tv-tira__tally.is-pgm {
+  background: var(--record);
+}
+.tv-tira__tally.is-pre {
+  background: var(--success);
+}
+
+/* As teclas de efeito, ao pé das tiras da mesa. */
+.tv-efeitos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  min-width: 190px;
+  align-self: flex-start;
+}
+.tv-efeitos__teclas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.tv-tecla {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 56px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  overflow: hidden;
+}
+.tv-tecla.is-livre {
+  border-style: dashed;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px;
+  cursor: pointer;
+}
+.tv-tecla.is-livre input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.tv-tecla.is-on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.tv-tecla__disparo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 6px 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tv-tecla__atalho {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.tv-tecla__nome {
+  font-size: 10px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tv-tecla__pe {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 4px 4px 6px;
+}
+.tv-tecla__ciclo {
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  padding: 1px 5px;
+  cursor: pointer;
+}
+.tv-tecla__ciclo.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* A mesa física, por baixo das teclas de efeito. */
+.tv-fisica {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+}
+.tv-fisica__lista {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Escolher um ficheiro de vídeo como fonte, e o transporte dele. */
+.tv-ficheiro {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-2);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tv-ficheiro input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.tv-transporte {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 4px;
+}
+
+/* A coluna da direita da mesa de som leva, por cima do inspector, os painéis
+   do estúdio (bastidores, efeitos, mesa física). São MAIS ALTOS do que o ecrã
+   quando há um canal escolhido, por isso esta coluna — e só esta — rola.
+   Medido no browser a 2026-10-14: com os painéis como TERCEIRA coluna da
+   grelha (que só tem duas), o INSPECTOR era empurrado para uma segunda linha,
+   1072 px de largo e 64 px de alto, por baixo das tiras. */
+.tv-som .tv-col--dir {
+  overflow-y: auto;
+}
+
+/* Falar com os bastidores: premir e segurar. */
+.tv-bastidores {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+}
+.tv-bastidores.is-on {
+  border-color: var(--warning, var(--accent));
+  background: color-mix(in srgb, var(--warning, var(--accent)) 12%, var(--surface-2));
+}
+.tv-bastidores__botao {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+.tv-bastidores__botao svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+.tv-bastidores__botao .tv-mono-9 {
+  margin-left: auto;
+  color: var(--muted);
+}
+.tv-bastidores.is-on .tv-bastidores__botao {
+  border-color: var(--warning, var(--accent));
+  color: var(--warning, var(--accent));
+}
+.tv-selo--bastidores {
+  background: var(--warning, var(--accent));
+  color: #000;
+}

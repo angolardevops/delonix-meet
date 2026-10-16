@@ -63,7 +63,7 @@ export default function Iluminacao({ s, c }: PropsDoEcra) {
     <div className="dx-stage tv" data-tv-ecra="iluminacao">
       <TopoTv titulo={t('tv.luz.titulo')} onVoltar={() => c.onNavegar(null)}>
         <span className="tv-chip">{t('tv.luz.semAparelhos')}</span>
-        <SelosDoAr c={c} destinosNoSelo={false} />
+        <SelosDoAr c={c} destinosNoSelo={false} bastidores={s.aFalarComBastidores} />
         <Espaco />
         <span className="tv-selo tv-selo--espera" data-tv="agente-luz" title={t('tv.aguardarServidor')}>
           {t('tv.luz.semAgente')}
