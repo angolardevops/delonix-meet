@@ -1,7 +1,13 @@
 /**
- * Domínio e retenção (PATCH /api/orgs/:id). A retenção só apaga GRAVAÇÕES
- * (`recorder.rs`); o texto não promete retenção de chat nem de auditoria,
- * que não existe.
+ * Domínio e retenção (PATCH /api/orgs/:id). São DUAS retenções, e fazem coisas
+ * diferentes: a primeira apaga GRAVAÇÕES (`recorder.rs`), a segunda apaga o
+ * CHAT das salas (`room_chat.rs`). A de auditoria não existe, e o texto não a
+ * promete.
+ *
+ * **O campo do chat vazio significa «fica»** — é a omissão desde 2026-10-14, por
+ * decisão do dono. Até aí a varredura apagava ao fim do dia por quem nunca
+ * escolhera, e um chat que morre ao fim do dia não serve de histórico. Quem
+ * quer efémero escreve `0` (apaga na varredura seguinte).
  *
  * As quotas (grupos/salas/reuniões) SAÍRAM do formulário: são o plano que a
  * PLATAFORMA vende, não política de tenant (auditoria de 2026-10-08) — o
@@ -21,6 +27,11 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
   const { t } = useTranslation()
   const [domain, setDomain] = useState(org.domain ?? '')
   const [retention, setRetention] = useState(String(org.retention_days ?? 0))
+  // Vazio = «fica até alguém mandar apagar». Não há 0 implícito aqui, de
+  // propósito: 0 apaga, e apagar tem de ser escrito.
+  const [chatRetention, setChatRetention] = useState(
+    org.chat_retention_days == null ? '' : String(org.chat_retention_days),
+  )
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
@@ -28,19 +39,23 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
   useEffect(() => {
     setDomain(org.domain ?? '')
     setRetention(String(org.retention_days ?? 0))
-  }, [org.id, org.domain, org.retention_days])
+    setChatRetention(org.chat_retention_days == null ? '' : String(org.chat_retention_days))
+  }, [org.id, org.domain, org.retention_days, org.chat_retention_days])
 
   const days = Number(retention)
   const retentionOk = retention.trim() !== '' && Number.isInteger(days) && days >= 0 && days <= 3650
+  const chatDays = chatRetention.trim() === '' ? null : Number(chatRetention)
+  const chatOk =
+    chatDays === null || (Number.isInteger(chatDays) && chatDays >= 0 && chatDays <= 3650)
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (!retentionOk) return
+    if (!retentionOk || !chatOk) return
     setBusy(true)
     setErr('')
     setSaved(false)
     try {
-      await updateOrgSettings(org.id, domain.trim(), days)
+      await updateOrgSettings(org.id, domain.trim(), days, chatDays)
       setSaved(true)
       onSaved()
     } catch (x) {
@@ -78,6 +93,30 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
             value={retention}
             aria-invalid={!retentionOk}
             onChange={(e) => setRetention(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={t('org.definicoes.retencaoChat')}
+          htmlFor="org-set-chat-retention"
+          hint={
+            chatDays === null
+              ? t('org.definicoes.retencaoChatFica')
+              : chatDays === 0
+                ? t('org.definicoes.retencaoChatEfemero')
+                : t('org.definicoes.retencaoChatDica', { count: chatDays })
+          }
+          error={chatOk ? undefined : t('org.definicoes.retencaoInvalida')}
+        >
+          <TextInput
+            id="org-set-chat-retention"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={3650}
+            value={chatRetention}
+            placeholder={t('org.definicoes.retencaoChatVazio')}
+            aria-invalid={!chatOk}
+            onChange={(e) => setChatRetention(e.target.value)}
           />
         </Field>
         <div className="org-form__section">

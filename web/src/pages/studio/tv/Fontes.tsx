@@ -49,7 +49,7 @@ export default function Fontes({ s, c }: PropsDoEcra) {
         <span className="tv-chip" data-tv="contagem-fontes">
           {t('tv.fontes.contagem', { count: lista.length, noAr: noAr.size })}
         </span>
-        <SelosDoAr c={c} destinosNoSelo={false} />
+        <SelosDoAr c={c} destinosNoSelo={false} bastidores={s.aFalarComBastidores} />
         <Espaco />
         <BotaoTv disabled={aProcurar} data-tv="procurar" onClick={() => void procurar()}>
           {t('tv.fontes.procurar')}
@@ -92,6 +92,30 @@ export default function Fontes({ s, c }: PropsDoEcra) {
                 </ul>
               )}
               {s.erroFonte && <p className="tv-erro">{s.erroFonte}</p>}
+            </section>
+
+            <section className="tv-ligacao" data-tv="ligacao-ficheiro">
+              <div className="tv-ligacao__titulo">
+                <Icon name="film" />
+                <span>{t('tv.fontes.ficheiro')}</span>
+              </div>
+              <p className="tv-nota">{t('tv.fontes.ficheiroNota')}</p>
+              <label className="tv-ficheiro">
+                <span>{t('tv.fontes.escolherFicheiro')}</span>
+                <input
+                  type="file"
+                  accept="video/*,audio/*"
+                  data-tv="escolher-ficheiro"
+                  aria-label={t('tv.fontes.escolherFicheiro')}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    e.target.value = ''
+                    if (f) s.adicionarFicheiro(f)
+                  }}
+                />
+              </label>
+              {/* O que um browser NÃO pode fazer, dito antes de alguém o procurar. */}
+              <p className="tv-nota" data-tv="sem-fonte-de-browser">{t('tv.fontes.semFonteDeBrowser')}</p>
             </section>
 
             <section className="tv-ligacao" data-tv="ligacao-app">
@@ -357,6 +381,8 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
               </span>
             </div>
           )}
+          {f.tipo === 'camara' && <SomDaCamara s={s} id={id} />}
+          {f.tipo === 'ficheiro' && <Transporte s={s} id={id} />}
           {!local && f.tipo === 'participante' && (
             <div className="tv-kv">
               <span>{t('tv.fontes.estadoTelefone')}</span>
@@ -375,6 +401,73 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
         </div>
       </Cartao>
     </>
+  )
+}
+
+/**
+ * O TRANSPORTE de um ficheiro: tocar, pausar, voltar ao princípio, ciclo.
+ *
+ * Fica no detalhe da fonte e não na mesa de corte de propósito: rolar um VT é
+ * preparar uma fonte, e quem corta ao ar carrega na tecla do barramento como
+ * em qualquer outra.
+ */
+function Transporte({ s, id }: { s: PropsDoEcra['s']; id: string }) {
+  const { t } = useTranslation()
+  const v = s.registo.video(id)
+  if (!v) return null
+  const tempo = (x: number) => (Number.isFinite(x) ? `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}` : '—')
+  return (
+    <div className="tv-transporte" data-tv="transporte">
+      <BotaoTv mini data-tv="tocar" onClick={() => s.comandarFicheiro(id, v.paused ? 'tocar' : 'pausar')}>
+        {v.paused ? t('tv.fontes.tocar') : t('tv.fontes.pausar')}
+      </BotaoTv>
+      <BotaoTv mini data-tv="inicio" onClick={() => s.comandarFicheiro(id, 'inicio')}>
+        {t('tv.fontes.inicio')}
+      </BotaoTv>
+      <button
+        type="button"
+        className={cx('tv-tecla__ciclo', v.loop && 'is-on')}
+        aria-pressed={v.loop}
+        onClick={() => s.comandarFicheiro(id, 'ciclo')}
+      >
+        {t('tv.fontes.ciclo')}
+      </button>
+      <span className="tv-dir tv-mono-9">
+        {tempo(v.currentTime)} / {tempo(v.duration)}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * O som DESTA câmara: a linha que faltava entre as Fontes e a mesa de som.
+ *
+ * Uma capturadora HDMI, uma webcam com microfone ou uma mesa de som ligada por
+ * USB expõem duas entradas com o mesmo `groupId` — uma de imagem e uma de som.
+ * A imagem entrava pelas Fontes e o som ficava para trás: a mesa listava todos
+ * os microfones do sistema sem dizer qual era o daquela câmara.
+ *
+ * Leva-se à mesa por um clique, não sozinho: abrir um microfone é um pedido ao
+ * browser e é som que passa a ir ao ar.
+ */
+function SomDaCamara({ s, id }: { s: PropsDoEcra['s']; id: string }) {
+  const { t } = useTranslation()
+  const mic = s.microfoneDaFonte(id)
+  if (!mic) return null
+  const naMesa = !!s.som?.lista().some((c) => c.id === `mic:${mic.deviceId || 'omissao'}`)
+  return (
+    <div className="tv-kv">
+      <span>{t('tv.fontes.somDaCamara')}</span>
+      {naMesa ? (
+        <span className="tv-ok" data-tv="som-da-camara-na-mesa">
+          {t('tv.fontes.somNaMesa')}
+        </span>
+      ) : (
+        <BotaoTv mini data-tv="som-da-camara" onClick={() => void s.levarSomDaFonteAMesa(id)}>
+          {t('tv.fontes.levarSomAMesa')}
+        </BotaoTv>
+      )}
+    </div>
   )
 }
 

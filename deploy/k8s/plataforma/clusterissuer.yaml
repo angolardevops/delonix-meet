@@ -4,10 +4,19 @@
 # emissores. Em `partilhado` o cert-manager e o emissor são de quem é dono do
 # cluster e este ficheiro não é aplicado. Medido a 2026-10-11 no `delonix-lda`
 # (que é `partilhado`): o único ClusterIssuer é o `delonix-letsencrypt`, e o
-# cluster não tem IngressClass nenhuma — serve por Gateway API. O
-# `values-production.yaml` do chart pede `letsencrypt-prod` pelo nome, que ali
-# não existe: em `partilhado` o caminho de entrada é do operador, e nenhum
-# Certificate foi emitido por este nome.
+# cluster não tem IngressClass nenhuma — serve por Gateway API.
+#
+# E EM `partilhado` O CHART NÃO PEDE EMISSOR NENHUM, nem precisa. Medido a
+# 2026-10-13 no `delonix-lda`: quem termina o TLS é o listener `https` do
+# Gateway `delonix` (ns `delonix-system`), com DOIS certificateRefs —
+# `delonix-wildcard-tls` (8 nomes `.com`, entre eles `meet.ngolacloud.com`) e
+# `delonix-wildcard-tls-dns01` (`*.ngolacloud.ao`, `ngolacloud.ao`). Os dois
+# Certificate são do operador do cluster e apontam ao emissor dele,
+# `delonix-letsencrypt` (DNS-01 rfc2136 para o `.ao`, HTTP-01 por
+# `gatewayHTTPRoute` para o resto). O Meet cola-se a esse listener
+# (`gateway.mode: attach`, `sectionName: https`) e consome o segredo — não
+# emite nada. Os dois nomes coexistem sem conflito: `letsencrypt-prod` é deste
+# ficheiro e do modo `dedicado`, `delonix-letsencrypt` é do operador.
 #
 # O contacto do ACME NÃO se edita aqui: o `instalar.sh` exige `ACME_EMAIL` e
 # substitui-o nos dois emissores. O valor abaixo é o que ele procura, por isso

@@ -212,11 +212,16 @@ gateway:
     # em claro, enquanto `http://console.ngolacloud.ao/` devolvia 301. Preso ao
     # `https`, o :80 volta a ser do redireccionamento da plataforma.
     sectionName: https
-  # Sem `tls` nenhum, de propósito: quem termina o TLS é o listener do Gateway
-  # da plataforma, com o certificado `delonix-wildcard-tls` — que já cobre
-  # `meet.ngolacloud.com` e `meet.ngolacloud.ao` (18 nomes, verificado a
-  # 2026-10-11). Pedir aqui um certificado novo era um segundo desafio ACME
-  # para um nome que já está emitido.
+  # Sem `tls` nenhum, de propósito: quem termina o TLS é o listener `https` do
+  # Gateway da plataforma, e ele leva DOIS certificateRefs — re-medido a
+  # 2026-10-13: `delonix-wildcard-tls` (8 nomes `.com`, entre eles
+  # `meet.ngolacloud.com`) e `delonix-wildcard-tls-dns01` (`*.ngolacloud.ao`,
+  # `ngolacloud.ao`). São dois certificados e não um de 18 nomes: o SNI escolhe.
+  # Os dois são do operador do cluster e saem do emissor dele,
+  # `delonix-letsencrypt`. Pedir aqui um certificado novo era um segundo desafio
+  # ACME para nomes que já estão emitidos — e por isso também NÃO se põe
+  # `clusterIssuer` nenhum neste perfil: o `letsencrypt-prod` que o chart pedia
+  # até ao 0c6d6b1f não existe neste cluster.
   affinity:
     # A `BackendTrafficPolicy` com ConsistentHash por `room` — é o que mantém
     # a invariante do ADR-0001 e o portão recusa `none` em produção.
