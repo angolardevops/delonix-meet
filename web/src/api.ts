@@ -3499,3 +3499,114 @@ export const listOauthGrants = () => request<OAuthGrant[]>('/api/users/me/oauth-
 /** Retirar o consentimento TERMINA as sessões do agente — morre no mesmo instante. */
 export const revokeOauthGrant = (grantId: string) =>
   request<void>(`/api/users/me/oauth-grants/${encodeURIComponent(grantId)}`, { method: 'DELETE' })
+
+// ---------- Estúdio de TV: estúdios, códigos de emparelhamento e fontes ----------
+// O servidor serve isto desde o ADR-0014 (`server/src/studio.rs`): o Estúdio
+// emite um código `XXXX-XXXX` de vida curta, o telefone resgata-o e recebe a
+// SALA e um token de fonte. O cartão «Phone as a camera» dizia «a aguardar
+// servidor» porque o web nunca foi ligado — o servidor já cá estava.
+
+export interface Studio {
+  id: string
+  name: string
+  room_code: string
+  created_at: string
+}
+
+/** O código só aparece NESTA resposta — depois disto a base só tem o hash. */
+export interface NewPairingCode {
+  id: string
+  /** `XXXX-XXXX`, em Crockford base32. */
+  code: string
+  expires_at: string
+  number: number | null
+  label: string
+  max_attempts: number
+  room_code: string
+}
+
+export interface PairingCode {
+  id: string
+  number: number | null
+  label: string
+  expires_at: string
+  attempts: number
+  max_attempts: number
+  consumed_at: string | null
+  /** `active` · `consumed` · `expired` · `burned`. */
+  state: 'active' | 'consumed' | 'expired' | 'burned'
+  created_at: string
+}
+
+/** O que o telefone recebe ao resgatar: onde entrar e com que credencial. */
+export interface Pairing {
+  source_id: string
+  studio_id: string
+  number: number
+  ws_path: string
+  label: string
+  room_code: string
+  source_token: string
+  expires_at: string
+  /** STUN/TURN: uma fonte não tem conta para pedir `/api/ice-servers`. */
+  ice_servers: RTCConfiguration
+}
+
+/** Devolve o ENVELOPE (`{items}`), como as outras listagens — não um array. */
+export const listStudios = (orgId: string) =>
+  request<{ items: Studio[]; next_page_token?: string }>(`/api/orgs/${orgId}/studios`)
+
+export const createStudio = (orgId: string, name: string) =>
+  request<Studio>(`/api/orgs/${orgId}/studios`, { method: 'POST', body: JSON.stringify({ name }) })
+
+/** Uma câmara emparelhada: existe na base mesmo com o telefone desligado. */
+export interface StudioSource {
+  id: string
+  studio_id: string
+  number: number
+  label: string
+  /** `phone_app` — por agora o único. */
+  kind: string
+  device: { model: string; platform: string; app_version: string }
+  paired_at: string
+  revoked_at: string | null
+  last_seen_at: string | null
+  /** `true` enquanto o `/ws` da fonte estiver aberto. */
+  connected: boolean
+  tally: string
+}
+
+export const listStudioSources = (orgId: string, studioId: string) =>
+  request<{ items: StudioSource[]; next_page_token?: string }>(
+    `/api/orgs/${orgId}/studios/${studioId}/sources`,
+  )
+
+export const revokeStudioSource = (orgId: string, studioId: string, sourceId: string) =>
+  requestEmpty(`/api/orgs/${orgId}/studios/${studioId}/sources/${encodeURIComponent(sourceId)}`, {
+    method: 'DELETE',
+  })
+
+export const listPairingCodes = (orgId: string, studioId: string) =>
+  request<{ items: PairingCode[]; next_page_token?: string }>(
+    `/api/orgs/${orgId}/studios/${studioId}/pairing-codes`,
+  )
+
+export const createPairingCode = (orgId: string, studioId: string, body: { label?: string; number?: number } = {}) =>
+  request<NewPairingCode>(`/api/orgs/${orgId}/studios/${studioId}/pairing-codes`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const revokePairingCode = (orgId: string, studioId: string, codeId: string) =>
+  requestEmpty(`/api/orgs/${orgId}/studios/${studioId}/pairing-codes/${encodeURIComponent(codeId)}`, {
+    method: 'DELETE',
+  })
+
+/**
+ * Resgate — do lado do TELEFONE, que não tem conta. É anónimo de propósito, e
+ * o servidor responde o mesmo (`studio.pairing_invalid`) a código inexistente,
+ * expirado, já usado, queimado ou com segredo errado: quem tenta não aprende
+ * nada com a recusa.
+ */
+export const redeemPairingCode = (code: string, device: { model?: string; platform?: string; app_version?: string } = {}) =>
+  request<Pairing>('/api/studio-pairings', { method: 'POST', body: JSON.stringify({ code, device }) })

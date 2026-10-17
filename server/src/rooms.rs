@@ -412,7 +412,7 @@ pub async fn list_my_rooms(
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 403, description = "Quem pede não é o dono da sala.", body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
-        (status = 409, description = "Tem gravações, tem reunião futura na agenda, ou é a sala pessoal.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "Tem gravações, tem reunião futura na agenda, é a sala de um estúdio, ou é a sala pessoal.", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn delete_room(
@@ -451,6 +451,18 @@ pub async fn delete_room(
         )
         .into());
     }
+    // A sala de um ESTÚDIO não se apaga por aqui: o `studios_room_id_fkey` é
+    // ON DELETE CASCADE, e apagá-la levava atrás, em silêncio, o estúdio, os
+    // códigos de emparelhamento e TODAS as câmaras emparelhadas. Aconteceu a
+    // 2026-10-14 numa arrumação de salas: cinco salas apagadas, dois estúdios
+    // desaparecidos, e nada na auditoria a dizer porquê.
+    if tem_estudio(&state.db, room.id).await? {
+        return Err(DomainError::conflict(
+            "room.has_studio",
+            "a sala é de um estúdio: apaga o estúdio primeiro — apagá-la levaria as câmaras emparelhadas",
+        )
+        .into());
+    }
     sqlx::query("DELETE FROM rooms WHERE id = $1")
         .bind(room.id)
         .execute(&state.db)
@@ -464,6 +476,15 @@ pub async fn delete_room(
 async fn e_pessoal(db: &sqlx::PgPool, room_id: Uuid) -> Result<bool, ApiError> {
     Ok(
         sqlx::query_scalar::<_, bool>("SELECT is_personal FROM rooms WHERE id = $1")
+            .bind(room_id)
+            .fetch_one(db)
+            .await?,
+    )
+}
+
+async fn tem_estudio(db: &sqlx::PgPool, room_id: Uuid) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM studios WHERE room_id = $1)")
             .bind(room_id)
             .fetch_one(db)
             .await?,

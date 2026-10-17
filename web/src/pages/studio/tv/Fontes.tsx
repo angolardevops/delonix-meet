@@ -17,6 +17,8 @@ import { Icon } from '../../../ui/icons'
 import { cx, IconButton } from '../../../ui/kit'
 import { type PropsDoEcra, SelosDoAr } from './comum'
 import { bloquearAeAf, ControlosDaCamara, podeBloquear, podeFocarUmaVez } from './ControlosDaCamara'
+import { ehDireita, GEOMETRIA_NEUTRA, rodar } from '../../../studio/tv/geometria'
+import { Emparelhar } from './Emparelhar'
 import { BotaoTv, Cabeca, Cartao, Espaco, Miniatura, TopoTv, useTique } from './pecas'
 
 export default function Fontes({ s, c }: PropsDoEcra) {
@@ -94,6 +96,8 @@ export default function Fontes({ s, c }: PropsDoEcra) {
               {s.erroFonte && <p className="tv-erro">{s.erroFonte}</p>}
             </section>
 
+            <Emparelhar />
+
             <section className="tv-ligacao" data-tv="ligacao-ficheiro">
               <div className="tv-ligacao__titulo">
                 <Icon name="film" />
@@ -116,15 +120,6 @@ export default function Fontes({ s, c }: PropsDoEcra) {
               </label>
               {/* O que um browser NÃO pode fazer, dito antes de alguém o procurar. */}
               <p className="tv-nota" data-tv="sem-fonte-de-browser">{t('tv.fontes.semFonteDeBrowser')}</p>
-            </section>
-
-            <section className="tv-ligacao" data-tv="ligacao-app">
-              <div className="tv-ligacao__titulo">
-                <Icon name="phone" />
-                <span>{t('tv.fontes.app')}</span>
-                <span className="tv-dir tv-mono-85">{t('tv.aguardarServidorCurto')}</span>
-              </div>
-              <p className="tv-nota">{t('tv.fontes.appNota')}</p>
             </section>
 
             <section className={cx('tv-ligacao', participantes > 0 && 'is-on')}>
@@ -267,7 +262,7 @@ function CartaoDaFonte({
       }}
     >
       <span className="tv-fonte__img">
-        <Miniatura imagem={() => s.registo.imagem(id)} ajuste={s.registo.ajuste(id)} largura={384} altura={216} />
+        <Miniatura imagem={() => s.registo.imagem(id)} ajuste={s.registo.ajuste(id)} geometria={() => s.registo.geometria(id)} largura={384} altura={216} />
         <span className="tv-mini__num">{numero <= 6 ? numero : ''}</span>
         <span className="tv-mini__tally">{t(`tv.tally.${tally}`)}</span>
         <span className="tv-fonte__medidas">
@@ -301,6 +296,12 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
   const local = f.tipo === 'camara'
   const [bloqueado, setBloqueado] = useState(false)
   const [focado, setFocado] = useState('')
+  const [, forcar] = useState(0)
+  const geo = s.registo.geometria(id)
+  const mudarGeo = (g: typeof geo) => {
+    s.registo.definirGeometria(id, g)
+    forcar((n) => n + 1)
+  }
   const valores = useRef<HTMLDivElement>(null)
   const ultimo = useRef(0)
   useTique((agora) => {
@@ -357,6 +358,37 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
           {focado && <span className="tv-mono-85">{focado}</span>}
         </Cartao>
       )}
+
+      <Cartao como="section" style={{ gap: 7 }} data-tv="enquadramento">
+        <Cabeca>
+          <h3 className="tv-t2">{t('tv.fontes.enquadramento')}</h3>
+          <span className="tv-dir tv-mono-85">{t('tv.fontes.grausN', { n: geo.rotacao })}</span>
+        </Cabeca>
+        <p className="tv-nota">{t('tv.fontes.enquadramentoNota')}</p>
+        <Cabeca style={{ gap: 5 }}>
+          <BotaoTv style={{ flex: 1, padding: 5, fontSize: 10 }} onClick={() => mudarGeo(rodar(geo, -1))}>
+            {t('tv.fontes.rodarEsquerda')}
+          </BotaoTv>
+          <BotaoTv style={{ flex: 1, padding: 5, fontSize: 10 }} onClick={() => mudarGeo(rodar(geo, 1))}>
+            {t('tv.fontes.rodarDireita')}
+          </BotaoTv>
+          <BotaoTv
+            style={{ flex: 1, padding: 5, fontSize: 10 }}
+            aria-pressed={geo.espelho}
+            variante={geo.espelho ? 'forte' : undefined}
+            onClick={() => mudarGeo({ ...geo, espelho: !geo.espelho })}
+          >
+            {t('tv.fontes.espelhar')}
+          </BotaoTv>
+          <BotaoTv
+            style={{ flex: 1, padding: 5, fontSize: 10 }}
+            disabled={ehDireita(geo)}
+            onClick={() => mudarGeo({ ...GEOMETRIA_NEUTRA })}
+          >
+            {t('tv.fontes.endireitar')}
+          </BotaoTv>
+        </Cabeca>
+      </Cartao>
 
       <Cartao como="section" style={{ gap: 7 }}>
         <h3 className="tv-t2">{t('tv.fontes.estado')}</h3>

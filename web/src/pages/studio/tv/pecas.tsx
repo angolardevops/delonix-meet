@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { useShell } from '../../../components/shellContext'
 import type { CompositorDeAula } from '../../../studio/compositor'
 import { desenharImagem, desenharPlano, type FontesParaDesenho } from '../../../studio/tv/desenhoDaMesa'
+import type { GeometriaDaFonte } from '../../../studio/tv/geometria'
 import type { Plano } from '../../../studio/tv/mesa'
 import { DelonixSymbol } from '../../../ui/icons'
 import { cx, IconButton } from '../../../ui/kit'
@@ -193,14 +194,32 @@ export function MonitorDePlano({ fontes, plano, largura = 640, altura = 360 }: {
 }
 
 /** Miniatura de uma fonte, a ~15 fps (as miniaturas não precisam de mais). */
-export function Miniatura({ imagem, ajuste = 'cover', largura = 320, altura = 180 }: { imagem: () => HTMLVideoElement | HTMLCanvasElement | null; ajuste?: 'cover' | 'contain'; largura?: number; altura?: number }) {
+export function Miniatura({
+  imagem,
+  ajuste = 'cover',
+  largura = 320,
+  altura = 180,
+  geometria,
+}: {
+  imagem: () => HTMLVideoElement | HTMLCanvasElement | null
+  ajuste?: 'cover' | 'contain'
+  largura?: number
+  altura?: number
+  /**
+   * Função, não valor: o desenho corre a cada quadro e o cartão da fonte não
+   * volta a renderizar quando o painel de detalhe muda a rotação. Com um valor
+   * de prop, a miniatura ficava a desenhar a geometria velha — era o que
+   * fazia a rotação «não funcionar» mesmo com o estado certo guardado.
+   */
+  geometria?: () => GeometriaDaFonte
+}) {
   const ref = useRef<HTMLCanvasElement>(null)
   const ultimo = useRef(0)
   useTique((agora) => {
     if (agora - ultimo.current < 66) return
     ultimo.current = agora
     const c = ref.current?.getContext('2d')
-    if (c) desenharImagem(c, imagem(), { x: 0, y: 0, w: largura, h: altura }, ajuste)
+    if (c) desenharImagem(c, imagem(), { x: 0, y: 0, w: largura, h: altura }, ajuste, geometria?.())
   })
   return <canvas ref={ref} width={largura} height={altura} className="tv-mini__imagem" aria-hidden="true" />
 }

@@ -8,6 +8,7 @@
  */
 import { type MarcaDoPalco, desenharSimbolo } from '../desenho'
 import { rectsDoLayout } from '../palco'
+import { GEOMETRIA_NEUTRA, type GeometriaDaFonte, trocaOsLados } from './geometria'
 import { bandaDoStinger, type Plano, type QuadroDaMesa, type Rect, rectDaJanela, stingerJaTrocou } from './mesa'
 
 export type ImagemDeFonte = HTMLVideoElement | HTMLCanvasElement
@@ -17,26 +18,56 @@ export interface FontesParaDesenho {
   imagem(id: string): ImagemDeFonte | null
   /** `contain` para ecrãs e quadros (não se corta um diapositivo); `cover` para pessoas. */
   ajuste(id: string): 'cover' | 'contain'
+  /** Rotação e espelho da fonte. Opcional: sem ela, desenha-se direita. */
+  geometria?(id: string): GeometriaDaFonte
 }
 
 const dims = (f: ImagemDeFonte) =>
   f instanceof HTMLVideoElement ? { w: f.videoWidth, h: f.videoHeight } : { w: f.width, h: f.height }
 
-export function desenharImagem(c: CanvasRenderingContext2D, f: ImagemDeFonte | null, r: Rect, modo: 'cover' | 'contain'): void {
+const geoDe = (fontes: FontesParaDesenho, id: string): GeometriaDaFonte => fontes.geometria?.(id) ?? GEOMETRIA_NEUTRA
+
+export function desenharImagem(
+  c: CanvasRenderingContext2D,
+  f: ImagemDeFonte | null,
+  r: Rect,
+  modo: 'cover' | 'contain',
+  geo: GeometriaDaFonte = GEOMETRIA_NEUTRA,
+): void {
   c.fillStyle = '#0d0d0f'
   c.fillRect(r.x, r.y, r.w, r.h)
   if (!f) return
   if (f instanceof HTMLVideoElement && f.readyState < 2) return
   const { w, h } = dims(f)
   if (!w || !h) return
-  const esc = modo === 'contain' ? Math.min(r.w / w, r.h / h) : Math.max(r.w / w, r.h / h)
+  // Com um quarto de volta, o que tem de caber no rectângulo é a imagem já
+  // DEITADA: a escala calcula-se com os lados trocados. Sem isto, um telemóvel
+  // em pé rodado 90° sai cortado no `cover` e minúsculo no `contain`.
+  const [lw, lh] = trocaOsLados(geo) ? [h, w] : [w, h]
+  const esc = modo === 'contain' ? Math.min(r.w / lw, r.h / lh) : Math.max(r.w / lw, r.h / lh)
   const dw = w * esc
   const dh = h * esc
   c.save()
   c.beginPath()
   c.rect(r.x, r.y, r.w, r.h)
   c.clip()
-  c.drawImage(f, r.x + (r.w - dw) / 2, r.y + (r.h - dh) / 2, dw, dh)
+  // Origem no centro do rectângulo, e o ESPELHO aplica-se à imagem ANTES da
+  // rotação (`geometria.ts`: «como um espelho de selfie»).
+  //
+  // A ordem das CHAMADAS é a inversa disso, e é aí que isto se enganou: no
+  // canvas as transformações pós-multiplicam a matriz, logo a ÚLTIMA chamada é
+  // a primeira a actuar sobre o que se desenha. Para o espelho vir primeiro,
+  // o `scale` tem de ser chamado DEPOIS do `rotate`.
+  //
+  // Com a ordem trocada compunha-se `S·R(θ)`, que é `R(−θ)·S`: com «espelhar»
+  // ligado — o estado por omissão da câmara frontal — «rodar à direita» rodava
+  // à ESQUERDA, e 90°→270° saía ao contrário. O teste que devia apanhá-lo
+  // media a ordem das chamadas (exactamente o que não determina a geometria) e
+  // dava-lhe verde; agora compõe-se a matriz e afirma-se onde um ponto aterra.
+  c.translate(r.x + r.w / 2, r.y + r.h / 2)
+  if (geo.rotacao) c.rotate((geo.rotacao * Math.PI) / 180)
+  if (geo.espelho) c.scale(-1, 1)
+  c.drawImage(f, -dw / 2, -dh / 2, dw, dh)
   c.restore()
 }
 
@@ -46,9 +77,9 @@ export function desenharPlano(c: CanvasRenderingContext2D, plano: Plano | null, 
   if (!plano || !plano.fontes.length) return
   if (plano.layout === 'janela' && plano.fontes.length > 1) {
     const [a, b] = plano.fontes
-    desenharImagem(c, fontes.imagem(a), { x: 0, y: 0, w: W, h: H }, fontes.ajuste(a))
+    desenharImagem(c, fontes.imagem(a), { x: 0, y: 0, w: W, h: H }, fontes.ajuste(a), geoDe(fontes, a))
     const j = rectDaJanela(W, H)
-    desenharImagem(c, fontes.imagem(b), j, 'cover')
+    desenharImagem(c, fontes.imagem(b), j, 'cover', geoDe(fontes, b))
     c.strokeStyle = 'rgba(255,255,255,0.7)'
     c.lineWidth = Math.max(2, H * 0.003)
     c.strokeRect(j.x, j.y, j.w, j.h)
@@ -59,7 +90,13 @@ export function desenharPlano(c: CanvasRenderingContext2D, plano: Plano | null, 
   const pad = rects.length > 1 ? Math.round(H * 0.004) : 0
   rects.forEach((r, i) => {
     const id = plano.fontes[i]
-    desenharImagem(c, fontes.imagem(id), { x: r.x + pad, y: r.y + pad, w: r.w - pad * 2, h: r.h - pad * 2 }, fontes.ajuste(id))
+    desenharImagem(
+      c,
+      fontes.imagem(id),
+      { x: r.x + pad, y: r.y + pad, w: r.w - pad * 2, h: r.h - pad * 2 },
+      fontes.ajuste(id),
+      geoDe(fontes, id),
+    )
   })
 }
 

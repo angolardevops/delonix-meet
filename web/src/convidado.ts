@@ -13,6 +13,7 @@
  * preenchido da próxima vez — é uma conveniência, não um estado.
  */
 import { currentUser, guestJoin, iceServers, joinRoom, type GuestJoinOk, type GuestRoomView, type Room } from './api'
+import { fonteDe, salaDaFonte } from './fonteDoEstudio'
 
 export interface SessaoDeConvidado {
   code: string
@@ -121,13 +122,20 @@ export async function entrarComoConvidado(code: string, nome: string): Promise<S
  * nome — e o lugar, se ele já estava na sala, volta pelo segredo de
  * reclamação, sem nova espera.
  *
+ * Uma FONTE DE ESTÚDIO (um telefone emparelhado por código) já tem tudo no
+ * resgate, e GANHA a tudo o resto: foi emparelhada há instantes, de propósito,
+ * para ESTA sala. Sem isto, um telefone com conta entrava como pessoa e a
+ * fonte ficava `connected: false` no Estúdio — era o defeito.
+ *
  * Quem tem conta nunca entra como convidado, mesmo com um bilhete antigo
- * guardado: a conta ganha.
+ * guardado: a conta ganha ao bilhete, e a fonte ganha às duas.
  */
 export async function entrarNaSala(
   code: string,
   agora = Date.now(),
 ): Promise<[{ room: Room; room_token: string; scheduled?: boolean }, RTCConfiguration]> {
+  const f = fonteDe(code, agora)
+  if (f) return [{ room: salaDaFonte(f), room_token: f.roomToken }, f.iceServers]
   let c = currentUser() ? null : convidadoDe(code)
   if (!c) return Promise.all([joinRoom(code), iceServers()])
   if (bilheteExpirado(c, agora)) c = await entrarComoConvidado(code, c.guest.display_name)
