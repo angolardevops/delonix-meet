@@ -211,6 +211,12 @@ no_signal | protected | error` — `protected` é o caso HDCP, dito pelo nome), 
 reclamou reporta, como no `sms_message`), `attempts`, `error`, `created_at`, `claimed_at`,
 `sent_at`. Declarada em `delonix_meet_core::jobs` como as outras.
 
+**Decidido na implementação (2026-10-14):** é o **servidor** que emparelha o vídeo com o áudio, não
+o agente. O relatório traz as entradas de vídeo e, em separado, os nós de áudio com o caminho físico
+de cada um; o par decide-se aqui, pela porta (`pair_audio`). A razão é que um agente a apontar o
+áudio da porta errada daria um canal com a voz de outro descodificador — e isso não se vê a olho,
+só se ouve quando já está no ar.
+
 **O que não se cria:** nenhuma tabela de canal nova. Uma entrada liga-se a um `tv_channels` que já
 existe, e é por aí que herda nome, slug, visibilidade e retenção. Uma emissão contínua de captura é
 uma `tv_broadcast_sessions` com `live_session_id` — o mesmo plano de controlo e o mesmo *lease* com
@@ -231,12 +237,16 @@ started_by` é `NOT NULL` e uma captura 24/7 não tem pessoa por trás): precisa
   e `status=queued`. **Não** devolve «canal mudado».
 - `GET /api/orgs/{org_id}/tv/capture-inputs/{input_id}/commands` — histórico.
 
-**Agente (token `Bearer`, sem sessão):**
+**Agente (token `dlxtv_`, sem sessão).** Corrigido a 2026-10-14, na implementação: a casa já
+tem uma superfície para agentes externos — `/api/integrations/<agente>/v1/…`, onde vive o agente de
+SMS — e um prefixo `/api/tv/agent/*` seria uma quinta superfície sem razão. Fica:
 
-- `POST /api/tv/agent/inventory` — relatório completo; substitui o inventário do agente.
-- `POST /api/tv/agent/commands/claim` — reivindica um lote.
-- `POST /api/tv/agent/commands/{id}/result` — só o `claimed_by`.
-- `POST /api/tv/agent/inputs/{id}/state` — sinal, débito, erros.
+- `PUT /api/integrations/tv-agent/v1/inputs` — **substitui** o inventário da caixa (é `PUT` porque
+  substitui, como o `PUT /devices` do agente de SMS). Devolve o estado conhecido de todas as
+  entradas, incluindo o canal a que cada uma está ligada: é a configuração que o agente precisa.
+- Com a fila de sintonia (Fase 3): `POST …/commands/claim` e `POST …/commands/{id}/result`, só para
+  o `claimed_by`.
+- O estado por entrada (sinal, débito) vai no próprio relatório — não precisa de rota própria.
 
 Checklist de rota nova (`delonix-meet-api`), e as duas que só correm no CI: cada rota precisa de
 secção em `web/e2e/isolamento.mjs` com o *path* literal (`check-isolamento-cobertura`) e de
@@ -304,6 +314,7 @@ Ditas uma vez, para a decisão ser do dono e não ficar implícita:
 |---|---|---|---|
 | **0 — hardware na mesa** (sem código) | um capturador + um descodificador | `v4l2-ctl --list-formats-ext` com os modos reais; `ffmpeg -f v4l2` a gravar 60 s com áudio ALSA do mesmo aparelho; HDCP: vê-se imagem ou preto; CEC: o descodificador responde ou não | tudo o resto |
 | **1 — o sinal chega** | `tv_capture_agents`, `tv_capture_inputs`, rotas de consola e de agente, agente mínimo (inventário + publicar 1 entrada), Fase A na sala | duas orgs isoladas (teste), e uma sala com o canal visível ≥ 30 min sem queda | zapping, HLS, quotas |
+| ↳ **1a — o plano de controlo do inventário** (entregue a 2026-10-14, sem hardware) | migração 0123, `domain::content::tv_capture`, `server/src/tv_capture.rs`, as rotas acima, e o emparelhamento do áudio **no servidor** | testes contra Postgres (contrato, token uma vez, áudio pela porta, entrada que desaparece, duas orgs) e `check-isolamento-cobertura` | media: publicar, sintonizar |
 | **2 — vários e com dono** | N entradas, par vídeo+áudio reportado, quotas, estado `protected` na interface | tecto de entradas por *dock* medido e escrito; `make fitness` + os dois portões do CI | grelha |
 | **3 — sintonia** | `tv_tuner_commands` na peça comum, executor CEC e executor IR | um comando pedido na consola muda o canal **no aparelho**, filmado ou medido; e o estado diz «pedido», não «mudado» | confirmação automática do canal |
 | **4 — grelha e player** | Channel Engine + MediaMTX (fecha o ADR-0015), ecrã de TV, HLS | latência p50/p95 com amostra ≥ 30 min, CPU por canal, leitores reais | anúncios, DRM |

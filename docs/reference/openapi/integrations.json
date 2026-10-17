@@ -1,6 +1,49 @@
 {
   "components": {
     "schemas": {
+      "AgentInputView": {
+        "description": "O que o agente precisa de saber de volta sobre uma entrada sua.",
+        "properties": {
+          "audio_node": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel_id": {
+            "description": "Nulo = inventariada e sem uso: não há nada a publicar desta entrada.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_path": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "tuner_config": {
+            "type": "object"
+          },
+          "tuner_kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "device_path",
+          "label",
+          "tuner_kind",
+          "tuner_config"
+        ],
+        "type": "object"
+      },
       "AtPdu": {
         "description": "Um PDU pronto para `AT+CMGS=<tpdu_len>` seguido de `<hex>` e Ctrl-Z.",
         "properties": {
@@ -16,6 +59,22 @@
         "required": [
           "hex",
           "tpdu_len"
+        ],
+        "type": "object"
+      },
+      "AudioReport": {
+        "description": "Um nó de áudio que o agente viu na caixa, com o caminho físico dele. É o\nservidor que decide a que vídeo pertence (pela porta).",
+        "properties": {
+          "device_path": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_path",
+          "node"
         ],
         "type": "object"
       },
@@ -245,6 +304,103 @@
         "required": [
           "field",
           "description"
+        ],
+        "type": "object"
+      },
+      "InputReport": {
+        "description": "Uma entrada de vídeo que o agente viu.",
+        "properties": {
+          "capabilities": {
+            "description": "O que o aparelho declara (formatos, resoluções, fps).",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "device_path": {
+            "description": "O caminho físico (`ID_PATH` do udev): a chave.",
+            "type": "string"
+          },
+          "product_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signal": {
+            "description": "`live | no_signal | protected | error`.",
+            "type": "string"
+          },
+          "vendor_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "video_node": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "device_path",
+          "signal"
+        ],
+        "type": "object"
+      },
+      "InventoryReq": {
+        "properties": {
+          "agent_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "audio": {
+            "description": "Os nós de áudio da caixa. O par vídeo↔áudio decide-se aqui, pela porta.",
+            "items": {
+              "$ref": "#/components/schemas/AudioReport"
+            },
+            "type": "array"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/InputReport"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputs"
+        ],
+        "type": "object"
+      },
+      "InventoryResp": {
+        "properties": {
+          "accepted": {
+            "description": "Quantas entradas o relatório trouxe.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inputs": {
+            "description": "O estado conhecido de TODAS as entradas desta caixa, incluindo as que\ndeixaram de aparecer (que ficam sem sinal, sem perder configuração).",
+            "items": {
+              "$ref": "#/components/schemas/AgentInputView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "inputs"
         ],
         "type": "object"
       },
@@ -739,6 +895,63 @@
         ],
         "tags": [
           "sms"
+        ]
+      }
+    },
+    "/api/integrations/tv-agent/v1/inputs": {
+      "put": {
+        "description": "Uma entrada que deixa de aparecer **não** é apagada: fica `no_signal` e\nmantém etiqueta, sintonia e canal — um cabo solto não apaga configuração.",
+        "operationId": "agent_put_inputs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryResp"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Token `dlxtv_` inválido ou revogado."
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Substitui o inventário desta caixa.",
+        "tags": [
+          "tv-capture"
         ]
       }
     }

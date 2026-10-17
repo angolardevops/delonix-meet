@@ -8,5 +8,6 @@ pub mod search;
 pub mod stream_destination;
 pub mod transcription;
 pub mod tv_broadcast;
+pub mod tv_capture;
 pub mod tv_channel;
 pub mod whiteboard;

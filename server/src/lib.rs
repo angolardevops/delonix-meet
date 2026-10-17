@@ -99,6 +99,7 @@ mod telephony_sip;
 mod telephony_trunks;
 mod transcription;
 mod tv_broadcasts;
+mod tv_capture;
 mod tv_channels;
 mod ui;
 mod usage;
@@ -164,7 +165,7 @@ use axum::{
     http::HeaderValue,
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -550,6 +551,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/claim", post(sms::agent_claim))
         .route("/messages/{message_id}/result", post(sms::agent_result));
 
+    // O agente de captura de TV (RFC-0002, ADR-0031): token `dlxtv_`, reporta o
+    // inventário da caixa onde os capturadores HDMI estão ligados.
+    let tv_agent_routes = Router::new().route("/inputs", put(tv_capture::agent_put_inputs));
+
     Router::new()
         // LIVENESS: o processo está vivo? Responde `ok` mesmo a drenar — um
         // pod a drenar não deve ser REINICIADO, deve ser deixado terminar.
@@ -595,6 +600,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest("/api/operator/v1", operator_routes)
         .nest("/api/integrations/odoo/v1", odoo_integration_routes)
         .nest("/api/integrations/sms-agent/v1", sms_agent_routes)
+        .nest("/api/integrations/tv-agent/v1", tv_agent_routes)
         // ══════════════════════════════════════════════════════════════════
         //  BFF — o web Delonix (sessão). Contrato instável, OpenAPI em
         //  /api/openapi.json. /api/mls NÃO está registado de propósito: os
@@ -1315,6 +1321,28 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(tv_channels::get_one)
                 .patch(tv_channels::update)
                 .delete(tv_channels::delete),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-agents",
+            get(tv_capture::list_agents).post(tv_capture::create_agent),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-agents/{agent_id}",
+            get(tv_capture::get_agent)
+                .patch(tv_capture::update_agent)
+                .delete(tv_capture::delete_agent),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-agents/{agent_id}/revoke",
+            post(tv_capture::revoke_agent),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-agents/{agent_id}/inputs",
+            get(tv_capture::list_inputs),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-inputs/{input_id}",
+            get(tv_capture::get_input).patch(tv_capture::update_input),
         )
         .route(
             "/api/orgs/{org_id}/tv/channels/{channel_id}/broadcasts",
