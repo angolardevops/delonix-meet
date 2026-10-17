@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { participanteLocal } from '../convidado'
 import { Cena, Fonte, RoomCompositor } from './compositor'
 import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
+import { paraOAr } from '../studio/destinosGuardados'
 import type { RoomCore } from './useRoomCore'
 
 export const MAX_MULTICAM_DESTINOS = 4
@@ -95,7 +96,7 @@ export function useMulticam(core: RoomCore) {
     const c = compositorRef.current
     if (!c) return
     try {
-      const alvos = destinos.filter((d) => d.chave.trim())
+      const alvos = paraOAr(destinos)
       const token = core.roomTokenRef.current
       if (!token) throw new Error(t('room.multicam.semToken'))
       const fluxo = c.montarFluxo()

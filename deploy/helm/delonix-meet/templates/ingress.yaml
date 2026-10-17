@@ -69,6 +69,11 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: {{ $v.ingress.proxyTimeoutSeconds | quote }}
     nginx.ingress.kubernetes.io/proxy-send-timeout: {{ $v.ingress.proxyTimeoutSeconds | quote }}
     nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"
+    # O token vai no `?token=` deste caminho (o da sala, e o de FONTE de um
+    # estúdio, que vive 12 h) e o `log-format-upstream` por omissão inclui a
+    # query. Em K8s o `/ws` vem por aqui, não pelo nginx do pod web. Igual ao
+    # `delonix-provisioning` abaixo (R278).
+    nginx.ingress.kubernetes.io/enable-access-log: "false"
 spec:
   ingressClassName: {{ $v.ingress.className }}
   {{- if $comTls }}

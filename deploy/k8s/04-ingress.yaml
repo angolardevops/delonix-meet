@@ -64,6 +64,18 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"
+    # O token vai no `?token=` deste caminho — o da sala, e o de FONTE de um
+    # estúdio, que vive 12 h. O `log-format-upstream` por omissão do
+    # ingress-nginx usa `$request`, que inclui a query: sem isto a credencial
+    # fica escrita no log do ingress e, com o Loki do `observabilidade/`,
+    # retida e pesquisável num cluster PARTILHADO (ADR-0021).
+    #
+    # Em K8s o `/ws` vem por AQUI — Ingress → Service `delonix-server-ws`,
+    # directo. Não passa pelo nginx do pod web (`deploy/k8s/nginx.conf`), e
+    # desligar o log lá não protege nada: foi o erro da primeira versão deste
+    # commit. O `delonix-provisioning` abaixo já leva esta anotação, pela
+    # mesma razão (R278).
+    nginx.ingress.kubernetes.io/enable-access-log: "false"
 spec:
   ingressClassName: nginx
   tls:
