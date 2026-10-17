@@ -86,12 +86,125 @@ describe('desenharImagem com geometria', () => {
     expect(dh).toBeCloseTo(1920)
   })
 
-  it('o espelho vem antes da volta', () => {
+  /**
+   * ONDE A IMAGEM ATERRA, e não em que ordem as chamadas saíram.
+   *
+   * O teste que aqui estava afirmava `scale` antes de `rotate` na ordem de
+   * invocação — que é exactamente o que NÃO determina a geometria, porque no
+   * canvas as transformações pós-multiplicam e a última a ser chamada é a
+   * primeira a actuar. Com isso, fixava o defeito: compunha-se `S·R(θ)`, que é
+   * `R(−θ)·S`, e com «espelhar» ligado rodar à direita rodava à esquerda.
+   *
+   * Agora compõe-se a matriz do que foi chamado e segue-se um ponto conhecido.
+   * O discriminador é o meio da ARESTA DIREITA da imagem com espelho e um
+   * quarto de volta: com o espelho a actuar primeiro vai para CIMA do centro;
+   * com a ordem trocada vai para BAIXO. Um sinal, e distingue as duas.
+   */
+  const pontoDaArestaDireita = (c: ReturnType<typeof contextoFalso>) => {
+    // Matriz do canvas: [a,b,c,d,e,f]; x' = a·x + c·y + e, y' = b·x + d·y + f.
+    let m = [1, 0, 0, 1, 0, 0]
+    const mul = (n: number[]) => {
+      m = [
+        m[0] * n[0] + m[2] * n[1],
+        m[1] * n[0] + m[3] * n[1],
+        m[0] * n[2] + m[2] * n[3],
+        m[1] * n[2] + m[3] * n[3],
+        m[0] * n[4] + m[2] * n[5] + m[4],
+        m[1] * n[4] + m[3] * n[5] + m[5],
+      ]
+    }
+    // Pela ordem em que foram chamadas.
+    const chamadas: { ordem: number; f: () => void }[] = [
+      ...c.translate.mock.calls.map((a, i) => ({
+        ordem: c.translate.mock.invocationCallOrder[i],
+        f: () => mul([1, 0, 0, 1, a[0] as number, a[1] as number]),
+      })),
+      ...c.rotate.mock.calls.map((a, i) => ({
+        ordem: c.rotate.mock.invocationCallOrder[i],
+        f: () => {
+          const t = a[0] as number
+          mul([Math.cos(t), Math.sin(t), -Math.sin(t), Math.cos(t), 0, 0])
+        },
+      })),
+      ...c.scale.mock.calls.map((a, i) => ({
+        ordem: c.scale.mock.invocationCallOrder[i],
+        f: () => mul([a[0] as number, 0, 0, a[1] as number, 0, 0]),
+      })),
+    ].sort((x, y) => x.ordem - y.ordem)
+    for (const { f } of chamadas) f()
+    const [, , , dw] = c.drawImage.mock.calls[0] as unknown as [unknown, number, number, number, number]
+    // Meio da aresta direita, em coordenadas da imagem centrada na origem.
+    const [x, y] = [dw / 2, 0]
+    return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] }
+  }
+
+  it('com espelho, um quarto de volta leva a aresta direita para CIMA', () => {
     const c = contextoFalso()
     desenharImagem(c, retrato(), R, 'cover', { rotacao: 90, espelho: true })
-    const ordem = [c.scale.mock.invocationCallOrder[0], c.rotate.mock.invocationCallOrder[0]]
-    expect(ordem[0]).toBeLessThan(ordem[1])
+    const p = pontoDaArestaDireita(c)
+    // Centro do rectângulo: (960, 540). Acima é y MENOR.
+    expect(p.y).toBeLessThan(540)
+    expect(p.x).toBeCloseTo(960)
+  })
+
+  it('e sem espelho leva-a para BAIXO — é o espelho que inverte o sentido', () => {
+    // O controlo que torna a asserção de cima uma medição: sem ele, um `y`
+    // menor que 540 podia ser de qualquer composição.
+    const c = contextoFalso()
+    desenharImagem(c, retrato(), R, 'cover', { rotacao: 90, espelho: false })
+    const p = pontoDaArestaDireita(c)
+    expect(p.y).toBeGreaterThan(540)
+  })
+
+  it('o espelho continua a ser um espelho horizontal', () => {
+    const c = contextoFalso()
+    desenharImagem(c, retrato(), R, 'cover', { rotacao: 0, espelho: true })
     expect(c.scale).toHaveBeenCalledWith(-1, 1)
+    // Sem volta, a aresta direita vai para a ESQUERDA do centro.
+    expect(pontoDaArestaDireita(c).x).toBeLessThan(960)
+  })
+
+  /**
+   * O CASO QUE FALTAVA. O único `cover` rodado que aqui havia era degenerado:
+   * um retrato 1080×1920 num rectângulo 1920×1080 tem os lados trocados
+   * exactamente iguais ao destino, logo `min` e `max` dão ambos 1 — e o teste
+   * passava igual se se trocasse `Math.max` por `Math.min` no desenho.
+   *
+   * Um destino que NÃO é 16:9 separa os dois: com os lados trocados
+   * (1920×1080) num 1000×800, `contain` limita pela largura (0,5208) e `cover`
+   * pela altura (0,7407).
+   */
+  const RETANGULO_NAO_16_9 = { x: 0, y: 0, w: 1000, h: 800 }
+
+  it('cover e contain divergem num destino que não é 16:9 — e com os lados trocados', () => {
+    const contain = contextoFalso()
+    desenharImagem(contain, retrato(), RETANGULO_NAO_16_9, 'contain', { rotacao: 90, espelho: false })
+    const [, , , dwContain] = contain.drawImage.mock.calls[0] as unknown as [unknown, number, number, number, number]
+    expect(dwContain).toBeCloseTo(1080 * (1000 / 1920), 1) // 562,5 — cabe inteira
+
+    const cover = contextoFalso()
+    desenharImagem(cover, retrato(), RETANGULO_NAO_16_9, 'cover', { rotacao: 90, espelho: false })
+    const [, , , dwCover] = cover.drawImage.mock.calls[0] as unknown as [unknown, number, number, number, number]
+    expect(dwCover).toBeCloseTo(1080 * (800 / 1080), 1) // 800 — enche e corta
+
+    // E são DIFERENTES: é isto que falha se o `max`/`min` for trocado.
+    expect(dwCover).toBeGreaterThan(dwContain)
+  })
+
+  it('270° troca os lados como 90°', () => {
+    const c = contextoFalso()
+    desenharImagem(c, retrato(), RETANGULO_NAO_16_9, 'contain', { rotacao: 270, espelho: false })
+    expect(c.rotate).toHaveBeenCalledWith((270 * Math.PI) / 180)
+    const [, , , dw] = c.drawImage.mock.calls[0] as unknown as [unknown, number, number, number, number]
+    expect(dw).toBeCloseTo(1080 * (1000 / 1920), 1)
+  })
+
+  it('espelho com meia volta: a aresta direita volta à direita', () => {
+    // 180° leva a aresta direita para a esquerda; o espelho devolve-a. Sem a
+    // composição certa, este caso e o de 0°+espelho não se distinguiriam.
+    const c = contextoFalso()
+    desenharImagem(c, retrato(), R, 'cover', { rotacao: 180, espelho: true })
+    expect(pontoDaArestaDireita(c).x).toBeGreaterThan(960)
   })
 
   it('180° não troca os lados, só vira', () => {

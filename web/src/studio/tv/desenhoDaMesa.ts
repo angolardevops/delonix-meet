@@ -51,11 +51,22 @@ export function desenharImagem(
   c.beginPath()
   c.rect(r.x, r.y, r.w, r.h)
   c.clip()
-  // Origem no centro do rectângulo: espelho primeiro, volta depois — a ordem
-  // que faz «espelhar» querer dizer o mesmo antes e depois de rodar.
+  // Origem no centro do rectângulo, e o ESPELHO aplica-se à imagem ANTES da
+  // rotação (`geometria.ts`: «como um espelho de selfie»).
+  //
+  // A ordem das CHAMADAS é a inversa disso, e é aí que isto se enganou: no
+  // canvas as transformações pós-multiplicam a matriz, logo a ÚLTIMA chamada é
+  // a primeira a actuar sobre o que se desenha. Para o espelho vir primeiro,
+  // o `scale` tem de ser chamado DEPOIS do `rotate`.
+  //
+  // Com a ordem trocada compunha-se `S·R(θ)`, que é `R(−θ)·S`: com «espelhar»
+  // ligado — o estado por omissão da câmara frontal — «rodar à direita» rodava
+  // à ESQUERDA, e 90°→270° saía ao contrário. O teste que devia apanhá-lo
+  // media a ordem das chamadas (exactamente o que não determina a geometria) e
+  // dava-lhe verde; agora compõe-se a matriz e afirma-se onde um ponto aterra.
   c.translate(r.x + r.w / 2, r.y + r.h / 2)
-  if (geo.espelho) c.scale(-1, 1)
   if (geo.rotacao) c.rotate((geo.rotacao * Math.PI) / 180)
+  if (geo.espelho) c.scale(-1, 1)
   c.drawImage(f, -dw / 2, -dh / 2, dw, dh)
   c.restore()
 }
