@@ -96,3 +96,24 @@
     margin: 0 auto;
   }
 }
+
+/* ---- Emparelhar este telefone (o ecrã onde se escreve/confirma o código) ----
+   A página não importava CSS nenhum e usava duas classes que não existiam em
+   lugar algum do repositório (`dx-centro`, `dx-h2`): a centragem vinha de um
+   `style` inline e o `<h1>` saía no tamanho por omissão do browser — num ecrã
+   de 360 px, enorme. Não se inventam classes `dx-*` novas (é o espaço do kit
+   partilhado); dá-se à página uma classe com escopo, como o resto da casa
+   faz (`.auth-form__head h1`, `.pub-cabecalho h1`). */
+.emp-tel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  max-width: 360px;
+  margin: 0 auto;
+}
+.emp-tel h1 {
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.25;
+  margin: 0;
+}

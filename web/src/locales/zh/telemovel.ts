@@ -32,6 +32,7 @@ export default {
     falhou: "配对失败。",
     vaiAoAr: "这部手机的摄像头和麦克风将在演播室中直播，并可能被录制。",
     comecar: "开始推流",
+    demasiados: "请求过于频繁。请稍候再试。",
     aEntrar: "正在配对…",
   },
   virarParaTras: "切换到后置",
@@ -44,7 +45,9 @@ export default {
   pararSeguranca: '停止录制',
   aGravarLocal: '正在手机本地录制',
   descarregarSeguranca: '下载',
+  descarregarPedaco: '下载第 {{n}} 段',
+  segurancaMorreu: '安全录制已自行停止。已录制的内容仍可在此下载。',
   sair: '离开',
-  nota: '只要演播室需要你的摄像头，此屏幕就会保持连接。请保持屏幕常亮。',
+  nota: '只要演播室需要你的摄像头，此屏幕就会保持连接。在浏览器支持的情况下，屏幕会自动保持常亮。',
   aCarregar: '· 充电中',
 }

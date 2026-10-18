@@ -32,6 +32,7 @@ export default {
     falhou: "Pairing failed.",
     vaiAoAr: "This phone’s camera and microphone will go live in the studio, and may be recorded.",
     comecar: "Start sending",
+    demasiados: "Too many attempts in a row. Wait a moment and try again.",
     aEntrar: "Pairing…",
   },
   virarParaTras: "Switch to back",
@@ -44,7 +45,9 @@ export default {
   pararSeguranca: 'Stop recording',
   aGravarLocal: 'recording on the phone',
   descarregarSeguranca: 'Download',
+  descarregarPedaco: 'Download {{n}}',
+  segurancaMorreu: 'The safety recording stopped on its own. What was already recorded is here to download.',
   sair: 'Leave',
-  nota: 'This screen stays connected while the Studio needs your camera. Keep the screen on.',
+  nota: 'This screen stays connected while the Studio needs your camera. Where the browser allows it, the screen stays on by itself.',
   aCarregar: '· charging',
 }

@@ -32,6 +32,7 @@ export default {
     falhou: "Échec de l'appairage.",
     vaiAoAr: "La caméra et le micro de ce téléphone passeront à l’antenne dans le studio, et peuvent être enregistrés.",
     comecar: "Commencer à diffuser",
+    demasiados: "Trop de tentatives d’affilée. Attendez un instant et réessayez.",
     aEntrar: "Appairage…",
   },
   virarParaTras: "Caméra arrière",
@@ -44,7 +45,9 @@ export default {
   pararSeguranca: "Arrêter l'enregistrement",
   aGravarLocal: 'enregistrement sur le téléphone',
   descarregarSeguranca: 'Télécharger',
+  descarregarPedaco: 'Télécharger {{n}}',
+  segurancaMorreu: "L'enregistrement de sécurité s'est arrêté de lui-même. Ce qui était déjà enregistré reste ici, téléchargeable.",
   sair: 'Quitter',
-  nota: "Cet écran reste connecté tant que le Studio a besoin de ta caméra. Laisse l'écran allumé.",
+  nota: "Cet écran reste connecté tant que le Studio a besoin de ta caméra. Lorsque le navigateur le permet, l'écran reste allumé tout seul.",
   aCarregar: '· en charge',
 }

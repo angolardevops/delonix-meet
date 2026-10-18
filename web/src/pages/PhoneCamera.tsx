@@ -18,6 +18,7 @@ import { AudioSink } from '../room/AudioSink'
 import { useRoomCore } from '../room/useRoomCore'
 import { useLocalMedia } from '../room/useLocalMedia'
 import { useCallSession } from '../room/useCallSession'
+import { ambienteDoBrowser, criarGuardaDeEcra } from '../room/wakeLock'
 import '../ui/phoneCamera.css'
 
 /** Capacidades não-padrão que só alguns browsers Android expõem. */
@@ -114,7 +115,12 @@ function OperadorDeCamara({
   const [talkback, setTalkback] = useState(false)
   const [bateria, setBateria] = useState<{ nivel: number; aCarregar: boolean } | null>(null)
   const [gravando, setGravando] = useState(false)
-  const [ficheiroSeguranca, setFicheiroSeguranca] = useState<{ url: string; nome: string } | null>(null)
+  /**
+   * Os pedaços da gravação de segurança. É uma LISTA porque virar a lente
+   * fecha um e abre outro (ver `virarLente`): com um só campo, o pedaço
+   * anterior era substituído e o que já estava gravado perdia-se.
+   */
+  const [ficheiros, setFicheiros] = useState<{ url: string; nome: string }[]>([])
   const [erro, setErro] = useState('')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -131,23 +137,77 @@ function OperadorDeCamara({
     // O lado ALVO calcula-se antes: o `media.facing` é estado do React e, lido
     // logo a seguir ao `await`, ainda traz o valor velho.
     const alvo = media.facing === 'user' ? 'environment' : 'user'
+    /**
+     * A gravação de segurança NÃO sobrevive a virar a lente, e não é escolha
+     * nossa: o `switchCam` faz `removeTrack`/`addTrack` no MESMO
+     * `MediaStream` sobre que o `MediaRecorder` foi construído, e a
+     * especificação do MediaStream Recording diz que mexer nas pistas durante
+     * a gravação a termina (`InvalidModificationError`). Antes, isso matava a
+     * gravação em silêncio e o botão continuava vermelho.
+     *
+     * Então fecha-se o pedaço ANTES de virar — fica um ficheiro válido, com
+     * tudo o que já se gravou — e abre-se outro depois, na pista nova. Dois
+     * ficheiros em vez de um perdido. Juntá-los num só exigia remultiplexar
+     * no telefone, que é precisamente o trabalho que esta página não faz.
+     */
+    const estavaAGravar = gravando
+    if (estavaAGravar) pararGravacaoSeguranca()
     try {
       await media.flipCam()
       setEspelhado(alvo === 'user')
     } finally {
       setAVirar(false)
+      if (estavaAGravar) iniciarGravacaoSeguranca()
     }
   }
 
+  /**
+   * O ecrã não apaga enquanto isto é uma câmara. O `visibilitychange` é
+   * parte da correcção e não um extra: o browser larga o lock de ecrã quando
+   * a página sai de vista (uma chamada, uma notificação) e **não o devolve**
+   * — quem peça só na montagem fica sem ele para o resto da sessão, com o
+   * sintoma igual a nunca o ter pedido. A lógica e as provas vivem em
+   * `room/wakeLock.ts`.
+   *
+   * Melhor esforço, como os controlos de câmara: no iOS antigo e no Firefox a
+   * API não existe, e aí não há nada a dizer ao operador que ele possa fazer.
+   */
+  useEffect(() => {
+    const guarda = criarGuardaDeEcra(ambienteDoBrowser())
+    void guarda.pedir()
+    const aoMudarVisibilidade = () => void guarda.pedir()
+    document.addEventListener('visibilitychange', aoMudarVisibilidade)
+    return () => {
+      document.removeEventListener('visibilitychange', aoMudarVisibilidade)
+      guarda.parar()
+      void guarda.largar()
+    }
+  }, [])
+
+  /**
+   * As capacidades são da LENTE, não do aparelho: a traseira é grande-angular
+   * com zoom de 1 a 10×, a frontal costuma ter 1× e mais nada. As dependências
+   * eram `[core.cameraTrackRef]` — um objecto `ref`, de identidade estável,
+   * por isso isto corria uma vez na montagem e os limites ficavam os da
+   * primeira lente para sempre. Depois de virar, o cursor de zoom aplicava
+   * `applyConstraints` fora do intervalo real e cada falha dava um alerta.
+   *
+   * Agora depende do que MUDA quando a lente muda (`facing` e `camId`, ambos
+   * estado do `useLocalMedia`, escritos no fim do `switchCam`); a pista
+   * continua a ler-se do ref, que é onde ela vive.
+   */
   useEffect(() => {
     const track = core.cameraTrackRef.current
     const caps = (track?.getCapabilities?.() ?? null) as CapacidadesAlargadas | null
     setCapacidades(caps)
     const settings = track?.getSettings?.() as ConstraintsAlargadas | undefined
-    if (caps?.zoom) setZoom((settings?.zoom as number) ?? caps.zoom.min)
-    if (caps?.focusDistance) setFoco((settings?.focusDistance as number) ?? caps.focusDistance.min)
-    if (caps?.exposureCompensation) setExposicao((settings?.exposureCompensation as number) ?? 0)
-  }, [core.cameraTrackRef])
+    setZoom(caps?.zoom ? ((settings?.zoom as number) ?? caps.zoom.min) : null)
+    setFoco(caps?.focusDistance ? ((settings?.focusDistance as number) ?? caps.focusDistance.min) : null)
+    setExposicao(caps?.exposureCompensation ? ((settings?.exposureCompensation as number) ?? 0) : null)
+    // A lente nova chega sem o bloqueio que estava na anterior.
+    setAeAfBloqueado(false)
+    setTorch(false)
+  }, [core.cameraTrackRef, media.facing, media.camId])
 
   useEffect(() => {
     const nav = navigator as Navigator & { getBattery?: () => Promise<EventTarget & { level: number; charging: boolean; addEventListener: (e: string, cb: () => void) => void }> }
@@ -203,8 +263,24 @@ function OperadorDeCamara({
       const rec = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'video/webm;codecs=vp8,opus' : 'video/webm' })
       rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data)
       rec.onstop = () => {
+        // Cada paragem fecha um PEDAÇO e acrescenta-o à lista, em vez de
+        // substituir o anterior: virar a lente fecha um e abre outro, e
+        // perder o primeiro era perder justamente o que já estava gravado.
         const blob = new Blob(chunksRef.current, { type: 'video/webm' })
-        setFicheiroSeguranca({ url: URL.createObjectURL(blob), nome: `seguranca-${new Date().toISOString().replace(/[:.]/g, '-')}.webm` })
+        if (!blob.size) return
+        setFicheiros((fs) => [...fs, { url: URL.createObjectURL(blob), nome: `seguranca-${new Date().toISOString().replace(/[:.]/g, '-')}.webm` }])
+      }
+      /**
+       * A gravação de segurança existe para quando o directo falha — por isso
+       * uma falha DELA não pode ser silenciosa. Sem este `onerror`, o botão
+       * ficava vermelho e o `StatusBadge` continuava a dizer «a gravar no
+       * telefone» com a gravação já morta; só se descobria no fim, ao ver o
+       * ficheiro acabar no instante em que a coisa correu mal.
+       */
+      rec.onerror = () => {
+        setErro(t('telemovel.segurancaMorreu'))
+        recorderRef.current = null
+        setGravando(false)
       }
       rec.start(1000)
       recorderRef.current = rec
@@ -337,11 +413,12 @@ function OperadorDeCamara({
             {gravando ? t('telemovel.pararSeguranca') : t('telemovel.gravarSeguranca')}
           </Button>
           {gravando && <StatusBadge tone="record">{t('telemovel.aGravarLocal')}</StatusBadge>}
-          {ficheiroSeguranca && !gravando && (
-            <a className="dx-btn dx-btn--ghost dx-btn--sm" href={ficheiroSeguranca.url} download={ficheiroSeguranca.nome}>
-              {t('telemovel.descarregarSeguranca')}
-            </a>
-          )}
+          {!gravando &&
+            ficheiros.map((f, i) => (
+              <a key={f.url} className="dx-btn dx-btn--ghost dx-btn--sm" href={f.url} download={f.nome}>
+                {ficheiros.length > 1 ? t('telemovel.descarregarPedaco', { n: i + 1 }) : t('telemovel.descarregarSeguranca')}
+              </a>
+            ))}
         </div>
         <Button variant="secondary" size="sm" icon="x" onClick={onLeave}>
           {t('telemovel.sair')}

@@ -16,10 +16,11 @@
  */
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { apiErrorCode, redeemPairingCode } from '../api'
+import { apiErrorCode, ApiError, redeemPairingCode } from '../api'
 import { guardarFonte } from '../fonteDoEstudio'
 import type { Pairing } from '../api'
 import { Alert, Button, Spinner } from '../ui/kit'
+import '../ui/phoneCamera.css'
 
 /** `XXXX-XXXX` em Crockford base32 — o que o servidor aceita. */
 const FORMATO = /^[0-9A-HJKMNP-TV-Z]{4}-?[0-9A-HJKMNP-TV-Z]{4}$/i
@@ -66,12 +67,25 @@ export default function EmparelharTelefone({ code }: { code?: string }) {
       setPronto(p)
     } catch (e) {
       const c = apiErrorCode(e)
+      /**
+       * O CÓDIGO nunca vai ao ecrã. Antes, o último ramo era `c ?? falhou`:
+       * com um código presente mostrava-se `studio.invalid_device` num quadro
+       * vermelho, em inglês qualquer que fosse a língua, e sem dizer o que
+       * fazer — a quem está ao telefone, que não sabe o que é um código de
+       * erro nosso. Vai para a consola, que é onde serve para diagnóstico.
+       */
+      if (c) console.warn('emparelhamento recusado:', c)
+      const demasiadosPedidos = e instanceof ApiError && e.status === 429
       setErro(
-        c === 'studio.pairing_invalid'
-          ? t('telemovel.emparelhar.invalido')
-          : c === 'studio.full'
-            ? t('telemovel.emparelhar.cheio')
-            : (c ?? t('telemovel.emparelhar.falhou')),
+        demasiadosPedidos
+          ? t('telemovel.emparelhar.demasiados')
+          : c === 'studio.pairing_invalid'
+            ? t('telemovel.emparelhar.invalido')
+            : c === 'studio.pairing_malformed'
+              ? t('telemovel.emparelhar.formato')
+              : c === 'studio.full'
+                ? t('telemovel.emparelhar.cheio')
+                : t('telemovel.emparelhar.falhou'),
       )
     } finally {
       setAResgatar(false)
@@ -79,8 +93,8 @@ export default function EmparelharTelefone({ code }: { code?: string }) {
   }, [t])
 
   return (
-    <div className="dx-centro" style={{ display: 'grid', gap: 12, padding: 16, maxWidth: 360, margin: '0 auto' }}>
-      <h1 className="dx-h2">{t('telemovel.emparelhar.titulo')}</h1>
+    <div className="emp-tel">
+      <h1>{t('telemovel.emparelhar.titulo')}</h1>
       <p className="dx-muted">{t('telemovel.emparelhar.nota')}</p>
 
       {erro && <Alert tone="danger">{erro}</Alert>}

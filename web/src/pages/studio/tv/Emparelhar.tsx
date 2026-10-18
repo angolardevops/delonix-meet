@@ -64,6 +64,40 @@ export function Emparelhar() {
   const [erro, setErro] = useState('')
   const [ocupado, setOcupado] = useState(false)
 
+  /**
+   * O erro que vai ao ecrã do operador é uma FRASE, nunca o código. Os três
+   * sítios desta página faziam `apiErrorCode(e) ?? falhou`, o que punha
+   * `studio.source_number_taken` num quadro vermelho, em inglês, sem dizer o
+   * que fazer. O código vai para a consola, que é onde serve.
+   *
+   * O mapeamento fica aqui e não num módulo partilhado de propósito: o
+   * extractor de chaves do `estudioTv.invariantes.test.ts` só vê `t('tv.…')`
+   * LITERAL no código da página. Centralizado num objecto, estas chaves
+   * saíam da cobertura do portão de i18n sem ninguém notar.
+   */
+  const fraseDoErro = useCallback(
+    (e: unknown): string => {
+      const c = apiErrorCode(e)
+      if (c) console.warn('estúdio/emparelhar:', c)
+      switch (c) {
+        case 'studio.source_number_taken':
+          return t('tv.emparelhar.numeroOcupado')
+        case 'studio.full':
+          return t('tv.emparelhar.cheio')
+        case 'studio.not_manager':
+        case 'studio.not_operator':
+          return t('tv.emparelhar.semPermissao')
+        case 'studio.invalid_name':
+          return t('tv.emparelhar.nomeInvalido')
+        case 'studio.pairing_invalid':
+          return t('tv.emparelhar.expirado')
+        default:
+          return t('tv.emparelhar.falhou')
+      }
+    },
+    [t],
+  )
+
   // Um estúdio por organização chega para já: o ecrã não tem onde escolher
   // entre vários, e criar um à socapa é melhor do que um painel vazio que não
   // diz porquê. Quando houver mais do que um, isto passa a selector.
@@ -80,9 +114,9 @@ export function Emparelhar() {
       setCodigos(cods.items)
       setFontes(fs.items.filter((f) => !f.revoked_at))
     } catch (e) {
-      setErro(apiErrorCode(e) ?? t('tv.emparelhar.falhou'))
+      setErro(fraseDoErro(e))
     }
-  }, [t])
+  }, [t, fraseDoErro])
 
   useEffect(() => {
     void carregar()
@@ -105,7 +139,7 @@ export function Emparelhar() {
       setQr(await toString(urlDoTelefone(c.code), { type: 'svg', margin: 1 }))
       setCodigos((await listPairingCodes(orgId, studioId)).items)
     } catch (e) {
-      setErro(apiErrorCode(e) ?? t('tv.emparelhar.falhou'))
+      setErro(fraseDoErro(e))
     } finally {
       setOcupado(false)
     }
@@ -121,7 +155,7 @@ export function Emparelhar() {
       }
       setCodigos((await listPairingCodes(orgId, studioId)).items)
     } catch (e) {
-      setErro(apiErrorCode(e) ?? t('tv.emparelhar.falhou'))
+      setErro(fraseDoErro(e))
     }
   }
 
