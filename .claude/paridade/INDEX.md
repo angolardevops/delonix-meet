@@ -11,7 +11,7 @@ A tabela completa com veredictos e evidência: [`docs/paridade-medida-2026-10-18
 
 | id | Lacuna | Estado do prompt |
 |---|---|---|
-| `A-01` | [Um telefone entra numa sala cifrada de ponta a ponta](A-01-telefone-entra-em-sala-e2ee.md) | escrito — **uma sessão tentou a 2026-10-18 e terminou com ZERO commits**; a lacuna nunca foi tocada |
+| `A-01` | [Um telefone entra numa sala cifrada de ponta a ponta](A-01-telefone-entra-em-sala-e2ee.md) | ✅ **FECHADO** 2026-10-18 — nos dois pontos de resolução da sala, com controlo negativo medido. Falta a prova por chamada real (sem DID de teste nesta máquina) |
 | `A-02` | [Gravação ISO ligada por omissão e inexistente](A-02-gravacao-iso-ligada-e-inexistente.md) | escrito |
 | `A-03` | [Ninguém é avisado sem ter a aba aberta](A-03-push-com-a-app-fechada.md) | escrito |
 | `A-04` | [Quarenta pessoas por sala](A-04-quarenta-pessoas-por-sala.md) | escrito — **mede primeiro, decide depois** |
@@ -54,7 +54,7 @@ Não por esquecimento. Um prompt que ninguém corre neste mês apodrece como qua
 
 ## Ordem sugerida, se a pergunta for «por onde começo»
 
-1. `A-01` e `A-02` — a garantia de E2EE que não se cumpre, e a gravação ISO que se promete sozinha. Um produto que mente sobre si próprio não se vende duas vezes.
+1. ~~`A-01`~~ (fechado) e `A-02` — a gravação ISO que se promete sozinha. Um produto que mente sobre si próprio não se vende duas vezes.
 2. `B-06` e `B-10` — baratas, medidas, de valor imediato: a entrada na sala deixa de arrastar numa demonstração, e o SCIM passa a aguentar um cliente a sério.
 3. `A-03` — o push. Sem ele, tudo o resto vale menos do que devia.
 4. `A-04` — **medir** onde a sala quebra. É a medição que decide se o produto compete fora do nicho do estúdio.
