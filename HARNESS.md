@@ -161,7 +161,8 @@
 | `matte.ts` | Matting RVM (fundo virtual com segmentação) |
 | `i18n.ts` | i18next PT/EN, persist `dx_lang` |
 | `pages/Room.tsx` | Sala: grelha↔palco, controls, breakouts, host controls, whiteboard, polls, Q&A, CC, timer, gravação, multicâmara (painel `multicamOpen`, host-only) |
-| `room/compositor.ts` | `RoomCompositor` — compõe N câmaras (local + convidados remotos, via SFU) num canvas por cena (`solo`/`lado-a-lado`/`grelha`), para o `Directo` ou gravação. Irmão do `studio/compositor.ts` (esse é ecrã+câmara fixos, solo; este é participantes dinâmicos, painel). `participantesVisiveis`/`calcularRects` são puros e testados sem DOM |
+| `room/compositor.ts` | `RoomCompositor` — compõe N câmaras (local + convidados remotos, via SFU) num canvas por cena (`solo`/`lado-a-lado`/`grelha`), para o `Directo` ou gravação. Irmão do `studio/compositor.ts` (esse é ecrã+câmara fixos, solo; este é participantes dinâmicos, painel). `participantesVisiveis`/`calcularRects` são puros e testados sem DOM. O `Rect` já não nasce aqui: vem de `cena/moldura.ts` e é re-exportado |
+| `cena/` | **Pasta FOLHA** — não importa de nenhuma outra pasta de `src/`, e a regra `no-restricted-imports` do `eslint.config.js` recusa que deixe de ser (corre no `check-frontend-lint.sh`, que está no CI). Existe porque a moldura de transmissão (faixa a rolar, coluna com marca, ecrã como herói) vai ser desenhada pelos DOIS compositores, e `room/` e `studio/` já se importam nos dois sentidos — pô-la numa delas fecharia um ciclo. `moldura.ts` é só geometria pura; o desenho fica para um `desenhoDaMoldura.ts` ainda por escrever. **Ainda sem chamador**: nenhum compositor a usa |
 | `pages/Landing.tsx` | Página pública (unauth na raiz) |
 | `pages/Calendar.tsx` | Calendário mês/semana/agenda, agendamento, conflitos, ics |
 | `pages/Recordings.tsx` | Biblioteca, viewer, tarefas do MoM |

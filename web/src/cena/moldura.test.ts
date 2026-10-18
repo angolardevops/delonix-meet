@@ -14,7 +14,9 @@ import {
   deslocamentoDaFaixa,
   FRACCAO_DA_MARGEM,
   MAXIMO_DE_CAMARAS,
+  OPCOES_INICIAIS,
   rectsDaMoldura,
+  sanearOpcoes,
   VELOCIDADE_DA_FAIXA,
   type Rect,
 } from './moldura'
@@ -159,10 +161,68 @@ describe('rectsDaMoldura — as peças repartem o espaço sem se pisarem', () =>
     expect(sem.heroi).toEqual(com.heroi)
   })
 
-  it('mais câmaras do que a coluna mostra: corta no tecto em vez de as espremer a zero', () => {
-    const r = rectsDaMoldura(99, 1920, 1080)
-    expect(r.camaras).toHaveLength(MAXIMO_DE_CAMARAS)
+  it('a coluna TILA para qualquer número de câmaras, zero incluído — sem barra preta no meio', () => {
+    // Este teste nasceu de um defeito a sério: com zero câmaras, o logótipo
+    // colava ao topo e a assinatura ancorava em baixo, e sobravam 59% da altura
+    // da coluna (564 px num 1080p) por pintar. O comentário da função prometia
+    // «não um buraco preto» e o código fazia um. Passava porque o teste de
+    // contiguidade só corria com n=3.
+    for (const n of [0, 1, 2, 3, 9]) {
+      const r = rectsDaMoldura(n, 1920, 1080)
+      const naColuna = [r.logo!, ...r.camaras, r.assinatura!]
+      for (let i = 1; i < naColuna.length; i++) {
+        expect(naColuna[i].y, `n=${n}: buraco na coluna`).toBeCloseTo(
+          naColuna[i - 1].y + naColuna[i - 1].h,
+          9,
+        )
+      }
+      const somada = naColuna.reduce((s, p) => s + p.h, 0)
+      expect(somada, `n=${n}: a coluna não cobre a altura do conteúdo`).toBeCloseTo(r.heroi.h, 9)
+    }
+  })
+
+  it('mais câmaras do que a coluna mostra: corta no tecto E DIZ QUANTAS FICARAM DE FORA', () => {
+    const r = rectsDaMoldura(9, 1920, 1080)
+    // O número é LITERAL, não `MAXIMO_DE_CAMARAS`: a versão anterior comparava
+    // o resultado com a mesma constante que o código lê, por isso baixar o
+    // tecto para 1 passava a suite inteira e um painel de três convidados
+    // mostrava um. É a mesma armadilha auto-referencial que a margem teve.
+    expect(r.camaras).toHaveLength(3)
+    expect(MAXIMO_DE_CAMARAS).toBe(3)
     for (const c of r.camaras) expect(c.h).toBeGreaterThan(0)
+    // Sem este sinal, quem chama não distingue 3 convidados de 9 — e os que
+    // sobram falam fora do ecrã a sessão inteira, com o áudio na mistura.
+    expect(r.omitidas).toBe(6)
+    expect(rectsDaMoldura(2, 1920, 1080).omitidas).toBe(0)
+  })
+
+  it('o logótipo é MAIOR que a assinatura — trocar as duas fracções tem de ser visível', () => {
+    // Sem isto, trocar FRACCAO_DO_LOGO com FRACCAO_DA_ASSINATURA passava a
+    // suite toda: as três bandas continuam contíguas e continuam a somar a
+    // altura do conteúdo, só que a marca fica espremida num espaço menor que o
+    // rodapé — o inverso da referência.
+    const r = rectsDaMoldura(3, 1920, 1080)
+    expect(r.logo!.h).toBeGreaterThan(r.assinatura!.h)
+  })
+
+  it('a faixa é uma tira, não uma parede — a magnitude está presa, não só a proporção', () => {
+    // Os outros testes aceitavam qualquer FRACCAO_DA_FAIXA em (0; 0,944):
+    // uma faixa a ocupar 60% do ecrã passava sem um vermelho.
+    const { faixa } = rectsDaMoldura(2, 1920, 1080)
+    expect(faixa!.h).toBeGreaterThan(1080 * 0.02)
+    expect(faixa!.h).toBeLessThan(1080 * 0.12)
+  })
+
+  it('n não-inteiro ou não-finito não deixa a coluna meio pintada', () => {
+    // `Array.from({length: 2.5})` dá 2 rects de altura calculada para 2,5 —
+    // 113 px por pintar acima da assinatura.
+    for (const n of [2.5, Number.NaN, Number.POSITIVE_INFINITY, -3]) {
+      const r = rectsDaMoldura(n, 1920, 1080)
+      const naColuna = [r.logo!, ...r.camaras, r.assinatura!]
+      const somada = naColuna.reduce((s, p) => s + p.h, 0)
+      expect(somada, `n=${n}`).toBeCloseTo(r.heroi.h, 9)
+      expect(Number.isInteger(r.camaras.length)).toBe(true)
+    }
   })
 
   it('desligar a faixa devolve o espaço ao conteúdo, não deixa uma tira preta', () => {
@@ -179,6 +239,75 @@ describe('rectsDaMoldura — as peças repartem o espaço sem se pisarem', () =>
     expect(r.assinatura).toBeNull()
     const somada = r.camaras.reduce((s, c) => s + c.h, 0)
     expect(somada).toBeCloseTo(r.heroi.h, 9)
+  })
+})
+
+describe('saneamento — um localStorage estragado não pode mudar a cena no ar', () => {
+  it('uma chave explicitamente `undefined` cai no valor por omissão, não o destrói', () => {
+    // O `{ ...OPCOES_INICIAIS, ...opcoes }` sozinho deixava o `undefined`
+    // sobrepor-se ao default. Com `exactOptionalPropertyTypes` desligado no
+    // tsconfig, `{ lado: cfg?.lado }` typecheca e produz exactamente isto.
+    const omissao = rectsDaMoldura(2, 1920, 1080)
+    const comUndefined = rectsDaMoldura(2, 1920, 1080, {
+      lado: undefined,
+      faixa: undefined,
+      logo: undefined,
+      assinatura: undefined,
+    })
+    expect(comUndefined).toEqual(omissao)
+  })
+
+  it('um `lado` inventado cai na esquerda em vez de escolher a direita por acidente', () => {
+    const mau = rectsDaMoldura(2, 1920, 1080, { lado: 'nordeste' as unknown as 'esquerda' })
+    const bom = rectsDaMoldura(2, 1920, 1080, { lado: 'esquerda' })
+    expect(mau).toEqual(bom)
+  })
+
+  it('sanearOpcoes devolve sempre os quatro campos com o tipo certo', () => {
+    expect(sanearOpcoes(null)).toEqual(OPCOES_INICIAIS)
+    expect(sanearOpcoes('não é um objecto')).toEqual(OPCOES_INICIAIS)
+    expect(sanearOpcoes({ faixa: 'sim', lado: 7 })).toEqual(OPCOES_INICIAIS)
+    expect(sanearOpcoes({ lado: 'direita', logo: false })).toEqual({
+      ...OPCOES_INICIAIS,
+      lado: 'direita',
+      logo: false,
+    })
+  })
+})
+
+describe('dimensões degeneradas — nunca um NaN, que apaga o frame todo', () => {
+  it('largura/altura não-finitas ou negativas dão rectângulos de área zero, não NaN', () => {
+    for (const [W, H] of [
+      [Number.NaN, 1080],
+      [1920, Number.NaN],
+      [0, 0],
+      [-1920, 1080],
+      [Number.POSITIVE_INFINITY, 1080],
+    ]) {
+      for (const p of todasAsPecas(rectsDaMoldura(3, W, H))) {
+        for (const v of [p.x, p.y, p.w, p.h]) {
+          expect(Number.isFinite(v), `${W}×${H} deu ${v}`).toBe(true)
+          expect(v).toBeGreaterThanOrEqual(0)
+        }
+      }
+    }
+  })
+
+  it('canvas muito estreito e alto: o herói não fica com largura negativa nem troca de lado', () => {
+    // Uma captura vertical (80×1080) punha `wHeroi` a −7,7 px e as peças
+    // trocadas de lado, porque a margem é da altura e comia a largura toda.
+    //
+    // A exigência é `> 0`, não `>= 0`, e a distinção custou uma mutação: os
+    // `Math.max(0, …)` sozinhos já evitam o negativo, mas devolvem peças de
+    // largura ZERO — um directo em branco, que é tão inútil como o negativo.
+    // Quem salva o enquadramento é o tecto da margem (`min(H·f, W/10)`), e só
+    // esta asserção o prende: com a margem sem tecto, o herói fica a 0 px.
+    const r = rectsDaMoldura(3, 80, 1080)
+    expect(r.heroi.w).toBeGreaterThan(0)
+    expect(r.logo!.w).toBeGreaterThan(0)
+    expect(r.logo!.x).toBeLessThan(r.heroi.x)
+    // E o herói continua a ser o maior, mesmo espremido.
+    expect(r.heroi.w).toBeGreaterThan(r.logo!.w)
   })
 })
 
@@ -213,8 +342,15 @@ describe('deslocamentoDaFaixa — determinístico, porque o instante é ARGUMENT
     expect(d).toBeLessThan(300)
   })
 
-  it('passo zero ou entrada não-finita: devolve 0 em vez de NaN — um NaN no canvas apaga o desenho todo', () => {
+  it('passo zero, negativo ou não-finito: devolve 0 — um NaN no canvas apaga o desenho todo', () => {
+    // O `passo` vem de `larguraDoPadrao * escala` no chamador; com a imagem do
+    // padrão ainda por carregar isso é NaN. A guarda só estava provada em
+    // `passo === 0`, e uma versão com `passo === 0` em vez de `!isFinite`
+    // passava a suite inteira enquanto deixava o NaN chegar ao `translate`.
     expect(deslocamentoDaFaixa(1000, 0, 1920)).toBe(0)
+    expect(deslocamentoDaFaixa(1000, Number.NaN, 1920)).toBe(0)
+    expect(deslocamentoDaFaixa(1000, -300, 1920)).toBe(0)
+    expect(deslocamentoDaFaixa(-1000, -300, 1920)).toBe(0)
     expect(deslocamentoDaFaixa(Number.NaN, 300, 1920)).toBe(0)
     expect(deslocamentoDaFaixa(1000, 300, Number.POSITIVE_INFINITY)).toBe(0)
   })

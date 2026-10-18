@@ -5,16 +5,25 @@
  * (o ecrã partilhado, normalmente) grande ao lado.
  *
  * Aqui não há canvas, nem `MediaStream`, nem DOM. Só rectângulos e um
- * deslocamento. O desenho vive no irmão `desenhoDaMoldura.ts` — a mesma
- * separação que o `studio/tv/mesa.ts` e o `desenhoDaMesa.ts` já usam, e pela
- * mesma razão: sem jsdom neste repo, o que não for puro não se testa.
+ * deslocamento — sem jsdom neste repo, o que não for puro não se testa. O
+ * desenho fica para um irmão `desenhoDaMoldura.ts`, pela mesma separação que o
+ * `studio/tv/mesa.ts` e o `desenhoDaMesa.ts` já usam.
  *
- * PORQUE É UM MÓDULO À PARTE, e não mais uma função no `studio/palco.ts`:
- * esta cena serve os DOIS compositores — o do Estúdio (`studio/compositor.ts`)
- * e o da Sala (`room/compositor.ts`). O `studio/palco.ts` já importa o
- * `calcularRects` da sala, logo a dependência existente é estúdio → sala. Pôr a
- * cena no estúdio e chamá-la da sala fechava um CICLO. Esta pasta é folha: não
- * importa de `room/` nem de `studio/`, e por isso ambos a podem importar.
+ * ESTADO, a 2026-10-18, para não dar a ideia errada a quem ler: este módulo
+ * AINDA NÃO TEM CHAMADOR. O desenho não está escrito, e nem o compositor da
+ * Sala nem o do Estúdio chamam o `rectsDaMoldura`. O que existe é a geometria e
+ * as suas propriedades; a ligação aos dois compositores é o trabalho a seguir,
+ * e enquanto não estiver feita esta frase fica aqui a dizê-lo.
+ *
+ * PORQUE É UM MÓDULO À PARTE, e não mais uma função no `studio/palco.ts`: a
+ * cena vai ser desenhada pelos dois compositores, e `room/` e `studio/` já se
+ * importam NOS DOIS SENTIDOS (`studio/palco.ts` traz o `calcularRects` da sala;
+ * `room/useMulticam.ts` traz o `directo` do estúdio). Pô-la numa dessas pastas
+ * só acrescentava arestas a um emaranhado que já existe. Esta é folha: não
+ * importa de nenhuma outra pasta de `src/`, e por isso qualquer uma a pode
+ * importar sem fechar ciclo. Quem o impõe é a regra `no-restricted-imports`
+ * para `src/cena/**` no `web/eslint.config.js` — e não um `grep`, que já se
+ * mostrou cego a importações multi-linha e a ciclos transitivos.
  *
  * É também daqui que sai o `Rect`, que antes nascia no `room/compositor.ts` —
  * a sala re-exporta-o para que nada a jusante tenha de mudar de import.
@@ -68,6 +77,31 @@ export const OPCOES_INICIAIS: OpcoesDaMoldura = {
 }
 
 /**
+ * Lê e SANEIA as opções, como o `sanearSobreposicoes` do `studio/palco.ts` faz
+ * para as suas — um JSON velho, mexido à mão, ou um `localStorage` corrompido
+ * não pode dar tipos errados à geometria.
+ *
+ * E não basta `{ ...OPCOES_INICIAIS, ...opcoes }`: o spread deixa uma chave
+ * explicitamente `undefined` DESTRUIR o valor por omissão em vez de cair nele.
+ * Como o `exactOptionalPropertyTypes` está desligado no `tsconfig`, um
+ * `{ lado: cfg?.lado }` ou um `JSON.parse` de armazenamento estragado passa no
+ * compilador e produz exactamente isso. Medido: `{ lado: undefined }` mandava a
+ * coluna para o lado errado, e `{ faixa: undefined }` fazia a faixa desaparecer
+ * e a cena saltar 62 px a meio de uma emissão.
+ */
+export function sanearOpcoes(v: unknown): OpcoesDaMoldura {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+  const bool = (k: keyof OpcoesDaMoldura) =>
+    typeof o[k] === 'boolean' ? (o[k] as boolean) : (OPCOES_INICIAIS[k] as boolean)
+  return {
+    lado: o.lado === 'esquerda' || o.lado === 'direita' ? o.lado : OPCOES_INICIAIS.lado,
+    faixa: bool('faixa'),
+    logo: bool('logo'),
+    assinatura: bool('assinatura'),
+  }
+}
+
+/**
  * Os rectângulos de uma moldura. O que estiver desligado vem a `null`, e quem
  * desenha testa o `null` em vez de adivinhar por tamanho zero. As `camaras`
  * podem vir em lista vazia: uma aula sem convidados é uma coluna só com marca,
@@ -79,6 +113,17 @@ export interface RectsDaMoldura {
   logo: Rect | null
   camaras: Rect[]
   assinatura: Rect | null
+  /**
+   * Quantas câmaras ficaram DE FORA por não caberem na coluna.
+   *
+   * Sem este número, quem chama não consegue distinguir três convidados de
+   * nove: a coluna fica igualmente bem desenhada nos dois casos, e os que
+   * sobram não aparecem em frame nenhum — com o áudio deles a continuar
+   * misturado, portanto a falar fora do ecrã durante a sessão inteira. O
+   * `calcularRects` da sala dá rectângulo a toda a gente; aqui há um tecto, e
+   * um tecto que não se anuncia é uma perda silenciosa.
+   */
+  omitidas: number
 }
 
 /**
@@ -104,43 +149,68 @@ export function rectsDaMoldura(
   altura: number,
   opcoes: Partial<OpcoesDaMoldura> = {},
 ): RectsDaMoldura {
-  const o = { ...OPCOES_INICIAIS, ...opcoes }
-  const margem = altura * FRACCAO_DA_MARGEM
+  const o = sanearOpcoes({ ...OPCOES_INICIAIS, ...opcoes })
 
-  const faixa: Rect | null = o.faixa ? { x: 0, y: 0, w: largura, h: altura * FRACCAO_DA_FAIXA } : null
+  // Dimensões saneadas ANTES de qualquer conta. Um `canvas.width` lido antes do
+  // `loadedmetadata`, ou um `video.videoWidth` de uma pista que ainda não
+  // chegou, dá `NaN`/`undefined` — e um `NaN` que chegue ao `drawImage` ou ao
+  // `fillRect` apaga o desenho TODO sem erro nenhum. Mais vale um frame com
+  // rectângulos de área zero (nada desenhado, recuperável no frame seguinte)
+  // do que a tela em branco e silêncio.
+  const W = Number.isFinite(largura) && largura > 0 ? largura : 0
+  const H = Number.isFinite(altura) && altura > 0 ? altura : 0
+
+  // A margem é da altura, mas não pode comer a largura num canvas muito
+  // estreito (uma captura vertical, 100×1920): sem o tecto, `wHeroi` saía
+  // NEGATIVO e as peças trocavam de lado.
+  const margem = Math.min(H * FRACCAO_DA_MARGEM, W / 10)
+
+  const faixa: Rect | null = o.faixa ? { x: 0, y: 0, w: W, h: H * FRACCAO_DA_FAIXA } : null
 
   const topoDoConteudo = (faixa?.h ?? 0) + margem
-  const alturaDoConteudo = altura - topoDoConteudo - margem
-  const larguraUtil = largura - margem * 2
-  const wColuna = (larguraUtil - margem) * FRACCAO_DA_COLUNA
-  const wHeroi = larguraUtil - margem - wColuna
+  const alturaDoConteudo = Math.max(0, H - topoDoConteudo - margem)
+  const larguraUtil = Math.max(0, W - margem * 2)
+  const wColuna = Math.max(0, (larguraUtil - margem) * FRACCAO_DA_COLUNA)
+  const wHeroi = Math.max(0, larguraUtil - margem - wColuna)
 
   const xColuna = o.lado === 'esquerda' ? margem : margem + wHeroi + margem
   const xHeroi = o.lado === 'esquerda' ? margem + wColuna + margem : margem
 
   const heroi: Rect = { x: xHeroi, y: topoDoConteudo, w: wHeroi, h: alturaDoConteudo }
 
-  const hLogo = o.logo ? alturaDoConteudo * FRACCAO_DO_LOGO : 0
-  const hAssinatura = o.assinatura ? alturaDoConteudo * FRACCAO_DA_ASSINATURA : 0
+  const pedidas = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+  const k = Math.min(pedidas, MAXIMO_DE_CAMARAS)
+
+  // As fracções do logótipo e da assinatura, com o espaço das câmaras
+  // redistribuído quando não há câmaras nenhumas.
+  //
+  // SEM ISTO havia um buraco: com `k = 0` o logótipo ficava colado ao topo e a
+  // assinatura ancorada em baixo, e no meio sobravam 59% da altura da coluna
+  // por pintar — 564 px num 1080p. O comentário desta função prometia «não um
+  // buraco preto» e o código fazia exactamente um. Passou despercebido porque o
+  // teste de contiguidade só corria com três câmaras.
+  const fLogo0 = o.logo ? FRACCAO_DO_LOGO : 0
+  const fAssinatura0 = o.assinatura ? FRACCAO_DA_ASSINATURA : 0
+  const somaDasMarcas = fLogo0 + fAssinatura0
+  const escala = k === 0 && somaDasMarcas > 0 ? 1 / somaDasMarcas : 1
+  const hLogo = alturaDoConteudo * fLogo0 * escala
+  const hAssinatura = alturaDoConteudo * fAssinatura0 * escala
+
   const logo: Rect | null = o.logo ? { x: xColuna, y: topoDoConteudo, w: wColuna, h: hLogo } : null
   const assinatura: Rect | null = o.assinatura
     ? { x: xColuna, y: topoDoConteudo + alturaDoConteudo - hAssinatura, w: wColuna, h: hAssinatura }
     : null
 
-  const k = Math.max(0, Math.min(Math.floor(n), MAXIMO_DE_CAMARAS))
   const yCamaras = topoDoConteudo + hLogo
-  const hCamaras = alturaDoConteudo - hLogo - hAssinatura
-  const camaras: Rect[] =
-    k > 0
-      ? Array.from({ length: k }, (_, i) => ({
-          x: xColuna,
-          y: yCamaras + (hCamaras / k) * i,
-          w: wColuna,
-          h: hCamaras / k,
-        }))
-      : []
+  const hCamaras = Math.max(0, alturaDoConteudo - hLogo - hAssinatura)
+  const camaras: Rect[] = Array.from({ length: k }, (_, i) => ({
+    x: xColuna,
+    y: yCamaras + (hCamaras / k) * i,
+    w: wColuna,
+    h: hCamaras / k,
+  }))
 
-  return { faixa, heroi, logo, camaras, assinatura }
+  return { faixa, heroi, logo, camaras, assinatura, omitidas: pedidas - k }
 }
 
 /**
@@ -157,7 +227,13 @@ export function rectsDaMoldura(
  * suficiente para perder precisão.
  */
 export function deslocamentoDaFaixa(instanteMs: number, passo: number, largura: number): number {
-  if (!(passo > 0) || !Number.isFinite(instanteMs) || !Number.isFinite(largura)) return 0
+  // `Number.isFinite` nos TRÊS, e não só o `passo > 0`: um `NaN` passa o
+  // `> 0` como falso e portanto saía 0 por acidente, mas um `passo` negativo
+  // devolvia um resultado FORA de `[0, passo)` — e um `passo` NaN vindo de uma
+  // imagem de padrão ainda por carregar (`larguraDoPadrao * escala`) levava o
+  // NaN até ao `translate`, que apaga o frame inteiro sem erro nenhum.
+  if (!Number.isFinite(passo) || passo <= 0) return 0
+  if (!Number.isFinite(instanteMs) || !Number.isFinite(largura)) return 0
   const px = (instanteMs / 1000) * largura * VELOCIDADE_DA_FAIXA
   const resto = px % passo
   // O `%` do JS devolve negativo para entradas negativas; um instante antes da

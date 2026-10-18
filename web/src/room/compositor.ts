@@ -25,16 +25,24 @@ import type { Rect } from '../cena/moldura'
 export type Cena = 'solo' | 'lado-a-lado' | 'grelha'
 
 /**
- * O `Rect` passou a nascer em `cena/moldura.ts` e é re-exportado daqui.
+ * O `Rect` deste módulo passou a vir de `cena/moldura.ts`, e é re-exportado
+ * daqui.
  *
- * PORQUÊ: a moldura de transmissão é desenhada pelos DOIS compositores (este e
- * o do Estúdio), logo vive num módulo à parte. Se esse módulo importasse o
- * `Rect` daqui, e este importasse a moldura de lá, fechava-se um ciclo. A cena
- * é folha — não importa de `room/` nem de `studio/` — e o
- * `scripts/check-cena-e-folha.sh` recusa que deixe de ser.
+ * PORQUÊ: a moldura de transmissão vai ser desenhada por este compositor e pelo
+ * do Estúdio, logo vive num módulo à parte. Se esse módulo importasse o `Rect`
+ * daqui, e este importasse a moldura de lá, fechava-se um ciclo. A cena é
+ * folha — não importa de nenhuma outra pasta de `src/` — e quem o impõe é a
+ * regra `no-restricted-imports` para `src/cena/**` no `web/eslint.config.js`,
+ * que corre no `check-frontend-lint.sh` do CI.
  *
  * Fica re-exportado para que nada a jusante (`studio/palco.ts`, entre outros)
  * tenha de mudar de import por causa de uma mudança que não lhes diz respeito.
+ *
+ * O QUE ISTO NÃO RESOLVEU: há uma TERCEIRA declaração igual em
+ * `studio/tv/mesa.ts`, consumida pelo `desenhoDaMesa.ts`. Não se unificou aqui
+ * para não arrastar a mesa de corte para dentro desta fatia, mas fica dito: são
+ * dois locais de nascimento, não um, e quem acrescentar um campo ao `Rect` tem
+ * de o fazer nos dois.
  */
 export type { Rect }
 
