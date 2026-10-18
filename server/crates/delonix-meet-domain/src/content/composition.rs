@@ -90,6 +90,19 @@ pub struct ComposeTrack {
     /// `"video"` ou `"audio"` (o adaptador compara com `ends_with("audio")`).
     pub kind: String,
     pub starts_at_ms: u64,
+    /// Quem publicou a pista (o `publisher` do SFU). Serve a gravação ISO:
+    /// sem isto os ficheiros por fonte saíam anónimos e ninguém sabia que
+    /// câmara era qual.
+    ///
+    /// **`serde(default)` não é descuido.** Este manifesto está PERSISTIDO em
+    /// `recordings.compose_manifest`: uma composição em voo no instante do
+    /// rollout tem de continuar a desserializar, senão a gravação de alguém
+    /// morre em `processing` por causa de um campo novo — que é exactamente o
+    /// modo de falha que este manifesto existe para evitar. Um manifesto
+    /// antigo traz o UUID nulo, e quem escreve as pistas ISO trata-o como
+    /// «publicador desconhecido» em vez de inventar um.
+    #[serde(default)]
+    pub publisher: uuid::Uuid,
 }
 
 /// O que basta para compor uma gravação sem a sessão em memória.

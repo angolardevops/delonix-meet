@@ -11988,6 +11988,67 @@
         ],
         "type": "object"
       },
+      "TrackItem": {
+        "description": "Uma pista por fonte, como vai para o ecrã.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "publisher_id": {
+            "description": "Quem publicou. Fica sempre, mesmo quando o nome não se resolveu — é o\nque torna uma pista sem etiqueta recuperável mais tarde.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "source_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_number": {
+            "description": "O número da câmara no estúdio (1–16), quando se soube resolver.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "starts_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "size_bytes",
+          "starts_at_ms",
+          "publisher_id"
+        ],
+        "type": "object"
+      },
+      "TracksResp": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TrackItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "Transcript": {
         "properties": {
           "confidence": {
@@ -38516,6 +38577,149 @@
           }
         ],
         "summary": "`GET /api/recordings/{id}/thumbnail` — JPEG gerado pelo servidor.",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/tracks": {
+      "get": {
+        "operationId": "tracks",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracksResp"
+                }
+              }
+            },
+            "description": "As pistas por fonte (gravação ISO, ADR-0014 §2.3). Vazio numa gravação que não as pediu."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Chega à gravação mas não a pode ver."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe, ou não chega a ela."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{recording_id}/tracks`",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/tracks/{track_id}/content": {
+      "get": {
+        "description": "Serve o ficheiro da pista. O vídeo ISO é **IVF** (VP8 cru, antes de\nqualquer mistura — é o requisito do ADR-0014) e nenhum browser o toca: sai\ncomo descarga, que é para o que serve, a pós-produção. O áudio é OGG, que\num browser já lê, e por isso aceita reprodução.",
+        "operationId": "track_content",
+        "parameters": [
+          {
+            "description": "Gravação.",
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Pista desta gravação. Um id de pista de OUTRA gravação dá 404.",
+            "in": "path",
+            "name": "track_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "O ficheiro da pista: IVF (vídeo, VP8 cru) ou OGG (áudio). Honra `Range`."
+          },
+          "206": {
+            "description": "Parte do ficheiro, quando o pedido traz `Range`."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Levar um ficheiro exige a permissão de download, como a gravação composta."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/recordings/{recording_id}/tracks/{track_id}/content`",
         "tags": [
           "recordings"
         ]

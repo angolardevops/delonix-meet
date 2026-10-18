@@ -70,6 +70,8 @@ pub struct WebmBytes(Vec<u8>);
         list,
         library,
         download,
+        tracks,
+        track_content,
         share,
         shares,
         unshare,
@@ -109,7 +111,9 @@ pub struct WebmBytes(Vec<u8>);
         ShareLink,
         CreateLinkReq,
         PublicShareResp,
-        PublicShareAccessReq
+        PublicShareAccessReq,
+        TrackItem,
+        TracksResp
     ))
 )]
 pub struct ApiDoc;
@@ -1239,6 +1243,19 @@ async fn serve_file_range(
     disposition: &str,
     range: Option<&str>,
 ) -> Result<Response, ApiError> {
+    serve_file_range_as(path, "video/webm", disposition, range).await
+}
+
+/// O mesmo, com o tipo de conteúdo à escolha: as pistas da gravação ISO são
+/// IVF e OGG, não webm. Separado em vez de mudar a assinatura de todos os
+/// chamadores — o `video/webm` da gravação composta é a regra, e isto a
+/// excepção que se nomeia.
+async fn serve_file_range_as(
+    path: &std::path::Path,
+    content_type: &str,
+    disposition: &str,
+    range: Option<&str>,
+) -> Result<Response, ApiError> {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
     let mut file = tokio::fs::File::open(path)
@@ -1247,7 +1264,7 @@ async fn serve_file_range(
     let total = file.metadata().await.map_err(ApiError::internal)?.len();
 
     let base = [
-        (header::CONTENT_TYPE, "video/webm".to_string()),
+        (header::CONTENT_TYPE, content_type.to_string()),
         (header::CONTENT_DISPOSITION, disposition.to_string()),
         // Anunciado SEMPRE, também na resposta inteira: é assim que o leitor
         // sabe que pode pedir um intervalo da próxima vez.
@@ -2523,4 +2540,155 @@ pub(crate) async fn library_items_by_ids(
         .filter_map(|id| by_id.remove(id))
         .map(|r| r.into_item(None))
         .collect())
+}
+
+// ===== Gravação ISO: as pistas por fonte (ADR-0014 §2.3) =====
+//
+// O interruptor `studios.iso_recording` existe desde a migração 0081, com UI,
+// e a tabela e as rotas que o servem nunca existiram — o contrato do estúdio
+// nomeava-as como «por implementar» e proibia a interface de mostrar
+// «REC · ISO n» sem elas. Isto é esse par de rotas.
+//
+// A autorização é a MESMA da gravação composta, e de propósito: uma pista é a
+// mesma gravação vista por uma câmara. Quem não chega à gravação leva o 404 de
+// «não existe» antes de qualquer outra resposta (`seen_item`), e descarregar
+// exige a permissão de download como o ficheiro inteiro.
+
+/// Uma pista por fonte, como vai para o ecrã.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct TrackItem {
+    pub id: Uuid,
+    pub kind: String,
+    pub size_bytes: i64,
+    pub starts_at_ms: i64,
+    /// O número da câmara no estúdio (1–16), quando se soube resolver.
+    pub source_number: Option<i32>,
+    pub source_label: Option<String>,
+    /// Quem publicou. Fica sempre, mesmo quando o nome não se resolveu — é o
+    /// que torna uma pista sem etiqueta recuperável mais tarde.
+    pub publisher_id: Uuid,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct TracksResp {
+    pub items: Vec<TrackItem>,
+}
+
+/// `GET /api/recordings/{recording_id}/tracks`
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/tracks", tag = "recordings",
+    security(("session" = [])),
+    params(("recording_id" = Uuid, Path, description = "Gravação.")),
+    responses(
+        (status = 200, body = TracksResp, description = "As pistas por fonte (gravação ISO, ADR-0014 §2.3). Vazio numa gravação que não as pediu."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "Chega à gravação mas não a pode ver."),
+        (status = 404, body = crate::openapi::ErrorBody, description = "Não existe, ou não chega a ela."),
+    )
+)]
+pub async fn tracks(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<TracksResp>, ApiError> {
+    let rec = seen_item(&state, id, auth.user_id).await?;
+    if !rec.facts().can_view() {
+        return Err(DomainError::forbidden("recording.view_forbidden")
+            .with_message("sem acesso a esta gravação")
+            .into());
+    }
+    let rows: Vec<(Uuid, String, i64, i64, Option<i32>, Option<String>, Uuid)> = sqlx::query_as(
+        "SELECT id, kind, size_bytes, starts_at_ms, source_number, source_label, publisher_id
+         FROM recording_tracks WHERE recording_id = $1
+         ORDER BY source_number NULLS LAST, starts_at_ms, filename",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(TracksResp {
+        items: rows
+            .into_iter()
+            .map(
+                |(id, kind, size_bytes, starts_at_ms, source_number, source_label, publisher_id)| {
+                    TrackItem {
+                        id,
+                        kind,
+                        size_bytes,
+                        starts_at_ms,
+                        source_number,
+                        source_label,
+                        publisher_id,
+                    }
+                },
+            )
+            .collect(),
+    }))
+}
+
+/// `GET /api/recordings/{recording_id}/tracks/{track_id}/content`
+///
+/// Serve o ficheiro da pista. O vídeo ISO é **IVF** (VP8 cru, antes de
+/// qualquer mistura — é o requisito do ADR-0014) e nenhum browser o toca: sai
+/// como descarga, que é para o que serve, a pós-produção. O áudio é OGG, que
+/// um browser já lê, e por isso aceita reprodução.
+#[utoipa::path(
+    get, path = "/api/recordings/{recording_id}/tracks/{track_id}/content", tag = "recordings",
+    security(("session" = [])),
+    params(
+        ("recording_id" = Uuid, Path, description = "Gravação."),
+        ("track_id" = Uuid, Path, description = "Pista desta gravação. Um id de pista de OUTRA gravação dá 404."),
+    ),
+    responses(
+        (status = 200, description = "O ficheiro da pista: IVF (vídeo, VP8 cru) ou OGG (áudio). Honra `Range`."),
+        (status = 206, description = "Parte do ficheiro, quando o pedido traz `Range`."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "Levar um ficheiro exige a permissão de download, como a gravação composta."),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn track_content(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, track_id)): Path<(Uuid, Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, ApiError> {
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let rec = seen_item(&state, id, auth.user_id).await?;
+    // Uma pista é um FICHEIRO: levar um ficheiro exige a mesma permissão que
+    // levar a gravação composta. Sem isto, a gravação ISO era a porta de
+    // serviço para quem só pode ver.
+    if !rec.facts().can_download() {
+        return Err(DomainError::forbidden("recording.download_forbidden")
+            .with_message("só o dono ou um administrador da organização descarrega os ficheiros")
+            .into());
+    }
+    // O `recording_id` entra na consulta: sem ele, um id de pista de OUTRA
+    // gravação (a que esta pessoa não chega) era servido por aqui.
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT filename, kind FROM recording_tracks WHERE id = $1 AND recording_id = $2",
+    )
+    .bind(track_id)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((filename, kind)) = row else {
+        return Err(ApiError::NotFound);
+    };
+    // A pasta dos segmentos é a da gravação, e o nome vem da base SEM barras
+    // (a migração recusa-as) — não há aqui caminho que o pedido controle.
+    let path = state
+        .config
+        .recordings_dir
+        .join(format!("iso-{}", rec.id))
+        .join(&filename);
+    let tipo = if kind.ends_with("audio") {
+        "audio/ogg"
+    } else {
+        "application/octet-stream"
+    };
+    let disposition = format!("attachment; filename=\"{}\"", filename.replace('"', ""));
+    serve_file_range_as(&path, tipo, &disposition, range.as_deref()).await
 }

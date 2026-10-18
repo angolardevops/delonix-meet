@@ -928,6 +928,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/recordings/{recording_id}/content", get(recordings::download))
         .route("/api/recordings/{recording_id}/details", get(recordings::details))
+        // Gravação ISO (ADR-0014 §2.3): as pistas por fonte. A autorização é a
+        // da gravação composta — uma pista é a mesma gravação vista por uma
+        // câmara, e levar um ficheiro exige a permissão de download.
+        .route("/api/recordings/{recording_id}/tracks", get(recordings::tracks))
+        .route(
+            "/api/recordings/{recording_id}/tracks/{track_id}/content",
+            get(recordings::track_content),
+        )
         .route(
             "/api/recordings/{recording_id}/chapters",
             get(recordings::list_chapters).post(recordings::create_chapter),

@@ -1547,6 +1547,7 @@ impl SfuState {
                     if let Some(session) = rec_guard.as_mut() {
                         if let Some(w) = session.open_track(
                             &publication.kind,
+                            publisher,
                             self.rec_cap(),
                             self.metrics.clone(),
                         ) {
@@ -2047,7 +2048,9 @@ impl SfuState {
                 continue;
             }
             if p.kind == "audio" {
-                if let Some(w) = session.open_track("audio", self.rec_cap(), self.metrics.clone()) {
+                if let Some(w) =
+                    session.open_track("audio", p.publisher, self.rec_cap(), self.metrics.clone())
+                {
                     *p.rec.lock().await = Some(w);
                 }
             } else {
@@ -2063,8 +2066,10 @@ impl SfuState {
             }
         }
         let mut need_keyframe: Vec<Arc<Publication>> = Vec::new();
-        for ((_, kind), p) in &best_video {
-            if let Some(w) = session.open_track(kind, self.rec_cap(), self.metrics.clone()) {
+        for ((publisher, kind), p) in &best_video {
+            if let Some(w) =
+                session.open_track(kind, *publisher, self.rec_cap(), self.metrics.clone())
+            {
                 *p.rec.lock().await = Some(w);
                 need_keyframe.push(Arc::clone(p));
             }

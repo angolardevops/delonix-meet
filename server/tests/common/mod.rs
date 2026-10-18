@@ -274,6 +274,28 @@ impl RawResponse {
 }
 
 impl TestApp {
+    /// Pedido que devolve os BYTES, não texto.
+    ///
+    /// O `raw` acima faz `res.text()`, que passa o corpo por UTF-8 lossy: um
+    /// ficheiro de media sai corrompido e um teste que o medisse estaria a
+    /// medir lixo. Serve as rotas que devolvem ficheiros (gravação composta,
+    /// pistas ISO, exportações).
+    pub async fn raw_bytes(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> (u16, Vec<u8>) {
+        let mut rb = self.http.request(method, self.url(path));
+        for (k, v) in headers {
+            rb = rb.header(*k, *v);
+        }
+        let res = rb.send().await.expect("pedido HTTP falhou");
+        let status = res.status().as_u16();
+        let bytes = res.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
+        (status, bytes)
+    }
+
     /// Pedido com cabeçalhos arbitrários; devolve a resposta crua.
     pub async fn raw(
         &self,
