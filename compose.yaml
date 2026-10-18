@@ -85,6 +85,22 @@ services:
       INTERNAL_BIND_ADDR: 0.0.0.0:8181
       TURN_HOST: meet.ngolacloud.local:23478
       CORS_ORIGINS: https://meet.ngolacloud.local:8443
+      # Admissão por capacidade (ADR-0017). Declarados AQUI e não deixados à
+      # omissão do código, para que esta forma de implantar diga o seu tecto em
+      # voz alta como as outras duas dizem (`deploy/k8s/01-config.yaml` e os
+      # `values` do chart). Até 2026-10-18 o compose não declarava nenhum dos
+      # dois: aceitava a 41.ª pessoa e degradava a sala para todos, sem sinal.
+      #
+      # 50 é a capacidade do deploy de REFERÊNCIA e o máximo provado em bancada
+      # são 40 (`docs/ops/teste-de-carga-2026-10-05.md:29`: 11,2 de 16 núcleos).
+      # O compose não põe limites de recursos ao contentor — leva a máquina
+      # toda —, por isso o número honesto é o do host onde isto corre: se o teu
+      # aguenta menos, baixa-o; é uma decisão de quem opera, não uma constante.
+      NODE_PEER_CAPACITY: "50"
+      # 80 % da capacidade do nó, a mesma regra dos três `values` (25→20,
+      # 50→40). Trava o vizinho ruidoso: uma organização sozinha não fecha o nó
+      # às outras. Recusa com 429 — «tu já tens o teu» —, não com 503.
+      ORG_MAX_PARTICIPANTS: "40"
       RECORDINGS_DIR: /var/lib/delonix/recordings
       # Endereço público do servidor SIP dos ramais, que a consola mostra nas
       # credenciais de um ramal (perfil «internal» do FreeSWITCH). A porta só

@@ -375,18 +375,36 @@ capabilities:
 {{- if not (has $v.gateway.affinity.implementation (list "envoy" "none")) -}}
 {{- $e = append $e (printf "gateway.affinity.implementation=%s: é «envoy» ou «none»" $v.gateway.affinity.implementation) -}}
 {{- end -}}
-{{- if and $prod (le (int $v.server.nodePeerCapacity) 0) -}}
-{{- $e = append $e "server.nodePeerCapacity: 0 em produção. Sem capacidade declarada o nó NÃO recusa salas novas (ADR-0017): aceita até degradar, e o alerta MeetSalasRecusadasPorCapacidade nunca dispara. Foi o que esteve em produção até 2026-10-13. Declara os participantes que o pod aguenta — para o limite de memória do pod, é (limite − base) ÷ 73 MB por participante (docs/ops/teste-de-carga-2026-10-05.md)" -}}
-{{- end -}}
-{{- if and (gt (int $v.server.orgMaxParticipants) 0) (gt (int $v.server.orgMaxParticipants) (int $v.server.nodePeerCapacity)) (gt (int $v.server.nodePeerCapacity) 0) -}}
-{{- $e = append $e (printf "server.orgMaxParticipants (%d) acima de server.nodePeerCapacity (%d): o tecto da organização nunca morde, porque o nó recusa primeiro" (int $v.server.orgMaxParticipants) (int $v.server.nodePeerCapacity)) -}}
-{{- end -}}
 {{- if and $prod (eq $v.gateway.affinity.implementation "none") -}}
 {{- $e = append $e "gateway.affinity.implementation=none em produção: sem a BackendTrafficPolicy não há hash(room)→mesmo pod, os pares de uma sala caem em pods diferentes e o SFU em memória parte-se — é a regressão R3, «media num só sentido» (ADR-0001). Com outra implementação de Gateway API, arranja o equivalente ANTES de pôr isto a none" -}}
 {{- end -}}
 {{- if and $prod (not $v.gateway.acceptProvisioningInAccessLog) -}}
 {{- $e = append $e "gateway.acceptProvisioningInAccessLog: em Gateway API o registo de acessos é do GATEWAY e não da rota, logo o caminho /api/public/extension-provisioning — que leva um bilhete de uso único (R278) — vai para o log. O Ingress tinha uma rota dedicada só para o desligar e isso não tem equivalente. Põe true para reconhecer, ou usa ingress.enabled" -}}
 {{- end -}}
+{{- end -}}
+
+{{- /*
+  Admissão por capacidade (ADR-0017). FORA do bloco do Gateway: estas guardas
+  viveram dentro do `if $v.gateway.enabled` até 2026-10-18 e por isso NUNCA
+  corriam no caminho por omissão do chart (`values.yaml`: gateway desligado,
+  ingress ligado). O tecto não tem nada que ver com a forma como o tráfego
+  entra — uma guarda que só dispara em metade das implantações não é guarda.
+*/}}
+{{- if and $prod (le (int $v.server.nodePeerCapacity) 0) -}}
+{{- $e = append $e "server.nodePeerCapacity: 0 em produção. `0` é «sem tecto, de propósito» e o ConfigMap passa-o tal e qual ao servidor (ADR-0017): o nó aceita até degradar, e o alerta MeetSalasRecusadasPorCapacidade nunca dispara. Foi o que esteve em produção até 2026-10-13. É o valor de uma RAMPA DE CARGA, não de uma instalação a servir gente. Declara os participantes que o pod aguenta — para o limite de memória do pod, é (limite − base) ÷ 73 MB por participante (docs/ops/teste-de-carga-2026-10-05.md)" -}}
+{{- end -}}
+{{- /*
+  Com `nodePeerCapacity: 0` um tecto de organização explícito continua a valer
+  (o servidor respeita-o mesmo com o do nó desligado), mas comparar os dois não
+  diz nada — por isso a guarda de baixo só corre com capacidade declarada. O
+  que ela NÃO pode é desarmar-se em silêncio: `0` + `orgMaxParticipants: 60`
+  era aceite sem ninguém reparar que o nó ficava sem tecto nenhum.
+*/}}
+{{- if and (gt (int $v.server.orgMaxParticipants) 0) (gt (int $v.server.orgMaxParticipants) (int $v.server.nodePeerCapacity)) (gt (int $v.server.nodePeerCapacity) 0) -}}
+{{- $e = append $e (printf "server.orgMaxParticipants (%d) acima de server.nodePeerCapacity (%d): o tecto da organização nunca morde, porque o nó recusa primeiro" (int $v.server.orgMaxParticipants) (int $v.server.nodePeerCapacity)) -}}
+{{- end -}}
+{{- if and (le (int $v.server.nodePeerCapacity) 0) (gt (int $v.server.orgMaxParticipants) 0) -}}
+{{- $e = append $e (printf "server.nodePeerCapacity: 0 com server.orgMaxParticipants: %d. O tecto da ORGANIZAÇÃO morde mas o do NÓ não existe: uma segunda organização enche o nó na mesma. Ou declara a capacidade do nó, ou põe os dois a 0 (é o que uma rampa de carga faz)" (int $v.server.orgMaxParticipants)) -}}
 {{- end -}}
 
 {{- if $e -}}

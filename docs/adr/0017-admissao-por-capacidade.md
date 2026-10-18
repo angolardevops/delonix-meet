@@ -58,10 +58,45 @@ recusa não é «este nó não serve», é «tu já tens o teu»):
   ter ligados, em todas as salas do nó, **incluindo a sala de espera**. Não conta lugares em graça,
   bots, a ponte telefónica nem fontes de estúdio (identidades de serviço emitidas pela organização).
 - **Por organização** — `organizations.max_concurrent_participants` (migração 0097), ou
-  `ORG_MAX_PARTICIPANTS` por omissão (sem ele, uma org sem tecto próprio é ilimitada). **Só o operador
+  `ORG_MAX_PARTICIPANTS` por omissão. **Só o operador
   o fixa** (`PUT /api/operator/v1/organizations/{org_id}/concurrency`): é um limite do plano, e uma org
   que o pudesse subir não estaria limitada. Conta os participantes das salas da organização
   (inquilino, como acima), incluindo lugares em graça.
+
+### A ausência deixou de significar «sem tecto» (2026-10-18)
+
+Os dois tectos do nó eram lidos com `opt()`: **ausente valia `None`, e `None` não recusa ninguém**. O
+`compose.yaml` não declarava nenhum dos dois, por isso essa forma de implantar aceitava a 41.ª pessoa
+e degradava a sala para todos sem um sinal — contra um máximo **provado** de 40 em bancada
+(`docs/ops/teste-de-carga-2026-10-05.md:29`: 11,2 de 16 núcleos, 0,03 % de perda).
+
+Passaram a ter **três estados declarados**, em `config.rs` (`tecto()`):
+
+| ambiente | significado |
+|---|---|
+| ausente | a omissão do código — **nunca «sem tecto»** |
+| `0` | sem tecto, **de propósito**: é o que uma rampa de carga põe |
+| outro inteiro | o valor; um não-inteiro continua a dar pânico no arranque |
+
+A omissão do nó é `DEFAULT_NODE_PEER_CAPACITY` = 50, a capacidade do deploy de **referência** — não um
+número novo. A da organização **deriva** dela: 80 % (`ORG_SHARE_OF_NODE`), que é a regra que os três
+`values` já aplicavam à mão (25→20, 50→40, 50→40). Com o tecto do nó **desligado** (`0`) não se deriva
+nada: não há capacidade de onde tirar uma parte, e inventar uma contradizia o `0` que o operador pôs.
+
+Três consequências que custaram correcções na mesma sessão:
+
+- o ConfigMap do chart **emite `0` tal e qual**. Antes omitia a variável quando o valor era `0` (porque
+  o servidor entrava em pânico com um inteiro não positivo) — e com a ausência a valer 50, `0` passaria
+  a significar o oposto do que diz, com a rampa a medir contra um tecto que o operador julgava ter
+  desligado;
+- as guardas de capacidade do `_helpers.tpl` viviam **dentro** do `if gateway.enabled` e por isso nunca
+  corriam no caminho por omissão do chart (ingress). Saíram de lá: o tecto não tem que ver com a forma
+  como o tráfego entra;
+- os tectos em vigor são **ditos no arranque**, com `declarado = true|false`. O inventário do operador
+  publica o número mas não de onde veio, e depois de gravado um tecto por omissão é indistinguível de
+  um declarado.
+
+O `scripts/check-tectos-de-admissao.sh` recusa uma forma de implantar que não declare os dois.
 
 **Quem volta ao seu lugar não é uma entrada nova.** Uma entrada com `?reconnect=` só fica isenta se o
 segredo reclama de facto um lugar em graça desta sala (`Hub::seat_reclaimable`, comparação em tempo

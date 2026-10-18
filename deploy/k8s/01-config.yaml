@@ -18,8 +18,10 @@ data:
   # docs/ops/teste-de-carga-2026-10-05.md) são ~53, declarados 50.
   # A 85% (42) o nó passa a recusar salas NOVAS de quem já usa a sua parte justa;
   # aos 50 recusa a todos. Quem já está numa sala deste nó entra sempre.
-  # SEM esta variável nada se recusa — o nó aceita até degradar, que é como a
-  # produção esteve até 2026-10-13.
+  # Desde 2026-10-18 a AUSÊNCIA desta variável já não é «nada se recusa»: vale
+  # 50, a capacidade deste deploy de referência. Só `0` — explícito — desliga a
+  # admissão, e é o que uma rampa de carga põe. Até 2026-10-13 a produção
+  # esteve sem ela, a aceitar até degradar.
   NODE_PEER_CAPACITY: "50"
   # Tecto por organização NESTE nó quando o operador não lhe fixou um
   # (`PUT /api/operator/v1/organizations/{id}/concurrency`): 80% da capacidade,

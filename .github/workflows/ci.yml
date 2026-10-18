@@ -239,6 +239,9 @@ jobs:
       - name: Os compose das réplicas de prova lêem-se (uma chave repetida partiu uma sem ninguém ver)
         run: bash scripts/check-replicas-compose.sh
 
+      - name: Nenhuma forma de implantar fica sem tecto de participantes (ADR-0017)
+        run: bash scripts/check-tectos-de-admissao.sh
+
       - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
         run: bash scripts/check-k8s-render.sh
 
