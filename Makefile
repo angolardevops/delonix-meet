@@ -290,6 +290,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-fs-xml.sh
 	@bash scripts/check-ffmpeg-licenca.sh
+	@bash scripts/check-asr-soberania.sh
 	@bash scripts/check-tts-licenca.sh
 	@bash scripts/check-bordo-anuncia.sh
 	@bash scripts/check-bordo-central.sh

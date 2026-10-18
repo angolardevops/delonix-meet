@@ -21,8 +21,10 @@ const {
   asrDoServidorPreferido,
   guardaAsrDoServidor,
   guardaLegendas,
+  guardaWebSpeech,
   legendasLigadasPorOmissao,
   motorDaTranscricao,
+  webSpeechAceita,
 } = await import('./legendasPref')
 
 beforeEach(() => {
@@ -64,9 +66,34 @@ describe('ASR do servidor preferido por omissão', () => {
     expect(asrDoServidorPreferido()).toBe(true)
   })
 
-  it('quem o desliga fica com o motor do browser', () => {
+  it('quem o desliga dispensa o servidor — e não a soberania', () => {
+    // O nome deste teste dizia «fica com o motor do browser» até 2026-10-18,
+    // e era verdade sobre o código de então. Desligar o ASR do servidor
+    // passa a deixar o pedido no outro motor soberano (ver
+    // `motorDaTranscricao` abaixo); a Google é uma escolha à parte.
     guardaAsrDoServidor(false)
     expect(asrDoServidorPreferido()).toBe(false)
+  })
+})
+
+describe('aceitação explícita da Web Speech', () => {
+  it('um browser que nunca viu o ecrã NÃO aceitou o motor da Google', () => {
+    // `=== '1'` e não `!== '0'`: ao contrário das outras duas preferências
+    // deste módulo, aqui o que se guarda é o CONSENTIMENTO — e um
+    // consentimento que vale por omissão não é consentimento.
+    expect(webSpeechAceita()).toBe(false)
+  })
+
+  it('com o armazenamento bloqueado também não aceitou nada', () => {
+    atira = true
+    expect(webSpeechAceita()).toBe(false)
+  })
+
+  it('aceita-se e retira-se', () => {
+    guardaWebSpeech(true)
+    expect(webSpeechAceita()).toBe(true)
+    guardaWebSpeech(false)
+    expect(webSpeechAceita()).toBe(false)
   })
 })
 
@@ -75,13 +102,25 @@ describe('motorDaTranscricao', () => {
     expect(motorDaTranscricao({ asrDoServidor: true, temWebSpeech: true })).toBe('servidor')
   })
 
-  it('ASR do servidor em baixo: cai para o motor do browser e NÃO volta a tentar', () => {
-    // Esta é a regressão que o ciclo infinito causava: o `start()` voltava a
-    // ler a preferência (ainda «servidor»), abria outro WebSocket e falhava,
-    // sem nunca chegar ao motor seguinte. A marca «em baixo» é o que o impede.
+  // ─────────────────────────────────────────────────────────────────────────
+  // INVERTIDO A 2026-10-18, de propósito. Este teste trancava `'webspeech'`
+  // e era a razão por que a divergência durava: o módulo documentava a ordem
+  // «1. servidor · 2. wasm · 3. webspeech» e o código, no recuo que mais
+  // acontece, saltava o wasm. O teste não estava errado sobre o CÓDIGO —
+  // descrevia-o fielmente. Estava errado sobre o PRODUTO, e por isso ficou.
+  //
+  // O que uma falha do `/asr` a meio de uma reunião fazia em Chrome: começava
+  // a enviar o áudio aos servidores da Google, no meio de uma sessão que
+  // começara soberana, enquanto a interface dizia «a usar o motor local».
+  // Agora o recuo de uma falha é SEMPRE outro motor soberano.
+  // ─────────────────────────────────────────────────────────────────────────
+  it('ASR do servidor em baixo: o recuo é o WASM local, NUNCA a Google', () => {
+    // A marca «em baixo» continua a impedir o ciclo infinito que o `start()`
+    // causava (voltava a ler a preferência, ainda «servidor», e abria outro
+    // WebSocket). O que mudou é para onde ela dá lugar.
     expect(
       motorDaTranscricao({ asrDoServidor: true, asrDoServidorEmBaixo: true, temWebSpeech: true }),
-    ).toBe('webspeech')
+    ).toBe('wasm')
   })
 
   it('ASR do servidor em baixo e sem Web Speech (Firefox): Whisper local', () => {
@@ -90,14 +129,68 @@ describe('motorDaTranscricao', () => {
     ).toBe('wasm')
   })
 
-  it('a Web Speech é a ÚLTIMA escolha: é a única que envia o áudio para fora', () => {
-    expect(motorDaTranscricao({ asrDoServidor: false, temWebSpeech: true })).toBe('webspeech')
+  // A segunda afirmação do antigo «a Web Speech é a ÚLTIMA escolha», também
+  // invertida: dispensar o servidor não é pedir a Google. Quem desliga o
+  // `dx_asr_server` fica com o outro motor soberano.
+  it('dispensar o ASR do servidor NÃO é consentir a Google: fica o WASM', () => {
+    expect(motorDaTranscricao({ asrDoServidor: false, temWebSpeech: true })).toBe('wasm')
     expect(motorDaTranscricao({ asrDoServidor: false, temWebSpeech: false })).toBe('wasm')
   })
 
-  it('quem pede o modo 100% local não cai na Web Speech, mesmo tendo-a', () => {
+  it('a Web Speech exige TRÊS sins — e com os três é alcançada', () => {
+    // Sem este caso a «escolha explícita» não escolheria nada, e a opção
+    // seria uma mentira de interface.
+    const comTudo = {
+      asrDoServidor: false,
+      temWebSpeech: true,
+      aceitaWebSpeech: true,
+      webSpeechPermitida: true,
+    }
+    expect(motorDaTranscricao(comTudo)).toBe('webspeech')
+    // Falta o sim do BROWSER.
+    expect(motorDaTranscricao({ ...comTudo, temWebSpeech: false })).toBe('wasm')
+    // Falta o sim da PESSOA.
+    expect(motorDaTranscricao({ ...comTudo, aceitaWebSpeech: false })).toBe('wasm')
+    // Falta o sim da ORGANIZAÇÃO — e este vem do servidor, não do browser.
+    expect(motorDaTranscricao({ ...comTudo, webSpeechPermitida: false })).toBe('wasm')
+  })
+
+  it('a política da organização manda sobre a aceitação do browser', () => {
+    // É o ponto da política do lado do servidor: a preferência do cliente
+    // deixa de ser a única guarda. Mesmo com o `localStorage` alterado à mão
+    // (ou por uma extensão), uma organização que proíbe não é servida.
+    expect(
+      motorDaTranscricao({
+        asrDoServidor: true,
+        asrDoServidorEmBaixo: true,
+        temWebSpeech: true,
+        aceitaWebSpeech: true,
+        webSpeechPermitida: false,
+      }),
+    ).toBe('wasm')
+  })
+
+  it('a política ainda por chegar do servidor não abre nada por si', () => {
+    // `webSpeechPermitida` omisso = «o servidor ainda não falou» (a política
+    // chega por WebSocket depois de a página abrir). Pode valer o sim porque
+    // sem a aceitação da pessoa o motor não é alcançável de qualquer modo.
+    expect(
+      motorDaTranscricao({ asrDoServidor: true, asrDoServidorEmBaixo: true, temWebSpeech: true }),
+    ).toBe('wasm')
+  })
+
+  it('quem pede o modo 100% local não cai na Web Speech, nem tendo-a aceitado', () => {
     expect(
       motorDaTranscricao({ asrDoServidor: false, temWebSpeech: true, preferirLocal: true }),
+    ).toBe('wasm')
+    expect(
+      motorDaTranscricao({
+        asrDoServidor: false,
+        temWebSpeech: true,
+        preferirLocal: true,
+        aceitaWebSpeech: true,
+        webSpeechPermitida: true,
+      }),
     ).toBe('wasm')
   })
 
@@ -105,5 +198,33 @@ describe('motorDaTranscricao', () => {
     expect(
       motorDaTranscricao({ asrDoServidor: true, temWebSpeech: true, preferirLocal: true }),
     ).toBe('servidor')
+  })
+
+  it('sem WASM servido e sem os três sins: NENHUM motor, e diz-se', () => {
+    // O caminho que esta sessão existe para não deixar em silêncio: uma
+    // instalação que não correu o `deploy/fetch-whisper.sh`, o `/asr` em
+    // baixo, e um Chrome à mão. Antes disto, isto era «webspeech».
+    expect(
+      motorDaTranscricao({
+        asrDoServidor: true,
+        asrDoServidorEmBaixo: true,
+        temWebSpeech: true,
+        temWasm: false,
+      }),
+    ).toBe('nenhum')
+    // Com a aceitação explícita, o mesmo caso tem motor.
+    expect(
+      motorDaTranscricao({
+        asrDoServidor: true,
+        asrDoServidorEmBaixo: true,
+        temWebSpeech: true,
+        temWasm: false,
+        aceitaWebSpeech: true,
+      }),
+    ).toBe('webspeech')
+    // E o modo 100% local sem modelo não inventa um motor.
+    expect(
+      motorDaTranscricao({ asrDoServidor: false, temWebSpeech: true, temWasm: false, preferirLocal: true }),
+    ).toBe('nenhum')
   })
 })

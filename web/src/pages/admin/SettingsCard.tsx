@@ -18,7 +18,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { OrgSummary, updateOrgSettings } from '../../api'
-import { Alert, Button, Card, Field, Tag, TextInput } from '../../ui/kit'
+import { Alert, Button, Card, Field, Tag, TextInput, Toggle } from '../../ui/kit'
 import { orgErrorMessage } from './orgShared'
 
 const quota = (v?: number | null) => (v == null || v < 0 ? '' : String(v))
@@ -32,6 +32,10 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
   const [chatRetention, setChatRetention] = useState(
     org.chat_retention_days == null ? '' : String(org.chat_retention_days),
   )
+  // A POLÍTICA DO MOTOR DE LEGENDAS. `?? true` porque a coluna nasceu `DEFAULT
+  // TRUE` (migração 0125) e um servidor anterior a ela não devolve o campo —
+  // nesse caso o estado honesto é «permite», não «proíbe».
+  const [allowWebSpeech, setAllowWebSpeech] = useState(org.allow_web_speech ?? true)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
@@ -40,7 +44,8 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
     setDomain(org.domain ?? '')
     setRetention(String(org.retention_days ?? 0))
     setChatRetention(org.chat_retention_days == null ? '' : String(org.chat_retention_days))
-  }, [org.id, org.domain, org.retention_days, org.chat_retention_days])
+    setAllowWebSpeech(org.allow_web_speech ?? true)
+  }, [org.id, org.domain, org.retention_days, org.chat_retention_days, org.allow_web_speech])
 
   const days = Number(retention)
   const retentionOk = retention.trim() !== '' && Number.isInteger(days) && days >= 0 && days <= 3650
@@ -55,7 +60,7 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
     setErr('')
     setSaved(false)
     try {
-      await updateOrgSettings(org.id, domain.trim(), days, chatDays)
+      await updateOrgSettings(org.id, domain.trim(), days, chatDays, allowWebSpeech)
       setSaved(true)
       onSaved()
     } catch (x) {
@@ -117,6 +122,20 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
             placeholder={t('org.definicoes.retencaoChatVazio')}
             aria-invalid={!chatOk}
             onChange={(e) => setChatRetention(e.target.value)}
+          />
+        </Field>
+        <div className="org-form__section">
+          <span className="dx-eyebrow">{t('org.definicoes.soberania')}</span>
+          <span className="dx-muted org-form__hint">{t('org.definicoes.webSpeechDica')}</span>
+        </div>
+        <Field
+          label={t('org.definicoes.webSpeech')}
+          hint={allowWebSpeech ? t('org.definicoes.webSpeechPermitido') : t('org.definicoes.webSpeechProibido')}
+        >
+          <Toggle
+            label={t('org.definicoes.webSpeech')}
+            checked={allowWebSpeech}
+            onChange={(e) => setAllowWebSpeech(e.target.checked)}
           />
         </Field>
         <div className="org-form__section">

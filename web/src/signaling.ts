@@ -73,6 +73,17 @@ export type ServerMsg =
   /** Línguas de dobragem activas na sala, e o código de uma recusa (ADR-0030). */
   | { type: 'dub-languages'; langs: string[]; error?: string }
   | { type: 'transcription'; on: boolean; by: string }
+  /**
+   * A organização PERMITE o motor de voz do browser (a Web Speech, que envia o
+   * áudio aos servidores da Google)? `organizations.allow_web_speech`, no
+   * servidor. Só chega quando a resposta é NÃO — como as `room-settings`, o
+   * silêncio é o caso normal.
+   *
+   * Chega antes de o microfone arrancar (à entrada) e também como resposta a
+   * uma frase recusada, que é o que faz a política alcançar quem já estava na
+   * sala quando ela mudou.
+   */
+  | { type: 'caption-policy'; web_speech: boolean }
   | { type: 'waiting' }
   | { type: 'waiting-join'; peer: PeerInfo }
   | { type: 'waiting-left'; peer_id: string }
@@ -120,8 +131,14 @@ export type ClientMsg =
   | { type: 'hand'; raised: boolean }
   | { type: 'media'; cam: boolean; mic: boolean }
   | { type: 'recording'; active: boolean }
-  | { type: 'transcript'; text: string }
-  | { type: 'transcript-interim'; text: string }
+  /**
+   * `engine` é o motor que produziu a frase (`legendasPref.MotorDeTranscricao`).
+   * O servidor usa-o para RECUSAR a frase quando a organização proíbe o motor
+   * da Google. Um cliente hostil pode mentir — ver o comentário no
+   * `signaling.rs`: isto fecha o caminho honesto, não substitui a política.
+   */
+  | { type: 'transcript'; text: string; engine?: string }
+  | { type: 'transcript-interim'; text: string; engine?: string }
   /** Que língua de dobragem ESTE dispositivo quer ouvir (`null` = original). */
   | { type: 'dub-listen'; lang: string | null }
   /** Só o anfitrião: liga ou desliga uma língua NA SALA. */

@@ -69,6 +69,8 @@ export function useTranscription(core: RoomCore) {
   const [momSaved, setMomSaved] = useState(false)
 
   const transcriberRef = useRef<Transcriber | null>(null)
+  /** `undefined` = o servidor ainda não falou (ver `legendasPref`). */
+  const webSpeechPermitidaRef = useRef<boolean | undefined>(undefined)
   const transcribingRef = useRef(false)
   const ccOnRef = useRef(false)
   const ccLangRef = useRef(ccLang)
@@ -141,6 +143,14 @@ export function useTranscription(core: RoomCore) {
       signal.on('transcript-interim', (m) => {
         if (ccOnRef.current) showCaptionRef.current(m.username, m.text, true)
       }),
+      // A política da ORGANIZAÇÃO sobre o motor da Google. Guarda-se num ref
+      // (não num estado) de propósito: um `setState` aqui remontava o efeito
+      // do ciclo de vida e reiniciava o motor a meio de uma frase. Quem tem de
+      // saber é o `Transcriber`, e diz-se-lhe directamente.
+      signal.on('caption-policy', (m) => {
+        webSpeechPermitidaRef.current = m.web_speech
+        transcriberRef.current?.politicaDaOrganizacao(m.web_speech)
+      }),
       // NÃO se abre o painel aos outros: basta avisar que a fala é captada.
       signal.on('transcription', (m) => {
         setScribeBy(m.on ? m.by : null)
@@ -162,10 +172,16 @@ export function useTranscription(core: RoomCore) {
     const want = (ccOn || transcribing) && core.roomState === 'in'
     if (want && !transcriberRef.current) {
       const tr = new Transcriber()
+      // A política ANTES do `start()`: um motor que arranque sem a conhecer
+      // podia ser o da Google numa organização que o proíbe, e a primeira
+      // frase já teria saído para fora.
+      if (webSpeechPermitidaRef.current !== undefined) {
+        tr.politicaDaOrganizacao(webSpeechPermitidaRef.current)
+      }
       tr.onFinal = (text) => {
         if (ccOnRef.current) showCaptionRef.current(me, text)
         setInterim('')
-        signal.send({ type: 'transcript', text })
+        signal.send({ type: 'transcript', text, engine: tr.motorActivo() ?? undefined })
         // Só acumula nas notas com a transcrição ligada (CC é efémera).
         if (transcribingRef.current) setLines((l) => [...l, `[${stamp()}] ${me}: ${text}`])
       }
@@ -178,7 +194,7 @@ export function useTranscription(core: RoomCore) {
           const now = Date.now()
           if (now - interimSentAtRef.current >= 250) {
             interimSentAtRef.current = now
-            signal.send({ type: 'transcript-interim', text })
+            signal.send({ type: 'transcript-interim', text, engine: tr.motorActivo() ?? undefined })
           }
         }
       }

@@ -41,7 +41,11 @@ A contagem não é um placar. Uma linha — participantes por sala — pesa mais
 | TURN | coturn próprio, sem STUN da Google |
 | Phone-home / licença | não existe; OTLP só se o operador der `OTEL_EXPORTER_OTLP_ENDPOINT` |
 
-**A única fuga medida**, e é deliberada: a Web Speech API do Chrome (`web/src/media.ts:633,911`) envia áudio à Google. É o **último** motor da ordem de preferência, por soberania escrita (`web/src/legendasPref.ts:58-68`), e o ecrã diz-o em vez de prometer «processamento local». **Ressalva honesta:** não há política do lado do servidor que a proíba — ver `A-07` na fila.
+**A única fuga possível**, e é deliberada: a Web Speech API do Chrome envia áudio à Google. **Corrigido a 2026-10-18** (ramo `integra/legendas-soberanas`, a partir de `049948388`) — e o que estava escrito aqui antes dessa data era falso no caminho que mais acontece, por isso fica dito o que era:
+
+- **Era:** a ordem estava escrita «1. servidor · 2. wasm · 3. webspeech» e implementada de outra maneira. O ramo `wasm` só se alcançava sem Web Speech no browser (Firefox, Safari) ou com o modo local pedido à mão. Em Chrome, uma falha do `/asr` a meio da reunião — a degradação real, anunciada ao utilizador — recuava para a Web Speech: o áudio começava a ir à Google **no meio** de uma sessão que começara soberana. Estava trancado por teste (`legendasPref.test.ts`, `.toBe('webspeech')`).
+- **É:** o recuo de uma falha é sempre outro motor soberano (Whisper WASM local); quando nem esse está servido, o produto **diz que não há motor** em vez de escolher a Google. A Web Speech exige três sins — o browser tem-no, a organização permite-o (`organizations.allow_web_speech`, migração 0125) e a pessoa aceitou-o (`dx_asr_webspeech`). O servidor **recusa** uma frase marcada com esse motor numa organização que o proíbe, conta-a em `delonix_caption_engine_refused_total`, e entrega a política antes de o microfone arrancar.
+- **Ressalva honesta, a que fica:** isto não impede a fuga, impede que o produto a faça sozinho. Um cliente modificado instancia o reconhecedor que quiser e mente no campo `engine`; o áudio já foi à Google antes de a frase chegar ao servidor. Quem precisa de garantia corta o acesso do browser à Google na rede. (A versão anterior deste parágrafo apontava a ressalva para o `A-07` da fila, que é outra coisa — MFA obrigatório e lockout central.)
 
 `[CG]` Zoom, Teams e Meet oferecem *escolha de região de datacenter*. O conteúdo é sempre processado pelo fornecedor. É uma diferença de natureza, não de grau.
 

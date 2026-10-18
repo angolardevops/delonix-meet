@@ -119,11 +119,30 @@ pub enum ClientMsg {
     },
     Transcript {
         text: String,
+        /// O motor que produziu a frase (`web/src/legendasPref.ts`:
+        /// `servidor` | `wasm` | `webspeech`). Ausente num cliente antigo.
+        ///
+        /// Serve UMA coisa: uma organização que proíba o motor de voz do
+        /// browser (`organizations.allow_web_speech = false`) recusa a frase
+        /// aqui, em vez de confiar que o browser cumpriu a política.
+        ///
+        /// LIMITE HONESTO, e não o escondas: um cliente hostil pode mentir
+        /// neste campo, e nada no servidor o detecta — o áudio já foi à
+        /// Google antes de a frase chegar. O que isto fecha é o caminho
+        /// honesto (o nosso cliente, que não mente) e o que dá é a MEDIDA
+        /// (`caption_engine_refused_total`). Uma organização que precise de
+        /// garantia tem de impedir o acesso do browser à Google na rede; o
+        /// produto não pode prometer o que não controla.
+        #[serde(default)]
+        engine: Option<String>,
     },
     /// Legenda ao vivo (parcial) — enquanto a pessoa ainda fala. Difundida a
     /// todos e substituída pela `Transcript` final; NUNCA persiste na ata.
     TranscriptInterim {
         text: String,
+        /// Ver `Transcript::engine`.
+        #[serde(default)]
+        engine: Option<String>,
     },
     /// Anfitrião liga/desliga a transcrição PARTILHADA (Nota AI). Ao ligar,
     /// todos os clientes transcrevem o PRÓPRIO microfone e difundem as frases —
@@ -696,6 +715,26 @@ pub enum ServerMsg {
     DuplicateResolved {
         phone_id: Uuid,
         outcome: String,
+    },
+    /// A organização PERMITE o motor de voz do browser (a Web Speech do
+    /// Chrome/Edge, que envia o áudio aos servidores da Google)?
+    ///
+    /// Só se envia quando a resposta é NÃO — como as `RoomSettings`, o
+    /// silêncio é o caso normal e um cliente que nunca receba isto decide
+    /// como sempre decidiu (e a sua própria ordem já não alcança a Google sem
+    /// aceitação explícita).
+    ///
+    /// Vai à ENTRADA, antes de o microfone arrancar, e outra vez a quem tiver
+    /// uma frase recusada (para mudar de motor sem recarregar a página).
+    ///
+    /// LIMITE, e não o escondas: a política é lida da base a cada entrada, por
+    /// isso uma organização que a mude NO MEIO de uma reunião só alcança quem
+    /// entrar depois. Para os que já estão na sala, o `recusa_motor` baseia-se
+    /// na marca que a última entrada deixou — ela própria ainda `permitido`.
+    /// Fechar isto exige propagar a mudança do `PATCH /api/orgs` às salas
+    /// vivas de TODOS os nós (o `pubsub`), e é trabalho de outra sessão.
+    CaptionPolicy {
+        web_speech: bool,
     },
     /// Definições runtime da sala (lock, só-anfitrião-partilha).
     RoomSettings {
@@ -1580,6 +1619,14 @@ pub(crate) struct Room {
     locked: bool,
     /// Só o anfitrião pode partilhar ecrã.
     host_share_only: bool,
+    /// A organização PROÍBE o motor de voz do browser
+    /// (`organizations.allow_web_speech = false`).
+    ///
+    /// Guardado INVERTIDO, pela mesma razão do `chat_closed` abaixo: o `Room`
+    /// deriva `Default`, um `bool` nasce `false`, e com `web_speech_allowed` o
+    /// valor por omissão seria «proibido» — que é o oposto do que a migração
+    /// 0125 decidiu e transformaria uma falha de leitura numa política nova.
+    web_speech_forbidden: bool,
     /// Chat FECHADO a quem não é anfitrião (R92).
     ///
     /// Guardado invertido de propósito: o `Room` deriva `Default`, e um `bool`
@@ -1773,12 +1820,39 @@ pub struct SignalingHub {
     /// Escrita do chat na base de dados, FORA do caminho quente (fila
     /// limitada consumida por uma tarefa própria). `None` em testes.
     pub chat_store: Option<crate::room_chat::ChatStore>,
+    /// Os contadores do `/metrics`. `None` nos testes que não os observam —
+    /// quem os observa instala-os (ver `recusa_motor`).
+    pub metrics: Option<Arc<crate::metrics::Metrics>>,
 }
 
 impl SignalingHub {
     /// Quantos participantes há na sala (0 se não existir).
     fn peer_count(&self, room_id: Uuid) -> usize {
         self.rooms.get(&room_id).map(|r| r.peers.len()).unwrap_or(0)
+    }
+
+    /// A frase vem do motor de voz do browser numa organização que o PROÍBE?
+    ///
+    /// `true` = recusada: não se difunde, conta-se no `/metrics`, e a política
+    /// vai (outra vez) a quem a enviou, para o cliente mudar de motor. É o
+    /// segundo envio descrito na `ServerMsg::CaptionPolicy` — o que alcança
+    /// quem já estava na sala quando a organização mudou de política.
+    ///
+    /// Silenciosa para o resto da sala de propósito: a frase não aparece como
+    /// erro aos outros participantes, porque o problema não é deles.
+    fn recusa_motor(&self, room_id: Uuid, peer_id: Uuid, engine: Option<&str>) -> bool {
+        if engine != Some("webspeech") || !self.web_speech_forbidden(room_id) {
+            return false;
+        }
+        if let Some(m) = &self.metrics {
+            crate::metrics::Metrics::bump(&m.caption_engine_refused_total);
+        }
+        self.send_to_local(
+            room_id,
+            peer_id,
+            ServerMsg::CaptionPolicy { web_speech: false },
+        );
+        true
     }
 
     /// Consome um token do travão de legendas parciais deste peer.
@@ -2638,6 +2712,24 @@ impl SignalingHub {
                 r.tenant = Some(tenant);
             }
         }
+    }
+
+    /// Regista a política da organização sobre o motor de voz do browser.
+    ///
+    /// Ao contrário do inquilino, esta REESCREVE-SE a cada entrada: é lida da
+    /// base no `join` e uma organização que mude de política alcança a sala na
+    /// entrada seguinte, sem esperar que ela se esvazie.
+    pub fn set_web_speech_forbidden(&self, room_id: Uuid, forbidden: bool) {
+        if let Some(mut r) = self.rooms.get_mut(&room_id) {
+            r.web_speech_forbidden = forbidden;
+        }
+    }
+
+    /// A organização desta sala proíbe o motor de voz do browser?
+    pub fn web_speech_forbidden(&self, room_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .is_some_and(|r| r.web_speech_forbidden)
     }
 
     /// A ocupação deste nó vista por inquilino: `(participantes do inquilino,
@@ -3611,10 +3703,13 @@ impl SignalingHub {
                     },
                 );
             }
-            ClientMsg::Transcript { text } => {
+            ClientMsg::Transcript { text, engine } => {
                 // Frase final da fala do próprio microfone — difunde aos outros
                 // para montarem a transcrição partilhada, legendada por orador.
                 if text.is_empty() || text.len() > 4000 {
+                    return true;
+                }
+                if self.recusa_motor(room_id, peer_id, engine.as_deref()) {
                     return true;
                 }
                 // Limpeza: PII (DLP) + máscara de palavrões antes de difundir.
@@ -3639,7 +3734,7 @@ impl SignalingHub {
                     },
                 );
             }
-            ClientMsg::TranscriptInterim { text } => {
+            ClientMsg::TranscriptInterim { text, engine } => {
                 // Legenda ao vivo (parcial): difunde já para a legenda dos outros
                 // acompanhar em tempo real, sem esperar pelo fim da frase. Não
                 // persiste na ata (efémera; é substituída pela final).
@@ -3657,6 +3752,9 @@ impl SignalingHub {
                     return true;
                 }
                 if !self.allow_interim(room_id, peer_id) {
+                    return true;
+                }
+                if self.recusa_motor(room_id, peer_id, engine.as_deref()) {
                     return true;
                 }
                 let text = crate::dlp::clean_caption(&text);
@@ -4251,6 +4349,67 @@ pub(crate) async fn resolve_tenant(state: &AppState, room_id: Uuid) -> Option<Uu
     let mut orgs = crate::org::orgs_of_user(state, owner).await;
     orgs.sort();
     Some(orgs.first().copied().unwrap_or(owner))
+}
+
+/// A leitura da política foi CONCLUSIVA? Um `false` aqui significa «o servidor
+/// não sabe», e distingue-se de «a organização permite»: a resposta segura vai
+/// a quem está a entrar, mas não se escreve na marca da SALA.
+type Fiavel = bool;
+
+/// A organização desta sala PROÍBE o motor de voz do browser, e com que
+/// confiança?
+///
+/// RECEBE O INQUILINO JÁ RESOLVIDO, e não o `room_id`, de propósito: quem
+/// chama (a entrada no `/ws`) já o tem em mão. A primeira versão disto chamava
+/// o `resolve_tenant` outra vez e acrescentava DUAS consultas a cada entrada
+/// na sala — exactamente a direcção contrária à da lacuna `B-06` («a entrada
+/// na sala é O(n) em série, e passa de 0,3 s a 1,7 s»). Assim é UMA consulta.
+///
+/// FALHA FECHADA, e é uma decisão: um erro da base devolve `true` (proibido).
+/// A alternativa — falhar aberta — era abrir o caminho do áudio para a Google
+/// precisamente no momento em que o servidor não sabe o que a organização
+/// decidiu, e isto é uma política de soberania do dado. O custo de errar para
+/// este lado é legendas menos precisas (o recuo é o Whisper WASM local, que é
+/// soberano); o custo de errar para o outro é áudio a sair da instalação.
+/// Numa falha da base, de resto, quase nada do produto está a funcionar: a
+/// própria entrada na sala passa por ela.
+///
+/// HERANÇA QUE ESTA POLÍTICA AGRAVA, e fica escrita: o `resolve_tenant` não
+/// sabe a organização da SALA — devolve a primeira organização do dono por
+/// ordem de UUID (`orgs.sort(); orgs.first()`). Para um dono que pertence a
+/// duas organizações, a política que governa a sala é a daquela cujo UUID for
+/// menor, que pode não ser a que paga pela soberania. Era uma aproximação
+/// aceitável quando só servia a justiça de capacidade por inquilino (ADR-0017);
+/// com uma decisão de soberania por cima dela, passa a merecer a organização
+/// verdadeira na linha da `rooms` — trabalho de outra sessão, anotado no
+/// contrato.
+///
+/// SEM ORGANIZAÇÃO NENHUMA não é falha: uma sala de um utilizador individual
+/// (o `resolve_tenant` devolve o próprio dono) não tem organização que decida,
+/// e o `fetch_optional` devolve `Ok(None)` — permitido. Distinguir isto do
+/// erro é o ponto desta função, e é por isso que não é um `unwrap_or(true)`
+/// sobre o `Result` inteiro.
+pub(crate) async fn web_speech_forbidden(state: &AppState, tenant: Option<Uuid>) -> (bool, Fiavel) {
+    // `None` = o `resolve_tenant` não chegou a dono nenhum (a base não
+    // respondeu). Mesmo lado seguro: proibir — mas não é uma leitura fiável.
+    let Some(tenant) = tenant else {
+        return (true, false);
+    };
+    match sqlx::query_scalar::<_, bool>("SELECT allow_web_speech FROM organizations WHERE id = $1")
+        .bind(tenant)
+        .fetch_optional(&state.db)
+        .await
+    {
+        // A organização decidiu.
+        Ok(Some(permitido)) => (!permitido, true),
+        // Não é uma organização (utilizador individual): ninguém proibiu. É
+        // uma resposta, não uma falha — ver o cabeçalho.
+        Ok(None) => (false, true),
+        Err(e) => {
+            tracing::warn!(%tenant, erro = %e, "allow_web_speech ilegível — a proibir o motor do browser a quem está a entrar");
+            (true, false)
+        }
+    }
 }
 
 fn parse_origin(s: &str) -> Option<Origin> {
@@ -4994,12 +5153,31 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     if let Some(t) = tenant {
         state.hub.set_room_tenant(room_id, t);
     }
+    // A POLÍTICA DO MOTOR DE LEGENDAS, antes de o cliente arrancar o
+    // microfone. Lê-se a cada entrada (uma organização que mude alcança a
+    // entrada seguinte) e só se ENVIA quando a resposta é «proibido» — como as
+    // `RoomSettings`, o silêncio é o caso normal.
+    let (web_speech_proibido, politica_fiavel) = web_speech_forbidden(&state, tenant).await;
+    // SÓ UMA LEITURA FIÁVEL ESCREVE NA SALA. A marca é da sala inteira, e uma
+    // leitura falhada aplicada a ela calava o motor do browser de TODOS os
+    // participantes — por causa do azar de UM que entrou durante um soluço da
+    // base, numa organização que nunca proibiu nada, e sem se desfazer quando
+    // a base voltasse. Quem falhou leva a resposta segura (abaixo); a sala
+    // mantém o que sabia.
+    if politica_fiavel {
+        state
+            .hub
+            .set_web_speech_forbidden(room_id, web_speech_proibido);
+    }
     // O token do DONO traz a sala de espera da BD: é o valor inicial do
     // runtime, até o anfitrião o mudar.
     if is_host {
         if let Some(wr) = wait.waiting_room {
             state.hub.init_waiting_room(room_id, wr);
         }
+    }
+    if web_speech_proibido {
+        let _ = tx.send(ServerMsg::CaptionPolicy { web_speech: false });
     }
     let seat_secret = entrada.reconnect_secret.clone();
     let _ = tx.send(ServerMsg::Joined {
@@ -7626,7 +7804,12 @@ mod b1_sala_tests {
         s.hub.handle(
             s.room,
             s.b,
-            ClientMsg::Transcript { text: crua.into() },
+            // `engine: None` = um cliente que não declara o motor (um cliente
+            // antigo). Nunca é recusado por política: ver `recusa_motor`.
+            ClientMsg::Transcript {
+                text: crua.into(),
+                engine: None,
+            },
             None,
         );
 
@@ -7644,6 +7827,146 @@ mod b1_sala_tests {
         );
     }
 
+    /// A ORGANIZAÇÃO PROÍBE o motor de voz do browser: a frase não chega a
+    /// ninguém, conta-se, e quem a enviou recebe a política de volta.
+    ///
+    /// A observação é o que os OUTROS peers receberam — não o que o `handle`
+    /// devolveu (devolve `true`, como para qualquer mensagem tratada) nem o
+    /// que o emissor viu. Uma legenda «recusada» que ainda fosse difundida
+    /// passava um teste sobre o valor de retorno e falhava o produto.
+    #[tokio::test]
+    async fn legenda_da_web_speech_recusada_quando_a_organizacao_a_proibe() {
+        let mut s = sala();
+        let m = Arc::new(crate::metrics::Metrics::default());
+        s.hub.metrics = Some(m.clone());
+        s.hub.set_web_speech_forbidden(s.room, true);
+
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::Transcript {
+                text: "isto foi à Google".into(),
+                engine: Some("webspeech".into()),
+            },
+            None,
+        );
+
+        for (quem, rx) in [("anfitriã", &mut s.rx_a), ("carlos", &mut s.rx_c)] {
+            let vistas = recolher(rx);
+            assert!(
+                !vistas
+                    .iter()
+                    .any(|msg| matches!(msg, ServerMsg::Transcript { .. })),
+                "{quem} não podia receber uma legenda do motor proibido: {vistas:?}"
+            );
+        }
+        assert_eq!(
+            m.caption_engine_refused_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "a recusa tem de ser MEDÍVEL de fora do cliente"
+        );
+        // E o cliente é informado, para mudar de motor sem recarregar a página
+        // — é por aqui que a política alcança quem já estava na sala.
+        let do_emissor = recolher(&mut s.rx_b);
+        assert!(
+            do_emissor
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::CaptionPolicy { web_speech: false })),
+            "quem enviou tem de receber a política: {do_emissor:?}"
+        );
+    }
+
+    /// CONTROLO POSITIVO da recusa: a MESMA frase, do MESMO motor, numa
+    /// organização que o permite — difunde-se como sempre.
+    ///
+    /// Sem este caso, uma recusa que travasse TODAS as legendas passaria o
+    /// teste de cima e ninguém notaria até alguém abrir uma reunião.
+    #[tokio::test]
+    async fn a_mesma_legenda_passa_quando_a_organizacao_permite() {
+        let mut s = sala();
+        let m = Arc::new(crate::metrics::Metrics::default());
+        s.hub.metrics = Some(m.clone());
+        // Por omissão não há proibição nenhuma (ver a migração 0125).
+        assert!(!s.hub.web_speech_forbidden(s.room));
+
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::Transcript {
+                text: "bom dia".into(),
+                engine: Some("webspeech".into()),
+            },
+            None,
+        );
+
+        let vistas = recolher(&mut s.rx_a);
+        assert!(
+            vistas
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::Transcript { text, .. } if text == "bom dia")),
+            "a legenda tem de chegar: {vistas:?}"
+        );
+        assert_eq!(
+            m.caption_engine_refused_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+    }
+
+    /// Os motores SOBERANOS não são tocados pela política, e um cliente que
+    /// não declare o motor também não: a política é sobre a Web Speech, e uma
+    /// recusa por omissão deixaria sem legendas quem não tem culpa nenhuma.
+    #[tokio::test]
+    async fn a_politica_nao_apanha_os_motores_soberanos_nem_o_cliente_antigo() {
+        for motor in [Some("wasm"), Some("servidor"), None] {
+            let mut s = sala();
+            s.hub.set_web_speech_forbidden(s.room, true);
+            s.hub.handle(
+                s.room,
+                s.b,
+                ClientMsg::Transcript {
+                    text: "bom dia".into(),
+                    engine: motor.map(String::from),
+                },
+                None,
+            );
+            let vistas = recolher(&mut s.rx_a);
+            assert!(
+                vistas.iter().any(
+                    |msg| matches!(msg, ServerMsg::Transcript { text, .. } if text == "bom dia")
+                ),
+                "o motor {motor:?} não é o proibido e tem de passar: {vistas:?}"
+            );
+        }
+    }
+
+    /// A parcial segue a mesma regra da final. Tinha de ser dito num teste
+    /// próprio: são dois braços diferentes do `handle`, e proteger só o da
+    /// frase final deixava a legenda ao vivo — a que aparece no ecrã enquanto
+    /// se fala — a sair do motor proibido.
+    #[tokio::test]
+    async fn a_parcial_da_web_speech_tambem_e_recusada() {
+        let mut s = sala();
+        s.hub.set_web_speech_forbidden(s.room, true);
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::TranscriptInterim {
+                text: "isto foi à Goo".into(),
+                engine: Some("webspeech".into()),
+            },
+            None,
+        );
+        let vistas = recolher(&mut s.rx_a);
+        assert!(
+            !vistas
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::TranscriptInterim { .. })),
+            "a parcial do motor proibido não pode ser difundida: {vistas:?}"
+        );
+    }
+
     /// Sem dobragem registada (o caso normal: sem `TTS_URL`), o caminho da
     /// legenda não muda nada — nem sequer tenta.
     #[tokio::test]
@@ -7655,6 +7978,7 @@ mod b1_sala_tests {
             s.b,
             ClientMsg::Transcript {
                 text: "bom dia".into(),
+                engine: None,
             },
             None,
         );
