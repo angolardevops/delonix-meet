@@ -147,6 +147,13 @@ async fn without_a_declared_capacity_no_room_is_refused(db: sqlx::PgPool) {
     assert_eq!(refused(&app), 0);
 }
 
+fn refused_org_quota(app: &TestApp) -> u64 {
+    app.state
+        .metrics
+        .ws_refused_org_quota_total
+        .load(Ordering::Relaxed)
+}
+
 fn refused_fair_share(app: &TestApp) -> u64 {
     app.state
         .metrics
@@ -338,4 +345,21 @@ async fn the_refusal_says_why_through_the_admission_probe(db: sqlx::PgPool) {
     // A recusa não expõe o vizinho (ADR-0017): não diz quanto ocupam os outros.
     let frase = corpo["error"].as_str().unwrap_or("");
     assert!(!frase.contains('%') && !frase.contains(" de 5"), "{frase}");
+
+    // A SONDAGEM NÃO CONTA COMO RECUSA. Uma recusa é um cliente que não
+    // entrou (é o que a anotação do alerta diz); se a explicação também
+    // contasse, cada pessoa somava 2 — e qualquer cliente com um room token
+    // válido inflacionava `MeetSalasRecusadasPorCapacidade` em ciclo.
+    let antes = refused_org_quota(&app);
+    for _ in 0..5 {
+        let (st, _) = app
+            .get(&format!("/ws/admission?token={tok}&room={code}"), None)
+            .await;
+        assert_eq!(st, 429);
+    }
+    assert_eq!(
+        refused_org_quota(&app),
+        antes,
+        "cinco sondagens não são cinco recusas"
+    );
 }

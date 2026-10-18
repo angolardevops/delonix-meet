@@ -8,7 +8,7 @@
  * e a página recarregava em ciclo.
  */
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { motivoDoCorpo, perguntarPorqueRecusou } from './admissao'
+import { motivoDoCorpo, perguntarPorqueRecusou, valeRepetir } from './admissao'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -65,5 +65,25 @@ describe('perguntarPorqueRecusou', () => {
     // Resposta de erro sem corpo JSON (um 502 de um proxy, p.ex.).
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: () => Promise.reject(new Error('x')) }))
     await expect(perguntarPorqueRecusou('t', 'A')).resolves.toBeNull()
+  })
+})
+
+describe('valeRepetir', () => {
+  it('um TECTO não passa por recarregar', () => {
+    // Recarregar num nó no tecto é um reload por pessoa recusada a cada 8 s —
+    // amplifica a sobrecarga que a admissão existe para conter.
+    expect(valeRepetir('org_at_capacity')).toBe(false)
+    expect(valeRepetir('node_at_capacity')).toBe(false)
+    expect(valeRepetir('over_fair_share')).toBe(false)
+  })
+
+  it('um drain passa: é para isso que ele recusa', () => {
+    expect(valeRepetir('node_draining')).toBe(true)
+  })
+
+  it('não saber porquê conta como repetir — desistir deixava um ecrã morto', () => {
+    // Um 502 do ingress a meio de um rollout, ou um room token expirado:
+    // recarregar é o que recuperava, e é o que o reload sempre fez.
+    expect(valeRepetir(null)).toBe(true)
   })
 })

@@ -13,12 +13,31 @@
  */
 
 /** Os motivos que o servidor sabe nomear (`Admissao::code` em signaling.rs). */
-export type MotivoDeRecusa = 'org_at_capacity' | 'node_at_capacity' | 'over_fair_share'
+export type MotivoDeRecusa =
+  | 'org_at_capacity'
+  | 'node_at_capacity'
+  | 'over_fair_share'
+  /** O nó está a encerrar. NÃO é tecto: repete-se, e cai-se noutro pod. */
+  | 'node_draining'
 
 const MOTIVOS: Record<string, MotivoDeRecusa> = {
   'admission.org_at_capacity': 'org_at_capacity',
   'admission.node_at_capacity': 'node_at_capacity',
   'admission.over_fair_share': 'over_fair_share',
+  'admission.node_draining': 'node_draining',
+}
+
+/**
+ * Vale a pena voltar a tentar? Um TECTO não passa por repetir — repetir só
+ * amplifica a sobrecarga que a admissão existe para conter. Um drain, sim: é
+ * para isso que ele recusa, e o balanceador manda para outro pod.
+ *
+ * `null` (não sabemos porquê) conta como «repetir»: era o que recuperava de um
+ * 502 do ingress a meio de um rollout, ou de um room token expirado, e
+ * desistir aí deixava a pessoa num ecrã morto sem nada a não ser F5 à mão.
+ */
+export function valeRepetir(motivo: MotivoDeRecusa | null): boolean {
+  return motivo === null || motivo === 'node_draining'
 }
 
 /**

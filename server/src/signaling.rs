@@ -4061,7 +4061,23 @@ struct Admitido {
 ///
 /// Não reserva lugar nenhum: o lugar toma-se ao abrir o socket. Por isso a
 /// sondagem que usa isto EXPLICA uma recusa, não promete uma entrada.
-async fn admitir(state: &Arc<AppState>, query: &WsQuery) -> Result<Admitido, ApiError> {
+/// A sondagem corre a MESMA decisão, mas não é uma entrada: não pode contar
+/// como recusa. Um contador que soma duas vezes por pessoa (uma no socket,
+/// outra na explicação) desmente a anotação do alerta — «uma recusa é um
+/// cliente que não entrou» — e qualquer cliente podia inflacioná-lo em ciclo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Efeito {
+    /// Uma entrada a sério: conta nas métricas.
+    Socket,
+    /// Só a explicar uma recusa que já aconteceu: não conta.
+    Sonda,
+}
+
+async fn admitir(
+    state: &Arc<AppState>,
+    query: &WsQuery,
+    efeito: Efeito,
+) -> Result<Admitido, ApiError> {
     // Only short-lived, room-scoped tokens open a signaling socket — a room
     // token (a person) or a SOURCE token (a studio camera, ADR-0014 §2.1).
     let (claims, source) = match verify_jwt(&state.config.jwt_secret, &query.token, "room") {
@@ -4073,6 +4089,15 @@ async fn admitir(state: &Arc<AppState>, query: &WsQuery) -> Result<Admitido, Api
         }
     };
     let room_id = claims.room.ok_or(ApiError::Unauthorized)?;
+    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
+    // token de sala ainda válido volta a abrir o /ws. Vive AQUI, e não só no
+    // `ws_handler`, para que a sondagem recuse exactamente o que o socket
+    // recusa — senão a sondagem confirmava um token cuja sessão já morreu, e a
+    // declaração em `rotas-publicas.txt` («nem a mais nem a menos do que no
+    // socket») passava a ser falsa.
+    if let Some(sid) = claims.sid {
+        crate::sessions::ensure_active(state, claims.sub, sid).await?;
+    }
 
     // Nó a drenar: recusa ENTRADAS NOVAS, mas só as de salas que ainda não
     // existem aqui. Quem já está numa sala deste pod tem de conseguir voltar a
@@ -4083,9 +4108,7 @@ async fn admitir(state: &Arc<AppState>, query: &WsQuery) -> Result<Admitido, Api
     // de «não tens autorização», e volta a pedir — o balanceador já o manda
     // para outro pod.
     if state.draining.load(std::sync::atomic::Ordering::Relaxed) && !state.hub.tem_sala(room_id) {
-        return Err(ApiError::ServiceUnavailable(
-            "Este nó está a encerrar. A tentar noutro…".into(),
-        ));
+        return Err(admissao_recusada(Admissao::ANoDrenar));
     }
     // Admissão por capacidade (`NODE_PEER_CAPACITY`, ADR-0017): só decide SALAS
     // NOVAS. Uma sala que já cá está tem de poder continuar a crescer e a
@@ -4114,10 +4137,12 @@ async fn admitir(state: &Arc<AppState>, query: &WsQuery) -> Result<Admitido, Api
         regressa,
     ) {
         if state.hub.user_sockets(claims.sub) >= max as usize {
-            state
-                .metrics
-                .ws_refused_user_cap_total
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if efeito == Efeito::Socket {
+                state
+                    .metrics
+                    .ws_refused_user_cap_total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return Err(ApiError::TooManyRequests);
         }
     }
@@ -4133,10 +4158,12 @@ async fn admitir(state: &Arc<AppState>, query: &WsQuery) -> Result<Admitido, Api
     if let (Some(t), None, false, false) = (tenant, source.as_ref(), claims.is_bot, regressa) {
         if let Some(limit) = org_participant_limit(&state, t).await {
             if state.hub.tenant_load(t).0 >= limit {
-                state
-                    .metrics
-                    .ws_refused_org_quota_total
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if efeito == Efeito::Socket {
+                    state
+                        .metrics
+                        .ws_refused_org_quota_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 return Err(admissao_recusada(Admissao::OrgNoTecto));
             }
         }
@@ -4162,18 +4189,22 @@ async fn admitir(state: &Arc<AppState>, query: &WsQuery) -> Result<Admitido, Api
                 NewRoomAdmission::Admit => None,
                 NewRoomAdmission::NodeFull => Some(Admissao::NoNoTecto),
                 NewRoomAdmission::OverFairShare => {
-                    state
-                        .metrics
-                        .node_new_rooms_refused_fair_share_total
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if efeito == Efeito::Socket {
+                        state
+                            .metrics
+                            .node_new_rooms_refused_fair_share_total
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     Some(Admissao::AcimaDaParteJusta)
                 }
             };
             if let Some(m) = motivo {
-                state
-                    .metrics
-                    .node_new_rooms_refused_total
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if efeito == Efeito::Socket {
+                    state
+                        .metrics
+                        .node_new_rooms_refused_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 return Err(admissao_recusada(m));
             }
         }
@@ -4222,7 +4253,7 @@ pub async fn ws_admission_handler(
     State(state): State<Arc<AppState>>,
     Query(query): Query<WsQuery>,
 ) -> Result<axum::http::StatusCode, ApiError> {
-    admitir(&state, &query).await?;
+    admitir(&state, &query, Efeito::Sonda).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
@@ -4236,7 +4267,7 @@ pub async fn ws_handler(
         source,
         room_id,
         tenant,
-    } = admitir(&state, &query).await?;
+    } = admitir(&state, &query, Efeito::Socket).await?;
     // O lugar (papel, origem, espera) decide-se num sítio só, testável sem
     // socket: ver `seat_policy`.
     let SeatPolicy {
@@ -4246,11 +4277,6 @@ pub async fn ws_handler(
         extras,
         wait,
     } = seat_policy(&claims);
-    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
-    // token de sala ainda válido volta a abrir o /ws.
-    if let Some(sid) = claims.sid {
-        crate::sessions::ensure_active(&state, claims.sub, sid).await?;
-    }
     let session_id = claims.sid;
     let username = claims.name.clone().unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
@@ -4300,6 +4326,10 @@ pub enum Admissao {
     NoNoTecto,
     /// O nó está na zona de margem e este inquilino já usa a sua parte justa.
     AcimaDaParteJusta,
+    /// O nó está a encerrar. NÃO é um tecto: volta-se a tentar e o balanceador
+    /// manda para outro pod. Tem código próprio para o cliente saber que deve
+    /// repetir — sem ele, uma recusa de drain ficava sem explicação nem recuo.
+    ANoDrenar,
 }
 
 impl Admissao {
@@ -4308,6 +4338,7 @@ impl Admissao {
             Admissao::OrgNoTecto => "admission.org_at_capacity",
             Admissao::NoNoTecto => "admission.node_at_capacity",
             Admissao::AcimaDaParteJusta => "admission.over_fair_share",
+            Admissao::ANoDrenar => "admission.node_draining",
         }
     }
 }
@@ -4332,6 +4363,10 @@ pub fn admissao_recusada(motivo: Admissao) -> ApiError {
         Admissao::AcimaDaParteJusta => (
             ErrorKind::Unavailable,
             "Este servidor está ocupado e a tua organização já usa a parte dele que lhe cabe. Tenta daqui a pouco.",
+        ),
+        Admissao::ANoDrenar => (
+            ErrorKind::Unavailable,
+            "Este servidor está a encerrar. A tentar noutro…",
         ),
     };
     ApiError::Domain(DomainError::new(kind, motivo.code(), msg))

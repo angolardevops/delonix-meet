@@ -95,6 +95,30 @@ while IFS=: read -r f esperadas; do
     echo "✗ ws/access_log: $f:$linha — a location do /ws registra; o token do ?token= fica em claro no log"
     fail=1
   done <<<"$veredictos"
+
+  # Não basta a location ter `access_log off`: o caminho tem de CAIR nela.
+  # Medido a 2026-10-18: dois destes ficheiros tinham `^/(ws|rtc)$` — ancorado —
+  # e o `/ws/admission`, que leva o MESMO room token em `?token=`, caía no
+  # `location /`. O token ia para o log e o SPA respondia 200 com HTML. O
+  # portão passava a verde na mesma, porque só media o `/ws`.
+  for caminho in /ws /ws/admission /rtc; do
+    casa=0
+    while read -r padrao; do
+      # `location ~ ^/(ws|rtc)(/|$) {` → a ERE entre o `~` e o `{`.
+      ere=$(sed -E 's/^[[:space:]]*location[[:space:]]+~\*?[[:space:]]*//; s/[[:space:]]*\{[[:space:]]*$//' <<<"$padrao")
+      # Prefixo simples (`location /ws {`): casa por prefixo, não por ERE.
+      case "$padrao" in
+        *'~'*) grep -qE "$ere" <<<"$caminho" && casa=1 ;;
+        *) pref=$(sed -E 's/^[[:space:]]*location[[:space:]]+(\^~[[:space:]]*)?//; s/[[:space:]]*\{[[:space:]]*$//' <<<"$padrao")
+           case "$caminho" in "$pref"*) casa=1 ;; esac ;;
+      esac
+      [ "$casa" = 1 ] && break
+    done < <(grep -E '^[[:space:]]*location[^{]*((/|\()(ws|rtc)([|)/ $]|$))' "$f")
+    if [ "$casa" != 1 ]; then
+      echo "✗ ws/access_log: $f — $caminho NÃO cai em nenhuma location do /ws; leva room token em ?token= e vai para o access log"
+      fail=1
+    fi
+  done
 done <<<"$NGINX"
 
 # ---- camada 2: a anotação do Ingress ----

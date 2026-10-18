@@ -11,7 +11,7 @@ import { LinhaDoTempo } from '../callTimings'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import type { LocalMedia } from './useLocalMedia'
 import type { RoomCore } from './useRoomCore'
-import { perguntarPorqueRecusou } from './admissao'
+import { perguntarPorqueRecusou, valeRepetir } from './admissao'
 
 /** A entrada salta a pré-entrada? Voz atendida, ou reentrada recente (< 60 s). */
 export function entradaDirecta(code: string, voiceOnly: boolean): boolean {
@@ -202,6 +202,22 @@ export function useCallSession(
             if (!cancelled) location.reload()
           }, reconnect_in_ms + jitter)
         })
+        // Recarregar com guarda anti-ciclo: sem sinalização não há
+        // renegociação, e reentra-se recarregando. Se cair outra vez em < 8 s,
+        // pede-se à pessoa em vez de insistir.
+        const reentrar = () => {
+          const now = Date.now()
+          const last = Number(sessionStorage.getItem('dx_reconnect_at') || 0)
+          if (now - last > 8000) {
+            sessionStorage.setItem('dx_reconnect_at', String(now))
+            sessionStorage.setItem(`dx_rejoin_${code}`, String(now))
+            setTimeout(() => {
+              if (!cancelled) location.reload()
+            }, 1500)
+          } else {
+            setStatus(t('room.estado.ligacaoInstavel'))
+          }
+        }
         s.onclose = (abriu) => {
           if (cancelled) return // saída intencional
           // O socket NUNCA abriu: foi recusado no handshake, e o browser não
@@ -219,24 +235,18 @@ export function useCallSession(
               if (motivo === 'org_at_capacity') setStatus(t('room.admissao.organizacaoNoTecto'))
               else if (motivo === 'node_at_capacity') setStatus(t('room.admissao.servidorCheio'))
               else if (motivo === 'over_fair_share') setStatus(t('room.admissao.parteJusta'))
-              else setStatus(t('room.estado.ligacaoInstavel'))
+              else if (motivo === 'node_draining') setStatus(t('room.estado.servidorVaiReiniciar'))
+              else setStatus(t('room.estado.ligacaoPerdidaAReconectar'))
+              // Um TECTO não passa por recarregar — e recarregar amplifica a
+              // sobrecarga. Um drain (ou um motivo que não saibamos) passa:
+              // era isto que recuperava de um rollout a meio, e desistir
+              // deixava a pessoa num ecrã morto.
+              if (valeRepetir(motivo)) reentrar()
             })
             return
           }
-          // Sem sinalização não há renegociação: reentra-se recarregando, com
-          // guarda anti-ciclo — se cair outra vez em < 8 s, pede-se à pessoa.
-          const now = Date.now()
-          const last = Number(sessionStorage.getItem('dx_reconnect_at') || 0)
-          if (now - last > 8000) {
-            sessionStorage.setItem('dx_reconnect_at', String(now))
-            sessionStorage.setItem(`dx_rejoin_${code}`, String(now))
-            setStatus(t('room.estado.ligacaoPerdidaAReconectar'))
-            setTimeout(() => {
-              if (!cancelled) location.reload()
-            }, 1500)
-          } else {
-            setStatus(t('room.estado.ligacaoInstavel'))
-          }
+          setStatus(t('room.estado.ligacaoPerdidaAReconectar'))
+          reentrar()
         }
         s.on('waiting', () => setRoomState('waiting'))
         s.on('denied', () => setRoomState('denied'))
