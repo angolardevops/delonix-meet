@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Alert, Button, cx, Spinner, StatusBadge } from '../ui/kit'
 import { Icon } from '../ui/icons'
+import { AudioSink } from '../room/AudioSink'
 import { useRoomCore } from '../room/useRoomCore'
 import { useLocalMedia } from '../room/useLocalMedia'
 import { useCallSession } from '../room/useCallSession'
@@ -103,12 +104,40 @@ function OperadorDeCamara({
   // aponta para fora (traseira) e a orientação real é que interessa.
   const [espelhado, setEspelhado] = useState(true)
   const [aeAfBloqueado, setAeAfBloqueado] = useState(false)
+  const [aVirar, setAVirar] = useState(false)
+  /**
+   * Talkback: ouvir o estúdio. DESLIGADO por omissão de propósito — o som sai
+   * no altifalante do telefone e volta a entrar pelo microfone que está no ar.
+   * O cancelamento de eco ajuda, mas num telefone encostado a uma cena não
+   * chega: quem quer retorno põe auscultadores, e é isso que o aviso diz.
+   */
+  const [talkback, setTalkback] = useState(false)
   const [bateria, setBateria] = useState<{ nivel: number; aCarregar: boolean } | null>(null)
   const [gravando, setGravando] = useState(false)
   const [ficheiroSeguranca, setFicheiroSeguranca] = useState<{ url: string; nome: string } | null>(null)
   const [erro, setErro] = useState('')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+
+  /**
+   * Trocar de lente é pedir OUTRA pista ao aparelho, por isso o espelho tem de
+   * a acompanhar: a frontal quer-se espelhada (o operador vê-se como num
+   * espelho) e a traseira não, senão o que está escrito na cena aparece ao
+   * contrário. Quem quiser o contrário continua a ter o botão ao lado.
+   */
+  const virarLente = async () => {
+    if (aVirar) return
+    setAVirar(true)
+    // O lado ALVO calcula-se antes: o `media.facing` é estado do React e, lido
+    // logo a seguir ao `await`, ainda traz o valor velho.
+    const alvo = media.facing === 'user' ? 'environment' : 'user'
+    try {
+      await media.flipCam()
+      setEspelhado(alvo === 'user')
+    } finally {
+      setAVirar(false)
+    }
+  }
 
   useEffect(() => {
     const track = core.cameraTrackRef.current
@@ -192,6 +221,9 @@ function OperadorDeCamara({
 
   return (
     <div className="phonecam">
+      {/* O áudio do estúdio. Sempre montado, silenciado quando o retorno está
+          desligado: ligar o som passa a ser instantâneo, sem renegociar nada. */}
+      <AudioSink peers={core.peers} sinkId="" mudo={!talkback} />
       <div className={`phonecam__tally ${tally ? 'is-live' : ''}`}>
         {tally ? t('telemovel.tally.noAr') : t('telemovel.tally.emEspera')}
       </div>
@@ -269,9 +301,21 @@ function OperadorDeCamara({
             {t('telemovel.bloquearAeAf')}
           </Button>
         )}
+        <Button variant={media.micOn ? 'secondary' : 'primary'} size="sm" onClick={() => void media.toggleMic()}>
+          {media.micOn ? t('telemovel.microfoneLigado') : t('telemovel.microfoneDesligado')}
+        </Button>
+        <Button variant={talkback ? 'primary' : 'secondary'} size="sm" onClick={() => setTalkback((v) => !v)}>
+          {talkback ? t('telemovel.retornoLigado') : t('telemovel.retornoDesligado')}
+        </Button>
+        {media.facing && (
+          <Button variant="secondary" size="sm" disabled={aVirar} onClick={() => void virarLente()}>
+            {media.facing === 'user' ? t('telemovel.virarParaTras') : t('telemovel.virarParaFrente')}
+          </Button>
+        )}
         <Button variant={espelhado ? 'primary' : 'secondary'} size="sm" onClick={() => setEspelhado((v) => !v)}>
           {t('telemovel.espelhar')}
         </Button>
+        {talkback && <p className="dx-muted phonecam__semControlo">{t('telemovel.retornoNota')}</p>}
         {!capacidades?.zoom && !capacidades?.focusDistance && !capacidades?.exposureCompensation && (
           <p className="dx-muted phonecam__semControlo">{t('telemovel.semControlosAvancados')}</p>
         )}

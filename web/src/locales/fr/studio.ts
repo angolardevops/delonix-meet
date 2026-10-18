@@ -319,6 +319,8 @@ export default {
     abrir: 'Relier à une salle',
     aCarregar: 'Chargement de la salle…',
     semRede: 'Il faut du réseau.',
+    abrirDoEstudio: "Ouvrir la salle du studio",
+    notaDoEstudio: "C'est la salle que les codes d'appairage promettent au téléphone :",
     criar: "Créer une salle d'invités",
     codigo: 'Code de la salle',
     codigoPh: 'Code ou invitation',

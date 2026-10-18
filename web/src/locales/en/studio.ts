@@ -319,6 +319,8 @@ export default {
     abrir: 'Link to a room',
     aCarregar: 'Loading the room…',
     semRede: 'Needs a network.',
+    abrirDoEstudio: "Open the studio room",
+    notaDoEstudio: "This is the room the pairing codes promise the phone:",
     criar: 'Create guest room',
     codigo: 'Room code',
     codigoPh: 'Code or invite',

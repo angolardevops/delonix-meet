@@ -26,6 +26,8 @@ export type Route =
   | { kind: 'room'; code: string; voice: boolean }
   | { kind: 'lobby'; code: string }
   | { kind: 'telemovel'; code: string }
+  /** O telefone a resgatar um código de emparelhamento do Estúdio; sem código, pede-o. */
+  | { kind: 'emparelhar'; code?: string }
   | { kind: 'share'; token: string }
   | { kind: 'invite'; token: string }
   /** O ecrã de entrada (`#/login`, com ou sem `?sso_error=`). */
@@ -92,6 +94,8 @@ export function parseHash(hash: string = location.hash): Route {
   if (lobby) return { kind: 'lobby', code: lobby[1].toLowerCase() }
   const telemovel = h.match(/^#\/telemovel\/([A-Za-z-]+)(?:\?.*)?$/)
   if (telemovel) return { kind: 'telemovel', code: telemovel[1].toLowerCase() }
+  const emparelhar = h.match(/^#\/emparelhar(?:\/([A-Za-z0-9-]+))?(?:\?.*)?$/)
+  if (emparelhar) return { kind: 'emparelhar', code: emparelhar[1] }
   const share = h.match(/^#\/share\/([a-f0-9]+)(?:\?.*)?$/)
   if (share) return { kind: 'share', token: share[1] }
   if (/^#\/login(?:\?.*)?$/.test(h)) return { kind: 'login' }
@@ -157,6 +161,7 @@ export function destinoNoRail(r: Route): NavKey | null {
       return 'whiteboards'
     case 'room':
     case 'telemovel':
+    case 'emparelhar':
     case 'share':
     case 'invite':
     case 'login':
@@ -184,6 +189,7 @@ export function trilhoDe(r: Route): Degrau[] {
     case 'home':
     case 'room':
     case 'telemovel':
+    case 'emparelhar':
     case 'share':
     case 'invite':
     case 'login':

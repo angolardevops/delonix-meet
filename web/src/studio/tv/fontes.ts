@@ -14,6 +14,7 @@
 import type { Fonte } from '../../room/compositor'
 import { CorrectorDeImagem } from '../../media/correccaoGl'
 import { type CorreccaoDeImagem, CORRECCAO_NEUTRA, ehNeutra, sanearCorreccao } from './correccao'
+import { GEOMETRIA_NEUTRA, type GeometriaDaFonte, sanearGeometria } from './geometria'
 import type { FontesParaDesenho, ImagemDeFonte } from './desenhoDaMesa'
 
 export type TipoDeFonte = 'camara' | 'ecra' | 'quadro' | 'participante' | 'ficheiro'
@@ -47,6 +48,7 @@ export interface FonteDaMesa {
 interface Viva extends FonteDaMesa {
   corrector: CorrectorDeImagem | null
   correccao: CorreccaoDeImagem
+  geometria: GeometriaDaFonte
   quadroCorrigido: number
   medidas: MedidasDaFonte
   pararMedicao: (() => void) | null
@@ -57,11 +59,21 @@ export const MAX_BARRAMENTO = 6
 const PRIORIDADE: Record<TipoDeFonte, number> = { camara: 0, participante: 1, ficheiro: 2, ecra: 3, quadro: 4 }
 
 const CHAVE_CORRECCOES = 'dx_studio_tv_correccoes'
+const CHAVE_GEOMETRIAS = 'dx_studio_tv_geometrias'
 
 function lerCorreccoes(): Record<string, CorreccaoDeImagem> {
   try {
     const o = JSON.parse(globalThis.localStorage?.getItem(CHAVE_CORRECCOES) ?? '{}') as Record<string, unknown>
     return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, sanearCorreccao(v)]))
+  } catch {
+    return {}
+  }
+}
+
+function lerGeometrias(): Record<string, GeometriaDaFonte> {
+  try {
+    const o = JSON.parse(globalThis.localStorage?.getItem(CHAVE_GEOMETRIAS) ?? '{}') as Record<string, unknown>
+    return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, sanearGeometria(v)]))
   } catch {
     return {}
   }
@@ -144,6 +156,7 @@ export class RegistoDeFontes implements FontesParaDesenho {
   private fontes = new Map<string, Viva>()
   private ordem: string[] = []
   private correccoesGuardadas = lerCorreccoes()
+  private geometriasGuardadas = lerGeometrias()
   private quadroN = 0
   private raf = 0
   /** Chamado quando a lista (ou a ordem) muda — não a cada frame. */
@@ -243,6 +256,26 @@ export class RegistoDeFontes implements FontesParaDesenho {
     }
   }
 
+  geometria(id: string): GeometriaDaFonte {
+    return this.fontes.get(id)?.geometria ?? { ...GEOMETRIA_NEUTRA }
+  }
+
+  /**
+   * A volta NÃO toca no `MediaStream`: só muda como a imagem é desenhada, por
+   * isso a fonte não se desliga nem pisca, e a pré, a mesa e o ar mudam juntos.
+   */
+  definirGeometria(id: string, g: GeometriaDaFonte): void {
+    const f = this.fontes.get(id)
+    if (!f) return
+    f.geometria = g
+    this.geometriasGuardadas[this.chave(f)] = g
+    try {
+      globalThis.localStorage?.setItem(CHAVE_GEOMETRIAS, JSON.stringify(this.geometriasGuardadas))
+    } catch {
+      /* sem armazenamento: vale para esta sessão */
+    }
+  }
+
   private chave(f: FonteDaMesa): string {
     if (f.tipo === 'camara') return `camara:${f.deviceId ?? f.dispositivo}`
     if (f.tipo === 'participante') return `p:${f.nome}`
@@ -260,11 +293,13 @@ export class RegistoDeFontes implements FontesParaDesenho {
       ...f,
       corrector: null,
       correccao: { ...CORRECCAO_NEUTRA },
+      geometria: { ...GEOMETRIA_NEUTRA },
       quadroCorrigido: -1,
       medidas,
       pararMedicao: f.elemento instanceof HTMLVideoElement ? medirVideo(f.elemento as VideoComFrames, medidas) : null,
     }
     viva.correccao = this.correccoesGuardadas[this.chave(viva)] ?? { ...CORRECCAO_NEUTRA }
+    viva.geometria = this.geometriasGuardadas[this.chave(viva)] ?? { ...GEOMETRIA_NEUTRA }
     this.fontes.set(f.id, viva)
     if (!this.ordem.includes(f.id)) {
       // Entra antes da primeira fonte de um tipo que vem depois: câmaras

@@ -68,6 +68,55 @@ async fn new_code(app: &TestApp, a: &common::Account, studio_id: &str, body: Val
     c
 }
 
+/// A sala de um estúdio não se apaga pela porta das salas.
+///
+/// O `studios_room_id_fkey` é ON DELETE CASCADE: sem esta guarda, apagar a
+/// sala levava atrás o estúdio, os códigos e TODAS as câmaras emparelhadas,
+/// em silêncio. Aconteceu a 2026-10-14 numa arrumação de salas.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_sala_de_um_estudio_nao_se_apaga_pela_porta_das_salas(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.ao").await;
+    let s = create_studio(&app, &a).await;
+    let code = s["room_code"].as_str().unwrap().to_string();
+
+    let (st, body) = app
+        .delete(&format!("/api/rooms/{code}"), Some(&a.token))
+        .await;
+    assert_eq!(st, 409, "{body}");
+    assert_eq!(body["code"], "room.has_studio");
+
+    // E continua lá: a recusa não é cosmética.
+    let (st, _) = app
+        .get(
+            &format!(
+                "/api/orgs/{}/studios/{}",
+                a.org(),
+                s["id"].as_str().unwrap()
+            ),
+            Some(&a.token),
+        )
+        .await;
+    assert_eq!(st, 200, "o estúdio sobreviveu à tentativa");
+
+    // Apagado o estúdio, a sala já se apaga — a guarda não prende a sala para sempre.
+    let (st, _) = app
+        .delete(
+            &format!(
+                "/api/orgs/{}/studios/{}",
+                a.org(),
+                s["id"].as_str().unwrap()
+            ),
+            Some(&a.token),
+        )
+        .await;
+    assert_eq!(st, 204);
+    let (st, body) = app
+        .delete(&format!("/api/rooms/{code}"), Some(&a.token))
+        .await;
+    assert_eq!(st, 204, "{body}");
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn studio_crud_and_who_can(db: sqlx::PgPool) {
     let app = TestApp::spawn(db).await;
@@ -252,6 +301,40 @@ async fn source_token_is_minimal_and_single_use(db: sqlx::PgPool) {
     assert_eq!(claims["typ"], "source");
     assert!(claims.get("owner").is_none());
     assert!(p["ws_path"].as_str().unwrap().contains("&room="));
+
+    // Os servidores ICE vêm NO RESGATE. Uma fonte não tem conta, e o
+    // `/api/ice-servers` exige sessão: sem isto, um telefone emparelhado só se
+    // ligava a quem estivesse na mesma rede — sem relay para atravessar NAT.
+    let ice = p["ice_servers"]["iceServers"]
+        .as_array()
+        .unwrap_or_else(|| panic!("o resgate tem de trazer ice_servers: {p}"));
+    assert!(
+        ice.iter().any(|e| e["urls"][0]
+            .as_str()
+            .is_some_and(|u| u.starts_with("stun:"))),
+        "falta o STUN: {p}"
+    );
+    // O TURN só existe se a configuração o tiver; quando existe, traz
+    // credencial de vida curta — nunca um URL de relay sem credencial.
+    for e in ice {
+        if e["urls"][0]
+            .as_str()
+            .is_some_and(|u| u.starts_with("turn:"))
+        {
+            assert!(
+                e["username"].is_string() && e["credential"].is_string(),
+                "TURN sem credencial: {e}"
+            );
+        }
+    }
+
+    // E a prova de que isto NÃO é só o token a dar jeito: a mesma fonte não
+    // alcança o `/api/ice-servers`, que é o caminho de quem tem sessão.
+    let (st, _) = app.get("/api/ice-servers", Some(token)).await;
+    assert_eq!(
+        st, 401,
+        "o token de fonte não serve para pedir ICE pela REST"
+    );
 
     // Uso único.
     let (st, _) = app
