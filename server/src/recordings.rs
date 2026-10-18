@@ -826,24 +826,38 @@ pub async fn upload(
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| format!("{}-{stamp}.webm", room.code));
 
+    // O id nasce AQUI e não do `DEFAULT` da coluna: os nomes dos ficheiros
+    // derivados são função dele, e o registo de artefactos escreve-se na mesma
+    // transacção que a linha — a linha antes do ficheiro, sempre
+    // (`recording_artifacts`, migração 0126).
+    let rec_id = Uuid::new_v4();
+    let mut tx = state.db.begin().await?;
     let rec: Recording = sqlx::query_as(
-        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, kind)
-         VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO recordings (id, room_id, uploader_id, filename, size_bytes, kind)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, room_id, uploader_id, filename, size_bytes, created_at",
     )
+    .bind(rec_id)
     .bind(room.id)
     .bind(auth.user_id)
     .bind(&display)
     .bind(body.len() as i64)
     .bind(kind)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
+    crate::recording_artifacts::register_canonical(
+        &mut tx,
+        &state.config.recordings_dir,
+        rec_id,
+    )
+    .await?;
+    tx.commit().await?;
 
     let dir = &state.config.recordings_dir;
     tokio::fs::create_dir_all(dir)
         .await
         .map_err(ApiError::internal)?;
-    let path = dir.join(format!("{}.webm", rec.id));
+    let path = crate::recording_artifacts::composed_path(dir, rec.id);
     tokio::fs::write(&path, &body)
         .await
         .map_err(ApiError::internal)?;
@@ -851,7 +865,8 @@ pub async fn upload(
     // Mede antes de responder: quem carrega recebe já a duração e a resolução,
     // e o `recording.ready` sai com elas. Cada passo tem tecto de tempo.
     let media = crate::media_probe::probe_and_store(&state, rec.id, &path).await;
-    let has_thumbnail = crate::media_probe::thumbnail_path(&state, rec.id).exists();
+    let has_thumbnail =
+        crate::media_probe::thumbnail_path(&state.config.recordings_dir, rec.id).exists();
     tracing::info!(room = %room.code, id = %rec.id, size = body.len(), "recording stored");
     // O UPLOAD é o caso em que uma transacção NÃO fecha a janela, e vale dizer
     // porquê em vez de a fingir fechada: a linha da gravação já foi commitada
@@ -1219,7 +1234,7 @@ pub async fn download(
             .into());
     }
 
-    let path = state.config.recordings_dir.join(format!("{}.webm", rec.id));
+    let path = crate::recording_artifacts::composed_path(&state.config.recordings_dir, rec.id);
     let disposition = if as_download {
         format!("attachment; filename=\"{}\"", rec.filename.replace('"', ""))
     } else {
@@ -1849,7 +1864,7 @@ pub async fn public_share_download(
         }
     }
 
-    let path = state.config.recordings_dir.join(format!("{rec_id}.webm"));
+    let path = crate::recording_artifacts::composed_path(&state.config.recordings_dir, rec_id);
     let data = tokio::fs::read(&path)
         .await
         .map_err(|_| ApiError::NotFound)?;

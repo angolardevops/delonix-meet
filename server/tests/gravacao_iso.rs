@@ -119,6 +119,21 @@ async fn gravacao_com_pista(
     escreve_ogg_real(&caminho);
     let bytes = std::fs::metadata(&caminho).unwrap().len() as i64;
 
+    // A pasta entra no REGISTO de artefactos, porque é o que o
+    // `registar_pistas_iso` faz em produção — e antes do `rename`, não depois
+    // (migração 0126). Sem esta linha a fixture montava um estado que a
+    // produção não produz: uma pasta no disco que nada nomeia. A retenção
+    // apaga PELO registo, logo é daqui que ela sabe o que levar.
+    sqlx::query(
+        "INSERT INTO recording_artifacts (recording_id, kind, path, is_dir)
+         VALUES ($1, 'iso_tracks', 'iso-' || $1::text, TRUE)
+         ON CONFLICT (path) DO NOTHING",
+    )
+    .bind(rec)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
     let track: Uuid = sqlx::query_scalar(
         "INSERT INTO recording_tracks
            (recording_id, publisher_id, kind, filename, size_bytes, starts_at_ms, source_number, source_label)

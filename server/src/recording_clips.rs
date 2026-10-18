@@ -435,11 +435,20 @@ pub async fn delete(
     if apagou == 0 {
         return Err(ApiError::NotFound);
     }
-    // O ficheiro depois da linha: se o processo morrer entre os dois, sobra um
-    // ficheiro órfão (que a varredura de órfãos do `recorder` já sabe limpar) —
-    // a ordem inversa deixava uma linha a apontar para nada.
-    let _ = tokio::fs::remove_file(clip_path(&state, clip_id)).await;
-    let _ = tokio::fs::remove_file(clip_vtt_path(&state, clip_id)).await;
+    // O ficheiro depois da linha: a ordem inversa deixava uma linha a apontar
+    // para nada. Se o processo morrer entre os dois, os ficheiros ficam — e
+    // AGORA têm quem os recolha: as linhas de `recording_artifacts` sobrevivem
+    // ao recorte (não têm FK), logo a purga da gravação leva-os. Era aqui que a
+    // fuga 2 vivia, e o comentário que dizia que «a varredura de órfãos do
+    // recorder já sabe limpar» estava simplesmente errado: ela só olhava para
+    // `tmp-*`.
+    let ficheiros = [clip_path(&state, clip_id), clip_vtt_path(&state, clip_id)];
+    for f in &ficheiros {
+        let _ = tokio::fs::remove_file(f).await;
+    }
+    // Os ficheiros saíram por ordem nossa: as linhas do registo saem também, em
+    // vez de ficarem a afirmar ficheiros que já não há.
+    crate::recording_artifacts::forget(&state.db, &state.config.recordings_dir, &ficheiros).await;
     crate::audit::log(
         &state.db,
         None,
@@ -570,14 +579,30 @@ fn codigo_de_erro(e: &anyhow::Error) -> &'static str {
 
 /// Compõe um recorte. Devolve `(tamanho, duração em ms)`.
 async fn compoe(state: &Arc<AppState>, job: &PorCompor) -> anyhow::Result<(i64, i64)> {
-    let src = state
-        .config
-        .recordings_dir
-        .join(format!("{}.webm", job.recording_id));
+    let src =
+        crate::recording_artifacts::composed_path(&state.config.recordings_dir, job.recording_id);
     if !tokio::fs::try_exists(&src).await.unwrap_or(false) {
         anyhow::bail!("source-missing: {}", src.display());
     }
     let out = clip_path(state, job.id);
+    // A LINHA ANTES DO FICHEIRO (`recording_artifacts`, migração 0126): o
+    // ffmpeg abaixo escreve o `clip-<id>.webm`, e sem registo esse ficheiro
+    // sobrevivia à gravação inteira — o `ON DELETE CASCADE` da 0118 levava a
+    // linha do recorte e os bytes ficavam, sem nada na base que os nomeasse.
+    // Falhar a registar aborta o render: o recorte volta à fila (é retentável)
+    // e não se deixa um ficheiro sem dono no disco.
+    if !crate::recording_artifacts::register(
+        &state.db,
+        job.recording_id,
+        crate::recording_artifacts::KIND_CLIP,
+        &state.config.recordings_dir,
+        &out,
+        false,
+    )
+    .await
+    {
+        anyhow::bail!("artefacto-nao-registado: {}", out.display());
+    }
 
     let kind = rules::Kind::parse(&job.kind).unwrap_or(rules::Kind::Clip);
     let focus = rules::Focus::parse(&job.focus).unwrap_or_default();
@@ -730,7 +755,25 @@ async fn escreve_vtt(state: &Arc<AppState>, job: &PorCompor, lang: &str) {
             })
             .collect::<Vec<_>>(),
     );
-    if let Err(e) = tokio::fs::write(clip_vtt_path(state, job.id), vtt).await {
+    // A LINHA ANTES DO FICHEIRO, como no `.webm` do recorte. Aqui a falha do
+    // registo só custa as legendas (o vídeo está composto e é melhor um recorte
+    // sem legendas do que nenhum), por isso diz-se e sai — nunca se escreve o
+    // ficheiro sem a linha, que era a fuga.
+    let vtt_path = clip_vtt_path(state, job.id);
+    if !crate::recording_artifacts::register(
+        &state.db,
+        job.recording_id,
+        crate::recording_artifacts::KIND_CLIP_CAPTIONS,
+        &state.config.recordings_dir,
+        &vtt_path,
+        false,
+    )
+    .await
+    {
+        tracing::warn!(clip = %job.id, "recorte: o .vtt não ficou registado — não se escreve");
+        return;
+    }
+    if let Err(e) = tokio::fs::write(&vtt_path, vtt).await {
         tracing::warn!(clip = %job.id, error = %e, "recorte: não consegui escrever o .vtt");
     }
 }

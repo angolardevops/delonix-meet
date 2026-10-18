@@ -1327,14 +1327,44 @@ async fn registar_pistas_iso(
         IsoDecision::Keep => return true,
     }
 
-    // Para fora do `tmp-`, ANTES de qualquer registo: se a mudança falhar não
-    // se escreve nada, e o chamador apaga como sempre — melhor não ter pistas
-    // do que ter linhas na base a apontar para ficheiros que o varredor vai
-    // levar. É uma renomeação no mesmo sistema de ficheiros, logo O(1).
     let destino = iso_dir(recordings_dir, rec_id);
+    // A PASTA ENTRA NO REGISTO ANTES DE EXISTIR, e é isto que fecha a fuga que
+    // esta função deixava aberta: o `rename` abaixo tira os ficheiros do
+    // `tmp-<sessão>` (que o `sweep_orphan_segments` recolhe) e um processo
+    // morto entre ele e os `INSERT` das pistas deixava a pasta sem NENHUMA
+    // linha que a nomeasse — nem em `recording_tracks`, nem em sítio nenhum.
+    // Com a linha escrita primeiro, essa janela não encolhe: deixa de existir.
+    // E não se infere nada do nome nem da idade da pasta, que foi a abordagem
+    // medida e revertida (ver o comentário do `sweep_orphan_segments`).
+    //
+    // Se o registo falhar, NÃO se renomeia: os ficheiros ficam no `tmp-` e o
+    // varredor de segmentos recolhe-os depois da folga. Um ficheiro fora do
+    // `tmp-` e sem linha é a fuga; dentro do `tmp-` tem sempre quem o leve.
+    if !crate::recording_artifacts::register(
+        db,
+        rec_id,
+        crate::recording_artifacts::KIND_ISO_TRACKS,
+        recordings_dir,
+        &destino,
+        true,
+    )
+    .await
+    {
+        tracing::error!(%rec_id, para = %destino.display(),
+            "gravação ISO: a pasta não ficou registada — as pistas ficam no tmp- para o varredor");
+        return true;
+    }
+    // Para fora do `tmp-`: se a mudança falhar não se escreve nada mais, e o
+    // chamador apaga como sempre — melhor não ter pistas do que ter linhas na
+    // base a apontar para ficheiros que o varredor vai levar. É uma renomeação
+    // no mesmo sistema de ficheiros, logo O(1).
     if let Err(e) = tokio::fs::rename(&manifest.dir, &destino).await {
         tracing::error!(%rec_id, error = %e, de = %manifest.dir.display(), para = %destino.display(),
             "gravação ISO: falha a mover as pistas para fora do tmp- — não se registam");
+        // A pasta nunca chegou a existir: a linha sai. Uma linha a mais é
+        // inofensiva para quem recolhe (apaga o que não existe e segue), mas
+        // deixar a tabela a afirmar uma pasta que não há é deixá-la a mentir.
+        crate::recording_artifacts::forget(db, recordings_dir, &[destino]).await;
         return false;
     }
 
@@ -1468,9 +1498,12 @@ async fn registar_pistas_iso(
         // Nada registado: não se guardam ficheiros que ninguém vai conseguir
         // pedir. Dizê-lo, porque é um estado que o operador vai estranhar.
         tracing::warn!(%rec_id, %room_id, "gravação ISO pedida e NENHUMA pista registada — os segmentos são apagados");
-        // A pasta já saiu do `tmp-`, logo o varredor não a apanharia: apaga-se
-        // aqui, senão ficava para sempre sem ninguém que a pudesse pedir.
+        // A pasta já saiu do `tmp-`: apaga-se aqui, e a linha sai com ela. Se
+        // este processo morrer entre as duas, a pasta fica registada e a
+        // retenção (ou o `sweep_orphans`) recolhe-a — que é precisamente o que
+        // antes não acontecia.
         let _ = tokio::fs::remove_dir_all(&destino).await;
+        crate::recording_artifacts::forget(db, recordings_dir, &[destino]).await;
         return false;
     }
     tracing::info!(%rec_id, pistas = registadas.len(), "gravação ISO: pistas por fonte registadas");
@@ -1676,25 +1709,44 @@ async fn insert_processing(
     manifest: &ComposeManifest,
 ) -> Option<Uuid> {
     let info = room_rec_info(state, room_id).await;
-    let r: Result<(Uuid,), _> = sqlx::query_as(
-        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status,
-                                 progress_pct, progress_at, kind,
-                                 compose_manifest, compose_lease_token,
-                                 compose_lease_expires_at, compose_attempts)
-         VALUES ($1, $2, $3, 0, 'processing', 0, now(), $4,
-                 $5::jsonb, $6, now() + make_interval(secs => $7), 1) RETURNING id",
-    )
-    .bind(room_id)
-    .bind(session.by_user)
-    .bind(recording_filename(&info.code))
-    .bind(crate::recordings::kind_from_room_format(&info.format))
-    .bind(serde_json::to_string(manifest).unwrap_or_else(|_| "null".into()))
-    .bind(delonix_meet_core::crypto::random_hex(24))
-    .bind(compose_rules::LEASE.as_secs() as f64)
-    .fetch_one(&state.db)
+    // O id nasce AQUI e não do `DEFAULT` da coluna: o `<id>.webm` e o
+    // `<id>.jpg` derivam dele, e as linhas do registo de artefactos escrevem-se
+    // na MESMA transacção que a da gravação — a linha antes do ficheiro, que é
+    // a regra do `recording_artifacts` (migração 0126). Numa transacção só, não
+    // há o caso de «a gravação existe e os ficheiros dela não estão
+    // registados», que era a fuga a entrar por outra porta.
+    let rec_id = Uuid::new_v4();
+    let r = async {
+        let mut tx = state.db.begin().await?;
+        sqlx::query(
+            "INSERT INTO recordings (id, room_id, uploader_id, filename, size_bytes, status,
+                                     progress_pct, progress_at, kind,
+                                     compose_manifest, compose_lease_token,
+                                     compose_lease_expires_at, compose_attempts)
+             VALUES ($1, $2, $3, $4, 0, 'processing', 0, now(), $5,
+                     $6::jsonb, $7, now() + make_interval(secs => $8), 1)",
+        )
+        .bind(rec_id)
+        .bind(room_id)
+        .bind(session.by_user)
+        .bind(recording_filename(&info.code))
+        .bind(crate::recordings::kind_from_room_format(&info.format))
+        .bind(serde_json::to_string(manifest).unwrap_or_else(|_| "null".into()))
+        .bind(delonix_meet_core::crypto::random_hex(24))
+        .bind(compose_rules::LEASE.as_secs() as f64)
+        .execute(&mut *tx)
+        .await?;
+        crate::recording_artifacts::register_canonical(
+            &mut tx,
+            &state.config.recordings_dir,
+            rec_id,
+        )
+        .await?;
+        tx.commit().await
+    }
     .await;
     match r {
-        Ok((id,)) => Some(id),
+        Ok(()) => Some(rec_id),
         Err(e) => {
             tracing::error!(%room_id, error = %e, "não foi possível registar a gravação em processamento");
             None
@@ -2445,21 +2497,35 @@ async fn finalize_inner(
         }
         None => {
             let filename = recording_filename(&info.code);
-            let (id,): (Uuid,) = sqlx::query_as(
-                "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status, kind)
-                 VALUES ($1, $2, $3, 0, 'processing', $4) RETURNING id",
+            // Mesma regra do `insert_processing`: o id vem de cá e o registo dos
+            // artefactos vai na mesma transacção, senão esta porta de recuo
+            // criava gravações cujos ficheiros ninguém apaga.
+            let id = Uuid::new_v4();
+            let mut tx = state.db.begin().await?;
+            sqlx::query(
+                "INSERT INTO recordings (id, room_id, uploader_id, filename, size_bytes, status, kind)
+                 VALUES ($1, $2, $3, $4, 0, 'processing', $5)",
             )
+            .bind(id)
             .bind(room_id)
             .bind(manifest.by_user)
             .bind(&filename)
             .bind(kind)
-            .fetch_one(&state.db)
+            .execute(&mut *tx)
             .await?;
+            crate::recording_artifacts::register_canonical(
+                &mut tx,
+                &state.config.recordings_dir,
+                id,
+            )
+            .await?;
+            tx.commit().await?;
             (id, filename)
         }
     };
 
-    let final_path = state.config.recordings_dir.join(format!("{rec_id}.webm"));
+    let final_path =
+        crate::recording_artifacts::composed_path(&state.config.recordings_dir, rec_id);
     // rename falha com EXDEV (errno 18) se out e final_path estiverem em
     // filesystems diferentes (e.g., tmp num volume separado). Fallback: copy+delete.
     match tokio::fs::rename(&out, &final_path).await {
@@ -2869,17 +2935,13 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
     };
     let mut n = 0;
     for (id, _fname) in rows {
-        let path = state.config.recordings_dir.join(format!("{id}.webm"));
-        let _ = tokio::fs::remove_file(&path).await;
-        // A miniatura é da gravação: sai com ela (media_probe::thumbnail_path).
-        let _ = tokio::fs::remove_file(crate::media_probe::thumbnail_path(state, id)).await;
-        // E as pistas ISO. O `ON DELETE CASCADE` limpa as LINHAS de
-        // `recording_tracks`, e isso fazia a fuga parecer fechada: os
-        // FICHEIROS ficavam em `iso-<gravação>/` indefinidamente, sem registo
-        // nenhum na base que os nomeasse. O varredor de órfãos só olhava para
-        // `tmp-*`, e não há rota de `DELETE` — a retenção é o único caminho
-        // que apaga, logo era aqui que a pasta tinha de sair.
-        let _ = tokio::fs::remove_dir_all(iso_dir(&state.config.recordings_dir, id)).await;
+        // UM caminho, e ele percorre o REGISTO (`recording_artifacts`, migração
+        // 0126). Aqui estavam três `let _ = remove_file(...)` à mão — a
+        // composta, a miniatura e a pasta das pistas — e o quarto derivado
+        // ficou esquecido: os `clip-<id>.webm`/`.vtt` da 0118 nunca eram
+        // apagados por ninguém. A lista do que uma gravação tem no disco deixa
+        // de viver na memória de quem escreveu este ciclo.
+        crate::recording_artifacts::purge(state, id).await;
         if sqlx::query("DELETE FROM recordings WHERE id = $1")
             .bind(id)
             .execute(&state.db)
@@ -5362,6 +5424,82 @@ mod tests {
         let destino = iso_dir(&raiz, rec);
         assert!(destino.join("00-video.ivf").exists(), "o ficheiro não está em iso-<gravação>");
         assert!(destino.join("01-audio.ogg").exists());
+        std::fs::remove_dir_all(&raiz).ok();
+    }
+
+    /// A PASTA FICA REGISTADA, e é o que fecha a fuga do processo morto: a
+    /// linha de `recording_artifacts` nomeia a pasta, logo a retenção e o
+    /// `sweep_orphans` sabem o que apagar mesmo que os `INSERT` das pistas
+    /// nunca cheguem a correr.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_pasta_das_pistas_fica_registada(db: sqlx::PgPool) {
+        let raiz = std::env::temp_dir().join(format!("iso-registada-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&raiz).unwrap();
+        let (room_id, rec) = semeia_sala_com_gravacao(&db, Some(true)).await;
+        let (_dir, manifest) = semeia_segmentos(&raiz);
+        let studio = crate::studio_realtime::StudioHub::default();
+        let m = crate::metrics::Metrics::default();
+
+        assert!(
+            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await
+        );
+
+        let linhas: Vec<(String, String, bool)> = sqlx::query_as(
+            "SELECT kind, path, is_dir FROM recording_artifacts WHERE recording_id = $1",
+        )
+        .bind(rec)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(
+            linhas,
+            vec![(
+                crate::recording_artifacts::KIND_ISO_TRACKS.to_string(),
+                format!("iso-{rec}"),
+                true
+            )],
+            "a pasta das pistas não ficou registada — um processo morto a meio \
+             deixava-a sem nada que a nomeasse"
+        );
+        std::fs::remove_dir_all(&raiz).ok();
+    }
+
+    /// CONTROLO NEGATIVO da ORDEM, e é a prova de que a linha vem ANTES do
+    /// `rename` e não depois: sem a tabela do registo, o `INSERT` falha — e os
+    /// ficheiros têm de ficar no `tmp-<sessão>`, onde o `sweep_orphan_segments`
+    /// os recolhe. Se o registo corresse depois da renomeação, a pasta já
+    /// estaria em `iso-<gravação>` e este teste apanhava-o.
+    ///
+    /// Também é o único sítio onde se consegue provar o modo de falha: contra
+    /// Postgres real não se sabe provocar um erro da base de outra maneira.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn sem_registo_as_pistas_ficam_no_tmp(db: sqlx::PgPool) {
+        let raiz = std::env::temp_dir().join(format!("iso-sem-registo-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&raiz).unwrap();
+        let (room_id, rec) = semeia_sala_com_gravacao(&db, Some(true)).await;
+        let (dir, manifest) = semeia_segmentos(&raiz);
+        let studio = crate::studio_realtime::StudioHub::default();
+        let m = crate::metrics::Metrics::default();
+        sqlx::query("DROP TABLE recording_artifacts")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let guardar =
+            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await;
+
+        // `true` = «não apagues»: os segmentos ficam para o varredor, que é o
+        // recuo que não perde nada.
+        assert!(guardar, "sem registo os segmentos não se apagam — ficam para o varredor");
+        assert!(
+            dir.exists(),
+            "a pasta saiu do tmp- sem estar registada — a ordem está invertida e a fuga está aberta"
+        );
+        assert!(
+            !iso_dir(&raiz, rec).exists(),
+            "a pasta foi renomeada sem registo: {:?}",
+            ficheiros(&raiz)
+        );
         std::fs::remove_dir_all(&raiz).ok();
     }
 

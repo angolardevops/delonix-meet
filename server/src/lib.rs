@@ -62,6 +62,7 @@ mod pubsub;
 mod ramais;
 mod rate_limit;
 mod recorder;
+mod recording_artifacts;
 mod recording_captions;
 mod recording_chapters;
 mod recording_clips;
@@ -150,6 +151,16 @@ pub use recorder::iso_dir as recording_iso_dir;
 pub use recorder::{
     resume_due as recording_resume_due, retention_sweep as recordings_retention_sweep,
     sweep_orphan_segments as recording_sweep_orphan_segments,
+};
+/// O registo dos ficheiros derivados de uma gravação (migração 0126) e as suas
+/// duas saídas: a purga de uma gravação (o que a retenção chama) e a varredura
+/// dos artefactos cuja gravação já não existe.
+///
+/// Exposto aos testes de integração porque o critério desta frente é um
+/// ficheiro AUSENTE do disco e um `SELECT count(*)` a zero — nunca o número que
+/// uma varredura devolve.
+pub use recording_artifacts::{
+    purge as recording_artifacts_purge, sweep_orphans as recording_artifacts_sweep_orphans,
 };
 /// A varredura dos capítulos automáticos, exposta aos testes de integração sem
 /// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
@@ -2203,6 +2214,13 @@ pub async fn run() {
                     0 => {}
                     n => tracing::info!(apagados = n, "segmentos órfãos apagados"),
                 }
+                // E os ficheiros que o registo nomeia e cuja gravação já não
+                // existe: um recorte levado pelo `ON DELETE CASCADE` da 0118,
+                // ou uma gravação levada pela cascata de `rooms`/`users`. É o
+                // backstop do caminho de cima — a retenção purga pelo registo
+                // antes de apagar a linha, e isto apanha o que ninguém mandou
+                // apagar. Não olha para o disco: a lista sai da tabela.
+                recording_artifacts::sweep_orphans(&state).await;
             }
         });
     }

@@ -167,6 +167,13 @@ pub struct Metrics {
     /// log: era exactamente assim que a pista `screen-audio` desaparecia em
     /// silêncio (`CHECK` da migração 0124, corrigido na 0125).
     pub recording_iso_tracks_discarded_total: AtomicU64,
+    /// Artefactos de gravação que o registo (`recording_artifacts`, migração
+    /// 0126) manda apagar e que NÃO saíram do disco: um `unlink` recusado
+    /// (permissões, volume em leitura) ou uma linha com um caminho inseguro,
+    /// escrita por fora do `CHECK` da 0126. A linha fica e volta a ser tentada
+    /// no tique seguinte, por isso um valor que não desce é disco que não se
+    /// liberta — e, no segundo caso, alguém a escrever na tabela por fora.
+    pub recording_artifacts_stuck_total: AtomicU64,
 
     /// Escritas de auditoria que FALHARAM. Qualquer valor acima de zero
     /// significa uma trilha incompleta — que é uma falha de conformidade em
@@ -311,6 +318,9 @@ impl Metrics {
              # HELP delonix_recording_iso_tracks_discarded_total Ficheiros de pista ISO descartados por não terem linha em recording_tracks.\n\
              # TYPE delonix_recording_iso_tracks_discarded_total counter\n\
              delonix_recording_iso_tracks_discarded_total {}\n\
+             # HELP delonix_recording_artifacts_stuck_total Artefactos de gravação que o registo manda apagar e que não saíram do disco.\n\
+             # TYPE delonix_recording_artifacts_stuck_total counter\n\
+             delonix_recording_artifacts_stuck_total {}\n\
              # HELP delonix_audit_write_failures_total Escritas de auditoria falhadas (trilha incompleta).\n\
              # TYPE delonix_audit_write_failures_total counter\n\
              delonix_audit_write_failures_total {}\n\
@@ -369,6 +379,7 @@ impl Metrics {
             g(self.recording_compose_queued.load(Relaxed)),
             g(self.recording_compose_running.load(Relaxed)),
             self.recording_iso_tracks_discarded_total.load(Relaxed),
+            self.recording_artifacts_stuck_total.load(Relaxed),
             self.audit_write_failures_total.load(Relaxed),
             self.join_total.load(Relaxed),
             self.join_ms_sum.load(Relaxed),
@@ -403,6 +414,22 @@ mod tests {
         let esperada = ["delonix_recording_iso_tracks_discarded_total 4242"];
         assert_eq!(
             com_valor, esperada,
+            "o valor saiu na linha de outra métrica"
+        );
+    }
+
+    /// O mesmo para o contador dos artefactos presos — e com um valor
+    /// DIFERENTE do de cima de propósito: dois contadores vizinhos com o mesmo
+    /// valor passariam o teste um do outro mesmo trocados.
+    #[test]
+    fn o_contador_de_artefactos_presos_sai_na_sua_linha() {
+        let m = Metrics::default();
+        m.recording_artifacts_stuck_total.store(3131, Relaxed);
+        let s = m.render(7);
+        let com_valor: Vec<&str> = s.lines().filter(|l| l.ends_with(" 3131")).collect();
+        assert_eq!(
+            com_valor,
+            ["delonix_recording_artifacts_stuck_total 3131"],
             "o valor saiu na linha de outra métrica"
         );
     }

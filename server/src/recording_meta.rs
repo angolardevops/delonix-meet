@@ -264,7 +264,10 @@ pub async fn thumbnail(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     access(&state, id, auth.user_id).await?;
-    let data = tokio::fs::read(crate::media_probe::thumbnail_path(&state, id))
+    let data = tokio::fs::read(crate::media_probe::thumbnail_path(
+        &state.config.recordings_dir,
+        id,
+    ))
         .await
         .map_err(|_| ApiError::NotFound)?;
     Ok((
