@@ -1044,11 +1044,71 @@ impl Drop for RecWriter {
     }
 }
 
+// O vocabulário dos `kind` vive no DOMÍNIO, ao lado do `ComposeTrack::kind` que
+// os transporta (`delonix-meet-domain::content::composition`) — não aqui, que é
+// o módulo de IO. O `sfu` e o `recordings` importam-nos do mesmo sítio.
+pub(crate) use delonix_meet_domain::content::composition::{
+    KIND_AUDIO, KIND_SCREEN, KIND_SCREEN_AUDIO, KIND_VIDEO,
+};
+
+/// O prefixo da pasta das pistas ISO. Deliberadamente DIFERENTE de `tmp-`: o
+/// `sweep_orphan_segments` apaga qualquer `tmp-*` que nenhuma composição
+/// reclame, e deixar as pistas lá era perdê-las no momento em que passam a ser
+/// úteis.
+const ISO_PREFIX: &str = "iso-";
+
+/// O tamanho acima do qual uma pista tem conteúdo a sério. NÃO é zero: o
+/// `open_track` escreve o cabeçalho ao criar o ficheiro (32 bytes de DKIF no
+/// IVF, as páginas de identificação no OGG), logo uma pista que nunca recebeu
+/// um pacote RTP tem dezenas de bytes. Um limiar de zero deixava passar
+/// exactamente a pista vazia que ele diz querer travar.
+const HEADER_ONLY: u64 = 1024;
+
+/// O que fazer com os segmentos depois de perguntar à base se o estúdio pediu
+/// gravação ISO.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum IsoDecision {
+    /// Registar as pistas e guardar os ficheiros.
+    Register,
+    /// Apagar como sempre: não é um estúdio, ou o interruptor está desligado.
+    /// Guardar ficheiros que ninguém pediu é uma fuga de disco silenciosa.
+    Delete,
+    /// Não apagar AGORA. Os segmentos ficam no `tmp-<sessão>` e é o varredor de
+    /// órfãos que os recolhe depois da folga se ninguém os reclamar.
+    Keep,
+}
+
+/// A decisão, separada da consulta para poder ser PROVADA nos três estados —
+/// um deles é um erro da base, que não se sabe provocar contra Postgres real.
+///
+/// `None` significa «a base não respondeu». Antes, a leitura era
+/// `.ok().flatten()`, o que tornava um erro indistinguível de «interruptor
+/// desligado» e fazia o chamador apagar TODAS as pistas por fonte de um
+/// estúdio que as pediu, sem um aviso — a mesma classe de perda silenciosa que
+/// esta frente existe para fechar. Um atraso de horas a libertar disco é barato
+/// ao lado disso.
+pub(crate) fn decide_iso(leitura: Option<Option<bool>>) -> IsoDecision {
+    match leitura {
+        Some(Some(true)) => IsoDecision::Register,
+        Some(_) => IsoDecision::Delete,
+        None => IsoDecision::Keep,
+    }
+}
+
+/// Onde vivem as pistas ISO de uma gravação. É UMA função porque este caminho é
+/// construído em três sítios — quem renomeia, quem serve e quem apaga por
+/// retenção — e um deles a divergir é, dependendo de qual, uma rota que serve o
+/// vazio ou uma pasta que nunca ninguém apaga.
+pub fn iso_dir(recordings_dir: &Path, rec_id: Uuid) -> PathBuf {
+    recordings_dir.join(format!("{ISO_PREFIX}{rec_id}"))
+}
+
 /// Metadados de uma track gravada (o writer vive na Publication do SFU).
 #[derive(Debug, Clone)]
 pub struct RecTrackMeta {
     pub path: PathBuf,
-    pub kind: String, // "video" | "audio"
+    /// Um de [`TRACK_KINDS`].
+    pub kind: String,
     /// Quem publicou esta pista: o `publisher` do SFU. Já estava em âmbito no
     /// sítio da chamada (`sfu.rs`) e era desperdiçado — sem ele, os ficheiros
     /// da gravação ISO saíam anónimos (`00-video.ivf`) e ninguém sabia que
@@ -1151,7 +1211,10 @@ impl RecordingSession {
     }
 
     /// Cria o writer para uma track nova e regista os metadados.
-    /// `kind`: "video" | "screen" | "audio".
+    ///
+    /// `kind`: um de [`TRACK_KINDS`] (no domínio) — e a lista é lá, não aqui. Foi um
+    /// comentário desta linha, a enumerar três dos quatro valores, que fez o
+    /// `CHECK` da migração 0124 nascer sem o `screen-audio`.
     pub fn open_track(
         &mut self,
         kind: &str,
@@ -1228,6 +1291,14 @@ impl RecordingSession {
 /// recuperável depois, mas o nome não se inventa. Na prática o operador para
 /// com as câmaras ligadas; quando isso não for verdade, a saída é persistir o
 /// par ↔ fonte em vez de o ter só em memória.
+///
+/// **A invariante, e é a razão desta função existir assim:** quando devolve
+/// `true`, a pasta `iso-<gravação>` contém EXACTAMENTE os ficheiros que têm
+/// linha em `recording_tracks`. Um ficheiro guardado sem linha não é
+/// alcançável por rota nenhuma — é uma fuga de disco que ninguém vê, e foi o
+/// que aconteceu à pista `screen-audio` que o `CHECK` da 0124 recusava. Por
+/// isso o registo acaba com uma reconciliação da pasta contra a base, e não
+/// com a contagem dos `INSERT` que correram bem.
 async fn registar_pistas_iso(
     db: &sqlx::PgPool,
     recordings_dir: &Path,
@@ -1235,35 +1306,45 @@ async fn registar_pistas_iso(
     room_id: Uuid,
     manifest: &ComposeManifest,
     rec_id: Option<Uuid>,
+    metrics: &crate::metrics::Metrics,
 ) -> bool {
     let Some(rec_id) = rec_id else {
         // Sem linha na biblioteca não há a que pendurar as pistas.
         return false;
     };
-    let iso: Option<bool> = sqlx::query_scalar(
-        "SELECT s.iso_recording FROM studios s WHERE s.room_id = $1",
-    )
-    .bind(room_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten();
-    if iso != Some(true) {
-        return false;
+    let iso =
+        sqlx::query_scalar::<_, bool>("SELECT s.iso_recording FROM studios s WHERE s.room_id = $1")
+            .bind(room_id)
+            .fetch_optional(db)
+            .await;
+    if let Err(e) = &iso {
+        tracing::error!(%rec_id, %room_id, error = %e,
+            "gravação ISO: a base não disse se o estúdio a pediu — os segmentos ficam para o varredor");
+    }
+    match decide_iso(iso.ok()) {
+        IsoDecision::Register => {}
+        IsoDecision::Delete => return false,
+        IsoDecision::Keep => return true,
     }
 
     // Para fora do `tmp-`, ANTES de qualquer registo: se a mudança falhar não
     // se escreve nada, e o chamador apaga como sempre — melhor não ter pistas
     // do que ter linhas na base a apontar para ficheiros que o varredor vai
     // levar. É uma renomeação no mesmo sistema de ficheiros, logo O(1).
-    let destino = recordings_dir.join(format!("iso-{rec_id}"));
+    let destino = iso_dir(recordings_dir, rec_id);
     if let Err(e) = tokio::fs::rename(&manifest.dir, &destino).await {
         tracing::error!(%rec_id, error = %e, de = %manifest.dir.display(), para = %destino.display(),
             "gravação ISO: falha a mover as pistas para fora do tmp- — não se registam");
         return false;
     }
 
-    let mut escritas = 0usize;
+    // Os nomes que ficaram com linha, e as duas razões de um ficheiro não
+    // ficar: `vazias` é operação NORMAL (uma câmara que se ligou e nunca
+    // publicou), `perdidas` é DEFEITO (a base recusou a pista). Só a segunda
+    // vai ao contador — ver o comentário na reconciliação.
+    let mut registadas: Vec<String> = Vec::new();
+    let mut vazias = 0u64;
+    let mut perdidas = 0u64;
     for t in &manifest.tracks {
         // O nome do ficheiro, nunca o caminho: quem serve junta-o ao
         // `recordings_dir`. Um caminho absoluto na base era uma travessia de
@@ -1272,10 +1353,22 @@ async fn registar_pistas_iso(
             continue;
         };
         // Uma pista que nunca recebeu nada não vai para a lista: um ficheiro
-        // de zero bytes no ecrã é pior do que ficheiro nenhum.
+        // que o browser não consegue abrir é pior do que ficheiro nenhum.
+        // Também não fica no disco — a reconciliação lá abaixo leva-o.
+        //
+        // **O limiar NÃO é zero**, e isso foi medido: o `open_track` escreve o
+        // cabeçalho no instante em que cria o ficheiro (as 32 bytes do DKIF no
+        // `Vp8IvfWriter::new`, as páginas de identificação no OGG), logo uma
+        // pista sem um único pacote RTP tem dezenas de bytes, nunca `len() == 0`.
+        // Um `m.len() > 0` deixava passar exactamente a pista vazia que diz
+        // querer travar, e servia-a como um ficheiro que não toca.
         let bytes = match tokio::fs::metadata(destino.join(filename)).await {
-            Ok(m) if m.len() > 0 => m.len() as i64,
-            _ => continue,
+            Ok(m) if m.len() > HEADER_ONLY => m.len() as i64,
+            Ok(_) => {
+                vazias += 1;
+                continue;
+            }
+            Err(_) => continue,
         };
         let fonte = studio.source_of_peer(room_id, t.publisher);
         let (numero, etiqueta) = match &fonte {
@@ -1301,11 +1394,77 @@ async fn registar_pistas_iso(
         .execute(db)
         .await;
         match r {
-            Ok(_) => escritas += 1,
-            Err(e) => tracing::error!(%rec_id, error = %e, "gravação ISO: falha a registar pista"),
+            // `Ok` cobre o `ON CONFLICT DO NOTHING`: ou a linha nasceu agora, ou
+            // já existia desta pasta — nos dois casos há linha a servir o
+            // ficheiro, que é a única coisa que esta lista afirma.
+            Ok(_) => registadas.push(filename.to_string()),
+            Err(e) => {
+                // O ficheiro NÃO fica: a reconciliação abaixo leva-o, porque
+                // esta pista não entrou na base. Antes, este `tracing::error!`
+                // era o único sinal e o ficheiro ficava no disco para sempre.
+                perdidas += 1;
+                tracing::error!(%rec_id, kind = %t.kind, error = %e,
+                    "gravação ISO: a base recusou a pista — o ficheiro vai ser descartado");
+            }
         }
     }
-    if escritas == 0 {
+
+    // RECONCILIAÇÃO, NOS DOIS SENTIDOS. A invariante é «pasta e base dizem o
+    // mesmo», e tem duas metades que falham de maneiras opostas:
+    //
+    //   · ficheiro sem linha → ninguém o consegue pedir (a fuga do `screen-audio`);
+    //   · linha sem ficheiro → a listagem promete uma pista e o download dá 404.
+    //
+    // A segunda metade é a que a primeira versão desta função CRIAVA: os
+    // `INSERT` já estão commitados quando se chega aqui (não há transacção à
+    // volta do ciclo), e ela relia `SELECT filename` e apagava a pasta inteira
+    // se a releitura falhasse — deixando as linhas commitadas a apontar para
+    // ficheiros que acabara de apagar. A releitura também era errada por outro
+    // motivo: trazia as linhas de TODA a gravação, incluindo as de uma
+    // composição anterior com outros nomes, e com elas uma pasta recém-mudada
+    // podia ser inteiramente apagada «por não casar». Agora a lista é o que
+    // ESTE ciclo registou, e não há releitura nenhuma.
+    let descartados = discard_rowless(&destino, &registadas).await;
+    if perdidas > 0 || descartados > 0 {
+        // Contador, não aviso perdido no log: um ficheiro de gravação que se
+        // descarta é matéria-prima que não volta, e tem de ser alertável.
+        // Conta-se o que indica DEFEITO — a pista que a base recusou e o
+        // ficheiro estranho — e NÃO a pista deliberadamente vazia (uma câmara
+        // ligada que nunca publicou), que é operação normal. Um contador que
+        // sobe em quase todas as gravações é um alarme que se desliga, e com
+        // ele perdia-se o único sinal da fuga que este commit fecha.
+        let defeito = perdidas + descartados.saturating_sub(vazias);
+        if defeito > 0 {
+            metrics
+                .recording_iso_tracks_discarded_total
+                .fetch_add(defeito, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!(%rec_id, %room_id, defeito, vazias,
+                "gravação ISO: ficheiros sem linha na base foram descartados");
+        }
+    }
+    // E a outra metade: linhas desta gravação que já não têm ficheiro na pasta
+    // (uma composição anterior com outros nomes, ou a releitura que a versão
+    // antiga desta função podia deixar). Sem isto, a listagem mostrava pistas
+    // que o download não serve, e nada as limpava — não há rota de `DELETE`.
+    let limpas = sqlx::query(
+        "DELETE FROM recording_tracks
+          WHERE recording_id = $1 AND filename <> ALL($2)",
+    )
+    .bind(rec_id)
+    .bind(&registadas)
+    .execute(db)
+    .await;
+    match limpas {
+        Ok(r) if r.rows_affected() > 0 => {
+            tracing::warn!(%rec_id, linhas = r.rows_affected(),
+                "gravação ISO: linhas sem ficheiro na pasta foram removidas");
+        }
+        Err(e) => tracing::error!(%rec_id, error = %e,
+            "gravação ISO: não foi possível limpar linhas sem ficheiro"),
+        _ => {}
+    }
+
+    if registadas.is_empty() {
         // Nada registado: não se guardam ficheiros que ninguém vai conseguir
         // pedir. Dizê-lo, porque é um estado que o operador vai estranhar.
         tracing::warn!(%rec_id, %room_id, "gravação ISO pedida e NENHUMA pista registada — os segmentos são apagados");
@@ -1314,8 +1473,49 @@ async fn registar_pistas_iso(
         let _ = tokio::fs::remove_dir_all(&destino).await;
         return false;
     }
-    tracing::info!(%rec_id, pistas = escritas, "gravação ISO: pistas por fonte registadas");
+    tracing::info!(%rec_id, pistas = registadas.len(), "gravação ISO: pistas por fonte registadas");
     true
+}
+
+/// Apaga de `dir` tudo o que não está em `registadas`. Devolve quantas entradas
+/// foram descartadas.
+///
+/// Um erro de leitura do directório devolve 0 e não apaga nada — é o único
+/// caminho em que um ficheiro pode sobreviver sem linha, e nesse caso o
+/// `sweep_orphan_segments` ainda o apanha pela gravação (ou pela falta dela).
+async fn discard_rowless(dir: &Path, registadas: &[String]) -> u64 {
+    let mut entradas = match tokio::fs::read_dir(dir).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!(dir = %dir.display(), error = %e,
+                "gravação ISO: não foi possível reconciliar a pasta com a base");
+            return 0;
+        }
+    };
+    let mut n = 0;
+    while let Ok(Some(e)) = entradas.next_entry().await {
+        let nome = e.file_name();
+        // Um nome que não é UTF-8 nunca pode ter linha (a coluna é `TEXT` e o
+        // `INSERT` vem de um `&str`), logo é sempre para descartar.
+        let tem_linha = nome
+            .to_str()
+            .is_some_and(|n| registadas.iter().any(|r| r == n));
+        if tem_linha {
+            continue;
+        }
+        let caminho = e.path();
+        let apagado = if e.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+            tokio::fs::remove_dir_all(&caminho).await.is_ok()
+        } else {
+            tokio::fs::remove_file(&caminho).await.is_ok()
+        };
+        if apagado {
+            tracing::warn!(ficheiro = %caminho.display(),
+                "gravação ISO: ficheiro sem linha em recording_tracks — descartado");
+            n += 1;
+        }
+    }
+    n
 }
 
 /// Compõe a gravação num único webm (em background) e insere-a na biblioteca.
@@ -1359,6 +1559,7 @@ async fn compose_once(
                 room_id,
                 manifest,
                 rec_id,
+                &state.metrics,
             )
             .await;
             if !guardar {
@@ -1778,6 +1979,30 @@ pub async fn resume_due(state: &Arc<AppState>) -> usize {
 }
 
 /// Apaga os directórios `tmp-*` que já não pertencem a nenhuma composição.
+///
+/// **Não varre as pastas `iso-<gravação>`, e é uma decisão — não um esquecimento.**
+/// Uma versão deste commit varria-as pela ausência da linha em `recordings`, e a
+/// revisão mostrou que estava errada por três razões independentes, todas
+/// medidas:
+///
+///  1. **Não cobria o caso para que foi escrita.** A pasta nasce de um `rename`
+///     feito DEPOIS de o `insert_processing` ter escrito a linha, logo num
+///     processo morto entre a renomeação e o `INSERT` das pistas a linha
+///     EXISTE — e o varredor saltava a pasta para sempre.
+///  2. **A folga não protegia nada.** O `rename(2)` preserva o mtime do
+///     directório (medido): a pasta `iso-` nasce com a idade do `tmp-`, que
+///     numa reunião longa já passou a folga.
+///  3. **O modo de falha era catastrófico.** `vivas.is_empty()` não é um erro,
+///     logo uma base restaurada para um ponto anterior — ou um ambiente apontado
+///     ao mesmo volume `ReadWriteMany`, que sobrevive à base — autorizava
+///     `remove_dir_all` em TODAS as pastas de pistas do volume, no primeiro
+///     tique de arranque, sem tecto nem quarentena.
+///
+/// A fuga que ela queria fechar (uma pasta que um processo morto deixa a meio do
+/// registo) é REAL e continua aberta. Fecha-se com um registo explícito do
+/// artefacto — uma coluna `recordings.iso_dir`, ou uma tabela de ficheiros por
+/// gravação que a retenção percorra — e não por inferência a partir do nome da
+/// pasta. Fica dito aqui em vez de num ficheiro de notas.
 ///
 /// Antes, o `remove_dir_all` só corria no caminho feliz: cada processo morto a
 /// meio deixava os segmentos RTP no volume para sempre. Agora a composição
@@ -2648,6 +2873,13 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
         let _ = tokio::fs::remove_file(&path).await;
         // A miniatura é da gravação: sai com ela (media_probe::thumbnail_path).
         let _ = tokio::fs::remove_file(crate::media_probe::thumbnail_path(state, id)).await;
+        // E as pistas ISO. O `ON DELETE CASCADE` limpa as LINHAS de
+        // `recording_tracks`, e isso fazia a fuga parecer fechada: os
+        // FICHEIROS ficavam em `iso-<gravação>/` indefinidamente, sem registo
+        // nenhum na base que os nomeasse. O varredor de órfãos só olhava para
+        // `tmp-*`, e não há rota de `DELETE` — a retenção é o único caminho
+        // que apaga, logo era aqui que a pasta tinha de sair.
+        let _ = tokio::fs::remove_dir_all(iso_dir(&state.config.recordings_dir, id)).await;
         if sqlx::query("DELETE FROM recordings WHERE id = $1")
             .bind(id)
             .execute(&state.db)
@@ -5055,16 +5287,27 @@ mod tests {
     /// Dois ficheiros com conteúdo numa pasta `tmp-…`, como o recorder os
     /// deixa, e o manifesto que lhes corresponde.
     fn semeia_segmentos(raiz: &Path) -> (PathBuf, ComposeManifest) {
+        semeia_segmentos_de(raiz, &[(KIND_VIDEO, 2048), (KIND_AUDIO, 2048)])
+    }
+
+    /// O mesmo, com os `kind` e os tamanhos escolhidos: é o que permite semear
+    /// uma pista `screen-audio` (a que a base recusava) e uma pista VAZIA (a
+    /// que fica no disco sem linha se ninguém reconciliar).
+    fn semeia_segmentos_de(raiz: &Path, pistas: &[(&str, usize)]) -> (PathBuf, ComposeManifest) {
         let dir = raiz.join(format!("tmp-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut tracks = Vec::new();
-        for (n, kind, ext) in [(0, "video", "ivf"), (1, "audio", "ogg")] {
+        for (n, (kind, bytes)) in pistas.iter().enumerate() {
+            // A mesma escolha do `open_track`, e pela mesma via.
+            let is_audio = kind.ends_with("audio");
+            let ext = if is_audio { "ogg" } else { "ivf" };
+            // O MESMO nome que o `open_track` dá: `{n:02}-{kind}.{ext}`.
             let nome = format!("{n:02}-{kind}.{ext}");
             let caminho = dir.join(&nome);
-            std::fs::write(&caminho, vec![7u8; 2048]).unwrap();
+            std::fs::write(&caminho, vec![7u8; *bytes]).unwrap();
             tracks.push(ComposeTrack {
                 path: caminho,
-                kind: kind.to_string(),
+                kind: (*kind).to_string(),
                 starts_at_ms: 100 * (n as u64 + 1),
                 publisher: Uuid::new_v4(),
             });
@@ -5079,6 +5322,19 @@ mod tests {
         (dir, m)
     }
 
+    /// Os nomes dos ficheiros que estão numa pasta, ordenados.
+    fn ficheiros(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
+
     /// Com o interruptor LIGADO as pistas ficam registadas e os ficheiros saem
     /// do `tmp-` (que o varredor de órfãos apaga) para `iso-<gravação>`.
     #[sqlx::test(migrations = "./migrations")]
@@ -5088,9 +5344,10 @@ mod tests {
         let (room_id, rec) = semeia_sala_com_gravacao(&db, Some(true)).await;
         let (dir, manifest) = semeia_segmentos(&raiz);
         let studio = crate::studio_realtime::StudioHub::default();
+        let m = crate::metrics::Metrics::default();
 
         let guardar =
-            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec)).await;
+            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await;
 
         assert!(guardar, "com iso ligado os ficheiros têm de FICAR");
         let n: i64 = sqlx::query_scalar("SELECT count(*) FROM recording_tracks WHERE recording_id = $1")
@@ -5102,7 +5359,7 @@ mod tests {
         // Saiu do `tmp-`: é isto que impede o varredor de as apagar quando a
         // gravação deixa de estar em `processing`.
         assert!(!dir.exists(), "a pasta tmp- ainda existe — o varredor vai apagar as pistas");
-        let destino = raiz.join(format!("iso-{rec}"));
+        let destino = iso_dir(&raiz, rec);
         assert!(destino.join("00-video.ivf").exists(), "o ficheiro não está em iso-<gravação>");
         assert!(destino.join("01-audio.ogg").exists());
         std::fs::remove_dir_all(&raiz).ok();
@@ -5120,8 +5377,9 @@ mod tests {
         // (a) estúdio com o interruptor DESLIGADO
         let (room_id, rec) = semeia_sala_com_gravacao(&db, Some(false)).await;
         let (dir, manifest) = semeia_segmentos(&raiz);
+        let m = crate::metrics::Metrics::default();
         let guardar =
-            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec)).await;
+            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await;
         assert!(!guardar, "com iso DESLIGADO os ficheiros não se guardam");
         assert!(dir.exists(), "a pasta não devia ter sido movida — o chamador vai apagá-la");
         let n: i64 = sqlx::query_scalar("SELECT count(*) FROM recording_tracks")
@@ -5140,7 +5398,187 @@ mod tests {
         let (room_id, _rec) = semeia_sala_com_gravacao(&db, Some(true)).await;
         let (_dir, manifest) = semeia_segmentos(&raiz);
         let studio = crate::studio_realtime::StudioHub::default();
-        assert!(!registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, None).await);
+        let m = crate::metrics::Metrics::default();
+        assert!(!registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, None, &m).await);
+        std::fs::remove_dir_all(&raiz).ok();
+    }
+
+    /// Os TRÊS estados da leitura do interruptor, e o do meio é o que custava
+    /// uma gravação: um erro da base NÃO é «iso desligado».
+    #[test]
+    fn um_erro_da_base_nao_autoriza_apagar_as_pistas() {
+        // O estúdio pediu ISO.
+        assert_eq!(decide_iso(Some(Some(true))), IsoDecision::Register);
+        // Interruptor desligado, e sala sem estúdio: apaga-se como sempre —
+        // guardar ficheiros que ninguém pediu é uma fuga de disco.
+        assert_eq!(decide_iso(Some(Some(false))), IsoDecision::Delete);
+        assert_eq!(decide_iso(Some(None)), IsoDecision::Delete);
+        // A BASE NÃO RESPONDEU. Não se apaga: era isto que o `.ok().flatten()`
+        // antigo fazia passar por «desligado», deitando fora as pistas de um
+        // estúdio que as pediu sem deixar um aviso.
+        assert_eq!(decide_iso(None), IsoDecision::Keep);
+    }
+
+    // ===== Fuga 1: a pista de áudio do ecrã desaparecia em silêncio =====
+
+    /// O caso que o `CHECK` da 0124 recusava. Quem partilha ecrã com som
+    /// publica DUAS pistas de áudio — o microfone e o som do sistema — e a
+    /// segunda chega aqui com `kind == "screen-audio"` (`sfu.rs`). A base
+    /// rejeitava o `INSERT`, o erro ia para o log, e o ficheiro ficava em
+    /// `iso-<gravação>` para sempre sem linha que o pudesse pedir.
+    ///
+    /// A observação é o `SELECT count(*)`, não o `true` da função.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_pista_de_audio_do_ecra_e_registada_e_fica_no_disco(db: sqlx::PgPool) {
+        let raiz = std::env::temp_dir().join(format!("iso-screen-audio-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&raiz).unwrap();
+        let (room_id, rec) = semeia_sala_com_gravacao(&db, Some(true)).await;
+        // Exactamente o que o SFU produz numa partilha de ecrã com som.
+        let (_dir, manifest) = semeia_segmentos_de(
+            &raiz,
+            &[
+                (KIND_VIDEO, 2048),
+                (KIND_AUDIO, 2048),
+                (KIND_SCREEN, 2048),
+                (KIND_SCREEN_AUDIO, 2048),
+            ],
+        );
+        let studio = crate::studio_realtime::StudioHub::default();
+        let m = crate::metrics::Metrics::default();
+
+        let guardar =
+            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await;
+        assert!(guardar);
+
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM recording_tracks
+              WHERE recording_id = $1 AND kind = 'screen-audio'",
+        )
+        .bind(rec)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(n, 1, "a pista de áudio do ecrã NÃO foi registada");
+        // As quatro, e o som do ecrã separado do microfone — é o propósito do
+        // ISO (ADR-0014 §3: cada faixa antes de qualquer mistura).
+        let kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT kind FROM recording_tracks WHERE recording_id = $1 ORDER BY kind",
+        )
+        .bind(rec)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(kinds, ["audio", "screen", "screen-audio", "video"]);
+        // E o ficheiro dessa pista está lá, servível.
+        let destino = iso_dir(&raiz, rec);
+        assert!(
+            destino.join("03-screen-audio.ogg").exists(),
+            "ficheiros na pasta: {:?}",
+            ficheiros(&destino)
+        );
+        assert_eq!(
+            m.recording_iso_tracks_discarded_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "nada se devia ter descartado"
+        );
+        std::fs::remove_dir_all(&raiz).ok();
+    }
+
+    /// O vocabulário tem UMA fonte de verdade, e a base é a autoridade: cada
+    /// valor de `TRACK_KINDS` tem de ser ACEITE, e um valor inventado tem
+    /// de ser RECUSADO.
+    ///
+    /// O controlo negativo não é decoração: sem ele, este teste passava com um
+    /// `CHECK` apagado — que é precisamente a maneira errada de fechar a fuga.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_base_aceita_todos_os_kinds_e_recusa_um_inventado(db: sqlx::PgPool) {
+        let (_room_id, rec) = semeia_sala_com_gravacao(&db, Some(true)).await;
+        let insere = |kind: &'static str| {
+            let db = db.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO recording_tracks
+                       (recording_id, publisher_id, kind, filename, size_bytes, starts_at_ms)
+                     VALUES ($1, gen_random_uuid(), $2, $3, 1, 0)",
+                )
+                .bind(rec)
+                .bind(kind)
+                .bind(format!("00-{kind}.bin"))
+                .execute(&db)
+                .await
+            }
+        };
+        for kind in delonix_meet_domain::content::composition::TRACK_KINDS {
+            assert!(
+                insere(kind).await.is_ok(),
+                "a base recusou «{kind}», que o SFU produz — falta na migração"
+            );
+        }
+        // CONTROLO NEGATIVO: o `CHECK` continua a travar o que não conhece.
+        assert!(
+            insere("pata-de-elefante").await.is_err(),
+            "o CHECK do `kind` deixou de recusar valores desconhecidos"
+        );
+    }
+
+    // ===== Fuga 2: ficheiros no disco sem linha que os sirva =====
+
+    /// A invariante do `registar_pistas_iso`: a pasta guardada contém
+    /// EXACTAMENTE os ficheiros que têm linha. Aqui há três coisas que não
+    /// podem ficar — uma pista vazia, um ficheiro que nunca esteve no
+    /// manifesto, e uma pasta estranha — e uma que tem de ficar.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn nenhum_ficheiro_fica_no_disco_sem_linha(db: sqlx::PgPool) {
+        let raiz = std::env::temp_dir().join(format!("iso-sem-linha-no-disco-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&raiz).unwrap();
+        let (room_id, rec) = semeia_sala_com_gravacao(&db, Some(true)).await;
+        // A segunda pista tem SÓ O CABEÇALHO: uma câmara que se ligou e nunca
+        // mandou um pacote. 48 bytes e não zero, porque é isso que o
+        // `open_track` deixa no disco (o DKIF do IVF são 32 bytes) — um
+        // ficheiro de zero bytes é um estado que a produção não sabe criar, e
+        // uma fixture que o usasse provava o limiar errado. Não vai para a
+        // lista, logo também não pode ficar no disco.
+        let (dir, manifest) =
+            semeia_segmentos_de(&raiz, &[(KIND_VIDEO, 2048), (KIND_SCREEN, 48)]);
+        // Lixo que não está no manifesto: um `.part` do ffmpeg, e uma pasta.
+        std::fs::write(dir.join("out.webm.part"), b"lixo").unwrap();
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub/x.ivf"), b"lixo").unwrap();
+        let studio = crate::studio_realtime::StudioHub::default();
+        let m = crate::metrics::Metrics::default();
+
+        let guardar =
+            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await;
+        assert!(guardar, "a pista com conteúdo tinha de ficar");
+
+        // A OBSERVAÇÃO: o disco contra a base, não a contagem dos INSERT.
+        let destino = iso_dir(&raiz, rec);
+        let mut linhas: Vec<String> =
+            sqlx::query_scalar("SELECT filename FROM recording_tracks WHERE recording_id = $1")
+                .bind(rec)
+                .fetch_all(&db)
+                .await
+                .unwrap();
+        linhas.sort();
+        assert_eq!(linhas, ["00-video.ivf"]);
+        assert_eq!(
+            ficheiros(&destino),
+            linhas,
+            "a pasta tem ficheiros que nenhuma linha serve"
+        );
+        // E o descarte é um CONTADOR, não um erro perdido no log — MAS só conta
+        // o que é DEFEITO. Saíram três coisas do disco (a pista só-cabeçalho, o
+        // `.part` e a pasta `sub`) e o contador diz DUAS: a pista de uma câmara
+        // que nunca publicou é operação normal, e um contador que subisse em
+        // quase todas as gravações seria um alarme que o operador desliga — e
+        // com ele perdia-se o único sinal da fuga que isto fecha.
+        assert_eq!(
+            m.recording_iso_tracks_discarded_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "o contador tem de contar o defeito e NÃO a pista legitimamente vazia"
+        );
         std::fs::remove_dir_all(&raiz).ok();
     }
 }

@@ -2574,6 +2574,28 @@ pub struct TracksResp {
     pub items: Vec<TrackItem>,
 }
 
+/// A linha de `recording_tracks` como o `query_as` a devolve. Tem nome próprio
+/// porque a tupla de sete tinha de ser escrita à mão no sítio da consulta E no
+/// fecho que a desmontava: o clippy chamava-lhe «very complex type» e tinha
+/// razão — a ordem das colunas ficava repetida duas vezes, e trocar duas do
+/// mesmo tipo (`source_label` e `kind`, ambas `String`) compilava.
+type TrackRow = (Uuid, String, i64, i64, Option<i32>, Option<String>, Uuid);
+
+impl From<TrackRow> for TrackItem {
+    fn from(r: TrackRow) -> Self {
+        let (id, kind, size_bytes, starts_at_ms, source_number, source_label, publisher_id) = r;
+        Self {
+            id,
+            kind,
+            size_bytes,
+            starts_at_ms,
+            source_number,
+            source_label,
+            publisher_id,
+        }
+    }
+}
+
 /// `GET /api/recordings/{recording_id}/tracks`
 #[utoipa::path(
     get, path = "/api/recordings/{recording_id}/tracks", tag = "recordings",
@@ -2597,7 +2619,7 @@ pub async fn tracks(
             .with_message("sem acesso a esta gravação")
             .into());
     }
-    let rows: Vec<(Uuid, String, i64, i64, Option<i32>, Option<String>, Uuid)> = sqlx::query_as(
+    let rows: Vec<TrackRow> = sqlx::query_as(
         "SELECT id, kind, size_bytes, starts_at_ms, source_number, source_label, publisher_id
          FROM recording_tracks WHERE recording_id = $1
          ORDER BY source_number NULLS LAST, starts_at_ms, filename",
@@ -2606,22 +2628,7 @@ pub async fn tracks(
     .fetch_all(&state.db)
     .await?;
     Ok(Json(TracksResp {
-        items: rows
-            .into_iter()
-            .map(
-                |(id, kind, size_bytes, starts_at_ms, source_number, source_label, publisher_id)| {
-                    TrackItem {
-                        id,
-                        kind,
-                        size_bytes,
-                        starts_at_ms,
-                        source_number,
-                        source_label,
-                        publisher_id,
-                    }
-                },
-            )
-            .collect(),
+        items: rows.into_iter().map(TrackItem::from).collect(),
     }))
 }
 
@@ -2679,11 +2686,7 @@ pub async fn track_content(
     };
     // A pasta dos segmentos é a da gravação, e o nome vem da base SEM barras
     // (a migração recusa-as) — não há aqui caminho que o pedido controle.
-    let path = state
-        .config
-        .recordings_dir
-        .join(format!("iso-{}", rec.id))
-        .join(&filename);
+    let path = crate::recorder::iso_dir(&state.config.recordings_dir, rec.id).join(&filename);
     let tipo = if kind.ends_with("audio") {
         "audio/ogg"
     } else {

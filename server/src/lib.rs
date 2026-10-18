@@ -133,11 +133,23 @@ pub use meetings::sweep_expired_seats;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
-/// A retoma das composições abandonadas e a varredura dos segmentos órfãos
-/// (migração 0099), expostas aos testes de integração sem abrir o módulo —
-/// pelo mesmo motivo do `webhook_retry_due` abaixo.
+/// Onde vivem as pistas ISO de uma gravação, para os testes de integração
+/// semearem no MESMO sítio onde a produção escreve. Exposta porque as fixtures
+/// construíam `iso-{id}` à mão: uma mudança de layout movia a produção e
+/// deixava os testes a semear no caminho antigo, a falhar a apontar para a
+/// retenção em vez de para a fixture.
+pub use recorder::iso_dir as recording_iso_dir;
+/// A retoma das composições abandonadas e as duas varreduras que apagam
+/// ficheiros de gravação (migração 0099), expostas aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due` abaixo.
+///
+/// As varreduras são o ÚNICO caminho que apaga: não existe rota de `DELETE` de
+/// gravação, logo o que elas esquecerem fica no disco para sempre — foi o que
+/// aconteceu à pasta `iso-<gravação>`, que a retenção não apagava e para onde o
+/// varredor de órfãos não olhava.
 pub use recorder::{
-    resume_due as recording_resume_due, sweep_orphan_segments as recording_sweep_orphan_segments,
+    resume_due as recording_resume_due, retention_sweep as recordings_retention_sweep,
+    sweep_orphan_segments as recording_sweep_orphan_segments,
 };
 /// A varredura dos capítulos automáticos, exposta aos testes de integração sem
 /// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.

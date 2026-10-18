@@ -160,6 +160,13 @@ pub struct Metrics {
     pub recording_compose_queued: AtomicI64,
     /// Composições a correr agora; nunca passa de `FFMPEG_MAX_CONCURRENT`.
     pub recording_compose_running: AtomicI64,
+    /// Ficheiros de pista ISO DESCARTADOS por não terem linha em
+    /// `recording_tracks` — a base recusou o `INSERT`, ou a pista estava
+    /// vazia. Qualquer valor acima de zero é matéria-prima de uma gravação
+    /// que não volta, e por isso é contador e não `tracing::error!` perdido no
+    /// log: era exactamente assim que a pista `screen-audio` desaparecia em
+    /// silêncio (`CHECK` da migração 0124, corrigido na 0125).
+    pub recording_iso_tracks_discarded_total: AtomicU64,
 
     /// Escritas de auditoria que FALHARAM. Qualquer valor acima de zero
     /// significa uma trilha incompleta — que é uma falha de conformidade em
@@ -301,6 +308,9 @@ impl Metrics {
              # HELP delonix_recording_compose_running Composições de gravação a correr (ffmpeg).\n\
              # TYPE delonix_recording_compose_running gauge\n\
              delonix_recording_compose_running {}\n\
+             # HELP delonix_recording_iso_tracks_discarded_total Ficheiros de pista ISO descartados por não terem linha em recording_tracks.\n\
+             # TYPE delonix_recording_iso_tracks_discarded_total counter\n\
+             delonix_recording_iso_tracks_discarded_total {}\n\
              # HELP delonix_audit_write_failures_total Escritas de auditoria falhadas (trilha incompleta).\n\
              # TYPE delonix_audit_write_failures_total counter\n\
              delonix_audit_write_failures_total {}\n\
@@ -358,6 +368,7 @@ impl Metrics {
             self.recording_audio_gap_unfilled_total.load(Relaxed),
             g(self.recording_compose_queued.load(Relaxed)),
             g(self.recording_compose_running.load(Relaxed)),
+            self.recording_iso_tracks_discarded_total.load(Relaxed),
             self.audit_write_failures_total.load(Relaxed),
             self.join_total.load(Relaxed),
             self.join_ms_sum.load(Relaxed),
@@ -366,5 +377,33 @@ impl Metrics {
             self.chat_persist_failed_total.load(Relaxed),
             uptime_secs,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    /// O `render` é um `format!` posicional gigante: um valor inserido fora de
+    /// ordem desloca TODOS os seguintes e cada métrica passa a reportar o
+    /// número da vizinha — em silêncio, com o painel verde. Este teste põe um
+    /// valor único no contador novo e exige que apareça na SUA linha.
+    #[test]
+    fn o_contador_de_pistas_iso_descartadas_sai_na_sua_linha() {
+        let m = Metrics::default();
+        m.recording_iso_tracks_discarded_total.store(4242, Relaxed);
+        let s = m.render(7);
+        assert!(
+            s.contains("delonix_recording_iso_tracks_discarded_total 4242"),
+            "a linha não saiu com o valor certo"
+        );
+        // E não contaminou as vizinhas: nenhuma outra linha ficou com 4242.
+        let com_valor: Vec<&str> = s.lines().filter(|l| l.ends_with(" 4242")).collect();
+        let esperada = ["delonix_recording_iso_tracks_discarded_total 4242"];
+        assert_eq!(
+            com_valor, esperada,
+            "o valor saiu na linha de outra métrica"
+        );
     }
 }

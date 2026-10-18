@@ -1409,14 +1409,19 @@ impl SfuState {
         // internamente é um "kind" próprio para ter slot/subscrição separados
         // da câmara (e ficheiro próprio na gravação). O áudio do sistema da
         // partilha (2º áudio do mesmo peer durante sharing) idem.
+        // Os nomes vêm do `recorder` porque é a tabela `recording_tracks` que
+        // os tem de aceitar: foi uma lista destes valores escrita à mão, com
+        // três dos quatro, que fez o `CHECK` da migração 0124 recusar a pista
+        // `screen-audio` em silêncio.
+        use crate::recorder::{KIND_AUDIO, KIND_SCREEN, KIND_SCREEN_AUDIO, KIND_VIDEO};
         let raw_kind = remote.kind().to_string();
-        let raw_kind_is_audio = raw_kind == "audio";
+        let raw_kind_is_audio = raw_kind == KIND_AUDIO;
         let sharing_now = pub_peer.sharing.load(Relaxed);
         // A câmara publica com rids de simulcast, o ecrã não. Mas um browser sem
         // `sendEncodings` (fallback em webrtc.ts) publica a CÂMARA sem rid: se
         // isso acontecesse durante uma partilha, a câmara era classificada como
         // ecrã. Só a PRIMEIRA track de vídeo sem rid durante a partilha é ecrã.
-        let is_screen = raw_kind == "video"
+        let is_screen = raw_kind == KIND_VIDEO
             && remote.rid().is_empty()
             && sharing_now
             && !room
@@ -1424,13 +1429,14 @@ impl SfuState {
                 .lock()
                 .await
                 .iter()
-                .any(|p| p.publisher == publisher && p.kind == "screen");
-        let is_screen_audio = raw_kind == "audio" && sharing_now && {
+                .any(|p| p.publisher == publisher && p.kind == KIND_SCREEN);
+        let is_screen_audio = raw_kind == KIND_AUDIO && sharing_now && {
             // já existe um áudio (microfone OU ecrã) deste publicador?
             let pubs = room.publications.lock().await;
             let mut has_audio = false;
             for p in pubs.iter() {
-                if p.publisher == publisher && (p.kind == "audio" || p.kind == "screen-audio") {
+                if p.publisher == publisher && (p.kind == KIND_AUDIO || p.kind == KIND_SCREEN_AUDIO)
+                {
                     has_audio = true;
                     break;
                 }
@@ -1438,9 +1444,9 @@ impl SfuState {
             has_audio
         };
         let kind = if is_screen {
-            "screen".to_string()
+            KIND_SCREEN.to_string()
         } else if is_screen_audio {
-            "screen-audio".to_string()
+            KIND_SCREEN_AUDIO.to_string()
         } else {
             raw_kind
         };
@@ -1522,9 +1528,12 @@ impl SfuState {
                     // dia se quiser guardar a dobragem, é uma pista própria,
                     // com decisão própria.
                     false
-                } else if publication.kind == "audio" || publication.kind == "screen-audio" {
+                } else if publication.kind == crate::recorder::KIND_AUDIO
+                    || publication.kind == crate::recorder::KIND_SCREEN_AUDIO
+                {
                     true
-                } else if publication.kind == "video" && publication.rid == "q" {
+                } else if publication.kind == crate::recorder::KIND_VIDEO && publication.rid == "q"
+                {
                     false
                 } else {
                     // uma track gravada por (publicador, tipo) — evita duplicar

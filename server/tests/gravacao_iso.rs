@@ -36,9 +36,18 @@ fn escreve_ogg_real(destino: &Path) {
     std::fs::create_dir_all(destino.parent().unwrap()).unwrap();
     let saida = std::process::Command::new("ffmpeg")
         .args([
-            "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-            "-c:a", "libopus", "-b:a", "32k",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "32k",
         ])
         .arg(destino)
         .output()
@@ -54,8 +63,12 @@ fn escreve_ogg_real(destino: &Path) {
 fn fluxos(ficheiro: &Path) -> Vec<(String, String)> {
     let out = std::process::Command::new("ffprobe")
         .args([
-            "-v", "error", "-show_entries", "stream=codec_name,codec_type",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_name,codec_type",
+            "-of",
+            "csv=p=0",
         ])
         .arg(ficheiro)
         .output()
@@ -101,12 +114,8 @@ async fn gravacao_com_pista(
 
     // O ficheiro vai para onde o `finalize` o deixa: `iso-<gravação>/`, FORA
     // do `tmp-` que o varredor de órfãos apaga.
-    let caminho = app
-        .state
-        .config
-        .recordings_dir
-        .join(format!("iso-{rec}"))
-        .join(ficheiro);
+    let caminho =
+        delonix_server::recording_iso_dir(&app.state.config.recordings_dir, rec).join(ficheiro);
     escreve_ogg_real(&caminho);
     let bytes = std::fs::metadata(&caminho).unwrap().len() as i64;
 
@@ -136,7 +145,8 @@ async fn a_pista_por_fonte_e_servida_e_o_ffprobe_le_uma_fonte(db: sqlx::PgPool) 
     }
     let app = TestApp::spawn(db).await;
     let a = app.new_org("iso-um.ao").await;
-    let (rec, track, _) = gravacao_com_pista(&app, &a, "02-audio.ogg", Some(2), Some("CAM 2")).await;
+    let (rec, track, _) =
+        gravacao_com_pista(&app, &a, "02-audio.ogg", Some(2), Some("CAM 2")).await;
 
     // 1. A listagem traz a pista, com o número e a etiqueta fotografados.
     let (st, body): (u16, Value) = app
@@ -163,9 +173,14 @@ async fn a_pista_por_fonte_e_servida_e_o_ffprobe_le_uma_fonte(db: sqlx::PgPool) 
         )
         .await;
     assert_eq!(st, 200, "o conteúdo da pista não foi servido");
-    assert!(bytes.len() > 100, "ficheiro vazio ou truncado: {} bytes", bytes.len());
+    assert!(
+        bytes.len() > 100,
+        "ficheiro vazio ou truncado: {} bytes",
+        bytes.len()
+    );
 
-    let descarregado = std::env::temp_dir().join(format!("iso-descarregado-{}.ogg", Uuid::new_v4()));
+    let descarregado =
+        std::env::temp_dir().join(format!("iso-descarregado-{}.ogg", Uuid::new_v4()));
     std::fs::write(&descarregado, &bytes).unwrap();
     let f = fluxos(&descarregado);
     std::fs::remove_file(&descarregado).ok();
@@ -250,4 +265,96 @@ async fn uma_pista_sem_fonte_resolvida_nao_inventa_nome(db: sqlx::PgPool) {
     assert!(it["source_number"].is_null(), "{body}");
     assert!(it["source_label"].is_null(), "{body}");
     assert!(it["publisher_id"].as_str().is_some(), "{body}");
+}
+
+// ===========================================================================
+//  Fuga 2: a pasta das pistas sobrevivia à gravação
+// ===========================================================================
+//
+// A retenção apagava `{id}.webm`, a miniatura e a linha de `recordings` — e o
+// `ON DELETE CASCADE` limpava `recording_tracks`, o que fazia a fuga parecer
+// fechada. Os FICHEIROS ficavam em `iso-{id}/` indefinidamente, sem nenhum
+// registo na base que os nomeasse: o varredor de órfãos só olhava para `tmp-*`,
+// e não existe rota de `DELETE` de gravação. A retenção é o ÚNICO caminho que
+// apaga, logo era o único sítio onde isto podia sair.
+
+/// Põe a org em retenção de `dias` e envelhece a gravação para lá do prazo.
+async fn vence_a_retencao(app: &TestApp, org: &str, rec: Uuid, dias: i32) {
+    sqlx::query("UPDATE organizations SET retention_days = $2 WHERE id = $1::uuid")
+        .bind(org)
+        .bind(dias)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE recordings SET created_at = now() - make_interval(days => $2 + 1) WHERE id = $1",
+    )
+    .bind(rec)
+    .bind(dias)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// O critério não é o número que a varredura devolve: é a PASTA AUSENTE do
+/// disco e o `SELECT count(*)` a zero.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_retencao_apaga_a_pasta_das_pistas(db: sqlx::PgPool) {
+    if sem_ffmpeg() {
+        return;
+    }
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("iso-retencao.ao").await;
+    let (rec, _track, caminho) =
+        gravacao_com_pista(&app, &a, "00-audio.ogg", Some(1), Some("CAM 1")).await;
+    let pasta = caminho.parent().unwrap().to_path_buf();
+    // CONTROLO POSITIVO: antes da varredura o ficheiro ESTÁ lá. Sem isto, um
+    // teste que mede ausência passa com um caminho errado.
+    assert!(caminho.exists(), "o ficheiro não foi semeado em {pasta:?}");
+
+    vence_a_retencao(&app, a.org(), rec, 7).await;
+    let apagadas = delonix_server::recordings_retention_sweep(&app.state).await;
+    assert_eq!(apagadas, 1, "a retenção não apagou a gravação");
+
+    assert!(
+        !pasta.exists(),
+        "a pasta das pistas sobreviveu à gravação: {:?}",
+        std::fs::read_dir(&pasta)
+            .map(|d| d
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name())
+                .collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM recording_tracks")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "ficaram linhas de pistas de uma gravação apagada");
+}
+
+/// CONTROLO POSITIVO da retenção: uma gravação DENTRO do prazo não perde as
+/// pistas. Sem este caso, «apagar sempre» passava o teste de cima.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_retencao_nao_toca_numa_gravacao_dentro_do_prazo(db: sqlx::PgPool) {
+    if sem_ffmpeg() {
+        return;
+    }
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("iso-retencao-viva.ao").await;
+    let (_rec, _track, caminho) = gravacao_com_pista(&app, &a, "00-audio.ogg", None, None).await;
+    sqlx::query("UPDATE organizations SET retention_days = 30 WHERE id = $1::uuid")
+        .bind(a.org())
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        delonix_server::recordings_retention_sweep(&app.state).await,
+        0
+    );
+    assert!(
+        caminho.exists(),
+        "a retenção levou pistas de uma gravação viva"
+    );
 }

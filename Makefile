@@ -287,6 +287,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-filas-reivindicacao.sh
 	@bash scripts/check-room-affinity.sh
 	@bash scripts/check-ws-sem-access-log.sh
+	@bash scripts/check-recording-track-kinds.sh
 	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-fs-xml.sh
 	@bash scripts/check-ffmpeg-licenca.sh
