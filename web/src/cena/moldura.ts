@@ -9,11 +9,24 @@
  * desenho fica para um irmão `desenhoDaMoldura.ts`, pela mesma separação que o
  * `studio/tv/mesa.ts` e o `desenhoDaMesa.ts` já usam.
  *
- * ESTADO, a 2026-10-18, para não dar a ideia errada a quem ler: este módulo
- * AINDA NÃO TEM CHAMADOR. O desenho não está escrito, e nem o compositor da
- * Sala nem o do Estúdio chamam o `rectsDaMoldura`. O que existe é a geometria e
- * as suas propriedades; a ligação aos dois compositores é o trabalho a seguir,
- * e enquanto não estiver feita esta frase fica aqui a dizê-lo.
+ * ESTADO, a 2026-10-18. O desenho está no irmão `desenhoDaMoldura.ts`, e o
+ * `rectsDaMoldura` tem QUATRO chamadores — contados, porque eu já escrevi aqui
+ * «dois» e estava errado:
+ *   1. `room/compositor.ts`, cena `moldura` — passa a lista INTEIRA de câmaras,
+ *      logo é o caminho onde o `omitidas` conta a verdade;
+ *   2. `studio/compositor.ts`, layout `moldura` — idem, com as peças do palco;
+ *   3. `studio/palco.ts`, dentro do `rectsDoLayout` — este CORTA o `n` antes
+ *      (`Math.min(n, MAXIMO_POR_LAYOUT.moldura)`) e devolve só rectângulos, pelo
+ *      que o `omitidas` nasce sempre a zero deste lado;
+ *   4. `desenhoDaMoldura.ts`, no `desenharMoldura` completo.
+ *
+ * O (3) IMPORTA e não está resolvido: quem desenha a partir do `rectsDoLayout`
+ * — hoje a mesa de corte do Estúdio (`studio/tv/desenhoDaMesa.ts`, que faz
+ * `rects.forEach` sobre a lista já cortada) — continua a largar fontes em
+ * silêncio, em qualquer layout e não só neste. O aviso desta fatia cobre o (1) e
+ * o (2). Fechar o (3) é fazer o `rectsDoLayout` devolver também o que cortou, e
+ * é trabalho de outra fatia; fica escrito para não se confundir «a moldura
+ * anuncia» com «o palco anuncia».
  *
  * PORQUE É UM MÓDULO À PARTE, e não mais uma função no `studio/palco.ts`: a
  * cena vai ser desenhada pelos dois compositores, e `room/` e `studio/` já se
@@ -122,6 +135,10 @@ export interface RectsDaMoldura {
    * misturado, portanto a falar fora do ecrã durante a sessão inteira. O
    * `calcularRects` da sala dá rectângulo a toda a gente; aqui há um tecto, e
    * um tecto que não se anuncia é uma perda silenciosa.
+   *
+   * QUEM O LÊ: o `desenharAvisoDeOmitidas` do `desenhoDaMoldura.ts`, que o põe
+   * como ficha no canto do último painel da coluna. Por isso é um número e não
+   * um booleano — e por isso o tecto deixou de ser silencioso.
    */
   omitidas: number
 }

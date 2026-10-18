@@ -15,8 +15,8 @@
  * emudeceria um directo a decorrer.
  *
  * O que é PURO e testável sem canvas nem `MediaStream` nenhum:
- * `participantesVisiveis` e `calcularRects`. É aí que vive a lógica que um
- * `git revert` distraído partiria — a classe à volta só liga essa
+ * `participantesVisiveis`, `ordenarPorFoco` e `calcularRects`. É aí que vive a
+ * lógica que um `git revert` distraído partiria — a classe à volta só liga essa
  * matemática a APIs de browser.
  */
 
@@ -28,7 +28,7 @@ import {
   enquadrar,
   type MarcaDaMoldura,
 } from '../cena/desenhoDaMoldura'
-import { rectsDaMoldura, type Rect } from '../cena/moldura'
+import { MAXIMO_DE_CAMARAS, rectsDaMoldura, type Rect } from '../cena/moldura'
 
 /**
  * `moldura` é a cena de marca — faixa a rolar, coluna com logótipo, câmaras e
@@ -68,21 +68,114 @@ export interface Fonte {
 }
 
 /**
+ * Quantas fontes cada cena põe no ar — e portanto quantas o anfitrião pode
+ * escolher nas fichas de foco.
+ *
+ * UMA TABELA, e não um ternário em cada sítio que precisa do número. O número
+ * estava escrito em quatro: aqui, no `toggleFoco` do `useMulticam`, na dica do
+ * `MulticamPanel` e no tecto da coluna. Um `Record` sobre a união recusa-se a
+ * compilar quando alguém acrescenta uma cena; um ternário com ramo por omissão
+ * aceita-a em silêncio e dá-lhe o tecto de outra — era assim que a `moldura`
+ * tinha fichas limitadas a dois para uma coluna de três.
+ *
+ * A `grelha` mostra toda a gente, e `Infinity` diz isso sem precisar de um caso
+ * especial em quem lê a tabela.
+ */
+export const LUGARES_DA_CENA: Record<Cena, number> = {
+  solo: 1,
+  'lado-a-lado': 2,
+  grelha: Number.POSITIVE_INFINITY,
+  moldura: MAXIMO_DE_CAMARAS,
+}
+
+/**
  * Quais fontes se veem, dada a cena e quem está em foco. Em `solo`/
  * `lado-a-lado`, se faltar gente no foco (ninguém escolhido, ou só um em
  * `lado-a-lado`), completa-se com quem sobrar — a emissão não pode ficar
  * com um ecrã vazio só porque o anfitrião ainda não escolheu ninguém.
+ *
+ * NÃO SERVE A `moldura`, e o `desenhar` nunca a manda por aqui: esta função
+ * CORTA no número de lugares, e a moldura precisa da lista inteira para contar
+ * quem ficou de fora. Lá usa-se o `ordenarPorFoco` cru.
  */
 export function participantesVisiveis<T>(cena: Cena, todos: T[], focoIds: string[], idDe: (t: T) => string): T[] {
   if (cena === 'grelha') return todos
-  const alvo = cena === 'solo' ? 1 : 2
-  const escolhidos = focoIds
-    .map((id) => todos.find((t) => idDe(t) === id))
-    .filter((t): t is T => !!t)
-    .slice(0, alvo)
-  if (escolhidos.length >= alvo || todos.length === 0) return escolhidos
-  const restantes = todos.filter((t) => !escolhidos.some((e) => idDe(e) === idDe(t)))
-  return [...escolhidos, ...restantes].slice(0, alvo)
+  // O corpo é o `ordenarPorFoco` mais um corte. Era escrito à mão aqui, e a
+  // cópia tinha um defeito que a outra não tem: sem a de-duplicação, um
+  // `focoIds` com o mesmo id duas vezes punha A MESMA câmara nas duas metades
+  // de um `lado-a-lado` e deixava duas pessoas fora do ar. Agora há uma
+  // implementação só, e a guarda vale para as duas cenas.
+  return ordenarPorFoco(todos, focoIds, idDe).slice(0, LUGARES_DA_CENA[cena])
+}
+
+/**
+ * A lista TODA, reordenada para que quem está em foco venha primeiro.
+ *
+ * É o irmão do `participantesVisiveis` para a cena `moldura`, e a diferença é a
+ * razão de ser de uma função separada: ali CORTA-SE a lista ao número de lugares
+ * (`alvo`), aqui não se corta nada. A moldura precisa da lista inteira para o
+ * `rectsDaMoldura` saber quantas câmaras ficaram de fora — se esta função
+ * devolvesse só três, o `omitidas` vinha sempre a zero e o aviso no canto nunca
+ * aparecia. Quem corta é a geometria, no sítio onde também conta o que sobra.
+ *
+ * O FOCO É ORDEM, não filtro: quem o anfitrião escolhe sobe aos primeiros
+ * lugares, e os restantes seguem pela ordem em que estavam. Assim uma escolha
+ * não expulsa ninguém da emissão por si — expulsa-o o tecto da coluna, que é
+ * quem o anuncia.
+ */
+export function ordenarPorFoco<T>(todos: T[], focoIds: string[], idDe: (t: T) => string): T[] {
+  const vistos = new Set<string>()
+  const escolhidos: T[] = []
+  for (const id of focoIds) {
+    // `vistos` ANTES do `find`: um `focoIds` com o mesmo id duas vezes (o
+    // `toggleFoco` não o produz hoje, mas é estado que vem de fora) punha a
+    // mesma câmara em dois lugares da coluna e empurrava uma terceira pessoa
+    // para fora do ar — a falha exacta que esta função existe para impedir.
+    if (vistos.has(id)) continue
+    const t = todos.find((x) => idDe(x) === id)
+    if (!t) continue
+    vistos.add(id)
+    escolhidos.push(t)
+  }
+  return [...escolhidos, ...todos.filter((t) => !vistos.has(idDe(t)))]
+}
+
+/**
+ * O foco aparado ao tecto da cena — e A MESMA LISTA quando já cabe.
+ *
+ * Devolver a mesma referência quando nada muda não é poupança de memória: é o
+ * que impede um `setFocoIds` num efeito de disparar outra renderização, e outra,
+ * a cada troca de cena. O React compara por identidade.
+ *
+ * Apara-se o FIM, como o `toggleFoco` faz com o seu `slice(-max)`: o que fica é
+ * o que o anfitrião escolheu mais recentemente.
+ */
+export function aparadoAoTecto(focoIds: string[], cena: Cena): string[] {
+  const tecto = LUGARES_DA_CENA[cena]
+  return focoIds.length > tecto ? focoIds.slice(-tecto) : focoIds
+}
+
+/**
+ * Quem ocupa o rectângulo grande da `moldura`.
+ *
+ * Por ordem: o DESIGNADO (`heroiId`, normalmente a partilha de ecrã), se ainda
+ * cá estiver; senão a primeira fonte que o anfitrião NÃO escolheu para a
+ * coluna; senão a primeira que houver.
+ *
+ * O meio dessa ordem é o que faltava, e falhava assim: sem partilha de ecrã o
+ * herói caía em `ids[0]`, que é o próprio anfitrião, e o `desenharMoldura` tira
+ * o herói da lista da coluna. Carregar na própria ficha gastava um dos três
+ * lugares e não mudava nada — a ficha ficava acesa e o ar igual, e um dos três
+ * lugares que a dica promete ia para quem o anfitrião não escolheu. Preferir um
+ * NÃO-escolhido para o herói faz as três escolhas chegarem todas à coluna.
+ *
+ * Nunca devolve `null` com fontes na sala: uma emissão com o maior rectângulo do
+ * ecrã em negro é pior do que uma com a cara de alguém — e se o anfitrião
+ * escolher TODOS, o herói volta a ser `ids[0]`, porque não há sobras.
+ */
+export function heroiDaMoldura(ids: string[], heroiId: string | null, focoIds: string[]): string | null {
+  if (heroiId && ids.includes(heroiId)) return heroiId
+  return ids.find((id) => !focoIds.includes(id)) ?? ids[0] ?? null
 }
 
 /**
@@ -136,6 +229,12 @@ export class RoomCompositor {
   private fluxoComposto: MediaStream | null = null
 
   cena: Cena = 'grelha'
+  /**
+   * Quem o anfitrião escolheu, e o que isso significa muda com a cena: em
+   * `solo`/`lado-a-lado` é QUEM APARECE (o resto não entra no quadro); na
+   * `moldura` é QUEM VEM PRIMEIRO na coluna, porque lá todos entram na lista e
+   * é o tecto da coluna que decide onde ela acaba.
+   */
   focoIds: string[] = []
   /**
    * Quem ocupa o herói da `moldura` — normalmente a partilha de ecrã.
@@ -198,9 +297,23 @@ export class RoomCompositor {
       this.fontesAudio.get(id)?.disconnect()
       this.fontesAudio.delete(id)
     }
-    // Quem saiu não fica preso no foco — a próxima cena solo/lado-a-lado cai
-    // para quem sobrar em vez de mostrar um rectângulo vazio para sempre.
-    this.focoIds = this.focoIds.filter((id) => idsActuais.has(id))
+    // O FOCO NÃO SE PODA AQUI, e já se podava: `this.focoIds` era filtrado para
+    // os ids presentes, com a intenção boa de não deixar quem saiu preso no
+    // foco. O efeito era pior do que o problema.
+    //
+    // O foco é estado do React (`useMulticam`), que o empurra para cá num
+    // `useEffect([focoIds])`. Podá-lo deste lado fazia as duas cópias
+    // divergirem SEM caminho de volta: o array do React não mudava de
+    // referência, logo o efeito não voltava a correr, e o compositor ficava com
+    // a versão podada para sempre. Medido como falha de produto: uma câmara
+    // cujo stream pisca (uma renegociação) sai e volta à lista; o `definir`
+    // corria no meio, limpava-a do foco, e ela nunca regressava à coluna — com
+    // a ficha do painel a continuar acesa. Desde que a moldura obedece ao foco,
+    // isto decidia quem ia ao ar.
+    //
+    // E a poda era DISPENSÁVEL: tanto o `participantesVisiveis` como o
+    // `ordenarPorFoco` ignoram um id que não esteja na lista. Um fantasma no
+    // foco não desenha rectângulo vazio nenhum — só não encontra ninguém.
   }
 
   iniciarPreVisualizacao(): void {
@@ -274,10 +387,16 @@ export class RoomCompositor {
     this.ctx.fillRect(0, 0, W, H)
 
     const ids = [...this.videos.keys()]
-    // O herói é quem o `heroiId` diz, SE ainda cá estiver. Senão, o primeiro
-    // que houver — nunca um buraco preto (ver o comentário do campo).
-    const heroi = this.heroiId && ids.includes(this.heroiId) ? this.heroiId : (ids[0] ?? null)
-    const camaras = ids.filter((id) => id !== heroi)
+    const heroi = heroiDaMoldura(ids, this.heroiId, this.focoIds)
+    // A ordem da coluna é a do FOCO — as fichas do `MulticamPanel` são o que o
+    // anfitrião tem para decidir quem ocupa os lugares que há. A lista vai
+    // INTEIRA para a geometria: é ela que corta no tecto e que diz, no
+    // `omitidas`, quantas ficaram de fora.
+    const camaras = ordenarPorFoco(
+      ids.filter((id) => id !== heroi),
+      this.focoIds,
+      (id) => id,
+    )
     // As opções da geometria seguem a marca que REALMENTE existe. Sem isto, a
     // Sala — que nunca tem logótipo — reservava 26% da altura da coluna para
     // uma imagem que nunca chega, e as câmaras ficavam espremidas por baixo de

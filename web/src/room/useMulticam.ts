@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { getAppName } from '../branding'
 import { COR_DA_MARCA } from '../cena/desenhoDaMoldura'
 import { participanteLocal } from '../convidado'
-import { Cena, Fonte, RoomCompositor } from './compositor'
+import { aparadoAoTecto, Cena, Fonte, LUGARES_DA_CENA, RoomCompositor } from './compositor'
 import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
 import { paraOAr } from '../studio/destinosGuardados'
 import type { RoomCore } from './useRoomCore'
@@ -72,6 +72,19 @@ export function useMulticam(core: RoomCore) {
 
   useEffect(() => {
     if (compositorRef.current) compositorRef.current.cena = cena
+    // TROCAR DE CENA APARA O FOCO ao tecto da cena nova, e tem de ser aqui.
+    // A `moldura` deixa escolher três; as outras não. Sem este aparo, três
+    // escolhas feitas na moldura sobreviviam a uma ida para `lado-a-lado`, e
+    // então: três fichas acesas sob uma dica que diz «até duas», só duas no ar,
+    // e a ficha da terceira a REMOVER em vez de trazer ao ar (o `toggleFoco` vê
+    // o id na lista). O clique seguinte, com o `slice(-2)`, despejava de uma vez
+    // as duas pessoas que estavam na emissão.
+    //
+    // O aparo é uma função PURA (`aparadoAoTecto`), e não um `slice` escrito
+    // aqui: dentro de um efeito não se prova sem jsdom, que este repo não tem.
+    // Devolve a MESMA lista quando já cabe, senão isto re-renderizava a sala a
+    // cada troca de cena.
+    setFocoIds((ids) => aparadoAoTecto(ids, cena))
   }, [cena])
   useEffect(() => {
     if (compositorRef.current) compositorRef.current.focoIds = focoIds
@@ -155,9 +168,12 @@ export function useMulticam(core: RoomCore) {
 
   function toggleFoco(id: string) {
     setFocoIds((ids) => {
-      const max = cena === 'solo' ? 1 : 2
+      // O tecto é o da CENA, lido da tabela `LUGARES_DA_CENA` e não escrito
+      // outra vez aqui: um lugar em `solo`, dois em `lado-a-lado`, e na
+      // `moldura` os que a coluna tem. Baixar o tecto da coluna não pode deixar
+      // o anfitrião a escolher um quarto que nunca aparece.
       if (ids.includes(id)) return ids.filter((x) => x !== id)
-      return [...ids, id].slice(-max)
+      return [...ids, id].slice(-LUGARES_DA_CENA[cena])
     })
   }
 

@@ -6,9 +6,10 @@
  * Mas «impuro» não quer dizer «não testável». Sem jsdom neste repo, uma função
  * que receba um `CanvasRenderingContext2D` não se chama em Node — por isso tudo
  * o que é DECIDÍVEL antes de tocar no contexto sai daqui como função pura:
- * `enquadrar` (o `cover`) e `posicoesDaFaixa` (o mosaico). O que fica por
- * testar é só a sequência de chamadas ao contexto, e essa prova-se no browser,
- * por amostragem de píxeis, como o `e2e/estudio-palco.mjs` já faz.
+ * `enquadrar` (o `cover`), `posicoesDaFaixa` (o mosaico) e `textoDasOmitidas`
+ * (o número de quem ficou de fora). O que fica por testar é só a sequência de
+ * chamadas ao contexto, e essa prova-se no browser, por amostragem de píxeis,
+ * como o `e2e/estudio-palco.mjs` já faz.
  *
  * As cores daqui são de IMAGEM, não de interface: vão para o vídeo como píxeis.
  * Por isso são literais e não tokens — o tema escuro não pode mudar a cor de
@@ -85,6 +86,27 @@ export function enquadrar(fonteW: number, fonteH: number, destino: Rect): Rect {
  * visíveis já não se lê de qualquer maneira.
  */
 export const MAXIMO_DE_REPETICOES = 512
+
+/**
+ * O que o aviso escreve quando há câmaras de fora: `+3`, ou vazio quando não
+ * ficou nenhuma.
+ *
+ * O NÚMERO é o ponto. Um aviso que só dissesse «há mais» não distingue um
+ * convidado esquecido de nove — e é precisamente essa a diferença entre um
+ * anfitrião que carrega numa ficha para trazer alguém e um anfitrião que não
+ * sabe que tem de o fazer. Por isso não há tecto de dígitos: um `+12` largo é
+ * verdade, um `+9` em vez de `+12` é mentira, e o desenho recorta o que não
+ * couber no painel.
+ *
+ * Sai como função pura porque é a única parte do aviso que se prova sem
+ * browser — a sequência de chamadas ao contexto vê-se no `e2e/cena-na-sala.mjs`,
+ * por amostragem de píxeis.
+ */
+export function textoDasOmitidas(n: number): string {
+  if (!Number.isFinite(n)) return ''
+  const k = Math.floor(n)
+  return k > 0 ? `+${k}` : ''
+}
 
 /**
  * O irmão do `enquadrar`: a fonte CABE inteira no destino, centrada, com
@@ -211,8 +233,80 @@ export function desenharFaixa(
 }
 
 /**
- * A MARCA da moldura — faixa, logótipo e assinatura — sobre rects já
- * calculados. NÃO desenha o fundo nem as fontes.
+ * O AVISO DE QUEM FICOU DE FORA: uma ficha no canto do último painel da coluna,
+ * a dizer quantas câmaras a cena não mostra.
+ *
+ * PORQUE EXISTE: a coluna tem tecto (`MAXIMO_DE_CAMARAS`), e até aqui quem não
+ * cabia desaparecia em silêncio — a coluna fica igualmente bem desenhada com
+ * três convidados ou com nove, e os que sobram continuam com o áudio na
+ * mistura, a falar fora do ecrã a sessão inteira. O `RectsDaMoldura.omitidas`
+ * sabia o número desde o início e nenhum dos dois compositores o lia. Fica
+ * desenhado AQUI, e não em cada compositor, porque esta é a única função que os
+ * dois já chamam: pô-lo nos dois era a terceira cópia da mesma regra.
+ *
+ * NÃO é um erro nem um alarme, e o desenho segue isso: é uma ficha preta com o
+ * número na cor da marca, como a assinatura logo abaixo — não um triângulo
+ * amarelo em cima de uma emissão que está no ar.
+ *
+ * Preto opaco por baixo, e não a cor da marca com o número a branco: a cor da
+ * marca é entrada de quem chama, e uma marca clara deixaria o número ilegível
+ * — ao contrário do preto, que é o fundo da própria cena.
+ *
+ * NO ALTO do painel, e não em baixo, que é onde eu a tinha posto: é preciso um
+ * canto que esta pasta possa reclamar sem saber o que os compositores desenham.
+ * A BASE do painel não serve — os dois escrevem lá o nome de quem aparece (o da
+ * Sala com `fillText` até `r.w - 16`, o do Estúdio com uma placa própria), e
+ * medido a 1280×720 a ficha preta e opaca cortava a cauda de um nome comprido a
+ * meio de uma letra: lê-se como frame corrompido, não como nome truncado. O
+ * topo está livre nos dois, e a ficha continua a ser inequívoca por estar no
+ * ÚLTIMO painel.
+ */
+export function desenharAvisoDeOmitidas(
+  c: CanvasRenderingContext2D,
+  r: RectsDaMoldura,
+  cor: string,
+  altura: number,
+): void {
+  const texto = textoDasOmitidas(r.omitidas)
+  if (!texto) return
+  // A ficha vai no ÚLTIMO painel: é o fim da lista que continua. Quando há
+  // omitidas há sempre pelo menos um painel (o tecto é positivo), mas um canvas
+  // degenerado pode dar-lhe área zero — e aí não se desenha nada.
+  const painel = r.camaras[r.camaras.length - 1]
+  if (!painel || painel.w <= 0 || painel.h <= 0) return
+  const s = escalaDaAltura(altura)
+  if (s <= 0) return
+
+  // A altura da ficha manda na tipografia, e não o contrário: assim uma coluna
+  // apertada (nove convidados num 480p) encolhe a ficha inteira em vez de
+  // deixar o número a transbordar de uma caixa de tamanho fixo.
+  const h = Math.min(Math.round(42 * s), painel.h)
+  const fonte = Math.max(1, Math.round(h * 0.56))
+  c.save()
+  c.beginPath()
+  c.rect(painel.x, painel.y, painel.w, painel.h)
+  c.clip()
+  c.font = `700 ${fonte}px ${TIPO_MONO}`
+  c.textBaseline = 'middle'
+  c.textAlign = 'center'
+  const w = Math.min(c.measureText(texto).width + h * 0.7, painel.w)
+  const folga = Math.round(10 * s)
+  // `Math.max` com a origem do painel: numa coluna mais estreita que a ficha, a
+  // folga empurrava-a para fora pela esquerda e o recorte comia-a toda.
+  const x = Math.max(painel.x, painel.x + painel.w - w - folga)
+  // A folga em baixo só se gasta se houver painel para ela: `h` já está preso a
+  // `painel.h`, logo `painel.y + painel.h - h` nunca sobe acima do topo.
+  const y = Math.min(painel.y + folga, painel.y + painel.h - h)
+  c.fillStyle = COR_DO_FUNDO
+  c.fillRect(x, y, w, h)
+  c.fillStyle = cor
+  c.fillText(texto, x + w / 2, y + h / 2, w)
+  c.restore()
+}
+
+/**
+ * A MARCA da moldura — faixa, logótipo e assinatura — mais o aviso de quem
+ * ficou de fora, sobre rects já calculados. NÃO desenha o fundo nem as fontes.
  *
  * É esta a função que os compositores chamam, e não a `desenharMoldura`
  * completa, por uma razão concreta: cada um já sabe desenhar as SUAS fontes de
@@ -274,6 +368,10 @@ export function desenharMarcaDaMoldura(
   }
 
   if (r.faixa) desenharFaixa(c, r.faixa, marca.faixa, marca.cor, instanteMs, largura)
+
+  // O aviso é o ÚLTIMO a entrar: vai por cima da câmara que já foi pintada,
+  // senão a imagem dela apagava-o.
+  desenharAvisoDeOmitidas(c, r, marca.cor, altura)
 }
 
 /**

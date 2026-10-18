@@ -779,6 +779,7 @@ export default {
     ecra: 'Partilha de ecrã',
     escolherUm: 'Escolhe quem aparece.',
     escolherDois: 'Escolhe até duas pessoas.',
+    escolherColuna: 'A coluna mostra até {{n}} câmaras, pela ordem que escolheres. Quem não couber fica de fora, e a emissão di-lo.',
     destinos: 'Destinos',
     destinoN: 'Destino {{n}}',
     removerDestino: 'Remover o destino {{n}}',

@@ -9,7 +9,7 @@
  * critério 2 deste contrato, e até lá o desenho está por observar.
  */
 import { describe, expect, it } from 'vitest'
-import { enquadrar, escalaDaAltura, MAXIMO_DE_REPETICOES, posicoesDaFaixa } from './desenhoDaMoldura'
+import { enquadrar, escalaDaAltura, MAXIMO_DE_REPETICOES, posicoesDaFaixa, textoDasOmitidas } from './desenhoDaMoldura'
 
 describe('enquadrar — o `cover`, que hoje existe em triplicado e sem um teste', () => {
   it('fonte mais larga que o destino: cobre a altura e corta a largura, centrado', () => {
@@ -130,5 +130,36 @@ describe('escalaDaAltura — a convenção `H/1080` do studio/desenho.ts, com no
     expect(escalaDaAltura(0)).toBe(0)
     expect(escalaDaAltura(-1080)).toBe(0)
     expect(escalaDaAltura(Number.NaN)).toBe(0)
+  })
+})
+
+describe('textoDasOmitidas — o número de quem não cabe na coluna', () => {
+  it('diz QUANTAS, não que há mais', () => {
+    // O valor de cada caso é LITERAL: um teste que comparasse com
+    // `` `+${n}` `` concordaria com qualquer formatação, incluindo a que
+    // escrevesse sempre `+1`.
+    expect(textoDasOmitidas(1)).toBe('+1')
+    expect(textoDasOmitidas(3)).toBe('+3')
+    expect(textoDasOmitidas(12)).toBe('+12')
+  })
+
+  it('ninguém de fora é aviso NENHUM, não um `+0`', () => {
+    // Um `+0` num canto da emissão é pior do que nada: lê-se como defeito.
+    expect(textoDasOmitidas(0)).toBe('')
+    expect(textoDasOmitidas(-1)).toBe('')
+  })
+
+  it('não há tecto de dígitos — um `+9` em vez de `+12` é mentira', () => {
+    // A tentação era limitar a dois caracteres para a ficha não crescer. O
+    // desenho resolve isso por recorte; o número não se arredonda.
+    expect(textoDasOmitidas(120)).toBe('+120')
+  })
+
+  it('entrada degenerada não escreve `+NaN` no ar', () => {
+    expect(textoDasOmitidas(Number.NaN)).toBe('')
+    expect(textoDasOmitidas(Number.POSITIVE_INFINITY)).toBe('')
+    // Um `omitidas` fraccionário não existe hoje (sai de uma subtracção de
+    // inteiros), mas truncar é o que não inventa meia câmara.
+    expect(textoDasOmitidas(2.7)).toBe('+2')
   })
 })

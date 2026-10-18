@@ -779,6 +779,7 @@ export default {
     ecra: 'Screen share',
     escolherUm: 'Choose who appears.',
     escolherDois: 'Choose up to two people.',
+    escolherColuna: 'The column shows up to {{n}} cameras, in the order you choose. Whoever does not fit stays out, and the broadcast says so.',
     destinos: 'Destinations',
     destinoN: 'Destination {{n}}',
     removerDestino: 'Remove destination {{n}}',

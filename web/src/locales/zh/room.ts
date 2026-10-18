@@ -779,6 +779,7 @@ export default {
     ecra: '屏幕共享',
     escolherUm: '选择要显示的人。',
     escolherDois: '最多选择两人。',
+    escolherColuna: '侧栏最多显示 {{n}} 路画面，顺序由你选择。放不下的不出画，直播画面会标出人数。',
     destinos: '推流目标',
     destinoN: '推流目标 {{n}}',
     removerDestino: '删除推流目标 {{n}}',

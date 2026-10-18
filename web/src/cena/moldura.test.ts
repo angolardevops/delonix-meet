@@ -194,6 +194,14 @@ describe('rectsDaMoldura — as peças repartem o espaço sem se pisarem', () =>
     // sobram falam fora do ecrã a sessão inteira, com o áudio na mistura.
     expect(r.omitidas).toBe(6)
     expect(rectsDaMoldura(2, 1920, 1080).omitidas).toBe(0)
+    // O caso de FRONTEIRA do tecto, nos dois sentidos: no tecto exacto não fica
+    // ninguém de fora, e um a mais é um a fora. Sem estes dois, um `omitidas`
+    // escrito com `>=` em vez de `>` passava com 9 e com 2, e a cena anunciava
+    // uma câmara de fora com a coluna cheia e exacta — um aviso falso numa
+    // emissão lê-se como defeito do produto.
+    expect(rectsDaMoldura(3, 1920, 1080).omitidas).toBe(0)
+    expect(rectsDaMoldura(4, 1920, 1080).omitidas).toBe(1)
+    expect(rectsDaMoldura(6, 1920, 1080).omitidas).toBe(3)
   })
 
   it('o logótipo é MAIOR que a assinatura — trocar as duas fracções tem de ser visível', () => {

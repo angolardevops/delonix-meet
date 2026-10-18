@@ -599,6 +599,11 @@ export class CompositorDeAula {
       // As fontes vão para os lugares que a cena calculou, desenhadas pelos
       // métodos DESTE compositor — é o que preserva o recorte do ecrã, o
       // espelho da câmara e o alfa do avatar, que a cena não conhece.
+      //
+      // As peças que não têm lugar NÃO são desenhadas — o `?.` é que as deixa
+      // cair, e é por isso que o `r.omitidas` conta exactamente quantas são. O
+      // aviso delas não se desenha aqui: sai do `desenharMarcaDaMoldura`, que
+      // já recebe o `r` inteiro, e assim é o MESMO aviso que a Sala mostra.
       const lugares = [r.heroi, ...r.camaras]
       lugares.forEach((lugar, i) => pecas[i]?.(lugar))
       desenharMarcaDaMoldura(this.ctx, r, marca, Date.now(), W, H)
