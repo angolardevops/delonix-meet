@@ -176,6 +176,268 @@ ok('sem cena o bordo esquerdo NÃO é a moldura preta', s.cantoSuperiorEsquerdo 
 // alguma coisa. Um canvas em branco passaria todas as asserções acima.
 ok('o controlo negativo não está a medir um canvas vazio', s.heroi === '0,255,0', s.heroi)
 
+// ---------------------------------------------------------------------------
+// O `programaId` MANDA NA COLUNA.
+//
+// O que isto prova, e porque é que o `+3` do aviso não bastava: a coluna tem
+// três lugares e o Estúdio enchia-os pela ordem de inserção do `Map` dos
+// convidados. O operador via no ar a ficha a dizer que três ficaram de fora e
+// não tinha controlo nenhum que mudasse QUAIS três — o `programaId`, que é o
+// botão «Tornar programa» que ele já tem, só era lido no layout `solo`.
+//
+// SEIS CONVIDADOS DE SEIS CORES. Uma cor repetida não distinguiria quem está no
+// lugar de quem não aparece, que é exactamente a pergunta: as asserções são «a
+// cor X está no lugar i» E «a cor Y não tem UM píxel em toda a coluna». Nenhuma
+// delas sobrevive a duas fontes da mesma cor.
+const CONVIDADOS = [
+  { id: 'g1', nome: 'Ana Bragança', cor: '#0000ff', rgb: '0,0,255', diz: 'azul' },
+  { id: 'g2', nome: 'Bento Quilemba', cor: '#ff00ff', rgb: '255,0,255', diz: 'magenta' },
+  { id: 'g3', nome: 'Carla Mucanza', cor: '#00ffff', rgb: '0,255,255', diz: 'ciano' },
+  { id: 'g4', nome: 'Dário Kiluanje', cor: '#ff8000', rgb: '255,128,0', diz: 'laranja' },
+  { id: 'g5', nome: 'Eunice Tchissola', cor: '#8000ff', rgb: '128,0,255', diz: 'violeta' },
+  { id: 'g6', nome: 'Faustino Dala', cor: '#80ff00', rgb: '128,255,0', diz: 'lima' },
+]
+// NENHUMA destas cores passa o crivo da tinta da marca (`r > 140 && g < 90 &&
+// b < 90`), nem é o verde do ecrã nem o amarelo do logótipo. Verificado à mão,
+// porque uma colisão aqui faria a contagem da assinatura e do aviso medir um
+// convidado: o laranja é o único de aspecto arriscado e tem `g = 128`.
+
+const amostrarColuna = (programaId) =>
+  pagina.evaluate(
+    async ({ programaId, convidados }) => {
+      const { CompositorDeAula, rectsDaMoldura } = window
+      const cor = (c) => {
+        const el = document.createElement('canvas')
+        el.width = 320
+        el.height = 180
+        const g = el.getContext('2d')
+        g.fillStyle = c
+        g.fillRect(0, 0, 320, 180)
+        return el
+      }
+      const ligar = async (video, canvas) => {
+        const fluxo = canvas.captureStream(30)
+        video.srcObject = fluxo
+        video.muted = true
+        video.playsInline = true
+        await video.play().catch(() => {})
+        // A MESMA condição que o `desenharConvidado` usa (`readyState >= 2 &&
+        // videoWidth > 0`), e não só o `videoWidth`: esperar por menos do que o
+        // desenho exige faz o arnês flocar e desenhar o painel de «fonte sem
+        // imagem» num código que está certo.
+        for (let i = 0; i < 150 && !(video.readyState >= 2 && video.videoWidth > 0); i++) {
+          await new Promise((r) => setTimeout(r, 20))
+        }
+        return fluxo
+      }
+
+      const comp = new CompositorDeAula({ largura: 1920, altura: 1080 })
+      comp.layout = 'moldura'
+      comp.conteudo = 'fontes'
+      comp.marca = { nome: 'DELONIX', titulo: '', aviso: '', deOrigem: true, logo: cor('#ffff00') }
+      comp.sobreposicoes = { ...comp.sobreposicoes, url: 'PESSOAS > TECNOLOGIA' }
+      // O AVATAR FICA DESLIGADO, ao contrário do `amostrar` acima. Com ele a
+      // câmara local era uma peça e tomava o primeiro lugar da coluna, deixando
+      // só DOIS para os convidados — e a pergunta desta secção é sobre os três.
+      comp.avatar = { ...comp.avatar, visivel: false }
+
+      comp.ecraStream = await ligar(comp.ecraVideo, cor('#00ff00'))
+      if (!comp.temEcra) return { erro: 'o ecrã não ligou' }
+
+      comp.definirConvidados(convidados.map((c) => ({ id: c.id, nome: c.nome, stream: null })))
+      // Os fluxos entram DEPOIS do `definirConvidados`, pelo elemento `<video>`
+      // que ele criou — é o mesmo caminho que a sala usa quando a pista de um
+      // peer chega atrasada, e não há API pública para lá chegar de outra forma.
+      const porId = new Map(comp.convidados)
+      const prontos = []
+      for (const c of convidados) {
+        const no = porId.get(c.id)
+        if (!no) return { erro: `o convidado ${c.id} não entrou no palco` }
+        await ligar(no.video, cor(c.cor))
+        prontos.push(no.video.readyState >= 2 && no.video.videoWidth > 0)
+      }
+      if (prontos.some((p) => !p)) return { erro: `fontes por montar: ${prontos.map((p) => (p ? 1 : 0)).join('')}` }
+
+      comp.programaId = programaId
+      comp.desenhar()
+
+      const g = comp.canvas.getContext('2d')
+      const W = comp.canvas.width
+      const H = comp.canvas.height
+      // A geometria REAL, com as mesmas opções que o compositor lhe passa — é
+      // ela que diz onde estão os três painéis, e não uma fracção adivinhada.
+      //
+      // O `n` é o número de CONVIDADOS, que neste palco é o mesmo que o
+      // compositor calcula (`pecas.length - 1`: o ecrã é uma peça e o avatar
+      // está desligado). É de propósito que não se vá ler o `pecas` dele: isto
+      // é a referência FIXA de «seis convidados, três lugares», e se o
+      // compositor passar a desenhar outro número de painéis as amostras caem
+      // em cima do fundo preto e o teste grita. Medido: a mutação que filtra em
+      // vez de ordenar desenha UM painel, e a coluna saiu `amarelo|preto|preto`.
+      const r = rectsDaMoldura(convidados.length, W, H, { logo: true, assinatura: true })
+
+      const corEm = (x, y) => {
+        const d = g.getImageData(Math.round(x), Math.round(y), 1, 1).data
+        return `${d[0]},${d[1]},${d[2]}`
+      }
+      // Quantos píxeis de CADA cor de convidado há numa zona. Uma passagem só:
+      // seis varreduras de 500 mil píxeis em JS no browser era meio segundo por
+      // frame e nenhuma informação a mais.
+      const contarCores = (zona) => {
+        const d = g.getImageData(
+          Math.round(zona.x),
+          Math.round(zona.y),
+          Math.max(1, Math.round(zona.w)),
+          Math.max(1, Math.round(zona.h)),
+        ).data
+        const n = {}
+        for (const c of convidados) n[c.id] = 0
+        for (let i = 0; i < d.length; i += 4) {
+          for (const c of convidados) {
+            if (d[i] === c.rgb[0] && d[i + 1] === c.rgb[1] && d[i + 2] === c.rgb[2]) {
+              n[c.id]++
+              break
+            }
+          }
+        }
+        return n
+      }
+      const vermelhos = (zona) => {
+        const d = g.getImageData(
+          Math.round(zona.x),
+          Math.round(zona.y),
+          Math.max(1, Math.round(zona.w)),
+          Math.max(1, Math.round(zona.h)),
+        ).data
+        let n = 0
+        for (let i = 0; i < d.length; i += 4) if (d[i] > 140 && d[i + 1] < 90 && d[i + 2] < 90) n++
+        return n
+      }
+
+      // A COLUNA INTEIRA, do topo do logótipo à base da assinatura, com 2 px de
+      // recuo em cada lado. O recuo é a lição medida da sessão anterior: uma
+      // zona que toca na margem preta mede a MOLDURA, e devolve um número
+      // redondo que se lê como resultado. Sem recuo, a borda de uma fonte
+      // misturada com o preto do fundo também nunca daria a cor exacta.
+      const colunaInteira = {
+        x: (r.logo ?? r.camaras[0]).x + 2,
+        y: (r.logo ?? r.camaras[0]).y + 2,
+        w: (r.logo ?? r.camaras[0]).w - 4,
+        h: (r.assinatura ? r.assinatura.y + r.assinatura.h : r.camaras[r.camaras.length - 1].y + r.camaras[r.camaras.length - 1].h) - (r.logo ?? r.camaras[0]).y - 4,
+      }
+
+      return {
+        painel: r.camaras.map((p) => corEm(p.x + p.w / 2, p.y + p.h / 2)),
+        heroi: corEm(r.heroi.x + r.heroi.w / 2, r.heroi.y + r.heroi.h / 2),
+        naColuna: contarCores(colunaInteira),
+        // O aviso de omitidas: a ficha vai no ALTO do último painel, com o
+        // número na tinta da marca. Mede-se a tinta na faixa de cima desse
+        // painel — não a coluna toda, onde a assinatura também é vermelha.
+        avisoVermelhos: vermelhos({
+          x: r.camaras[r.camaras.length - 1].x,
+          y: r.camaras[r.camaras.length - 1].y,
+          w: r.camaras[r.camaras.length - 1].w,
+          h: Math.min(60, r.camaras[r.camaras.length - 1].h),
+        }),
+        // ESTES DOIS SÃO A REFERÊNCIA DO ARNÊS, não leituras do canvas: saem do
+        // `rectsDaMoldura` que o script chamou com os seis convidados. Dizem o
+        // que a cena DEVIA mostrar, e servem para posicionar as amostras e para
+        // falhar alto se a geometria mudar por baixo do teste. Quem prova que o
+        // aviso foi DESENHADO é o `avisoVermelhos` acima — e foi mesmo ele que
+        // apanhou a mutação que corta a lista antes da geometria (167 → 0
+        // píxeis de tinta), com estes dois a continuarem a dizer `+3`.
+        omitidasEsperadas: r.omitidas,
+        lugaresEsperados: r.camaras.length,
+      }
+    },
+    { programaId, convidados: CONVIDADOS.map((c) => ({ ...c, rgb: c.rgb.split(',').map(Number) })) },
+  )
+
+const porCor = (rgb) => CONVIDADOS.find((c) => c.rgb === rgb)?.diz ?? rgb
+const nomesDos = (painel) => painel.map(porCor).join('|')
+
+console.log('\n— a coluna sem programa escolhido (ordem de inserção) —')
+const antes = await amostrarColuna(null)
+if (antes.erro) {
+  ok('as seis fontes montaram', false, antes.erro)
+} else {
+  ok(
+    'a geometria dá três lugares e três de fora (a referência do arnês)',
+    antes.lugaresEsperados === 3 && antes.omitidasEsperadas === 3,
+    `${antes.lugaresEsperados} lugares, +${antes.omitidasEsperadas}`,
+  )
+  ok('o ECRÃ é o herói, não um convidado', antes.heroi === '0,255,0', antes.heroi)
+  ok(
+    'a coluna é azul|magenta|ciano — os três primeiros a entrar',
+    nomesDos(antes.painel) === 'azul|magenta|ciano',
+    nomesDos(antes.painel),
+  )
+  // Os três que não cabem: ZERO píxeis em toda a coluna. É esta a asserção que
+  // o aviso `+3` não fazia — ele conta quantos, não diz quais.
+  for (const id of ['g4', 'g5', 'g6']) {
+    const c = CONVIDADOS.find((x) => x.id === id)
+    ok(`o ${c.diz} não cabe e não tem UM píxel na coluna`, antes.naColuna[id] === 0, `${antes.naColuna[id]} píxeis`)
+  }
+}
+
+console.log('\n— o mesmo palco com o VIOLETA no programa —')
+// O violeta é o 5.º a entrar: sem programa está fora do ar (medido acima, zero
+// píxeis). Escolhê-lo tem de o trazer para o TOPO da coluna e empurrar o ciano
+// — que lá estava — para fora. É a troca que prova que o `programaId` manda.
+const depois = await amostrarColuna('g5')
+if (depois.erro) {
+  ok('as seis fontes montaram (2.ª volta)', false, depois.erro)
+} else {
+  ok(
+    'a coluna passa a violeta|azul|magenta — o programa à cabeça',
+    nomesDos(depois.painel) === 'violeta|azul|magenta',
+    nomesDos(depois.painel),
+  )
+  ok(
+    'o VIOLETA ganhou lugar: tinha zero píxeis, agora tem muitos',
+    antes.naColuna.g5 === 0 && depois.naColuna.g5 > 50_000,
+    `${antes.naColuna.g5} → ${depois.naColuna.g5} píxeis`,
+  )
+  ok(
+    'o CIANO estava na coluna e o programa empurrou-o: zero píxeis',
+    antes.naColuna.g3 > 50_000 && depois.naColuna.g3 === 0,
+    `${antes.naColuna.g3} → ${depois.naColuna.g3} píxeis`,
+  )
+  ok('o ECRÃ continua a ser o herói — o programa escolhe a COLUNA, não o herói', depois.heroi === '0,255,0', depois.heroi)
+  // O AVISO continua a contar certo depois da reordenação. O `> 0` não é
+  // decoração: sem ele, `0 === 0` dava verde exactamente no caso em que o aviso
+  // deixou de ser desenhado — foi a lição da sessão anterior.
+  ok(
+    'o aviso de +3 continua DESENHADO e com a mesma tinta depois da reordenação',
+    antes.omitidasEsperadas === 3 &&
+      depois.omitidasEsperadas === 3 &&
+      antes.avisoVermelhos > 0 &&
+      antes.avisoVermelhos === depois.avisoVermelhos,
+    `+${antes.omitidasEsperadas}/+${depois.omitidasEsperadas}, ${antes.avisoVermelhos} → ${depois.avisoVermelhos} píxeis de tinta`,
+  )
+}
+
+console.log('\n— controlo negativo: um programa que já saiu do palco —')
+// Um `programaId` fantasma não pode deixar um lugar vazio nem reordenar nada: o
+// dono do `programaId` é o React, o compositor não o poda, e a ordem tem de cair
+// na de sempre. Sem esta asserção, um `find` que devolvesse `undefined` e fosse
+// empurrado para a lista passaria as duas acima.
+const fantasma = await amostrarColuna('ninguem-com-este-id')
+if (fantasma.erro) {
+  ok('as seis fontes montaram (3.ª volta)', false, fantasma.erro)
+} else {
+  ok(
+    'um programa fantasma é ignorado: a coluna volta à ordem de inserção',
+    nomesDos(fantasma.painel) === 'azul|magenta|ciano',
+    nomesDos(fantasma.painel),
+  )
+  ok(
+    'e não deixa lugar vazio: o aviso de +3 continua desenhado',
+    fantasma.omitidasEsperadas === 3 && fantasma.avisoVermelhos > 0,
+    `+${fantasma.omitidasEsperadas}, ${fantasma.avisoVermelhos} píxeis`,
+  )
+}
+
 await navegador.close()
 srv.close()
 rmSync(PACOTE, { force: true })

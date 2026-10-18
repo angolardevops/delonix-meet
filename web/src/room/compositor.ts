@@ -18,6 +18,10 @@
  * `participantesVisiveis`, `ordenarPorFoco` e `calcularRects`. É aí que vive a
  * lógica que um `git revert` distraído partiria — a classe à volta só liga essa
  * matemática a APIs de browser.
+ *
+ * O `ordenarPorFoco` já NÃO NASCE AQUI — desceu para `cena/foco.ts` quando o
+ * Estúdio passou a precisar dele, e é re-exportado mais abaixo. Continua a
+ * testar-se no `compositor.test.ts` desta pasta, que é onde estão os casos.
  */
 
 import {
@@ -28,6 +32,7 @@ import {
   enquadrar,
   type MarcaDaMoldura,
 } from '../cena/desenhoDaMoldura'
+import { ordenarPorFoco } from '../cena/foco'
 import { MAXIMO_DE_CAMARAS, rectsDaMoldura, type Rect } from '../cena/moldura'
 
 /**
@@ -60,6 +65,22 @@ export type Cena = 'solo' | 'lado-a-lado' | 'grelha' | 'moldura'
  * de o fazer nos dois.
  */
 export type { Rect }
+
+/**
+ * O `ordenarPorFoco` desceu para `cena/foco.ts`, pela MESMA razão que o `Rect`
+ * acima, e é re-exportado daqui pelo mesmo motivo.
+ *
+ * PORQUÊ DESCEU: deixou de ser só da Sala. O Estúdio precisa dele para a coluna
+ * da moldura obedecer ao `programaId`, e `room/` e `studio/` já se importam nos
+ * DOIS sentidos — o Estúdio chamá-lo daqui acrescentava uma aresta a um
+ * emaranhado que já existe. A cena é folha, logo os dois a podem importar sem
+ * ciclo.
+ *
+ * A re-exportação não é cortesia: o `room/compositor.test.ts` e qualquer coisa
+ * a jusante continuam a importá-lo daqui, e uma mudança de arrumação interna não
+ * tem de lhes custar um `git diff`.
+ */
+export { ordenarPorFoco }
 
 export interface Fonte {
   id: string
@@ -106,38 +127,6 @@ export function participantesVisiveis<T>(cena: Cena, todos: T[], focoIds: string
   // de um `lado-a-lado` e deixava duas pessoas fora do ar. Agora há uma
   // implementação só, e a guarda vale para as duas cenas.
   return ordenarPorFoco(todos, focoIds, idDe).slice(0, LUGARES_DA_CENA[cena])
-}
-
-/**
- * A lista TODA, reordenada para que quem está em foco venha primeiro.
- *
- * É o irmão do `participantesVisiveis` para a cena `moldura`, e a diferença é a
- * razão de ser de uma função separada: ali CORTA-SE a lista ao número de lugares
- * (`alvo`), aqui não se corta nada. A moldura precisa da lista inteira para o
- * `rectsDaMoldura` saber quantas câmaras ficaram de fora — se esta função
- * devolvesse só três, o `omitidas` vinha sempre a zero e o aviso no canto nunca
- * aparecia. Quem corta é a geometria, no sítio onde também conta o que sobra.
- *
- * O FOCO É ORDEM, não filtro: quem o anfitrião escolhe sobe aos primeiros
- * lugares, e os restantes seguem pela ordem em que estavam. Assim uma escolha
- * não expulsa ninguém da emissão por si — expulsa-o o tecto da coluna, que é
- * quem o anuncia.
- */
-export function ordenarPorFoco<T>(todos: T[], focoIds: string[], idDe: (t: T) => string): T[] {
-  const vistos = new Set<string>()
-  const escolhidos: T[] = []
-  for (const id of focoIds) {
-    // `vistos` ANTES do `find`: um `focoIds` com o mesmo id duas vezes (o
-    // `toggleFoco` não o produz hoje, mas é estado que vem de fora) punha a
-    // mesma câmara em dois lugares da coluna e empurrava uma terceira pessoa
-    // para fora do ar — a falha exacta que esta função existe para impedir.
-    if (vistos.has(id)) continue
-    const t = todos.find((x) => idDe(x) === id)
-    if (!t) continue
-    vistos.add(id)
-    escolhidos.push(t)
-  }
-  return [...escolhidos, ...todos.filter((t) => !vistos.has(idDe(t)))]
 }
 
 /**

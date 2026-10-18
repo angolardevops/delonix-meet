@@ -28,6 +28,10 @@ import {
   type Sobreposicoes,
 } from './palco'
 import { COR_DA_MARCA, COR_DO_FUNDO, desenharMarcaDaMoldura } from '../cena/desenhoDaMoldura'
+// De `cena/`, e NÃO do `room/compositor.ts` que o re-exporta: a cena é folha e
+// importá-la não fecha ciclo, ao contrário de ir buscá-lo à Sala — que já
+// importa deste lado (`room/useMulticam.ts` traz o `directo`).
+import { ordenarPorFoco } from '../cena/foco'
 import { rectsDaMoldura } from '../cena/moldura'
 import { desenharCartaoDeMarca, desenharSobreposicoes, type MarcaDoPalco, type SondagemNoPalco } from './desenho'
 import { desenharQuadroDaMesa, type FontesParaDesenho } from './tv/desenhoDaMesa'
@@ -245,10 +249,17 @@ export class CompositorDeAula {
   layout: LayoutDoPalco = 'solo'
   conteudo: ConteudoDoPalco = 'fontes'
   /**
-   * Em `layout: 'solo'`, qual convidado vai para o ecrã inteiro — o «corte»
-   * da mesa de corte. `null`, ou um id que já não está no palco, cai para o
-   * mais antigo ainda montado (o comportamento de sempre, antes de existir
-   * escolha do operador).
+   * O «corte» da mesa de corte: qual convidado o operador pôs no programa.
+   *
+   * Em `layout: 'solo'` vai para o ecrã inteiro. Nos layouts com vários lugares
+   * — e a `moldura` é o caso que importa — vai para o PRIMEIRO lugar dos
+   * convidados, que na moldura é o topo da coluna; ver o `pecasDoPalco`. Até
+   * aqui só o `solo` o lia, e a coluna enchia-se pela ordem de inserção do
+   * `Map`: o operador via o aviso de quantas câmaras ficaram de fora e não
+   * tinha como mudar quais.
+   *
+   * `null`, ou um id que já não está no palco, cai para a ordem de sempre (o
+   * mais antigo ainda montado) — não para um lugar vazio.
    */
   programaId: string | null = null
   sobreposicoes: Sobreposicoes = { ...SOBREPOSICOES_INICIAIS }
@@ -628,13 +639,40 @@ export class CompositorDeAula {
    * Sai do `desenharMosaico` para que a moldura possa usar a MESMA lista sem
    * depender da geometria do mosaico — o que ela precisa é dos desenhadores,
    * não dos rects.
+   *
+   * OS CONVIDADOS VÊM ORDENADOS PELO `programaId`, e não pela ordem de inserção
+   * do `Map`. Era essa a ordem até aqui, e fazia da escolha do operador uma
+   * decoração: com ecrã e seis convidados, a coluna da moldura anunciava `+3` no
+   * ar e nenhum controlo do Estúdio mudava QUAIS três — quem entrou primeiro na
+   * sala ficava no ar, e o botão «Tornar programa» só tinha efeito no layout
+   * `solo`. O `ordenarPorFoco` é o mesmo que a Sala usa para as suas fichas de
+   * foco; mora em `cena/foco.ts` por causa disso.
+   *
+   * SÓ OS CONVIDADOS SE REORDENAM. O conteúdo (ecrã ou quadro) e a tua câmara
+   * mantêm a cabeça da lista, que é o que põe o ecrã partilhado no rectângulo
+   * grande da moldura: o `programaId` escolhe quem ocupa a COLUNA, não quem é o
+   * herói. Trocar isso trocaria uma emissão de aula pelo retrato de quem fala.
+   *
+   * VALE PARA TODOS OS LAYOUTS, de propósito — não só para a `moldura`. O
+   * `rectsDoLayout` também tem tecto (`MAXIMO_POR_LAYOUT`) e o `desenharMosaico`
+   * larga em silêncio as peças que sobram; pôr o programa à cabeça é o que dá ao
+   * operador a mesma escolha num `lado-a-lado` de dois lugares. Uma ordenação
+   * só-na-moldura seria uma segunda regra para a mesma pergunta.
    */
   private pecasDoPalco(): ((r: { x: number; y: number; w: number; h: number }) => void)[] {
     const pecas: ((r: { x: number; y: number; w: number; h: number }) => void)[] = []
     if (this.conteudo === 'quadro') pecas.push((r) => this.desenharConteudo(this.quadro, r, 'contain'))
     else if (this.temEcra) pecas.push((r) => this.desenharEcraEm(r))
     if (this.avatar.visivel && this.temCamara) pecas.push((r) => this.desenharCamaraEm(r))
-    for (const c of this.convidados.values()) pecas.push((r) => this.desenharConvidado(c, r))
+    // O id é a CHAVE do mapa, não um campo do `ConvidadoNoPalco` — daí as
+    // `entries()`. Um `programaId` de quem já saiu do palco é ignorado pelo
+    // `ordenarPorFoco` (não encontra ninguém), e é por isso que não se poda
+    // aqui: o dono do `programaId` é o React, e podar estado partilhado do lado
+    // que não o possui já fez as duas cópias divergirem sem caminho de volta.
+    const escolha = this.programaId ? [this.programaId] : []
+    for (const [, c] of ordenarPorFoco([...this.convidados.entries()], escolha, ([id]) => id)) {
+      pecas.push((r) => this.desenharConvidado(c, r))
+    }
     return pecas
   }
 
