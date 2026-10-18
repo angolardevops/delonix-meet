@@ -35,6 +35,16 @@ function Miniatura({ layout }: { layout: LayoutDoPalco }) {
           <span />
         </>
       )}
+      {layout === 'moldura' && (
+        <>
+          <span className="st-lay__faixa" />
+          <span className="st-lay__col">
+            <span />
+            <span />
+          </span>
+          <span />
+        </>
+      )}
     </span>
   )
 }

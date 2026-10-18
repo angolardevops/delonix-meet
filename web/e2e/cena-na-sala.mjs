@@ -118,6 +118,13 @@ const amostrar = (cena, comEcra) =>
       camaraTopo: em(0.1, 0.4),
       faixaVermelhos: vermelhos(0, 0, 1, 0.055),
       bordo: em(0.004, 0.5),
+      // Perto do TOPO do herói. Com `contain` (um ecrã 16:9 num herói de
+      // rácio 1,376) há barra de fundo aqui; com `cover` estaria tudo
+      // preenchido e os lados do ecrã cortados.
+      heroiTopo: em(0.65, 0.132),
+      // Perto do topo da COLUNA. Sem logótipo, a primeira câmara começa logo
+      // ali; com o espaço do logótipo reservado em vão, seria fundo morto.
+      colunaTopo: em(0.1, 0.12),
     }
   }, { cena, comEcra })
 
@@ -127,6 +134,14 @@ ok('o ECRÃ partilhado está na área grande (verde no herói)', comEcra.heroi =
 ok('uma CÂMARA está na coluna, não no herói', comEcra.camaraTopo === '0,0,255', comEcra.camaraTopo)
 ok('a FAIXA tem a tinta da marca', comEcra.faixaVermelhos > 200, `${comEcra.faixaVermelhos} píxeis`)
 ok('a MOLDURA existe: o bordo esquerdo é preto', comEcra.bordo === '0,0,0', comEcra.bordo)
+// O ecrã CABE inteiro, não é cortado para encher. Com `cover`, um ecrã 16:9
+// neste herói perdia 11% de cada lado — a primeira e a última coluna de texto
+// duns slides. Mede-se pela barra de fundo que o `contain` deixa no topo.
+ok('o ecrã CABE inteiro — não é cortado para encher o herói', comEcra.heroiTopo === '0,0,0', comEcra.heroiTopo)
+// Sem logótipo não se reserva espaço para ele: a Sala nunca tem logótipo, e
+// 26% da altura da coluna em preto morto seria o que se veria em todas as
+// emissões.
+ok('sem logótipo a coluna não guarda espaço morto', comEcra.colunaTopo === '0,0,255', comEcra.colunaTopo)
 
 // CONTROLO POSITIVO do contrato: sem ecrã, o herói NÃO é um rectângulo preto.
 console.log('\n— controlo positivo: SEM partilha de ecrã —')

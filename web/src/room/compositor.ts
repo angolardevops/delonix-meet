@@ -21,6 +21,7 @@
  */
 
 import {
+  caber,
   COR_DA_MARCA,
   COR_DO_FUNDO,
   desenharMarcaDaMoldura,
@@ -277,9 +278,27 @@ export class RoomCompositor {
     // que houver — nunca um buraco preto (ver o comentário do campo).
     const heroi = this.heroiId && ids.includes(this.heroiId) ? this.heroiId : (ids[0] ?? null)
     const camaras = ids.filter((id) => id !== heroi)
-    const r = rectsDaMoldura(camaras.length, W, H, { lado: 'esquerda' })
+    // As opções da geometria seguem a marca que REALMENTE existe. Sem isto, a
+    // Sala — que nunca tem logótipo — reservava 26% da altura da coluna para
+    // uma imagem que nunca chega, e as câmaras ficavam espremidas por baixo de
+    // um bloco preto morto. O `OpcoesDaMoldura.logo` existe exactamente para
+    // devolver esse espaço a quem o usa.
+    const r = rectsDaMoldura(camaras.length, W, H, {
+      lado: 'esquerda',
+      logo: !!this.marca.logo,
+      assinatura: !!this.marca.assinatura.trim(),
+    })
 
-    if (heroi) this.pintarFonte(heroi, r.heroi, false)
+    // O herói DESIGNADO é a partilha de ecrã, e um ecrã desenha-se `contain`:
+    // cortar slides para encher o rectângulo perde a primeira e a última
+    // coluna de texto. Medido: com `cover`, um ecrã 16:9 num herói de 1,376
+    // perdia 11% de cada lado, e um 21:9 perdia 41%. O Estúdio já desenhava o
+    // ecrã `contain` (`desenharEcraEm`) pela mesma razão.
+    //
+    // Quando o herói é o RECURSO (não há ecrã, entrou uma câmara), volta a ser
+    // `cover`: um retrato com barras pretas dos lados é feio sem ser útil.
+    const heroiEhOEcra = !!heroi && heroi === this.heroiId
+    if (heroi) this.pintarFonte(heroi, r.heroi, false, heroiEhOEcra ? 'contain' : 'cover')
     r.camaras.forEach((rect, i) => {
       const id = camaras[i]
       if (id) this.pintarFonte(id, rect, true)
@@ -287,12 +306,12 @@ export class RoomCompositor {
     desenharMarcaDaMoldura(this.ctx, r, this.marca, Date.now(), W, H)
   }
 
-  /** Uma fonte a cobrir o rect, recortada, com o nome por baixo se se pedir. */
-  private pintarFonte(id: string, r: Rect, comNome: boolean): void {
+  /** Uma fonte no rect, com o nome por baixo se se pedir. */
+  private pintarFonte(id: string, r: Rect, comNome: boolean, modo: 'cover' | 'contain' = 'cover'): void {
     const v = this.videos.get(id)
     if (!v || r.w <= 0 || r.h <= 0) return
     if (v.readyState >= 2 && v.videoWidth > 0) {
-      const d = enquadrar(v.videoWidth, v.videoHeight, r)
+      const d = modo === 'contain' ? caber(v.videoWidth, v.videoHeight, r) : enquadrar(v.videoWidth, v.videoHeight, r)
       this.ctx.save()
       this.ctx.beginPath()
       this.ctx.rect(r.x, r.y, r.w, r.h)

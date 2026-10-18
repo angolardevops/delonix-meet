@@ -575,28 +575,33 @@ export class CompositorDeAula {
       // de televisão em vez de um painel de software.
       this.ctx.fillStyle = COR_DO_FUNDO
       this.ctx.fillRect(0, 0, W, H)
+      const pecas = this.pecasDoPalco()
+      // A geometria calcula-se UMA VEZ e serve as fontes e a marca. A primeira
+      // versão chamava o `rectsDaMoldura` duas vezes — uma dentro do
+      // `rectsDoLayout` e outra para a marca — e isso só funcionava enquanto as
+      // duas recebessem exactamente as mesmas opções. Um invariante não escrito
+      // entre dois ficheiros: bastava passar `logo: false` a um deles para a
+      // marca ficar desalinhada das fontes.
+      const marca = {
+        logo: this.marca.logo,
+        // O texto da faixa é o do ticker que o operador já escreve nas
+        // sobreposições — não se inventa campo novo para o que já tem sítio.
+        // Mas RESPEITA O INTERRUPTOR: com o ticker desligado, o que vai para a
+        // faixa é o nome da marca, não um URL que o operador decidiu esconder.
+        faixa: (this.sobreposicoes.ticker && this.sobreposicoes.url) || this.marca.nome,
+        assinatura: this.marca.nome,
+        cor: COR_DA_MARCA,
+      }
+      const r = rectsDaMoldura(Math.max(0, pecas.length - 1), W, H, {
+        logo: !!marca.logo,
+        assinatura: !!marca.assinatura.trim(),
+      })
       // As fontes vão para os lugares que a cena calculou, desenhadas pelos
       // métodos DESTE compositor — é o que preserva o recorte do ecrã, o
       // espelho da câmara e o alfa do avatar, que a cena não conhece.
-      const rects = this.desenharMosaico(W, H)
-      desenharMarcaDaMoldura(
-        this.ctx,
-        // A cena recalcula as peças da marca a partir do mesmo n, logo os
-        // rects batem certo com os que o mosaico acabou de preencher.
-        rectsDaMoldura(Math.max(0, rects.length - 1), W, H),
-        {
-          logo: this.marca.logo,
-          // O texto da faixa é o do ticker que o operador já escreve nas
-          // sobreposições; sem ele, o nome da marca. Não se inventa campo novo
-          // para uma coisa que já tem sítio onde se escrever.
-          faixa: this.sobreposicoes.url || this.marca.nome,
-          assinatura: this.marca.nome,
-          cor: COR_DA_MARCA,
-        },
-        Date.now(),
-        W,
-        H,
-      )
+      const lugares = [r.heroi, ...r.camaras]
+      lugares.forEach((lugar, i) => pecas[i]?.(lugar))
+      desenharMarcaDaMoldura(this.ctx, r, marca, Date.now(), W, H)
     } else {
       this.desenharMosaico(W, H)
     }
@@ -614,14 +619,23 @@ export class CompositorDeAula {
 
   /**
    * As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados.
-   * Devolve os rects usados, para quem precise de desenhar por cima deles.
+   *
+   * Sai do `desenharMosaico` para que a moldura possa usar a MESMA lista sem
+   * depender da geometria do mosaico — o que ela precisa é dos desenhadores,
+   * não dos rects.
    */
-  private desenharMosaico(W: number, H: number): { x: number; y: number; w: number; h: number }[] {
+  private pecasDoPalco(): ((r: { x: number; y: number; w: number; h: number }) => void)[] {
     const pecas: ((r: { x: number; y: number; w: number; h: number }) => void)[] = []
     if (this.conteudo === 'quadro') pecas.push((r) => this.desenharConteudo(this.quadro, r, 'contain'))
     else if (this.temEcra) pecas.push((r) => this.desenharEcraEm(r))
     if (this.avatar.visivel && this.temCamara) pecas.push((r) => this.desenharCamaraEm(r))
     for (const c of this.convidados.values()) pecas.push((r) => this.desenharConvidado(c, r))
+    return pecas
+  }
+
+  /** As fontes nos lugares do layout em vigor. */
+  private desenharMosaico(W: number, H: number): { x: number; y: number; w: number; h: number }[] {
+    const pecas = this.pecasDoPalco()
     const rects = rectsDoLayout(this.layout, pecas.length, W, H)
     // A moldura NÃO leva o `pad`: a sua geometria já traz a margem e o vão
     // entre a coluna e o herói, e descontar outra vez punha as peças mais

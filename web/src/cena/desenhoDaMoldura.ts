@@ -87,6 +87,26 @@ export function enquadrar(fonteW: number, fonteH: number, destino: Rect): Rect {
 export const MAXIMO_DE_REPETICOES = 512
 
 /**
+ * O irmão do `enquadrar`: a fonte CABE inteira no destino, centrada, com
+ * barras onde o rácio não bate certo. É o `contain` do CSS.
+ *
+ * Existe para o herói da moldura quando ele é uma partilha de ecrã. Cortar um
+ * ecrã para encher o rectângulo perde a primeira e a última coluna de texto
+ * duns slides — medido: um 16:9 num herói de rácio 1,376 perdia 11% de cada
+ * lado, e um 21:9 perdia 41%. Para câmaras continua a valer o `enquadrar`:
+ * um retrato com barras pretas é feio sem ser útil.
+ */
+export function caber(fonteW: number, fonteH: number, destino: Rect): Rect {
+  const ok =
+    Number.isFinite(fonteW) && Number.isFinite(fonteH) && fonteW > 0 && fonteH > 0 && destino.w > 0 && destino.h > 0
+  if (!ok) return { x: destino.x, y: destino.y, w: 0, h: 0 }
+  const escala = Math.min(destino.w / fonteW, destino.h / fonteH)
+  const w = fonteW * escala
+  const h = fonteH * escala
+  return { x: destino.x + (destino.w - w) / 2, y: destino.y + (destino.h - h) / 2, w, h }
+}
+
+/**
  * Os `x` onde cada repetição do padrão da faixa começa, já deslocados.
  *
  * A faixa é um padrão repetido que anda para a esquerda. Desenha-se uma
