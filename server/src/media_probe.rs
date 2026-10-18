@@ -228,7 +228,7 @@ pub async fn thumbnail(ffmpeg: &str, src: &Path, dst: &Path, at_ms: i64) -> bool
 /// Caminho da miniatura de uma gravação.
 ///
 /// Recebe o `recordings_dir` e não o `AppState` porque o registo de artefactos
-/// (`recording_artifacts::canonicos`) precisa deste nome sem ter um estado à
+/// (`recording_artifacts::canonical`) precisa deste nome sem ter um estado à
 /// mão — e um segundo sítio a construir `{id}.jpg` era a miniatura a deixar de
 /// ser apagada sem ninguém notar.
 pub fn thumbnail_path(recordings_dir: &Path, rec_id: Uuid) -> std::path::PathBuf {

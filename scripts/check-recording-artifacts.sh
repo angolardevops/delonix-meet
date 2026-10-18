@@ -152,7 +152,7 @@ while IFS='|' read -r f lit classe razao; do
     # A pergunta é pelo `kind` e não pelo ficheiro do literal de propósito:
     # quem constrói o nome e quem escreve a linha podem ser módulos
     # diferentes, e são (a miniatura é nomeada pelo `media_probe` e registada
-    # pelo `canonicos` do registo, na transacção da gravação).
+    # pelo `canonical` do registo, na transacção da gravação).
     if [ "${classe#registado:}" != "$classe" ]; then
         k="${classe#registado:}"
         const="KIND_$(echo "$k" | tr '[:lower:]' '[:upper:]')"

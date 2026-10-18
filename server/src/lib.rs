@@ -152,16 +152,14 @@ pub use recorder::{
     resume_due as recording_resume_due, retention_sweep as recordings_retention_sweep,
     sweep_orphan_segments as recording_sweep_orphan_segments,
 };
-/// O registo dos ficheiros derivados de uma gravação (migração 0126) e as suas
-/// duas saídas: a purga de uma gravação (o que a retenção chama) e a varredura
-/// dos artefactos cuja gravação já não existe.
+/// A varredura dos artefactos cuja gravação já não existe (migração 0126).
 ///
-/// Exposto aos testes de integração porque o critério desta frente é um
+/// Exposta aos testes de integração porque o critério desta frente é um
 /// ficheiro AUSENTE do disco e um `SELECT count(*)` a zero — nunca o número que
-/// uma varredura devolve.
-pub use recording_artifacts::{
-    purge as recording_artifacts_purge, sweep_orphans as recording_artifacts_sweep_orphans,
-};
+/// uma varredura devolve. O `purge` NÃO vem: quem o exercita é a retenção, e
+/// expor um nome que ninguém chama alarga a superfície pública da crate sem
+/// pagar nada (um `pub use` nunca dá `dead_code` a avisar).
+pub use recording_artifacts::sweep_orphans as recording_artifacts_sweep_orphans;
 /// A varredura dos capítulos automáticos, exposta aos testes de integração sem
 /// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
 pub use recording_chapters::auto_chapters_sweep;
@@ -2205,6 +2203,11 @@ pub async fn run() {
         let state = state.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            // Como os outros cinco ciclos de `run()`: uma volta que passe da
+            // hora não faz a seguinte disparar já. A varredura de artefactos
+            // órfãos pode levar o seu tempo depois de uma cascata grande, e
+            // reentrar de imediato era reler o mesmo conjunto.
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 ticker.tick().await;
                 recorder::retention_sweep(&state).await;

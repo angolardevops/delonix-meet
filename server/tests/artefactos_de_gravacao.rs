@@ -521,6 +521,178 @@ async fn o_varredor_nao_toca_nos_ficheiros_de_uma_gravacao_viva(db: PgPool) {
     );
 }
 
+// ===========================================================================
+//  4. Os três defeitos que a revisão do commit encontrou
+// ===========================================================================
+
+/// **A linha só morre depois do ficheiro.** Se o `unlink` não correr, a linha
+/// FICA — e o contador sobe.
+///
+/// Era o defeito da primeira versão, em três sítios: um
+/// `let _ = remove_file(...)` que descartava o erro, seguido de um `forget`
+/// incondicional que apagava a linha. Num volume em leitura, ou com `EACCES`,
+/// o ficheiro ficava no disco e a ÚNICA linha que o nomeava desaparecia: a fuga
+/// que este módulo fecha, reaberta no caminho de erro e sem contador que a
+/// denunciasse.
+///
+/// Como se provoca: no Linux, apagar um ficheiro exige escrita no DIRECTÓRIO.
+/// Tira-se a escrita à raiz e o `unlink` leva `EACCES` — nenhuma simulação,
+/// o erro é o do sistema.
+#[sqlx::test]
+async fn um_unlink_recusado_nao_apaga_a_linha(db: PgPool) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("unlink-recusado.test").await;
+    let sala = app.new_room(&a, "gravada").await;
+    let room_id = sala["id"].as_str().unwrap().to_string();
+    let raiz = app.state.config.recordings_dir.clone();
+    std::fs::create_dir_all(&raiz).unwrap();
+
+    let rec: Uuid = sqlx::query_scalar(
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status)
+         VALUES ($1::uuid, $2::uuid, 'c.webm', 4, 'ready') RETURNING id",
+    )
+    .bind(&room_id)
+    .bind(&a.user_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let ficheiro = raiz.join(format!("{rec}.webm"));
+    std::fs::write(&ficheiro, b"bytes").unwrap();
+    sqlx::query(
+        "INSERT INTO recording_artifacts (recording_id, kind, path, is_dir)
+         VALUES ($1, 'recording', $1::text || '.webm', FALSE)",
+    )
+    .bind(rec)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // A gravação sai da tabela: é o varredor de órfãos que vai tentar apagar.
+    sqlx::query("DELETE FROM recordings WHERE id = $1")
+        .bind(rec)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // Raiz sem escrita: o `unlink` passa a ser recusado pelo sistema.
+    let antes = std::fs::metadata(&raiz).unwrap().permissions();
+    std::fs::set_permissions(&raiz, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let apagados = delonix_server::recording_artifacts_sweep_orphans(&app.state).await;
+    std::fs::set_permissions(&raiz, antes).unwrap();
+
+    assert_eq!(apagados, 0, "o varredor disse ter apagado o que não apagou");
+    // CONTROLO POSITIVO do cenário: o ficheiro de facto não saiu. Sem isto,
+    // uma raiz onde o `chmod` não pega (root, um tmpfs permissivo) daria verde
+    // a provar coisa nenhuma.
+    assert!(
+        ficheiro.exists(),
+        "o cenário não se provocou: o ficheiro saiu apesar da raiz sem escrita"
+    );
+    assert_eq!(
+        linhas_no_registo(&app.db).await,
+        1,
+        "a linha do ficheiro que NÃO saiu foi apagada — nada volta a encontrá-lo"
+    );
+    // E é alertável: um contador, não um aviso perdido no log.
+    let m = app.state.metrics.render(1);
+    assert!(
+        m.lines()
+            .any(|l| l.starts_with("delonix_recording_artifacts_stuck_total ")
+                && !l.ends_with(" 0")),
+        "o contador de artefactos presos não subiu:\n{m}"
+    );
+}
+
+/// **A retenção falha FECHADO.** Se o registo não responde, a gravação NÃO é
+/// apagada: sem a linha de `recordings` a retenção nunca mais volta a esta
+/// gravação, e o que ficou no disco passaria a depender só do varredor.
+///
+/// A primeira versão documentava este contrato e não o cumpria — o `purge`
+/// devolvia `u64`, o valor era descartado e o `DELETE FROM recordings` corria
+/// sempre.
+#[sqlx::test]
+async fn sem_registo_a_retencao_nao_apaga_a_gravacao(db: PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("retencao-fechada.test").await;
+    let sala = app.new_room(&a, "gravada").await;
+    let room_id = sala["id"].as_str().unwrap().to_string();
+    let rec: Uuid = sqlx::query_scalar(
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status)
+         VALUES ($1::uuid, $2::uuid, 'c.webm', 4, 'ready') RETURNING id",
+    )
+    .bind(&room_id)
+    .bind(&a.user_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    vence_a_retencao(&app, a.org(), &rec.to_string(), 7).await;
+
+    // A base deixa de poder responder sobre artefactos. É a única maneira de
+    // provocar um erro de leitura contra Postgres real.
+    sqlx::query("DROP TABLE recording_artifacts")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    let apagadas = delonix_server::recordings_retention_sweep(&app.state).await;
+    assert_eq!(apagadas, 0, "a retenção contou uma gravação que não apagou");
+    let ainda: i64 = sqlx::query_scalar("SELECT count(*) FROM recordings WHERE id = $1")
+        .bind(rec)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        ainda, 1,
+        "a gravação foi apagada sem se saber o que ela tinha no disco — a retenção nunca mais cá volta"
+    );
+}
+
+/// **Um `is_dir` errado na base não deixa nada no disco.** O valor é escrito a
+/// partir do `kind` (`is_dir_of`), mas uma linha posta à mão — ou um `kind` que
+/// essa função ainda não conheça — marcaria a pasta das pistas como ficheiro, e
+/// quem recolhe ficava a chamar `remove_file` num directório para sempre:
+/// `EISDIR` a cada tique, o contador a subir e o disco a não libertar.
+#[sqlx::test]
+async fn uma_pasta_registada_como_ficheiro_ainda_e_apagada(db: PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("is-dir-errado.test").await;
+    let sala = app.new_room(&a, "estúdio").await;
+    let room_id = sala["id"].as_str().unwrap();
+    let rec: Uuid = sqlx::query_scalar(
+        "INSERT INTO recordings (room_id, uploader_id, filename, size_bytes, status)
+         VALUES ($1::uuid, $2::uuid, 'c.webm', 4, 'ready') RETURNING id",
+    )
+    .bind(room_id)
+    .bind(&a.user_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let pasta = delonix_server::recording_iso_dir(&app.state.config.recordings_dir, rec);
+    std::fs::create_dir_all(&pasta).unwrap();
+    std::fs::write(pasta.join("00-video.ivf"), b"pista").unwrap();
+    // A linha MENTE: diz que é um ficheiro.
+    sqlx::query(
+        "INSERT INTO recording_artifacts (recording_id, kind, path, is_dir)
+         VALUES ($1, 'iso_tracks', 'iso-' || $1::text, FALSE)",
+    )
+    .bind(rec)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(pasta.exists(), "a pasta não foi semeada");
+
+    vence_a_retencao(&app, a.org(), &rec.to_string(), 7).await;
+    delonix_server::recordings_retention_sweep(&app.state).await;
+
+    assert!(
+        !pasta.exists(),
+        "a pasta ficou no disco porque a linha dizia que era um ficheiro: {:?}",
+        no_disco(&app.state.config.recordings_dir)
+    );
+    assert_eq!(linhas_no_registo(&app.db).await, 0, "ficaram linhas");
+}
+
 /// Um ficheiro que o registo NÃO conhece nunca é tocado. É a diferença entre
 /// varrer um registo e varrer o disco, e é a razão pela qual este varredor é
 /// seguro onde a varredura por nome de pasta não era: uma base restaurada para

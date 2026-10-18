@@ -222,6 +222,15 @@ jobs:
       - name: O CHECK do recording_tracks.kind aceita o que o SFU produz
         run: bash scripts/check-recording-track-kinds.sh
 
+      # Os ficheiros derivados de uma gravação não estavam registados em sítio
+      # nenhum e cada caminho que apaga tinha de se lembrar deles um a um: a
+      # retenção fazia três `remove_file` à mão e o quarto derivado (os
+      # `clip-*` da 0118) ficou esquecido no disco para sempre. O portão obriga
+      # a CLASSIFICAR cada nome de ficheiro novo, e a ligá-lo ao registo da
+      # 0126 se for de uma gravação.
+      - name: Todo o ficheiro derivado de uma gravação está no registo
+        run: bash scripts/check-recording-artifacts.sh
+
       # O Lua 5.2 é o que o mod_lua da imagem liga (liblua5.2).
       - name: Sintaxe dos scripts Lua do FreeSWITCH (R223 — o IVR está no caminho de quem liga)
         run: |

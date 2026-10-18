@@ -1346,7 +1346,6 @@ async fn registar_pistas_iso(
         crate::recording_artifacts::KIND_ISO_TRACKS,
         recordings_dir,
         &destino,
-        true,
     )
     .await
     {
@@ -1361,10 +1360,18 @@ async fn registar_pistas_iso(
     if let Err(e) = tokio::fs::rename(&manifest.dir, &destino).await {
         tracing::error!(%rec_id, error = %e, de = %manifest.dir.display(), para = %destino.display(),
             "gravação ISO: falha a mover as pistas para fora do tmp- — não se registam");
-        // A pasta nunca chegou a existir: a linha sai. Uma linha a mais é
-        // inofensiva para quem recolhe (apaga o que não existe e segue), mas
-        // deixar a tabela a afirmar uma pasta que não há é deixá-la a mentir.
-        crate::recording_artifacts::forget(db, recordings_dir, &[destino]).await;
+        // A LINHA FICA, e é deliberado. A tentação é tirá-la («a pasta nunca
+        // chegou a existir»), e está errada: a razão mais provável de este
+        // `rename` falhar é o destino JÁ existir — duas composições da mesma
+        // gravação a correr (uma reserva que expirou com o pod ainda vivo, e o
+        // `resume_due` a reivindicá-la noutro), ou uma pasta que ficou de
+        // antes. Nesse caso a linha nomeia uma pasta REAL e cheia, da MESMA
+        // gravação, e apagá-la era deixá-la órfã — a fuga 1 reaberta dentro do
+        // seu próprio remendo. Se a pasta de facto não existe, a linha é
+        // inofensiva: quem recolhe apaga o que não encontra e segue.
+        //
+        // O que não se faz aqui é apagar a pasta: ela pode ser da outra
+        // composição, e essa tem pistas registadas.
         return false;
     }
 
@@ -1498,12 +1505,15 @@ async fn registar_pistas_iso(
         // Nada registado: não se guardam ficheiros que ninguém vai conseguir
         // pedir. Dizê-lo, porque é um estado que o operador vai estranhar.
         tracing::warn!(%rec_id, %room_id, "gravação ISO pedida e NENHUMA pista registada — os segmentos são apagados");
-        // A pasta já saiu do `tmp-`: apaga-se aqui, e a linha sai com ela. Se
-        // este processo morrer entre as duas, a pasta fica registada e a
-        // retenção (ou o `sweep_orphans`) recolhe-a — que é precisamente o que
-        // antes não acontecia.
-        let _ = tokio::fs::remove_dir_all(&destino).await;
-        crate::recording_artifacts::forget(db, recordings_dir, &[destino]).await;
+        // A pasta já saiu do `tmp-` e é nossa (o `rename` acima correu bem):
+        // apaga-se, e a linha sai SÓ SE ela sair. O `discard` é que garante a
+        // ordem — um `remove_dir_all` recusado (`EACCES`, `EBUSY`, um
+        // identificador NFS velho) mantém a linha, conta no
+        // `recording_artifacts_stuck_total` e volta a ser tentado, em vez de
+        // deixar a pasta no disco com a linha apagada. Era este o defeito da
+        // primeira versão: um `let _ = remove_dir_all` seguido de um `forget`
+        // incondicional.
+        crate::recording_artifacts::discard(db, recordings_dir, metrics, &[destino]).await;
         return false;
     }
     tracing::info!(%rec_id, pistas = registadas.len(), "gravação ISO: pistas por fonte registadas");
@@ -2941,7 +2951,18 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
         // ficou esquecido: os `clip-<id>.webm`/`.vtt` da 0118 nunca eram
         // apagados por ninguém. A lista do que uma gravação tem no disco deixa
         // de viver na memória de quem escreveu este ciclo.
-        crate::recording_artifacts::purge(state, id).await;
+        //
+        // E a purga é uma CONDIÇÃO, não um passo: `None` é «a base não disse o
+        // que esta gravação tem no disco». Apagar a linha nesse caso era perder
+        // para sempre o único caminho que volta a esta gravação — a retenção
+        // procura por `recordings`, logo sem a linha nunca mais cá volta, e o
+        // disco ficava à espera do varredor de órfãos. Falha FECHADO: a
+        // gravação fica, e a próxima volta tenta outra vez.
+        if crate::recording_artifacts::purge(state, id).await.is_none() {
+            tracing::warn!(%id,
+                "retenção: o registo de artefactos não respondeu — a gravação fica para a próxima volta");
+            continue;
+        }
         if sqlx::query("DELETE FROM recordings WHERE id = $1")
             .bind(id)
             .execute(&state.db)

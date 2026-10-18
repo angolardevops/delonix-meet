@@ -92,8 +92,21 @@ INSERT INTO recording_artifacts (recording_id, kind, path, is_dir)
 SELECT id, 'recording', id::text || '.webm', FALSE FROM recordings
 ON CONFLICT (path) DO NOTHING;
 
+-- A miniatura, para TODAS as gravações — e não só para as que têm
+-- `has_thumbnail`, que seria o óbvio e era uma regressão.
+--
+-- Até aqui a retenção fazia `remove_file(<id>.jpg)` sem olhar à coluna, e isso
+-- cobria dois estados reais em que o ficheiro existe e o campo diz que não: o
+-- `probe_and_store` escreve a miniatura e só depois faz o `UPDATE` (que, se
+-- falhar, é apenas registado), e uma segunda medição em que o `ffprobe` não
+-- reconhece vídeo volta a pôr `has_thumbnail = false` sobre um `.jpg` que já
+-- está escrito. Filtrar aqui deixava esses ficheiros sem NINGUÉM que os
+-- apagasse, agora que quem apaga segue o registo. Cobre também a gravação que
+-- nasceu antes desta migração e cuja miniatura é escrita depois dela (uma
+-- composição retomada a meio de um rollout): o `register_canonical` só corre
+-- ao INSERIR a linha, logo essa nunca ganharia a sua linha.
 INSERT INTO recording_artifacts (recording_id, kind, path, is_dir)
-SELECT id, 'thumbnail', id::text || '.jpg', FALSE FROM recordings WHERE has_thumbnail
+SELECT id, 'thumbnail', id::text || '.jpg', FALSE FROM recordings
 ON CONFLICT (path) DO NOTHING;
 
 -- A pasta das pistas, para TODAS as gravações — e não só para as que têm
