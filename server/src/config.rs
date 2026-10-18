@@ -51,10 +51,14 @@ pub struct Config {
     /// ocupe o nó com sockets. Não conta bots nem fontes de estúdio.
     pub max_ws_per_user: Option<u32>,
     /// Participantes concorrentes que uma organização pode ter NESTE nó quando
-    /// o operador não lhe fixou um tecto (`ORG_MAX_PARTICIPANTS`). **Ausente não
-    /// é «ilimitada»**: deriva de `ORG_SHARE_OF_NODE` da capacidade do nó, a
-    /// mesma regra que os três `values` já codificam (25→20, 50→40). Só `0` —
-    /// explícito — a desliga.
+    /// o operador não lhe fixou um tecto (`ORG_MAX_PARTICIPANTS`). DECLARADO-SÓ:
+    /// ausente, não há quota de organização — é um limite de PLANO, e quem o
+    /// quer escreve-o (os `values` põem 80 % da capacidade do nó).
+    ///
+    /// Quem impede «sem tecto» é o [`Config::node_peer_capacity`], que tem
+    /// omissão: por ADR-0001 a sala é servida por UM pod, logo o pod é o limite
+    /// da sala. Dar omissão também a este cortava a 80 % uma organização
+    /// SOZINHA no nó, contra o que o `admit_new_room` calcula dinamicamente.
     pub org_max_participants: Option<u32>,
     /// `DELONIX_ALLOW_INSECURE=1`: segredos de dev aceites e CORS permissivo.
     /// Lido UMA vez aqui — nenhum outro módulo lê o ambiente.
@@ -573,21 +577,18 @@ impl Config {
         let ollama_model_summary = src
             .var("OLLAMA_MODEL_SUMMARY")
             .unwrap_or_else(|_| "qwen2.5:1.5b".into());
-        // Os dois tectos da admissão (ADR-0017). A omissão do tecto da
-        // organização DERIVA da capacidade do nó, porque é a regra que os três
-        // `values` já codificam à mão (25→20, 50→40, 50→40) e que o
-        // `_helpers.tpl` já guarda — não um número novo inventado aqui.
+        // Os dois tectos da admissão (ADR-0017). O que impede «sem tecto» é o
+        // do NÓ: por ADR-0001 todos os pares de uma sala são servidos pelo
+        // MESMO pod, logo o pod É o limite da sala, e é ele que tem omissão.
         let node_peer_capacity = tecto(src, "NODE_PEER_CAPACITY", DEFAULT_NODE_PEER_CAPACITY);
-        // Quem DESLIGA o tecto do nó (`NODE_PEER_CAPACITY=0`) não pode receber
-        // um tecto de organização por derivação: era a entrada menos restritiva
-        // a produzir a saída mais restritiva, e matava exactamente o caso que o
-        // `0` existe para servir — a rampa de carga do `A-04`, que mediria 40 e
-        // leria isso como «a sala quebrou aos 40». Sem capacidade de nó não há
-        // de onde derivar uma parte dela; só um valor explícito impõe tecto.
-        let org_max_participants = match node_peer_capacity {
-            Some(c) => tecto(src, "ORG_MAX_PARTICIPANTS", parte_da_organizacao(c)),
-            None => tecto_declarado(src, "ORG_MAX_PARTICIPANTS"),
-        };
+        // O da organização continua DECLARADO-SÓ, de propósito. Dar-lhe uma
+        // omissão derivada (80 % do nó) foi tentado e REPROVOU contra Postgres
+        // real: cortava a 80 % uma organização SOZINHA no nó, contra o que o
+        // `media_node.rs:92-94` documenta e o `admit_new_room` calcula
+        // dinamicamente — «um inquilino sozinho no nó tem a capacidade toda e
+        // não é penalizado». Os 80 % são uma decisão de quem opera e vivem nos
+        // `values`, não uma regra inventada aqui ao lado da que já existe.
+        let org_max_participants = tecto_declarado(src, "ORG_MAX_PARTICIPANTS");
         Self {
             edition,
             registration_mode,
@@ -925,23 +926,6 @@ impl Config {
 /// Isto é o chão que impede «sem tecto», não o tecto certo de cada nó.
 pub const DEFAULT_NODE_PEER_CAPACITY: u32 = 50;
 
-/// A parte do nó que UMA organização pode ocupar quando não tem tecto próprio:
-/// 80 %, para que uma organização sozinha não feche o nó às outras. É a regra
-/// que os três `values` já aplicam à mão (25→20, 50→40, 50→40) e que o
-/// `_helpers.tpl:381` guarda ao recusar um tecto acima da capacidade.
-pub const ORG_SHARE_OF_NODE: u32 = 80;
-
-/// 80 % da capacidade do nó, nunca menos de 1: num nó declarado com 1 lugar,
-/// arredondar para baixo dava 0 — e `0` significa «sem tecto», que é o oposto
-/// do que esta função existe para garantir.
-///
-/// A conta vai por `u64` para que uma capacidade absurda não SATURE: em `u32`,
-/// `4_294_967_295 × 80` satura e devolveria ~1 % em vez de 80 % — uma distorção
-/// silenciosa, no sentido de apertar o tecto.
-pub fn parte_da_organizacao(capacidade: u32) -> u32 {
-    ((capacidade as u64 * ORG_SHARE_OF_NODE as u64) / 100).max(1) as u32
-}
-
 /// Um tecto de admissão lido do ambiente, com três estados declarados:
 /// ausente => `default` (**nunca «sem tecto»**, que é o defeito que isto
 /// fecha), `0` => `None`, explicitamente sem tecto, e é o que uma rampa de
@@ -960,9 +944,9 @@ fn tecto(src: &Source, var: &str, default: u32) -> Option<u32> {
     }
 }
 
-/// Como [`tecto`], mas sem omissão: ausente vale `None`. Só para o tecto da
-/// organização quando o do nó está DESLIGADO — não há capacidade de onde
-/// derivar uma parte, e inventar uma era contradizer o `0` que o operador pôs.
+/// Como [`tecto`], mas sem omissão: ausente vale `None`, como `0`. É o tecto
+/// por ORGANIZAÇÃO, que é um limite de PLANO — quem o quer escreve-o. Quem
+/// impede «sem tecto» é a capacidade do nó, que tem omissão.
 fn tecto_declarado(src: &Source, var: &str) -> Option<u32> {
     match tecto_bruto(src, var) {
         Declarado::Ausente | Declarado::SemTecto => None,
@@ -1439,39 +1423,14 @@ mod tests {
     /// implantação por compose (que não declara nenhuma das duas variáveis)
     /// aceitava a 41.ª pessoa e degradava a sala para todos, sem sinal.
     #[test]
-    fn sem_variaveis_nenhumas_os_dois_tectos_mordem() {
+    fn sem_variaveis_nenhumas_o_no_tem_tecto() {
         let c = production(&[("NODE_PEER_CAPACITY", None), ("ORG_MAX_PARTICIPANTS", None)]);
+        // O que fecha o defeito: `None` aqui era «não recusa ninguém».
         assert_eq!(c.node_peer_capacity, Some(DEFAULT_NODE_PEER_CAPACITY));
-        assert_eq!(c.org_max_participants, Some(40));
-        // E o que importa a jusante: nenhum dos dois é `None`, porque `None` é
-        // precisamente o valor que não recusa ninguém.
-        assert!(c.node_peer_capacity.is_some() && c.org_max_participants.is_some());
-    }
-
-    /// A omissão da organização DERIVA da capacidade do nó. O caso de dev é o
-    /// que prende o código ao chart: `values.yaml` tem 25 e 20 escritos à mão,
-    /// e é essa a regra que aqui se aplica sozinha.
-    #[test]
-    fn a_omissao_da_organizacao_sao_80_por_cento_do_no() {
-        let dev = production(&[
-            ("NODE_PEER_CAPACITY", Some("25")),
-            ("ORG_MAX_PARTICIPANTS", None),
-        ]);
-        assert_eq!(dev.org_max_participants, Some(20), "values.yaml: 25 → 20");
-
-        let prod = production(&[
-            ("NODE_PEER_CAPACITY", Some("50")),
-            ("ORG_MAX_PARTICIPANTS", None),
-        ]);
-        assert_eq!(
-            prod.org_max_participants,
-            Some(40),
-            "values-production.yaml: 50 → 40"
-        );
-
-        // Nunca 0: num nó de 1 lugar, arredondar para baixo devolvia «sem
-        // tecto», que é o oposto do que a derivação existe para garantir.
-        assert_eq!(parte_da_organizacao(1), 1);
+        // A quota da organização é DECLARADO-SÓ e continua ausente: é um limite
+        // de plano, e dar-lhe omissão cortava a 80 % uma org sozinha no nó
+        // (reprovado contra Postgres real em `node_admission.rs`).
+        assert_eq!(c.org_max_participants, None);
     }
 
     /// `0` continua a desligar — explicitamente. É o que uma rampa de carga
@@ -1505,31 +1464,6 @@ mod tests {
         production(&[("NODE_PEER_CAPACITY", Some("cinquenta"))]);
     }
 
-    /// Desligar o tecto do NÓ não pode LIGAR um tecto de organização por
-    /// derivação: era a entrada menos restritiva a dar a saída mais restritiva,
-    /// e fechava a saída que o `0` existe para abrir — a rampa de carga do
-    /// `A-04` mediria 40 e leria isso como «a sala quebrou aos 40».
-    #[test]
-    fn desligar_o_tecto_do_no_nao_liga_o_da_organizacao() {
-        let c = production(&[
-            ("NODE_PEER_CAPACITY", Some("0")),
-            ("ORG_MAX_PARTICIPANTS", None),
-        ]);
-        assert_eq!(c.node_peer_capacity, None);
-        assert_eq!(
-            c.org_max_participants, None,
-            "sem capacidade de nó não há parte dela para derivar"
-        );
-
-        // Mas um tecto de organização EXPLÍCITO continua a valer, mesmo com o
-        // do nó desligado: quem o escreveu quis-o.
-        let d = production(&[
-            ("NODE_PEER_CAPACITY", Some("0")),
-            ("ORG_MAX_PARTICIPANTS", Some("30")),
-        ]);
-        assert_eq!(d.org_max_participants, Some(30));
-    }
-
     /// Uma variável DEFINIDA mas vazia é «ausente», como em todo o resto do
     /// ficheiro. Um `NODE_PEER_CAPACITY=${NODE_PEER_CAPACITY}` em compose com a
     /// variável do host por definir expande para vazio: tem de arrancar com a
@@ -1541,14 +1475,6 @@ mod tests {
             ("ORG_MAX_PARTICIPANTS", Some("   ")),
         ]);
         assert_eq!(c.node_peer_capacity, Some(DEFAULT_NODE_PEER_CAPACITY));
-        assert_eq!(c.org_max_participants, Some(40));
-    }
-
-    /// Uma capacidade absurda não SATURA a conta dos 80 %: em `u32`,
-    /// `u32::MAX × 80` saturava e devolvia ~1 % — a apertar o tecto em silêncio.
-    #[test]
-    fn a_derivacao_nao_satura() {
-        assert_eq!(parte_da_organizacao(u32::MAX), 3_435_973_836);
-        assert_eq!(parte_da_organizacao(100), 80);
+        assert_eq!(c.org_max_participants, None);
     }
 }

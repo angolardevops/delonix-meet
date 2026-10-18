@@ -233,3 +233,56 @@ async fn a_tenant_alone_on_the_node_is_refused_only_at_the_capacity(db: sqlx::Pg
     assert_eq!(connect(&app, &tok_a3).await.err(), Some(503));
     assert_eq!((refused(&app), refused_fair_share(&app)), (1, 0));
 }
+
+/// O defeito que a omissão do tecto do nó fecha, observado pela API do
+/// OPERADOR e não pela opinião do cliente de teste: **sem `NODE_PEER_CAPACITY`
+/// declarado**, `peer_capacity` era `null` e nada se recusava. Era o estado de
+/// uma implantação por compose, que não declarava nenhuma das duas variáveis.
+///
+/// Agora a ausência vale `DEFAULT_NODE_PEER_CAPACITY`, e o inventário mostra-o:
+/// o nó publica a capacidade com que vai mesmo recusar, e `load` deixa de ser
+/// `null`. A quota de ORGANIZAÇÃO continua ausente de propósito — é um limite
+/// de plano, e dar-lhe omissão cortava a 80 % uma org sozinha no nó, contra o
+/// que o `admit_new_room` calcula dinamicamente.
+#[sqlx::test(migrations = "./migrations")]
+async fn without_any_variable_the_node_still_declares_a_ceiling(db: sqlx::PgPool) {
+    // 1.ª instância só para criar a conta que vai ser administradora.
+    let boot = TestApp::spawn(db.clone()).await;
+    let op = boot.new_org("plataforma.ao").await;
+    // A instância sob teste: administrador declarado, e NENHUM dos dois tectos.
+    let app = TestApp::spawn_with(db, &[("PLATFORM_ADMIN_USER_IDS", op.user_id.as_str())]).await;
+
+    assert_eq!(
+        app.state.config.node_peer_capacity,
+        Some(delonix_server::config::DEFAULT_NODE_PEER_CAPACITY),
+        "sem a variável, o tecto do nó TEM de existir — `None` não recusa ninguém"
+    );
+    assert_eq!(
+        app.state.config.org_max_participants, None,
+        "a quota da organização é declarado-só: é um limite de plano"
+    );
+
+    delonix_server::nodes::heartbeat(&app.state, chrono::Utc::now())
+        .await
+        .unwrap();
+
+    // Observação de FORA: o inventário do operador, não o estado em memória.
+    let (st, v) = app.get("/api/operator/v1/nodes", Some(&op.token)).await;
+    assert_eq!(st, 200, "{v}");
+    let eu = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["hostname"].is_string())
+        .cloned()
+        .unwrap_or_else(|| panic!("o nó não se anunciou: {v}"));
+    assert_eq!(
+        eu["peer_capacity"].as_i64(),
+        Some(delonix_server::config::DEFAULT_NODE_PEER_CAPACITY as i64),
+        "o nó publica a capacidade com que vai recusar: {v}"
+    );
+    assert!(
+        eu["load"].as_f64().is_some(),
+        "sem capacidade o `load` era null — o operador não via ocupação nenhuma: {v}"
+    );
+}

@@ -171,10 +171,14 @@ server:
   # Tecto de participantes concorrentes de UMA organização, NESTE nó, quando o
   # operador não lhe fixou um à parte (`PUT /api/operator/v1/organizations/{id}/concurrency`,
   # migração 0097). Recusa com 429 — «tu já tens o teu», não «este nó não serve».
-  # `0` = sem tecto, de propósito (uma org sem tecto próprio fica ilimitada).
-  # AUSENTE já não é isso: o servidor deriva 80% da capacidade do nó. Quem quer
-  # mesmo «ilimitada» escreve `0` — e então o chart exige que a capacidade do
-  # nó também seja 0, senão o tecto da org morde sem o do nó existir.
+  # `0` (e a ausência) = sem quota de organização. É DECLARADO-SÓ de propósito:
+  # ao contrário da capacidade do nó, este não ganhou omissão no código. Dá-la
+  # cortava a 80% uma organização SOZINHA no nó, contra a parte justa que o
+  # `admit_new_room` calcula dinamicamente — «um inquilino sozinho no nó tem a
+  # capacidade toda e não é penalizado». Quem protege o nó é `nodePeerCapacity`.
+  #
+  # Com `0` aqui e `nodePeerCapacity` > 0 o chart aceita; o contrário (nó a 0 e
+  # este > 0) é recusado: o tecto da org mordia sem o do nó existir.
   #
   # É um limite de PLANO, e por isso aqui fica generoso: 80% da capacidade do nó.
   # Serve de travão ao vizinho ruidoso, não de grade comercial — quem vende

@@ -78,10 +78,16 @@ Passaram a ter **três estados declarados**, em `config.rs` (`tecto()`):
 | `0` | sem tecto, **de propósito**: é o que uma rampa de carga põe |
 | outro inteiro | o valor; um não-inteiro continua a dar pânico no arranque |
 
-A omissão do nó é `DEFAULT_NODE_PEER_CAPACITY` = 50, a capacidade do deploy de **referência** — não um
-número novo. A da organização **deriva** dela: 80 % (`ORG_SHARE_OF_NODE`), que é a regra que os três
-`values` já aplicavam à mão (25→20, 50→40, 50→40). Com o tecto do nó **desligado** (`0`) não se deriva
-nada: não há capacidade de onde tirar uma parte, e inventar uma contradizia o `0` que o operador pôs.
+A omissão é **só do nó**: `DEFAULT_NODE_PEER_CAPACITY` = 50, a capacidade do deploy de **referência** —
+não um número novo. É o tecto certo para impedir a degradação, porque por ADR-0001 todos os pares de
+uma sala são servidos pelo MESMO pod: **o pod é o limite da sala**.
+
+**O tecto por organização fica DECLARADO-SÓ.** Dar-lhe uma omissão derivada (80 % da capacidade do nó,
+a regra que os três `values` aplicam à mão: 25→20, 50→40) foi implementado e **reprovou contra Postgres
+real** — cortava a 80 % uma organização **sozinha** no nó, contra o que esta mesma ADR promete e o
+`admit_new_room` calcula dinamicamente: «um inquilino sozinho no nó tem a capacidade toda e não é
+penalizado». Três testes de `server/tests/node_admission.rs` apanharam-no. Os 80 % são uma decisão de
+quem opera e vivem nos `values`, não uma segunda regra de parte justa ao lado da que já existe.
 
 Três consequências que custaram correcções na mesma sessão:
 
