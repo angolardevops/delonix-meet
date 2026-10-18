@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { getAppName } from '../branding'
+import { COR_DA_MARCA } from '../cena/desenhoDaMoldura'
 import { participanteLocal } from '../convidado'
 import { Cena, Fonte, RoomCompositor } from './compositor'
 import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
@@ -7,6 +9,9 @@ import { paraOAr } from '../studio/destinosGuardados'
 import type { RoomCore } from './useRoomCore'
 
 export const MAX_MULTICAM_DESTINOS = 4
+
+/** O id da fonte «partilha de ecrã» no compositor. Um só sítio, para o herói e a lista baterem certo. */
+export const ECRA = 'ecra'
 
 /**
  * Multicâmara (anfitrião): compõe os participantes num canvas e envia-o ao
@@ -40,16 +45,30 @@ export function useMulticam(core: RoomCore) {
     if (!open || !compositorRef.current) return
     const fontes: Fonte[] = [
       ...(boardStream ? [{ id: 'quadro', nome: t('room.quadro.titulo'), stream: boardStream }] : []),
+      // A PARTILHA DE ECRÃ como fonte, que é o que faz da `moldura` uma cena
+      // de aula e não de painel. Entra pela mesma porta do quadro — o
+      // compositor nunca soube distinguir uma câmara de outra coisa, e é essa
+      // indiferença que torna isto barato.
+      ...(core.presentation ? [{ id: ECRA, nome: t('room.multicam.ecra'), stream: core.presentation.stream }] : []),
       { id: 'eu', nome: participanteLocal().username, stream: core.localStreamRef.current },
       ...core.peers.filter((p) => p.stream).map((p): Fonte => ({ id: p.peerId, nome: p.username, stream: p.stream })),
     ]
     compositorRef.current.definirParticipantes(fontes)
+    // O herói da moldura é o ecrã quando há ecrã. Quando não há, fica `null` e
+    // o compositor cai para a primeira fonte — não para um rectângulo preto.
+    compositorRef.current.heroiId = core.presentation ? ECRA : null
+    compositorRef.current.marca = {
+      logo: null,
+      faixa: getAppName(),
+      assinatura: getAppName(),
+      cor: COR_DA_MARCA,
+    }
     // `t` fora de propósito: este efeito não pode recriar o AudioContext (ver
     // o comentário acima — emudeceria o directo), e com `t` nas dependências
     // uma troca de língua fazia-o correr. CUSTO ASSUMIDO: o nome da fonte
     // «quadro» fica na língua antiga até alguém entrar ou sair.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, core.peers, core.localStreamRef, boardStream])
+  }, [open, core.peers, core.localStreamRef, boardStream, core.presentation])
 
   useEffect(() => {
     if (compositorRef.current) compositorRef.current.cena = cena

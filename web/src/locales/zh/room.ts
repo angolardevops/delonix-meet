@@ -775,6 +775,8 @@ export default {
     cenaGrelha: '宫格',
     cenaSolo: '单人',
     cenaLadoALado: '并排',
+    cenaMoldura: '品牌场景',
+    ecra: '屏幕共享',
     escolherUm: '选择要显示的人。',
     escolherDois: '最多选择两人。',
     destinos: '推流目标',

@@ -775,6 +775,8 @@ export default {
     cenaGrelha: 'Grelha',
     cenaSolo: 'Solo',
     cenaLadoALado: 'Lado a lado',
+    cenaMoldura: 'Cena de marca',
+    ecra: 'Partilha de ecrã',
     escolherUm: 'Escolhe quem aparece.',
     escolherDois: 'Escolhe até duas pessoas.',
     destinos: 'Destinos',

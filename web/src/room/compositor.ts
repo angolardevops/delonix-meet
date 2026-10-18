@@ -20,9 +20,23 @@
  * matemática a APIs de browser.
  */
 
-import type { Rect } from '../cena/moldura'
+import {
+  COR_DA_MARCA,
+  COR_DO_FUNDO,
+  desenharMarcaDaMoldura,
+  enquadrar,
+  type MarcaDaMoldura,
+} from '../cena/desenhoDaMoldura'
+import { rectsDaMoldura, type Rect } from '../cena/moldura'
 
-export type Cena = 'solo' | 'lado-a-lado' | 'grelha'
+/**
+ * `moldura` é a cena de marca — faixa a rolar, coluna com logótipo, câmaras e
+ * assinatura, e o conteúdo grande ao lado. Ao contrário das outras três, tem um
+ * HERÓI explícito (`heroiId`), que é normalmente a partilha de ecrã: é o que a
+ * torna útil para uma aula em directo, onde o que importa são os slides e não
+ * os retratos.
+ */
+export type Cena = 'solo' | 'lado-a-lado' | 'grelha' | 'moldura'
 
 /**
  * O `Rect` deste módulo passou a vir de `cena/moldura.ts`, e é re-exportado
@@ -122,6 +136,17 @@ export class RoomCompositor {
 
   cena: Cena = 'grelha'
   focoIds: string[] = []
+  /**
+   * Quem ocupa o herói da `moldura` — normalmente a partilha de ecrã.
+   *
+   * `null`, ou um id que já não está na sala, NÃO deixa o herói preto: cai para
+   * a primeira fonte que houver. Uma emissão com o maior rectângulo do ecrã em
+   * negro é pior do que uma emissão com a cara de alguém lá — e quem pára de
+   * partilhar o ecrã a meio de uma aula não pode derrubar a imagem.
+   */
+  heroiId: string | null = null
+  /** A marca desenhada na moldura. Quem monta o compositor é que a sabe. */
+  marca: MarcaDaMoldura = { logo: null, faixa: '', assinatura: '', cor: COR_DA_MARCA }
 
   constructor(largura = 1280, altura = 720) {
     this.canvas.width = largura
@@ -189,6 +214,10 @@ export class RoomCompositor {
 
   private desenhar(): void {
     const { width: W, height: H } = this.canvas
+    if (this.cena === 'moldura') {
+      this.desenharMoldura(W, H)
+      return
+    }
     this.ctx.fillStyle = '#0d1117'
     this.ctx.fillRect(0, 0, W, H)
 
@@ -229,6 +258,57 @@ export class RoomCompositor {
         this.ctx.fillText(nome, x + 10, y + h - 12, Math.max(0, w - 20))
       }
     })
+  }
+
+  /**
+   * A cena de marca: o herói grande, as câmaras na coluna, e a marca por cima.
+   *
+   * A GEOMETRIA e a marca vêm de `cena/`, partilhadas com o Estúdio; as FONTES
+   * são desenhadas aqui, com o recorte e o nome que esta sala já sabe pôr. É a
+   * mesma divisão que o compositor do Estúdio faz, e pela mesma razão: a cena
+   * não tem de saber o que é um nome de participante.
+   */
+  private desenharMoldura(W: number, H: number): void {
+    this.ctx.fillStyle = COR_DO_FUNDO
+    this.ctx.fillRect(0, 0, W, H)
+
+    const ids = [...this.videos.keys()]
+    // O herói é quem o `heroiId` diz, SE ainda cá estiver. Senão, o primeiro
+    // que houver — nunca um buraco preto (ver o comentário do campo).
+    const heroi = this.heroiId && ids.includes(this.heroiId) ? this.heroiId : (ids[0] ?? null)
+    const camaras = ids.filter((id) => id !== heroi)
+    const r = rectsDaMoldura(camaras.length, W, H, { lado: 'esquerda' })
+
+    if (heroi) this.pintarFonte(heroi, r.heroi, false)
+    r.camaras.forEach((rect, i) => {
+      const id = camaras[i]
+      if (id) this.pintarFonte(id, rect, true)
+    })
+    desenharMarcaDaMoldura(this.ctx, r, this.marca, Date.now(), W, H)
+  }
+
+  /** Uma fonte a cobrir o rect, recortada, com o nome por baixo se se pedir. */
+  private pintarFonte(id: string, r: Rect, comNome: boolean): void {
+    const v = this.videos.get(id)
+    if (!v || r.w <= 0 || r.h <= 0) return
+    if (v.readyState >= 2 && v.videoWidth > 0) {
+      const d = enquadrar(v.videoWidth, v.videoHeight, r)
+      this.ctx.save()
+      this.ctx.beginPath()
+      this.ctx.rect(r.x, r.y, r.w, r.h)
+      this.ctx.clip()
+      this.ctx.drawImage(v, d.x, d.y, d.w, d.h)
+      this.ctx.restore()
+    } else {
+      this.ctx.fillStyle = '#1a1d24'
+      this.ctx.fillRect(r.x, r.y, r.w, r.h)
+    }
+    const nome = comNome ? this.nomes.get(id) : null
+    if (nome) {
+      this.ctx.font = `${Math.max(12, Math.round(r.h * 0.09))}px sans-serif`
+      this.ctx.fillStyle = 'rgba(255,255,255,0.92)'
+      this.ctx.fillText(nome, r.x + 8, r.y + r.h - 10, Math.max(0, r.w - 16))
+    }
   }
 
   /** Idempotente: chamadas seguintes devolvem o MESMO fluxo, não um novo. */

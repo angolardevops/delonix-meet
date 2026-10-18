@@ -775,6 +775,8 @@ export default {
     cenaGrelha: 'Grid',
     cenaSolo: 'Solo',
     cenaLadoALado: 'Side by side',
+    cenaMoldura: 'Branded scene',
+    ecra: 'Screen share',
     escolherUm: 'Choose who appears.',
     escolherDois: 'Choose up to two people.',
     destinos: 'Destinations',

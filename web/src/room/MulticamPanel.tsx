@@ -47,9 +47,12 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
             { value: 'grelha', label: t('room.multicam.cenaGrelha') },
             { value: 'solo', label: t('room.multicam.cenaSolo') },
             { value: 'lado-a-lado', label: t('room.multicam.cenaLadoALado') },
+            { value: 'moldura', label: t('room.multicam.cenaMoldura') },
           ]}
         />
-        {m.cena !== 'grelha' && (
+        {/* A moldura escolhe o herói sozinha (o ecrã partilhado, se houver) —
+            não há foco a escolher, logo não se mostram as fichas. */}
+        {m.cena !== 'grelha' && m.cena !== 'moldura' && (
           <>
             <span className="dx-muted">{m.cena === 'solo' ? t('room.multicam.escolherUm') : t('room.multicam.escolherDois')}</span>
             <div className="dx-chips">

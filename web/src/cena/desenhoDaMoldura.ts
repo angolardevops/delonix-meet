@@ -227,10 +227,11 @@ export function desenharMarcaDaMoldura(
         const dh = h * escala
         c.drawImage(marca.logo, r.logo.x + (r.logo.w - dw) / 2, r.logo.y + (r.logo.h - dh) / 2, dw, dh)
       }
-    } else {
-      c.fillStyle = COR_DO_VAZIO
-      c.fillRect(r.logo.x, r.logo.y, r.logo.w, r.logo.h)
     }
+    // Sem logótipo não se desenha NADA — fica o fundo. Um rectângulo cinzento
+    // no sítio da marca lê-se como uma imagem que falhou a carregar, e a Sala
+    // nunca tem logótipo (só o Estúdio o deixa carregar): ia ficar com uma
+    // caixa morta no cimo da coluna em todas as emissões.
   }
 
   if (r.assinatura && marca.assinatura.trim()) {

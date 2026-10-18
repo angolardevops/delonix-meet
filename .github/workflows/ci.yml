@@ -152,6 +152,14 @@ jobs:
         working-directory: .
         run: node web/e2e/cena-de-marca.mjs
 
+      # O mesmo, mas na SALA, onde o herói é a partilha de ecrã. Inclui o
+      # controlo positivo de que sem ecrã o herói cai para uma câmara em vez
+      # de ficar preto — quem pára de partilhar a meio de uma aula não pode
+      # derrubar a imagem.
+      - name: Cena de marca na sala (ecrã no herói, câmaras na coluna)
+        working-directory: .
+        run: node web/e2e/cena-na-sala.mjs
+
       - name: Build de produção
         run: npm run build
 

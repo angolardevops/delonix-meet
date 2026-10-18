@@ -775,6 +775,8 @@ export default {
     cenaGrelha: 'Grille',
     cenaSolo: 'Solo',
     cenaLadoALado: 'Côte à côte',
+    cenaMoldura: 'Habillage de marque',
+    ecra: 'Partage d\u2019écran',
     escolherUm: 'Choisissez qui apparaît.',
     escolherDois: "Choisissez jusqu'à deux personnes.",
     destinos: 'Destinations',
