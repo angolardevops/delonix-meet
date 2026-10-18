@@ -13,13 +13,20 @@ import { CompositorDeAula } from '../src/studio/compositor'
 // e a geometria em si já tem 26 testes puros em `cena/moldura.test.ts`, que é
 // onde ela se prova.
 import { rectsDaMoldura } from '../src/cena/moldura'
+// O `rectsDoLayout` vai pela MESMA razão, e serve as passagens que não são da
+// `moldura`: a regra do `programaId` aplica-se a mais layouts do que um, e um
+// teste que só sabe medir a moldura não consegue dizer onde a regra começa e
+// acaba. Era o buraco que deixava passar «reordenar só na moldura».
+import { rectsDoLayout } from '../src/studio/palco'
 
 declare global {
   interface Window {
     CompositorDeAula: typeof CompositorDeAula
     rectsDaMoldura: typeof rectsDaMoldura
+    rectsDoLayout: typeof rectsDoLayout
   }
 }
 
 window.CompositorDeAula = CompositorDeAula
 window.rectsDaMoldura = rectsDaMoldura
+window.rectsDoLayout = rectsDoLayout

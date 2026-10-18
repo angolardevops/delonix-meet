@@ -252,9 +252,16 @@ export class CompositorDeAula {
    * O «corte» da mesa de corte: qual convidado o operador pôs no programa.
    *
    * Em `layout: 'solo'` vai para o ecrã inteiro. Nos layouts com vários lugares
-   * — e a `moldura` é o caso que importa — vai para o PRIMEIRO lugar dos
-   * convidados, que na moldura é o topo da coluna; ver o `pecasDoPalco`. Até
-   * aqui só o `solo` o lia, e a coluna enchia-se pela ordem de inserção do
+   * — e a `moldura` é o caso que importa — vai para o primeiro lugar DOS
+   * CONVIDADOS, que não é necessariamente o topo da coluna; ver o
+   * `pecasDoPalco`, onde está medido o que o antecede. Em resumo, e tudo
+   * verificado em Chromium: com ecrã partilhado e sem avatar, o programa é o
+   * topo da coluna; com o avatar ligado (que é o `AVATAR_INICIAL.visivel`, o
+   * default do produto) o topo é a TUA câmara e o programa fica no 2.º painel,
+   * sobrando dois para os outros; e sem conteúdo nenhum o programa é o próprio
+   * herói. A `grelha` é a excepção e não o lê — não tem lugar privilegiado.
+   *
+   * Até aqui só o `solo` o lia, e a coluna enchia-se pela ordem de inserção do
    * `Map`: o operador via o aviso de quantas câmaras ficaram de fora e não
    * tinha como mudar quais.
    *
@@ -648,16 +655,33 @@ export class CompositorDeAula {
    * `solo`. O `ordenarPorFoco` é o mesmo que a Sala usa para as suas fichas de
    * foco; mora em `cena/foco.ts` por causa disso.
    *
-   * SÓ OS CONVIDADOS SE REORDENAM. O conteúdo (ecrã ou quadro) e a tua câmara
-   * mantêm a cabeça da lista, que é o que põe o ecrã partilhado no rectângulo
-   * grande da moldura: o `programaId` escolhe quem ocupa a COLUNA, não quem é o
-   * herói. Trocar isso trocaria uma emissão de aula pelo retrato de quem fala.
+   * SÓ OS CONVIDADOS SE REORDENAM — o conteúdo (ecrã ou quadro) e a tua câmara
+   * mantêm a cabeça da lista. QUANDO HÁ CONTEÚDO, é isso que põe o ecrã
+   * partilhado no rectângulo grande e faz o `programaId` escolher a coluna; mas
+   * a invariante não é «o programa nunca é herói», e eu escrevi-a assim e estava
+   * errado. MEDIDO em Chromium: numa `moldura` SEM ecrã nem quadro (o
+   * `conteudo: 'fontes'` é o estado inicial — uma mesa-redonda é o uso normal
+   * desta cena), não existe peça que segure a cabeça da lista, o `pecas[0]` vai
+   * para o `r.heroi`, e o programa É o herói: com `programaId = g5` saiu
+   * `heroi = violeta, coluna = azul|magenta|ciano`. É coerente — o programa
+   * reclama o lugar mais importante que houver — mas não é o que a frase antiga
+   * prometia.
    *
-   * VALE PARA TODOS OS LAYOUTS, de propósito — não só para a `moldura`. O
-   * `rectsDoLayout` também tem tecto (`MAXIMO_POR_LAYOUT`) e o `desenharMosaico`
-   * larga em silêncio as peças que sobram; pôr o programa à cabeça é o que dá ao
-   * operador a mesma escolha num `lado-a-lado` de dois lugares. Uma ordenação
-   * só-na-moldura seria uma segunda regra para a mesma pergunta.
+   * NA `grelha` NÃO SE REORDENA, e a razão é medida. A grelha não tem lugar
+   * privilegiado: abaixo do tecto de nove ninguém entra nem sai do ar, logo
+   * reordenar não dá ao operador escolha nenhuma — só embaralha o mosaico
+   * inteiro ao vivo, a meio de uma gravação, porque alguém carregou em «Tornar
+   * programa». A Sala já tinha tomado esta decisão e eu divergi dela sem
+   * reparar: o `participantesVisiveis` do `room/compositor.ts` faz
+   * `if (cena === 'grelha') return todos` e salta a ordenação pelo mesmo motivo.
+   * Isto é UMA regra — «o programa reclama um lugar privilegiado» — e não duas;
+   * a grelha fica de fora por não ter nenhum para reclamar.
+   *
+   * FICA UM BURACO CONHECIDO, e é da grelha: acima de nove fontes o
+   * `MAXIMO_POR_LAYOUT` corta, e aí a escolha do operador passaria a mudar quem
+   * vai ao ar. Não se trata aqui porque o `rectsDoLayout` devolve só
+   * rectângulos e nem conta o que cortou — é o defeito que atinge os cinco
+   * layouts, e o sítio de o fechar é lá, não com um caso especial neste método.
    */
   private pecasDoPalco(): ((r: { x: number; y: number; w: number; h: number }) => void)[] {
     const pecas: ((r: { x: number; y: number; w: number; h: number }) => void)[] = []
@@ -669,7 +693,7 @@ export class CompositorDeAula {
     // `ordenarPorFoco` (não encontra ninguém), e é por isso que não se poda
     // aqui: o dono do `programaId` é o React, e podar estado partilhado do lado
     // que não o possui já fez as duas cópias divergirem sem caminho de volta.
-    const escolha = this.programaId ? [this.programaId] : []
+    const escolha = this.programaId && this.layout !== 'grelha' ? [this.programaId] : []
     for (const [, c] of ordenarPorFoco([...this.convidados.entries()], escolha, ([id]) => id)) {
       pecas.push((r) => this.desenharConvidado(c, r))
     }

@@ -202,9 +202,16 @@ const CONVIDADOS = [
 // porque uma colisão aqui faria a contagem da assinatura e do aviso medir um
 // convidado: o laranja é o único de aspecto arriscado e tem `g = 128`.
 
-const amostrarColuna = (programaId) =>
+/**
+ * Uma passagem: monta o palco, põe o programa pedido e lê o canvas.
+ *
+ * `quantos` e `layout` são argumentos porque três perguntas diferentes precisam
+ * deles: o número do aviso prova-se comparando DUAS contagens de convidados, e
+ * o âmbito da regra prova-se noutro layout que não a `moldura`.
+ */
+const amostrarColuna = (programaId, { quantos = 6, layout = 'moldura' } = {}) =>
   pagina.evaluate(
-    async ({ programaId, convidados }) => {
+    async ({ programaId, convidados, layout }) => {
       const { CompositorDeAula, rectsDaMoldura } = window
       const cor = (c) => {
         const el = document.createElement('canvas')
@@ -232,7 +239,7 @@ const amostrarColuna = (programaId) =>
       }
 
       const comp = new CompositorDeAula({ largura: 1920, altura: 1080 })
-      comp.layout = 'moldura'
+      comp.layout = layout
       comp.conteudo = 'fontes'
       comp.marca = { nome: 'DELONIX', titulo: '', aviso: '', deOrigem: true, logo: cor('#ffff00') }
       comp.sobreposicoes = { ...comp.sobreposicoes, url: 'PESSOAS > TECNOLOGIA' }
@@ -265,16 +272,20 @@ const amostrarColuna = (programaId) =>
       const W = comp.canvas.width
       const H = comp.canvas.height
       // A geometria REAL, com as mesmas opções que o compositor lhe passa — é
-      // ela que diz onde estão os três painéis, e não uma fracção adivinhada.
+      // ela que diz onde estão os painéis, e não uma fracção adivinhada.
       //
       // O `n` é o número de CONVIDADOS, que neste palco é o mesmo que o
       // compositor calcula (`pecas.length - 1`: o ecrã é uma peça e o avatar
       // está desligado). É de propósito que não se vá ler o `pecas` dele: isto
-      // é a referência FIXA de «seis convidados, três lugares», e se o
-      // compositor passar a desenhar outro número de painéis as amostras caem
-      // em cima do fundo preto e o teste grita. Medido: a mutação que filtra em
-      // vez de ordenar desenha UM painel, e a coluna saiu `amarelo|preto|preto`.
+      // é a referência FIXA de «N convidados, três lugares», e se o compositor
+      // passar a desenhar outro número de painéis as amostras caem em cima do
+      // fundo preto e o teste grita. Medido: a mutação que filtra em vez de
+      // ordenar desenha UM painel, e a coluna saiu `amarelo|preto|preto`.
       const r = rectsDaMoldura(convidados.length, W, H, { logo: true, assinatura: true })
+      // Fora da `moldura` os lugares vêm do `rectsDoLayout`, que é o que o
+      // `desenharMosaico` usa. A peça 0 é o ecrã, logo os convidados começam no
+      // rect 1 — é esse que diz quem o programa pôs à frente.
+      const doLayout = layout === 'moldura' ? null : rectsDoLayout(layout, 1 + convidados.length, W, H)
 
       const corEm = (x, y) => {
         const d = g.getImageData(Math.round(x), Math.round(y), 1, 1).data
@@ -327,8 +338,15 @@ const amostrarColuna = (programaId) =>
       }
 
       return {
-        painel: r.camaras.map((p) => corEm(p.x + p.w / 2, p.y + p.h / 2)),
-        heroi: corEm(r.heroi.x + r.heroi.w / 2, r.heroi.y + r.heroi.h / 2),
+        // Na `moldura`, os painéis da coluna; fora dela, os lugares do mosaico
+        // a partir do segundo (o primeiro é o ecrã, que não se reordena).
+        painel: doLayout
+          ? doLayout.slice(1).map((p) => corEm(p.x + p.w / 2, p.y + p.h / 2))
+          : r.camaras.map((p) => corEm(p.x + p.w / 2, p.y + p.h / 2)),
+        heroi: corEm(
+          doLayout ? doLayout[0].x + doLayout[0].w / 2 : r.heroi.x + r.heroi.w / 2,
+          doLayout ? doLayout[0].y + doLayout[0].h / 2 : r.heroi.y + r.heroi.h / 2,
+        ),
         naColuna: contarCores(colunaInteira),
         // O aviso de omitidas: a ficha vai no ALTO do último painel, com o
         // número na tinta da marca. Mede-se a tinta na faixa de cima desse
@@ -340,17 +358,21 @@ const amostrarColuna = (programaId) =>
           h: Math.min(60, r.camaras[r.camaras.length - 1].h),
         }),
         // ESTES DOIS SÃO A REFERÊNCIA DO ARNÊS, não leituras do canvas: saem do
-        // `rectsDaMoldura` que o script chamou com os seis convidados. Dizem o
-        // que a cena DEVIA mostrar, e servem para posicionar as amostras e para
-        // falhar alto se a geometria mudar por baixo do teste. Quem prova que o
-        // aviso foi DESENHADO é o `avisoVermelhos` acima — e foi mesmo ele que
-        // apanhou a mutação que corta a lista antes da geometria (167 → 0
-        // píxeis de tinta), com estes dois a continuarem a dizer `+3`.
+        // `rectsDaMoldura` que o script chamou com os N convidados. Dizem o que
+        // a cena DEVIA mostrar, e servem para posicionar as amostras e para
+        // falhar alto se a geometria mudar por baixo do teste. NÃO SERVEM de
+        // prova de que o aviso está certo, e já estiveram a fazer esse papel
+        // indevidamente: numa mutação que faz o canvas desenhar `+4` eles
+        // continuam a dizer `+3`, porque nunca leram o canvas.
         omitidasEsperadas: r.omitidas,
         lugaresEsperados: r.camaras.length,
       }
     },
-    { programaId, convidados: CONVIDADOS.map((c) => ({ ...c, rgb: c.rgb.split(',').map(Number) })) },
+    {
+      programaId,
+      layout,
+      convidados: CONVIDADOS.slice(0, quantos).map((c) => ({ ...c, rgb: c.rgb.split(',').map(Number) })),
+    },
   )
 
 const porCor = (rgb) => CONVIDADOS.find((c) => c.rgb === rgb)?.diz ?? rgb
@@ -403,17 +425,99 @@ if (depois.erro) {
     antes.naColuna.g3 > 50_000 && depois.naColuna.g3 === 0,
     `${antes.naColuna.g3} → ${depois.naColuna.g3} píxeis`,
   )
-  ok('o ECRÃ continua a ser o herói — o programa escolhe a COLUNA, não o herói', depois.heroi === '0,255,0', depois.heroi)
+  // AS TRÊS AUSÊNCIAS também na 2.ª passagem, e não só a do ciano. A zona
+  // `colunaInteira` cobre o logótipo e a assinatura além dos painéis, pelo que
+  // uma peça desenhada fora dos três lugares só é apanhada na passagem onde se
+  // procura por ela — verificar três ausências antes e uma depois deixava meia
+  // coluna sem guarda.
+  for (const id of ['g3', 'g4', 'g6']) {
+    const c = CONVIDADOS.find((x) => x.id === id)
+    ok(`e o ${c.diz} fica fora da coluna inteira`, depois.naColuna[id] === 0, `${depois.naColuna[id]} píxeis`)
+  }
+  // A frase é «COM ECRÃ», e a qualificação não é pedantismo: medido em
+  // Chromium, numa `moldura` SEM conteúdo não há peça que segure a cabeça da
+  // lista e o programa passa a ser o HERÓI (`heroi = violeta`). A invariante que
+  // este arnês prova é a deste palco — com ecrã partilhado, o programa fica-se
+  // pela coluna.
+  ok('COM ECRÃ, o programa fica-se pela coluna e não rouba o herói', depois.heroi === '0,255,0', depois.heroi)
   // O AVISO continua a contar certo depois da reordenação. O `> 0` não é
   // decoração: sem ele, `0 === 0` dava verde exactamente no caso em que o aviso
   // deixou de ser desenhado — foi a lição da sessão anterior.
+  // A FRASE DIZ SÓ O QUE A MEDIÇÃO DÁ, e isto já esteve errado aqui: dizia «o
+  // aviso de +3 continua DESENHADO» e passava com o canvas a desenhar `+4`.
+  // Esta asserção prova INVARIÂNCIA — a reordenação não mexeu no aviso — e não
+  // o valor do número. Quem prova o valor é o par de passagens abaixo.
   ok(
-    'o aviso de +3 continua DESENHADO e com a mesma tinta depois da reordenação',
-    antes.omitidasEsperadas === 3 &&
-      depois.omitidasEsperadas === 3 &&
-      antes.avisoVermelhos > 0 &&
-      antes.avisoVermelhos === depois.avisoVermelhos,
-    `+${antes.omitidasEsperadas}/+${depois.omitidasEsperadas}, ${antes.avisoVermelhos} → ${depois.avisoVermelhos} píxeis de tinta`,
+    'a tinta do aviso é a MESMA antes e depois da reordenação, e não é zero',
+    antes.avisoVermelhos > 0 && antes.avisoVermelhos === depois.avisoVermelhos,
+    `${antes.avisoVermelhos} → ${depois.avisoVermelhos} píxeis de tinta`,
+  )
+}
+
+console.log('\n— o número do aviso segue a contagem, não é um selo fixo —')
+// PORQUE É UM PAR, e não uma asserção sobre um número só: um glifo não se lê
+// por OCR a partir de píxeis, mas a TINTA muda com o algarismo. Com quatro
+// convidados sobra UM de fora (`+1`), com seis sobram três (`+3`), e as duas
+// medições têm de ser diferentes com folga — se fossem iguais, o aviso seria uma
+// imagem fixa que não sabe contar. `+1` e `+3` estão a ~24 píxeis um do outro;
+// `+2` e `+3` ficam a 3, e um portão com 3 píxeis de folga dá falso alarme à
+// primeira troca de tipo de letra, por isso o par é 4↔6 e não 5↔6.
+const quatro = await amostrarColuna(null, { quantos: 4 })
+if (quatro.erro) {
+  ok('as quatro fontes montaram', false, quatro.erro)
+} else {
+  ok('com UM de fora o aviso também é desenhado', quatro.avisoVermelhos > 0, `${quatro.avisoVermelhos} píxeis`)
+  ok(
+    'a tinta de `+1` difere da de `+3` com folga — o aviso conta, não é um selo',
+    Math.abs(quatro.avisoVermelhos - antes.avisoVermelhos) > 10,
+    `+1=${quatro.avisoVermelhos} vs +3=${antes.avisoVermelhos}`,
+  )
+}
+// O QUE ESTE PAR APANHA POR ACIDENTE, e vale dizê-lo porque a diferença entre
+// «apanha» e «apanha de propósito» é a que decide se o portão sobrevive à
+// próxima troca de tipo de letra.
+//
+// A mutação que desloca a CONTAGEM por um — `rectsDaMoldura(pecas.length)` em
+// vez de `pecas.length - 1`, umas linhas acima no `studio/compositor.ts` — faz
+// o canvas desenhar `+2`/`+4` onde devia estar `+1`/`+3`. Ela DÁ EXIT 1 hoje,
+// mas não por este teste saber qual é o número certo: é que `+2` e `+4` saem a
+// 7 píxeis de tinta um do outro (164 e 157), abaixo da folga de 10, enquanto o
+// par correcto sai a 24 (143 e 167). O portão fecha-se por as larguras dos
+// glifos caírem assim, e um tipo de letra diferente pode reabri-lo.
+//
+// O que falta para o fechar DE PROPÓSITO é uma âncora absoluta — saber que
+// aquele glifo é um `3` e não um `4` — e nem este arnês nem o da Sala
+// (`cena-na-sala.mjs`, que também só compara contagens entre si) a têm. É
+// anterior a esta fatia e atinge os dois compositores.
+
+console.log('\n— o âmbito da regra: vale fora da moldura, MENOS na grelha —')
+// A fatia decidiu que o `programaId` ordena os convidados em todos os layouts
+// EXCEPTO a `grelha`, e uma decisão sem portão é uma intenção. Sem estas duas
+// asserções passava tanto «reordenar só na moldura» como «reordenar na grelha
+// também» — medi as duas mutações a dar exit 0 antes de as escrever.
+const lado = { sem: await amostrarColuna(null, { layout: 'lado-a-lado' }), com: await amostrarColuna('g5', { layout: 'lado-a-lado' }) }
+if (lado.sem.erro || lado.com.erro) {
+  ok('o lado-a-lado montou', false, lado.sem.erro || lado.com.erro)
+} else {
+  ok(
+    'no `lado-a-lado` o programa ganha o único lugar de convidado',
+    porCor(lado.sem.painel[0]) === 'azul' && porCor(lado.com.painel[0]) === 'violeta',
+    `${porCor(lado.sem.painel[0])} → ${porCor(lado.com.painel[0])}`,
+  )
+  ok('e o ecrã continua a ser a outra metade', lado.com.heroi === '0,255,0', lado.com.heroi)
+}
+const grelha = { sem: await amostrarColuna(null, { layout: 'grelha' }), com: await amostrarColuna('g5', { layout: 'grelha' }) }
+if (grelha.sem.erro || grelha.com.erro) {
+  ok('a grelha montou', false, grelha.sem.erro || grelha.com.erro)
+} else {
+  // A grelha de sete fontes está ABAIXO do tecto de nove: ninguém entra nem sai
+  // do ar, logo reordenar não daria escolha nenhuma ao operador — só
+  // embaralhava o mosaico inteiro a meio de uma gravação. O `> 1` no tamanho não
+  // é decoração: com um mosaico de um lugar só, a igualdade seria trivial.
+  ok(
+    'na `grelha` o programa NÃO embaralha o mosaico ao vivo',
+    grelha.sem.painel.length > 1 && grelha.sem.painel.join('|') === grelha.com.painel.join('|'),
+    `${grelha.sem.painel.length} lugares: ${grelha.sem.painel.map(porCor).join('|')}`,
   )
 }
 
@@ -431,10 +535,14 @@ if (fantasma.erro) {
     nomesDos(fantasma.painel) === 'azul|magenta|ciano',
     nomesDos(fantasma.painel),
   )
+  // O «lugar vazio» é provado pela asserção ACIMA desta: um lugar vazio leria
+  // `0,0,0`, não `azul|magenta|ciano`. Esta mede o aviso, e mede-o pela tinta
+  // IGUAL à das outras passagens de seis — não pelo `omitidasEsperadas`, que é
+  // a referência do arnês e diria `+3` faça o compositor o que fizer.
   ok(
-    'e não deixa lugar vazio: o aviso de +3 continua desenhado',
-    fantasma.omitidasEsperadas === 3 && fantasma.avisoVermelhos > 0,
-    `+${fantasma.omitidasEsperadas}, ${fantasma.avisoVermelhos} píxeis`,
+    'e o aviso sai com a mesma tinta das outras passagens de seis',
+    fantasma.avisoVermelhos > 0 && fantasma.avisoVermelhos === antes.avisoVermelhos,
+    `${fantasma.avisoVermelhos} vs ${antes.avisoVermelhos} píxeis`,
   )
 }
 
