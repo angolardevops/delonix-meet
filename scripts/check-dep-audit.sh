@@ -56,6 +56,63 @@ fi
 
 # ---------- cargo ----------
 RUSTSEC_ACCEPTED="scripts/rustsec-accepted.txt"
+
+# ---- a razão de uma aceitação tem de CONTINUAR verdadeira ----
+# Os três avisos do `zip` (RUSTSEC-2026-0367/0368/0369, um deles 9.1 crítico)
+# estão aceites com a razão «só escrevemos ZIP, nunca extraímos» — os três são
+# exclusivamente sobre `ZipArchive::extract` e `ZipStreamReader::extract`. Essa
+# razão deixa de ser verdadeira no instante em que o `server/` ganhar uma API
+# de extracção, e quem a acrescentar NÃO vem ler o ficheiro de aceites. Por
+# isso é aqui que se recusa: a aceitação verifica-se a si mesma ou não vale.
+# Procura-se a CHAMADA `.extract(`, não o tipo. Nomear o `ZipArchive` não é
+# extrair: server/tests/account_data_export.rs:26 constrói um para LER as
+# entradas (`by_index` + `read_to_string`) do ZIP que o próprio teste pediu,
+# e isso não toca no caminho vulnerável. Vigiar o tipo punha esse teste
+# vermelho; vigiar a chamada apanha o que os avisos descrevem. As formas
+# `Tipo::extract(x)` entram à parte, que o `.extract(` não as apanha.
+# Corre fora do `command -v cargo-audit`: é um grep, e nesta máquina o
+# cargo-audit pode não estar instalado — o guarda não se pode calar por isso.
+#
+# A detecção dos IDs imita o parser do `--ignore` abaixo (sem comentários,
+# primeiro campo) em vez de ancorar em `^RUSTSEC`: uma linha INDENTADA é
+# aceite pelo parser, e com a âncora o guarda ficava mudo justamente quando o
+# cargo-audit estava a ignorar o aviso.
+aceites_zip=$(grep -vE '^\s*(#|$)' "$RUSTSEC_ACCEPTED" 2>/dev/null \
+                | awk '{print $1}' | grep -cE '^RUSTSEC-2026-036[789]$' || true)
+if [ "$aceites_zip" -gt 0 ]; then
+  # CONTROLO POSITIVO, primeiro. Um grep que não encontra nada é
+  # indistinguível de um grep que procurou no sítio errado — e um portão que
+  # passa em silêncio é pior do que portão nenhum. Se o `ZipWriter` de
+  # data_exports.rs deixar de aparecer, os caminhos abaixo estão obsoletos
+  # (ficheiro movido, crate renomeada) e o guarda perdeu o rasto: recusa.
+  if ! grep -rqE 'ZipWriter' server/src --include='*.rs' 2>/dev/null; then
+    echo "✗ audit: o guarda do zip perdeu o rasto — não encontrou o \`ZipWriter\`"
+    echo "     em server/src (devia estar em server/src/data_exports.rs). Os"
+    echo "     caminhos deste guarda estão obsoletos: corrige-os, senão ele"
+    echo "     passa a aprovar em silêncio um \`extract\` que não vê."
+    fail=1
+  fi
+  # `server/target` e `server/vendor` ficam FORA: são código de terceiros, e
+  # um `ZipArchive` lá dentro não é nosso. Os quatro de dentro são onde o
+  # nosso Rust vive — `ls -d server/*/` para confirmar se isto mudar.
+  # As linhas de COMENTÁRIO não contam: mencionar `ZipArchive::extract` num
+  # aviso ao colega não é extrair, e punha o CI vermelho sem mudança real.
+  extraccoes=$(grep -rnE '\.extract\(|Zip(Archive|StreamReader)::extract' \
+                 server/src server/crates server/tests server/examples \
+                 --include='*.rs' 2>/dev/null \
+                 | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)
+  if [ -n "$extraccoes" ]; then
+    echo "✗ audit: o server/ passou a EXTRAIR ZIP, e os RUSTSEC-2026-0367/0368/0369"
+    echo "     estão aceites em $RUSTSEC_ACCEPTED com a razão «nunca extraímos»:"
+    echo "$extraccoes" | sed 's/^/     /'
+    echo '     Sobe o `zip` para >=9.0.0 (onde estão corrigidos) e APAGA as três'
+    echo "     linhas de aceitação. A razão escrita acabou de ficar falsa."
+    fail=1
+  else
+    echo "  ✓ zip: sem APIs de extracção no server/ — a razão dos -0367/0368/0369 mantém-se"
+  fi
+fi
+
 if command -v cargo-audit >/dev/null 2>&1; then
   # Cada ID aceite entra como --ignore. Um aviso NOVO não está na lista e
   # portanto faz falhar — que é exactamente o ponto da catraca.
