@@ -102,3 +102,33 @@ CRÍTICO / ALTO / MÉDIO (cada: ficheiro:linha · cenário concreto de ataque ·
 ABERTOS NESTE DIFF: fechados | tocados e nomeados | não tocados · S1–S6: intactas | reabertas
 PROVADO (o que correu, contra quê) / NÃO VALIDADO
 ```
+
+## Lacunas medidas na tua área (2026-10-18) — com id da fila
+
+- **`A-01` ALTO: um telefone entra numa sala E2EE.** O dial-OUT recusa com razão escrita
+  (`dial_outs.rs:307`) e a auto-gravação também (`recorder.rs:1750`); o dial-IN não chega
+  a olhar — `grep -c e2ee server/src/voice.rs` = **0**, e o `signaling.rs:2346` tem o
+  mesmo lapso. Confirmado por leitura, NÃO explorado.
+- **`A-07` MÉDIO: `require_mfa` não impõe MFA.** O único consumidor é
+  `identity/factors.rs:39-55`, que impede remover o ÚLTIMO factor. Quem nunca inscreveu
+  entra com password, e o ecrã diz `required_by_organization: true`.
+- **`A-07` MÉDIO: lockout por processo.** `rate_limit.rs:22-37` — com N réplicas, 8
+  tentativas/5min tornam-se 8N. O padrão certo já existe nesta árvore: o travão do PIN de
+  ramal vive em Postgres (`voice_pin_origins`), precisamente por isso.
+- **`A-08` o grande: legal hold e eDiscovery = 0 linhas.** Há retenção, auditoria
+  encadeada verificável e DLP; não há *hold* que suspenda a retenção nem pesquisa que
+  ignore a visibilidade de cada pessoa (e a `search/global.rs` respeita-a por desenho —
+  é o certo para o produto e não serve um regulador).
+- **`A-11`: SAML 2.0 = 0.** O OIDC existe, com `enforce_sso` só sobre domínio verificado
+  por DNS TXT.
+- **`B-10`: o SCIM trunca em silêncio** acima de 200 e devolve `totalResults` = tamanho da
+  página (`scim.rs:64,399-414`). Falha do lado do cliente, sem erro.
+
+**Onde NÃO procures problema** — está medido e é bom: `reqwest` fora do `net_guard` = 0;
+cadeia de auditoria com gatilhos que recusam UPDATE/DELETE (`migrations/0037_*.sql:76,86`);
+349 casos negativos de isolamento contra Postgres real com catraca de cobertura; E2EE
+*fail-closed* nos dois sentidos com a chave fora do servidor.
+
+**O que falta e não é código:** SOC 2, ISO 27001, BAA de HIPAA, FedRAMP (`A-10`). Não
+encontrámos artefacto nenhum na árvore, e é o portão de compras real no segmento que a
+soberania abre. Não o prometas numa revisão.

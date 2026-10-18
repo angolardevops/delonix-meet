@@ -69,3 +69,28 @@ VEREDICTO: pronto | não pronto
 BLOQUEIA (ficheiro:linha · cenário: réplicas/rollout/rede · efeito · correcção)
 PROVADO (o que foi aplicado e medido, em que cluster) / NÃO VALIDADO (multi-nó, RWX, TURN real…)
 ```
+
+## Lacunas medidas na tua área (2026-10-18) — com id da fila
+
+- **`A-04`: o deploy de referência envia `ORG_MAX_PARTICIPANTS: "40"` e
+  `NODE_PEER_CAPACITY: "50"`** (`deploy/k8s/01-config.yaml:23,27`), e o ADR-0001 fixa a
+  sala a um pod. Qualquer promessa de escala passa por aqui, e a medição de onde a sala
+  quebra ainda **não existe**.
+- **O `/rtc` e o `/live` vão a disco no ingress.** O `delonix-ingress` serve `/api` e
+  `/rtc` **sem** `enable-access-log` (`deploy/k8s/04-ingress.yaml:21,28`); só o
+  `delonix-ws` e o `delonix-provisioning` a têm. O ingress-nginx registra `$request`, que
+  leva a query — e no `/rtc` o que lá vai é o **token de ACESSO (15 min)**, que abre a REST
+  toda. Daí para o Loki, com 720 h de retenção. O portão
+  `scripts/check-ws-sem-access-log.sh` **nomeia o que não mede**; não o leias como
+  garantia das três rotas.
+- A correcção boa não é uma anotação por rota (anotar o `delonix-ingress` apaga o log do
+  `/api` INTEIRO): é **o token sair da query**, no `Sec-WebSocket-Protocol`. Não existe
+  nada disso hoje, e não parte o `upstream-hash-by: $arg_room`, porque o `room` continua na
+  query. É decisão do dono.
+
+**Duas lições desta área que custaram sessões:** em K8s o `/ws` e o `/api` vão
+**Ingress → Service directo**, sem tocar no nginx do pod web — corrigir
+`deploy/k8s/nginx.conf` para o `/ws` é corrigir um ficheiro por onde ele nunca passa. E o
+`cargo audit` lê uma base EXTERNA: a mesma `develop` passou às 15:25Z e falhou às 09:00Z do
+dia seguinte sem uma linha mudada. **Despacha o job no DESTINO antes de culpar a base do
+ramo.**
