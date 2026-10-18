@@ -13,6 +13,37 @@ RUSTSEC-2023-0071  # `rsa` 0.9.10 — Marvin Attack (5.9 médio). Entra por
                    # daqui quando o `rsa` publicar correcção ou o
                    # `openidconnect` trocar de backend.
 
+# Os três do `zip` 2.4.2 têm a MESMA razão, e é uma razão VERIFICADA: o portão
+# do audit (check-dep-audit.sh) recusa se alguma destas linhas estiver aqui e
+# o `server/` ganhar uma API de extracção. Sem esse guarda, a razão abaixo
+# ficava verdadeira hoje e falsa em silêncio no dia em que alguém extraísse um
+# ZIP — e quem o fizesse não vinha ler este ficheiro.
+RUSTSEC-2026-0369  # `zip` 2.4.2 (9.1 CRÍTICO) — `ZipStreamReader::extract()` e
+                   # `ZipArchive::extract()` aplicam permissões Unix ATRAVÉS de
+                   # symlinks sem confinar o alvo. Nós não extraímos: no
+                   # código que VAI para o binário o único uso do `zip` é
+                   # `ZipWriter` em server/src/data_exports.rs:673, que ESCREVE
+                   # o ZIP de «os meus dados» com CompressionMethod::Stored.
+                   # Há UM `ZipArchive` no repositório — em
+                   # server/tests/account_data_export.rs:26 — mas é um teste, e
+                   # LÊ as entradas para memória (`by_index` +
+                   # `read_to_string`) do ZIP que ele mesmo acabou de pedir:
+                   # não chama `extract()`, não escreve nada no disco e não vê
+                   # entrada de terceiros. Não existe um `.extract(` em todo o
+                   # `server/`, e é ISSO que os três avisos descrevem, por isso
+                   # o caminho vulnerável não é alcançável — nem por entrada
+                   # não confiável, nem por nenhuma outra. É o que o guarda do
+                   # check-dep-audit.sh passa a vigiar: a CHAMADA, não o tipo.
+                   # A correcção é subir a `zip` >=9.0.0, um
+                   # salto de MAJOR para uma API que não chamamos; faz-se no
+                   # dia em que passarmos a extrair, e é o portão que obriga.
+RUSTSEC-2026-0367  # `zip` 2.4.2 (7.3 alto) — preservação insegura dos bits
+                   # SUID/SGID DURANTE A EXTRACÇÃO. Mesma razão do -0369: só
+                   # escrevemos ZIP, nunca extraímos.
+RUSTSEC-2026-0368  # `zip` 2.4.2 — `ZipArchive::extract` cria symlinks cujo
+                   # alvo, controlado pelo atacante, fica FORA do destino.
+                   # Mesma razão do -0369: só escrevemos ZIP, nunca extraímos.
+
 RUSTSEC-2026-0221  # `event-listener` 5.4.1 — unsound (`!Send` a atravessar
                    # fronteiras de thread via `StackSlot`). Entra por
                    # `sqlx-core` 0.8.6; não temos como o evitar sem sair do
