@@ -20,14 +20,23 @@
  * matemática a APIs de browser.
  */
 
+import type { Rect } from '../cena/moldura'
+
 export type Cena = 'solo' | 'lado-a-lado' | 'grelha'
 
-export interface Rect {
-  x: number
-  y: number
-  w: number
-  h: number
-}
+/**
+ * O `Rect` passou a nascer em `cena/moldura.ts` e é re-exportado daqui.
+ *
+ * PORQUÊ: a moldura de transmissão é desenhada pelos DOIS compositores (este e
+ * o do Estúdio), logo vive num módulo à parte. Se esse módulo importasse o
+ * `Rect` daqui, e este importasse a moldura de lá, fechava-se um ciclo. A cena
+ * é folha — não importa de `room/` nem de `studio/` — e o
+ * `scripts/check-cena-e-folha.sh` recusa que deixe de ser.
+ *
+ * Fica re-exportado para que nada a jusante (`studio/palco.ts`, entre outros)
+ * tenha de mudar de import por causa de uma mudança que não lhes diz respeito.
+ */
+export type { Rect }
 
 export interface Fonte {
   id: string
