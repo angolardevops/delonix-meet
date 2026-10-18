@@ -44,7 +44,9 @@ export default {
   pararSeguranca: 'Parar gravação',
   aGravarLocal: 'a gravar no telefone',
   descarregarSeguranca: 'Descarregar',
+  descarregarPedaco: 'Descarregar {{n}}',
+  segurancaMorreu: 'A gravação de segurança parou sozinha. O que já estava gravado fica aqui para descarregar.',
   sair: 'Sair',
-  nota: 'Este ecrã fica ligado enquanto o Estúdio precisar da tua câmara. Mantém o ecrã aceso.',
+  nota: 'Este ecrã fica ligado enquanto o Estúdio precisar da tua câmara. Onde o browser o permite, o ecrã fica aceso sozinho.',
   aCarregar: '· a carregar',
 }

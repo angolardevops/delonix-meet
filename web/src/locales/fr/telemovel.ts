@@ -44,7 +44,9 @@ export default {
   pararSeguranca: "Arrêter l'enregistrement",
   aGravarLocal: 'enregistrement sur le téléphone',
   descarregarSeguranca: 'Télécharger',
+  descarregarPedaco: 'Télécharger {{n}}',
+  segurancaMorreu: "L'enregistrement de sécurité s'est arrêté de lui-même. Ce qui était déjà enregistré reste ici, téléchargeable.",
   sair: 'Quitter',
-  nota: "Cet écran reste connecté tant que le Studio a besoin de ta caméra. Laisse l'écran allumé.",
+  nota: "Cet écran reste connecté tant que le Studio a besoin de ta caméra. Lorsque le navigateur le permet, l'écran reste allumé tout seul.",
   aCarregar: '· en charge',
 }
