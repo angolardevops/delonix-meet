@@ -2041,6 +2041,25 @@ pub async fn run() {
         tenancy = ?config.tenancy_mode,
         "perfil da instalação"
     );
+    // Os tectos da admissão, ditos no arranque (ADR-0017). O inventário do
+    // operador publica o NÚMERO mas não de onde veio, e um tecto que vale por
+    // omissão é indistinguível de um declarado depois de gravado — é aqui que
+    // a diferença fica escrita. Um nó sem tecto nenhum passa a ser um AVISO,
+    // porque é um estado que só uma medição de carga deve querer.
+    match (config.node_peer_capacity, config.org_max_participants) {
+        (None, None) => tracing::warn!(
+            "SEM TECTO DE ADMISSÃO: NODE_PEER_CAPACITY=0 e nenhum tecto de organização. \
+             O nó aceita participantes até degradar e nada se recusa — é o que uma rampa \
+             de carga quer, e não o que uma instalação a servir gente quer."
+        ),
+        (node, org) => tracing::info!(
+            node_peer_capacity = ?node,
+            node_declarado = std::env::var("NODE_PEER_CAPACITY").is_ok(),
+            org_max_participants = ?org,
+            org_declarado = std::env::var("ORG_MAX_PARTICIPANTS").is_ok(),
+            "tectos da admissão (`declarado = false` => omissão do código)"
+        ),
+    }
 
     // `delonix-server migrate`: corre as migrações e sai. É o que o Job de
     // migração do SaaS executa antes do rollout (ADR-0006 §4).

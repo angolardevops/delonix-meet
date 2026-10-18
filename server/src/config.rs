@@ -578,11 +578,16 @@ impl Config {
         // `values` já codificam à mão (25→20, 50→40, 50→40) e que o
         // `_helpers.tpl` já guarda — não um número novo inventado aqui.
         let node_peer_capacity = tecto(src, "NODE_PEER_CAPACITY", DEFAULT_NODE_PEER_CAPACITY);
-        let org_max_participants = tecto(
-            src,
-            "ORG_MAX_PARTICIPANTS",
-            parte_da_organizacao(node_peer_capacity.unwrap_or(DEFAULT_NODE_PEER_CAPACITY)),
-        );
+        // Quem DESLIGA o tecto do nó (`NODE_PEER_CAPACITY=0`) não pode receber
+        // um tecto de organização por derivação: era a entrada menos restritiva
+        // a produzir a saída mais restritiva, e matava exactamente o caso que o
+        // `0` existe para servir — a rampa de carga do `A-04`, que mediria 40 e
+        // leria isso como «a sala quebrou aos 40». Sem capacidade de nó não há
+        // de onde derivar uma parte dela; só um valor explícito impõe tecto.
+        let org_max_participants = match node_peer_capacity {
+            Some(c) => tecto(src, "ORG_MAX_PARTICIPANTS", parte_da_organizacao(c)),
+            None => tecto_declarado(src, "ORG_MAX_PARTICIPANTS"),
+        };
         Self {
             edition,
             registration_mode,
@@ -909,10 +914,6 @@ impl Config {
     }
 }
 
-/// Lê um tamanho de fila do ambiente, preso a `[min, max]`. Um valor
-/// inválido ou fora do intervalo cai no default com um aviso em vez de fazer
-/// panic: uma fila mal configurada não deve impedir o servidor de arrancar,
-/// mas também não pode virar «ilimitada por engano» com um 0 ou um u32 inteiro.
 /// Participantes que um nó aguenta quando o operador não o declarou. É a
 /// capacidade do deploy de REFERÊNCIA (`deploy/k8s/01-config.yaml` e
 /// `values-production.yaml`), e não um número novo: a omissão passa a valer o
@@ -933,8 +934,12 @@ pub const ORG_SHARE_OF_NODE: u32 = 80;
 /// 80 % da capacidade do nó, nunca menos de 1: num nó declarado com 1 lugar,
 /// arredondar para baixo dava 0 — e `0` significa «sem tecto», que é o oposto
 /// do que esta função existe para garantir.
+///
+/// A conta vai por `u64` para que uma capacidade absurda não SATURE: em `u32`,
+/// `4_294_967_295 × 80` satura e devolveria ~1 % em vez de 80 % — uma distorção
+/// silenciosa, no sentido de apertar o tecto.
 pub fn parte_da_organizacao(capacidade: u32) -> u32 {
-    (capacidade.saturating_mul(ORG_SHARE_OF_NODE) / 100).max(1)
+    ((capacidade as u64 * ORG_SHARE_OF_NODE as u64) / 100).max(1) as u32
 }
 
 /// Um tecto de admissão lido do ambiente, com três estados declarados:
@@ -948,13 +953,44 @@ pub fn parte_da_organizacao(capacidade: u32) -> u32 {
 /// declarou uma capacidade que o servidor nunca leu — o mesmo argumento do
 /// `uuid_list` aqui ao lado.
 fn tecto(src: &Source, var: &str, default: u32) -> Option<u32> {
+    match tecto_bruto(src, var) {
+        Declarado::Ausente => Some(default),
+        Declarado::SemTecto => None,
+        Declarado::Valor(n) => Some(n),
+    }
+}
+
+/// Como [`tecto`], mas sem omissão: ausente vale `None`. Só para o tecto da
+/// organização quando o do nó está DESLIGADO — não há capacidade de onde
+/// derivar uma parte, e inventar uma era contradizer o `0` que o operador pôs.
+fn tecto_declarado(src: &Source, var: &str) -> Option<u32> {
+    match tecto_bruto(src, var) {
+        Declarado::Ausente | Declarado::SemTecto => None,
+        Declarado::Valor(n) => Some(n),
+    }
+}
+
+enum Declarado {
+    Ausente,
+    SemTecto,
+    Valor(u32),
+}
+
+fn tecto_bruto(src: &Source, var: &str) -> Declarado {
     let bruto = match src.var(var) {
-        Err(_) => return Some(default),
+        Err(_) => return Declarado::Ausente,
         Ok(v) => v,
     };
+    // Vazio é AUSENTE, como em todo o resto deste ficheiro (`opt`, que filtra
+    // `v.trim().is_empty()`). Um `NODE_PEER_CAPACITY=${NODE_PEER_CAPACITY}` em
+    // compose com a variável do host por definir expande para vazio, e isso
+    // tem de arrancar com a omissão — não derrubar o pod em CrashLoopBackOff.
+    if bruto.trim().is_empty() {
+        return Declarado::Ausente;
+    }
     match bruto.trim().parse::<u32>() {
-        Ok(0) => None,
-        Ok(n) => Some(n),
+        Ok(0) => Declarado::SemTecto,
+        Ok(n) => Declarado::Valor(n),
         Err(_) => panic!(
             "{var}: «{bruto}» não é um inteiro. Declara os participantes que o nó aguenta, \
              ou `0` para não impor tecto nenhum (é o que uma rampa de carga põe)."
@@ -962,6 +998,10 @@ fn tecto(src: &Source, var: &str, default: u32) -> Option<u32> {
     }
 }
 
+/// Lê um tamanho de fila do ambiente, preso a `[min, max]`. Um valor
+/// inválido ou fora do intervalo cai no default com um aviso em vez de fazer
+/// panic: uma fila mal configurada não deve impedir o servidor de arrancar,
+/// mas também não pode virar «ilimitada por engano» com um 0 ou um u32 inteiro.
 fn bounded_env(src: &Source, var: &str, default: usize, min: usize, max: usize) -> usize {
     match src.var(var) {
         Err(_) => default,
@@ -1463,5 +1503,52 @@ mod tests {
     #[should_panic(expected = "NODE_PEER_CAPACITY")]
     fn um_tecto_mal_escrito_nao_arranca() {
         production(&[("NODE_PEER_CAPACITY", Some("cinquenta"))]);
+    }
+
+    /// Desligar o tecto do NÓ não pode LIGAR um tecto de organização por
+    /// derivação: era a entrada menos restritiva a dar a saída mais restritiva,
+    /// e fechava a saída que o `0` existe para abrir — a rampa de carga do
+    /// `A-04` mediria 40 e leria isso como «a sala quebrou aos 40».
+    #[test]
+    fn desligar_o_tecto_do_no_nao_liga_o_da_organizacao() {
+        let c = production(&[
+            ("NODE_PEER_CAPACITY", Some("0")),
+            ("ORG_MAX_PARTICIPANTS", None),
+        ]);
+        assert_eq!(c.node_peer_capacity, None);
+        assert_eq!(
+            c.org_max_participants, None,
+            "sem capacidade de nó não há parte dela para derivar"
+        );
+
+        // Mas um tecto de organização EXPLÍCITO continua a valer, mesmo com o
+        // do nó desligado: quem o escreveu quis-o.
+        let d = production(&[
+            ("NODE_PEER_CAPACITY", Some("0")),
+            ("ORG_MAX_PARTICIPANTS", Some("30")),
+        ]);
+        assert_eq!(d.org_max_participants, Some(30));
+    }
+
+    /// Uma variável DEFINIDA mas vazia é «ausente», como em todo o resto do
+    /// ficheiro. Um `NODE_PEER_CAPACITY=${NODE_PEER_CAPACITY}` em compose com a
+    /// variável do host por definir expande para vazio: tem de arrancar com a
+    /// omissão, não derrubar o pod.
+    #[test]
+    fn uma_variavel_vazia_e_ausente_e_nao_panico() {
+        let c = production(&[
+            ("NODE_PEER_CAPACITY", Some("")),
+            ("ORG_MAX_PARTICIPANTS", Some("   ")),
+        ]);
+        assert_eq!(c.node_peer_capacity, Some(DEFAULT_NODE_PEER_CAPACITY));
+        assert_eq!(c.org_max_participants, Some(40));
+    }
+
+    /// Uma capacidade absurda não SATURA a conta dos 80 %: em `u32`,
+    /// `u32::MAX × 80` saturava e devolvia ~1 % — a apertar o tecto em silêncio.
+    #[test]
+    fn a_derivacao_nao_satura() {
+        assert_eq!(parte_da_organizacao(u32::MAX), 3_435_973_836);
+        assert_eq!(parte_da_organizacao(100), 80);
     }
 }
