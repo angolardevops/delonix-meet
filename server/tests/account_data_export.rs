@@ -29,7 +29,10 @@ fn unzip(bytes: &[u8]) -> std::collections::BTreeMap<String, String> {
         let mut f = archive.by_index(i).unwrap();
         let mut s = String::new();
         f.read_to_string(&mut s).unwrap();
-        out.insert(f.name().to_string(), s);
+        // O `zip` 9 devolve o nome em `Result`: um nome não-UTF-8 ou com
+        // caminho a sair do destino é erro e não um `&str` silencioso.
+        let nome = f.name().expect("o nome no ZIP é válido").to_string();
+        out.insert(nome, s);
     }
     out
 }
