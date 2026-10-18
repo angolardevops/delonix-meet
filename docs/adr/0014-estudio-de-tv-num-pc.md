@@ -214,8 +214,8 @@ cada um é do domínio, não da base.
 
 | # | Linha | Estado |
 |---|---|---|
-| 1 | Um código errado 5 vezes fica queimado; o certo depois disso é recusado | por provar |
-| 2 | O token de fonte não abre nenhuma rota REST nem o `/live` | por provar |
+| 1 | Um código errado 5 vezes fica queimado; o certo depois disso é recusado | **provado** — `server/tests/studio.rs:202` `pairing_code_burns_after_five_wrong_attempts` |
+| 2 | O token de fonte não abre nenhuma rota REST nem o `/live` | **provado** — `server/tests/studio.rs:343-358` (`/api/users/me` e `/api/orgs/{id}/studios` dão 401, e o upgrade do `/live` falha) |
 | 3 | Uma fonte que manda `chat`, `set-role` ou `server-record` é recusada | por provar |
 | 4 | Só o anfitrião actual fixa o tally e comanda; outro participante é recusado | por provar |
 | 5 | Um telefone (cliente webrtc-rs) emparelha, publica, recebe tally e comando, devolve estado | por provar ao vivo |

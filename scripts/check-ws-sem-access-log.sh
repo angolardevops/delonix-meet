@@ -29,6 +29,12 @@
 #  contagem ESPERADA por ficheiro, e chavetas contadas em vez de fechar no
 #  primeiro `}`.
 #
+#  O QUE ESTE PORTÃO NÃO MEDE, e não deve deixar supor que mede: só olha
+#  para o `/ws` (mais o `/live` nos nginx). O `/rtc` e o `/live` em k8s vão
+#  pelo Ingress `delonix-ingress`, SEM `enable-access-log` — ver o aviso que
+#  ele próprio imprime no fim. Antes de 2026-10-18 dizia aqui que o token
+#  não ia a disco em «nenhuma camada»: media uma e afirmava três.
+#
 #  Uso:  bash scripts/check-ws-sem-access-log.sh
 # ============================================================
 set -uo pipefail
@@ -117,6 +123,18 @@ for f in $INGRESS; do
 done
 
 if [ "$fail" -eq 0 ]; then
-  echo "✓ /ws sem access_log: 4 nginx + 2 ingress — o token do ?token= não vai a disco em nenhuma camada"
+  echo "✓ /ws sem access_log: 4 nginx + 2 ingress (delonix-ws, delonix-provisioning)"
+  # O que este portão NÃO cobre, dito aqui porque é aqui que alguém vem
+  # procurar a garantia. Até 2026-10-18 esta linha dizia «o token do ?token=
+  # não vai a disco em NENHUMA camada», e era falso: media-se o /ws e
+  # afirmava-se o /rtc e o /live. Um portão que afirma mais do que mede é
+  # pior do que portão nenhum — faz o próximo leitor fechar o assunto.
+  echo "  ⚠ NÃO MEDIDO AQUI: em k8s o /rtc e o /api/rooms/{code}/live vão pelo"
+  echo "    Ingress 'delonix-ingress' (deploy/k8s/04-ingress.yaml:21,28), que NÃO"
+  echo "    tem enable-access-log — e o ingress-nginx registra \$request, que leva"
+  echo "    a query. Vão a disco o token de acesso do /rtc (15 min, abre a REST"
+  echo "    toda) e o room token do /live (5 min). Não é esquecimento do portão:"
+  echo "    anotar o 'delonix-ingress' apagaria o log do /api INTEIRO, e a"
+  echo "    correcção boa é o token sair da query. Decisão em aberto."
 fi
 exit "$fail"
