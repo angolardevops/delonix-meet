@@ -143,6 +143,15 @@ jobs:
         working-directory: .
         run: node web/e2e/bar-responsivo.mjs
 
+      # A cena de marca mede-se por PIXÉIS, e é a única forma de a medir: a
+      # geometria tem testes puros, mas o `drawImage` e o texto da faixa só se
+      # observam no canvas que saiu. Sem servidor nem conta, pelo mesmo
+      # argumento do e2e acima — o compositor REAL do Estúdio vai empacotado
+      # pelo esbuild, e as fontes são canvas de cor sólida.
+      - name: Cena de marca no canvas (faixa, coluna, herói e moldura)
+        working-directory: .
+        run: node web/e2e/cena-de-marca.mjs
+
       - name: Build de produção
         run: npm run build
 

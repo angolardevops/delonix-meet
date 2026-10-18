@@ -27,6 +27,8 @@ import {
   SOBREPOSICOES_INICIAIS,
   type Sobreposicoes,
 } from './palco'
+import { COR_DA_MARCA, COR_DO_FUNDO, desenharMarcaDaMoldura } from '../cena/desenhoDaMoldura'
+import { rectsDaMoldura } from '../cena/moldura'
 import { desenharCartaoDeMarca, desenharSobreposicoes, type MarcaDoPalco, type SondagemNoPalco } from './desenho'
 import { desenharQuadroDaMesa, type FontesParaDesenho } from './tv/desenhoDaMesa'
 import type { QuadroDaMesa } from './tv/mesa'
@@ -567,6 +569,34 @@ export class CompositorDeAula {
         if (alvo) this.desenharConvidado(alvo, todo)
       }
       if (this.avatar.visivel && this.temCamara) this.desenharAvatar(W, H)
+    } else if (this.layout === 'moldura') {
+      // A cena de marca. O fundo é PRETO, não o `#0d1117` da app: a moldura é
+      // imagem que vai para o ar, e o preto é o que a faz ler como um cenário
+      // de televisão em vez de um painel de software.
+      this.ctx.fillStyle = COR_DO_FUNDO
+      this.ctx.fillRect(0, 0, W, H)
+      // As fontes vão para os lugares que a cena calculou, desenhadas pelos
+      // métodos DESTE compositor — é o que preserva o recorte do ecrã, o
+      // espelho da câmara e o alfa do avatar, que a cena não conhece.
+      const rects = this.desenharMosaico(W, H)
+      desenharMarcaDaMoldura(
+        this.ctx,
+        // A cena recalcula as peças da marca a partir do mesmo n, logo os
+        // rects batem certo com os que o mosaico acabou de preencher.
+        rectsDaMoldura(Math.max(0, rects.length - 1), W, H),
+        {
+          logo: this.marca.logo,
+          // O texto da faixa é o do ticker que o operador já escreve nas
+          // sobreposições; sem ele, o nome da marca. Não se inventa campo novo
+          // para uma coisa que já tem sítio onde se escrever.
+          faixa: this.sobreposicoes.url || this.marca.nome,
+          assinatura: this.marca.nome,
+          cor: COR_DA_MARCA,
+        },
+        Date.now(),
+        W,
+        H,
+      )
     } else {
       this.desenharMosaico(W, H)
     }
@@ -582,19 +612,26 @@ export class CompositorDeAula {
     this.custoDoFrameMs = performance.now() - t0
   }
 
-  /** As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados. */
-  private desenharMosaico(W: number, H: number): void {
+  /**
+   * As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados.
+   * Devolve os rects usados, para quem precise de desenhar por cima deles.
+   */
+  private desenharMosaico(W: number, H: number): { x: number; y: number; w: number; h: number }[] {
     const pecas: ((r: { x: number; y: number; w: number; h: number }) => void)[] = []
     if (this.conteudo === 'quadro') pecas.push((r) => this.desenharConteudo(this.quadro, r, 'contain'))
     else if (this.temEcra) pecas.push((r) => this.desenharEcraEm(r))
     if (this.avatar.visivel && this.temCamara) pecas.push((r) => this.desenharCamaraEm(r))
     for (const c of this.convidados.values()) pecas.push((r) => this.desenharConvidado(c, r))
     const rects = rectsDoLayout(this.layout, pecas.length, W, H)
-    const pad = rects.length > 1 ? Math.round(H * 0.004) : 0
+    // A moldura NÃO leva o `pad`: a sua geometria já traz a margem e o vão
+    // entre a coluna e o herói, e descontar outra vez punha as peças mais
+    // pequenas do que a marca desenhada à volta delas espera.
+    const pad = this.layout !== 'moldura' && rects.length > 1 ? Math.round(H * 0.004) : 0
     rects.forEach((r, i) => {
       const dentro = { x: r.x + pad, y: r.y + pad, w: r.w - pad * 2, h: r.h - pad * 2 }
       pecas[i](dentro)
     })
+    return rects
   }
 
   private desenharEcraEm(r: { x: number; y: number; w: number; h: number }): void {

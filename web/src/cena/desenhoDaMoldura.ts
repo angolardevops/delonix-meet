@@ -26,6 +26,15 @@ import {
 export const COR_DO_FUNDO = '#000000'
 /** Fundo de um painel que ainda não tem imagem (uma câmara a ligar). */
 export const COR_DO_VAZIO = '#101317'
+/**
+ * A cor da faixa e da assinatura quando quem chama não escolhe outra.
+ *
+ * É o vermelho da marca (`#e8232b`, o mesmo que o `studio/desenho.ts` usa no
+ * símbolo e no rodapé), e é uma cor de IMAGEM: vai para o vídeo como píxeis.
+ * Por isso é literal e não token — o tema escuro não pode mudar a cor de uma
+ * emissão que está no ar.
+ */
+export const COR_DA_MARCA = '#e8232b'
 /** Tipografia da faixa e da assinatura: monoespaçada, como a referência. */
 export const TIPO_MONO = '"DM Mono", ui-monospace, monospace'
 
@@ -182,27 +191,29 @@ export function desenharFaixa(
 }
 
 /**
- * Desenha a moldura inteira num frame. Chamar de dentro do
- * `requestAnimationFrame` do compositor, com o instante desse frame — a
- * animação da faixa sai daí, não de um relógio lido cá dentro.
+ * A MARCA da moldura — faixa, logótipo e assinatura — sobre rects já
+ * calculados. NÃO desenha o fundo nem as fontes.
+ *
+ * É esta a função que os compositores chamam, e não a `desenharMoldura`
+ * completa, por uma razão concreta: cada um já sabe desenhar as SUAS fontes de
+ * maneiras que esta pasta não conhece nem deve conhecer. O do Estúdio aplica o
+ * recorte que o operador escolheu no ecrã (`desenharEcraEm`), espelha a câmara
+ * e compõe o avatar com alfa; o da Sala recorta e põe o nome por baixo. Se a
+ * cena pintasse as fontes, perdia-se tudo isso — e a cena passaria a precisar
+ * de saber o que é um recorte, um avatar e um nome de participante, que é
+ * exactamente o acoplamento que a torna folha hoje.
+ *
+ * A ordem de chamada é: fundo → fontes nos rects → esta função.
  */
-export function desenharMoldura(
+export function desenharMarcaDaMoldura(
   c: CanvasRenderingContext2D,
-  fontes: FontesDaMoldura,
+  r: RectsDaMoldura,
   marca: MarcaDaMoldura,
   instanteMs: number,
   largura: number,
   altura: number,
-  opcoes: Partial<OpcoesDaMoldura> = {},
-): RectsDaMoldura {
-  const r = rectsDaMoldura(fontes.camaras.length, largura, altura, opcoes)
+): void {
   const s = escalaDaAltura(altura)
-
-  c.fillStyle = COR_DO_FUNDO
-  c.fillRect(0, 0, largura, altura)
-
-  pintar(c, fontes.heroi, r.heroi)
-  r.camaras.forEach((rect, i) => pintar(c, fontes.camaras[i] ?? null, rect))
 
   if (r.logo) {
     if (marca.logo) {
@@ -242,6 +253,31 @@ export function desenharMoldura(
   }
 
   if (r.faixa) desenharFaixa(c, r.faixa, marca.faixa, marca.cor, instanteMs, largura)
+}
 
+/**
+ * A moldura inteira, fundo e fontes incluídos — o atalho para quem não tem
+ * maneira própria de desenhar as suas fontes. Chamar de dentro do
+ * `requestAnimationFrame` do compositor, com o instante desse frame: a
+ * animação da faixa sai daí, não de um relógio lido cá dentro.
+ *
+ * Devolve os rects que usou, para quem precise de saber onde as coisas foram
+ * parar (um clique, um realce, um indicador de quem ficou de fora).
+ */
+export function desenharMoldura(
+  c: CanvasRenderingContext2D,
+  fontes: FontesDaMoldura,
+  marca: MarcaDaMoldura,
+  instanteMs: number,
+  largura: number,
+  altura: number,
+  opcoes: Partial<OpcoesDaMoldura> = {},
+): RectsDaMoldura {
+  const r = rectsDaMoldura(fontes.camaras.length, largura, altura, opcoes)
+  c.fillStyle = COR_DO_FUNDO
+  c.fillRect(0, 0, largura, altura)
+  pintar(c, fontes.heroi, r.heroi)
+  r.camaras.forEach((rect, i) => pintar(c, fontes.camaras[i] ?? null, rect))
+  desenharMarcaDaMoldura(c, r, marca, instanteMs, largura, altura)
   return r
 }

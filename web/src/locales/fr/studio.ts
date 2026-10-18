@@ -229,6 +229,7 @@ export default {
     ladoALado: 'Côte à côte',
     destaque: 'Vedette et colonne',
     grelha: 'Grille',
+    moldura: 'Habillage de marque',
     conteudo: 'Sur scène',
     conteudos: {
       fontes: 'Sources',

@@ -229,6 +229,7 @@ export default {
     ladoALado: 'Side by side',
     destaque: 'Featured and column',
     grelha: 'Grid',
+    moldura: 'Branded scene',
     conteudo: 'On stage',
     conteudos: {
       fontes: 'Sources',

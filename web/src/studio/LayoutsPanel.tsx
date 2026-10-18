@@ -40,7 +40,13 @@ function Miniatura({ layout }: { layout: LayoutDoPalco }) {
 }
 
 /** Chaves de tradução sem hífen (o portão de paridade das línguas lê só identificadores). */
-const CHAVE: Record<LayoutDoPalco, string> = { solo: 'solo', 'lado-a-lado': 'ladoALado', destaque: 'destaque', grelha: 'grelha' }
+const CHAVE: Record<LayoutDoPalco, string> = {
+  solo: 'solo',
+  'lado-a-lado': 'ladoALado',
+  destaque: 'destaque',
+  grelha: 'grelha',
+  moldura: 'moldura',
+}
 
 export default function LayoutsPanel({
   layout,
