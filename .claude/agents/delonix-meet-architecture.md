@@ -84,3 +84,25 @@ NÃO VALIDADO (o que não mediste e porquê)
 
 Fecha com um único pedido seguinte bem formado. O catálogo está no fim da skill
 `delonix-meet`.
+
+## Lacunas medidas que mexem em fronteiras (2026-10-18) — com id da fila
+
+Três das lacunas da fila não são funcionalidades: são decisões de fronteira, e passam por ti.
+
+- **`A-04`: o tecto de 40 por sala é arquitectural.** O ADR-0001 fixa a sala a um pod
+  porque o RTP não passa pelo Redis, o que faz da sala a unidade de *sharding*. Sair daqui
+  é SFU em cascata (mover RTP entre processos) ou um caminho de audiência passiva — e o
+  próprio ADR já marca onde fica o *seam*. Nenhuma das duas se faz sem ADR novo.
+- **`A-08`: o legal hold atravessa camadas.** Toca em cada varredura de retenção
+  (`recorder.rs`, `room_chat.rs`, `notifications.rs`) e exige uma pesquisa que **ignora**
+  a visibilidade por pessoa — o oposto do que a `search/global.rs` faz por desenho. É um
+  caminho próprio, não uma bandeira no existente.
+- **`A-05`: a integração de calendário é a primeira saída** para a nuvem de um terceiro
+  neste produto. Passa pelo `net_guard` (que hoje tem `reqwest` fora dele = 0, por
+  catraca) e pela promessa de soberania. Há precedente com o Odoo; não há precedente de
+  uma nuvem pública.
+
+**Padrão a impor nas três:** não pôr a capacidade na base de dados antes do caminho que a
+serve. O `iso_recording` é `DEFAULT TRUE` sem a tabela `recording_tracks` (`A-02`) e os
+formatos `broadcast`/`hybrid` persistem sem serem lidos (`A-09`) — são os dois exemplos
+desta casa, e os dois foram apanhados a mentir ao ler a tabela.

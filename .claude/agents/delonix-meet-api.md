@@ -93,3 +93,27 @@ BLOQUEIA (rota · regra da checklist violada · como fica)
 QUEBRA DE CONTRATO v1 (se houver)
 PROVADO / NÃO VALIDADO
 ```
+
+## Lacunas medidas na tua área (2026-10-18) — com id da fila
+
+- **`B-07`: a superfície pública é 3 % da interna.** A v1 são **9 caminhos / 12
+  operações**; a BFF são **282 / 404** (contados dos JSON em `docs/reference/openapi/`,
+  com o módulo `json` — não com `grep`). `operator` 11/13, `integrations` 6/6. **SDK
+  publicado não existe**, e já foi uma afirmação falsa apanhada pela R85.
+- **`B-10`: o SCIM ignora a paginação.** `ListParams` só aceita `filter` (`scim.rs:344-352`)
+  e `list_users` devolve `"totalResults": recursos.len()` com `MAX_RESULTS = 200`
+  (`scim.rs:64,399-414`). Numa org de 500, o Entra lê 200 **e o campo confirma-lhe que são
+  200**: truncatura silenciosa, não erro. É a correcção mais barata de alto valor da fila.
+  `/Groups` não tem rota — e a descoberta declara honestamente só `User`, o que está certo.
+- **`A-09`: `broadcast` e `hybrid` são validados e persistidos** (`ROOM_FORMATS`,
+  `rooms.rs:123`) e **não são lidos para decidir nada** — só o `training` muda
+  comportamento (`rooms.rs:38`). Um valor aceite que não faz nada é uma capacidade mentida
+  à espera de alguém a pôr num comparativo.
+- **`A-02`: `iso_recording` é `DEFAULT TRUE`** e as rotas `…/tracks` e `…/tracks/{id}/content`
+  que o contrato nomeia **não existem**, nem a tabela `recording_tracks`.
+
+**Onde NÃO procures problema:** `rotas_sem_openapi = 0` é catraca; OAuth 2.1 com PKCE S256
+obrigatório; webhooks assinados com repetição; e o MCP filtra a `tools/list` pelo
+cruzamento escopo × capacidade **da pessoa** — «anunciar uma tool que vai responder 403 é
+vender o que não se tem» (`mcp.rs:334-355`). Isso é mais apertado do que a prática de
+mercado; não o afrouxes.

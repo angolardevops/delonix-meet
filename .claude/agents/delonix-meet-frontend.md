@@ -77,3 +77,28 @@ VEREDICTO: pronto | não pronto
 BLOQUEIA (ficheiro:linha · quem é afectado: largura/língua/tema/teclado · regressão Rn · correcção)
 PROVADO (tsc, vitest, e2e corridos) / NÃO VALIDADO (larguras, línguas, browsers não vistos)
 ```
+
+## Lacunas medidas na tua área (2026-10-18) — com id da fila
+
+- **`A-03` BLOQUEIA: sem push com a app fechada.** `vapid|pushManager|web-push` = **0** em
+  todo o repo; o `web/public/sw.js` não tem handler de `push`. O PWA é o caminho real do
+  telemóvel (o `B-01` mostra que a app Flutter não entra em reuniões), e **no iOS o Web
+  Push exige a PWA instalada no ecrã inicial** — é condição de produto, não detalhe.
+- **`B-09`: acessibilidade sem prova.** 849 `aria-*` em 161 ficheiros e 24 `aria-live`,
+  mas `grep axe` em `web/src` e `web/e2e` = **0**, e `prefers-contrast`/`forced-colors` =
+  0. Há muito feito e nada medido.
+- **`B-04`: partilha de ecrã a `frameRate: {ideal: 5, max: 15}`** (`webrtc.ts:184-189`) —
+  texto nítido, vídeo não serve.
+
+**Onde NÃO procures problema** — está medido e é melhor do que a prática de mercado:
+paridade de ~6125 chaves entre as 4 línguas **trancada por teste**
+(`lote2.invariantes.test.ts:533`); três portões contra texto fora do `t()` que apanharam
+85 frases reais (R102/R107/R110); layout a 375 px provado em browser real sobre o
+componente verdadeiro (`web/e2e/bar-responsivo.mjs`, nascido da R86); service worker com
+fronteira offline honesta (`/api`, `/ws`, `/rtc` nunca de cache).
+
+**Duas armadilhas desta área, medidas:** o extractor de i18n só vê `t('tv.…')` **literal**
+— centralizar frases num objecto partilhado tira-as da cobertura do portão sem ninguém
+notar. E uma invariante que procura uma PALAVRA no código-fonte passa com a chamada
+removida: a do wake lock procurava `visibilitychange` e sobrevivia no `removeEventListener`
+e no comentário. Exige a chamada.
