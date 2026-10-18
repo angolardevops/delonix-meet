@@ -11,7 +11,7 @@ A tabela completa com veredictos e evidência: [`docs/paridade-medida-2026-10-18
 
 | id | Lacuna | Estado do prompt |
 |---|---|---|
-| `A-01` | Um telefone entra numa sala cifrada de ponta a ponta | **em curso** numa sessão desta máquina (ramo `integra/dial-in-e2ee`) — não escrever prompt nem mexer |
+| `A-01` | [Um telefone entra numa sala cifrada de ponta a ponta](A-01-telefone-entra-em-sala-e2ee.md) | escrito — **uma sessão tentou a 2026-10-18 e terminou com ZERO commits**; a lacuna nunca foi tocada |
 | `A-02` | [Gravação ISO ligada por omissão e inexistente](A-02-gravacao-iso-ligada-e-inexistente.md) | escrito |
 | `A-03` | [Ninguém é avisado sem ter a aba aberta](A-03-push-com-a-app-fechada.md) | escrito |
 | `A-04` | [Quarenta pessoas por sala](A-04-quarenta-pessoas-por-sala.md) | escrito — **mede primeiro, decide depois** |
@@ -48,13 +48,13 @@ A tabela completa com veredictos e evidência: [`docs/paridade-medida-2026-10-18
 | `C-03` | Bordo de operadora (identidade, tectos de gasto, registo de entrada) | por escrever |
 | `C-04` | Salas de hardware / SIP de vídeo | por escrever — **o bloqueio não é o codec**, é não haver gateway de vídeo; ver o documento |
 
-## Porque é que onze estão por escrever
+## Porque é que 15 estão por escrever
 
-Não por esquecimento. Um prompt que ninguém corre neste mês apodrece como qualquer outro documento — as citações `ficheiro:linha` deslizam e a próxima sessão herda uma fotografia errada. Escreveram-se os **oito** que bloqueiam uma venda ou são afirmação falsa latente; os restantes escrevem-se com `/paridade novo <id>` no momento em que alguém os for fazer, com as linhas relidas nesse dia.
+Não por esquecimento. Um prompt que ninguém corre neste mês apodrece como qualquer outro documento — as citações `ficheiro:linha` deslizam e a próxima sessão herda uma fotografia errada. Escreveram-se os **9** que bloqueiam uma venda ou são afirmação falsa latente; os restantes **15** escrevem-se com `/paridade novo <id>` no momento em que alguém os for fazer, com as linhas relidas nesse dia.
 
 ## Ordem sugerida, se a pergunta for «por onde começo»
 
-1. `A-01` (em curso) e `A-02` — as duas afirmações falsas. Um produto que mente sobre si próprio não se vende duas vezes.
+1. `A-01` e `A-02` — a garantia de E2EE que não se cumpre, e a gravação ISO que se promete sozinha. Um produto que mente sobre si próprio não se vende duas vezes.
 2. `B-06` e `B-10` — baratas, medidas, de valor imediato: a entrada na sala deixa de arrastar numa demonstração, e o SCIM passa a aguentar um cliente a sério.
 3. `A-03` — o push. Sem ele, tudo o resto vale menos do que devia.
 4. `A-04` — **medir** onde a sala quebra. É a medição que decide se o produto compete fora do nicho do estúdio.
