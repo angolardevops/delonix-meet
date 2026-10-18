@@ -2215,3 +2215,83 @@
   background: var(--warning, var(--accent));
   color: #000;
 }
+
+/* ---- Emparelhar um telefone (o painel do QR e as duas listas) ----
+   Estas classes eram usadas pelo `pages/studio/tv/Emparelhar.tsx` e NÃO
+   existiam em nenhum CSS: o painel aparecia sem grelha, com o SVG do QR ao
+   tamanho natural e o código sem destaque. É o momento crítico do fluxo —
+   quem está ao telefone tem de ler o QR ou o código antes de expirarem — e
+   era o que estava sem estilo. Tudo com os tokens da consola, nas mesmas
+   dimensões densas do resto deste ficheiro. */
+.tv-emparelhar {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--panel, transparent);
+}
+/* O QR vem do gerador local como SVG sem dimensões: sem isto saía ao
+   tamanho natural e empurrava o resto do painel para fora do ecrã. */
+.tv-emparelhar__qr {
+  flex: none;
+  width: 104px;
+  height: 104px;
+  padding: 5px;
+  border-radius: var(--r-2);
+  /* Fundo claro fixo, e não um token: um QR escuro em tema escuro não se lê
+     — o leitor precisa do contraste do papel, não do da interface. */
+  background: #fff;
+  line-height: 0;
+}
+.tv-emparelhar__qr > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.tv-emparelhar__lado {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+/* O código é para ser DITADO ao telefone: grande, monoespaçado e espaçado,
+   que é o que faz distinguir um 0 de um O ao ler em voz alta. */
+.tv-emparelhar__codigo {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.1;
+  color: var(--text, inherit);
+  user-select: all;
+}
+.tv-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tv-lista > li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.tv-lista > li:last-child {
+  border-bottom: 0;
+}
+/* Ecrã estreito: o QR e o texto empilham. Sem isto, a 375 px o painel saía
+   da margem e o código ficava cortado — e é num telefone que isto se usa. */
+@media (max-width: 420px) {
+  .tv-emparelhar {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .tv-emparelhar__lado {
+    align-items: center;
+  }
+}

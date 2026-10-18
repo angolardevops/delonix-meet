@@ -58,11 +58,11 @@ describe('a contagem de fontes activas concorda em número', () => {
   it('nenhum dicionário volta a usar `_plural` — o sufixo v3 não resolve neste repositório', () => {
     for (const loc of ['pt', 'en', 'fr', 'zh']) {
       for (const f of ['tv', 'telemovel', 'studio', 'room']) {
-        let src = ''
+        let src: string
         try {
           src = readFileSync(join(__dirname, 'locales', loc, `${f}.ts`), 'utf8')
         } catch {
-          continue
+          continue // um dicionário que não exista nesta língua não é defeito
         }
         expect(src, `${loc}/${f}.ts usa o sufixo v3 _plural`).not.toMatch(/\w+_plural\s*:/)
       }

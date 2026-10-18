@@ -32,6 +32,7 @@ export default {
     falhou: "配对失败。",
     vaiAoAr: "这部手机的摄像头和麦克风将在演播室中直播，并可能被录制。",
     comecar: "开始推流",
+    demasiados: "请求过于频繁。请稍候再试。",
     aEntrar: "正在配对…",
   },
   virarParaTras: "切换到后置",

@@ -32,6 +32,7 @@ export default {
     falhou: "Não foi possível emparelhar.",
     vaiAoAr: "A câmara e o microfone deste telefone vão ao ar no estúdio, e podem ser gravados.",
     comecar: "Começar a transmitir",
+    demasiados: "Pedidos demasiado seguidos. Espera um instante e tenta outra vez.",
     aEntrar: "A emparelhar…",
   },
   virarParaTras: "Virar para trás",

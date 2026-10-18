@@ -32,6 +32,7 @@ export default {
     falhou: "Pairing failed.",
     vaiAoAr: "This phone’s camera and microphone will go live in the studio, and may be recorded.",
     comecar: "Start sending",
+    demasiados: "Too many attempts in a row. Wait a moment and try again.",
     aEntrar: "Pairing…",
   },
   virarParaTras: "Switch to back",

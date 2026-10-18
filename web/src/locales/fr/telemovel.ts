@@ -32,6 +32,7 @@ export default {
     falhou: "Échec de l'appairage.",
     vaiAoAr: "La caméra et le micro de ce téléphone passeront à l’antenne dans le studio, et peuvent être enregistrés.",
     comecar: "Commencer à diffuser",
+    demasiados: "Trop de tentatives d’affilée. Attendez un instant et réessayez.",
     aEntrar: "Appairage…",
   },
   virarParaTras: "Caméra arrière",

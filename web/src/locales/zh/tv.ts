@@ -293,6 +293,10 @@ export default {
     tentativas: "{{usadas}}/{{max}} 次尝试",
     semOrg: "此账户没有组织。",
     falhou: "无法连接服务器。",
+    numeroOcupado: "该机位号已被其他信号源占用。",
+    cheio: "导播台的摄像机位已满。",
+    semPermissao: "你没有管理此导播台摄像机的权限。",
+    nomeInvalido: "该导播台名称无效。",
     nomeEstudio: "导播台",
   },
   fontes: {

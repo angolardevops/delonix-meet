@@ -298,6 +298,10 @@ export default {
     tentativas: "{{usadas}}/{{max}} tentativas",
     semOrg: "Sem organização nesta conta.",
     falhou: "Não foi possível falar com o servidor.",
+    numeroOcupado: "Esse número de câmara já está ocupado por outra fonte.",
+    cheio: "O estúdio já tem todas as câmaras ocupadas.",
+    semPermissao: "Não tens permissão para gerir as câmaras deste estúdio.",
+    nomeInvalido: "O nome do estúdio não serve.",
     nomeEstudio: "Estúdio",
   },
   fontes: {

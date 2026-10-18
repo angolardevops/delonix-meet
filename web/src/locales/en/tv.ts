@@ -293,6 +293,10 @@ export default {
     tentativas: "{{usadas}}/{{max}} attempts",
     semOrg: "No organisation on this account.",
     falhou: "Could not reach the server.",
+    numeroOcupado: "That camera number is already taken by another source.",
+    cheio: "The studio already has every camera slot taken.",
+    semPermissao: "You do not have permission to manage this studio's cameras.",
+    nomeInvalido: "That studio name is not valid.",
     nomeEstudio: "Studio",
   },
   fontes: {
