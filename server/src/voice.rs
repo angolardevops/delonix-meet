@@ -1205,16 +1205,38 @@ async fn room_bridge_for(
         );
         return None;
     }
-    let existe: Option<Uuid> = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
+    // O `e2ee` vem na MESMA consulta que confirma a sala, de propósito: duas
+    // consultas eram duas oportunidades de alguém acrescentar uma e esquecer a
+    // outra — que é exactamente como este buraco nasceu.
+    let sala: Option<(Uuid, bool)> = sqlx::query_as("SELECT id, e2ee FROM rooms WHERE code = $1")
         .bind(room_code)
         .fetch_optional(&state.db)
         .await
         .ok()
         .flatten();
-    if existe.is_none() {
+    let Some((_, e2ee)) = sala else {
         tracing::warn!(
             room_code,
             "ponte telefone↔sala: sala WebRTC ainda não existe para este room_code"
+        );
+        return None;
+    };
+    // UMA SALA CIFRADA DE PONTA A PONTA NÃO ACEITA UM TELEFONE, e o produto já
+    // o dizia nos outros dois caminhos: o dial-OUT recusa com razão escrita
+    // (`dial_outs.rs`, `dial_out.room_e2ee`) e a auto-gravação recusa
+    // (`recorder.rs`, `auto_record AND NOT r.e2ee`). Só a ENTRADA não chegava a
+    // olhar — e a ponte publica no SFU EM CLARO (`PubSource::Bridge`), logo os
+    // browsers decifravam ruído e a mistura da sala saía pela rede da
+    // operadora, fora da garantia que o ecrã promete. Pré-condição do cenário:
+    // só o DID e o PIN, nenhuma credencial de conta.
+    //
+    // `None` é o recuo que esta função já usa três vezes: o IVR cai na
+    // conferência local. Não se inventa aqui uma mensagem falada própria — quem
+    // liga OUVE WAV do FreeSWITCH, não lê i18n.
+    if e2ee {
+        tracing::warn!(
+            room_code,
+            "ponte telefone↔sala RECUSADA: a sala é cifrada de ponta a ponta e a ponte não decifra; dial-in cai na conferência local"
         );
         return None;
     }
@@ -1416,6 +1438,11 @@ static BRIDGE_LOCAL_IP: std::sync::OnceLock<std::net::IpAddr> = std::sync::OnceL
 /// aqui repete-se porque o `INVITE` chega bem depois, e a sala pode ter
 /// desaparecido entretanto. Sem sala, `None`: o UA responde `404` e o
 /// FreeSWITCH cai na conferência local (o IVR já sabe fazê-lo).
+///
+/// **E recusa uma sala cifrada de ponta a ponta, pela mesma porta.** Não é
+/// redundância do `room_bridge_for`: é o que apanha um `INVITE` que NUNCA
+/// passou pelo IVR — a allowlist de origens diz de onde um INVITE pode vir, não
+/// para que sala. Aqui a resposta é `404`, que é o que o UA já sabe dar.
 struct DialInAdmission {
     db: sqlx::PgPool,
 }
@@ -1427,12 +1454,20 @@ impl crate::phone_bridge::sip::BridgeAdmission for DialInAdmission {
         room_code: &str,
         _call_id: Option<Uuid>,
     ) -> Option<crate::phone_bridge::sip::Admitted> {
-        let room_id: Uuid = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
-            .bind(room_code)
-            .fetch_optional(&self.db)
-            .await
-            .ok()
-            .flatten()?;
+        let (room_id, e2ee): (Uuid, bool) =
+            sqlx::query_as("SELECT id, e2ee FROM rooms WHERE code = $1")
+                .bind(room_code)
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten()?;
+        if e2ee {
+            tracing::warn!(
+                room_code,
+                "INVITE para sala cifrada de ponta a ponta RECUSADO: a ponte não decifra"
+            );
+            return None;
+        }
         Some(crate::phone_bridge::sip::Admitted {
             room_id,
             leg_id: Uuid::new_v4(),
