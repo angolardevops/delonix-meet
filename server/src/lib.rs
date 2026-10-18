@@ -1554,6 +1554,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // ---- Tempo real (WebSocket) ----
         .route("/ws", get(signaling::ws_handler))
+        // No MESMO prefixo que o socket, para cair no mesmo pod pela afinidade
+        // por `$arg_room`: diz PORQUÊ o /ws recusaria, que o handshake não
+        // consegue entregar ao browser. Ver `ws_admission_handler`.
+        .route("/ws/admission", get(signaling::ws_admission_handler))
         // Directo: o browser empurra a emissão já composta e codificada, e o
         // servidor remultiplexa para RTMP (ADR-0003). Autenticada pelo token de
         // sala na query, como o /ws — um WebSocket não leva cabeçalhos nossos.

@@ -300,6 +300,16 @@ export default {
     removidoTexto: 'O anfitrião retirou-te desta reunião.',
     voltar: 'Voltar ao início',
   },
+  /**
+   * A admissão recusou (ADR-0017). Não é «a tua ligação está má»: o servidor
+   * recusou de propósito, e dizer «verifica a rede» mandava a pessoa depurar
+   * o que estava bom.
+   */
+  admissao: {
+    organizacaoNoTecto: 'A tua organização já tem todas as pessoas que pode ter em reunião ao mesmo tempo. Quando alguém sair, podes entrar.',
+    servidorCheio: 'Este servidor está cheio neste momento. Tenta daqui a pouco.',
+    parteJusta: 'O servidor está ocupado e a tua organização já usa a parte que lhe cabe. Tenta daqui a pouco.',
+  },
   estado: {
     aLigar: 'A ligar…',
     permissaoBloqueada: 'O browser bloqueou a câmara e o microfone. Autoriza-os no cadeado da barra de endereço.',

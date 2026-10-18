@@ -286,3 +286,56 @@ async fn without_any_variable_the_node_still_declares_a_ceiling(db: sqlx::PgPool
         "sem capacidade o `load` era null — o operador não via ocupação nenhuma: {v}"
     );
 }
+
+/// A recusa tem de chegar a quem a sofre. Um `/ws` recusado no HANDSHAKE não
+/// entrega ao browser o estado HTTP nem o corpo — chega um `onclose` com
+/// `code: 1006`, igual a uma falha de rede, e a pessoa via «Ligação instável.
+/// Verifica a rede» com a rede dela perfeita.
+///
+/// A sondagem `/ws/admission` corre a MESMA `admitir()` e devolve a razão com
+/// `code` estável. Vive no prefixo `/ws` porque é o único com afinidade por
+/// `$arg_room` (ADR-0001): em `/api` responderia um pod ao acaso, com a
+/// contagem de outro nó.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_refusal_says_why_through_the_admission_probe(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(
+        db,
+        &[("NODE_PEER_CAPACITY", "5"), ("ORG_MAX_PARTICIPANTS", "4")],
+    )
+    .await;
+    let dona = app.new_org("alfa.test").await;
+    let sala = app.new_room(&dona, "A").await;
+    let code = sala["code"].as_str().unwrap().to_string();
+    let tok = room_token(&app, &code, &dona).await;
+
+    // Com lugar, a sondagem diz «entrarias»: 204 e nada a explicar.
+    let (st, _) = app
+        .get(&format!("/ws/admission?token={tok}&room={code}"), None)
+        .await;
+    assert_eq!(st, 204, "com lugar livre a sondagem não inventa recusa");
+
+    let _ocupados = fill(&app, &tok, 4).await;
+
+    // O socket recusa — e o browser não saberia porquê.
+    assert_eq!(connect(&app, &tok).await.err(), Some(429));
+
+    // A sondagem diz porquê, com código estável e frase legível.
+    let (st, corpo) = app
+        .get(&format!("/ws/admission?token={tok}&room={code}"), None)
+        .await;
+    assert_eq!(st, 429, "{corpo}");
+    assert_eq!(
+        corpo["code"], "admission.org_at_capacity",
+        "sem código próprio isto era `rate_limited` — indistinguível de «pediste depressa de mais»: {corpo}"
+    );
+    assert!(
+        corpo["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("organização"),
+        "a frase tem de explicar-se a quem a lê: {corpo}"
+    );
+    // A recusa não expõe o vizinho (ADR-0017): não diz quanto ocupam os outros.
+    let frase = corpo["error"].as_str().unwrap_or("");
+    assert!(!frase.contains('%') && !frase.contains(" de 5"), "{frase}");
+}

@@ -300,6 +300,16 @@ export default {
     removidoTexto: 'The host removed you from this meeting.',
     voltar: 'Back to home',
   },
+  /**
+   * Admission refused (ADR-0017). Not "your connection is bad": the server
+   * refused on purpose, and saying "check your network" sent people to debug
+   * something that was working.
+   */
+  admissao: {
+    organizacaoNoTecto: 'Your organisation already has as many people in meetings as it can at once. When someone leaves, you can join.',
+    servidorCheio: 'This server is full right now. Try again shortly.',
+    parteJusta: 'The server is busy and your organisation is already using its share. Try again shortly.',
+  },
   estado: {
     aLigar: 'Connecting…',
     permissaoBloqueada: 'The browser blocked the camera and microphone. Allow them from the padlock in the address bar.',
