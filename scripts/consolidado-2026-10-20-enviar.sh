@@ -48,17 +48,24 @@ enviar() {
   git push "$REMOTO" develop:develop
 }
 
-# Devolve 0 só se TODOS os ramos (e a develop) existirem no remoto.
+# Devolve 0 só se, para TODOS os ramos (e a develop), o SHA do remoto for
+# IGUAL ao local. Existir não chega: a develop já existe no remoto e estava 25
+# commits atrás — dá-la por confirmada só porque tem SHA era falhar ABERTO.
 confirmar() {
   local falta=0
   for b in "${VIVOS[@]}" develop; do
-    local sha
-    sha=$(git ls-remote --heads "$REMOTO" "$b" | cut -f1)
-    if [ -z "$sha" ]; then
+    local local_sha remoto_sha
+    local_sha=$(git rev-parse "$b")
+    remoto_sha=$(git ls-remote --heads "$REMOTO" "$b" | cut -f1)
+    if [ -z "$remoto_sha" ]; then
       printf '%-42s AUSENTE\n' "$b"
       falta=1
+    elif [ "$remoto_sha" != "$local_sha" ]; then
+      printf '%-42s DESACERTADO (remoto %s, local %s)\n' \
+        "$b" "${remoto_sha:0:9}" "${local_sha:0:9}"
+      falta=1
     else
-      printf '%-42s %s\n' "$b" "${sha:0:9}"
+      printf '%-42s %s ok\n' "$b" "${local_sha:0:9}"
     fi
   done
   return "$falta"
