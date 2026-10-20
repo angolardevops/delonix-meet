@@ -4355,6 +4355,18 @@ pub async fn ws_admission_handler(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
+/// O spec deste módulo. O `#[utoipa::path]` do `ws_admission_handler` existia
+/// desde que a rota nasceu, mas sem um `ApiDoc` registado no
+/// `openapi::parts()` o gerador nunca o lia: a rota contava como MONTADA e NÃO
+/// documentada, e a catraca do contrato subia de 0 para 1.
+///
+/// Só o `/ws/admission` entra. O `/ws` e o `/rtc` ficam de fora de propósito —
+/// são upgrades de WebSocket, sem contrato REST, e o `check-openapi.sh`
+/// exclui-os pelo caminho. Este é um GET de HTTP normal, com 204/401/429/503.
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(ws_admission_handler))]
+pub struct ApiDoc;
+
 pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
     Query(query): Query<WsQuery>,
