@@ -35,12 +35,28 @@ function Miniatura({ layout }: { layout: LayoutDoPalco }) {
           <span />
         </>
       )}
+      {layout === 'moldura' && (
+        <>
+          <span className="st-lay__faixa" />
+          <span className="st-lay__col">
+            <span />
+            <span />
+          </span>
+          <span />
+        </>
+      )}
     </span>
   )
 }
 
 /** Chaves de tradução sem hífen (o portão de paridade das línguas lê só identificadores). */
-const CHAVE: Record<LayoutDoPalco, string> = { solo: 'solo', 'lado-a-lado': 'ladoALado', destaque: 'destaque', grelha: 'grelha' }
+const CHAVE: Record<LayoutDoPalco, string> = {
+  solo: 'solo',
+  'lado-a-lado': 'ladoALado',
+  destaque: 'destaque',
+  grelha: 'grelha',
+  moldura: 'moldura',
+}
 
 export default function LayoutsPanel({
   layout,

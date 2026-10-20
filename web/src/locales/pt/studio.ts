@@ -229,6 +229,7 @@ export default {
     ladoALado: 'Lado a lado',
     destaque: 'Destaque e coluna',
     grelha: 'Grelha',
+    moldura: 'Cena de marca',
     conteudo: 'No palco',
     conteudos: {
       fontes: 'Fontes',

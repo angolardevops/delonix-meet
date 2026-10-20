@@ -229,6 +229,7 @@ export default {
     ladoALado: '并排',
     destaque: '主画面加侧栏',
     grelha: '宫格',
+    moldura: '品牌场景',
     conteudo: '画布内容',
     conteudos: {
       fontes: '源',

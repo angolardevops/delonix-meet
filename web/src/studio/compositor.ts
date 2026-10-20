@@ -27,6 +27,12 @@ import {
   SOBREPOSICOES_INICIAIS,
   type Sobreposicoes,
 } from './palco'
+import { COR_DA_MARCA, COR_DO_FUNDO, desenharMarcaDaMoldura } from '../cena/desenhoDaMoldura'
+// De `cena/`, e NÃO do `room/compositor.ts` que o re-exporta: a cena é folha e
+// importá-la não fecha ciclo, ao contrário de ir buscá-lo à Sala — que já
+// importa deste lado (`room/useMulticam.ts` traz o `directo`).
+import { ordenarPorFoco } from '../cena/foco'
+import { rectsDaMoldura } from '../cena/moldura'
 import { desenharCartaoDeMarca, desenharSobreposicoes, type MarcaDoPalco, type SondagemNoPalco } from './desenho'
 import { desenharQuadroDaMesa, type FontesParaDesenho } from './tv/desenhoDaMesa'
 import type { QuadroDaMesa } from './tv/mesa'
@@ -243,10 +249,24 @@ export class CompositorDeAula {
   layout: LayoutDoPalco = 'solo'
   conteudo: ConteudoDoPalco = 'fontes'
   /**
-   * Em `layout: 'solo'`, qual convidado vai para o ecrã inteiro — o «corte»
-   * da mesa de corte. `null`, ou um id que já não está no palco, cai para o
-   * mais antigo ainda montado (o comportamento de sempre, antes de existir
-   * escolha do operador).
+   * O «corte» da mesa de corte: qual convidado o operador pôs no programa.
+   *
+   * Em `layout: 'solo'` vai para o ecrã inteiro. Nos layouts com vários lugares
+   * — e a `moldura` é o caso que importa — vai para o primeiro lugar DOS
+   * CONVIDADOS, que não é necessariamente o topo da coluna; ver o
+   * `pecasDoPalco`, onde está medido o que o antecede. Em resumo, e tudo
+   * verificado em Chromium: com ecrã partilhado e sem avatar, o programa é o
+   * topo da coluna; com o avatar ligado (que é o `AVATAR_INICIAL.visivel`, o
+   * default do produto) o topo é a TUA câmara e o programa fica no 2.º painel,
+   * sobrando dois para os outros; e sem conteúdo nenhum o programa é o próprio
+   * herói. A `grelha` é a excepção e não o lê — não tem lugar privilegiado.
+   *
+   * Até aqui só o `solo` o lia, e a coluna enchia-se pela ordem de inserção do
+   * `Map`: o operador via o aviso de quantas câmaras ficaram de fora e não
+   * tinha como mudar quais.
+   *
+   * `null`, ou um id que já não está no palco, cai para a ordem de sempre (o
+   * mais antigo ainda montado) — não para um lugar vazio.
    */
   programaId: string | null = null
   sobreposicoes: Sobreposicoes = { ...SOBREPOSICOES_INICIAIS }
@@ -567,6 +587,44 @@ export class CompositorDeAula {
         if (alvo) this.desenharConvidado(alvo, todo)
       }
       if (this.avatar.visivel && this.temCamara) this.desenharAvatar(W, H)
+    } else if (this.layout === 'moldura') {
+      // A cena de marca. O fundo é PRETO, não o `#0d1117` da app: a moldura é
+      // imagem que vai para o ar, e o preto é o que a faz ler como um cenário
+      // de televisão em vez de um painel de software.
+      this.ctx.fillStyle = COR_DO_FUNDO
+      this.ctx.fillRect(0, 0, W, H)
+      const pecas = this.pecasDoPalco()
+      // A geometria calcula-se UMA VEZ e serve as fontes e a marca. A primeira
+      // versão chamava o `rectsDaMoldura` duas vezes — uma dentro do
+      // `rectsDoLayout` e outra para a marca — e isso só funcionava enquanto as
+      // duas recebessem exactamente as mesmas opções. Um invariante não escrito
+      // entre dois ficheiros: bastava passar `logo: false` a um deles para a
+      // marca ficar desalinhada das fontes.
+      const marca = {
+        logo: this.marca.logo,
+        // O texto da faixa é o do ticker que o operador já escreve nas
+        // sobreposições — não se inventa campo novo para o que já tem sítio.
+        // Mas RESPEITA O INTERRUPTOR: com o ticker desligado, o que vai para a
+        // faixa é o nome da marca, não um URL que o operador decidiu esconder.
+        faixa: (this.sobreposicoes.ticker && this.sobreposicoes.url) || this.marca.nome,
+        assinatura: this.marca.nome,
+        cor: COR_DA_MARCA,
+      }
+      const r = rectsDaMoldura(Math.max(0, pecas.length - 1), W, H, {
+        logo: !!marca.logo,
+        assinatura: !!marca.assinatura.trim(),
+      })
+      // As fontes vão para os lugares que a cena calculou, desenhadas pelos
+      // métodos DESTE compositor — é o que preserva o recorte do ecrã, o
+      // espelho da câmara e o alfa do avatar, que a cena não conhece.
+      //
+      // As peças que não têm lugar NÃO são desenhadas — o `?.` é que as deixa
+      // cair, e é por isso que o `r.omitidas` conta exactamente quantas são. O
+      // aviso delas não se desenha aqui: sai do `desenharMarcaDaMoldura`, que
+      // já recebe o `r` inteiro, e assim é o MESMO aviso que a Sala mostra.
+      const lugares = [r.heroi, ...r.camaras]
+      lugares.forEach((lugar, i) => pecas[i]?.(lugar))
+      desenharMarcaDaMoldura(this.ctx, r, marca, Date.now(), W, H)
     } else {
       this.desenharMosaico(W, H)
     }
@@ -582,19 +640,79 @@ export class CompositorDeAula {
     this.custoDoFrameMs = performance.now() - t0
   }
 
-  /** As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados. */
-  private desenharMosaico(W: number, H: number): void {
+  /**
+   * As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados.
+   *
+   * Sai do `desenharMosaico` para que a moldura possa usar a MESMA lista sem
+   * depender da geometria do mosaico — o que ela precisa é dos desenhadores,
+   * não dos rects.
+   *
+   * OS CONVIDADOS VÊM ORDENADOS PELO `programaId`, e não pela ordem de inserção
+   * do `Map`. Era essa a ordem até aqui, e fazia da escolha do operador uma
+   * decoração: com ecrã e seis convidados, a coluna da moldura anunciava `+3` no
+   * ar e nenhum controlo do Estúdio mudava QUAIS três — quem entrou primeiro na
+   * sala ficava no ar, e o botão «Tornar programa» só tinha efeito no layout
+   * `solo`. O `ordenarPorFoco` é o mesmo que a Sala usa para as suas fichas de
+   * foco; mora em `cena/foco.ts` por causa disso.
+   *
+   * SÓ OS CONVIDADOS SE REORDENAM — o conteúdo (ecrã ou quadro) e a tua câmara
+   * mantêm a cabeça da lista. QUANDO HÁ CONTEÚDO, é isso que põe o ecrã
+   * partilhado no rectângulo grande e faz o `programaId` escolher a coluna; mas
+   * a invariante não é «o programa nunca é herói», e eu escrevi-a assim e estava
+   * errado. MEDIDO em Chromium: numa `moldura` SEM ecrã nem quadro (o
+   * `conteudo: 'fontes'` é o estado inicial — uma mesa-redonda é o uso normal
+   * desta cena), não existe peça que segure a cabeça da lista, o `pecas[0]` vai
+   * para o `r.heroi`, e o programa É o herói: com `programaId = g5` saiu
+   * `heroi = violeta, coluna = azul|magenta|ciano`. É coerente — o programa
+   * reclama o lugar mais importante que houver — mas não é o que a frase antiga
+   * prometia.
+   *
+   * NA `grelha` NÃO SE REORDENA, e a razão é medida. A grelha não tem lugar
+   * privilegiado: abaixo do tecto de nove ninguém entra nem sai do ar, logo
+   * reordenar não dá ao operador escolha nenhuma — só embaralha o mosaico
+   * inteiro ao vivo, a meio de uma gravação, porque alguém carregou em «Tornar
+   * programa». A Sala já tinha tomado esta decisão e eu divergi dela sem
+   * reparar: o `participantesVisiveis` do `room/compositor.ts` faz
+   * `if (cena === 'grelha') return todos` e salta a ordenação pelo mesmo motivo.
+   * Isto é UMA regra — «o programa reclama um lugar privilegiado» — e não duas;
+   * a grelha fica de fora por não ter nenhum para reclamar.
+   *
+   * FICA UM BURACO CONHECIDO, e é da grelha: acima de nove fontes o
+   * `MAXIMO_POR_LAYOUT` corta, e aí a escolha do operador passaria a mudar quem
+   * vai ao ar. Não se trata aqui porque o `rectsDoLayout` devolve só
+   * rectângulos e nem conta o que cortou — é o defeito que atinge os cinco
+   * layouts, e o sítio de o fechar é lá, não com um caso especial neste método.
+   */
+  private pecasDoPalco(): ((r: { x: number; y: number; w: number; h: number }) => void)[] {
     const pecas: ((r: { x: number; y: number; w: number; h: number }) => void)[] = []
     if (this.conteudo === 'quadro') pecas.push((r) => this.desenharConteudo(this.quadro, r, 'contain'))
     else if (this.temEcra) pecas.push((r) => this.desenharEcraEm(r))
     if (this.avatar.visivel && this.temCamara) pecas.push((r) => this.desenharCamaraEm(r))
-    for (const c of this.convidados.values()) pecas.push((r) => this.desenharConvidado(c, r))
+    // O id é a CHAVE do mapa, não um campo do `ConvidadoNoPalco` — daí as
+    // `entries()`. Um `programaId` de quem já saiu do palco é ignorado pelo
+    // `ordenarPorFoco` (não encontra ninguém), e é por isso que não se poda
+    // aqui: o dono do `programaId` é o React, e podar estado partilhado do lado
+    // que não o possui já fez as duas cópias divergirem sem caminho de volta.
+    const escolha = this.programaId && this.layout !== 'grelha' ? [this.programaId] : []
+    for (const [, c] of ordenarPorFoco([...this.convidados.entries()], escolha, ([id]) => id)) {
+      pecas.push((r) => this.desenharConvidado(c, r))
+    }
+    return pecas
+  }
+
+  /** As fontes nos lugares do layout em vigor. */
+  private desenharMosaico(W: number, H: number): { x: number; y: number; w: number; h: number }[] {
+    const pecas = this.pecasDoPalco()
     const rects = rectsDoLayout(this.layout, pecas.length, W, H)
-    const pad = rects.length > 1 ? Math.round(H * 0.004) : 0
+    // A moldura NÃO leva o `pad`: a sua geometria já traz a margem e o vão
+    // entre a coluna e o herói, e descontar outra vez punha as peças mais
+    // pequenas do que a marca desenhada à volta delas espera.
+    const pad = this.layout !== 'moldura' && rects.length > 1 ? Math.round(H * 0.004) : 0
     rects.forEach((r, i) => {
       const dentro = { x: r.x + pad, y: r.y + pad, w: r.w - pad * 2, h: r.h - pad * 2 }
       pecas[i](dentro)
     })
+    return rects
   }
 
   private desenharEcraEm(r: { x: number; y: number; w: number; h: number }): void {

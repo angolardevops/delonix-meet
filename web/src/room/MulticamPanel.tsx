@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { participanteLocal } from '../convidado'
-import type { Cena } from './compositor'
+import { LUGARES_DA_CENA, type Cena } from './compositor'
 import { Icon } from '../ui/icons'
 import { Alert, Button, Field, IconButton, Segmented, StatusBadge, TextInput, cx } from '../ui/kit'
 import { Since } from './Clocks'
@@ -47,11 +47,22 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
             { value: 'grelha', label: t('room.multicam.cenaGrelha') },
             { value: 'solo', label: t('room.multicam.cenaSolo') },
             { value: 'lado-a-lado', label: t('room.multicam.cenaLadoALado') },
+            { value: 'moldura', label: t('room.multicam.cenaMoldura') },
           ]}
         />
+        {/* A moldura escolhe o HERÓI sozinha (o ecrã partilhado, se houver),
+            mas a COLUNA tem tecto: acima de três câmaras alguém fica de fora, e
+            quem fica é decisão do anfitrião. Esconder as fichas aqui era
+            escondê-la — e a cena anuncia no canto quantas sobraram. */}
         {m.cena !== 'grelha' && (
           <>
-            <span className="dx-muted">{m.cena === 'solo' ? t('room.multicam.escolherUm') : t('room.multicam.escolherDois')}</span>
+            <span className="dx-muted">
+              {m.cena === 'solo'
+                ? t('room.multicam.escolherUm')
+                : m.cena === 'moldura'
+                  ? t('room.multicam.escolherColuna', { n: LUGARES_DA_CENA.moldura })
+                  : t('room.multicam.escolherDois')}
+            </span>
             <div className="dx-chips">
               {pessoas.map((p) => (
                 <button key={p.id} type="button" className="dx-chip" aria-pressed={m.focoIds.includes(p.id)} onClick={() => m.toggleFoco(p.id)}>
