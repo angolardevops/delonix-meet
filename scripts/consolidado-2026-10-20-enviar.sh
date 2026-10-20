@@ -41,6 +41,14 @@ cd "$RAIZ"
 
 enviar() {
   for b in "${VIVOS[@]}"; do
+    # Um ramo que já não existe localmente foi enviado e limpo numa passagem
+    # anterior — o `limpar` só o apaga depois de o confirmar no remoto. Saltar
+    # é correcto; rebentar aqui deixava a develop por enviar, que é o que
+    # importa.
+    if ! git rev-parse --verify --quiet "refs/heads/$b" >/dev/null; then
+      echo "=== $b (já limpo localmente — nada a enviar)"
+      continue
+    fi
     echo "=== $b"
     git push "$REMOTO" "$b:$b"
   done
@@ -55,8 +63,18 @@ confirmar() {
   local falta=0
   for b in "${VIVOS[@]}" develop; do
     local local_sha remoto_sha
-    local_sha=$(git rev-parse "$b")
     remoto_sha=$(git ls-remote --heads "$REMOTO" "$b" | cut -f1)
+    if ! local_sha=$(git rev-parse --verify --quiet "refs/heads/$b"); then
+      # Sem ramo local: ou já foi limpo (e então TEM de estar no remoto), ou
+      # nunca existiu. A primeira é sucesso, a segunda é falha.
+      if [ -n "$remoto_sha" ]; then
+        printf '%-42s %s só no remoto (já limpo)\n' "$b" "${remoto_sha:0:9}"
+      else
+        printf '%-42s DESAPARECIDO (nem local nem remoto)\n' "$b"
+        falta=1
+      fi
+      continue
+    fi
     if [ -z "$remoto_sha" ]; then
       printf '%-42s AUSENTE\n' "$b"
       falta=1
