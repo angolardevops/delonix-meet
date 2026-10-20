@@ -3,8 +3,9 @@
  * medidores de nível de voz e gravação composta da reunião.
  */
 import { accessTokenValue } from './api'
-import { asrDoServidorPreferido, motorDaTranscricao } from './legendasPref'
+import { asrDoServidorPreferido, motorDaTranscricao, webSpeechAceita, type MotorDeTranscricao } from './legendasPref'
 import { buildVoiceChain, loadVoiceChain, type VoiceChain } from './voiceChain'
+import { modeloInstalado, modeloInstaladoConhecido } from './whisperModelo'
 
 export interface DeviceSets {
   mics: MediaDeviceInfo[]
@@ -662,6 +663,18 @@ function cleanWhisper(raw: string): string {
 }
 
 class WhisperEngine {
+  /**
+   * O `stop()` já foi chamado.
+   *
+   * PORQUE EXISTE: o `start()` passou a ESPERAR pela medição do modelo antes
+   * de abrir o worker, e nessa janela não possui nada — um `stop()` que caia
+   * aqui não tem o que parar e perde-se. Sem esta marca, quem desligasse as
+   * legendas (ou saísse da sala) durante a sonda ficava com um worker, um
+   * `AudioContext` e possivelmente o MICROFONE abertos para o resto da
+   * página, e cada bloco transcrito continuava a ser difundido à sala depois
+   * de as legendas estarem desligadas.
+   */
+  private parado = false
   private worker: Worker | null = null
   private ctx: AudioContext | null = null
   private proc: ScriptProcessorNode | null = null
@@ -675,8 +688,28 @@ class WhisperEngine {
   onFinal: ((text: string) => void) | null = null
   onInterim: ((text: string) => void) | null = null
 
-  async start(lang: string, stream?: MediaStream | null): Promise<boolean> {
+  /**
+   * `'ok'`, ou a RAZÃO de não ter arrancado.
+   *
+   * Devolvia um `boolean`, e quem chamava tinha de adivinhar a razão para
+   * escolher a mensagem — a primeira versão disto perguntava à medição do
+   * modelo (`modeloInstaladoConhecido()`), o que deixou de funcionar no
+   * momento em que uma medição falhada passou a não ficar em cache: a pessoa
+   * com o modelo em falta recebia «sem acesso ao microfone». Quem sabe a razão
+   * é quem falhou.
+   */
+  async start(lang: string, stream?: MediaStream | null): Promise<'ok' | 'sem-modelo' | 'sem-microfone'> {
     this.lang = lang.split('-')[0] // 'pt-PT' -> 'pt'
+    // O MODELO PRIMEIRO, antes do worker e antes de pedir o microfone. Sem
+    // isto, uma instalação que não correu o `deploy/fetch-whisper.sh` abria o
+    // worker, o `pipeline()` não encontrava o modelo, o erro morria num
+    // `console.warn` LÁ DENTRO, e quem estava na reunião ficava com «(a
+    // carregar modelo de voz local…)» para sempre: sem legenda, sem erro e sem
+    // saber porquê. Devolver `false` aqui é o que permite ao `Transcriber`
+    // dizer que não há motor em vez de ficar a fingir que arranca.
+    if (!(await modeloInstalado())) return 'sem-modelo'
+    // Esperámos: quem desligou entretanto manda.
+    if (this.parado) return 'ok'
     this.worker = new Worker(new URL('./whisperWorker.ts', import.meta.url), { type: 'module' })
     this.worker.onmessage = (e) => {
       const m = e.data as { op: string; text?: string; message?: string }
@@ -695,7 +728,14 @@ class WhisperEngine {
       this.ownStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null)
       audio = this.ownStream ?? undefined
     }
-    if (!audio) return false
+    if (!audio) return 'sem-microfone'
+    // Segunda espera, mesma armadilha: um `stop()` durante a permissão do
+    // microfone deixava o grafo de áudio montado a seguir.
+    if (this.parado) {
+      this.ownStream?.getTracks().forEach((t) => t.stop())
+      this.ownStream = null
+      return 'ok'
+    }
 
     // 16 kHz mono para o Whisper; blocos fecham por silêncio (~0,7 s) ou 8 s.
     this.ctx = new AudioContext({ sampleRate: 16000 })
@@ -724,7 +764,7 @@ class WhisperEngine {
     }
     this.source.connect(this.proc)
     this.proc.connect(this.ctx.destination)
-    return true
+    return 'ok'
   }
 
   private flush() {
@@ -750,6 +790,7 @@ class WhisperEngine {
   }
 
   stop() {
+    this.parado = true
     this.flush()
     this.proc?.disconnect()
     this.source?.disconnect()
@@ -868,9 +909,16 @@ export class ServerWhisperEngine {
 }
 
 /**
- * Transcrição contínua do áudio local. Usa a Web Speech API quando existe
- * (Chrome/Edge — melhor latência) e cai para Whisper WASM local nos outros
- * browsers (Firefox/Safari). `onFinal` recebe cada frase confirmada.
+ * Transcrição contínua do áudio local. A ordem dos motores é a do
+ * `legendasPref.motorDaTranscricao` — servidor soberano, depois o WASM local —
+ * e a Web Speech do Chrome só entra com os três sins (browser, organização,
+ * pessoa). `onFinal` recebe cada frase confirmada.
+ *
+ * MUDOU A 2026-10-18: até aqui, uma falha do ASR do servidor em Chrome recuava
+ * para a Web Speech, isto é, começava a mandar o áudio à Google a meio de uma
+ * reunião que começara soberana — e a mensagem que o utilizador via dizia «a
+ * usar o motor local». Agora o recuo de uma falha é sempre outro motor que não
+ * envia áudio para fora, e quando não há nenhum isso DIZ-SE.
  */
 export class Transcriber {
   private rec: SpeechRecognitionLike | null = null
@@ -891,18 +939,61 @@ export class Transcriber {
    * o código recursava.
    */
   private asrDoServidorEmBaixo = false
+  /**
+   * A organização permite a Web Speech (`organizations.allow_web_speech`, que
+   * chega por `caption-policy` no WebSocket da sala). `undefined` = o servidor
+   * ainda não falou.
+   *
+   * NÃO é a guarda principal — a aceitação da pessoa é. É a guarda que NÃO
+   * vive no `localStorage`: a preferência do cliente pode ser alterada por
+   * quem usa o browser ou por uma extensão, e esta não.
+   */
+  private webSpeechPermitida?: boolean
+  /**
+   * O motor que está REALMENTE a correr, não o que a preferência pediu. Vai
+   * com cada frase para o servidor (`engine`), que é como uma organização que
+   * proíbe a Web Speech pode recusar a frase em vez de confiar no cliente.
+   *
+   * Limite honesto, e está escrito no servidor também: um cliente hostil pode
+   * mentir aqui. Isto não impede a fuga — impede que o produto a faça sozinho,
+   * e dá à organização a recusa do caminho honesto.
+   */
+  private motor: MotorDeTranscricao | null = null
   onFinal: ((text: string) => void) | null = null
   onInterim: ((text: string) => void) | null = null
-  /** Erro legível (permissão negada, sem microfone, etc.). */
+  /** Erro legível (permissão negada, sem microfone, sem motor). */
   onError: ((message: string) => void) | null = null
 
   /**
+   * A política da organização, vinda do servidor. Chamável a qualquer momento:
+   * se já houver um reconhecedor da Google a correr e a política o proibir,
+   * pára-o AQUI e passa ao motor soberano — é o caminho que torna a recusa do
+   * servidor efectiva no meio de uma reunião, e não só à entrada.
+   */
+  politicaDaOrganizacao(permitida: boolean) {
+    this.webSpeechPermitida = permitida
+    if (permitida || !this.rec || !this.running) return
+    const rec = this.rec
+    this.rec = null
+    try {
+      rec.stop()
+    } catch {
+      /* já parado */
+    }
+    this.onInterim?.('(a tua organização não permite o motor do browser — a mudar para transcrição local…)')
+    this.startWhisper()
+  }
+
+  /**
    * Arranca o melhor motor disponível. `stream` alimenta o Whisper (mic).
-   * `preferLocal` força o Whisper WASM (100% no dispositivo, privado) em vez da
-   * Web Speech do Chrome — que ENVIA áudio para servidores da Google, o que
-   * quebra a soberania de dados. Sem `preferLocal`, usa Web Speech quando
-   * existe e cai automaticamente no Whisper se a Google estiver inacessível
-   * (erro `network`) — típico numa rede self-hosted/offline.
+   * `preferLocal` força o Whisper WASM (100% no dispositivo, privado) e não há
+   * nada acima dele.
+   *
+   * Sem `preferLocal` a ordem é a do `motorDaTranscricao`: o ASR do servidor,
+   * depois o WASM local. A Web Speech do Chrome ENVIA áudio para servidores da
+   * Google, e por isso exige os três sins; quando ela está a correr e a Google
+   * fica inacessível (erro `network`, típico numa rede self-hosted), cai para
+   * o Whisper local.
    */
   start(lang = 'pt-PT', stream?: MediaStream | null, preferLocal = false) {
     this.lang = lang
@@ -915,8 +1006,16 @@ export class Transcriber {
       asrDoServidor: asrDoServidorPreferido(),
       asrDoServidorEmBaixo: this.asrDoServidorEmBaixo,
       temWebSpeech: !!Ctor,
+      // O que a medição JÁ soube dizer (`null` → omisso → presume-se que sim).
+      // Se a presunção estiver errada, o `WhisperEngine.start` devolve `false`
+      // e o `startWhisper` reporta que não há motor — nunca se cai na Google
+      // por causa de um modelo em falta.
+      temWasm: modeloInstaladoConhecido() ?? undefined,
       preferirLocal: preferLocal,
+      aceitaWebSpeech: webSpeechAceita(),
+      webSpeechPermitida: this.webSpeechPermitida,
     })
+    this.motor = motor
     if (motor === 'servidor') {
       // Whisper SERVER-SIDE (`dx_asr_server`, a OMISSÃO desde 2026-10-13):
       // precisão muito superior ao WASM local e soberano — o áudio vai ao
@@ -926,8 +1025,10 @@ export class Transcriber {
       sw.onFinal = (t) => this.onFinal?.(t)
       sw.onInterim = (t) => this.onInterim?.(t)
       sw.onError = (mensagem) => {
-        // Serviço indisponível → degrada para Web Speech / WASM local. A
-        // marca é o que impede o `start()` de voltar aqui em ciclo.
+        // Serviço indisponível → degrada para o WASM local, que é também
+        // soberano; a Web Speech só se a pessoa a tiver aceitado e a
+        // organização a permitir. A marca é o que impede o `start()` de
+        // voltar aqui em ciclo.
         this.asrDoServidorEmBaixo = true
         this.serverWhisper?.stop()
         this.serverWhisper = null
@@ -939,10 +1040,18 @@ export class Transcriber {
       this.serverWhisper = sw
       return true
     }
-    if (motor === 'wasm' || !Ctor) {
-      // Sem Web Speech (Firefox) ou modo 100% local: Whisper WASM.
+    if (motor === 'wasm') {
+      // O recuo soberano: sem Web Speech (Firefox), sem aceitação dela, com o
+      // modo 100% local pedido, ou com o ASR do servidor em baixo.
       this.startWhisper()
       return true
+    }
+    if (motor === 'nenhum' || !Ctor) {
+      // `!Ctor` junto com `nenhum` porque o `motorDaTranscricao` só devolve
+      // `'webspeech'` com `temWebSpeech`, e o TypeScript não o sabe. Se um dia
+      // soubesse, este braço continuava a ser o certo para o `nenhum`.
+      this.semMotor()
+      return false
     }
     const rec = new Ctor()
     rec.continuous = true
@@ -997,17 +1106,44 @@ export class Transcriber {
     return true
   }
 
+  /** O motor que está a correr AGORA (`null` antes do primeiro `start`). */
+  motorActivo(): MotorDeTranscricao | null {
+    return this.motor
+  }
+
   /** Arranca o motor Whisper WASM local (uma só vez). */
   private startWhisper() {
     if (this.usedWhisper || !this.running) return
     this.usedWhisper = true
+    this.motor = 'wasm'
     this.whisper = new WhisperEngine()
     this.whisper.onFinal = (t) => this.onFinal?.(t)
     this.whisper.onInterim = (t) => this.onInterim?.(t)
-    void this.whisper.start(this.lang, this.stream).then((ok) => {
-      if (!ok && this.running)
-        this.onError?.('Sem acesso ao microfone para transcrição — verifica a permissão do browser.')
+    void this.whisper.start(this.lang, this.stream).then((r) => {
+      if (r === 'ok' || !this.running) return
+      // DUAS causas, e confundi-las manda a pessoa mexer no sítio errado: o
+      // microfone (dela) ou o modelo (da instalação). Quem sabe qual foi é
+      // quem falhou — não se adivinha aqui.
+      if (r === 'sem-modelo') this.semMotor()
+      else this.onError?.('Sem acesso ao microfone para transcrição — verifica a permissão do browser.')
     })
+  }
+
+  /**
+   * Não sobrou motor nenhum, e diz-se.
+   *
+   * É a alternativa ao que este ficheiro fazia antes de 2026-10-18: cair na
+   * Web Speech sem ninguém ter pedido. A mensagem nomeia a saída — e, quando a
+   * saída é o motor da Google, nomeia o custo dela, porque é isso que torna a
+   * escolha informada em vez de um botão.
+   */
+  private semMotor() {
+    this.motor = 'nenhum'
+    this.onError?.(
+      this.webSpeechPermitida === false
+        ? 'Sem motor de transcrição: a transcrição local não está instalada neste servidor e a tua organização não permite o motor do browser.'
+        : 'Sem motor de transcrição: a transcrição local não está instalada neste servidor. Nas definições de Inteligência podes aceitar o motor do browser — que envia o áudio aos servidores da Google.',
+    )
   }
 
   stop() {

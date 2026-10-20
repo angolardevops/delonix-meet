@@ -121,7 +121,7 @@ secção afirmava a 2026-10-03, para se ver a que velocidade isto envelhece:
 | Binários em `server/tests/` | **83** | 31 | `ls server/tests/*.rs \| wc -l` |
 | Portões `scripts/check-*.sh` | **31** | 27 | `ls scripts/check-*.sh \| wc -l` |
 | Catraca do clippy | **11** | 13 | `cat scripts/clippy-baseline.txt` |
-| Migrações | **125** (a última é a `0125`) | 73 | `ls server/migrations/*.sql \| wc -l` |
+| Migrações | **127** (a última é a `0127`) | 73 | `ls server/migrations/*.sql \| wc -l` |
 | Rotas no router | **335** | — | `grep -cE '^\s*\.route\(' server/src/lib.rs` |
 | ADR | **31** | — | `ls docs/adr/*.md \| wc -l` |
 | Ficheiros de teste do frontend | **111** | — | `find web/src -name '*.test.ts*' \| wc -l` |

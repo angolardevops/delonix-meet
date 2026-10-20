@@ -1825,6 +1825,9 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
     hub.bus = redis_bus.clone();
     // Chat persistido fora do caminho quente (fila limitada + tarefa própria).
     hub.chat_store = Some(room_chat::spawn_writer(db.clone(), metrics.clone()));
+    // Os contadores que o hub reporta por si (hoje: legendas recusadas por
+    // política de motor — ver `signaling::recusa_motor`).
+    hub.metrics = Some(metrics.clone());
     let state = Arc::new(AppState {
         draining: std::sync::atomic::AtomicBool::new(false),
         started: std::time::Instant::now(),

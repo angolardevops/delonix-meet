@@ -6589,6 +6589,13 @@
       },
       "OrgSettingsReq": {
         "properties": {
+          "allow_web_speech": {
+            "description": "A organização permite o motor de voz do browser (a Web Speech, que\nenvia o áudio aos servidores da Google). `false` PROÍBE-A: os clientes\nrecebem a política à entrada da sala e o servidor recusa uma frase que\nvenha marcada com esse motor (`signaling.rs`, `ClientMsg::Transcript`).\nOmisso => mantém o actual.\n\nÉ política de TENANT e fica aqui de propósito, ao contrário das quotas:\nquem decide onde o áudio da sua organização pode ser processado é a\norganização, não o plano que a plataforma vende.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "chat_retention_days": {
             "description": "`null`/omisso = promessa por omissão (fim do dia UTC da última\nmensagem); como os outros campos deste pedido, o valor gravado é\nsempre o que vier aqui, não um `PATCH` parcial.",
             "format": "int32",
@@ -6833,6 +6840,10 @@
       },
       "OrgSummary": {
         "properties": {
+          "allow_web_speech": {
+            "description": "A organização permite o motor de voz do BROWSER (a Web Speech do\nChrome/Edge, que envia o áudio aos servidores da Google). `true` por\nomissão — ver a migração 0127: proibir por omissão mudava o\ncomportamento de quem não o pediu.",
+            "type": "boolean"
+          },
           "chat_retention_days": {
             "description": "Retenção do chat da sala em dias corridos (G9); `null` = promessa por\nomissão (até ao fim do dia UTC da última mensagem).",
             "format": "int32",
@@ -6919,7 +6930,8 @@
           "role_id",
           "role_name",
           "owner_missing",
-          "sms_send_policy"
+          "sms_send_policy",
+          "allow_web_speech"
         ],
         "type": "object"
       },

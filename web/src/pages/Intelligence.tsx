@@ -3,16 +3,20 @@
  * existe no código, e o estado medido quando se pode medir.
  *
  * Motores reais:
- *  - Web Speech do browser (Chrome/Edge): é o motor por omissão da sala quando
- *    existe (media.ts Transcriber.start sem preferLocal) e ENVIA o áudio aos
- *    servidores da Google. Cai para o Whisper local em erro de rede. Por isso
- *    este ecrã NÃO diz «processamento local por omissão»: diz qual é o motor
- *    deste browser.
+ *  - Web Speech do browser (Chrome/Edge): ENVIA o áudio aos servidores da
+ *    Google, e por isso NÃO é alcançável sem a aceitação explícita que este
+ *    ecrã pede (`dx_asr_webspeech`) e sem a organização a permitir
+ *    (`organizations.allow_web_speech`). Até 2026-10-18 era o recuo
+ *    automático de uma falha do ASR do servidor — e este cabeçalho dizia que
+ *    era «o motor por omissão da sala quando existe», o que deixara de ser
+ *    verdade no dia em que o ASR do servidor passou a omissão (2026-10-13).
  *  - Whisper-tiny em WASM, no browser (whisperWorker.ts): modelo servido pela
  *    própria instalação em /models (deploy/fetch-whisper.sh). Mede-se se o
- *    modelo está instalado e quanto pesa, e se já está na cache do browser.
- *  - whisper-server (WebSocket /asr): opt-in por browser (dx_asr_server, a
- *    mesma preferência das definições da sala). Testa-se a ligação a pedido.
+ *    modelo está instalado e quanto pesa, e se já está na cache do browser —
+ *    e a MESMA medição decide, agora, se há recuo soberano (`whisperModelo.ts`).
+ *  - whisper-server (WebSocket /asr): a omissão desde 2026-10-13
+ *    (dx_asr_server, a mesma preferência das definições da sala). Testa-se a
+ *    ligação a pedido.
  *  - Ollama no cluster (ai.rs): tradução de legendas e resumo da acta. Testa-se
  *    a pedido com uma tradução curta; sem OLLAMA_URL o servidor diz que não há.
  *
@@ -29,10 +33,15 @@ import PageBar from '../components/PageBar'
 import { Icon } from '../ui/icons'
 import { Button, Toggle } from '../ui/kit'
 import '../ui/ai.css'
-import { asrDoServidorPreferido, guardaAsrDoServidor, motorDaTranscricao } from '../legendasPref'
+import {
+  asrDoServidorPreferido,
+  guardaAsrDoServidor,
+  guardaWebSpeech,
+  motorDaTranscricao,
+  webSpeechAceita,
+} from '../legendasPref'
+import { MODEL_BASE, MODEL_FILES, tamanhoEstatico } from '../whisperModelo'
 
-const MODEL_BASE = '/models/Xenova/whisper-tiny'
-const MODEL_FILES = ['onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx']
 /** Línguas da transcrição na sala (room/NotesPanel.tsx STT_LANGS). */
 const STT_LANGS = ['pt', 'en', 'es', 'fr', 'de', 'it'] as const
 /** Alvos de tradução do servidor (server/src/ai.rs translate). */
@@ -48,14 +57,6 @@ function readPref(key: string): string | null {
   }
 }
 
-/** Um ficheiro estático existe se a resposta não for a página da app (fallback SPA). */
-async function staticSize(url: string, signal: AbortSignal): Promise<number | null> {
-  const r = await fetch(url, { method: 'HEAD', signal, cache: 'no-store' })
-  const type = r.headers.get('content-type') ?? ''
-  if (!r.ok || type.includes('text/html')) return null
-  return Number(r.headers.get('content-length') ?? 0)
-}
-
 export interface BrowserModel {
   installed: boolean
   bytes: number
@@ -64,7 +65,11 @@ export interface BrowserModel {
 }
 
 async function probeBrowserModel(signal: AbortSignal): Promise<BrowserModel> {
-  const sizes = await Promise.all(MODEL_FILES.map((f) => staticSize(`${MODEL_BASE}/${f}`, signal).catch(() => null)))
+  // A MEDIÇÃO É A MESMA do motor (`whisperModelo.ts`): era aqui que ela vivia,
+  // e o `media.ts` nunca a olhava — por isso uma instalação sem modelo ficava
+  // com «(a carregar modelo de voz local…)» para sempre na sala, enquanto este
+  // ecrã já dizia «não instalado».
+  const sizes = await Promise.all(MODEL_FILES.map((f) => tamanhoEstatico(`${MODEL_BASE}/${f}`, signal).catch(() => null)))
   const installed = sizes.every((s) => s !== null)
   // Sem valor inicial: o `try`/`catch` cobre os dois caminhos, e atribuir
   // `false` antes era um valor que nunca se lia.
@@ -158,6 +163,9 @@ export default function Intelligence() {
   // motor activo, e dizer «Chrome» quando a sala usa o servidor era a pior
   // forma de errar.
   const [serverAsr, setServerAsr] = useState(asrDoServidorPreferido)
+  // A aceitação explícita do motor da Google (`dx_asr_webspeech`). É este
+  // ecrã que a pede, porque é o único que diz, ao lado, para onde vai o áudio.
+  const [aceitaGoogle, setAceitaGoogle] = useState(webSpeechAceita)
   // O ESTADO MEDIDO do LLM do cluster, não uma afirmação. As duas
   // funcionalidades que dependem dele diziam «activa» em código fixo — e em
   // produção, de 10 a 13 de Outubro de 2026, o servidor corria SEM OLLAMA_URL:
@@ -184,6 +192,11 @@ export default function Intelligence() {
     guardaAsrDoServidor(on)
   }
 
+  function chooseGoogle(on: boolean) {
+    setAceitaGoogle(on)
+    guardaWebSpeech(on)
+  }
+
   /**
    * O subtítulo de uma funcionalidade que depende do LLM do cluster: a sua
    * descrição quando está (ou quando ainda não se sabe), a razão quando não.
@@ -192,8 +205,25 @@ export default function Intelligence() {
     return llmPronto === false ? t('consola.ia.llmIndisponivel') : base
   }
 
-  // O motor que a sala usa NESTE browser, pela mesma ordem do Transcriber.
-  const active = motorDaTranscricao({ asrDoServidor: serverAsr, temWebSpeech: hasWebSpeech })
+  const m = model.state.s === 'ready' ? model.state.d : null
+
+  // O motor que a sala usa NESTE browser, pela mesma ordem do Transcriber — e
+  // agora com o modelo MEDIDO: este ecrã dizia «WASM activo» em instalações
+  // onde o modelo não está servido, que é precisamente o caso em que não há
+  // motor nenhum.
+  const active = motorDaTranscricao({
+    asrDoServidor: serverAsr,
+    temWebSpeech: hasWebSpeech,
+    temWasm: m ? m.installed : undefined,
+    aceitaWebSpeech: aceitaGoogle,
+    // A POLÍTICA DA ORGANIZAÇÃO também aqui. Sem ela este ecrã dizia «a
+    // transcrição usa a Google» a quem aceitou o motor numa organização que o
+    // PROÍBE — e a sala corria o Whisper local. É exactamente o erro que o
+    // cabeçalho deste ficheiro e o do `legendasPref.ts` descrevem: duas
+    // leituras da mesma decisão, a divergir sem nenhuma delas estar
+    // obviamente errada.
+    webSpeechPermitida: org?.allow_web_speech,
+  })
   const local = active !== 'webspeech'
 
   const names = useMemo(() => {
@@ -224,15 +254,13 @@ export default function Intelligence() {
     }
   }
 
-  const m = model.state.s === 'ready' ? model.state.d : null
-
   return (
     <>
       <PageBar
         title={t('consola.ia.titulo')}
         meta={
-          <span className={local ? 'ai-metachip ai-metachip--ok' : 'ai-metachip ai-metachip--warn'} data-testid="ai-meta">
-            {local ? t('consola.ia.metaLocal') : t('consola.ia.metaGoogle')}
+          <span className={local && active !== 'nenhum' ? 'ai-metachip ai-metachip--ok' : 'ai-metachip ai-metachip--warn'} data-testid="ai-meta">
+            {active === 'nenhum' ? t('consola.ia.metaNenhum') : local ? t('consola.ia.metaLocal') : t('consola.ia.metaGoogle')}
           </span>
         }
       />
@@ -243,7 +271,7 @@ export default function Intelligence() {
               <h2 id="ai-onde">{t('consola.ia.ondeCorre')}</h2>
               <span className="dx-num dx-muted">{t('consola.ia.motores', { count: 4 })}</span>
             </header>
-            <ul className="ai-engines" role="list" data-testid="ai-active" aria-label={active === 'servidor' ? t('consola.ia.activoServer') : active === 'webspeech' ? t('consola.ia.activoWebspeech') : t('consola.ia.activoWasm')}>
+            <ul className="ai-engines" role="list" data-testid="ai-active" aria-label={active === 'servidor' ? t('consola.ia.activoServer') : active === 'webspeech' ? t('consola.ia.activoWebspeech') : active === 'nenhum' ? t('consola.ia.activoNenhum') : t('consola.ia.activoWasm')}>
               <EngineRow
                 active={active === 'wasm'}
                 title={t('consola.ia.wasm')}
@@ -282,7 +310,23 @@ export default function Intelligence() {
                     <span className="ai-tag">{t('consola.ia.naoExisteBrowser')}</span>
                   )
                 }
-              />
+              >
+                {/* A ACEITAÇÃO EXPLÍCITA. Está aqui, e não nas definições da
+                    sala, porque é o único sítio onde a frase «envia o áudio
+                    aos servidores da Google» está ao lado do interruptor —
+                    sem isso não é uma escolha informada, é um botão. */}
+                {hasWebSpeech && (
+                  <div className="ai-engine__actions">
+                    <Toggle
+                      label={t('consola.ia.aceitarGoogle')}
+                      checked={aceitaGoogle}
+                      onChange={(e) => chooseGoogle(e.target.checked)}
+                    />
+                    <span className="dx-spacer" />
+                    <span className="dx-muted ai-engine__cache">{t('consola.ia.aceitarGoogleDica')}</span>
+                  </div>
+                )}
+              </EngineRow>
               <EngineRow
                 active={active === 'servidor'}
                 title={t('consola.ia.whisperServer')}

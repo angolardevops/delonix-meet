@@ -51,6 +51,11 @@ pub struct OrgSummary {
     pub owner_missing: bool,
     /// Quem pode enviar SMS a contactos da org: `admins` | `members`.
     pub sms_send_policy: String,
+    /// A organização permite o motor de voz do BROWSER (a Web Speech do
+    /// Chrome/Edge, que envia o áudio aos servidores da Google). `true` por
+    /// omissão — ver a migração 0127: proibir por omissão mudava o
+    /// comportamento de quem não o pediu.
+    pub allow_web_speech: bool,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -77,6 +82,17 @@ pub struct OrgSettingsReq {
     /// Omisso => mantém o actual.
     #[serde(default)]
     pub require_mfa: Option<bool>,
+    /// A organização permite o motor de voz do browser (a Web Speech, que
+    /// envia o áudio aos servidores da Google). `false` PROÍBE-A: os clientes
+    /// recebem a política à entrada da sala e o servidor recusa uma frase que
+    /// venha marcada com esse motor (`signaling.rs`, `ClientMsg::Transcript`).
+    /// Omisso => mantém o actual.
+    ///
+    /// É política de TENANT e fica aqui de propósito, ao contrário das quotas:
+    /// quem decide onde o áudio da sua organização pode ser processado é a
+    /// organização, não o plano que a plataforma vende.
+    #[serde(default)]
+    pub allow_web_speech: Option<bool>,
 }
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
@@ -213,7 +229,8 @@ pub async fn update_settings(
     sqlx::query(
         "UPDATE organizations SET domain = $1, retention_days = $2,
              chat_retention_days = $4,
-             require_mfa = COALESCE($5, require_mfa)
+             require_mfa = COALESCE($5, require_mfa),
+             allow_web_speech = COALESCE($6, allow_web_speech)
          WHERE id = $3",
     )
     .bind(&domain)
@@ -221,6 +238,7 @@ pub async fn update_settings(
     .bind(org_id)
     .bind(chat_retention)
     .bind(req.require_mfa)
+    .bind(req.allow_web_speech)
     .execute(&state.db)
     .await?;
     crate::audit::log(
@@ -231,6 +249,23 @@ pub async fn update_settings(
         &domain,
     )
     .await;
+    // Proibir (ou voltar a permitir) o motor que envia áudio para fora é uma
+    // decisão de soberania do dado: entra na auditoria com nome próprio, como
+    // o `require_mfa`, e não escondida num `org.settings_updated` genérico.
+    if let Some(on) = req.allow_web_speech {
+        crate::audit::log(
+            &state.db,
+            Some(org_id),
+            auth.user_id,
+            if on {
+                "org.web_speech_allowed"
+            } else {
+                "org.web_speech_forbidden"
+            },
+            &org_id.to_string(),
+        )
+        .await;
+    }
     if let Some(on) = req.require_mfa {
         crate::audit::log(
             &state.db,
@@ -604,6 +639,7 @@ const MY_ORGS_SQL: &str = r#"
              WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
            o.domain, o.retention_days, o.chat_retention_days,
            o.max_groups, o.max_rooms, o.max_meetings, o.sms_send_policy,
+           o.allow_web_speech,
            m.role_id, r.name AS role_name, r.system_key AS role_key,
            (EXISTS (SELECT 1 FROM org_members hm JOIN users hu ON hu.id = hm.user_id
                      WHERE hm.org_id = o.id AND hm.archived_at IS NULL

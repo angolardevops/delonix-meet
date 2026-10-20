@@ -688,6 +688,15 @@ export interface OrgSummary {
   max_groups?: number | null
   max_rooms?: number | null
   max_meetings?: number | null
+  /**
+   * A organização permite o motor de voz do BROWSER (a Web Speech, que envia
+   * o áudio aos servidores da Google). `false` proíbe-o: o servidor avisa os
+   * clientes à entrada da sala e recusa as frases que venham dele.
+   *
+   * Ausente = um servidor anterior à migração 0127; vale «permite», que é a
+   * omissão da coluna.
+   */
+  allow_web_speech?: boolean
 }
 
 export interface WhiteboardMeta {
@@ -785,6 +794,7 @@ export const updateOrgSettings = (
   domain: string,
   retentionDays: number,
   chatRetentionDays: number | null = null,
+  allowWebSpeech?: boolean,
 ) =>
   request(`/api/orgs/${orgId}`, {
     method: 'PATCH',
@@ -792,6 +802,10 @@ export const updateOrgSettings = (
       domain,
       retention_days: retentionDays,
       chat_retention_days: chatRetentionDays,
+      // Omisso MANTÉM o actual (`COALESCE` no servidor). É por isso que vai
+      // como `undefined` e não como `false` por omissão: um formulário que não
+      // mostrasse o campo não podia proibir o motor do browser sem querer.
+      allow_web_speech: allowWebSpeech,
     }),
   })
 

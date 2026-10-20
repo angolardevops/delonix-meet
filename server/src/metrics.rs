@@ -141,6 +141,15 @@ pub struct Metrics {
     pub chat_persist_dropped_total: AtomicU64,
     /// Escritas de chat que a base de dados recusou.
     pub chat_persist_failed_total: AtomicU64,
+    /// Frases de legenda RECUSADAS por vir do motor de voz do browser (a Web
+    /// Speech, que envia o áudio à Google) numa organização que o proíbe
+    /// (`organizations.allow_web_speech = false`).
+    ///
+    /// Existe para que a política se possa MEDIR de fora do cliente que a
+    /// devia cumprir: um número a subir aqui significa que há browsers na
+    /// organização a usar o motor proibido — ou um cliente a mentir no campo
+    /// `engine`, que é o limite honesto desta imposição.
+    pub caption_engine_refused_total: AtomicU64,
     /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
     /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
@@ -339,6 +348,9 @@ impl Metrics {
              # HELP delonix_chat_persist_failed_total Escritas de chat recusadas pela base de dados.\n\
              # TYPE delonix_chat_persist_failed_total counter\n\
              delonix_chat_persist_failed_total {}\n\
+             # HELP delonix_caption_engine_refused_total Legendas recusadas por vir do motor do browser numa organizacao que o proibe.\n\
+             # TYPE delonix_caption_engine_refused_total counter\n\
+             delonix_caption_engine_refused_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -386,6 +398,7 @@ impl Metrics {
             self.join_slow_total.load(Relaxed),
             self.chat_persist_dropped_total.load(Relaxed),
             self.chat_persist_failed_total.load(Relaxed),
+            self.caption_engine_refused_total.load(Relaxed),
             uptime_secs,
         )
     }
