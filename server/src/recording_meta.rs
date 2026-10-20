@@ -268,8 +268,8 @@ pub async fn thumbnail(
         &state.config.recordings_dir,
         id,
     ))
-        .await
-        .map_err(|_| ApiError::NotFound)?;
+    .await
+    .map_err(|_| ApiError::NotFound)?;
     Ok((
         [
             (header::CONTENT_TYPE, "image/jpeg"),

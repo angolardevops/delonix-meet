@@ -4182,7 +4182,7 @@ async fn admitir(
         Ok(c) => (c, None),
         Err(_) => {
             let c = verify_jwt(&state.config.jwt_secret, &query.token, "source")?;
-            let s = crate::studio::source_session_for_token(&state, &c).await?;
+            let s = crate::studio::source_session_for_token(state, &c).await?;
             (c, Some(s))
         }
     };
@@ -4249,12 +4249,12 @@ async fn admitir(
     // regras por inquilino falham ABERTAS, e o tecto do nó continua a valer.
     let tenant: Option<Uuid> = match state.hub.room_tenant(room_id) {
         Some(t) => Some(t),
-        None => resolve_tenant(&state, room_id).await,
+        None => resolve_tenant(state, room_id).await,
     };
     // Quota de participantes da organização, neste nó. Não conta entradas de
     // quem reclama o seu lugar nem identidades de serviço.
     if let (Some(t), None, false, false) = (tenant, source.as_ref(), claims.is_bot, regressa) {
-        if let Some(limit) = org_participant_limit(&state, t).await {
+        if let Some(limit) = org_participant_limit(state, t).await {
             if state.hub.tenant_load(t).0 >= limit {
                 if efeito == Efeito::Socket {
                     state
@@ -4354,6 +4354,18 @@ pub async fn ws_admission_handler(
     admitir(&state, &query, Efeito::Sonda).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
+
+/// O spec deste módulo. O `#[utoipa::path]` do `ws_admission_handler` existia
+/// desde que a rota nasceu, mas sem um `ApiDoc` registado no
+/// `openapi::parts()` o gerador nunca o lia: a rota contava como MONTADA e NÃO
+/// documentada, e a catraca do contrato subia de 0 para 1.
+///
+/// Só o `/ws/admission` entra. O `/ws` e o `/rtc` ficam de fora de propósito —
+/// são upgrades de WebSocket, sem contrato REST, e o `check-openapi.sh`
+/// exclui-os pelo caminho. Este é um GET de HTTP normal, com 204/401/429/503.
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(ws_admission_handler))]
+pub struct ApiDoc;
 
 pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
