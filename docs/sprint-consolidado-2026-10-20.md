@@ -61,9 +61,17 @@ O `git push` é **recusado pelo hook de segurança desta máquina**,
 incondicionalmente. É o mesmo bloqueio que o handoff da sessão «Medição contra
 os 3 grandes» já tinha encontrado a 2026-10-18.
 
-Por isso **nenhum ramo local foi apagado**: sem push, eles continuam a ser a
-única cópia de 21 commits. Os comandos de envio e de limpeza estão na §6, por
-esta ordem — e a limpeza só depois de o `git ls-remote` confirmar cada ramo.
+Por isso **nenhum ramo local foi apagado** pelo harness: sem envio, eles eram a
+única cópia de 21 commits. Os comandos estão na §6.
+
+> **Resolvido a 2026-10-20, pelo dono.** O envio aconteceu e a limpeza correu.
+> A `develop` remota está em `7d730e2bb`, igual à local; os cinco ramos
+> `integra/*` ficaram no remoto como rede de segurança e saíram todos da
+> máquina. Sobram localmente a `develop` e a `main`, mais os ramos dos outros
+> produtos, cada um com a sua worktree. As worktrees do Meet passaram de 11
+> para 8.
+>
+> Fica a **promoção** por fazer — ver a §6.
 
 ---
 
@@ -149,14 +157,33 @@ Estão num script, não aqui, para serem corridos e não copiados:
 ```bash
 cd /home/walter/workspaces/ngolacloud/delonix-meet
 
-./scripts/consolidado-2026-10-20-enviar.sh enviar      # 5 ramos + develop
-./scripts/consolidado-2026-10-20-enviar.sh confirmar   # lê os SHA do remoto
-./scripts/consolidado-2026-10-20-enviar.sh limpar      # worktrees + ramos locais
+./scripts/consolidado-2026-10-20-enviar.sh enviar      # ✅ feito 2026-10-20
+./scripts/consolidado-2026-10-20-enviar.sh confirmar   # ✅ lê os SHA do remoto
+./scripts/consolidado-2026-10-20-enviar.sh limpar      # ✅ feito 2026-10-20
+./scripts/consolidado-2026-10-20-enviar.sh promover    # ⬅ o que falta
 ```
 
 O `limpar` **recusa-se a apagar** enquanto o `confirmar` não achar todos os
-ramos no remoto — e diz quais faltam. É a única salvaguarda que impede os 21
+ramos no remoto — e diz quais faltam. Foi a salvaguarda que impediu os 21
 commits de desaparecerem com um `branch -D` dado cedo demais.
+
+### O modo `promover`
+
+Prepara a promoção da `develop` à `main` do Meet — **764 commits**, migrações
+`0001-0127` — e **recusa-se** a dar-lhe luz verde em dois casos, ambos vistos a
+disparar por código de saída:
+
+1. a `develop` local diverge da remota (havia trabalho por enviar);
+2. a `main` tem commits de trabalho que a `develop` não tem (promover perdê-los-ia).
+
+Quando passa, imprime o que a promoção carrega e o `gh pr create` que a abre —
+e **não abre a PR nem empurra nada**, de propósito: neste repositório promove-se
+por PR `develop` → `main` (ver #176 e #200), e carregar no botão é do dono.
+
+As duas referências que ele compara são sobreponíveis por variável de ambiente
+(`PROMOVER_DEV_REF`, `PROMOVER_MAIN_REF`) para que o controlo negativo corra a
+função **real** contra uma referência forjada, em vez de medir uma cópia
+alterada do script — que seria medir outra coisa.
 
 ---
 
