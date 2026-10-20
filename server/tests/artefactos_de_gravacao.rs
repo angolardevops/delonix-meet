@@ -190,7 +190,10 @@ async fn recorta(c: &Cenario, body: Value) -> String {
         )
         .await;
     assert_eq!(st, 200, "{clip}");
-    assert_eq!(clip["status"], "ready", "o recorte não ficou pronto: {clip}");
+    assert_eq!(
+        clip["status"], "ready",
+        "o recorte não ficou pronto: {clip}"
+    );
     id
 }
 
@@ -451,7 +454,10 @@ async fn os_ficheiros_de_uma_gravacao_que_a_cascata_levou_sao_recolhidos(db: PgP
     );
 
     let n = delonix_server::recording_artifacts_sweep_orphans(&c.app.state).await;
-    assert!(n >= 2, "o varredor não recolheu os artefactos órfãos (n = {n})");
+    assert!(
+        n >= 2,
+        "o varredor não recolheu os artefactos órfãos (n = {n})"
+    );
     for f in [&webm, &composta] {
         assert!(
             !f.exists(),
@@ -597,9 +603,9 @@ async fn um_unlink_recusado_nao_apaga_a_linha(db: PgPool) {
     // E é alertável: um contador, não um aviso perdido no log.
     let m = app.state.metrics.render(1);
     assert!(
-        m.lines()
-            .any(|l| l.starts_with("delonix_recording_artifacts_stuck_total ")
-                && !l.ends_with(" 0")),
+        m.lines().any(
+            |l| l.starts_with("delonix_recording_artifacts_stuck_total ") && !l.ends_with(" 0")
+        ),
         "o contador de artefactos presos não subiu:\n{m}"
     );
 }
@@ -715,7 +721,11 @@ async fn o_que_o_registo_nao_conhece_nao_e_apagado(db: PgPool) {
     std::fs::create_dir_all(&pasta_alheia).unwrap();
     std::fs::write(pasta_alheia.join("00-video.ivf"), b"pista").unwrap();
 
-    assert_eq!(linhas_no_registo(&app.db).await, 0, "o registo não está vazio");
+    assert_eq!(
+        linhas_no_registo(&app.db).await,
+        0,
+        "o registo não está vazio"
+    );
     assert_eq!(
         delonix_server::recording_artifacts_sweep_orphans(&app.state).await,
         0,

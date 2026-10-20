@@ -44731,6 +44731,50 @@
           "whiteboards"
         ]
       }
+    },
+    "/ws/admission": {
+      "get": {
+        "description": "Existe porque um WebSocket recusado no HANDSHAKE não entrega ao browser nem\no estado HTTP nem o corpo: chega um `onclose` opaco com `code: 1006`, igual\nao de uma falha de rede. A pessoa recusada por capacidade via «Ligação\ninstável. Verifica a rede» — a app mandava-a depurar a ligação dela quando\no servidor a tinha recusado de propósito.\n\nVive no prefixo `/ws` de PROPÓSITO: o ingress encaminha `/ws` com\n`upstream-hash-by: $arg_room` (ADR-0001), logo esta sondagem cai no MESMO\npod que recusou o socket. Em `/api` não cairia — esse caminho não tem\nafinidade nenhuma, e a resposta viria de um pod ao acaso, com a contagem de\noutro nó. Por isso o `room=` tem de ir no query, como vai no socket.\n\nNão reserva lugar e não promete entrada: explica a recusa que JÁ aconteceu.\nO cliente só lhe chama depois de o socket falhar sem abrir.",
+        "operationId": "ws_admission_handler",
+        "parameters": [
+          {
+            "description": "O mesmo room token do /ws",
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Código da sala — fixa o pod pela afinidade do ingress",
+            "in": "query",
+            "name": "room",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Seria admitido agora"
+          },
+          "401": {
+            "description": "Token inválido ou sessão terminada"
+          },
+          "429": {
+            "description": "`admission.org_at_capacity`: a organização está no tecto neste nó"
+          },
+          "503": {
+            "description": "`admission.node_at_capacity` ou `admission.over_fair_share`"
+          }
+        },
+        "summary": "`GET /ws/admission` — porque é que o socket seria recusado, em palavras que\no cliente pode ler.",
+        "tags": [
+          "rooms"
+        ]
+      }
     }
   }
 }

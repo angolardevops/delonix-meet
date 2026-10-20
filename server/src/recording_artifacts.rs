@@ -357,7 +357,9 @@ async fn delete_entries(
         }
     }
     if stuck > 0 {
-        metrics.recording_artifacts_stuck_total.fetch_add(stuck, Relaxed);
+        metrics
+            .recording_artifacts_stuck_total
+            .fetch_add(stuck, Relaxed);
     }
     if gone.is_empty() {
         return 0;
@@ -482,14 +484,19 @@ pub async fn sweep_orphans(state: &AppState) -> u64 {
     )
     .await;
     if n > 0 {
-        tracing::info!(apagados = n, filled_batch,
-            "artefactos de gravações que já não existem apagados");
+        tracing::info!(
+            apagados = n,
+            filled_batch,
+            "artefactos de gravações que já não existem apagados"
+        );
     }
     if filled_batch {
         // Dizê-lo: um tecto silencioso lê-se como «já não há nada», que é
         // precisamente a leitura errada quando ainda há dezenas de milhares.
-        tracing::info!(lote = ORPHAN_BATCH,
-            "artefactos órfãos: o lote encheu — ficam mais para o próximo tique");
+        tracing::info!(
+            lote = ORPHAN_BATCH,
+            "artefactos órfãos: o lote encheu — ficam mais para o próximo tique"
+        );
     }
     n
 }
@@ -541,11 +548,7 @@ mod tests {
     fn um_nome_torto_vindo_da_base_nao_da_caminho() {
         let r = raiz();
         for mau in ["../../etc", "/etc/passwd", "sub/a.webm", "", ".", ".."] {
-            assert_eq!(
-                path_of(&r, mau),
-                None,
-                "um nome inseguro deu path: {mau:?}"
-            );
+            assert_eq!(path_of(&r, mau), None, "um nome inseguro deu path: {mau:?}");
         }
         assert_eq!(path_of(&r, "a.webm"), Some(r.join("a.webm")));
     }

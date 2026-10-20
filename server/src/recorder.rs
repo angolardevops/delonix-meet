@@ -4285,7 +4285,9 @@ mod tests {
     /// thread do `RecWriter`, o `RecSink`) e devolve o writer e o ficheiro.
     fn abre_pista(session: &mut RecordingSession, kind: &str) -> (RecWriter, PathBuf) {
         let metrics = Arc::new(crate::metrics::Metrics::default());
-        let w = session.open_track(kind, Uuid::new_v4(), 4096, metrics).unwrap();
+        let w = session
+            .open_track(kind, Uuid::new_v4(), 4096, metrics)
+            .unwrap();
         (w, session.tracks.last().unwrap().path.clone())
     }
 
@@ -5326,10 +5328,7 @@ mod tests {
 
     /// Uma org, uma sala e uma gravação. Com `iso` dá também um estúdio com o
     /// interruptor no estado pedido. Devolve `(room_id, rec_id)`.
-    async fn semeia_sala_com_gravacao(
-        db: &sqlx::PgPool,
-        iso: Option<bool>,
-    ) -> (Uuid, Uuid) {
+    async fn semeia_sala_com_gravacao(db: &sqlx::PgPool, iso: Option<bool>) -> (Uuid, Uuid) {
         let (room_id, org_id, user_id): (Uuid, Uuid, Uuid) = sqlx::query_as(
             "WITH u AS (INSERT INTO users (email, username, password_hash)
                         VALUES ('iso@x.test', 'iso', 'x') RETURNING id),
@@ -5433,17 +5432,24 @@ mod tests {
             registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await;
 
         assert!(guardar, "com iso ligado os ficheiros têm de FICAR");
-        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM recording_tracks WHERE recording_id = $1")
-            .bind(rec)
-            .fetch_one(&db)
-            .await
-            .unwrap();
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM recording_tracks WHERE recording_id = $1")
+                .bind(rec)
+                .fetch_one(&db)
+                .await
+                .unwrap();
         assert_eq!(n, 2, "as duas pistas tinham de ser registadas");
         // Saiu do `tmp-`: é isto que impede o varredor de as apagar quando a
         // gravação deixa de estar em `processing`.
-        assert!(!dir.exists(), "a pasta tmp- ainda existe — o varredor vai apagar as pistas");
+        assert!(
+            !dir.exists(),
+            "a pasta tmp- ainda existe — o varredor vai apagar as pistas"
+        );
         let destino = iso_dir(&raiz, rec);
-        assert!(destino.join("00-video.ivf").exists(), "o ficheiro não está em iso-<gravação>");
+        assert!(
+            destino.join("00-video.ivf").exists(),
+            "o ficheiro não está em iso-<gravação>"
+        );
         assert!(destino.join("01-audio.ogg").exists());
         std::fs::remove_dir_all(&raiz).ok();
     }
@@ -5461,9 +5467,7 @@ mod tests {
         let studio = crate::studio_realtime::StudioHub::default();
         let m = crate::metrics::Metrics::default();
 
-        assert!(
-            registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await
-        );
+        assert!(registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await);
 
         let linhas: Vec<(String, String, bool)> = sqlx::query_as(
             "SELECT kind, path, is_dir FROM recording_artifacts WHERE recording_id = $1",
@@ -5511,7 +5515,10 @@ mod tests {
 
         // `true` = «não apagues»: os segmentos ficam para o varredor, que é o
         // recuo que não perde nada.
-        assert!(guardar, "sem registo os segmentos não se apagam — ficam para o varredor");
+        assert!(
+            guardar,
+            "sem registo os segmentos não se apagam — ficam para o varredor"
+        );
         assert!(
             dir.exists(),
             "a pasta saiu do tmp- sem estar registada — a ordem está invertida e a fuga está aberta"
@@ -5540,7 +5547,10 @@ mod tests {
         let guardar =
             registar_pistas_iso(&db, &raiz, &studio, room_id, &manifest, Some(rec), &m).await;
         assert!(!guardar, "com iso DESLIGADO os ficheiros não se guardam");
-        assert!(dir.exists(), "a pasta não devia ter sido movida — o chamador vai apagá-la");
+        assert!(
+            dir.exists(),
+            "a pasta não devia ter sido movida — o chamador vai apagá-la"
+        );
         let n: i64 = sqlx::query_scalar("SELECT count(*) FROM recording_tracks")
             .fetch_one(&db)
             .await
@@ -5698,8 +5708,7 @@ mod tests {
         // ficheiro de zero bytes é um estado que a produção não sabe criar, e
         // uma fixture que o usasse provava o limiar errado. Não vai para a
         // lista, logo também não pode ficar no disco.
-        let (dir, manifest) =
-            semeia_segmentos_de(&raiz, &[(KIND_VIDEO, 2048), (KIND_SCREEN, 48)]);
+        let (dir, manifest) = semeia_segmentos_de(&raiz, &[(KIND_VIDEO, 2048), (KIND_SCREEN, 48)]);
         // Lixo que não está no manifesto: um `.part` do ffmpeg, e uma pasta.
         std::fs::write(dir.join("out.webm.part"), b"lixo").unwrap();
         std::fs::create_dir_all(dir.join("sub")).unwrap();
