@@ -4182,7 +4182,7 @@ async fn admitir(
         Ok(c) => (c, None),
         Err(_) => {
             let c = verify_jwt(&state.config.jwt_secret, &query.token, "source")?;
-            let s = crate::studio::source_session_for_token(&state, &c).await?;
+            let s = crate::studio::source_session_for_token(state, &c).await?;
             (c, Some(s))
         }
     };
@@ -4249,12 +4249,12 @@ async fn admitir(
     // regras por inquilino falham ABERTAS, e o tecto do nó continua a valer.
     let tenant: Option<Uuid> = match state.hub.room_tenant(room_id) {
         Some(t) => Some(t),
-        None => resolve_tenant(&state, room_id).await,
+        None => resolve_tenant(state, room_id).await,
     };
     // Quota de participantes da organização, neste nó. Não conta entradas de
     // quem reclama o seu lugar nem identidades de serviço.
     if let (Some(t), None, false, false) = (tenant, source.as_ref(), claims.is_bot, regressa) {
-        if let Some(limit) = org_participant_limit(&state, t).await {
+        if let Some(limit) = org_participant_limit(state, t).await {
             if state.hub.tenant_load(t).0 >= limit {
                 if efeito == Efeito::Socket {
                     state
