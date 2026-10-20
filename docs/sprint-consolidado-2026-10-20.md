@@ -160,7 +160,48 @@ commits de desaparecerem com um `branch -D` dado cedo demais.
 
 ---
 
-## 7. Lições desta consolidação
+## 7. Prompt para retomar noutra máquina
+
+Copiar tal e qual para uma sessão nova, depois de clonar o repositório e correr
+a §6 nesta máquina:
+
+> Vou retomar o Delonix Meet a partir da consolidação de 2026-10-20.
+>
+> Começa por ler `docs/sprint-consolidado-2026-10-20.md` — é o ponto único de
+> retoma e descreve seis sessões e quatro frentes que foram fundidas na
+> `develop`. Confirma primeiro que a `develop` do remoto já contém esses 25
+> commits (o topo deve ser `fix(consolidado): a confirmação dava a develop por
+> boa só porque ela existia`). Se não contiver, **pára e diz-me** — a
+> consolidação não saiu da outra máquina e qualquer trabalho aqui duplica-se.
+>
+> Depois executa o sprint pela ordem da §4, uma fatia por sessão, cada uma com
+> o seu contrato em `.claude/sessions/` aberto por `/escopo`:
+>
+> - **S1** — acabar o `enum Kind`/`reserve` do registo de artefactos. O
+>   trabalho começado está no ramo `integra/gravacao-iso-registo-kind`, num
+>   commit marcado `WIP(gravação)`, e o contrato é
+>   `.claude/sessions/integra-gravacao-iso--20436200.md`, **0/3 critérios, zero
+>   medidos**. Lê esse contrato antes de tocar no código: os três critérios já
+>   dizem como se prova cada coisa, incluindo que o portão
+>   `check-recording-artifacts.sh` tem de ser VISTO a recusar por código de
+>   saída.
+> - **S2** a **S5** — ver a §4. Não as faças todas de seguida sem me perguntar.
+>
+> Regras desta casa, que o repositório impõe e eu confirmo: um critério prova-se
+> observando comportamento (comando a passar, saída medida), nunca lendo o diff;
+> um portão novo só conta depois de o veres **recusar** por código de saída, com
+> controlo positivo ao lado para não ser falso positivo; e trabalho que o
+> objectivo da sessão não cobre abre sessão nova em vez de alargar o contrato.
+>
+> Antes de medires o que quer que seja, levanta o Postgres 17 em :5435
+> (`delonix compose`) — a bateria de gravação e a da política de legendas falam
+> com base real, e sem ele os números não valem nada.
+>
+> Não empurres nada sem mo dizeres primeiro.
+
+---
+
+## 8. Lições desta consolidação
 
 1. **Um portão correu na pasta errada e deu verde.** O `cargo build --workspace`
    na raiz devolveu **exit 0** com `could not find Cargo.toml` — o workspace vive
