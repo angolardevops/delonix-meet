@@ -58,10 +58,51 @@ recusa não é «este nó não serve», é «tu já tens o teu»):
   ter ligados, em todas as salas do nó, **incluindo a sala de espera**. Não conta lugares em graça,
   bots, a ponte telefónica nem fontes de estúdio (identidades de serviço emitidas pela organização).
 - **Por organização** — `organizations.max_concurrent_participants` (migração 0097), ou
-  `ORG_MAX_PARTICIPANTS` por omissão (sem ele, uma org sem tecto próprio é ilimitada). **Só o operador
+  `ORG_MAX_PARTICIPANTS` por omissão. **Só o operador
   o fixa** (`PUT /api/operator/v1/organizations/{org_id}/concurrency`): é um limite do plano, e uma org
   que o pudesse subir não estaria limitada. Conta os participantes das salas da organização
   (inquilino, como acima), incluindo lugares em graça.
+
+### A ausência deixou de significar «sem tecto» (2026-10-18)
+
+Os dois tectos do nó eram lidos com `opt()`: **ausente valia `None`, e `None` não recusa ninguém**. O
+`compose.yaml` não declarava nenhum dos dois, por isso essa forma de implantar aceitava a 41.ª pessoa
+e degradava a sala para todos sem um sinal — contra um máximo **provado** de 40 em bancada
+(`docs/ops/teste-de-carga-2026-10-05.md:29`: 11,2 de 16 núcleos, 0,03 % de perda).
+
+Passaram a ter **três estados declarados**, em `config.rs` (`tecto()`):
+
+| ambiente | significado |
+|---|---|
+| ausente | a omissão do código — **nunca «sem tecto»** |
+| `0` | sem tecto, **de propósito**: é o que uma rampa de carga põe |
+| outro inteiro | o valor; um não-inteiro continua a dar pânico no arranque |
+
+A omissão é **só do nó**: `DEFAULT_NODE_PEER_CAPACITY` = 50, a capacidade do deploy de **referência** —
+não um número novo. É o tecto certo para impedir a degradação, porque por ADR-0001 todos os pares de
+uma sala são servidos pelo MESMO pod: **o pod é o limite da sala**.
+
+**O tecto por organização fica DECLARADO-SÓ.** Dar-lhe uma omissão derivada (80 % da capacidade do nó,
+a regra que os três `values` aplicam à mão: 25→20, 50→40) foi implementado e **reprovou contra Postgres
+real** — cortava a 80 % uma organização **sozinha** no nó, contra o que esta mesma ADR promete e o
+`admit_new_room` calcula dinamicamente: «um inquilino sozinho no nó tem a capacidade toda e não é
+penalizado». Três testes de `server/tests/node_admission.rs` apanharam-no. Os 80 % são uma decisão de
+quem opera e vivem nos `values`, não uma segunda regra de parte justa ao lado da que já existe.
+
+Três consequências que custaram correcções na mesma sessão:
+
+- o ConfigMap do chart **emite `0` tal e qual**. Antes omitia a variável quando o valor era `0` (porque
+  o servidor entrava em pânico com um inteiro não positivo) — e com a ausência a valer 50, `0` passaria
+  a significar o oposto do que diz, com a rampa a medir contra um tecto que o operador julgava ter
+  desligado;
+- as guardas de capacidade do `_helpers.tpl` viviam **dentro** do `if gateway.enabled` e por isso nunca
+  corriam no caminho por omissão do chart (ingress). Saíram de lá: o tecto não tem que ver com a forma
+  como o tráfego entra;
+- os tectos em vigor são **ditos no arranque**, com `declarado = true|false`. O inventário do operador
+  publica o número mas não de onde veio, e depois de gravado um tecto por omissão é indistinguível de
+  um declarado.
+
+O `scripts/check-tectos-de-admissao.sh` recusa uma forma de implantar que não declare os dois.
 
 **Quem volta ao seu lugar não é uma entrada nova.** Uma entrada com `?reconnect=` só fica isenta se o
 segredo reclama de facto um lugar em graça desta sala (`Hub::seat_reclaimable`, comparação em tempo

@@ -4043,11 +4043,41 @@ pub fn seat_policy(claims: &crate::auth::Claims) -> SeatPolicy {
     }
 }
 
-pub async fn ws_handler(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<WsQuery>,
-    ws: WebSocketUpgrade,
-) -> Result<Response, ApiError> {
+/// O que a admissão apurou sobre quem está a entrar. Sai de [`admitir`], que é
+/// o ÚNICO sítio onde a decisão se toma — o socket e a sondagem de admissão
+/// chamam a mesma função, senão a sondagem explicava uma recusa diferente da
+/// que o socket aplica.
+struct Admitido {
+    claims: crate::auth::Claims,
+    source: Option<crate::studio_realtime::SourceSession>,
+    room_id: Uuid,
+    /// O inquilino da sala, já resolvido: o `handle_socket` recebe-o e não o
+    /// volta a derivar.
+    tenant: Option<Uuid>,
+}
+
+/// Verifica o token, resolve a sala e aplica a admissão (drain, tecto por
+/// conta, quota da organização, capacidade do nó). `Ok` = esta pessoa entra.
+///
+/// Não reserva lugar nenhum: o lugar toma-se ao abrir o socket. Por isso a
+/// sondagem que usa isto EXPLICA uma recusa, não promete uma entrada.
+/// A sondagem corre a MESMA decisão, mas não é uma entrada: não pode contar
+/// como recusa. Um contador que soma duas vezes por pessoa (uma no socket,
+/// outra na explicação) desmente a anotação do alerta — «uma recusa é um
+/// cliente que não entrou» — e qualquer cliente podia inflacioná-lo em ciclo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Efeito {
+    /// Uma entrada a sério: conta nas métricas.
+    Socket,
+    /// Só a explicar uma recusa que já aconteceu: não conta.
+    Sonda,
+}
+
+async fn admitir(
+    state: &Arc<AppState>,
+    query: &WsQuery,
+    efeito: Efeito,
+) -> Result<Admitido, ApiError> {
     // Only short-lived, room-scoped tokens open a signaling socket — a room
     // token (a person) or a SOURCE token (a studio camera, ADR-0014 §2.1).
     let (claims, source) = match verify_jwt(&state.config.jwt_secret, &query.token, "room") {
@@ -4059,6 +4089,15 @@ pub async fn ws_handler(
         }
     };
     let room_id = claims.room.ok_or(ApiError::Unauthorized)?;
+    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
+    // token de sala ainda válido volta a abrir o /ws. Vive AQUI, e não só no
+    // `ws_handler`, para que a sondagem recuse exactamente o que o socket
+    // recusa — senão a sondagem confirmava um token cuja sessão já morreu, e a
+    // declaração em `rotas-publicas.txt` («nem a mais nem a menos do que no
+    // socket») passava a ser falsa.
+    if let Some(sid) = claims.sid {
+        crate::sessions::ensure_active(state, claims.sub, sid).await?;
+    }
 
     // Nó a drenar: recusa ENTRADAS NOVAS, mas só as de salas que ainda não
     // existem aqui. Quem já está numa sala deste pod tem de conseguir voltar a
@@ -4069,9 +4108,7 @@ pub async fn ws_handler(
     // de «não tens autorização», e volta a pedir — o balanceador já o manda
     // para outro pod.
     if state.draining.load(std::sync::atomic::Ordering::Relaxed) && !state.hub.tem_sala(room_id) {
-        return Err(ApiError::ServiceUnavailable(
-            "Este nó está a encerrar. A tentar noutro…".into(),
-        ));
+        return Err(admissao_recusada(Admissao::ANoDrenar));
     }
     // Admissão por capacidade (`NODE_PEER_CAPACITY`, ADR-0017): só decide SALAS
     // NOVAS. Uma sala que já cá está tem de poder continuar a crescer e a
@@ -4100,10 +4137,12 @@ pub async fn ws_handler(
         regressa,
     ) {
         if state.hub.user_sockets(claims.sub) >= max as usize {
-            state
-                .metrics
-                .ws_refused_user_cap_total
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if efeito == Efeito::Socket {
+                state
+                    .metrics
+                    .ws_refused_user_cap_total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return Err(ApiError::TooManyRequests);
         }
     }
@@ -4119,11 +4158,13 @@ pub async fn ws_handler(
     if let (Some(t), None, false, false) = (tenant, source.as_ref(), claims.is_bot, regressa) {
         if let Some(limit) = org_participant_limit(&state, t).await {
             if state.hub.tenant_load(t).0 >= limit {
-                state
-                    .metrics
-                    .ws_refused_org_quota_total
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return Err(ApiError::TooManyRequests);
+                if efeito == Efeito::Socket {
+                    state
+                        .metrics
+                        .ws_refused_org_quota_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Err(admissao_recusada(Admissao::OrgNoTecto));
             }
         }
     }
@@ -4146,26 +4187,87 @@ pub async fn ws_handler(
             );
             let motivo = match verdict {
                 NewRoomAdmission::Admit => None,
-                NewRoomAdmission::NodeFull => {
-                    Some("Este nó está no limite da capacidade e não aceita salas novas agora.")
-                }
+                NewRoomAdmission::NodeFull => Some(Admissao::NoNoTecto),
                 NewRoomAdmission::OverFairShare => {
-                    state
-                        .metrics
-                        .node_new_rooms_refused_fair_share_total
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    Some("Este nó está ocupado e a tua organização já usa a sua parte dele. Tenta daqui a pouco.")
+                    if efeito == Efeito::Socket {
+                        state
+                            .metrics
+                            .node_new_rooms_refused_fair_share_total
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    Some(Admissao::AcimaDaParteJusta)
                 }
             };
             if let Some(m) = motivo {
-                state
-                    .metrics
-                    .node_new_rooms_refused_total
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return Err(ApiError::ServiceUnavailable(m.into()));
+                if efeito == Efeito::Socket {
+                    state
+                        .metrics
+                        .node_new_rooms_refused_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Err(admissao_recusada(m));
             }
         }
     }
+    Ok(Admitido {
+        claims,
+        source,
+        room_id,
+        tenant,
+    })
+}
+
+/// `GET /ws/admission` — porque é que o socket seria recusado, em palavras que
+/// o cliente pode ler.
+///
+/// Existe porque um WebSocket recusado no HANDSHAKE não entrega ao browser nem
+/// o estado HTTP nem o corpo: chega um `onclose` opaco com `code: 1006`, igual
+/// ao de uma falha de rede. A pessoa recusada por capacidade via «Ligação
+/// instável. Verifica a rede» — a app mandava-a depurar a ligação dela quando
+/// o servidor a tinha recusado de propósito.
+///
+/// Vive no prefixo `/ws` de PROPÓSITO: o ingress encaminha `/ws` com
+/// `upstream-hash-by: $arg_room` (ADR-0001), logo esta sondagem cai no MESMO
+/// pod que recusou o socket. Em `/api` não cairia — esse caminho não tem
+/// afinidade nenhuma, e a resposta viria de um pod ao acaso, com a contagem de
+/// outro nó. Por isso o `room=` tem de ir no query, como vai no socket.
+///
+/// Não reserva lugar e não promete entrada: explica a recusa que JÁ aconteceu.
+/// O cliente só lhe chama depois de o socket falhar sem abrir.
+#[utoipa::path(
+    get,
+    path = "/ws/admission",
+    tag = "rooms",
+    params(
+        ("token" = String, Query, description = "O mesmo room token do /ws"),
+        ("room" = Option<String>, Query, description = "Código da sala — fixa o pod pela afinidade do ingress"),
+    ),
+    responses(
+        (status = 204, description = "Seria admitido agora"),
+        (status = 401, description = "Token inválido ou sessão terminada"),
+        (status = 429, description = "`admission.org_at_capacity`: a organização está no tecto neste nó"),
+        (status = 503, description = "`admission.node_at_capacity` ou `admission.over_fair_share`"),
+    ),
+)]
+pub async fn ws_admission_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<WsQuery>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    admitir(&state, &query, Efeito::Sonda).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+pub async fn ws_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<WsQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, ApiError> {
+    let Admitido {
+        claims,
+        source,
+        room_id,
+        tenant,
+    } = admitir(&state, &query, Efeito::Socket).await?;
     // O lugar (papel, origem, espera) decide-se num sítio só, testável sem
     // socket: ver `seat_policy`.
     let SeatPolicy {
@@ -4175,11 +4277,6 @@ pub async fn ws_handler(
         extras,
         wait,
     } = seat_policy(&claims);
-    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
-    // token de sala ainda válido volta a abrir o /ws.
-    if let Some(sid) = claims.sid {
-        crate::sessions::ensure_active(&state, claims.sub, sid).await?;
-    }
     let session_id = claims.sid;
     let username = claims.name.clone().unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
@@ -4215,6 +4312,64 @@ pub async fn ws_handler(
             },
         )
     }))
+}
+
+/// Porque é que a admissão recusou (ADR-0017). Cada uma tem `code` próprio: um
+/// `rate_limited` genérico não deixava o cliente distinguir «a tua organização
+/// está no tecto» de «estás a pedir depressa de mais», e era com esse que a
+/// pessoa recusada ficava.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admissao {
+    /// A organização já tem os participantes que o seu tecto permite NESTE nó.
+    OrgNoTecto,
+    /// O nó está na capacidade: não aceita salas novas de ninguém.
+    NoNoTecto,
+    /// O nó está na zona de margem e este inquilino já usa a sua parte justa.
+    AcimaDaParteJusta,
+    /// O nó está a encerrar. NÃO é um tecto: volta-se a tentar e o balanceador
+    /// manda para outro pod. Tem código próprio para o cliente saber que deve
+    /// repetir — sem ele, uma recusa de drain ficava sem explicação nem recuo.
+    ANoDrenar,
+}
+
+impl Admissao {
+    pub fn code(self) -> &'static str {
+        match self {
+            Admissao::OrgNoTecto => "admission.org_at_capacity",
+            Admissao::NoNoTecto => "admission.node_at_capacity",
+            Admissao::AcimaDaParteJusta => "admission.over_fair_share",
+            Admissao::ANoDrenar => "admission.node_draining",
+        }
+    }
+}
+
+/// A recusa como erro de domínio: estado HTTP IGUAL ao de antes (429 para a
+/// quota da organização — «tu já tens o teu» —, 503 para o nó), mas com um
+/// `code` estável que a interface mapeia para uma frase própria.
+///
+/// A mensagem continua a não dizer quanto ocupam os outros inquilinos
+/// (ADR-0017): a recusa explica-se a quem a sofre sem expor o vizinho.
+pub fn admissao_recusada(motivo: Admissao) -> ApiError {
+    use delonix_meet_core::error::{DomainError, ErrorKind};
+    let (kind, msg) = match motivo {
+        Admissao::OrgNoTecto => (
+            ErrorKind::ResourceExhausted,
+            "A tua organização já tem todos os participantes que este servidor lhe permite ao mesmo tempo. Quando alguém sair, podes entrar.",
+        ),
+        Admissao::NoNoTecto => (
+            ErrorKind::Unavailable,
+            "Este servidor está no limite da capacidade e não aceita salas novas agora.",
+        ),
+        Admissao::AcimaDaParteJusta => (
+            ErrorKind::Unavailable,
+            "Este servidor está ocupado e a tua organização já usa a parte dele que lhe cabe. Tenta daqui a pouco.",
+        ),
+        Admissao::ANoDrenar => (
+            ErrorKind::Unavailable,
+            "Este servidor está a encerrar. A tentar noutro…",
+        ),
+    };
+    ApiError::Domain(DomainError::new(kind, motivo.code(), msg))
 }
 
 /// O tecto de participantes concorrentes da organização `org_id` neste nó: o

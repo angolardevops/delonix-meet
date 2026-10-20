@@ -294,6 +294,7 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@bash scripts/check-bordo-anuncia.sh
 	@bash scripts/check-bordo-central.sh
 	@bash scripts/check-replicas-compose.sh
+	@HELM=$(HELM) bash scripts/check-tectos-de-admissao.sh
 	@bash scripts/check-k8s-render.sh
 	@HELM=$(HELM) bash scripts/check-helm.sh
 	@HELM=$(HELM) bash scripts/check-observabilidade.sh

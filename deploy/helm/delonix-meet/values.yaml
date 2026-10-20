@@ -149,11 +149,15 @@ server:
   #   - na capacidade, recusa salas novas a todos.
   # Uma sala que JÁ está no nó admite sempre: não pode mudar de pod (ADR-0001).
   #
-  # `0` = não declarada, e então NADA se recusa: o nó aceita até degradar, e o
-  # alerta `MeetSalasRecusadasPorCapacidade` nunca pode disparar. Foi o que
-  # esteve em produção até 2026-10-13. Em produção o chart passou a RECUSAR 0
-  # (ver _helpers.tpl): declarar a capacidade é uma decisão do operador, mas
-  # não declarar nenhuma deixou de ser uma omissão silenciosa.
+  # `0` = SEM TECTO, de propósito: o nó aceita até degradar, e o alerta
+  # `MeetSalasRecusadasPorCapacidade` nunca pode disparar. Foi o que esteve em
+  # produção até 2026-10-13. Em produção o chart RECUSA 0 (ver _helpers.tpl):
+  # declarar a capacidade é uma decisão do operador, mas não declarar nenhuma
+  # deixou de ser uma omissão silenciosa.
+  #
+  # O `0` chega ao servidor TAL E QUAL (desde 2026-10-18). Antes a variável era
+  # omitida do ConfigMap, e como a ausência passou a valer uma omissão do
+  # código (50), `0` teria passado a significar o contrário do que diz.
   #
   # Como escolher: pelo limite que morde primeiro, e para um pod de 2Gi/2 CPU é
   # a memória — (2048 − ~200 de base) ÷ 73 ≈ 25 participantes.
@@ -167,7 +171,14 @@ server:
   # Tecto de participantes concorrentes de UMA organização, NESTE nó, quando o
   # operador não lhe fixou um à parte (`PUT /api/operator/v1/organizations/{id}/concurrency`,
   # migração 0097). Recusa com 429 — «tu já tens o teu», não «este nó não serve».
-  # `0` = sem tecto por omissão (uma org sem tecto próprio é ilimitada).
+  # `0` (e a ausência) = sem quota de organização. É DECLARADO-SÓ de propósito:
+  # ao contrário da capacidade do nó, este não ganhou omissão no código. Dá-la
+  # cortava a 80% uma organização SOZINHA no nó, contra a parte justa que o
+  # `admit_new_room` calcula dinamicamente — «um inquilino sozinho no nó tem a
+  # capacidade toda e não é penalizado». Quem protege o nó é `nodePeerCapacity`.
+  #
+  # Com `0` aqui e `nodePeerCapacity` > 0 o chart aceita; o contrário (nó a 0 e
+  # este > 0) é recusado: o tecto da org mordia sem o do nó existir.
   #
   # É um limite de PLANO, e por isso aqui fica generoso: 80% da capacidade do nó.
   # Serve de travão ao vizinho ruidoso, não de grade comercial — quem vende

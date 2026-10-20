@@ -300,6 +300,16 @@ export default {
     removidoTexto: "L'hôte vous a retiré de cette réunion.",
     voltar: "Retour à l'accueil",
   },
+  /**
+   * L'admission a refusé (ADR-0017). Ce n'est pas « votre connexion est
+   * mauvaise » : le serveur a refusé exprès, et dire « vérifiez le réseau »
+   * envoyait la personne déboguer ce qui fonctionnait.
+   */
+  admissao: {
+    organizacaoNoTecto: 'Votre organisation a déjà le nombre maximum de personnes en réunion en même temps. Dès que quelqu’un part, vous pourrez entrer.',
+    servidorCheio: 'Ce serveur est plein pour le moment. Réessayez dans un instant.',
+    parteJusta: 'Le serveur est occupé et votre organisation utilise déjà la part qui lui revient. Réessayez dans un instant.',
+  },
   estado: {
     aLigar: 'Connexion…',
     permissaoBloqueada: "Le navigateur a bloqué la caméra et le micro. Autorisez-les via le cadenas de la barre d'adresse.",

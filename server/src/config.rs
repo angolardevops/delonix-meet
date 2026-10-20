@@ -41,16 +41,24 @@ pub struct Config {
     /// (422) em vez de os escrever em claro.
     pub secret_box: Option<std::sync::Arc<delonix_meet_core::secret_box::SecretBox>>,
     /// Participantes que este nó aguenta (`NODE_PEER_CAPACITY`), declarado pelo
-    /// operador a partir de testes de carga. Sem ele o inventário não inventa
-    /// uma ocupação.
+    /// operador a partir de testes de carga. **Ausente não é «sem tecto»**: vale
+    /// `DEFAULT_NODE_PEER_CAPACITY`, a capacidade do deploy de referência. Só
+    /// `0` — explícito — desliga a admissão, e é o que uma rampa de carga põe
+    /// para medir onde a sala quebra.
     pub node_peer_capacity: Option<u32>,
     /// Ligações `/ws` simultâneas que UMA conta pode ter neste nó
     /// (`MAX_WS_PER_USER`, por omissão 16; `0` desliga). Impede que uma conta
     /// ocupe o nó com sockets. Não conta bots nem fontes de estúdio.
     pub max_ws_per_user: Option<u32>,
     /// Participantes concorrentes que uma organização pode ter NESTE nó quando
-    /// o operador não lhe fixou um tecto (`ORG_MAX_PARTICIPANTS`). Sem ele, uma
-    /// org sem tecto próprio é ilimitada.
+    /// o operador não lhe fixou um tecto (`ORG_MAX_PARTICIPANTS`). DECLARADO-SÓ:
+    /// ausente, não há quota de organização — é um limite de PLANO, e quem o
+    /// quer escreve-o (os `values` põem 80 % da capacidade do nó).
+    ///
+    /// Quem impede «sem tecto» é o [`Config::node_peer_capacity`], que tem
+    /// omissão: por ADR-0001 a sala é servida por UM pod, logo o pod é o limite
+    /// da sala. Dar omissão também a este cortava a 80 % uma organização
+    /// SOZINHA no nó, contra o que o `admit_new_room` calcula dinamicamente.
     pub org_max_participants: Option<u32>,
     /// `DELONIX_ALLOW_INSECURE=1`: segredos de dev aceites e CORS permissivo.
     /// Lido UMA vez aqui — nenhum outro módulo lê o ambiente.
@@ -569,33 +577,29 @@ impl Config {
         let ollama_model_summary = src
             .var("OLLAMA_MODEL_SUMMARY")
             .unwrap_or_else(|_| "qwen2.5:1.5b".into());
+        // Os dois tectos da admissão (ADR-0017). O que impede «sem tecto» é o
+        // do NÓ: por ADR-0001 todos os pares de uma sala são servidos pelo
+        // MESMO pod, logo o pod É o limite da sala, e é ele que tem omissão.
+        let node_peer_capacity = tecto(src, "NODE_PEER_CAPACITY", DEFAULT_NODE_PEER_CAPACITY);
+        // O da organização continua DECLARADO-SÓ, de propósito. Dar-lhe uma
+        // omissão derivada (80 % do nó) foi tentado e REPROVOU contra Postgres
+        // real: cortava a 80 % uma organização SOZINHA no nó, contra o que o
+        // `media_node.rs:92-94` documenta e o `admit_new_room` calcula
+        // dinamicamente — «um inquilino sozinho no nó tem a capacidade toda e
+        // não é penalizado». Os 80 % são uma decisão de quem opera e vivem nos
+        // `values`, não uma regra inventada aqui ao lado da que já existe.
+        let org_max_participants = tecto_declarado(src, "ORG_MAX_PARTICIPANTS");
         Self {
             edition,
             registration_mode,
             registration_domains,
             tenancy_mode,
-            node_peer_capacity: opt("NODE_PEER_CAPACITY").map(|v| {
-                v.trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|n| *n > 0)
-                    .unwrap_or_else(|| {
-                        panic!("NODE_PEER_CAPACITY: «{v}» não é um inteiro positivo")
-                    })
-            }),
+            node_peer_capacity,
             max_ws_per_user: match bounded_env(src, "MAX_WS_PER_USER", 16, 0, 100_000) {
                 0 => None,
                 n => Some(n as u32),
             },
-            org_max_participants: opt("ORG_MAX_PARTICIPANTS").map(|v| {
-                v.trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|n| *n > 0)
-                    .unwrap_or_else(|| {
-                        panic!("ORG_MAX_PARTICIPANTS: «{v}» não é um inteiro positivo")
-                    })
-            }),
+            org_max_participants,
             migrate_on_start: src.var("DELONIX_MIGRATE").ok().as_deref() != Some("0"),
             log_json: src.var("LOG_FORMAT").ok().as_deref() == Some("json"),
             internal_bind_addr: opt("INTERNAL_BIND_ADDR"),
@@ -908,6 +912,73 @@ impl Config {
                 .or_else(|| opt("SFU_EXTERNAL_IP"))
                 .unwrap_or_else(|| "127.0.0.1".into()),
         }
+    }
+}
+
+/// Participantes que um nó aguenta quando o operador não o declarou. É a
+/// capacidade do deploy de REFERÊNCIA (`deploy/k8s/01-config.yaml` e
+/// `values-production.yaml`), e não um número novo: a omissão passa a valer o
+/// que a implantação documentada já vale.
+///
+/// Não substitui declará-la. Um pod pequeno aguenta menos (o `values.yaml` de
+/// dev deriva 25 do limite de memória: `(2048 − ~200) ÷ 73 MB`), e por isso o
+/// `_helpers.tpl` continua a RECUSAR um chart de produção que não a declare.
+/// Isto é o chão que impede «sem tecto», não o tecto certo de cada nó.
+pub const DEFAULT_NODE_PEER_CAPACITY: u32 = 50;
+
+/// Um tecto de admissão lido do ambiente, com três estados declarados:
+/// ausente => `default` (**nunca «sem tecto»**, que é o defeito que isto
+/// fecha), `0` => `None`, explicitamente sem tecto, e é o que uma rampa de
+/// carga põe para medir onde a sala quebra (`values.yaml`: «SE ESTÁS A MEDIR O
+/// TECTO, PÕE 0»); qualquer outra coisa que não seja um inteiro => pânico.
+///
+/// O pânico fica de propósito, como estava: um `NODE_PEER_CAPACITY=cinquenta`
+/// a cair em silêncio para a omissão deixava o operador convencido de que
+/// declarou uma capacidade que o servidor nunca leu — o mesmo argumento do
+/// `uuid_list` aqui ao lado.
+fn tecto(src: &Source, var: &str, default: u32) -> Option<u32> {
+    match tecto_bruto(src, var) {
+        Declarado::Ausente => Some(default),
+        Declarado::SemTecto => None,
+        Declarado::Valor(n) => Some(n),
+    }
+}
+
+/// Como [`tecto`], mas sem omissão: ausente vale `None`, como `0`. É o tecto
+/// por ORGANIZAÇÃO, que é um limite de PLANO — quem o quer escreve-o. Quem
+/// impede «sem tecto» é a capacidade do nó, que tem omissão.
+fn tecto_declarado(src: &Source, var: &str) -> Option<u32> {
+    match tecto_bruto(src, var) {
+        Declarado::Ausente | Declarado::SemTecto => None,
+        Declarado::Valor(n) => Some(n),
+    }
+}
+
+enum Declarado {
+    Ausente,
+    SemTecto,
+    Valor(u32),
+}
+
+fn tecto_bruto(src: &Source, var: &str) -> Declarado {
+    let bruto = match src.var(var) {
+        Err(_) => return Declarado::Ausente,
+        Ok(v) => v,
+    };
+    // Vazio é AUSENTE, como em todo o resto deste ficheiro (`opt`, que filtra
+    // `v.trim().is_empty()`). Um `NODE_PEER_CAPACITY=${NODE_PEER_CAPACITY}` em
+    // compose com a variável do host por definir expande para vazio, e isso
+    // tem de arrancar com a omissão — não derrubar o pod em CrashLoopBackOff.
+    if bruto.trim().is_empty() {
+        return Declarado::Ausente;
+    }
+    match bruto.trim().parse::<u32>() {
+        Ok(0) => Declarado::SemTecto,
+        Ok(n) => Declarado::Valor(n),
+        Err(_) => panic!(
+            "{var}: «{bruto}» não é um inteiro. Declara os participantes que o nó aguenta, \
+             ou `0` para não impor tecto nenhum (é o que uma rampa de carga põe)."
+        ),
     }
 }
 
@@ -1345,5 +1416,65 @@ mod tests {
             "postgres://delonix_dev_pass:forte@db:5432/delonix_dev_pass"
         ));
         assert!(!database_url_uses_burned_password(DEV_DB));
+    }
+
+    /// O defeito que isto fecha: `ORG_MAX_PARTICIPANTS` ausente valia `None`, e
+    /// `None` em `signaling::org_participant_limit` é **sem tecto** — uma
+    /// implantação por compose (que não declara nenhuma das duas variáveis)
+    /// aceitava a 41.ª pessoa e degradava a sala para todos, sem sinal.
+    #[test]
+    fn sem_variaveis_nenhumas_o_no_tem_tecto() {
+        let c = production(&[("NODE_PEER_CAPACITY", None), ("ORG_MAX_PARTICIPANTS", None)]);
+        // O que fecha o defeito: `None` aqui era «não recusa ninguém».
+        assert_eq!(c.node_peer_capacity, Some(DEFAULT_NODE_PEER_CAPACITY));
+        // A quota da organização é DECLARADO-SÓ e continua ausente: é um limite
+        // de plano, e dar-lhe omissão cortava a 80 % uma org sozinha no nó
+        // (reprovado contra Postgres real em `node_admission.rs`).
+        assert_eq!(c.org_max_participants, None);
+    }
+
+    /// `0` continua a desligar — explicitamente. É o que uma rampa de carga
+    /// põe («SE ESTÁS A MEDIR O TECTO, PÕE 0», `values.yaml`), e perder esta
+    /// saída fazia o `A-04` medir contra um tecto de 50 sem dar por isso.
+    #[test]
+    fn zero_explicito_desliga_o_tecto() {
+        let c = production(&[
+            ("NODE_PEER_CAPACITY", Some("0")),
+            ("ORG_MAX_PARTICIPANTS", Some("0")),
+        ]);
+        assert_eq!(c.node_peer_capacity, None);
+        assert_eq!(c.org_max_participants, None);
+    }
+
+    #[test]
+    fn um_valor_declarado_vale_mais_que_a_omissao() {
+        let c = production(&[
+            ("NODE_PEER_CAPACITY", Some("120")),
+            ("ORG_MAX_PARTICIPANTS", Some("96")),
+        ]);
+        assert_eq!(c.node_peer_capacity, Some(120));
+        assert_eq!(c.org_max_participants, Some(96));
+    }
+
+    /// Um valor mal escrito não cai para a omissão em silêncio: isso deixava o
+    /// operador convencido de que declarou uma capacidade que ninguém leu.
+    #[test]
+    #[should_panic(expected = "NODE_PEER_CAPACITY")]
+    fn um_tecto_mal_escrito_nao_arranca() {
+        production(&[("NODE_PEER_CAPACITY", Some("cinquenta"))]);
+    }
+
+    /// Uma variável DEFINIDA mas vazia é «ausente», como em todo o resto do
+    /// ficheiro. Um `NODE_PEER_CAPACITY=${NODE_PEER_CAPACITY}` em compose com a
+    /// variável do host por definir expande para vazio: tem de arrancar com a
+    /// omissão, não derrubar o pod.
+    #[test]
+    fn uma_variavel_vazia_e_ausente_e_nao_panico() {
+        let c = production(&[
+            ("NODE_PEER_CAPACITY", Some("")),
+            ("ORG_MAX_PARTICIPANTS", Some("   ")),
+        ]);
+        assert_eq!(c.node_peer_capacity, Some(DEFAULT_NODE_PEER_CAPACITY));
+        assert_eq!(c.org_max_participants, None);
     }
 }

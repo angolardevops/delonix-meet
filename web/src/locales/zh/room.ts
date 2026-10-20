@@ -300,6 +300,15 @@ export default {
     removidoTexto: '主持人已将你移出此会议。',
     voltar: '返回首页',
   },
+  /**
+   * 准入被拒绝（ADR-0017）。这不是「你的网络不好」：服务器是有意拒绝的，
+   * 而提示「请检查网络」会让人去排查本来正常的东西。
+   */
+  admissao: {
+    organizacaoNoTecto: '你所在的组织同时参会的人数已达上限。等有人离开后，你就可以加入。',
+    servidorCheio: '此服务器当前已满，请稍后再试。',
+    parteJusta: '服务器繁忙，且你所在的组织已用满分配给它的份额。请稍后再试。',
+  },
   estado: {
     aLigar: '正在连接…',
     permissaoBloqueada: '浏览器已阻止摄像头和麦克风。请点击地址栏中的锁形图标授予权限。',

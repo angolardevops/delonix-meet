@@ -181,7 +181,8 @@ export type ClientMsg =
 export class Signaling {
   private ws: WebSocket
   private handlers = new Map<string, ((msg: never) => void)[]>()
-  onclose: (() => void) | null = null
+  /** `abriu`: o socket chegou a estar ligado. `false` = recusado no handshake. */
+  onclose: ((abriu: boolean) => void) | null = null
 
   /** Guarda o segredo de reclamação desta sala (R91). */
   static guardarSegredo(roomCode: string, segredo: string) {
@@ -233,8 +234,19 @@ export class Signaling {
       console.debug('[signal] <-', msg.type, this.handlers.has(msg.type) ? '' : '(no handler!)')
       this.handlers.get(msg.type)?.forEach((h) => h(msg as never))
     }
-    this.ws.onclose = () => this.onclose?.()
+    // Um handshake recusado NÃO abre: o browser entrega `onerror` e depois um
+    // `onclose` com `code: 1006`, sem o estado HTTP nem o corpo. Guardar se
+    // chegou a abrir é o que permite distinguir «o servidor recusou-me» de «a
+    // minha ligação caiu a meio» — sem isto, as duas davam a mesma frase, e a
+    // pessoa recusada por capacidade era mandada verificar a rede dela.
+    this.ws.onopen = () => {
+      this.abriu = true
+    }
+    this.ws.onclose = () => this.onclose?.(this.abriu)
   }
+
+  /** O socket chegou a estar aberto? `false` = foi recusado no handshake. */
+  private abriu = false
 
   on<T extends ServerMsg['type']>(type: T, handler: (msg: Extract<ServerMsg, { type: T }>) => void) {
     const list = this.handlers.get(type) ?? []

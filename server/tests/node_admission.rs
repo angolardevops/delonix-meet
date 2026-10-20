@@ -147,6 +147,13 @@ async fn without_a_declared_capacity_no_room_is_refused(db: sqlx::PgPool) {
     assert_eq!(refused(&app), 0);
 }
 
+fn refused_org_quota(app: &TestApp) -> u64 {
+    app.state
+        .metrics
+        .ws_refused_org_quota_total
+        .load(Ordering::Relaxed)
+}
+
 fn refused_fair_share(app: &TestApp) -> u64 {
     app.state
         .metrics
@@ -232,4 +239,127 @@ async fn a_tenant_alone_on_the_node_is_refused_only_at_the_capacity(db: sqlx::Pg
     // Na capacidade ninguém abre salas novas, e já não é «parte justa».
     assert_eq!(connect(&app, &tok_a3).await.err(), Some(503));
     assert_eq!((refused(&app), refused_fair_share(&app)), (1, 0));
+}
+
+/// O defeito que a omissão do tecto do nó fecha, observado pela API do
+/// OPERADOR e não pela opinião do cliente de teste: **sem `NODE_PEER_CAPACITY`
+/// declarado**, `peer_capacity` era `null` e nada se recusava. Era o estado de
+/// uma implantação por compose, que não declarava nenhuma das duas variáveis.
+///
+/// Agora a ausência vale `DEFAULT_NODE_PEER_CAPACITY`, e o inventário mostra-o:
+/// o nó publica a capacidade com que vai mesmo recusar, e `load` deixa de ser
+/// `null`. A quota de ORGANIZAÇÃO continua ausente de propósito — é um limite
+/// de plano, e dar-lhe omissão cortava a 80 % uma org sozinha no nó, contra o
+/// que o `admit_new_room` calcula dinamicamente.
+#[sqlx::test(migrations = "./migrations")]
+async fn without_any_variable_the_node_still_declares_a_ceiling(db: sqlx::PgPool) {
+    // 1.ª instância só para criar a conta que vai ser administradora.
+    let boot = TestApp::spawn(db.clone()).await;
+    let op = boot.new_org("plataforma.ao").await;
+    // A instância sob teste: administrador declarado, e NENHUM dos dois tectos.
+    let app = TestApp::spawn_with(db, &[("PLATFORM_ADMIN_USER_IDS", op.user_id.as_str())]).await;
+
+    assert_eq!(
+        app.state.config.node_peer_capacity,
+        Some(delonix_server::config::DEFAULT_NODE_PEER_CAPACITY),
+        "sem a variável, o tecto do nó TEM de existir — `None` não recusa ninguém"
+    );
+    assert_eq!(
+        app.state.config.org_max_participants, None,
+        "a quota da organização é declarado-só: é um limite de plano"
+    );
+
+    delonix_server::nodes::heartbeat(&app.state, chrono::Utc::now())
+        .await
+        .unwrap();
+
+    // Observação de FORA: o inventário do operador, não o estado em memória.
+    let (st, v) = app.get("/api/operator/v1/nodes", Some(&op.token)).await;
+    assert_eq!(st, 200, "{v}");
+    let eu = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["hostname"].is_string())
+        .cloned()
+        .unwrap_or_else(|| panic!("o nó não se anunciou: {v}"));
+    assert_eq!(
+        eu["peer_capacity"].as_i64(),
+        Some(delonix_server::config::DEFAULT_NODE_PEER_CAPACITY as i64),
+        "o nó publica a capacidade com que vai recusar: {v}"
+    );
+    assert!(
+        eu["load"].as_f64().is_some(),
+        "sem capacidade o `load` era null — o operador não via ocupação nenhuma: {v}"
+    );
+}
+
+/// A recusa tem de chegar a quem a sofre. Um `/ws` recusado no HANDSHAKE não
+/// entrega ao browser o estado HTTP nem o corpo — chega um `onclose` com
+/// `code: 1006`, igual a uma falha de rede, e a pessoa via «Ligação instável.
+/// Verifica a rede» com a rede dela perfeita.
+///
+/// A sondagem `/ws/admission` corre a MESMA `admitir()` e devolve a razão com
+/// `code` estável. Vive no prefixo `/ws` porque é o único com afinidade por
+/// `$arg_room` (ADR-0001): em `/api` responderia um pod ao acaso, com a
+/// contagem de outro nó.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_refusal_says_why_through_the_admission_probe(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(
+        db,
+        &[("NODE_PEER_CAPACITY", "5"), ("ORG_MAX_PARTICIPANTS", "4")],
+    )
+    .await;
+    let dona = app.new_org("alfa.test").await;
+    let sala = app.new_room(&dona, "A").await;
+    let code = sala["code"].as_str().unwrap().to_string();
+    let tok = room_token(&app, &code, &dona).await;
+
+    // Com lugar, a sondagem diz «entrarias»: 204 e nada a explicar.
+    let (st, _) = app
+        .get(&format!("/ws/admission?token={tok}&room={code}"), None)
+        .await;
+    assert_eq!(st, 204, "com lugar livre a sondagem não inventa recusa");
+
+    let _ocupados = fill(&app, &tok, 4).await;
+
+    // O socket recusa — e o browser não saberia porquê.
+    assert_eq!(connect(&app, &tok).await.err(), Some(429));
+
+    // A sondagem diz porquê, com código estável e frase legível.
+    let (st, corpo) = app
+        .get(&format!("/ws/admission?token={tok}&room={code}"), None)
+        .await;
+    assert_eq!(st, 429, "{corpo}");
+    assert_eq!(
+        corpo["code"], "admission.org_at_capacity",
+        "sem código próprio isto era `rate_limited` — indistinguível de «pediste depressa de mais»: {corpo}"
+    );
+    assert!(
+        corpo["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("organização"),
+        "a frase tem de explicar-se a quem a lê: {corpo}"
+    );
+    // A recusa não expõe o vizinho (ADR-0017): não diz quanto ocupam os outros.
+    let frase = corpo["error"].as_str().unwrap_or("");
+    assert!(!frase.contains('%') && !frase.contains(" de 5"), "{frase}");
+
+    // A SONDAGEM NÃO CONTA COMO RECUSA. Uma recusa é um cliente que não
+    // entrou (é o que a anotação do alerta diz); se a explicação também
+    // contasse, cada pessoa somava 2 — e qualquer cliente com um room token
+    // válido inflacionava `MeetSalasRecusadasPorCapacidade` em ciclo.
+    let antes = refused_org_quota(&app);
+    for _ in 0..5 {
+        let (st, _) = app
+            .get(&format!("/ws/admission?token={tok}&room={code}"), None)
+            .await;
+        assert_eq!(st, 429);
+    }
+    assert_eq!(
+        refused_org_quota(&app),
+        antes,
+        "cinco sondagens não são cinco recusas"
+    );
 }
