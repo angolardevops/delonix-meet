@@ -845,12 +845,8 @@ pub async fn upload(
     .bind(kind)
     .fetch_one(&mut *tx)
     .await?;
-    crate::recording_artifacts::register_canonical(
-        &mut tx,
-        &state.config.recordings_dir,
-        rec_id,
-    )
-    .await?;
+    crate::recording_artifacts::register_canonical(&mut tx, &state.config.recordings_dir, rec_id)
+        .await?;
     tx.commit().await?;
 
     let dir = &state.config.recordings_dir;
