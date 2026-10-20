@@ -158,14 +158,26 @@ pub struct PageQuery {
 
 // ---------- Rotas ----------
 
-/// Onde o recorte fica no disco. Ao lado das gravações, com o seu próprio id:
-/// `clip-<uuid>.webm`, e `clip-<uuid>.vtt` para as legendas.
+/// Onde o recorte está no disco, **para quem o LÊ** (a rota que o serve, a que
+/// lê as legendas, e quem o desfaz). Ao lado das gravações, com o seu próprio
+/// id — o nome sai do registo de artefactos, que é a única fonte dele.
+///
+/// Quem PRODUZ não chama isto: chama o `recording_artifacts::reserve`, que
+/// escreve a linha e devolve o caminho. Ter aqui um caminho de escrita era ter
+/// como nomear um `clip-<id>.webm` sem linha que o apague — a fuga que a 0118
+/// deixou aberta quatro meses.
 pub(crate) fn clip_path(state: &AppState, id: Uuid) -> std::path::PathBuf {
-    state.config.recordings_dir.join(format!("clip-{id}.webm"))
+    crate::recording_artifacts::path_for(
+        &state.config.recordings_dir,
+        crate::recording_artifacts::Kind::Clip(id),
+    )
 }
 
 pub(crate) fn clip_vtt_path(state: &AppState, id: Uuid) -> std::path::PathBuf {
-    state.config.recordings_dir.join(format!("clip-{id}.vtt"))
+    crate::recording_artifacts::path_for(
+        &state.config.recordings_dir,
+        crate::recording_artifacts::Kind::ClipCaptions(id),
+    )
 }
 
 /// `POST /api/recordings/{id}/clips` — pede um recorte. `202`: a composição é
@@ -630,24 +642,23 @@ async fn compoe(state: &Arc<AppState>, job: &PorCompor) -> anyhow::Result<(i64, 
     if !tokio::fs::try_exists(&src).await.unwrap_or(false) {
         anyhow::bail!("source-missing: {}", src.display());
     }
-    let out = clip_path(state, job.id);
     // A LINHA ANTES DO FICHEIRO (`recording_artifacts`, migração 0126): o
     // ffmpeg abaixo escreve o `clip-<id>.webm`, e sem registo esse ficheiro
     // sobrevivia à gravação inteira — o `ON DELETE CASCADE` da 0118 levava a
     // linha do recorte e os bytes ficavam, sem nada na base que os nomeasse.
-    // Falhar a registar aborta o render: o recorte volta à fila (é retentável)
-    // e não se deixa um ficheiro sem dono no disco.
-    if !crate::recording_artifacts::register(
+    // O `out` SAI da reserva: sem linha não há caminho para dar ao ffmpeg, e o
+    // render aborta — o recorte volta à fila (é retentável) e não se deixa um
+    // ficheiro sem dono no disco.
+    let Some(out) = crate::recording_artifacts::reserve(
         &state.db,
         job.recording_id,
-        crate::recording_artifacts::KIND_CLIP,
+        crate::recording_artifacts::Kind::Clip(job.id),
         &state.config.recordings_dir,
-        &out,
     )
     .await
-    {
-        anyhow::bail!("artefacto-nao-registado: {}", out.display());
-    }
+    else {
+        anyhow::bail!("artefacto-nao-registado: clip {}", job.id);
+    };
 
     let kind = rules::Kind::parse(&job.kind).unwrap_or(rules::Kind::Clip);
     let focus = rules::Focus::parse(&job.focus).unwrap_or_default();
@@ -804,19 +815,17 @@ async fn escreve_vtt(state: &Arc<AppState>, job: &PorCompor, lang: &str) {
     // registo só custa as legendas (o vídeo está composto e é melhor um recorte
     // sem legendas do que nenhum), por isso diz-se e sai — nunca se escreve o
     // ficheiro sem a linha, que era a fuga.
-    let vtt_path = clip_vtt_path(state, job.id);
-    if !crate::recording_artifacts::register(
+    let Some(vtt_path) = crate::recording_artifacts::reserve(
         &state.db,
         job.recording_id,
-        crate::recording_artifacts::KIND_CLIP_CAPTIONS,
+        crate::recording_artifacts::Kind::ClipCaptions(job.id),
         &state.config.recordings_dir,
-        &vtt_path,
     )
     .await
-    {
-        tracing::warn!(clip = %job.id, "recorte: o .vtt não ficou registado — não se escreve");
+    else {
+        tracing::warn!(clip = %job.id, "recorte: o .vtt não ficou reservado — não se escreve");
         return;
-    }
+    };
     if let Err(e) = tokio::fs::write(&vtt_path, vtt).await {
         tracing::warn!(clip = %job.id, error = %e, "recorte: não consegui escrever o .vtt");
     }

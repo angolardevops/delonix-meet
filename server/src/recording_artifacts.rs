@@ -48,18 +48,124 @@ use crate::AppState;
 /// Quantos artefactos órfãos um tique recolhe, no máximo. Ver [`sweep_orphans`].
 const ORPHAN_BATCH: i64 = 500;
 
-/// A gravação composta, `<id>.webm`. Nasce com a linha de `recordings`.
-pub(crate) const KIND_RECORDING: &str = "recording";
-/// A miniatura, `<id>.jpg`. Nasce com a linha de `recordings`: o nome é uma
-/// função pura do id, e registá-la antes de se saber se vai existir é o lado
-/// seguro (uma linha a mais não faz mal; um ficheiro a mais fica para sempre).
-pub(crate) const KIND_THUMBNAIL: &str = "thumbnail";
-/// A PASTA das pistas por fonte, `iso-<id>/`. A única entrada com `is_dir`.
-pub(crate) const KIND_ISO_TRACKS: &str = "iso_tracks";
-/// Um recorte, `clip-<id do recorte>.webm`.
-pub(crate) const KIND_CLIP: &str = "clip";
-/// O WebVTT que sai ao lado de um recorte, `clip-<id do recorte>.vtt`.
-pub(crate) const KIND_CLIP_CAPTIONS: &str = "clip_captions";
+/// O que um artefacto É: o nome que leva no disco, se é pasta, e quem o produz.
+///
+/// # Porque é um enum e não cinco constantes soltas
+///
+/// Antes disto o `kind` era uma `&str` e o NOME do ficheiro era construído noutro
+/// lado — `{id}.webm` aqui, `{id}.jpg` no `media_probe`, `iso-{id}` no `recorder`,
+/// `clip-{id}.webm`/`.vtt` no `recording_clips`. Quatro módulos, e o registo só
+/// conhecia os dois primeiros. Isso tem duas consequências, e as duas já se
+/// mediram nesta frente:
+///
+///  · o `kind` e o nome podiam divergir sem que nada desse vermelho — quem
+///    recolhe apaga o que a coluna `path` diz, logo um produtor que registasse
+///    um nome e escrevesse outro criava exactamente a fuga que este módulo
+///    fecha;
+///  · o derivado SEGUINTE (waveform, legendas por pista, pré-visualização)
+///    nascia outra vez num quinto módulo, sem ninguém notar. O defeito do
+///    `A-02` é de OMISSÃO e repete-se sempre da mesma maneira.
+///
+/// Com o nome aqui dentro, as duas perguntas — «como se chama» e «o que é» —
+/// têm a mesma resposta, no mesmo sítio, e uma variante nova obriga quem a
+/// escreve a responder às três (nome, `is_dir`, produtor) para compilar.
+///
+/// A coluna `kind` continua texto na base, de propósito: um `CHECK` fechado
+/// seria a armadilha da `0124` outra vez (ver o cabeçalho da `0125`).
+/// **Cada variante traz o id de que o seu nome deriva**, e não é cerimónia: o
+/// dos três primeiros é o da GRAVAÇÃO, o dos dois últimos é o do RECORTE. Um
+/// `name(rec_id)` que as variantes de recorte ignorassem punha dois ids em jogo
+/// em cada chamada, e trocá-los dava um nome que compila e aponta para o
+/// ficheiro de outro.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// A gravação composta, `<id da gravação>.webm`. Nasce com a linha de
+    /// `recordings`.
+    Recording(Uuid),
+    /// A miniatura, `<id da gravação>.jpg`. Nasce com a linha de `recordings`:
+    /// o nome é função pura do id, e registá-la antes de se saber se vai
+    /// existir é o lado seguro (uma linha a mais não faz mal; um ficheiro a
+    /// mais fica para sempre).
+    Thumbnail(Uuid),
+    /// A PASTA das pistas por fonte, `iso-<id da gravação>/`. A única variante
+    /// com `is_dir`.
+    IsoTracks(Uuid),
+    /// Um recorte, `clip-<id do recorte>.webm`.
+    Clip(Uuid),
+    /// O WebVTT que sai ao lado de um recorte, `clip-<id do recorte>.vtt`.
+    ClipCaptions(Uuid),
+}
+
+/// Todas as variantes, para quem precise de percorrer o vocabulário (os testes).
+#[cfg(test)]
+pub(crate) fn todas(rec_id: Uuid, clip_id: Uuid) -> [Kind; 5] {
+    [
+        Kind::Recording(rec_id),
+        Kind::Thumbnail(rec_id),
+        Kind::IsoTracks(rec_id),
+        Kind::Clip(clip_id),
+        Kind::ClipCaptions(clip_id),
+    ]
+}
+
+impl Kind {
+    /// O valor que vai para a coluna `kind`. É o vocabulário que o
+    /// `scripts/check-recording-artifacts.sh` compara com a lista de
+    /// classificação, nos dois sentidos.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Kind::Recording(_) => "recording",
+            Kind::Thumbnail(_) => "thumbnail",
+            Kind::IsoTracks(_) => "iso_tracks",
+            Kind::Clip(_) => "clip",
+            Kind::ClipCaptions(_) => "clip_captions",
+        }
+    }
+
+    /// Um artefacto é uma PASTA ou um ficheiro, e isso **deriva do tipo**: não é
+    /// um parâmetro que quem produz possa passar ao contrário.
+    ///
+    /// A migração 0126 argumenta, com razão, que um `CHECK` fechado na `kind`
+    /// seria a armadilha da 0124 outra vez — mas a coluna que decide QUE chamada
+    /// de sistema corre não pode ser um `bool` solto com `DEFAULT FALSE`: um
+    /// produtor que o esquecesse registava a pasta ISO como ficheiro, e quem
+    /// recolhe ficava a chamar `remove_file` num directório para sempre.
+    ///
+    /// E porque mesmo assim pode estar errada (uma linha escrita à mão, um
+    /// `kind` que o código já não conhece), o [`delete_entries`] tenta a outra
+    /// chamada quando o sistema diz que o tipo não bate. Uma fuga não fica à
+    /// espera de uma tabela de tipos estar certa.
+    pub(crate) fn is_dir(self) -> bool {
+        matches!(self, Kind::IsoTracks(_))
+    }
+
+    /// Quem escreve este artefacto. **Não é decoração**: é o que torna
+    /// respondível a pergunta «este derivado tem produtor registado?» sem
+    /// procurar por `grep` em quatro módulos, e é o que a lista de
+    /// classificação (`scripts/artefactos-de-gravacao.txt`) compara com o
+    /// código em vez de ser mantida à mão em paralelo.
+    pub(crate) fn producer(self) -> &'static str {
+        match self {
+            // Os dois canónicos nascem na transacção da linha de `recordings`.
+            Kind::Recording(_) | Kind::Thumbnail(_) => "recordings::register_canonical",
+            Kind::IsoTracks(_) => "recorder::registar_pistas_iso",
+            Kind::Clip(_) => "recording_clips::compoe",
+            Kind::ClipCaptions(_) => "recording_clips::escreve_vtt",
+        }
+    }
+
+    /// O nome no disco. **É a única fonte**: nenhum outro módulo compõe um nome
+    /// de artefacto, e é isso que o portão mede.
+    pub(crate) fn name(self) -> String {
+        match self {
+            Kind::Recording(id) => format!("{id}.webm"),
+            Kind::Thumbnail(id) => format!("{id}.jpg"),
+            Kind::IsoTracks(id) => format!("iso-{id}"),
+            Kind::Clip(id) => format!("clip-{id}.webm"),
+            Kind::ClipCaptions(id) => format!("clip-{id}.vtt"),
+        }
+    }
+}
 
 /// O nome com que um caminho entra no registo: tem de ser filho **directo** do
 /// `recordings_dir`, porque é isso que a coluna `path` guarda (sem barras — ver
@@ -99,29 +205,26 @@ fn path_of(recordings_dir: &Path, nome: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-/// Um artefacto é uma PASTA ou um ficheiro, e isso **deriva do `kind`**: não é
-/// um parâmetro que quem produz possa passar ao contrário.
+/// O caminho de um artefacto, **para quem o vai LER**.
 ///
-/// A migração 0126 argumenta, com razão, que um `CHECK` fechado na `kind` seria
-/// a armadilha da 0124 outra vez — mas a coluna que decide QUE chamada de
-/// sistema corre não pode ser um `bool` solto com `DEFAULT FALSE`: um produtor
-/// que o esquecesse registava a pasta ISO como ficheiro, e quem recolhe ficava
-/// a chamar `remove_file` num directório para sempre. Com a derivação, a
-/// pergunta tem uma resposta só, ao lado das constantes.
+/// Serve quem descarrega a composta, quem mostra a miniatura, quem lê o `.vtt`
+/// de um recorte e quem o usa como fonte de outro — todos precisam do caminho
+/// sem escrever nada, e para todos eles a linha já existe (ou não, e o ficheiro
+/// também não).
 ///
-/// E porque mesmo assim pode estar errada (uma linha escrita à mão, um `kind`
-/// que esta função ainda não conhece), o [`delete_entries`] tenta a outra
-/// chamada quando o sistema diz que o tipo não bate. Uma fuga não fica à espera
-/// de uma tabela de tipos estar certa.
-pub(crate) fn is_dir_of(kind: &str) -> bool {
-    kind == KIND_ISO_TRACKS
+/// **Quem PRODUZ não chama isto: chama o [`reserve`].** A diferença é a regra
+/// do módulo inteira — o `reserve` não devolve caminho nenhum sem ter a linha
+/// escrita, e é o que torna «ficheiro sem registo» não-representável em vez de
+/// apenas desaconselhado.
+pub(crate) fn path_for(recordings_dir: &Path, kind: Kind) -> PathBuf {
+    recordings_dir.join(kind.name())
 }
 
-/// A gravação composta de `rec_id`. É UMA função porque o nome é construído em
-/// quatro sítios — quem compõe, quem carrega, quem serve e quem apaga — e um
-/// deles a divergir é um download partido ou um ficheiro que nunca sai.
+/// A gravação composta de `rec_id`, que é o artefacto que mais sítios lêem.
+/// Atalho para [`path_for`] com [`Kind::Recording`] — o nome continua a sair do
+/// `enum`, aqui só se poupa a repetição nos sete chamadores.
 pub(crate) fn composed_path(recordings_dir: &Path, rec_id: Uuid) -> PathBuf {
-    recordings_dir.join(format!("{rec_id}.webm"))
+    path_for(recordings_dir, Kind::Recording(rec_id))
 }
 
 /// O nome de um caminho, já em `String`. Os dois usos precisam de o possuir.
@@ -140,21 +243,15 @@ fn name_of(recordings_dir: &Path, path: &Path) -> Option<String> {
 /// inseria zero linhas, a transacção fechava bem — e a gravação ficava com os
 /// dois ficheiros sem registo. Um descarte silencioso no único sítio onde um
 /// descarte silencioso é exactamente o defeito que o módulo persegue.
-pub(crate) fn canonical(
-    recordings_dir: &Path,
-    rec_id: Uuid,
-) -> Option<[(&'static str, String); 2]> {
+pub(crate) fn canonical(recordings_dir: &Path, rec_id: Uuid) -> Option<[(Kind, String); 2]> {
     Some([
         (
-            KIND_RECORDING,
-            name_of(recordings_dir, &composed_path(recordings_dir, rec_id))?,
+            Kind::Recording(rec_id),
+            name_of(recordings_dir, &path_for(recordings_dir, Kind::Recording(rec_id)))?,
         ),
         (
-            KIND_THUMBNAIL,
-            name_of(
-                recordings_dir,
-                &crate::media_probe::thumbnail_path(recordings_dir, rec_id),
-            )?,
+            Kind::Thumbnail(rec_id),
+            name_of(recordings_dir, &path_for(recordings_dir, Kind::Thumbnail(rec_id)))?,
         ),
     ])
 }
@@ -193,33 +290,57 @@ pub(crate) async fn register_canonical(
              ON CONFLICT (path) DO NOTHING",
         )
         .bind(rec_id)
-        .bind(kind)
+        .bind(kind.as_str())
         .bind(&name)
-        .bind(is_dir_of(kind))
+        .bind(kind.is_dir())
         .execute(&mut *tx)
         .await?;
     }
     Ok(())
 }
 
-/// Registra um artefacto. **Chama-se ANTES de escrever o ficheiro.**
+/// Reserva um artefacto: escreve a linha e **só então** diz como se chama o
+/// ficheiro. `None` é «não há linha» e significa «não escrevas».
 ///
-/// `false` significa «não há linha», e quem produz tem de tratar isso como
-/// «não escrevas»: um ficheiro sem linha é a fuga que este módulo fecha. Os
-/// dois produtores que chamam isto têm um caminho de recuo que não perde nada
-/// (as pistas ISO ficam no `tmp-`, que o varredor de segmentos recolhe; o
-/// recorte volta à fila).
-pub(crate) async fn register(
+/// # Porque devolve o caminho em vez de o receber
+///
+/// A versão anterior era um `register(db, rec_id, kind, recordings_dir, path)
+/// -> bool`: quem produzia construía o `PathBuf`, pedia o registo e depois
+/// escrevia. Isso deixava três maneiras de reabrir a fuga, e nenhuma delas dava
+/// vermelho:
+///
+///  · ignorar o `bool` (é só um valor de retorno — `let _ = register(...)`
+///    compila) e escrever na mesma;
+///  · registar um nome e escrever noutro, porque o caminho existia antes e
+///    independentemente da linha;
+///  · esquecer a chamada por completo num produtor novo, que é precisamente
+///    como os `clip-<id>.webm`/`.vtt` da 0118 ficaram quatro meses sem ninguém
+///    que os apagasse.
+///
+/// Com a reserva, o caminho é **resultado** da linha e não entrada dela. Quem
+/// produz não tem de onde tirar um `PathBuf` sob o `recordings_dir` sem ter
+/// passado por aqui (o nome vive no [`Kind`] e o único outro acesso,
+/// [`path_for`], é a porta de quem LÊ). Ignorar o `None` deixa de ser possível
+/// por construção: sem ele não há nome para dar ao `ffmpeg` nem ao
+/// `tokio::fs::write`.
+///
+/// Os três produtores que chamam isto têm um recuo que não perde nada — as
+/// pistas ISO ficam no `tmp-`, que o varredor de segmentos recolhe; o recorte
+/// volta à fila; o `.vtt` sai e o vídeo fica.
+pub(crate) async fn reserve(
     db: &sqlx::PgPool,
     rec_id: Uuid,
-    kind: &str,
+    kind: Kind,
     recordings_dir: &Path,
-    path: &Path,
-) -> bool {
-    let Some(name) = name_in(recordings_dir, path) else {
-        tracing::error!(%rec_id, kind, path = %path.display(),
-            "artefacto de gravação: o path não é filho directo do recordings_dir — não se registra");
-        return false;
+) -> Option<PathBuf> {
+    let path = path_for(recordings_dir, kind);
+    // A mesma validação de sempre, agora sobre um caminho que este módulo
+    // construiu: um `recordings_dir` torto (relativo com `..`, com barra no
+    // fim) continua a não produzir nome registável, e aí não se escreve nada.
+    let Some(name) = name_in(recordings_dir, &path) else {
+        tracing::error!(%rec_id, kind = kind.as_str(), path = %path.display(),
+            "artefacto de gravação: o path não é filho directo do recordings_dir — não se reserva");
+        return None;
     };
     // `ON CONFLICT (path) DO NOTHING`: uma composição repetida ou uma retoma
     // voltam a passar por aqui, e o que importa afirmar é que há linha — não
@@ -230,17 +351,17 @@ pub(crate) async fn register(
          ON CONFLICT (path) DO NOTHING",
     )
     .bind(rec_id)
-    .bind(kind)
+    .bind(kind.as_str())
     .bind(name)
-    .bind(is_dir_of(kind))
+    .bind(kind.is_dir())
     .execute(db)
     .await;
     match r {
-        Ok(_) => true,
+        Ok(_) => Some(path),
         Err(e) => {
-            tracing::error!(%rec_id, kind, name, error = %e,
-                "artefacto de gravação: não foi possível registar — o ficheiro NÃO se escreve");
-            false
+            tracing::error!(%rec_id, kind = kind.as_str(), name, error = %e,
+                "artefacto de gravação: não foi possível reservar — o ficheiro NÃO se escreve");
+            None
         }
     }
 }
@@ -561,8 +682,8 @@ mod tests {
         assert_eq!(
             c,
             [
-                (KIND_RECORDING, format!("{id}.webm")),
-                (KIND_THUMBNAIL, format!("{id}.jpg")),
+                (Kind::Recording(id), format!("{id}.webm")),
+                (Kind::Thumbnail(id), format!("{id}.jpg")),
             ]
         );
         assert_eq!(composed_path(&r, id), r.join(format!("{id}.webm")));
@@ -570,13 +691,57 @@ mod tests {
             crate::media_probe::thumbnail_path(&r, id),
             r.join(format!("{id}.jpg"))
         );
-        // E nenhum dos dois é uma pasta: o `is_dir` deriva do `kind` e só a
+        // E nenhum dos dois é uma pasta: o `is_dir` deriva do tipo e só a
         // pasta das pistas o tem. Um canónico marcado como directório fazia o
         // `remove_dir_all` correr no `.webm` de uma gravação.
         for (kind, _) in &c {
-            assert!(!is_dir_of(kind), "{kind} não é uma pasta");
+            assert!(!kind.is_dir(), "{kind:?} não é uma pasta");
         }
-        assert!(is_dir_of(KIND_ISO_TRACKS), "a pasta das pistas É uma pasta");
+        assert!(
+            Kind::IsoTracks(id).is_dir(),
+            "a pasta das pistas É uma pasta"
+        );
+    }
+
+    /// O vocabulário inteiro, num sítio só: cada variante tem um `kind`
+    /// distinto, um nome distinto, e o `is_dir` só na pasta.
+    ///
+    /// Existe porque a troca das cinco constantes pelo `enum` é só uma melhoria
+    /// se o `enum` for de facto a ÚNICA fonte — e um `as_str` repetido por
+    /// copy-paste (dois ramos a devolver `"clip"`) fazia duas variantes
+    /// partilharem linha no registo sem nada dar vermelho.
+    #[test]
+    fn cada_variante_tem_kind_nome_e_is_dir_proprios() {
+        let rec = Uuid::new_v4();
+        let clip = Uuid::new_v4();
+        let todas = todas(rec, clip);
+
+        let kinds: std::collections::BTreeSet<_> = todas.iter().map(|k| k.as_str()).collect();
+        assert_eq!(kinds.len(), todas.len(), "dois `kind` iguais: {kinds:?}");
+        let nomes: std::collections::BTreeSet<_> = todas.iter().map(|k| k.name()).collect();
+        assert_eq!(nomes.len(), todas.len(), "dois nomes iguais: {nomes:?}");
+
+        // Os nomes, por extenso. Um `format!` trocado aqui é uma rota que serve
+        // o vazio ou um ficheiro que nunca sai, e nenhuma das duas dá vermelho
+        // sozinha.
+        assert_eq!(Kind::Recording(rec).name(), format!("{rec}.webm"));
+        assert_eq!(Kind::Thumbnail(rec).name(), format!("{rec}.jpg"));
+        assert_eq!(Kind::IsoTracks(rec).name(), format!("iso-{rec}"));
+        assert_eq!(Kind::Clip(clip).name(), format!("clip-{clip}.webm"));
+        assert_eq!(Kind::ClipCaptions(clip).name(), format!("clip-{clip}.vtt"));
+
+        // Uma só pasta, e é a das pistas.
+        let pastas: Vec<_> = todas.iter().filter(|k| k.is_dir()).collect();
+        assert_eq!(
+            pastas,
+            vec![&Kind::IsoTracks(rec)],
+            "o `is_dir` deixou de ser só da pasta das pistas"
+        );
+        // E todas têm produtor nomeado: é o que torna respondível «este
+        // derivado tem quem o escreva registado?» sem grep por quatro módulos.
+        for k in &todas {
+            assert!(!k.producer().is_empty(), "{k:?} sem produtor");
+        }
     }
 
     /// Um `recordings_dir` que deixe de casar com a comparação de `name_in`

@@ -1051,12 +1051,6 @@ pub(crate) use delonix_meet_domain::content::composition::{
     KIND_AUDIO, KIND_SCREEN, KIND_SCREEN_AUDIO, KIND_VIDEO,
 };
 
-/// O prefixo da pasta das pistas ISO. Deliberadamente DIFERENTE de `tmp-`: o
-/// `sweep_orphan_segments` apaga qualquer `tmp-*` que nenhuma composição
-/// reclame, e deixar as pistas lá era perdê-las no momento em que passam a ser
-/// úteis.
-const ISO_PREFIX: &str = "iso-";
-
 /// O tamanho acima do qual uma pista tem conteúdo a sério. NÃO é zero: o
 /// `open_track` escreve o cabeçalho ao criar o ficheiro (32 bytes de DKIF no
 /// IVF, as páginas de identificação no OGG), logo uma pista que nunca recebeu
@@ -1095,12 +1089,22 @@ pub(crate) fn decide_iso(leitura: Option<Option<bool>>) -> IsoDecision {
     }
 }
 
-/// Onde vivem as pistas ISO de uma gravação. É UMA função porque este caminho é
-/// construído em três sítios — quem renomeia, quem serve e quem apaga por
-/// retenção — e um deles a divergir é, dependendo de qual, uma rota que serve o
-/// vazio ou uma pasta que nunca ninguém apaga.
+/// Onde vivem as pistas ISO de uma gravação, **para quem as LÊ** (a rota que
+/// serve uma pista, e os testes). O nome sai do registo de artefactos, que é a
+/// única fonte dele — aqui só se poupa aos chamadores saber disso.
+///
+/// O prefixo `iso-` é deliberadamente DIFERENTE de `tmp-`: o
+/// `sweep_orphan_segments` apaga qualquer `tmp-*` que nenhuma composição
+/// reclame, e deixar as pistas lá era perdê-las no momento em que passam a ser
+/// úteis.
+///
+/// Quem PRODUZ a pasta não chama isto — chama o `recording_artifacts::reserve`,
+/// que escreve a linha e devolve o caminho.
 pub fn iso_dir(recordings_dir: &Path, rec_id: Uuid) -> PathBuf {
-    recordings_dir.join(format!("{ISO_PREFIX}{rec_id}"))
+    crate::recording_artifacts::path_for(
+        recordings_dir,
+        crate::recording_artifacts::Kind::IsoTracks(rec_id),
+    )
 }
 
 /// Metadados de uma track gravada (o writer vive na Publication do SFU).
@@ -1327,7 +1331,6 @@ async fn registar_pistas_iso(
         IsoDecision::Keep => return true,
     }
 
-    let destino = iso_dir(recordings_dir, rec_id);
     // A PASTA ENTRA NO REGISTO ANTES DE EXISTIR, e é isto que fecha a fuga que
     // esta função deixava aberta: o `rename` abaixo tira os ficheiros do
     // `tmp-<sessão>` (que o `sweep_orphan_segments` recolhe) e um processo
@@ -1337,22 +1340,22 @@ async fn registar_pistas_iso(
     // E não se infere nada do nome nem da idade da pasta, que foi a abordagem
     // medida e revertida (ver o comentário do `sweep_orphan_segments`).
     //
-    // Se o registo falhar, NÃO se renomeia: os ficheiros ficam no `tmp-` e o
-    // varredor de segmentos recolhe-os depois da folga. Um ficheiro fora do
-    // `tmp-` e sem linha é a fuga; dentro do `tmp-` tem sempre quem o leve.
-    if !crate::recording_artifacts::register(
+    // O `destino` SAI da reserva: sem linha não há caminho para onde renomear,
+    // e os ficheiros ficam no `tmp-` para o varredor de segmentos os levar
+    // depois da folga. Um ficheiro fora do `tmp-` e sem linha é a fuga; dentro
+    // do `tmp-` tem sempre quem o leve.
+    let Some(destino) = crate::recording_artifacts::reserve(
         db,
         rec_id,
-        crate::recording_artifacts::KIND_ISO_TRACKS,
+        crate::recording_artifacts::Kind::IsoTracks(rec_id),
         recordings_dir,
-        &destino,
     )
     .await
-    {
-        tracing::error!(%rec_id, para = %destino.display(),
+    else {
+        tracing::error!(%rec_id,
             "gravação ISO: a pasta não ficou registada — as pistas ficam no tmp- para o varredor");
         return true;
-    }
+    };
     // Para fora do `tmp-`: se a mudança falhar não se escreve nada mais, e o
     // chamador apaga como sempre — melhor não ter pistas do que ter linhas na
     // base a apontar para ficheiros que o varredor vai levar. É uma renomeação
@@ -5475,7 +5478,9 @@ mod tests {
         assert_eq!(
             linhas,
             vec![(
-                crate::recording_artifacts::KIND_ISO_TRACKS.to_string(),
+                crate::recording_artifacts::Kind::IsoTracks(rec)
+                    .as_str()
+                    .to_string(),
                 format!("iso-{rec}"),
                 true
             )],

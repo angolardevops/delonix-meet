@@ -225,14 +225,19 @@ pub async fn thumbnail(ffmpeg: &str, src: &Path, dst: &Path, at_ms: i64) -> bool
         .unwrap_or(false)
 }
 
-/// Caminho da miniatura de uma gravação.
+/// Caminho da miniatura de uma gravação, para quem a LÊ (a rota que a serve) e
+/// para quem a escreve a seguir à composição.
 ///
-/// Recebe o `recordings_dir` e não o `AppState` porque o registo de artefactos
-/// (`recording_artifacts::canonical`) precisa deste nome sem ter um estado à
-/// mão — e um segundo sítio a construir `{id}.jpg` era a miniatura a deixar de
-/// ser apagada sem ninguém notar.
+/// O nome sai do registo de artefactos, que é a única fonte dele: um segundo
+/// sítio a construir `{id}.jpg` era a miniatura a deixar de ser apagada sem
+/// ninguém notar. A linha desta entrada nasce na transacção da gravação
+/// (`register_canonical`), não aqui — por isso este é um caminho de leitura e
+/// não uma reserva.
 pub fn thumbnail_path(recordings_dir: &Path, rec_id: Uuid) -> std::path::PathBuf {
-    recordings_dir.join(format!("{rec_id}.jpg"))
+    crate::recording_artifacts::path_for(
+        recordings_dir,
+        crate::recording_artifacts::Kind::Thumbnail(rec_id),
+    )
 }
 
 /// Mede o ficheiro de uma gravação, gera a miniatura e grava tudo na base.
