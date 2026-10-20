@@ -62,6 +62,7 @@ mod pubsub;
 mod ramais;
 mod rate_limit;
 mod recorder;
+mod recording_artifacts;
 mod recording_captions;
 mod recording_chapters;
 mod recording_clips;
@@ -133,12 +134,32 @@ pub use meetings::sweep_expired_seats;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
-/// A retoma das composições abandonadas e a varredura dos segmentos órfãos
-/// (migração 0099), expostas aos testes de integração sem abrir o módulo —
-/// pelo mesmo motivo do `webhook_retry_due` abaixo.
+/// Onde vivem as pistas ISO de uma gravação, para os testes de integração
+/// semearem no MESMO sítio onde a produção escreve. Exposta porque as fixtures
+/// construíam `iso-{id}` à mão: uma mudança de layout movia a produção e
+/// deixava os testes a semear no caminho antigo, a falhar a apontar para a
+/// retenção em vez de para a fixture.
+pub use recorder::iso_dir as recording_iso_dir;
+/// A retoma das composições abandonadas e as duas varreduras que apagam
+/// ficheiros de gravação (migração 0099), expostas aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due` abaixo.
+///
+/// As varreduras são o ÚNICO caminho que apaga: não existe rota de `DELETE` de
+/// gravação, logo o que elas esquecerem fica no disco para sempre — foi o que
+/// aconteceu à pasta `iso-<gravação>`, que a retenção não apagava e para onde o
+/// varredor de órfãos não olhava.
 pub use recorder::{
-    resume_due as recording_resume_due, sweep_orphan_segments as recording_sweep_orphan_segments,
+    resume_due as recording_resume_due, retention_sweep as recordings_retention_sweep,
+    sweep_orphan_segments as recording_sweep_orphan_segments,
 };
+/// A varredura dos artefactos cuja gravação já não existe (migração 0126).
+///
+/// Exposta aos testes de integração porque o critério desta frente é um
+/// ficheiro AUSENTE do disco e um `SELECT count(*)` a zero — nunca o número que
+/// uma varredura devolve. O `purge` NÃO vem: quem o exercita é a retenção, e
+/// expor um nome que ninguém chama alarga a superfície pública da crate sem
+/// pagar nada (um `pub use` nunca dá `dead_code` a avisar).
+pub use recording_artifacts::sweep_orphans as recording_artifacts_sweep_orphans;
 /// A varredura dos capítulos automáticos, exposta aos testes de integração sem
 /// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
 pub use recording_chapters::auto_chapters_sweep;
@@ -928,6 +949,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/recordings/{recording_id}/content", get(recordings::download))
         .route("/api/recordings/{recording_id}/details", get(recordings::details))
+        // Gravação ISO (ADR-0014 §2.3): as pistas por fonte. A autorização é a
+        // da gravação composta — uma pista é a mesma gravação vista por uma
+        // câmara, e levar um ficheiro exige a permissão de download.
+        .route("/api/recordings/{recording_id}/tracks", get(recordings::tracks))
+        .route(
+            "/api/recordings/{recording_id}/tracks/{track_id}/content",
+            get(recordings::track_content),
+        )
         .route(
             "/api/recordings/{recording_id}/chapters",
             get(recordings::list_chapters).post(recordings::create_chapter),
@@ -2197,6 +2226,11 @@ pub async fn run() {
         let state = state.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            // Como os outros cinco ciclos de `run()`: uma volta que passe da
+            // hora não faz a seguinte disparar já. A varredura de artefactos
+            // órfãos pode levar o seu tempo depois de uma cascata grande, e
+            // reentrar de imediato era reler o mesmo conjunto.
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 ticker.tick().await;
                 recorder::retention_sweep(&state).await;
@@ -2206,6 +2240,13 @@ pub async fn run() {
                     0 => {}
                     n => tracing::info!(apagados = n, "segmentos órfãos apagados"),
                 }
+                // E os ficheiros que o registo nomeia e cuja gravação já não
+                // existe: um recorte levado pelo `ON DELETE CASCADE` da 0118,
+                // ou uma gravação levada pela cascata de `rooms`/`users`. É o
+                // backstop do caminho de cima — a retenção purga pelo registo
+                // antes de apagar a linha, e isto apanha o que ninguém mandou
+                // apagar. Não olha para o disco: a lista sai da tabela.
+                recording_artifacts::sweep_orphans(&state).await;
             }
         });
     }

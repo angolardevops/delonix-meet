@@ -820,6 +820,12 @@ if (gravB) {
   await recusadoNaPorta('A PUBLICA a gravação da B', `/api/recordings/${gravB}/publish`, { token: A.token, method: 'POST', body: { visibility: 'org' } })
   await recusadoNaPorta('A despublica a gravação da B', `/api/recordings/${gravB}/unpublish`, { token: A.token, method: 'POST' })
   await recusadoNaPorta('A lê a miniatura da B', `/api/recordings/${gravB}/thumbnail`, { token: A.token })
+  // Gravação ISO (A-02): as pistas por fonte são a MESMA gravação vista por uma
+  // câmara, logo a fronteira é a mesma. A B lista as suas (vazio é resposta
+  // válida: esta gravação não é de um estúdio); a A não chega lá nem ao ficheiro.
+  await permitido('B lista as pistas ISO da sua gravação (controlo positivo)', `/api/recordings/${gravB}/tracks`, { token: B.token })
+  await recusadoNaPorta('A lista as pistas ISO da gravação da B', `/api/recordings/${gravB}/tracks`, { token: A.token })
+  await recusadoNaPorta('A descarrega uma pista ISO da gravação da B', `/api/recordings/${gravB}/tracks/${inventado}/content`, { token: A.token })
   await recusadoNaPorta('A regista visualizações na gravação da B', `/api/recordings/${gravB}/views`, { token: A.token, method: 'POST' })
   await recusadoNaPorta('A lista os participantes da gravação da B', `/api/recordings/${gravB}/participants`, { token: A.token })
   await recusadoNaPorta('A lista os participantes da sala da B', `/api/rooms/${salaB.code}/participants`, { token: A.token })

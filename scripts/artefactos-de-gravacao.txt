@@ -1,0 +1,65 @@
+# Os nomes de ficheiro que o código de produção constrói, e o que cada um é.
+#
+# O `check-recording-artifacts.sh` exige que TODO literal com forma de nome de
+# ficheiro (um `{marcador}` e uma extensão, ou um prefixo de pasta derivada)
+# esteja aqui com uma classe e uma razão ESCRITA. É o molde do
+# `rotas-publicas.txt`: a lista não existe para permitir, existe para obrigar a
+# classificar.
+#
+# Porque existe: os ficheiros derivados de uma gravação não estavam registados
+# em lado nenhum e cada caminho que apaga tinha de se lembrar deles um a um.
+# Falhou duas vezes (2026-10-18, commit `ece92e6a4`): a pasta `iso-<gravação>`
+# que um processo morto deixava e os `clip-<id>.webm`/`.vtt` da 0118, que
+# nenhum varredor conhecia. A migração 0126 deu-lhes um registo; esta lista é o
+# que obriga o DERIVADO SEGUINTE (waveform, legendas por pista,
+# pré-visualização) a passar por ele em vez de ser esquecido outra vez.
+#
+# ficheiro | literal | classe | razão
+#
+# Classes:
+#   registado:<kind>        escreve um ficheiro sob o `recordings_dir` E regista-o
+#                           (o <kind> tem de ser uma constante do
+#                           `recording_artifacts.rs`, e o ficheiro tem de chamar
+#                           um `register`/`register_canonical`)
+#   nao-artefacto           vive sob o `recordings_dir` e NÃO pertence a uma
+#                           gravação da biblioteca — tem outro dono que o recolhe
+#   fora-do-recordings-dir  é um caminho noutra árvore
+#   nome-de-exibicao        é texto que vai para a base ou para o ecrã, não um caminho
+#   fixture                 só existe em código de teste
+#   dormente                código não declarado em `lib.rs` (não compila)
+
+# ---- Os cinco artefactos de uma gravação (migração 0126) ----
+src/recording_artifacts.rs | {rec_id}.webm | registado:recording | A composta. `composed_path` é o único construtor deste nome, e a linha nasce com a de `recordings`, na mesma transacção (`register_canonical`).
+src/media_probe.rs | {rec_id}.jpg | registado:thumbnail | A miniatura. Registada ao nascer da gravação, antes de se saber se vai existir: uma linha a mais é inofensiva, um ficheiro a mais fica para sempre.
+src/recorder.rs | {ISO_PREFIX}{rec_id} | registado:iso_tracks | A PASTA das pistas por fonte. A linha escreve-se ANTES do `rename` que a cria — é isso que fecha a janela do processo morto, e o `recorder::tests::sem_registo_as_pistas_ficam_no_tmp` prova a ordem.
+src/recording_clips.rs | clip-{id}.webm | registado:clip | O recorte. Registado antes de o ffmpeg correr; falhar o registo aborta o render (o recorte volta à fila) em vez de deixar bytes sem dono.
+src/recording_clips.rs | clip-{id}.vtt | registado:clip_captions | O WebVTT ao lado do recorte. Era o ficheiro que ninguém apagava: o `ON DELETE CASCADE` da 0118 levava a linha do recorte e os bytes ficavam.
+
+# ---- Sob o `recordings_dir`, mas de outro dono ----
+src/recorder.rs | tmp-{id} | nao-artefacto | Os segmentos RTP de uma gravação a COMPOR. Não são de uma gravação da biblioteca: a composição retomável precisa deles enquanto a linha viver, e o `sweep_orphan_segments` é quem os recolhe. Registá-los era dar-lhes dois donos.
+
+# ---- Sob OUTRO `recordings_dir`, que não é nosso ----
+src/telephony_fs_xml.rs | execute_on_answer=record_session ${recordings_dir}/delonix-${uuid}.wav | nao-artefacto | O `${recordings_dir}` é uma variável do FreeSWITCH, interpolada por ELE no seu próprio volume — não o `config.recordings_dir` deste servidor. Nenhuma linha de `recordings` nasce destes `.wav` e nenhuma rota os serve: é o defeito gémeo `C-01` («a gravação de chamada que escreve para um disco que ninguém lê»), e fica aqui NOMEADO em vez de invisível. Fechá-lo é fatia própria — e quando for, é por aqui que passa.
+
+# ---- Noutra árvore ----
+src/data_exports.rs | {id}.zip | fora-do-recordings-dir | Exportação de dados pessoais, no `data_exports_dir`.
+src/data_exports.rs | transcripts/{rid}.txt | fora-do-recordings-dir | Entrada DENTRO do zip da exportação, não um caminho no disco.
+src/broadcast.rs | {k}.bin | fora-do-recordings-dir | Chave de directo, no directório de segredos.
+src/broadcast.rs | {k}.marca | fora-do-recordings-dir | Marca de uma chave de directo, idem.
+src/broadcast.rs | {chave_b}.bin | fixture | Caso de teste do directório de chaves.
+src/broadcast.rs | {bom}.bin | fixture | Caso de teste do directório de chaves.
+
+# ---- Texto, não caminhos ----
+src/recordings.rs | {}-{stamp}.webm | nome-de-exibicao | O `recordings.filename` que o utilizador vê na biblioteca. O caminho no disco é `{id}.webm` e vem do `composed_path`.
+src/recorder.rs | Reunião {code} — servidor — {stamp}.webm | nome-de-exibicao | Idem, para a gravação de servidor.
+src/transcription.rs | {id}.webm | nome-de-exibicao | O NOME que vai no trabalho de transcrição (`media_file`), para o worker o pedir pela rota. Leitor, não produtor.
+
+# ---- Testes ----
+src/recording_artifacts.rs | {id}.webm | fixture | O teste que exige que `canonicos` e `composed_path` não divirjam.
+src/recording_artifacts.rs | {id}.jpg | fixture | Idem, para a miniatura.
+src/recorder.rs | iso-{rec} | fixture | Raiz temporária dos testes da gravação ISO.
+src/recorder.rs | 00-{kind}.bin | fixture | Nome de pista semeado pelos testes do gravador.
+
+# ---- Dormente ----
+src/infrastructure/storage/local_fs.rs | {id}.webm | dormente | `LocalFsStorage` (ADR-0006): `src/infrastructure` NÃO está declarado em `lib.rs`, logo não compila. Tem `put`/`delete` dos bytes de uma gravação — quando esta camada for ligada, passa a ser um produtor e tem de escrever no registo.
+src/application/recording_service.rs | {}-{stamp}.webm | dormente | `src/application` também não está declarado em `lib.rs`.

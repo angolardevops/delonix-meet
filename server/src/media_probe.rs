@@ -226,8 +226,13 @@ pub async fn thumbnail(ffmpeg: &str, src: &Path, dst: &Path, at_ms: i64) -> bool
 }
 
 /// Caminho da miniatura de uma gravação.
-pub fn thumbnail_path(state: &AppState, rec_id: Uuid) -> std::path::PathBuf {
-    state.config.recordings_dir.join(format!("{rec_id}.jpg"))
+///
+/// Recebe o `recordings_dir` e não o `AppState` porque o registo de artefactos
+/// (`recording_artifacts::canonical`) precisa deste nome sem ter um estado à
+/// mão — e um segundo sítio a construir `{id}.jpg` era a miniatura a deixar de
+/// ser apagada sem ninguém notar.
+pub fn thumbnail_path(recordings_dir: &Path, rec_id: Uuid) -> std::path::PathBuf {
+    recordings_dir.join(format!("{rec_id}.jpg"))
 }
 
 /// Mede o ficheiro de uma gravação, gera a miniatura e grava tudo na base.
@@ -246,7 +251,7 @@ pub async fn probe_and_store(state: &AppState, rec_id: Uuid, path: &Path) -> Med
         thumbnail(
             &state.config.ffmpeg_bin,
             path,
-            &thumbnail_path(state, rec_id),
+            &thumbnail_path(&state.config.recordings_dir, rec_id),
             thumbnail_at_ms(info.duration_ms),
         )
         .await

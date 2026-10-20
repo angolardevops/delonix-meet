@@ -435,11 +435,27 @@ pub async fn delete(
     if apagou == 0 {
         return Err(ApiError::NotFound);
     }
-    // O ficheiro depois da linha: se o processo morrer entre os dois, sobra um
-    // ficheiro órfão (que a varredura de órfãos do `recorder` já sabe limpar) —
-    // a ordem inversa deixava uma linha a apontar para nada.
-    let _ = tokio::fs::remove_file(clip_path(&state, clip_id)).await;
-    let _ = tokio::fs::remove_file(clip_vtt_path(&state, clip_id)).await;
+    // O ficheiro depois da linha: a ordem inversa deixava uma linha a apontar
+    // para nada. Se o processo morrer entre os dois, os ficheiros ficam — e
+    // AGORA têm quem os recolha: as linhas de `recording_artifacts` sobrevivem
+    // ao recorte (não têm FK), logo a purga da gravação leva-os. Era aqui que a
+    // fuga 2 vivia, e o comentário que dizia que «a varredura de órfãos do
+    // recorder já sabe limpar» estava simplesmente errado: ela só olhava para
+    // `tmp-*`.
+    // Um só caminho para os dois ficheiros e as duas linhas, e a ordem certa
+    // lá dentro: o ficheiro primeiro, a linha só se ele saiu. Escrito à mão
+    // (`let _ = remove_file(...)` e depois um `forget` incondicional), um
+    // `unlink` recusado apagava a única linha que nomeava bytes que ficavam no
+    // disco — e, como a linha do recorte já cá não está, nada voltaria a
+    // encontrá-los.
+    let ficheiros = [clip_path(&state, clip_id), clip_vtt_path(&state, clip_id)];
+    crate::recording_artifacts::discard(
+        &state.db,
+        &state.config.recordings_dir,
+        &state.metrics,
+        &ficheiros,
+    )
+    .await;
     crate::audit::log(
         &state.db,
         None,
@@ -510,7 +526,7 @@ pub async fn render_due(state: &Arc<AppState>) -> Result<usize, sqlx::Error> {
 async fn compoe_um(state: &Arc<AppState>, job: PorCompor, running_at: DateTime<Utc>) {
     match compoe(state, &job).await {
         Ok((size, duration_ms)) => {
-            let _ = sqlx::query(
+            let fechou = sqlx::query(
                 "UPDATE recording_clips
                     SET status = 'ready', progress = 1, size_bytes = $3, duration_ms = $4,
                         filename = $5, ready_at = now(), error_code = NULL,
@@ -523,8 +539,41 @@ async fn compoe_um(state: &Arc<AppState>, job: PorCompor, running_at: DateTime<U
             .bind(duration_ms)
             .bind(format!("clip-{}.webm", job.id))
             .execute(&state.db)
-            .await;
-            tracing::info!(clip = %job.id, size, "recorte composto");
+            .await
+            .map(|r| r.rows_affected())
+            .unwrap_or(0);
+            if fechou > 0 {
+                tracing::info!(clip = %job.id, size, "recorte composto");
+            } else {
+                // Zero linhas tem DUAS causas, e só uma delas autoriza apagar.
+                // Se a linha do recorte ainda existe, a reivindicação é de
+                // outra volta (`running_at` mudou) e o ficheiro é dela — não se
+                // toca. Se já não existe, a gravação foi apagada enquanto o
+                // ffmpeg corria (a retenção ou uma cascata levaram o recorte) e
+                // o ficheiro que acabámos de escrever não tem dono nenhum: o
+                // `ffmpeg` escreve-o num descritor que a purga já não vê, logo
+                // sem isto ficava no disco para sempre.
+                let existe: Option<(i32,)> =
+                    sqlx::query_as("SELECT 1 FROM recording_clips WHERE id = $1")
+                        .bind(job.id)
+                        .fetch_optional(&state.db)
+                        .await
+                        .unwrap_or(None);
+                if existe.is_none() {
+                    tracing::warn!(clip = %job.id,
+                        "o recorte deixou de existir enquanto compunha — o ficheiro é descartado");
+                    crate::recording_artifacts::discard(
+                        &state.db,
+                        &state.config.recordings_dir,
+                        &state.metrics,
+                        &[clip_path(state, job.id), clip_vtt_path(state, job.id)],
+                    )
+                    .await;
+                } else {
+                    tracing::warn!(clip = %job.id,
+                        "a reivindicação já não é desta volta — o ficheiro fica para quem a tem");
+                }
+            }
         }
         Err(e) => {
             let codigo = codigo_de_erro(&e);
@@ -563,6 +612,12 @@ fn codigo_de_erro(e: &anyhow::Error) -> &'static str {
         "clip.source_missing"
     } else if t.contains("timed out") || t.contains("prazo") {
         "clip.timeout"
+    } else if t.contains("artefacto-nao-registado") {
+        // O registo do artefacto não respondeu, e o ffmpeg nem correu. Sem um
+        // código próprio isto caía no `clip.ffmpeg_failed` abaixo e mandava
+        // quem opera investigar o codificador por uma falha da base — e o
+        // `error_code` é contrato: a consola e a tool mostram-no.
+        "clip.registry_unavailable"
     } else {
         "clip.ffmpeg_failed"
     }
@@ -570,14 +625,29 @@ fn codigo_de_erro(e: &anyhow::Error) -> &'static str {
 
 /// Compõe um recorte. Devolve `(tamanho, duração em ms)`.
 async fn compoe(state: &Arc<AppState>, job: &PorCompor) -> anyhow::Result<(i64, i64)> {
-    let src = state
-        .config
-        .recordings_dir
-        .join(format!("{}.webm", job.recording_id));
+    let src =
+        crate::recording_artifacts::composed_path(&state.config.recordings_dir, job.recording_id);
     if !tokio::fs::try_exists(&src).await.unwrap_or(false) {
         anyhow::bail!("source-missing: {}", src.display());
     }
     let out = clip_path(state, job.id);
+    // A LINHA ANTES DO FICHEIRO (`recording_artifacts`, migração 0126): o
+    // ffmpeg abaixo escreve o `clip-<id>.webm`, e sem registo esse ficheiro
+    // sobrevivia à gravação inteira — o `ON DELETE CASCADE` da 0118 levava a
+    // linha do recorte e os bytes ficavam, sem nada na base que os nomeasse.
+    // Falhar a registar aborta o render: o recorte volta à fila (é retentável)
+    // e não se deixa um ficheiro sem dono no disco.
+    if !crate::recording_artifacts::register(
+        &state.db,
+        job.recording_id,
+        crate::recording_artifacts::KIND_CLIP,
+        &state.config.recordings_dir,
+        &out,
+    )
+    .await
+    {
+        anyhow::bail!("artefacto-nao-registado: {}", out.display());
+    }
 
     let kind = rules::Kind::parse(&job.kind).unwrap_or(rules::Kind::Clip);
     let focus = rules::Focus::parse(&job.focus).unwrap_or_default();
@@ -730,7 +800,24 @@ async fn escreve_vtt(state: &Arc<AppState>, job: &PorCompor, lang: &str) {
             })
             .collect::<Vec<_>>(),
     );
-    if let Err(e) = tokio::fs::write(clip_vtt_path(state, job.id), vtt).await {
+    // A LINHA ANTES DO FICHEIRO, como no `.webm` do recorte. Aqui a falha do
+    // registo só custa as legendas (o vídeo está composto e é melhor um recorte
+    // sem legendas do que nenhum), por isso diz-se e sai — nunca se escreve o
+    // ficheiro sem a linha, que era a fuga.
+    let vtt_path = clip_vtt_path(state, job.id);
+    if !crate::recording_artifacts::register(
+        &state.db,
+        job.recording_id,
+        crate::recording_artifacts::KIND_CLIP_CAPTIONS,
+        &state.config.recordings_dir,
+        &vtt_path,
+    )
+    .await
+    {
+        tracing::warn!(clip = %job.id, "recorte: o .vtt não ficou registado — não se escreve");
+        return;
+    }
+    if let Err(e) = tokio::fs::write(&vtt_path, vtt).await {
         tracing::warn!(clip = %job.id, error = %e, "recorte: não consegui escrever o .vtt");
     }
 }

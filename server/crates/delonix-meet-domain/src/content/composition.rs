@@ -78,6 +78,37 @@ pub fn is_retryable(erro: &str) -> bool {
     !ESTAVEIS.iter().any(|e| erro.contains(e))
 }
 
+// ---------------------------------------------------------------------------
+//  O vocabulário dos `kind` de uma pista gravada — UMA fonte de verdade
+// ---------------------------------------------------------------------------
+//
+// Vive aqui, e não no `recorder`, porque é vocabulário de DOMÍNIO: é o conjunto
+// de valores que `ComposeTrack::kind` (logo abaixo) e a coluna
+// `recording_tracks.kind` podem tomar. O `sfu` constrói os `kind` destas
+// constantes e o `recorder` escreve-os.
+//
+// Existe porque a migração 0124 não o tinha: o `CHECK` dela foi escrito a partir
+// de um comentário desactualizado («"video" | "screen" | "audio"») e ficou sem o
+// quarto valor que o SFU produz há muito, o `screen-audio`. A base recusava o
+// `INSERT` dessa pista, o erro ia para o log, e o ficheiro ficava no disco sem
+// linha que o servisse. A 0125 corrige o `CHECK` e há um teste contra Postgres
+// real a afirmar que as duas listas concordam, com controlo negativo.
+
+/// Câmara. Uma camada de simulcast por publicador (a melhor que aparecer).
+pub const KIND_VIDEO: &str = "video";
+/// Partilha de ecrã (vídeo). Slot próprio, para não ser confundida com a câmara.
+pub const KIND_SCREEN: &str = "screen";
+/// Microfone.
+pub const KIND_AUDIO: &str = "audio";
+/// Som do SISTEMA de quem partilha ecrã — o segundo áudio do mesmo publicador.
+/// Não é `audio` (perdia-se qual é a voz) nem `screen` (não é vídeo, e quem
+/// serve escolhe o `Content-Type` por `ends_with("audio")`).
+pub const KIND_SCREEN_AUDIO: &str = "screen-audio";
+
+/// Todos os `kind` que podem chegar a `recording_tracks`. Tem de ser
+/// exactamente o `CHECK` da migração 0125.
+pub const TRACK_KINDS: [&str; 4] = [KIND_VIDEO, KIND_SCREEN, KIND_AUDIO, KIND_SCREEN_AUDIO];
+
 /// Uma pista no manifesto: o que a composição precisa de saber dela.
 ///
 /// `starts_at_ms` é JÁ o valor resolvido (`RecTrackMeta::starts_at_ms`), não o
@@ -87,9 +118,22 @@ pub fn is_retryable(erro: &str) -> bool {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ComposeTrack {
     pub path: PathBuf,
-    /// `"video"` ou `"audio"` (o adaptador compara com `ends_with("audio")`).
+    /// Um de [`TRACK_KINDS`] (o adaptador compara com `ends_with("audio")`).
     pub kind: String,
     pub starts_at_ms: u64,
+    /// Quem publicou a pista (o `publisher` do SFU). Serve a gravação ISO:
+    /// sem isto os ficheiros por fonte saíam anónimos e ninguém sabia que
+    /// câmara era qual.
+    ///
+    /// **`serde(default)` não é descuido.** Este manifesto está PERSISTIDO em
+    /// `recordings.compose_manifest`: uma composição em voo no instante do
+    /// rollout tem de continuar a desserializar, senão a gravação de alguém
+    /// morre em `processing` por causa de um campo novo — que é exactamente o
+    /// modo de falha que este manifesto existe para evitar. Um manifesto
+    /// antigo traz o UUID nulo, e quem escreve as pistas ISO trata-o como
+    /// «publicador desconhecido» em vez de inventar um.
+    #[serde(default)]
+    pub publisher: uuid::Uuid,
 }
 
 /// O que basta para compor uma gravação sem a sessão em memória.
@@ -168,6 +212,11 @@ mod tests {
                 path: PathBuf::from("/var/rec/tmp-abc/0.ivf"),
                 kind: "video".into(),
                 starts_at_ms: 1234,
+                // Um publicador REAL, não o nulo: o nulo é o valor que o
+                // `serde(default)` dá a um manifesto antigo, e um teste de
+                // ida-e-volta que o usasse passava mesmo que o campo não fosse
+                // serializado — que é precisamente o que ele tem de provar.
+                publisher: uuid::Uuid::from_u128(0x5c2e_e1a7),
             }],
             expected_ms: 60_000,
             duration_secs: Some(60),

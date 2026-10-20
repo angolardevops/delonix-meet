@@ -119,9 +119,9 @@ secção afirmava a 2026-10-03, para se ver a que velocidade isto envelhece:
 |---|---|---|---|
 | Regressões no catálogo | **231** (a última é a R311) | 173, R225 | `grep -cE '^### R[0-9]+' docs/reference/regressions.md` |
 | Binários em `server/tests/` | **83** | 31 | `ls server/tests/*.rs \| wc -l` |
-| Portões `scripts/check-*.sh` | **30** | 27 | `ls scripts/check-*.sh \| wc -l` |
+| Portões `scripts/check-*.sh` | **31** | 27 | `ls scripts/check-*.sh \| wc -l` |
 | Catraca do clippy | **11** | 13 | `cat scripts/clippy-baseline.txt` |
-| Migrações | **123** (a última é a `0123`) | 73 | `ls server/migrations/*.sql \| wc -l` |
+| Migrações | **125** (a última é a `0125`) | 73 | `ls server/migrations/*.sql \| wc -l` |
 | Rotas no router | **335** | — | `grep -cE '^\s*\.route\(' server/src/lib.rs` |
 | ADR | **31** | — | `ls docs/adr/*.md \| wc -l` |
 | Ficheiros de teste do frontend | **111** | — | `find web/src -name '*.test.ts*' \| wc -l` |
@@ -159,8 +159,7 @@ Dez capacidades a zero por grep, com o id da fila. O detalhe e o prompt estão e
   uma capacidade.
 
 E três coisas que a fila chama **afirmação falsa latente**, porque a base de dados ou o
-ecrã prometem o que nenhum código serve: a gravação ISO (`iso_recording DEFAULT TRUE` sem
-a tabela `recording_tracks`, `A-02`), os dois formatos de sala inertes (`A-09`), e o
+ecrã prometem o que nenhum código serve: os dois formatos de sala inertes (`A-09`), e o
 telefone que entra numa sala E2EE porque o caminho de entrada não verifica o que o de
 saída recusa com razão escrita (`A-01`).
 
