@@ -34,7 +34,7 @@ De pé: `A-03` e `A-05`.
 | `A-05` | [Calendário nos dois sentidos](A-05-calendario-nos-dois-sentidos.md) | escrito |
 | `A-06` | Canais persistentes de equipa | por escrever |
 | `A-07` | `require_mfa` não impõe MFA, e o lockout é por processo | por escrever |
-| `A-08` | [Legal hold e eDiscovery](A-08-legal-hold-e-ediscovery.md) | escrito |
+| `A-08` | [Legal hold e eDiscovery](A-08-legal-hold-e-ediscovery.md) | **HOLD FEITO** 2026-10-21: as varreduras e gatilhos na base recusam apagar o retido (409 `legal_hold.active`), com controlos negativos. **Por fazer:** a pesquisa de eDiscovery e a exportação com manifesto (capacidade própria de investigador) |
 | `A-09` | [Modo webinar — dois formatos inertes](A-09-modo-webinar.md) | escrito |
 | `A-10` | Certificações (SOC 2, ISO 27001, HIPAA) | **não é código** — é processo, e não entra nesta fila |
 | `A-11` | SAML 2.0 | por escrever |
