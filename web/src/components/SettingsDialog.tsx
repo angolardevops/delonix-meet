@@ -14,6 +14,7 @@ import { Alert, Avatar, Button, Dialog, Field, Segmented, Tabs, TextInput, Toggl
 import EmailVerification from './EmailVerification'
 import MfaPanel from './MfaPanel'
 import MyExtensionPanel from './MyExtensionPanel'
+import PushPanel from './PushPanel'
 import SessionsPanel from './SessionsPanel'
 
 export type SettingsTab = 'account' | 'appearance' | 'security' | 'brand'
@@ -210,6 +211,7 @@ function Conta({ user }: { user: User }) {
           onChange={(e) => mudarPref({ blurByDefault: e.target.checked })}
         />
       </div>
+      <PushPanel />
       <div className="settings-section">
         <h3 className="dx-eyebrow" style={{ margin: '8px 0 4px' }}>{t('shell.def.osMeusDados')}</h3>
         <p className="dx-muted" style={{ margin: '0 0 8px' }}>{t('shell.def.exportarDadosDica')}</p>

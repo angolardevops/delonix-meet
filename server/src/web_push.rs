@@ -140,7 +140,7 @@ fn aviso(room_code: &str, locale: &str) -> serde_json::Value {
         "en" => "You are being called into a meeting. Tap to join.",
         "fr" => "On vous appelle à une réunion. Touchez pour la rejoindre.",
         "zh" => "有人邀请您加入会议。点按即可加入。",
-        _ => "Estão a chamá-lo para uma reunião. Toque para entrar.",
+        _ => "Estão a chamar-te para uma reunião. Toca para entrar.",
     };
     serde_json::json!({
         "kind": "ring",
