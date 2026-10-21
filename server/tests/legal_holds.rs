@@ -93,6 +93,23 @@ async fn com_hold_a_retencao_nao_apaga_a_gravacao_e_sem_hold_apaga(db: sqlx::PgP
     retencao_curta(&app, a.org()).await;
     let (rec_ana, _, _) = gravacao_antiga(&app, &ana).await;
     let (rec_admin, _, _) = gravacao_antiga(&app, &a).await;
+    // O FICHEIRO da gravação retida, registado como a produção o regista
+    // (migração 0126). É ele que prova o filtro da varredura: sem o filtro, o
+    // gatilho da 0129 ainda impedia a linha de sair — mas os ficheiros já
+    // tinham sido purgados antes do DELETE.
+    let dir = app.state.config.recordings_dir.clone();
+    std::fs::create_dir_all(&dir).unwrap();
+    let ficheiro = dir.join(format!("{rec_ana}.webm"));
+    std::fs::write(&ficheiro, b"webm").unwrap();
+    sqlx::query(
+        "INSERT INTO recording_artifacts (recording_id, kind, path, is_dir)
+         VALUES ($1, 'recording', $2, FALSE)",
+    )
+    .bind(rec_ana)
+    .bind(format!("{rec_ana}.webm"))
+    .execute(&app.db)
+    .await
+    .unwrap();
 
     let (st, hold) = abre(
         &app,
@@ -107,6 +124,10 @@ async fn com_hold_a_retencao_nao_apaga_a_gravacao_e_sem_hold_apaga(db: sqlx::PgP
     assert!(
         existe_gravacao(&app, rec_ana).await,
         "a gravação da Ana estava retida e foi apagada"
+    );
+    assert!(
+        ficheiro.exists(),
+        "a linha ficou, mas o FICHEIRO da gravação retida foi purgado"
     );
     // CONTROLO na mesma volta: a do administrador, sem hold, saiu.
     assert!(
