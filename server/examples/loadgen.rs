@@ -28,6 +28,19 @@
 //!   -c:a libopus -b:a 32k -frame_duration 20 -page_duration 20000 audio.ogg
 //! ```
 //!
+//! **O servidor tem de arrancar com `MAX_WS_PER_USER=0`.** Todos os clientes
+//! deste gerador entram com a MESMA conta, e o tecto de sockets por conta
+//! (omissão 16, desde 2026-10-05) recusa o 17.º `/ws` com 429. Medido a
+//! 2026-10-21: sem a variável, um degrau de 40 tem 16 clientes ligados e 24
+//! com `HTTP error: 429` no log do gerador — e os fluxos ficam em 240 de 1560,
+//! o que se lê como «a sala colapsa às 24» e não é. Pela mesma razão,
+//! `NODE_PEER_CAPACITY=0` quando a rampa passa a capacidade declarada do nó.
+//!
+//! **`entrada_s` NÃO é o tempo de entrada de ninguém.** É o tempo que o gerador
+//! leva a LANÇAR os clientes, com `--join-gap-ms` (40) entre cada um: 40
+//! clientes dão ~1,6 s por construção. O tempo que uma pessoa espera até ver
+//! alguém é o `primeiro_video_ms_p50`/`_p95`.
+//!
 //! Uso e resultados medidos: `docs/ops/teste-de-carga-2026-09-17.md`, ou `--help`.
 
 use std::{

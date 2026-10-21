@@ -48,7 +48,7 @@ De pé: `A-03` e `A-05`.
 | `B-03` | Pesquisa semântica (hoje é lexical) | por escrever |
 | `B-04` | Partilha de ecrã a 5–15 fps | por escrever |
 | `B-05` | A composição rouba CPU ao media no mesmo pod | por escrever |
-| `B-06` | [A entrada na sala é O(n) em série](B-06-entrada-na-sala-em-serie.md) | escrito — **a mais barata da lista** |
+| `B-06` | [A entrada na sala é O(n) em série](B-06-entrada-na-sala-em-serie.md) | ✅ **FECHADO** 2026-10-21 **sem mudar o SFU**. O «1,7 s» era o espaçamento do gerador, e um A/B mostrou que tornar o laço concorrente não ajuda. Primeiro vídeo plano até 16; acima disso acompanha a CPU, o que passa para o `A-04` |
 | `B-07` | API pública v1 é 3 % da BFF, e não há SDK | por escrever — remedido a 2026-10-21: v1 9/12, BFF 285/407 (era 282/404) |
 | `B-08` | A sala de espera do convidado é obrigatória e sem interruptor | por escrever |
 | `B-09` | Acessibilidade sem prova automática (`grep axe` = 0) | por escrever |

@@ -3,7 +3,7 @@ gap: B-06
 grupo: B
 title: A entrada na sala é O(n) em série, e passa de 0,3 s a 1,7 s
 severidade: MÉDIO — e é a correcção mais barata da lista
-estado: ATRÁS (defeito localizado, causa conhecida)
+estado: FECHADO a 2026-10-21 — a premissa era um artefacto do gerador, e o laço em série medido não é a causa. Ver «Como fechou»
 medido: 2026-10-18
 base: develop @ f21e6fc47
 ---
@@ -28,3 +28,27 @@ Evidência já lida (2026-10-18, `f21e6fc47`):
 Nota de prioridade: de todas as linhas em que estamos atrás, esta é a que tem **causa localizada, medição pronta e âmbito pequeno**. É a primeira a fazer se o objectivo for ganhar credibilidade rápido numa demonstração com 30 ou 40 pessoas.
 
 Portões em risco: a catraca do clippy (`sfu.rs` conta para ela); e o portão de arquitectura, se a correcção mover código entre camadas.
+
+## Como fechou (2026-10-21) — sem alteração ao SFU
+
+Medido. O relatório completo está em [`docs/ops/teste-de-carga-2026-10-21-entrada.md`](../../docs/ops/teste-de-carga-2026-10-21-entrada.md).
+
+1. **A premissa deste prompt era um artefacto.** O «0,3 s com 8 / 1,7 s com 40» é o `entrada_s` do loadgen: o tempo que o GERADOR leva a lançar os clientes, com 40 ms entre cada um (8 × 40 ms = 0,32 s, 40 × 40 ms = 1,6 s). Não é o tempo de entrada de ninguém. O tempo que uma pessoa espera até ver alguém é o `primeiro_video_ms`.
+2. **O laço em série não é a causa medida.** O A/B foi intercalado (base, `join_all`, base, `join_all`), com os binários conferidos por sha256:
+   - até 16 pessoas, o primeiro vídeo chega em ~70–90 ms, nas duas variantes;
+   - aos 40, a variante concorrente **piora** (p95 de 5,4 s e 6,0 s, contra 4,0 s e 3,0 s da base), com a máquina a 92–98 %;
+   - a subida acompanha a saturação da máquina, não o número de reavaliações em série.
+
+   A alteração não foi entregue.
+3. **Uma armadilha nova, documentada no `loadgen.rs` e no `loadgen-rampa.sh`.** Desde 2026-10-05, o `MAX_WS_PER_USER` (16) corta a rampa no 17.º cliente com 429, porque o gerador usa uma só conta. Sem `MAX_WS_PER_USER=0`, um degrau de 40 parece colapsar aos 24.
+
+Critérios do prompt:
+
+| Critério | Estado |
+|---|---|
+| O tempo de entrada fica plano entre 8 e 40, **ou a subida fica justificada por outra causa nomeada** | **Justificada:** é plana até 16; acima disso acompanha a saturação da máquina (servidor + gerador + carga alheia). Separar o servidor do gerador precisa de um gerador noutra máquina, e isso é trabalho do `A-04` |
+| Sem lock atravessado por `.await` | Não se aplica: nada mudou no SFU. A análise feita para a variante (ordem `peer.subscribed` → `publication.subscribers`, sem caminho inverso) está no relatório |
+| Sem regressão | Não se aplica: nada mudou no SFU |
+
+**O que fica por saber, e passa para o `A-04`:** quanto da subida aos 32–40 é do servidor, com um gerador fora da máquina e o host limpo. E um desenho diferente, reavaliar só os peers que uma entrada afecta em vez da sala inteira, não foi medido.
+
