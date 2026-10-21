@@ -155,7 +155,7 @@ fn aviso(room_code: &str, locale: &str) -> serde_json::Value {
 
 /// O que o browser precisa de saber antes de pedir permissão.
 #[derive(Serialize, utoipa::ToSchema)]
-pub struct PushStatus {
+pub struct WebPushStatus {
     /// `false` quando a instalação não configurou o Web Push: o ecrã não
     /// oferece o que o servidor não envia.
     pub enabled: bool,
@@ -166,7 +166,7 @@ pub struct PushStatus {
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
-pub struct SubscriptionKeys {
+pub struct WebPushKeys {
     pub p256dh: String,
     pub auth: String,
 }
@@ -174,18 +174,18 @@ pub struct SubscriptionKeys {
 /// A forma do `PushSubscription.toJSON()` do browser — `expirationTime` e o
 /// resto são ignorados.
 #[derive(Deserialize, utoipa::ToSchema)]
-pub struct SubscribeReq {
+pub struct WebPushSubscribeReq {
     pub endpoint: String,
-    pub keys: SubscriptionKeys,
+    pub keys: WebPushKeys,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
-pub struct SubscribeResp {
+pub struct WebPushSubscribeResp {
     pub id: Uuid,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
-pub struct UnsubscribeReq {
+pub struct WebPushUnsubscribeReq {
     pub endpoint: String,
 }
 
@@ -242,21 +242,21 @@ fn chaves_do_browser(p256dh: &str, auth: &str) -> Result<(PublicKey, Auth), ApiE
     get, path = "/api/users/me/push", tag = "notifications",
     security(("session" = [])),
     responses(
-        (status = 200, body = PushStatus, description = "Se o Web Push está ligado nesta instalação, a chave pública VAPID e quantos browsers desta pessoa estão subscritos."),
+        (status = 200, body = WebPushStatus, description = "Se o Web Push está ligado nesta instalação, a chave pública VAPID e quantos browsers desta pessoa estão subscritos."),
         (status = 401, body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn status(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-) -> Result<Json<PushStatus>, ApiError> {
+) -> Result<Json<WebPushStatus>, ApiError> {
     let ch = chaves(&state.config);
     let subscriptions: i64 =
         sqlx::query_scalar("SELECT count(*) FROM web_push_subscriptions WHERE user_id = $1")
             .bind(auth.user_id)
             .fetch_one(&state.db)
             .await?;
-    Ok(Json(PushStatus {
+    Ok(Json(WebPushStatus {
         enabled: ch.is_some(),
         public_key: ch.map(|c| c.publica),
         subscriptions,
@@ -267,9 +267,9 @@ pub async fn status(
 #[utoipa::path(
     post, path = "/api/users/me/push/subscriptions", tag = "notifications",
     security(("session" = [])),
-    request_body = SubscribeReq,
+    request_body = WebPushSubscribeReq,
     responses(
-        (status = 201, body = SubscribeResp, description = "Subscrição registada. O mesmo endpoint registado por outra pessoa passa a ser desta — é o mesmo browser."),
+        (status = 201, body = WebPushSubscribeResp, description = "Subscrição registada. O mesmo endpoint registado por outra pessoa passa a ser desta — é o mesmo browser."),
         (status = 400, body = crate::openapi::ErrorBody, description = "`push.endpoint_invalid`, `push.endpoint_not_allowed`, `push.endpoint_not_https` ou `push.keys_invalid`."),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 409, body = crate::openapi::ErrorBody, description = "`push.not_configured`: esta instalação não configurou o Web Push."),
@@ -279,8 +279,8 @@ pub async fn subscribe(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     headers: axum::http::HeaderMap,
-    Json(req): Json<SubscribeReq>,
-) -> Result<(StatusCode, Json<SubscribeResp>), ApiError> {
+    Json(req): Json<WebPushSubscribeReq>,
+) -> Result<(StatusCode, Json<WebPushSubscribeResp>), ApiError> {
     if chaves(&state.config).is_none() {
         return Err(DomainError::conflict(
             "push.not_configured",
@@ -323,14 +323,14 @@ pub async fn subscribe(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok((StatusCode::CREATED, Json(SubscribeResp { id })))
+    Ok((StatusCode::CREATED, Json(WebPushSubscribeResp { id })))
 }
 
 /// `POST /api/users/me/push/subscriptions/unsubscribe`
 #[utoipa::path(
     post, path = "/api/users/me/push/subscriptions/unsubscribe", tag = "notifications",
     security(("session" = [])),
-    request_body = UnsubscribeReq,
+    request_body = WebPushUnsubscribeReq,
     responses(
         (status = 204, description = "A subscrição deste browser saiu. Um endpoint que não é desta pessoa não muda nada — e a resposta é a mesma, para não revelar de quem é."),
         (status = 401, body = crate::openapi::ErrorBody),
@@ -339,7 +339,7 @@ pub async fn subscribe(
 pub async fn unsubscribe(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Json(req): Json<UnsubscribeReq>,
+    Json(req): Json<WebPushUnsubscribeReq>,
 ) -> Result<StatusCode, ApiError> {
     sqlx::query("DELETE FROM web_push_subscriptions WHERE user_id = $1 AND endpoint = $2")
         .bind(auth.user_id)
