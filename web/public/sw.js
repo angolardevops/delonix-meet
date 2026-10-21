@@ -130,3 +130,57 @@ self.addEventListener('fetch', (e) => {
       .catch(() => caches.match(e.request, { ignoreVary: true }).then((m) => m ?? Response.error())),
   )
 })
+
+/**
+ * Web Push (A-03, ADR-0032): o toque de uma reunião com a aplicação FECHADA.
+ *
+ * O servidor manda um texto genérico e o link da sala — nunca o assunto nem quem
+ * chama, porque um aviso no ecrã de bloqueio é uma fuga (ADR-0032 §2). O aviso
+ * chega cifrado e assinado com a chave da instalação; mesmo assim, o link só se
+ * aceita se for RELATIVO à app (`/#/…`): um clique numa notificação nunca abre
+ * um endereço de fora.
+ */
+function linkDaApp(link) {
+  return typeof link === 'string' && link.startsWith('/#/') ? link : '/'
+}
+
+self.addEventListener('push', (e) => {
+  let aviso = {}
+  try {
+    aviso = e.data ? e.data.json() : {}
+  } catch {
+    // Um aviso ilegível ainda é um toque: mostra-se o título genérico.
+  }
+  e.waitUntil(
+    self.registration.showNotification(aviso.title || 'Delonix Meet', {
+      body: aviso.body || '',
+      // Um toque por sala: um segundo toque da mesma reunião substitui o
+      // primeiro em vez de empilhar avisos iguais.
+      tag: aviso.room_code ? `ring-${aviso.room_code}` : 'ring',
+      renotify: true,
+      requireInteraction: true,
+      icon: '/icon-192.png',
+      data: { link: linkDaApp(aviso.link) },
+    }),
+  )
+})
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close()
+  const link = linkDaApp(e.notification.data && e.notification.data.link)
+  e.waitUntil(
+    (async () => {
+      // Uma janela da app já aberta é reaproveitada: abrir outra punha a pessoa
+      // em duas abas da mesma sessão.
+      const janelas = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      for (const c of janelas) {
+        if (new URL(c.url).origin === self.location.origin) {
+          await c.focus()
+          if ('navigate' in c) await c.navigate(link)
+          return
+        }
+      }
+      await self.clients.openWindow(link)
+    })(),
+  )
+})

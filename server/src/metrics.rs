@@ -150,6 +150,14 @@ pub struct Metrics {
     /// organização a usar o motor proibido — ou um cliente a mentir no campo
     /// `engine`, que é o limite honesto desta imposição.
     pub caption_engine_refused_total: AtomicU64,
+    /// Web Push (A-03): avisos aceites pelo serviço de push do browser. Aceite
+    /// não é «visto» — é o que o servidor pode saber; o resto é do aparelho.
+    pub web_push_sent_total: AtomicU64,
+    /// Web Push recusados ou sem resposta (que não sejam 404/410).
+    pub web_push_failed_total: AtomicU64,
+    /// Subscrições removidas porque o serviço de push respondeu 404/410: o
+    /// browser revogou a permissão ou a subscrição expirou.
+    pub web_push_expired_total: AtomicU64,
     /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
     /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
@@ -351,6 +359,15 @@ impl Metrics {
              # HELP delonix_caption_engine_refused_total Legendas recusadas por vir do motor do browser numa organizacao que o proibe.\n\
              # TYPE delonix_caption_engine_refused_total counter\n\
              delonix_caption_engine_refused_total {}\n\
+             # HELP delonix_web_push_sent_total Avisos Web Push aceites pelo servico de push.\n\
+             # TYPE delonix_web_push_sent_total counter\n\
+             delonix_web_push_sent_total {}\n\
+             # HELP delonix_web_push_failed_total Avisos Web Push recusados ou sem resposta.\n\
+             # TYPE delonix_web_push_failed_total counter\n\
+             delonix_web_push_failed_total {}\n\
+             # HELP delonix_web_push_expired_total Subscricoes Web Push removidas por 404/410.\n\
+             # TYPE delonix_web_push_expired_total counter\n\
+             delonix_web_push_expired_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -399,6 +416,9 @@ impl Metrics {
             self.chat_persist_dropped_total.load(Relaxed),
             self.chat_persist_failed_total.load(Relaxed),
             self.caption_engine_refused_total.load(Relaxed),
+            self.web_push_sent_total.load(Relaxed),
+            self.web_push_failed_total.load(Relaxed),
+            self.web_push_expired_total.load(Relaxed),
             uptime_secs,
         )
     }

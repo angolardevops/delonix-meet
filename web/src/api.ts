@@ -40,6 +40,25 @@ function saveSession(t: AuthOk) {
 }
 
 export function logout() {
+  // Web Push (A-03): o browser deixa de avisar esta pessoa ANTES de o token se
+  // perder — num browser partilhado, quem entra a seguir não recebe os toques
+  // de quem saiu. Best-effort: sem service worker, sem subscrição, nada a fazer.
+  const tok = accessToken
+  if (tok && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    void navigator.serviceWorker
+      .getRegistration()
+      .then((reg) => reg?.pushManager.getSubscription())
+      .then((sub) => {
+        if (!sub) return
+        void fetch('/api/users/me/push/subscriptions/unsubscribe', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: sub.endpoint }),
+        }).catch(() => {})
+        return sub.unsubscribe()
+      })
+      .catch(() => {})
+  }
   accessToken = null
   localStorage.removeItem('dx_access')
   localStorage.removeItem('dx_user')
@@ -1483,6 +1502,22 @@ export async function downloadRecording(rec: Recording): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
+/** Web Push (A-03, ADR-0032): se a instalação o tem ligado, e a chave pública VAPID. */
+export interface PushStatus {
+  enabled: boolean
+  public_key: string | null
+  /** Quantos browsers desta pessoa estão subscritos. */
+  subscriptions: number
+}
+
+export const pushStatus = () => request<PushStatus>('/api/users/me/push')
+
+/** Regista a subscrição deste browser (a forma de `PushSubscription.toJSON()`). */
+export const subscribePush = (sub: PushSubscriptionJSON) =>
+  request<{ id: string }>('/api/users/me/push/subscriptions', { method: 'POST', body: JSON.stringify(sub) })
+
+export const unsubscribePush = (endpoint: string) =>
+  requestEmpty('/api/users/me/push/subscriptions/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) })
 /** Uma pista por fonte de uma gravação ISO (ADR-0014 §2.3), antes de qualquer mistura. */
 export interface RecordingTrack {
   id: string
