@@ -23,7 +23,7 @@ use base64::Engine as _;
 use chrono::{Duration, Utc};
 use common::TestApp;
 use serde_json::{json, Value};
-use web_push_native::{jwt_simple::algorithms::ES256KeyPair, p256::SecretKey, Auth};
+use web_push_native::{p256::SecretKey, Auth};
 
 const SUBJECT: &str = "mailto:ops@meet.test";
 const TITULO_SECRETO: &str = "Despedimento colectivo Q4";
