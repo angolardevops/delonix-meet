@@ -1483,6 +1483,41 @@ export async function downloadRecording(rec: Recording): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
+/** Uma pista por fonte de uma gravação ISO (ADR-0014 §2.3), antes de qualquer mistura. */
+export interface RecordingTrack {
+  id: string
+  /** `video` (câmara), `screen` (ecrã partilhado), `audio` (microfone), `screen-audio` (som do ecrã). */
+  kind: string
+  size_bytes: number
+  /** Onde a pista começa na linha do tempo da gravação. */
+  starts_at_ms: number
+  /** O número da câmara no estúdio (1–16), quando se soube resolver. */
+  source_number: number | null
+  source_label: string | null
+  publisher_id: string
+}
+
+export const recordingTracks = (id: string, signal?: AbortSignal) =>
+  request<{ items: RecordingTrack[] }>(`/api/recordings/${id}/tracks`, { signal })
+
+/**
+ * Descarrega uma pista. O nome vem do `Content-Disposition` do servidor — é
+ * ele que sabe a extensão (`.ivf` no vídeo, `.ogg` no áudio). Um 403 é a falta
+ * da permissão de download, a mesma da gravação composta.
+ */
+export async function downloadRecordingTrack(recordingId: string, track: RecordingTrack): Promise<void> {
+  const res = await fetch(`/api/recordings/${recordingId}/tracks/${track.id}/content`, { headers: authHeader() })
+  if (!res.ok) throw new Error(`track download failed: ${res.status}`)
+  const disposition = res.headers.get('content-disposition') ?? ''
+  const nome = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `pista-${track.id}`
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = nome
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // ---------- Agenda de reunião ----------
 
 export interface AgendaItem {

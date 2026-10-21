@@ -33,7 +33,15 @@ fn sem_ffmpeg() -> bool {
 
 /// Um OGG/Opus de verdade, de um segundo, escrito em `destino`.
 fn escreve_ogg_real(destino: &Path) {
+    escreve_ogg(destino, 1, 440);
+}
+
+/// Um OGG/Opus de verdade, com a duração e o tom pedidos. Duas fontes com
+/// durações diferentes é o que distingue «um ficheiro por fonte» de «o mesmo
+/// ficheiro servido duas vezes».
+fn escreve_ogg(destino: &Path, segundos: u32, hz: u32) {
     std::fs::create_dir_all(destino.parent().unwrap()).unwrap();
+    let fonte = format!("sine=frequency={hz}:duration={segundos}");
     let saida = std::process::Command::new("ffmpeg")
         .args([
             "-hide_banner",
@@ -43,7 +51,7 @@ fn escreve_ogg_real(destino: &Path) {
             "-f",
             "lavfi",
             "-i",
-            "sine=frequency=440:duration=1",
+            &fonte,
             "-c:a",
             "libopus",
             "-b:a",
@@ -57,6 +65,26 @@ fn escreve_ogg_real(destino: &Path) {
         "ffmpeg não escreveu o OGG: {}",
         String::from_utf8_lossy(&saida.stderr)
     );
+}
+
+/// A duração, em segundos, que o ffprobe lê no contentor.
+fn duracao(ficheiro: &Path) -> f64 {
+    let out = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(ficheiro)
+        .output()
+        .expect("ffprobe não arrancou");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("ffprobe não leu a duração de {}", ficheiro.display()))
 }
 
 /// Os fluxos que o ffprobe vê num ficheiro: `(codec, tipo)` por fluxo.
@@ -204,6 +232,76 @@ async fn a_pista_por_fonte_e_servida_e_o_ffprobe_le_uma_fonte(db: sqlx::PgPool) 
     assert_eq!(f.len(), 1, "a pista ISO tem de ter UMA fonte, veio {f:?}");
     assert_eq!(f[0].1, "audio", "veio {f:?}");
     assert_eq!(f[0].0, "opus", "veio {f:?}");
+}
+
+/// O critério 3 do A-02: DUAS fontes dão DOIS ficheiros, cada um com a sua
+/// duração. Descarregados pela rota e lidos pelo ffprobe: se a rota servisse o
+/// mesmo ficheiro às duas, ou misturasse as fontes, as durações coincidiam ou
+/// apareciam dois fluxos num ficheiro.
+///
+/// O que isto NÃO prova: que uma sessão do SFU produz estes ficheiros. Isso é o
+/// `registar_pistas_iso` (testes unitários em `recorder.rs`) e, ponta a ponta,
+/// precisa de dois publicadores reais — fica por provar.
+#[sqlx::test(migrations = "./migrations")]
+async fn duas_fontes_dao_dois_ficheiros_com_duracoes_proprias(db: sqlx::PgPool) {
+    if sem_ffmpeg() {
+        return;
+    }
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("iso-duas.ao").await;
+    let (rec, pista_1, _) =
+        gravacao_com_pista(&app, &a, "01-audio.ogg", Some(1), Some("CAM 1")).await;
+
+    // A segunda fonte, na MESMA gravação: dois segundos, outro tom.
+    let segunda = delonix_server::recording_iso_dir(&app.state.config.recordings_dir, rec)
+        .join("02-audio.ogg");
+    escreve_ogg(&segunda, 2, 880);
+    let pista_2: Uuid = sqlx::query_scalar(
+        "INSERT INTO recording_tracks
+           (recording_id, publisher_id, kind, filename, size_bytes, starts_at_ms, source_number, source_label)
+         VALUES ($1, $2, 'audio', '02-audio.ogg', $3, 1500, 2, 'CAM 2') RETURNING id",
+    )
+    .bind(rec)
+    .bind(Uuid::new_v4())
+    .bind(std::fs::metadata(&segunda).unwrap().len() as i64)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+
+    let (st, lista): (u16, Value) = app
+        .get(&format!("/api/recordings/{rec}/tracks"), Some(&a.token))
+        .await;
+    assert_eq!(st, 200, "{lista}");
+    assert_eq!(lista["items"].as_array().map(Vec::len), Some(2), "{lista}");
+
+    let mut duracoes = Vec::new();
+    let mut corpos = Vec::new();
+    for pista in [pista_1, pista_2] {
+        let (st, bytes) = app
+            .raw_bytes(
+                reqwest::Method::GET,
+                &format!("/api/recordings/{rec}/tracks/{pista}/content"),
+                &[("authorization", &format!("Bearer {}", a.token))],
+            )
+            .await;
+        assert_eq!(st, 200, "a pista {pista} não foi servida");
+        let f = std::env::temp_dir().join(format!("iso-duas-{}.ogg", Uuid::new_v4()));
+        std::fs::write(&f, &bytes).unwrap();
+        let fl = fluxos(&f);
+        let d = duracao(&f);
+        std::fs::remove_file(&f).ok();
+        assert_eq!(fl.len(), 1, "cada pista tem UMA fonte, veio {fl:?}");
+        duracoes.push(d);
+        corpos.push(bytes);
+    }
+    assert_ne!(
+        corpos[0], corpos[1],
+        "as duas pistas serviram o MESMO ficheiro"
+    );
+    assert!(
+        (duracoes[0] - 1.0).abs() < 0.2 && (duracoes[1] - 2.0).abs() < 0.2,
+        "cada fonte tem a sua duração (1 s e 2 s), vieram {duracoes:?}"
+    );
 }
 
 /// CONTROLO: um id de pista de OUTRA gravação não é servido por aqui. É o que
