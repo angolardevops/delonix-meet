@@ -568,6 +568,7 @@ export default function Room({
                   isHost={isHost}
                   canAdmit={session.canAdmit}
                   isTraining={session.isTraining}
+                  isBroadcast={session.isBroadcast}
                   peers={peers}
                   speaking={core.speaking}
                   micOn={media.micOn}

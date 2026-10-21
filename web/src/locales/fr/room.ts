@@ -497,6 +497,8 @@ export default {
     congelado: '{{ms}} ms figé',
     accoesSobre: 'Actions pour {{nome}}',
     desligarCamara: 'Désactiver la caméra de {{nome}}',
+    darPalavra: 'Donner la parole à {{nome}}',
+    tirarPalavra: 'Retirer la parole à {{nome}}',
     permitirPartilha: "Autoriser {{nome}} à partager l'écran",
     retirarPartilha: "Retirer le partage d'écran à {{nome}}",
     permitirAdmissao: 'Autoriser {{nome}} à admettre des entrées',

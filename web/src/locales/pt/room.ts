@@ -497,6 +497,8 @@ export default {
     congelado: '{{ms}} ms parado',
     accoesSobre: 'Acções sobre {{nome}}',
     desligarCamara: 'Desligar a câmara de {{nome}}',
+    darPalavra: 'Dar a palavra a {{nome}}',
+    tirarPalavra: 'Tirar a palavra a {{nome}}',
     permitirPartilha: 'Permitir que {{nome}} partilhe o ecrã',
     retirarPartilha: 'Retirar a partilha de ecrã a {{nome}}',
     permitirAdmissao: 'Permitir que {{nome}} admita entradas',

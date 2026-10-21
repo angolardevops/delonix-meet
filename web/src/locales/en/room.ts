@@ -497,6 +497,8 @@ export default {
     congelado: '{{ms}} ms frozen',
     accoesSobre: 'Actions for {{nome}}',
     desligarCamara: "Turn off {{nome}}'s camera",
+    darPalavra: 'Give {{nome}} the floor',
+    tirarPalavra: 'Take the floor from {{nome}}',
     permitirPartilha: 'Allow {{nome}} to share their screen',
     retirarPartilha: 'Stop {{nome}} from sharing their screen',
     permitirAdmissao: 'Allow {{nome}} to admit people',

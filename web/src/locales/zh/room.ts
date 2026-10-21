@@ -496,6 +496,8 @@ export default {
     congelado: '卡顿 {{ms}} ms',
     accoesSobre: '对 {{nome}} 的操作',
     desligarCamara: '关闭 {{nome}} 的摄像头',
+    darPalavra: '让 {{nome}} 发言',
+    tirarPalavra: '收回 {{nome}} 的发言权',
     permitirPartilha: '允许 {{nome}} 共享屏幕',
     retirarPartilha: '收回 {{nome}} 的屏幕共享权限',
     permitirAdmissao: '允许 {{nome}} 准入人员',
