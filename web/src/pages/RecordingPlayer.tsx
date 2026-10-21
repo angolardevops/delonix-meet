@@ -30,6 +30,8 @@ import {
   publishRecording,
   recordingCaptionVttUrl,
   recordingDetails,
+  RecordingTrack,
+  recordingTracks,
   recordingsLibraryMeta,
   recordRecordingView,
   roomChatHistory,
@@ -50,6 +52,7 @@ import RecordingChaptersEditor from './recordings/RecordingChaptersEditor'
 import RecordingComments from './recordings/RecordingComments'
 import RecordingEditDialog from './recordings/RecordingEditDialog'
 import RecordingParticipants from './recordings/RecordingParticipants'
+import RecordingTracks from './recordings/RecordingTracks'
 import { thumbStyle, useThumbnail } from './recordings/RecordingThumb'
 import { formatBytes, formatDate, formatDateTime, formatDateTimeShort, formatDayMonth } from './recordings/format'
 import { chapterAt, formatClock, resolutionLabel, visibleState } from './recordings/libraryData'
@@ -65,7 +68,7 @@ import { playerHash, studioEditHash } from './recordings/studioLink'
 import Transcript from './recordings/Transcript'
 import { useProcessingUpdates } from './recordings/useProcessingUpdates'
 
-type InfoTab = 'description' | 'transcript' | 'comments' | 'participants' | 'captions' | 'attachments'
+type InfoTab = 'description' | 'transcript' | 'comments' | 'participants' | 'tracks' | 'captions' | 'attachments'
 type SideTab = 'next' | 'series'
 
 const RATES = [1, 1.25, 1.5, 2, 0.75]
@@ -209,14 +212,20 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
   }, [ccLang, src, tracks])
 
   const extra = useAsync(async (signal) => {
-    const [chapters, segments, boards, chat] = await Promise.all([
+    const [chapters, segments, boards, chat, isoTracks] = await Promise.all([
       loadChapters(rec, signal),
       loadSegments(rec, signal),
       optional(listWhiteboards(signal), null as WhiteboardMeta[] | null),
       // O chat não aceita AbortSignal: um erro (403/404) é «sem acesso», não um ecrã partido.
       roomChatHistory(rec.roomCode).catch(() => null as ChatHistoryMsg[] | null),
+      // Pistas ISO: vazio numa gravação que não as pediu, e então o separador
+      // nem aparece. Um erro também o esconde — não é razão para partir o leitor.
+      optional(
+        recordingTracks(rec.id, signal).then((r) => r.items),
+        [] as RecordingTrack[],
+      ),
     ])
-    return { chapters, segments, boards: boards?.filter((b) => b.room_code === rec.roomCode) ?? null, chat }
+    return { chapters, segments, boards: boards?.filter((b) => b.room_code === rec.roomCode) ?? null, chat, isoTracks }
   }, [rec.id])
   const x = extra.state.s === 'ready' ? extra.state.d : null
   const chapters = x?.chapters ?? null
@@ -311,6 +320,7 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
   ]
   if (rec.hasFile) tabs.push({ value: 'comments', label: t('player.comentariosN', { count: rec.commentCount ?? 0 }) })
   if (rec.participantCount !== null) tabs.push({ value: 'participants', label: t('player.participantesN', { count: rec.participantCount }) })
+  if (x && x.isoTracks.length > 0) tabs.push({ value: 'tracks', label: t('player.pistasN', { count: x.isoTracks.length }) })
   if (rec.hasFile) tabs.push({ value: 'captions', label: t('player.legendasN', { count: rec.captionLanguages.length }) })
   tabs.push({ value: 'attachments', label: attachCount === null ? t('player.anexos') : t('player.anexosN', { count: attachCount }) })
 
@@ -464,6 +474,7 @@ function Player({ rec, library, meetings, onChanged }: { rec: RecordingView; lib
                 (extra.state.s === 'loading' ? null : x?.segments ? <Transcript segments={x.segments} nowMs={pb.nowMs} onSeek={seek} /> : <RecordingNotes roomCode={rec.roomCode} />)}
               {info === 'comments' && <RecordingComments recordingId={rec.id} nowMs={pb.nowMs} onSeek={seek} onChanged={onChanged} />}
               {info === 'participants' && <RecordingParticipants recordingId={rec.id} />}
+              {info === 'tracks' && x && <RecordingTracks recordingId={rec.id} tracks={x.isoTracks} canDownload={rec.canDownload} />}
               {info === 'captions' && <RecordingCaptions recordingId={rec.id} canManage={rec.canManage} onChanged={onChanged} />}
               {info === 'attachments' && (
                 <AsyncSection state={extra.state} onRetry={extra.reload}>
