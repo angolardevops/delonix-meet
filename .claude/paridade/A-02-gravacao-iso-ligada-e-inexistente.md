@@ -3,7 +3,7 @@ gap: A-02
 grupo: A
 title: A gravação ISO está LIGADA por omissão e não existe
 severidade: AFIRMAÇÃO FALSA LATENTE
-estado: coluna e interruptor sem implementação
+estado: FECHADO a 2026-10-21 — implementado, e não recuado. Falta a prova ponta-a-ponta pelo SFU; ver «Como fechou»
 medido: 2026-10-18
 base: develop @ f21e6fc47
 ---
@@ -29,3 +29,18 @@ Evidência já lida (2026-10-18, `f21e6fc47`):
 Nota que decide a fatia: isto é o caso mais puro de «capacidade meio feita» de todo o repositório — a base de dados diz sim, o ecrã diz sim, e não há uma linha que produza o artefacto. Um cliente de produção que ligue o estúdio vai procurar as pistas por câmara e não as encontra. Recuar é legítimo; ficar como está não é.
 
 Portões em risco: `check-docs-drift.sh` (migração nova tem de aparecer nos docs); `check-capability-claims.sh`; e se a saída for implementar, o portão de autorização das rotas novas.
+
+## Como fechou (2026-10-21)
+
+**A decisão foi implementar, não recuar.** O servidor ganhou a tabela `recording_tracks` e as duas rotas na sessão de 2026-10-18 (migrações 0124–0126, `lib.rs:955-959`). Esta sessão fecha o que faltava medido na remedição de 2026-10-21: o ecrã e a prova das duas fontes. Medido contra a `develop` @ `bbf7a5fa`.
+
+| Critério | Estado | Observação |
+|---|---|---|
+| 1. A decisão tomada, e o ecrã de acordo com a base | **feito** | O leitor de gravações ganha o separador «Pistas ISO · N» (`web/src/pages/recordings/RecordingTracks.tsx`), com a fonte, o tipo, o instante, o tamanho e a descarga. **Visto no browser** contra um servidor da `develop`, com 4 pistas semeadas: o separador aparece, as quatro listam-se, cabe a 375 px (`scrollWidth` = 375), e o botão da CAM 2 descarrega `02-audio.ogg` com 43 883 bytes, iguais ao disco, como `audio/ogg`. O `ffprobe` de um ficheiro descarregado está no `gravacao_iso.rs` |
+| 2. Nenhum ecrã mostra «ISO» sem pista servida | **feito** | O separador só aparece quando a listagem traz pistas, e um erro na listagem esconde-o. O interruptor do estúdio continua, e agora corresponde a uma capacidade servida. O `check-capability-claims.sh` dá `exit=0` |
+| 3. Duas fontes dão dois ficheiros, com durações próprias | **feito, ao nível da rota** | `duas_fontes_dao_dois_ficheiros_com_duracoes_proprias`: duas pistas de 1 s e 2 s, descarregadas pela rota, com um fluxo cada, conteúdos diferentes e durações de 1 s e 2 s pelo `ffprobe`. **Controlo negativo medido:** com a rota a servir sempre a primeira pista, o teste falha em «as duas pistas serviram o MESMO ficheiro» |
+
+**O que fica por provar, dito sem rodeios:** que uma sessão real do SFU, com dois publicadores, produz estes ficheiros. O caminho de produção (`registar_pistas_iso`) tem testes unitários contra Postgres em `recorder.rs`, mas com bytes falsos; os ficheiros dos testes de integração são feitos pelo `ffmpeg` do teste. A prova ponta-a-ponta precisa de um e2e com dois browsers num estúdio a gravar, e esse e2e não existe.
+
+Portões: `tsc` 0, `vitest` com todos os testes verdes, `check-frontend-lint` com 0 problemas, `check-capability-claims` e `check-docs-drift` com `exit=0`. O teste de paridade das quatro línguas recusa, nomeando-a, uma chave nova que se retire do `zh` (controlo negativo medido).
+
