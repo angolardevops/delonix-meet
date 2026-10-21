@@ -647,7 +647,7 @@ pub async fn ring_users(
     let caller_name_s = caller_name.to_string();
     let title_s = title.to_string();
 
-    let (mut ringing, mut offline) = (Vec::new(), Vec::new());
+    let (mut ringing, mut sem_socket) = (Vec::new(), Vec::new());
     for uid in targets {
         if uid == caller {
             continue;
@@ -662,22 +662,36 @@ pub async fn ring_users(
         if state.presence.is_online_any(uid).await && state.presence.send_or_publish(uid, msg) {
             ringing.push(uid);
         } else {
-            offline.push(uid);
-            // Alvo offline: regista chamada perdida (vê ao voltar online).
-            let _ = sqlx::query(
-                "INSERT INTO missed_calls (user_id, room_code, caller_id, caller_name, kind)
-                 VALUES ($1, $2, $3, $4, $5)",
-            )
-            .bind(uid)
-            .bind(room_code)
-            .bind(caller)
-            .bind(caller_name)
-            .bind(kind)
-            .execute(&state.db)
-            .await;
-            crate::notifications::call_missed(state, uid, caller, caller_name, room_code, kind)
-                .await;
+            sem_socket.push(uid);
         }
+    }
+    // Quem não tem socket é avisado pelo Web Push do browser (A-03), em
+    // paralelo e com prazo curto. Um aviso ACEITE por um serviço de push conta
+    // como «a tocar»: é o que o servidor pode saber, tal como o envio pelo
+    // socket. Quem nenhum serviço aceitou fica `offline`, como antes.
+    let avisados = crate::web_push::ring(state, &sem_socket, room_code).await;
+    let mut offline = Vec::new();
+    for uid in sem_socket {
+        if avisados.contains(&uid) {
+            ringing.push(uid);
+        } else {
+            offline.push(uid);
+        }
+        // Sem socket: regista a chamada perdida (vê ao voltar online). Também
+        // para quem recebeu o aviso por push — receber não é atender, e a
+        // chamada perdida é o que fica se não atender.
+        let _ = sqlx::query(
+            "INSERT INTO missed_calls (user_id, room_code, caller_id, caller_name, kind)
+                 VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(uid)
+        .bind(room_code)
+        .bind(caller)
+        .bind(caller_name)
+        .bind(kind)
+        .execute(&state.db)
+        .await;
+        crate::notifications::call_missed(state, uid, caller, caller_name, room_code, kind).await;
     }
     (ringing, offline)
 }

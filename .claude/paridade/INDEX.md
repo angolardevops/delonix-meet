@@ -29,7 +29,7 @@ De pé: `A-03` e `A-05`.
 |---|---|---|
 | `A-01` | [Um telefone entra numa sala cifrada de ponta a ponta](A-01-telefone-entra-em-sala-e2ee.md) | ✅ **FECHADO** 2026-10-18 — nos dois pontos de resolução da sala, com controlo negativo medido. Na `develop` desde o #378 (remedido a 2026-10-21: `grep -c e2ee voice.rs` = 9). Falta a prova por chamada real (sem DID de teste nesta máquina) |
 | `A-02` | [Gravação ISO ligada por omissão e inexistente](A-02-gravacao-iso-ligada-e-inexistente.md) | ✅ **FECHADO** 2026-10-21: as pistas aparecem no leitor (visto no browser) e duas fontes dão dois ficheiros pela rota, com controlo negativo. Falta a prova ponta-a-ponta pelo SFU (não há e2e de estúdio a gravar) |
-| `A-03` | [Ninguém é avisado sem ter a aba aberta](A-03-push-com-a-app-fechada.md) | escrito |
+| `A-03` | [Ninguém é avisado sem ter a aba aberta](A-03-push-com-a-app-fechada.md) | ✅ **IMPLEMENTADO** 2026-10-21: Web Push no `ring`, com `offline` a passar a `ringing` e o 410 a limpar a subscrição, provado com controlo negativo. **Falta ver a notificação num aparelho real**, e o ADR-0032 está à espera do dono |
 | `A-04` | [Quarenta pessoas por sala](A-04-quarenta-pessoas-por-sala.md) | escrito — **mede primeiro, decide depois** |
 | `A-05` | [Calendário nos dois sentidos](A-05-calendario-nos-dois-sentidos.md) | escrito |
 | `A-06` | Canais persistentes de equipa | por escrever |
