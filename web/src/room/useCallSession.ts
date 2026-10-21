@@ -41,6 +41,8 @@ export function useCallSession(
   const [callState, setCallState] = useState<CallState>('connecting')
   const temposEnviados = useRef(false)
   const [isTraining, setIsTraining] = useState(false)
+  /** Webinar (formato `broadcast`, A-09): só quem está em palco publica. */
+  const [isBroadcast, setIsBroadcast] = useState(false)
   const [isInstant, setIsInstant] = useState(false)
   const [waitingRoomOn, setWaitingRoomOn] = useState(false)
   const [roomName, setRoomName] = useState('')
@@ -151,6 +153,7 @@ export function useCallSession(
         core.setTopology(room.topology)
         setRoomName(room.name)
         setIsTraining(room.format === 'training')
+        setIsBroadcast(room.format === 'broadcast')
         setIsInstant(scheduled === false) // só se o servidor o confirmar
         setWaitingRoomOn(room.waiting_room)
         const amHost = room.owner_id === participanteLocal().id
@@ -521,6 +524,7 @@ export function useCallSession(
     leave,
     callState,
     isTraining,
+    isBroadcast,
     isInstant,
     waitingRoomOn,
     roomName,

@@ -5478,11 +5478,22 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                 .unwrap_or(false);
         state.hub.set_broadcast(room_id, broadcast);
         if broadcast {
-            let palco = state
-                .hub
-                .effective_role_of(room_id, peer_id)
-                .is_some_and(em_palco);
-            state.sfu.set_on_stage(room_id, peer_id, palco).await;
+            let papel = state.hub.effective_role_of(room_id, peer_id);
+            state
+                .sfu
+                .set_on_stage(room_id, peer_id, papel.is_some_and(em_palco))
+                .await;
+            // O cliente só sabia o próprio papel quando ele MUDAVA. Num webinar
+            // é o papel que decide se a pessoa vê o microfone e a câmara: um
+            // orador por convite que começasse como «assistente» era silenciado
+            // pelo próprio ecrã até alguém lhe mexer no papel.
+            if let Some(role) = papel {
+                let _ = tx.send(ServerMsg::PeerRole {
+                    peer_id,
+                    role,
+                    can_admit,
+                });
+            }
         }
         // Reunião agendada com «gravar automaticamente»: o gravador do servidor
         // arranca quando o anfitrião entra — as tracks anexam-se à medida que

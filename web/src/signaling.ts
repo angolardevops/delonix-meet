@@ -91,6 +91,8 @@ export type ServerMsg =
   | { type: 'peer-role'; peer_id: string; can_admit: boolean }
   | { type: 'denied' }
   | { type: 'force-muted' }
+  /** Webinar (A-09): o SFU reteve o que publicaste — estás fora de palco. */
+  | { type: 'publish-refused'; reason: string }
   | { type: 'force-cam-off' }
   | { type: 'tally'; live: boolean }
   | { type: 'muted-all'; by: string; allow_unmute: boolean }

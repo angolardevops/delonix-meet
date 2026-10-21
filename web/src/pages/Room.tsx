@@ -36,6 +36,7 @@ import { useInvite } from '../room/useInvite'
 import { useLayout } from '../room/useLayout'
 import { destinosNoAr, useLive } from '../room/useLive'
 import { useLocalMedia } from '../room/useLocalMedia'
+import { aAssistir as soAssiste } from '../room/webinar'
 import { useMeetingTools } from '../room/useMeetingTools'
 import { useMulticam } from '../room/useMulticam'
 import { useParticipants } from '../room/useParticipants'
@@ -109,6 +110,18 @@ export default function Room({
   const multicam = useMulticam(core)
   const live = useLive(core)
   const enhancements = useStageEnhancements(core, media, layout, participants.conditions)
+  // Webinar (A-09): quem só assiste entra calado e sem câmara, e deixa de
+  // partilhar se for despromovido a meio. O SFU já impede que chegue a alguém;
+  // isto é o ecrã a não oferecer o que o servidor recusaria.
+  const aAssistir = soAssiste(session.isBroadcast, core.myRole)
+  const pararDePublicar = media.pararDePublicar
+  const aPartilhar = share.sharing
+  const alternarPartilha = share.requestOrToggleShare
+  useEffect(() => {
+    if (!aAssistir) return
+    pararDePublicar()
+    if (aPartilhar) alternarPartilha()
+  }, [aAssistir, pararDePublicar, aPartilhar, alternarPartilha])
 
   const [secOpen, setSecOpen] = useState(false)
   // «Serão admitidos ao entrar» (pré-entrada): quem admite e viu gente à
@@ -340,6 +353,7 @@ export default function Room({
         recBusy={recording.recBusy}
         onToggleRecording={() => void recording.toggleLocal()}
         podeGravar={!convidado}
+        aAssistir={aAssistir}
         wbOpen={whiteboard.open}
         onToggleWhiteboard={whiteboard.toggle}
         transcribing={transcription.transcribing}

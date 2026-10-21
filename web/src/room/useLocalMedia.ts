@@ -88,6 +88,17 @@ export function useLocalMedia(core: RoomCore) {
         setMicOn(false)
         setStatus(t('room.estado.anfitriaoSilenciouTe'))
       }),
+      // Webinar (A-09): o SFU reteve o que esta pessoa publicou — está fora de
+      // palco. Desliga-se o que ia a caminho em vez de o deixar a mandar media
+      // que ninguém recebe.
+      signal.on('publish-refused', () => {
+        const stream = core.localStreamRef.current
+        stream?.getAudioTracks().forEach((tr) => (tr.enabled = false))
+        stream?.getVideoTracks().forEach((tr) => (tr.enabled = false))
+        setMicOn(false)
+        setCamOn(false)
+        setStatus(t('room.webinar.publicacaoRetida'))
+      }),
       signal.on('force-cam-off', () => {
         const track = core.localStreamRef.current?.getVideoTracks()[0]
         if (track) track.enabled = false
@@ -164,6 +175,16 @@ export function useLocalMedia(core: RoomCore) {
     },
     [core.denoiserRef, core.rawMicRef],
   )
+
+  /** Desliga o microfone e a câmara sem os pedir de volta — quem assiste a um
+   *  webinar (A-09). Quem for promovido liga-os pelos controlos, como sempre. */
+  function pararDePublicar() {
+    const stream = core.localStreamRef.current
+    stream?.getAudioTracks().forEach((tr) => (tr.enabled = false))
+    stream?.getVideoTracks().forEach((tr) => (tr.enabled = false))
+    setMicOn(false)
+    setCamOn(false)
+  }
 
   async function toggleMic() {
     // Guarda de INTERFACE: a de servidor é não reencaminhar áudio de quem está
@@ -492,6 +513,7 @@ export function useLocalMedia(core: RoomCore) {
     setNoiseSuppression,
     denoiseMic,
     toggleMic,
+    pararDePublicar,
     toggleCam,
     switchMic,
     switchCam,

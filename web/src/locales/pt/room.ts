@@ -310,6 +310,10 @@ export default {
     servidorCheio: 'Este servidor está cheio neste momento. Tenta daqui a pouco.',
     parteJusta: 'O servidor está ocupado e a tua organização já usa a parte que lhe cabe. Tenta daqui a pouco.',
   },
+  webinar: {
+    aAssistir: 'A assistir — o anfitrião pode dar-te a palavra',
+    publicacaoRetida: 'Estás a assistir: só quem tem a palavra é ouvido e visto.',
+  },
   estado: {
     aLigar: 'A ligar…',
     permissaoBloqueada: 'O browser bloqueou a câmara e o microfone. Autoriza-os no cadeado da barra de endereço.',

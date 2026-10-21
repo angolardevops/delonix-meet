@@ -309,6 +309,10 @@ export default {
     servidorCheio: '此服务器当前已满，请稍后再试。',
     parteJusta: '服务器繁忙，且你所在的组织已用满分配给它的份额。请稍后再试。',
   },
+  webinar: {
+    aAssistir: '正在观看——主持人可以让您发言',
+    publicacaoRetida: '您正在观看：只有获准发言的人会被听到和看到。',
+  },
   estado: {
     aLigar: '正在连接…',
     permissaoBloqueada: '浏览器已阻止摄像头和麦克风。请点击地址栏中的锁形图标授予权限。',

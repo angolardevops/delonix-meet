@@ -310,6 +310,10 @@ export default {
     servidorCheio: 'This server is full right now. Try again shortly.',
     parteJusta: 'The server is busy and your organisation is already using its share. Try again shortly.',
   },
+  webinar: {
+    aAssistir: 'Watching — the host can give you the floor',
+    publicacaoRetida: 'You are watching: only people with the floor are heard and seen.',
+  },
   estado: {
     aLigar: 'Connecting…',
     permissaoBloqueada: 'The browser blocked the camera and microphone. Allow them from the padlock in the address bar.',

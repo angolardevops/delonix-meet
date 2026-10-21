@@ -106,6 +106,8 @@ export interface ControlBarProps {
   onToggleRecording: () => void
   /** `false` para um convidado sem conta: a gravação guarda-se na conta de quem grava, e ele não tem nenhuma. */
   podeGravar?: boolean
+  /** Webinar (A-09): esta pessoa só assiste — sem microfone, câmara nem partilha. */
+  aAssistir?: boolean
   wbOpen: boolean
   onToggleWhiteboard: () => void
   transcribing: boolean
@@ -206,6 +208,12 @@ export function ControlBar(p: ControlBarProps) {
 
       <div className="rm-controls__center">
         <div className="rm-controls__group">
+          {p.aAssistir ? (
+            <span className="rm-controls__watching" role="status">
+              {t('room.webinar.aAssistir')}
+            </span>
+          ) : (
+          <>
           <div className="rm-split" ref={micPop.wrapRef}>
             <Ctrl icon={media.micOn ? 'mic' : 'micOff'} label={micLabel} atalho="micro" caption={t('room.controlos.rotuloSom')} off={!media.micOn} onClick={() => void media.toggleMic()} pressed={!media.micOn} />
             <button
@@ -314,6 +322,8 @@ export function ControlBar(p: ControlBarProps) {
               </PopoverPanel>
             )}
           </div>
+          </>
+          )}
         </div>
 
         <div className="rm-controls__group">
@@ -338,7 +348,7 @@ export function ControlBar(p: ControlBarProps) {
               </PopoverPanel>
             )}
           </div>
-          <Ctrl icon="screen" label={shareLabel} active={p.sharing} pressed={p.sharing} onClick={p.onShare} className="rm-hide-narrow" />
+          {!p.aAssistir && <Ctrl icon="screen" label={shareLabel} active={p.sharing} pressed={p.sharing} onClick={p.onShare} className="rm-hide-narrow" />}
           {/* No telemóvel o chat vive na barra, como no template; no desktop, à direita. */}
           <Ctrl
             icon="chat"
@@ -372,9 +382,11 @@ export function ControlBar(p: ControlBarProps) {
                   <MenuItem icon={<Icon name="captions" />} checked={p.ccOn} onClick={fecharMais(p.onToggleCc)}>
                     {t('room.controlos.legendas')}
                   </MenuItem>
-                  <MenuItem icon={<Icon name="screen" />} checked={p.sharing} onClick={fecharMais(p.onShare)}>
-                    {shareLabel}
-                  </MenuItem>
+                  {!p.aAssistir && (
+                    <MenuItem icon={<Icon name="screen" />} checked={p.sharing} onClick={fecharMais(p.onShare)}>
+                      {shareLabel}
+                    </MenuItem>
+                  )}
                   {p.podeGravar !== false && (
                     <MenuItem icon={<Icon name={p.recording ? 'stop' : 'record'} />} checked={p.recording} disabled={p.recBusy} onClick={fecharMais(p.onToggleRecording)}>
                       {t('room.controlos.gravar')}
