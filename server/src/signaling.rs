@@ -8638,6 +8638,85 @@ mod b1_sala_tests {
             .effective_role()
     }
 
+    /// **A-09** — num webinar, dar ou tirar a palavra muda o que o SFU
+    /// encaminha, não só o crachá. O efeito na media está em
+    /// `sfu_e2e::webinar_quem_esta_fora_de_palco_nao_chega_a_ninguem`; aqui
+    /// mede-se o que o `Hub` PEDE ao SFU.
+    ///
+    /// Controlo: numa reunião normal, o mesmo `SetRole` não mexe no palco —
+    /// senão todas as salas passavam a calar quem não é orador.
+    #[tokio::test]
+    async fn num_webinar_o_papel_decide_quem_publica_no_sfu() {
+        let s = sala();
+        let palco = Arc::new(PalcoFalso::default());
+        let _ = s.hub.stage.set(palco.clone() as Arc<dyn StageControl>);
+
+        // Reunião normal: o papel não toca no palco.
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.b,
+                role: Role::Speaker,
+            },
+            None,
+        );
+        assert!(
+            palco.1.lock().unwrap().is_empty(),
+            "fora de um webinar, o SetRole não pode mexer no palco"
+        );
+
+        // Webinar: promover põe em palco, despromover tira.
+        s.hub.set_broadcast(s.room, true);
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.c,
+                role: Role::Speaker,
+            },
+            None,
+        );
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.c,
+                role: Role::Attendee,
+            },
+            None,
+        );
+        assert_eq!(
+            palco.1.lock().unwrap().as_slice(),
+            &[(s.c, true), (s.c, false)],
+            "promover e despromover o Carlos num webinar"
+        );
+
+        // Quem não é anfitrião não muda papéis — nem o palco.
+        palco.1.lock().unwrap().clear();
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::SetRole {
+                to: s.c,
+                role: Role::Speaker,
+            },
+            None,
+        );
+        assert!(
+            palco.1.lock().unwrap().is_empty(),
+            "só o anfitrião dá a palavra"
+        );
+    }
+
+    #[test]
+    fn em_palco_sao_os_papeis_que_publicam() {
+        for r in [Role::Host, Role::Cohost, Role::Speaker, Role::Broadcast] {
+            assert!(em_palco(r), "{r:?}");
+        }
+        assert!(!em_palco(Role::Attendee));
+    }
+
     #[tokio::test]
     async fn anfitria_da_um_papel_e_toda_a_sala_sabe() {
         let mut s = sala();

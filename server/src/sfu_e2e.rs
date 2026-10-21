@@ -74,6 +74,9 @@ struct TestClient {
     /// Cada pacote de ÁUDIO recebido, com o instante de chegada — é o que deixa
     /// descodificar o que a ponte telefone↔sala publicou e medir o atraso.
     audio_rx: Arc<std::sync::Mutex<Vec<RxAudio>>>,
+    /// Quantas vezes o servidor disse a este cliente que reteve uma publicação
+    /// dele (`ServerMsg::PublishRefused`, webinar A-09).
+    recusas: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Um pacote de áudio tal como o subscritor o viu.
@@ -172,6 +175,7 @@ impl TestClient {
             video_rx: Arc::new(std::sync::Mutex::new(Vec::new())),
             rtp_por_tipo: Arc::new(Mutex::new(std::collections::HashMap::new())),
             audio_rx: Arc::new(std::sync::Mutex::new(Vec::new())),
+            recusas: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         });
 
         // Trickle ICE cliente → SFU.
@@ -536,6 +540,11 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
                 if let Ok(init) = serde_json::from_value::<RTCIceCandidateInit>(candidate) {
                     let _ = client.pc.add_ice_candidate(init).await;
                 }
+            }
+            ServerMsg::PublishRefused { .. } => {
+                client
+                    .recusas
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             _ => {}
         }
@@ -2650,6 +2659,114 @@ async fn force_mute_cala_o_telefone_na_perna() {
     );
 
     sfu.remove_peer(room, ana.id).await;
+    ana.pc.close().await.unwrap();
+}
+
+/// **A-09 — num webinar, quem está fora de palco não chega a ninguém.**
+///
+/// O formato `broadcast` guardava-se e não decidia nada. Agora o palco vale NO
+/// SFU: a Bia entra como assistente (fora de palco) e publica um tom — e a Ana,
+/// na mesma sala, não recebe um único pacote dela. Mede-se o que a sala
+/// RECEBE, não o que o servidor diz:
+/// 1. fora de palco: zero pacotes da Bia na Ana, a recusa dita à Bia, e a
+///    métrica a contar;
+/// 2. promovida: a Ana passa a recebê-la, SEM a Bia renegociar nada;
+/// 3. despromovida: deixa de chegar outra vez (controlo — senão o passo 1
+///    passaria por a Bia nunca ter ligado).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn webinar_quem_esta_fora_de_palco_nao_chega_a_ninguem() {
+    let (sfu, metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let ana = TestClient::join(&sfu, room).await;
+    let (ana_fala, _) = ana.publish_opus_tone("ana-mic", 440.0).await;
+    let bia = TestClient::join(&sfu, room).await;
+    // Fora de palco ANTES de publicar — é o que a sinalização faz à entrada.
+    assert!(sfu.set_on_stage(room, bia.id, false).await);
+    let (bia_fala, _) = bia.publish_opus_tone("bia-mic", 880.0).await;
+    for c in [&ana, &bia] {
+        let c = c.clone();
+        eventually_com_diagnostico(
+            "ligado ao SFU",
+            prazo(30),
+            || {
+                let c = c.clone();
+                async move {
+                    c.pc.connection_state()
+                        == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+                }
+            },
+            || format!("[{}]", c.retrato()),
+        )
+        .await;
+    }
+    ana_fala.store(true, std::sync::atomic::Ordering::SeqCst);
+    bia_fala.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let da_bia = || {
+        let ana = ana.clone();
+        let chave = bia.id.to_string();
+        async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) }
+    };
+    // CONTROLO POSITIVO: a sala funciona — a Bia recebe a Ana.
+    eventually("a Bia recebe a Ana", prazo(30), || {
+        let bia = bia.clone();
+        let chave = ana.id.to_string();
+        async move { bia.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) > 20 }
+    })
+    .await;
+
+    // (1) Fora de palco: nada da Bia chega à Ana, a Bia sabe porquê.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        da_bia().await,
+        0,
+        "fora de palco, a Ana recebeu pacotes da Bia"
+    );
+    eventually("a recusa foi dita à Bia", prazo(10), || {
+        let bia = bia.clone();
+        async move { bia.recusas.load(std::sync::atomic::Ordering::SeqCst) > 0 }
+    })
+    .await;
+    assert!(
+        metrics
+            .sfu_publish_offstage_total
+            .load(std::sync::atomic::Ordering::Relaxed)
+            > 0,
+        "a métrica das publicações retidas não contou"
+    );
+
+    // (2) Promovida: a Ana passa a recebê-la, sem a Bia renegociar.
+    assert!(sfu.set_on_stage(room, bia.id, true).await);
+    eventually_com_diagnostico(
+        "promovida, a Ana recebe a Bia",
+        prazo(30),
+        || async move { da_bia().await > 20 },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+
+    // (3) Despromovida: deixa de chegar. Espera-se primeiro o que já ia a
+    // caminho, depois mede-se uma janela.
+    assert!(sfu.set_on_stage(room, bia.id, false).await);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let calada = da_bia().await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let depois = da_bia().await;
+    assert_eq!(
+        depois,
+        calada,
+        "despromovida, ainda chegaram {} pacotes da Bia em 2 s",
+        depois - calada
+    );
+    eprintln!(
+        "A-09 webinar: fora de palco 0 pacotes · promovida {calada} · despromovida +{}",
+        depois - calada
+    );
+
+    sfu.remove_peer(room, bia.id).await;
+    sfu.remove_peer(room, ana.id).await;
+    bia.pc.close().await.unwrap();
     ana.pc.close().await.unwrap();
 }
 
