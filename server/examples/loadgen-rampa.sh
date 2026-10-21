@@ -13,6 +13,10 @@
 #   jitter p95 < 30 ms, nenhuma PeerConnection falhada, e o GERADOR não
 #   saturado (ticks atrasados < 5%) — senão o degrau mede o gerador, não o
 #   servidor, e é marcado «inconclusivo».
+#
+# O servidor tem de estar com MAX_WS_PER_USER=0 (o gerador usa uma só conta, e
+# o tecto de 16 sockets por conta recusa o 17.º cliente com 429) e, acima da
+# capacidade declarada do nó, NODE_PEER_CAPACITY=0. Ver o cabeçalho do loadgen.rs.
 set -uo pipefail
 CEN=$1; PS=$2; DEGRAUS=$3; shift 3
 API=${API:-http://127.0.0.1:8280}
