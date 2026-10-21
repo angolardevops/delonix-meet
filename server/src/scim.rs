@@ -20,8 +20,17 @@
 //! **O QUE ESTA FATIA FAZ:** os `Users` (criar, ler, listar por `userName`,
 //! `PATCH`/`PUT` de `active` e de nome, e `DELETE`) mais a descoberta
 //! (`ServiceProviderConfig`, `ResourceTypes`, `Schemas`) que os provedores lêem
-//! antes de falar. Os `Groups` são a fatia seguinte, e a descoberta di-lo: quem
-//! lê o `ResourceTypes` vê só `User`, em vez de descobrir à terceira chamada.
+//! antes de falar. A listagem pagina por `startIndex`/`count` (RFC 7644
+//! §3.4.2.4) e o `totalResults` é o total da organização — ver `list_users`.
+//!
+//! **Os `Groups` ficam de fora, por decisão escrita a 2026-10-21** (fecho do
+//! `B-10`): um grupo do directório só vale alguma coisa quando decidir algo
+//! aqui dentro — um papel, uma sala, um departamento — e o mapeamento
+//! atributo→papel é decisão de produto em aberto (ver «não mexe em papéis»
+//! abaixo). Anunciar `/Groups` sem esse efeito era aceitar escritas que não
+//! mudam nada. Até lá a descoberta continua a dizer a verdade: quem lê o
+//! `ResourceTypes` vê só `User`, em vez de descobrir a ausência à terceira
+//! chamada.
 //!
 //! **O QUE NÃO FAZ, dito aqui:**
 //! - `DELETE` **suspende**, não apaga. Uma pessoa que sai leva consigo actas,
@@ -349,6 +358,49 @@ pub struct ListParams {
     /// uma lista silenciosamente errada.
     #[serde(default)]
     pub filter: Option<String>,
+    /// Paginação do RFC 7644 §3.4.2.4, em texto de propósito: um valor que não
+    /// seja um inteiro tem de sair no envelope do SCIM (`invalidValue`), e a
+    /// recusa do extractor `Query` sairia no nosso, sem `detail` para o painel
+    /// do provedor.
+    #[serde(default, rename = "startIndex")]
+    pub start_index: Option<String>,
+    #[serde(default)]
+    pub count: Option<String>,
+}
+
+/// Uma página pedida: `start` é 1-based, como a norma.
+#[derive(Debug, PartialEq, Eq)]
+struct Pagina {
+    start: i64,
+    count: i64,
+}
+
+/// A página pedida, nas regras da norma (RFC 7644 §3.4.2.4):
+/// - `startIndex` menor que 1 vale 1; omisso vale 1;
+/// - `count` negativo vale 0, e `0` é legítimo: o provedor só quer o
+///   `totalResults`; omisso, ou maior que o tecto, vale [`MAX_RESULTS`], que é o
+///   `filter.maxResults` que a descoberta declara.
+///
+/// O que NÃO é tolerado: um valor que não seja inteiro. Interpretá-lo como 1
+/// ou como 200 dava ao provedor uma página que ele não pediu, sem erro.
+fn pagina(start_index: Option<&str>, count: Option<&str>) -> Result<Pagina, ScimError> {
+    let inteiro = |nome: &str, v: &str| {
+        v.trim().parse::<i64>().map_err(|_| {
+            ScimError::bad(
+                "invalidValue",
+                format!("`{nome}` tem de ser um inteiro, veio «{v}»"),
+            )
+        })
+    };
+    let start = match start_index {
+        Some(v) => inteiro("startIndex", v)?.max(1),
+        None => 1,
+    };
+    let count = match count {
+        Some(v) => inteiro("count", v)?.clamp(0, MAX_RESULTS),
+        None => MAX_RESULTS,
+    };
+    Ok(Pagina { start, count })
 }
 
 /// O email de um `filter` de `userName eq`. `None` quando não há filtro;
@@ -395,7 +447,15 @@ fn esquema_de_user_ok(schemas: &[String]) -> Result<(), ScimError> {
 }
 
 /// `GET /scim/v2/Users` — a lista desta organização, ou um filtro por
-/// `userName`.
+/// `userName`, paginada por `startIndex` e `count`.
+///
+/// **O `totalResults` é o total da organização, não o tamanho da página.** Até
+/// 2026-10-21 era `recursos.len()` com um tecto de 200 e o `startIndex`
+/// ignorado: numa organização de 500, o Entra ID lia 200 e o campo
+/// confirmava-lhe que eram 200 — 300 pessoas ficavam fora do provisionamento
+/// sem erro de lado nenhum (lacuna `B-10` da fila de paridade). Os provedores
+/// decidem quando parar pelo `totalResults`, por isso é ele que tem de ser
+/// verdade.
 pub async fn list_users(
     State(state): State<Arc<AppState>>,
     scim: ScimAuth,
@@ -405,13 +465,17 @@ pub async fn list_users(
         Some(f) => email_do_filtro(f)?,
         None => None,
     };
-    let rows = crate::org::scim_members(&state, scim.org_id, email.as_deref(), MAX_RESULTS).await?;
+    let p = pagina(params.start_index.as_deref(), params.count.as_deref())?;
+    let total = crate::org::scim_members_total(&state, scim.org_id, email.as_deref()).await?;
+    let rows =
+        crate::org::scim_members(&state, scim.org_id, email.as_deref(), p.start - 1, p.count)
+            .await?;
     let recursos: Vec<Value> = rows.iter().map(ParaRecurso::to_resource).collect();
     Ok(Json(json!({
         "schemas": [SCHEMA_LIST],
-        "totalResults": recursos.len(),
+        "totalResults": total,
         "itemsPerPage": recursos.len(),
-        "startIndex": 1,
+        "startIndex": p.start,
         "Resources": recursos,
     })))
 }
@@ -886,6 +950,50 @@ mod tests {
         let e = esquema_de_user_ok(&["urn:ietf:params:scim:schemas:core:2.0:Group".into()])
             .expect_err("um Group não é um User");
         assert_eq!(e.status, StatusCode::BAD_REQUEST);
+    }
+
+    /// As regras da norma para a página (RFC 7644 §3.4.2.4).
+    #[test]
+    fn a_pagina_segue_a_norma() {
+        let p = |s, c| pagina(s, c).unwrap();
+        // Omisso: do princípio, até ao tecto declarado na descoberta.
+        assert_eq!(
+            p(None, None),
+            Pagina {
+                start: 1,
+                count: MAX_RESULTS
+            }
+        );
+        // O que o Entra ID manda na segunda volta.
+        assert_eq!(
+            p(Some("201"), Some("100")),
+            Pagina {
+                start: 201,
+                count: 100
+            }
+        );
+        // `startIndex` < 1 vale 1; `count` negativo vale 0; acima do tecto, o tecto.
+        assert_eq!(p(Some("0"), Some("-5")), Pagina { start: 1, count: 0 });
+        assert_eq!(
+            p(Some("-3"), Some("100000")),
+            Pagina {
+                start: 1,
+                count: MAX_RESULTS
+            }
+        );
+        // `count=0` é um pedido legítimo: só o `totalResults`.
+        assert_eq!(p(Some("1"), Some("0")), Pagina { start: 1, count: 0 });
+    }
+
+    /// Um valor que não é inteiro é um erro no envelope da norma — não uma
+    /// página escolhida por nós que o provedor tomaria pela que pediu.
+    #[test]
+    fn pagina_com_lixo_e_erro() {
+        for (s, c) in [(Some("um"), None), (None, Some("10.5")), (Some(""), None)] {
+            let e = pagina(s, c).expect_err("lixo tem de ser recusado");
+            assert_eq!(e.status, StatusCode::BAD_REQUEST);
+            assert_eq!(e.kind, Some("invalidValue"));
+        }
     }
 
     /// O envelope de erro é o da norma: é o `detail` que o painel do Entra ID

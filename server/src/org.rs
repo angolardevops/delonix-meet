@@ -3110,37 +3110,51 @@ pub(crate) async fn scim_member(
 }
 
 /// Os membros desta organização, ou só o de um email (o filtro que os
-/// provedores de SCIM mandam para reconciliar).
+/// provedores de SCIM mandam para reconciliar), numa página: `desvio` linhas
+/// saltadas, no máximo `limite`.
+///
+/// A ordem é total (`email`, depois `id`) de propósito: um provedor pagina em
+/// pedidos separados, e com uma ordem parcial o Postgres pode devolver a mesma
+/// linha em duas páginas e saltar outra.
 pub(crate) async fn scim_members(
     state: &AppState,
     org_id: Uuid,
     email: Option<&str>,
+    desvio: i64,
     limite: i64,
 ) -> Result<Vec<ScimMemberRow>, ApiError> {
-    Ok(match email {
-        Some(email) => {
-            sqlx::query_as(&format!(
-                "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
-               JOIN org_members m ON m.user_id = u.id
-              WHERE m.org_id = $1 AND u.email = $2"
-            ))
-            .bind(org_id)
-            .bind(email)
-            .fetch_all(&state.db)
-            .await?
-        }
-        None => {
-            sqlx::query_as(&format!(
-                "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
-               JOIN org_members m ON m.user_id = u.id
-              WHERE m.org_id = $1 ORDER BY u.email LIMIT $2"
-            ))
-            .bind(org_id)
-            .bind(limite)
-            .fetch_all(&state.db)
-            .await?
-        }
-    })
+    Ok(sqlx::query_as(&format!(
+        "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
+           JOIN org_members m ON m.user_id = u.id
+          WHERE m.org_id = $1 AND ($2::text IS NULL OR u.email = $2)
+          ORDER BY u.email, u.id
+          LIMIT $3 OFFSET $4"
+    ))
+    .bind(org_id)
+    .bind(email)
+    .bind(limite)
+    .bind(desvio)
+    .fetch_all(&state.db)
+    .await?)
+}
+
+/// Quantos membros o [`scim_members`] alcança com o mesmo filtro, sem página.
+/// É o `totalResults` do SCIM — o número pelo qual o provedor decide quando
+/// parar de paginar, e por isso tem de contar o mesmo conjunto.
+pub(crate) async fn scim_members_total(
+    state: &AppState,
+    org_id: Uuid,
+    email: Option<&str>,
+) -> Result<i64, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM users u
+           JOIN org_members m ON m.user_id = u.id
+          WHERE m.org_id = $1 AND ($2::text IS NULL OR u.email = $2)",
+    )
+    .bind(org_id)
+    .bind(email)
+    .fetch_one(&state.db)
+    .await?)
 }
 
 /// Readmite quem o PRÓPRIO directório tinha tirado.

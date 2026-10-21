@@ -417,3 +417,214 @@ async fn o_scim_nao_muda_o_endereco_de_uma_conta(db: sqlx::PgPool) {
     .await;
     assert_eq!(st, 400, "um PUT com outro endereço também não: {body}");
 }
+
+// ---------- paginação (lacuna B-10 da fila de paridade) ----------
+
+/// `n` membros semeados directamente na base, com `arquivados` deles
+/// arquivados. Directamente porque o que está em causa é o que a LISTAGEM faz
+/// com uma organização grande, não o caminho de criação — e 250 `POST`s
+/// esbarravam no tecto de lugares, que é outra regra. Devolve os ids.
+async fn semeia_membros(
+    app: &TestApp,
+    org: &str,
+    prefixo: &str,
+    n: i32,
+    arquivados: i32,
+) -> Vec<String> {
+    sqlx::query_scalar::<_, uuid::Uuid>(
+        "WITH novos AS (
+             INSERT INTO users (email, username, password_hash)
+             SELECT $2 || '-' || lpad(g::text, 4, '0') || '@semeado.ao',
+                    $2 || '-' || lpad(g::text, 4, '0'), ''
+               FROM generate_series(1, $3) g
+             RETURNING id, email
+         )
+         INSERT INTO org_members (org_id, user_id, role, archived_at)
+         SELECT $1::uuid, id, 'member',
+                CASE WHEN row_number() OVER (ORDER BY email) <= $4 THEN now() END
+           FROM novos
+         RETURNING user_id",
+    )
+    .bind(org)
+    .bind(prefixo)
+    .bind(n)
+    .bind(arquivados)
+    .fetch_all(&app.db)
+    .await
+    .expect("semear membros")
+    .into_iter()
+    .map(|u| u.to_string())
+    .collect()
+}
+
+/// O que a base diz que a organização tem — a fonte FORA de quem responde.
+async fn membros_na_base(app: &TestApp, org: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM org_members WHERE org_id = $1::uuid")
+        .bind(org)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// Um cliente que pagina como o RFC 7644 §3.4.2.4 manda e como o Entra ID faz:
+/// avança o `startIndex` pelo `itemsPerPage` e PÁRA pelo `totalResults` — não
+/// por uma página vazia. É por isso que um `totalResults` errado trunca em
+/// silêncio. Devolve `(ids lidos, totalResults de cada página)`.
+async fn ciclo_de_provisionamento(app: &TestApp, tok: &str, count: i64) -> (Vec<String>, Vec<i64>) {
+    let mut ids = Vec::new();
+    let mut totais = Vec::new();
+    let mut start = 1i64;
+    loop {
+        let (st, pag) = scim(
+            app,
+            "GET",
+            &format!("/scim/v2/Users?startIndex={start}&count={count}"),
+            tok,
+            None,
+        )
+        .await;
+        assert_eq!(st, 200, "{pag}");
+        assert_eq!(
+            pag["startIndex"], start,
+            "a página diz de onde começou: {pag}"
+        );
+        let total = pag["totalResults"].as_i64().expect("totalResults");
+        let recursos = pag["Resources"].as_array().cloned().unwrap_or_default();
+        assert_eq!(
+            pag["itemsPerPage"].as_u64(),
+            Some(recursos.len() as u64),
+            "itemsPerPage é o tamanho DESTA página: {pag}"
+        );
+        totais.push(total);
+        ids.extend(
+            recursos
+                .iter()
+                .filter_map(|r| r["id"].as_str().map(String::from)),
+        );
+        start += recursos.len() as i64;
+        if start > total {
+            break;
+        }
+        assert!(
+            !recursos.is_empty(),
+            "página vazia antes do total ({start} de {total}): o cliente ficava em ciclo"
+        );
+    }
+    (ids, totais)
+}
+
+/// O critério do B-10: numa organização com MAIS de 200 membros, um ciclo
+/// completo paginado lê exactamente o que o `SELECT count(*)` da base dá — sem
+/// repetidos, sem ninguém de outra organização, e com o `totalResults` igual
+/// em todas as páginas.
+///
+/// Controlo negativo medido a 2026-10-21 contra o `list_users` anterior
+/// (`totalResults = recursos.len()`, `startIndex` ignorado): este teste falha
+/// na primeira asserção do total: «base 251, páginas [200]».
+#[sqlx::test(migrations = "./migrations")]
+async fn um_ciclo_paginado_le_a_organizacao_inteira(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, AMBIENTE).await;
+    let a = app.new_org("grande.ao").await;
+    let b = app.new_org("vizinha.ao").await;
+    let tok_a = token(&app, &a).await;
+
+    // 250 na A (10 deles arquivados, que o SCIM também lista, como
+    // `active: false`), mais o administrador que a criou. 30 na B, para a
+    // fronteira entre organizações ser medida com gente do outro lado.
+    semeia_membros(&app, a.org(), "a", 250, 10).await;
+    let da_b: std::collections::HashSet<String> = semeia_membros(&app, b.org(), "b", 30, 0)
+        .await
+        .into_iter()
+        .collect();
+
+    let na_base = membros_na_base(&app, a.org()).await;
+    assert!(
+        na_base > 200,
+        "o caso só prova alguma coisa acima do tecto antigo: {na_base}"
+    );
+
+    let (ids, totais) = ciclo_de_provisionamento(&app, &tok_a, 100).await;
+
+    assert!(
+        totais.iter().all(|t| *t == na_base),
+        "o totalResults é o total da organização em TODAS as páginas: base {na_base}, páginas {totais:?}"
+    );
+    let unicos: std::collections::HashSet<&String> = ids.iter().collect();
+    assert_eq!(
+        unicos.len(),
+        ids.len(),
+        "a mesma pessoa veio em duas páginas"
+    );
+    assert_eq!(
+        ids.len() as i64,
+        na_base,
+        "o ciclo leu {} de {na_base}",
+        ids.len()
+    );
+    assert!(
+        ids.iter().all(|id| !da_b.contains(id)),
+        "um membro da organização vizinha apareceu na listagem"
+    );
+}
+
+/// Os casos de fronteira da norma, contra o servidor: `count=0` dá só o total;
+/// um `startIndex` para lá do fim dá uma página vazia COM o total certo; o
+/// filtro pagina sobre o seu próprio conjunto; e um valor que não é inteiro é
+/// `invalidValue` no envelope do SCIM, não uma página escolhida por nós.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_paginacao_respeita_as_fronteiras_da_norma(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, AMBIENTE).await;
+    let a = app.new_org("fronteira.ao").await;
+    let tok = token(&app, &a).await;
+    semeia_membros(&app, a.org(), "f", 12, 0).await;
+    let na_base = membros_na_base(&app, a.org()).await;
+
+    let (st, so_total) = scim(&app, "GET", "/scim/v2/Users?count=0", &tok, None).await;
+    assert_eq!(st, 200, "{so_total}");
+    assert_eq!(so_total["totalResults"], na_base, "{so_total}");
+    assert_eq!(so_total["itemsPerPage"], 0, "{so_total}");
+
+    let (st, alem) = scim(
+        &app,
+        "GET",
+        "/scim/v2/Users?startIndex=500&count=10",
+        &tok,
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{alem}");
+    assert_eq!(alem["totalResults"], na_base, "{alem}");
+    assert_eq!(
+        alem["Resources"].as_array().map(Vec::len).unwrap_or(0),
+        0,
+        "{alem}"
+    );
+
+    let (st, filtrado) = scim(
+        &app,
+        "GET",
+        "/scim/v2/Users?filter=userName%20eq%20%22f-0003%40semeado.ao%22&startIndex=1&count=5",
+        &tok,
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{filtrado}");
+    assert_eq!(
+        filtrado["totalResults"], 1,
+        "o total do FILTRO, não da organização: {filtrado}"
+    );
+    assert_eq!(
+        filtrado["Resources"][0]["userName"], "f-0003@semeado.ao",
+        "{filtrado}"
+    );
+
+    for lixo in ["startIndex=um", "count=10.5"] {
+        let (st, erro) = scim(&app, "GET", &format!("/scim/v2/Users?{lixo}"), &tok, None).await;
+        assert_eq!(st, 400, "{lixo}: {erro}");
+        assert_eq!(erro["scimType"], "invalidValue", "{lixo}: {erro}");
+        assert_eq!(
+            erro["schemas"][0], "urn:ietf:params:scim:api:messages:2.0:Error",
+            "{lixo}: {erro}"
+        );
+    }
+}
