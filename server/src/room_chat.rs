@@ -229,7 +229,10 @@ pub async fn retention_sweep(state: &crate::AppState) -> Result<u64, sqlx::Error
     // aqui é o que deixa a varredura apagar o resto em vez de falhar inteira.
     let r = sqlx::query(
         "DELETE FROM room_chat_messages
-          WHERE room_id = ANY($1) AND NOT chat_on_legal_hold(room_id, user_id)",
+          WHERE room_id = ANY($1)
+            AND NOT chat_on_legal_hold(room_id,
+                                       (SELECT r.owner_id FROM rooms r WHERE r.id = room_id),
+                                       user_id)",
     )
     .bind(&a_apagar)
     .execute(&state.db)

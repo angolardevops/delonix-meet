@@ -52,17 +52,19 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 -- O chat de uma sala está retido se um hold ACTIVO cobre a sala, o dono dela
--- (por pessoa ou pela organização dele), ou quem escreveu a mensagem.
-CREATE FUNCTION chat_on_legal_hold(p_room UUID, p_author UUID) RETURNS BOOLEAN
+-- (por pessoa ou pela organização dele), ou quem escreveu a mensagem. O dono
+-- vem por argumento e não por um JOIN a `rooms`: numa cascata de apagar a
+-- sala, a linha dela já não se vê quando o gatilho das mensagens corre — e o
+-- JOIN deixava passar tudo (medido no teste da sala retida).
+CREATE FUNCTION chat_on_legal_hold(p_room UUID, p_owner UUID, p_author UUID) RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
     SELECT EXISTS (
         SELECT 1 FROM legal_holds h
-          JOIN rooms r ON r.id = p_room
          WHERE h.released_at IS NULL
            AND (   (h.scope = 'room' AND h.room_id = p_room)
-                OR (h.scope = 'user' AND h.user_id IN (r.owner_id, p_author))
+                OR (h.scope = 'user' AND h.user_id IN (p_owner, p_author))
                 OR (h.scope = 'org'  AND h.org_id IN (SELECT m.org_id FROM org_members m
-                                                       WHERE m.user_id IN (r.owner_id, p_author))))
+                                                       WHERE m.user_id IN (p_owner, p_author))))
     )
 $$;
 
@@ -88,7 +90,9 @@ CREATE TRIGGER legal_hold_recordings
 CREATE FUNCTION legal_hold_block_chat_delete() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
-    IF chat_on_legal_hold(OLD.room_id, OLD.user_id) THEN
+    IF chat_on_legal_hold(OLD.room_id,
+                          (SELECT r.owner_id FROM rooms r WHERE r.id = OLD.room_id),
+                          OLD.user_id) THEN
         RAISE EXCEPTION 'legal_hold: o chat da sala % está retido por ordem legal', OLD.room_id;
     END IF;
     RETURN OLD;
@@ -98,3 +102,29 @@ $$;
 CREATE TRIGGER legal_hold_room_chat
     BEFORE DELETE ON room_chat_messages
     FOR EACH ROW EXECUTE FUNCTION legal_hold_block_chat_delete();
+
+-- APAGAR A SALA. As mensagens e as gravações saem por cascata, e na cascata o
+-- gatilho das mensagens já não vê a sala (logo, nem o dono). A verificação
+-- faz-se AQUI, antes de a sala sair: um hold sobre a sala, sobre o dono (ou a
+-- organização dele), ou sobre quem lá escreveu, recusa. Corre antes da chave
+-- estrangeira `legal_holds.room_id` (RESTRICT), que sairia como um erro cru.
+CREATE FUNCTION legal_hold_block_room_delete() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF chat_on_legal_hold(OLD.id, OLD.owner_id, OLD.owner_id)
+       OR EXISTS (SELECT 1 FROM room_chat_messages c
+                   WHERE c.room_id = OLD.id
+                     AND chat_on_legal_hold(OLD.id, OLD.owner_id, c.user_id))
+       OR EXISTS (SELECT 1 FROM recordings r
+                   WHERE r.room_id = OLD.id
+                     AND recording_on_legal_hold(r.room_id, r.uploader_id)) THEN
+        RAISE EXCEPTION 'legal_hold: a sala % está retida por ordem legal', OLD.id;
+    END IF;
+    RETURN OLD;
+END
+$$;
+
+CREATE TRIGGER legal_hold_rooms
+    BEFORE DELETE ON rooms
+    FOR EACH ROW EXECUTE FUNCTION legal_hold_block_room_delete();
+
