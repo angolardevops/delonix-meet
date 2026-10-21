@@ -1,4 +1,5 @@
 export default {
+  trilho: 'Breadcrumb',
   saltarParaConteudo: 'Skip to content',
   procurar: 'Search…',
   atalhoPaleta: 'Ctrl K',
@@ -16,6 +17,7 @@ export default {
     rotulo: 'Main navigation',
     inicio: 'Home',
     agenda: 'Schedule',
+    salas: 'Rooms',
     estudio: 'Studio',
     gravacoes: 'Recordings',
     quadros: 'Boards',

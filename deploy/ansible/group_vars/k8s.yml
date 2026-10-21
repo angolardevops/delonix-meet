@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+#  O que o cluster de produção do Meet é. Tudo o que é escolha fica AQUI, e
+#  não espalhado pelas tarefas (ADR-0020).
+# ---------------------------------------------------------------------------
+
+# A série do Kubernetes. Fixa de propósito: um cluster que sobe sozinho para a
+# série seguinte é um cluster que um dia não arranca.
+k8s_serie: "1.31"
+
+# O VIP do API server. É isto que torna os três control-planes úteis: sem um
+# endereço estável à frente deles, o kubeconfig aponta para UM, e a morte desse
+# tira o cluster do ar mesmo com os outros dois vivos.
+#
+# Servido por kube-vip em modo ARP, pelos próprios control-planes — sem
+# máquinas extra, que num host só seriam mais VMs a morrer com ele.
+k8s_vip: "192.168.1.19"
+k8s_api_porta: 6443
+
+# A rede dos pods. NÃO pode colidir com a 192.168.1.0/24 das VMs.
+k8s_pod_cidr: "10.244.0.0/16"
+k8s_service_cidr: "10.96.0.0/12"
+
+# CNI: Cilium. Escolhido por duas razões, as duas do ADR-0020 — o chart do Meet
+# usa NetworkPolicy e quer que ela seja imposta, e o Hubble dá visibilidade de
+# rede que se junta à observabilidade em vez de ser um segundo sistema.
+cilium_versao: "1.16.5"
+
+# MetalLB: o coturn do Meet pede um Service LoadBalancer, e num Proxmox não há
+# nuvem que o dê. O intervalo tem de estar FORA do que o DHCP distribui.
+metallb_versao: "0.14.9"
+metallb_intervalo: "192.168.1.200-192.168.1.220"

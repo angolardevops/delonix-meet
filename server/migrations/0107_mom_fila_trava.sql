@@ -1,0 +1,42 @@
+-- Trava "em execução" da fila do resumo da acta (PR A da fase de robustez da
+-- IA de reuniões). Fecha a corrida de `FILA_MOM`/`POLITICA_MOM` (`ai.rs`):
+--
+-- O DEFEITO (auditoria do backlog de 2026-10-07): `enqueue_mom_summary`
+-- (chamada ao gravar a ata e em `POST …/minutes/summary`) era só
+--   `UPDATE meetings SET mom_queued_at = now(), mom_attempts = 0,
+--           mom_next_attempt_at = NULL WHERE id = $1`
+-- sem nenhuma condição que verificasse se já havia uma geração a decorrer.
+-- O `claim` genérico (`delonix-meet-store::jobs`, `FOR UPDATE SKIP LOCKED`)
+-- protege duas reivindicações SIMULTÂNEAS da mesma linha, mas NÃO protege
+-- contra uma reivindicação NOVA enquanto a antiga ainda está a meio da
+-- chamada ao Ollama: nada na fila marcava "isto está a correr", e o próprio
+-- `claim_set` (`mom_attempts = mom_attempts + 1, mom_next_attempt_at = NULL`)
+-- deixava o `ready_when` verdadeiro de novo na volta seguinte da varredura.
+-- Duas chamadas simultâneas ao Ollama para a MESMA reunião — o botão manual
+-- "Guardar acta" e o `beforeunload`, por exemplo — gastavam o dobro do
+-- trabalho, e a escrita final (`grava_ata_e_avisa`) não tinha protecção de
+-- ordem: quem gravasse por último ficava, de forma não determinística.
+--
+-- A CORRECÇÃO segue o padrão já usado para o mesmo problema noutras duas
+-- filas deste repositório:
+--   - `recording_chapter_generations` (migração 0076): uma coluna de estado
+--     "running", com uma margem de tempo ("stale") que destrava uma
+--     reivindicação morta sem precisar de um varredor dedicado;
+--   - a fila da transcrição (`transcription.rs`, `transcription_lease_token`/
+--     `transcription_lease_expires_at`, migração 0006): a escrita final só
+--     fecha quem ainda tem a MESMA marca da reivindicação que a chamou.
+--
+-- `mom_running_at` faz os dois papéis com UMA coluna: é a marca de posse que
+-- o `ready_when` lê para recusar uma reivindicação nova enquanto a anterior
+-- não estiver "stale" (`ai::FILA_MOM`), e é também o IDENTIFICADOR que a
+-- escrita final (`grava_ata_e_avisa`) e os dois caminhos de falha
+-- (`devolve_tentativa_mom`, `adia_mom`) exigem de volta antes de fechar a
+-- reivindicação — para uma reivindicação ANTIGA, que acordou tarde depois de
+-- a sua própria marca já ter ficado stale e a linha ter sido reivindicada de
+-- novo, nunca poder sobrepor-se a uma reivindicação mais recente. Um único
+-- timestamp chega como identificador porque duas reivindicações da MESMA
+-- linha nunca podem ter a mesma marca: a segunda só é possível depois de a
+-- primeira já estar "stale" (mais velha do que o tecto da chamada ao Ollama
+-- mais a margem — ver `ai::MOM_SUMMARY_TIMEOUT_SECS`/`MOM_STALE_MARGIN_SECS`),
+-- e portanto o `now()` que a marca de novo é necessariamente posterior.
+ALTER TABLE meetings ADD COLUMN mom_running_at TIMESTAMPTZ NULL;

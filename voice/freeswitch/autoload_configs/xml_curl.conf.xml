@@ -76,5 +76,33 @@
       <param name="timeout" value="5"/>
       <param name="debug" value="false"/>
     </binding>
+    <!-- A telefonia de troncos (ADR-0009, server/src/telephony_fs_xml.rs).
+         Duas perguntas ao mesmo endereço:
+           - "directory" com purpose=gateways: os troncos activos de todas as
+             organizações, como gateways do perfil `external`. O FreeSWITCH
+             pergunta ao arrancar o perfil e a cada `sofia profile external
+             rescan` — um tronco criado depois do arranque só aparece com um
+             dos dois.
+           - "dialplan" no contexto `delonix-outbound`: a extensão para ESTE
+             número, já resolvida pelo plano de marcação da organização.
+         Vem DEPOIS dos dois de cima de propósito: um "not found" passa a
+         pergunta ao binding seguinte, e este responde "not found" a tudo o
+         que não seja seu — um REGISTER de ramal e uma chamada de dial-in
+         continuam a ser respondidos por quem já os respondia. -->
+    <binding name="delonix_telefonia">
+      <param name="gateway-url"
+             value="$${delonix_control_url}/internal/v1/telephony/freeswitch-config"
+             bindings="dialplan|directory"/>
+      <param name="gateway-credentials" value="freeswitch:$${delonix_voice_secret}"/>
+      <param name="auth-scheme" value="basic"/>
+      <param name="method" value="POST"/>
+      <param name="timeout" value="5"/>
+      <!-- Os troncos de TODAS as organizações vêm numa só resposta, e acima
+           deste tamanho o módulo deita-a fora INTEIRA: o FreeSWITCH ficava sem
+           tronco nenhum. 16 MiB são uns milhares de troncos; o servidor põe um
+           tecto por organização (MAX_TRUNKS_PER_ORG). -->
+      <param name="response-max-bytes" value="16777216"/>
+      <param name="debug" value="false"/>
+    </binding>
   </bindings>
 </configuration>

@@ -5,6 +5,7 @@ export default {
   meta_one: '{{count}} 项 · {{size}}',
   meta_other: '{{count}} 项 · {{size}}',
   abrir: '打开 {{name}}',
+  menuDe: '{{name}} 的操作',
   salaCodigo: '会议室 {{code}}',
   partilhadaComigo: '分享给我的',
   semResultados: '没有与搜索匹配的录制内容',
@@ -47,6 +48,9 @@ export default {
     estado: '状态',
   },
   estado: {
+    aProcessar: '处理中',
+    aProcessarPct: '处理中 {{pct}}%',
+    aProcessarAviso: '服务器仍在合成此录制内容，完成后即可使用。',
     aTranscrever: '转写中',
     aTranscreverPct: '转写中 {{pct}}%',
     publicada: '已发布',

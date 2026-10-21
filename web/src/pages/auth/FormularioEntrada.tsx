@@ -13,7 +13,7 @@ import { apiErrorMessage, getPlatformSettings, login, registerOrg, ssoCheck, sso
 import { getAppName } from '../../branding'
 import { Alert, Button, Field, TextInput } from '../../ui/kit'
 import CampoPalavraPasse from './CampoPalavraPasse'
-import { dominioDoEmail, motivoDaRecusa } from './logica'
+import { chaveDoErroSso, dominioDoEmail, motivoDaRecusa, ssoErroDoEndereco } from './logica'
 
 type Modo = 'entrar' | 'registo'
 
@@ -29,9 +29,12 @@ const SEM_SSO: EstadoSso = { dominio: null, activo: false, obrigatorio: false, a
 export default function FormularioEntrada({
   onLogin,
   onDesafio,
+  onEsqueci,
 }: {
   onLogin: (u: User) => void
   onDesafio: (mfaToken: string) => void
+  /** «Esqueci-me da palavra-passe» (E3). Sem ele, o link não aparece. */
+  onEsqueci?: () => void
 }) {
   const { t } = useTranslation()
   const [modo, setModo] = useState<Modo>('entrar')
@@ -45,6 +48,15 @@ export default function FormularioEntrada({
   // a criação de organização e o botão de SSO.
   const [esconderRegisto, setEsconderRegisto] = useState(false)
   const [esconderSso, setEsconderSso] = useState(false)
+
+  // O SSO volta aqui com `#/login?sso_error=<código>` quando recusa ou falha.
+  // Diz-se a frase, e o endereço fica limpo: um reload não a repete.
+  useEffect(() => {
+    const codigo = ssoErroDoEndereco(location.hash)
+    if (!codigo) return
+    setErro(t(chaveDoErroSso(codigo)))
+    history.replaceState(null, '', `${location.pathname}${location.search}#/login`)
+  }, [t])
 
   useEffect(() => {
     let vivo = true
@@ -138,12 +150,20 @@ export default function FormularioEntrada({
 
       <form className="auth-form__campos" onSubmit={submeter} data-testid="auth-form">
         {registo && (
-          <Field label={t('auth.registo.nomeOrg')} htmlFor="auth-org">
+          <Field
+            label={t('auth.registo.nomeOrg')}
+            htmlFor="auth-org"
+            hint={t('auth.registo.dicaOrg')}
+          >
+            {/* OPCIONAL (ADR-0019): em branco cria uma conta PARTICULAR, com
+                qualquer email. Com nome, é uma conta empresarial e o servidor
+                exige um domínio próprio — um email público é recusado com
+                `registration.corporate_email_required`. O `minLength` fica para
+                não deixar escrever um nome de uma letra, que o servidor recusa. */}
             <TextInput
               id="auth-org"
               name="organization"
               large
-              required
               minLength={2}
               autoComplete="organization"
               value={orgName}
@@ -204,6 +224,11 @@ export default function FormularioEntrada({
                 onChange={(e) => setPassword(e.target.value)}
               />
             </Field>
+            {!registo && onEsqueci && (
+              <button type="button" className="auth-link auth-link--muted" onClick={onEsqueci} data-testid="auth-esqueci">
+                {t('auth.reposicao.link')}
+              </button>
+            )}
 
             {erro && (
               <div className="auth-error">

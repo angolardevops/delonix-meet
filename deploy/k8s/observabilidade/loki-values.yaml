@@ -1,0 +1,32 @@
+# Loki em modo de instância única com armazenamento no MinIO. Não é o modo
+# distribuído: para o volume de um Meet não vale a complexidade, e o que
+# importa é os registos sobreviverem ao pod que os escreveu.
+deploymentMode: SingleBinary
+loki:
+  auth_enabled: false   # um só inquilino; a porta é a NetworkPolicy
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: s3
+    bucketNames:
+      chunks: meet-logs
+      ruler: meet-logs
+    s3:
+      endpoint: minio.minio.svc.cluster.local:9000
+      insecure: true
+      s3ForcePathStyle: true
+  limits_config:
+    retention_period: 720h   # 30 dias, como o backup do Postgres
+    # Um pod em ciclo de reinício escreve muito: sem tecto, enche o bucket.
+    ingestion_rate_mb: 10
+    ingestion_burst_size_mb: 20
+singleBinary:
+  replicas: 1
+  persistence:
+    size: 20Gi
+# Os componentes do modo distribuído ficam a zero: o chart liga-os por omissão.
+read: { replicas: 0 }
+write: { replicas: 0 }
+backend: { replicas: 0 }
+chunksCache:
+  enabled: false

@@ -109,3 +109,75 @@ async fn a_conversa_directa_so_volta_ao_par(db: sqlx::PgPool) {
     assert_eq!(body[1]["parent_id"], publica.as_str());
     assert_eq!(body[1]["reactions"], json!({}));
 }
+
+/// **A RETENÇÃO DO CHAT, depois da decisão de 2026-10-14.**
+///
+/// Sem `chat_retention_days` na organização, o chat **fica** — era aqui que a
+/// varredura decidia por quem nunca escolheu e apagava ao fim do dia, o que
+/// tornava o histórico inútil e fechava a porta aos canais persistentes.
+///
+/// O efémero continua a existir, explícito: com `0` apaga na varredura
+/// seguinte, com `1` ao fim de um dia.
+#[sqlx::test(migrations = "./migrations")]
+async fn sem_retencao_definida_o_chat_fica(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let ana = app.new_org("alfa.test").await;
+    let room = app.new_room(&ana, "equipa").await;
+    let room_id = room["id"].as_str().unwrap();
+    mensagem(&app, room_id, &ana.user_id, "ana", "isto fica", None).await;
+
+    // Mensagem de ANTEONTEM: com a regra antiga, já tinha desaparecido.
+    sqlx::query("UPDATE room_chat_messages SET created_at = now() - interval '2 days'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    let apagadas = delonix_server::room_chat_retention_sweep(&app.state)
+        .await
+        .unwrap();
+    assert_eq!(apagadas, 0, "sem retenção definida não se apaga nada");
+    let restam: i64 = sqlx::query_scalar("SELECT count(*) FROM room_chat_messages")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(restam, 1, "a mensagem de anteontem tinha de ficar");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn com_retencao_definida_apaga_como_sempre(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let ana = app.new_org("alfa.test").await;
+    let room = app.new_room(&ana, "equipa").await;
+    let room_id = room["id"].as_str().unwrap();
+    mensagem(&app, room_id, &ana.user_id, "ana", "isto sai", None).await;
+    sqlx::query("UPDATE room_chat_messages SET created_at = now() - interval '2 days'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // Um dia de retenção: a de anteontem expirou.
+    sqlx::query("UPDATE organizations SET chat_retention_days = 1 WHERE id = $1::uuid")
+        .bind(ana.org())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let apagadas = delonix_server::room_chat_retention_sweep(&app.state)
+        .await
+        .unwrap();
+    assert_eq!(apagadas, 1, "com retenção de um dia, a de anteontem sai");
+
+    // E `0` é o efémero explícito: apaga na varredura seguinte.
+    mensagem(&app, room_id, &ana.user_id, "ana", "efémero", None).await;
+    sqlx::query("UPDATE organizations SET chat_retention_days = 0 WHERE id = $1::uuid")
+        .bind(ana.org())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let apagadas = delonix_server::room_chat_retention_sweep(&app.state)
+        .await
+        .unwrap();
+    assert_eq!(
+        apagadas, 1,
+        "com 0 apaga logo — é o efémero de quem o escolhe"
+    );
+}

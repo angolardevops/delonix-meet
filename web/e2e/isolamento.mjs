@@ -149,10 +149,20 @@ await recusado('A altera definições da org B', `/api/orgs/${B.orgId}`, {
   token: A.token, method: 'PATCH', body: { hide_org_creation: true },
 })
 await recusado('A lê a análise de quarentena da org B', `/api/orgs/${B.orgId}/analytics/quarantine`, { token: A.token })
+// ADR-0019: converter a organização de outra pessoa em empresa — com o domínio
+// de email de QUEM converte. Se passasse, A dava o seu domínio à org de B.
+await recusado('A converte a org B em empresarial', `/api/orgs/${B.orgId}/upgrade`, {
+  token: A.token, method: 'POST', body: { name: 'Roubada Lda' },
+})
 await recusado('A cria uma sala de voz na org B', `/api/orgs/${B.orgId}/voice/rooms`, {
   token: A.token, method: 'POST', body: { room_code: salaB.code },
 })
 await recusado('A roda o token Odoo da org B', `/api/orgs/${B.orgId}/integrations/odoo/rotate-token`, {
+  token: A.token, method: 'POST', body: {},
+})
+// O token do SCIM é o que deixa o directório da empresa reescrever membros: se
+// A o puder rodar na org B, passa a provisionar lá dentro.
+await recusado('A roda o token SCIM da org B', `/api/orgs/${B.orgId}/scim/rotate-token`, {
   token: A.token, method: 'POST', body: {},
 })
 await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/members/${B.userId}`, {
@@ -169,6 +179,16 @@ await recusado('A verifica a cadeia de auditoria da org B', `/api/orgs/${B.orgId
   token: A.token,
 })
 await recusado('A lê a configuração de SSO da org B', `/api/orgs/${B.orgId}/sso`, { token: A.token })
+// A3: o token do TXT da org B não sai para A, e A não pode pôr o servidor a
+// consultar o DNS do domínio de B — a recusa tem de vir ANTES do handler.
+await recusadoNaPorta('A lê o registo de prova do domínio da org B', `/api/orgs/${B.orgId}/domain-verification`, {
+  token: A.token,
+})
+await recusadoNaPorta(
+  'A pede a verificação do domínio da org B',
+  `/api/orgs/${B.orgId}/domain-verification/check`,
+  { method: 'POST', token: A.token },
+)
 await recusado('A lê a facturação de voz da org B', `/api/orgs/${B.orgId}/voice/billing`, {
   token: A.token,
 })
@@ -228,9 +248,34 @@ await recusado('A apaga um papel da org B', `/api/orgs/${B.orgId}/roles/${fantas
 await recusado('A duplica um papel da org B', `/api/orgs/${B.orgId}/roles/${fantasma}/duplicate`, {
   token: A.token, method: 'POST', body: {},
 })
+// Repor a password de alguém é TOMAR-LHE a conta: se isto não fosse recusado,
+// o isolamento entre organizações acabava aqui — nenhuma outra rota dá acesso
+// tão completo a uma conta alheia.
+await recusado('A repõe a password de um utilizador da org B', `/api/orgs/${B.orgId}/users/${B.userId}/password-reset`, {
+  token: A.token, method: 'POST',
+})
 await recusado('A atribui um papel a um membro da org B', `/api/orgs/${B.orgId}/members/${B.userId}/role`, {
   token: A.token, method: 'PUT', body: { role_id: fantasma },
 })
+// O SMTP de uma organização é a credencial de um relay DELA: host, conta e
+// password selada. Ler, gravar ou verificar o da org B a partir da A seria
+// entregar-lhe o caminho de saída do correio de outra empresa — e a
+// verificação, pior, fá-lo-ia LIGAR-SE a um destino escolhido por quem não é
+// dono dele.
+await recusado('A lê o SMTP da org B', `/api/orgs/${B.orgId}/mail-settings`, { token: A.token })
+await recusado('A grava o SMTP da org B', `/api/orgs/${B.orgId}/mail-settings`, {
+  token: A.token, method: 'PUT',
+  body: { host: 'smtp.exemplo.ao', port: 587, from_address: 'nao-responda@exemplo.ao' },
+})
+await recusado('A apaga o SMTP da org B', `/api/orgs/${B.orgId}/mail-settings`, {
+  token: A.token, method: 'DELETE',
+})
+await recusado('A verifica o relay da org B', `/api/orgs/${B.orgId}/mail-settings/check`, {
+  token: A.token, method: 'POST',
+})
+// A caixa de saída de uma organização diz a quem ela escreveu e com que
+// assunto — o directório de contactos dela, por outras palavras.
+await recusado('A lê a caixa de saída da org B', `/api/orgs/${B.orgId}/mail-messages`, { token: A.token })
 await recusado('A lista os ramais da org B', `/api/orgs/${B.orgId}/extensions`, { token: A.token })
 await recusado('A cria um ramal na org B', `/api/orgs/${B.orgId}/extensions`, {
   token: A.token, method: 'POST', body: { extension: '9001', display_name: 'intruso' },
@@ -277,6 +322,19 @@ await recusado('A emite um QR do Linphone para um ramal da org B', `/api/orgs/${
 await recusado('A emite um QR do Linphone para «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/provisioning-ticket`, {
   token: A.token, method: 'POST', body: {},
 })
+// Aparelhos do ramal e *wake* por push (ADR-0023): A não regista, lê nem desliga aparelhos na org B,
+// nem lista ou desliga os de um ramal da org B (o token de push é o que acorda o telemóvel de alguém).
+await recusado('A regista um aparelho em «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices/${fantasma}`, {
+  token: A.token, method: 'PUT', body: { platform: 'android', provider: 'lab', push_token: 'token-de-prova' },
+})
+await recusado('A lista os aparelhos de «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices`, { token: A.token })
+await recusado('A desliga um aparelho de «o meu ramal» na org B', `/api/orgs/${B.orgId}/my-extension/devices/${fantasma}`, {
+  token: A.token, method: 'DELETE',
+})
+await recusado('A lista os aparelhos de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/devices`, { token: A.token })
+await recusado('A desliga um aparelho de um ramal da org B', `/api/orgs/${B.orgId}/extensions/${fantasma}/devices/${fantasma}`, {
+  token: A.token, method: 'DELETE',
+})
 
 // O segredo mais valioso desta família: com ele, qualquer um emite no canal
 // de YouTube da empresa. A provar: A não alcança os destinos da B (ler, rodar
@@ -320,6 +378,52 @@ if (canalB.status === 201 && canalB.json?.id) {
   if (depoisC.status === 200 && depoisC.json?.name === 'Canal da B' && depoisC.json?.version === 1) ok('e o canal da B CONTINUA LÁ, inalterado')
   else nok('e o canal da B CONTINUA LÁ, inalterado', `${depoisC.status}: ${JSON.stringify(depoisC.json).slice(0, 120)}`)
 } else nok('B cria um canal de TV', `${canalB.status}: ${JSON.stringify(canalB.json).slice(0, 160)}`)
+
+console.log('\n--- caixas de captura de TV da org B (RFC-0002) ---')
+// Uma caixa de captura é hardware de uma organização, e o inventário dela diz
+// o que está ligado onde. A não a lista, lê, altera, apaga, revoga, nem vê as
+// entradas — e o TOKEN do agente da B não abre a consola de A nem a de B.
+const caixaB = await req(`/api/orgs/${B.orgId}/tv/capture-agents`, {
+  token: B.token, method: 'POST', body: { name: 'Caixa da B', location: 'sala técnica' },
+})
+if (caixaB.status === 201 && caixaB.json?.id && typeof caixaB.json?.token === 'string') {
+  ok('B cria uma caixa de captura → 201 (com o token uma vez)')
+  const g = `/api/orgs/${B.orgId}/tv/capture-agents/${caixaB.json.id}`
+  const tokenAgenteB = caixaB.json.token
+  await recusadoNaPorta('A lista as caixas de captura da org B', `/api/orgs/${B.orgId}/tv/capture-agents`, { token: A.token })
+  await recusadoNaPorta('A lê uma caixa de captura da org B', g, { token: A.token })
+  await recusadoNaPorta('A altera uma caixa de captura da org B', g, { token: A.token, method: 'PATCH', body: { name: 'roubada' } })
+  await recusadoNaPorta('A revoga o token da caixa da org B', `/api/orgs/${B.orgId}/tv/capture-agents/${caixaB.json.id}/revoke`, { token: A.token, method: 'POST', body: {} })
+  await recusadoNaPorta('A lista as entradas da caixa da org B', `/api/orgs/${B.orgId}/tv/capture-agents/${caixaB.json.id}/inputs`, { token: A.token })
+  await recusadoNaPorta('A apaga a caixa de captura da org B', g, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A cria uma caixa de captura na org B', `/api/orgs/${B.orgId}/tv/capture-agents`, {
+    token: A.token, method: 'POST', body: { name: 'intrusa' },
+  })
+  // Pelo caminho da PRÓPRIA org A, com o id da B.
+  await recusado('A lê a caixa da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/capture-agents/${caixaB.json.id}`, { token: A.token })
+  // O agente da B reporta uma entrada; ela é da B e de mais ninguém.
+  const relato = await req('/api/integrations/tv-agent/v1/inputs', {
+    token: tokenAgenteB, method: 'PUT',
+    body: {
+      agent_version: '0.1.0',
+      audio: [{ device_path: `pci-0000:00:14.0-usb-0:3:1.2`, node: 'hw:1' }],
+      inputs: [{ device_path: `pci-0000:00:14.0-usb-0:3:1.0`, video_node: '/dev/video0', signal: 'live' }],
+    },
+  })
+  if (relato.status === 200 && relato.json?.inputs?.length === 1 && relato.json.inputs[0].audio_node === 'hw:1') {
+    ok('o agente da B reporta o inventário, e o servidor emparelha o áudio pela porta')
+    const entradaB = relato.json.inputs[0].id
+    await recusado('A lê a entrada da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/capture-inputs/${entradaB}`, { token: A.token })
+    await recusadoNaPorta('A lê a entrada da B pelo caminho da org B', `/api/orgs/${B.orgId}/tv/capture-inputs/${entradaB}`, { token: A.token })
+    await recusado('A altera a entrada da B pelo caminho da org A', `/api/orgs/${A.orgId}/tv/capture-inputs/${entradaB}`, { token: A.token, method: 'PATCH', body: { version: 1, label: 'roubada' } })
+  } else nok('o agente da B reporta o inventário', `${relato.status}: ${JSON.stringify(relato.json).slice(0, 200)}`)
+  // O token do AGENTE é só para a superfície de integração: não é sessão.
+  await recusado('o token do agente da B abre a consola da B', `/api/orgs/${B.orgId}/tv/capture-agents`, { token: tokenAgenteB })
+  await recusado('o token do agente da B abre a consola da A', `/api/orgs/${A.orgId}/tv/capture-agents`, { token: tokenAgenteB })
+  const depoisG = await req(g, { token: B.token })
+  if (depoisG.status === 200 && depoisG.json?.name === 'Caixa da B' && depoisG.json?.revoked_at === null) ok('e a caixa da B CONTINUA LÁ, activa e inalterada')
+  else nok('e a caixa da B CONTINUA LÁ, activa e inalterada', `${depoisG.status}: ${JSON.stringify(depoisG.json).slice(0, 120)}`)
+} else nok('B cria uma caixa de captura', `${caixaB.status}: ${JSON.stringify(caixaB.json).slice(0, 160)}`)
 
 console.log('\n--- destinos de directo guardados da org B ---')
 await recusado('A lista destinos de emissão da org B', `/api/orgs/${B.orgId}/stream-destinations`, { token: A.token })
@@ -596,11 +700,34 @@ if (reuniaoB.status >= 200 && reuniaoB.status < 300 && reuniaoB.json?.id) {
   await recusado('A APAGA a reunião da org B', `/api/meetings/${m}`, {
     token: A.token, method: 'DELETE',
   })
+  // Remarcar é mandar na agenda de outra empresa: mudava a hora e avisava os
+  // convidados dela em nome de quem não é o anfitrião.
+  await recusado('A REMARCA a reunião da org B', `/api/meetings/${m}/reschedule`, {
+    token: A.token, method: 'POST',
+    body: { starts_at: new Date(Date.now() + 864e5).toISOString() },
+  })
   await recusado('A escreve a ACTA da reunião da B', `/api/meetings/${m}/minutes`, {
     token: A.token, method: 'PUT', body: { markdown: 'acta forjada' },
   })
+  // Pedir o resumo pelo LLM gasta GPU e revela que a reunião existe: a recusa
+  // tem de ser a mesma das outras (404, sem confirmar que existe).
+  await recusado('A pede o RESUMO da acta da reunião da B', `/api/meetings/${m}/minutes/summary`, {
+    token: A.token, method: 'POST', body: {},
+  })
   await recusado('A lê a agenda da reunião da B', `/api/meetings/${m}/agenda-items`, { token: A.token })
   await recusado('A lê os convidados da reunião da B', `/api/meetings/${m}/invitees`, { token: A.token })
+  // Os convidados de FORA são endereços de email de gente que não tem conta
+  // aqui: ler a lista é ler a lista de contactos externos de outra empresa, e
+  // acrescentar é mandar um convite em nome dela.
+  await recusado('A lê os convidados de FORA da reunião da B', `/api/meetings/${m}/external-invitees`, {
+    token: A.token,
+  })
+  await recusado('A convida um endereço de fora para a reunião da B', `/api/meetings/${m}/external-invitees`, {
+    token: A.token, method: 'POST', body: { email: 'intruso@fora.ao' },
+  })
+  await recusado('A tira um convidado de fora da reunião da B', `/api/meetings/${m}/external-invitees/alguem@fora.ao`, {
+    token: A.token, method: 'DELETE',
+  })
   await recusado('A lê o plano de acção da reunião da B', `/api/meetings/${m}/action-plan`, { token: A.token })
   await recusado('A descarrega o ICS da reunião da B', `/api/meetings/${m}/calendar.ics`, { token: A.token })
   await recusado('A responde ao convite da reunião da B', `/api/meetings/${m}/invitees/me`, {
@@ -693,6 +820,12 @@ if (gravB) {
   await recusadoNaPorta('A PUBLICA a gravação da B', `/api/recordings/${gravB}/publish`, { token: A.token, method: 'POST', body: { visibility: 'org' } })
   await recusadoNaPorta('A despublica a gravação da B', `/api/recordings/${gravB}/unpublish`, { token: A.token, method: 'POST' })
   await recusadoNaPorta('A lê a miniatura da B', `/api/recordings/${gravB}/thumbnail`, { token: A.token })
+  // Gravação ISO (A-02): as pistas por fonte são a MESMA gravação vista por uma
+  // câmara, logo a fronteira é a mesma. A B lista as suas (vazio é resposta
+  // válida: esta gravação não é de um estúdio); a A não chega lá nem ao ficheiro.
+  await permitido('B lista as pistas ISO da sua gravação (controlo positivo)', `/api/recordings/${gravB}/tracks`, { token: B.token })
+  await recusadoNaPorta('A lista as pistas ISO da gravação da B', `/api/recordings/${gravB}/tracks`, { token: A.token })
+  await recusadoNaPorta('A descarrega uma pista ISO da gravação da B', `/api/recordings/${gravB}/tracks/${inventado}/content`, { token: A.token })
   await recusadoNaPorta('A regista visualizações na gravação da B', `/api/recordings/${gravB}/views`, { token: A.token, method: 'POST' })
   await recusadoNaPorta('A lista os participantes da gravação da B', `/api/recordings/${gravB}/participants`, { token: A.token })
   await recusadoNaPorta('A lista os participantes da sala da B', `/api/rooms/${salaB.code}/participants`, { token: A.token })
@@ -715,6 +848,16 @@ if (gravB) {
     token: A.token, method: 'PUT', body: { vtt: 'WEBVTT\n', publish: true },
   })
   await recusadoNaPorta('A gera legendas na B', `/api/recordings/${gravB}/captions/generate`, { token: A.token, method: 'POST', body: {} })
+  // Recortes e shorts (migração 0116): um recorte é um artefacto da gravação e
+  // herda-lhe o acesso — não há segunda porta (a lição da R304).
+  await recusadoNaPorta('A lista os recortes da B', `/api/recordings/${gravB}/clips`, { token: A.token })
+  await recusadoNaPorta('A pede um recorte da B', `/api/recordings/${gravB}/clips`, {
+    token: A.token, method: 'POST', body: { kind: 'clip', label: 'intruso', start_ms: 0, end_ms: 2000 },
+  })
+  await recusadoNaPorta('A lê um recorte da B', `/api/recordings/${gravB}/clips/${inventado}`, { token: A.token })
+  await recusadoNaPorta('A APAGA um recorte da B', `/api/recordings/${gravB}/clips/${inventado}`, { token: A.token, method: 'DELETE' })
+  await recusadoNaPorta('A descarrega um recorte da B', `/api/recordings/${gravB}/clips/${inventado}/content`, { token: A.token })
+  await recusadoNaPorta('A lê as legendas de um recorte da B', `/api/recordings/${gravB}/clips/${inventado}/captions.vtt`, { token: A.token })
   const pub = await req('/api/recordings?scope=published', { token: A.token })
   if (Array.isArray(pub.json) && !pub.json.some((r) => r.id === gravB)) ok('a gravação da B não aparece nas publicadas da A')
   else nok('a gravação da B não aparece nas publicadas da A', JSON.stringify(pub.json).slice(0, 160))
@@ -936,7 +1079,7 @@ if (gravacaoA) {
 const chaveApiA = await req(`/api/orgs/${A.orgId}/api-keys`, {
   token: A.token, method: 'POST', body: { name: 's3-arquivo' },
 })
-await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
+const reuniaoS3antes = await permitido('controlo: a chave da A cria reunião com C como anfitriã', '/api/v1/meetings', {
   token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 antes', starts_at: new Date(Date.now() + 7200_000).toISOString(), host_email: C.email },
 })
@@ -956,6 +1099,55 @@ if (gravacaoA) {
 await recusado('a chave da A cria reunião com C ARQUIVADA como anfitriã', '/api/v1/meetings', {
   token: chaveApiA.json?.key, method: 'POST',
   body: { title: 's3 depois', starts_at: new Date(Date.now() + 9000_000).toISOString(), host_email: C.email },
+})
+
+console.log('\n--- T1: a chave da B não alcança uma reunião da A por /api/v1/meetings ---')
+// Achado da auditoria de 2026-10-08: `meeting_in_org` (e as equivalentes em
+// `apikeys.rs`, `v1_meetings`/`v1_meeting_notes`) decidiam se uma reunião
+// "pertence" à organização da chave só verificando se o DONO é (ou foi,
+// mesmo arquivado) membro dessa organização — nunca se a reunião nasceu lá.
+// A `reuniaoS3antes` é real (criada ali acima pela chave da A, com C como
+// anfitriã) — um 404 para a chave da B é mesmo "não é tua", não "não
+// existe". `chaveB` é a chave `dlx_` da B criada para o teste de destruição
+// cross-tenant, acima.
+if (reuniaoS3antes?.id) {
+  const m = reuniaoS3antes.id
+  const chaveApiB = chaveB.json?.key
+  await recusado('a chave da B lê a reunião da A', `/api/v1/meetings/${m}`, { token: chaveApiB })
+  await recusado('a chave da B lê a ata/transcrição da reunião da A', `/api/v1/meetings/${m}/minutes`, { token: chaveApiB })
+  await recusado('a chave da B altera a reunião da A', `/api/v1/meetings/${m}`, {
+    token: chaveApiB, method: 'PATCH', body: { title: 'sequestrada pela B' },
+  })
+  await recusado('a chave da B toca na reunião da A', `/api/v1/meetings/${m}/ring`, {
+    token: chaveApiB, method: 'POST',
+  })
+  const listaB = await req('/api/v1/meetings', { token: chaveApiB })
+  const apareceu = Array.isArray(listaB.json?.meetings) && listaB.json.meetings.some((x) => x.id === m)
+  if (listaB.status === 200 && !apareceu) ok('a listagem da B não traz a reunião da A')
+  else nok('a listagem da B não traz a reunião da A', `devolveu ${listaB.status}: ${JSON.stringify(listaB.json).slice(0, 160)}`)
+  // E o recurso da A tem de sobreviver aos pedidos recusados da B — o
+  // DELETE por último, para não destruir o fixture a meio dos casos acima.
+  await recusado('a chave da B apaga a reunião da A', `/api/v1/meetings/${m}`, {
+    token: chaveApiB, method: 'DELETE',
+  })
+  const aindaLa = await req(`/api/v1/meetings/${m}`, { token: chaveApiA.json?.key })
+  if (aindaLa.status === 200) ok('a reunião da A continua lá depois dos pedidos da B')
+  else nok('a reunião da A continua lá depois dos pedidos da B', `devolveu ${aindaLa.status}`)
+} else {
+  nok('fixture da reunião da A para o T1', 'a criação de controlo acima não devolveu id')
+}
+
+console.log('\n--- «Ligar a…» a partir da sala da A (dial-outs) ---')
+// Fazer tocar um ramal custa atenção e, na F2, dinheiro: quem não gere a sala
+// não lista, não liga e não desliga. A B é de outra organização — a sala e o
+// pedido respondem como se não existissem (401/403/404, nunca 2xx).
+const semId = '00000000-0000-0000-0000-000000000000'
+await recusadoNaPorta('B lista os dial-outs da sala da A', `/api/rooms/${salaA.code}/dial-outs`, { token: B.token })
+await recusadoNaPorta('B liga a um ramal a partir da sala da A', `/api/rooms/${salaA.code}/dial-outs`, {
+  token: B.token, method: 'POST', body: { extension_id: semId },
+})
+await recusadoNaPorta('B desliga um dial-out da sala da A', `/api/rooms/${salaA.code}/dial-outs/${semId}/hangup`, {
+  token: B.token, method: 'POST', body: {},
 })
 
 // ---------------------------------------------------------------------------

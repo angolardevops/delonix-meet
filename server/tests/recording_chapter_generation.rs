@@ -266,3 +266,82 @@ async fn running_generation_refuses_a_second_and_a_stale_one_reads_as_interrupte
     assert_eq!(g["status"], "succeeded", "{g}");
     assert_eq!(g["chapter_count"], 3, "{g}");
 }
+
+/// Quantas tentativas e qual a espera, na escrituração da fila.
+async fn fila(app: &TestApp, rec: &str) -> (i32, bool) {
+    let (n, espera): (i32, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT chapters_attempts, chapters_next_attempt_at FROM recordings WHERE id = $1::uuid",
+    )
+    .bind(rec)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    (n, espera.is_some())
+}
+
+/// **O Ollama em baixo não pode custar as tentativas de quem não tem culpa.**
+///
+/// A reivindicação da fila conta a tentativa ANTES de o trabalho correr — é o
+/// que a torna atómica entre nós. Mas se o LLM estiver em baixo a falha não é
+/// desta gravação, e sem devolver a tentativa uma avaria de uma hora queimava
+/// as três de todas as gravações em fila: elas nunca mais teriam capítulos.
+/// Dano permanente causado por avaria temporária.
+#[sqlx::test(migrations = "./migrations")]
+async fn o_llm_em_baixo_nao_gasta_as_tentativas(db: sqlx::PgPool) {
+    // `500` em tudo: é o LLM em baixo (`GenerateOutcome::LlmUnavailable`).
+    let r = recording(db, Reply::Status(500, "em baixo".into())).await;
+    transcribe(&r.app, &r.rec).await;
+
+    for volta in 1..=4 {
+        delonix_server::auto_chapters_sweep(&r.app.state).await;
+        let (tentativas, _) = fila(&r.app, &r.rec).await;
+        assert_eq!(
+            tentativas, 0,
+            "volta {volta}: a avaria do LLM gastou uma tentativa desta gravação"
+        );
+    }
+    // E continua elegível: quatro voltas depois ainda é selecionável.
+    assert!(
+        !generated_at_is_set(&r.app, &r.rec).await,
+        "marcou como gerada sem o LLM ter respondido"
+    );
+    // Com o LLM de volta, gera à primeira.
+    r.fake.set_reply(Reply::Answer(CHAPTERS.into()));
+    delonix_server::auto_chapters_sweep(&r.app.state).await;
+    assert!(
+        generated_at_is_set(&r.app, &r.rec).await,
+        "o LLM voltou e a gravação não recuperou"
+    );
+}
+
+/// **Uma resposta inutilizável gasta a tentativa e não volta.**
+///
+/// É a pílula envenenada: o `NOT EXISTS` da fila exclui-a para sempre e
+/// volta-se a pedir à mão. A tentativa fica gasta, que é o correcto — o modelo
+/// respondeu, só respondeu mal.
+#[sqlx::test(migrations = "./migrations")]
+async fn uma_resposta_inutilizavel_gasta_a_tentativa_e_sai_da_fila(db: sqlx::PgPool) {
+    let r = recording(
+        db,
+        Reply::Answer("Não consegui dividir em capítulos.".into()),
+    )
+    .await;
+    transcribe(&r.app, &r.rec).await;
+
+    delonix_server::auto_chapters_sweep(&r.app.state).await;
+    let (tentativas, _) = fila(&r.app, &r.rec).await;
+    assert_eq!(tentativas, 1, "a tentativa não foi contada");
+    assert!(
+        !generated_at_is_set(&r.app, &r.rec).await,
+        "marcou como gerada com uma resposta inutilizável"
+    );
+
+    // A volta seguinte NÃO a leva outra vez: antes, isto repetia-se a cada
+    // cinco minutos para sempre, a ocupar 1 das 2 vagas por volta.
+    delonix_server::auto_chapters_sweep(&r.app.state).await;
+    let (depois, _) = fila(&r.app, &r.rec).await;
+    assert_eq!(
+        depois, 1,
+        "a gravação voltou à fila depois de uma resposta inutilizável"
+    );
+}

@@ -35,6 +35,24 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      # Prioridade de agendamento — OPCIONAL e nunca fixa no chart. Num
+      # cluster PARTILHADO (ADR-0021) é o que decide quem é desalojado
+      # quando um nó aperta; mas o nome da classe é do operador do cluster,
+      # e um `priorityClassName` que não exista faz o API server RECUSAR o
+      # pod. Por isso: vazio por omissão, e quem instala diz o nome.
+      {{- with $v.server.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      serviceAccountName: delonix-server
+      automountServiceAccountToken: false
+      {{- with include "dm.turnAlias" . }}
+      # Relay atrás de NAT: o nome do TURN resolve, cá dentro, para o IP
+      # PRIVADO do relay. O browser recebe o mesmo nome e chega-lhe pelo
+      # público; o SFU não sai pelo router para falar com o vizinho.
+      hostAliases:
+        - ip: {{ $v.coturn.privateIP | quote }}
+          hostnames: [{{ . | quote }}]
+      {{- end }}
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       # O SFU é em memória por pod: o SIGTERM abre o drain (o /ready passa a
       # 503, as salas são avisadas) e o SIGKILL só pode chegar depois dele.
@@ -102,6 +120,12 @@ spec:
                 name: delonix-config
           env:
             {{- include "dm.serverSecretEnv" . | nindent 12 }}
+            {{- with $v.otel }}{{- if .endpoint }}
+            # Rastos por OTLP (ADR-0020). Só existe se o valor existir: sem ele
+            # o servidor arranca sem rastos, como sempre arrancou.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .endpoint | quote }}
+            {{- end }}{{- end }}
             # Opcional: vazio desliga a provisão de organizações (fail-closed).
             - name: PROVISIONING_SECRET
               valueFrom: { secretKeyRef: { name: {{ $s }}, key: PROVISIONING_SECRET, optional: true } }

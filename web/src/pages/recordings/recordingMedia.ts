@@ -17,7 +17,7 @@ export function useRecordingVideo(rec: RecordingView, want: boolean): [VideoLoad
   const [video, setVideo] = useState<VideoLoad>({ s: 'idle' })
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
-    if (!want || rec.failed) {
+    if (!want || !rec.hasFile) {
       setVideo({ s: 'idle' })
       return
     }
@@ -38,7 +38,7 @@ export function useRecordingVideo(rec: RecordingView, want: boolean): [VideoLoad
     }
     // O objecto `rec` muda a cada recarga da biblioteca; o ficheiro é o mesmo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rec.id, rec.failed, want, attempt])
+  }, [rec.id, rec.hasFile, want, attempt])
   return [video, () => setAttempt((n) => n + 1)]
 }
 

@@ -16,14 +16,23 @@ mod broadcast;
 pub mod config;
 mod crypto;
 pub mod data_exports;
+mod diagrams;
+mod dial_outs;
 mod directory;
 mod dlp;
+mod domain_verify;
+mod dubbing;
+mod email_verification;
 mod error;
 mod extension_pin;
 mod extension_provisioning;
+mod fair_slots;
 pub mod grpc;
 mod guests;
+mod mail;
+mod mcp;
 mod media_probe;
+mod meeting_invite_mail;
 mod meetings;
 mod meetings_v1;
 mod metrics;
@@ -33,10 +42,19 @@ pub mod net_guard;
 mod net_probe;
 pub mod nodes;
 mod notifications;
+mod password_recovery;
+// `pub` de propósito: o cliente está completo mas o gravador ainda não o chama
+// (ADR-0020). Deixá-lo privado dava `dead_code` em metade dos métodos, e a
+// resposta a isso seria um `#[allow]` — que é esconder, não resolver.
+mod invitation_mail;
+mod jobs;
+mod oauth;
+pub mod objectos;
 mod odoo;
 mod odoo_sso;
 pub mod openapi;
 mod org;
+mod org_mail;
 mod passkeys;
 mod phone_bridge;
 mod presence;
@@ -44,8 +62,10 @@ mod pubsub;
 mod ramais;
 mod rate_limit;
 mod recorder;
+mod recording_artifacts;
 mod recording_captions;
 mod recording_chapters;
+mod recording_clips;
 mod recording_meta;
 mod recordings;
 mod redis_state;
@@ -53,6 +73,7 @@ mod roles;
 mod room_chat;
 mod room_tools;
 mod rooms;
+mod scim;
 mod search;
 pub mod secrets_at_rest;
 mod sessions;
@@ -79,30 +100,93 @@ mod telephony_sip;
 mod telephony_trunks;
 mod transcription;
 mod tv_broadcasts;
+mod tv_capture;
 mod tv_channels;
 mod ui;
 mod usage;
 mod users;
 mod voice;
 mod voice_caller;
+mod voice_devices;
 mod webhooks;
 mod whiteboards;
 
+/// A volta da fila do resumo da acta, exposta aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use ai::{mom_summary_due, MOM_STALE_AFTER_SECS};
+/// A fila das exportações e a sua reivindicação, expostas aos testes de
+/// integração sem abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use data_exports::run_queue as data_export_run_queue;
+pub use dial_outs::caller_of_call as dial_outs_caller_of_call;
+/// A espinha do correio, exposta aos testes de integração (D7, ADR-0025): a
+/// caixa de saída e as duas filas provam-se contra Postgres real, com um relay
+/// que não existe de propósito — o comportamento da fila não depende de haver
+/// correio a sair no CI.
+pub use mail::{
+    enabled as mail_enabled, enqueue as mail_enqueue, send_due as mail_send_due,
+    sweep as mail_sweep, Outgoing as MailOutgoing, Purpose as MailPurpose,
+};
+/// A varredura de lugares expirados (R91) e o aviso de sala vazia que ela
+/// dispara — exposta pelo mesmo motivo: `TestApp` não arranca o cron de
+/// `run()`, e esperar por um temporizador real tornaria os testes lentos e
+/// pouco deterministas.
+pub use meetings::sweep_expired_seats;
 /// A varredura da quarentena, exposta aos testes de integração sem abrir o
 /// módulo inteiro (os handlers já não a chamam — ver `meetings::quarantine_sweep`).
 pub use meetings::{quarantine_sweep, run_quarantine_sweeper};
+/// Onde vivem as pistas ISO de uma gravação, para os testes de integração
+/// semearem no MESMO sítio onde a produção escreve. Exposta porque as fixtures
+/// construíam `iso-{id}` à mão: uma mudança de layout movia a produção e
+/// deixava os testes a semear no caminho antigo, a falhar a apontar para a
+/// retenção em vez de para a fixture.
+pub use recorder::iso_dir as recording_iso_dir;
+/// A retoma das composições abandonadas e as duas varreduras que apagam
+/// ficheiros de gravação (migração 0099), expostas aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due` abaixo.
+///
+/// As varreduras são o ÚNICO caminho que apaga: não existe rota de `DELETE` de
+/// gravação, logo o que elas esquecerem fica no disco para sempre — foi o que
+/// aconteceu à pasta `iso-<gravação>`, que a retenção não apagava e para onde o
+/// varredor de órfãos não olhava.
+pub use recorder::{
+    resume_due as recording_resume_due, retention_sweep as recordings_retention_sweep,
+    sweep_orphan_segments as recording_sweep_orphan_segments,
+};
+/// A varredura dos artefactos cuja gravação já não existe (migração 0126).
+///
+/// Exposta aos testes de integração porque o critério desta frente é um
+/// ficheiro AUSENTE do disco e um `SELECT count(*)` a zero — nunca o número que
+/// uma varredura devolve. O `purge` NÃO vem: quem o exercita é a retenção, e
+/// expor um nome que ninguém chama alarga a superfície pública da crate sem
+/// pagar nada (um `pub use` nunca dá `dead_code` a avisar).
+pub use recording_artifacts::sweep_orphans as recording_artifacts_sweep_orphans;
+/// A varredura dos capítulos automáticos, exposta aos testes de integração sem
+/// abrir o módulo — pelo mesmo motivo do `webhook_retry_due`.
+pub use recording_chapters::auto_chapters_sweep;
+/// Uma volta da fila dos recortes. Exportada para a prova de integração a
+/// poder correr sem levantar o `run()` inteiro — como a do resumo da acta.
+pub use recording_clips::render_due as recording_clip_render_due;
+/// A varredura da retenção do chat, para os testes a poderem correr à mão (o
+/// que acontece em produção é o ciclo de fundo do `run()`).
+pub use room_chat::retention_sweep as room_chat_retention_sweep;
 /// Senta uma perna da ponte telefone↔sala no censo. Exposto para o portão
 /// `tests/ivr_identifica_quem_liga.rs`, que não tem um UA SIP.
 pub use voice::{discard_caller_ticket, seat_phone_caller};
+/// O varredor que revoga no delonix-push os aparelhos de sessões terminadas, exposto aos testes (ADR-0023).
+pub use voice_devices::reconcile_delonix;
 /// O passo do worker de repetição de webhooks, exposto pelo mesmo motivo.
 pub use webhooks::retry_due as webhook_retry_due;
+/// O registo transaccional das entregas e o tipo do evento, expostos aos testes
+/// de integração: é o que permite provar o nº3 — gravar numa transacção, NÃO
+/// enviar (a «morte» do processo), e o evento sair depois pelo varredor.
+pub use webhooks::{enqueue as webhook_enqueue, sweep_deliveries, Event as WebhookEvent};
 
 use axum::{
     extract::DefaultBodyLimit,
     http::HeaderValue,
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -113,6 +197,12 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 /// sobrepõem este valor com o seu próprio limite.
 const DEFAULT_BODY_LIMIT: usize = 1024 * 1024; // 1 MB
 const WHITEBOARD_BODY_LIMIT: usize = 12 * 1024 * 1024; // PNG 8MB → base64 ~11MB
+/// Corpo máximo do `PUT /api/diagrams/{id}`. O módulo valida o DOCUMENTO em
+/// 2 MiB; o pedido leva também o título e a notação, e o JSON escapado é maior
+/// do que o que a coluna guarda. Com o limite por omissão do axum (2 MiB) um
+/// documento no tecto morria no router com `413` em vez de levar o `400` que
+/// diz qual é o tecto.
+const DIAGRAM_BODY_LIMIT: usize = 4 * 1024 * 1024;
 
 /// Cabeçalhos de segurança nas respostas da API (defesa-em-profundidade;
 /// a CSP completa da SPA é definida no Nginx — ver deploy/nginx-delonix.conf).
@@ -151,6 +241,9 @@ pub struct AppState {
     pub db: sqlx::PgPool,
     pub hub: SignalingHub,
     pub sfu: Arc<sfu::SfuState>,
+    /// As línguas de dobragem activas por sala (ADR-0030). Vazio é o estado
+    /// normal: sem `TTS_URL` nunca se liga nenhuma.
+    pub dub: Arc<dubbing::Registo>,
     /// Emissões em directo a decorrer neste pod (ADR-0003).
     pub directos: Arc<broadcast::Registo>,
     /// Estúdio de TV: fontes, tally e comandos das salas deste pod (ADR-0014).
@@ -170,6 +263,10 @@ pub struct AppState {
     /// travão contra um admin comprometido ou um script descontrolado.
     pub sms_send_limiter: RateLimiter,
     /// Entradas de convidado sem conta, por IP e por sala (ver `guests.rs`).
+    /// Travão da porta pública de uma sala (`GET /api/rooms/{code}/entrance`),
+    /// por IP. Separado do `guest_ip_limiter` de propósito: ver a porta não
+    /// pode gastar o orçamento de ENTRAR por ela.
+    pub room_entrance_limiter: RateLimiter,
     pub guest_ip_limiter: RateLimiter,
     pub guest_room_limiter: RateLimiter,
     /// Envios de SMS por utilizador dentro de uma org (chave `org:user`). Com a
@@ -203,7 +300,7 @@ pub struct AppState {
     pub webauthn: Option<Arc<webauthn_rs::prelude::Webauthn>>,
     /// Vagas de composição de gravação (`FFMPEG_MAX_CONCURRENT`): o `ffmpeg`
     /// de uma gravação só arranca com uma vaga. Ver `recorder::wait_for_slot`.
-    pub compose_slots: Arc<tokio::sync::Semaphore>,
+    pub compose_slots: fair_slots::FairSlots,
 }
 
 impl AppState {
@@ -280,6 +377,12 @@ fn internal_routes() -> Router<Arc<AppState>> {
         .route(
             "/internal/v1/voice/ivr/dialplan-did",
             post(ramais::ivr_dialplan_did),
+        )
+        // O FreeSWITCH pergunta se há aparelhos a acordar para um ramal sem registo, e o ramal só toca
+        // depois de se registar (`ramais_dial.lua`, S-02; ADR-0023).
+        .route(
+            "/internal/v1/voice/push/wake",
+            post(voice_devices::ivr_push_wake),
         )
         // Telefonia (ADR-0009): CDRs do `mod_json_cdr` e configuração do
         // `mod_xml_curl`. Mesmo segredo interno do IVR.
@@ -367,9 +470,45 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ));
 
     // ---- Operador: quem opera a plataforma (fora do SDK do inquilino) ----
+    // SCIM 2.0 (RFC 7644). Superfície PRÓPRIA, com token próprio (`dlxs_`): a
+    // R142 ensinou que um token emitido para uma superfície não pode abrir
+    // outra. O caminho base é o que a norma manda, e é o que se dá ao Entra ID
+    // ou ao Okta.
+    let scim_routes = Router::new()
+        .route("/ServiceProviderConfig", get(scim::service_provider_config))
+        .route("/ResourceTypes", get(scim::resource_types))
+        .route("/Schemas", get(scim::schemas))
+        .route("/Users", get(scim::list_users).post(scim::create_user))
+        .route(
+            "/Users/{user_id}",
+            get(scim::get_user)
+                .patch(scim::patch_user)
+                .put(scim::replace_user)
+                .delete(scim::delete_user),
+        );
+
     let operator_routes = Router::new()
         // Provisão de org — segredo de plataforma (a org ainda não existe).
         .route("/organizations", post(apikeys::v1_provision_org))
+        // Tenants (organizações já existentes) vistos pelo operador —
+        // `/tenants`, não `/organizations`, de propósito: o provisionamento
+        // acima autentica por segredo e está declarado público em
+        // `scripts/rotas-publicas.txt`; partilhar o caminho com uma rota de
+        // sessão fazia `check-route-auth.sh` falhar (o portão compara só por
+        // caminho, não por método — refazê-lo está fora do âmbito desta PR).
+        .route("/tenants", get(directory::list_operator_organizations))
+        // Detalhe de UM tenant, com uso real (lugares e armazenamento
+        // ocupados) — as rotas do inquilino exigem membro, o operador não é.
+        .route(
+            "/tenants/{org_id}",
+            get(directory::get_operator_organization),
+        )
+        // Quotas de plano (grupos/salas/reuniões + dial-in PSTN) — saem da
+        // autoridade do inquilino (`PATCH /api/orgs/{org_id}`) para aqui.
+        .route(
+            "/tenants/{org_id}/quotas",
+            axum::routing::put(directory::operator_set_quotas),
+        )
         // Armazenamento remoto da plataforma: TrueNAS NFS / Nextcloud WebDAV.
         .route(
             "/storage",
@@ -377,6 +516,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/storage/test", post(storage::test_storage))
         .route("/storage/pvc-manifest", get(storage::pvc_manifest))
+        // Config de LOGIN da plataforma: esconder «criar organização» e/ou o
+        // botão SSO no ecrã de entrada. Era escrita por um admin de tenant
+        // (hide_org_creation/hide_sso_button em organizations) e agregada com
+        // BOOL_OR sobre todas as orgs — um único tenant escondia-o para toda a
+        // plataforma. Migração 0103.
+        .route(
+            "/login-settings",
+            get(odoo::get_login_settings).put(odoo::save_login_settings),
+        )
         // Inventário de nós de media (G10).
         .route("/nodes", get(nodes::list))
         // Tecto de lugares por organização (ADR-0008 §7).
@@ -384,9 +532,29 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/organizations/{org_id}/seats",
             axum::routing::put(directory::operator_set_seats),
         )
+        // Tecto de participantes concorrentes por organização, por nó.
+        .route(
+            "/organizations/{org_id}/concurrency",
+            axum::routing::put(directory::operator_set_concurrency),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit::ip_rate_limit,
+        ));
+
+    // ---- OAuth 2.1 para clientes MCP (ADR-0028) ----
+    // Pública por desenho: o cliente ainda não existe (`register`), ou a prova
+    // é o código mais o PKCE (`token`, `revoke`). O ecrã de consentimento é da
+    // web e exige sessão — as duas rotas que decidem (`authorization-info` e
+    // `authorizations`) levam `AuthUser` e estão no BFF, não aqui.
+    let oauth_routes = Router::new()
+        .route("/register", post(oauth::register))
+        .route("/authorize", get(oauth::authorize))
+        .route("/token", post(oauth::token))
+        .route("/revoke", post(oauth::revoke))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::auth_rate_limit,
         ));
 
     // ---- Integração Odoo (módulo nk_delonix_meet, token `dlxo_`) ----
@@ -404,6 +572,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/claim", post(sms::agent_claim))
         .route("/messages/{message_id}/result", post(sms::agent_result));
 
+    // O agente de captura de TV (RFC-0002, ADR-0031): token `dlxtv_`, reporta o
+    // inventário da caixa onde os capturadores HDMI estão ligados.
+    let tv_agent_routes = Router::new().route("/inputs", put(tv_capture::agent_put_inputs));
+
     Router::new()
         // LIVENESS: o processo está vivo? Responde `ok` mesmo a drenar — um
         // pod a drenar não deve ser REINICIADO, deve ser deixado terminar.
@@ -417,11 +589,39 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/openapi.json", get(openapi::v1_json))
         .route("/api/operator/v1/openapi.json", get(openapi::operator_json))
         .route("/api/integrations/openapi.json", get(openapi::integrations_json))
+        // RFC 8414 e RFC 9728: os clientes MCP procuram-nos na RAIZ, não
+        // debaixo de /api — o caminho é parte do contrato.
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth::as_metadata),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth::resource_metadata),
+        )
+        // ---- MCP: a superfície dos agentes (ADR-0027) ----
+        // O caminho é literal e não aninhado de propósito: `nest` com uma rota
+        // `/` monta `/api/mcp/`, e o contrato (e o portão do OpenAPI) falam de
+        // `/api/mcp`. O limite por IP vai no `MethodRouter`, que é o que
+        // permite um travão só nesta rota.
+        .route(
+            "/api/mcp",
+            post(mcp::post)
+                .get(mcp::get)
+                .delete(mcp::delete)
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    rate_limit::ip_rate_limit,
+                )),
+        )
+        .nest("/api/oauth", oauth_routes)
         .nest("/api/auth", auth_routes)
         .nest("/api/v1", v1_routes)
+        .nest("/scim/v2", scim_routes)
         .nest("/api/operator/v1", operator_routes)
         .nest("/api/integrations/odoo/v1", odoo_integration_routes)
         .nest("/api/integrations/sms-agent/v1", sms_agent_routes)
+        .nest("/api/integrations/tv-agent/v1", tv_agent_routes)
         // ══════════════════════════════════════════════════════════════════
         //  BFF — o web Delonix (sessão). Contrato instável, OpenAPI em
         //  /api/openapi.json. /api/mls NÃO está registado de propósito: os
@@ -444,6 +644,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(search::saved::delete),
         )
         .route("/api/users/me", get(users::me).patch(users::update_me))
+        // O ecrã de consentimento e a lista de agentes a que a pessoa disse
+        // sim (ADR-0028 §5 e §7). Levam sessão: é a pessoa que decide.
+        .route(
+            "/api/oauth/authorization-info",
+            get(oauth::authorization_info),
+        )
+        .route("/api/oauth/authorizations", post(oauth::decide))
+        .route("/api/users/me/oauth-grants", get(oauth::my_grants))
+        .route(
+            "/api/users/me/oauth-grants/{grant_id}",
+            axum::routing::delete(oauth::revoke_my_grant),
+        )
+        // Prova do endereço (D7): a pessoa pede o email com sessão; abre o
+        // link e a web entrega o token SEM sessão (pode ser outro aparelho).
+        .route(
+            "/api/users/me/email-verification",
+            get(email_verification::status).post(email_verification::request),
+        )
         // «A minha sala» (G2).
         .route(
             "/api/users/me/room",
@@ -570,14 +788,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(presence::ack_missed_calls),
         )
         // ---- Salas ----
-        .route("/api/rooms", post(rooms::create_room))
+        .route(
+            "/api/rooms",
+            get(rooms::list_my_rooms).post(rooms::create_room),
+        )
         .route(
             "/api/rooms/{room_code}",
-            get(rooms::get_room).patch(rooms::patch_room),
+            get(rooms::get_room)
+                .patch(rooms::patch_room)
+                .delete(rooms::delete_room),
         )
         // Convidado SEM conta (público por desenho — ver guests.rs e
         // scripts/rotas-publicas.txt): só produz um token de sala que passa
         // SEMPRE pela sala de espera.
+        .route(
+            "/api/rooms/{room_code}/entrance",
+            get(rooms::room_entrance),
+        )
         .route(
             "/api/rooms/{room_code}/guest-join",
             post(guests::guest_join),
@@ -593,6 +820,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // (`?room={code}` é a chave de afinidade do balanceador).
         .route("/api/rooms/{room_code}/waiting", get(rooms::room_waiting))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
+        // «Ligar a…» um ramal a partir da sala (`?room={code}` é a chave de
+        // afinidade do balanceador: a sala e a ponte vivem no pod que a serve).
+        .route(
+            "/api/rooms/{room_code}/dial-outs",
+            get(dial_outs::list).post(dial_outs::create),
+        )
+        .route(
+            "/api/rooms/{room_code}/dial-outs/{dial_out_id}/hangup",
+            post(dial_outs::hangup),
+        )
         .route("/api/rooms/{room_code}/invitations", post(rooms::invite_to_room))
         .route("/api/rooms/{room_code}/quality-samples", post(rooms::post_qos))
         // Tempos de estabelecimento (um por sessão) — ver callTimings.ts.
@@ -627,6 +864,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Tradução de legendas em tempo real via LLM local (ai.rs / Ollama).
         .route("/api/ai/translations", post(ai::translate_caption))
         // ---- Reuniões, agenda e plano de acção 5W2H ----
+        // SMTP da própria organização (ADR-0025): o host é escrito por um
+        // cliente, logo passa pela guarda de saída ao gravar E ao ligar.
+        .route(
+            "/api/orgs/{org_id}/mail-settings",
+            get(org_mail::get_settings)
+                .put(org_mail::put_settings)
+                .delete(org_mail::delete_settings),
+        )
+        .route(
+            "/api/orgs/{org_id}/mail-settings/check",
+            post(org_mail::check_settings),
+        )
+        // A caixa de saída, para diagnóstico: sem corpos (o do convite leva o
+        // token).
+        .route(
+            "/api/orgs/{org_id}/mail-messages",
+            get(org_mail::list_messages),
+        )
         .route("/api/meetings", get(meetings::list).post(meetings::create))
         .route("/api/meetings/check-conflicts", post(meetings::check_conflicts))
         .route(
@@ -636,9 +891,33 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(meetings::delete),
         )
         .route("/api/meetings/{meeting_id}/start", post(meetings::start))
+        // Remarcar: método personalizado, e não um campo do PATCH das opções —
+        // mudar a hora avisa gente, repõe o lembrete e sobe a revisão do .ics.
+        .route(
+            "/api/meetings/{meeting_id}/reschedule",
+            post(meetings::reschedule),
+        )
         .route("/api/meetings/{meeting_id}/calendar.ics", get(meetings::ics))
-        .route("/api/meetings/{meeting_id}/minutes", axum::routing::put(meetings::save_minutes))
+        .route(
+            "/api/meetings/{meeting_id}/minutes",
+            get(meetings::minutes).put(meetings::save_minutes),
+        )
+        // Pede (ou repete) o resumo da acta pelo LLM — `202` com o estado da
+        // fila. Custom method sob o sub-recurso `minutes`, como a checklist da
+        // `delonix-meet-api` manda para uma acção que não é CRUD.
+        .route(
+            "/api/meetings/{meeting_id}/minutes/summary",
+            axum::routing::post(meetings::request_mom_summary),
+        )
         .route("/api/meetings/{meeting_id}/invitees", get(meetings::invitees))
+        .route(
+            "/api/meetings/{meeting_id}/external-invitees",
+            get(meetings::external_invitees).post(meetings::add_external_invitee),
+        )
+        .route(
+            "/api/meetings/{meeting_id}/external-invitees/{email}",
+            axum::routing::delete(meetings::remove_external_invitee),
+        )
         .route("/api/meetings/{meeting_id}/invitees/me", axum::routing::put(meetings::respond))
         .route(
             "/api/meetings/{meeting_id}/agenda-items",
@@ -670,6 +949,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/recordings/{recording_id}/content", get(recordings::download))
         .route("/api/recordings/{recording_id}/details", get(recordings::details))
+        // Gravação ISO (ADR-0014 §2.3): as pistas por fonte. A autorização é a
+        // da gravação composta — uma pista é a mesma gravação vista por uma
+        // câmara, e levar um ficheiro exige a permissão de download.
+        .route("/api/recordings/{recording_id}/tracks", get(recordings::tracks))
+        .route(
+            "/api/recordings/{recording_id}/tracks/{track_id}/content",
+            get(recordings::track_content),
+        )
         .route(
             "/api/recordings/{recording_id}/chapters",
             get(recordings::list_chapters).post(recordings::create_chapter),
@@ -679,6 +966,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(recordings::get_chapter)
                 .patch(recording_chapters::patch)
                 .delete(recordings::delete_chapter),
+        )
+        // ---- Recortes e shorts (plano do MCP; regras em `content::clip`) ----
+        .route(
+            "/api/recordings/{recording_id}/clips",
+            get(recording_clips::list).post(recording_clips::create),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}",
+            get(recording_clips::get_one).delete(recording_clips::delete),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}/content",
+            get(recording_clips::content),
+        )
+        .route(
+            "/api/recordings/{recording_id}/clips/{clip_id}/captions.vtt",
+            get(recording_clips::captions),
         )
         .route(
             "/api/recordings/{recording_id}/chapters/generate",
@@ -772,6 +1076,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/recordings/{recording_id}/captions/{lang}/vtt",
             get(recording_captions::vtt),
         )
+        // ---- Diagramas (o modelo EDITÁVEL; o PNG é a biblioteca de quadros) ----
+        .route("/api/diagrams", get(diagrams::list))
+        .route(
+            "/api/diagrams/{diagram_id}",
+            get(diagrams::get_one)
+                .put(diagrams::save)
+                .delete(diagrams::delete)
+                // Um diagrama grande é JSON, não imagem: o limite por omissão
+                // do axum (2 MiB) é o MESMO tecto que o módulo valida, e sem
+                // folga o pedido morria no router com 413 em vez de responder
+                // o 400 que diz o que se passa.
+                .layer(DefaultBodyLimit::max(DIAGRAM_BODY_LIMIT)),
+        )
         // ---- Quadros ----
         .route(
             "/api/whiteboards",
@@ -803,6 +1120,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/orgs/{org_id}",
             get(org::get_org).patch(org::update_settings),
         )
+        .route("/api/orgs/{org_id}/upgrade", post(org::upgrade_org))
         .route("/api/orgs/{org_id}/stats", get(org::org_stats))
         .route(
             "/api/orgs/{org_id}/analytics/quarantine",
@@ -835,6 +1153,38 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(directory::resend_invitation),
         )
         // O token é a credencial: rate-limit por IP como no login.
+        // Reposição de password: o administrador emite (autenticado,
+        // `admin.manage_accounts` e sem escalada), a pessoa usa SEM sessão —
+        // está fora da conta. A pública leva o mesmo limite por IP do
+        // `/api/invitations/accept`, pela mesma razão: é uma credencial.
+        .route(
+            "/api/orgs/{org_id}/users/{user_id}/password-reset",
+            post(directory::issue_password_reset),
+        )
+        .route(
+            "/api/password-resets/accept",
+            post(directory::accept_password_reset).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
+        // E3: a própria pessoa pede o email de reposição. Pública (está fora da
+        // conta), mesmo limite por IP do `accept`, e a mesma resposta para
+        // toda a gente — ver `password_recovery`.
+        .route(
+            "/api/password-resets/request",
+            post(password_recovery::request).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
+        .route(
+            "/api/email-verifications/accept",
+            post(email_verification::accept).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::auth_rate_limit,
+            )),
+        )
         .route(
             "/api/invitations/accept",
             post(directory::accept_invitation).layer(middleware::from_fn_with_state(
@@ -946,6 +1296,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .put(org::upsert_sso_config)
                 .delete(org::delete_sso_config),
         )
+        .route(
+            "/api/orgs/{org_id}/domain-verification",
+            get(org::get_domain_verification),
+        )
+        .route(
+            "/api/orgs/{org_id}/domain-verification/check",
+            post(org::check_domain_verification),
+        )
         .route("/api/orgs/{org_id}/storage-usage", get(usage::org_storage_usage))
         .route("/api/orgs/{org_id}/api-keys", get(apikeys::list).post(apikeys::create))
         .route(
@@ -994,6 +1352,28 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(tv_channels::delete),
         )
         .route(
+            "/api/orgs/{org_id}/tv/capture-agents",
+            get(tv_capture::list_agents).post(tv_capture::create_agent),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-agents/{agent_id}",
+            get(tv_capture::get_agent)
+                .patch(tv_capture::update_agent)
+                .delete(tv_capture::delete_agent),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-agents/{agent_id}/revoke",
+            post(tv_capture::revoke_agent),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-agents/{agent_id}/inputs",
+            get(tv_capture::list_inputs),
+        )
+        .route(
+            "/api/orgs/{org_id}/tv/capture-inputs/{input_id}",
+            get(tv_capture::get_input).patch(tv_capture::update_input),
+        )
+        .route(
             "/api/orgs/{org_id}/tv/channels/{channel_id}/broadcasts",
             get(tv_broadcasts::list).post(tv_broadcasts::request_live),
         )
@@ -1008,6 +1388,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/integrations/odoo",
             get(odoo::get_config).put(odoo::save_config),
+        )
+        .route(
+            "/api/orgs/{org_id}/scim/rotate-token",
+            post(scim::rotate_token),
         )
         .route(
             "/api/orgs/{org_id}/integrations/odoo/rotate-token",
@@ -1086,6 +1470,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/orgs/{org_id}/my-extension/provisioning-ticket",
             post(extension_provisioning::issue_my_ticket),
+        )
+        // Os aparelhos do ramal e o *wake* por push (ADR-0023, S-01): a pessoa regista e desliga os SEUS;
+        // o administrador lista e desliga os de qualquer ramal da organização.
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices",
+            get(voice_devices::list_my_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/my-extension/devices/{device_id}",
+            axum::routing::put(voice_devices::put_my_device).delete(voice_devices::delete_my_device),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices",
+            get(voice_devices::list_extension_devices),
+        )
+        .route(
+            "/api/orgs/{org_id}/extensions/{id}/devices/{device_id}",
+            axum::routing::delete(voice_devices::delete_extension_device),
         )
         .route(
             "/api/orgs/{org_id}/extensions/{id}/provisioning-ticket",
@@ -1181,6 +1583,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // ---- Tempo real (WebSocket) ----
         .route("/ws", get(signaling::ws_handler))
+        // No MESMO prefixo que o socket, para cair no mesmo pod pela afinidade
+        // por `$arg_room`: diz PORQUÊ o /ws recusaria, que o handshake não
+        // consegue entregar ao browser. Ver `ws_admission_handler`.
+        .route("/ws/admission", get(signaling::ws_admission_handler))
         // Directo: o browser empurra a emissão já composta e codificada, e o
         // servidor remultiplexa para RTMP (ADR-0003). Autenticada pelo token de
         // sala na query, como o /ws — um WebSocket não leva cabeçalhos nossos.
@@ -1419,6 +1825,9 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
     hub.bus = redis_bus.clone();
     // Chat persistido fora do caminho quente (fila limitada + tarefa própria).
     hub.chat_store = Some(room_chat::spawn_writer(db.clone(), metrics.clone()));
+    // Os contadores que o hub reporta por si (hoje: legendas recusadas por
+    // política de motor — ver `signaling::recusa_motor`).
+    hub.metrics = Some(metrics.clone());
     let state = Arc::new(AppState {
         draining: std::sync::atomic::AtomicBool::new(false),
         started: std::time::Instant::now(),
@@ -1428,6 +1837,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         directos: Arc::new(broadcast::Registo::default()),
         studio: studio_realtime::StudioHub::default(),
         studio_pairing_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        dub: Arc::new(dubbing::Registo::default()),
         sfu: Arc::new(sfu::SfuState::new(
             sfu::IceConfig {
                 external_ip: config.sfu_external_ip.clone(),
@@ -1447,6 +1857,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         v1_limiter: RateLimiter::new(120, Duration::from_secs(60)),
         voice_pin_limiter: RateLimiter::new(10, Duration::from_secs(300)),
         sms_send_limiter: RateLimiter::new(30, Duration::from_secs(60)),
+        room_entrance_limiter: RateLimiter::new(60, Duration::from_secs(60)),
         guest_ip_limiter: RateLimiter::new(
             config.guest_join_per_ip_per_min as u32,
             Duration::from_secs(60),
@@ -1465,7 +1876,7 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
         provisioning_limiter: RateLimiter::new(20, Duration::from_secs(60)),
         telephony: telephony_service::Adapters::from_config(&config, &outbound),
         outbound,
-        compose_slots: Arc::new(tokio::sync::Semaphore::new(config.ffmpeg_max_concurrent)),
+        compose_slots: fair_slots::FairSlots::new(config.ffmpeg_max_concurrent),
         config: config.clone(),
         redis_bus: redis_bus.clone(),
         metrics,
@@ -1531,19 +1942,109 @@ pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
     state
 }
 
-/// Logs em texto (desenvolvimento) ou JSON (`LOG_FORMAT=json`, K8s/Loki).
-fn init_tracing(json: bool) {
+/// Logs em texto (desenvolvimento) ou JSON (`LOG_FORMAT=json`, K8s/Loki), e —
+/// com `OTEL_EXPORTER_OTLP_ENDPOINT` — rastos por OTLP (ADR-0020, fase 5).
+///
+/// A camada de rastos SÓ existe se a variável estiver definida e não vazia.
+/// Sem ela, o servidor arranca exactamente como arrancava: nada se exporta,
+/// nada se liga, e quem corre o Meet fora de um cluster não paga por isto.
+///
+/// Devolve o provider, se houver, para quem arranca o servidor o poder
+/// desligar no fim. Sem esse `shutdown`, os spans do último lote ficam no
+/// buffer e o rasto de um pedido que correu mal — que é precisamente o que se
+/// quer ver — nunca sai da máquina.
+#[must_use = "o provider tem de ser desligado no fim, senão os últimos spans perdem-se"]
+fn init_tracing(json: bool) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "delonix_server=info,tower_http=info".into());
-    if json {
-        tracing_subscriber::fmt()
-            .json()
-            .with_current_span(true)
-            .with_env_filter(filter)
-            .init();
+
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let registo = tracing_subscriber::registry().with(filter);
+    // Duas formas da MESMA camada de texto. O `if json` tem de estar aqui e
+    // não à volta de tudo porque os dois tipos não são o mesmo tipo.
+    let (texto_json, texto_simples) = if json {
+        (
+            Some(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_current_span(true),
+            ),
+            None,
+        )
     } else {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
+        (None, Some(tracing_subscriber::fmt::layer()))
+    };
+
+    let Some(endpoint) = endpoint else {
+        registo.with(texto_json).with(texto_simples).init();
+        return None;
+    };
+
+    match construir_otlp(&endpoint) {
+        Ok((provider, camada)) => {
+            registo
+                .with(texto_json)
+                .with(texto_simples)
+                .with(camada)
+                .init();
+            tracing::info!(endpoint, "rastos OTLP ligados");
+            Some(provider)
+        }
+        Err(e) => {
+            // FALHA ABERTA, de propósito: um colector em baixo não pode
+            // impedir o servidor de arrancar. Perde-se observabilidade, não o
+            // serviço — e o aviso fica no log para não se perder em silêncio.
+            registo.with(texto_json).with(texto_simples).init();
+            tracing::warn!(endpoint, error = %e, "OTLP indisponível — o servidor arranca sem rastos");
+            None
+        }
     }
+}
+
+/// O exportador e a camada de rastos. Separado para o `init_tracing` poder
+/// tratar a falha num sítio só.
+/// Genérica sobre o subscriber de propósito: quando a camada se junta, o
+/// subscriber já não é o `Registry` nu — é o `Registry` com o filtro e com a
+/// camada de texto por cima, e um tipo fixo aqui não casava com ele.
+#[allow(clippy::type_complexity)]
+fn construir_otlp<S>(
+    endpoint: &str,
+) -> Result<
+    (
+        opentelemetry_sdk::trace::SdkTracerProvider,
+        tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::SdkTracer>,
+    ),
+    Box<dyn std::error::Error>,
+>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_otlp::WithExportConfig as _;
+
+    let exportador = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()?;
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        // Em lote e não a cada span: um export por pedido punha o colector no
+        // caminho quente da media.
+        .with_batch_exporter(exportador)
+        .with_resource(
+            opentelemetry_sdk::Resource::builder()
+                .with_service_name("delonix-server")
+                .build(),
+        )
+        .build();
+    let camada = tracing_opentelemetry::layer().with_tracer(provider.tracer("delonix-server"));
+    Ok((provider, camada))
 }
 
 /// Arranca o servidor: configuração, base, estado partilhado, tarefas de
@@ -1563,7 +2064,7 @@ pub async fn run() {
         return;
     }
     let config = Config::from_env();
-    init_tracing(config.log_json);
+    let rastos = init_tracing(config.log_json);
     // Avisado DEPOIS de os logs existirem — antes perdia-se sem ninguém ver.
     if config.allow_insecure {
         tracing::warn!(
@@ -1576,6 +2077,25 @@ pub async fn run() {
         tenancy = ?config.tenancy_mode,
         "perfil da instalação"
     );
+    // Os tectos da admissão, ditos no arranque (ADR-0017). O inventário do
+    // operador publica o NÚMERO mas não de onde veio, e um tecto que vale por
+    // omissão é indistinguível de um declarado depois de gravado — é aqui que
+    // a diferença fica escrita. Um nó sem tecto nenhum passa a ser um AVISO,
+    // porque é um estado que só uma medição de carga deve querer.
+    match (config.node_peer_capacity, config.org_max_participants) {
+        (None, None) => tracing::warn!(
+            "SEM TECTO DE ADMISSÃO: NODE_PEER_CAPACITY=0 e nenhum tecto de organização. \
+             O nó aceita participantes até degradar e nada se recusa — é o que uma rampa \
+             de carga quer, e não o que uma instalação a servir gente quer."
+        ),
+        (node, org) => tracing::info!(
+            node_peer_capacity = ?node,
+            node_declarado = std::env::var("NODE_PEER_CAPACITY").is_ok(),
+            org_max_participants = ?org,
+            org_declarado = std::env::var("ORG_MAX_PARTICIPANTS").is_ok(),
+            "tectos da admissão (`declarado = false` => omissão do código)"
+        ),
+    }
 
     // `delonix-server migrate`: corre as migrações e sai. É o que o Job de
     // migração do SaaS executa antes do rollout (ADR-0006 §4).
@@ -1617,7 +2137,10 @@ pub async fn run() {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 ticker.tick().await;
-                let n = state.hub.expire_disconnected(janela);
+                // Também avisa `meetings::on_room_emptied` para cada sala que
+                // isto deixou vazia — sinal fiável de "a reunião acabou",
+                // independente de topologia/SFU.
+                let n = crate::meetings::sweep_expired_seats(&state, janela).await;
                 if n > 0 {
                     state
                         .metrics
@@ -1650,6 +2173,24 @@ pub async fn run() {
             .set(Arc::new(PalcoNoSfu(state.sfu.clone())) as Arc<dyn signaling::StageControl>);
     }
 
+    // A dobragem ao vivo (ADR-0030): a frase final que a sala já difundiu
+    // chega à voz por aqui. Sem `TTS_URL` o registo fica sempre vazio e isto
+    // não faz nada — é a mesma forma fail-closed do resto da IA.
+    {
+        struct DobragemNoRegisto(Arc<AppState>);
+        impl signaling::DubControl for DobragemNoRegisto {
+            fn say(&self, room_id: uuid::Uuid, text: &str) {
+                // Não bloqueia: quem chama está a tratar uma mensagem do
+                // WebSocket, e a tradução e a síntese são pedidos de rede.
+                self.0.dub.diz(self.0.clone(), room_id, text);
+            }
+        }
+        let _ = state
+            .hub
+            .dub
+            .set(Arc::new(DobragemNoRegisto(state.clone())) as Arc<dyn signaling::DubControl>);
+    }
+
     // Ponte telefone↔sala (ADR-0010): o UA SIP que atende a segunda perna que
     // o FreeSWITCH origina. Sem configuração não abre socket nenhum.
     voice::start_phone_bridge(&state).await;
@@ -1665,21 +2206,59 @@ pub async fn run() {
         quarantine_stop.clone(),
     ));
 
+    // Cron: aparelhos de push (delonix-push) cuja sessão terminou ou expirou deixam de se poder ligar ao serviço
+    // (ADR-0023). Sem o serviço configurado não faz nada.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                match voice_devices::reconcile_delonix(&state).await {
+                    0 => {}
+                    n => tracing::info!(revogados = n, "aparelhos revogados no delonix-push"),
+                }
+            }
+        });
+    }
+
     // Cron: retenção de gravações (DLP-lite) a cada hora — apaga as que
     // passaram do prazo configurado por organização.
     {
         let state = state.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+            // Como os outros cinco ciclos de `run()`: uma volta que passe da
+            // hora não faz a seguinte disparar já. A varredura de artefactos
+            // órfãos pode levar o seu tempo depois de uma cascata grande, e
+            // reentrar de imediato era reler o mesmo conjunto.
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 ticker.tick().await;
                 recorder::retention_sweep(&state).await;
+                // Os `tmp-*` que nenhuma composição reclama. Antes acumulavam
+                // para sempre: só o caminho feliz os apagava.
+                match recorder::sweep_orphan_segments(&state).await {
+                    0 => {}
+                    n => tracing::info!(apagados = n, "segmentos órfãos apagados"),
+                }
+                // E os ficheiros que o registo nomeia e cuja gravação já não
+                // existe: um recorte levado pelo `ON DELETE CASCADE` da 0118,
+                // ou uma gravação levada pela cascata de `rooms`/`users`. É o
+                // backstop do caminho de cima — a retenção purga pelo registo
+                // antes de apagar a linha, e isto apanha o que ninguém mandou
+                // apagar. Não olha para o disco: a lista sai da tabela.
+                recording_artifacts::sweep_orphans(&state).await;
             }
         });
     }
 
-    // Cron: gravações — as presas em `processing` por um pod que morreu passam
-    // a `failed`, e as transcritas ganham capítulos automáticos (LLM local).
+    // Cron: gravações — as composições abandonadas por um pod que morreu são
+    // RETOMADAS (o primeiro `tick` é imediato, que é o que importa: o caso
+    // normal é este processo acabar de arrancar depois de um rollout que
+    // interrompeu uma composição); só depois se fecham as que já não têm
+    // retoma possível, e as transcritas ganham capítulos automáticos.
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -1687,6 +2266,10 @@ pub async fn run() {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 ticker.tick().await;
+                match recorder::resume_due(&state).await {
+                    0 => {}
+                    n => tracing::info!(retomadas = n, "composições retomadas"),
+                }
                 recorder::fail_stale_processing(&state).await;
                 recording_chapters::auto_chapters_sweep(&state).await;
             }
@@ -1891,8 +2474,73 @@ pub async fn run() {
         });
     }
 
-    // Gateway de SMS: envio pelos operadores e varrimento das mensagens paradas.
-    sms::spawn_worker(state.clone());
+    // As filas de trabalho durável: tarefas com `CancellationToken`, paradas no
+    // drain em vez de abortadas a meio da volta (ver `jobs.rs`). Os ciclos
+    // acima são `tokio::spawn` soltos por migrar — à medida que cada fila passa
+    // pela peça comum, desce para aqui.
+    let mut filas = jobs::Filas::new();
+    sms::levanta_filas(&mut filas, state.clone());
+    // Chamadas penduradas (trabalho nº5): o `finish_stale` só corria de
+    // handlers de LEITURA, por isso uma chamada que ficou a tocar sem fim
+    // bloqueava o ramal e contava para o limite de concorrência até alguém
+    // abrir o ecrã daquela sala ou organização. Agora não precisa de ninguém a
+    // olhar. São `UPDATE`s idempotentes, não reivindicações — dois nós fecham
+    // as mesmas linhas com o mesmo resultado.
+    {
+        let db = state.db.clone();
+        filas.levanta("telephony_stale", Duration::from_secs(60), move || {
+            let db = db.clone();
+            async move {
+                let a = dial_outs::finish_stale_all(&db).await?;
+                let b = telephony_service::finish_stale_all(&db).await?;
+                Ok((a + b) as usize)
+            }
+        });
+    }
+
+    // Correio (D7, ADR-0025): a cada 15 s manda o que está na caixa de saída e
+    // repete o que falhou. No-op sem `SMTP_HOST`/`SMTP_FROM` — o relay é do
+    // operador e um servidor sem ele simplesmente não envia.
+    {
+        let s = state.clone();
+        filas.levanta("mail_send", Duration::from_secs(15), move || {
+            let s = s.clone();
+            async move { mail::send_due(&s).await }
+        });
+    }
+    // As abandonadas (um processo que morreu a meio de um envio) e a retenção.
+    {
+        let db = state.db.clone();
+        filas.levanta("mail_sweep", Duration::from_secs(120), move || {
+            let db = db.clone();
+            async move {
+                let (reagendadas, apagadas) = mail::sweep(&db).await?;
+                Ok((reagendadas + apagadas) as usize)
+            }
+        });
+    }
+
+    // Os recortes e os shorts: a cada 20 s, dois por volta. A espera pelo
+    // ffmpeg é das vagas do gravador (`fair_slots`), não deste ritmo — um
+    // agente a pedir vinte recortes não afoga as composições de outra
+    // organização.
+    {
+        let s = state.clone();
+        filas.levanta("recording_clip", Duration::from_secs(20), move || {
+            let s = s.clone();
+            async move { recording_clips::render_due(&s).await }
+        });
+    }
+
+    // O resumo da acta pelo LLM (trabalho nº4): a cada minuto, o que foi
+    // enfileirado ao gravar a ata ou pela rota. No-op sem `OLLAMA_URL`.
+    {
+        let s = state.clone();
+        filas.levanta("mom_summary", Duration::from_secs(60), move || {
+            let s = s.clone();
+            async move { ai::mom_summary_due(&s).await }
+        });
+    }
 
     if let Some(addr) = config.internal_bind_addr.clone() {
         let internal = build_internal_router(state.clone());
@@ -1942,6 +2590,10 @@ pub async fn run() {
         async move {
             shutdown_signal().await;
             quarantine_stop.cancel();
+            // As filas param ANTES do drain das salas: uma volta que esteja a
+            // escrever na base acaba enquanto a base ainda está lá, e nenhuma
+            // nova começa durante o drain.
+            filas.parar(std::time::Duration::from_secs(5)).await;
             drenar(state).await;
         }
     })
@@ -1949,6 +2601,9 @@ pub async fn run() {
     .unwrap();
     // Uma passagem em curso acaba; nenhuma nova começa.
     let _ = quarantine_sweeper.await;
+    // Depois do drain e das tarefas de fundo: é agora que o último lote de
+    // spans tem de sair, e é o lote de quem estava a fechar que interessa ver.
+    desligar_rastos(rastos);
 }
 
 /// Espera SIGTERM (K8s rollout/drain) ou Ctrl-C. Quando dispara, o axum PÁRA de
@@ -2038,6 +2693,7 @@ async fn drenar(state: Arc<AppState>) {
                 segundos = inicio.elapsed().as_secs(),
                 "drain: todas as salas esvaziaram"
             );
+            esperar_composicoes(&state).await;
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -2047,6 +2703,58 @@ async fn drenar(state: Arc<AppState>) {
         segundos = limite.as_secs(),
         "drain: prazo esgotado — a fechar com participantes ainda ligados"
     );
+    esperar_composicoes(&state).await;
+}
+
+/// Dá às composições em curso o que resta do prazo de terminação.
+///
+/// O drain contava só os peers do WebSocket, e por isso toda a gravação que
+/// estivesse a compor durante um rollout morria com o pod: o ffmpeg tem
+/// `FFMPEG_TIMEOUT_SECS` (3600 s por omissão) e o drain tinha 52 s. Isto não
+/// resolve o desencontro — nem pode, o K8s manda SIGKILL aos 60 s —, resolve
+/// o caso frequente: a composição que estava quase a acabar acaba.
+///
+/// O que NÃO acaba já não se perde: a linha ficou `processing` com manifesto e
+/// a reserva expira, por isso o pod seguinte retoma-a (`recorder::resume_due`).
+/// Esta espera é uma optimização, não a garantia.
+async fn esperar_composicoes(state: &Arc<AppState>) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let em_curso = || state.metrics.recording_compose_running.load(Relaxed);
+    if em_curso() == 0 {
+        return;
+    }
+    let limite = std::time::Duration::from_secs(state.config.drain_compose_secs);
+    let inicio = std::time::Instant::now();
+    tracing::info!(
+        composicoes = em_curso(),
+        segundos = limite.as_secs(),
+        "drain: a aguardar composições em curso"
+    );
+    while inicio.elapsed() < limite {
+        if em_curso() == 0 {
+            tracing::info!(
+                segundos = inicio.elapsed().as_secs(),
+                "drain: composições terminadas"
+            );
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    tracing::warn!(
+        composicoes = em_curso(),
+        "drain: prazo esgotado — as composições em curso vão ser retomadas por outro nó"
+    );
+}
+
+/// Esvazia o que o exportador de rastos tem em buffer. Chama-se no fim do
+/// `run()`: sem isto, o último lote de spans morre com o processo — e é
+/// justamente o lote de quem estava a fechar que interessa ver.
+fn desligar_rastos(provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>) {
+    if let Some(p) = provider {
+        if let Err(e) = p.shutdown() {
+            tracing::warn!(error = %e, "o exportador de rastos não fechou limpo");
+        }
+    }
 }
 
 /// Uma passagem do sweeper de autorização (ADR-0008 §6, §8, §11).

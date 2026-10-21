@@ -74,6 +74,22 @@ pub struct Metrics {
     /// os dois diz se a janela está bem dimensionada: muitos a expirar e ou a
     /// janela é curta, ou as pessoas estão mesmo a sair.
     pub seats_expired_total: AtomicU64,
+    /// Lugares reclamados a partir da cópia no Redis (o pod que os guardava
+    /// morreu ou a sala mudou de pod). Dentro de `seats_reclaimed_total`.
+    pub seats_reclaimed_redis_total: AtomicU64,
+    /// Salas NOVAS recusadas porque o nó estava no limite da capacidade
+    /// declarada (`NODE_PEER_CAPACITY`). Um valor a subir é o sinal para
+    /// acrescentar nós; a zero com capacidade declarada, a regra nunca actuou.
+    pub node_new_rooms_refused_total: AtomicU64,
+    /// Dentro das anteriores: as recusadas porque o inquilino já usava a sua parte
+    /// justa do nó (zona de margem). A diferença para o total são as recusadas
+    /// por o nó estar na capacidade, que não é de ninguém em particular.
+    pub node_new_rooms_refused_fair_share_total: AtomicU64,
+    /// Ligações `/ws` recusadas por a conta já ter `MAX_WS_PER_USER` sockets.
+    pub ws_refused_user_cap_total: AtomicU64,
+    /// Ligações `/ws` recusadas por a organização já ter o seu tecto de
+    /// participantes concorrentes neste nó.
+    pub ws_refused_org_quota_total: AtomicU64,
     /// Microfones fora do top-N de oradores (áudio não reencaminhado). É a
     /// medida directa da poupança de downlink de voz.
     pub sfu_audio_suppressed: AtomicI64,
@@ -125,16 +141,48 @@ pub struct Metrics {
     pub chat_persist_dropped_total: AtomicU64,
     /// Escritas de chat que a base de dados recusou.
     pub chat_persist_failed_total: AtomicU64,
+    /// Frases de legenda RECUSADAS por vir do motor de voz do browser (a Web
+    /// Speech, que envia o áudio à Google) numa organização que o proíbe
+    /// (`organizations.allow_web_speech = false`).
+    ///
+    /// Existe para que a política se possa MEDIR de fora do cliente que a
+    /// devia cumprir: um número a subir aqui significa que há browsers na
+    /// organização a usar o motor proibido — ou um cliente a mentir no campo
+    /// `engine`, que é o limite honesto desta imposição.
+    pub caption_engine_refused_total: AtomicU64,
     /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
     /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
     /// pior, e porque uma gravação corrompida em silêncio é a R18.
     pub recording_packets_dropped_total: AtomicU64,
+    /// Pacotes de áudio que a gravação não escreveu: chegaram atrasados para lá
+    /// da janela de reordenação, ou repetidos — ver `recorder::OpusTrack`. Um
+    /// atrasado dentro da janela escreve-se no sítio e não conta aqui.
+    pub recording_audio_late_dropped_total: AtomicU64,
+    /// Saltos do relógio de uma pista de áudio que a gravação NÃO encheu de
+    /// silêncio, por serem maiores do que o tempo que passou (um timestamp
+    /// corrompido, uma origem que recomeçou o relógio lá à frente) — ver
+    /// `recorder::OpusGapFill`. A fala a seguir fica adiantada na gravação.
+    pub recording_audio_gap_unfilled_total: AtomicU64,
     /// Composições de gravação à espera de vaga (`FFMPEG_MAX_CONCURRENT`). Um
     /// valor que não desce é o sinal de que o nó compõe mais do que aguenta.
     pub recording_compose_queued: AtomicI64,
     /// Composições a correr agora; nunca passa de `FFMPEG_MAX_CONCURRENT`.
     pub recording_compose_running: AtomicI64,
+    /// Ficheiros de pista ISO DESCARTADOS por não terem linha em
+    /// `recording_tracks` — a base recusou o `INSERT`, ou a pista estava
+    /// vazia. Qualquer valor acima de zero é matéria-prima de uma gravação
+    /// que não volta, e por isso é contador e não `tracing::error!` perdido no
+    /// log: era exactamente assim que a pista `screen-audio` desaparecia em
+    /// silêncio (`CHECK` da migração 0124, corrigido na 0125).
+    pub recording_iso_tracks_discarded_total: AtomicU64,
+    /// Artefactos de gravação que o registo (`recording_artifacts`, migração
+    /// 0126) manda apagar e que NÃO saíram do disco: um `unlink` recusado
+    /// (permissões, volume em leitura) ou uma linha com um caminho inseguro,
+    /// escrita por fora do `CHECK` da 0126. A linha fica e volta a ser tentada
+    /// no tique seguinte, por isso um valor que não desce é disco que não se
+    /// liberta — e, no segundo caso, alguém a escrever na tabela por fora.
+    pub recording_artifacts_stuck_total: AtomicU64,
 
     /// Escritas de auditoria que FALHARAM. Qualquer valor acima de zero
     /// significa uma trilha incompleta — que é uma falha de conformidade em
@@ -213,6 +261,21 @@ impl Metrics {
              # HELP delonix_seats_expired_total Lugares reservados que expiraram sem reclamação.\n\
              # TYPE delonix_seats_expired_total counter\n\
              delonix_seats_expired_total {}\n\
+             # HELP delonix_seats_reclaimed_redis_total Lugares reclamados a partir do Redis (pod anterior perdido).\n\
+             # TYPE delonix_seats_reclaimed_redis_total counter\n\
+             delonix_seats_reclaimed_redis_total {}\n\
+             # HELP delonix_node_new_rooms_refused_total Salas novas recusadas por o nó estar no limite da capacidade.\n\
+             # TYPE delonix_node_new_rooms_refused_total counter\n\
+             delonix_node_new_rooms_refused_total {}\n\
+             # HELP delonix_node_new_rooms_refused_fair_share_total Salas novas recusadas por o inquilino já usar a sua parte justa do nó.\n\
+             # TYPE delonix_node_new_rooms_refused_fair_share_total counter\n\
+             delonix_node_new_rooms_refused_fair_share_total {}\n\
+             # HELP delonix_ws_refused_user_cap_total Ligações /ws recusadas por a conta ter o máximo de sockets.\n\
+             # TYPE delonix_ws_refused_user_cap_total counter\n\
+             delonix_ws_refused_user_cap_total {}\n\
+             # HELP delonix_ws_refused_org_quota_total Ligações /ws recusadas por a organização ter o tecto de participantes.\n\
+             # TYPE delonix_ws_refused_org_quota_total counter\n\
+             delonix_ws_refused_org_quota_total {}\n\
              # HELP delonix_sfu_audio_suppressed Microfones fora do top-N de oradores.\n\
              # TYPE delonix_sfu_audio_suppressed gauge\n\
              delonix_sfu_audio_suppressed {}\n\
@@ -249,12 +312,24 @@ impl Metrics {
              # HELP delonix_recording_packets_dropped_total Pacotes perdidos por fila de gravação cheia.\n\
              # TYPE delonix_recording_packets_dropped_total counter\n\
              delonix_recording_packets_dropped_total {}\n\
+             # HELP delonix_recording_audio_late_dropped_total Pacotes de áudio atrasados ou repetidos que a gravação não escreveu.\n\
+             # TYPE delonix_recording_audio_late_dropped_total counter\n\
+             delonix_recording_audio_late_dropped_total {}\n\
+             # HELP delonix_recording_audio_gap_unfilled_total Saltos do relógio do áudio que a gravação não encheu de silêncio.\n\
+             # TYPE delonix_recording_audio_gap_unfilled_total counter\n\
+             delonix_recording_audio_gap_unfilled_total {}\n\
              # HELP delonix_recording_compose_queued Composições de gravação à espera de vaga.\n\
              # TYPE delonix_recording_compose_queued gauge\n\
              delonix_recording_compose_queued {}\n\
              # HELP delonix_recording_compose_running Composições de gravação a correr (ffmpeg).\n\
              # TYPE delonix_recording_compose_running gauge\n\
              delonix_recording_compose_running {}\n\
+             # HELP delonix_recording_iso_tracks_discarded_total Ficheiros de pista ISO descartados por não terem linha em recording_tracks.\n\
+             # TYPE delonix_recording_iso_tracks_discarded_total counter\n\
+             delonix_recording_iso_tracks_discarded_total {}\n\
+             # HELP delonix_recording_artifacts_stuck_total Artefactos de gravação que o registo manda apagar e que não saíram do disco.\n\
+             # TYPE delonix_recording_artifacts_stuck_total counter\n\
+             delonix_recording_artifacts_stuck_total {}\n\
              # HELP delonix_audit_write_failures_total Escritas de auditoria falhadas (trilha incompleta).\n\
              # TYPE delonix_audit_write_failures_total counter\n\
              delonix_audit_write_failures_total {}\n\
@@ -273,6 +348,9 @@ impl Metrics {
              # HELP delonix_chat_persist_failed_total Escritas de chat recusadas pela base de dados.\n\
              # TYPE delonix_chat_persist_failed_total counter\n\
              delonix_chat_persist_failed_total {}\n\
+             # HELP delonix_caption_engine_refused_total Legendas recusadas por vir do motor do browser numa organizacao que o proibe.\n\
+             # TYPE delonix_caption_engine_refused_total counter\n\
+             delonix_caption_engine_refused_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -291,6 +369,11 @@ impl Metrics {
             self.sfu_recordings_orphaned_total.load(Relaxed),
             self.seats_reclaimed_total.load(Relaxed),
             self.seats_expired_total.load(Relaxed),
+            self.seats_reclaimed_redis_total.load(Relaxed),
+            self.node_new_rooms_refused_total.load(Relaxed),
+            self.node_new_rooms_refused_fair_share_total.load(Relaxed),
+            self.ws_refused_user_cap_total.load(Relaxed),
+            self.ws_refused_org_quota_total.load(Relaxed),
             g(self.sfu_audio_suppressed.load(Relaxed)),
             g(self.ws_queue_high_water.load(Relaxed)),
             self.ws_queue_dropped_total.load(Relaxed),
@@ -303,15 +386,64 @@ impl Metrics {
             self.qos_turn_relay_total.load(Relaxed),
             self.qos_cpu_limited_total.load(Relaxed),
             self.recording_packets_dropped_total.load(Relaxed),
+            self.recording_audio_late_dropped_total.load(Relaxed),
+            self.recording_audio_gap_unfilled_total.load(Relaxed),
             g(self.recording_compose_queued.load(Relaxed)),
             g(self.recording_compose_running.load(Relaxed)),
+            self.recording_iso_tracks_discarded_total.load(Relaxed),
+            self.recording_artifacts_stuck_total.load(Relaxed),
             self.audit_write_failures_total.load(Relaxed),
             self.join_total.load(Relaxed),
             self.join_ms_sum.load(Relaxed),
             self.join_slow_total.load(Relaxed),
             self.chat_persist_dropped_total.load(Relaxed),
             self.chat_persist_failed_total.load(Relaxed),
+            self.caption_engine_refused_total.load(Relaxed),
             uptime_secs,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    /// O `render` é um `format!` posicional gigante: um valor inserido fora de
+    /// ordem desloca TODOS os seguintes e cada métrica passa a reportar o
+    /// número da vizinha — em silêncio, com o painel verde. Este teste põe um
+    /// valor único no contador novo e exige que apareça na SUA linha.
+    #[test]
+    fn o_contador_de_pistas_iso_descartadas_sai_na_sua_linha() {
+        let m = Metrics::default();
+        m.recording_iso_tracks_discarded_total.store(4242, Relaxed);
+        let s = m.render(7);
+        assert!(
+            s.contains("delonix_recording_iso_tracks_discarded_total 4242"),
+            "a linha não saiu com o valor certo"
+        );
+        // E não contaminou as vizinhas: nenhuma outra linha ficou com 4242.
+        let com_valor: Vec<&str> = s.lines().filter(|l| l.ends_with(" 4242")).collect();
+        let esperada = ["delonix_recording_iso_tracks_discarded_total 4242"];
+        assert_eq!(
+            com_valor, esperada,
+            "o valor saiu na linha de outra métrica"
+        );
+    }
+
+    /// O mesmo para o contador dos artefactos presos — e com um valor
+    /// DIFERENTE do de cima de propósito: dois contadores vizinhos com o mesmo
+    /// valor passariam o teste um do outro mesmo trocados.
+    #[test]
+    fn o_contador_de_artefactos_presos_sai_na_sua_linha() {
+        let m = Metrics::default();
+        m.recording_artifacts_stuck_total.store(3131, Relaxed);
+        let s = m.render(7);
+        let com_valor: Vec<&str> = s.lines().filter(|l| l.ends_with(" 3131")).collect();
+        assert_eq!(
+            com_valor,
+            ["delonix_recording_artifacts_stuck_total 3131"],
+            "o valor saiu na linha de outra métrica"
+        );
     }
 }

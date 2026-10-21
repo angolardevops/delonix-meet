@@ -14,7 +14,35 @@ O que este chart NÃO faz (README §«Fora do chart»):
 {{- if not .Values.postgresql.enabled }}
   - a base de dados: é externa (DATABASE_URL no Secret) — HA, backup e PITR são de quem a opera;
 {{- end }}
-  - whisper e ollama (transcrição e IA): não são instalados.
+{{- if not (or .Values.ollama.enabled .Values.whisper.enabled) }}
+  - a IA (ollama.enabled, whisper.enabled): não é instalada. Sem ela a ata fica
+    pela versão por regras e as legendas pelo motor do browser — que no Chrome
+    é a Web Speech, e essa ENVIA O ÁUDIO PARA A GOOGLE.
+{{- end }}
+{{- if or .Values.ollama.enabled .Values.whisper.enabled }}
+
+IA in-cluster:
+{{- if .Values.ollama.enabled }}
+  LLM local: {{ printf "%s:%s" .Values.ollama.image.repository (toString .Values.ollama.image.tag) }}
+    ata (MoM): {{ .Values.ollama.modelSummary }}   legendas: {{ .Values.ollama.modelTranslate }}
+    O pod PUXA {{ len .Values.ollama.models }} modelo(s) no arranque ({{ join ", " .Values.ollama.models }}).
+    Isso são gigabytes: até acabar, o servidor responde «modelo não instalado»
+    e a fila da ata volta a tentar — não se perde nada, mas também não há ata.
+      kubectl -n {{ .Release.Namespace }} exec deploy/delonix-ollama -- ollama list
+{{- if not .Values.ollama.nodeSelector }}
+    SEM GPU: a ata leva minutos (é em lote, no fim da reunião) e a tradução da
+    legenda em tempo real fica no limite. Ver o ADR-0024.
+{{- end }}
+{{- end }}
+{{- if .Values.whisper.enabled }}
+  ASR soberano: {{ printf "%s:%s" .Values.whisper.image.repository (toString .Values.whisper.image.tag) }} (modelo {{ .Values.whisper.model }}, {{ .Values.whisper.device }})
+    O áudio do microfone vai a este pod e a mais nenhum sítio. A imagem embute
+    o modelo — constrói-se com `BUILD_WHISPER=1 deploy/build-images.sh`, não
+    com `make image`.
+      kubectl -n {{ .Release.Namespace }} port-forward deploy/delonix-whisper 8000:8000 &
+      curl -s localhost:8000/health
+{{- end }}
+{{- end }}
 {{- if .Values.voice.enabled }}
 
 Voz:

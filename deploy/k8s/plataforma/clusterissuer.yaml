@@ -1,0 +1,59 @@
+# O emissor dos certificados de meet.ngolacloud.com, no modo `dedicado`.
+#
+# APLICADO SÓ EM `dedicado` — é o único modo em que o `instalar.sh` cria
+# emissores. Em `partilhado` o cert-manager e o emissor são de quem é dono do
+# cluster e este ficheiro não é aplicado. Medido a 2026-10-11 no `delonix-lda`
+# (que é `partilhado`): o único ClusterIssuer é o `delonix-letsencrypt`, e o
+# cluster não tem IngressClass nenhuma — serve por Gateway API.
+#
+# E EM `partilhado` O CHART NÃO PEDE EMISSOR NENHUM, nem precisa. Medido a
+# 2026-10-13 no `delonix-lda`: quem termina o TLS é o listener `https` do
+# Gateway `delonix` (ns `delonix-system`), com DOIS certificateRefs —
+# `delonix-wildcard-tls` (8 nomes `.com`, entre eles `meet.ngolacloud.com`) e
+# `delonix-wildcard-tls-dns01` (`*.ngolacloud.ao`, `ngolacloud.ao`). Os dois
+# Certificate são do operador do cluster e apontam ao emissor dele,
+# `delonix-letsencrypt` (DNS-01 rfc2136 para o `.ao`, HTTP-01 por
+# `gatewayHTTPRoute` para o resto). O Meet cola-se a esse listener
+# (`gateway.mode: attach`, `sectionName: https`) e consome o segredo — não
+# emite nada. Os dois nomes coexistem sem conflito: `letsencrypt-prod` é deste
+# ficheiro e do modo `dedicado`, `delonix-letsencrypt` é do operador.
+#
+# O contacto do ACME NÃO se edita aqui: o `instalar.sh` exige `ACME_EMAIL` e
+# substitui-o nos dois emissores. O valor abaixo é o que ele procura, por isso
+# não deve aparecer em comentário nenhum — o sed trocá-lo-ia lá também.
+#
+# O desafio é HTTP-01 pelo ingress: exige que o 80 de meet.ngolacloud.com
+# chegue a este cluster de fora. Se o domínio ainda não apontar para cá, o
+# certificado fica pendente e o ingress serve o certificado próprio do nginx —
+# não é avaria, é o DNS.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ops@ngolacloud.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-conta
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+---
+# O de ensaio, para experimentar sem gastar o limite do Let's Encrypt (cinco
+# certificados por domínio por semana, e esgotá-lo bloqueia sete dias).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ops@ngolacloud.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-conta
+    solvers:
+      - http01:
+          ingress:
+            class: nginx

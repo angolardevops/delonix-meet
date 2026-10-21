@@ -24,8 +24,17 @@ import {
 
 const area = (rs: { w: number; h: number }[]) => rs.reduce((n, r) => n + r.w * r.h, 0)
 
+/**
+ * A `moldura` é o ÚNICO layout que não enche o palco, e é de propósito: o preto
+ * à volta e a faixa do topo são o desenho, não espaço perdido. Por isso fica de
+ * fora da invariante de cobertura e tem a sua, logo a seguir — e a lista é
+ * derivada de `LAYOUTS`, não escrita à mão, para que um layout novo entre
+ * automaticamente na invariante em vez de ser esquecido.
+ */
+const LAYOUTS_QUE_ENCHEM = LAYOUTS.filter((l) => l !== 'moldura')
+
 describe('rectsDoLayout — cada layout cobre o palco inteiro, sem buracos', () => {
-  for (const layout of LAYOUTS) {
+  for (const layout of LAYOUTS_QUE_ENCHEM) {
     it(`${layout}: a área somada é a do canvas, para 1–9 fontes`, () => {
       for (let n = 1; n <= 9; n++) {
         const rs = rectsDoLayout(layout, n, 1920, 1080)
@@ -34,6 +43,32 @@ describe('rectsDoLayout — cada layout cobre o palco inteiro, sem buracos', () 
       }
     })
   }
+
+  it('moldura: NÃO enche o palco — a margem é o desenho — mas as peças não se pisam nem saem', () => {
+    for (let n = 1; n <= 9; n++) {
+      const rs = rectsDoLayout('moldura', n, 1920, 1080)
+      expect(rs.length).toBe(Math.min(n, MAXIMO_POR_LAYOUT.moldura))
+      // Deixa preto a descoberto — é o que a distingue dos outros layouts.
+      expect(area(rs)).toBeLessThan(1920 * 1080 * 0.95)
+      // Mas o que desenha é são: nada fora do canvas, nada sobreposto.
+      for (const r of rs) {
+        expect(r.x).toBeGreaterThanOrEqual(0)
+        expect(r.y).toBeGreaterThanOrEqual(0)
+        expect(r.x + r.w).toBeLessThanOrEqual(1920 + 1e-9)
+        expect(r.y + r.h).toBeLessThanOrEqual(1080 + 1e-9)
+        expect(r.w).toBeGreaterThan(0)
+        expect(r.h).toBeGreaterThan(0)
+      }
+      for (let i = 0; i < rs.length; i++)
+        for (let j = i + 1; j < rs.length; j++) {
+          const [a, b] = [rs[i], rs[j]]
+          const pisa = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+          expect(pisa, `n=${n}: peça ${i} pisa a ${j}`).toBe(false)
+        }
+      // O primeiro lugar é o HERÓI, e é o maior de todos.
+      if (rs.length > 1) for (const r of rs.slice(1)) expect(rs[0].w * rs[0].h).toBeGreaterThan(r.w * r.h)
+    }
+  })
 
   it('sem fontes não há nada a desenhar', () => {
     for (const layout of LAYOUTS) expect(rectsDoLayout(layout, 0, 1920, 1080)).toEqual([])
@@ -142,9 +177,11 @@ describe('formatos', () => {
   })
 
   it('formatarBytes', () => {
+    // Desde que há UM formatador (`ui/format`): rótulo binário honesto e
+    // decimais só a partir de MiB. Isto dizia «1.50 KB» para 1536 bytes.
     expect(formatarBytes(512, 'en-GB')).toBe('512 B')
-    expect(formatarBytes(1536, 'en-GB')).toBe('1.50 KB')
-    expect(formatarBytes(42.8 * 1024 ** 3, 'en-GB')).toBe('42.8 GB')
+    expect(formatarBytes(1536, 'en-GB')).toBe('2 KiB')
+    expect(formatarBytes(42.8 * 1024 ** 3, 'en-GB')).toBe('42.8 GiB')
   })
 
   it('partirEmLinhas não perde palavras', () => {

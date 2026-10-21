@@ -201,6 +201,9 @@ function HistorySearch({ entries, render }: { entries: Entry[]; render: (list: E
         text: (e) => (e.kind === 'missed' ? e.m.caller_name : `${e.c.caller_number} ${e.c.did_e164}`),
       },
     }),
+    // O `key` resume a língua e os filtros. As funções de desenho que este
+    // memo devolve fecham sobre o `t`, e listá-lo refazia o objecto a cada
+    // render — o `key` muda quando a língua muda, que é o que importa.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key],
   )

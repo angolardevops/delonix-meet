@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+#  A StorageClass do MinIO — UMA réplica, de propósito.
+#
+#  A `longhorn` por omissão deste cluster tem `numberOfReplicas: 2`. Para o
+#  MinIO isso é pagar DUAS VEZES pela mesma redundância: o MinIO em
+#  `mode: distributed` já faz erasure coding entre os seus quatro pods e
+#  aguenta perder um sem perder dados. Replicar cada volume por baixo não
+#  acrescenta durabilidade — acrescenta escrita, espaço e latência.
+#
+#  Medido a 2026-10-07 no `delonix-lda`: Longhorn com 2993 GiB livres, mas
+#  distribuídos de forma muito desigual — w-1/w-2/w-3 com 146 GiB cada, w-4
+#  com 391 e w-5 com 2163. Com réplica 2 e volumes de 250Gi (o que o
+#  `minio-values.yaml` pedia), três dos cinco nós ficavam de fora e o volume
+#  não assentava. Com réplica 1 e 100Gi assenta em qualquer um.
+#
+#  `dataLocality: best-effort` e não `disabled`: com uma só réplica, vale a
+#  pena que ela fique no nó onde o pod corre — o MinIO lê e escreve muito, e
+#  assim não atravessa a rede para falar com o seu próprio disco.
+#
+#  `reclaimPolicy: Retain` e não `Delete`: um `helm uninstall minio` não leva
+#  as gravações com ele. Apagar os dados passa a ser um acto deliberado.
+# ---------------------------------------------------------------------------
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-minio
+  labels:
+    app.kubernetes.io/part-of: ngolacloud
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "1"
+  dataLocality: best-effort
+  staleReplicaTimeout: "30"
+  fsType: ext4
+  unmapMarkSnapChainRemoved: ignored

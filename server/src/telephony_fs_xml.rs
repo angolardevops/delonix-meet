@@ -16,8 +16,12 @@
 //!   `limit_execute` para os canais máximos — excepto na emergência, que nunca
 //!   é travada por limite de canais —, gravação só quando a regra o diz).
 //! - `section=directory`, `purpose=gateways`: os gateways de todos os troncos
-//!   activos (o perfil sofia usa `<domain name="delonix-trunks" parse="true"/>`; `all` só lê o directório estático), com a
-//!   password decifrada — por isso só no listener interno e com o segredo.
+//!   activos, com a password decifrada — por isso só no listener interno e
+//!   com o segredo. O perfil sofia pede-os com
+//!   `<domain name="delonix-trunks" parse="true"/>`, e SÓ com esse: o
+//!   `<domain name="all">` da vanilla também chega aqui, e com os dois a lista
+//!   é lida duas vezes a cada `rescan` (R291). O arranque distribuído troca um
+//!   pelo outro (`voice/cluster/freeswitch-entrypoint.sh`, passo 7b).
 //!
 //! Autenticação: `VOICE_INTERNAL_SECRET` por HTTP Basic (`gateway-credentials`).
 
@@ -39,12 +43,24 @@ use crate::{error::ApiError, AppState};
 
 pub const OUTBOUND_CONTEXT: &str = "delonix-outbound";
 
+/// Escapa um valor para dentro de um atributo XML que o FreeSWITCH vai ler.
+///
+/// O `$` também, e não é por causa do XML: o FreeSWITCH passa a resposta do
+/// `mod_xml_curl` pelo PRÉ-PROCESSADOR antes de a ler, e esse troca
+/// `$${nome}` pelo valor da variável global `nome`. O segredo de voz é uma
+/// (`delonix_voice_secret`). O utilizador e a password de um tronco são texto
+/// que o administrador de QUALQUER organização escreve: cru, um utilizador
+/// `$${delonix_voice_secret}` punha o FreeSWITCH a registar-se no servidor
+/// SIP dele com o segredo da plataforma no `From` (R291, medido). Como
+/// referência numérica o pré-processador não o vê, e o leitor de XML
+/// devolve-o como o `$` que era.
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+        .replace('$', "&#36;")
 }
 
 pub fn not_found() -> String {
@@ -87,6 +103,33 @@ pub fn dialplan_extension(
     // O CDR que conta é o de cada perna B (uma por tentativa de tronco: é o
     // que dá o ASR por operadora). A perna A — o PBX que marcou — marca-se
     // para a ingestão a ignorar; o resto EXPORTA-se para as pernas B.
+    // O `mod_json_cdr` distribuído NÃO regista pernas B (um registo leva as
+    // chaves SRTP da perna): a do tronco pede-o na dial string, com
+    // `force_process_cdr=true` (R291). E volta a ligar o registo NA PRÓPRIA
+    // perna (`execute_on_originate`): a perna de quem marca — um ramal —
+    // tem `process_cdr=false`, e o FreeSWITCH copia esse valor para a perna
+    // que ela origina DEPOIS de aplicar as variáveis da dial string
+    // (switch_core_session.c). Sem isto a chamada de um ramal saía pelo
+    // tronco e não deixava registo: não se cobrava (R292, medido).
+    //
+    // Mais três coisas na perna do tronco, todas medidas ou lidas no fonte:
+    // - `unset switch_m_sdp`: ao originar, o FreeSWITCH copia para ela o SDP
+    //   que quem marcou ofereceu — com a chave SRTP dele —, e o registo leva
+    //   todas as variáveis. Só o modo proxy lê essa cópia.
+    // - `execute_on_post_bridge=unset switch_m_sdp`: a cópia VOLTA a ser escrita
+    //   sempre que quem marcou manda um SDP novo a meio da chamada — pôr em
+    //   espera e retomar chega (sofia_glue_pass_sdp, sem condição). Tira-se
+    //   outra vez quando a ponte acaba, na própria perna (`trunk_leg_vars`).
+    // - `outbound_redirect_fatal`: um 3xx da operadora não é seguido. Segui-lo
+    //   era ligar a um destino que a operadora escolhe (e que não passou pela
+    //   guarda de saída, R213), ou a outro número por conta da organização.
+    // - na perna de quem marca, `sip_copy_custom_headers=false`: os
+    //   cabeçalhos `X-…`/`P-…` do INVITE do ramal iam para a operadora — um
+    //   `P-Asserted-Identity` escrito pelo telefone, por exemplo.
+    act("set", "sip_copy_custom_headers=false".into());
+    // E as partes de um INVITE multipart (a de SDP incluída) também não:
+    // ficavam no registo da perna do tronco e seguiam no corpo para a operadora.
+    act("set", "sip_copy_multipart=false".into());
     act("set", "delonix_cdr_skip=true".into());
     act("export", format!("delonix_org_id={org_id}"));
     act("export", "delonix_direction=outbound".into());
@@ -115,16 +158,18 @@ pub fn dialplan_extension(
                     act(
                         "bridge",
                         format!(
-                            "[delonix_trunk_id={}]sofia/gateway/{gw}/{wire_number}",
-                            leg.trunk_id
+                            "[{}]sofia/gateway/{gw}/{wire_number}",
+                            trunk_leg_vars(leg.trunk_id)
                         ),
                     );
                 } else {
                     act(
                         "limit_execute",
                         format!(
-                            "hash delonix_trunk {} {} bridge [delonix_trunk_id={}]sofia/gateway/{gw}/{wire_number}",
-                            leg.trunk_id, leg.max_channels, leg.trunk_id
+                            "hash delonix_trunk {} {} bridge [{}]sofia/gateway/{gw}/{wire_number}",
+                            leg.trunk_id,
+                            leg.max_channels,
+                            trunk_leg_vars(leg.trunk_id)
                         ),
                     );
                 }
@@ -288,32 +333,37 @@ pub async fn handler(
     }
 }
 
+/// As variáveis da perna de um TRONCO (o que vai dentro de `[...]`).
+///
+/// A cópia do SDP de quem marcou (`switch_m_sdp`, com a chave SRTP dele) é
+/// tirada DUAS vezes: quando a perna nasce (`execute_on_originate_2`) e quando
+/// a ponte acaba (`execute_on_post_bridge`) — porque o FreeSWITCH volta a
+/// escrevê-la sempre que quem marcou manda um SDP novo a meio da chamada.
+///
+/// O que NÃO serve, medido (R292): um `api_hangup_hook=uuid_setvar …`. O texto
+/// do plano é expandido na perna de quem marca (duas vezes, com o
+/// `limit_execute`), e `${uuid}` saía com o identificador dela; e mesmo com o
+/// identificador certo (`origination_uuid`) o `uuid_setvar` não encontra uma
+/// sessão que já desligou (`switch_core_session_perform_read_lock`).
+fn trunk_leg_vars(trunk_id: Uuid) -> String {
+    format!(
+        "delonix_trunk_id={trunk_id},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true"
+    )
+}
+
 async fn dialplan(state: &AppState, form: &HashMap<String, String>) -> Result<Response, ApiError> {
     if form.get("Caller-Context").map(String::as_str) != Some(OUTBOUND_CONTEXT) {
         return Ok(xml(not_found()));
     }
-    // A org: a variável que nós pusemos, ou o domínio SIP de quem liga.
-    let org_id = match form
+    // A organização que paga é a variável que NÓS pusemos no canal — o Lua
+    // dos ramais (com a identidade que o digest autenticou), a chamada de
+    // teste pelo ESL — e mais nada. Havia um recuo para o host do Request-URI
+    // (`sip_req_host`): um dado que quem liga escreve. Sem a variável, não há
+    // rota (R292).
+    let Some(org_id) = form
         .get("variable_delonix_org_id")
         .and_then(|v| Uuid::parse_str(v).ok())
-    {
-        Some(o) => Some(o),
-        None => match form
-            .get("variable_sip_req_host")
-            .or_else(|| form.get("variable_domain_name"))
-        {
-            Some(host) => {
-                sqlx::query_scalar(
-                    "SELECT org_id FROM telephony_sip_settings WHERE lower(domain) = lower($1)",
-                )
-                .bind(host)
-                .fetch_optional(&state.db)
-                .await?
-            }
-            None => None,
-        },
-    };
-    let Some(org_id) = org_id else {
+    else {
         return Ok(xml(not_found()));
     };
     let destination = form
@@ -389,11 +439,23 @@ async fn gateways(state: &AppState) -> Result<Response, ApiError> {
         password_sealed: String,
     }
     let rows: Vec<Row> = sqlx::query_as(
+        // Os troncos de TODAS as organizações vão num só documento, e o
+        // mod_xml_curl deita fora a resposta inteira acima do seu limite: o
+        // tecto por organização vale também aqui, para as linhas que já lá
+        // estavam antes de ele existir.
         "SELECT id, org_id, host, port, transport, srtp, register, username, password_sealed
-           FROM telephony_trunks WHERE enabled ORDER BY org_id, position, id",
+           FROM (SELECT t.*, row_number() OVER (PARTITION BY org_id ORDER BY position, id) AS n
+                   FROM telephony_trunks t WHERE enabled) t
+          WHERE n <= $1 ORDER BY org_id, position, id",
     )
+    .bind(delonix_meet_domain::telephony::trunk::MAX_TRUNKS_PER_ORG)
     .fetch_all(&state.db)
     .await?;
+    // O host só é verificado quando o tronco se GRAVA (`telephony_trunks`):
+    // um nome que então não resolvia foi aceite, e o FreeSWITCH resolve-o por
+    // conta própria a cada registo. Voltar a perguntar ao DNS aqui punha o DNS
+    // de uma organização a atrasar os troncos de todas, e não fechava nada —
+    // um gateway já carregado nunca volta a ser verificado. Ver a R291.
     let mut specs = Vec::with_capacity(rows.len());
     for r in rows {
         // Um segredo que não abre não derruba os gateways das outras orgs.
@@ -425,6 +487,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tenant_text_cannot_reference_a_freeswitch_global() {
+        let g = gateways_directory(&[GatewaySpec {
+            trunk_id: Uuid::from_u128(7),
+            org_id: Uuid::nil(),
+            host: "sip.exemplo.ao".into(),
+            port: 5060,
+            transport: "udp".into(),
+            srtp: "off".into(),
+            register: true,
+            username: "$${delonix_voice_secret}".into(),
+            password: "pa$$${delonix_voice_secret}".into(),
+        }]);
+        // O pré-processador do FreeSWITCH procura `$${`: não pode lá estar.
+        assert!(!g.contains("$${"), "{g}");
+        assert!(!g.contains('$'), "{g}");
+        // E o valor continua a ser o que o inquilino escreveu, depois de lido.
+        assert!(
+            g.contains(r#"name="username" value="&#36;&#36;{delonix_voice_secret}""#),
+            "{g}"
+        );
+    }
+
+    #[test]
     fn route_extension_has_limits_failover_and_recording() {
         let (org, a, b) = (Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(2));
         let x = dialplan_extension(
@@ -451,15 +536,18 @@ mod tests {
         assert!(x.contains(r#"expression="^923447108$""#));
         let ia = x
             .find(&format!(
-                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a}]sofia/gateway/dlx-{a}/244923447108"
+                "hash delonix_trunk {a} 60 bridge [delonix_trunk_id={a},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{a}/244923447108"
             ))
             .unwrap();
         let ib = x
             .find(&format!(
-                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b}]sofia/gateway/dlx-{b}/244923447108"
+                "hash delonix_trunk {b} 30 bridge [delonix_trunk_id={b},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{b}/244923447108"
             ))
             .unwrap();
         assert!(ia < ib, "a ordem de failover é a da resolução");
+        // Nada na dial string depende de uma expansão: o texto é expandido
+        // na perna de quem marca, e um `${uuid}` saía com o identificador dela.
+        assert!(!x.contains("uuid_setvar") && !x.contains("origination_uuid"));
         assert!(x.contains("record_session"));
         assert!(x.contains("delonix_record=true"));
     }
@@ -485,7 +573,7 @@ mod tests {
         assert!(x.contains("delonix_record=false"));
         assert!(!x.contains("limit_execute"));
         assert!(x.contains(&format!(
-            r#"application="bridge" data="[delonix_trunk_id={a}]sofia/gateway/dlx-{a}/112""#
+            r#"application="bridge" data="[delonix_trunk_id={a},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{a}/112""#
         )));
     }
 

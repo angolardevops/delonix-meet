@@ -7,6 +7,9 @@
 //! - [`crypto`] — hashes, tokens aleatórios, comparação em tempo constante e
 //!   argon2, com UM dono (antes havia cópias em seis módulos);
 //! - [`page`] — paginação por cursor opaco, com limite obrigatório;
+//! - [`jobs`] — a forma e a aritmética de uma fila de trabalho durável
+//!   (reivindicação, posse, tentativas, backoff, justiça entre inquilinos):
+//!   havia SETE implementações do mesmo padrão sem uma linha partilhada;
 //! - [`query`] — pesquisa de lista estilo Odoo: domínio de filtro contra lista
 //!   branca, ordenação, agrupamento e keyset (ADR-0007);
 //! - [`edition`] — os perfis de instalação (SaaS, enterprise, pessoal);
@@ -18,6 +21,7 @@ pub mod crypto;
 pub mod edition;
 pub mod egress;
 pub mod error;
+pub mod jobs;
 pub mod page;
 pub mod query;
 pub mod secret_box;

@@ -93,3 +93,37 @@ export function saudeGlobal(info: EstadoServico | null): Saude {
 export function megabytes(bytes: number): string {
   return (bytes / 1_048_576).toFixed(1)
 }
+
+/**
+ * O SSO é uma navegação do browser: quando recusa ou falha, o servidor volta ao
+ * login com `#/login?sso_error=<código>`. Isto lê o código do endereço — `null`
+ * quando não há — e não aceita mais do que um código bem formado.
+ */
+export function ssoErroDoEndereco(hash: string): string | null {
+  const q = hash.split('?')[1]
+  if (!q) return null
+  const codigo = new URLSearchParams(q).get('sso_error')
+  return codigo && /^[a-z_.]{1,64}$/.test(codigo) ? codigo : null
+}
+
+/** O código do SSO → a chave da frase que a pessoa lê. */
+export function chaveDoErroSso(codigo: string): string {
+  switch (codigo) {
+    case 'sso.domain_not_verified':
+      return 'auth.ssoErro.dominioPorProvar'
+    case 'sso.account_not_in_org':
+      return 'auth.ssoErro.foraDaOrg'
+    case 'sso.email_domain_mismatch':
+      return 'auth.ssoErro.outroDominio'
+    case 'sso.provider_unavailable':
+      return 'auth.ssoErro.fornecedorEmBaixo'
+    case 'sso.invalid_id_token':
+      return 'auth.ssoErro.tokenRecusado'
+    case 'auth.unauthenticated':
+      return 'auth.ssoErro.expirou'
+    case 'conflict':
+      return 'auth.ssoErro.contaEmConflito'
+    default:
+      return 'auth.ssoErro.generico'
+  }
+}

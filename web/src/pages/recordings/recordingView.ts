@@ -12,14 +12,16 @@
  * nunca um número inventado.
  */
 import type { RecordingLibraryItem } from '../../api'
+import { hasFile as fileExists, isProcessing } from './format'
 
 export type SessionCategory = 'training' | 'hybrid' | 'broadcast' | 'meeting'
 
 /**
- * Fase da gravação. Não há «a processar»: o servidor só cria a linha depois de
- * o ficheiro estar composto.
+ * Fase da gravação. `processing` é o servidor a compor o ficheiro: a linha
+ * nasce quando a gravação pára, antes de o ffmpeg correr, e ainda não há nada
+ * para abrir.
  */
-export type Pipeline = 'transcribing' | 'ready' | 'published' | 'failed'
+export type Pipeline = 'processing' | 'transcribing' | 'ready' | 'published' | 'failed'
 
 export interface RecordingView {
   /** Item original — só para o passar às funções da API (descarregar, partilhar). */
@@ -31,7 +33,7 @@ export interface RecordingView {
   roomCode: string
   uploaderName: string
   createdAt: string
-  /** `null` numa falhada: não há ficheiro, e «0 MB» leria-se como ficheiro vazio. */
+  /** `null` sem ficheiro (falhada ou a compor): «0 MB» leria-se como ficheiro vazio. */
   sizeBytes: number | null
   owned: boolean
   shareCount: number
@@ -39,6 +41,10 @@ export interface RecordingView {
   canManage: boolean
   failed: boolean
   failureReason: string | null
+  /** O servidor ainda está a compor o ficheiro. Não é uma falha, e não há o que abrir. */
+  processing: boolean
+  /** Há ficheiro para reproduzir. Sem ele não se oferece nenhuma acção (R59). */
+  hasFile: boolean
   pipeline: Pipeline
   published: boolean
   hasThumbnail: boolean
@@ -84,8 +90,12 @@ export function displayName(filename: string): string {
 const CATEGORIES: SessionCategory[] = ['training', 'hybrid', 'broadcast', 'meeting']
 
 export function fromRecordingItem(r: RecordingLibraryItem): RecordingView {
-  const failed = r.status === 'failed'
-  const published = !failed && (r.state === 'published' || r.visibility === 'org')
+  const processing = isProcessing(r)
+  const hasFile = fileExists(r)
+  // Sem ficheiro e sem estar a compor é falhada — também um estado que esta
+  // consola não conheça, que falha fechado como no servidor (`file_status`).
+  const failed = !hasFile && !processing
+  const published = hasFile && (r.state === 'published' || r.visibility === 'org')
   return {
     source: r,
     id: r.id,
@@ -94,14 +104,16 @@ export function fromRecordingItem(r: RecordingLibraryItem): RecordingView {
     roomCode: r.room_code,
     uploaderName: r.uploader_name,
     createdAt: r.created_at,
-    sizeBytes: failed ? null : r.size_bytes,
+    sizeBytes: hasFile ? r.size_bytes : null,
     owned: r.owned,
     shareCount: r.share_count,
     canDownload: r.can_download,
     canManage: r.can_manage,
     failed,
     failureReason: r.failure_reason,
-    pipeline: failed ? 'failed' : r.status === 'transcribing' ? 'transcribing' : published ? 'published' : 'ready',
+    processing,
+    hasFile,
+    pipeline: failed ? 'failed' : processing ? 'processing' : r.status === 'transcribing' ? 'transcribing' : published ? 'published' : 'ready',
     published,
     hasThumbnail: r.has_thumbnail,
     snippet: r.snippet ?? null,

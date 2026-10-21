@@ -97,6 +97,14 @@ pub trait SipControl: Send + Sync {
     /// Força um novo REGISTER dos gateways (FreeSWITCH `sofia profile … killgw`
     /// + `rescan`). Não espera pelo resultado: o estado lê-se no `snapshot`.
     async fn restart_registration(&self, gateway_names: &[String]) -> Result<(), PortError>;
+    /// O ramal `sip_username@domain` tem um registo vivo no media server? Serve a chamada que o servidor
+    /// origina para um ramal móvel (ADR-0023): se não está registado, acorda-se o aparelho e espera-se pelo
+    /// registo antes de ligar.
+    async fn extension_registered(
+        &self,
+        sip_username: &str,
+        domain: &str,
+    ) -> Result<bool, PortError>;
 }
 
 // ============================================================
@@ -111,6 +119,17 @@ pub struct DialLeg {
     pub gateway_name: String,
     /// O número como a operadora o quer (E.164 sem `+`, ou nacional).
     pub number: String,
+}
+
+/// Uma perna para um ramal da PRÓPRIA instalação (`user/<sip_username>@<domínio>`,
+/// resolvido pelo directório do FreeSWITCH). Não sai por nenhum tronco: não tem
+/// tarifa, e só toca se o ramal estiver registado.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InternalLeg {
+    /// A AOR do ramal (`voice_extensions.sip_username`), nunca o número curto.
+    pub sip_username: String,
+    /// O domínio SIP da organização (`<slug>.<sufixo>`).
+    pub domain: String,
 }
 
 /// O que acontece depois de a pessoa atender.
@@ -187,6 +206,9 @@ pub struct OriginateRequest {
     pub call_id: Uuid,
     pub org_id: Uuid,
     pub legs: Vec<DialLeg>,
+    /// Um ramal interno em vez de troncos: exactamente um dos dois (`legs` ou
+    /// `internal`) tem de estar preenchido.
+    pub internal: Option<InternalLeg>,
     /// Número apresentado; `None` = o do tronco.
     pub caller_id: Option<String>,
     pub record: bool,

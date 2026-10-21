@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: delonix-config
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 data:
   TURN_HOST: "{{ public_ip_effective }}:3478"
   TURN_REALM: "{{ turn_realm }}"
@@ -11,7 +11,7 @@ data:
   COOKIE_INSECURE: "0"
   RECORDINGS_DIR: /var/lib/delonix/recordings
   OLLAMA_URL: >-
-    {{ 'http://delonix-ollama.delonix-meet.svc.cluster.local:11434'
+    {{ 'http://delonix-ollama.ngolacloud-meet.svc.cluster.local:11434'
        if ollama_enabled | bool else '' }}
   OLLAMA_MODEL_TRANSLATE: "{{ ollama_model_translate }}"
   OLLAMA_MODEL_SUMMARY: "{{ ollama_model_summary }}"
@@ -21,11 +21,11 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: delonix-secrets
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 type: Opaque
 stringData:
-  DATABASE_URL: "postgres://delonix:{{ postgres_password }}@delonix-postgres-postgresql.delonix-meet.svc.cluster.local:5432/delonix_meet"
-  REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
+  DATABASE_URL: "postgres://delonix:{{ postgres_password }}@delonix-postgres-postgresql.ngolacloud-meet.svc.cluster.local:5432/delonix_meet"
+  REDIS_URL: "redis://delonix-redis-master.ngolacloud-meet.svc.cluster.local:6379"
   JWT_SECRET: "{{ jwt_secret }}"
   TURN_SECRET: "{{ turn_secret }}"
   DATA_ENCRYPTION_KEYS: "{{ data_encryption_keys }}"

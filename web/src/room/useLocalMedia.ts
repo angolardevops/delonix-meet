@@ -6,10 +6,13 @@ import {
   BackgroundEffect,
   Denoiser,
   DeviceSets,
+  type Facing,
+  facingOf,
   HeadTracker,
   playTestTone,
   presetBackgrounds,
   videoConstraints,
+  withNativeNoiseSuppression,
 } from '../media'
 import type { RoomCore } from './useRoomCore'
 
@@ -32,10 +35,16 @@ export function useLocalMedia(core: RoomCore) {
   const [devices, setDevices] = useState<DeviceSets>({ mics: [], cams: [], speakers: [] })
   const [micId, setMicId] = useState('')
   const [camId, setCamId] = useState('')
+  /**
+   * Para que lado a câmara actual aponta, quando o browser o diz. `undefined`
+   * num computador — e é por isso que serve para decidir se o botão de virar
+   * aparece: só faz sentido onde há frente e trás.
+   */
+  const [facing, setFacing] = useState<Facing | undefined>(undefined)
   const [speakerId, setSpeakerId] = useState('')
   // Supressão de ruído por IA (RNNoise) — LIGADA por omissão, ou o que a
   // pessoa escolheu em Definições ➜ Conta ➜ Preferências ao entrar. Se
-  // falhar, fica a track crua com a supressão nativa do browser.
+  // falhar, o microfone volta à supressão nativa do browser (ver `denoiseMic`).
   const [noiseSuppression, setNoiseSuppression] = useState(() => readJoinPrefs().noiseSuppression)
 
   const [bgMode, setBgMode] = useState<BgMode>(() => (readJoinPrefs().blurByDefault ? 'blur' : 'none'))
@@ -95,6 +104,11 @@ export function useLocalMedia(core: RoomCore) {
       signal.on('room-settings', (m) => setAllowUnmute(m.allow_unmute ?? true)),
     ]
     return () => offs.forEach((off) => off())
+    // Só `signal`: estes handlers registam-se uma vez por LIGAÇÃO e o cleanup
+    // tira-os. Com `t` ou `setStatus` nas dependências, trocar de língua a meio
+    // de uma chamada desmontava e reregistava todos os handlers — e os eventos
+    // que chegassem no intervalo perdiam-se. O `core.localStreamRef` é um ref:
+    // estável por definição, e o ESLint só o acusa por vir dentro de `core`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal])
 
@@ -105,24 +119,47 @@ export function useLocalMedia(core: RoomCore) {
     if (core.roomState === 'in') signal.send({ type: 'media', cam: (camOn && hasLocalVideo) || meshSharing, mic: micOn })
   }, [camOn, micOn, hasLocalVideo, core.sharing, core.roomState, core.topology, signal])
 
-  /** Aplica (ou retira) a supressão por IA e devolve a track a enviar. */
+  /**
+   * Aplica (ou retira) a cadeia de voz e devolve a track a ENVIAR.
+   *
+   * É a ÚNICA porta por onde um microfone chega à chamada, e garante que há
+   * sempre UMA supressão de ruído — nem duas, nem nenhuma:
+   *
+   *  - `ns` ligado: o RNNoise trata do ruído e a supressão nativa do browser
+   *    sai (duas em série não limpam o dobro). Se o RNNoise não carregar, a
+   *    nativa VOLTA — é o recuo, e é o que impede um microfone sem supressão;
+   *  - `ns` desligado: o processamento nativo do browser, como sempre.
+   *
+   * Quem abre o microfone pede-o já no estado certo
+   * (`audioConstraints(id, !ns)`), e por isso no caminho normal nada se reabre.
+   * Quando não bate certo (a opção mudou na pré-entrada depois de o microfone
+   * estar aberto, ou o RNNoise falhou), o `withNativeNoiseSuppression` reabre
+   * o microfone — e a track devolvida pode ser OUTRA que não a recebida.
+   *
+   * `source: 'mix'` é a mistura de dois microfones: não tem dispositivo que se
+   * possa reabrir, e as duas entradas já vêm com a supressão nativa ligada
+   * (ver `toggleSecondMic` na pré-entrada).
+   */
   const denoiseMic = useCallback(
-    async (rawTrack: MediaStreamTrack, ns: boolean): Promise<MediaStreamTrack> => {
+    async (rawTrack: MediaStreamTrack, ns: boolean, source: 'device' | 'mix' = 'device'): Promise<MediaStreamTrack> => {
       core.denoiserRef.current?.stop()
       core.denoiserRef.current = null
       core.rawMicRef.current?.stop()
       core.rawMicRef.current = null
-      if (!ns) return rawTrack
+      const native = (track: MediaStreamTrack, on: boolean) =>
+        source === 'mix' ? Promise.resolve(track) : withNativeNoiseSuppression(track, on)
+      if (!ns) return native(rawTrack, true)
+      const raw = await native(rawTrack, false)
       try {
         const d = new Denoiser()
-        const clean = await d.process(rawTrack)
-        clean.enabled = rawTrack.enabled
+        const clean = await d.process(raw)
+        clean.enabled = raw.enabled
         core.denoiserRef.current = d
-        core.rawMicRef.current = rawTrack // mantém-se viva: alimenta o denoiser
+        core.rawMicRef.current = raw // mantém-se viva: alimenta o denoiser
         return clean
       } catch (e) {
         console.warn('[denoise] RNNoise indisponível — supressão nativa do browser', e)
-        return rawTrack
+        return native(raw, true)
       }
     },
     [core.denoiserRef, core.rawMicRef],
@@ -142,15 +179,21 @@ export function useLocalMedia(core: RoomCore) {
       setMicOn(track.enabled)
       return
     }
-    // Sem track (espectador ou mic negado à entrada): adquire agora.
+    // Sem track (espectador ou mic negado à entrada): adquire agora — e pela
+    // MESMA cadeia de voz que os outros caminhos. Este entrava com a track
+    // crua mesmo com a supressão por IA ligada: quem ligava o microfone tarde
+    // soava diferente de quem entrava com ele.
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(micId || undefined) })
-      const newTrack = s.getAudioTracks()[0]
-      if (!newTrack) throw new Error('sem microfone')
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(micId || undefined, !noiseSuppression) })
+      const raw = s.getAudioTracks()[0]
+      if (!raw) throw new Error('sem microfone')
+      // O deviceId lê-se ANTES do denoise: a track limpa não o tem.
+      const devId = raw.getSettings().deviceId ?? ''
+      const newTrack = await denoiseMic(raw, noiseSuppression)
       core.localStreamRef.current?.addTrack(newTrack)
       await core.callRef.current?.replaceAudioTrack(newTrack)
       if (core.localStreamRef.current) core.levelsRef.current?.watch('me', core.localStreamRef.current)
-      setMicId(newTrack.getSettings().deviceId ?? '')
+      setMicId(devId)
       setMicOn(true)
     } catch {
       setStatus(t('room.estado.semAcessoMicrofone'))
@@ -181,13 +224,19 @@ export function useLocalMedia(core: RoomCore) {
       return
     }
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(camId || undefined) })
+      // Sem `camId` ainda (primeira vez), pede-se o lado que a pessoa tinha —
+      // ou nenhum, e o browser escolhe. No telemóvel é aqui que o `facing`
+      // fica a saber-se.
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints(camId || undefined, facing),
+      })
       const track = s.getVideoTracks()[0]
       track.contentHint = 'motion'
       core.cameraTrackRef.current = track
       core.localStreamRef.current?.addTrack(track)
       setHasLocalVideo(true)
       setCamOn(true)
+      setFacing(facingOf(track))
       let sendTrack = track
       if (bgMode !== 'none' && core.effectRef.current) sendTrack = await core.effectRef.current.start(track)
       await core.callRef.current?.enableVideo(sendTrack, core.localStreamRef.current ?? s)
@@ -205,18 +254,27 @@ export function useLocalMedia(core: RoomCore) {
       // Escolher UM microfone desfaz a mistura de dois da pré-entrada.
       core.micMixRef.current?.stop()
       core.micMixRef.current = null
-      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId || undefined) })
+      // Com a cadeia de voz (`ns`), o microfone pede-se SEM a supressão nativa.
+      // Se for o MESMO microfone que já está aberto, o Chromium devolve-o com
+      // o processamento que tinha (uma fonte por microfone) — quem acerta é o
+      // `denoiseMic`, a seguir.
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId || undefined, !ns) })
       const raw = s.getAudioTracks()[0]
       raw.enabled = micOn
       // O deviceId lê-se ANTES do denoise: a track limpa não o tem.
       const devId = raw.getSettings().deviceId ?? deviceId
-      const sendTrack = await denoiseMic(raw, ns)
-      sendTrack.enabled = micOn
+      // A pista que se estava a enviar pára ANTES de acertar a nova, e não
+      // depois: sem RNNoise ela É a pista do microfone, e enquanto viver
+      // prende-lhe o processamento — a nova reabria com a supressão antiga.
+      // Só se pára depois de o microfone novo ter aberto (acima): se o pedido
+      // falhar, a chamada fica com o microfone que tinha.
       const old = core.localStreamRef.current?.getAudioTracks()[0]
       if (old) {
         core.localStreamRef.current?.removeTrack(old)
         old.stop()
       }
+      const sendTrack = await denoiseMic(raw, ns)
+      sendTrack.enabled = micOn
       core.localStreamRef.current?.addTrack(sendTrack)
       await core.callRef.current?.replaceAudioTrack(sendTrack)
       if (core.localStreamRef.current) core.levelsRef.current?.watch('me', core.localStreamRef.current)
@@ -226,9 +284,19 @@ export function useLocalMedia(core: RoomCore) {
     }
   }
 
-  async function switchCam(deviceId: string) {
+  /**
+   * Troca a câmara por `deviceId`, ou — quando o `deviceId` vem vazio e há um
+   * `facing` — pelo LADO para que ela aponta.
+   *
+   * O caminho do lado existe para o telemóvel: lá, o `deviceId` não é de
+   * confiança (etiquetas vazias antes da permissão, ids que rodam entre
+   * sessões) e o `facingMode` é o que o browser sabe responder.
+   */
+  async function switchCam(deviceId: string, facing?: Facing) {
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(deviceId || undefined) })
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints(deviceId || undefined, facing),
+      })
       const newTrack = s.getVideoTracks()[0]
       newTrack.contentHint = 'motion'
       newTrack.enabled = camOn
@@ -253,9 +321,24 @@ export function useLocalMedia(core: RoomCore) {
         }
       }
       setCamId(newTrack.getSettings().deviceId ?? deviceId)
+      setFacing(facingOf(newTrack))
     } catch {
       setStatus(t('room.estado.naoMudouCamara'))
     }
+  }
+
+  /**
+   * Vira a câmara: frontal ↔ traseira. É o gesto que falta no telemóvel, e a
+   * razão de ele não existir antes é que o código só sabia escolher câmaras por
+   * `deviceId` — que no telemóvel não diz para onde elas apontam.
+   *
+   * Pede o lado CONTRÁRIO ao da pista actual. Se o browser não disser o lado
+   * (um computador), assume-se que se está na frontal e pede-se a traseira: no
+   * pior caso o `ideal` devolve a mesma câmara e nada se estraga.
+   */
+  async function flipCam() {
+    const actual = facingOf(core.cameraTrackRef.current) ?? 'user'
+    await switchCam('', actual === 'user' ? 'environment' : 'user')
   }
 
   async function toggleNoiseSuppression() {
@@ -269,7 +352,7 @@ export function useLocalMedia(core: RoomCore) {
     // Com dois microfones misturados, reprocessa-se a MISTURA — voltar a pedir
     // um só microfone desfazia a escolha da pré-entrada sem aviso.
     try {
-      const sendTrack = await denoiseMic(mix.freshOutput(), next)
+      const sendTrack = await denoiseMic(mix.freshOutput(), next, 'mix')
       sendTrack.enabled = micOn
       const old = core.localStreamRef.current?.getAudioTracks()[0]
       if (old) {
@@ -412,6 +495,9 @@ export function useLocalMedia(core: RoomCore) {
     toggleCam,
     switchMic,
     switchCam,
+    flipCam,
+    facing,
+    setFacing,
     toggleNoiseSuppression,
     testSpeaker: () => void playTestTone(speakerId),
     bgMode,

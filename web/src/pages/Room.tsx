@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../i18n'
-import { currentUser } from '../api'
+import { participanteLocal, souConvidado } from '../convidado'
 import { Icon } from '../ui/icons'
 import { usePresence } from '../components/PresenceProvider'
 import { Button, Dialog, IconButton, Tabs } from '../ui/kit'
@@ -9,6 +9,8 @@ import '../ui/room.css'
 import { AudioSink } from '../room/AudioSink'
 import { ChatPanel } from '../room/ChatPanel'
 import { ControlBar } from '../room/ControlBar'
+import { DuplicateDeviceDialog, DuplicateDeviceResult } from '../room/DuplicateDeviceDialog'
+import { DialOutDialog } from '../room/DialOutDialog'
 import { InviteDialog } from '../room/InviteDialog'
 import { MulticamPanel } from '../room/MulticamPanel'
 import { Notices } from '../room/Notices'
@@ -18,6 +20,7 @@ import { PollsPanel } from '../room/PollsPanel'
 import { Prejoin } from '../room/Prejoin'
 import { QaPanel } from '../room/QaPanel'
 import { SettingsPanel } from '../room/SettingsPanel'
+import { useDobragem } from '../room/useDobragem'
 import { Stage } from '../room/Stage'
 import { CaptionOverlay, ReactionsLayer, ReadyCard, SpotlightQuestion, WaitingOverlay, WinnerOverlay } from '../room/StageOverlays'
 import { EndedScreen, PassphraseScreen } from '../room/StateScreens'
@@ -27,6 +30,8 @@ import { Whiteboard } from '../room/Whiteboard'
 import { useBreakouts } from '../room/useBreakouts'
 import { entradaDirecta, useCallSession } from '../room/useCallSession'
 import { useChat } from '../room/useChat'
+import { useDuplicateDevice } from '../room/useDuplicateDevice'
+import { useDialOut } from '../room/useDialOut'
 import { useInvite } from '../room/useInvite'
 import { useLayout } from '../room/useLayout'
 import { destinosNoAr, useLive } from '../room/useLive'
@@ -40,6 +45,7 @@ import { useReactions } from '../room/useReactions'
 import { useRecording } from '../room/useRecording'
 import { useRemoteControl } from '../room/useRemoteControl'
 import { useRoomChrome, type Panel } from '../room/useRoomChrome'
+import { useAtalhos } from '../ui/useAtalhos'
 import { useRoomCore, type RemotePeer } from '../room/useRoomCore'
 import { useScreenShare } from '../room/useScreenShare'
 import { useTranscription } from '../room/useTranscription'
@@ -69,6 +75,9 @@ export default function Room({
   const locale = intlLocale(i18n.language)
   const [initial] = useState(() => (entradaDirecta(code, voiceOnly) ? 'connecting' : 'prejoin') as 'connecting' | 'prejoin')
 
+  /** Entrou sem conta: fica sem o que é da conta (gravar para a biblioteca, convidar colegas). */
+  const [convidado] = useState(souConvidado)
+
   const core = useRoomCore(code, initial)
   const media = useLocalMedia(core)
   const session = useCallSession(core, media, { voiceOnly, onLeave, onSwitch })
@@ -81,16 +90,22 @@ export default function Room({
   const chat = useChat(core, chrome.panel === 'chat')
   const reactions = useReactions(core)
   const transcription = useTranscription(core)
-  const recording = useRecording(core, {
-    onServerStopped: transcription.saveOnServerRecordingStop,
-    onUploaded: () => chrome.setPanel('people'),
-  })
+  const dobragem = useDobragem(core)
+  const recording = useRecording(
+    core,
+    {
+      onServerStopped: transcription.saveOnServerRecordingStop,
+      onUploaded: () => chrome.setPanel('people'),
+    },
+    chrome.panel === 'people',
+  )
   const share = useScreenShare(core, media)
   const whiteboard = useWhiteboard(core)
   const tools = useMeetingTools(core)
   const breakouts = useBreakouts(core, onSwitch)
   const remote = useRemoteControl(core)
   const invite = useInvite(code)
+  const dialOut = useDialOut(code)
   const multicam = useMulticam(core)
   const live = useLive(core)
   const enhancements = useStageEnhancements(core, media, layout, participants.conditions)
@@ -128,27 +143,24 @@ export default function Room({
   const onTileMute = participants.mute
   const onTileKick = participants.kick
 
-  // Atalhos Ctrl+D (microfone) e Ctrl+E (câmara). Chamam a acção DIRECTAMENTE:
-  // procurar o botão pelo `aria-label` partia-se em inglês e em francês.
-  // Na pré-entrada os mesmos atalhos actuam sobre a pré-visualização.
-  const atalhosRef = useRef({ media, prejoin, prejoinAtivo: core.roomState === 'prejoin' })
-  atalhosRef.current = { media, prejoin, prejoinAtivo: core.roomState === 'prejoin' }
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      if (!(e.ctrlKey || e.metaKey)) return
-      const k = e.key.toLowerCase()
-      if (k !== 'd' && k !== 'e') return
-      e.preventDefault()
-      const { media: m, prejoin: pj, prejoinAtivo } = atalhosRef.current
-      if (prejoinAtivo) pj.toggle(k === 'd' ? 'mic' : 'cam')
-      else if (k === 'd') void m.toggleMic()
-      else void m.toggleCam()
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [])
+  // Os atalhos da sala, do catálogo (`ui/atalhos.ts`): microfone e câmara
+  // (⌘D/⌘E, os mesmos do Google Meet) e os cinco painéis laterais, que até
+  // aqui só se abriam com o rato — numa reunião com a barra de controlos
+  // escondida não havia como chegar ao chat sem ela.
+  //
+  // O microfone e a câmara chamam a acção DIRECTAMENTE: procurar o botão pelo
+  // `aria-label` partia-se em inglês e em francês. Na pré-entrada actuam sobre
+  // a pré-visualização, e os painéis ainda não existem.
+  const noPrejoin = core.roomState === 'prejoin'
+  useAtalhos('sala', {
+    micro: () => (noPrejoin ? prejoin.toggle('mic') : void media.toggleMic()),
+    camara: () => (noPrejoin ? prejoin.toggle('cam') : void media.toggleCam()),
+    chat: noPrejoin ? undefined : () => chrome.togglePanel('chat'),
+    participantes: noPrejoin ? undefined : () => chrome.togglePanel('people'),
+    perguntas: noPrejoin ? undefined : () => chrome.togglePanel('qa'),
+    sondagens: noPrejoin ? undefined : () => chrome.togglePanel('polls'),
+    notas: noPrejoin ? undefined : () => chrome.togglePanel('notes'),
+  })
 
   // A segunda fonte escolhida na pré-entrada entra como apresentação assim que
   // a media liga — pelo caminho da partilha, com as mesmas permissões.
@@ -159,6 +171,9 @@ export default function Room({
     if (!fonte) return
     core.secondSourceRef.current = null
     void shareSource(fonte)
+    // Só `session.callState`: isto corre quando a media LIGA, uma vez. O
+    // `shareSource` está içado acima para estreitar as dependências; pô-lo aqui
+    // repartilhava a segunda fonte a cada render do painel de partilha.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.callState])
 
@@ -173,13 +188,14 @@ export default function Room({
   function leave() {
     void session.leave(transcription.saveOnLeave)
   }
+  const dispositivos = useDuplicateDevice(core, code, leave)
 
   // «O outro lado» de uma chamada de voz. Ao entrar, a lista chega a trazer um
   // instante a PRÓPRIA sessão (medido no e2e: o próprio peer_id/nome antes do
   // `joined`) — contá-la punha o cronómetro a correr e, ao sair da lista,
   // «a chamada terminou» antes de alguém atender. Outra sessão da mesma conta
   // (companion) também não é o outro lado.
-  const myName = currentUser()?.username
+  const myName = participanteLocal().username
   const otherSide = peers.filter((p) => p.peerId !== core.meuPeerIdRef.current && p.username !== myName)
 
   /** Liga a câmara nesta sessão; só muda de vista se a câmara ligou mesmo. */
@@ -269,7 +285,7 @@ export default function Room({
       ? t('room.topo.aPartilhar', {
           nome:
             core.presentation.peerId === 'me'
-              ? currentUser()?.username ?? ''
+              ? participanteLocal().username
               : peers.find((p) => p.peerId === core.presentation!.peerId)?.username ?? '',
         })
       : null
@@ -323,6 +339,7 @@ export default function Room({
         recording={recording.recording}
         recBusy={recording.recBusy}
         onToggleRecording={() => void recording.toggleLocal()}
+        podeGravar={!convidado}
         wbOpen={whiteboard.open}
         onToggleWhiteboard={whiteboard.toggle}
         transcribing={transcription.transcribing}
@@ -429,7 +446,7 @@ export default function Room({
             {whiteboard.open && (
               <Whiteboard
                 wb={whiteboard}
-                me={currentUser()?.username ?? ''}
+                me={participanteLocal().username}
                 myPeerId={core.meuPeerIdRef.current}
                 isHost={isHost}
                 controls={controlos}
@@ -447,6 +464,7 @@ export default function Room({
             )}
 
             <div className="rm-float">
+              <DuplicateDeviceResult dup={dispositivos} />
               {chrome.readyOpen && isHost && inRoom && (
                 <ReadyCard
                   code={code}
@@ -551,7 +569,8 @@ export default function Room({
                   breakouts={breakouts}
                   recordings={recording.recordings}
                   onDownload={recording.download}
-                  onInvite={invite.show}
+                  onInvite={convidado ? undefined : invite.show}
+                  onDialOut={convidado ? undefined : dialOut.show}
                   onPrivateMessage={(peer) => {
                     chat.setTarget({ peerId: peer.peerId, username: peer.username })
                     chrome.setPanel('chat')
@@ -561,7 +580,12 @@ export default function Room({
                 />
               )}
               {chrome.panel === 'settings' && (
-                <SettingsPanel media={media} transcription={transcription} localVideo={core.localVideoRef.current}>
+                <SettingsPanel
+                  media={media}
+                  transcription={transcription}
+                  dobragem={dobragem}
+                  localVideo={core.localVideoRef.current}
+                >
                   <EnhancementSettings enh={enhancements} viewMode={layout.effectiveViewMode} onSpeakerView={() => layout.setViewMode('stage')} />
                 </SettingsPanel>
               )}
@@ -575,6 +599,8 @@ export default function Room({
         <AudioSink peers={peers} sinkId={speakerId} mudo={companion} volume={media.outputVolume} />
 
         {invite.open && <InviteDialog invite={invite} />}
+        <DuplicateDeviceDialog dup={dispositivos} />
+        {dialOut.open && <DialOutDialog ctl={dialOut} />}
       </div>
     )
   }
@@ -647,7 +673,7 @@ export default function Room({
           }
         >
           <p>{t('room.confirmar.gravarE2eeTexto')}</p>
-          <p className="dx-muted">{t('room.confirmar.gravarE2eeNota', { nome: currentUser()?.username ?? '' })}</p>
+          <p className="dx-muted">{t('room.confirmar.gravarE2eeNota', { nome: participanteLocal().username })}</p>
         </Dialog>
       )}
     </div>

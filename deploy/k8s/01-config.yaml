@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: delonix-config
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 data:
   BIND_ADDR: "0.0.0.0:8180"
   # IP do LoadBalancer do coturn (51-coturn.yaml) — alcançável pelo SFU (pod)
@@ -13,20 +13,39 @@ data:
   # de candidatos ICE num host multi-homed). Exige coturn com --allowed-peer-ip.
   FORCE_TURN_RELAY: "1"
   SFU_EXTERNAL_IP: ""
+  # ADMISSÃO POR CAPACIDADE (ADR-0017). Participantes que este nó aguenta: com
+  # 4Gi de limite e ~73 MB de RSS por participante (medido,
+  # docs/ops/teste-de-carga-2026-10-05.md) são ~53, declarados 50.
+  # A 85% (42) o nó passa a recusar salas NOVAS de quem já usa a sua parte justa;
+  # aos 50 recusa a todos. Quem já está numa sala deste nó entra sempre.
+  # Desde 2026-10-18 a AUSÊNCIA desta variável já não é «nada se recusa»: vale
+  # 50, a capacidade deste deploy de referência. Só `0` — explícito — desliga a
+  # admissão, e é o que uma rampa de carga põe. Até 2026-10-13 a produção
+  # esteve sem ela, a aceitar até degradar.
+  NODE_PEER_CAPACITY: "50"
+  # Tecto por organização NESTE nó quando o operador não lhe fixou um
+  # (`PUT /api/operator/v1/organizations/{id}/concurrency`): 80% da capacidade,
+  # para que uma organização sozinha não feche o nó às outras. 429, não 503.
+  ORG_MAX_PARTICIPANTS: "40"
   # Gravações no PVC partilhado (montado em 02-server.yaml).
   RECORDINGS_DIR: "/var/lib/delonix/recordings"
   # LLM local (07-ollama.yaml): tradução de legendas + resumo da ata. Vazio
   # desliga a IA (MoM volta a ser por regras no cliente).
-  OLLAMA_URL: "http://delonix-ollama.delonix-meet.svc.cluster.local:11434"
+  OLLAMA_URL: "http://delonix-ollama.ngolacloud-meet.svc.cluster.local:11434"
   OLLAMA_MODEL_TRANSLATE: "qwen2.5:1.5b"
   OLLAMA_MODEL_SUMMARY: qwen2.5:7b
   # Estúdio (POST /api/orgs/{org_id}/ai/suggestions). Por omissão: o modelo do resumo,
   # tecto de 120 s (5..900) e 1 tarefa em simultâneo por organização (1..8).
   # OLLAMA_MODEL_STUDIO: qwen2.5:7b
   # OLLAMA_TIMEOUT_SECS: "120"
+  # A ata: a janela de transcrição no prompt (caracteres) e o tecto da
+  # chamada. A janela decide o `num_ctx` pedido ao Ollama — sem ele, o Ollama
+  # corta o prompt em silêncio (medido: 2 050 tokens de 4 835).
+  # MOM_WINDOW_CHARS: "24000"
+  # MOM_SUMMARY_TIMEOUT_SECS: "600"
   # AI_STUDIO_CONCURRENCY_PER_ORG: "1"
   # URL interno para a app interagir com Redis Sentinel (HA)
-  REDIS_URL: "redis://delonix-redis-master.delonix-meet.svc.cluster.local:6379"
+  REDIS_URL: "redis://delonix-redis-master.ngolacloud-meet.svc.cluster.local:6379"
 # O Secret `delonix-secrets` NÃO vive aqui.
 #
 # Esteve escrito neste ficheiro até 2026-10-04 (JWT_SECRET, TURN_SECRET,

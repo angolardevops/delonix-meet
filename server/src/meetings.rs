@@ -8,6 +8,8 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, Utc};
+use delonix_meet_domain::scheduling::calendar;
+pub(crate) use delonix_meet_domain::scheduling::calendar::Method as IcsMethod;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -24,6 +26,11 @@ pub struct Meeting {
     pub starts_at: DateTime<Utc>,
     pub duration_min: i32,
     pub room_code: Option<String>,
+    /// Instante em que o anfitrião arrancou a reunião, ou `null` se ainda não
+    /// arrancou. Desde a migração 0114 a sala nasce com a reunião, por isso
+    /// `room_code` já não distingue «agendada» de «a decorrer» — esta coluna
+    /// é que distingue.
+    pub started_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub room_ref: Option<Uuid>,
     #[serde(default)]
@@ -37,6 +44,13 @@ pub struct Meeting {
     pub recurrence_count: Option<i16>,
     pub recurrence_byday: Option<String>,
     pub recurrence_parent_id: Option<Uuid>,
+    // Organização em cujo contexto a reunião nasceu (migração 0104). Fonte
+    // de verdade de `meetings_v1::meeting_in_org` e das equivalentes em
+    // `apikeys.rs` — nunca a pertença (actual OU arquivada) do dono. `NULL`
+    // numa reunião órfã (dono sem organização nenhuma na altura da
+    // criação/backfill): fica invisível a qualquer chave `dlx_`. Nota de
+    // implementação — `//`, não `///`: não é descrição pública do contrato.
+    pub org_id: Option<Uuid>,
 }
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
@@ -48,17 +62,24 @@ pub struct Meeting {
         patch,
         create,
         check_conflicts,
+        reschedule,
         delete,
         start,
         ics,
+        minutes,
         save_minutes,
+        request_mom_summary,
         invitees,
+        external_invitees,
+        add_external_invitee,
+        remove_external_invitee,
         respond,
         quarantine_analytics,
         save_minutes_by_room,
         notes_by_room
     ),
     components(schemas(
+        RescheduleMeetingReq,
         Meeting,
         MeetingItem,
         SessionOptions,
@@ -69,10 +90,15 @@ pub struct Meeting {
         RoomConflict,
         Conflicts,
         MinutesReq,
+        MeetingMinutes,
+        MomSummaryState,
         RoomNotes,
         StartResp,
         ConflictCheckReq,
         InviteeResponse,
+        ExternalInvitee,
+        ExternalInviteeReq,
+        ExternalInviteeResp,
         RespondReq,
         QuarantineRow
     ))
@@ -88,9 +114,9 @@ pub struct ApiDoc;
 /// e mais um em `meetings_v1.rs`. Um só lugar, uma só vez (ADR-0004, Fase 3).
 pub const MEETING_COLUMNS: &str =
     "id, owner_id, title, description, kind, starts_at, duration_min, \
-     room_code, created_at, room_ref, minutes, transcript, recurrence_freq, \
+     room_code, started_at, created_at, room_ref, minutes, transcript, recurrence_freq, \
      recurrence_interval, recurrence_until, recurrence_count, recurrence_byday, \
-     recurrence_parent_id";
+     recurrence_parent_id, org_id";
 
 /// Reunião enriquecida para a UI do calendário.
 #[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -104,6 +130,9 @@ pub struct MeetingItem {
     pub starts_at: DateTime<Utc>,
     pub duration_min: i32,
     pub room_code: Option<String>,
+    /// `null` enquanto o anfitrião não arrancar. A consola usa-o para saber se
+    /// mostra «entrar» ou a contagem até à hora (migração 0114).
+    pub started_at: Option<DateTime<Utc>>,
     pub is_owner: bool,
     pub minutes: String,
     pub room_ref: Option<Uuid>,
@@ -304,6 +333,11 @@ pub struct CreateMeetingReq {
     pub duration_min: i32,
     #[serde(default)]
     pub invitee_ids: Vec<Uuid>,
+    /// Endereços de email de convidados **sem conta aqui**. Cada um recebe o
+    /// seu convite com o `.ics`; entram pela porta de convidado (nome + sala de
+    /// espera), como manda a R290. Máximo 50 por reunião.
+    #[serde(default)]
+    pub external_emails: Vec<String>,
     #[serde(default)]
     pub room_ref: Option<Uuid>,
     // Recorrência
@@ -550,6 +584,9 @@ pub async fn create(
     if !(5..=1440).contains(&req.duration_min) {
         return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
     }
+    // Os endereços externos validam-se ANTES de escrever: um endereço mal
+    // formado no meio da lista não pode deixar meia reunião criada.
+    let externos = normalize_external_emails(&req.external_emails)?;
     // `sessions.create` (ADR-0008 §1): o poder de criar, avaliado sobre o dono.
     crate::org::require_session_create(&state, auth.user_id, None).await?;
     req.options.validate()?;
@@ -574,13 +611,20 @@ pub async fn create(
         None
     };
 
-    // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
-    // membro da org do criador. NULL => ilimitado.
-    if let Some(org_id) = crate::org::orgs_of_user(&state, auth.user_id)
+    // Organização em cujo contexto a reunião nasce (migração 0104): a
+    // primeira organização ACTIVA do criador — mesma heurística que já
+    // servia só para a quota abaixo, agora também gravada em `meetings.org_id`
+    // (ver `meeting_in_org`/`v1_meetings`/`v1_meeting_notes`, que passam a
+    // confiar nesta coluna e não em pertença inferida). `None` só para uma
+    // conta sem organização nenhuma — a reunião nasce sem dono-de-org.
+    let creator_org_id = crate::org::orgs_of_user(&state, auth.user_id)
         .await
         .first()
-        .copied()
-    {
+        .copied();
+
+    // Quota de reuniões da organização (agenda): conta as reuniões cujo dono é
+    // membro da org do criador. NULL => ilimitado.
+    if let Some(org_id) = creator_org_id {
         let limit: Option<i32> =
             sqlx::query_scalar("SELECT max_meetings FROM organizations WHERE id = $1")
                 .bind(org_id)
@@ -630,11 +674,24 @@ pub async fn create(
         )));
     }
 
+    // A SALA NASCE AQUI, antes da transacção (migração 0114). Era criada só no
+    // `start`, e por isso uma reunião agendada não tinha link nenhum para
+    // partilhar: nem botão de copiar, nem URL no `.ics`, nem `join_url`
+    // utilizável na v1. Fica fora da transacção porque `insert_room` recebe a
+    // pool; o pior caso de a transacção abortar a seguir é uma sala vazia sem
+    // reunião, que não é alcançável por ninguém (o código nunca foi dado) e
+    // que nada no sistema confunde com uma sala a decorrer.
+    let room = criar_sala_da_reuniao(&state, auth.user_id, title, &req.options).await?;
+
+    // ANTES da transacção: as consultas do dono usam a pool.
+    let dono = dono_do_evento(&state, auth.user_id).await;
+    let mut tx = state.db.begin().await?;
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                recurrence_freq, recurrence_interval, recurrence_until, recurrence_count, recurrence_byday,
-                               format, waiting_room, auto_record, record_quality, sms_reminder_min)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                               format, waiting_room, auto_record, record_quality, sms_reminder_min, org_id,
+                               room_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
          RETURNING {MEETING_COLUMNS}"
     ))
     .bind(auth.user_id)
@@ -654,7 +711,9 @@ pub async fn create(
     .bind(req.options.auto_record)
     .bind(&req.options.record_quality)
     .bind(req.sms_reminder_min)
-    .fetch_one(&state.db)
+    .bind(creator_org_id)
+    .bind(&room.code)
+    .fetch_one(&mut *tx)
     .await?;
 
     for uid in req.invitee_ids.iter().filter(|u| **u != auth.user_id) {
@@ -664,11 +723,39 @@ pub async fn create(
         )
         .bind(meeting.id)
         .bind(uid)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
 
-    // Gera instâncias filhas para reuniões recorrentes (até 6 meses).
+    for email in &externos {
+        sqlx::query(
+            "INSERT INTO meeting_external_invitees (meeting_id, email, invited_by)
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+        )
+        .bind(meeting.id)
+        .bind(email)
+        .bind(auth.user_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // A reunião, os convidados e o registo do `meeting.created`: uma
+    // transacção (trabalho nº3). Fecha a janela em que um SIGTERM apagava o
+    // aviso sem deixar rasto, E de passagem torna atómico o que já não era —
+    // a reunião e os seus convidados eram duas escritas soltas, e uma falha
+    // no meio deixava uma reunião sem as pessoas convidadas.
+    let fila = match dono {
+        Some(d) => {
+            let ctx = monta_meeting_webhook(d, &meeting, "meeting.created");
+            enqueue_meeting_webhook(&mut tx, ctx, "meeting.created").await?
+        }
+        None => Vec::new(),
+    };
+    tx.commit().await?;
+
+    // Depois do commit: HTTP para fora, notificações e as instâncias filhas não
+    // seguram locks. As recorrentes já eram escritas à parte (cada instância é
+    // uma linha própria) — ficam onde estavam em efeito, só mais abaixo.
     if meeting.recurrence_freq.is_some() {
         let invitees: Vec<Uuid> = req
             .invitee_ids
@@ -678,9 +765,14 @@ pub async fn create(
             .collect();
         generate_instances(&state.db, &meeting, &invitees).await;
     }
-
-    fire_meeting_webhook(&state, &meeting, auth.user_id, "meeting.created").await;
+    crate::webhooks::envia(&state, "meeting.created", fila).await;
     crate::notifications::meeting_invited(&state, &meeting, auth.user_id, &req.invitee_ids).await;
+    // Os externos não passam pelo centro de notificações (não têm conta nem
+    // preferências): é um email directo, best-effort, com o `.ics` deste
+    // endereço. Depois do commit, como o resto do que sai para fora.
+    for email in &externos {
+        crate::meeting_invite_mail::send_best_effort(&state, &meeting, email).await;
+    }
 
     let sms = match sms_org {
         None => None,
@@ -722,44 +814,88 @@ pub async fn create(
 
 /// Dispara um evento de reunião para os webhooks das organizações do dono.
 /// O link usa o domínio de produção da org, se configurado (settings).
-pub(crate) async fn fire_meeting_webhook(
-    state: &Arc<AppState>,
-    meeting: &Meeting,
-    owner: Uuid,
-    event: &'static str,
-) {
+/// **Registra** as entregas de um evento de reunião na transacção de quem
+/// chama (trabalho nº3). Devolve o que há a enviar depois do commit.
+///
+/// Era um `fire` disparado numa tarefa à parte: entre o `COMMIT` que criava ou
+/// arrancava a reunião e o `INSERT` da entrega havia uma janela em que um
+/// SIGTERM apagava o aviso sem deixar rasto — e o `meeting.created` é o que um
+/// ERP integrado usa para saber que há reunião.
+///
+/// **O contexto LÊ-SE ANTES de abrir a transacção** — ver
+/// [`contexto_meeting_webhook`]. Segurar uma transacção enquanto se pede outra
+/// ligação à pool é a armadilha que a `delonix-meet-backend` avisa pelo nome: o
+/// `acquire` espera, e sob a pool pequena dos testes o handler estoura. Foi
+/// exactamente o que esta função fazia na primeira versão.
+/// O que o registo de um evento de reunião precisa, calculado **fora** da
+/// transacção: as organizações do dono, o texto e o payload. As duas consultas
+/// que isto faz (`orgs_of_user`, `primary_domain`) usam a pool, e por isso não
+/// podem correr com uma transacção aberta na mão.
+pub(crate) struct ContextoWebhook {
+    orgs: Vec<Uuid>,
+    text: String,
+    payload: serde_json::Value,
+}
+
+/// Prepara o contexto. `None` quando não há nada a enviar (dono sem organização).
+/// O que se sabe do DONO antes de a reunião existir: as organizações e a base
+/// do link. **Lê-se ANTES de abrir a transacção** — as duas consultas usam a
+/// pool, e pedir uma segunda ligação com uma transacção na mão é a armadilha que
+/// a `delonix-meet-backend` avisa pelo nome («um handler que segura duas
+/// ligações espera 30 s pelo acquire e responde 500»). Foi o que a primeira
+/// versão deste trabalho fez, e foi um teste pré-existente que o apanhou.
+pub(crate) struct DonoDoEvento {
+    orgs: Vec<Uuid>,
+    base: String,
+}
+
+/// `None` quando não há nada a enviar (dono sem organização).
+pub(crate) async fn dono_do_evento(state: &Arc<AppState>, owner: Uuid) -> Option<DonoDoEvento> {
     let orgs = crate::org::orgs_of_user(state, owner).await;
     if orgs.is_empty() {
-        return;
+        return None;
     }
     let domain = crate::org::primary_domain(state, owner).await;
     let base = if domain.is_empty() {
-        "".to_string()
+        String::new()
     } else {
         format!("https://{domain}")
     };
+    Some(DonoDoEvento { orgs, base })
+}
+
+/// Monta o texto e o payload. **Puro** — nada de IO, por isso corre sem
+/// problema com a transacção aberta, que é onde a reunião já existe.
+pub(crate) fn monta_meeting_webhook(
+    dono: DonoDoEvento,
+    meeting: &Meeting,
+    event: &'static str,
+) -> ContextoWebhook {
+    let DonoDoEvento { orgs, base } = dono;
     let link = meeting
         .room_code
         .as_ref()
         .map(|c| format!("{base}/#/r/{c}"))
         .unwrap_or_default();
     let when = meeting.starts_at.format("%Y-%m-%d %H:%M UTC");
-    let verb = if event == "meeting.started" {
-        "começou"
+    let sufixo = if link.is_empty() {
+        String::new()
     } else {
-        "agendada"
+        format!(" · {link}")
     };
-    let text = format!(
-        "Reunião «{}» {} para {}{}",
-        meeting.title,
-        verb,
-        when,
-        if link.is_empty() {
-            String::new()
+    // `meeting.ended` não fala do `starts_at` (não é «termina PARA»,
+    // é um facto já consumado) — os outros dois continuam com a frase
+    // original.
+    let text = if event == "meeting.ended" {
+        format!("Reunião «{}» terminou{sufixo}", meeting.title)
+    } else {
+        let verb = if event == "meeting.started" {
+            "começou"
         } else {
-            format!(" · {link}")
-        }
-    );
+            "agendada"
+        };
+        format!("Reunião «{}» {verb} para {when}{sufixo}", meeting.title)
+    };
     let payload = serde_json::json!({
         "meeting_id": meeting.id,
         "title": meeting.title,
@@ -769,17 +905,183 @@ pub(crate) async fn fire_meeting_webhook(
         "room_code": meeting.room_code,
         "link": link,
     });
+    ContextoWebhook {
+        orgs,
+        text,
+        payload,
+    }
+}
+
+pub(crate) async fn enqueue_meeting_webhook(
+    conn: &mut sqlx::PgConnection,
+    ctx: ContextoWebhook,
+    event: &'static str,
+) -> Result<Vec<crate::webhooks::Enfileirada>, sqlx::Error> {
+    let ContextoWebhook {
+        orgs,
+        text,
+        payload,
+    } = ctx;
+    let mut fila = Vec::new();
     for org_id in orgs {
-        crate::webhooks::fire(
-            state.clone(),
-            org_id,
-            crate::webhooks::Event {
-                name: event,
-                title: "Delonix Meet".into(),
-                text: text.clone(),
-                payload: payload.clone(),
-            },
+        fila.extend(
+            crate::webhooks::enqueue(
+                &mut *conn,
+                org_id,
+                &crate::webhooks::Event {
+                    name: event,
+                    title: "Delonix Meet".into(),
+                    text: text.clone(),
+                    payload: payload.clone(),
+                },
+            )
+            .await?,
         );
+    }
+    Ok(fila)
+}
+
+/// Tempo de graça entre a sala ficar vazia e considerarmos a acta por IA
+/// encalhada. Dá tempo ao fluxo normal — o `PUT .../minutes` do cliente
+/// (que já chama `ai::enqueue_mom_summary`) mais a fila `mom_summary_due`
+/// (`ai.rs`, até três tentativas com 2 e 10 minutos de intervalo) — de
+/// terminar sozinho antes de reenfileirarmos por cima.
+const GRACA_REENFILEIRAMENTO_MOM_MIN: i64 = 15;
+
+/// Chamado quando uma sala fica genuinamente vazia (peers E sala de espera)
+/// — por `signaling::expire_disconnected` (via [`sweep_expired_seats`], a
+/// fonte normal) ou, raramente, por um `leave()` imediato que já a esvaziou.
+/// Dispara `meeting.ended` e reenfileira defensivamente o resumo da acta —
+/// SÓ quando a sala tem mesmo uma reunião associada: uma sala ad-hoc ou
+/// pessoal não tem `room_code` em nenhuma linha de `meetings`, e não produz
+/// nada aqui. As duas metades são independentes — uma falhar não impede a
+/// outra — e ambas best-effort, como o resto dos webhooks.
+pub(crate) async fn on_room_emptied(state: Arc<AppState>, room_id: Uuid) {
+    let code: Option<(String,)> = sqlx::query_as("SELECT code FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some((code,)) = code else { return };
+
+    // `started_at IS NOT NULL` é o que impede o falso `meeting.ended`: desde a
+    // migração 0114 a sala existe assim que a reunião é agendada, por isso
+    // alguém que abra o link na véspera, espreite e saia esvazia uma sala cuja
+    // reunião ainda nem começou. E `ORDER BY started_at DESC` desempata as
+    // ocorrências de uma série, que PARTILHAM o código da sala: a que acabou é
+    // a última que começou.
+    let meeting: Option<Meeting> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings
+          WHERE room_code = $1 AND started_at IS NOT NULL
+          ORDER BY started_at DESC LIMIT 1"
+    ))
+    .bind(&code)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(meeting) = meeting else { return };
+
+    fire_meeting_ended(&state, &meeting).await;
+    reenfileira_mom_se_encalhada(&state, meeting.id).await;
+}
+
+/// Varre os lugares reservados expirados (`signaling::expire_disconnected`) e
+/// chama [`on_room_emptied`] para cada sala que isso deixou vazia — a mesma
+/// lógica do cron em `lib.rs`, extraída para que os testes de integração a
+/// possam invocar directamente (com `janela = Duration::ZERO` para expirar
+/// já, por exemplo) em vez de esperar por um temporizador real, que
+/// `TestApp` não arranca. Devolve quantos lugares expiraram.
+pub async fn sweep_expired_seats(state: &Arc<AppState>, janela: std::time::Duration) -> usize {
+    let (n, esvaziadas) = state.hub.expire_disconnected(janela);
+    for room_id in esvaziadas {
+        on_room_emptied(state.clone(), room_id).await;
+    }
+    n
+}
+
+/// Regista e envia o `meeting.ended`. Sem escrita de negócio para emparelhar
+/// (ao contrário de `start`, que grava o `room_code` na mesma transacção), por
+/// isso regista directamente numa ligação adquirida — o mesmo padrão de
+/// `broadcast::fire_stream_event` para um evento disparado fora do pedido
+/// HTTP que o originou.
+async fn fire_meeting_ended(state: &Arc<AppState>, meeting: &Meeting) {
+    let Some(dono) = dono_do_evento(state, meeting.owner_id).await else {
+        return;
+    };
+    let ctx = monta_meeting_webhook(dono, meeting, "meeting.ended");
+    let mut conn = match state.db.acquire().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(meeting_id = %meeting.id, error = %e, "meeting.ended: sem ligação à base");
+            return;
+        }
+    };
+    let fila = match enqueue_meeting_webhook(&mut conn, ctx, "meeting.ended").await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(meeting_id = %meeting.id, error = %e, "meeting.ended: registo da entrega falhou");
+            return;
+        }
+    };
+    drop(conn);
+    crate::webhooks::envia(state, "meeting.ended", fila).await;
+}
+
+/// Estado mínimo de `meetings` para decidir se a acta por IA encalhou.
+#[derive(sqlx::FromRow)]
+struct EstadoMom {
+    transcript: String,
+    minutes: String,
+    minutes_ai_at: Option<DateTime<Utc>>,
+    mom_queued_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+/// Reenfileira o resumo da acta quando os dados chegaram (transcrição ou ata
+/// não vazias) mas `minutes_ai_at` continua por preencher passado o tempo de
+/// graça — o caso mais comum de falha silenciosa (o processamento nunca
+/// correu, ou correu e esgotou as tentativas). NÃO cobre o caso em que
+/// ninguém gravou nada: essa falha fica para uma fase futura.
+async fn reenfileira_mom_se_encalhada(state: &Arc<AppState>, meeting_id: Uuid) {
+    let estado: Option<EstadoMom> = sqlx::query_as(
+        "SELECT transcript, minutes, minutes_ai_at, mom_queued_at, created_at
+           FROM meetings WHERE id = $1",
+    )
+    .bind(meeting_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(estado) = estado else { return };
+
+    if estado.minutes_ai_at.is_some() {
+        return; // já tem ata final — nada a fazer
+    }
+    let ha_dados = !estado.transcript.trim().is_empty() || !estado.minutes.trim().is_empty();
+    if !ha_dados {
+        return; // ninguém gravou nada — fora do âmbito (ver doc acima)
+    }
+    // Referência: o último pedido explícito (`mom_queued_at`), ou o
+    // nascimento da reunião se nunca chegou a ser pedido.
+    let referencia = estado.mom_queued_at.unwrap_or(estado.created_at);
+    if Utc::now() - referencia < ChronoDuration::minutes(GRACA_REENFILEIRAMENTO_MOM_MIN) {
+        return; // ainda dentro da janela normal (fila + retries)
+    }
+
+    let mut conn = match state.db.acquire().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(%meeting_id, error = %e, "reenfileiramento defensivo da acta: sem ligação");
+            return;
+        }
+    };
+    match crate::ai::enqueue_mom_summary(&mut conn, meeting_id).await {
+        Ok(()) => tracing::info!(%meeting_id, "acta encalhada — reenfileirada defensivamente"),
+        Err(e) => {
+            tracing::warn!(%meeting_id, error = %e, "reenfileiramento defensivo da acta falhou")
+        }
     }
 }
 
@@ -893,7 +1195,7 @@ pub async fn list(
             SELECT meeting_id FROM meeting_invitees WHERE user_id = $1
         )
         SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
-               m.kind, m.starts_at, m.duration_min, m.room_code,
+               m.kind, m.starts_at, m.duration_min, m.room_code, m.started_at,
                (m.owner_id = $1) AS is_owner, m.minutes,
                m.room_ref, mr.name AS room_name,
                CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,
@@ -937,7 +1239,10 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<axum::http::StatusCode, ApiError> {
-    let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
+    // ANTES do DELETE, e com o que o `.ics` de cancelamento precisa: depois
+    // dele não há `SEQUENCE`, nem sala, nem endereços externos para ler.
+    let audience =
+        crate::notifications::meeting_audience_for_cancel(&state, id, auth.user_id).await;
     let res = sqlx::query("DELETE FROM meetings WHERE id = $1 AND owner_id = $2")
         .bind(id)
         .bind(auth.user_id)
@@ -959,6 +1264,164 @@ pub struct MinutesReq {
     /// Se dado, associa/cria pela sala em vez do id da reunião.
     #[serde(default)]
     pub room_code: Option<String>,
+}
+
+/// O estado do resumo da acta pelo LLM, devolvido no `202` de
+/// `POST …/minutes/summary`: é a «operação a consultar» que a checklist da
+/// `delonix-meet-api` pede para trabalho assíncrono.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct MomSummaryState {
+    /// Quando o pedido entrou na fila.
+    pub queued_at: Option<chrono::DateTime<Utc>>,
+    /// Quantas tentativas já foram gastas (tecto de 3).
+    pub attempts: i32,
+    /// Quando a próxima tentativa pode correr. `null` = pronta já.
+    pub next_attempt_at: Option<chrono::DateTime<Utc>>,
+    /// Preenchido quando o resumo FICOU. É o que o Odoo lê para saber que a
+    /// ata é a versão final.
+    pub summarized_at: Option<chrono::DateTime<Utc>>,
+}
+
+/// Pede (ou repete) o resumo da acta pelo LLM local.
+///
+/// PORQUE EXISTE (trabalho nº4): o resumo era um `tokio::spawn` com um só
+/// chamador. Se o Ollama estivesse em baixo ou o pod reiniciasse, não havia
+/// coluna de estado, nem varredor, nem forma de pedir outra vez — a ata por
+/// regras ficava, mas o Odoo passava a ver para sempre uma reunião sem ata
+/// final, sem ninguém poder corrigir.
+///
+/// Repetir é SEGURO e deliberadamente idempotente no efeito: põe o pedido na
+/// fila com as tentativas a zero. Se o resumo já existir, a fila não o
+/// selecciona (`minutes_ai_at IS NULL` no `ready_when`), e a resposta mostra-o
+/// em `summarized_at` — quem chamou vê que não havia nada a fazer.
+#[utoipa::path(
+    post, path = "/api/meetings/{meeting_id}/minutes/summary", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 202, body = MomSummaryState, description = "Na fila. O estado lê-se aqui e em `GET /api/meetings`."),
+        (status = 401, body = crate::openapi::ErrorBody, description = "sessão inválida"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe, ou não é dono nem convidado"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`mom.no_transcript`: sem transcrição suficiente para valer um resumo"),
+    )
+)]
+pub async fn request_mom_summary(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<MomSummaryState>), ApiError> {
+    // A MESMA regra de acesso do `save_minutes`: dono ou convidado. A quem não
+    // chega dá-se `404` e não se confirma que a reunião existe.
+    // `(i32,)` e não `(i64,)`: o `length()` do Postgres devolve `integer`, e
+    // descodificá-lo como `bigint` falha no sqlx — o handler respondia `500`
+    // opaco em vez do `422`. O SQL é de runtime neste repo (zero macros
+    // `query!`), por isso o tipo errado só aparece a correr.
+    let transcript_len: Option<(i32,)> = sqlx::query_as(
+        "SELECT length(btrim(COALESCE(m.transcript, ''))) FROM meetings m
+         LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $2
+         WHERE m.id = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)",
+    )
+    .bind(id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((len,)) = transcript_len else {
+        return Err(ApiError::NotFound);
+    };
+    if len < 80 {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "mom.no_transcript",
+            "esta reunião não tem transcrição suficiente para valer um resumo",
+        )
+        .into());
+    }
+    let mut conn = state.db.acquire().await?;
+    crate::ai::enqueue_mom_summary(&mut conn, id).await?;
+    let (queued_at, attempts, next_attempt_at, summarized_at) = sqlx::query_as(
+        "SELECT mom_queued_at, mom_attempts, mom_next_attempt_at, minutes_ai_at
+           FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(MomSummaryState {
+            queued_at,
+            attempts,
+            next_attempt_at,
+            summarized_at,
+        }),
+    ))
+}
+
+#[derive(sqlx::FromRow)]
+struct MinutesRow {
+    owner_id: Uuid,
+    title: String,
+    minutes: String,
+    transcript: String,
+    minutes_ai_at: Option<DateTime<Utc>>,
+}
+
+/// A acta (MoM) e a transcrição de uma reunião.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct MeetingMinutes {
+    pub id: Uuid,
+    pub title: String,
+    /// Acta (MoM). Vazia enquanto ninguém a gravar.
+    pub minutes: String,
+    /// Transcrição bruta.
+    pub transcript: String,
+    /// Presente quando a acta já é a versão final do LLM local.
+    pub minutes_ai_at: Option<DateTime<Utc>>,
+}
+
+/// Lê a acta de uma reunião que ESTA pessoa alcança.
+///
+/// Não existia: o BFF tinha `PUT` da acta e a leitura só por CÓDIGO DE SALA
+/// (`notes_by_room`); por `meeting_id` a única leitura era a da v1
+/// (`apikeys::v1_meeting_notes`), com o `SELECT` dentro do handler e âmbito de
+/// ORGANIZAÇÃO — a chave `dlx_` age pela org, e vê qualquer reunião dela.
+///
+/// Reaproveitar essa consulta para um agente seria dar-lhe MAIS do que a
+/// pessoa tem. Aqui o portão é o mesmo do resto do BFF: dono ou convidado
+/// (`is_owner_or_invitee`), e o que não se alcança dá `404`.
+#[utoipa::path(
+    get, path = "/api/meetings/{meeting_id}/minutes", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = MeetingMinutes),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não é dono nem convidado"),
+    )
+)]
+pub async fn minutes(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<MeetingMinutes>, ApiError> {
+    let row: Option<MinutesRow> = sqlx::query_as(
+        "SELECT owner_id, title, minutes, transcript, minutes_ai_at
+           FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(r) = row else {
+        return Err(ApiError::NotFound);
+    };
+    if !is_owner_or_invitee(&state, id, r.owner_id, auth.user_id).await? {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(MeetingMinutes {
+        id,
+        title: r.title,
+        minutes: r.minutes,
+        transcript: r.transcript,
+        minutes_ai_at: r.minutes_ai_at,
+    }))
 }
 
 /// Guarda as MoM (notas AI) numa reunião. Dono ou convidado podem guardar.
@@ -1001,16 +1464,20 @@ pub async fn save_minutes(
     // Censurar aqui protege de uma vez todos os leitores a jusante.
     let minutes = crate::dlp::censor(req.minutes.trim());
     let transcript = crate::dlp::censor(req.transcript.trim());
+    // A ata e o PEDIDO do resumo numa transacção (trabalho nº4): antes, o
+    // resumo era um `tokio::spawn` sem estado — se o Ollama estivesse em baixo
+    // ou o pod reiniciasse, não havia coluna, nem varredor, nem rota, e o Odoo
+    // ficava a ver para sempre uma reunião sem ata final. Agora o pedido é uma
+    // linha na fila, e ou fica com a ata ou com nenhuma.
+    let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE meetings SET minutes = $1, transcript = $2 WHERE id = $3")
         .bind(minutes.chars().take(200_000).collect::<String>())
         .bind(transcript.chars().take(200_000).collect::<String>())
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
-    // A transcrição (ata bruta) ficou persistida acima; em background o LLM
-    // local gera o resumo elegante e substitui `minutes` (ai.rs — no-op sem
-    // OLLAMA_URL; se falhar, fica a ata por regras enviada pelo cliente).
-    crate::ai::spawn_mom_summary(state.clone(), id);
+    crate::ai::enqueue_mom_summary(&mut tx, id).await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1045,9 +1512,14 @@ pub async fn save_minutes_by_room(
     // delegado `save_minutes` autoriza —, mas o 200 e a razão já eram resposta
     // a mais.
     let meeting: Option<(Uuid,)> = sqlx::query_as(
+        // A ordem não é enfeite: numa SÉRIE as ocorrências partilham o código
+        // da sala (migração 0114), e sem ela a acta caía numa ocorrência à
+        // sorte — provavelmente a de daqui a três meses. A acta é da que está
+        // a decorrer, isto é, a última que arrancou.
         "SELECT m.id FROM meetings m
          LEFT JOIN meeting_invitees i ON i.meeting_id = m.id AND i.user_id = $2
-         WHERE m.room_code = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)",
+         WHERE m.room_code = $1 AND (m.owner_id = $2 OR i.user_id IS NOT NULL)
+         ORDER BY m.started_at DESC NULLS LAST, m.starts_at DESC LIMIT 1",
     )
     .bind(&code)
     .bind(auth.user_id)
@@ -1098,8 +1570,10 @@ pub async fn notes_by_room(
         return Err(ApiError::NotFound);
     }
     let row: Option<(String, String, String)> = sqlx::query_as(
+        // Mesma razão da `save_minutes_by_room`: numa série, a que interessa é
+        // a que arrancou por último, não a mais distante no calendário.
         "SELECT title, minutes, transcript FROM meetings WHERE room_code = $1
-         ORDER BY starts_at DESC LIMIT 1",
+         ORDER BY started_at DESC NULLS LAST, starts_at DESC LIMIT 1",
     )
     .bind(&code)
     .fetch_optional(&state.db)
@@ -1127,17 +1601,61 @@ pub struct StartResp {
     pub record_quality: String,
 }
 
-/// Arranca a reunião: cria a sala (se ainda não existe) e devolve o código.
-/// Reuniões de voz criam na mesma uma sala — o cliente entra sem vídeo.
+/// Cria a sala de uma reunião com as opções agendadas (R184): sala de espera,
+/// formato (a videoaula abre salas de grupo), gravação automática e a
+/// qualidade que o gravador do servidor tem de cumprir. Uma só definição para
+/// os dois caminhos que a podem criar — a criação da reunião (desde a migração
+/// 0114) e o `start` de uma reunião agendada ANTES dessa migração, que nasceu
+/// sem sala.
+async fn criar_sala_da_reuniao(
+    state: &AppState,
+    owner_id: Uuid,
+    title: &str,
+    opts: &SessionOptions,
+) -> Result<crate::rooms::Room, ApiError> {
+    let room = crate::rooms::insert_room(
+        &state.db,
+        owner_id,
+        title,
+        "sfu",
+        opts.waiting_room,
+        false,
+        crate::rooms::room_format_for_meeting(&opts.format),
+    )
+    .await?;
+    crate::rooms::set_recording_options(
+        &state.db,
+        room.id,
+        opts.auto_record,
+        Some(&opts.record_quality),
+    )
+    .await?;
+    Ok(room)
+}
+
+async fn sala_existe(state: &AppState, code: &str) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
+            .bind(code)
+            .fetch_optional(&state.db)
+            .await?
+            .is_some(),
+    )
+}
+
+/// Arranca a reunião: marca o início, toca aos convidados e devolve o código
+/// da sala — que existe desde que a reunião foi agendada (migração 0114).
+/// Reuniões de voz têm sala na mesma: o cliente entra sem vídeo.
 #[utoipa::path(
     post, path = "/api/meetings/{meeting_id}/start", tag = "meetings",
     security(("session" = [])),
     params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
     responses(
         (status = 200, body = StartResp),
-        (status = 400, body = crate::openapi::ErrorBody, description = "um convidado tentou arrancar antes do anfitrião"),
+        (status = 400, body = crate::openapi::ErrorBody, description = "reunião agendada antes da migração 0114, sem sala, e quem pede não é o anfitrião"),
         (status = 401, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou não és dono nem convidado"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`meeting.not_started_yet`: um convidado pediu a sala antes da hora marcada e o anfitrião ainda não arrancou. O cliente mostra o ecrã de espera."),
     )
 )]
 pub async fn start(
@@ -1153,15 +1671,14 @@ pub async fn start(
     .await?;
 
     // Só dono ou convidado pode arrancar/entrar; para os outros não existe.
+    // (Quem recebeu o LINK e não está na lista entra pela porta da sala —
+    // `rooms::join_room` ou `guests::guest_join` —, não por aqui.)
     if !is_owner_or_invitee(&state, id, meeting.owner_id, auth.user_id).await? {
         return Err(ApiError::NotFound);
     }
 
-    // As opções agendadas passam à sala: sala de espera, formato (videoaula
-    // abre salas de grupo; emissão e híbrida marcam as gravações) e o que o
-    // gravador do servidor tem de cumprir. Antes era sempre 'normal', sem
-    // sala de espera. Lidas já aqui porque também vão na resposta — reutilizar
-    // a sala (abaixo) ou criá-la de novo devolvem as mesmas opções ao cliente.
+    // As opções agendadas passam à sala. Lidas já aqui porque também vão na
+    // resposta — a sala criada ao agendar e a criada agora devolvem as mesmas.
     let opts: SessionOptions = sqlx::query_as(
         "SELECT format, waiting_room, auto_record, record_quality FROM meetings WHERE id = $1",
     )
@@ -1169,83 +1686,99 @@ pub async fn start(
     .fetch_one(&state.db)
     .await?;
 
-    // Se já foi arrancada, reutiliza a sala.
-    if let Some(code) = meeting.room_code.clone() {
-        if sqlx::query_as::<_, (Uuid,)>("SELECT id FROM rooms WHERE code = $1")
-            .bind(&code)
-            .fetch_optional(&state.db)
-            .await?
-            .is_some()
-        {
-            return Ok(Json(StartResp {
-                code,
-                kind: meeting.kind,
-                format: opts.format,
-                waiting_room: opts.waiting_room,
-                auto_record: opts.auto_record,
-                record_quality: opts.record_quality,
-            }));
+    // A sala nasce com a reunião desde a migração 0114. Só as agendadas ANTES
+    // dela chegam aqui sem sala — e essas só o dono as pode abrir.
+    let code = match meeting.room_code.clone() {
+        Some(code) if sala_existe(&state, &code).await? => code,
+        _ => {
+            if meeting.owner_id != auth.user_id {
+                return Err(ApiError::BadRequest(
+                    "a reunião ainda não foi iniciada pelo anfitrião".into(),
+                ));
+            }
+            let room = criar_sala_da_reuniao(&state, auth.user_id, &meeting.title, &opts).await?;
+            sqlx::query("UPDATE meetings SET room_code = $1 WHERE id = $2")
+                .bind(&room.code)
+                .bind(id)
+                .execute(&state.db)
+                .await?;
+            room.code
+        }
+    };
+
+    // Quem não é o anfitrião não abre a reunião antes da hora: a sala existe,
+    // mas entrar nela às 9h uma reunião das 15h é entrar numa sala vazia. O
+    // cliente lê este código e mostra o ecrã de espera com a contagem.
+    if meeting.owner_id != auth.user_id
+        && meeting.started_at.is_none()
+        && Utc::now() < meeting.starts_at
+    {
+        return Err(delonix_meet_core::DomainError::precondition(
+            "meeting.not_started_yet",
+            "a reunião ainda não começou",
+        )
+        .into());
+    }
+
+    // Arrancar acontece UMA vez, e é o anfitrião que arranca. O `WHERE
+    // started_at IS NULL` é o que garante o «uma vez» quando dois
+    // separadores do mesmo anfitrião carregam ao mesmo tempo: só um escreve,
+    // e só esse toca aos convidados e dispara o `meeting.started`.
+    if meeting.owner_id == auth.user_id && meeting.started_at.is_none() {
+        let dono = dono_do_evento(&state, auth.user_id).await;
+        let mut tx = state.db.begin().await?;
+        let marcou = sqlx::query(
+            "UPDATE meetings SET started_at = now() WHERE id = $1 AND started_at IS NULL",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+        if marcou {
+            let mut started_meeting = meeting.clone();
+            started_meeting.room_code = Some(code.clone());
+            started_meeting.started_at = Some(Utc::now());
+            let fila = match dono {
+                Some(d) => {
+                    let ctx = monta_meeting_webhook(d, &started_meeting, "meeting.started");
+                    enqueue_meeting_webhook(&mut tx, ctx, "meeting.started").await?
+                }
+                None => Vec::new(),
+            };
+            tx.commit().await?;
+            crate::webhooks::envia(&state, "meeting.started", fila).await;
+
+            // Estilo Teams: a reunião começou → "desperta" os convidados. Quem
+            // está online recebe a chamada a tocar (aceitar entra na sala);
+            // quem não está fica com chamada perdida. Quem recusou o convite
+            // não é incomodado.
+            let targets = invitees_to_ring(&state, id, auth.user_id, &code).await;
+            if !targets.is_empty() {
+                let caller_name: (String,) =
+                    sqlx::query_as("SELECT username FROM users WHERE id = $1")
+                        .bind(auth.user_id)
+                        .fetch_one(&state.db)
+                        .await?;
+                let (ringing, offline) = register_and_ring(
+                    &state,
+                    &code,
+                    auth.user_id,
+                    &caller_name.0,
+                    targets,
+                    &meeting.kind,
+                    &meeting.title,
+                )
+                .await;
+                tracing::info!(meeting = %id, ringing = ringing.len(), offline = offline.len(), "meeting start ring");
+            }
+        } else {
+            tx.rollback().await?;
         }
     }
 
-    // O dono cria a sala; um convidado que chegue antes recebe erro amigável.
-    if meeting.owner_id != auth.user_id {
-        return Err(ApiError::BadRequest(
-            "a reunião ainda não foi iniciada pelo anfitrião".into(),
-        ));
-    }
-    let room = crate::rooms::insert_room(
-        &state.db,
-        auth.user_id,
-        &meeting.title,
-        "sfu",
-        opts.waiting_room,
-        false,
-        crate::rooms::room_format_for_meeting(&opts.format),
-    )
-    .await?;
-    crate::rooms::set_recording_options(
-        &state.db,
-        room.id,
-        opts.auto_record,
-        Some(&opts.record_quality),
-    )
-    .await?;
-    sqlx::query("UPDATE meetings SET room_code = $1 WHERE id = $2")
-        .bind(&room.code)
-        .bind(id)
-        .execute(&state.db)
-        .await?;
-
-    // Webhook meeting.started (com o room_code já preenchido).
-    let mut started_meeting = meeting.clone();
-    started_meeting.room_code = Some(room.code.clone());
-    fire_meeting_webhook(&state, &started_meeting, auth.user_id, "meeting.started").await;
-
-    // Estilo Teams: a reunião começou → "desperta" os convidados. Quem está
-    // online recebe a chamada a tocar (aceitar entra na sala); quem não está
-    // fica com chamada perdida. Quem recusou o convite não é incomodado.
-    let targets = invitees_to_ring(&state, id, auth.user_id, &room.code).await;
-    if !targets.is_empty() {
-        let caller_name: (String,) = sqlx::query_as("SELECT username FROM users WHERE id = $1")
-            .bind(auth.user_id)
-            .fetch_one(&state.db)
-            .await?;
-        let (ringing, offline) = register_and_ring(
-            &state,
-            &room.code,
-            auth.user_id,
-            &caller_name.0,
-            targets,
-            &meeting.kind,
-            &meeting.title,
-        )
-        .await;
-        tracing::info!(meeting = %id, ringing = ringing.len(), offline = offline.len(), "meeting start ring");
-    }
-
     Ok(Json(StartResp {
-        code: room.code,
+        code,
         kind: meeting.kind,
         format: opts.format,
         waiting_room: opts.waiting_room,
@@ -1347,6 +1880,325 @@ pub async fn patch(
     patch_session_options(&state, id, &patch).await.map(Json)
 }
 
+/// O que se precisa de saber da reunião ANTES de a remarcar. Tem nome próprio
+/// porque a tupla de cinco era «very complex type» para o clippy — e porque os
+/// cinco campos são as cinco perguntas que a rota faz.
+#[derive(sqlx::FromRow)]
+struct EstadoParaRemarcar {
+    owner_id: Uuid,
+    /// A hora que SAI da agenda: vai na notificação, ao lado da nova.
+    starts_at: DateTime<Utc>,
+    /// Não-nulo = já começou, e aí a hora de início é história.
+    started_at: Option<DateTime<Utc>>,
+    /// Não-nulo = é o pai de uma série.
+    recurrence_freq: Option<String>,
+    /// Não-nulo = é uma instância de uma série.
+    recurrence_parent_id: Option<Uuid>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RescheduleMeetingReq {
+    /// A hora nova. Tem de estar no futuro.
+    pub starts_at: DateTime<Utc>,
+    /// Nova duração em minutos (5–1440). Omissa = mantém a que está.
+    #[serde(default)]
+    pub duration_min: Option<i32>,
+}
+
+// PORQUE É UMA ROTA PRÓPRIA, e não um campo do PATCH: o
+// `PATCH /api/meetings/{id}` responde `SessionOptions` e existe para as opções
+// de sessão. A hora não é uma opção — mudá-la avisa gente, repõe o lembrete e
+// sobe a revisão do calendário. Isso atrás de um contrato de opções era
+// esconder um efeito grande.
+//
+// O LEMBRETE POR SMS é reposto a zero (`sms_reminder_done_at = NULL`): se já
+// tinha saído para a hora antiga, tem de sair outra vez para a nova — senão
+// remarcar para mais tarde comia-o.
+//
+// A REVISÃO DO CALENDÁRIO sobe (`sequence + 1`, RFC 5545 §3.8.7.4). Sem isso o
+// `.ics` exportado depois de remarcar era silenciosamente ignorado pelo Outlook
+// e pelo Google Calendar: a hora mudava aqui e não mudava na agenda de ninguém.
+//
+// E uma recorrente é recusada porque remarcar uma série precisa de semântica
+// própria («esta ocorrência» ou «todas»), e escolher por adivinhação era pior
+// do que recusar com razão.
+/// Método personalizado: **remarcar** uma reunião. Só o anfitrião.
+///
+/// Recusa uma reunião recorrente, uma que já começou, e uma hora no passado.
+/// Repõe o lembrete por SMS e sobe o `SEQUENCE` do `.ics`, para o calendário de
+/// quem já tem o evento aceitar a versão nova.
+#[utoipa::path(
+    post, path = "/api/meetings/{meeting_id}/reschedule", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    request_body = RescheduleMeetingReq,
+    responses(
+        (status = 200, body = Meeting, description = "A reunião com a hora nova e o `sequence` já subido."),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`meeting.starts_in_past` ou duração fora de 5–1440"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host` — é convidado, não anfitrião"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou quem pede não é dono nem convidado"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`meeting.already_started` ou `meeting.recurring_unsupported`"),
+    )
+)]
+pub async fn reschedule(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<RescheduleMeetingReq>,
+) -> Result<Json<Meeting>, ApiError> {
+    let atual: Option<EstadoParaRemarcar> = sqlx::query_as(
+        "SELECT owner_id, starts_at, started_at, recurrence_freq, recurrence_parent_id
+           FROM meetings WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(m0) = atual else {
+        return Err(ApiError::NotFound);
+    };
+    let (owner_id, was_at) = (m0.owner_id, m0.starts_at);
+    if owner_id != auth.user_id {
+        // Um convidado fica a saber que a reunião existe (já o sabia); quem não
+        // é nem dono nem convidado não fica.
+        return Err(
+            if is_owner_or_invitee(&state, id, owner_id, auth.user_id).await? {
+                delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                    .with_message("só o anfitrião remarca a reunião")
+                    .into()
+            } else {
+                ApiError::NotFound
+            },
+        );
+    }
+    if m0.recurrence_freq.is_some() || m0.recurrence_parent_id.is_some() {
+        return Err(delonix_meet_core::DomainError::conflict(
+            "meeting.recurring_unsupported",
+            "remarcar uma reunião recorrente ainda não existe: cancele a série e marque outra",
+        )
+        .into());
+    }
+    if m0.started_at.is_some() {
+        return Err(delonix_meet_core::DomainError::conflict(
+            "meeting.already_started",
+            "a reunião já começou: a hora de início deixou de ser uma marcação",
+        )
+        .into());
+    }
+    if req.starts_at <= Utc::now() {
+        return Err(ApiError::BadRequest(
+            "meeting.starts_in_past: a hora nova tem de estar no futuro".into(),
+        ));
+    }
+    if let Some(d) = req.duration_min {
+        if !(5..=1440).contains(&d) {
+            return Err(ApiError::BadRequest("duration must be 5-1440 min".into()));
+        }
+    }
+
+    sqlx::query(
+        "UPDATE meetings
+            SET starts_at = $2,
+                duration_min = COALESCE($3, duration_min),
+                sequence = sequence + 1,
+                -- O lembrete que já saiu para a hora antiga tem de sair outra
+                -- vez para a nova.
+                sms_reminder_done_at = NULL
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(req.starts_at)
+    .bind(req.duration_min)
+    .execute(&state.db)
+    .await?;
+
+    crate::audit::log(
+        &state.db,
+        None,
+        auth.user_id,
+        "meeting.rescheduled",
+        &serde_json::json!({"meeting_id": id, "was_at": was_at, "starts_at": req.starts_at})
+            .to_string(),
+    )
+    .await;
+
+    // A audiência lê-se DEPOIS do UPDATE: traz a hora nova, e a antiga vai à
+    // parte — quem recebe precisa de saber o que sai da agenda, não só o que
+    // entra.
+    let audience = crate::notifications::meeting_audience(&state, id, auth.user_id).await;
+    crate::notifications::meeting_rescheduled(&state, audience, was_at).await;
+    // Os externos recebem convite NOVO: a chave de dedupe leva a hora, por isso
+    // uma hora diferente sai, e a mesma hora não sai duas vezes. É este segundo
+    // `REQUEST` — mesmo UID, `SEQUENCE` maior — que SUBSTITUI o evento na agenda
+    // de quem está de fora, em vez de lhe deixar dois.
+    let externos: Vec<String> =
+        sqlx::query_scalar("SELECT email FROM meeting_external_invitees WHERE meeting_id = $1")
+            .bind(id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+
+    let m: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+    // Com a reunião já na hora NOVA: é essa que tem de ir no `.ics`.
+    for email in &externos {
+        crate::meeting_invite_mail::send_best_effort(&state, &m, email).await;
+    }
+    Ok(Json(m))
+}
+
+/// O link da sala, **absoluto ou nada**.
+///
+/// Um `.ics` e um email são lidos noutro programa, dias depois: um caminho
+/// relativo lá dentro não aponta para lado nenhum (medido a 2026-10-13 contra um
+/// servidor real — saía `URL:/#/r/zqc-ghvp-eie`). O `room_link` cai para
+/// relativo quando a organização não declara domínio, e isso serve numa resposta
+/// de API, que o cliente resolve contra o host a que chamou; aqui não serve.
+///
+/// A ordem é a do produto: o domínio da organização primeiro (é o endereço por
+/// que os convidados dela conhecem o serviço), o `PUBLIC_URL` a seguir, e nada
+/// em último. **Nunca o cabeçalho `Host` do pedido** — pela mesma razão que os
+/// links de reposição de password não o usam.
+pub(crate) async fn room_link_absolute(state: &AppState, meeting: &Meeting) -> Option<String> {
+    let code = meeting.room_code.as_ref()?;
+    let org_id = crate::org::orgs_of_user(state, meeting.owner_id)
+        .await
+        .first()
+        .copied();
+    if let Some(org_id) = org_id {
+        let l = crate::apikeys::room_link(state, org_id, code).await;
+        if l.starts_with("http") {
+            return Some(l);
+        }
+    }
+    state
+        .config
+        .public_url
+        .as_deref()
+        .map(|base| format!("{base}/#/r/{code}"))
+}
+
+/// O texto iCalendar de uma reunião — para descarregar (`PUBLISH`) ou para
+/// anexar a um convite por correio (`REQUEST`) e a um corte (`CANCEL`).
+///
+/// **Não autoriza nada.** Quem chama já decidiu que esta pessoa pode saber da
+/// reunião: o handler da descarga pela posse ou pelo convite, o correio pela
+/// audiência que a notificação já resolveu.
+///
+/// O `attendee` é o endereço de QUEM recebe esta mensagem, um por mensagem: num
+/// convite ele faz o cliente de calendário mostrar «aceitar», e manter um só
+/// evita que um destinatário fique a saber a lista dos outros.
+/// O que o `.ics` precisa da base de dados: a revisão, o link da sala e o
+/// organizador. Lê-se À PARTE do `Meeting` porque o cancelamento tem de o ler
+/// ANTES do `DELETE` — depois já não existe nada para ler.
+pub(crate) struct IcsContext {
+    pub sequence: i32,
+    pub link: Option<String>,
+    pub organizer: Option<String>,
+}
+
+/// Lê o contexto do `.ics` da base. Ver `IcsContext`.
+pub(crate) async fn ics_context(
+    state: &AppState,
+    meeting: &Meeting,
+    method: IcsMethod,
+) -> IcsContext {
+    // O `sequence` lê-se à parte e NÃO entra no `MEETING_COLUMNS`: aquela lista
+    // é o contrato de várias respostas da API, e a revisão do calendário só
+    // interessa ao `.ics`.
+    let sequence: i32 = sqlx::query_scalar("SELECT sequence FROM meetings WHERE id = $1")
+        .bind(meeting.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+    let link = room_link_absolute(state, meeting).await;
+    // O organizador é o anfitrião, e só entra onde serve: num `PUBLISH` ninguém
+    // responde, e a descarga tem de continuar a sair igual ao que saía.
+    let organizer: Option<String> = match method {
+        IcsMethod::Publish => None,
+        _ => sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+            .bind(meeting.owner_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten(),
+    };
+    IcsContext {
+        sequence,
+        link,
+        organizer,
+    }
+}
+
+/// O `.ics`, sem tocar na base. É esta metade que o cancelamento usa depois de
+/// a reunião já não existir.
+pub(crate) fn ics_with_context(
+    meeting: &Meeting,
+    ctx: &IcsContext,
+    method: IcsMethod,
+    attendee: Option<&str>,
+) -> String {
+    // O link vai nas duas formas (`URL:` e na descrição) porque os clientes de
+    // calendário não concordam: o Google e o Outlook lêem `URL:`, muitos
+    // telemóveis só mostram a descrição.
+    let mut desc = meeting.description.clone();
+    if let Some(link) = &ctx.link {
+        if !desc.is_empty() {
+            desc.push('\n');
+        }
+        desc.push_str(&format!("Delonix Meet — entrar: {link}"));
+    }
+    calendar::ics(
+        &calendar::Event {
+            uid: &format!("{}@delonix-meet", meeting.id),
+            dtstamp: Utc::now(),
+            sequence: ctx.sequence,
+            starts_at: meeting.starts_at,
+            duration_min: meeting.duration_min,
+            title: &meeting.title,
+            description: &desc,
+            url: ctx.link.as_deref(),
+            organizer: ctx.organizer.as_deref(),
+            attendee,
+        },
+        method,
+    )
+}
+
+pub(crate) async fn ics_for(
+    state: &AppState,
+    meeting: &Meeting,
+    method: IcsMethod,
+    attendee: Option<&str>,
+) -> String {
+    let ctx = ics_context(state, meeting, method).await;
+    ics_with_context(meeting, &ctx, method, attendee)
+}
+
+/// O mesmo, para quem só tem o id (o correio). `None` quando a reunião já não
+/// existe — apagar uma reunião não pode fazer uma notificação falhar.
+pub(crate) async fn ics_by_id(
+    state: &AppState,
+    meeting_id: Uuid,
+    method: IcsMethod,
+    attendee: Option<&str>,
+) -> Option<String> {
+    let meeting: Meeting = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(meeting_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+    Some(ics_for(state, &meeting, method, attendee).await)
+}
+
 /// Exportação iCalendar (roadmap "Google e Outlook Calendar"): um .ics por
 /// reunião — importa/abre no Google Calendar, Outlook, Apple Calendar, etc.
 #[utoipa::path(
@@ -1374,30 +2226,10 @@ pub async fn ics(
         // Quem não é dono nem convidado não fica a saber que a reunião existe.
         return Err(ApiError::NotFound);
     }
-
-    let esc = |s: &str| {
-        s.replace('\\', "\\\\")
-            .replace(';', "\\;")
-            .replace(',', "\\,")
-            .replace('\n', "\\n")
-    };
-    let dt = |t: &chrono::DateTime<Utc>| t.format("%Y%m%dT%H%M%SZ").to_string();
-    let mut desc = meeting.description.clone();
-    if let Some(code) = &meeting.room_code {
-        if !desc.is_empty() {
-            desc.push('\n');
-        }
-        desc.push_str(&format!("Delonix Meet — código da sala: {code}"));
-    }
-    let body = format!(
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Delonix Meet//PT\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{id}@delonix-meet\r\nDTSTAMP:{now}\r\nDTSTART:{start}\r\nDURATION:PT{dur}M\r\nSUMMARY:{title}\r\nDESCRIPTION:{desc}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
-        id = meeting.id,
-        now = dt(&Utc::now()),
-        start = dt(&meeting.starts_at),
-        dur = meeting.duration_min,
-        title = esc(&meeting.title),
-        desc = esc(&desc),
-    );
+    // A descarga é um `PUBLISH` sem destinatário: não pede resposta a ninguém.
+    // O texto sai do mesmo construtor que o convite por correio usa
+    // (`scheduling::calendar`), e um teste prende-o byte a byte.
+    let body = ics_for(&state, &meeting, IcsMethod::Publish, None).await;
     Ok(axum::response::Response::builder()
         .header("Content-Type", "text/calendar; charset=utf-8")
         .header(
@@ -1465,6 +2297,205 @@ pub struct InviteeResponse {
     pub status: String,
     pub decline_reason: String,
     pub responded_at: Option<DateTime<Utc>>,
+}
+
+/// Quantos endereços externos uma reunião aceita. Não é um número redondo por
+/// gosto: cada um é um email a sair e um `.ics` a construir, e uma lista sem
+/// tecto era um caminho para mandar correio em nome desta instalação.
+pub(crate) const MAX_EXTERNAL_INVITEES: usize = 50;
+
+/// Normaliza e valida a lista de endereços externos, **sem repetidos**.
+///
+/// A regra do que é um email válido NÃO se escreve aqui: vem de
+/// `identity::validation`, que é quem a tem para os convites de organização e
+/// para o registo. Copiá-la era a cópia que a catraca persegue.
+pub(crate) fn normalize_external_emails(brutos: &[String]) -> Result<Vec<String>, ApiError> {
+    use delonix_meet_domain::identity::validation::{normalize_email, validate_email};
+    if brutos.len() > MAX_EXTERNAL_INVITEES {
+        return Err(delonix_meet_core::DomainError::invalid(
+            "meeting.too_many_external_invitees",
+            format!("no máximo {MAX_EXTERNAL_INVITEES} endereços externos por reunião"),
+        )
+        .into());
+    }
+    let mut out: Vec<String> = Vec::with_capacity(brutos.len());
+    for bruto in brutos {
+        let email = normalize_email(bruto);
+        validate_email(&email).map_err(|m| {
+            ApiError::from(delonix_meet_core::DomainError::invalid(
+                "meeting.invalid_external_email",
+                m,
+            ))
+        })?;
+        if !out.contains(&email) {
+            out.push(email);
+        }
+    }
+    Ok(out)
+}
+
+/// Um convidado externo de uma reunião: um endereço, sem conta aqui.
+#[derive(serde::Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct ExternalInvitee {
+    pub email: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct ExternalInviteeReq {
+    /// O endereço a convidar. Normalizado e validado como em qualquer outro
+    /// sítio da casa (`identity::validation`).
+    pub email: String,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct ExternalInviteeResp {
+    pub email: String,
+    /// `email` se o convite entrou na fila do correio, `manual` se não há por
+    /// onde sair (sem relay ou sem `PUBLIC_URL`) — e aí o anfitrião entrega o
+    /// link à mão, como no convite de organização.
+    pub delivery_channel: String,
+}
+
+/// Só o anfitrião mexe nos convidados externos; um convidado com conta recebe
+/// 403 e quem não tem nada a ver com a reunião recebe 404 — a mesma escada do
+/// `invitees`, para não revelar que a reunião existe.
+async fn require_host(state: &AppState, id: Uuid, user_id: Uuid) -> Result<Meeting, ApiError> {
+    let meeting: Option<Meeting> = sqlx::query_as(&format!(
+        "SELECT {MEETING_COLUMNS} FROM meetings WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(meeting) = meeting else {
+        return Err(ApiError::NotFound);
+    };
+    if meeting.owner_id == user_id {
+        return Ok(meeting);
+    }
+    if is_owner_or_invitee(state, id, meeting.owner_id, user_id).await? {
+        return Err(
+            delonix_meet_core::DomainError::forbidden("meeting.not_host")
+                .with_message("só o anfitrião convida de fora")
+                .into(),
+        );
+    }
+    Err(ApiError::NotFound)
+}
+
+/// Os convidados externos de uma reunião (só o anfitrião vê).
+#[utoipa::path(
+    get, path = "/api/meetings/{meeting_id}/external-invitees", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    responses(
+        (status = 200, body = Vec<ExternalInvitee>),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "não existe, ou nada tem a ver com ela"),
+    )
+)]
+pub async fn external_invitees(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ExternalInvitee>>, ApiError> {
+    require_host(&state, id, auth.user_id).await?;
+    let rows: Vec<ExternalInvitee> = sqlx::query_as(
+        "SELECT email, created_at FROM meeting_external_invitees
+          WHERE meeting_id = $1 ORDER BY email",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows))
+}
+
+/// Convida um endereço externo para uma reunião que já existe, e manda-lhe o
+/// convite com o `.ics`.
+#[utoipa::path(
+    post, path = "/api/meetings/{meeting_id}/external-invitees", tag = "meetings",
+    security(("session" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Id da reunião")),
+    request_body = ExternalInviteeReq,
+    responses(
+        (status = 200, body = ExternalInviteeResp),
+        (status = 400, body = crate::openapi::ErrorBody, description = "`meeting.invalid_external_email` ou `meeting.too_many_external_invitees`"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn add_external_invitee(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ExternalInviteeReq>,
+) -> Result<Json<ExternalInviteeResp>, ApiError> {
+    let meeting = require_host(&state, id, auth.user_id).await?;
+    let email = normalize_external_emails(std::slice::from_ref(&req.email))?
+        .pop()
+        .ok_or_else(|| ApiError::BadRequest("email em falta".into()))?;
+    // O tecto conta a lista INTEIRA, não só o que chega agora: senão
+    // acrescentava-se um a um até não haver tecto nenhum.
+    let quantos: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM meeting_external_invitees WHERE meeting_id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
+    if quantos as usize >= MAX_EXTERNAL_INVITEES {
+        return Err(delonix_meet_core::DomainError::invalid(
+            "meeting.too_many_external_invitees",
+            format!("no máximo {MAX_EXTERNAL_INVITEES} endereços externos por reunião"),
+        )
+        .into());
+    }
+    sqlx::query(
+        "INSERT INTO meeting_external_invitees (meeting_id, email, invited_by)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+    )
+    .bind(id)
+    .bind(&email)
+    .bind(auth.user_id)
+    .execute(&state.db)
+    .await?;
+    let channel = crate::meeting_invite_mail::send_best_effort(&state, &meeting, &email).await;
+    Ok(Json(ExternalInviteeResp {
+        email,
+        delivery_channel: channel.to_string(),
+    }))
+}
+
+/// Tira um endereço externo da reunião. **Não desconvida quem já recebeu o
+/// email** — o que isto impede é ele voltar a receber (uma hora nova, por
+/// exemplo). Dito aqui porque é a pergunta seguinte de quem clica.
+#[utoipa::path(
+    delete, path = "/api/meetings/{meeting_id}/external-invitees/{email}", tag = "meetings",
+    security(("session" = [])),
+    params(
+        ("meeting_id" = Uuid, Path, description = "Id da reunião"),
+        ("email" = String, Path, description = "O endereço a tirar"),
+    ),
+    responses(
+        (status = 204, description = "tirado (ou já não estava)"),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "`meeting.not_host`"),
+        (status = 404, body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn remove_external_invitee(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((id, email)): Path<(Uuid, String)>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    require_host(&state, id, auth.user_id).await?;
+    let email = delonix_meet_domain::identity::validation::normalize_email(&email);
+    sqlx::query("DELETE FROM meeting_external_invitees WHERE meeting_id = $1 AND email = $2")
+        .bind(id)
+        .bind(&email)
+        .execute(&state.db)
+        .await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// Lista as respostas dos convidados (só o anfitrião vê tudo).
@@ -1721,8 +2752,8 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         let child_id: Option<(Uuid,)> = sqlx::query_as(
             "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_ref,
                                    recurrence_freq, recurrence_interval, recurrence_until, recurrence_count,
-                                   recurrence_byday, recurrence_parent_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                                   recurrence_byday, recurrence_parent_id, org_id, room_code)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT DO NOTHING
              RETURNING id",
         )
@@ -1739,6 +2770,15 @@ pub async fn generate_instances(db: &sqlx::PgPool, parent: &Meeting, invitee_ids
         .bind(parent.recurrence_count)
         .bind(&parent.recurrence_byday)
         .bind(parent.id)
+        // A ocorrência herda a organização da reunião-mãe (migração 0104) —
+        // a mesma organização, nunca uma inferida de novo.
+        .bind(parent.org_id)
+        // E herda a SALA: uma série semanal tem UM link, como no Zoom e no
+        // Teams. Criar uma sala por ocorrência daria 26 códigos diferentes
+        // para a mesma reunião de equipa — e 26 salas que ninguém abriria.
+        // Quem desempata a ocorrência que acabou é o `started_at`
+        // (`on_room_emptied`).
+        .bind(&parent.room_code)
         .fetch_optional(db)
         .await
         .ok()
@@ -1919,7 +2959,7 @@ pub async fn ring_upcoming_meetings(state: &Arc<AppState>) {
 /// listagem (`list`), para a forma da pesquisa (`search`) não divergir.
 const MEETING_ITEM_SELECT: &str = r#"
 SELECT m.id, m.owner_id, u.username AS owner_name, m.title, m.description,
-       m.kind, m.starts_at, m.duration_min, m.room_code,
+       m.kind, m.starts_at, m.duration_min, m.room_code, m.started_at,
        (m.owner_id = $1) AS is_owner, m.minutes,
        m.room_ref, mr.name AS room_name,
        CASE WHEN m.owner_id = $1 THEN 'owner' ELSE COALESCE(i.status, 'pending') END AS my_status,

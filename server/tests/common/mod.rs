@@ -274,6 +274,28 @@ impl RawResponse {
 }
 
 impl TestApp {
+    /// Pedido que devolve os BYTES, não texto.
+    ///
+    /// O `raw` acima faz `res.text()`, que passa o corpo por UTF-8 lossy: um
+    /// ficheiro de media sai corrompido e um teste que o medisse estaria a
+    /// medir lixo. Serve as rotas que devolvem ficheiros (gravação composta,
+    /// pistas ISO, exportações).
+    pub async fn raw_bytes(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> (u16, Vec<u8>) {
+        let mut rb = self.http.request(method, self.url(path));
+        for (k, v) in headers {
+            rb = rb.header(*k, *v);
+        }
+        let res = rb.send().await.expect("pedido HTTP falhou");
+        let status = res.status().as_u16();
+        let bytes = res.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
+        (status, bytes)
+    }
+
     /// Pedido com cabeçalhos arbitrários; devolve a resposta crua.
     pub async fn raw(
         &self,
@@ -367,6 +389,20 @@ impl TestApp {
 
     /// Arquiva um membro directamente na base (como os e2e fazem): marca
     /// `archived_at`, que é o que o `remove_employee` faz.
+    /// Marca o domínio de email da org como já provado por DNS TXT (A3,
+    /// raiz) -- directo na base, porque um teste de HTTP não pode publicar
+    /// um registo DNS a sério. Quem precisa de JIT por SSO ou de
+    /// `enforce_sso` com teeth tem de chamar isto primeiro.
+    pub async fn verify_domain(&self, org_id: &str) {
+        sqlx::query(
+            "UPDATE organizations SET email_domain_verified_at = now() WHERE id = $1::uuid",
+        )
+        .bind(org_id)
+        .execute(&self.db)
+        .await
+        .unwrap();
+    }
+
     pub async fn archive_member(&self, org_id: &str, user_id: &str) {
         sqlx::query(
             "UPDATE org_members SET archived_at = now()

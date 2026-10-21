@@ -1,4 +1,5 @@
-/**
+
+import { formatBytes } from '../../ui/format'/**
  * Predefinições de exportação que o BROWSER consegue cumprir.
  *
  * O template mostra também «Aula 4K · H.265 · 24 Mbps». Não está aqui: o
@@ -61,11 +62,14 @@ export function tempoEstimado(p: Predefinicao, duracao: number, fpsMedidos: numb
 }
 
 /** `1,2 GB`, `48 MB`, `512 KB` — base 1000, como os sistemas mostram ficheiros. */
+/**
+ * Tamanho legível. **Delega** no formatador único (`ui/format`) — tinha a sua
+ * própria implementação em base 1000, e o mesmo ficheiro aparecia com 1,5 GB
+ * aqui e 1,4 GiB na biblioteca. O nome fica porque é chamado em seis sítios do
+ * Estúdio; o comportamento é o de todos.
+ */
 export function tamanhoLegivel(bytes: number, locale = 'pt'): string {
-  const f = (v: number, casas: number) => v.toLocaleString(locale, { maximumFractionDigits: casas, minimumFractionDigits: 0 })
-  if (bytes >= 1e9) return `${f(bytes / 1e9, 1)} GB`
-  if (bytes >= 1e6) return `${f(bytes / 1e6, 1)} MB`
-  return `${f(Math.max(1, bytes / 1e3), 0)} KB`
+  return formatBytes(bytes, locale)
 }
 
 /** Nome de ficheiro seguro a partir de um título. */

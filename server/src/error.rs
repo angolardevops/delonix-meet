@@ -90,6 +90,13 @@ impl ApiError {
         }
     }
 
+    /// O código estável que a resposta leva — o mesmo `code` do envelope. Para
+    /// quem não devolve o erro em JSON mas o leva noutro sítio (o SSO devolve-o
+    /// no endereço de regresso ao login, que é uma navegação do browser).
+    pub(crate) fn code(&self) -> &'static str {
+        self.parts().1
+    }
+
     /// Estado HTTP, código estável e mensagem pública.
     fn parts(&self) -> (StatusCode, &'static str, String) {
         match self {

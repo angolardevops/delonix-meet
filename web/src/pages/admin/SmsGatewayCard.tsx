@@ -20,8 +20,9 @@ import {
   putSmsRoute,
 } from '../../api'
 import { AsyncSection, useAsync } from '../../components/AsyncSection'
-import { Alert, Button, Card, Dialog, Select, StatusBadge, TextInput } from '../../ui/kit'
+import { Alert, Button, Card, Confirm, Dialog, Select, StatusBadge, TextInput } from '../../ui/kit'
 import { formatAgo, orgErrorMessage, refusalAware, useLocaleTag } from './orgShared'
+import { copiarTexto } from '../../ui/copy'
 
 export default function SmsGatewayCard({ orgId }: { orgId: string }) {
   const { t } = useTranslation()
@@ -31,6 +32,8 @@ export default function SmsGatewayCard({ orgId }: { orgId: string }) {
   const route = useAsync((signal) => refusalAware(getSmsRoute(orgId, signal), t), [orgId])
   const [pairing, setPairing] = useState(false)
   const [busyRevoke, setBusyRevoke] = useState<string | null>(null)
+  /** Gateway à espera de confirmação para ser revogado. */
+  const [aRevogar, setARevogar] = useState<string | null>(null)
   const [routeBusy, setRouteBusy] = useState(false)
   const [err, setErr] = useState('')
 
@@ -40,8 +43,10 @@ export default function SmsGatewayCard({ orgId }: { orgId: string }) {
     route.reload()
   }
 
+  // A revogação pede confirmação num `Confirm` do kit e não num
+  // `window.confirm`: a mensagem já era traduzida, mas os botões «OK/Cancel»
+  // eram do browser, em inglês, num produto com quatro línguas.
   async function revoke(id: string) {
-    if (!window.confirm(t('org.sms.gateways.confirmarRevogar'))) return
     setBusyRevoke(id)
     setErr('')
     try {
@@ -90,7 +95,7 @@ export default function SmsGatewayCard({ orgId }: { orgId: string }) {
                       <StatusBadge tone={g.online ? 'success' : 'neutral'}>
                         {g.online ? t('org.sms.gateways.activo') : t('org.sms.gateways.porLigar')}
                       </StatusBadge>
-                      <Button size="sm" variant="secondary" busy={busyRevoke === g.id} onClick={() => revoke(g.id)}>
+                      <Button size="sm" variant="secondary" busy={busyRevoke === g.id} onClick={() => setARevogar(g.id)}>
                         {t('org.sms.gateways.revogar')}
                       </Button>
                     </div>
@@ -157,6 +162,18 @@ export default function SmsGatewayCard({ orgId }: { orgId: string }) {
           }}
         />
       )}
+      {aRevogar && (
+        <Confirm
+          title={t('org.sms.gateways.revogar')}
+          onClose={() => setARevogar(null)}
+          onConfirm={() => revoke(aRevogar)}
+          confirmLabel={t('org.sms.gateways.revogar')}
+          icon="trash"
+          erroDe={(e) => orgErrorMessage(e, t, 'ui.erroGenerico')}
+        >
+          <p>{t('org.sms.gateways.confirmarRevogar')}</p>
+        </Confirm>
+      )}
     </Card>
   )
 }
@@ -195,7 +212,7 @@ function PairDialog({ orgId, onClose }: { orgId: string; onClose: () => void }) 
             icon="copy"
             onClick={async () => {
               try {
-                await navigator.clipboard.writeText(created.token)
+                await copiarTexto(created.token)
                 setCopied(true)
               } catch {
                 setErr(t('org.sms.gateways.erroCopiar'))

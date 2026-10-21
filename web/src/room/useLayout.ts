@@ -153,6 +153,10 @@ export function useLayout(core: RoomCore, conditions: LocalConditions) {
       }
     })
     return chooseLayers(tiles, conditions)
+    // `videoInterest.join(',')` e não `videoInterest`: o array é novo a cada
+    // render, e pô-lo aqui anulava o `useMemo` — recalculava as camadas em
+    // todos os renders de uma sala com vídeo a mexer. A string compara por
+    // VALOR, que é o que interessa.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoInterest.join(','), tileSize.w, effectiveViewMode, stagePeer?.peerId, pinnedPeer?.peerId, presentation?.peerId, speaking, conditions])
 

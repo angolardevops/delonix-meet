@@ -2,8 +2,10 @@ import { CSSProperties, memo, ReactNode, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../ui/icons'
 import { avatarTone, cx, initials } from '../ui/kit'
+import { Menu, useMenuDeContexto, type AccaoDeMenu, type EventoDePonteiro } from '../ui/Menu'
 import type { Role } from '../signaling'
 import type { RemotePeer } from './useRoomCore'
+import { useFluxoDeVideo } from './useFluxoDeVideo'
 
 /** Rótulo do papel num retrato; `null` para quem assiste. */
 export function rotuloPapel(t: (k: string) => string, role: Role): string | null {
@@ -68,6 +70,7 @@ export function TileFrame({
   width,
   height,
   onDoubleClick,
+  onContextMenu,
   children,
 }: {
   kind: 'local' | 'remoto'
@@ -79,6 +82,8 @@ export function TileFrame({
   width?: number
   height?: number
   onDoubleClick: () => void
+  /** Botão direito (e a tecla ☰): abre o menu de acções deste retrato. */
+  onContextMenu?: (e: EventoDePonteiro) => void
   children: ReactNode
 }) {
   const { t } = useTranslation()
@@ -92,6 +97,7 @@ export function TileFrame({
       data-peer-id={peerId}
       style={style}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       title={t('room.tile.duploCliqueFixa')}
     >
       {children}
@@ -153,8 +159,44 @@ export function ParticipantTileBase({
   }, [peer.stream])
   // Vídeo só com track E câmara ligada: uma track desactivada chega como preto.
   const hasVideo = !!peer.stream?.getVideoTracks().length && peer.camOn
+  // ...e, mesmo com as duas, pode não chegar um único quadro. Medido em
+  // produção a 2026-10-13 com um participante em macOS: faixa publicada,
+  // câmara anunciada ligada, e o retrato preto do princípio ao fim.
+  const fluxo = useFluxoDeVideo(ref, hasVideo)
+  const comImagem = hasVideo && fluxo === 'a-chegar'
   const hasAudio = !!peer.stream?.getAudioTracks().length && peer.micOn
   const role = rotuloPapel(t, peer.host ? 'host' : peer.role)
+
+  // As mesmas acções dos botões que aparecem com o rato por cima — num menu
+  // que também se abre com a tecla ☰, e que no telemóvel é o único caminho
+  // (não há `hover` num ecrã táctil).
+  const menu = useMenuDeContexto()
+  const nome = peer.username
+  const accoes: AccaoDeMenu[] = [
+    {
+      id: 'fixar',
+      label: pinned ? t('room.tile.desafixar', { nome }) : t('room.tile.fixar', { nome }),
+      icon: 'pin',
+      marcado: pinned,
+      onPick: () => onPin(peer.peerId),
+    },
+  ]
+  if (isHost && onSpotlight) {
+    accoes.push({
+      id: 'destaque',
+      label: spotlit ? t('room.tile.desafixarParaTodos', { nome }) : t('room.tile.fixarParaTodos', { nome }),
+      icon: 'people',
+      marcado: !!spotlit,
+      onPick: () => onSpotlight(spotlit ? null : peer.peerId),
+    })
+  }
+  if (isHost && !peer.host) {
+    accoes.push(
+      { id: 'silenciar', label: t('room.tile.silenciar', { nome }), icon: 'micOff', onPick: () => onMute(peer.peerId) },
+      { id: 'remover', label: t('room.tile.remover', { nome }), icon: 'x', perigo: true, onPick: () => onKick(peer.peerId) },
+    )
+  }
+
   return (
     <TileFrame
       kind="remoto"
@@ -166,10 +208,29 @@ export function ParticipantTileBase({
       width={width}
       height={height}
       onDoubleClick={() => onPin(peer.peerId)}
+      onContextMenu={menu.abrir}
     >
+      <Menu ponto={menu.ponto} accoes={accoes} label={t('room.tile.accoes', { nome })} onFechar={menu.fechar}>
+        {nome}
+      </Menu>
       {/* O <video> nunca desmonta: esconde-se, para não perder o srcObject. */}
-      <video ref={ref} autoPlay playsInline muted className={cx('rm-tile__video', !hasVideo && 'is-hidden')} />
-      {!hasVideo && <TileAvatar name={peer.username} />}
+      <video ref={ref} autoPlay playsInline muted className={cx('rm-tile__video', !comImagem && 'is-hidden')} />
+      {!comImagem && <TileAvatar name={peer.username} />}
+      {/* Dizer QUAL dos três casos é. «Câmara desligada» é o único que sabemos
+          de certeza (vem anunciado por quem publica); chamar-lhe isso quando a
+          câmara está ligada e a imagem é que não chega seria informação falsa
+          sobre o estado de outra pessoa. */}
+      {!comImagem && (
+        <span className="rm-tile__semimagem">
+          {!peer.camOn
+            ? t('room.tile.camaraDesligada')
+            : fluxo === 'parado'
+              ? t('room.tile.imagemParada')
+              : fluxo === 'sem-imagem'
+                ? t('room.tile.semImagem')
+                : t('room.tile.aLigarVideo')}
+        </span>
+      )}
       <div className="rm-tile__flags">
         {peer.hand && (
           <span className="rm-flag rm-flag--live">

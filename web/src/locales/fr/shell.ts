@@ -1,4 +1,5 @@
 export default {
+  trilho: "Fil d'Ariane",
   saltarParaConteudo: 'Aller au contenu',
   procurar: 'Rechercher…',
   atalhoPaleta: 'Ctrl K',
@@ -16,6 +17,7 @@ export default {
     rotulo: 'Navigation principale',
     inicio: 'Accueil',
     agenda: 'Agenda',
+    salas: 'Salles',
     estudio: 'Studio',
     gravacoes: 'Enregistrements',
     quadros: 'Tableaux',

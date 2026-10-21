@@ -26,6 +26,10 @@ export default function SessionsPanel() {
 
   useEffect(() => {
     void carregar()
+    // `[]` de propósito: carrega uma vez à montagem. O `carregar` fecha sobre
+    // o `t`, e incluí-lo pediria a lista ao servidor outra vez a cada mudança
+    // de língua — para mostrar os mesmos dados. O `reload` manual é quem a
+    // volta a pedir.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

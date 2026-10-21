@@ -103,8 +103,11 @@ if [ -f "$CAT" ]; then
            --include='*.mjs' --include='*.md' --include='*.sql' --include='*.sh' \
            --exclude-dir=node_modules --exclude-dir=target . 2>/dev/null \
          | grep -oE '[0-9]+' | sort -n -u)
+  # `<<<` e não `echo "$rnums" | grep -q` (R298): o `grep -q` sai à primeira
+  # correspondência, o `echo` do bash escreve uma linha de cada vez e morre com
+  # SIGPIPE a meio, e com `pipefail` isso lia-se como «não encontrado».
   for r in $refs; do
-    echo "$rnums" | grep -qx "$r" || {
+    grep -qx "$r" <<<"$rnums" || {
       echo "✗ higiene: referência a R$r sem entrada no catálogo (renumeração perdida?)"
       fail=1
     }
@@ -129,7 +132,8 @@ if [ -f "$WF" ] && [ -d web/e2e ]; then
     n=$(basename "$f")
     # Módulos de apoio, não testes — declarados no próprio cabeçalho.
     case "$n" in pg.mjs|harness*.mjs) continue;; esac
-    head -20 "$f" | grep -q "MÓDULO DE APOIO" && continue
+    cabecalho=$(head -20 "$f")
+    grep -q "MÓDULO DE APOIO" <<<"$cabecalho" && continue
     grep -q "web/e2e/$n" "$WF" && continue
     grep -qE "^$n . .+" "$EXC" 2>/dev/null && continue
     echo "✗ higiene: $n não corre no CI nem tem razão em $EXC"
@@ -158,11 +162,12 @@ hist_keys=$(git rev-list --objects --all 2>/dev/null \
             | sed 's/^[0-9a-f]\{40,\} //' \
             | grep -iE '(^|/)(id_rsa|id_ed25519|id_ecdsa)[^/]*$|\.(key|pem|p12|pfx|jks)$' \
             | sort -u || true)
+aceites=$(grep -v '^#' "$LEDGER" 2>/dev/null || true)
 for p in $hist_keys; do
   # `-F -x` porque o ledger guarda caminhos literais, um por linha; sem isto um
   # `.` do caminho passava a curinga e um caminho novo podia casar com a linha
   # de outro.
-  if ! grep -v '^#' "$LEDGER" 2>/dev/null | grep -qFx "$p"; then
+  if ! grep -qFx "$p" <<<"$aceites"; then
     echo "✗ higiene: CHAVE PRIVADA no histórico do git, sem decisão escrita: $p"
     echo '     Um "git rm" NÃO a remove do histórico. Trata-a como comprometida:'
     echo "     roda-a, e depois ou reescreves o histórico (force-push, parte todos"
@@ -275,5 +280,98 @@ if [ -n "$marcadores" ]; then
   fail=1
 fi
 
-[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros"
+# R298, R303 — nenhum script decide pelo estado de um `… | grep -q`.
+#
+# Os scripts de bash do repo correm com `pipefail` (o `motor.sh` por via de
+# quem o inclui). Um `grep -q` sai à primeira correspondência; se o produtor ainda
+# estiver a escrever, morre com SIGPIPE, o pipeline dá erro, e o `||` ou o `&&`
+# a seguir lê «não encontrado» quando a resposta era «encontrado». Este
+# ficheiro acusou assim referências a regressões que existiam, em 4 corridas
+# de 50 (R298); o `make cluster` disse «falta a imagem» com a imagem lá, nas
+# condições e com as contagens que a R303 regista.
+# A forma segura não tem produtor que possa morrer: `grep -q … <<<"$variavel"`
+# ou `grep -q … ficheiro`. Onde o estado do produtor contava, continua a
+# contar: `v=$(produtor) && grep -q … <<<"$v"`.
+#
+# Vale para todos os `.sh` seguidos (e para os novos ainda por seguir), e não
+# só para os portões nem só para `scripts/`: a regex não distingue
+# um veredicto de um ciclo de espera, e um «às vezes falha» numa prova de voz
+# custa o mesmo hábito de correr outra vez até dar verde.
+#
+# Vê o `grep`, o `egrep` e o `fgrep`, com caminho, com `command`/`xargs` ou
+# uma variável à frente, e o `-q` em qualquer posição entre as opções — na
+# mesma linha da barra, ou na linha de código seguinte quando a anterior acaba
+# na barra (com ou sem `\`, com ou sem um comentário depois dela; linhas em
+# branco e de comentário pelo meio não contam).
+#
+# Limite honesto: não distingue uma barra dentro de uma cadeia de texto ou de
+# um heredoc (falha fechado), e não vê o `grep -q` dentro de `{ …; }` ou de
+# `( … )`, atrás de outro comando (`timeout 5 grep -q`), nem o `-q` depois de
+# um padrão que tenha `|` ou `)`. Um `| head -1` cujo estado decida alguma
+# coisa, ou outro consumidor que saia cedo (`grep -m`, `awk … exit`), é
+# revisão.
+grep_q='([A-Za-z_]+=[^[:space:]]*[[:space:]]+)*((command|xargs)[[:space:]]+)?([^[:space:]|]*/)?[ef]?grep[[:space:]]([^|;&)]*[[:space:]])?(-[A-Za-z0-9]*q[A-Za-z0-9]*|--quiet|--silent)([[:space:];)|&]|$)'
+shs=()
+while IFS= read -r f; do [ -f "$f" ] && shs+=("$f"); done < <(git ls-files -co --exclude-standard -- '*.sh')
+pipes_q=$(grep -nHE "(^|[^|])\\|&?[[:space:]]*$grep_q" "${shs[@]}" \
+          | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+# A barra no fim de uma linha e o `grep -q` no princípio da seguinte.
+pipes_q2=$(awk -v cmd="^[[:space:]]*$grep_q" '
+  FNR == 1 { barra = 0 }
+  /^[[:space:]]*(#.*)?$/ { next }
+  barra && $0 ~ cmd { print FILENAME ":" FNR ":" $0 }
+  { barra = ($0 ~ /[^|]\|&?[[:space:]]*(\\|#.*)?$/) }' "${shs[@]}") ||
+  { echo "✗ higiene: o awk do portão do \`grep -q\` falhou — o portão não olhou"; fail=1; }
+pipes_q=$(printf '%s\n%s\n' "$pipes_q" "$pipes_q2" | sed '/^$/d')
+if [ -n "$pipes_q" ]; then
+  echo "✗ higiene: um script decide pelo estado de um pipe para \`grep -q\`, com pipefail (SIGPIPE dá falso «não encontrado»):"
+  echo "$pipes_q" | sed 's/^/     /'
+  echo '     Lê para uma variável e usa `grep -q … <<<"$variavel"` (com `v=$(produtor) && …` se o estado do produtor contar).'
+  fail=1
+fi
+
+# ---------------------------------------------------------------------------
+#  O namespace é `ngolacloud-meet` (ADR-0021). Sem referências ao antigo.
+#
+#  Esta catraca varre TODOS os ficheiros versionados (`git ls-files`) e NÃO
+#  uma lista de extensões — porque foi exactamente assim que o rename falhou
+#  duas vezes: a primeira passagem enumerou `*.yaml *.yml *.md *.sh Makefile
+#  *.conf` e deixou de fora as formas inline e os nomes DNS; a segunda deixou
+#  de fora os `*.j2`, e seis templates do Ansible ficaram a apontar para um
+#  namespace que já não existe. Um rename por lista de extensões é um rename
+#  que não acaba.
+#
+#  O que NÃO conta, e porquê: nomes de objectos e de crates (`delonix-meet-*`),
+#  o nome do chart, as imagens `delonix-meet/<algo>`, o realm do coturn, a
+#  string de derivação HMAC `delonix-meet/derive/` — essa última mudaria todas
+#  as chaves derivadas que existem — e o nome do Ingress do laboratório.
+# ---------------------------------------------------------------------------
+ns_velho=$(git ls-files -z -- . ':!scripts/check-repo-hygiene.sh' | xargs -0 grep -nE 'namespace: *delonix-meet([,} ]|$)|\.delonix-meet\.svc|-n +delonix-meet([ ,)]|$)|--namespace[= ]delonix-meet([ ,)]|$)|matchNames: *\[delonix-meet\]|namespace="delonix-meet"|namespace `?delonix-meet([` ,)]|$)' 2>/dev/null || true)
+if [ -n "$ns_velho" ]; then
+  echo "✗ higiene: referências ao namespace ANTIGO «delonix-meet» (o namespace é ngolacloud-meet, ADR-0021):"
+  echo "$ns_velho" | sed 's/^/     /' | head -20
+  echo '     Nomes de objectos, crates, imagens e a string de derivação HMAC NÃO contam — só namespaces e nomes DNS.'
+  fail=1
+fi
+
+# ---------------------------------------------------------------------------
+# Um documento seguido NÃO pode estar vazio.
+#
+# Isto custou um plano inteiro: um script de edição escreveu 0 bytes por cima
+# de `docs/plano-mcp-2026-10-13.md` (9335 → 0) e o ficheiro foi commitado e
+# fundido assim. NENHUM portão deu por isso — o drift compara nomes de módulos
+# e migrações, não o conteúdo —, e só se viu dias depois, ao tentar editá-lo.
+# Um `.md` vazio nunca é intencional: ou tem texto, ou não devia estar seguido.
+# ---------------------------------------------------------------------------
+vazios=$(git ls-files -z -- '*.md' '*.sql' '*.sh' | while IFS= read -r -d "" f; do
+  [ -f "$f" ] && [ ! -s "$f" ] && echo "$f"
+done)
+if [ -n "$vazios" ]; then
+  echo "✗ higiene: ficheiros seguidos VAZIOS (0 bytes) — provavelmente escritos por engano:"
+  echo "$vazios" | sed 's/^/     /'
+  echo "     Repõe o conteúdo (git show <commit>:<ficheiro>) ou deixa de o seguir."
+  fail=1
+fi
+
+[ "$fail" = 0 ] && echo "✓ higiene do repositório: sem chaves, artefactos ou dumps seguidos; migrações e regressões sem duplicados; sem mutantes em voo; sem marcadores de conflito; nenhum script a decidir por um pipe para «grep -q»; sem symlinks para fora da árvore; fugas de chave no histórico todas com decisão escrita; nenhum segredo queimado de volta aos ficheiros; nenhuma referência ao namespace antigo; nenhum documento seguido a zero bytes"
 exit $fail

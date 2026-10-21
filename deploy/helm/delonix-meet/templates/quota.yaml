@@ -1,0 +1,118 @@
+{{- /*
+  ResourceQuota e LimitRange do namespace.
+
+  PORQUE EXISTEM (tabela de convergência de 2026-10-08): o ADR-0021 pôs a
+  produção num cluster PARTILHADO (`ngolacloud-meet` no `delonix-lda`). Sem
+  quota, um pico do Meet — e o HPA leva o servidor a 8 réplicas — come o CPU e a
+  memória que são dos vizinhos. É o único item da tabela em que o dano NÃO é
+  nosso: é de terceiros que não pediram nada.
+
+  LIGADA EM PRODUÇÃO, não por omissão: os números abaixo saem da escala que o
+  `values-production.yaml` declara, e num laboratório de um nó (ou num cluster
+  dedicado) seriam um tecto inventado. Quem instala noutro sítio põe
+  `quota.enabled: true` com os SEUS números.
+
+  UMA SÓ QUOTA NO NAMESPACE (D1, 2026-10-10). O Postgres (CNPG) e o Redis da
+  plataforma vivem no MESMO namespace, instalados pelo `deploy/k8s/plataforma/
+  instalar.sh` e não por este chart — e o Kubernetes aplica a quota a todos os
+  pods do namespace. Havia duas quotas (esta e a do `00-namespace.yaml`): com
+  duas, vale a mais restritiva, e esta deixava 8Gi de requests a um Postgres
+  que pede 12Gi sozinho. A do namespace saiu; esta conta a plataforma.
+
+  A CONTA — medida no render de produção com voz e nos ficheiros da
+  plataforma, não estimada à mão:
+
+                                        limits         requests        pods  PVCs
+    chart, HPA no máximo, com rollout   44,60 CPU 44,06Gi   7,31 CPU 11,26Gi   17    2
+    Postgres: 3 instâncias              12    CPU 24   Gi   3    CPU 12   Gi    3    3
+    Redis: 3 × (redis+exporter)          3,60 CPU  6,38Gi   0,45 CPU  1,69Gi    3    3
+    pico                                60,20 CPU 74,44Gi  10,76 CPU 24,95Gi   23    8
+
+  A SUBIDA DE 2026-10-13 (segunda do dia) é o servidor alinhado com a medição:
+  4 CPU / 4Gi de limits por pod em vez de 2 / 2Gi, e o HPA a 6 réplicas em vez de
+  8. Dez CPU e 10Gi de limits a mais, DOIS pods a menos, e a capacidade declarada
+  do conjunto sobe de ~200 para ~300 participantes (`nodePeerCapacity: 50` por
+  pod). O que estava antes punha o tecto do pod cinco vezes abaixo da sala de 40
+  pessoas medida em metal (11,17 núcleos, 2 929 MB —
+  docs/ops/teste-de-carga-2026-10-05.md).
+
+  A SUBIDA DE 2026-10-13 é a IA in-cluster (templates/ai.yaml): o Ollama
+  (4 CPU / 8Gi de limits, 250m / 2Gi de requests, 1 pod, 1 PVC) e o Whisper
+  (4 CPU / 4Gi, 500m / 1Gi, 1 pod, sem PVC). Oito CPU e 12Gi de limits a mais,
+  que é o preço de a ata ser escrita por um modelo nosso e de o áudio das
+  legendas não ir à Google.
+
+  O Redis são 1 master + 2 réplicas, e não 3 nós de Sentinel: a mudança de
+  2026-10-11 desligou o Sentinel porque o cliente não o fala — o cabeçalho do
+  `redis-values.yaml` tem a medição. Os pods continuam três; sai um contentor
+  de sentinel por pod, e com ele 0,60 CPU de limits.
+
+  (coturn, voz e dados do chart são `Recreate`; o CNPG e o StatefulSet do
+  Redis actualizam pod a pod: nenhum soma surge.)
+
+  A quota leva ~20% de folga sobre o pico: limits 72 CPU / 90Gi, requests
+  13 CPU / 30Gi, 40 pods, 12 PVCs. Dimensionar sobre o pico sem rollout
+  rebenta o primeiro deploy, que é o momento exacto em que se descobre o erro.
+
+  OS 90Gi DE LIMITS SÃO MAIS MEMÓRIA DO QUE OS WORKERS TÊM (~82Gi somados, e
+  o maior tem 17,5Gi): é sobre-subscrição de LIMITS, como nos CPU. O que
+  reserva lugar ao scheduler são os 30Gi de requests — pouco mais de um terço
+  do cluster partilhado. Quem aumentar os limits sem olhar aos requests não
+  está a pedir mais nada ao cluster; quem aumentar os requests está.
+
+  Os limits somam mais CPU do que os workers têm (~30): é sobre-subscrição de
+  limits, normal. O que reserva lugar ao scheduler são os requests — 12 CPU e
+  24Gi do cluster partilhado.
+
+  QUEM MUDAR RÉPLICAS, LIMITES OU A PLATAFORMA REFAZ ESTA CONTA. Não é um
+  pedido: o `check-helm.sh` recalcula-a a partir do render e dos ficheiros da
+  plataforma, e FALHA se a quota não cobrir o pico em requests, limits, pods
+  ou PVCs.
+*/ -}}
+{{- $v := .Values }}
+{{- if $v.quota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: delonix-meet-quota
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: {{ $v.quota.requests.cpu | quote }}
+    requests.memory: {{ $v.quota.requests.memory | quote }}
+    limits.cpu: {{ $v.quota.limits.cpu | quote }}
+    limits.memory: {{ $v.quota.limits.memory | quote }}
+    # Tecto de objectos: um ciclo de reconciliação em fuga cria pods sem fim, e
+    # o CPU não é o primeiro a acabar — é a quota de pods do nó.
+    pods: {{ $v.quota.maxPods | quote }}
+    persistentvolumeclaims: {{ $v.quota.maxPvcs | quote }}
+    services.loadbalancers: {{ $v.quota.maxLoadBalancers | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: delonix-meet-limits
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  limits:
+    # Os pods DESTE chart já declaram requests/limits — o `check-helm.sh`
+    # recusa um contentor sem eles. O `default`/`defaultRequest` é para o que
+    # mais aterra no namespace e o chart não controla: um pod de depuração, um
+    # Job avulso, um chart vizinho. Sem isto, um pod sem `resources` não
+    # consome quota de `requests` nenhuma e o scheduler coloca-o em qualquer
+    # nó — fica invisível à contabilidade.
+    - type: Container
+      default:
+        cpu: {{ $v.quota.container.defaultLimit.cpu | quote }}
+        memory: {{ $v.quota.container.defaultLimit.memory | quote }}
+      defaultRequest:
+        cpu: {{ $v.quota.container.defaultRequest.cpu | quote }}
+        memory: {{ $v.quota.container.defaultRequest.memory | quote }}
+      # O máximo por contentor é uma barra, não uma reserva: impede que um
+      # `values` com um zero a mais esgote a quota num pod só.
+      max:
+        cpu: {{ $v.quota.container.max.cpu | quote }}
+        memory: {{ $v.quota.container.max.memory | quote }}
+{{- end }}

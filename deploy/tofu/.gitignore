@@ -1,0 +1,7 @@
+# Estado e segredos NUNCA entram no repositório.
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfstate
+*.tfstate.*
+*.tfplan

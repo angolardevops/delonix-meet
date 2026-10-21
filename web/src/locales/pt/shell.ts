@@ -1,4 +1,5 @@
 export default {
+  trilho: 'Onde estás',
   saltarParaConteudo: 'Saltar para o conteúdo',
   procurar: 'Procurar…',
   atalhoPaleta: 'Ctrl K',
@@ -16,6 +17,7 @@ export default {
     rotulo: 'Navegação principal',
     inicio: 'Início',
     agenda: 'Agenda',
+    salas: 'Salas',
     estudio: 'Estúdio',
     gravacoes: 'Gravações',
     quadros: 'Quadros',

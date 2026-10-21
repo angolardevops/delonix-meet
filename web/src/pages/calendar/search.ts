@@ -106,6 +106,9 @@ export function useMeetingsMatching(rs: ResourceSearch<Meeting>, from: Date, to:
         if (!isAbort(e)) setState({ s: 'error', msg: apiErrorMessage(e, t('search.estado.erro')) })
       })
     return () => ctrl.abort()
+    // O `key` resume os filtros num texto: é ele que dispara, e não os objectos
+    // de onde saiu. O `t` fica fora — só serve a mensagem de erro, e incluí-lo
+    // refazia a pesquisa a cada mudança de língua.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, fetcher, key])
 

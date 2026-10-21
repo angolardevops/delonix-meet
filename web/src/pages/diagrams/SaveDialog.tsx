@@ -18,6 +18,9 @@ import { Alert, Button, Dialog, Field, Select, TextInput } from '../../ui/kit'
 
 const OTHER = '__outra__'
 
+type Salas = { recordings: string[]; meetings: { code: string; title: string }[] }
+const SEM_SALAS: Salas = { recordings: [], meetings: [] }
+
 export default function SaveDialog({
   title,
   roomCode,
@@ -56,7 +59,11 @@ export default function SaveDialog({
     },
     [],
   )
-  const lists = rooms.state.s === 'ready' ? rooms.state.d : { recordings: [], meetings: [] }
+  // `SEM_SALAS` é uma constante de módulo: o literal `{ recordings: [], … }`
+  // era um objecto NOVO a cada render enquanto as salas carregavam, e anulava o
+  // `useMemo` da linha seguinte. O TIPO é explícito de propósito — sem ele o
+  // literal vazio inferia `never[]` e os usos de `m` abaixo viravam `any`.
+  const lists: Salas = rooms.state.s === 'ready' ? rooms.state.d : SEM_SALAS
   const meetingRooms = useMemo(() => lists.meetings.filter((m) => !lists.recordings.includes(m.code)), [lists])
   const known = new Set([...lists.recordings, ...lists.meetings.map((m) => m.code)])
   const [choice, setChoice] = useState(roomCode)

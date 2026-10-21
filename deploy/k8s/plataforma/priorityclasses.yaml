@@ -1,0 +1,67 @@
+# As duas classes de prioridade do Meet (ADR-0021, cluster PARTILHADO).
+#
+# PORQUE EXISTEM. No `delonix-lda` o Meet vive ao lado de outras cargas. Sob
+# pressão de nó, sem prioridade, o SFU e o Postgres são desalojados como
+# qualquer coisa — e o que cai é uma reunião a decorrer. O `priorityClassName`
+# é o que diz ao scheduler quem se aguenta.
+#
+# PRÉ-REQUISITO, E A ORDEM IMPORTA. O `values-production.yaml` do chart refere
+# estes nomes. Um `priorityClassName` que não exista no cluster faz o API server
+# **RECUSAR o pod** — a instalação falha no `helm upgrade`, não num aviso. Por
+# isso isto é o PRIMEIRO passo do `instalar.sh`: são objectos de CLUSTER, não
+# têm dependência nenhuma, e tudo o resto depende deles.
+#
+# MEDIDO a 2026-10-09 num cluster real (`kubectl apply --dry-run=server`, que
+# passa pela admissão sem escrever nada):
+#
+#   com meet-critico    → aceite, e o API server resolve `spec.priority` = 10000
+#   com meet-inventado  → Error from server (Forbidden): pods "…" is forbidden:
+#                         no PriorityClass with name meet-inventado was found
+#
+# Não é um aviso nem um pod pendente: é um 403 na criação.
+#
+# OS VALORES SÃO UM PONTO DE PARTIDA, NÃO UMA VERDADE. O número só tem
+# significado COMPARADO com as outras classes do mesmo cluster, e as dos
+# vizinhos não são nossas para conhecer. Se o Meet estiver a ser desalojado
+# apesar disto, é aqui que se olha — e fala-se com o operador do `delonix-lda`
+# antes de subir, porque subir a nossa prioridade é baixar a de outro.
+#
+# `globalDefault: false` NOS DOIS, e não é detalhe: uma classe com
+# `globalDefault: true` passa a ser a prioridade de TODOS os pods do cluster que
+# não declarem uma — incluindo os de outros namespaces, de outras equipas. Seria
+# o mesmo erro que a quota evita, pela porta oposta.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: meet-critico
+  labels:
+    app.kubernetes.io/part-of: delonix-meet
+# O caminho da chamada e os dados: o servidor (SFU em memória por pod), o coturn
+# (sem relay não há media atrás de NAT), o Postgres e o Redis (sem eles não há
+# sessão nenhuma), e o Job de migração — que bloqueia o release.
+value: 10000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Delonix Meet — caminho da chamada e dados. Desalojar isto derruba reuniões a
+  decorrer. Ver deploy/k8s/plataforma/priorityclasses.yaml.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: meet-normal
+  labels:
+    app.kubernetes.io/part-of: delonix-meet
+# O resto: a web (ficheiros estáticos, servidos de 3 réplicas), o FreeSWITCH e o
+# Kamailio (a entrada por telefone degrada, a reunião não cai).
+#
+# `preemptionPolicy: Never` — esta classe serve para NÃO ser desalojada antes do
+# que não tem classe, não para desalojar os outros. Espera a sua vez em vez de
+# tirar o lugar a um vizinho.
+value: 1000
+globalDefault: false
+preemptionPolicy: Never
+description: >-
+  Delonix Meet — o resto do produto. Degrada sem derrubar a reunião. Ver
+  deploy/k8s/plataforma/priorityclasses.yaml.

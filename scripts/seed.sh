@@ -11,6 +11,10 @@
 #  ADR-0016), um número de acesso e uma sala com PIN para entrar por telefone
 #  — escrita em deploy/compose/generated/sala-telefone.txt.
 #
+#  O ficheiro da sala não é a verdade: a base é. Se ele já existe, confere-se
+#  NESTA base que a sala que descreve existe e é a mesma; se não for — uma base
+#  nova com um ficheiro de antes, por exemplo —, cria-se outra e reescreve-se.
+#
 #  uso: scripts/seed.sh <url-base>      ex.: https://meet.ngolacloud.local:8443
 # ============================================================
 set -euo pipefail
@@ -19,10 +23,25 @@ cd "$(dirname "$0")/.."
 BASE=${1:?uso: $0 <url-base>}
 ORG=${MEET_ORG:-ngolacloud}
 EMAIL=${MEET_ADMIN_EMAIL:-admin@ngolacloud.local}
-PW=$(sed -n 's/^MEET_ADMIN_PASSWORD=//p' .env 2>/dev/null | head -1)
+# `|| true`: com `set -e` e `pipefail`, sem `.env` o `sed` sai com 2 e o script
+# morria aqui, calado, antes da mensagem da linha seguinte (R303).
+PW=$(sed -n 's/^MEET_ADMIN_PASSWORD=//p' .env 2>/dev/null | head -1) || true
 [ -n "$PW" ] || { echo "✗ o .env não tem MEET_ADMIN_PASSWORD — corre «make bootstrap»" >&2; exit 1; }
 
 g=$'\033[1;32m'; y=$'\033[1;33m'; z=$'\033[0m'
+
+# A conta de DEMONSTRAÇÃO (ver a secção lá em baixo). Lida e validada AQUI, antes
+# de se esperar pelo servidor: uma password curta é um erro de quem corre o
+# comando, e dizê-lo ao fim de oitenta segundos de espera é um desperdício.
+DEMO_EMAIL=${MEET_DEMO_EMAIL:-demo@ngolacloud.ao}
+DEMO_PW=${MEET_DEMO_PASSWORD:-demo1234}
+DEMO_ORG=${MEET_DEMO_ORG:-Demo}
+DEMO_OK=1
+if [ "${#DEMO_PW}" -lt 8 ]; then
+  printf "  %s!%s MEET_DEMO_PASSWORD tem %s caracteres e o mínimo do produto é 8 (identity::validation) — a conta demo fica por criar\n" \
+    "$y" "$z" "${#DEMO_PW}"
+  DEMO_OK=0
+fi
 
 # A borda pode demorar uns segundos a responder depois do `up`.
 for _ in $(seq 1 40); do
@@ -36,8 +55,14 @@ pede() { # método caminho corpo → imprime o código HTTP
 }
 corpo_login=$(printf '{"email":"%s","password":"%s"}' "$EMAIL" "$PW")
 
-if [ "$(pede POST /api/auth/login "$corpo_login")" = 200 ]; then
+entrada=$(pede POST /api/auth/login "$corpo_login")
+if [ "$entrada" = 200 ]; then
   printf "  %s✓%s a conta %s já existe na organização «%s»\n" "$g" "$z" "$EMAIL" "$ORG"
+elif [ "$entrada" = 429 ]; then
+  # O servidor aceita poucos logins por conta em cada cinco minutos. Seguir
+  # para o registo dava um 409 e a mensagem errada («a conta NÃO foi criada»).
+  printf "  %s!%s o login devolveu 429 — demasiadas entradas nesta conta em pouco tempo; espera uns minutos e repete\n" "$y" "$z"
+  exit 1
 else
   corpo=$(printf '{"org_name":"%s","email":"%s","username":"admin","password":"%s"}' "$ORG" "$EMAIL" "$PW")
   codigo=$(pede POST /api/auth/register "$corpo")
@@ -49,9 +74,39 @@ else
   fi
 fi
 
+# ============================================================
+#  A conta de DEMONSTRAÇÃO — para validar melhorias no browser.
+#
+#  Própria e isolada: tem a sua organização, por isso mexer nela não estraga a
+#  do laboratório nem a voz semeada acima. Falhar aqui não desfaz nada do que
+#  veio antes.
+#
+#  A PASSWORD TEM DE TER 8 CARACTERES OU MAIS. Não é escolha deste script: é a
+#  política do produto (`identity::validation::validate_password`, 8-128), a
+#  mesma que um cliente encontra. Baixá-la para o laboratório seria mudar o
+#  produto para a demonstração ficar bonita.
+# ============================================================
+corpo_demo_login=$(printf '{"email":"%s","password":"%s"}' "$DEMO_EMAIL" "$DEMO_PW")
+if [ "$DEMO_OK" = 0 ]; then
+  : # dito acima, antes da espera pelo servidor
+elif [ "$(pede POST /api/auth/login "$corpo_demo_login")" = 200 ]; then
+  printf "  %s✓%s conta de demonstração: %s / %s\n" "$g" "$z" "$DEMO_EMAIL" "$DEMO_PW"
+else
+  corpo_demo=$(printf '{"org_name":"%s","email":"%s","username":"demo","password":"%s"}' \
+    "$DEMO_ORG" "$DEMO_EMAIL" "$DEMO_PW")
+  codigo=$(pede POST /api/auth/register "$corpo_demo")
+  if [ "$codigo" = 200 ] || [ "$codigo" = 201 ]; then
+    printf "  %s✓%s conta de demonstração criada: %s / %s\n" "$g" "$z" "$DEMO_EMAIL" "$DEMO_PW"
+  else
+    # 409 = o domínio já tem organização (outra corrida criou-a com outro email).
+    printf "  %s!%s o registo da conta demo devolveu %s — entra com a conta de administração\n" \
+      "$y" "$z" "$codigo"
+  fi
+fi
+
 # ---- a voz da organização: a conta SIP da central e uma sala com PIN ----
 # Falhar aqui não desfaz a conta de validação: avisa-se e segue-se.
-CENTRAL_PW=$(sed -n 's/^VOICE_CENTRAL_PASSWORD=//p' .env 2>/dev/null | head -1)
+CENTRAL_PW=$(sed -n 's/^VOICE_CENTRAL_PASSWORD=//p' .env 2>/dev/null | head -1) || true
 SALA_TXT=${SALA_TXT:-deploy/compose/generated/sala-telefone.txt}
 if [ -z "$CENTRAL_PW" ]; then
   printf "  %s!%s o .env não tem VOICE_CENTRAL_PASSWORD — corre «make bootstrap»; a central fica sem conta SIP\n" "$y" "$z"
@@ -95,6 +150,10 @@ def ok(msg):
     print("  \033[1;32m✓\033[0m " + msg)
 
 
+def avisa(msg):
+    print("  \033[1;33m!\033[0m " + msg)
+
+
 st, login = call("POST", "/api/auth/login", {"email": os.environ["EMAIL"], "password": os.environ["PW"]})
 if st != 200:
     sys.exit(f"  login devolveu {st}")
@@ -113,10 +172,37 @@ if st != 200:
     sys.exit(f"  o «Registo SIP» devolveu {st}: {(r or {}).get('code')}")
 ok(f"«Registo SIP» da organização: {dominio}, utilizador central")
 
-# Uma sala com PIN para entrar por telefone. Se o ficheiro já a descreve, fica.
+# Uma sala com PIN para entrar por telefone. Se o ficheiro já a descreve, fica
+# — MAS só depois de se conferir nesta base que ela existe. O ficheiro vive no
+# disco e a base não: um cluster criado de novo nasce vazio com o ficheiro de
+# antes ao lado, e quem confiasse nele dizia «sala com PIN» de uma sala que não
+# existe (medido a 2026-10-05: a central marcava o PIN e o IVR recusava).
 if os.path.exists(sala_txt):
-    ok("sala com PIN: a de " + sala_txt)
-    sys.exit(0)
+    with open(sala_txt) as f:
+        desc = dict(l.strip().split("=", 1) for l in f if "=" in l)
+    motivo, nota = None, ""
+    if not desc.get("sala") or not desc.get("pin"):
+        motivo = "não tem sala e PIN"
+    elif desc.get("voz"):
+        # A sala de voz pelo identificador: tem de existir, estar activa, e ser
+        # a deste código com este PIN.
+        st, v = call("GET", f"/api/orgs/{org}/voice/rooms/{desc['voz']}", token=tok)
+        if st != 200:
+            motivo = f"descreve uma sala de voz que não existe nesta base ({st})"
+        elif (v.get("room_code"), v.get("pin"), v.get("status")) != (desc["sala"], desc["pin"], "active"):
+            motivo = "descreve uma sala de voz que nesta base já não é essa (código, PIN ou estado)"
+    else:
+        # Um ficheiro de antes de se guardar o identificador: a API não deixa
+        # procurar uma sala de voz pelo código, por isso só se confere a sala.
+        st, _ = call("GET", f"/api/rooms/{desc['sala']}", token=tok)
+        if st != 200:
+            motivo = f"descreve a sala {desc['sala']}, que não existe nesta base ({st})"
+        else:
+            nota = " — ficheiro antigo, sem o identificador da sala de voz: conferiu-se que a sala existe, não o PIN"
+    if motivo is None:
+        ok("sala com PIN: a de " + sala_txt + nota)
+        sys.exit(0)
+    avisa(f"{sala_txt} {motivo}: cria-se outra sala, e o ficheiro é reescrito")
 did = os.environ["DID"]
 st, r = call("POST", f"/api/orgs/{org}/voice/dids", {"e164": did, "org_scoped": True}, tok)
 if st not in (200, 201, 409):
@@ -129,6 +215,9 @@ if st != 200:
     sys.exit(f"  criar a sala de voz devolveu {st}: {(voz or {}).get('code')}")
 fd = os.open(sala_txt, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w") as f:
-    f.write(f"sala={sala['code']}\npin={voz['pin']}\nnumero={did}\n")
+    # `voz` é o identificador da sala de voz: é por ele que a próxima corrida
+    # confere, na base, que este ficheiro ainda diz a verdade.
+    f.write(f"sala={sala['code']}\npin={voz['pin']}\nnumero={did}\nvoz={voz['id']}\n")
 ok(f"sala com PIN: {sala['code']} (em {sala_txt})")
 PY
+

@@ -414,18 +414,72 @@ impl TestClient {
         }
     }
 
+    /// Responde a uma oferta do servidor depois de o ICE deste cliente estar
+    /// ligado (ou ao fim de 5 s, para um ICE que nunca liga continuar visível).
+    ///
+    /// Porquê: o webrtc-rs só regista as credenciais remotas ao ARRANCAR o
+    /// transporte ICE, que é assíncrono. Uma oferta do servidor que chegue
+    /// antes disso (o SFU oferece logo a seguir à resposta) é lida como uma
+    /// MUDANÇA de credenciais — um reinício implícito de ICE — e falha com
+    /// «ICE Agent can not be restarted when gathering»; o PC fica preso em
+    /// `have-remote-offer` e recusa tudo o que vem depois. Medido (a oferta e a
+    /// descrição remota anterior tinham o MESMO `ice-ufrag`): o servidor não
+    /// mudou nada. Um browser não tem esta corrida; o cliente de teste tem.
+    async fn responder_com_ice_ligado(&self, sdp: String) {
+        use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState as S;
+        let limite = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < limite {
+            if matches!(self.pc.ice_connection_state(), S::Connected | S::Completed) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.answer_to(sdp).await;
+    }
+
     async fn answer_to(&self, sdp: String) {
+        // Cada saída avisa: sem isto, um cliente que recusa a oferta do servidor
+        // só se vê como um timeout de 3×10 s do lado do SFU, sem dizer porquê.
+        let ufrag = |sdp: &str| -> String {
+            sdp.lines()
+                .filter_map(|l| l.strip_prefix("a=ice-ufrag:"))
+                .map(|u| u.trim().to_owned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let ufrag_da_oferta = ufrag(&sdp);
         let offer = RTCSessionDescription::offer(sdp).unwrap();
-        if self.pc.set_remote_description(offer).await.is_err() {
+        let estado = self.pc.signaling_state();
+        if let Err(e) = self.pc.set_remote_description(offer).await {
+            // As credenciais ICE decidem se o webrtc-rs trata a oferta como um
+            // reinício de ICE: iguais às da descrição remota anterior = o
+            // reinício é espúrio; diferentes = o servidor mudou-as.
+            let ufrag_remoto_anterior = match self.pc.remote_description().await {
+                Some(d) => ufrag(&d.sdp),
+                None => "<nenhuma>".to_owned(),
+            };
+            tracing::warn!(
+                cliente = %self.id, ?estado, erro = %e,
+                ufrag_oferta = %ufrag_da_oferta, ufrag_remoto_anterior = %ufrag_remoto_anterior,
+                "TestClient: set_remote(oferta do servidor) recusado"
+            );
             return;
         }
-        let Ok(answer) = self.pc.create_answer(None).await else {
-            return;
+        let answer = match self.pc.create_answer(None).await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(cliente = %self.id, erro = %e, "TestClient: create_answer falhou");
+                return;
+            }
         };
-        if self.pc.set_local_description(answer).await.is_err() {
+        if let Err(e) = self.pc.set_local_description(answer).await {
+            tracing::warn!(cliente = %self.id, erro = %e, "TestClient: set_local(resposta) falhou");
             return;
         }
         let Some(local) = self.pc.local_description().await else {
+            tracing::warn!(cliente = %self.id, "TestClient: sem local_description depois da resposta");
             return;
         };
         let sdp = local.sdp;
@@ -473,7 +527,10 @@ async fn pump(client: Arc<TestClient>, mut rx: mpsc::Receiver<ServerMsg>) {
                     client.held.lock().await.push(sdp);
                     continue;
                 }
-                client.answer_to(sdp).await;
+                // Fora da bomba: esperar pelo ICE dentro dela travava os
+                // `SfuIce` que vêm na mesma fila, e sem eles o ICE nunca liga.
+                let client = client.clone();
+                tokio::spawn(async move { client.responder_com_ice_ligado(sdp).await });
             }
             ServerMsg::SfuIce { candidate } => {
                 if let Ok(init) = serde_json::from_value::<RTCIceCandidateInit>(candidate) {
@@ -508,6 +565,15 @@ fn new_sfu() -> (Arc<SfuState>, Arc<Metrics>) {
 }
 
 fn new_sfu_com(ice_timeouts: Option<(Duration, Duration)>) -> (Arc<SfuState>, Arc<Metrics>) {
+    // `DELONIX_IT_LOG=<filtro tracing>` (a mesma variável dos testes de
+    // integração) mostra o que o SFU faz. Sem ela não há subscritor e uma falha
+    // de corrida só diz «faltou media», sem dizer em que ponto da negociação.
+    if let Ok(filter) = std::env::var("DELONIX_IT_LOG") {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    }
     let metrics = Arc::new(Metrics::default());
     (
         Arc::new(SfuState::new(
@@ -639,6 +705,137 @@ impl TestClient {
             self.pc.connection_state(),
         )
     }
+}
+
+/// **Duas pessoas, duas línguas** — a prova que o ADR-0030 pede, com WebRTC a
+/// sério: a pista de dobragem chega a quem a pediu e **não chega a quem não a
+/// pediu**.
+///
+/// É o teste que nenhum unitário substitui. Os unitários provam a tabela de
+/// verdade do filtro; este prova que o filtro está mesmo no caminho do RTP —
+/// que foi exactamente o que faltou à descoberta do OAuth (#333).
+///
+/// A sala tem três: A fala, B pediu inglês, C não pediu nada.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dobragem_chega_a_quem_a_pediu_e_nao_a_quem_nao_pediu() {
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    // Os três publicam microfone, como na sala a sério: mesmo calado, o
+    // browser publica a track. Um peer que nunca oferece também nunca negocia
+    // — e o `reevaluate_peer` sai cedo sem SDP remoto, que foi exactamente o
+    // que esta prova mostrou à primeira tentativa (`ice=New, tracks=[]`).
+    let a = TestClient::join(&sfu, room).await;
+    a.publish(OPUS, "a-audio").await;
+    let b = TestClient::join(&sfu, room).await;
+    b.publish(OPUS, "b-audio").await;
+    let c = TestClient::join(&sfu, room).await;
+    c.publish(OPUS, "c-audio").await;
+
+    // O anfitrião ligou o inglês: nasce um publicador SINTÉTICO, um por língua
+    // e não por ouvinte.
+    let lang = "en-US";
+    let dub = crate::dubbing::dub_id(room, lang);
+    let tx = sfu.publish_dub_audio(room, dub, lang).await;
+
+    // B escolhe ouvir inglês. C não escolhe nada — é a maioria das pessoas.
+    sfu.set_dub_language(room, b.id, Some(lang.into())).await;
+
+    // A voz a sair: Opus de 20 ms, como o `dubbing::arranca` produz.
+    let bombeia = tokio::spawn(async move {
+        let mut enc = opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
+        let mut saida = vec![0u8; 1500];
+        let (mut seq, mut ts) = (0u16, 0u32);
+        for i in 0..500u32 {
+            let pcm: Vec<f32> = (0..960)
+                .map(|k| {
+                    let n = (i * 960 + k) as f32;
+                    0.3 * (2.0 * std::f32::consts::PI * 440.0 * n / 48_000.0).sin()
+                })
+                .collect();
+            let n = enc.encode(&pcm, 960, &mut saida).unwrap();
+            let packet = webrtc::rtp::packet::Packet {
+                header: webrtc::rtp::header::Header {
+                    version: 2,
+                    marker: seq == 0,
+                    payload_type: 111,
+                    sequence_number: seq,
+                    timestamp: ts,
+                    ssrc: 0x0D0B_0000,
+                    ..Default::default()
+                },
+                payload: bytes::Bytes::copy_from_slice(&saida[..n]),
+            };
+            seq = seq.wrapping_add(1);
+            ts = ts.wrapping_add(960);
+            if tx
+                .send(crate::sfu::BridgePacket { packet, level: 40 })
+                .await
+                .is_err()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+
+    // O stream da dobragem tem nome próprio — é assim que o cliente a liga a um
+    // `<audio>` só dela, e é por ele que este teste a reconhece.
+    let fluxo = format!("dub-{lang}");
+
+    eventually_com_diagnostico(
+        "B recebe a pista de dobragem que pediu",
+        prazo(30),
+        || {
+            let b = b.clone();
+            let fluxo = fluxo.clone();
+            async move { b.streams_seen().await.iter().any(|(s, _)| *s == fluxo) }
+        },
+        || format!("B[{}] · C[{}]", b.retrato(), c.retrato()),
+    )
+    .await;
+
+    eventually("RTP real da dobragem a chegar a B", prazo(30), || {
+        let b = b.clone();
+        let fluxo = fluxo.clone();
+        async move { b.rtp_seen.lock().await.get(&fluxo).copied().unwrap_or(0) > 0 }
+    })
+    .await;
+
+    // E o áudio REAL de A continua a chegar: a dobragem acrescenta, não
+    // substitui.
+    eventually("o áudio de A chega a C", prazo(30), || {
+        let c = c.clone();
+        let a_id = a.id.to_string();
+        async move { c.rtp_seen.lock().await.get(&a_id).copied().unwrap_or(0) > 0 }
+    })
+    .await;
+
+    // **A asserção que justifica esta frente inteira.** C nunca pediu inglês:
+    // não pode ter visto a pista nem recebido um pacote dela. Sem o filtro do
+    // `reevaluate_peer`, toda a sala ouviria uma segunda voz por cima do
+    // orador — e ninguém saberia porquê.
+    let c_viu = c
+        .streams_seen()
+        .await
+        .iter()
+        .filter(|(s, _)| *s == fluxo)
+        .count();
+    let c_rtp = c.rtp_seen.lock().await.get(&fluxo).copied().unwrap_or(0);
+    let b_rtp = b.rtp_seen.lock().await.get(&fluxo).copied().unwrap_or(0);
+    eprintln!(
+        "dobragem: B recebeu {b_rtp} pacotes de «{fluxo}»; C viu {c_viu} tracks e {c_rtp} pacotes"
+    );
+    assert!(b_rtp > 0, "B pediu a dobragem e não a recebeu");
+    assert_eq!(c_viu, 0, "a pista VAZOU para quem não a pediu");
+    assert_eq!(c_rtp, 0, "chegou RTP de dobragem a quem não a pediu");
+
+    // Desligar a língua retira a pista.
+    sfu.end_dub(room, lang).await;
+    bombeia.abort();
+    sfu.remove_peer(room, a.id).await;
+    sfu.remove_peer(room, b.id).await;
+    sfu.remove_peer(room, c.id).await;
 }
 
 /// Caminho feliz: dois participantes, media a fluir nos DOIS sentidos.
@@ -1532,6 +1729,388 @@ async fn churn_de_subscricoes_nao_deixa_nada_vivo() {
 }
 
 // ===================================================================
+//  Gravação arrancada a meio da chamada (R299)
+// ===================================================================
+//
+// Quem carrega em «gravar» com a chamada a decorrer liga um writer a um vídeo
+// que já vai em quadros delta. A pista só serve se abrir num keyframe, e o
+// codificador só manda um quando lho pedem: a gravação é mais um consumidor de
+// vídeo, e tem de o pedir. Não pedia — três pistas em três não descodificavam,
+// a grelha de dois publicadores acabava em `failed` e a de um ficava «pronta»
+// sem imagem.
+//
+// O CI não tem ffmpeg, por isso estes testes olham para a PISTA: o que o
+// gravador escreveu tem de começar num keyframe. A gravação a sério, com o VP8
+// do Chromium e a composição, mede-se com `web/e2e/gravacao-a-meio.mjs`.
+
+/// Uma câmara VP8 que se porta como o codificador de um browser: abre com um
+/// keyframe, segue em quadros delta, e só volta a mandar um keyframe quando
+/// recebe um PLI.
+///
+/// Os quadros não são descodificáveis; têm a forma que o gravador lê. O delta
+/// não cabe num pacote e é zeros a seguir ao cabeçalho: as continuações começam
+/// por um byte PAR, que a guarda antiga do `Vp8IvfWriter` lia como «keyframe».
+struct CamaraVp8 {
+    plis: Arc<std::sync::atomic::AtomicUsize>,
+    keyframes: Arc<std::sync::atomic::AtomicUsize>,
+    quadros: Arc<std::sync::atomic::AtomicUsize>,
+    /// `false` = o codificador deixou de produzir quadros (um ecrã parado).
+    /// Um PLI continua a ter resposta: é o que um browser faz.
+    a_emitir: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CamaraVp8 {
+    const LARGURA: u16 = 640;
+    const ALTURA: u16 = 360;
+
+    async fn publicar(cliente: &TestClient) -> Self {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+        use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+
+        let id = format!("{}-video", cliente.id);
+        let track = cliente.adicionar_track(VP8, &id).await;
+        cliente.offer().await;
+        let mut sender = None;
+        for s in cliente.pc.get_senders().await {
+            if s.track().await.is_some_and(|t| t.id() == id) {
+                sender = Some(s);
+            }
+        }
+        let sender = sender.expect("o sender da câmara");
+
+        let camara = CamaraVp8 {
+            plis: Arc::new(AtomicUsize::new(0)),
+            keyframes: Arc::new(AtomicUsize::new(0)),
+            quadros: Arc::new(AtomicUsize::new(0)),
+            a_emitir: Arc::new(AtomicBool::new(true)),
+        };
+        // O primeiro quadro de um codificador é sempre um keyframe.
+        let pedido = Arc::new(AtomicBool::new(true));
+
+        {
+            let (plis, pedido) = (camara.plis.clone(), pedido.clone());
+            tokio::spawn(async move {
+                while let Ok((pacotes, _)) = sender.read_rtcp().await {
+                    for p in pacotes {
+                        if p.as_any().downcast_ref::<PictureLossIndication>().is_some() {
+                            plis.fetch_add(1, SeqCst);
+                            pedido.store(true, SeqCst);
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let (keyframes, quadros, a_emitir) = (
+                camara.keyframes.clone(),
+                camara.quadros.clone(),
+                camara.a_emitir.clone(),
+            );
+            tokio::spawn(async move {
+                loop {
+                    let chave = pedido.swap(false, SeqCst);
+                    if chave || a_emitir.load(SeqCst) {
+                        let data = if chave {
+                            let [l0, l1] = Self::LARGURA.to_le_bytes();
+                            let [a0, a1] = Self::ALTURA.to_le_bytes();
+                            let mut q = vec![0x10, 0x00, 0x00, 0x9d, 0x01, 0x2a, l0, l1, a0, a1];
+                            q.resize(400, 0x00);
+                            q
+                        } else {
+                            let mut q = vec![0x11];
+                            q.resize(3000, 0x00);
+                            q
+                        };
+                        let sample = Sample {
+                            data: data.into(),
+                            duration: Duration::from_millis(33),
+                            ..Default::default()
+                        };
+                        if track.write_sample(&sample).await.is_err() {
+                            break;
+                        }
+                        if chave {
+                            keyframes.fetch_add(1, SeqCst);
+                        }
+                        quadros.fetch_add(1, SeqCst);
+                    }
+                    tokio::time::sleep(Duration::from_millis(33)).await;
+                }
+            });
+        }
+        camara
+    }
+
+    fn keyframes(&self) -> usize {
+        self.keyframes.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn quadros(&self) -> usize {
+        self.quadros.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn plis(&self) -> usize {
+        self.plis.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Espera que a câmara produza mais `n` quadros.
+    async fn mais_quadros(&self, n: usize, label: &str) {
+        let alvo = self.quadros() + n;
+        eventually(label, prazo(30), || {
+            let q = self.quadros.clone();
+            async move { q.load(std::sync::atomic::Ordering::SeqCst) >= alvo }
+        })
+        .await;
+    }
+}
+
+/// Pára a gravação e confirma que a pista de vídeo ABRE num keyframe: o
+/// primeiro quadro tem o bit de keyframe e o código de início, e o cabeçalho
+/// IVF leva as dimensões dele em vez das nominais (1280×720), que eram a marca
+/// de uma pista que nunca viu um keyframe.
+async fn parar_e_verificar_a_pista(sfu: &Arc<SfuState>, room: Uuid, dir: &std::path::Path) {
+    let sessao = sfu
+        .stop_recording(room)
+        .await
+        .expect("a gravação estava a decorrer");
+    let pista = sessao
+        .tracks
+        .iter()
+        .find(|t| t.kind == "video")
+        .expect("a gravação tem uma pista de vídeo");
+    let b = std::fs::read(&pista.path).expect("a pista IVF");
+    let mut quadros: Vec<&[u8]> = Vec::new();
+    let mut i = 32;
+    while i + 12 <= b.len() {
+        let n = u32::from_le_bytes(b[i..i + 4].try_into().unwrap()) as usize;
+        quadros.push(&b[i + 12..i + 12 + n]);
+        i += 12 + n;
+    }
+    assert!(
+        quadros.len() >= 10,
+        "a pista tem de ter o keyframe e os quadros que vieram depois dele: {} quadros",
+        quadros.len()
+    );
+    let primeiro = quadros[0];
+    assert!(
+        primeiro.len() >= 10 && primeiro[0] & 0x01 == 0 && primeiro[3..6] == [0x9d, 0x01, 0x2a],
+        "o primeiro quadro da pista tem de ser um keyframe; começa por {:02x?} ({} bytes)",
+        &primeiro[..primeiro.len().min(10)],
+        primeiro.len()
+    );
+    assert!(
+        quadros[1..]
+            .iter()
+            .all(|q| q.len() == 3000 || q.len() == 400),
+        "depois dele, quadros inteiros — nenhum remontado a partir do meio"
+    );
+    let dims = (
+        u16::from_le_bytes([b[12], b[13]]),
+        u16::from_le_bytes([b[14], b[15]]),
+    );
+    assert_eq!(
+        dims,
+        (CamaraVp8::LARGURA, CamaraVp8::ALTURA),
+        "o cabeçalho IVF leva as dimensões do keyframe"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Aberta a pista, o SFU deixa de pedir keyframes: durante mais de duas vezes
+/// o intervalo mínimo entre PLI a câmara não recebe nenhum. Uma bandeira que
+/// nunca apagasse era um keyframe por segundo e por câmara gravada — o ticker
+/// que a R14 tirou.
+async fn os_pedidos_pararam(camara: &CamaraVp8) {
+    let antes = (camara.plis(), camara.keyframes());
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        (camara.plis(), camara.keyframes()),
+        antes,
+        "com a pista aberta, a câmara não pode continuar a receber pedidos de keyframe (PLI, keyframes)"
+    );
+}
+
+/// A gravação arranca com a câmara a meio do fluxo, e LOGO A SEGUIR a um
+/// keyframe pedido por outro (um participante que entrou): o pedido que o
+/// `start_recording` faz cai no intervalo mínimo entre PLI e não sai. Sem
+/// repetição, a pista ficava à espera de um keyframe que ninguém voltava a
+/// pedir — é a bomba de RTP que insiste até ele chegar.
+///
+/// O pedido só é travado se o arranque correr a menos de um segundo do PLI
+/// anterior, e isso depende da máquina. Por isso o teste MEDE se foi (o
+/// contador de pedidos do SFU não mexe durante o `start_recording`) e, se não
+/// foi, repete o cenário com outro participante a entrar: passar sem nunca ter
+/// exercitado a repetição não provava nada sobre ela.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gravacao_arrancada_a_meio_abre_a_pista_num_keyframe() {
+    use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+    let (sfu, metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let a = TestClient::join(&sfu, room).await;
+    let camara = CamaraVp8::publicar(&a).await;
+    eventually_com_diagnostico(
+        "o SFU recebe a câmara de A",
+        prazo(30),
+        || {
+            let m = metrics.clone();
+            async move { m.sfu_publications_total.load(Relaxed) >= 1 }
+        },
+        || format!("A[{}]", a.retrato()),
+    )
+    .await;
+    camara
+        .mais_quadros(10, "a câmara de A segue em quadros delta")
+        .await;
+    assert_eq!(
+        camara.keyframes(),
+        1,
+        "sem subscritores ninguém pediu keyframe: só o de abertura"
+    );
+
+    let mut outros = Vec::new();
+    let mut travado = false;
+    for tentativa in 1..=5 {
+        // Alguém entra e é subscrito à câmara de A: o SFU pede um keyframe por ele.
+        let keyframes_antes = camara.keyframes();
+        let b = TestClient::join(&sfu, room).await;
+        b.publish(OPUS, &format!("b{tentativa}-audio")).await;
+        eventually_com_diagnostico(
+            "a entrada de outro participante fez a câmara de A mandar um keyframe",
+            prazo(30),
+            || {
+                let k = camara.keyframes.clone();
+                async move { k.load(SeqCst) > keyframes_antes }
+            },
+            || {
+                format!(
+                    "A[{}] · B[{}] · PLI={}",
+                    a.retrato(),
+                    b.retrato(),
+                    camara.plis()
+                )
+            },
+        )
+        .await;
+        outros.push(b);
+        // Esse keyframe já passou: quando a gravação arrancar, só há deltas.
+        camara
+            .mais_quadros(4, "a câmara voltou aos quadros delta")
+            .await;
+
+        let dir = std::env::temp_dir().join(format!("dlx-rec-e2e-{}", Uuid::new_v4()));
+        let keyframes_antes = camara.keyframes();
+        let pedidos_antes = metrics.sfu_keyframes_requested_total.load(Relaxed);
+        assert!(
+            sfu.start_recording(room, Uuid::new_v4(), "anfitrião", None, &dir)
+                .await,
+            "a gravação arranca"
+        );
+        let pedido_travado = metrics.sfu_keyframes_requested_total.load(Relaxed) == pedidos_antes;
+        eventually_com_diagnostico(
+            "a gravação pediu um keyframe à câmara de A e ela mandou-o",
+            prazo(30),
+            || {
+                let k = camara.keyframes.clone();
+                async move { k.load(SeqCst) > keyframes_antes }
+            },
+            || {
+                format!(
+                    "A[{}] · pedido do arranque travado={pedido_travado} · PLI recebidos={} · keyframes={} · pedidos do SFU={}",
+                    a.retrato(),
+                    camara.plis(),
+                    camara.keyframes(),
+                    metrics.sfu_keyframes_requested_total.load(Relaxed),
+                )
+            },
+        )
+        .await;
+        camara
+            .mais_quadros(45, "a chamada continua depois do keyframe")
+            .await;
+        os_pedidos_pararam(&camara).await;
+        parar_e_verificar_a_pista(&sfu, room, &dir).await;
+        if pedido_travado {
+            travado = true;
+            break;
+        }
+    }
+    assert!(
+        travado,
+        "em cinco tentativas o pedido do arranque nunca caiu no intervalo mínimo entre PLI: \
+         a repetição na bomba de RTP não foi exercitada (máquina demasiado lenta para este cenário?)"
+    );
+}
+
+/// O publicador não está a mandar quadros quando a gravação arranca (um ecrã
+/// partilhado e parado): não há pacote nenhum a passar na bomba de RTP que
+/// faça alguém lembrar-se do keyframe. Tem de ser o `start_recording` a
+/// pedi-lo, no momento em que liga o writer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gravacao_arrancada_com_o_video_parado_pede_o_keyframe_ao_ligar_o_writer() {
+    use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+    let (sfu, metrics) = new_sfu();
+    let room = Uuid::new_v4();
+
+    let a = TestClient::join(&sfu, room).await;
+    let camara = CamaraVp8::publicar(&a).await;
+    eventually_com_diagnostico(
+        "o SFU recebe a câmara de A",
+        prazo(30),
+        || {
+            let m = metrics.clone();
+            async move { m.sfu_publications_total.load(Relaxed) >= 1 }
+        },
+        || format!("A[{}]", a.retrato()),
+    )
+    .await;
+    camara
+        .mais_quadros(10, "a câmara de A segue em quadros delta")
+        .await;
+
+    // O codificador cala-se, e o que ia a caminho acaba de chegar.
+    camara.a_emitir.store(false, SeqCst);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(camara.plis(), 0, "até aqui ninguém pediu keyframe");
+
+    let dir = std::env::temp_dir().join(format!("dlx-rec-e2e-{}", Uuid::new_v4()));
+    let pedidos_antes = metrics.sfu_keyframes_requested_total.load(Relaxed);
+    assert!(
+        sfu.start_recording(room, Uuid::new_v4(), "anfitrião", None, &dir)
+            .await,
+        "a gravação arranca"
+    );
+    assert_eq!(
+        metrics.sfu_keyframes_requested_total.load(Relaxed),
+        pedidos_antes + 1,
+        "o pedido sai do próprio start_recording, sem esperar por pacote nenhum"
+    );
+    eventually_com_diagnostico(
+        "a câmara parada recebe o pedido de keyframe da gravação e responde",
+        prazo(30),
+        || {
+            let k = camara.keyframes.clone();
+            async move { k.load(SeqCst) >= 2 }
+        },
+        || {
+            format!(
+                "A[{}] · PLI recebidos={} · pedidos do SFU={}",
+                a.retrato(),
+                camara.plis(),
+                metrics.sfu_keyframes_requested_total.load(Relaxed),
+            )
+        },
+    )
+    .await;
+    camara.a_emitir.store(true, SeqCst);
+    camara
+        .mais_quadros(45, "a câmara volta a produzir quadros")
+        .await;
+    os_pedidos_pararam(&camara).await;
+    parar_e_verificar_a_pista(&sfu, room, &dir).await;
+}
+
+// ===================================================================
 //  Ponte telefone↔sala (ADR-0010, R221)
 // ===================================================================
 
@@ -1836,7 +2415,7 @@ async fn palco_impede_o_selector_de_calar_quem_esta_destacado() {
                 room_id: room,
                 leg_id,
                 allowed_sources: vec!["127.0.0.1".parse().unwrap()],
-                default_law: Law::A,
+                codec: leg::LegCodec::G711(Law::A),
                 initial_remote: None,
             },
             socket,
@@ -1979,7 +2558,7 @@ async fn force_mute_cala_o_telefone_na_perna() {
             room_id: room,
             leg_id,
             allowed_sources: vec!["127.0.0.1".parse().unwrap()],
-            default_law: Law::A,
+            codec: leg::LegCodec::G711(Law::A),
             initial_remote: None,
         },
         socket,
@@ -2130,7 +2709,7 @@ async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
             room_id: room,
             leg_id,
             allowed_sources: vec!["127.0.0.1".parse().unwrap()],
-            default_law: Law::A,
+            codec: leg::LegCodec::G711(Law::A),
             initial_remote: None,
         },
         socket,
@@ -2326,6 +2905,328 @@ async fn ponte_telefone_sala_tom_nos_dois_sentidos() {
     esperar_censo_vazio(&sfu, "depois da chamada e da Ana saírem", prazo(20)).await;
 }
 
+/// «Softphone» falso com a perna em Opus (ADR-0018): o papel do FreeSWITCH
+/// quando a dial string leva `OPUS` à frente. Manda Opus a 48 kHz (silêncio e
+/// depois um tom), guarda cada payload que mandou, e descodifica a 16 kHz o
+/// que a ponte lhe devolve.
+struct TelefoneOpus {
+    /// PCM (16 kHz) de cada pacote da mistura.
+    recebido: Arc<std::sync::Mutex<Vec<Vec<f32>>>>,
+    /// Todos os payloads que saíram deste telefone, tal como saíram.
+    enviados: Arc<std::sync::Mutex<std::collections::HashSet<Vec<u8>>>>,
+    tocar: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TelefoneOpus {
+    async fn ligar(ponte: std::net::SocketAddr, payload_type: u8, freq: f32) -> Self {
+        use webrtc::util::{Marshal, Unmarshal};
+        let socket = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let recebido: Arc<std::sync::Mutex<Vec<Vec<f32>>>> = Default::default();
+        let enviados: Arc<std::sync::Mutex<std::collections::HashSet<Vec<u8>>>> =
+            Default::default();
+        let tocar = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let socket = socket.clone();
+            let recebido = recebido.clone();
+            tokio::spawn(async move {
+                let mut dec = opus_rs::OpusDecoder::new(16_000, 1).unwrap();
+                let mut pcm = vec![0f32; 320 * 6];
+                let mut buf = vec![0u8; 1500];
+                while let Ok((n, _)) = socket.recv_from(&mut buf).await {
+                    let mut raw: &[u8] = &buf[..n];
+                    let Ok(p) = webrtc::rtp::packet::Packet::unmarshal(&mut raw) else {
+                        continue;
+                    };
+                    if p.header.payload_type != payload_type {
+                        continue;
+                    }
+                    if let Ok(k) = dec.decode(&p.payload, 320 * 6, &mut pcm) {
+                        recebido.lock().unwrap().push(pcm[..k].to_vec());
+                    }
+                }
+            });
+        }
+        {
+            let socket = socket.clone();
+            let enviados = enviados.clone();
+            let tocar = tocar.clone();
+            tokio::spawn(async move {
+                let mut enc =
+                    opus_rs::OpusEncoder::new(48_000, 1, opus_rs::Application::Voip).unwrap();
+                enc.bitrate_bps = 32_000;
+                let mut out = vec![0u8; 1500];
+                let mut tick = tokio::time::interval(Duration::from_millis(20));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+                let (mut seq, mut ts, mut fase) = (64_000u16, 4_294_000_000u32, 0usize);
+                loop {
+                    tick.tick().await;
+                    let on = tocar.load(std::sync::atomic::Ordering::SeqCst);
+                    let pcm: Vec<f32> = (0..960)
+                        .map(|i| {
+                            if on {
+                                0.5 * (2.0 * std::f32::consts::PI * freq * (fase + i) as f32
+                                    / 48_000.0)
+                                    .sin()
+                            } else {
+                                0.0
+                            }
+                        })
+                        .collect();
+                    fase += 960;
+                    let len = enc.encode(&pcm, 960, &mut out).unwrap();
+                    enviados.lock().unwrap().insert(out[..len].to_vec());
+                    let pkt = webrtc::rtp::packet::Packet {
+                        header: webrtc::rtp::header::Header {
+                            version: 2,
+                            payload_type,
+                            sequence_number: seq,
+                            timestamp: ts,
+                            ssrc: 0x0b05_f0e0,
+                            ..Default::default()
+                        },
+                        payload: out[..len].to_vec().into(),
+                    };
+                    // Os dois contadores dão a volta durante o teste, de propósito.
+                    seq = seq.wrapping_add(1);
+                    ts = ts.wrapping_add(960);
+                    if socket
+                        .send_to(&pkt.marshal().unwrap(), ponte)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        Self {
+            recebido,
+            enviados,
+            tocar,
+        }
+    }
+}
+
+/// **ADR-0018 — com a perna em Opus, a banda larga passa nos dois sentidos e
+/// o telefone entra na sala sem ser recodificado.**
+///
+/// A perna G.711 deitava fora tudo acima de ~3,4 kHz: um softphone que falava
+/// Opus a 48 kHz chegava à sala com qualidade de telefone fixo. Aqui os tons
+/// estão ACIMA dessa banda de propósito — num caminho a 8 kHz nenhum dos dois
+/// existe:
+///
+/// 1. a Ana ouve os **5 kHz** do softphone;
+/// 2. cada payload que a Ana recebe dessa perna é, byte a byte, um dos que o
+///    softphone mandou — a ponte não recodificou;
+/// 3. o softphone ouve os **6 kHz** da Ana, em Opus;
+/// 4. e não se ouve a si próprio (mix-minus);
+/// 5. silenciada na ponte, a perna deixa de entrar na sala, e volta ao desfazer.
+///
+/// **Âmbito:** como na R221, sem FreeSWITCH e sem SRTP — o caminho de media. O
+/// controlo negativo da banda (os mesmos 6 kHz a NÃO chegarem em G.711) está em
+/// `phone_bridge::audio::tests::banda_larga_leva_6_khz_ao_telefone_e_o_g711_nao`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ponte_em_opus_leva_banda_larga_nos_dois_sentidos() {
+    use crate::phone_bridge::leg;
+    const PT: u8 = 116;
+    let (sfu, _metrics) = new_sfu();
+    let room = Uuid::new_v4();
+    let leg_id = Uuid::new_v4();
+    let chave = leg_id.to_string();
+
+    let ana = TestClient::join(&sfu, room).await;
+    let (ana_fala, _) = ana.publish_opus_tone("ana-mic", 6000.0).await;
+    eventually_com_diagnostico(
+        "a Ana está ligada ao SFU",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            async move {
+                ana.pc.connection_state()
+                    == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected
+                    && ana.pc.signaling_state()
+                        == webrtc::peer_connection::signaling_state::RTCSignalingState::Stable
+            }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+
+    let (ev_tx, mut ev_rx) = mpsc::channel(16);
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let perna = leg::start(
+        sfu.clone(),
+        leg::LegConfig {
+            room_id: room,
+            leg_id,
+            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            codec: leg::LegCodec::Opus { payload_type: PT },
+            initial_remote: None,
+        },
+        socket,
+        None,
+        ev_tx,
+    )
+    .await
+    .expect("perna da ponte em Opus");
+    let telefone = TelefoneOpus::ligar(perna.local_addr, PT, 5000.0).await;
+
+    eventually_com_diagnostico(
+        "a Ana recebe o áudio da chamada",
+        prazo(30),
+        || {
+            let ana = ana.clone();
+            let chave = chave.clone();
+            async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) > 10 }
+        },
+        || format!("Ana[{}]", ana.retrato()),
+    )
+    .await;
+    assert_eq!(ev_rx.try_recv().ok(), Some(leg::LegEvent::FirstMedia));
+
+    telefone
+        .tocar
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    ana_fala.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // 1. A sala ouve os 5 kHz do softphone.
+    eventually("a Ana ouve os 5 kHz do softphone", prazo(20), || {
+        let ana = ana.clone();
+        let chave = chave.clone();
+        async move {
+            ana.tom_recebido(&chave, 5000.0)
+                .iter()
+                .rev()
+                .take(25)
+                .filter(|(_, m)| *m > 0.15)
+                .count()
+                >= 20
+        }
+    })
+    .await;
+    // 3. O softphone ouve os 6 kHz da Ana.
+    eventually("o softphone ouve os 6 kHz da Ana", prazo(20), || {
+        let r = telefone.recebido.clone();
+        async move {
+            let v = r.lock().unwrap();
+            v.iter()
+                .rev()
+                .take(25)
+                .filter(|pcm| tom(pcm, 16_000.0, 6000.0) > 0.05)
+                .count()
+                >= 20
+        }
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // 2. Sem recodificação: o que a Ana recebeu é o que o softphone mandou.
+    let recebidos: Vec<RxAudio> = ana
+        .audio_rx
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| p.stream_id == chave)
+        .cloned()
+        .collect();
+    let alheios = {
+        let enviados = telefone.enviados.lock().unwrap();
+        recebidos
+            .iter()
+            .filter(|p| !enviados.contains(&p.payload))
+            .count()
+    };
+    assert!(
+        recebidos.len() > 50,
+        "amostra curta de mais para provar a passagem: {}",
+        recebidos.len()
+    );
+    assert_eq!(
+        alheios, 0,
+        "a ponte publicou payloads que o softphone não mandou — recodificou"
+    );
+
+    // 4. Mix-minus, e o nível do que chega.
+    let (proprio_max, alheio_min) = {
+        let v = telefone.recebido.lock().unwrap();
+        let ultimos: Vec<&Vec<f32>> = v.iter().rev().take(40).collect();
+        (
+            ultimos
+                .iter()
+                .map(|f| tom(f, 16_000.0, 5000.0))
+                .fold(0.0, f32::max),
+            ultimos
+                .iter()
+                .map(|f| tom(f, 16_000.0, 6000.0))
+                .fold(1.0, f32::min),
+        )
+    };
+    assert!(
+        proprio_max < 0.02,
+        "o softphone ouve-se a si próprio: {proprio_max}"
+    );
+    assert!(
+        alheio_min > 0.03,
+        "os 6 kHz da Ana falham no softphone: {alheio_min}"
+    );
+    // 5. Calar na ponte cala também em Opus, e desfazer devolve o áudio — a
+    //    R224 só estava guardada no codec antigo.
+    let visto = {
+        let ana = ana.clone();
+        let chave = chave.clone();
+        move || {
+            let ana = ana.clone();
+            let chave = chave.clone();
+            async move { ana.rtp_seen.lock().await.get(&chave).copied().unwrap_or(0) }
+        }
+    };
+    let calar = perna.mute_flag();
+    calar.store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let calado_a = visto().await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let calado_b = visto().await;
+    assert_eq!(
+        calado_a, calado_b,
+        "silenciada na ponte, a perna em Opus continuou a entrar na sala"
+    );
+    calar.store(false, std::sync::atomic::Ordering::SeqCst);
+    eventually(
+        "desfeito o silêncio, o softphone volta à sala",
+        prazo(15),
+        {
+            let visto = visto.clone();
+            move || {
+                let visto = visto.clone();
+                async move { visto().await > calado_b + 20 }
+            }
+        },
+    )
+    .await;
+
+    let rejeitados = perna
+        .stats
+        .packets_rejected
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(rejeitados, 0, "Opus válido não é recusado");
+    eprintln!(
+        "ADR-0018 ponte em Opus: {} pacotes na sala, todos intactos · softphone ouve 6 kHz a {:.3} \
+         (próprio {:.4}) · pacotes in={} out={}",
+        recebidos.len(),
+        alheio_min,
+        proprio_max,
+        perna.stats.packets_in.load(std::sync::atomic::Ordering::Relaxed),
+        perna.stats.packets_out.load(std::sync::atomic::Ordering::Relaxed),
+    );
+
+    perna.stop().await;
+    drop(telefone);
+    sfu.remove_peer(room, ana.id).await;
+    ana.pc.close().await.unwrap();
+    assert!(sfu.is_room_empty(room).await);
+    esperar_censo_vazio(&sfu, "depois da chamada em Opus e da Ana saírem", prazo(20)).await;
+}
+
 /// **R172 — entradas concorrentes: toda a gente recebe toda a gente.**
 ///
 /// Medido a 2026-09-17 com clientes WebRTC reais (`server/examples/loadgen.rs`,
@@ -2358,6 +3259,17 @@ async fn entradas_concorrentes_todos_recebem_todos() {
     // as 96 subscrições todas feitas, e o CI da main ficou vermelho por isso.
     // Escala-se pelo que a máquina tem, em vez de subir o prazo (mais prazo
     // não liga um ICE que já desistiu).
+    //
+    // CAUSA MEDIDA a 2026-10-05 — não era só a máquina. Com `DELONIX_IT_LOG`
+    // ligado, os dois subscritores sem media tinham o MESMO `ice-ufrag` na
+    // oferta do servidor e na descrição remota anterior: o servidor não mudou
+    // credenciais. Quem falhava era o CLIENTE webrtc-rs, que lia a oferta como
+    // um reinício de ICE («ICE Agent can not be restarted when gathering») por
+    // ela chegar antes de o transporte ICE ter registado as credenciais
+    // remotas, e ficava preso em `have-remote-offer` (ver
+    // `TestClient::responder_com_ice_ligado`). O SFU dava 3 timeouts e
+    // «peer sem media nova». Controlo (100 execuções cada, mesma máquina):
+    // sem a correcção 8 falhas, com ela 0 (p ≈ 0,003).
     let nucleos = std::thread::available_parallelism().map_or(2, |n| n.get());
     let n_salas: usize = if nucleos >= 8 { 4 } else { 2 };
     let por_sala: usize = 4;
@@ -2495,7 +3407,9 @@ async fn um_invite_recusado_devolve_o_bilhete_para_invalidar() {
             sip_bind: "127.0.0.1:0".parse().unwrap(),
             rtp_ip: "127.0.0.1".parse().unwrap(),
             rtp_ports: None,
-            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            allowed_sources: crate::phone_bridge::origens::SourceAllowlist::new(vec!["127.0.0.1"
+                .parse()
+                .unwrap()]),
         },
         sfu,
         Arc::new(AdmissaoFixa {
@@ -2739,7 +3653,9 @@ async fn ponte_com_freeswitch_real_tom_nos_dois_sentidos() {
             sip_bind: "127.0.0.1:0".parse().unwrap(),
             rtp_ip: "127.0.0.1".parse().unwrap(),
             rtp_ports: None,
-            allowed_sources: vec!["127.0.0.1".parse().unwrap()],
+            allowed_sources: crate::phone_bridge::origens::SourceAllowlist::new(vec!["127.0.0.1"
+                .parse()
+                .unwrap()]),
         },
         sfu.clone(),
         Arc::new(AdmissaoFixa {

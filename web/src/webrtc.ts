@@ -63,7 +63,21 @@ function pcConfig(base: RTCConfiguration, crypto?: FrameCrypto): RTCConfiguratio
 export const SIMULCAST_ENCODINGS: readonly RTCRtpEncodingParameters[] = [
   { rid: 'q', scaleResolutionDownBy: 4, maxBitrate: 300_000 },
   { rid: 'h', scaleResolutionDownBy: 2, maxBitrate: 1_200_000 },
-  { rid: 'f', maxBitrate: 6_000_000 },
+  // 2,5 Mbps e não 6. O tecto de 6 vinha de uma captura a 4K60 (ver
+  // `videoConstraints`), e numa sala de até quatro pessoas o servidor pede a
+  // camada `f` a toda a gente — com dois publicadores são DOZE Mbps de descida
+  // pedidos a cada participante. Quando a ligação não os leva, a perda sobe, o
+  // `shift` do SFU desce de camada, e **cada mudança de camada exige um
+  // keyframe: é nesse intervalo que a imagem trava**.
+  //
+  // Medido em produção a 2026-10-13: 8 mudanças de camada em 10 minutos numa
+  // chamada de três pessoas, a saltar `q`→`f` (0,3 → 6 Mbps, vinte vezes) e a
+  // cair outra vez. O coturn não perdia nada (9 pacotes em 2 milhões): a perda
+  // era do caminho, não do relay.
+  //
+  // Com 1080p30 à entrada, a escada fica 0,3 / 1,2 / 2,5 — passos de pouco mais
+  // do dobro, e um tecto que uma ligação real carrega.
+  { rid: 'f', maxBitrate: 2_500_000 },
 ]
 
 function addSimulcastVideo(pc: RTCPeerConnection, track: MediaStreamTrack, stream: MediaStream): RTCRtpSender {
@@ -177,6 +191,31 @@ export const SCREEN_CONSTRAINTS: DisplayMediaStreamOptions = {
   audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
 }
 
+/**
+ * Os tipos de media que NÃO têm faixa local e por isso precisam de uma via só
+ * de RECEPÇÃO (`recvonly`).
+ *
+ * Porque é por TIPO e não tudo-ou-nada: a condição era
+ * `localStream.getTracks().length === 0`, isto é, só se criava a via de
+ * recepção quando não havia faixa NENHUMA. Quem entrasse só com áudio tinha uma
+ * faixa — logo a condição era falsa — e ficava sem m-line de vídeo: **nunca
+ * mais conseguia ver ninguém**, por muito que os outros publicassem.
+ *
+ * E não é um caso de canto. Três caminhos levam lá, dois deles sem ninguém
+ * escolher nada (`useCallSession`):
+ *
+ *   getMedia(voiceOnly ? { audio } : { audio, video })   ← o botão «só áudio»
+ *     .catch(() => getMedia({ audio }))                   ← a câmara falhou
+ *     .catch(() => new MediaStream())
+ *
+ * mais a entrada com a câmara bloqueada por permissão. Reportado de uma chamada
+ * a 2026-10-13: «entra com micro e câmara off e fica sem som e vídeo».
+ */
+export function tiposSemEnvio(presentes: Iterable<string | undefined>): ('audio' | 'video')[] {
+  const tem = new Set(presentes)
+  return (['audio', 'video'] as const).filter((k) => !tem.has(k))
+}
+
 async function replaceTrackOfKind(pcs: Iterable<RTCPeerConnection>, kind: string, track: MediaStreamTrack) {
   for (const pc of pcs) {
     const sender = pc.getSenders().find((s) => s.track?.kind === kind)
@@ -281,9 +320,9 @@ export class MeshCall implements Call {
   private async callPeer(peerId: string) {
     const pc = this.getOrCreatePc(peerId)
     // Sem tracks locais (sem cam/mic) queremos na mesma *receber* media.
-    if (pc.getSenders().length === 0) {
-      pc.addTransceiver('audio', { direction: 'recvonly' })
-      pc.addTransceiver('video', { direction: 'recvonly' })
+    // Por TIPO: um sender de áudio não dá por onde receber VÍDEO.
+    for (const kind of tiposSemEnvio(pc.getSenders().map((x) => x.track?.kind))) {
+      pc.addTransceiver(kind, { direction: 'recvonly' })
     }
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
@@ -427,9 +466,10 @@ export class SfuCall implements Call {
       if (track.kind === 'video') this.videoSender = sender
       this.crypto?.protectSender(sender)
     }
-    if (localStream.getTracks().length === 0) {
-      this.pc.addTransceiver('audio', { direction: 'recvonly' })
-      this.pc.addTransceiver('video', { direction: 'recvonly' })
+    // Por TIPO, e não só quando não há faixa nenhuma: quem entra «só com
+    // áudio» tem UMA faixa, e sem isto fica sem via para receber vídeo.
+    for (const kind of tiposSemEnvio(localStream.getTracks().map((t) => t.kind))) {
+      this.pc.addTransceiver(kind, { direction: 'recvonly' })
     }
 
     this.pc.onicecandidate = (e) => {

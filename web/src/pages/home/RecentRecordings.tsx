@@ -1,6 +1,8 @@
 /**
  * Gravações recentes em cartões. Uma gravação falhada NÃO é clicável (R59):
  * não há nada para abrir, e o cartão diz porquê em vez de fingir um vídeo.
+ * Uma que o servidor ainda está a compor também não — e não é uma falha: o
+ * cartão diz «A processar», e relê-se até ela ficar pronta.
  *
  * «Importar gravação» usa o mesmo caminho do Estúdio: uma gravação pertence a
  * uma sala e só quem participou nela a pode carregar (recordings.rs), por isso
@@ -15,9 +17,12 @@ import { AsyncSection, useAsync } from '../../components/AsyncSection'
 import { Icon } from '../../ui/icons'
 import { Alert, Skeleton, StatusBadge } from '../../ui/kit'
 import { fmtBytes, localeOf } from '../calendar/dates'
+import { hasFile, isProcessing } from '../recordings/format'
+import { useProcessingUpdates } from '../recordings/useProcessingUpdates'
 
 /** Três gravações e o cartão de importar: a fila de quatro do template. */
 const MAX = 3
+const NONE: RecordingItem[] = []
 
 export default function RecentRecordings() {
   const { t, i18n } = useTranslation()
@@ -29,6 +34,9 @@ export default function RecentRecordings() {
     const all = await recordingsLibrary(signal)
     return [...all].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, MAX)
   }, [])
+  // As que o servidor ainda está a compor relêem-se à parte: senão ficavam
+  // «A processar» até a pessoa recarregar a página.
+  const live = useProcessingUpdates(state.s === 'ready' ? state.d : NONE)
 
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -69,12 +77,17 @@ export default function RecentRecordings() {
   )
 
   function body(r: RecordingItem) {
-    const failed = r.status !== 'ready'
+    const processing = isProcessing(r)
+    const failed = !processing && !hasFile(r)
     const size = fmtBytes(r.size_bytes, locale)
     return (
       <>
         <span className="home-rec__thumb">
-          {failed ? (
+          {processing ? (
+            <StatusBadge tone="neutral" icon="hourglass">
+              {t('home.gravacoes.aProcessar')}
+            </StatusBadge>
+          ) : failed ? (
             <StatusBadge tone="record" icon="alert">
               {t('home.gravacoes.falhou')}
             </StatusBadge>
@@ -89,7 +102,7 @@ export default function RecentRecordings() {
           <small>
             {new Date(r.created_at).toLocaleDateString(locale, { day: 'numeric', month: 'short' })}
             {' · '}
-            {failed ? r.failure_reason || t('home.gravacoes.semMedia') : <span className="dx-num">{r.room_code}</span>}
+            {processing ? t('home.gravacoes.aCompor') : failed ? r.failure_reason || t('home.gravacoes.semMedia') : <span className="dx-num">{r.room_code}</span>}
           </small>
         </span>
       </>
@@ -135,14 +148,16 @@ export default function RecentRecordings() {
       <AsyncSection state={state} onRetry={reload} skeleton={skeleton}>
         {(rs) => (
           <ul className="home-recs" role="list">
-            {rs.map((r) => (
+            {rs.map(live).map((r) => (
               <li key={r.id}>
-                {r.status === 'ready' ? (
+                {hasFile(r) ? (
                   <button type="button" className="home-rec" onClick={() => (location.hash = `/recordings?id=${r.id}`)}>
                     {body(r)}
                   </button>
                 ) : (
-                  <div className="home-rec home-rec--failed">{body(r)}</div>
+                  <div className={isProcessing(r) ? 'home-rec home-rec--processing' : 'home-rec home-rec--failed'} data-status={isProcessing(r) ? 'processing' : 'failed'}>
+                    {body(r)}
+                  </div>
                 )}
               </li>
             ))}

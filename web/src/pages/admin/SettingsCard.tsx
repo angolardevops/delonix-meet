@@ -1,24 +1,41 @@
 /**
- * Domínio, retenção e quotas (PATCH /api/orgs/:id). A retenção só apaga
- * GRAVAÇÕES (`recorder.rs`); o texto não promete retenção de chat nem de
- * auditoria, que não existe. Quota vazia = ilimitado (o servidor grava NULL).
+ * Domínio e retenção (PATCH /api/orgs/:id). São DUAS retenções, e fazem coisas
+ * diferentes: a primeira apaga GRAVAÇÕES (`recorder.rs`), a segunda apaga o
+ * CHAT das salas (`room_chat.rs`). A de auditoria não existe, e o texto não a
+ * promete.
+ *
+ * **O campo do chat vazio significa «fica»** — é a omissão desde 2026-10-14, por
+ * decisão do dono. Até aí a varredura apagava ao fim do dia por quem nunca
+ * escolhera, e um chat que morre ao fim do dia não serve de histórico. Quem
+ * quer efémero escreve `0` (apaga na varredura seguinte).
+ *
+ * As quotas (grupos/salas/reuniões) SAÍRAM do formulário: são o plano que a
+ * PLATAFORMA vende, não política de tenant (auditoria de 2026-10-08) — o
+ * admin da organização continua a VER o seu plano abaixo, só deixa de o
+ * poder escrever. A escrita fica para uma rota de operador a desenhar
+ * depois (backoffice, fora deste repo) — não as acrescentes de volta aqui.
  */
 import { FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { OrgSummary, updateOrgSettings } from '../../api'
-import { Alert, Button, Card, Field, TextInput } from '../../ui/kit'
+import { Alert, Button, Card, Field, Tag, TextInput, Toggle } from '../../ui/kit'
 import { orgErrorMessage } from './orgShared'
 
 const quota = (v?: number | null) => (v == null || v < 0 ? '' : String(v))
-const limit = (s: string) => (s.trim() === '' ? null : Math.max(0, Math.floor(Number(s))))
 
 export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSaved: () => void }) {
   const { t } = useTranslation()
   const [domain, setDomain] = useState(org.domain ?? '')
   const [retention, setRetention] = useState(String(org.retention_days ?? 0))
-  const [maxGroups, setMaxGroups] = useState(quota(org.max_groups))
-  const [maxRooms, setMaxRooms] = useState(quota(org.max_rooms))
-  const [maxMeetings, setMaxMeetings] = useState(quota(org.max_meetings))
+  // Vazio = «fica até alguém mandar apagar». Não há 0 implícito aqui, de
+  // propósito: 0 apaga, e apagar tem de ser escrito.
+  const [chatRetention, setChatRetention] = useState(
+    org.chat_retention_days == null ? '' : String(org.chat_retention_days),
+  )
+  // A POLÍTICA DO MOTOR DE LEGENDAS. `?? true` porque a coluna nasceu `DEFAULT
+  // TRUE` (migração 0127) e um servidor anterior a ela não devolve o campo —
+  // nesse caso o estado honesto é «permite», não «proíbe».
+  const [allowWebSpeech, setAllowWebSpeech] = useState(org.allow_web_speech ?? true)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
@@ -26,26 +43,24 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
   useEffect(() => {
     setDomain(org.domain ?? '')
     setRetention(String(org.retention_days ?? 0))
-    setMaxGroups(quota(org.max_groups))
-    setMaxRooms(quota(org.max_rooms))
-    setMaxMeetings(quota(org.max_meetings))
-  }, [org.id, org.domain, org.retention_days, org.max_groups, org.max_rooms, org.max_meetings])
+    setChatRetention(org.chat_retention_days == null ? '' : String(org.chat_retention_days))
+    setAllowWebSpeech(org.allow_web_speech ?? true)
+  }, [org.id, org.domain, org.retention_days, org.chat_retention_days, org.allow_web_speech])
 
   const days = Number(retention)
   const retentionOk = retention.trim() !== '' && Number.isInteger(days) && days >= 0 && days <= 3650
+  const chatDays = chatRetention.trim() === '' ? null : Number(chatRetention)
+  const chatOk =
+    chatDays === null || (Number.isInteger(chatDays) && chatDays >= 0 && chatDays <= 3650)
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (!retentionOk) return
+    if (!retentionOk || !chatOk) return
     setBusy(true)
     setErr('')
     setSaved(false)
     try {
-      await updateOrgSettings(org.id, domain.trim(), days, {
-        max_groups: limit(maxGroups),
-        max_rooms: limit(maxRooms),
-        max_meetings: limit(maxMeetings),
-      })
+      await updateOrgSettings(org.id, domain.trim(), days, chatDays, allowWebSpeech)
       setSaved(true)
       onSaved()
     } catch (x) {
@@ -85,19 +100,57 @@ export default function SettingsCard({ org, onSaved }: { org: OrgSummary; onSave
             onChange={(e) => setRetention(e.target.value)}
           />
         </Field>
+        <Field
+          label={t('org.definicoes.retencaoChat')}
+          htmlFor="org-set-chat-retention"
+          hint={
+            chatDays === null
+              ? t('org.definicoes.retencaoChatFica')
+              : chatDays === 0
+                ? t('org.definicoes.retencaoChatEfemero')
+                : t('org.definicoes.retencaoChatDica', { count: chatDays })
+          }
+          error={chatOk ? undefined : t('org.definicoes.retencaoInvalida')}
+        >
+          <TextInput
+            id="org-set-chat-retention"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={3650}
+            value={chatRetention}
+            placeholder={t('org.definicoes.retencaoChatVazio')}
+            aria-invalid={!chatOk}
+            onChange={(e) => setChatRetention(e.target.value)}
+          />
+        </Field>
+        <div className="org-form__section">
+          <span className="dx-eyebrow">{t('org.definicoes.soberania')}</span>
+          <span className="dx-muted org-form__hint">{t('org.definicoes.webSpeechDica')}</span>
+        </div>
+        <Field
+          label={t('org.definicoes.webSpeech')}
+          hint={allowWebSpeech ? t('org.definicoes.webSpeechPermitido') : t('org.definicoes.webSpeechProibido')}
+        >
+          <Toggle
+            label={t('org.definicoes.webSpeech')}
+            checked={allowWebSpeech}
+            onChange={(e) => setAllowWebSpeech(e.target.checked)}
+          />
+        </Field>
         <div className="org-form__section">
           <span className="dx-eyebrow">{t('org.definicoes.quotas')}</span>
           <span className="dx-muted org-form__hint">{t('org.definicoes.quotasDica')}</span>
         </div>
         <div className="org-form__grid org-form__grid--3">
-          <Field label={t('org.definicoes.quotaGrupos')} htmlFor="org-set-qg">
-            <TextInput id="org-set-qg" type="number" inputMode="numeric" min={0} value={maxGroups} placeholder={t('org.ilimitado')} onChange={(e) => setMaxGroups(e.target.value)} />
+          <Field label={t('org.definicoes.quotaGrupos')}>
+            <Tag plain>{quota(org.max_groups) || t('org.ilimitado')}</Tag>
           </Field>
-          <Field label={t('org.definicoes.quotaSalas')} htmlFor="org-set-qr">
-            <TextInput id="org-set-qr" type="number" inputMode="numeric" min={0} value={maxRooms} placeholder={t('org.ilimitado')} onChange={(e) => setMaxRooms(e.target.value)} />
+          <Field label={t('org.definicoes.quotaSalas')}>
+            <Tag plain>{quota(org.max_rooms) || t('org.ilimitado')}</Tag>
           </Field>
-          <Field label={t('org.definicoes.quotaReunioes')} htmlFor="org-set-qm">
-            <TextInput id="org-set-qm" type="number" inputMode="numeric" min={0} value={maxMeetings} placeholder={t('org.ilimitado')} onChange={(e) => setMaxMeetings(e.target.value)} />
+          <Field label={t('org.definicoes.quotaReunioes')}>
+            <Tag plain>{quota(org.max_meetings) || t('org.ilimitado')}</Tag>
           </Field>
         </div>
         {err && <Alert tone="danger">{err}</Alert>}

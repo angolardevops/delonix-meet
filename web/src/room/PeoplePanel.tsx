@@ -1,15 +1,18 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser, Recording } from '../api'
+import type { RecordingLibraryItem } from '../api'
+import { participanteLocal } from '../convidado'
 import { Icon } from '../ui/icons'
 import { Avatar, Button, IconButton, Tag, Toggle, cx } from '../ui/kit'
 import { BreakoutsCard } from './BreakoutsCard'
 import { SpeakingBars } from './ParticipantTile'
 import { ligacaoFraca } from './qosAmostra'
+import { RoomRecordings } from './RoomRecordings'
 import type { Breakouts } from './useBreakouts'
 import type { Participants } from './useParticipants'
 import type { RemotePeer } from './useRoomCore'
 import type { QosReport } from '../webrtc'
+import { Bloco } from './Bloco'
 
 export function PeoplePanel({
   code,
@@ -32,6 +35,7 @@ export function PeoplePanel({
   recordings,
   onDownload,
   onInvite,
+  onDialOut,
   onPrivateMessage,
   spotlightId,
   onSpotlight,
@@ -53,18 +57,21 @@ export function PeoplePanel({
   onGrantShare: (peerId: string, allowed: boolean) => void
   onTransferHost: (peer: RemotePeer) => void
   breakouts: Breakouts
-  recordings: Recording[]
-  onDownload: (r: Recording) => void
-  onInvite: () => void
+  recordings: RecordingLibraryItem[]
+  onDownload: (r: RecordingLibraryItem) => void
+  /** Ausente para um convidado sem conta: convidar é pesquisar pessoas da organização, e ele não tem nenhuma. */
+  onInvite?: () => void
+  /** «Ligar a…» um ramal da organização (só anfitrião; ausente para um convidado sem conta). */
+  onDialOut?: () => void
   /** «Mensagem privada»: abre o chat com o «Para» nessa pessoa. */
   onPrivateMessage?: (peer: RemotePeer) => void
   /** Destaque para todos (só anfitrião). */
   spotlightId?: string | null
   onSpotlight?: (peerId: string | null) => void
 }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
-  const me = currentUser()?.username ?? ''
+  const me = participanteLocal().username
   const q = search.trim().toLowerCase()
   const lista = peers.filter((p) => !q || p.username.toLowerCase().includes(q))
   const maos = peers.filter((p) => p.hand).length
@@ -72,9 +79,16 @@ export function PeoplePanel({
   return (
     <div className="rm-scroll">
       <div className="rm-block__row">
-        <Button size="sm" variant="primary" icon="userPlus" onClick={onInvite}>
-          {t('room.pessoas.convidar')}
-        </Button>
+        {onInvite && (
+          <Button size="sm" variant="primary" icon="userPlus" onClick={onInvite}>
+            {t('room.pessoas.convidar')}
+          </Button>
+        )}
+        {isHost && onDialOut && (
+          <Button size="sm" variant="outline" icon="phone" onClick={onDialOut}>
+            {t('room.pessoas.ligarA')}
+          </Button>
+        )}
         {isHost && (
           <Button size="sm" variant="outline" icon="micOff" onClick={() => participants.muteAll(true)}>
             {t('room.pessoas.silenciarTodos')}
@@ -93,13 +107,12 @@ export function PeoplePanel({
       )}
 
       {canAdmit && participants.waitingQueue.length > 0 && (
-        <section className="rm-block rm-block--accent" aria-labelledby="rm-wait-h">
-          <h3 id="rm-wait-h" className="rm-block__title">
-            <Icon name="door" size={13} />
-            {t('room.avisos.salaDeEspera')}
-            <span className="dx-spacer" />
-            <span className="dx-num dx-muted">{t('room.pessoas.aAguardar', { count: participants.waitingQueue.length })}</span>
-          </h3>
+        <Bloco
+          accent
+          icon="door"
+          titulo={t('room.avisos.salaDeEspera')}
+          meta={<span className="dx-num dx-muted">{t('room.pessoas.aAguardar', { count: participants.waitingQueue.length })}</span>}
+        >
           {participants.waitingQueue.map((p) => (
             <div key={p.peer_id} className="rm-person">
               <Avatar name={p.username} size={28} />
@@ -120,21 +133,21 @@ export function PeoplePanel({
               {t('room.avisos.admitirTodos', { count: participants.waitingQueue.length })}
             </Button>
           )}
-        </section>
+        </Bloco>
       )}
 
-      <section className="rm-block" aria-labelledby="rm-people-h">
-        <h3 id="rm-people-h" className="rm-block__title">
-          <Icon name="people" size={13} />
-          {t('room.pessoas.naSala', { count: peers.length + 1 })}
-          <span className="dx-spacer" />
-          {maos > 0 && (
+      <Bloco
+        icon="people"
+        titulo={t('room.pessoas.naSala', { count: peers.length + 1 })}
+        meta={
+          maos > 0 && (
             <Tag tone="live">
               <Icon name="hand" size={10} />
               {t('room.pessoas.maosNoAr', { count: maos })}
             </Tag>
-          )}
-        </h3>
+          )
+        }
+      >
         <label className="rm-search">
           <Icon name="search" size={13} />
           <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('room.pessoas.pesquisar')} aria-label={t('room.pessoas.pesquisar')} />
@@ -229,14 +242,10 @@ export function PeoplePanel({
           )
         })}
         {q && lista.length === 0 && <p className="dx-muted">{t('room.pessoas.ninguem')}</p>}
-      </section>
+      </Bloco>
 
       {isHost && (
-        <section className="rm-block" aria-labelledby="rm-host-h">
-          <h3 id="rm-host-h" className="rm-block__title">
-            <Icon name="shield" size={13} />
-            {t('room.pessoas.controlosAnfitriao')}
-          </h3>
+        <Bloco icon="shield" titulo={t('room.pessoas.controlosAnfitriao')}>
           <Toggle
             label={t('room.pessoas.bloquear')}
             hint={t('room.pessoas.bloquearDica')}
@@ -249,29 +258,14 @@ export function PeoplePanel({
             checked={hostShareOnly}
             onChange={(e) => onHostShareOnly(e.target.checked)}
           />
-        </section>
+        </Bloco>
       )}
 
       {isHost && isTraining && <BreakoutsCard code={code} api={breakouts} className="rm-block" />}
 
-      <section className="rm-block" aria-labelledby="rm-recs-h">
-        <h3 id="rm-recs-h" className="rm-block__title">
-          <Icon name="film" size={13} />
-          {t('room.pessoas.gravacoes')}
-        </h3>
-        {recordings.length === 0 && <p className="dx-muted">{t('room.pessoas.semGravacoes')}</p>}
-        {recordings.map((r) => (
-          <button key={r.id} type="button" className="rm-rec" onClick={() => onDownload(r)}>
-            <Icon name="download" size={14} />
-            <span className="rm-rec__text">
-              <span>{r.filename}</span>
-              <small className="dx-num dx-muted">
-                {new Date(r.created_at).toLocaleString(i18n.language)} · {t('room.pessoas.megabytes', { n: (r.size_bytes / 1_048_576).toFixed(1) })}
-              </small>
-            </span>
-          </button>
-        ))}
-      </section>
+      <Bloco icon="film" titulo={t('room.pessoas.gravacoes')}>
+        <RoomRecordings recordings={recordings} onDownload={onDownload} />
+      </Bloco>
     </div>
   )
 }

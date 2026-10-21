@@ -1,0 +1,304 @@
+{{- $v := .Values -}}
+{{- /*
+  A IA do Meet, in-cluster: o LLM local (Ollama) e o ASR soberano (Whisper).
+
+  PORQUE ESTÃO AQUI E NÃO SÓ EM deploy/k8s: a produção é servida por ESTE
+  chart (ADR-0021). Até 2026-10-13 o Ollama existia só no caminho kustomize
+  (`deploy/k8s/07-ollama.yaml`, com o `OLLAMA_URL` no `01-config.yaml`) e o
+  Whisper só no `09-whisper.yaml` — nenhum dos dois chegava ao cluster
+  partilhado, e o `NOTES.txt` dizia-o em letra pequena. O resultado medido em
+  produção a 2026-10-13: `delonix-config` sem `OLLAMA_URL`, logo
+  `Config.ollama_url = None`, logo a ata de IA NUNCA foi escrita (a fila
+  `mom_summary` devolvia a tentativa, ver `ai.rs`), e as legendas da sala
+  passavam pela Web Speech do Chrome — áudio dos clientes enviado para a
+  Google, o contrário do que este produto vende.
+
+  SOBERANIA, e é a razão de os dois correrem dentro do cluster: o texto das
+  reuniões vai ao LLM in-cluster e o áudio ao ASR in-cluster. Nenhum dos dois
+  fala para fora — excepto o Ollama, UMA vez, para puxar os modelos.
+
+  SEM GPU (medido a 2026-10-13: nenhum dos 8 nós do `delonix-lda` anuncia
+  `nvidia.com/gpu`). Consequências que o operador tem de conhecer:
+    * a ata (MoM) é trabalho em LOTE, no fim da reunião: com `qwen2.5:7b` em
+      CPU leva minutos, e isso é aceitável porque ninguém está à espera;
+    * a tradução da legenda em tempo real com `qwen2.5:1.5b` em CPU está NO
+      LIMITE. Fica ligada porque degrada bem (a legenda original aparece já e
+      a traduzida substitui-a quando chega, `useTranscription.ts`), não porque
+      esteja medida como confortável;
+    * com GPU, ver o ADR-0024: `ollama.gpu` acrescenta o selector, a
+      toleration, a runtimeClass e o `nvidia.com/gpu` nos limits.
+*/ -}}
+{{- if $v.ollama.enabled }}
+# O PVC dos modelos. SEM ele o puxão de ~5,5GB repetia-se a cada reinício do
+# pod — e um reinício durante uma reunião deixava a ata sem modelo.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  labels:
+    app: delonix-ollama
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  # RWO basta: é UM pod, e o `Recreate` abaixo garante que não há dois a
+  # disputar o volume durante um rollout.
+  accessModes: [ReadWriteOnce]
+  {{- with $v.ollama.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $v.ollama.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-ollama
+  labels:
+    app: delonix-ollama
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate e não RollingUpdate: o PVC é RWO, e duas réplicas num rollout
+  # ficariam presas no attach do volume (a segunda em `Pending`, para sempre).
+  strategy: { type: Recreate }
+  # MEDIDO NA PRIMEIRA INSTALAÇÃO EM PRODUÇÃO, 2026-10-13: o `progressDeadlineSeconds`
+  # por omissão são 600 s, e o nó ainda NÃO tinha acabado de puxar a imagem de
+  # 3,5GB do Docker Hub quando esse prazo passou. O Deployment ficou
+  # `Progressing=False ProgressDeadlineExceeded`, e o `helm upgrade --wait`
+  # desistiu com o release em `failed` — com tudo aplicado e o pod a puxar,
+  # tranquilamente, por trás. O prazo não é um tecto de paciência do operador;
+  # é o que decide se o release é dado por falhado.
+  #
+  # Este é o único workload do chart cuja imagem se mede em gigabytes, por isso
+  # é o único que precisa disto.
+  progressDeadlineSeconds: {{ $v.ollama.progressDeadlineSeconds }}
+  selector:
+    matchLabels:
+      app: delonix-ollama
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: delonix-ollama
+        {{- include "dm.labels" . | nindent 8 }}
+    spec:
+      {{- with $v.ollama.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      {{- with $v.ollama.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.ollama.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.ollama.runtimeClassName }}
+      runtimeClassName: {{ . | quote }}
+      {{- end }}
+      # NÃO-ROOT, ao contrário do `07-ollama.yaml`, e isto exige duas coisas
+      # que a imagem não dá de graça: o `OLLAMA_MODELS` aponta para o volume
+      # (a omissão é `$HOME/.ollama`, e `$HOME` é `/root`, onde um uid não
+      # privilegiado não escreve) e o `fsGroup` dá-lhe o volume. Medido com o
+      # motor a 2026-10-13, uid 1000: o `ollama serve` arranca, o `/api/tags`
+      # responde e o `ollama pull` escreve no volume.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $v.ollama.runAsUser }}
+        runAsGroup: {{ $v.ollama.runAsUser }}
+        fsGroup: {{ $v.ollama.runAsUser }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: ollama
+          image: {{ printf "%s:%s" $v.ollama.image.repository (toString $v.ollama.image.tag) | quote }}
+          imagePullPolicy: {{ $v.ollama.image.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 11434 }
+          env:
+            - { name: OLLAMA_MODELS, value: /models }
+            # `$HOME` para o cliente de linha de comando do `postStart`: sem
+            # isto escreve em `/root` e o puxão falha com «permission denied».
+            - { name: HOME, value: /tmp }
+            # Mantém o modelo carregado entre pedidos. Em CPU, carregar o 7b
+            # outra vez custa mais do que a geração.
+            - { name: OLLAMA_KEEP_ALIVE, value: {{ $v.ollama.keepAlive | quote }} }
+            # Um pedido de cada vez. O modelo local é um só e o CPU é
+            # partilhado com o SFU: dois resumos em paralelo não chegam mais
+            # depressa, roubam CPU a quem está em chamada.
+            - { name: OLLAMA_NUM_PARALLEL, value: "1" }
+            - { name: OLLAMA_MAX_LOADED_MODELS, value: {{ $v.ollama.maxLoadedModels | quote }} }
+          {{- with $v.ollama.models }}
+          lifecycle:
+            # Puxa os modelos DEPOIS de o servidor arrancar (o `postStart`
+            # corre em paralelo com o `ollama serve`, daí o ciclo com espera).
+            #
+            # O puxão NÃO é condição de prontidão, de propósito: ~5,5GB em CPU
+            # levam muitos minutos e um `helm upgrade --wait` morreria à
+            # espera. Enquanto o modelo não estiver lá, o servidor responde a
+            # verdade — `LlmError::ModelMissing` — e a fila da ata devolve a
+            # tentativa, por isso NADA se perde: a ata nasce quando o modelo
+            # chegar. Um `exit 0` no fim por isso mesmo: uma rede sem caminho
+            # para o registry não deve matar o pod em ciclo.
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    for i in $(seq 1 {{ $v.ollama.pullRetries }}); do
+                      ok=1
+                      {{- range $v.ollama.models }}
+                      ollama pull {{ . | quote }} || ok=0
+                      {{- end }}
+                      [ "$ok" = 1 ] && exit 0
+                      sleep 10
+                    done
+                    echo "ollama: modelos não puxados — ver OLLAMA_URL/rede" >&2
+                    exit 0
+          {{- end }}
+          readinessProbe:
+            httpGet: { path: /api/tags, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/tags, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml $v.ollama.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Sem `readOnlyRootFilesystem`: o runtime do Ollama escreve fora do
+            # volume dos modelos (o `/tmp` abaixo é o que lhe demos para isso).
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: models, mountPath: /models }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: models
+          persistentVolumeClaim: { claimName: ollama-models }
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-ollama
+  labels:
+    app: delonix-ollama
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: delonix-ollama
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: http, port: 11434, targetPort: http }
+{{- end }}
+{{- if $v.whisper.enabled }}
+---
+# ASR soberano (`whisper-server/`): o áudio do microfone vai só ao nosso
+# servidor. Substitui a Web Speech do Chrome, que o ENVIA para a Google.
+#
+# SEM PVC, de propósito: o modelo vem EMBUTIDO na imagem (o `Dockerfile` puxa-o
+# no build). Um PVC aqui só servia para descarregar outra vez o que a imagem já
+# traz — e a quota de PVCs do namespace é um recurso escasso.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delonix-whisper
+  labels:
+    app: delonix-whisper
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $v.whisper.replicas }}
+  # Recreate: é CPU-pesado, e dois pods num rollout competem pelo mesmo CPU
+  # com as reuniões a decorrer.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app: delonix-whisper
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: delonix-whisper
+        {{- include "dm.labels" . | nindent 8 }}
+    spec:
+      {{- with $v.whisper.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      {{- include "dm.imagePullSecrets" . | nindent 6 }}
+      {{- with $v.whisper.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.whisper.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # O uid é o da imagem (`whisper-server/Dockerfile`: `USER 65532:65532`,
+      # com o modelo em /models já `chown`ado para ele).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $v.whisper.runAsUser }}
+        runAsGroup: {{ $v.whisper.runAsUser }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: whisper
+          image: {{ printf "%s:%s" $v.whisper.image.repository (toString $v.whisper.image.tag) | quote }}
+          imagePullPolicy: {{ $v.whisper.image.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 8000 }
+          env:
+            - { name: WHISPER_MODEL, value: {{ $v.whisper.model | quote }} }
+            - { name: WHISPER_DEVICE, value: {{ $v.whisper.device | quote }} }
+            - { name: WHISPER_COMPUTE, value: {{ $v.whisper.compute | quote }} }
+            - { name: HF_HOME, value: /models }
+            # O /asr valida o MESMO access token do /rtc (`auth.rs`, HS256), e
+            # a chave é um SEGREDO: vem do Secret por chave, nunca de um
+            # `envFrom` sobre o ConfigMap. O `09-whisper.yaml` fazia exactamente
+            # isso — e desde 2026-10-04 o `JWT_SECRET` já não está no
+            # ConfigMap, pelo que o whisper ficava com a chave vazia e, por
+            # ser fail-closed (`app.py:46`), RECUSAVA todas as ligações. O
+            # sintoma era silencioso: o browser caía para o motor local.
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "dm.secretName" . }}, key: JWT_SECRET } }
+          # O modelo carrega-se no arranque (segundos a dezenas de segundos em
+          # CPU): sem startupProbe o liveness matava o pod a meio.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+          resources:
+            {{- toYaml $v.whisper.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            # O `app.py` não escreve em disco (medido no cabeçalho do
+            # Dockerfile) e o modelo está em /models, só de leitura.
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delonix-whisper
+  labels:
+    app: delonix-whisper
+    {{- include "dm.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: delonix-whisper
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - { name: http, port: 8000, targetPort: http }
+{{- end }}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser, saveWhiteboard } from '../api'
+import { saveWhiteboard } from '../api'
+import { participanteLocal } from '../convidado'
 import type { WbStroke } from '../signaling'
 import { comObjecto, comTexto, movido, semObjecto } from './wbState'
 import type { RoomCore } from './useRoomCore'
@@ -111,6 +112,9 @@ export function useWhiteboard(core: RoomCore) {
       }),
     ]
     return () => offs.forEach((off) => off())
+    // Só `signal`, como no useLocalMedia. O `tocar` é um `useCallback` e o
+    // `core.peersRef` um ref — nenhum dos dois justifica remontar as
+    // subscrições do quadro, e `t` muito menos (perdia traços no intervalo).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal])
 
@@ -145,7 +149,7 @@ export function useWhiteboard(core: RoomCore) {
     signal.send({ type: 'wb-close' })
   }
 
-  const meuNome = currentUser()?.username
+  const meuNome = participanteLocal().username
   const canWrite = !writers.restricted || core.isHost || writers.writers.includes(core.meuPeerIdRef.current)
 
   /** Um objecto novo (traço, texto, nota, forma) na página à vista. O servidor não o devolve a quem enviou. */

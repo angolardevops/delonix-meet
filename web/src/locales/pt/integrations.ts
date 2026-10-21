@@ -75,6 +75,11 @@ export default {
     testeOk: 'Ligação bem-sucedida',
     testeFalhou: 'A ligação falhou',
     testaGravado: 'O teste usa a configuração gravada: guarda antes de testar o destino novo.',
+    objectosTitulo: 'Armazenamento de objectos',
+    objectosSub: 'Configurado no ambiente do servidor (OBJECT_STORE_*), não neste cartão: as chaves são um segredo do cluster.',
+    objectosAindaNao: 'As gravações ainda NÃO ficam aqui — continuam em disco. O teste de ligação já mede este bucket.',
+    objectosBucket: 'Bucket',
+    objectosEndpoint: 'Endereço',
   },
   webhooks: {
     destinos: 'Destinos configurados',

@@ -322,12 +322,19 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     assert!(v["broken_at_seq"].is_null());
     assert!(v["entries"].as_i64().unwrap() >= 2);
 
-    // Definições: normaliza o domínio.
+    // Definições: normaliza o domínio. `max_rooms` SAIU de `OrgSettingsReq`
+    // (PR1 do backoffice, auditoria de 2026-10-08): a quota é plataforma, não
+    // tenant, e por isso quem a põe em vigor aqui é SQL directo, não o PATCH.
+    sqlx::query("UPDATE organizations SET max_rooms = 1 WHERE id = $1::uuid")
+        .bind(&org)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let (st, body) = app
         .patch(
             &format!("/api/orgs/{org}"),
             t,
-            json!({"domain": "HTTPS://Meet.Alfa.test/", "retention_days": 99999, "max_rooms": 1}),
+            json!({"domain": "HTTPS://Meet.Alfa.test/", "retention_days": 99999}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
@@ -343,7 +350,7 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
         .patch(
             &format!("/api/orgs/{org}"),
             t,
-            json!({"domain": "https://Meet.Alfa.test/", "retention_days": 99999, "max_rooms": 1}),
+            json!({"domain": "https://Meet.Alfa.test/", "retention_days": 99999}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
@@ -353,12 +360,12 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
     );
     // G9: chat_retention_days grava e persiste (visível em GET /api/orgs).
     // max_rooms repete-se: este endpoint substitui o registo inteiro, e a
-    // quota de 1 sala continua a ser exercida mais abaixo.
+    // quota de 1 sala (posta a SQL acima) continua a ser exercida mais abaixo.
     let (st, body) = app
         .patch(
             &format!("/api/orgs/{org}"),
             t,
-            json!({"domain": "meet.alfa.test", "retention_days": 3650, "chat_retention_days": 7, "max_rooms": 1}),
+            json!({"domain": "meet.alfa.test", "retention_days": 3650, "chat_retention_days": 7}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
@@ -386,6 +393,68 @@ async fn admin_stats_audit_settings_and_quota(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 409, "{body}");
     assert!(body["error"].as_str().unwrap().contains("limite"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn admin_patch_ignores_platform_quota_and_voice_fields(db: sqlx::PgPool) {
+    // PR1 do backoffice (auditoria de 2026-10-08): `max_groups`/`max_rooms`/
+    // `max_meetings`/`voice_media_backend`/`voice_did_model` SAÍRAM de
+    // `OrgSettingsReq`. Um admin de TENANT que os manda em PATCH recebe 200
+    // (o pedido continua válido pelos campos que restam), mas os valores
+    // gravados não mudam — a prova de que o caminho de escrita foi mesmo
+    // removido do servidor, e não apenas escondido no formulário do
+    // frontend (`SettingsCard.tsx`). A leitura continua: `GET /api/orgs`
+    // mostra sempre o plano actual (ver `admin_stats_audit_settings_and_quota`
+    // e `my_orgs_shape`).
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa.test").await;
+    let org = a.org().to_string();
+    let t = Some(a.token.as_str());
+
+    // O plano actual, como só a plataforma o poria (SQL directo: a rota de
+    // operador que o fará é o PR2, ainda não existe nesta árvore).
+    sqlx::query(
+        "UPDATE organizations SET max_groups = 5, max_rooms = 5, max_meetings = 5,
+             voice_media_backend = 'freeswitch', voice_did_model = 'shared'
+         WHERE id = $1::uuid",
+    )
+    .bind(&org)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let (st, body) = app
+        .patch(
+            &format!("/api/orgs/{org}"),
+            t,
+            json!({
+                "domain": "meet.alfa.test", "retention_days": 30,
+                "max_groups": 999, "max_rooms": 999, "max_meetings": 999,
+                "voice_media_backend": "provider", "voice_did_model": "dedicated"
+            }),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+
+    // O plano não mudou: nem a quota (visível em OrgSummary)…
+    let (_, orgs) = app.get("/api/orgs", t).await;
+    assert_eq!(orgs[0]["max_groups"], 5, "{orgs}");
+    assert_eq!(orgs[0]["max_rooms"], 5, "{orgs}");
+    assert_eq!(orgs[0]["max_meetings"], 5, "{orgs}");
+    // …nem os campos de voz (não entram em OrgSummary; lêem-se directo).
+    let (backend, did_model): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT voice_media_backend, voice_did_model FROM organizations WHERE id = $1::uuid",
+    )
+    .bind(&org)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(backend.as_deref(), Some("freeswitch"));
+    assert_eq!(did_model.as_deref(), Some("shared"));
+
+    // O que o PATCH tem autoridade para mudar mudou mesmo (domain/retention).
+    assert_eq!(orgs[0]["domain"], "meet.alfa.test");
+    assert_eq!(orgs[0]["retention_days"], 30);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -460,6 +529,7 @@ async fn sso_enforced_blocks_password_login(db: sqlx::PgPool) {
         )
         .await;
     assert_eq!(st, 200);
+    app.verify_domain(a.org()).await; // A3, raiz: enforce_sso só tem teeth com o domínio provado
     let (st, body) = app
         .post(
             "/api/auth/login",
@@ -469,6 +539,86 @@ async fn sso_enforced_blocks_password_login(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 400, "{body}");
     assert!(body["error"].as_str().unwrap().contains("SSO"));
+}
+
+/// A3, raiz (revisão de segurança, 2026-10-09) — o registo TXT a publicar,
+/// o estado de verificação, e que só admin o vê/pede.
+#[sqlx::test(migrations = "./migrations")]
+async fn admin_domain_verification_crud(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+    let a = app.new_org("alfa-dominio.test").await;
+    let membro = app.add_member(&a, "colega", "member").await;
+    let org = a.org().to_string();
+    let t = Some(a.token.as_str());
+
+    // Sem domínio nenhum: 412, não 404 -- a org existe, só falta o passo
+    // anterior (converter para empresa com um email próprio). Uma conta
+    // PESSOAL (sem org_name, email público) é exactamente esse caso.
+    let (st, _) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "pessoal@gmail.com", "username": "pessoal",
+                   "password": PASSWORD}),
+        )
+        .await;
+    assert!(st < 300, "registo particular: {st}");
+    let pessoal = app.login("pessoal@gmail.com").await;
+    let (_, orgs) = app.get("/api/orgs", Some(&pessoal.token)).await;
+    let org_pessoal = orgs[0]["id"].as_str().unwrap().to_string();
+    let (st, body) = app
+        .get(
+            &org_path(&org_pessoal, "domain-verification"),
+            Some(&pessoal.token),
+        )
+        .await;
+    assert_eq!(st, 422, "{body}");
+    assert_eq!(body["code"], "org.no_email_domain", "{body}");
+
+    let (st, body) = app.get(&org_path(&org, "domain-verification"), t).await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["domain"], "alfa-dominio.test");
+    assert_eq!(body["record_name"], "_delonix-challenge.alfa-dominio.test");
+    let token = body["record_value"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("delonix-domain-verification=")
+        .expect("o valor do TXT tem o prefixo esperado")
+        .to_string();
+    assert_eq!(token.len(), 32, "token: {token}");
+    assert_eq!(body["verified"], false);
+    assert!(body["verified_at"].is_null());
+
+    // Um membro sem papel de admin não vê o token de verificação de outrem.
+    let (st, body) = app
+        .get(&org_path(&org, "domain-verification"), Some(&membro.token))
+        .await;
+    assert_denied(
+        "membro lê verificação de domínio",
+        st,
+        &body,
+        "delonix-domain-verification",
+    );
+
+    // Checar agora: o registo DNS real não existe, por isso continua falso
+    // -- e não é um 500, é "ainda não".
+    let (st, body) = app
+        .post(
+            &format!("{}/check", org_path(&org, "domain-verification")),
+            t,
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["verified"], false, "{body}");
+
+    // Depois de provado (aqui, directo na base -- um registo DNS a sério não
+    // se publica num teste), o GET reflecte-o.
+    app.verify_domain(&org).await;
+    let (st, body) = app.get(&org_path(&org, "domain-verification"), t).await;
+    assert_eq!(st, 200);
+    assert_eq!(body["verified"], true, "{body}");
+    assert!(!body["verified_at"].is_null());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -601,14 +751,15 @@ async fn admin_api_keys_voice_and_odoo(db: sqlx::PgPool) {
         .put(
             &org_path(&org, "integrations/odoo"),
             t,
-            json!({"odoo_enabled": false, "odoo_url": "https://erp.alfa.test/", "odoo_db": "prod",
-                   "hide_org_creation": true, "hide_sso_button": false}),
+            json!({"odoo_enabled": false, "odoo_url": "https://erp.alfa.test/", "odoo_db": "prod"}),
         )
         .await;
     assert_eq!(st, 200, "{body}");
     let (_, cfg) = app.get(&org_path(&org, "integrations/odoo"), t).await;
     assert_eq!(cfg["odoo_url"], "https://erp.alfa.test");
-    assert_eq!(cfg["hide_org_creation"], true);
+    // `hide_org_creation`/`hide_sso_button` SAÍRAM desta resposta: já não são
+    // configuração de tenant (ver `platform_login_settings`, migração 0103).
+    assert!(cfg["hide_org_creation"].is_null(), "{cfg}");
     assert_eq!(cfg["odoo_admin_id"], a.user_id.as_str());
     let (st, tok) = app
         .post(
@@ -813,8 +964,7 @@ async fn cross_org_admin_is_denied_on_every_org_route(db: sqlx::PgPool) {
         .put(
             &org_path(&borg, "integrations/odoo"),
             t,
-            json!({"odoo_enabled": true, "odoo_url": "https://evil.test", "odoo_db": "x",
-                   "hide_org_creation": true, "hide_sso_button": true}),
+            json!({"odoo_enabled": true, "odoo_url": "https://evil.test", "odoo_db": "x"}),
         )
         .await;
     assert_eq!(st, 404);
@@ -1081,4 +1231,150 @@ async fn add_employee_accepts_account_archived_elsewhere(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "{body}");
     assert_eq!(body["user_id"], x.user_id.as_str());
+}
+
+/// ADR-0019: o registo sem nome de organização cria uma conta PARTICULAR, e ela
+/// passa a EMPRESARIAL quando quiser — sem registo novo e sem perder nada.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_personal_account_signs_up_without_a_company_and_upgrades_later(db: sqlx::PgPool) {
+    let app = TestApp::spawn(db).await;
+
+    // 1. Registo SEM `org_name`, e com um email PÚBLICO: é o caso que até
+    //    2026-10-06 dava `registration.invalid_org_name`.
+    let (st, b) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "ana@gmail.com", "username": "ana", "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert!(st < 300, "registo particular recusado: {st} {b}");
+    let ana = app.login("ana@gmail.com").await;
+
+    // O espaço dela existe, chama-se por ela, e é `personal`.
+    let (st, orgs) = app.get("/api/orgs", Some(&ana.token)).await;
+    assert_eq!(st, 200, "{orgs}");
+    let org_id = orgs[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(orgs[0]["name"], "Espaço de ana", "{orgs}");
+    let kind: String = sqlx::query_scalar("SELECT kind FROM organizations WHERE id = $1::uuid")
+        .bind(&org_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(kind, "personal");
+    let domain: String =
+        sqlx::query_scalar("SELECT email_domain FROM organizations WHERE id = $1::uuid")
+            .bind(&org_id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(domain, "", "uma conta particular não toma domínio nenhum");
+
+    // 2. PEDIR empresa com um email público continua a ser recusado — é o que
+    //    impedia o primeiro gmail de trancar todos os outros.
+    let (st, b) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"org_name": "Empresa do Bruno", "email": "bruno@gmail.com",
+                   "username": "bruno", "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "registration.corporate_email_required");
+    // E o Bruno entra como particular, sem empresa.
+    let (st, _) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "bruno@gmail.com", "username": "bruno",
+                   "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert!(st < 300, "o segundo gmail também tem conta");
+
+    // 3. A conversão: a Ana passa a empresa. Com o gmail dela, não pode.
+    let upgrade = format!("/api/orgs/{org_id}/upgrade");
+    let (st, b) = app
+        .post(
+            &upgrade,
+            Some(&ana.token),
+            json!({"name": "Empresa da Ana"}),
+        )
+        .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "registration.corporate_email_required");
+
+    // 4. Com um email de domínio próprio, converte.
+    let (st, _) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "carla@carla.ao", "username": "carla",
+                   "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert!(st < 300);
+    let carla = app.login("carla@carla.ao").await;
+    let (_, orgs) = app.get("/api/orgs", Some(&carla.token)).await;
+    let org_c = orgs[0]["id"].as_str().unwrap().to_string();
+    let upgrade_c = format!("/api/orgs/{org_c}/upgrade");
+    let (st, b) = app
+        .post(&upgrade_c, Some(&carla.token), json!({"name": "Carla Lda"}))
+        .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["name"], "Carla Lda");
+    let (kind, domain): (String, String) =
+        sqlx::query_as("SELECT kind, email_domain FROM organizations WHERE id = $1::uuid")
+            .bind(&org_c)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!((kind.as_str(), domain.as_str()), ("company", "carla.ao"));
+
+    // 5. Outra vez: não muda nada em silêncio.
+    let (st, b) = app
+        .post(&upgrade_c, Some(&carla.token), json!({"name": "Carla SA"}))
+        .await;
+    assert_eq!(st, 422, "{b}");
+    assert_eq!(b["code"], "organization.already_company");
+    let name: String = sqlx::query_scalar("SELECT name FROM organizations WHERE id = $1::uuid")
+        .bind(&org_c)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(name, "Carla Lda", "a recusa não escreveu nada");
+
+    // 6. Nome ilegível: erro de forma, e nada escrito.
+    let (st, _) = app
+        .post(
+            "/api/auth/register",
+            None,
+            json!({"email": "dora@dora.ao", "username": "dora",
+                   "password": "UmaPasswordForte123!"}),
+        )
+        .await;
+    assert!(st < 300);
+    let dora = app.login("dora@dora.ao").await;
+    let (_, orgs) = app.get("/api/orgs", Some(&dora.token)).await;
+    let org_d = orgs[0]["id"].as_str().unwrap().to_string();
+    let (st, b) = app
+        .post(
+            &format!("/api/orgs/{org_d}/upgrade"),
+            Some(&dora.token),
+            json!({"name": "X"}),
+        )
+        .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "registration.invalid_org_name");
+
+    // 7. Quem não é da organização não a converte: `404`, não `403`.
+    let (st, _) = app
+        .post(
+            &format!("/api/orgs/{org_c}/upgrade"),
+            Some(&dora.token),
+            json!({"name": "Roubada Lda"}),
+        )
+        .await;
+    assert_eq!(st, 404, "a org de outra pessoa nem se confirma que existe");
 }

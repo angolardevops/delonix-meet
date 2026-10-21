@@ -45,9 +45,13 @@ maneiras, e não são a mesma coisa:
 Para os dois caberem no mesmo PBX, a allowlist do laboratório só aceita a **porta 5060 de
 origem** — a do tronco UDP. O tronco TLS sai de uma porta efémera, não está na lista, e é
 desafiado. O `make seed` cria também uma sala com PIN
-(`deploy/compose/generated/sala-telefone.txt`), e o `make compose-voice-check` liga por cada
+(`deploy/compose/generated/sala-telefone.txt`) — e, se o ficheiro já existir, confere na
+base que a sala que ele descreve ainda lá está, e cria outra se não estiver (R302: uma base
+nova com um ficheiro de antes) —, e o `make compose-voice-check` liga por cada
 tronco: pelo da central, com o PIN certo (entra) e com um errado (autenticada, e recusada
-pelo IVR).
+pelo IVR). Com o PIN certo, diz também **para onde a chamada foi** — a ponte telefone↔sala
+do SFU, ou a conferência local do FreeSWITCH —, lendo-o no registo do IVR em vez de o
+presumir pelo ambiente.
 
 ```bash
 make bootstrap     # gera VOICE_CENTRAL_PASSWORD, DATA_ENCRYPTION_KEYS e o tronco da central
@@ -152,9 +156,10 @@ registrar/auth_db/DB), e dar-lhe isso era maior risco do que esta fase pede.
 | Caminho | Papel |
 |---|---|
 | `freeswitch/sip_profiles/internal.xml` | Perfil Sofia dos ramais — porta própria, realm por org (`challenge-realm=auto_from`) |
-| `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático |
-| `freeswitch/dialplan/default/00_delonix_extensions.xml` | Contexto `delonix_ramais`: números de 3–5 dígitos → `ramais_dial.lua` |
-| `freeswitch/scripts/ramais_dial.lua` | Traduz (domínio do chamador, número curto) → AOR registado, e faz o bridge; o número de acesso às reuniões segue para o IVR (Fase 3) |
+| `freeswitch/autoload_configs/xml_curl.conf.xml` | Directório dinâmico (REGISTER) — consulta o control plane em vez de um XML estático. O terceiro binding (`delonix_telefonia`) é o dos troncos: gateways e o plano de marcação do contexto `delonix-outbound` (ADR-0009, R291) |
+| `freeswitch/autoload_configs/json_cdr.conf.xml` | Registos de chamada (`mod_json_cdr`) entregues ao servidor — custo, duração e qualidade de cada chamada por tronco (R291) |
+| `freeswitch/dialplan/default/00_delonix_extensions.xml` | Contexto `delonix_ramais`: tudo o que um ramal marca (3 a 15 dígitos) → `ramais_dial.lua`. Não decide nada nem tem troncos |
+| `freeswitch/scripts/ramais_dial.lua` | Pergunta ao control plane o que é o número marcado: outro ramal (AOR registado, e faz o bridge), o número de acesso às reuniões (segue para o IVR, Fase 3), ou um número que sai para a rede pública pelo plano de marcação da organização do ramal autenticado (R292) |
 
 **Domínio SIP e endereço público são duas coisas.** O softphone precisa de
 quatro dados, e a consola mostra-os no diálogo «Credenciais SIP» de um ramal:
@@ -326,12 +331,32 @@ FreeSWITCH real que as duas variáveis `sip_auth_*` vêm preenchidas e que o
 
 ## Ponte telefone↔sala (ADR-0010) — ligada
 
-> **No compose e no cluster locais a ponte está DESLIGADA** (medido a 2026-10-04): o servidor
-> regista «`PHONE_BRIDGE_SIP_BIND` não configurado» e o dial-in cai na conferência local, por isso
-> um ramal que marca `8000` + PIN **não aparece na sala do browser**. Ligá-la exige `PHONE_BRIDGE_FREESWITCH_IPS`
-> com **IPs exactos** e `PHONE_BRIDGE_RTP_IP` com o IP do próprio servidor, e o `delonix compose`
-> recusa sub-redes fixas (`ipam:`) e dá um IP novo a cada recriação (4 amostras seguidas, nunca o
-> mesmo); o chart do Helm também não o resolve (ver o «Achado» em `deploy/helm/delonix-meet/README.md`).
+> **No compose a ponte está LIGADA**; no cluster local e no Helm continua desligada (o chart
+> pede IPs exactos, ver o «Achado» em `deploy/helm/delonix-meet/README.md`). `PHONE_BRIDGE_FREESWITCH_IPS`
+> aceita IPs **e nomes**: o servidor resolve os nomes (só endereços privados, nunca loopback) a
+> cada `PHONE_BRIDGE_RESOLVE_SECS` e, se o nome deixar de resolver durante 3 ciclos seguidos, a
+> lista cai para os IPs literais — um IP que ficou livre não herda o acesso. O IP de RTP, se não
+> for configurado, deduz-se da rota para o FreeSWITCH.
+> **Modelo de confiança:** a lista de origens é a única autenticação do socket SIP da ponte;
+> por nome, a âncora de confiança passa a ser o DNS (em produção, IPs literais ou um nome de um
+> DNS interno de confiança; prefere o nome absoluto com ponto final, que não passa pelos
+> domínios de pesquisa). **Limite conhecido:** na rede do compose, um contentor com `NET_RAW`
+> (o `pbx` não confiado é um) pode forjar a origem do FreeSWITCH; vale também para IPs literais.
+> **Event Socket:** com `TELEPHONY_ESL_PASSWORD` no ambiente do FreeSWITCH, o ESL escuta em
+> todas as interfaces com a ACL `delonix_esl` (só redes privadas, `default=deny`) e essa password; sem
+> ela fica em loopback com password aleatória. O servidor liga-se com `TELEPHONY_ESL_ADDR`. O ESL
+> origina chamadas: nunca se publica no host, e a password vem do segredo (`.env` / Secret
+> `delonix-voice`; `make esl-secret-rotate` troca-a). **A ACL não separa nada nestes laboratórios:**
+> o compose e a rede de pods são redes privadas, e o `pbx` não confiado (compose) e qualquer pod
+> (cluster) passam por ela — a password é a única barreira, em claro (o ESL não tem TLS) e visível no
+> argv do `fs_cli`. O ESL dá `originate` e `api system`. **`DELONIX_ESL_CIDRS`** (opcional) estreita a
+> lista às redes de onde o servidor fala — com ela, quem não é o servidor nem com a password certa
+> entra (medido, R300; a máscara tem de ser válida e diferente de zero); o compose e o `make cluster` não a usam, porque os contentores não têm
+> endereço fixo. **No chart do Helm** o FreeSWITCH recebe a password do Secret com
+> `server.telephony.eslAddr`, aceita `voice.freeswitch.eslCidrs`, e com `networkPolicy.enabled` o
+> `:8021` fica só para os pods do servidor — conferido no render, por aplicar num cluster; em `hostNetwork` a política não se aplica e o chart exige `eslCidrs`. É pelo
+> ESL que um tronco criado, alterado ou apagado chega ao FreeSWITCH na hora (R300). Por fechar antes
+> de produção: Kamailio sem o `.env` inteiro, e `fs_cli` sem `-p`.
 > A ponte está medida contra um FreeSWITCH real em `sfu_e2e`, não nestes laboratórios.
 
 Quem entra por telefone é um **participante da sala**: fala e ouve os
@@ -366,3 +391,31 @@ browser em vez do cliente webrtc-rs.
   multiplexar no runtime das apps web).
 - CiliumNetworkPolicy: SIP (5060/5061) e RTP (faixa dinâmica) só entre trunk↔Kamailio↔FreeSWITCH.
 - Escalar 300+ canais: acrescentar nós ao `dispatcher.list`; o Kamailio balanceia.
+
+## TLS nos ramais
+
+Sem TLS, as chaves do SRTP (SDES) vão em claro no SDP (ADR-0009). O perfil dos ramais liga o TLS no
+entrypoint (`voice/cluster/freeswitch-entrypoint.sh`, passo 9b); sem a primeira variável nada muda.
+
+| Variável | Efeito |
+|---|---|
+| `DELONIX_RAMAIS_TLS_PORT` | Porta TLS do perfil (ex. `5071`). **Ausente = sem TLS.** Presente sem certificado, o arranque falha: não cai em UDP calado |
+| `DELONIX_RAMAIS_TLS_DIR` | Pasta com `tls.crt` (cadeia completa) e `tls.key`; por omissão `/tls-ramais`. O certificado tem de cobrir o nome ou IP a que o telefone se liga |
+| `DELONIX_RAMAIS_TLS_ONLY` | `true` fecha o UDP/TCP do perfil: só TLS (o certo em produção) |
+
+O certificado tem de cobrir o nome ou o IP a que o telefone se liga (SAN). Pedir TLS sem certificado falha o
+arranque. O servidor tem de mandar o telefone para lá (`VOICE_RAMAIS_PUBLIC_TRANSPORT=tls` e
+`VOICE_RAMAIS_PUBLIC_PORT`, ver `docs/deployment.md`). A pasta do Sofia é `$${conf_dir}/tls`, **não** a
+`$${certs_dir}` (a do prefixo de instalação, com os `.pem` da vanilla): com ela o perfil serve um
+`CN=FreeSWITCH` auto-assinado em vez do nosso (medido). Prova: `scripts/ramais-tls-prova.py`
+(certificado conferido, TLS ≥ 1.2, REGISTER com digest por TLS, e os controlos negativos).
+
+## Chamada à espera do aparelho (S-02, ADR-0023)
+
+`DELONIX_PUSH_WAIT_SECS` (entrypoint, passo 6; 0 a 60, por omissão **0 = desligado**): quanto uma chamada
+entre ramais espera que o aparelho do destino acorde por push e se registe. Com valor > 0, se o destino não
+está registado o `ramais_dial.lua` pede o *wake* ao servidor (`POST /internal/v1/voice/push/wake`) e, se este
+responder `awaiting:true`, segura a chamada a tocar ao chamador até ao registo ou ao limite
+(`NO_USER_RESPONSE`). Sem `awaiting:true` falha já, como antes. Prova: `scripts/ramais-push-espera-prova.py`.
+O endpoint (`POST /internal/v1/voice/push/wake`), a tabela de aparelhos e o fornecedor `lab` existem (S-01); FCM e APNs não. As chamadas que o **servidor** origina (ligar a partir da sala) não passam por este Lua: têm o seu `PUSH_WAIT_SECS` no servidor (`docs/deployment.md`).
+

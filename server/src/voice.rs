@@ -949,6 +949,75 @@ pub async fn ivr_validate_extension_pin(
 /// do pedido. Todas as recusas dão o mesmo `404`: ramal inexistente ou
 /// inactivo, domínio que não é o da org dele, dono arquivado, PIN errado, PIN
 /// de outra org, PIN ambíguo.
+/// O ramal que o FreeSWITCH autenticou por digest — a única identidade em que
+/// uma chamada de ramal se pode apoiar para decidir alguma coisa (em que
+/// organização se procura uma sala, por que troncos sai uma chamada).
+pub(crate) struct AuthenticatedExtension {
+    pub org_id: Uuid,
+    pub member_id: Option<Uuid>,
+    pub extension_id: Uuid,
+    /// O número curto do ramal dentro da organização.
+    pub extension: String,
+    pub label: String,
+    pub person: Option<String>,
+}
+
+impl AuthenticatedExtension {
+    /// O ramal de uma pessoa arquivada deixa de valer; um ramal da empresa
+    /// (R276) não tem pessoa — vale enquanto estiver activo.
+    pub(crate) async fn owner_is_active(&self, state: &AppState) -> Result<bool, ApiError> {
+        match self.member_id {
+            Some(member_id) => Ok(role_in_org(state, self.org_id, member_id).await?.is_some()),
+            None => Ok(true),
+        }
+    }
+}
+
+/// O ramal ACTIVO com este utilizador SIP, se o realm com que o FreeSWITCH o
+/// autenticou (`sip_auth_username`, `sip_auth_realm`) for o domínio da
+/// organização dele — o HA1 só bate com esse. Um par (utilizador, domínio)
+/// que não existe não veio de um INVITE autenticado. Nunca o `From`.
+pub(crate) async fn authenticated_extension(
+    state: &AppState,
+    sip_username: &str,
+    domain: &str,
+) -> Result<Option<AuthenticatedExtension>, ApiError> {
+    #[allow(clippy::type_complexity)]
+    let ext: Option<(
+        Uuid,
+        Option<Uuid>,
+        String,
+        Uuid,
+        String,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT e.org_id, e.member_id, o.slug, e.id, e.label,
+                COALESCE(u.display_name, u.username), e.extension
+           FROM voice_extensions e JOIN organizations o ON o.id = e.org_id
+           LEFT JOIN users u ON u.id = e.member_id
+          WHERE e.sip_username = $1 AND e.active",
+    )
+    .bind(sip_username.trim())
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((org_id, member_id, slug, extension_id, label, person, extension)) = ext else {
+        return Ok(None);
+    };
+    let expected = format!("{slug}.{}", state.config.voice_ramais_domain_suffix);
+    if !domain.trim().eq_ignore_ascii_case(&expected) {
+        return Ok(None);
+    }
+    Ok(Some(AuthenticatedExtension {
+        org_id,
+        member_id,
+        extension_id,
+        extension,
+        label,
+        person,
+    }))
+}
+
 pub(crate) async fn validate_pin_for_extension(
     state: &AppState,
     sip_username: &str,
@@ -966,34 +1035,22 @@ pub(crate) async fn validate_pin_for_extension(
         ApiError::NotFound
     };
 
-    #[allow(clippy::type_complexity)]
-    let ext: Option<(Uuid, Option<Uuid>, String, Uuid, String, Option<String>)> = sqlx::query_as(
-        "SELECT e.org_id, e.member_id, o.slug, e.id, e.label,
-                COALESCE(u.display_name, u.username)
-           FROM voice_extensions e JOIN organizations o ON o.id = e.org_id
-           LEFT JOIN users u ON u.id = e.member_id
-          WHERE e.sip_username = $1 AND e.active",
-    )
-    .bind(sip_username)
-    .fetch_optional(&state.db)
-    .await?;
-    let Some((org_id, member_id, slug, extension_id, label, person)) = ext else {
+    let Some(ext) = authenticated_extension(state, sip_username, domain).await? else {
         return Err(refuse());
     };
-    // O realm com que o FreeSWITCH autenticou tem de ser o domínio da org do
-    // ramal — o HA1 só bate com esse. Um par (utilizador, domínio) que não
-    // existe não veio de um INVITE autenticado.
-    let expected = format!("{slug}.{}", state.config.voice_ramais_domain_suffix);
-    if !domain.trim().eq_ignore_ascii_case(&expected) {
-        return Err(refuse());
-    }
     // O ramal de uma pessoa: arquivada, o softphone não abre reuniões. Um
     // ramal da empresa (R276) não tem pessoa — vale enquanto estiver activo.
-    if let Some(member_id) = member_id {
-        if role_in_org(state, org_id, member_id).await?.is_none() {
-            return Err(refuse());
-        }
+    if !ext.owner_is_active(state).await? {
+        return Err(refuse());
     }
+    let AuthenticatedExtension {
+        org_id,
+        member_id,
+        extension_id,
+        label,
+        person,
+        ..
+    } = ext;
 
     let Some(mut resp) = room_by_pin_in_org(state, org_id, pin).await? else {
         return Err(refuse());
@@ -1136,22 +1193,50 @@ async fn room_bridge_for(
         );
         return None;
     };
-    if state.config.phone_bridge_freeswitch_ips.is_empty() {
+    // A lista pode vir por IP ou por NOME (o compose e o chart usam o nome do
+    // serviço). Olhar só para os IPs deixava uma instalação configurada por
+    // nome com o UA à escuta e a ponte nunca entregue ao IVR: toda a chamada
+    // caía na conferência local (medido no laboratório a 2026-10-05).
+    if state.config.phone_bridge_freeswitch_ips.is_empty()
+        && state.config.phone_bridge_freeswitch_names.is_empty()
+    {
         tracing::warn!(
             "PHONE_BRIDGE_FREESWITCH_IPS vazio — a ponte recusaria o INVITE (fail-closed); dial-in cai na conferência local"
         );
         return None;
     }
-    let existe: Option<Uuid> = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
+    // O `e2ee` vem na MESMA consulta que confirma a sala, de propósito: duas
+    // consultas eram duas oportunidades de alguém acrescentar uma e esquecer a
+    // outra — que é exactamente como este buraco nasceu.
+    let sala: Option<(Uuid, bool)> = sqlx::query_as("SELECT id, e2ee FROM rooms WHERE code = $1")
         .bind(room_code)
         .fetch_optional(&state.db)
         .await
         .ok()
         .flatten();
-    if existe.is_none() {
+    let Some((_, e2ee)) = sala else {
         tracing::warn!(
             room_code,
             "ponte telefone↔sala: sala WebRTC ainda não existe para este room_code"
+        );
+        return None;
+    };
+    // UMA SALA CIFRADA DE PONTA A PONTA NÃO ACEITA UM TELEFONE, e o produto já
+    // o dizia nos outros dois caminhos: o dial-OUT recusa com razão escrita
+    // (`dial_outs.rs`, `dial_out.room_e2ee`) e a auto-gravação recusa
+    // (`recorder.rs`, `auto_record AND NOT r.e2ee`). Só a ENTRADA não chegava a
+    // olhar — e a ponte publica no SFU EM CLARO (`PubSource::Bridge`), logo os
+    // browsers decifravam ruído e a mistura da sala saía pela rede da
+    // operadora, fora da garantia que o ecrã promete. Pré-condição do cenário:
+    // só o DID e o PIN, nenhuma credencial de conta.
+    //
+    // `None` é o recuo que esta função já usa três vezes: o IVR cai na
+    // conferência local. Não se inventa aqui uma mensagem falada própria — quem
+    // liga OUVE WAV do FreeSWITCH, não lê i18n.
+    if e2ee {
+        tracing::warn!(
+            room_code,
+            "ponte telefone↔sala RECUSADA: a sala é cifrada de ponta a ponta e a ponte não decifra; dial-in cai na conferência local"
         );
         return None;
     }
@@ -1162,16 +1247,32 @@ async fn room_bridge_for(
                 "rtp_secure_media".to_string(),
                 format!("mandatory:{}", crate::phone_bridge::srtp::SRTP_PROFILE_NAME),
             ),
-            // A ponte só transcodifica G.711: uma oferta sem PCMA/PCMU leva
-            // `488`. É também o que a perna levava na prova contra o
-            // FreeSWITCH real — o caminho do cliente não é uma variante por
-            // medir do que foi medido.
-            ("absolute_codec_string".to_string(), "PCMA".to_string()),
+            // A ordem é a preferência: o UA da ponte responde com o primeiro
+            // que souber falar (ADR-0018). Com Opus à frente, a voz de um
+            // softphone chega à sala sem passar por 8 kHz; `PCMA` sozinho é o
+            // caminho que a prova contra o FreeSWITCH real mediu (R222), e
+            // fica atrás como recurso. Uma oferta sem nenhum dos dois leva `488`.
+            // O valor tem uma VÍRGULA: quem monta a lista `[k=v,…]` da dial
+            // string tem de a escapar (`dialin_ivr.lua`), senão o FreeSWITCH
+            // fica só com o primeiro codec e o recurso deixa de existir.
+            (
+                "absolute_codec_string".to_string(),
+                bridge_codec_string(state.config.phone_bridge_wideband).to_string(),
+            ),
         ]
         .into_iter()
         .collect(),
         srtp_profile: crate::phone_bridge::srtp::SRTP_PROFILE_NAME.to_string(),
     })
+}
+
+/// Os codecs que o FreeSWITCH oferece à ponte, por ordem de preferência.
+fn bridge_codec_string(wideband: bool) -> &'static str {
+    if wideband {
+        "OPUS,PCMA"
+    } else {
+        "PCMA"
+    }
 }
 
 /// Emite o bilhete de identidade de quem liga e junta-o às variáveis de canal
@@ -1258,11 +1359,26 @@ pub async fn seat_phone_caller(
     room_code: &str,
     leg_id: Uuid,
     caller_ticket: Option<&str>,
+    call_id: Option<Uuid>,
 ) {
-    let who = match caller_ticket {
+    let mut who = match caller_ticket {
         Some(t) => crate::voice_caller::redeem(&state.db, t, room_code).await,
         None => None,
     };
+    // Uma chamada que a SALA fez tocar (um dial-out) sabe quem é: o ramal que o
+    // anfitrião escolheu. Sem isto entrava como «Telefone», sem nome nem pessoa.
+    // O `call_id` só se guarda (e com ele o poder de o desligar) quando é de um dial-out
+    // DESTA sala: vem de um cabeçalho SIP que ninguém assina, e decide o alvo do `hupall`.
+    let mut call_id_validado = None;
+    if who.is_none() {
+        if let Some(c) = call_id {
+            if let Some(w) = crate::dial_outs::caller_of_call(&state.db, c, room_code).await {
+                who = Some(w);
+                call_id_validado = Some(c);
+            }
+        }
+    }
+    let member_id = who.as_ref().and_then(|w| w.member_id);
     // O telefone não tem WebSocket: o lado receptor é drenado e deitado fora.
     // A fila existe só porque o censo a exige para toda a gente.
     let (tx, mut rx_peer, _sd) = crate::signaling::PeerTx::new(16, state.metrics.clone());
@@ -1277,10 +1393,16 @@ pub async fn seat_phone_caller(
             channel: delonix_meet_domain::conferencing::channels::Channel::Phone,
             anonymous,
             video_unavailable: true,
+            call_id: call_id_validado,
+            member_id,
             ..Default::default()
         },
         tx,
     );
+    // A mesma pessoa já está na sala pelo browser: pergunta-lhe em que dispositivo continuar.
+    if let Some(m) = member_id {
+        state.hub.notify_duplicates(room_id, m, None);
+    }
 }
 
 /// `host:porta` que o FreeSWITCH usa para alcançar o UA SIP. O
@@ -1289,9 +1411,26 @@ pub async fn seat_phone_caller(
 pub(crate) fn bridge_advertise(state: &AppState, bind: std::net::SocketAddr) -> String {
     match &state.config.phone_bridge_sip_advertise {
         Some(a) if !a.trim().is_empty() => a.trim().to_string(),
-        _ => format!("{}:{}", state.config.pstn_bridge_host, bind.port()),
+        _ => {
+            // Sem morada configurada (`PHONE_BRIDGE_SIP_ADVERTISE`, `PSTN_BRIDGE_HOST`,
+            // `SFU_EXTERNAL_IP`), a que o FreeSWITCH pode marcar é o IP local que a ponte
+            // detectou; o `127.0.0.1` de omissão só serve quando tudo corre na mesma máquina.
+            let host = if state.config.pstn_bridge_host_explicit {
+                state.config.pstn_bridge_host.clone()
+            } else {
+                match BRIDGE_LOCAL_IP.get() {
+                    Some(std::net::IpAddr::V6(v6)) => format!("[{v6}]"),
+                    Some(ip) => ip.to_string(),
+                    None => state.config.pstn_bridge_host.clone(),
+                }
+            };
+            format!("{host}:{}", bind.port())
+        }
     }
 }
+
+/// O IP local que a ponte usa no SDP, posto no arranque (`start_phone_bridge`).
+static BRIDGE_LOCAL_IP: std::sync::OnceLock<std::net::IpAddr> = std::sync::OnceLock::new();
 
 /// Quem entra na ponte: `room-<code>` → a sala do SFU com esse `rooms.code`.
 ///
@@ -1299,6 +1438,11 @@ pub(crate) fn bridge_advertise(state: &AppState, bind: std::net::SocketAddr) -> 
 /// aqui repete-se porque o `INVITE` chega bem depois, e a sala pode ter
 /// desaparecido entretanto. Sem sala, `None`: o UA responde `404` e o
 /// FreeSWITCH cai na conferência local (o IVR já sabe fazê-lo).
+///
+/// **E recusa uma sala cifrada de ponta a ponta, pela mesma porta.** Não é
+/// redundância do `room_bridge_for`: é o que apanha um `INVITE` que NUNCA
+/// passou pelo IVR — a allowlist de origens diz de onde um INVITE pode vir, não
+/// para que sala. Aqui a resposta é `404`, que é o que o UA já sabe dar.
 struct DialInAdmission {
     db: sqlx::PgPool,
 }
@@ -1310,12 +1454,20 @@ impl crate::phone_bridge::sip::BridgeAdmission for DialInAdmission {
         room_code: &str,
         _call_id: Option<Uuid>,
     ) -> Option<crate::phone_bridge::sip::Admitted> {
-        let room_id: Uuid = sqlx::query_scalar("SELECT id FROM rooms WHERE code = $1")
-            .bind(room_code)
-            .fetch_optional(&self.db)
-            .await
-            .ok()
-            .flatten()?;
+        let (room_id, e2ee): (Uuid, bool) =
+            sqlx::query_as("SELECT id, e2ee FROM rooms WHERE code = $1")
+                .bind(room_code)
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten()?;
+        if e2ee {
+            tracing::warn!(
+                room_code,
+                "INVITE para sala cifrada de ponta a ponta RECUSADO: a ponte não decifra"
+            );
+            return None;
+        }
         Some(crate::phone_bridge::sip::Admitted {
             room_id,
             leg_id: Uuid::new_v4(),
@@ -1337,18 +1489,54 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
     let Some(sip_bind) = state.config.phone_bridge_sip_bind else {
         return;
     };
-    if state.config.phone_bridge_freeswitch_ips.is_empty() {
+    let literais = state.config.phone_bridge_freeswitch_ips.clone();
+    let nomes = state.config.phone_bridge_freeswitch_names.clone();
+    if literais.is_empty() && nomes.is_empty() {
         tracing::warn!(
             "PHONE_BRIDGE_SIP_BIND definido mas PHONE_BRIDGE_FREESWITCH_IPS vazio — ponte telefone↔sala NÃO arranca (fail-closed)"
         );
         return;
     }
+    // A lista inicial: os IPs literais mais o que cada nome resolve agora. Com nomes que
+    // ainda não resolvem (o FreeSWITCH pode arrancar depois do servidor) a ponte arranca com
+    // o que houver — se for nada, recusa tudo, que é o fail-closed — e a tarefa de refresco
+    // preenche a lista quando o nome aparecer.
+    let allowed = crate::phone_bridge::origens::SourceAllowlist::new(
+        crate::phone_bridge::origens::resolve_all(&literais, &nomes)
+            .await
+            .unwrap_or_else(|| literais.clone()),
+    );
+    // O IP onde as pernas abrem RTP e que vai no SDP: o configurado; senão o do bind, se for
+    // um endereço; senão o IP local por onde se alcança o FreeSWITCH (`0.0.0.0` não é um
+    // endereço onde alguém possa mandar RTP).
+    let rtp_ip = match state.config.phone_bridge_rtp_ip {
+        Some(ip) => ip,
+        None if !sip_bind.ip().is_unspecified() => sip_bind.ip(),
+        None => match crate::phone_bridge::origens::local_ip_towards(
+            allowed.snapshot().into_iter().find(|ip| !ip.is_loopback()),
+        ) {
+            Some(ip) => ip,
+            None => {
+                tracing::warn!(
+                    "ponte: não consegui detectar o IP local e PHONE_BRIDGE_RTP_IP não está definido — ponte telefone↔sala NÃO arranca"
+                );
+                return;
+            }
+        },
+    };
+    let _ = BRIDGE_LOCAL_IP.set(rtp_ip);
     let cfg = crate::phone_bridge::sip::SipBridgeConfig {
         sip_bind,
-        rtp_ip: state.config.phone_bridge_rtp_ip.unwrap_or(sip_bind.ip()),
+        rtp_ip,
         rtp_ports: state.config.phone_bridge_rtp_ports,
-        allowed_sources: state.config.phone_bridge_freeswitch_ips.clone(),
+        allowed_sources: allowed.clone(),
     };
+    crate::phone_bridge::origens::spawn_refresh(
+        allowed.clone(),
+        literais,
+        nomes,
+        std::time::Duration::from_secs(state.config.phone_bridge_resolve_secs),
+    );
     // A fila dos eventos é limitada: um pico de chamadas não pode crescer
     // memória sem tecto. O UA larga eventos quando ela enche — são
     // observabilidade, não o caminho da media.
@@ -1367,7 +1555,7 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
             tracing::info!(
                 sip = %b.local_sip,
                 anuncia = %bridge_advertise(state, sip_bind),
-                origens = state.config.phone_bridge_freeswitch_ips.len(),
+                origens = allowed.snapshot().len(),
                 "ponte telefone↔sala à escuta"
             );
             // A ponte é quem impõe o `ForceMute` a quem não tem cliente (R224).
@@ -1388,6 +1576,7 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                             room_id,
                             room_code,
                             caller_ticket,
+                            call_id,
                             ..
                         } => {
                             seat_phone_caller(
@@ -1396,6 +1585,7 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                                 room_code,
                                 *leg_id,
                                 caller_ticket.as_deref(),
+                                *call_id,
                             )
                             .await;
                         }
@@ -1411,7 +1601,20 @@ pub(crate) async fn start_phone_bridge(state: &Arc<AppState>) {
                                 seat.weak_link = weak;
                             });
                         }
-                        BridgeEvent::Ended { leg_id, room_id } => st.hub.leave(*room_id, *leg_id),
+                        BridgeEvent::Ended { leg_id, room_id } => {
+                            // Mesmo sinal do `drop(ws)` em `signaling.rs`: se
+                            // esta perna de telefone era a última na sala,
+                            // `meeting.ended`/o reenfileiramento da acta têm
+                            // de disparar aqui também — uma reunião só com
+                            // telefones nunca passa por `handle_socket`.
+                            if st.hub.leave(*room_id, *leg_id) {
+                                let st = st.clone();
+                                let room_id = *room_id;
+                                tokio::spawn(async move {
+                                    crate::meetings::on_room_emptied(st, room_id).await;
+                                });
+                            }
+                        }
                         // A ponte recusou a perna: o bilhete que ela trazia
                         // não entrou em sala nenhuma e deixa de valer.
                         BridgeEvent::Refused { caller_ticket } => {

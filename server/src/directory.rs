@@ -473,10 +473,13 @@ const INVITATION_FROM: &str =
 pub struct InvitationWithToken {
     #[serde(flatten)]
     pub invitation: Invitation,
-    /// A credencial do convite, mostrada esta única vez. Não há envio de correio
-    /// no servidor: a UI entrega-a (link ou código).
+    /// A credencial do convite, mostrada esta única vez. Vem **sempre**, mesmo
+    /// quando o email sai: a consola oferece «copiar link» e quem convida pode
+    /// querer entregá-la à mão de qualquer forma.
     pub token: String,
-    /// Sempre `manual`: o servidor não envia correio (medido: zero SMTP).
+    /// `email` quando o convite entrou na fila do correio; `manual` quando não
+    /// há relay configurado, falta o `PUBLIC_URL`, ou a fila recusou — nesse
+    /// caso o convite vale e entrega-se à mão, como antes de haver correio.
     pub delivery_channel: &'static str,
 }
 
@@ -850,6 +853,14 @@ pub async fn create_invitation(
     )
     .await?;
     let invitation = load_invitation(&state, org_id, id).await?;
+    // As horas que o texto do email anuncia saem do convite JÁ gravado, não do
+    // pedido: o `expires_in_hours` é opcional e a validade real pode vir do
+    // tecto dos convidados externos.
+    let hours = (invitation.expires_at - Utc::now()).num_hours().max(1);
+    let channel = crate::invitation_mail::send_best_effort(
+        &state, org_id, &req.email, &token, delivery, hours,
+    )
+    .await;
     Ok((
         StatusCode::CREATED,
         [(
@@ -859,7 +870,7 @@ pub async fn create_invitation(
         Json(InvitationWithToken {
             invitation,
             token,
-            delivery_channel: "manual",
+            delivery_channel: channel,
         }),
     )
         .into_response())
@@ -1015,7 +1026,7 @@ async fn resend_inner(
     org_id: Uuid,
     actor: Uuid,
     inv: &Invitation,
-) -> Result<String, ApiError> {
+) -> Result<(String, i64), ApiError> {
     if !matches!(inv.status.as_str(), "pending" | "expired") {
         return Err(DomainError::conflict(
             "invitation.not_pending",
@@ -1060,7 +1071,7 @@ async fn resend_inner(
         &serde_json::json!({"invitation_id": inv.id, "expires_in_hours": hours}).to_string(),
     )
     .await;
-    Ok(token)
+    Ok((token, hours))
 }
 
 /// Reenvia: roda o token (o anterior deixa de servir) e renova a validade.
@@ -1078,11 +1089,19 @@ pub async fn resend_invitation(
     Path((org_id, id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<InvitationWithToken>, ApiError> {
     let inv = invitation_in_scope(&state, org_id, auth.user_id, id).await?;
-    let token = resend_inner(&state, org_id, auth.user_id, &inv).await?;
+    let (token, hours) = resend_inner(&state, org_id, auth.user_id, &inv).await?;
     Ok(Json(InvitationWithToken {
         invitation: load_invitation(&state, org_id, id).await?,
+        delivery_channel: crate::invitation_mail::send_best_effort(
+            &state,
+            org_id,
+            &inv.email,
+            &token,
+            &inv.delivery,
+            hours,
+        )
+        .await,
         token,
-        delivery_channel: "manual",
     }))
 }
 
@@ -1418,7 +1437,13 @@ async fn invitation_action(
 ) -> Result<(bool, Option<String>), ApiError> {
     let inv = invitation_in_scope(state, org_id, actor, id).await?;
     match req.action.as_str() {
-        "resend_invitation" => Ok((true, Some(resend_inner(state, org_id, actor, &inv).await?))),
+        // Em massa não se manda email: são até centenas de convites por pedido,
+        // e a fila do correio não é o sítio para uma rajada que ninguém pediu
+        // explicitamente. Quem quer o email reenvia um a um.
+        "resend_invitation" => Ok((
+            true,
+            Some(resend_inner(state, org_id, actor, &inv).await?.0),
+        )),
         "revoke_invitation" => {
             revoke_inner(state, org_id, actor, id).await?;
             Ok((true, None))
@@ -2313,6 +2338,67 @@ pub struct SeatLimitReq {
     pub max_seats: Option<i64>,
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct ConcurrencyLimitReq {
+    /// Participantes concorrentes que a organização pode ter em cada nó de
+    /// media. `null` = o valor por omissão do nó (`ORG_MAX_PARTICIPANTS`).
+    pub max_concurrent_participants: Option<i32>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct ConcurrencyLimit {
+    pub max_concurrent_participants: Option<i32>,
+}
+
+/// Tecto de participantes concorrentes de uma organização, por nó — só o
+/// operador da plataforma. É um limite do plano: a própria organização não o
+/// altera. A contagem é por nó, não global: com N nós a organização pode chegar
+/// a N vezes este valor.
+#[utoipa::path(
+    put, path = "/api/operator/v1/organizations/{org_id}/concurrency", tag = "platform",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = ConcurrencyLimitReq,
+    responses((status = 200, body = ConcurrencyLimit), (status = 400, body = crate::openapi::ErrorBody),
+              (status = 401, body = crate::openapi::ErrorBody),
+              (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador da plataforma"),
+              (status = 404, body = crate::openapi::ErrorBody), (status = 429, body = crate::openapi::ErrorBody))
+)]
+pub async fn operator_set_concurrency(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<ConcurrencyLimitReq>,
+) -> Result<Json<ConcurrencyLimit>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    if req.max_concurrent_participants.is_some_and(|n| n <= 0) {
+        return Err(ApiError::BadRequest(
+            "max_concurrent_participants tem de ser maior que zero (ou null)".into(),
+        ));
+    }
+    let n = sqlx::query("UPDATE organizations SET max_concurrent_participants = $2 WHERE id = $1")
+        .bind(org_id)
+        .bind(req.max_concurrent_participants)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "org.concurrency_limit_set",
+        &serde_json::json!({"max_concurrent_participants": req.max_concurrent_participants})
+            .to_string(),
+    )
+    .await;
+    Ok(Json(ConcurrencyLimit {
+        max_concurrent_participants: req.max_concurrent_participants,
+    }))
+}
+
 /// Tecto de lugares de uma organização — só o operador da plataforma.
 #[utoipa::path(
     put, path = "/api/operator/v1/organizations/{org_id}/seats", tag = "platform",
@@ -2350,6 +2436,231 @@ pub async fn operator_set_seats(
     )
     .await;
     Ok(Json(crate::org::seat_summary(&state, org_id, 60).await?))
+}
+
+// ---------------------------------------------------------------------------
+//  Operador: listagem e quotas por organização (backoffice)
+// ---------------------------------------------------------------------------
+
+/// A mesma selecção de colunas da listagem e do detalhe de operador — uma só
+/// fonte, chamada pelas três rotas em vez de copiada. A contagem de membros
+/// vem de `org::active_member_count_sql` (regra 1: pertença decide-se em
+/// `org.rs`, não se escreve `org_members` à mão aqui).
+fn operator_org_select() -> String {
+    let member_count = crate::org::active_member_count_sql("o.id");
+    format!(
+        "SELECT o.id, o.name, o.slug, o.domain, o.created_at,
+                {member_count} AS member_count,
+                o.max_groups, o.max_rooms, o.max_meetings, o.max_storage_bytes,
+                o.max_seats, o.max_concurrent_participants
+           FROM organizations o"
+    )
+}
+
+/// Uma organização vista pelo operador: identidade + os seis tectos de plano.
+/// Sem uso agregado (lugares ocupados, bytes ocupados) — isso é só o
+/// detalhe (`OperatorOrgDetail`).
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct OperatorOrgSummary {
+    pub id: Uuid,
+    pub name: String,
+    pub slug: String,
+    pub domain: String,
+    pub created_at: DateTime<Utc>,
+    /// Membros activos (sem convites pendentes nem arquivados).
+    pub member_count: i64,
+    pub max_groups: Option<i32>,
+    pub max_rooms: Option<i32>,
+    pub max_meetings: Option<i32>,
+    pub max_storage_bytes: Option<i64>,
+    pub max_seats: Option<i64>,
+    pub max_concurrent_participants: Option<i32>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OperatorOrgPage {
+    pub items: Vec<OperatorOrgSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+}
+
+/// Detalhe de uma organização para o operador: os tectos de plano MAIS o uso
+/// real (lugares ocupados, bytes ocupados).
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OperatorOrgDetail {
+    pub org: OperatorOrgSummary,
+    pub seats: crate::org::SeatSummary,
+    pub storage: crate::usage::OrgStorageUsage,
+}
+
+/// Uma organização pelo `id`, nas colunas de `operator_org_select()` — usado
+/// pelo detalhe e pela resposta de `operator_set_quotas` (que devolve o
+/// recurso actualizado, como os irmãos `seats`/`concurrency`).
+async fn load_operator_org(state: &AppState, org_id: Uuid) -> Result<OperatorOrgSummary, ApiError> {
+    sqlx::query_as(&format!("{} WHERE o.id = $1", operator_org_select()))
+        .bind(org_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)
+}
+
+/// Organizações da plataforma, paginadas por nome — só o operador. Sem uso
+/// agregado: caro de calcular para N organizações a cada refrescar, e não é
+/// preciso para decidir em qual entrar (usa `GET .../{org_id}` para isso).
+#[utoipa::path(
+    get, path = "/api/operator/v1/tenants", tag = "platform",
+    security(("session" = [])),
+    params(crate::roles::PageQuery),
+    responses((status = 200, body = OperatorOrgPage), (status = 401, body = crate::openapi::ErrorBody),
+              (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador da plataforma"))
+)]
+pub async fn list_operator_organizations(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(q): Query<crate::roles::PageQuery>,
+) -> Result<Json<OperatorOrgPage>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    let page = PageRequest {
+        page_size: q.page_size,
+        page_token: q.page_token,
+    };
+    let size = page.size();
+    let cursor: Option<NameCursor> = page.cursor()?;
+    let select = operator_org_select();
+    let rows: Vec<OperatorOrgSummary> = sqlx::query_as(&format!(
+        "{select}
+          WHERE ($1::text IS NULL OR (lower(o.name), o.id) > ($1, $2))
+          ORDER BY lower(o.name), o.id LIMIT $3"
+    ))
+    .bind(cursor.as_ref().map(|c| c.name.clone()))
+    .bind(cursor.as_ref().map(|c| c.id).unwrap_or_default())
+    .bind(size as i64 + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let p = delonix_meet_core::page::Page::from_overfetch(rows, size, |o: &OperatorOrgSummary| {
+        NameCursor {
+            name: o.name.to_lowercase(),
+            id: o.id,
+        }
+    });
+    Ok(Json(OperatorOrgPage {
+        items: p.items,
+        next_page_token: p.next_page_token,
+    }))
+}
+
+/// Detalhe de uma organização, com uso real — só o operador. As rotas do
+/// inquilino (`GET /api/orgs/{org_id}/seats`, `.../storage-usage`) exigem que
+/// quem pede seja MEMBRO; um operador normalmente não é, por isso este
+/// handler chama directamente as funções de domínio/armazenamento
+/// (`org::seat_summary`, `usage::org_storage_usage_for`) em vez das rotas.
+#[utoipa::path(
+    get, path = "/api/operator/v1/tenants/{org_id}", tag = "platform",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    responses((status = 200, body = OperatorOrgDetail), (status = 401, body = crate::openapi::ErrorBody),
+              (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador da plataforma"),
+              (status = 404, body = crate::openapi::ErrorBody))
+)]
+pub async fn get_operator_organization(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<OperatorOrgDetail>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    let org = load_operator_org(&state, org_id).await?;
+    Ok(Json(OperatorOrgDetail {
+        seats: crate::org::seat_summary(&state, org_id, 60).await?,
+        storage: crate::usage::org_storage_usage_for(&state, org_id).await?,
+        org,
+    }))
+}
+
+/// Corpo de `PUT /api/operator/v1/organizations/{org_id}/quotas`.
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct OperatorQuotasReq {
+    /// `null`/negativo = ilimitado.
+    #[serde(default)]
+    pub max_groups: Option<i32>,
+    /// `null`/negativo = ilimitado.
+    #[serde(default)]
+    pub max_rooms: Option<i32>,
+    /// `null`/negativo = ilimitado.
+    #[serde(default)]
+    pub max_meetings: Option<i32>,
+    /// `'freeswitch' | 'provider'`. Omisso ou fora do enum mantém o actual.
+    #[serde(default)]
+    pub voice_media_backend: Option<String>,
+    /// `'shared' | 'dedicated'`. Omisso ou fora do enum mantém o actual.
+    #[serde(default)]
+    pub voice_did_model: Option<String>,
+}
+
+/// Quotas de plano de uma organização — só o operador da plataforma. PUT
+/// substitui (`max_groups`/`max_rooms`/`max_meetings`) e devolve o recurso
+/// actualizado, como os irmãos `seats`/`concurrency`. Os mesmos dois campos de
+/// voz validados em `org::update_settings` (dial-in PSTN) saem da autoridade
+/// do inquilino para aqui.
+#[utoipa::path(
+    put, path = "/api/operator/v1/tenants/{org_id}/quotas", tag = "platform",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path)),
+    request_body = OperatorQuotasReq,
+    responses((status = 200, body = OperatorOrgSummary), (status = 400, body = crate::openapi::ErrorBody),
+              (status = 401, body = crate::openapi::ErrorBody),
+              (status = 403, body = crate::openapi::ErrorBody, description = "não é administrador da plataforma"),
+              (status = 404, body = crate::openapi::ErrorBody), (status = 429, body = crate::openapi::ErrorBody))
+)]
+pub async fn operator_set_quotas(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<OperatorQuotasReq>,
+) -> Result<Json<OperatorOrgSummary>, ApiError> {
+    crate::storage::require_platform_admin(&state, auth.user_id)?;
+    // Quotas: None/negativo => ilimitado (NULL) — mesma regra de `org::update_settings`.
+    let norm = |v: Option<i32>| v.filter(|n| *n >= 0);
+    // Dial-in PSTN: valida os enums (None/inválido => mantém o actual via COALESCE).
+    let backend = req
+        .voice_media_backend
+        .as_deref()
+        .and_then(|b| matches!(b, "freeswitch" | "provider").then(|| b.to_string()));
+    let did_model = req
+        .voice_did_model
+        .as_deref()
+        .and_then(|m| matches!(m, "shared" | "dedicated").then(|| m.to_string()));
+    let n = sqlx::query(
+        "UPDATE organizations SET max_groups = $2, max_rooms = $3, max_meetings = $4,
+             voice_media_backend = COALESCE($5, voice_media_backend),
+             voice_did_model = COALESCE($6, voice_did_model)
+         WHERE id = $1",
+    )
+    .bind(org_id)
+    .bind(norm(req.max_groups))
+    .bind(norm(req.max_rooms))
+    .bind(norm(req.max_meetings))
+    .bind(&backend)
+    .bind(&did_model)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "org.quotas_set",
+        &serde_json::json!({
+            "max_groups": norm(req.max_groups), "max_rooms": norm(req.max_rooms),
+            "max_meetings": norm(req.max_meetings),
+            "voice_media_backend": backend, "voice_did_model": did_model,
+        })
+        .to_string(),
+    )
+    .await;
+    Ok(Json(load_operator_org(&state, org_id).await?))
 }
 
 // ---------------------------------------------------------------------------
@@ -2598,9 +2909,15 @@ pub async fn provisioning(
         seats,
         release_seats,
         operator_set_seats,
+        operator_set_concurrency,
+        list_operator_organizations,
+        get_operator_organization,
+        operator_set_quotas,
         get_entry_rules,
         put_entry_rules,
         provisioning,
+        issue_password_reset,
+        accept_password_reset,
     ),
     components(schemas(
         DirectoryEntry,
@@ -2625,11 +2942,20 @@ pub async fn provisioning(
         ReleaseSeatsReq,
         ReleaseSeatsResult,
         SeatLimitReq,
+        ConcurrencyLimitReq,
+        ConcurrencyLimit,
+        OperatorOrgSummary,
+        OperatorOrgPage,
+        OperatorOrgDetail,
+        OperatorQuotasReq,
         AttendanceLog,
         EntryRules,
         EntryRulesReq,
         OdooProvisioning,
         Provisioning,
+        IssuedPasswordReset,
+        AcceptPasswordResetReq,
+        AcceptedPasswordReset,
         crate::org::SeatSummary,
     ))
 )]
@@ -2701,4 +3027,237 @@ mod tests {
         assert!(order_of(Some("-last_access_at")).is_ok());
         assert!(order_of(Some("email")).is_err());
     }
+}
+// ---------------------------------------------------------------------------
+//  Reposição de password emitida por um administrador
+// ---------------------------------------------------------------------------
+//
+//  PORQUE EXISTE. Antes disto o ÚNICO caminho para mudar uma password era a
+//  própria pessoa, com a password actual ou uma sessão recente
+//  (`users.rs`, `sessions::prove_current_password` / `require_recent`). Nenhuma
+//  rota escrevia o `password_hash` de OUTRA conta: quem perdia a password
+//  ficava fora para sempre.
+//
+//  É a metade da E3 do plano de lacunas que NÃO depende de correio: o
+//  administrador emite, o token aparece UMA vez na resposta, e ele entrega-o
+//  pelo canal que já usa para os convites. É o mesmo molde do
+//  `temporary_password` do `org::add_employee`, que já faz isto para contas
+//  NOVAS.
+//
+//  TRÊS GUARDAS, e nenhuma é decorativa:
+//
+//  1. `accounts_scope` + departamento — a mesma de todas as escritas de contas;
+//  2. **sem escalada**: `roles::ensure_can_assign` com o papel DO ALVO. Repor é
+//     tomar a conta, logo quem não poderia NOMEAR aquele papel não pode repor
+//     aquela conta. Sem isto, um administrador de departamento tomava a conta
+//     do dono da organização;
+//  3. conta gerida pelo Odoo — a password é a do Odoo, e um hash local novo
+//     seria sobrescrito no próximo login (a mesma razão que o `users.rs` dá
+//     para recusar a mudança pela própria pessoa).
+
+/// 24 h: é um token que alguém entrega à mão e que a pessoa usa no mesmo dia.
+const DEFAULT_RESET_HOURS: i64 = 24;
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct IssuedPasswordReset {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub expires_at: DateTime<Utc>,
+    /// Aparece **uma só vez**, nesta resposta. A base guarda só o hash.
+    pub token: String,
+    /// `manual`: quem emite entrega o token. Quando o correio existir
+    /// (D7), passa a poder ser `email`.
+    pub delivery_channel: &'static str,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct AcceptPasswordResetReq {
+    pub token: String,
+    pub password: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct AcceptedPasswordReset {
+    /// Sessões terminadas pela reposição. Todas: a pessoa entra de novo.
+    pub sessions_revoked: u64,
+}
+
+pub(crate) fn reset_token_hash(token: &str) -> String {
+    delonix_meet_core::crypto::sha256_hex(token.trim())
+}
+
+/// Emite uma reposição de password para um membro da organização.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/users/{user_id}/password-reset", tag = "directory",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path), ("user_id" = Uuid, Path)),
+    responses(
+        (status = 201, body = IssuedPasswordReset, description = "O `token` vem preenchido UMA só vez."),
+        (status = 401, body = crate::openapi::ErrorBody),
+        (status = 403, body = crate::openapi::ErrorBody, description = "sem `admin.manage_accounts`, fora do departamento, ou `authz.escalation`/`role.owner_assignment` (repor é tomar a conta)"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a organização não existe, ou o alvo não é membro activo"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`account.managed_by_odoo`"),
+    )
+)]
+pub async fn issue_password_reset(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((org_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<Response, ApiError> {
+    let restricted = accounts_scope(&state, org_id, auth.user_id).await?;
+    let (role_id, department_id) = crate::org::member_subject(&state.db, org_id, user_id)
+        .await?
+        .ok_or_else(|| ApiError::from(DomainError::not_found("member.not_found")))?;
+    if restricted.is_some() && department_id != restricted {
+        return Err(outside_scope());
+    }
+    // Repor é tomar a conta: vale a mesma regra de nomeação (ADR-0008 §5).
+    crate::roles::ensure_can_assign(&state, org_id, auth.user_id, role_id).await?;
+    if crate::account::is_odoo_managed(&state, user_id).await? {
+        return Err(DomainError::conflict(
+            "account.managed_by_odoo",
+            "a password desta conta é a do Odoo: reponha-a no Odoo",
+        )
+        .into());
+    }
+
+    let token = delonix_meet_core::crypto::prefixed_token("dlxr_");
+    let hash = reset_token_hash(&token);
+    let prefix: String = token.chars().take(12).collect();
+    let expires_at = Utc::now() + chrono::Duration::hours(DEFAULT_RESET_HOURS);
+
+    let mut tx = state.db.begin().await?;
+    // Uma pendente por pessoa (índice parcial único): emitir outra REVOGA a
+    // anterior. Sem isto ficavam dois tokens válidos e revogar um não fechava
+    // o outro.
+    sqlx::query(
+        "UPDATE password_resets SET status = 'revoked' WHERE user_id = $1 AND status = 'pending'",
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO password_resets (user_id, org_id, token_hash, token_prefix, expires_at, issued_by)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .bind(&hash)
+    .bind(&prefix)
+    .bind(expires_at)
+    .bind(auth.user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "user.password_reset_issued",
+        &user_id.to_string(),
+    )
+    .await;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(IssuedPasswordReset {
+            id,
+            user_id,
+            expires_at,
+            token,
+            delivery_channel: "manual",
+        }),
+    )
+        .into_response())
+}
+
+/// Usa uma reposição de password. **Pública**: quem a usa está fora da conta.
+#[utoipa::path(
+    post, path = "/api/password-resets/accept", tag = "directory",
+    request_body = AcceptPasswordResetReq,
+    responses(
+        (status = 200, body = AcceptedPasswordReset),
+        (status = 400, body = crate::openapi::ErrorBody, description = "password fora da política"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "`password_reset.not_found` — token errado, já usado ou revogado"),
+        (status = 409, body = crate::openapi::ErrorBody, description = "`account.managed_by_odoo`"),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`password_reset.expired`"),
+        (status = 429, body = crate::openapi::ErrorBody, description = "limite por IP"),
+    )
+)]
+pub async fn accept_password_reset(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AcceptPasswordResetReq>,
+) -> Result<Json<AcceptedPasswordReset>, ApiError> {
+    // A MESMA política de password do registo e da mudança, num só sítio.
+    delonix_meet_domain::identity::validation::validate_password(&req.password)
+        .map_err(ApiError::BadRequest)?;
+
+    let hash = reset_token_hash(&req.token);
+    // Um 404 igual para token errado, usado, revogado e inexistente: distinguir
+    // dava um oráculo a quem adivinha.
+    let not_found = || ApiError::from(DomainError::not_found("password_reset.not_found"));
+
+    let mut tx = state.db.begin().await?;
+    // A busca É a comparação: a linha é encontrada PELO hash, que tem 256 bits
+    // imprevisíveis. Não se compara o hash outra vez — seria comparar um valor
+    // com ele próprio e fingir que isso é um controlo.
+    // `org_id` é `None` numa reposição pedida pela própria pessoa (E3, 0112):
+    // não age em nome de organização nenhuma.
+    let row: Option<(Uuid, Uuid, Option<Uuid>, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, user_id, org_id, expires_at FROM password_resets
+          WHERE token_hash = $1 AND status = 'pending' FOR UPDATE",
+    )
+    .bind(&hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((id, user_id, org_id, expires_at)) = row else {
+        return Err(not_found());
+    };
+    if expires_at <= Utc::now() {
+        sqlx::query("UPDATE password_resets SET status = 'expired' WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Err(DomainError::precondition(
+            "password_reset.expired",
+            "a reposição expirou — peça outra",
+        )
+        .into());
+    }
+    // Reconfere o Odoo AGORA: a conta pode ter passado a ser gerida depois de
+    // a reposição ter sido emitida, e então este hash seria lixo. Vai pela
+    // transacção ABERTA: uma 2ª ligação à pool aqui esgotava-a.
+    if crate::account::is_odoo_managed_with(&mut *tx, user_id).await? {
+        return Err(DomainError::conflict(
+            "account.managed_by_odoo",
+            "a password desta conta é a do Odoo: reponha-a no Odoo",
+        )
+        .into());
+    }
+    let new_hash = crate::auth::hash_password(&req.password)?;
+    sqlx::query("UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2")
+        .bind(&new_hash)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE password_resets SET status = 'used', used_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    // TODAS as sessões: quem repõe a password pode estar a recuperar de um
+    // acesso indevido, e deixar a sessão do intruso de pé esvaziava a reposição.
+    let sessions_revoked = crate::sessions::revoke_all_except(&state, user_id, None).await?;
+    crate::audit::log(
+        &state.db,
+        org_id,
+        user_id,
+        "user.password_reset_used",
+        &sessions_revoked.to_string(),
+    )
+    .await;
+    Ok(Json(AcceptedPasswordReset { sessions_revoked }))
 }

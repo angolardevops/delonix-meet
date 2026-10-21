@@ -121,6 +121,9 @@ export default defineConfig(({ command }) => {
   // Docker). Se estivermos a servir mas sem os certos mkcert, cai no basic-ssl.
   const wantHttps = command === 'serve' && !process.env.NO_HTTPS
   const apiPort = Number(process.env.API_PORT) || 8180
+  // API_HOST: o servidor noutro endereço que não esta máquina — um contentor de
+  // uma réplica de prova, por exemplo. Por omissão, o de sempre.
+  const apiHost = process.env.API_HOST || '127.0.0.1'
   const haveCerts = wantHttps && fs.existsSync(KEY) && fs.existsSync(CRT)
   return {
     plugins: [react(), precachePwa(), ...(wantHttps && !haveCerts ? [basicSsl()] : [])],
@@ -170,9 +173,15 @@ export default defineConfig(({ command }) => {
         // chega ao servidor — sem erro em lado nenhum, nem no browser nem no
         // log do backend. Foi assim que o directo pareceu recusado quando na
         // verdade nunca foi tentado (R78).
-        '/api': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true, ws: true },
-        '/ws': { target: `ws://127.0.0.1:${apiPort}`, ws: true, changeOrigin: true },
-        '/rtc': { target: `ws://127.0.0.1:${apiPort}`, ws: true, changeOrigin: true },
+        '/api': { target: `http://${apiHost}:${apiPort}`, changeOrigin: true, ws: true },
+        // A descoberta do OAuth dos clientes MCP (ADR-0028 §2) vive na RAIZ,
+        // não debaixo de `/api`: é onde os RFC 8414 e 9728 a põem. Sem esta
+        // linha o dev server respondia com o index.html da aplicação e o
+        // percurso do agente não se podia experimentar sem um cluster —
+        // exactamente a mesma falta que havia no nginx e no chart.
+        '/.well-known/oauth-': { target: `http://${apiHost}:${apiPort}`, changeOrigin: true },
+        '/ws': { target: `ws://${apiHost}:${apiPort}`, ws: true, changeOrigin: true },
+        '/rtc': { target: `ws://${apiHost}:${apiPort}`, ws: true, changeOrigin: true },
       },
     },
   }

@@ -691,3 +691,324 @@ async fn a_removed_or_disabled_webhook_ends_the_retries(db: sqlx::PgPool) {
     );
     assert_eq!(rx.received().len(), 1);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_event_id_is_stable_across_attempts_and_distinct_across_events(db: sqlx::PgPool) {
+    use std::collections::{BTreeMap, HashSet};
+
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(503, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r1", &[]).await;
+    app.new_meeting(&a, "r2", &[]).await;
+    wait_final(&app, &a, &hook, 2).await;
+
+    // Repetição automática dos dois eventos…
+    make_due(&app).await;
+    assert_eq!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap(),
+        2
+    );
+    let items = wait_final(&app, &a, &hook, 4).await;
+
+    // …e um reenvio MANUAL de uma segunda tentativa.
+    let segunda = items.iter().find(|d| d["attempt"] == 2).unwrap();
+    let id = segunda["id"].as_str().unwrap();
+    let (st, v) = app
+        .post(
+            &format!("{}/{hook}/deliveries/{id}/redeliver", hooks(a.org())),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 202, "{v}");
+    let items = wait_final(&app, &a, &hook, 5).await;
+
+    // Na API: duas cadeias (2 e 3 tentativas), cada uma com UM event_id.
+    let mut por_evento: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+    for d in &items {
+        por_evento
+            .entry(d["event_id"].as_str().expect("sem event_id").to_string())
+            .or_default()
+            .push(d["attempt"].as_i64().unwrap());
+    }
+    assert_eq!(
+        por_evento.len(),
+        2,
+        "dois eventos, dois event_id: {por_evento:?}"
+    );
+    let mut tentativas: Vec<usize> = por_evento.values().map(Vec::len).collect();
+    tentativas.sort_unstable();
+    assert_eq!(tentativas, vec![2, 3], "{por_evento:?}");
+
+    // No cabeçalho: o MESMO conjunto de event_id, e um X-Delonix-Delivery
+    // diferente por tentativa.
+    let got = rx.received();
+    assert_eq!(got.len(), 5);
+    let header = |r: &Received, name: &str| r.headers[name].to_str().unwrap().to_string();
+    let eventos_no_cabecalho: HashSet<String> = got
+        .iter()
+        .map(|r| header(r, "x-delonix-event-id"))
+        .collect();
+    let eventos_na_api: HashSet<String> = por_evento.keys().cloned().collect();
+    assert_eq!(eventos_no_cabecalho, eventos_na_api);
+    let entregas: HashSet<String> = got
+        .iter()
+        .map(|r| header(r, "x-delonix-delivery"))
+        .collect();
+    assert_eq!(
+        entregas.len(),
+        5,
+        "cada tentativa tem o seu X-Delonix-Delivery"
+    );
+
+    // O event_id não é o id de nenhuma tentativa: não se confunde com ele.
+    assert!(
+        eventos_na_api.is_disjoint(&entregas),
+        "o event_id não pode ser o id de uma tentativa: {eventos_na_api:?} / {entregas:?}"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn next_retry_at_is_exposed_while_a_retry_is_scheduled(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(503, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r", &[]).await;
+    let items = wait_final(&app, &a, &hook, 1).await;
+    assert!(
+        items[0]["next_retry_at"].is_string(),
+        "falha repetível: a API tem de dizer quando vai repetir: {}",
+        items[0]
+    );
+
+    // Falha definitiva: nada agendado, e a API di-lo com nulo.
+    rx.status.store(404, Ordering::SeqCst);
+    app.new_meeting(&a, "r2", &[]).await;
+    let items = wait_final(&app, &a, &hook, 2).await;
+    let definitiva = items.iter().find(|d| d["response_status"] == 404).unwrap();
+    assert!(definitiva["next_retry_at"].is_null(), "{definitiva}");
+}
+
+/// DUAS organizações: a B não reenvia, não lista nem lê as entregas da A, nem
+/// pelo caminho da A nem pelo da B com os ids da A — e nada chega ao destino da
+/// A por causa disso. A própria A continua a poder reenviar (é o controlo de que
+/// as recusas são por organização e não a rota partida).
+#[sqlx::test(migrations = "./migrations")]
+async fn another_organization_cannot_redeliver_list_or_read_my_deliveries(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    rx.status.store(204, Ordering::SeqCst);
+    let a = app.new_org("alfa.test").await;
+    let b = app.new_org("beta.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+    app.new_meeting(&a, "r", &[]).await;
+    let items = wait_final(&app, &a, &hook, 1).await;
+    let delivery = items[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(rx.received().len(), 1);
+
+    let a_path = format!("{}/{hook}/deliveries", hooks(a.org()));
+    let b_path_com_ids_da_a = format!("{}/{hook}/deliveries", hooks(b.org()));
+
+    // 1. Pelo caminho da A, com a sessão da B: B não é admin da A.
+    let (st, v) = app
+        .post(
+            &format!("{a_path}/{delivery}/redeliver"),
+            Some(&b.token),
+            json!({}),
+        )
+        .await;
+    assert!([403, 404].contains(&st), "B reenviou na org da A: {st} {v}");
+    // 2. Pelo caminho da B, com o webhook e a entrega da A: não existem aí.
+    let (st, v) = app
+        .post(
+            &format!("{b_path_com_ids_da_a}/{delivery}/redeliver"),
+            Some(&b.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 404, "B reenviou uma entrega da A pelo seu caminho: {v}");
+    // 3. Listar e ler: igual.
+    for (path, quem, esperado) in [
+        (a_path.clone(), &b.token, vec![403, 404]),
+        (b_path_com_ids_da_a.clone(), &b.token, vec![404]),
+        (format!("{a_path}/{delivery}"), &b.token, vec![403, 404]),
+        (
+            format!("{b_path_com_ids_da_a}/{delivery}"),
+            &b.token,
+            vec![404],
+        ),
+    ] {
+        let (st, v) = app.get(&path, Some(quem)).await;
+        assert!(
+            esperado.contains(&st),
+            "GET {path} com a sessão da B: {st} {v}"
+        );
+        assert!(
+            !v.to_string().contains(&delivery),
+            "a resposta à B menciona a entrega da A: {v}"
+        );
+    }
+
+    // Nada foi enviado nem criado por causa das tentativas da B.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        rx.received().len(),
+        1,
+        "o destino da A recebeu um reenvio pedido pela B"
+    );
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM webhook_deliveries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(total, 1, "as tentativas da B criaram entregas");
+
+    // Controlo: a A reenvia pelo mesmo caminho.
+    let (st, v) = app
+        .post(
+            &format!("{a_path}/{delivery}/redeliver"),
+            Some(&a.token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(st, 202, "{v}");
+    wait_final(&app, &a, &hook, 2).await;
+    assert_eq!(rx.received().len(), 2);
+}
+
+/// Insere `n` entregas falhadas e vencidas de `hook`, com `retry_at` a começar
+/// `older_secs` atrás e a avançar um segundo por entrega.
+async fn insert_due(app: &TestApp, org: &str, hook: &str, n: i32, older_secs: i32) {
+    sqlx::query(
+        "INSERT INTO webhook_deliveries (org_id, webhook_id, event, payload, attempt, status, retry_at)
+         SELECT $1::uuid, $2::uuid, 'meeting.created', '{\"event\":\"meeting.created\"}'::jsonb,
+                1, 'failed', now() - make_interval(secs => $4 - g)
+           FROM generate_series(1, $3) AS g",
+    )
+    .bind(org)
+    .bind(hook)
+    .bind(n)
+    .bind(older_secs)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// Uma organização com muitas repetições vencidas não deixa as das outras à
+/// espera: o lote de 50 reparte-se por organização. A tem 60 repetições mais
+/// antigas, B tem uma mais recente — ordenado só por `retry_at`, a de B ficava
+/// fora do primeiro lote.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_backlog_in_one_organization_does_not_starve_anothers_retries(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx_a = Receiver::spawn().await;
+    let rx_b = Receiver::spawn().await;
+    let a = app.new_org("alfa.test").await;
+    let b = app.new_org("beta.test").await;
+    let hook_a = new_hook(&app, &a, &rx_a.url).await;
+    let hook_b = new_hook(&app, &b, &rx_b.url).await;
+    insert_due(&app, a.org(), &hook_a, 60, 3600).await;
+    insert_due(&app, b.org(), &hook_b, 1, 5).await;
+
+    // Um passo: o lote de 50, repartido — a de B entra mesmo sendo a mais recente.
+    let sent = delonix_server::webhook_retry_due(&app.state).await.unwrap();
+    assert_eq!(sent, 50, "o lote enche-se");
+    assert_eq!(
+        rx_b.received().len(),
+        1,
+        "a repetição da organização B tinha de entrar no primeiro lote"
+    );
+    assert_eq!(rx_a.received().len(), 49);
+
+    // Só A tem repetições por fazer: o passo seguinte leva-as todas, sem teto
+    // por organização que atrase quem está sozinho.
+    let sent = delonix_server::webhook_retry_due(&app.state).await.unwrap();
+    assert_eq!(sent, 11);
+    assert_eq!(rx_a.received().len(), 60);
+    // O corpo e a organização de cada repetição são os da própria: nada de A
+    // chegou ao receptor de B.
+    assert_eq!(rx_b.received().len(), 1);
+}
+
+/// **O defeito que o trabalho nº3 fecha: um evento morto na janela.**
+///
+/// O `fire` antigo disparava numa tarefa à parte e entre o `COMMIT` do evento
+/// de negócio e o `INSERT` da entrega havia uma janela em que um `SIGTERM`
+/// apagava o evento **sem deixar rasto nenhum** — nem entrega, nem linha
+/// falhada, nem nada para reenviar na consola. O código assumia-o por escrito:
+/// «o registo não é condição do envio».
+///
+/// Aqui a morte é simulada da única forma honesta: grava-se na transacção,
+/// faz-se o commit, e **não se envia**. O que o teste exige é que o evento
+/// saia mesmo assim, pela rede de segurança que já existia.
+#[sqlx::test(migrations = "./migrations")]
+async fn um_evento_gravado_sai_mesmo_que_o_envio_nunca_aconteca(db: sqlx::PgPool) {
+    let app = spawn_app(db).await;
+    let rx = Receiver::spawn().await;
+    let a = app.new_org("alfa.test").await;
+    let hook = new_hook(&app, &a, &rx.url).await;
+
+    // 1. O evento é GRAVADO na transacção do negócio, e a transacção fecha.
+    let mut tx = app.db.begin().await.unwrap();
+    let fila = delonix_server::webhook_enqueue(
+        &mut tx,
+        a.org().parse().unwrap(),
+        &delonix_server::WebhookEvent {
+            name: "meeting.created",
+            title: "Delonix Meet".into(),
+            text: "Reunião criada".into(),
+            payload: json!({"meeting_id": "o-que-nao-se-pode-perder"}),
+        },
+    )
+    .await
+    .expect("o registo da entrega falhou");
+    tx.commit().await.unwrap();
+    assert_eq!(fila.len(), 1, "o webhook subscrito não ficou na fila");
+
+    // 2. O PROCESSO MORRE AQUI: `envia` nunca é chamado. A `fila` é largada.
+    drop(fila);
+    assert!(
+        rx.received().is_empty(),
+        "não devia ter saído nada: o envio não aconteceu"
+    );
+    // Mas a linha existe, e é isso que faz a diferença.
+    let pendentes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM webhook_deliveries WHERE webhook_id = $1::uuid AND status = 'pending'",
+    )
+    .bind(&hook)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        pendentes, 1,
+        "o evento morreu na janela — sem linha nenhuma"
+    );
+
+    // 3. O nó seguinte arranca. Envelhece a `pending` para o varredor a dar por
+    //    abandonada (é o que um processo morto deixa), e corre a rede de
+    //    segurança que já existia.
+    sqlx::query(
+        "UPDATE webhook_deliveries SET created_at = now() - interval '2 hours'
+          WHERE webhook_id = $1::uuid",
+    )
+    .bind(&hook)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    delonix_server::sweep_deliveries(&app.db).await.unwrap();
+    assert!(
+        delonix_server::webhook_retry_due(&app.state).await.unwrap() > 0,
+        "o varredor não reagendou a entrega abandonada"
+    );
+
+    // 4. E o evento SAIU — com o corpo original, que é o que o integrador espera.
+    let recebido = rx.received();
+    assert_eq!(recebido.len(), 1, "o evento não saiu depois do arranque");
+    let corpo: Value = serde_json::from_slice(&recebido[0].body).unwrap();
+    assert_eq!(corpo["event"], "meeting.created");
+    assert_eq!(corpo["data"]["meeting_id"], "o-que-nao-se-pode-perder");
+}

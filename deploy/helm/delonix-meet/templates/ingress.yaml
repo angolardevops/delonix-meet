@@ -39,11 +39,17 @@ spec:
             pathType: Prefix
             backend:
               service: { name: delonix-server, port: { number: 8180 } }
-          {{- if $v.ingress.asr.serviceName }}
+          # Descoberta do OAuth (ADR-0028 §2): os RFC 8414 e 9728 põem-na na
+          # RAIZ. Só o prefixo `oauth-` — o `acme-challenge` é do cert-manager.
+          - path: /.well-known/oauth-
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
+          {{- with include "dm.asrService" . }}
           - path: /asr
             pathType: Prefix
             backend:
-              service: { name: {{ $v.ingress.asr.serviceName }}, port: { number: {{ $v.ingress.asr.servicePort }} } }
+              service: { name: {{ . }}, port: { number: {{ include "dm.asrPort" $ }} } }
           {{- end }}
           - path: /
             pathType: Prefix
@@ -63,6 +69,11 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: {{ $v.ingress.proxyTimeoutSeconds | quote }}
     nginx.ingress.kubernetes.io/proxy-send-timeout: {{ $v.ingress.proxyTimeoutSeconds | quote }}
     nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"
+    # O token vai no `?token=` deste caminho (o da sala, e o de FONTE de um
+    # estúdio, que vive 12 h) e o `log-format-upstream` por omissão inclui a
+    # query. Em K8s o `/ws` vem por aqui, não pelo nginx do pod web. Igual ao
+    # `delonix-provisioning` abaixo (R278).
+    nginx.ingress.kubernetes.io/enable-access-log: "false"
 spec:
   ingressClassName: {{ $v.ingress.className }}
   {{- if $comTls }}
@@ -78,4 +89,32 @@ spec:
             pathType: Prefix
             backend:
               service: { name: delonix-server-ws, port: { number: 8180 } }
+---
+# Ingress DEDICADO ao resgate do QR do Linphone (R278): o caminho leva o
+# bilhete de uso único — a credencial. O ingress-nginx escreveria o caminho no
+# registo de acessos do controlador; aqui esse registo fica desligado só para
+# esta rota. O prefixo mais longo ganha ao /api do Ingress principal.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: delonix-provisioning
+  labels:
+    {{- include "dm.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/enable-access-log: "false"
+spec:
+  ingressClassName: {{ $v.ingress.className }}
+  {{- if $comTls }}
+  tls:
+    - hosts: [{{ $v.host | quote }}]
+      secretName: {{ $tlsSecret }}
+  {{- end }}
+  rules:
+    - host: {{ $v.host | quote }}
+      http:
+        paths:
+          - path: /api/public/extension-provisioning
+            pathType: Prefix
+            backend:
+              service: { name: delonix-server, port: { number: 8180 } }
 {{- end }}

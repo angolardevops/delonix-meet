@@ -7,12 +7,14 @@ import {
   ButtonHTMLAttributes,
   forwardRef,
   InputHTMLAttributes,
+  type KeyboardEvent as EventoDeTeclaReact,
   ReactNode,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
   useEffect,
   useId,
   useRef,
+  useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon, IconName } from './icons'
@@ -116,7 +118,7 @@ export function Tag({ tone, children, plain }: { tone?: 'live' | 'accent' | 'suc
   return <span className={cx('dx-tag', tone && `dx-tag--${tone}`, plain && 'dx-tag--plain')}>{children}</span>
 }
 
-export type BadgeTone = 'record' | 'live' | 'warning' | 'success' | 'neutral'
+export type BadgeTone = 'record' | 'live' | 'warning' | 'danger' | 'success' | 'neutral'
 
 /** Badge de estado: cor + forma (ponto, triângulo, ícone) + texto. */
 export function StatusBadge({ tone, children, icon }: { tone: BadgeTone; children: ReactNode; icon?: IconName }) {
@@ -219,21 +221,87 @@ export function Toggle({
   )
 }
 
+export interface SegmentedOption<T extends string> {
+  value: T
+  label: ReactNode
+  /** Dica do rato e do leitor de ecrã — é aqui que vai a tecla do atalho. */
+  title?: string
+  disabled?: boolean
+}
+
+/**
+ * Grupo de segmentos — o selector de vistas da app. Um só botão carregado
+ * (`aria-pressed`), e as setas andam por ele: num grupo de botões o Tab passa
+ * ao seguinte da PÁGINA, e quem navega por teclado não tinha como percorrer as
+ * vistas sem sair do grupo.
+ *
+ * `dataKey` escreve `data-<chave>="<valor>"` em cada segmento: é por aí que o
+ * e2e agarra uma vista («data-studio-vista»), sem depender do rótulo, que muda
+ * com a língua.
+ */
 export function Segmented<T extends string>({
   value,
   options,
   onChange,
   label,
+  className,
+  dataKey,
 }: {
   value: T
-  options: { value: T; label: ReactNode }[]
+  options: SegmentedOption<T>[]
   onChange: (v: T) => void
   label: string
+  className?: string
+  dataKey?: string
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const idx = options.findIndex((o) => o.value === value)
+
+  /** O segmento activável a `delta` passos daqui, dando a volta e saltando os desactivados. */
+  function seguinte(delta: number): number | null {
+    const n = options.length
+    if (!n) return null
+    const base = idx < 0 ? 0 : idx
+    for (let k = 1; k <= n; k++) {
+      const j = (base + delta * k + n * n) % n
+      if (!options[j].disabled) return j
+    }
+    return null
+  }
+
+  function aoTeclar(e: EventoDeTeclaReact<HTMLDivElement>) {
+    const extremo = (de: number, passo: number) => {
+      for (let j = de; j >= 0 && j < options.length; j += passo) if (!options[j].disabled) return j
+      return null
+    }
+    const j =
+      e.key === 'ArrowRight' || e.key === 'ArrowDown'
+        ? seguinte(1)
+        : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+          ? seguinte(-1)
+          : e.key === 'Home'
+            ? extremo(0, 1)
+            : e.key === 'End'
+              ? extremo(options.length - 1, -1)
+              : null
+    if (j === null) return
+    e.preventDefault()
+    onChange(options[j].value)
+    ref.current?.querySelectorAll<HTMLButtonElement>('button')[j]?.focus()
+  }
+
   return (
-    <div className="dx-seg" role="group" aria-label={label}>
+    <div ref={ref} className={cx('dx-seg', className)} role="group" aria-label={label} onKeyDown={aoTeclar}>
       {options.map((o) => (
-        <button key={o.value} type="button" aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={o.value === value}
+          title={o.title}
+          disabled={o.disabled}
+          onClick={() => onChange(o.value)}
+          {...(dataKey ? { [`data-${dataKey}`]: o.value } : {})}
+        >
           {o.label}
         </button>
       ))}
@@ -355,6 +423,77 @@ export function Skeleton({ h = 14, w = '100%' }: { h?: number; w?: number | stri
 /**
  * Diálogo modal: foco preso ao abrir, Esc fecha, o foco volta a quem abriu.
  */
+/**
+ * Confirmação de uma acção, sobre o [`Dialog`].
+ *
+ * PORQUE EXISTE: havia cinco `window.confirm(...)` no backoffice (um no
+ * `SmsGatewayCard`, quatro no `ExtensionsCard`). A MENSAGEM já era traduzida
+ * pelo `t(...)` — mas os botões **«OK» e «Cancel» são do browser**, em inglês,
+ * num produto com quatro línguas. E o `confirm` nativo não se estiliza, não se
+ * fecha com `Escape` do nosso lado, e bloqueia o fio do browser enquanto está
+ * aberto.
+ *
+ * NÃO FOI INVENTADO: é o padrão que o `telecom/TrunksCard` e o
+ * `admin/MemberDialogs` já faziam à mão — `Dialog` + `Alert` para o erro +
+ * dois `Button`, com o perigoso em `variant="danger"`. Aqui fica num sítio.
+ *
+ * O `onConfirm` pode ser assíncrono: o botão fica `busy` enquanto corre, e um
+ * erro aparece no `Alert` sem fechar o diálogo — quem está a apagar algo tem
+ * de ver porque não deu, em vez de o diálogo desaparecer em silêncio.
+ */
+export function Confirm({
+  title,
+  children,
+  onClose,
+  onConfirm,
+  confirmLabel,
+  tone = 'danger',
+  icon,
+  erroDe,
+}: {
+  title: ReactNode
+  children?: ReactNode
+  onClose: () => void
+  /** Corre ao confirmar. Se lançar, a mensagem fica no `Alert`. */
+  onConfirm: () => Promise<void> | void
+  /** Texto do botão que confirma. Por omissão, `ui.confirmar`. */
+  confirmLabel?: string
+  tone?: 'danger' | 'primary'
+  icon?: string
+  /** Traduz o erro apanhado. Sem isto usa-se a mensagem do `Error`. */
+  erroDe?: (e: unknown) => string
+}) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  async function confirmar() {
+    setBusy(true)
+    setErr('')
+    try {
+      await onConfirm()
+      onClose()
+    } catch (x) {
+      setErr(erroDe ? erroDe(x) : x instanceof Error ? x.message : String(x))
+      // Fica aberto de propósito: o erro é a informação.
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog title={title} onClose={onClose}>
+      {children}
+      {err && <Alert tone="danger">{err}</Alert>}
+      <div className="dx-dialog__foot">
+        <Button variant="secondary" onClick={onClose} disabled={busy} data-close>
+          {t('ui.cancelar')}
+        </Button>
+        <Button variant={tone} icon={icon} busy={busy} onClick={() => void confirmar()}>
+          {confirmLabel ?? t('ui.confirmar')}
+        </Button>
+      </div>
+    </Dialog>
+  )
+}
+
 export function Dialog({
   title,
   onClose,

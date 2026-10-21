@@ -18,7 +18,7 @@ helm upgrade --install meet deploy/helm/delonix-meet -n meet-lab --create-namesp
   -f deploy/helm/delonix-meet/values-local.yaml --set host=meet-lab.test
 
 # Produção — meet.ngolacloud.com
-helm upgrade --install meet deploy/helm/delonix-meet -n delonix-meet \
+helm upgrade --install meet deploy/helm/delonix-meet -n ngolacloud-meet \
   -f deploy/helm/delonix-meet/values-production.yaml \
   --set image.tag=<git describe> \
   --set secrets.existingSecret=<nome do Secret> \
@@ -75,7 +75,7 @@ O chart não traz nenhum valor. Em produção lê **um** Secret criado fora dele
 | `DATA_ENCRYPTION_KEYS` | sim | Cifra de segredos em repouso: `kid:base64` de 32 bytes, vários separados por vírgula | Malformada → não arranca. (Sem ela o servidor arrancaria e recusaria com 422 o que guarda segredos; o chart exige-a) |
 | `VOICE_INTERNAL_SECRET` | com `voice.enabled` | Cabeçalho `X-Voice-Secret` entre o FreeSWITCH e o servidor | Vazio, menos de 32 caracteres, ou um valor já publicado no repo → as rotas de IVR respondem 503 |
 | `PROVISIONING_SECRET` | não | Autoriza a provisão de organizações (`/api/operator/v1/organizations`) | Vazio → endpoint desligado |
-| `REDIS_URL` | com `externalRedis.fromSecret` | Redis com password (`redis://:pass@host:6379`) | — |
+| `REDIS_URL` | com `externalRedis.fromSecret` | Redis com password (`redis://:pass@host:6379`). **O host tem de aceitar ESCRITAS**: em produção é o `redis-master`, nunca o Service que cobre as réplicas — o `dlx:online` é um `SADD` e um `PUBLISH` numa réplica não chega aos outros pods | — |
 | `TELEPHONY_ESL_PASSWORD` | com `server.telephony.eslAddr` | Password do ESL do FreeSWITCH (ADR-0009) | `TELEPHONY_ESL_ADDR` sem ela → não arranca |
 
 Outros Secrets, por nome:
@@ -89,7 +89,7 @@ Outros Secrets, por nome:
 
 ```bash
 # Exemplo de criação — os valores nunca passam pelo git nem pelo chart
-kubectl -n delonix-meet create secret generic delonix-meet-secrets \
+kubectl -n ngolacloud-meet create secret generic delonix-meet-secrets \
   --from-literal=DATABASE_URL="postgres://…" \
   --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
   --from-literal=TURN_SECRET="$(openssl rand -hex 24)" \
@@ -134,8 +134,64 @@ Postgres não é apagado pelo `helm uninstall`.
 | Voz | Kamailio, FreeSWITCH, ConfigMaps, Services `kamailio`, `kamailio-border`, `freeswitch` | desligada por omissão |
 | NetworkPolicy | `delonix-server` | opcional; `:8181`, `:9180` e a ponte só para o FreeSWITCH |
 
-Não são instalados: whisper, ollama, open-webui, o worker de IA, o gateway de
-SMS e o `ClusterIssuer` (é do cluster, não de uma release).
+| IA | `delonix-ollama` (Deployment, PVC `ollama-models`, Service), `delonix-whisper` (Deployment, Service) | desligados por omissão; ver abaixo |
+
+Não são instalados: open-webui, o worker de transcrição das GRAVAÇÕES
+(`ai-worker/`, que é outra coisa do ASR em tempo real), o gateway de SMS e o
+`ClusterIssuer` (é do cluster, não de uma release).
+
+### A IA in-cluster
+
+Duas peças independentes, as duas desligadas por omissão:
+
+| Valor | O que instala | Para quê |
+|---|---|---|
+| `ollama.enabled` | LLM local (`ollama/ollama`) + PVC dos modelos | a ata da reunião (MoM) e a tradução das legendas |
+| `whisper.enabled` | ASR soberano (`whisper-server/`) + rota `/asr` | as legendas da sala sem passar pela Web Speech do Chrome |
+
+O que o chart garante, e são as três maneiras conhecidas de isto se partir:
+
+* **`OLLAMA_URL` é derivado**, não escrito. Com `ollama.enabled` o ConfigMap
+  aponta para o Service do chart. Pôr a chave à mão com o Ollama desligado é
+  recusado pelo portão: seria um 503 por cada legenda e por cada ata.
+* **os modelos pedidos são os puxados.** `ollama.modelSummary` e
+  `ollama.modelTranslate` têm de estar em `ollama.models` — se não, o chart
+  recusa. Divergir dava um 404 por resumo (`LlmError::ModelMissing`).
+* **a rota `/asr` sai de `whisper.enabled`**, e é exclusiva de
+  `ingress.asr.serviceName` (um serviço de transcrição de fora).
+
+A imagem do ASR **não sai do `make image`**: embute o modelo (~2GB) e
+constrói-se à parte, com tag própria.
+
+```bash
+BUILD_WHISPER=1 REGISTRY=<registo> TAG=<tag> deploy/build-images.sh
+helm upgrade … --set whisper.image.repository=<registo>/delonix-whisper \
+               --set whisper.image.tag=<tag>
+```
+
+O `JWT_SECRET` do Whisper vem do Secret por chave: o `/asr` valida o mesmo
+access token do `/rtc` e, sem a chave, é fail-closed — recusa todas as
+ligações e o browser cai em silêncio para o motor local.
+
+**Espelha a imagem do Ollama no registo da instalação.** São 3,5GB do Docker
+Hub, e o prazo que o Kubernetes dá a um Deployment para progredir (`progress
+DeadlineSeconds`) acaba antes: medido a 2026-10-13, o release foi dado por
+`failed` com tudo aplicado e o pod a puxar por trás. O chart leva o prazo a
+2700 s para isso não acontecer, mas o espelho é o que resolve a causa — a
+mesma instalação puxou 1,18GB do registo da rede em 1m24s.
+
+```bash
+podman pull ollama/ollama:0.40.2
+podman tag  ollama/ollama:0.40.2 <registo>/ollama/ollama:0.40.2
+podman push --tls-verify=false   <registo>/ollama/ollama:0.40.2
+helm upgrade … --set ollama.image.repository=<registo>/ollama/ollama
+```
+
+Sem GPU, o primeiro arranque do Ollama puxa gigabytes e isso **não** é
+condição de prontidão: até o modelo chegar, a fila da ata devolve a tentativa
+(nada se perde, mas também não há ata). Com GPU, `ollama.nodeSelector`,
+`ollama.tolerations`, `ollama.runtimeClassName` e `nvidia.com/gpu` nos limits
+— ADR-0024.
 
 ### Portas internas
 
@@ -190,12 +246,24 @@ O que a produção em `meet.ngolacloud.com` precisa e o chart não cria:
    dele; outro controlador ignora-a e o SFU fica em split-brain.
 3. **cert-manager** e o `ClusterIssuer` de `ingress.tls.clusterIssuer`, ou um
    Secret TLS já emitido.
-4. **IP público para o coturn**: um LoadBalancer que aceite UDP e um IP fixo,
-   posto em `coturn.externalIP` (e em `coturn.service.loadBalancerIP`, ou nas
-   anotações do fornecedor). Portas: **UDP 3478**. A gama de relay
-   (49152–59152) não precisa de ser exposta — em relay-only dos dois lados o
-   relay-a-relay é interno ao coturn. O IP tem de ser alcançável pelos browsers
-   **e** pelos pods do servidor.
+4. **IP público para o coturn**, posto em `coturn.externalIP`. Portas: **UDP 3478**
+   (e TCP 3478 para redes que bloqueiam UDP). Duas formas:
+   - *o relay tem o IP público* (um LoadBalancer que aceite UDP, com IP fixo em
+     `coturn.service.loadBalancerIP` ou nas anotações do fornecedor);
+   - *o relay está atrás de um router* (o caso do `ngola-lda`): o router encaminha a
+     3478 para o nó, `coturn.externalIP` é o IP público do router, `coturn.privateIP`
+     o IP do nó, e `server.turnHost` um **nome** que resolve para o público. O coturn
+     passa a anunciar `público/privado`, e o chart aponta esse nome, dentro dos pods do
+     servidor, para o IP privado — o SFU não sai pelo router para falar com o relay.
+
+   Em relay-only dos dois lados o relay-a-relay é interno ao coturn, e a gama de relay
+   não precisa de ser exposta — **desde que o coturn saiba que o IP público é ele**: é
+   para isso o par `público/privado` (medido: 60 de 60 mensagens entre dois relays com
+   o par, 0 de 60 sem ele).
+
+   O chart recusa em produção um `coturn.externalIP` privado: é o endereço que o browser
+   recebe, e quem está fora dessa rede entra na sala e fica sem áudio nem vídeo, sem um
+   erro. Uma instalação só para a rede local di-lo com `coturn.lanOnly=true`.
 5. **Postgres e Redis** (acima).
 6. **StorageClass ReadWriteMany** para as gravações (abaixo).
 7. **Registo de imagens** com `delonix-server`, `delonix-web` e a imagem do
@@ -258,7 +326,7 @@ Encontrados ao construir e ao instalar o chart. Cada um diz onde está e de quem
 | 1 | `voice/cluster/freeswitch-entrypoint.sh:16` (origin/develop) | `rm -rf "$CONF"` falha quando `/conf` é um volume montado: o FreeSWITCH entra em CrashLoop (visto: «rm: cannot remove '/conf': Device or resource busy»). A correcção existe em `origin/fix/voz-arranque-no-cluster` (b210f2fe), por fundir. O chart contorna-o não montando volume em `/conf` | voz |
 | 2 | `voice/kamailio/kamailio.cfg:39-41` | `listen` sem `advertise`: atrás de um LoadBalancer o Kamailio põe o IP do pod no Via/Record-Route, e os pedidos dentro do diálogo (ACK, BYE) de um PBX externo vão para um IP inalcançável. Não medido — o laboratório só tem PBX dentro do cluster | voz |
 | 3 | `voice/cluster/freeswitch-entrypoint.sh:27` e `:86-93` | O perfil do dial-in anuncia o IP do pod no SDP; o Kamailio não faz relay de media. O áudio de um PBX externo não tem por onde chegar. `DELONIX_EXTERNAL_IP` só cobre o perfil dos ramais. Saídas: `hostNetwork`, ou um relay de media no bordo | voz |
-| 4 | `voice/cluster/freeswitch-entrypoint.sh:33-36` | O ESL fica em `127.0.0.1` com password aleatória: o servidor não lhe chega, e `TELEPHONY_ESL_ADDR` (ADR-0009) não tem como funcionar com este arranque | voz |
+| 4 | `voice/cluster/freeswitch-entrypoint.sh` (passo 4) | **Fechado no arranque e no chart (R300), por aplicar num cluster.** Com `server.telephony.eslAddr` o FreeSWITCH recebe a `TELEPHONY_ESL_PASSWORD` do Secret e abre o ESL (8021); `voice.freeswitch.eslCidrs` estreita a lista de acesso, e com `networkPolicy.enabled` o 8021 fica só para os pods do servidor. Em `hostNetwork` a política não se aplica: o chart exige `eslCidrs`. O ESL não tem TLS — a password vai em claro na rede de pods. Sem `eslAddr` continua em `127.0.0.1` com password aleatória | voz |
 | 5 | `voice/freeswitch/image/Containerfile` (sem `USER`) e a imagem do Kamailio | Correm como root. O chart tira-lhes a escalada e todas as capacidades (e o rootfs de escrita, no Kamailio), mas non-root exige mudar as imagens | voz |
 | 6 | `deploy/k8s/cluster/voice.yaml:69-71` | O Kamailio resolve o dispatcher ao arrancar. Um FreeSWITCH que reinicie com outro IP fica fora do pool até o Kamailio reiniciar. Lido no comentário do repo, não reproduzido | voz |
 | 7 | `voice/cluster/tls.cfg:5-6` | O único `tls.cfg` com os caminhos de um Secret `kubernetes.io/tls` é o do laboratório, com `verify_certificate = no`. O chart usa-o também em produção | voz |
@@ -281,3 +349,97 @@ make helm-package
 Não validado por este chart em lado nenhum: media por coturn com um browser,
 cert-manager, LoadBalancer, várias réplicas em vários nós, HPA, base externa
 real, um PBX fora do cluster e a ponte telefone↔sala.
+
+## Entrada: Ingress ou Gateway API
+
+São **exclusivos** — o chart recusa os dois ligados. O `ingress` continua a ser a omissão;
+o `gateway` existe para clusters que servem por Gateway API e não têm ingress-nginx
+([ADR-0021](../../../docs/adr/0021-a-producao-do-meet-partilha-o-cluster-ngola-lda.md)).
+
+```bash
+helm upgrade --install meet deploy/helm/delonix-meet -n ngolacloud-meet \
+  -f deploy/helm/delonix-meet/values-production.yaml \
+  --set image.tag=<git describe> --set secrets.existingSecret=<Secret> \
+  --set coturn.externalIP=<IP do relay> \
+  --set ingress.enabled=false \
+  --set gateway.enabled=true --set gateway.className=delonix \
+  --set gateway.tls.clusterIssuer=delonix-letsencrypt \
+  --set gateway.acceptProvisioningInAccessLog=true
+```
+
+### `mode: own` é a omissão, e há uma razão medida
+
+`own` cria um Gateway **neste** namespace, com `allowedRoutes: from: Same` — nenhum outro
+inquilino lhe pode colar rotas. Custa um IP do LoadBalancer.
+
+`attach` cola-se a um Gateway existente, e **o Gateway tem de aceitar rotas do nosso
+namespace**. Medido a 2026-10-07: o Gateway do `ngolacloud-system` está em `from: Same` e
+**não as aceita** — usá-lo exigiria mudar o recurso de outro inquilino. Em `attach` com um
+Gateway que não nos aceita, as rotas ficam `Accepted=False` e não servem nada, sem erro
+na instalação.
+
+### Em `attach`, as rotas dizem a que listener se colam
+
+`gateway.parentRef.sectionName` é obrigatório em produção com `mode: attach` (o perfil traz
+`https`). Sem ele as rotas colam-se a **todos** os listeners do Gateway, o de `:80` incluído,
+e ganham ao redireccionamento genérico da plataforma por terem nome próprio. Medido a
+2026-10-13: `http://meet.ngolacloud.com/` devolvia 200 com a aplicação, em claro.
+
+### O endereço público (`publicUrl`)
+
+O `PUBLIC_URL` sai de `publicUrl`, ou, vazio, de `https://<host>`. O servidor usa-o para os
+links que escreve num email (prova de endereço, convites, reposição de password) e para o
+emissor e o recurso do OAuth do servidor MCP — e **nunca** o tira do cabeçalho `Host`. Sem
+ele, esses emails recusam-se (`mail.public_url_missing`) e o OAuth responde 503. Medido em
+produção a 2026-10-14, antes de o chart o pôr: `/.well-known/oauth-authorization-server`
+devolvia «OAuth desligado: sem PUBLIC_URL» nos dois domínios.
+
+### Mais do que um nome (`extraHosts`)
+
+`host` é o nome canónico; `extraHosts` são outros nomes pelos quais a mesma instalação
+responde. O perfil de produção serve `meet.ngolacloud.com` (canónico) e
+`meet.ngolacloud.ao`. Os nomes entram, pela mesma ordem, nas **duas** HTTPRoutes e no
+`CORS_ORIGINS` — o portão recusa uma rota do `/ws` com menos nomes do que a geral, que
+daria uma página que abre e uma sala que nunca liga.
+
+Só em `mode: attach`. O certificado é do Gateway a que as rotas se colam e é ele que tem
+de cobrir todos os nomes; em `mode: own` e no Ingress o chart pede um certificado para um
+nome, e recusa a lista.
+
+O TURN acompanha o nome: com `server.turnHostBySite`, quem entra por um dos
+`extraHosts` recebe o TURN desse site (`meet.ngolacloud.ao` → `turn.ngolacloud.ao:3478`).
+Um nome por pessoa, e não os dois a toda a gente — um browser com dois URLs de TURN para o
+mesmo relay faz duas alocações, e a gama de relay é finita. O chart recusa um par cujo site
+a instalação não serve.
+
+O que um segundo nome **não** faz: a sessão e as chaves de acesso (WebAuthn) são por
+origem, e o SSO devolve o browser à primeira origem do `CORS_ORIGINS` — quem entra por
+SSO no `.ao` acaba no `.com`.
+
+### As duas coisas que mudam de forma, e a que se perde
+
+**A afinidade por sala continua, por outro mecanismo.** No Ingress era
+`nginx.ingress.kubernetes.io/upstream-hash-by: "$arg_room"`. Aqui é uma
+`BackendTrafficPolicy` com `ConsistentHash` de `type: QueryParams` sobre `room`, colada à
+HTTPRoute dedicada do `/ws` — que aponta, como antes, para o Service **dedicado**
+`delonix-server-ws`. O SFU é em memória por pod e todos os pares de uma sala têm de cair
+no mesmo (ADR-0001); perder isto é a regressão **R3**, «media num só sentido».
+
+`gateway.affinity.implementation` é `envoy` por omissão porque a política é **específica
+do Envoy Gateway**. Noutra implementação de Gateway API ela é ignorada **em silêncio** e a
+afinidade desaparece sem um único erro. Em produção o chart recusa `none`.
+
+**A precedência dos caminhos passa a ser da especificação.** O Ingress precisava de três
+objectos para o `/api/public/extension-provisioning` ganhar ao `/api`; em Gateway API o
+prefixo mais longo ganha, e é uma regra na mesma rota.
+
+**E perde-se desligar o registo de acessos numa só rota.** No Envoy o access log é do
+Gateway (`EnvoyProxy.telemetry.accessLog`), não da rota. O terceiro Ingress existia
+exactamente para isso: o caminho do resgate do QR do Linphone leva um **bilhete de uso
+único** — uma credencial — e não devia ir para o log (**R278**). Com Gateway API vai. O
+chart **recusa-se a instalar** sem `gateway.acceptProvisioningInAccessLog=true`, para que
+isso seja uma decisão de quem instala e não uma perda silenciosa.
+
+Tudo isto está sob catraca no `scripts/check-helm.sh`: sete recusas, um render próprio, e
+asserções sobre o hash, o Service dedicado, o caminho do QR e as portas internas. As
+asserções foram testadas por mutação — cinco quebras, cinco detectadas.

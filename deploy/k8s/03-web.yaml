@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-web
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
   labels:
     app: delonix-web
 spec:
@@ -15,6 +15,31 @@ spec:
       labels:
         app: delonix-web
     spec:
+      # Espalhar as 3 réplicas por nó (e por zona, no servidor). `ScheduleAnyway`
+      # e não `DoNotSchedule`: no laboratório de UM nó (kind, `make cluster`) isto
+      # é um no-op, e um `DoNotSchedule` deixava pods `Pending` sem ninguém
+      # perceber porquê. Onde conta é no artefacto de PRODUTO — os overlays
+      # `k8s-overlays/saas` e `.../enterprise` (ADR-0006 §2), que um cliente
+      # aplica com `kubectl apply -k` no SEU cluster, de vários nós. Sem isto, as
+      # 3 réplicas podem aterrar todas no mesmo nó e a perda desse nó leva o
+      # serviço inteiro. É o padrão que o chart de produção já usa.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: delonix-web }
+      # A conta dedicada e SEM token montado: a web é nginx a servir ficheiros
+      # estáticos — não fala com a API do Kubernetes, e um token montado só
+      # serve para ser roubado de dentro de um pod que nunca precisa dele.
+      serviceAccountName: delonix-web
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: web
           image: delonix-web:latest
@@ -22,6 +47,24 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          # O `delonix-web` era a ÚNICA carga do deploy/k8s sem sondas: o
+          # kubelet dava-a por pronta assim que o processo arrancava, e o
+          # Service mandava-lhe tráfego antes de o nginx estar a servir.
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: [ALL]
           resources:
             requests:
               cpu: 100m
@@ -34,7 +77,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: delonix-web
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   selector:
     app: delonix-web

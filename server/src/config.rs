@@ -41,9 +41,25 @@ pub struct Config {
     /// (422) em vez de os escrever em claro.
     pub secret_box: Option<std::sync::Arc<delonix_meet_core::secret_box::SecretBox>>,
     /// Participantes que este nó aguenta (`NODE_PEER_CAPACITY`), declarado pelo
-    /// operador a partir de testes de carga. Sem ele o inventário não inventa
-    /// uma ocupação.
+    /// operador a partir de testes de carga. **Ausente não é «sem tecto»**: vale
+    /// `DEFAULT_NODE_PEER_CAPACITY`, a capacidade do deploy de referência. Só
+    /// `0` — explícito — desliga a admissão, e é o que uma rampa de carga põe
+    /// para medir onde a sala quebra.
     pub node_peer_capacity: Option<u32>,
+    /// Ligações `/ws` simultâneas que UMA conta pode ter neste nó
+    /// (`MAX_WS_PER_USER`, por omissão 16; `0` desliga). Impede que uma conta
+    /// ocupe o nó com sockets. Não conta bots nem fontes de estúdio.
+    pub max_ws_per_user: Option<u32>,
+    /// Participantes concorrentes que uma organização pode ter NESTE nó quando
+    /// o operador não lhe fixou um tecto (`ORG_MAX_PARTICIPANTS`). DECLARADO-SÓ:
+    /// ausente, não há quota de organização — é um limite de PLANO, e quem o
+    /// quer escreve-o (os `values` põem 80 % da capacidade do nó).
+    ///
+    /// Quem impede «sem tecto» é o [`Config::node_peer_capacity`], que tem
+    /// omissão: por ADR-0001 a sala é servida por UM pod, logo o pod é o limite
+    /// da sala. Dar omissão também a este cortava a 80 % uma organização
+    /// SOZINHA no nó, contra o que o `admit_new_room` calcula dinamicamente.
+    pub org_max_participants: Option<u32>,
     /// `DELONIX_ALLOW_INSECURE=1`: segredos de dev aceites e CORS permissivo.
     /// Lido UMA vez aqui — nenhum outro módulo lê o ambiente.
     pub allow_insecure: bool,
@@ -51,6 +67,15 @@ pub struct Config {
     pub bind_addr: String,
     pub jwt_secret: String,
     pub turn_host: String,
+    /// O nome do TURN por nome do SITE (`TURN_HOST_BY_HOST`, csv de
+    /// `site=turn:porta`, p.ex. `meet.exemplo.ao=turn.exemplo.ao:3478`). Quem
+    /// entra por um site da lista recebe o TURN desse par; os outros, o
+    /// `TURN_HOST`. O SFU usa sempre o `TURN_HOST`.
+    ///
+    /// Um nome por pessoa, e não os dois a toda a gente: um browser que recebe
+    /// dois URLs de TURN para o mesmo relay faz DUAS alocações (medido num
+    /// Chromium contra um coturn, 2026-10-13), e a gama de relay é finita.
+    pub turn_host_by_host: Vec<(String, String)>,
     pub turn_secret: String,
     pub access_ttl_secs: i64,
     pub refresh_ttl_secs: i64,
@@ -147,6 +172,17 @@ pub struct Config {
     /// DENTRO da org (ver migração 0064); sem isto, o ramal "101" da Acme e o
     /// "101" da Zeta colidiriam no mesmo directório SIP.
     pub voice_ramais_domain_suffix: String,
+    /// Só laboratório e testes (ADR-0023): o URL do operador a que o servidor entrega o pedido de «acordar»
+    /// de um aparelho `lab`. Vazio = o fornecedor `lab` não está configurado (não acorda ninguém).
+    pub push_lab_url: Option<String>,
+    /// O serviço `delonix-push` (ADR-0023): URL base (`PUSH_DELONIX_URL`) e chave de servidor do projecto
+    /// (`PUSH_DELONIX_KEY`, segredo). Qualquer um ausente = o fornecedor `delonix` não está configurado.
+    pub push_delonix_url: Option<String>,
+    pub push_delonix_key: Option<String>,
+    /// Quantos segundos uma chamada que o SERVIDOR origina para um ramal sem registo espera que o aparelho acorde
+    /// (push) e se registe (ADR-0023). 0 (por omissão) desliga. É a contraparte, para chamadas do servidor, do
+    /// `DELONIX_PUSH_WAIT_SECS` do FreeSWITCH, que só vê as chamadas que passam pelo seu dialplan.
+    pub push_wait_secs: u32,
     /// Número curto RESERVADO que um ramal marca para entrar numa reunião
     /// (`VOICE_MEETING_ACCESS_NUMBER`, 3–5 dígitos sem zero à esquerda; por
     /// omissão `8000`). O FreeSWITCH não o conhece: pergunta-o ao servidor em
@@ -189,10 +225,51 @@ pub struct Config {
     /// media; sem relay-only o ICE liga por um par que passa o check mas fica
     /// preto. `FORCE_TURN_RELAY=1` exige coturn alcançável. Off em local.
     pub force_turn_relay: bool,
+    /// Relay de correio do operador (`SMTP_HOST`). Vazio => **o correio fica
+    /// desligado** e quem enfileira recebe-o dito, em vez de enfileirar
+    /// mensagens que ninguém envia. O D7 (2026-10-09, ADR-0025) escolheu o
+    /// relay primeiro: não há SMTP por organização, e por isso também não há
+    /// host escolhido pelo inquilino — o `net_guard` só guarda URLs HTTP e não
+    /// cobre uma ligação SMTP.
+    pub smtp_host: Option<String>,
+    /// Porta do relay (`SMTP_PORT`, 587, 1..=65535). 587 = submissão com
+    /// STARTTLS, que é o que o `smtp_starttls` assume.
+    pub smtp_port: u16,
+    /// Conta no relay (`SMTP_USERNAME`). Vazio => entrega sem autenticação,
+    /// que só faz sentido num relay da rede interna.
+    pub smtp_username: Option<String>,
+    /// Password no relay (`SMTP_PASSWORD`). Nunca aparece em log nem em
+    /// resposta de API.
+    pub smtp_password: Option<String>,
+    /// Remetente (`SMTP_FROM`), p.ex. `Delonix Meet <nao-responda@exemplo.ao>`.
+    /// Sem ele o correio fica desligado: uma mensagem sem remetente é recusada
+    /// por qualquer relay sério.
+    pub smtp_from: Option<String>,
+    /// `SMTP_STARTTLS=0` desliga o STARTTLS (1 por omissão). Só para um relay
+    /// em `localhost`: sem isto a password da conta viaja em claro.
+    pub smtp_starttls: bool,
+    /// O endereço público da web (`PUBLIC_URL`, p.ex. `https://meet.exemplo.ao`,
+    /// sem barra no fim). É de onde saem os links que o servidor escreve num
+    /// email (prova de endereço, reposição de password). NUNCA se tira do
+    /// cabeçalho `Host` do pedido: quem pede escolhia o domínio para onde vai o
+    /// token — o envenenamento de links de reposição. Sem ele, o correio que
+    /// leva um link recusa-se (`mail.public_url_missing`), como as chaves de
+    /// acesso sem `WEBAUTHN_RP_ORIGIN`.
+    pub public_url: Option<String>,
+    /// Registo dinâmico de clientes OAuth (RFC 7591, ADR-0028 §3). Ligado por
+    /// omissão porque é o que um cliente MCP precisa para se apresentar sem
+    /// ninguém o pré-registar; `OAUTH_DYNAMIC_REGISTRATION=off` fecha-o para
+    /// quem quiser lista fechada.
+    pub oauth_dynamic_registration: bool,
     /// URL do Ollama in-cluster (LLM local — soberania: o texto nunca sai do
     /// datacenter). Vazio => IA desligada, fail-open: o MoM fica por regras
     /// (cliente) e a tradução de legendas não aparece.
     pub ollama_url: Option<String>,
+    /// URL do `tts-server` in-cluster (dobragem ao vivo, ADR-0030). Vazio =>
+    /// dobragem DESLIGADA, fail-closed: sem voz não se oferece a língua, em vez
+    /// de a oferecer e calar. A imagem é GPL-3.0 e vive à parte — é por isso
+    /// que é um serviço e não uma biblioteca (`tts-server/LICENCAS.md`).
+    pub tts_url: Option<String>,
     /// Modelo para tradução das legendas (rápido; ex.: qwen2.5:1.5b).
     pub ollama_model_translate: String,
     /// Modelo para o resumo da ata (qualidade; ex.: qwen2.5:7b em prod).
@@ -203,6 +280,29 @@ pub struct Config {
     /// Tecto de uma tarefa do Estúdio (`OLLAMA_TIMEOUT_SECS`, 120, 5..=900).
     /// O pedido é síncrono: o ecrã espera pela resposta ou pelo erro.
     pub ollama_timeout_secs: u64,
+    /// Caracteres de transcrição que entram no prompt da ata
+    /// (`MOM_WINDOW_CHARS`, 24 000, 2 000..=[`crate::ai::MOM_WINDOW_CHARS_MAX`]
+    /// — hoje 110 488) — o FIM da transcrição, porque é lá que estão as
+    /// decisões.
+    ///
+    /// O máximo NÃO é redondo de propósito: é o tecto do `num_ctx` que pedimos
+    /// menos a reserva, convertido em caracteres. Um máximo maior aceitava uma
+    /// janela que o contexto não cobre, e o corte silencioso voltava.
+    ///
+    /// É configurável por uma razão medida: em CPU sem AVX2 o modelo processa
+    /// prompt a 0,59 tokens/s (produção, 2026-10-13), e a essa velocidade
+    /// 24 000 caracteres não cabem em tecto nenhum. Encurtar a janela é a
+    /// única maneira de a ata existir nesse hardware — pior do que a ata
+    /// completa, melhor do que nenhuma.
+    pub mom_window_chars: usize,
+    /// Tecto da chamada ao Ollama para o resumo da ata
+    /// (`MOM_SUMMARY_TIMEOUT_SECS`, 600, 60..=1800). Ninguém está à espera: é
+    /// trabalho em lote no fim da reunião.
+    ///
+    /// O máximo é o da fila, não um número redondo: a margem «em execução»
+    /// (`FILA_MOM`) tem de o cobrir, ou um segundo worker reivindicava uma
+    /// reunião cuja chamada ainda corre.
+    pub mom_summary_timeout_secs: u64,
     /// Tarefas do Estúdio em simultâneo POR ORGANIZAÇÃO
     /// (`AI_STUDIO_CONCURRENCY_PER_ORG`, 1, 1..=8). O modelo local é um só e
     /// partilhado: sem este tecto, uma organização monopolizava-o.
@@ -286,6 +386,21 @@ pub struct Config {
     /// faz os clientes reconectarem e o balanceador mandá-los de volta para
     /// aqui. O default cobre um `periodSeconds: 10` de readiness com folga.
     pub drain_readiness_secs: u64,
+    /// Segundos que o drain dá às composições de gravação em curso depois de
+    /// as salas esvaziarem (`DRAIN_COMPOSE_SECS`, por omissão 5).
+    ///
+    /// Curto por obrigação, não por escolha, e a conta tem de fechar: o
+    /// `terminationGracePeriodSeconds` é **60 s** (`deploy/k8s/02-server.yaml`),
+    /// e 12 (readiness) + 40 (salas) + 5 = **57 s** deixa 3 s de folga antes do
+    /// SIGKILL. Com 8 dava 60 exactos — o SIGKILL chegava no mesmo instante em
+    /// que a espera terminava, e um drain que acaba ao mesmo tempo que é morto
+    /// não é um drain. Quem subir um dos três tem de subir a graça do K8s.
+    ///
+    /// Serve o caso frequente: a composição que estava quase a acabar acaba. A
+    /// que não acabar JÁ NÃO SE PERDE — fica `processing` com manifesto e o nó
+    /// seguinte retoma-a (`recorder::resume_due`, migração 0099). Esta espera é
+    /// uma optimização; a garantia é a retoma.
+    pub drain_compose_secs: u64,
     /// Atraso que se pede ao cliente antes de reconectar (`DRAIN_RECONNECT_MS`,
     /// default 2000). O cliente acrescenta jitter por cima — sem isso, uma sala
     /// inteira reconecta no mesmo milissegundo e o pod novo leva com tudo de uma vez.
@@ -343,6 +458,17 @@ pub struct Config {
     /// Passou de um IP a uma lista porque o `dispatcher.list` do Kamailio
     /// cresce em produção e o SBC pode reenviar de mais que um nó (ADR-0009).
     pub phone_bridge_freeswitch_ips: Vec<std::net::IpAddr>,
+    /// Os **nomes** de `PHONE_BRIDGE_FREESWITCH_IPS` (a mesma variável aceita IPs e nomes
+    /// de máquina, separados por vírgulas). Resolvem-se ao arrancar e de tempos a tempos,
+    /// e só valem os endereços **privados** a que resolvem (`phone_bridge::origens`): um
+    /// orquestrador que dá um IP novo a cada arranque deixa de pedir um IP fixo.
+    pub phone_bridge_freeswitch_names: Vec<String>,
+    /// De quantos em quantos segundos se voltam a resolver os nomes
+    /// (`PHONE_BRIDGE_RESOLVE_SECS`, 5–300, por omissão 15).
+    pub phone_bridge_resolve_secs: u64,
+    /// `PSTN_BRIDGE_HOST`/`SFU_EXTERNAL_IP` foi mesmo definido? Se não, a morada que a
+    /// ponte dá ao FreeSWITCH é o IP local detectado, e não o `127.0.0.1` de omissão.
+    pub pstn_bridge_host_explicit: bool,
     /// Onde o UA SIP da ponte escuta (`PHONE_BRIDGE_SIP_BIND`, p.ex.
     /// `0.0.0.0:5090`). Ausente => a ponte NÃO arranca e as rotas de canais
     /// respondem `channels.bridge_not_configured` — nunca um estado inventado.
@@ -359,6 +485,12 @@ pub struct Config {
     /// (`PHONE_BRIDGE_RTP_MIN`/`MAX`). Ausente => porta efémera do SO, que não
     /// se pode expor no K8s.
     pub phone_bridge_rtp_ports: Option<(u16, u16)>,
+    /// A perna da ponte negoceia Opus (`PHONE_BRIDGE_WIDEBAND`, por omissão
+    /// ligado — ADR-0018): o servidor manda `OPUS,PCMA` na dial string e a voz
+    /// de um softphone chega à sala sem passar por 8 kHz. `0` (ou `false`,
+    /// `off`, `no`, ou qualquer valor que não se perceba) repõe `PCMA`, o
+    /// caminho G.711 de sempre, sem reconstruir nada.
+    pub phone_bridge_wideband: bool,
     /// Host que o control plane devolve ao IVR (`PSTN_BRIDGE_HOST`). Por
     /// omissão o mesmo `SFU_EXTERNAL_IP`; "127.0.0.1" se nenhum dos dois
     /// estiver definido (dev local, tudo na mesma máquina).
@@ -445,20 +577,29 @@ impl Config {
         let ollama_model_summary = src
             .var("OLLAMA_MODEL_SUMMARY")
             .unwrap_or_else(|_| "qwen2.5:1.5b".into());
+        // Os dois tectos da admissão (ADR-0017). O que impede «sem tecto» é o
+        // do NÓ: por ADR-0001 todos os pares de uma sala são servidos pelo
+        // MESMO pod, logo o pod É o limite da sala, e é ele que tem omissão.
+        let node_peer_capacity = tecto(src, "NODE_PEER_CAPACITY", DEFAULT_NODE_PEER_CAPACITY);
+        // O da organização continua DECLARADO-SÓ, de propósito. Dar-lhe uma
+        // omissão derivada (80 % do nó) foi tentado e REPROVOU contra Postgres
+        // real: cortava a 80 % uma organização SOZINHA no nó, contra o que o
+        // `media_node.rs:92-94` documenta e o `admit_new_room` calcula
+        // dinamicamente — «um inquilino sozinho no nó tem a capacidade toda e
+        // não é penalizado». Os 80 % são uma decisão de quem opera e vivem nos
+        // `values`, não uma regra inventada aqui ao lado da que já existe.
+        let org_max_participants = tecto_declarado(src, "ORG_MAX_PARTICIPANTS");
         Self {
             edition,
             registration_mode,
             registration_domains,
             tenancy_mode,
-            node_peer_capacity: opt("NODE_PEER_CAPACITY").map(|v| {
-                v.trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|n| *n > 0)
-                    .unwrap_or_else(|| {
-                        panic!("NODE_PEER_CAPACITY: «{v}» não é um inteiro positivo")
-                    })
-            }),
+            node_peer_capacity,
+            max_ws_per_user: match bounded_env(src, "MAX_WS_PER_USER", 16, 0, 100_000) {
+                0 => None,
+                n => Some(n as u32),
+            },
+            org_max_participants,
             migrate_on_start: src.var("DELONIX_MIGRATE").ok().as_deref() != Some("0"),
             log_json: src.var("LOG_FORMAT").ok().as_deref() == Some("json"),
             internal_bind_addr: opt("INTERNAL_BIND_ADDR"),
@@ -490,6 +631,17 @@ impl Config {
             turn_host: src
                 .var("TURN_HOST")
                 .unwrap_or_else(|_| "localhost:3478".into()),
+            turn_host_by_host: csv_env(src, "TURN_HOST_BY_HOST")
+                .into_iter()
+                .map(|par| {
+                    let (site, turn) = par.split_once('=').unwrap_or((par.as_str(), ""));
+                    let (site, turn) = (normalize_site_host(site), turn.trim().to_string());
+                    if site.is_empty() || turn.is_empty() {
+                        panic!("TURN_HOST_BY_HOST: «{par}» não é `site=turn:porta`");
+                    }
+                    (site, turn)
+                })
+                .collect(),
             turn_secret: secret(src, "TURN_SECRET", DEV_TURN, insecure, 16),
             access_ttl_secs: 15 * 60,
             refresh_ttl_secs: 30 * 24 * 3600,
@@ -553,6 +705,13 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
+            push_lab_url: opt("PUSH_LAB_URL"),
+            push_delonix_url: opt("PUSH_DELONIX_URL"),
+            push_delonix_key: opt("PUSH_DELONIX_KEY"),
+            push_wait_secs: opt("PUSH_WAIT_SECS")
+                .and_then(|v| v.parse().ok())
+                .filter(|n| *n <= 60)
+                .unwrap_or(0),
             voice_ramais_domain_suffix: opt("VOICE_RAMAIS_DOMAIN_SUFFIX")
                 .unwrap_or_else(|| "ramais.delonix.meet".into()),
             voice_meeting_access_number: {
@@ -624,13 +783,49 @@ impl Config {
                 65_535,
             ) as u16,
             force_turn_relay: src.var("FORCE_TURN_RELAY").ok().as_deref() == Some("1"),
+            smtp_host: opt("SMTP_HOST"),
+            smtp_port: bounded_env(src, "SMTP_PORT", 587, 1, 65_535) as u16,
+            smtp_username: opt("SMTP_USERNAME"),
+            smtp_password: opt("SMTP_PASSWORD"),
+            smtp_from: opt("SMTP_FROM"),
+            smtp_starttls: src.var("SMTP_STARTTLS").ok().as_deref() != Some("0"),
+            public_url: opt("PUBLIC_URL").map(|v| {
+                let v = v.trim().trim_end_matches('/').to_string();
+                // Fail-closed e em voz alta: um link de email para um esquema
+                // estranho (ou sem esquema) seria um link partido em todas as
+                // caixas de correio, e só se descobria quando alguém clicasse.
+                if !(v.starts_with("https://") || v.starts_with("http://")) {
+                    panic!("PUBLIC_URL: «{v}» tem de começar por https:// (ou http:// num laboratório)");
+                }
+                v
+            }),
+            oauth_dynamic_registration: src
+                .var("OAUTH_DYNAMIC_REGISTRATION")
+                .ok()
+                .map(|v| !matches!(v.trim(), "off" | "0" | "false"))
+                .unwrap_or(true),
             ollama_url: src.var("OLLAMA_URL").ok().filter(|s| !s.is_empty()),
+            tts_url: src.var("TTS_URL").ok().filter(|s| !s.is_empty()),
             ollama_model_translate: src
                 .var("OLLAMA_MODEL_TRANSLATE")
                 .unwrap_or_else(|_| "qwen2.5:1.5b".into()),
             ollama_model_summary: ollama_model_summary.clone(),
             ollama_model_studio: opt("OLLAMA_MODEL_STUDIO").unwrap_or(ollama_model_summary),
             ollama_timeout_secs: bounded_env(src, "OLLAMA_TIMEOUT_SECS", 120, 5, 900) as u64,
+            mom_window_chars: bounded_env(
+                src,
+                "MOM_WINDOW_CHARS",
+                24_000,
+                2_000,
+                crate::ai::MOM_WINDOW_CHARS_MAX,
+            ),
+            mom_summary_timeout_secs: bounded_env(
+                src,
+                "MOM_SUMMARY_TIMEOUT_SECS",
+                600,
+                60,
+                crate::ai::MOM_TIMEOUT_MAX_SECS as usize,
+            ) as u64,
             ai_studio_concurrency_per_org: bounded_env(
                 src,
                 "AI_STUDIO_CONCURRENCY_PER_ORG",
@@ -654,6 +849,7 @@ impl Config {
             drain_grace_secs: bounded_env(src, "DRAIN_GRACE_SECS", 40, 1, 3_600) as u64,
             reconnect_grace_secs: bounded_env(src, "RECONNECT_GRACE_SECS", 45, 5, 300) as u64,
             drain_readiness_secs: bounded_env(src, "DRAIN_READINESS_SECS", 12, 0, 300) as u64,
+            drain_compose_secs: bounded_env(src, "DRAIN_COMPOSE_SECS", 5, 0, 3_600) as u64,
             drain_reconnect_ms: bounded_env(src, "DRAIN_RECONNECT_MS", 2_000, 100, 60_000) as u64,
             ffmpeg_timeout_secs: bounded_env(src, "FFMPEG_TIMEOUT_SECS", 3_600, 30, 86_400) as u64,
             ffmpeg_threads: bounded_env(src, "FFMPEG_THREADS", 2, 1, 64) as u32,
@@ -664,7 +860,7 @@ impl Config {
             ffmpeg_bin: src.var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into()),
             ffprobe_bin: src.var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".into()),
             phone_bridge_freeswitch_ips: {
-                let mut v = ips_env(src, "PHONE_BRIDGE_FREESWITCH_IPS");
+                let mut v = origens_env(src, "PHONE_BRIDGE_FREESWITCH_IPS").0;
                 if let Some(um) = ip_env(src, "PSTN_BRIDGE_FREESWITCH_IP") {
                     if !v.contains(&um) {
                         v.push(um);
@@ -672,6 +868,12 @@ impl Config {
                 }
                 v
             },
+            phone_bridge_freeswitch_names: origens_env(src, "PHONE_BRIDGE_FREESWITCH_IPS").1,
+            phone_bridge_resolve_secs: bounded_env(src, "PHONE_BRIDGE_RESOLVE_SECS", 15, 5, 300)
+                as u64,
+            pstn_bridge_host_explicit: opt("PSTN_BRIDGE_HOST")
+                .or_else(|| opt("SFU_EXTERNAL_IP"))
+                .is_some(),
             phone_bridge_sip_bind: match src.var("PHONE_BRIDGE_SIP_BIND") {
                 Ok(v) if !v.trim().is_empty() => match v.trim().parse() {
                     Ok(a) => Some(a),
@@ -691,10 +893,92 @@ impl Config {
                 let max = bounded_env(src, "PHONE_BRIDGE_RTP_MAX", 0, 0, 65_535) as u16;
                 (min > 0 && max >= min).then_some((min, max))
             },
+            // Quem escreve `false` ou `off` quer desligar: um valor que não se
+            // percebe NÃO pode cair no «ligado» por omissão.
+            phone_bridge_wideband: match opt("PHONE_BRIDGE_WIDEBAND") {
+                None => true,
+                Some(v) => match v.trim().to_ascii_lowercase().as_str() {
+                    "1" | "true" | "on" | "yes" => true,
+                    "0" | "false" | "off" | "no" => false,
+                    outro => {
+                        tracing::warn!(
+                            "PHONE_BRIDGE_WIDEBAND: «{outro}» não é 0 nem 1 — banda larga da ponte DESLIGADA"
+                        );
+                        false
+                    }
+                },
+            },
             pstn_bridge_host: opt("PSTN_BRIDGE_HOST")
                 .or_else(|| opt("SFU_EXTERNAL_IP"))
                 .unwrap_or_else(|| "127.0.0.1".into()),
         }
+    }
+}
+
+/// Participantes que um nó aguenta quando o operador não o declarou. É a
+/// capacidade do deploy de REFERÊNCIA (`deploy/k8s/01-config.yaml` e
+/// `values-production.yaml`), e não um número novo: a omissão passa a valer o
+/// que a implantação documentada já vale.
+///
+/// Não substitui declará-la. Um pod pequeno aguenta menos (o `values.yaml` de
+/// dev deriva 25 do limite de memória: `(2048 − ~200) ÷ 73 MB`), e por isso o
+/// `_helpers.tpl` continua a RECUSAR um chart de produção que não a declare.
+/// Isto é o chão que impede «sem tecto», não o tecto certo de cada nó.
+pub const DEFAULT_NODE_PEER_CAPACITY: u32 = 50;
+
+/// Um tecto de admissão lido do ambiente, com três estados declarados:
+/// ausente => `default` (**nunca «sem tecto»**, que é o defeito que isto
+/// fecha), `0` => `None`, explicitamente sem tecto, e é o que uma rampa de
+/// carga põe para medir onde a sala quebra (`values.yaml`: «SE ESTÁS A MEDIR O
+/// TECTO, PÕE 0»); qualquer outra coisa que não seja um inteiro => pânico.
+///
+/// O pânico fica de propósito, como estava: um `NODE_PEER_CAPACITY=cinquenta`
+/// a cair em silêncio para a omissão deixava o operador convencido de que
+/// declarou uma capacidade que o servidor nunca leu — o mesmo argumento do
+/// `uuid_list` aqui ao lado.
+fn tecto(src: &Source, var: &str, default: u32) -> Option<u32> {
+    match tecto_bruto(src, var) {
+        Declarado::Ausente => Some(default),
+        Declarado::SemTecto => None,
+        Declarado::Valor(n) => Some(n),
+    }
+}
+
+/// Como [`tecto`], mas sem omissão: ausente vale `None`, como `0`. É o tecto
+/// por ORGANIZAÇÃO, que é um limite de PLANO — quem o quer escreve-o. Quem
+/// impede «sem tecto» é a capacidade do nó, que tem omissão.
+fn tecto_declarado(src: &Source, var: &str) -> Option<u32> {
+    match tecto_bruto(src, var) {
+        Declarado::Ausente | Declarado::SemTecto => None,
+        Declarado::Valor(n) => Some(n),
+    }
+}
+
+enum Declarado {
+    Ausente,
+    SemTecto,
+    Valor(u32),
+}
+
+fn tecto_bruto(src: &Source, var: &str) -> Declarado {
+    let bruto = match src.var(var) {
+        Err(_) => return Declarado::Ausente,
+        Ok(v) => v,
+    };
+    // Vazio é AUSENTE, como em todo o resto deste ficheiro (`opt`, que filtra
+    // `v.trim().is_empty()`). Um `NODE_PEER_CAPACITY=${NODE_PEER_CAPACITY}` em
+    // compose com a variável do host por definir expande para vazio, e isso
+    // tem de arrancar com a omissão — não derrubar o pod em CrashLoopBackOff.
+    if bruto.trim().is_empty() {
+        return Declarado::Ausente;
+    }
+    match bruto.trim().parse::<u32>() {
+        Ok(0) => Declarado::SemTecto,
+        Ok(n) => Declarado::Valor(n),
+        Err(_) => panic!(
+            "{var}: «{bruto}» não é um inteiro. Declara os participantes que o nó aguenta, \
+             ou `0` para não impor tecto nenhum (é o que uma rampa de carga põe)."
+        ),
     }
 }
 
@@ -742,21 +1026,22 @@ fn uuid_list(src: &Source, var: &str) -> Vec<uuid::Uuid> {
 /// Vazia => a ponte recusa tudo. Entradas ilegíveis avisam e saem — nunca um
 /// panic por configuração de uma funcionalidade opcional, nunca um valor
 /// absurdo aceite em silêncio.
-fn ips_env(src: &Source, var: &str) -> Vec<std::net::IpAddr> {
+/// Uma lista de origens (`a,b,c`): IPs e nomes de máquina. Uma entrada que não é nem uma
+/// coisa nem outra avisa e cai — nunca vira «aceitar tudo».
+fn origens_env(src: &Source, var: &str) -> (Vec<std::net::IpAddr>, Vec<String>) {
+    use crate::phone_bridge::origens::{parse_origem, Origem};
     let Ok(raw) = src.var(var) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    raw.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| match s.parse() {
-            Ok(ip) => Some(ip),
-            Err(_) => {
-                tracing::warn!("{var}: «{s}» não é um IP — ignorado");
-                None
-            }
-        })
-        .collect()
+    let (mut ips, mut nomes) = (Vec::new(), Vec::new());
+    for s in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        match parse_origem(s) {
+            Some(Origem::Ip(ip)) => ips.push(ip),
+            Some(Origem::Nome(n)) => nomes.push(n),
+            None => tracing::warn!("{var}: «{s}» não é um IP nem um nome de máquina — ignorado"),
+        }
+    }
+    (ips, nomes)
 }
 
 fn ip_env(src: &Source, var: &str) -> Option<std::net::IpAddr> {
@@ -770,6 +1055,37 @@ fn ip_env(src: &Source, var: &str) -> Option<std::net::IpAddr> {
                 None
             }
         },
+    }
+}
+
+/// O nome de um site como se compara: minúsculas, sem porta, sem o ponto final
+/// de um FQDN. `Meet.Exemplo.AO:443` e `meet.exemplo.ao.` são o mesmo site.
+fn normalize_site_host(host: &str) -> String {
+    let host = host.trim().trim_end_matches('.');
+    // Um literal IPv6 (`[::1]:8443`) tem dois-pontos que não são da porta.
+    let host = match host.strip_prefix('[') {
+        Some(resto) => resto.split(']').next().unwrap_or(resto),
+        None => host.split(':').next().unwrap_or(host),
+    };
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+impl Config {
+    /// O TURN que ESTE pedido recebe, pelo nome do site por onde entrou (o
+    /// cabeçalho `Host`). O cabeçalho é do cliente, e por isso só ESCOLHE entre
+    /// valores que a instalação configurou: um nome que não está na lista, ou
+    /// nenhum, dá o `TURN_HOST`.
+    pub fn turn_host_for(&self, request_host: Option<&str>) -> &str {
+        let Some(site) = request_host
+            .map(normalize_site_host)
+            .filter(|s| !s.is_empty())
+        else {
+            return &self.turn_host;
+        };
+        self.turn_host_by_host
+            .iter()
+            .find(|(s, _)| *s == site)
+            .map_or(self.turn_host.as_str(), |(_, turn)| turn.as_str())
     }
 }
 
@@ -949,6 +1265,73 @@ mod tests {
         Config::from_map(&vars)
     }
 
+    #[test]
+    fn each_site_gets_its_own_turn_and_the_rest_get_the_default() {
+        let c = production(&[
+            ("TURN_HOST", Some("turn.exemplo.com:3478")),
+            (
+                "TURN_HOST_BY_HOST",
+                Some(
+                    " Meet.Exemplo.AO = turn.exemplo.ao:3478 , outro.exemplo.ao=turn.outro.ao:3479",
+                ),
+            ),
+        ]);
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.ao")),
+            "turn.exemplo.ao:3478"
+        );
+        // Como o browser e o proxy o escrevem: maiúsculas, porta, ponto final.
+        assert_eq!(
+            c.turn_host_for(Some("MEET.exemplo.ao:443")),
+            "turn.exemplo.ao:3478"
+        );
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.ao.")),
+            "turn.exemplo.ao:3478"
+        );
+        assert_eq!(
+            c.turn_host_for(Some("outro.exemplo.ao")),
+            "turn.outro.ao:3479"
+        );
+        // Fora da lista, ou sem cabeçalho: o TURN_HOST.
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.com")),
+            "turn.exemplo.com:3478"
+        );
+        assert_eq!(c.turn_host_for(None), "turn.exemplo.com:3478");
+        assert_eq!(c.turn_host_for(Some("")), "turn.exemplo.com:3478");
+        // O cabeçalho é do cliente: não se devolve o que ele escreveu, nem um
+        // sufixo ou um prefixo de um nome da lista chega para casar.
+        assert_eq!(
+            c.turn_host_for(Some("atacante.example")),
+            "turn.exemplo.com:3478"
+        );
+        assert_eq!(
+            c.turn_host_for(Some("x.meet.exemplo.ao")),
+            "turn.exemplo.com:3478"
+        );
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.ao.atacante.example")),
+            "turn.exemplo.com:3478"
+        );
+    }
+
+    #[test]
+    fn without_the_list_everyone_gets_the_default() {
+        let c = production(&[("TURN_HOST", Some("turn.exemplo.com:3478"))]);
+        assert!(c.turn_host_by_host.is_empty());
+        assert_eq!(
+            c.turn_host_for(Some("meet.exemplo.ao")),
+            "turn.exemplo.com:3478"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "TURN_HOST_BY_HOST")]
+    fn a_pair_without_a_turn_does_not_start() {
+        production(&[("TURN_HOST_BY_HOST", Some("meet.exemplo.ao"))]);
+    }
+
     /// Controlo positivo: sem ele, os `should_panic` abaixo podiam estar a
     /// medir outra coisa que falta no mapa.
     #[test]
@@ -1033,5 +1416,65 @@ mod tests {
             "postgres://delonix_dev_pass:forte@db:5432/delonix_dev_pass"
         ));
         assert!(!database_url_uses_burned_password(DEV_DB));
+    }
+
+    /// O defeito que isto fecha: `ORG_MAX_PARTICIPANTS` ausente valia `None`, e
+    /// `None` em `signaling::org_participant_limit` é **sem tecto** — uma
+    /// implantação por compose (que não declara nenhuma das duas variáveis)
+    /// aceitava a 41.ª pessoa e degradava a sala para todos, sem sinal.
+    #[test]
+    fn sem_variaveis_nenhumas_o_no_tem_tecto() {
+        let c = production(&[("NODE_PEER_CAPACITY", None), ("ORG_MAX_PARTICIPANTS", None)]);
+        // O que fecha o defeito: `None` aqui era «não recusa ninguém».
+        assert_eq!(c.node_peer_capacity, Some(DEFAULT_NODE_PEER_CAPACITY));
+        // A quota da organização é DECLARADO-SÓ e continua ausente: é um limite
+        // de plano, e dar-lhe omissão cortava a 80 % uma org sozinha no nó
+        // (reprovado contra Postgres real em `node_admission.rs`).
+        assert_eq!(c.org_max_participants, None);
+    }
+
+    /// `0` continua a desligar — explicitamente. É o que uma rampa de carga
+    /// põe («SE ESTÁS A MEDIR O TECTO, PÕE 0», `values.yaml`), e perder esta
+    /// saída fazia o `A-04` medir contra um tecto de 50 sem dar por isso.
+    #[test]
+    fn zero_explicito_desliga_o_tecto() {
+        let c = production(&[
+            ("NODE_PEER_CAPACITY", Some("0")),
+            ("ORG_MAX_PARTICIPANTS", Some("0")),
+        ]);
+        assert_eq!(c.node_peer_capacity, None);
+        assert_eq!(c.org_max_participants, None);
+    }
+
+    #[test]
+    fn um_valor_declarado_vale_mais_que_a_omissao() {
+        let c = production(&[
+            ("NODE_PEER_CAPACITY", Some("120")),
+            ("ORG_MAX_PARTICIPANTS", Some("96")),
+        ]);
+        assert_eq!(c.node_peer_capacity, Some(120));
+        assert_eq!(c.org_max_participants, Some(96));
+    }
+
+    /// Um valor mal escrito não cai para a omissão em silêncio: isso deixava o
+    /// operador convencido de que declarou uma capacidade que ninguém leu.
+    #[test]
+    #[should_panic(expected = "NODE_PEER_CAPACITY")]
+    fn um_tecto_mal_escrito_nao_arranca() {
+        production(&[("NODE_PEER_CAPACITY", Some("cinquenta"))]);
+    }
+
+    /// Uma variável DEFINIDA mas vazia é «ausente», como em todo o resto do
+    /// ficheiro. Um `NODE_PEER_CAPACITY=${NODE_PEER_CAPACITY}` em compose com a
+    /// variável do host por definir expande para vazio: tem de arrancar com a
+    /// omissão, não derrubar o pod.
+    #[test]
+    fn uma_variavel_vazia_e_ausente_e_nao_panico() {
+        let c = production(&[
+            ("NODE_PEER_CAPACITY", Some("")),
+            ("ORG_MAX_PARTICIPANTS", Some("   ")),
+        ]);
+        assert_eq!(c.node_peer_capacity, Some(DEFAULT_NODE_PEER_CAPACITY));
+        assert_eq!(c.org_max_participants, None);
     }
 }

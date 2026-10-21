@@ -27,6 +27,12 @@ import {
   SOBREPOSICOES_INICIAIS,
   type Sobreposicoes,
 } from './palco'
+import { COR_DA_MARCA, COR_DO_FUNDO, desenharMarcaDaMoldura } from '../cena/desenhoDaMoldura'
+// De `cena/`, e NÃO do `room/compositor.ts` que o re-exporta: a cena é folha e
+// importá-la não fecha ciclo, ao contrário de ir buscá-lo à Sala — que já
+// importa deste lado (`room/useMulticam.ts` traz o `directo`).
+import { ordenarPorFoco } from '../cena/foco'
+import { rectsDaMoldura } from '../cena/moldura'
 import { desenharCartaoDeMarca, desenharSobreposicoes, type MarcaDoPalco, type SondagemNoPalco } from './desenho'
 import { desenharQuadroDaMesa, type FontesParaDesenho } from './tv/desenhoDaMesa'
 import type { QuadroDaMesa } from './tv/mesa'
@@ -201,9 +207,11 @@ export class CompositorDeAula {
   private ganhoVideo: GainNode | null = null
   /**
    * Nivelador + limitador da MISTURA inteira (os três barramentos somados),
-   * não de uma fonte só — os mesmos valores do `Denoiser` (media.ts), a única
-   * cadeia de dinâmica já revista neste código, aplicados aqui para nenhum
-   * barramento sozinho conseguir saturar o que se grava ou emite.
+   * não de uma fonte só — os valores que o `Denoiser` (media.ts) usava até
+   * 2026-10-13, aplicados aqui para nenhum barramento sozinho conseguir
+   * saturar o que se grava ou emite. O `Denoiser` da chamada deixou de os ter
+   * (o ganho de compensação do compressor subia o eco residual e os agudos —
+   * medido em `e2e/voz-natural.mjs`); ESTA mistura não foi medida.
    */
   private compressorMestre: DynamicsCompressorNode | null = null
   private limiterMestre: DynamicsCompressorNode | null = null
@@ -221,6 +229,8 @@ export class CompositorDeAula {
   private somExternoFonte: MediaStreamAudioSourceNode | null = null
   private micFonte: MediaStreamAudioSourceNode | null = null
   private ecraFonte: MediaStreamAudioSourceNode | null = null
+  /** A saída do barramento de música, quando é a mesa de som a levá-lo. */
+  private destinoMedia: MediaStreamAudioDestinationNode | null = null
   /** Microfone escolhido; vazio = o de omissão do sistema. */
   microfoneId = ''
   /** Câmara escolhida; vazio = a de omissão do sistema. */
@@ -239,10 +249,24 @@ export class CompositorDeAula {
   layout: LayoutDoPalco = 'solo'
   conteudo: ConteudoDoPalco = 'fontes'
   /**
-   * Em `layout: 'solo'`, qual convidado vai para o ecrã inteiro — o «corte»
-   * da mesa de corte. `null`, ou um id que já não está no palco, cai para o
-   * mais antigo ainda montado (o comportamento de sempre, antes de existir
-   * escolha do operador).
+   * O «corte» da mesa de corte: qual convidado o operador pôs no programa.
+   *
+   * Em `layout: 'solo'` vai para o ecrã inteiro. Nos layouts com vários lugares
+   * — e a `moldura` é o caso que importa — vai para o primeiro lugar DOS
+   * CONVIDADOS, que não é necessariamente o topo da coluna; ver o
+   * `pecasDoPalco`, onde está medido o que o antecede. Em resumo, e tudo
+   * verificado em Chromium: com ecrã partilhado e sem avatar, o programa é o
+   * topo da coluna; com o avatar ligado (que é o `AVATAR_INICIAL.visivel`, o
+   * default do produto) o topo é a TUA câmara e o programa fica no 2.º painel,
+   * sobrando dois para os outros; e sem conteúdo nenhum o programa é o próprio
+   * herói. A `grelha` é a excepção e não o lê — não tem lugar privilegiado.
+   *
+   * Até aqui só o `solo` o lia, e a coluna enchia-se pela ordem de inserção do
+   * `Map`: o operador via o aviso de quantas câmaras ficaram de fora e não
+   * tinha como mudar quais.
+   *
+   * `null`, ou um id que já não está no palco, cai para a ordem de sempre (o
+   * mais antigo ainda montado) — não para um lugar vazio.
    */
   programaId: string | null = null
   sobreposicoes: Sobreposicoes = { ...SOBREPOSICOES_INICIAIS }
@@ -563,6 +587,44 @@ export class CompositorDeAula {
         if (alvo) this.desenharConvidado(alvo, todo)
       }
       if (this.avatar.visivel && this.temCamara) this.desenharAvatar(W, H)
+    } else if (this.layout === 'moldura') {
+      // A cena de marca. O fundo é PRETO, não o `#0d1117` da app: a moldura é
+      // imagem que vai para o ar, e o preto é o que a faz ler como um cenário
+      // de televisão em vez de um painel de software.
+      this.ctx.fillStyle = COR_DO_FUNDO
+      this.ctx.fillRect(0, 0, W, H)
+      const pecas = this.pecasDoPalco()
+      // A geometria calcula-se UMA VEZ e serve as fontes e a marca. A primeira
+      // versão chamava o `rectsDaMoldura` duas vezes — uma dentro do
+      // `rectsDoLayout` e outra para a marca — e isso só funcionava enquanto as
+      // duas recebessem exactamente as mesmas opções. Um invariante não escrito
+      // entre dois ficheiros: bastava passar `logo: false` a um deles para a
+      // marca ficar desalinhada das fontes.
+      const marca = {
+        logo: this.marca.logo,
+        // O texto da faixa é o do ticker que o operador já escreve nas
+        // sobreposições — não se inventa campo novo para o que já tem sítio.
+        // Mas RESPEITA O INTERRUPTOR: com o ticker desligado, o que vai para a
+        // faixa é o nome da marca, não um URL que o operador decidiu esconder.
+        faixa: (this.sobreposicoes.ticker && this.sobreposicoes.url) || this.marca.nome,
+        assinatura: this.marca.nome,
+        cor: COR_DA_MARCA,
+      }
+      const r = rectsDaMoldura(Math.max(0, pecas.length - 1), W, H, {
+        logo: !!marca.logo,
+        assinatura: !!marca.assinatura.trim(),
+      })
+      // As fontes vão para os lugares que a cena calculou, desenhadas pelos
+      // métodos DESTE compositor — é o que preserva o recorte do ecrã, o
+      // espelho da câmara e o alfa do avatar, que a cena não conhece.
+      //
+      // As peças que não têm lugar NÃO são desenhadas — o `?.` é que as deixa
+      // cair, e é por isso que o `r.omitidas` conta exactamente quantas são. O
+      // aviso delas não se desenha aqui: sai do `desenharMarcaDaMoldura`, que
+      // já recebe o `r` inteiro, e assim é o MESMO aviso que a Sala mostra.
+      const lugares = [r.heroi, ...r.camaras]
+      lugares.forEach((lugar, i) => pecas[i]?.(lugar))
+      desenharMarcaDaMoldura(this.ctx, r, marca, Date.now(), W, H)
     } else {
       this.desenharMosaico(W, H)
     }
@@ -578,19 +640,79 @@ export class CompositorDeAula {
     this.custoDoFrameMs = performance.now() - t0
   }
 
-  /** As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados. */
-  private desenharMosaico(W: number, H: number): void {
+  /**
+   * As fontes pela ordem em que ocupam os lugares: conteúdo, tu, convidados.
+   *
+   * Sai do `desenharMosaico` para que a moldura possa usar a MESMA lista sem
+   * depender da geometria do mosaico — o que ela precisa é dos desenhadores,
+   * não dos rects.
+   *
+   * OS CONVIDADOS VÊM ORDENADOS PELO `programaId`, e não pela ordem de inserção
+   * do `Map`. Era essa a ordem até aqui, e fazia da escolha do operador uma
+   * decoração: com ecrã e seis convidados, a coluna da moldura anunciava `+3` no
+   * ar e nenhum controlo do Estúdio mudava QUAIS três — quem entrou primeiro na
+   * sala ficava no ar, e o botão «Tornar programa» só tinha efeito no layout
+   * `solo`. O `ordenarPorFoco` é o mesmo que a Sala usa para as suas fichas de
+   * foco; mora em `cena/foco.ts` por causa disso.
+   *
+   * SÓ OS CONVIDADOS SE REORDENAM — o conteúdo (ecrã ou quadro) e a tua câmara
+   * mantêm a cabeça da lista. QUANDO HÁ CONTEÚDO, é isso que põe o ecrã
+   * partilhado no rectângulo grande e faz o `programaId` escolher a coluna; mas
+   * a invariante não é «o programa nunca é herói», e eu escrevi-a assim e estava
+   * errado. MEDIDO em Chromium: numa `moldura` SEM ecrã nem quadro (o
+   * `conteudo: 'fontes'` é o estado inicial — uma mesa-redonda é o uso normal
+   * desta cena), não existe peça que segure a cabeça da lista, o `pecas[0]` vai
+   * para o `r.heroi`, e o programa É o herói: com `programaId = g5` saiu
+   * `heroi = violeta, coluna = azul|magenta|ciano`. É coerente — o programa
+   * reclama o lugar mais importante que houver — mas não é o que a frase antiga
+   * prometia.
+   *
+   * NA `grelha` NÃO SE REORDENA, e a razão é medida. A grelha não tem lugar
+   * privilegiado: abaixo do tecto de nove ninguém entra nem sai do ar, logo
+   * reordenar não dá ao operador escolha nenhuma — só embaralha o mosaico
+   * inteiro ao vivo, a meio de uma gravação, porque alguém carregou em «Tornar
+   * programa». A Sala já tinha tomado esta decisão e eu divergi dela sem
+   * reparar: o `participantesVisiveis` do `room/compositor.ts` faz
+   * `if (cena === 'grelha') return todos` e salta a ordenação pelo mesmo motivo.
+   * Isto é UMA regra — «o programa reclama um lugar privilegiado» — e não duas;
+   * a grelha fica de fora por não ter nenhum para reclamar.
+   *
+   * FICA UM BURACO CONHECIDO, e é da grelha: acima de nove fontes o
+   * `MAXIMO_POR_LAYOUT` corta, e aí a escolha do operador passaria a mudar quem
+   * vai ao ar. Não se trata aqui porque o `rectsDoLayout` devolve só
+   * rectângulos e nem conta o que cortou — é o defeito que atinge os cinco
+   * layouts, e o sítio de o fechar é lá, não com um caso especial neste método.
+   */
+  private pecasDoPalco(): ((r: { x: number; y: number; w: number; h: number }) => void)[] {
     const pecas: ((r: { x: number; y: number; w: number; h: number }) => void)[] = []
     if (this.conteudo === 'quadro') pecas.push((r) => this.desenharConteudo(this.quadro, r, 'contain'))
     else if (this.temEcra) pecas.push((r) => this.desenharEcraEm(r))
     if (this.avatar.visivel && this.temCamara) pecas.push((r) => this.desenharCamaraEm(r))
-    for (const c of this.convidados.values()) pecas.push((r) => this.desenharConvidado(c, r))
+    // O id é a CHAVE do mapa, não um campo do `ConvidadoNoPalco` — daí as
+    // `entries()`. Um `programaId` de quem já saiu do palco é ignorado pelo
+    // `ordenarPorFoco` (não encontra ninguém), e é por isso que não se poda
+    // aqui: o dono do `programaId` é o React, e podar estado partilhado do lado
+    // que não o possui já fez as duas cópias divergirem sem caminho de volta.
+    const escolha = this.programaId && this.layout !== 'grelha' ? [this.programaId] : []
+    for (const [, c] of ordenarPorFoco([...this.convidados.entries()], escolha, ([id]) => id)) {
+      pecas.push((r) => this.desenharConvidado(c, r))
+    }
+    return pecas
+  }
+
+  /** As fontes nos lugares do layout em vigor. */
+  private desenharMosaico(W: number, H: number): { x: number; y: number; w: number; h: number }[] {
+    const pecas = this.pecasDoPalco()
     const rects = rectsDoLayout(this.layout, pecas.length, W, H)
-    const pad = rects.length > 1 ? Math.round(H * 0.004) : 0
+    // A moldura NÃO leva o `pad`: a sua geometria já traz a margem e o vão
+    // entre a coluna e o herói, e descontar outra vez punha as peças mais
+    // pequenas do que a marca desenhada à volta delas espera.
+    const pad = this.layout !== 'moldura' && rects.length > 1 ? Math.round(H * 0.004) : 0
     rects.forEach((r, i) => {
       const dentro = { x: r.x + pad, y: r.y + pad, w: r.w - pad * 2, h: r.h - pad * 2 }
       pecas[i](dentro)
     })
+    return rects
   }
 
   private desenharEcraEm(r: { x: number; y: number; w: number; h: number }): void {
@@ -791,8 +913,9 @@ export class CompositorDeAula {
     this.ganhoMusica.gain.value = this.mistura.musica
     this.ganhoVideo.gain.value = this.mistura.video
 
-    // Valores iguais aos do `Denoiser` (media.ts) — nivelador suave, depois
-    // um limitador com o cotovelo a zero mesmo antes do tecto (-3 dBFS).
+    // Os valores que o `Denoiser` (media.ts) tinha até 2026-10-13 — nivelador
+    // suave, depois um limitador com o cotovelo a zero mesmo antes do tecto
+    // (-3 dBFS).
     this.compressorMestre = this.audioCtx.createDynamicsCompressor()
     this.compressorMestre.threshold.value = -24
     this.compressorMestre.knee.value = 12
@@ -808,10 +931,12 @@ export class CompositorDeAula {
     this.analiserMestre = this.audioCtx.createAnalyser()
     this.analiserMestre.fftSize = 512
 
-    for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.compressorMestre)
+    this.ganhoVideo.connect(this.compressorMestre)
     this.compressorMestre.connect(this.limiterMestre)
     this.limiterMestre.connect(this.destino)
     this.limiterMestre.connect(this.analiserMestre)
+    this.ligarBarramentoDeMusica()
+    this.ligarBarramentoDoPalco()
 
     if (micDeviceId !== undefined) this.microfoneId = micDeviceId
     await this.ligarMicrofone()
@@ -863,6 +988,57 @@ export class CompositorDeAula {
       void this.ligarMicrofone()
       for (const c of this.convidados.values()) this.ligarConvidadoAoGrafo(c)
     }
+    // O ecrã e a música seguem o microfone e os convidados: ou são da mesa,
+    // ou são daqui.
+    this.ligarSomDoEcra()
+    this.ligarBarramentoDeMusica()
+    this.ligarBarramentoDoPalco()
+  }
+
+  /**
+   * O palco vai ao nivelador/limitador mestre — EXCEPTO quando a mesa de som o
+   * alimenta: a mesa tem a sua dinâmica por canal e o seu limitador de mestre,
+   * e duas dinâmicas em série tiram ao operador o controlo do que faz. Pior:
+   * com o limitador daqui (tecto a −3 dBFS) a morder abaixo do da mesa (−2), a
+   * sonoridade que a mesa mede nunca descreveria o que sai — e é precisamente
+   * o número que ela mostra ao operador.
+   *
+   * Quem NÃO tem mesa — o Estúdio clássico, com o microfone e os convidados a
+   * irem direitos ao palco — continua a ter a dinâmica daqui. E o LIMITADOR
+   * fica sempre no caminho, com mesa ou sem ela: o que salta é o nivelador.
+   */
+  private ligarBarramentoDoPalco(): void {
+    if (!this.audioCtx || !this.ganhoPalco || !this.compressorMestre || !this.limiterMestre) return
+    // Salta o NIVELADOR, nunca o limitador: o cinto de segurança do que se
+    // grava e se emite fica sempre no caminho.
+    this.ganhoPalco.disconnect()
+    this.ganhoPalco.connect(this.somExterno ? this.limiterMestre : this.compressorMestre)
+  }
+
+  /**
+   * O barramento de MÚSICA como fluxo, para a mesa de som o ter como canal —
+   * com fader, medidor e EQ, como qualquer outra fonte. `null` fora de uma
+   * gravação ou emissão: o grafo de áudio do compositor só existe com um fluxo
+   * montado, e sem ele a música toca pelo volume do próprio elemento.
+   */
+  get fluxoDeMusica(): MediaStream | null {
+    return this.destinoMedia?.stream ?? null
+  }
+
+  /**
+   * A música vai ao MESTRE ou à MESA — nunca aos dois, que a somaria consigo
+   * própria.
+   *
+   * O deslizador de música do palco (`mistura.musica`) continua a mexer no
+   * `ganhoMusica`, logo passa a ser um TRIM de entrada da mesa: quem manda no
+   * nível que vai ao ar é o fader do canal. Tirar-lhe o efeito seria deixar no
+   * ecrã um controlo que não controla nada.
+   */
+  private ligarBarramentoDeMusica(): void {
+    if (!this.audioCtx || !this.ganhoMusica || !this.compressorMestre) return
+    this.destinoMedia ??= this.audioCtx.createMediaStreamDestination()
+    this.ganhoMusica.disconnect()
+    this.ganhoMusica.connect(this.somExterno ? this.destinoMedia : this.compressorMestre)
   }
 
   private ligarSomExterno(): void {
@@ -907,10 +1083,16 @@ export class CompositorDeAula {
     }
   }
 
+  /**
+   * O som do separador partilhado entra na mistura — EXCEPTO quando a mesa de
+   * som o tomou como canal (`somExterno`). Sem esta excepção o mesmo som
+   * entrava duas vezes: uma pela mesa e outra por aqui.
+   */
   private ligarSomDoEcra(): void {
     if (!this.audioCtx || !this.ganhoVideo) return
     this.ecraFonte?.disconnect()
     this.ecraFonte = null
+    if (this.somExterno) return
     if (this.ecraStream && this.ecraStream.getAudioTracks().length) {
       this.ecraFonte = this.audioCtx.createMediaStreamSource(new MediaStream(this.ecraStream.getAudioTracks()))
       this.ecraFonte.connect(this.ganhoVideo)
@@ -1130,6 +1312,7 @@ export class CompositorDeAula {
     this.ganhoPalco = null
     this.ganhoMusica = null
     this.ganhoVideo = null
+    this.destinoMedia = null
     this.compressorMestre?.disconnect()
     this.compressorMestre = null
     this.limiterMestre?.disconnect()

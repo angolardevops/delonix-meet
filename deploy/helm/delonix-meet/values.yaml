@@ -24,6 +24,31 @@ production: true
 # O nome público. Entra no Ingress, no CORS_ORIGINS e no certificado.
 host: ""
 
+# Outros nomes pelos quais a MESMA instalação responde (p.ex. o `.ao` ao lado
+# do `.com`). Entram nas HTTPRoutes e no CORS_ORIGINS, DEPOIS do `host`.
+#
+# O `host` continua a ser o nome CANÓNICO, e isso tem consequências que um
+# segundo nome não apaga:
+#   * a primeira origem do CORS_ORIGINS é para onde o SSO devolve o browser
+#     (`sso_configured_origin`) — quem entra por SSO num nome extra acaba no
+#     canónico;
+#   * a sessão e as chaves de acesso (WebAuthn) são POR ORIGEM: quem entra num
+#     nome não está autenticado no outro.
+# Só em `gateway.mode: attach`: o certificado é do Gateway a que as rotas se
+# colam, e é ele que tem de cobrir todos os nomes. Em `mode: own` e no Ingress
+# o chart pede UM certificado para UM nome, e recusa a lista em vez de servir
+# o segundo nome com o certificado do primeiro.
+extraHosts: []
+
+# O endereço público da instalação (`PUBLIC_URL`), sem barra no fim. Vazio =
+# `https://<host>`, o nome canónico. É de onde o servidor tira os links que
+# escreve num email (prova de endereço, convites, reposição de password) e o
+# emissor e o recurso do OAuth do servidor MCP. O servidor NUNCA o deriva do
+# cabeçalho `Host` (era o envenenamento de links de reposição), e sem ele
+# recusa: os emails com link saem com `mail.public_url_missing` e o OAuth
+# responde 503. Medido em produção a 2026-10-14: era exactamente esse o estado.
+publicUrl: ""
+
 imagePullSecrets: []
 
 # Tag partilhada pelo servidor e pela web (saem do mesmo commit: `make image`
@@ -87,9 +112,78 @@ server:
   replicas: 2
   # Tem de ser MAIOR que DRAIN_GRACE_SECS (40) + DRAIN_READINESS_SECS (12).
   terminationGracePeriodSeconds: 60
+  # DIMENSIONADO PELA MEDIÇÃO, não pelo hábito (docs/ops/teste-de-carga-2026-10-05.md,
+  # repetida em metal: Ryzen 9, loopback, 720p sem simulcast):
+  #
+  #   8 pessoas numa sala  0,46 núcleos   201 MB
+  #  16                    1,91           577 MB
+  #  24                    3,28         1 100 MB
+  #  30                    7,01         1 807 MB
+  #  40                   11,17         2 929 MB
+  #
+  # Dois custos diferentes: a MEMÓRIA cresce ~73 MB por participante e não
+  # depende da forma da sala; o CPU é O(N²) DENTRO de uma sala (0,06 núcleos por
+  # participante até aos 24, ~0,28 marginais entre os 30 e os 40) e quase linear
+  # em muitas salas pequenas (160 pessoas em salas de 4 deram 4,8 núcleos,
+  # docs/ops/teste-de-carga-2026-09-17.md).
+  #
+  # Por isso o que estava aqui — `cpu: "1", memory: 1Gi` — era um tecto a sério e
+  # invisível: 1Gi é o RSS de ~11 participantes, e `limits.cpu: 1` dá ao tokio UM
+  # worker para todas as bombas de RTP de todas as salas do pod (o
+  # deploy/k8s/02-server.yaml já tinha escrito que com 1000m «o CFS estrangulava o
+  # processo», e estrangular media em tempo real é jitter e perda).
+  #
+  # Estes valores são para um laboratório ou uma instalação pequena; produção tem
+  # os seus (values-production.yaml). O `requests.memory` não é 256Mi por capricho:
+  # é o que o scheduler reserva, e com um limite de 2Gi um pod que cresça num nó
+  # cheio é despejado — metade do limite é o mínimo honesto.
   resources:
-    requests: { cpu: 250m, memory: 256Mi }
-    limits: { cpu: "1", memory: 1Gi }
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: "2", memory: 2Gi }
+
+  # ADMISSÃO POR CAPACIDADE (ADR-0017). Participantes que ESTE nó aguenta,
+  # declarados pelo operador a partir dos SEUS testes de carga. Com isto:
+  #   - abaixo de 85% da capacidade, o nó aceita salas novas de todos;
+  #   - entre 85% e 100%, recusa (503) só o inquilino que já usa a sua parte
+  #     justa (capacidade ÷ inquilinos activos);
+  #   - na capacidade, recusa salas novas a todos.
+  # Uma sala que JÁ está no nó admite sempre: não pode mudar de pod (ADR-0001).
+  #
+  # `0` = SEM TECTO, de propósito: o nó aceita até degradar, e o alerta
+  # `MeetSalasRecusadasPorCapacidade` nunca pode disparar. Foi o que esteve em
+  # produção até 2026-10-13. Em produção o chart RECUSA 0 (ver _helpers.tpl):
+  # declarar a capacidade é uma decisão do operador, mas não declarar nenhuma
+  # deixou de ser uma omissão silenciosa.
+  #
+  # O `0` chega ao servidor TAL E QUAL (desde 2026-10-18). Antes a variável era
+  # omitida do ConfigMap, e como a ausência passou a valer uma omissão do
+  # código (50), `0` teria passado a significar o contrário do que diz.
+  #
+  # Como escolher: pelo limite que morde primeiro, e para um pod de 2Gi/2 CPU é
+  # a memória — (2048 − ~200 de base) ÷ 73 ≈ 25 participantes.
+  #
+  # SE ESTÁS A MEDIR O TECTO, PÕE 0. Uma recusa a meio de uma rampa de carga
+  # aparece como «a sala não abre» e parece um defeito do SFU — não é, é esta
+  # linha. O `server/examples/loadgen.rs` fala com o binário e não com o chart,
+  # por isso só te morde se medires através do cluster.
+  nodePeerCapacity: 25
+
+  # Tecto de participantes concorrentes de UMA organização, NESTE nó, quando o
+  # operador não lhe fixou um à parte (`PUT /api/operator/v1/organizations/{id}/concurrency`,
+  # migração 0097). Recusa com 429 — «tu já tens o teu», não «este nó não serve».
+  # `0` (e a ausência) = sem quota de organização. É DECLARADO-SÓ de propósito:
+  # ao contrário da capacidade do nó, este não ganhou omissão no código. Dá-la
+  # cortava a 80% uma organização SOZINHA no nó, contra a parte justa que o
+  # `admit_new_room` calcula dinamicamente — «um inquilino sozinho no nó tem a
+  # capacidade toda e não é penalizado». Quem protege o nó é `nodePeerCapacity`.
+  #
+  # Com `0` aqui e `nodePeerCapacity` > 0 o chart aceita; o contrário (nó a 0 e
+  # este > 0) é recusado: o tecto da org mordia sem o do nó existir.
+  #
+  # É um limite de PLANO, e por isso aqui fica generoso: 80% da capacidade do nó.
+  # Serve de travão ao vizinho ruidoso, não de grade comercial — quem vende
+  # planos põe o número por organização, pela API do operador.
+  orgMaxParticipants: 20
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
@@ -100,7 +194,22 @@ server:
 
   # O que o BROWSER usa para chegar ao TURN (`host:porta`). Vazio = o
   # `coturn.externalIP` e a porta do coturn deste chart.
+  #
+  # É UM valor para dois leitores: o browser recebe-o, e o SFU usa-o para as
+  # suas próprias alocações. Com `coturn.privateIP` (relay atrás de NAT) põe
+  # aqui um NOME (`turn.exemplo.ao:3478`): o chart dá aos pods do servidor um
+  # `hostAliases` desse nome para o IP privado, e o SFU fala com o relay por
+  # dentro enquanto o browser lhe chega pelo IP público.
   turnHost: ""
+  # O nome do TURN por nome do SITE: quem entra por um dos `extraHosts` recebe
+  # o TURN desse site em vez do `turnHost` (`meet.exemplo.ao` →
+  # `turn.exemplo.ao:3478`). As chaves têm de ser nomes que a instalação serve
+  # (`host` ou `extraHosts`). Os nomes resolvem todos para o MESMO relay.
+  #
+  # Um nome por pessoa, e não todos a toda a gente: um browser com dois URLs
+  # de TURN para o mesmo relay faz duas alocações (medido), e a gama de relay
+  # é finita. O SFU usa sempre o `turnHost`.
+  turnHostBySite: {}
   # Media em Kubernetes é relay-only: o IP do pod não é alcançável de fora.
   forceTurnRelay: true
 
@@ -139,8 +248,12 @@ server:
     freeswitchIPs: []
     rtp: { min: 20200, max: 20400 }
 
-  # Telefonia de troncos (ADR-0009). `eslAddr` exige a chave
-  # TELEPHONY_ESL_PASSWORD no Secret (o servidor recusa arrancar sem ela).
+  # Telefonia de troncos (ADR-0009). `eslAddr` (ex.:
+  # freeswitch.<namespace>.svc.cluster.local:8021) exige a chave
+  # TELEPHONY_ESL_PASSWORD no Secret (o servidor recusa arrancar sem ela); com
+  # a voz do chart o FreeSWITCH abre-lhe o ESL com a mesma chave. É por aqui
+  # que um tronco alterado ou apagado chega ao FreeSWITCH e que a consola vê o
+  # registo.
   telephony:
     eslAddr: ""
     kamailioRpcUrl: ""
@@ -203,8 +316,10 @@ ingress:
     clusterIssuer: ""
     existingSecret: ""
     secretName: delonix-tls-secret
-  # Serviço de transcrição (não é instalado por este chart). Com nome, o
-  # /asr é encaminhado para ele.
+  # Serviço de transcrição de FORA do chart. Com `whisper.enabled` isto fica
+  # vazio e a rota `/asr` sai do Service do chart (o render é o mesmo, o
+  # destino é o `delonix-whisper`): são exclusivos, e o chart recusa os dois.
+  # Lido pelo `gateway.yaml` mesmo com o Ingress desligado.
   asr:
     serviceName: ""
     servicePort: 8000
@@ -232,6 +347,19 @@ coturn:
   # ou o do nó em hostNetwork). Obrigatório em produção. Fora de produção,
   # vazio = o IP do nó (hostNetwork) ou do pod.
   externalIP: ""
+  # RELAY ATRÁS DE NAT: o IP do nó (ou do pod) onde o coturn ESCUTA, quando o
+  # `externalIP` é um endereço público que não é dele — o do router que lhe
+  # encaminha a 3478 e a gama de relay. O coturn passa a correr com
+  # `--external-ip=<externalIP>/<privateIP>`: anuncia o público e sabe que é o
+  # privado. Sem isto, dois relays do mesmo coturn só se falam se o router
+  # fizer hairpin (medido em 2026-10-13 num coturn 4.6: com o mapa, 60 de 60
+  # mensagens entre dois relays; sem ele, 0 de 60).
+  privateIP: ""
+  # Reconhecimento explícito de uma instalação SÓ PARA A REDE LOCAL: em
+  # produção o chart recusa um `externalIP` privado (10/8, 172.16/12,
+  # 192.168/16), porque quem está fora dessa rede junta-se à sala e fica sem
+  # áudio nem vídeo — sem um erro. `true` diz que é isso que se quer.
+  lanOnly: false
   realm: delonix
   port: 3478
   relayPorts: { min: 49152, max: 59152 }
@@ -250,6 +378,53 @@ coturn:
     limits: { cpu: "4", memory: 1Gi }
   nodeSelector: {}
   tolerations: []
+
+# ------------------------------------------------------------
+#  Gateway API — para clusters que servem por Gateway e não por ingress-nginx.
+#
+#  EXCLUSIVO do `ingress`: um ou outro, nunca os dois. O chart recusa ambos.
+#
+#  O que se GANHA: funciona em clusters sem ingress-nginx, e a precedência dos
+#  caminhos é da especificação em vez de três objectos Ingress separados.
+#  O que se PERDE: desligar o registo de acessos numa só rota. No Envoy o
+#  access log é do Gateway, não da rota — ver `acceptProvisioningInAccessLog`.
+# ------------------------------------------------------------
+gateway:
+  enabled: false
+  # own    — cria um Gateway NESTE namespace. Gasta um IP do LoadBalancer, e
+  #          só aceita rotas deste namespace (`allowedRoutes: from: Same`).
+  # attach — cola-se a um Gateway existente, possivelmente noutro namespace.
+  #          CUIDADO: esse Gateway tem de permitir rotas do nosso namespace.
+  #          Medido a 2026-10-07: o Gateway do `ngolacloud-system` está em
+  #          `from: Same` e NÃO as aceita — ligar-se a ele exigiria mudar o
+  #          recurso de outro inquilino.
+  mode: own
+  # Obrigatório em mode=own. No `ngola-lda` a GatewayClass chama-se `delonix`.
+  className: ""
+  parentRef:
+    name: ""
+    namespace: ""
+    sectionName: ""
+  tls:
+    # Um Secret kubernetes.io/tls que já existe...
+    certificateRefName: ""
+    # ...ou deixa o cert-manager emitir (precisa de `--enable-gateway-api`).
+    clusterIssuer: ""
+  affinity:
+    # `envoy` — emite a BackendTrafficPolicy com ConsistentHash por `room`,
+    #           que é o que mantém a invariante do ADR-0001.
+    # `none`  — NÃO emite política nenhuma. A afinidade por sala DESAPARECE e
+    #           os pares de uma sala caem em pods diferentes: é a regressão R3,
+    #           «media num só sentido». O chart recusa isto em produção.
+    implementation: envoy
+  # R278: o caminho `/api/public/extension-provisioning` leva um bilhete de uso
+  # único — uma credencial. O Ingress tinha uma rota dedicada só para desligar
+  # o registo de acessos nela. Em Gateway API isso NÃO existe: o access log é
+  # do Gateway. Com `gateway.enabled`, esse caminho vai para o log.
+  #
+  # Põe `true` para reconhecer e seguir. O chart recusa-se a instalar sem isto,
+  # em vez de perder a protecção em silêncio.
+  acceptProvisioningInAccessLog: false
 
 # ------------------------------------------------------------
 #  Voz — bordo SIP (Kamailio) e gateway de media (FreeSWITCH).
@@ -307,6 +482,23 @@ voice:
     hostNetwork: false
     ivrVoice: ""          # DELONIX_IVR_VOICE; vazio = pt/BR/karina
     ramaisSipPort: 5070
+    # DELONIX_TRUNKS_RESCAN_SECS — de quanto em quanto tempo o FreeSWITCH volta
+    # a ler os troncos do servidor (ADR-0009): um tronco criado na consola
+    # regista-se sozinho, e um arranque com o servidor em baixo recupera.
+    # 0 desliga. Sem `server.telephony.eslAddr` é o ÚNICO caminho, e só
+    # acrescenta: um tronco alterado ou apagado fica como estava até um
+    # reinício. Com ele, o servidor avisa o FreeSWITCH na hora (R300).
+    trunksRescanSecs: 60
+    # DELONIX_ESL_CIDRS — de onde o SERVIDOR fala para o Event Socket do
+    # FreeSWITCH (8021). Só conta com `server.telephony.eslAddr`. Vazia, entram
+    # todas as redes privadas (com a TELEPHONY_ESL_PASSWORD do Secret); com
+    # redes, só essas. Quem lá entra manda em tudo (origina chamadas por
+    # qualquer tronco): o mais estreito que a rede dos pods do servidor
+    # permitir. Com `networkPolicy.enabled`, o 8021 fica além disso só para
+    # esses pods — EXCEPTO em `hostNetwork`, onde a política não se aplica e o
+    # ESL escuta nas interfaces do nó: aí o chart exige esta lista. Em
+    # produção exige uma das duas (a política ou a lista).
+    eslCidrs: []
     # DELONIX_EXTERNAL_IP — o endereço que o perfil dos ramais anuncia no SIP
     # e no SDP — e a gama RTP que se publica com ele.
     externalIP: ""
@@ -336,3 +528,194 @@ voice:
     resources:
       requests: { cpu: 100m, memory: 128Mi }
       limits: { cpu: "1", memory: 512Mi }
+
+# ------------------------------------------------------------
+#  A IA in-cluster (templates/ai.yaml).
+#
+#  DESLIGADOS os dois por omissão: nem um laboratório nem uma instalação de
+#  terceiros têm de carregar um LLM de 5,5GB e um ASR de 2GB para o Meet
+#  servir reuniões. Sem eles o produto degrada por desenho, e diz a verdade:
+#  a ata fica pela versão por regras (feita no cliente) e as legendas pelo
+#  motor do browser.
+# ------------------------------------------------------------
+
+# LLM local — resumo da ata (MoM) e tradução das legendas. `server/src/ai.rs`.
+#
+# Ligado, o chart escreve o OLLAMA_URL no ConfigMap e aponta-o a este Service:
+# o servidor nunca fala com um LLM de fora do cluster.
+ollama:
+  enabled: false
+  image:
+    repository: ollama/ollama
+    # Fixada por versão: artefacto imutável (doutrina do repo). A 0.40.2 é a
+    # última estável confirmada a 2026-10-09 (ADR-0024).
+    tag: "0.40.2"
+    pullPolicy: IfNotPresent
+  # Os modelos que o pod puxa no arranque, e os que o servidor pede.
+  #
+  # O par de 2026-10-13, decidido pelo dono SEM GPU no cluster: o 7b escreve a
+  # ata (trabalho em lote, minutos em CPU, ninguém à espera) e o 1.5b traduz a
+  # legenda (tempo real, no limite em CPU). Mudar aqui muda o que se puxa E o
+  # que o servidor pede: são a mesma lista.
+  models: ["qwen2.5:1.5b", "qwen2.5:7b"]
+  modelSummary: "qwen2.5:7b"
+  modelTranslate: "qwen2.5:1.5b"
+  # Tarefas do Estúdio. Vazio = o mesmo do resumo (server/src/config.rs).
+  modelStudio: ""
+  # Tecto de uma tarefa do Estúdio em segundos (OLLAMA_TIMEOUT_SECS, 5..900).
+  # Em CPU, 120 s não chegam a um resumo do 7b: 600 dá-lhe margem.
+  timeoutSeconds: 600
+  # A ATA (MoM): a janela de transcrição que entra no prompt, em caracteres, e
+  # o tecto da chamada. A janela DECIDE o `num_ctx` que o servidor pede — são
+  # a mesma decisão (`ai.rs::num_ctx_para`), e separá-las era o defeito: sem
+  # `num_ctx`, o Ollama cortava o prompt em silêncio e a ata saía de ~2 048
+  # tokens dos ~6 900 que a janela de 24 000 caracteres produz.
+  #
+  # ENCURTAR A JANELA É A MAÇANETA DE UM CPU LENTO, e o número que a justifica
+  # é medido: as VMs desta produção vêem um vCPU `x86-64-v2` (sem AVX2, ver
+  # `delonix-deploy/tofu/modules/vm/main.tf`) e o modelo processa prompt a
+  # **0,59 tokens/s**. A 24 000 caracteres são mais de três horas só para ler
+  # o prompt — a ata expira sempre. Com GPU, ou com vCPU `v3`, isto volta ao
+  # que é: a janela cheia em minutos.
+  momWindowChars: 24000
+  momSummaryTimeoutSeconds: 600
+  # Quantos modelos ficam carregados ao mesmo tempo. 2 = o da ata e o da
+  # legenda, para que uma legenda não descarregue o modelo da ata (e o
+  # contrário). Custa memória: é o que os 8Gi de limit abaixo cobrem.
+  maxLoadedModels: 2
+  keepAlive: 30m
+  # Quanto tempo o Kubernetes dá ao Deployment para progredir antes de o dar
+  # por falhado. A omissão (600 s) NÃO chega: medido a 2026-10-13 na primeira
+  # instalação em produção, o nó não acabou de puxar os 3,5GB da imagem nesse
+  # prazo e o `helm upgrade --wait` desistiu com o release em `failed` — com
+  # tudo aplicado e o pod a puxar por trás. 2700 s = 45 minutos, que cobre uma
+  # ligação má sem esconder uma avaria a sério.
+  #
+  # Quem serve a imagem de um registo na própria rede (recomendado, e é o que o
+  # `delonix-server` e a `delonix-web` já fazem) pode baixar isto.
+  progressDeadlineSeconds: 2700
+  # Tentativas do puxão no arranque, de 10 em 10 s. 60 = 10 minutos de rede
+  # intermitente antes de desistir (sem matar o pod: ver templates/ai.yaml).
+  pullRetries: 60
+  # ~5,5GB de modelos (1,0 + 4,7) mais margem para trocar de modelo sem
+  # reinstalar. O PVC é RWO e há UM pod.
+  storage: 10Gi
+  storageClassName: ""
+  # Uid não privilegiado qualquer: a imagem não tem utilizador próprio, e o
+  # volume chega-lhe pelo fsGroup (ver templates/ai.yaml).
+  runAsUser: 1000
+  resources:
+    # O request é baixo de propósito: fora de uma reunião o Ollama não faz
+    # nada, e num cluster partilhado reservar 4 CPU para esperar é tirá-los a
+    # quem os usa. O limit é o tecto de quando está a gerar.
+    requests: { cpu: 250m, memory: 2Gi }
+    limits: { cpu: "4", memory: 8Gi }
+  priorityClassName: ""
+  # GPU (ADR-0024): com hardware, é aqui que ele entra — nodeSelector,
+  # toleration e runtimeClass. Os limits de `nvidia.com/gpu` põem-se em
+  # `resources.limits`. Vazio = CPU, que é o que o cluster tem hoje.
+  nodeSelector: {}
+  tolerations: []
+  runtimeClassName: ""
+
+# ASR soberano (`whisper-server/`) — as legendas da sala sem passar pela Web
+# Speech do Chrome, que envia o áudio para a Google.
+#
+# A IMAGEM NÃO SAI DO `make image`: embute o modelo (~2GB) e constrói-se com
+# `BUILD_WHISPER=1 deploy/build-images.sh`. Por isso tem repositório e tag
+# PRÓPRIOS — não acompanham a tag do servidor e da web, que mudam a cada
+# commit.
+whisper:
+  enabled: false
+  replicas: 1
+  image:
+    repository: delonix-whisper
+    tag: ""
+    pullPolicy: IfNotPresent
+  # base|small|medium|large-v3 — tem de ser o modelo EMBUTIDO na imagem
+  # (`--build-arg MODEL=`). `small` int8 é o aceitável em CPU.
+  model: small
+  device: cpu
+  compute: int8
+  # O uid do `whisper-server/Dockerfile`.
+  runAsUser: 65532
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: "4", memory: 4Gi }
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+
+# Rastos por OTLP (ADR-0020, fase 5). Vazio = desligado, que é o que um
+# laboratório quer: sem colector, nada a exportar.
+otel:
+  endpoint: ""
+
+# ResourceQuota e LimitRange do namespace (templates/quota.yaml).
+#
+# DESLIGADA por omissão: os números são a escala do `values-production.yaml`, e
+# num laboratório de um nó ou num cluster dedicado seriam um tecto inventado.
+# O `values-production.yaml` liga-a, porque o ADR-0021 pôs a produção num
+# cluster PARTILHADO e sem quota um pico do Meet come o que é dos vizinhos.
+#
+# A conta está escrita no topo do `templates/quota.yaml`: é o pico com o HPA no
+# máximo MAIS o surge do rollout, com ~20% de folga. QUEM MUDAR RÉPLICAS OU
+# LIMITES REFAZ A CONTA — e o `check-helm.sh` recalcula-a do render e falha se a
+# quota não a cobrir (`QUOTA_CONTA=1` imprime o pico que ele mediu).
+quota:
+  enabled: false
+  # Chart + plataforma no mesmo namespace (Postgres e Redis do
+  # deploy/k8s/plataforma). A conta está no topo de templates/quota.yaml e o
+  # `check-helm.sh` refá-la a partir do render e dos ficheiros da plataforma.
+  #
+  # Refeita a 2026-10-13, quando o servidor passou a 4 CPU / 4Gi com o HPA a 6:
+  # pico medido no render 60,20 CPU / 74,44Gi de limits e 10,76 CPU / 24,95Gi de
+  # requests. Com os 62 CPU anteriores a folga caía para 3% — e o sítio onde isso
+  # aparece é o primeiro deploy, com a admissão a recusar um pod a meio do
+  # rollout.
+  requests:
+    cpu: "13"
+    memory: 30Gi
+  limits:
+    cpu: "72"
+    memory: 90Gi
+  maxPods: "40"
+  # 12 e não 9 (os 8 da conta + 1): a 2026-10-13 o namespace de produção tinha
+  # 10 PVCs vivos, e TRÊS deles — `redis-data-redis-node-0/1/2` — são órfãos
+  # da topologia de Sentinel que saiu a 2026-10-11 (os pods são
+  # `redis-master-0` e `redis-replicas-0/1`). Com o tecto em 10, o PVC do
+  # Ollama era RECUSADO pela admissão, e o sintoma seria o pod em Pending.
+  # Quem apagar os órfãos pode baixar isto; apagar um PVC em produção é ordem
+  # do dono, não efeito secundário de um upgrade.
+  maxPvcs: "12"
+  maxLoadBalancers: "2"
+  container:
+    # Para o que aterra no namespace SEM `resources` — um pod de depuração, um
+    # Job avulso. Os pods do chart já os declaram todos.
+    defaultRequest: { cpu: 100m, memory: 128Mi }
+    defaultLimit: { cpu: "1", memory: 1Gi }
+    # Barra por contentor: um zero a mais no `values` não esgota a quota num
+    # pod. Acima do maior que temos — o coturn, com 4 CPU, e o Postgres da
+    # plataforma, com 8Gi — e se ficasse IGUAL, a admissão passava a rejeitar
+    # um deles no primeiro aumento.
+    max: { cpu: "6", memory: 10Gi }
+
+# Prioridade de agendamento dos pods — VAZIO por omissão, de propósito.
+#
+# Num cluster PARTILHADO (ADR-0021) é isto que decide quem é desalojado quando
+# um nó aperta: sem prioridade, o SFU e o Postgres são tão desalojáveis como
+# qualquer coisa. MAS o nome da classe é do operador do cluster, e um
+# `priorityClassName` que não exista no cluster faz o API server **recusar o
+# pod** — por isso o chart nunca inventa um nome.
+#
+# Este valor é o default para os oito workloads. Para dar mais prioridade ao
+# caminho da chamada do que ao resto, basta sobrepor por workload:
+#
+#   --set priorityClassName=meet-normal \
+#   --set server.priorityClassName=meet-critico \
+#   --set postgresql.priorityClassName=meet-critico \
+#   --set coturn.priorityClassName=meet-critico
+#
+# As classes `system-cluster-critical` e `system-node-critical` são do
+# Kubernetes e, por omissão, só se usam no `kube-system` — não servem aqui.
+priorityClassName: ""

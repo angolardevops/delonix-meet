@@ -5,3 +5,4 @@
 //! ordem do ADR-0006 §6 linha D.
 
 pub mod api_key;
+pub mod oauth;

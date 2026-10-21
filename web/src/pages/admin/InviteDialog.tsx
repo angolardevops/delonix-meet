@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { createInvitation, invitationLink, OrgInvitationWithToken, OrgRole } from '../../api'
 import { Alert, Button, Dialog, Field, Select, TextInput } from '../../ui/kit'
 import { orgErrorMessage } from './orgShared'
+import { copiarTexto } from '../../ui/copy'
 
 export default function InviteDialog({
   orgId,
@@ -86,7 +87,7 @@ export default function InviteDialog({
             icon="copy"
             onClick={async () => {
               try {
-                await navigator.clipboard.writeText(link)
+                await copiarTexto(link)
                 setCopied(true)
               } catch {
                 setErr(t('org.convidar.erroCopiar'))

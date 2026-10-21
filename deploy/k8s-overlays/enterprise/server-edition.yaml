@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: delonix-server
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   replicas: 1
   template:

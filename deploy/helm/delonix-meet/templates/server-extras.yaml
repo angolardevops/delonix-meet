@@ -24,6 +24,13 @@ spec:
       labels:
         app: delonix-server-migrate
     spec:
+      # O Job de migração leva a prioridade do SERVIDOR: ele bloqueia o
+      # release (o `helm upgrade` espera por ele), logo um Job que não é
+      # agendado deixa a versão nova a meio. Mesma regra: opcional, e o
+      # nome vem de quem instala — ver o comentário no values.yaml.
+      {{- with $v.server.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       restartPolicy: Never
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       securityContext:

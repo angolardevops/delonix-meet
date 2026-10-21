@@ -225,7 +225,6 @@ export class ImmersiveRenderer implements OverlayRenderer {
       gl.bindTexture(gl.TEXTURE_2D, this.cpuTex)
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, m.width, m.height, 0, gl.RED, gl.FLOAT, m.data)
-      src = this.cpuTex
     }
     const next = 1 - this.current
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[next])

@@ -36,6 +36,22 @@ function listarTsx(dir: string): string[] {
   return out
 }
 
+/** Todo o código da app (`.tsx` e `.ts`), fora os testes e os dicionários.
+ *  Derivado da árvore, pela mesma razão do `listarTsx`. */
+function listarCodigo(dir: string): string[] {
+  const out: string[] = []
+  for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`
+    if (e.isDirectory()) {
+      if (e.name !== 'locales') out.push(...listarCodigo(p))
+    } else if ((e.name.endsWith('.tsx') || e.name.endsWith('.ts')) && !e.name.includes('.test.')) {
+      out.push(p)
+    }
+  }
+  return out
+}
+const ficheirosDeCodigo = () => listarCodigo('web/src')
+
 /** As áreas (namespaces) de um dicionário: um ficheiro por área em
  *  `locales/<língua>/`, fora o `index.ts` que as compõe. */
 function areasDeLocale(loc: string): string[] {
@@ -152,6 +168,11 @@ describe('3.2.5 · nada de emoji como controlo na consola', () => {
   // cor, e renderizam igual em todo o lado. Uma versão anterior metia-os no
   // mesmo saco e acusava 56 sítios, a maioria setas em prosa — um portão que
   // grita por tudo é ignorado tal como um portão cego.
+  // O `no-misleading-character-class` vê o `\u{FE0F}` (selector de variação)
+  // numa classe e avisa que ele COMBINA com o que vem antes. É verdade e é
+  // intencional: o que se procura aqui é a presença do selector, sozinho ou
+  // colado — um emoji «texto» com FE0F é tão emoji como o outro.
+  // eslint-disable-next-line no-misleading-character-class
   const EMOJI = /[\u{1F300}-\u{1FAFF}\u{FE0F}]/u
   // `⌘` e `⌥` são NOMES DE TECLAS dentro de <kbd> — conteúdo, não controlo.
   const TECLAS = /[\u2318\u2325\u21E7\u23CE]/u
@@ -341,6 +362,12 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
     const soltos: string[] = []
     for (const f of listarTsx('web/src')) {
       for (const l of read(f).split('\n')) {
+        // Despe `//` E os comentários de BLOCO: uma linha de `/** … */` com
+        // crases — `` (`GET /api/orgs/{id}/…`) `` — era apanhada como prosa
+        // solta. Um comentário não é texto de interface, e um portão que
+        // obriga a escrever comentários piores não protege nada.
+        const t = l.trim()
+        if (t.startsWith('*') || t.startsWith('/*')) continue
         const semComentario = l.replace(/\/\/.*$/, '')
         for (const m of semComentario.matchAll(/`([^`]{4,300})`/g)) {
           const prosa = m[1].replace(/\$\{[^{}]*\}/g, '').replace(/\s+/g, ' ').trim()
@@ -491,8 +518,13 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
         const abre = t.match(/^([A-Za-z0-9_]+):\s*\{$/)
         if (abre) { pilha.push(abre[1]); continue }
         if (t.startsWith('}')) { pilha.pop(); continue }
-        const par = t.match(/^([A-Za-z0-9_]+):\s*(['"])((?:\\.|(?!\2).)*)\2\s*,?$/)
-        if (par) out[[...pilha, par[1]].join('.')] = par[3]
+        // A chave pode vir ENTRE ASPAS — e tem de vir, quando leva um hífen
+        // (`'lingua_pt-PT'`). Sem este ramo, uma chave aspada era invisível
+        // para os dois invariantes deste bloco: a paridade não a comparava
+        // entre línguas e o teste do `t()` não a encontrava. Foi assim que
+        // cinco chaves da dobragem passaram ao lado (2026-10-14).
+        const par = t.match(/^(?:([A-Za-z0-9_]+)|'([^']+)'|"([^"]+)"):\s*(['"])((?:\\.|(?!\4).)*)\4\s*,?$/)
+        if (par) out[[...pilha, par[1] ?? par[2] ?? par[3]].join('.')] = par[5]
       }
     }
     return out
@@ -520,6 +552,47 @@ describe('3.2.7 · a sala fala os três idiomas', () => {
       }
     }
     expect(vazios).toEqual([])
+  })
+
+  it('toda a chave chamada por t() EXISTE no dicionário', () => {
+    // O caso real (2026-10-14, cartão da caixa de saída): `t('ui.actualizar')`
+    // — chave inventada, nunca existiu. O i18next não falha: devolve a CHAVE,
+    // e o botão ficou a dizer «ui.actualizar» à vista de toda a gente.
+    // Compila, passa o lint, passa a bateria. Só se vê no browser.
+    //
+    // Os PLURAIS contam-se como o i18next os resolve: `votos` existe se
+    // existir `votos_one` ou `votos_other`. Sem isto, 153 chamadas inocentes
+    // apareciam como culpadas.
+    const pt = mapaDeLocale('pt')
+    const SUFIXOS = ['_one', '_other', '_zero', '_two', '_few', '_many']
+    const existe = (k: string) => pt[k] !== undefined || SUFIXOS.some((s) => pt[k + s] !== undefined)
+    const maus: string[] = []
+    for (const f of ficheirosDeCodigo()) {
+      for (const m of read(f).matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'/g)) {
+        if (!existe(m[1])) maus.push(`${f}: ${m[1]}`)
+      }
+    }
+    expect(maus).toEqual([])
+  })
+
+  it('quem chama uma chave com {{…}} passa-lhe o parâmetro', () => {
+    // O caso real (2026-10-13, ecrã de remarcar): `t('schedule.form.hora')` sem
+    // o `{ fuso }` pôs «Hora · {{fuso}}» na etiqueta do campo, à vista. Não
+    // falha o build, não falha o tsc, não falha nenhum teste — só se vê no
+    // browser, e só se alguém lá for.
+    //
+    // Compara-se pela chave COMPLETA: pela última parte, 524 chamadas
+    // inocentes pareciam culpadas (um `erro` noutro sítio tem `{{…}}`).
+    const pt = mapaDeLocale('pt')
+    const exigemParam = new Set(Object.entries(pt).filter(([, v]) => v.includes('{{')).map(([k]) => k))
+    const maus: string[] = []
+    for (const f of ficheirosDeCodigo()) {
+      const txt = read(f)
+      for (const m of txt.matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'\s*\)/g)) {
+        if (exigemParam.has(m[1])) maus.push(`${f}: ${m[1]}`)
+      }
+    }
+    expect(maus).toEqual([])
   })
 
   it('os placeholders {{…}} de cada tradução são os mesmos do português', () => {

@@ -15,6 +15,9 @@ export interface Room {
   e2ee: boolean
   /** 'normal' (por defeito) ou 'training' — só treino tem salas de grupo. */
   format?: string
+  /** A sala aceita convidados sem conta (passam sempre pela sala de espera). */
+  allow_guests?: boolean
+  created_at?: string
 }
 
 /** Resposta de auth: o refresh token NÃO vem aqui — vive num cookie HttpOnly. */
@@ -266,6 +269,31 @@ export const createRoom = (
 
 export const getRoom = (code: string) => request<Room>(`/api/rooms/${code}`)
 
+export interface RoomPage {
+  items: Room[]
+  next_page_token?: string
+}
+
+/** As salas de que sou dono, da mais recente para a mais antiga. */
+export const listMyRooms = (signal?: AbortSignal, pageToken?: string, pageSize?: number) => {
+  const q = new URLSearchParams()
+  if (pageToken) q.set('page_token', pageToken)
+  if (pageSize) q.set('page_size', String(pageSize))
+  const qs = q.toString()
+  return request<RoomPage>(`/api/rooms${qs ? `?${qs}` : ''}`, { signal })
+}
+
+/** Liga ou desliga a entrada de convidados sem conta. Só o dono. */
+export const patchRoom = (code: string, allowGuests: boolean) =>
+  request<Room>(`/api/rooms/${code}`, { method: 'PATCH', body: JSON.stringify({ allow_guests: allowGuests }) })
+
+/**
+ * Apaga uma sala. O servidor RECUSA (409) se ela tiver gravações, se estiver
+ * marcada numa reunião futura, ou se for a sala pessoal — e diz qual é o caso
+ * no `code` do erro.
+ */
+export const deleteRoom = (code: string) => request<void>(`/api/rooms/${code}`, { method: 'DELETE' })
+
 export const joinRoom = (code: string) =>
   request<{ room: Room; room_token: string; scheduled?: boolean }>(`/api/rooms/${code}/join`, { method: 'POST' })
 
@@ -299,7 +327,10 @@ export interface RecordingItem extends Recording {
   share_count: number
   /** RBAC: só dono + admins da org podem descarregar (os restantes só reproduzem). */
   can_download: boolean
-  /** `ready` = há ficheiro. `failed` = houve tentativa e não há nada. */
+  /**
+   * `ready` = há ficheiro. `failed` = houve tentativa e não há nada.
+   * `processing` = o servidor ainda está a compor o ficheiro (não é falha).
+   */
   status: 'ready' | 'failed' | string
   /** Causa em linguagem de utilizador, quando falhou. */
   failure_reason: string | null
@@ -317,6 +348,8 @@ export interface Meeting {
   starts_at: string
   duration_min: number
   room_code: string | null
+  /** `null` enquanto o anfitrião não arrancar (migração 0114). */
+  started_at?: string | null
   is_owner: boolean
   minutes?: string
   room_ref?: string | null
@@ -366,7 +399,12 @@ export interface QuarantineRow {
   count: number
 }
 
-export const listRecordings = (code: string) => request<Recording[]>(`/api/rooms/${code}/recordings`)
+/**
+ * As gravações de uma sala (o painel dentro da reunião), na mesma forma da
+ * biblioteca: com `status`, `failure_reason`, `progress_pct` e `can_download`,
+ * para o painel não oferecer nada sobre uma gravação sem ficheiro (R59).
+ */
+export const listRecordings = (code: string) => request<RecordingLibraryItem[]>(`/api/rooms/${code}/recordings`)
 
 export const recordingsLibrary = (signal?: AbortSignal) => request<RecordingItem[]>('/api/recordings', { signal })
 
@@ -534,6 +572,41 @@ export const inviteToRoom = (code: string, targets: string[], kind: 'video' | 'v
     body: JSON.stringify({ targets, kind }),
   })
 
+/** «Ligar a…» a partir da sala: um ramal da organização que toca e entra na sala. */
+export type DialOutStatus =
+  | 'queued' | 'dialing' | 'ringing' | 'in_call' | 'ended' | 'declined' | 'no_answer' | 'failed' | 'cancelled'
+export interface DialOut {
+  id: string
+  room_code: string
+  extension_id: string | null
+  /** Número curto do ramal, enquanto ele existir. */
+  extension: string | null
+  display_name: string | null
+  status: DialOutStatus
+  /** Causa estável quando falhou (`USER_NOT_REGISTERED`, `stale`, `esl_lost`…). */
+  failure_code: string | null
+  created_at: string
+  answered_at: string | null
+  ended_at: string | null
+  billsec: number | null
+}
+// `?room=` é a chave de afinidade do balanceador: a sala e a ponte vivem no pod que a serve.
+export const createDialOut = (code: string, extensionId: string) =>
+  request<DialOut>(`/api/rooms/${code}/dial-outs?room=${encodeURIComponent(code)}`, {
+    method: 'POST',
+    body: JSON.stringify({ extension_id: extensionId }),
+  })
+export const listDialOuts = (code: string, signal?: AbortSignal) =>
+  request<{ items: DialOut[]; next_page_token: string | null }>(
+    `/api/rooms/${code}/dial-outs?room=${encodeURIComponent(code)}&page_size=20`,
+    { signal },
+  )
+export const hangupDialOut = (code: string, id: string) =>
+  request<DialOut>(`/api/rooms/${code}/dial-outs/${id}/hangup?room=${encodeURIComponent(code)}`, {
+    method: 'POST',
+    body: '{}',
+  })
+
 export const listMeetings = (signal?: AbortSignal) => request<Meeting[]>('/api/meetings', { signal })
 
 export const createMeeting = (m: {
@@ -543,6 +616,13 @@ export const createMeeting = (m: {
   starts_at: string
   duration_min: number
   invitee_ids: string[]
+  /**
+   * Endereços de email de convidados SEM conta aqui (no máximo 50). Cada um
+   * recebe o seu convite com o `.ics`, e entra pela porta de convidado — nome e
+   * sala de espera (R290). O servidor normaliza e valida
+   * (`meeting.invalid_external_email`, `meeting.too_many_external_invitees`).
+   */
+  external_emails?: string[]
   room_ref?: string | null
   recurrence_freq?: RecurrenceFreq | null
   recurrence_interval?: number
@@ -559,6 +639,16 @@ export const checkConflicts = (body: {
 }) => request<Conflicts>('/api/meetings/check-conflicts', { method: 'POST', body: JSON.stringify(body) })
 
 export const deleteMeeting = (id: string) => request(`/api/meetings/${id}`, { method: 'DELETE' })
+
+/**
+ * Remarca uma reunião. Só o anfitrião, e o servidor recusa uma recorrente, uma
+ * que já começou e uma hora no passado (`meeting.recurring_unsupported`,
+ * `meeting.already_started`, `meeting.starts_in_past`).
+ *
+ * `duration_min` omisso = mantém a duração que está.
+ */
+export const rescheduleMeeting = (id: string, body: { starts_at: string; duration_min?: number }) =>
+  request<Meeting>(`/api/meetings/${id}/reschedule`, { method: 'POST', body: JSON.stringify(body) })
 
 export const startMeeting = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' }>(`/api/meetings/${id}/start`, { method: 'POST' })
@@ -593,15 +683,20 @@ export interface OrgSummary {
   member_count: number
   domain?: string
   retention_days?: number
+  /** Dias de retenção do chat. `null`/ausente = fica até alguém mandar apagar. */
+  chat_retention_days?: number | null
   max_groups?: number | null
   max_rooms?: number | null
   max_meetings?: number | null
-}
-
-export interface OrgQuotas {
-  max_groups: number | null
-  max_rooms: number | null
-  max_meetings: number | null
+  /**
+   * A organização permite o motor de voz do BROWSER (a Web Speech, que envia
+   * o áudio aos servidores da Google). `false` proíbe-o: o servidor avisa os
+   * clientes à entrada da sala e recusa as frases que venham dele.
+   *
+   * Ausente = um servidor anterior à migração 0127; vale «permite», que é a
+   * omissão da coluna.
+   */
+  allow_web_speech?: boolean
 }
 
 export interface WhiteboardMeta {
@@ -628,6 +723,52 @@ export const shareWhiteboard = (id: string, isPublic: boolean) =>
   })
 export const whiteboardPngUrl = (id: string) => `/api/whiteboards/${id}/image`
 
+// ---------- Diagramas (o modelo EDITÁVEL; o quadro acima é o PNG) ----------
+
+/** O que a lista do servidor devolve — sem o documento. */
+export interface DiagramServerSummary {
+  id: string
+  title: string
+  notation: string
+  room_code: string
+  elements: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DiagramServerDetail extends DiagramServerSummary {
+  /** O `DiagramDoc` como o cliente o escreveu. Opaco para o servidor. */
+  doc: unknown
+}
+
+export interface DiagramSaveBody {
+  title: string
+  notation: string
+  room_code: string
+  elements: number
+  doc: unknown
+  /**
+   * O `updated_at` que este browser viu. Com ele, gravar a partir de um estado
+   * velho dá `409` em vez de escrever por cima do que outra aba gravou.
+   */
+  expected_updated_at?: string
+}
+
+export const listServerDiagrams = (signal?: AbortSignal) =>
+  request<DiagramServerSummary[]>('/api/diagrams', { signal })
+
+export const getServerDiagram = (id: string, signal?: AbortSignal) =>
+  request<DiagramServerDetail>(`/api/diagrams/${encodeURIComponent(id)}`, { signal })
+
+export const putServerDiagram = (id: string, body: DiagramSaveBody) =>
+  request<DiagramServerSummary>(`/api/diagrams/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+
+export const deleteServerDiagram = (id: string) =>
+  requestEmpty(`/api/diagrams/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
 export interface Webhook {
   id: string
   org_id: string
@@ -637,15 +778,35 @@ export interface Webhook {
   active: boolean
 }
 
+// `max_groups`/`max_rooms`/`max_meetings`/`voice_media_backend`/
+// `voice_did_model` SAÍRAM deste pedido de propósito (não os acrescentes de
+// volta): são o plano que a PLATAFORMA vende, não política de tenant — ver
+// `OrgSettingsReq` em `server/src/org.rs`. `OrgSummary` continua a devolvê-los
+// para leitura (o cartão de definições mostra-os só como texto).
+/**
+ * `chatRetentionDays`: dias que o chat das salas fica guardado.
+ * **`null` = fica até alguém mandar apagar** (a omissão desde 2026-10-14; antes
+ * disso a varredura apagava ao fim do dia). `0` apaga na varredura seguinte, que
+ * é o efémero de quem o escolhe.
+ */
 export const updateOrgSettings = (
   orgId: string,
   domain: string,
   retentionDays: number,
-  quotas?: Partial<OrgQuotas>,
+  chatRetentionDays: number | null = null,
+  allowWebSpeech?: boolean,
 ) =>
   request(`/api/orgs/${orgId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ domain, retention_days: retentionDays, ...quotas }),
+    body: JSON.stringify({
+      domain,
+      retention_days: retentionDays,
+      chat_retention_days: chatRetentionDays,
+      // Omisso MANTÉM o actual (`COALESCE` no servidor). É por isso que vai
+      // como `undefined` e não como `false` por omissão: um formulário que não
+      // mostrasse o campo não podia proibir o motor do browser sem querer.
+      allow_web_speech: allowWebSpeech,
+    }),
   })
 
 /** Busca autenticada de um recurso binário → object URL (para <img>). */
@@ -785,6 +946,87 @@ export interface AuditEntry {
   created_at: string
 }
 /** Registos de auditoria da organização (só admins). */
+/* ---------------- Correio da organização (ADR-0025) ---------------- */
+
+/** O SMTP próprio de uma organização. **Nunca traz a password**, só se existe. */
+export interface OrgMailSettings {
+  host: string
+  port: number
+  username: string
+  password_configured: boolean
+  starttls: boolean
+  from_address: string
+  /** `false` = guardado mas a dormir; o correio sai pelo relay do operador. */
+  enabled: boolean
+  updated_by: string | null
+  updated_at: string
+}
+
+export interface PutOrgMailSettings {
+  host: string
+  port: number
+  username?: string
+  /** Omissa = MANTÉM a que está. `''` apaga-a. */
+  password?: string
+  from_address: string
+  starttls: boolean
+  /** Obrigatório quando `starttls` é `false`: sem TLS a password viaja à vista. */
+  allow_plaintext?: boolean
+  enabled: boolean
+}
+
+/** `404` quando a organização não configurou SMTP próprio — e aí o correio dela
+ *  sai pelo relay do operador. */
+export const getOrgMailSettings = (orgId: string, signal?: AbortSignal) =>
+  request<OrgMailSettings>(`/api/orgs/${orgId}/mail-settings`, { signal })
+
+export const putOrgMailSettings = (orgId: string, body: PutOrgMailSettings) =>
+  request<OrgMailSettings>(`/api/orgs/${orgId}/mail-settings`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+
+export const deleteOrgMailSettings = (orgId: string) =>
+  request(`/api/orgs/${orgId}/mail-settings`, { method: 'DELETE' })
+
+/** Liga-se ao relay e fala SMTP (autenticação incluída) **sem mandar
+ *  mensagem**. `ok: false` com razão é uma resposta, não um erro. */
+export const checkOrgMailRelay = (orgId: string) =>
+  request<{ ok: boolean; error: string | null }>(`/api/orgs/${orgId}/mail-settings/check`, {
+    method: 'POST',
+  })
+
+export type MailStatus = 'pending' | 'sending' | 'sent' | 'failed'
+
+/** Uma mensagem da caixa de saída. **Sem corpo**: o de um convite leva o token. */
+export interface MailMessage {
+  id: string
+  purpose: string
+  to_address: string
+  subject: string
+  status: MailStatus
+  attempt: number
+  /** A razão da última falha — é para isto que a listagem serve. */
+  error: string | null
+  retry_at: string | null
+  created_at: string
+  sent_at: string | null
+}
+
+export const listOrgMailMessages = (
+  orgId: string,
+  f: { status?: MailStatus; purpose?: string } & PageParams = {},
+  signal?: AbortSignal,
+) => {
+  const q = new URLSearchParams()
+  if (f.status) q.set('status', f.status)
+  if (f.purpose) q.set('purpose', f.purpose)
+  if (f.page_size) q.set('page_size', String(f.page_size))
+  if (f.page_token) q.set('page_token', f.page_token)
+  const s = q.toString()
+  return request<Page<MailMessage>>(`/api/orgs/${orgId}/mail-messages${s ? `?${s}` : ''}`, { signal })
+}
+
 export const listAudit = (orgId: string, limit = 100) =>
   request<AuditEntry[]>(`/api/orgs/${orgId}/audit-events?limit=${limit}`)
 export const createOrg = (name: string) =>
@@ -976,11 +1218,69 @@ export const revokeInvitation = (orgId: string, invitationId: string) =>
 /** O link que o admin copia: o token só existe na resposta que o criou. */
 export const invitationLink = (token: string) => `${location.origin}${location.pathname}#/invite/${token}`
 
+/** Reposição de password emitida por um administrador (#288). O `token` vem
+ *  UMA só vez, nesta resposta; a base guarda só o hash. */
+export interface IssuedPasswordReset {
+  id: string
+  user_id: string
+  expires_at: string
+  token: string
+  delivery_channel: string
+}
+
+export const issuePasswordReset = (orgId: string, userId: string) =>
+  request<IssuedPasswordReset>(`/api/orgs/${orgId}/users/${userId}/password-reset`, { method: 'POST', body: '{}' })
+
+/** O link que o administrador entrega: abre a mesma página pública da
+ *  reposição por email (`#/repor-password`). O token vai no FRAGMENTO. */
+export const passwordResetLink = (token: string) =>
+  `${location.origin}${location.pathname}#/repor-password?token=${token}`
+
 /** Quem tem sessão aceita o convite (o token é a credencial, de uso único). */
 export const acceptInvitation = (token: string) =>
   request<{ org_id: string; role_id: string; access_expires_at?: string | null }>('/api/invitations/accept', {
     method: 'POST',
     body: JSON.stringify({ token }),
+  })
+
+// ---------- Prova do endereço de email (D7, migração 0111) ----------
+// O token NUNCA vem nestas respostas: só vai no email. Devolvê-lo provaria a
+// sessão de quem pede, não o endereço.
+
+export interface EmailVerificationStatus {
+  status: 'verified' | 'pending' | 'unverified' | 'sent'
+  email: string
+  expires_at?: string
+}
+
+export const emailVerificationStatus = () =>
+  request<EmailVerificationStatus>('/api/users/me/email-verification')
+
+export const requestEmailVerification = () =>
+  request<EmailVerificationStatus>('/api/users/me/email-verification', { method: 'POST', body: '{}' })
+
+/** Pública: o link do email pode abrir-se noutro aparelho, sem sessão. */
+export const acceptEmailVerification = (token: string) =>
+  request<{ email: string; verified_at: string }>('/api/email-verifications/accept', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+
+// ---------- Reposição de password pela própria pessoa (E3, migração 0112) ----------
+
+/** Pública. Responde o MESMO para qualquer endereço: só sai um email para uma
+ *  conta com o endereço provado, e a resposta não diz se foi o caso. */
+export const requestPasswordRecovery = (email: string) =>
+  request<{ status: 'accepted' }>('/api/password-resets/request', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+
+/** Pública: quem a usa está fora da conta. Termina TODAS as sessões. */
+export const acceptPasswordReset = (token: string, password: string) =>
+  request<{ sessions_revoked: number }>('/api/password-resets/accept', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
   })
 
 export interface DirectoryEntry {
@@ -1037,16 +1337,12 @@ export interface OdooConfig {
   odoo_token_prefix: string | null
   odoo_admin_id: string | null
   odoo_synced_at: string | null
-  hide_org_creation: boolean
-  hide_sso_button: boolean
 }
 
 export interface OdooConfigSaveReq {
   odoo_enabled: boolean
   odoo_url: string | null
   odoo_db: string | null
-  hide_org_creation: boolean
-  hide_sso_button: boolean
 }
 
 export const getOdooConfig = (orgId: string) =>
@@ -1073,6 +1369,15 @@ export const getPlatformSettings = () =>
 
 // ---------- Platform storage ----------
 
+/** Objectos (MinIO/S3) como o servidor os vê no AMBIENTE — nunca as chaves. */
+export interface ObjectStoreView {
+  endpoint: string
+  bucket: string
+  region: string
+  /** Hoje `false`: as gravações continuam em disco (ADR-0020). */
+  used_for_recordings: boolean
+}
+
 export interface StorageConfig {
   storage_type: 'local' | 'nfs' | 'webdav'
   nfs_server: string | null
@@ -1081,6 +1386,8 @@ export interface StorageConfig {
   webdav_user: string | null
   webdav_password_set: boolean
   webdav_path: string
+  /** Ausente quando o servidor não tem `OBJECT_STORE_*` configurado. */
+  object_store?: ObjectStoreView | null
 }
 
 export interface StorageConfigSaveReq {
@@ -1633,6 +1940,22 @@ export interface StudioAiStatus {
 export const studioAiStatus = (orgId: string, signal?: AbortSignal) =>
   request<StudioAiStatus>(`/api/orgs/${orgId}/ai/status`, { signal })
 
+/**
+ * A IA local está realmente utilizável?
+ *
+ * Os três têm de valer: `configured` (o servidor tem OLLAMA_URL — sem ele a IA
+ * está desligada e nem tenta), `reachable` (o Ollama responde) e um modelo
+ * instalado. O `model_installed !== false` e não `=== true` de propósito:
+ * `null` quer dizer «não se conseguiu saber», e isso não é um «não».
+ *
+ * Existe para não haver duas versões desta conta: o Estúdio decidia-a numa
+ * linha sua e a consola de IA mostrava «activa» em código fixo — que em
+ * produção, de 10 a 13 de Outubro de 2026, era falso.
+ */
+export function studioAiDisponivel(s: StudioAiStatus | null | undefined): boolean {
+  return !!s && s.configured && s.reachable && s.model_installed !== false
+}
+
 export type StudioAiTask = 'summary' | 'publication' | 'fillers'
 
 export interface StudioAiRequest {
@@ -1772,6 +2095,25 @@ export const createMeetingWithOptions = (
     method: 'POST',
     body: JSON.stringify(m),
   })
+
+/** Os convidados externos de uma reunião (só o anfitrião). */
+export const listExternalInvitees = (id: string) =>
+  request<{ email: string; created_at: string }[]>(`/api/meetings/${id}/external-invitees`)
+
+/**
+ * Convida um endereço externo para uma reunião que já existe e manda-lhe o
+ * convite. `delivery_channel` é `email` ou `manual` (sem relay configurado,
+ * quem convida entrega o link à mão).
+ */
+export const addExternalInvitee = (id: string, email: string) =>
+  request<{ email: string; delivery_channel: 'email' | 'manual' }>(
+    `/api/meetings/${id}/external-invitees`,
+    { method: 'POST', body: JSON.stringify({ email }) },
+  )
+
+/** Tira da lista. NÃO desconvida quem já recebeu — impede o próximo convite. */
+export const removeExternalInvitee = (id: string, email: string) =>
+  request(`/api/meetings/${id}/external-invitees/${encodeURIComponent(email)}`, { method: 'DELETE' })
 
 export const startMeetingWithOptions = (id: string) =>
   request<{ code: string; kind: 'video' | 'voice' } & MeetingSessionOptions>(`/api/meetings/${id}/start`, {
@@ -2619,7 +2961,8 @@ export const deleteSavedSearch = (id: string) =>
 // ---------- delonix-meet-backend/convidado-sem-conta ----------
 //
 // Convidado SEM conta. Estas funções são o contrato do ecrã de entrada de
-// convidado, que ainda NÃO existe: nenhuma página as chama.
+// convidado (`pages/PortaDeConvidado.tsx`); quem as chama é `convidado.ts`, que
+// guarda o bilhete e o entrega à sala.
 //
 // Fluxo: `guestJoin(código, nome)` → `room_token` + `ice_servers` → abrir
 // `/ws?token=…` → chega `waiting` → o anfitrião admite → chega `joined`. A partir
@@ -2704,6 +3047,32 @@ export async function guestJoin(code: string, displayName: string): Promise<Gues
     const ra = Number(res.headers.get('retry-after'))
     throw new GuestJoinError(res.status, body, guestJoinFailure(res.status), Number.isFinite(ra) && ra > 0 ? ra : null)
   }
+  return res.json()
+}
+
+export interface RoomEntrance {
+  code: string
+  name: string
+  allow_guests: boolean
+  waiting_room: boolean
+  e2ee: boolean
+  /** Hora marcada, quando a sala é de uma reunião agendada. */
+  starts_at: string | null
+  duration_min: number | null
+  /** `true` quando já se pode entrar: sala ad-hoc, anfitrião arrancou, ou a hora chegou. */
+  open: boolean
+}
+
+/**
+ * `GET /api/rooms/{code}/entrance`. PÚBLICO, como o `guest-join`: é o que o
+ * ecrã de entrada precisa de saber ANTES de haver sessão nenhuma — quem abre
+ * um link partilhado pode não ter conta. Vai sem `Authorization` de propósito
+ * (a resposta é a mesma com ou sem ela) e um erro aqui nunca dispara renovação
+ * de sessão.
+ */
+export async function roomEntrance(code: string, signal?: AbortSignal): Promise<RoomEntrance> {
+  const res = await fetch(`/api/rooms/${encodeURIComponent(code)}/entrance`, { credentials: 'omit', signal })
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null), 'room_entrance')
   return res.json()
 }
 
@@ -3082,3 +3451,176 @@ export const listCallRecords = (orgId: string, f?: CallRecordFilter, signal?: Ab
 /** `month` em `YYYY-MM`; sem ele, o mês corrente no fuso do servidor. */
 export const getTelephonyUsage = (orgId: string, month?: string, signal?: AbortSignal) =>
   request<TelephonyUsage>(tel(orgId, `/usage${query({ month })}`), { signal })
+
+// ---------------------------------------------------------------------------
+//  OAuth 2.1 — o consentimento de um agente (ADR-0028)
+//
+//  O ecrã de consentimento é da web de propósito: o servidor valida e
+//  redirecciona, mas quem desenha e quem pergunta é esta aplicação, com
+//  sessão. As três funções abaixo são tudo o que ele precisa.
+// ---------------------------------------------------------------------------
+
+/** Os parâmetros do fluxo, tal como chegam no endereço. Opacos para nós. */
+export interface OAuthRequestParams {
+  response_type: string
+  client_id: string
+  redirect_uri: string
+  scope: string
+  code_challenge: string
+  code_challenge_method: string
+  resource: string
+  state?: string
+}
+
+export interface OAuthScopeInfo {
+  scope: string
+  /** O que este escopo abre, em linguagem de pessoa. Vem do servidor. */
+  describes: string
+  read_only: boolean
+}
+
+export interface OAuthConsentInfo {
+  client_name: string
+  /** O cliente registou-se a si mesmo (RFC 7591) — quem consente deve sabê-lo. */
+  registered_dynamically: boolean
+  organization_id: string
+  organization_name: string
+  scopes: OAuthScopeInfo[]
+  already_granted: boolean
+}
+
+export interface OAuthGrant {
+  id: string
+  client_id: string
+  client_name: string
+  scopes: string[]
+  created_at: string
+  updated_at: string
+}
+
+export const oauthConsentInfo = (p: OAuthRequestParams, signal?: AbortSignal) =>
+  request<OAuthConsentInfo>(`/api/oauth/authorization-info${query({ ...p })}`, { signal })
+
+/** Devolve para onde o browser vai a seguir — com o código, ou com `access_denied`. */
+export const oauthDecide = (p: OAuthRequestParams, approve: boolean) =>
+  request<{ redirect_to: string }>('/api/oauth/authorizations', {
+    method: 'POST',
+    body: JSON.stringify({ ...p, approve }),
+  })
+
+export const listOauthGrants = () => request<OAuthGrant[]>('/api/users/me/oauth-grants')
+
+/** Retirar o consentimento TERMINA as sessões do agente — morre no mesmo instante. */
+export const revokeOauthGrant = (grantId: string) =>
+  request<void>(`/api/users/me/oauth-grants/${encodeURIComponent(grantId)}`, { method: 'DELETE' })
+
+// ---------- Estúdio de TV: estúdios, códigos de emparelhamento e fontes ----------
+// O servidor serve isto desde o ADR-0014 (`server/src/studio.rs`): o Estúdio
+// emite um código `XXXX-XXXX` de vida curta, o telefone resgata-o e recebe a
+// SALA e um token de fonte. O cartão «Phone as a camera» dizia «a aguardar
+// servidor» porque o web nunca foi ligado — o servidor já cá estava.
+
+export interface Studio {
+  id: string
+  name: string
+  room_code: string
+  created_at: string
+}
+
+/** O código só aparece NESTA resposta — depois disto a base só tem o hash. */
+export interface NewPairingCode {
+  id: string
+  /** `XXXX-XXXX`, em Crockford base32. */
+  code: string
+  expires_at: string
+  number: number | null
+  label: string
+  max_attempts: number
+  room_code: string
+}
+
+export interface PairingCode {
+  id: string
+  number: number | null
+  label: string
+  expires_at: string
+  attempts: number
+  max_attempts: number
+  consumed_at: string | null
+  /** `active` · `consumed` · `expired` · `burned`. */
+  state: 'active' | 'consumed' | 'expired' | 'burned'
+  created_at: string
+}
+
+/** O que o telefone recebe ao resgatar: onde entrar e com que credencial. */
+export interface Pairing {
+  source_id: string
+  studio_id: string
+  number: number
+  ws_path: string
+  label: string
+  room_code: string
+  source_token: string
+  expires_at: string
+  /** STUN/TURN: uma fonte não tem conta para pedir `/api/ice-servers`. */
+  ice_servers: RTCConfiguration
+}
+
+/** Devolve o ENVELOPE (`{items}`), como as outras listagens — não um array. */
+export const listStudios = (orgId: string) =>
+  request<{ items: Studio[]; next_page_token?: string }>(`/api/orgs/${orgId}/studios`)
+
+export const createStudio = (orgId: string, name: string) =>
+  request<Studio>(`/api/orgs/${orgId}/studios`, { method: 'POST', body: JSON.stringify({ name }) })
+
+/** Uma câmara emparelhada: existe na base mesmo com o telefone desligado. */
+export interface StudioSource {
+  id: string
+  studio_id: string
+  number: number
+  label: string
+  /** `phone_app` — por agora o único. */
+  kind: string
+  device: { model: string; platform: string; app_version: string }
+  paired_at: string
+  revoked_at: string | null
+  last_seen_at: string | null
+  /** `true` enquanto o `/ws` da fonte estiver aberto. */
+  connected: boolean
+  tally: string
+}
+
+export const listStudioSources = (orgId: string, studioId: string) =>
+  request<{ items: StudioSource[]; next_page_token?: string }>(
+    `/api/orgs/${orgId}/studios/${studioId}/sources`,
+  )
+
+export const revokeStudioSource = (orgId: string, studioId: string, sourceId: string) =>
+  requestEmpty(`/api/orgs/${orgId}/studios/${studioId}/sources/${encodeURIComponent(sourceId)}`, {
+    method: 'DELETE',
+  })
+
+export const listPairingCodes = (orgId: string, studioId: string) =>
+  request<{ items: PairingCode[]; next_page_token?: string }>(
+    `/api/orgs/${orgId}/studios/${studioId}/pairing-codes`,
+  )
+
+export const createPairingCode = (orgId: string, studioId: string, body: { label?: string; number?: number } = {}) =>
+  request<NewPairingCode>(`/api/orgs/${orgId}/studios/${studioId}/pairing-codes`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const revokePairingCode = (orgId: string, studioId: string, codeId: string) =>
+  requestEmpty(`/api/orgs/${orgId}/studios/${studioId}/pairing-codes/${encodeURIComponent(codeId)}`, {
+    method: 'DELETE',
+  })
+
+/**
+ * Resgate — do lado do TELEFONE, que não tem conta. É anónimo de propósito, e
+ * o servidor responde o mesmo (`studio.pairing_invalid`) a código inexistente,
+ * expirado, já usado, queimado ou com segredo errado: quem tenta não aprende
+ * nada com a recusa.
+ */
+export const redeemPairingCode = (code: string, device: { model?: string; platform?: string; app_version?: string } = {}) =>
+  request<Pairing>('/api/studio-pairings', { method: 'POST', body: JSON.stringify({ code, device }) })

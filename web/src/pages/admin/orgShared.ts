@@ -43,12 +43,17 @@ export function useLocaleTag(): string {
  * depois de criar uma organização ou mudar as definições) e a escolhida, que
  * começa na organização activa do Shell.
  */
+const SEM_ORGS: OrgSummary[] = []
+
 export function useOrgSelection() {
   const shell = useShell()
   const { t } = useTranslation()
   const list = useAsync((signal) => refusalAware(myOrgs(signal), t), [])
   const [orgId, setOrgId] = useState<string | null>(shell.org?.id ?? null)
-  const orgs: OrgSummary[] = list.state.s === 'ready' ? list.state.d : []
+  // `SEM_ORGS` é uma constante de módulo e não um `[]` literal: o literal era
+  // um array NOVO a cada render enquanto a lista carregava, e isso anulava o
+  // `useMemo` abaixo — recalculava a organização escolhida em todos os renders.
+  const orgs: OrgSummary[] = list.state.s === 'ready' ? list.state.d : SEM_ORGS
   const org = useMemo(() => orgs.find((o) => o.id === orgId) ?? orgs[0] ?? null, [orgs, orgId])
   useEffect(() => {
     if (!orgId && shell.org) setOrgId(shell.org.id)
@@ -74,13 +79,5 @@ export function formatAgo(iso: string | null | undefined, locale: string): strin
   return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-export function formatBytes(b: number, locale: string): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let v = b
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toLocaleString(locale, { maximumFractionDigits: i >= 3 ? 2 : 0 })} ${units[i]}`
-}
+/** Tamanho legível — o formatador único (`ui/format`). */
+export { formatBytes } from '../../ui/format'

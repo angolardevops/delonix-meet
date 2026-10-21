@@ -277,6 +277,13 @@ pub struct Pairing {
     pub source_token: String,
     pub expires_at: DateTime<Utc>,
     pub ws_path: String,
+    /// STUN e TURN com credenciais de uma hora, como o `/api/ice-servers` dá.
+    //
+    // Vão AQUI porque uma fonte não tem conta: o `/api/ice-servers` exige
+    // sessão, e sem relay um telefone emparelhado só se ligava dentro da mesma
+    // rede. É a mesma razão por que o bilhete de convidado já os traz, e o
+    // `rooms::ice_config` já está partilhado para isso.
+    pub ice_servers: serde_json::Value,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1013,6 +1020,7 @@ pub async fn redeem(
             room_code,
             source_token: token,
             expires_at: DateTime::from_timestamp(exp, 0).unwrap_or_else(Utc::now),
+            ice_servers: crate::rooms::ice_config(&state, &headers)?,
         }),
     )
         .into_response())

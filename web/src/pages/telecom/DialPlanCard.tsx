@@ -39,6 +39,7 @@ export default function DialPlanCard({ orgId, state, reload, trunks }: { orgId: 
             ) : (
               <div className="dx-table-wrap">
                 <table className="dx-table tel-table" data-testid="tel-dialplan">
+                  <caption className="dx-sr-only">{t('telecom.plano.titulo')}</caption>
                   <thead>
                     <tr>
                       <th scope="col">{t('telecom.plano.colN')}</th>

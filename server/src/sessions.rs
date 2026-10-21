@@ -38,6 +38,9 @@ pub enum AuthMethod {
     Passkey,
     Sso,
     Odoo,
+    /// Autorização de um agente por OAuth 2.1 (ADR-0028). É uma sessão como as
+    /// outras de propósito: aparece na lista, e «terminar» mata o agente.
+    Oauth,
     Legacy,
 }
 
@@ -49,6 +52,7 @@ impl AuthMethod {
             AuthMethod::Passkey => "passkey",
             AuthMethod::Sso => "sso",
             AuthMethod::Odoo => "odoo",
+            AuthMethod::Oauth => "oauth",
             AuthMethod::Legacy => "legacy",
         }
     }
@@ -278,7 +282,8 @@ pub(crate) async fn revoke_all_except(
 }
 
 /// Varredor: sessões sem refresh token vivo passam a `expired`; sessões
-/// terminadas há mais de 90 dias e cerimónias WebAuthn vencidas saem.
+/// terminadas há mais de 90 dias, cerimónias WebAuthn vencidas e estados SSO
+/// pendentes vencidos (A2) saem.
 pub(crate) async fn sweep(db: &sqlx::PgPool) -> Result<(u64, u64), sqlx::Error> {
     let expired = sqlx::query(
         "UPDATE user_sessions s SET revoked_at = now(), revoked_reason = 'expired'
@@ -296,6 +301,12 @@ pub(crate) async fn sweep(db: &sqlx::PgPool) -> Result<(u64, u64), sqlx::Error> 
             .await?
             .rows_affected();
     sqlx::query("DELETE FROM webauthn_ceremonies WHERE expires_at < now()")
+        .execute(db)
+        .await?;
+    // O consumo em `sso_callback` já é atómico e já filtra os vencidos (A2):
+    // isto é só limpeza, para a tabela não crescer com `authorize` que nunca
+    // chegou ao `callback` (link copiado mas não aberto, aba fechada, etc).
+    sqlx::query("DELETE FROM sso_pending_states WHERE created_at < now() - interval '10 minutes'")
         .execute(db)
         .await?;
     Ok((expired, deleted))

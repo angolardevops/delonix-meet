@@ -16,13 +16,29 @@
 #      `helm template` falha com a mensagem certa; `latest` é recusada em
 #      produção; o PBX de laboratório e o Postgres do chart também;
 #   4. os três perfis renderizam (produção, produção com voz, laboratório);
+#   5b. a IA in-cluster está ligada a si mesma: Ollama instalado ⇒ OLLAMA_URL no
+#      ConfigMap a apontar para o SEU Service, com PVC, e os modelos que o
+#      servidor pede são os que o pod puxa; OLLAMA_URL sem Ollama é recusado;
+#   5c. o ASR: Whisper instalado ⇒ /asr encaminhado para ele, e o JWT_SECRET por
+#      secretKeyRef (sem a chave o /asr recusa tudo em silêncio);
 #   5. em todos: nenhum Ingress chega ao Service interno nem às portas
 #      8181/9180; o /ws vai para o Service dedicado com
 #      upstream-hash-by:$arg_room; ninguém liga DELONIX_ALLOW_INSECURE;
 #      FORCE_TURN_RELAY=1; readiness em /ready; drain maior que o do servidor;
 #   6. produção: NENHUM Secret renderizado, nenhuma imagem sem tag ou `latest`;
-#   7. laboratório: os segredos gerados são aleatórios (dois renders diferem);
-#   8. nenhum segredo de desenvolvimento conhecido (deploy/k8s/01-config.yaml,
+#   7. produção: a quota do namespace cobre o pico COM ROLLOUT do chart MAIS a
+#      plataforma que vive no mesmo namespace (Postgres e Redis, lidos de
+#      deploy/k8s/plataforma) — requests, limits, pods e PVCs — e o `max` do
+#      LimitRange não rejeita nenhum deles (ADR-0021, D1 de 2026-10-10);
+#   7b. a prioridade de agendamento é opcional (ninguém FIXA uma classe) e, quando
+#      dada, chega a TODOS os workloads — incluindo o Job de migração, que bloqueia
+#      o release;
+#   7c. os nomes de classe que os valores usam estão DECLARADOS em
+#      deploy/k8s/plataforma/priorityclasses.yaml, e nenhuma classe é o default do
+#      cluster (um globalDefault: true mudava a prioridade dos pods de outras
+#      equipas);
+#   8. laboratório: os segredos gerados são aleatórios (dois renders diferem);
+#   9. nenhum segredo de desenvolvimento conhecido (deploy/k8s/01-config.yaml,
 #      server/src/config.rs) aparece no chart nem no que ele renderiza.
 #
 #  Opcional (DRYRUN=1): `kubectl apply --dry-run=server` do perfil de
@@ -94,7 +110,7 @@ lint local "${LOCAL[@]}"
 # ---- 3. recusas -------------------------------------------------------
 recusa() { # descrição, texto esperado, args…
   local desc=$1 esperado=$2; shift 2
-  if "$HELM" template meet "$CHART" -n delonix-meet "$@" >"$OUT/recusa.out" 2>"$OUT/recusa.err"; then
+  if "$HELM" template meet "$CHART" -n ngolacloud-meet "$@" >"$OUT/recusa.out" 2>"$OUT/recusa.err"; then
     erro "devia ter sido recusado e renderizou: $desc"
   elif ! grep -qF -- "$esperado" "$OUT/recusa.err"; then
     erro "recusado, mas sem a mensagem «$esperado»: $desc"
@@ -114,8 +130,44 @@ recusa "produção com segredos gerados" "secrets.create=true é só para labora
   "${PROD[@]}" --set secrets.create=true
 recusa "produção sem IP público do relay" "coturn.externalIP" \
   "${PROD[@]}" --set coturn.externalIP=
+# As três do CAMINHO de media. A primeira é a que faltava a 2026-10-11: o
+# render de produção passava o portão com o relay sem caminho nenhum.
+recusa "produção com um IP privado anunciado como público (media só na LAN)" "é um endereço PRIVADO" \
+  "${PROD[@]}" --set coturn.externalIP=192.168.1.32
+recusa "relay atrás de NAT com o TURN_HOST em IP (o SFU dependia do hairpin)" "server.turnHost: com coturn.privateIP indica um NOME" \
+  "${PROD[@]}" --set coturn.privateIP=10.0.0.32 --set server.turnHost=203.0.113.10:3478
+recusa "endereço público sem https em produção" "publicUrl=http://meet.ngolacloud.com: tem de começar por https://" \
+  "${PROD[@]}" --set publicUrl=http://meet.ngolacloud.com
+recusa "IP privado do relay igual ao público" "coturn.privateIP: só faz sentido" \
+  "${PROD[@]}" --set coturn.privateIP=203.0.113.10
+recusa "TURN por site para um nome que a instalação não serve" "não é um nome que esta instalação serve" \
+  "${PROD[@]}" --set 'server.turnHostBySite.meet\.outro\.ao=turn.outro.ao:3478'
+recusa "produção com o relay sem rede do nó" "coturn.hostNetwork" \
+  "${PROD[@]}" --set coturn.hostNetwork=false
+recusa "gama de relay nos portos efémeros do kernel" "coturn.relayPorts" \
+  "${PROD[@]}" --set coturn.relayPorts.max=59152
+# ADR-0017: a admissão por capacidade esteve no código e desligada no deploy até
+# 2026-10-13. Uma capacidade não declarada em produção é um nó que aceita salas
+# novas até degradar — e o alerta de recusa que nunca dispara.
+recusa "produção sem capacidade declarada (ADR-0017)" "server.nodePeerCapacity" \
+  "${PROD[@]}" --set server.nodePeerCapacity=0
+recusa "tecto da organização acima da capacidade do nó" "server.orgMaxParticipants" \
+  "${PROD[@]}" --set server.orgMaxParticipants=99
+recusa "quota do relay acima das portas que existem" "coturn.totalQuota" \
+  "${PROD[@]}" --set coturn.totalQuota=5000
+# O perfil de produção serve por Gateway API, logo este caso tem de LIGAR o
+# Ingress para o alcançar — um Ingress desligado não precisa de TLS nenhum.
 recusa "produção sem TLS no ingress" "ingress.tls" \
-  "${PROD[@]}" --set ingress.tls.clusterIssuer=
+  "${PROD[@]}" --set gateway.enabled=false --set ingress.enabled=true \
+  --set ingress.tls.clusterIssuer=
+# O perfil de produção é `attach`: os campos de TLS do gateway só são lidos em
+# `own`, por isso um emissor pedido aqui nunca chegava a template nenhum — foi
+# assim que o `clusterIssuer: letsencrypt-prod` viveu num cluster que só tem o
+# `delonix-letsencrypt`.
+recusa "emissor pedido em gateway.mode=attach (ignorado em silêncio)" "gateway.tls em mode=attach" \
+  "${PROD[@]}" --set gateway.tls.clusterIssuer=letsencrypt-prod
+recusa "certificado pedido em gateway.mode=attach (ignorado em silêncio)" "gateway.tls em mode=attach" \
+  "${PROD[@]}" --set gateway.tls.certificateRefName=delonix-meet-tls
 recusa "produção com o Postgres do chart" "postgresql.enabled" \
   "${PROD[@]}" --set postgresql.enabled=true
 recusa "produção com o PBX de laboratório" "voice.labPbx.enabled" \
@@ -128,11 +180,15 @@ recusa "várias réplicas sem Redis" "REDIS_URL é obrigatório" \
   "${PROD[@]}" --set externalRedis.fromSecret=false
 recusa "ponte telefone↔sala sem IPs do FreeSWITCH" "server.phoneBridge.freeswitchIPs" \
   "${LOCAL[@]}" --set server.phoneBridge.enabled=true
+recusa "ESL com o FreeSWITCH em hostNetwork e sem redes declaradas" "voice.freeswitch.eslCidrs: com server.telephony.eslAddr e o FreeSWITCH em hostNetwork" \
+  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 --set voice.freeswitch.hostNetwork=true
+recusa "ESL em produção sem política de rede nem redes declaradas" "server.telephony.eslAddr em produção" \
+  "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 --set networkPolicy.enabled=false
 
 # ---- 4. render --------------------------------------------------------
 render() { # nome, args…
   local nome=$1; shift
-  if "$HELM" template meet "$CHART" -n delonix-meet "$@" >"$OUT/$nome.yaml" 2>"$OUT/$nome.err"; then
+  if "$HELM" template meet "$CHART" -n ngolacloud-meet "$@" >"$OUT/$nome.yaml" 2>"$OUT/$nome.err"; then
     echo "  ✓ render $nome ($(grep -c '^kind:' "$OUT/$nome.yaml") recursos)"
   else
     erro "render falhou: $nome"; grep -v 'found symbolic link' "$OUT/$nome.err" | sed 's/^/    /' | head -20
@@ -140,8 +196,248 @@ render() { # nome, args…
 }
 render production "${PROD[@]}"
 render production-voz "${VOZ[@]}"
+render production-voz-esl "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021
+render production-voz-esl-cidrs "${VOZ[@]}" --set server.telephony.eslAddr=freeswitch.ngolacloud-meet.svc.cluster.local:8021 \
+  --set 'voice.freeswitch.eslCidrs={10.244.0.0/16}'
 render local "${LOCAL[@]}"
 render local-2 "${LOCAL[@]}"
+# Dois renders dedicados ao cruzamento 6d. Não se reaproveita o de produção:
+# desde que o values-production.yaml passou a LIGAR as classes, ele já não
+# serve de controlo negativo (o portão apanhou-me nisso mesmo).
+#
+#   sem-prioridade: todas as chaves VAZIAS → ninguém pode renderizar uma;
+#   prioridade:     uma só chave, sem overrides → todos têm de a levar.
+LIMPA=(--set priorityClassName= --set server.priorityClassName=
+       --set coturn.priorityClassName= --set postgresql.priorityClassName=
+       --set redis.priorityClassName= --set voice.freeswitch.priorityClassName=
+       --set voice.kamailio.priorityClassName= --set voice.labPbx.priorityClassName=
+       --set web.priorityClassName=)
+render sem-prioridade "${VOZ[@]}" "${LIMPA[@]}"
+render prioridade "${VOZ[@]}" "${LIMPA[@]}" --set priorityClassName=prova-prioridade
+
+# --- Gateway API (ADR-0021) ------------------------------------------------
+# O chart ganhou um segundo caminho de entrada. Estas recusas existem porque
+# cada uma delas, se passasse, perdia algo em silêncio.
+# O perfil de produção JÁ É Gateway API em `mode: attach` (ADR-0021: o
+# `ngola-lda` não tem IngressClass nenhuma). O `GW` cobre a OUTRA forma — um
+# Gateway próprio neste namespace — para que as duas continuem renderizadas.
+# `extraHosts=null`: o perfil de produção traz um segundo nome, e um Gateway
+# próprio só tem certificado para um (a recusa disso mede-se logo abaixo).
+# E sem o segundo nome não há TURN por site para ele: o chart recusa um par
+# cujo site a instalação não serve.
+GW=("${PROD[@]}" --set gateway.mode=own --set gateway.className=delonix
+    --set gateway.tls.clusterIssuer=delonix-letsencrypt --set extraHosts=null
+    --set server.turnHostBySite=null)
+
+recusa "ingress e gateway ao mesmo tempo" "são exclusivos" \
+  "${PROD[@]}" --set ingress.enabled=true
+recusa "gateway em mode=own sem GatewayClass" "gateway.className" \
+  "${PROD[@]}" --set gateway.mode=own
+recusa "gateway em produção sem TLS" "gateway.tls:" \
+  "${PROD[@]}" --set gateway.mode=own --set gateway.className=delonix
+recusa "gateway sem afinidade por sala em produção (R3)" "regressão R3" \
+  "${PROD[@]}" --set gateway.affinity.implementation=none
+recusa "gateway sem reconhecer o bilhete no access log (R278)" "acceptProvisioningInAccessLog" \
+  "${PROD[@]}" --set gateway.acceptProvisioningInAccessLog=false
+recusa "nem ingress nem gateway em produção" "sem um deles o host não é servido" \
+  "${PROD[@]}" --set gateway.enabled=false
+recusa "gateway em mode=attach sem parentRef" "gateway.parentRef.name" \
+  "${PROD[@]}" --set gateway.parentRef.name=
+recusa "gateway em mode=attach sem listener (servia em claro no :80)" "gateway.parentRef.sectionName" \
+  "${PROD[@]}" --set gateway.parentRef.sectionName=
+
+recusa "segundo nome com Gateway próprio (um certificado, um nome)" "extraHosts: em gateway.mode=own" \
+  "${GW[@]}" --set 'extraHosts={meet.exemplo.ao}'
+recusa "segundo nome com Ingress (um certificado, um nome)" "extraHosts: com ingress.enabled" \
+  "${PROD[@]}" --set gateway.enabled=false --set ingress.enabled=true \
+  --set ingress.tls.secretName=x --set 'extraHosts={meet.exemplo.ao}'
+
+render production-gateway-own "${GW[@]}"
+
+# --- o relay atrás de NAT (2026-10-13) --------------------------------------
+# Três formas, e as três têm de continuar a renderizar: o relay com IP público
+# seu (a de sempre), o relay atrás de um router (público/privado), e a
+# instalação que é SÓ da rede local e o diz.
+render production-turn-nat "${PROD[@]}" --set coturn.privateIP=10.0.0.32
+render production-turn-lan "${PROD[@]}" --set coturn.externalIP=192.168.1.32 --set coturn.lanOnly=true \
+  --set server.turnHost=
+python3 - "$OUT/production.yaml" "$OUT/production-turn-nat.yaml" "$OUT/production-turn-lan.yaml" <<'PYTURN' || fail=1
+import sys, yaml
+erros = []
+def ler(caminho):
+    docs = [d for d in yaml.safe_load_all(open(caminho, encoding='utf-8')) if d]
+    dep = {d['metadata']['name']: d for d in docs if d.get('kind') == 'Deployment'}
+    cm = next(d for d in docs if d.get('kind') == 'ConfigMap' and 'TURN_HOST' in (d.get('data') or {}))
+    c = dep['coturn']['spec']['template']['spec']['containers'][0]
+    return (" ".join(c['args']), {e['name']: e.get('value') for e in c['env']},
+            dep['delonix-server']['spec']['template']['spec'].get('hostAliases'), cm['data']['TURN_HOST'])
+
+# A sonda de vida é um `turnutils_stunclient`: com o RFC 5780 ligado ele segue
+# para os testes de descoberta de NAT contra o endereço alternativo — que, atrás
+# de NAT, é o IP público. Foi o que pôs o relay de produção a reiniciar de 70 em
+# 70 s (2026-10-13). Nas TRÊS formas: a sonda é a mesma em todas.
+for caminho in sys.argv[1:]:
+    a, _, _, _ = ler(caminho)
+    if '--no-rfc5780' not in a.split():
+        erros.append(f"[{caminho.rsplit('/', 1)[-1]}] o coturn corre com o RFC 5780 ligado: a sonda de vida "
+                     "passa a depender de chegar ao endereço alternativo e reinicia o relay quando não chega")
+
+args, env, alias, turn = ler(sys.argv[1])
+if '--external-ip="$EXTERNAL_IP" ' not in args or 'PRIVATE_IP' in env or alias:
+    erros.append(f"[production] sem privateIP o relay tem de ficar como era: alias={alias} env={sorted(env)}")
+if turn != 'turn.ngolacloud.com:3478':
+    erros.append(f"[production] o TURN_HOST do perfil não é o nome público: {turn!r}")
+# O PUBLIC_URL: sem ele o servidor não escreve links de email e o OAuth do MCP
+# responde 503 (medido em produção a 2026-10-14). É o nome CANÓNICO — o mesmo
+# que vai à frente no CORS_ORIGINS —, nunca o segundo domínio.
+cm_pu = next(d for d in [x for x in yaml.safe_load_all(open(sys.argv[1], encoding='utf-8')) if x]
+             if d.get('kind') == 'ConfigMap' and 'TURN_HOST' in (d.get('data') or {}))
+pu = cm_pu['data'].get('PUBLIC_URL')
+if pu != 'https://meet.ngolacloud.com':
+    erros.append(f"[production] PUBLIC_URL={pu!r}, esperado o nome canónico https://meet.ngolacloud.com")
+if pu and cm_pu['data'].get('CORS_ORIGINS', '').split(',')[0] != pu:
+    erros.append(f"[production] o PUBLIC_URL não é a primeira origem do CORS: {cm_pu['data'].get('CORS_ORIGINS')!r}")
+# Por domínio: quem entra pelo `.ao` recebe o TURN do `.ao`. O par tem de
+# casar com um nome que as rotas servem — senão nunca é escolhido.
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1], encoding='utf-8')) if d]
+cm = next(d for d in docs if d.get('kind') == 'ConfigMap' and 'TURN_HOST' in (d.get('data') or {}))
+por_site = dict(p.split('=', 1) for p in (cm['data'].get('TURN_HOST_BY_HOST') or '').split(',') if p)
+if por_site != {'meet.ngolacloud.ao': 'turn.ngolacloud.ao:3478'}:
+    erros.append(f"[production] TURN_HOST_BY_HOST não é o par do `.ao`: {por_site}")
+servidos = {h for d in docs if d.get('kind') == 'HTTPRoute' for h in d['spec'].get('hostnames') or []}
+for site in por_site:
+    if site not in servidos:
+        erros.append(f"[production] o TURN por site nomeia «{site}», que nenhuma rota serve")
+
+args, env, alias, turn = ler(sys.argv[2])
+# O par é o que faz dois relays do mesmo coturn falarem-se sem o router no
+# meio (medido: 60/60 com o mapa, 0/60 sem ele).
+if '--external-ip="$EXTERNAL_IP/$PRIVATE_IP"' not in args:
+    erros.append("[turn-nat] o coturn não anuncia público/privado")
+for ip in ('"$EXTERNAL_IP"', '"$PRIVATE_IP"'):
+    if f'--allowed-peer-ip={ip}' not in args:
+        erros.append(f"[turn-nat] falta --allowed-peer-ip={ip}")
+if env.get('PRIVATE_IP') != '10.0.0.32' or env.get('EXTERNAL_IP') != '203.0.113.10':
+    erros.append(f"[turn-nat] os dois endereços não chegam ao coturn: {env}")
+# O SFU e o browser lêem o MESMO TURN_HOST. Sem o alias o servidor ia ao IP
+# público para falar com um vizinho de cluster — depende do hairpin do router.
+if alias != [{'ip': '10.0.0.32', 'hostnames': ['turn.ngolacloud.com']}]:
+    erros.append(f"[turn-nat] o servidor não resolve o nome do TURN para o IP privado: {alias}")
+if turn != 'turn.ngolacloud.com:3478':
+    erros.append(f"[turn-nat] o browser não recebe o nome público: {turn!r}")
+
+args, env, alias, turn = ler(sys.argv[3])
+if turn != '192.168.1.32:3478' or alias or 'PRIVATE_IP' in env:
+    erros.append(f"[turn-lan] a instalação só-LAN mudou de forma: TURN_HOST={turn!r} alias={alias}")
+
+for e in erros:
+    print("✗ " + e)
+sys.exit(1 if erros else 0)
+PYTURN
+[ "$fail" = 0 ] && echo "  ✓ relay: público seu, atrás de NAT (público/privado + alias no servidor) e só-LAN reconhecida"
+
+# A invariante do ADR-0001 no caminho NOVO. No Ingress era a anotação
+# `upstream-hash-by: $arg_room`; aqui é uma BackendTrafficPolicy com
+# ConsistentHash por parâmetro de query. Se isto se perder, os pares de uma
+# sala caem em pods diferentes e o SFU em memória parte-se — sem um erro.
+# As DUAS formas de Gateway: a de produção (`attach`, ao Gateway da
+# plataforma) e a de um Gateway próprio. As invariantes do ADR-0001 e do
+# ADR-0006 são as mesmas nas duas, e antes só a segunda era medida.
+python3 - "$OUT/production.yaml" "$OUT/production-voz.yaml" \
+         "$OUT/production-voz-esl.yaml" "$OUT/production-gateway-own.yaml" <<'PYGW' || fail=1
+import sys, yaml
+erros = []
+for caminho in sys.argv[1:]:
+    forma = caminho.rsplit("/", 1)[-1].removesuffix(".yaml")
+    docs = [d for d in yaml.safe_load_all(open(caminho, encoding='utf-8')) if d]
+    pol = [d for d in docs if d.get('kind') == 'BackendTrafficPolicy']
+    rotas = {d['metadata']['name']: d for d in docs if d.get('kind') == 'HTTPRoute'}
+
+    def erro(m):
+        erros.append(f"[{forma}] {m}")
+
+    if not pol:
+        erro("R3: sem BackendTrafficPolicy — não há hash(room)→mesmo pod")
+    else:
+        ch = (pol[0].get('spec', {}).get('loadBalancer') or {}).get('consistentHash') or {}
+        if ch.get('type') != 'QueryParams':
+            erro(f"R3: consistentHash.type={ch.get('type')}, esperado QueryParams")
+        if [q.get('name') for q in ch.get('queryParams') or []] != ['room']:
+            erro(f"R3: o hash não é por `room`: {ch.get('queryParams')}")
+        alvos = [(t.get('kind'), t.get('name')) for t in pol[0]['spec'].get('targetRefs') or []]
+        if ('HTTPRoute', 'delonix-ws') not in alvos:
+            erro(f"R3: a política não se cola à rota do /ws: {alvos}")
+
+    ws = rotas.get('delonix-ws')
+    if not ws:
+        erro("R3: falta a HTTPRoute dedicada ao /ws")
+    else:
+        destinos = [b.get('name') for r in ws['spec']['rules'] for b in r.get('backendRefs') or []]
+        if destinos != ['delonix-server-ws']:
+            erro(f"R3: o /ws não usa o Service dedicado: {destinos}")
+
+    ger = rotas.get('delonix-meet')
+    if ger:
+        caminhos = [m['path']['value'] for r in ger['spec']['rules'] for m in r.get('matches') or []]
+        if '/ws' in caminhos:
+            erro("R3: o /ws entrou na rota geral — a política de afinidade não se lhe aplica")
+        if '/api/public/extension-provisioning' not in caminhos:
+            erro("R278: falta o caminho do resgate do QR")
+        # ADR-0006 §3: as portas internas nunca são servidas de fora
+        portas = [b.get('port') for r in ger['spec']['rules'] for b in r.get('backendRefs') or []]
+        for proibida in (8181, 9180):
+            if proibida in portas:
+                erro(f"ADR-0006 §3: a porta interna {proibida} está exposta na rota")
+
+    # Uma rota sem pai não se cola a nada: fica `Accepted=False` e o host não
+    # é servido — e nada no render o diz, porque o objecto é válido.
+    for nome, r in rotas.items():
+        pais = [pr.get('name') for pr in r['spec'].get('parentRefs') or []]
+        if not [n for n in pais if n]:
+            erro(f"a HTTPRoute {nome} não tem parentRef com nome")
+
+    # Colada a um Gateway alheio (`attach`), a rota tem de dizer A QUE LISTENER.
+    # Sem `sectionName` cola-se a todos, o de :80 incluído, e a aplicação sai
+    # em claro por cima do redireccionamento da plataforma (medido em produção
+    # a 2026-10-13: 200 em `http://`). Num Gateway próprio os listeners são os
+    # nossos e levam o nosso nome — aí não há a quem ganhar.
+    if forma != "production-gateway-own":
+        for nome, r in rotas.items():
+            for pr in r['spec'].get('parentRefs') or []:
+                if pr.get('sectionName') != 'https':
+                    erro(f"a HTTPRoute {nome} não está presa ao listener «https» "
+                         f"(sectionName={pr.get('sectionName')!r}) — seria servida também no :80")
+
+    if not rotas:
+        erro("nenhuma HTTPRoute no render — a entrada por Gateway não saiu")
+
+    # Os nomes públicos. As DUAS rotas têm de responder pelos MESMOS nomes: a
+    # geral com dois e a do /ws com um dá uma página que abre e uma sala que
+    # nunca liga — o browser pede `wss://<segundo nome>/ws` e leva 404 do
+    # Gateway, sem um erro do nosso lado. E o CORS segue a mesma lista, com o
+    # canónico primeiro (é para onde o SSO devolve o browser).
+    nomes = {n: r['spec'].get('hostnames') or [] for n, r in rotas.items()}
+    if len({tuple(v) for v in nomes.values()}) > 1:
+        erro(f"as rotas não respondem pelos mesmos nomes: {nomes}")
+    cm = next((d for d in docs if d.get('kind') == 'ConfigMap'
+               and 'CORS_ORIGINS' in (d.get('data') or {})), None)
+    if cm and rotas:
+        esperado = ",".join("https://" + h for h in next(iter(nomes.values())))
+        if cm['data']['CORS_ORIGINS'] != esperado:
+            erro(f"CORS_ORIGINS={cm['data']['CORS_ORIGINS']!r} não segue os nomes das rotas ({esperado!r})")
+    if forma == "production":
+        # O perfil de produção serve os dois domínios (decisão de 2026-10-13).
+        quer = ["meet.ngolacloud.com", "meet.ngolacloud.ao"]
+        for n, hs in nomes.items():
+            if hs != quer:
+                erro(f"a HTTPRoute {n} responde por {hs}, esperado {quer} (o .com canónico, primeiro)")
+
+for e in erros:
+    print("✗ " + e)
+sys.exit(1 if erros else 0)
+PYGW
+[ "$fail" = 0 ] && echo "  ✓ Gateway API: afinidade por sala por ConsistentHash(room), /ws em Service dedicado, portas internas fora, as duas rotas e o CORS com os mesmos nomes"
+
 [ "$fail" = 0 ] || exit 1
 
 if [ "${DRYRUN:-0}" = "1" ]; then
@@ -246,8 +542,20 @@ for nome in ("production", "production-voz", "local"):
             erros.append(f"[{nome}] o Service {n} expõe uma porta interna")
 
     # 5. afinidade por sala (ADR-0001)
+    #
+    # DUAS FORMAS DE ENTRADA, e as asserções abaixo são da forma Ingress:
+    # `upstream-hash-by` e `enable-access-log` são anotações do ingress-nginx e
+    # não existem em Gateway API, onde o equivalente é a BackendTrafficPolicy
+    # (medida no bloco PYGW). Por isso só correm quando o render TEM Ingress —
+    # e o render que não tem nem um nem outro é recusado logo aqui, para que
+    # «sem Ingress» não se torne a maneira de calar o portão.
+    ingressos = [d for d in docs if d.get("kind") == "Ingress"]
+    rotas_http = [d for d in docs if d.get("kind") == "HTTPRoute"]
+    if not ingressos and not rotas_http:
+        erros.append(f"[{nome}] nem Ingress nem HTTPRoute: o host não é servido de fora")
+
     ws_ok, api_svcs = False, set()
-    for ing in (d for d in docs if d.get("kind") == "Ingress"):
+    for ing in ingressos:
         ann = ing["metadata"].get("annotations") or {}
         for path, b in backends(ing):
             svc, _ = svc_ref(b)
@@ -256,12 +564,31 @@ for nome in ("production", "production-voz", "local"):
                          and ann.get("nginx.ingress.kubernetes.io/upstream-hash-by") == "$arg_room")
             else:
                 api_svcs.add(svc)
-    if not ws_ok:
+    if ingressos and not ws_ok:
         erros.append(f"[{nome}] /ws não vai para delonix-server-ws com upstream-hash-by:$arg_room (ADR-0001, R3)")
     if "delonix-server-ws" in api_svcs:
         erros.append(f"[{nome}] o Service do /ws é partilhado com outro caminho — o ingress-nginx descarta o hash")
     if not um(docs, "Service", "delonix-server-ws"):
         erros.append(f"[{nome}] falta o Service delonix-server-ws (ADR-0001)")
+
+    # 5b. o resgate do QR do Linphone não fica no registo de acessos (R278): o
+    #    caminho leva o bilhete, e só o Ingress dedicado, com o registo
+    #    desligado, o pode servir.
+    #    Em Gateway API o registo de acessos é do Gateway e não da rota: não há
+    #    equivalente, e o chart exige por isso o reconhecimento explícito
+    #    (`gateway.acceptProvisioningInAccessLog`, recusado em produção sem
+    #    ele). Logo esta asserção é, também ela, da forma Ingress.
+    qr_ok = False
+    for ing in ingressos:
+        ann = (ing["metadata"].get("annotations") or {})
+        for path, b in backends(ing):
+            if path == "/api/public/extension-provisioning":
+                svc, _ = svc_ref(b)
+                qr_ok = (svc == "delonix-server"
+                         and ann.get("nginx.ingress.kubernetes.io/enable-access-log") == "false")
+    if ingressos and not qr_ok:
+        erros.append(f"[{nome}] /api/public/extension-provisioning não tem Ingress próprio com "
+                     "enable-access-log:false — o bilhete do QR ficava no registo do ingress (R278)")
 
     # 5. nunca o modo inseguro; media relay-only
     if "DELONIX_ALLOW_INSECURE" in bruto:
@@ -332,6 +659,70 @@ for nome in ("production", "production-voz", "local"):
         if pvc and pvc["spec"]["accessModes"] == ["ReadWriteOnce"]:
             erros.append(f"[{nome}] gravações ReadWriteOnce com várias réplicas")
 
+    # 5b. A IA IN-CLUSTER LIGADA A SI MESMA.
+    #
+    #     Porque é um portão e não uma revisão: a produção correu de
+    #     2026-10-10 a 2026-10-13 com a ata de IA DESLIGADA e ninguém viu. O
+    #     código do resumo estava fundido, a fila levantada, o webhook pronto
+    #     — faltava uma chave no ConfigMap, e a falha é silenciosa por desenho
+    #     (`Config.ollama_url = None` desliga a IA sem um erro). Um teste de
+    #     Rust não apanha isto: o defeito está entre o chart e o servidor.
+    ollama_dep = um(docs, "Deployment", "delonix-ollama")
+    url = (cm.get("data") or {}).get("OLLAMA_URL", "")
+    if ollama_dep:
+        if not url:
+            erros.append(f"[{nome}] o Ollama é instalado mas o ConfigMap não leva OLLAMA_URL — "
+                         "o servidor arranca com a IA desligada e a ata de IA nunca nasce, sem erro")
+        elif "delonix-ollama" not in url:
+            erros.append(f"[{nome}] OLLAMA_URL «{url}» não aponta para o Service do chart")
+        if not um(docs, "Service", "delonix-ollama"):
+            erros.append(f"[{nome}] o Ollama sem Service: o OLLAMA_URL não resolve")
+        if not um(docs, "PersistentVolumeClaim", "ollama-models"):
+            erros.append(f"[{nome}] o Ollama sem PVC: ~5,5GB de modelos puxados outra vez a cada reinício")
+        # Os modelos pedidos ao servidor são os que o pod puxa. Divergir aqui
+        # dá um 404 por resumo (LlmError::ModelMissing) e nada na ata.
+        oc = ollama_dep["spec"]["template"]["spec"]["containers"][0]
+        puxa = ((oc.get("lifecycle") or {}).get("postStart") or {}).get("exec", {}).get("command", [])
+        puxados = " ".join(puxa)
+        for chave in ("OLLAMA_MODEL_SUMMARY", "OLLAMA_MODEL_TRANSLATE", "OLLAMA_MODEL_STUDIO"):
+            modelo = (cm.get("data") or {}).get(chave)
+            if modelo and f"ollama pull {modelo!r}".replace("'", '"') not in puxados.replace("'", '"'):
+                erros.append(f"[{nome}] {chave}={modelo} não está entre os modelos que o pod puxa "
+                             "— o Ollama responderia 404 a cada pedido")
+    elif url:
+        erros.append(f"[{nome}] o ConfigMap leva OLLAMA_URL «{url}» mas o render não instala Ollama "
+                     "nenhum: cada legenda traduzida e cada ata seriam um 503 contra um Service que "
+                     "não existe. Vale `ollama.enabled`, não a chave à mão")
+
+    # 5c. O ASR: pod com rota, rota com pod, e a chave do token do Secret.
+    whisper = um(docs, "Deployment", "delonix-whisper")
+    destinos = set()
+    for d in docs:
+        if d.get("kind") == "HTTPRoute":
+            for r in d["spec"].get("rules", []):
+                if any(m.get("path", {}).get("value") == "/asr" for m in r.get("matches", [])):
+                    destinos |= {b["name"] for b in r.get("backendRefs", [])}
+        if d.get("kind") == "Ingress":
+            for r in d["spec"].get("rules", []):
+                for path in (r.get("http") or {}).get("paths", []):
+                    if path.get("path") == "/asr":
+                        destinos.add(path["backend"]["service"]["name"])
+    if whisper and "delonix-whisper" not in destinos:
+        erros.append(f"[{nome}] o Whisper é instalado mas nada encaminha /asr para ele — "
+                     "um pod a carregar o modelo que browser nenhum alcança")
+    if destinos and not whisper and destinos != {s for s in destinos if s != "delonix-whisper"}:
+        erros.append(f"[{nome}] /asr aponta para delonix-whisper e o render não o instala")
+    if whisper:
+        wc = whisper["spec"]["template"]["spec"]["containers"][0]
+        chave = [e for e in wc.get("env", []) if e["name"] == "JWT_SECRET"]
+        if not chave or not (chave[0].get("valueFrom") or {}).get("secretKeyRef"):
+            erros.append(f"[{nome}] o Whisper tem de receber JWT_SECRET por secretKeyRef: o /asr "
+                         "valida o access token do /rtc e sem a chave é fail-closed — recusa TODAS "
+                         "as ligações e o browser cai em silêncio para o motor do Chrome")
+        if any("configMapRef" in e for e in wc.get("envFrom", [])):
+            erros.append(f"[{nome}] o Whisper lê um ConfigMap por envFrom — foi assim que o "
+                         "09-whisper.yaml ficou sem JWT_SECRET quando ele saiu do ConfigMap (2026-10-04)")
+
     # 8b. nenhum segredo conhecido no render (em claro ou em base64)
     valores = []
     for s in segredos:
@@ -366,6 +757,286 @@ for nome in ("production", "production-voz", "local"):
         fsd = um(docs, "Deployment", "freeswitch")["spec"]["template"]["spec"]["containers"][0]
         if fsd.get("command") != ["/bin/sh", "/entrypoint/freeswitch-entrypoint.sh"]:
             erros.append("[production-voz] o FreeSWITCH tem de arrancar pelo entrypoint que endurece a vanilla")
+        # O arranque copia ficheiros de /meet com `set -e`: um que o ConfigMap
+        # não traga deixa o pod em CrashLoop, e só se via no cluster (R291). O
+        # compose e o cluster local têm a prova com chamadas; o chart tem esta.
+        with open("voice/cluster/freeswitch-entrypoint.sh") as f:
+            copiados = set(re.findall(r'"\$MEET/([^"]+)"', f.read()))
+        meet = um(docs, "ConfigMap", "freeswitch-meet")
+        em_falta = sorted(copiados - set((meet or {}).get("data") or {}))
+        if not copiados:
+            erros.append("[production-voz] não encontrei no freeswitch-entrypoint.sh os ficheiros que ele copia de /meet")
+        elif em_falta:
+            erros.append("[production-voz] o arranque copia de /meet ficheiros que o ConfigMap freeswitch-meet não traz: "
+                         + ", ".join(em_falta))
+
+# 6b. o ESL (R300): fechado por omissão; aberto, com a password do Secret e só aos pods do servidor
+def env_do_fs(nome):
+    c = um(carregar(nome), "Deployment", "freeswitch")["spec"]["template"]["spec"]["containers"][0]
+    return {e["name"]: e for e in c.get("env") or []}
+fechado, aberto = env_do_fs("production-voz"), env_do_fs("production-voz-esl")
+if "TELEPHONY_ESL_PASSWORD" in fechado or "DELONIX_ESL_CIDRS" in fechado:
+    erros.append("[production-voz] o FreeSWITCH recebe a configuração do ESL sem o servidor a ter pedido")
+if um(carregar("production-voz"), "NetworkPolicy", "freeswitch-esl"):
+    erros.append("[production-voz] há uma política de rede do ESL sem ESL")
+if "DELONIX_ESL_CIDRS" in aberto:
+    erros.append("[production-voz-esl] o FreeSWITCH recebe DELONIX_ESL_CIDRS sem `voice.freeswitch.eslCidrs`")
+if env_do_fs("production-voz-esl-cidrs").get("DELONIX_ESL_CIDRS", {}).get("value") != "10.244.0.0/16":
+    erros.append("[production-voz-esl-cidrs] o FreeSWITCH não recebe as redes de onde o servidor fala (DELONIX_ESL_CIDRS)")
+if (aberto.get("TELEPHONY_ESL_PASSWORD", {}).get("valueFrom") or {}).get("secretKeyRef", {}).get("key") != "TELEPHONY_ESL_PASSWORD":
+    erros.append("[production-voz-esl] a password do ESL do FreeSWITCH não vem do Secret")
+pol = um(carregar("production-voz-esl"), "NetworkPolicy", "freeswitch-esl")
+if not pol:
+    erros.append("[production-voz-esl] falta a política de rede que fecha o 8021 ao servidor")
+else:
+    regras = pol["spec"]["ingress"]
+    do_esl = [r for r in regras if any(p.get("port") == 8021 for p in r.get("ports") or [])]
+    if len(do_esl) != 1 or not do_esl[0].get("from") or \
+       do_esl[0]["from"][0].get("podSelector", {}).get("matchLabels", {}).get("app") != "delonix-server":
+        erros.append("[production-voz-esl] o 8021 tem de estar aberto SÓ aos pods do servidor")
+    abertas = [(p.get("protocol"), p.get("port"), p.get("endPort")) for r in regras if not r.get("from") for p in r.get("ports") or []]
+    if any(a <= 8021 <= (b or a) for proto, a, b in abertas if proto == "TCP"):
+        erros.append("[production-voz-esl] uma regra sem origem cobre o 8021: a política não fecha nada")
+
+# 6c. a quota do namespace cobre o pico COM ROLLOUT (ADR-0021: cluster
+#     partilhado). Recalcula a conta do topo de templates/quota.yaml a partir
+#     do render — um comentário que ninguém recalcula não é uma garantia.
+def _cpu(v):
+    v = str(v)
+    return float(v[:-1]) / 1000 if v.endswith("m") else float(v)
+
+def _mem(v):
+    v = str(v)
+    for suf, mult in (("Ki", 2**10), ("Mi", 2**20), ("Gi", 2**30), ("Ti", 2**40),
+                      ("K", 1e3), ("M", 1e6), ("G", 1e9)):
+        if v.endswith(suf):
+            return float(v[: -len(suf)]) * mult
+    return float(v)
+
+def _surge(d, n):
+    """Pods a mais durante um rollout. `Recreate` não soma: derruba antes de subir."""
+    est = (d.get("spec") or {}).get("strategy") or {}
+    if d["kind"] != "Deployment" or est.get("type") == "Recreate":
+        return 0
+    ms = (est.get("rollingUpdate") or {}).get("maxSurge", "25%")
+    if isinstance(ms, str) and ms.endswith("%"):
+        import math
+        return math.ceil(n * float(ms[:-1]) / 100)
+    return int(ms)
+
+docs = carregar("production-voz")
+quota = um(docs, "ResourceQuota", "delonix-meet-quota")
+faixa = um(docs, "LimitRange", "delonix-meet-limits")
+if not quota:
+    erros.append("[production-voz] falta o ResourceQuota do namespace — em cluster partilhado "
+                 "um pico do Meet come o que é dos vizinhos (ADR-0021)")
+if not faixa:
+    erros.append("[production-voz] falta o LimitRange do namespace")
+if quota and faixa:
+    hpa = {d["spec"]["scaleTargetRef"]["name"]: d["spec"]["maxReplicas"]
+           for d in docs if d.get("kind") == "HorizontalPodAutoscaler"}
+    pico = {"cpu": 0.0, "mem": 0.0, "req_cpu": 0.0, "req_mem": 0.0, "pods": 0, "pvcs": 0}
+    maior = {"cpu": 0.0, "mem": 0.0}
+    for d, spec in pod_specs(docs):
+        n = 1 if d["kind"] == "Job" else hpa.get(d["metadata"]["name"],
+                                                 (d.get("spec") or {}).get("replicas", 1))
+        if d["kind"] == "StatefulSet":
+            pico["pvcs"] += len(d["spec"].get("volumeClaimTemplates") or []) * n
+        n += _surge(d, n)
+        pico["pods"] += n
+        for ct in spec.get("containers", []) + spec.get("initContainers", []):
+            res = ct.get("resources") or {}
+            lm, rq = res.get("limits") or {}, res.get("requests") or {}
+            c, m = _cpu(lm.get("cpu", 0)), _mem(lm.get("memory", 0))
+            pico["cpu"] += c * n
+            pico["mem"] += m * n
+            pico["req_cpu"] += _cpu(rq.get("cpu", 0)) * n
+            pico["req_mem"] += _mem(rq.get("memory", 0)) * n
+            maior["cpu"], maior["mem"] = max(maior["cpu"], c), max(maior["mem"], m)
+    pico["pvcs"] += sum(1 for d in docs if d.get("kind") == "PersistentVolumeClaim")
+
+    # A PLATAFORMA no mesmo namespace (D1, 2026-10-10). O `instalar.sh` de
+    # deploy/k8s/plataforma põe o Postgres (CNPG) e o Redis no namespace do
+    # Meet, fora do chart — e o Kubernetes aplica a quota a TODOS os pods do
+    # namespace. A quota do chart que só contava o chart deixava 8Gi de
+    # requests para um Postgres que pede 12Gi sozinho: recusado no primeiro
+    # `helm upgrade`. Lê-se dos próprios ficheiros, não de números copiados,
+    # para que mudar a plataforma refaça esta conta.
+    base = "deploy/k8s/plataforma"
+    def _soma(res, n, quem):
+        if not (res.get("requests") and res.get("limits")):
+            erros.append(f"[plataforma] {quem} sem requests/limits — um preset do chart externo "
+                         "não é medível aqui; declara-os")
+            return
+        pico["req_cpu"] += _cpu(res["requests"].get("cpu", 0)) * n
+        pico["req_mem"] += _mem(res["requests"].get("memory", 0)) * n
+        c, m = _cpu(res["limits"].get("cpu", 0)), _mem(res["limits"].get("memory", 0))
+        pico["cpu"] += c * n
+        pico["mem"] += m * n
+        maior["cpu"], maior["mem"] = max(maior["cpu"], c), max(maior["mem"], m)
+    pg = next(d for d in yaml.safe_load_all(open(f"{base}/cnpg-cluster.yaml"))
+              if d and d.get("kind") == "Cluster")
+    n = pg["spec"]["instances"]
+    # Sem surge: o CNPG actualiza instância a instância, no lugar. O Job de
+    # initdb/join corre ANTES da instância que cria, nunca ao lado de todas.
+    _soma(pg["spec"].get("resources") or {}, n, "o Postgres (cnpg-cluster.yaml)")
+    pico["pods"] += n
+    pico["pvcs"] += n * (2 if pg["spec"].get("walStorage") else 1)
+    rv = yaml.safe_load(open(f"{base}/redis-values.yaml"))
+
+    # O SENTINEL FICA DESLIGADO ATÉ O CLIENTE O FALAR.
+    #
+    # Com sentinel, o chart 28.3.1 publica um Service `redis` sobre os três nós
+    # e nenhum Service só do master, e o cliente tem de perguntar a :26379 quem
+    # é. O `server/src/pubsub.rs` não pergunta: liga-se directamente a
+    # `REDIS_URL`. MEDIDO a 2026-10-11 pelo Service `redis`: 4 de 6 escritas
+    # responderam `READONLY`, e um PUBLISH numa réplica não chega aos
+    # subscritores do master. Com `server.replicas: 3` isso perde presença e,
+    # pior, perde a REVOGAÇÃO DE SESSÃO noutros pods — em silêncio.
+    #
+    # A recusa cai no dia em que o `pubsub.rs` usar `redis::sentinel`, ou em
+    # que o Redis passar para um operador com Service de master. Até lá, ligar
+    # o sentinel aqui é reintroduzir um defeito já medido.
+    if (rv.get("sentinel") or {}).get("enabled"):
+        cliente = "server/src/pubsub.rs"
+        fala_sentinel = (os.path.exists(cliente)
+                         and "redis::sentinel" in open(cliente, encoding="utf-8").read())
+        if not fala_sentinel:
+            erros.append("[plataforma] sentinel.enabled com um cliente que não fala Sentinel: o "
+                         "Service `redis` do chart 28.3.1 cobre master E réplicas, e o pubsub.rs "
+                         "liga-se directo a REDIS_URL — medido a 2026-10-11, 4 de 6 escritas "
+                         "`READONLY` e um PUBLISH numa réplica invisível ao master, o que perde a "
+                         "revogação de sessão nos outros pods. Usa `redis::sentinel` no pubsub.rs "
+                         "(ou um operador com Service de master) ANTES de ligar isto")
+
+    if rv.get("architecture") != "replication" or (rv.get("sentinel") or {}).get("enabled"):
+        erros.append("[plataforma] a conta do Redis assume replication SEM sentinel (1 master + "
+                     "replica.replicaCount réplicas, cada pod com redis + exporter) — o "
+                     "redis-values.yaml mudou de forma")
+    else:
+        n_rep = rv["replica"]["replicaCount"]
+        n = 1 + n_rep                      # o master é um pod, e é o que escreve
+        _soma(rv["master"].get("resources") or {}, 1, "o Redis (master)")
+        _soma(rv["replica"].get("resources") or {}, n_rep, "o Redis (replica)")
+        if (rv.get("metrics") or {}).get("enabled"):
+            _soma(rv["metrics"].get("resources") or {}, n, "o exporter do Redis")
+        pico["pods"] += n
+        if (rv["master"].get("persistence") or {}).get("enabled"):
+            pico["pvcs"] += 1
+        if (rv["replica"].get("persistence") or {}).get("enabled"):
+            pico["pvcs"] += n_rep
+
+    dura = quota["spec"]["hard"]
+    tecto = {"cpu": _cpu(dura["limits.cpu"]), "mem": _mem(dura["limits.memory"]),
+             "req_cpu": _cpu(dura["requests.cpu"]), "req_mem": _mem(dura["requests.memory"]),
+             "pods": float(dura["pods"]), "pvcs": float(dura["persistentvolumeclaims"])}
+    for eixo, unidade, div in (("cpu", "CPU de limits", 1), ("mem", "Gi de limits", 2**30),
+                               ("req_cpu", "CPU de requests", 1), ("req_mem", "Gi de requests", 2**30),
+                               ("pods", "pods", 1), ("pvcs", "PVCs", 1)):
+        if tecto[eixo] < pico[eixo]:
+            erros.append(f"[production-voz] a quota ({tecto[eixo]/div:.2f} {unidade}) "
+                         f"não cobre o pico COM ROLLOUT do chart + plataforma "
+                         f"({pico[eixo]/div:.2f} {unidade}) — refaz a conta no topo de "
+                         "templates/quota.yaml")
+    if os.environ.get("QUOTA_CONTA"):
+        print("  conta da quota (chart + plataforma): " + ", ".join(
+            f"{k}={v/(2**30) if 'mem' in k else v:.2f}" for k, v in pico.items()))
+    # O `max` por contentor não pode rejeitar os nossos próprios pods.
+    lim = faixa["spec"]["limits"][0]
+    for eixo, chave, unidade, div in (("cpu", "cpu", "CPU", 1), ("mem", "memory", "Gi", 2**30)):
+        f = _cpu(lim["max"][chave]) if eixo == "cpu" else _mem(lim["max"][chave])
+        if f < maior[eixo]:
+            erros.append(f"[production-voz] o LimitRange max.{chave} ({f/div:.2f} {unidade}) é menor "
+                         f"que o maior contentor do namespace ({maior[eixo]/div:.2f} {unidade}) — a "
+                         "admissão rejeitava o nosso próprio pod (ou o Postgres da plataforma)")
+    # O default/defaultRequest é o que torna a quota aplicável. Tem de estar lá
+    # E ser uma quantidade > 0: um `cpu: ""` renderiza, mas o API server
+    # recusa-o — e só se via no cluster.
+    for campo in ("default", "defaultRequest"):
+        bloco = lim.get(campo) or {}
+        if not bloco:
+            erros.append(f"[production-voz] o LimitRange sem {campo} não torna a quota aplicável: "
+                         "um pod sem `resources` não consome requests nenhum")
+            continue
+        for chave, ler in (("cpu", _cpu), ("memory", _mem)):
+            try:
+                q = ler(bloco[chave])
+            except (KeyError, ValueError):
+                erros.append(f"[production-voz] LimitRange {campo}.{chave} = "
+                             f"{bloco.get(chave, '<ausente>')!r} não é uma quantidade")
+                continue
+            if q <= 0:
+                erros.append(f"[production-voz] LimitRange {campo}.{chave} é {q} — "
+                             "um default de zero é o mesmo que não ter default")
+
+# a quota é só de produção: num laboratório de um nó seria um tecto inventado
+if um(carregar("local"), "ResourceQuota", "delonix-meet-quota"):
+    erros.append("[local] o laboratório não leva quota — os números são a escala de produção")
+
+# 6d. a prioridade de agendamento é uma MAÇANETA, e chega a todos
+#     Num cluster partilhado (ADR-0021) o `priorityClassName` decide quem é
+#     desalojado quando um nó aperta. O chart NÃO pode fixar um nome — um
+#     `priorityClassName` que não exista faz o API server recusar o pod — logo
+#     é opcional. Duas coisas têm de valer:
+#
+#       sem o valor: NINGUÉM renderiza uma prioridade (ninguém a fixou);
+#       com o valor: TODOS a renderizam (ninguém se esqueceu de a ligar num
+#                    workload novo — é esta a metade que apodrece sozinha).
+sem = carregar("sem-prioridade")
+fixos = [f"{d['kind']}/{d['metadata']['name']}"
+         for d, spec in pod_specs(sem) if spec.get("priorityClassName")]
+if fixos:
+    erros.append("[sem-prioridade] com TODAS as chaves de prioridade vazias, estes workloads "
+                 f"renderizam uma: {', '.join(fixos)} — o chart não pode FIXAR um nome de "
+                 "classe, porque uma que não exista no cluster faz o API server recusar o pod")
+
+com = carregar("prioridade")
+faltam = [f"{d['kind']}/{d['metadata']['name']}"
+          for d, spec in pod_specs(com) if spec.get("priorityClassName") != "prova-prioridade"]
+if faltam:
+    erros.append("[prioridade] com `priorityClassName=prova-prioridade` nos valores, estes "
+                 f"workloads NÃO a levam: {', '.join(faltam)} — a maçaneta não chega a todos, "
+                 "e num nó apertado eles são desalojados antes dos outros")
+elif not list(pod_specs(com)):
+    erros.append("[prioridade] o render não trouxe workload nenhum — o portão deixou de medir")
+
+# 6e. os nomes de classe que os valores usam EXISTEM, e nenhuma classe é o
+#     default do cluster.
+#     Um `priorityClassName` que não exista faz o API server RECUSAR o pod: o
+#     `helm upgrade` falha, não avisa. E uma PriorityClass com
+#     `globalDefault: true` passa a ser a prioridade de TODOS os pods do
+#     cluster que não declarem uma — incluindo os de outras equipas, noutros
+#     namespaces. Num cluster partilhado (ADR-0021) é o mesmo dano que a quota
+#     evita, pela porta oposta.
+CLASSES = "deploy/k8s/plataforma/priorityclasses.yaml"
+usados = set()
+for nome in ("production", "production-voz"):
+    for d, spec in pod_specs(carregar(nome)):
+        if spec.get("priorityClassName"):
+            usados.add(spec["priorityClassName"])
+
+try:
+    with open(CLASSES) as f:
+        declaradas = {d["metadata"]["name"]: d for d in yaml.safe_load_all(f)
+                      if d and d.get("kind") == "PriorityClass"}
+except FileNotFoundError:
+    declaradas = {}
+    if usados:
+        erros.append(f"os valores usam as classes {sorted(usados)} e o {CLASSES} não existe — "
+                     "o API server recusaria os pods")
+
+for nome_classe in sorted(usados - set(declaradas)):
+    erros.append(f"os valores do chart usam a classe «{nome_classe}» e o {CLASSES} não a declara "
+                 "— um priorityClassName que não exista faz o API server RECUSAR o pod, e o "
+                 "`helm upgrade` falha")
+for nome_classe, d in sorted(declaradas.items()):
+    if d.get("globalDefault"):
+        erros.append(f"{CLASSES}: a classe «{nome_classe}» tem globalDefault: true — passaria a "
+                     "ser a prioridade de TODOS os pods do cluster que não declarem uma, "
+                     "incluindo os de outras equipas (ADR-0021: o cluster é partilhado)")
+if declaradas and not usados:
+    erros.append(f"o {CLASSES} declara {sorted(declaradas)} e nenhum valor do chart as usa — "
+                 "classes que ninguém pede não protegem nada")
 
 # 7. laboratório: aleatórios a sério
 def dados(nome):

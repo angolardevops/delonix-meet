@@ -34,7 +34,7 @@ apiVersion: core.delonix.io/v1alpha1
 kind: Stack
 metadata:
   name: delonix-meet
-  namespace: delonix-meet
+  namespace: ngolacloud-meet
 spec:
   networks:
     - name: meet-net

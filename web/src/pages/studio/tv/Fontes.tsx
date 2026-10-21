@@ -17,7 +17,9 @@ import { Icon } from '../../../ui/icons'
 import { cx, IconButton } from '../../../ui/kit'
 import { type PropsDoEcra, SelosDoAr } from './comum'
 import { bloquearAeAf, ControlosDaCamara, podeBloquear, podeFocarUmaVez } from './ControlosDaCamara'
-import { Espaco, Miniatura, TopoTv, useTique } from './pecas'
+import { ehDireita, GEOMETRIA_NEUTRA, rodar } from '../../../studio/tv/geometria'
+import { Emparelhar } from './Emparelhar'
+import { BotaoTv, Cabeca, Cartao, Espaco, Miniatura, TopoTv, useTique } from './pecas'
 
 export default function Fontes({ s, c }: PropsDoEcra) {
   const { t } = useTranslation()
@@ -49,14 +51,14 @@ export default function Fontes({ s, c }: PropsDoEcra) {
         <span className="tv-chip" data-tv="contagem-fontes">
           {t('tv.fontes.contagem', { count: lista.length, noAr: noAr.size })}
         </span>
-        <SelosDoAr c={c} destinosNoSelo={false} />
+        <SelosDoAr c={c} destinosNoSelo={false} bastidores={s.aFalarComBastidores} />
         <Espaco />
-        <button type="button" className="tv-botao" disabled={aProcurar} data-tv="procurar" onClick={() => void procurar()}>
+        <BotaoTv disabled={aProcurar} data-tv="procurar" onClick={() => void procurar()}>
           {t('tv.fontes.procurar')}
-        </button>
-        <button type="button" className="tv-botao tv-botao--forte" onClick={() => c.onNavegar('mesa-de-corte')}>
+        </BotaoTv>
+        <BotaoTv variante="forte" onClick={() => c.onNavegar('mesa-de-corte')}>
           {t('tv.fontes.abrirMesa')}
-        </button>
+        </BotaoTv>
       </TopoTv>
 
       <div className="tv-corpo tv-fontes">
@@ -78,14 +80,14 @@ export default function Fontes({ s, c }: PropsDoEcra) {
                     return (
                       <li key={d.deviceId || d.nome}>
                         <span title={d.nome}>{d.nome}</span>
-                        <button
-                          type="button"
-                          className={cx('tv-botao tv-botao--mini', !ligada && 'tv-botao--accent')}
+                        <BotaoTv
+                          mini
+                          variante={ligada ? undefined : 'accent'}
                           data-tv="ligar-camara"
                           onClick={() => (ligada ? s.registo.desligar(`camara:${d.deviceId}`) : void s.ligarCamara(d))}
                         >
                           {ligada ? t('tv.fontes.desligar') : t('tv.fontes.ligar')}
-                        </button>
+                        </BotaoTv>
                       </li>
                     )
                   })}
@@ -94,13 +96,30 @@ export default function Fontes({ s, c }: PropsDoEcra) {
               {s.erroFonte && <p className="tv-erro">{s.erroFonte}</p>}
             </section>
 
-            <section className="tv-ligacao" data-tv="ligacao-app">
+            <Emparelhar />
+
+            <section className="tv-ligacao" data-tv="ligacao-ficheiro">
               <div className="tv-ligacao__titulo">
-                <Icon name="phone" />
-                <span>{t('tv.fontes.app')}</span>
-                <span className="tv-dir tv-mono-85">{t('tv.aguardarServidorCurto')}</span>
+                <Icon name="film" />
+                <span>{t('tv.fontes.ficheiro')}</span>
               </div>
-              <p className="tv-nota">{t('tv.fontes.appNota')}</p>
+              <p className="tv-nota">{t('tv.fontes.ficheiroNota')}</p>
+              <label className="tv-ficheiro">
+                <span>{t('tv.fontes.escolherFicheiro')}</span>
+                <input
+                  type="file"
+                  accept="video/*,audio/*"
+                  data-tv="escolher-ficheiro"
+                  aria-label={t('tv.fontes.escolherFicheiro')}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    e.target.value = ''
+                    if (f) s.adicionarFicheiro(f)
+                  }}
+                />
+              </label>
+              {/* O que um browser NÃO pode fazer, dito antes de alguém o procurar. */}
+              <p className="tv-nota" data-tv="sem-fonte-de-browser">{t('tv.fontes.semFonteDeBrowser')}</p>
             </section>
 
             <section className={cx('tv-ligacao', participantes > 0 && 'is-on')}>
@@ -121,13 +140,13 @@ export default function Fontes({ s, c }: PropsDoEcra) {
             </section>
           </div>
 
-          <div className="tv-cartao tv-cartao--tracejado" style={{ marginTop: 'auto', padding: 9 }} data-tv="telefone-sem-cabo">
+          <Cartao variante="tracejado" style={{ marginTop: 'auto', padding: 9 }} data-tv="telefone-sem-cabo">
             <h2 className="tv-t3">{t('tv.fontes.semCabo')}</h2>
             <p className="tv-nota">{t('tv.fontes.semCaboNota')}</p>
             <span className="tv-selo tv-selo--espera" style={{ justifyContent: 'center' }}>
               {t('tv.aguardarServidor')}
             </span>
-          </div>
+          </Cartao>
         </aside>
 
         <section className="tv-centro" aria-label={t('tv.fontes.lista')}>
@@ -157,28 +176,28 @@ export default function Fontes({ s, c }: PropsDoEcra) {
             </div>
           )}
 
-          <section className="tv-cartao tv-cartao--painel" style={{ flex: 1, minHeight: 120, gap: 9 }} aria-labelledby="tv-iso-h" data-tv="iso">
-            <div className="tv-cabeca">
+          <Cartao como="section" variante="painel" style={{ flex: 1, minHeight: 120, gap: 9 }} aria-labelledby="tv-iso-h" data-tv="iso">
+            <Cabeca>
               <h2 id="tv-iso-h" className="tv-t1" style={{ fontSize: 12 }}>
                 {t('tv.fontes.iso')}
               </h2>
               <span className="tv-mono-9">{t('tv.fontes.isoDica')}</span>
               <span className="tv-dir tv-selo tv-selo--espera">{t('tv.aguardarServidor')}</span>
-            </div>
+            </Cabeca>
             <p className="tv-nota">{t('tv.fontes.isoNota')}</p>
-            <div className="tv-cabeca tv-mono-9" style={{ marginTop: 'auto' }}>
+            <Cabeca className="tv-mono-9" style={{ marginTop: 'auto' }}>
               <span>{t('tv.fontes.isoDestino')}</span>
               <span className="tv-dir">{t('tv.fontes.isoLocal')}</span>
-            </div>
-          </section>
+            </Cabeca>
+          </Cartao>
         </section>
 
         <aside className="tv-col tv-col--dir" aria-label={t('tv.fontes.detalhe')}>
           {fonte ? <Detalhe s={s} id={fonte.id} numero={lista.indexOf(fonte) + 1} /> : <div className="tv-vazio">{t('tv.fontes.escolhe')}</div>}
-          <div className="tv-cartao tv-cartao--accent" style={{ marginTop: 'auto', gap: 5 }}>
+          <Cartao variante="accent" style={{ marginTop: 'auto', gap: 5 }}>
             <h3 className="tv-t3">{t('tv.fontes.dicaTitulo')}</h3>
             <p className="tv-nota">{t('tv.fontes.dica')}</p>
-          </div>
+          </Cartao>
         </aside>
       </div>
     </div>
@@ -243,7 +262,7 @@ function CartaoDaFonte({
       }}
     >
       <span className="tv-fonte__img">
-        <Miniatura imagem={() => s.registo.imagem(id)} ajuste={s.registo.ajuste(id)} largura={384} altura={216} />
+        <Miniatura imagem={() => s.registo.imagem(id)} ajuste={s.registo.ajuste(id)} geometria={() => s.registo.geometria(id)} largura={384} altura={216} />
         <span className="tv-mini__num">{numero <= 6 ? numero : ''}</span>
         <span className="tv-mini__tally">{t(`tv.tally.${tally}`)}</span>
         <span className="tv-fonte__medidas">
@@ -252,10 +271,10 @@ function CartaoDaFonte({
         </span>
       </span>
       <span className="tv-fonte__pe">
-        <span className="tv-cabeca">
+        <Cabeca como="span">
           <span className="tv-fonte__nome">{f.nome}</span>
           <span className="tv-dir tv-tag">{numero <= 6 ? t(`tv.fontes.barramento.${tally}`) : t('tv.fontes.foraDoBarramento')}</span>
-        </span>
+        </Cabeca>
         {f.dispositivo && f.dispositivo !== f.nome && <span className="tv-fonte__disp">{f.dispositivo}</span>}
         <span className="tv-tags">
           <span className="tv-tag">{tipoTag}</span>
@@ -277,6 +296,12 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
   const local = f.tipo === 'camara'
   const [bloqueado, setBloqueado] = useState(false)
   const [focado, setFocado] = useState('')
+  const [, forcar] = useState(0)
+  const geo = s.registo.geometria(id)
+  const mudarGeo = (g: typeof geo) => {
+    s.registo.definirGeometria(id, g)
+    forcar((n) => n + 1)
+  }
   const valores = useRef<HTMLDivElement>(null)
   const ultimo = useRef(0)
   useTique((agora) => {
@@ -293,21 +318,20 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
   })
   return (
     <>
-      <div className="tv-cabeca">
+      <Cabeca>
         <h2 className="tv-t1" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {numero <= 6 ? t('tv.fontes.detalheTitulo', { n: numero, nome: f.nome }) : f.nome}
         </h2>
         <span className="tv-dir tv-tag tv-tag--forte">{t(`tv.fontes.tipos.${f.tipo}`)}</span>
-      </div>
+      </Cabeca>
 
       {local && (
-        <section className="tv-cartao" style={{ gap: 9 }} data-tv="controlo-camara">
+        <Cartao como="section" style={{ gap: 9 }} data-tv="controlo-camara">
           <span className="tv-mono-85">{t('tv.fontes.controlo')}</span>
           <ControlosDaCamara track={track} />
-          <div className="tv-cabeca" style={{ gap: 5 }}>
-            <button
-              type="button"
-              className="tv-botao tv-botao--forte"
+          <Cabeca style={{ gap: 5 }}>
+            <BotaoTv
+              variante="forte"
               style={{ flex: 1, padding: 5, fontSize: 10 }}
               disabled={!podeFocarUmaVez(track)}
               title={podeFocarUmaVez(track) ? undefined : t('tv.camara.semSuporte')}
@@ -320,10 +344,8 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
               }}
             >
               {t('tv.fontes.focar')}
-            </button>
-            <button
-              type="button"
-              className="tv-botao"
+            </BotaoTv>
+            <BotaoTv
               style={{ flex: 1, padding: 5, fontSize: 10 }}
               aria-pressed={bloqueado}
               disabled={!podeBloquear(track)}
@@ -331,13 +353,44 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
               onClick={() => track && void bloquearAeAf(track, !bloqueado).then((ok) => ok && setBloqueado(!bloqueado))}
             >
               {bloqueado ? t('tv.fontes.desbloquearAe') : t('tv.fontes.bloquearAe')}
-            </button>
-          </div>
+            </BotaoTv>
+          </Cabeca>
           {focado && <span className="tv-mono-85">{focado}</span>}
-        </section>
+        </Cartao>
       )}
 
-      <section className="tv-cartao" style={{ gap: 7 }}>
+      <Cartao como="section" style={{ gap: 7 }} data-tv="enquadramento">
+        <Cabeca>
+          <h3 className="tv-t2">{t('tv.fontes.enquadramento')}</h3>
+          <span className="tv-dir tv-mono-85">{t('tv.fontes.grausN', { n: geo.rotacao })}</span>
+        </Cabeca>
+        <p className="tv-nota">{t('tv.fontes.enquadramentoNota')}</p>
+        <Cabeca style={{ gap: 5 }}>
+          <BotaoTv style={{ flex: 1, padding: 5, fontSize: 10 }} onClick={() => mudarGeo(rodar(geo, -1))}>
+            {t('tv.fontes.rodarEsquerda')}
+          </BotaoTv>
+          <BotaoTv style={{ flex: 1, padding: 5, fontSize: 10 }} onClick={() => mudarGeo(rodar(geo, 1))}>
+            {t('tv.fontes.rodarDireita')}
+          </BotaoTv>
+          <BotaoTv
+            style={{ flex: 1, padding: 5, fontSize: 10 }}
+            aria-pressed={geo.espelho}
+            variante={geo.espelho ? 'forte' : undefined}
+            onClick={() => mudarGeo({ ...geo, espelho: !geo.espelho })}
+          >
+            {t('tv.fontes.espelhar')}
+          </BotaoTv>
+          <BotaoTv
+            style={{ flex: 1, padding: 5, fontSize: 10 }}
+            disabled={ehDireita(geo)}
+            onClick={() => mudarGeo({ ...GEOMETRIA_NEUTRA })}
+          >
+            {t('tv.fontes.endireitar')}
+          </BotaoTv>
+        </Cabeca>
+      </Cartao>
+
+      <Cartao como="section" style={{ gap: 7 }}>
         <h3 className="tv-t2">{t('tv.fontes.estado')}</h3>
         <div ref={valores} style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
           <div className="tv-kv">
@@ -360,6 +413,8 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
               </span>
             </div>
           )}
+          {f.tipo === 'camara' && <SomDaCamara s={s} id={id} />}
+          {f.tipo === 'ficheiro' && <Transporte s={s} id={id} />}
           {!local && f.tipo === 'participante' && (
             <div className="tv-kv">
               <span>{t('tv.fontes.estadoTelefone')}</span>
@@ -367,17 +422,84 @@ function Detalhe({ s, id, numero }: { s: PropsDoEcra['s']; id: string; numero: n
             </div>
           )}
         </div>
-      </section>
+      </Cartao>
 
-      <section className="tv-cartao" style={{ gap: 6 }}>
+      <Cartao como="section" style={{ gap: 6 }}>
         <h3 className="tv-t2">{t('tv.fontes.sincronismo')}</h3>
         <p className="tv-nota">{t('tv.fontes.sincronismoNota')}</p>
         <div className="tv-kv">
           <span>{t('tv.fontes.diferenca')}</span>
           <SincValor s={s} />
         </div>
-      </section>
+      </Cartao>
     </>
+  )
+}
+
+/**
+ * O TRANSPORTE de um ficheiro: tocar, pausar, voltar ao princípio, ciclo.
+ *
+ * Fica no detalhe da fonte e não na mesa de corte de propósito: rolar um VT é
+ * preparar uma fonte, e quem corta ao ar carrega na tecla do barramento como
+ * em qualquer outra.
+ */
+function Transporte({ s, id }: { s: PropsDoEcra['s']; id: string }) {
+  const { t } = useTranslation()
+  const v = s.registo.video(id)
+  if (!v) return null
+  const tempo = (x: number) => (Number.isFinite(x) ? `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}` : '—')
+  return (
+    <div className="tv-transporte" data-tv="transporte">
+      <BotaoTv mini data-tv="tocar" onClick={() => s.comandarFicheiro(id, v.paused ? 'tocar' : 'pausar')}>
+        {v.paused ? t('tv.fontes.tocar') : t('tv.fontes.pausar')}
+      </BotaoTv>
+      <BotaoTv mini data-tv="inicio" onClick={() => s.comandarFicheiro(id, 'inicio')}>
+        {t('tv.fontes.inicio')}
+      </BotaoTv>
+      <button
+        type="button"
+        className={cx('tv-tecla__ciclo', v.loop && 'is-on')}
+        aria-pressed={v.loop}
+        onClick={() => s.comandarFicheiro(id, 'ciclo')}
+      >
+        {t('tv.fontes.ciclo')}
+      </button>
+      <span className="tv-dir tv-mono-9">
+        {tempo(v.currentTime)} / {tempo(v.duration)}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * O som DESTA câmara: a linha que faltava entre as Fontes e a mesa de som.
+ *
+ * Uma capturadora HDMI, uma webcam com microfone ou uma mesa de som ligada por
+ * USB expõem duas entradas com o mesmo `groupId` — uma de imagem e uma de som.
+ * A imagem entrava pelas Fontes e o som ficava para trás: a mesa listava todos
+ * os microfones do sistema sem dizer qual era o daquela câmara.
+ *
+ * Leva-se à mesa por um clique, não sozinho: abrir um microfone é um pedido ao
+ * browser e é som que passa a ir ao ar.
+ */
+function SomDaCamara({ s, id }: { s: PropsDoEcra['s']; id: string }) {
+  const { t } = useTranslation()
+  const mic = s.microfoneDaFonte(id)
+  if (!mic) return null
+  const naMesa = !!s.som?.lista().some((c) => c.id === `mic:${mic.deviceId || 'omissao'}`)
+  return (
+    <div className="tv-kv">
+      <span>{t('tv.fontes.somDaCamara')}</span>
+      {naMesa ? (
+        <span className="tv-ok" data-tv="som-da-camara-na-mesa">
+          {t('tv.fontes.somNaMesa')}
+        </span>
+      ) : (
+        <BotaoTv mini data-tv="som-da-camara" onClick={() => void s.levarSomDaFonteAMesa(id)}>
+          {t('tv.fontes.levarSomAMesa')}
+        </BotaoTv>
+      )}
+    </div>
   )
 }
 

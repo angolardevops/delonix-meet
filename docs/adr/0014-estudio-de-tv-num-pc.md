@@ -119,6 +119,51 @@ perde»). Os telefones já publicam para o SFU; o SFU já escreve um ficheiro po
 Custo aceite: o espaço duplica (as faixas + o agregado). Mitigação possível, não feita:
 servir as faixas por extracção a pedido do agregado. Fica por decidir com números de uso.
 
+**Emenda (2026-10-18, medida no `049948388`) — o vocabulário das pistas é de QUATRO
+valores, e o ciclo de vida é o da gravação.** A fatia 1 entregou as pistas servidas e
+deixou duas fugas, ambas de um defeito só: um ficheiro no disco sem linha que o sirva.
+
+1. **`screen-audio` é um `kind` de primeira classe.** O `CHECK` da migração 0124 foi
+   escrito a partir de um comentário do `open_track` que enumerava três dos quatro
+   valores, e recusava o som do sistema de quem partilha ecrã — uma pista que o SFU
+   produz, grava em ficheiro próprio e publica há muito. A base rejeitava o `INSERT`, o
+   `registar_pistas_iso` escrevia um `tracing::error!` e seguia, e o ficheiro ficava em
+   `iso-<gravação>/` para sempre, sem nenhuma linha que o pudesse pedir e sem ninguém a
+   ver um erro. **Decidido acrescentar o valor** (migração 0125), e não mapeá-lo: para
+   `audio` perdia-se a distinção que é o PROPÓSITO do ISO — quem partilha ecrã com som
+   publica duas pistas de áudio, e duas linhas `audio` do mesmo `publisher_id` deixam a
+   pós-produção sem saber qual é a voz; para `screen` mentia-se sobre o tipo de media,
+   porque quem serve escolhe o `Content-Type` por `ends_with("audio")`. O vocabulário
+   passa a ter uma fonte de verdade em código (`recorder::REC_TRACK_KINDS`), de onde o
+   SFU o constrói, e um portão recusa que as duas listas voltem a divergir.
+2. **A invariante é a pasta, nos DOIS sentidos, e não a contagem dos `INSERT`.** O
+   registo acaba numa reconciliação de `iso-<gravação>/` contra `recording_tracks`:
+   ficheiro sem linha é descartado e CONTADO
+   (`delonix_recording_iso_tracks_discarded_total`, só o que é defeito — uma câmara que
+   nunca publicou não conta), e linha sem ficheiro é removida. A segunda metade não é
+   simetria decorativa: a primeira versão desta fatia relia as linhas depois dos
+   `INSERT` já commitados e, se a releitura falhasse, apagava a pasta inteira — deixando
+   a listagem a prometer pistas que o download não serve. Um erro no log não é sinal
+   suficiente para matéria-prima de gravação que não volta; rows-sem-ficheiro também não.
+3. **As pistas morrem com a gravação.** Não se guardam mais tempo que a composta: a
+   retenção apaga a pasta no mesmo passo em que apaga `{id}.webm`, a miniatura e a linha
+   (antes apagava as LINHAS por `ON DELETE CASCADE` e deixava os FICHEIROS para sempre —
+   o varredor de órfãos só olha para `tmp-*` e não há rota de `DELETE`).
+4. **O que fica ABERTO, dito em vez de suposto.** Um processo morto entre a renomeação
+   da pasta e o `INSERT` deixa pistas que nenhuma linha serve, e nada as recolhe.
+   Tentou-se varrê-las pela ausência da linha em `recordings` e **recuou-se**, por três
+   razões medidas: a linha EXISTE nessa janela (nasce no `insert_processing`, antes de
+   compor), logo o varredor nunca apanharia o caso; o `rename(2)` preserva o mtime do
+   directório, logo a folga que devia proteger a janela é nula numa reunião longa; e
+   «a base não conhece este id» não é um erro, logo uma base restaurada para um ponto
+   anterior — ou um ambiente apontado ao mesmo volume `ReadWriteMany`, que sobrevive à
+   base — autorizava `remove_dir_all` em todas as pastas de pistas do volume, no
+   primeiro tique de arranque. A saída certa é um registo explícito do artefacto (uma
+   coluna `recordings.iso_dir`, ou uma tabela de ficheiros por gravação que a retenção
+   percorra), e é fatia própria. O mesmo registo fecharia o defeito gémeo que esta
+   revisão encontrou ao lado: os `clip-{id}.webm`/`.vtt` da 0118 também não são apagados
+   por ninguém.
+
 Fronteira herdada: só VP8 e Opus. Uma app que publique H.264 fica fora da gravação com erro
 escrito — igual a hoje.
 
@@ -214,8 +259,8 @@ cada um é do domínio, não da base.
 
 | # | Linha | Estado |
 |---|---|---|
-| 1 | Um código errado 5 vezes fica queimado; o certo depois disso é recusado | por provar |
-| 2 | O token de fonte não abre nenhuma rota REST nem o `/live` | por provar |
+| 1 | Um código errado 5 vezes fica queimado; o certo depois disso é recusado | **provado** — `server/tests/studio.rs:202` `pairing_code_burns_after_five_wrong_attempts` |
+| 2 | O token de fonte não abre nenhuma rota REST nem o `/live` | **provado** — `server/tests/studio.rs:343-358` (`/api/users/me` e `/api/orgs/{id}/studios` dão 401, e o upgrade do `/live` falha) |
 | 3 | Uma fonte que manda `chat`, `set-role` ou `server-record` é recusada | por provar |
 | 4 | Só o anfitrião actual fixa o tally e comanda; outro participante é recusado | por provar |
 | 5 | Um telefone (cliente webrtc-rs) emparelha, publica, recebe tally e comando, devolve estado | por provar ao vivo |

@@ -1,0 +1,19 @@
+# Copia para `terraform.tfvars` (que o .gitignore ignora) e preenche.
+# O token do Proxmox NÃO vem daqui: exporta PROXMOX_VE_API_TOKEN.
+#
+#   export PROXMOX_VE_API_TOKEN='utilizador@pam!token=xxxxxxxx-xxxx-...'
+#   tofu init && tofu plan
+
+proxmox_endpoint = "https://192.168.1.10:8006/"
+proxmox_insecure = true # certificado próprio do laboratório
+node_name        = "pve"
+
+# VMID de um template cloud-init já criado no Proxmox (Debian 12 / Ubuntu 24.04).
+template_id = 9000
+
+ssh_public_keys = [
+  "ssh-ed25519 AAAA... o-teu-utilizador@a-tua-maquina",
+]
+
+# Os tamanhos por omissão estão em variables.tf e SÃO UM PALPITE — o ADR-0020
+# di-lo. Mede o que o host tem antes de subir seis VMs.

@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GeneratedPin } from '../api'
 import { Button } from '../ui/kit'
+import { copiarTexto } from '../ui/copy'
 
 export default function PinOnce({ generated, onCopied }: { generated: GeneratedPin; onCopied?: () => void }) {
   const { t } = useTranslation()
@@ -14,8 +15,9 @@ export default function PinOnce({ generated, onCopied }: { generated: GeneratedP
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(generated.pin)
-      setCopied(true)
+      // O mecanismo único (`ui/copy`): com *fallback* para http, onde o
+      // `navigator.clipboard` não existe e isto não copiava nada.
+      if (await copiarTexto(generated.pin)) setCopied(true)
     } catch {
       // Sem clipboard (contexto não seguro, permissão negada): o PIN está à
       // vista e selecciona-se inteiro com um toque.

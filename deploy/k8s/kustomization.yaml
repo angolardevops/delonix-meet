@@ -1,10 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # FONTE ÚNICA de deploy — os MESMOS ficheiros que `make stage`/`prod` aplicam
-# (namespace delonix-meet). Não há "Set B" duplicado: os manifests 10/20/30/40
+# (namespace ngolacloud-meet). Não há "Set B" duplicado: os manifests 10/20/30/40
 # (namespace delonix) foram eliminados porque causavam drift — a correção de
 # config ia para lá e nunca chegava ao cluster (ver docs/reference/regressions.md R4).
-# Sem `namespace:` global — cada recurso declara o seu (delonix-meet / metallb-system).
+# Sem `namespace:` global — cada recurso declara o seu (ngolacloud-meet / metallb-system).
 #
 # Alternativa ao Makefile:  kubectl apply -k deploy/k8s
 # (para stage/kind, correr antes: `make metallb` + `make infra-pull`, e prover a
@@ -14,6 +14,7 @@ resources:
   - 01-config.yaml # só o ConfigMap. O Secret delonix-secrets cria-se ANTES: scripts/k8s-app-secrets.sh
   - 02-server.yaml # Deployment + Services (/api + /ws dedicado) + PDB
   - 03-web.yaml
+  - 10-contas-e-rede.yaml # ServiceAccounts (sem token montado) + NetworkPolicy por carga
   - 04-ingress.yaml # /api,/rtc + /ws (upstream-hash-by:$arg_room — afinidade R3)
   - 05-cert-manager.yaml # ClusterIssuer (prod; .local usa mkcert/CA interna)
   - 07-ollama.yaml # LLM local (tradução de legendas + resumo MoM — ai.rs)

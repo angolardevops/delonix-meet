@@ -35,7 +35,11 @@ while read -r rota; do
   # teste (`/x/${id}/rotate-key`): o padrão aceita qualquer `${…}` no sítio de
   # cada `{param}`. Sem isto, só rotas com o parâmetro no FIM eram verificáveis.
   padrao=$(echo "$sufixo" | sed -E 's/[.[\*^$]/\\&/g; s/\{[a-z_]+\}/\\$\\{[^}]+\\}/g')
-  if ! grep -q "orgId}${alvo}" "$ISO" && ! grep -qE "orgId\}${padrao}" "$ISO"; then
+  # Com um parâmetro a meio, o `alvo` é uma ERE (`\$\{[^}]+\}`) e a primeira
+  # pesquisa é BRE: o grep recusava-a («Invalid content of \{\}», uma linha no
+  # stderr por rota) e quem decidia era a segunda. Decide na mesma, sem o ruído.
+  a_meio=0; case "$alvo" in *'\{'*) a_meio=1 ;; esac
+  if { [ "$a_meio" = 1 ] || ! grep -q "orgId}${alvo}" "$ISO"; } && ! grep -qE "orgId\}${padrao}" "$ISO"; then
     echo "✗ isolamento: $rota não é exercitada por $ISO"
     falta=1
   fi
@@ -56,7 +60,7 @@ while read -r rota; do
   base=$(echo "$rota" | sed -E 's|^/api/([a-z-]+).*|\1|')
   sufixo=$(echo "$rota" | sed -E 's|^/api/[a-z-]+||; s|/\{[a-z_]+\}||g')
   # Rotas de colecção (sem parâmetro) não são recursos por id.
-  echo "$rota" | grep -q '{' || continue
+  grep -q '{' <<<"$rota" || continue
   # Uma rota com parâmetros A MEIO (`/captions/{lang}/vtt`) não tem sufixo
   # literal que um pedido real possa conter; aceita-se então a rota inteira com
   # cada parâmetro interpolado — que é uma prova mais forte, não mais fraca.

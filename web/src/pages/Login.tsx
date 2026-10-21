@@ -14,13 +14,25 @@ import '../ui/auth.css'
 import DesafioMfa from './auth/DesafioMfa'
 import EntrarComCodigo from './auth/EntrarComCodigo'
 import FormularioEntrada from './auth/FormularioEntrada'
+import PedirReposicao from './auth/PedirReposicao'
 import PainelValor from './auth/PainelValor'
 import SeletorLingua from './auth/SeletorLingua'
 
-export default function Login({ pendingRoom, onLogin }: { pendingRoom: string | null; onLogin: (u: User) => void }) {
+export default function Login({
+  pendingRoom,
+  onLogin,
+  initialMfaToken = null,
+}: {
+  pendingRoom: string | null
+  onLogin: (u: User) => void
+  /** Desafio já devolvido pelo SSO (A4) — ver `App.tsx`, rota `#/sso-mfa`. */
+  initialMfaToken?: string | null
+}) {
   const { t } = useTranslation()
   /** Desafio de segundo factor devolvido pelo login (JWT `typ: "mfa"`, 5 min). */
-  const [mfaToken, setMfaToken] = useState<string | null>(null)
+  const [mfaToken, setMfaToken] = useState<string | null>(initialMfaToken)
+  /** «Esqueci-me da palavra-passe»: o formulário dá lugar ao pedido de email. */
+  const [esqueci, setEsqueci] = useState(false)
 
   return (
     <div className="auth">
@@ -47,11 +59,13 @@ export default function Login({ pendingRoom, onLogin }: { pendingRoom: string | 
 
           {mfaToken ? (
             <DesafioMfa mfaToken={mfaToken} onLogin={onLogin} onRecomecar={() => setMfaToken(null)} />
+          ) : esqueci ? (
+            <PedirReposicao onVoltar={() => setEsqueci(false)} />
           ) : (
-            <FormularioEntrada onLogin={onLogin} onDesafio={setMfaToken} />
+            <FormularioEntrada onLogin={onLogin} onDesafio={setMfaToken} onEsqueci={() => setEsqueci(true)} />
           )}
 
-          {!mfaToken && !pendingRoom && <EntrarComCodigo />}
+          {!mfaToken && !esqueci && !pendingRoom && <EntrarComCodigo />}
 
           <p className="auth-termos">
             {t('auth.entrar.termos')} <a href="#/legal">{t('auth.entrar.termosLink')}</a>.

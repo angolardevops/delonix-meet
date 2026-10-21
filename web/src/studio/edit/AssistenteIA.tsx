@@ -13,14 +13,24 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError, apiErrorMessage, isAbort, studioAi, studioAiStatus, updateRecording } from '../../api'
+import {
+  ApiError,
+  apiErrorMessage,
+  isAbort,
+  studioAi,
+  studioAiDisponivel,
+  studioAiStatus,
+  updateRecording,
+} from '../../api'
 import type { StudioAiFillers, StudioAiPublication, StudioAiStatus, StudioAiSummary, StudioAiTask } from '../../api'
 import { useShell } from '../../components/shellContext'
 import { Button, Dialog, TextArea, TextInput } from '../../ui/kit'
+import { BotaoEd, CartaoEd, TituloEd } from '../pecasDoEditor'
 import { contarPreenchimento, encontrarPreenchimento, palavrasDasCues, relogio } from '../captions/legendas'
 import { fonteDaBiblioteca, segmentosDasCues } from '../captions/servidor'
 import type { Edicao, Projecto } from './projecto'
 import { capitulos, novoId } from './projecto'
+import { copiarTexto } from '../../ui/copy'
 
 type Resultado =
   | { tarefa: 'summary'; dados: StudioAiSummary }
@@ -70,7 +80,7 @@ export default function AssistenteIA({
   const cues = p.legendas?.cues ?? []
   const temTranscricao = cues.some((c) => c.texto.trim())
   const s = estado.fase === 'pronto' ? estado.s : null
-  const disponivel = !!s && s.configured && s.reachable && s.model_installed !== false
+  const disponivel = studioAiDisponivel(s)
 
   async function pedir(tarefa: StudioAiTask) {
     if (!orgId || !p.legendas) return
@@ -107,8 +117,8 @@ export default function AssistenteIA({
   return (
     <section className="ed-group" data-studio="ia-servidor">
       <h2 className="ed-label">{t('editor.iaServidor.titulo')}</h2>
-      <div className="ed-card">
-        <span className="ed-card__title">{t('editor.iaServidor.assistente')}</span>
+      <CartaoEd>
+        <TituloEd como="span">{t('editor.iaServidor.assistente')}</TituloEd>
         <span className={disponivel || estado.fase === 'a-ver' ? 'dx-num ed-src__sub' : 'dx-num ed-src__sub ed-tone--erro'} role="status" data-studio="ia-estado">
           {linhaDeEstado}
         </span>
@@ -120,16 +130,14 @@ export default function AssistenteIA({
         {disponivel &&
           temTranscricao &&
           TAREFAS.map((tarefa) => (
-            <button
+            <BotaoEd
               key={tarefa}
-              type="button"
-              className="ed-btn"
               disabled={aCorrer !== null}
               onClick={() => void pedir(tarefa)}
               data-studio={`ia-${tarefa}`}
             >
               {aCorrer === tarefa ? t('editor.iaServidor.aPensar') : t(`editor.iaServidor.tarefas.${tarefa}`)}
-            </button>
+            </BotaoEd>
           ))}
         {aCorrer && (
           <button type="button" className="ed-link" onClick={() => pedido.current?.abort()}>
@@ -141,7 +149,7 @@ export default function AssistenteIA({
             {erro}
           </span>
         )}
-      </div>
+      </CartaoEd>
       {resultado && (
         <DialogoDoResultado
           p={p}
@@ -189,7 +197,7 @@ function DialogoDoResultado({
 
   async function copiar(texto: string) {
     try {
-      await navigator.clipboard.writeText(texto)
+      await copiarTexto(texto)
       setAviso(t('editor.iaServidor.copiado'))
     } catch {
       setAviso(t('editor.iaServidor.copiaFalhou'))

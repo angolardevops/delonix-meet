@@ -6,8 +6,12 @@
 //! - `in_app`: a caixa de entrada e o aviso imediato pelo `/rtc`. É o único
 //!   canal com entrega implementada; desligá-lo para um tipo faz o produtor
 //!   não criar a notificação.
-//! - `email`: guardado, mas **sem entrega** — não há adaptador de correio de
-//!   saída no servidor. A API di-lo em `channels[].delivery = "not_configured"`.
+//! - `email`: entrega pela espinha do correio (ADR-0025) **quando o operador
+//!   configurou um relay**. Sem relay a API continua a dizer
+//!   `channels[].delivery = "not_configured"`, porque aí é verdade — e com
+//!   relay diz `available`, porque passou a ser. Até ao #296 não havia
+//!   adaptador nenhum e isto era `not_configured` sempre; essa afirmação
+//!   ficou falsa no dia em que a espinha entrou.
 //! - `sms`: guardado; a entrega depende do gateway de SMS (ADR-0005) e do
 //!   telefone do perfil, e ainda não há produtor que envie notificações por
 //!   SMS — por isso também `not_configured`.
@@ -57,10 +61,16 @@ impl Delivery {
     }
 }
 
-/// Hoje só o `in_app` entrega (ver o topo do módulo).
-pub fn delivery(channel: Channel) -> Delivery {
+/// O estado de entrega de um canal **nesta instalação**.
+///
+/// O `mail_configured` entra como argumento de propósito: se este fosse um
+/// `match` fixo, voltaria a mentir no dia em que o correio mudasse — foi
+/// exactamente o que aconteceu entre o #296 (a espinha entrou) e a correcção
+/// disto. O domínio decide a REGRA; o facto («há relay?») vem de quem sabe.
+pub fn delivery(channel: Channel, mail_configured: bool) -> Delivery {
     match channel {
         Channel::InApp => Delivery::Available,
+        Channel::Email if mail_configured => Delivery::Available,
         Channel::Email | Channel::Sms => Delivery::NotConfigured,
     }
 }
@@ -74,6 +84,7 @@ pub fn default_enabled(kind: Kind, channel: Channel) -> bool {
         Channel::Email => matches!(
             kind,
             Kind::MeetingInvited
+                | Kind::MeetingRescheduled
                 | Kind::MeetingCancelled
                 | Kind::MeetingStarting
                 | Kind::RecordingReady
@@ -106,14 +117,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn in_app_is_the_only_delivering_channel_and_on_by_default() {
+    fn defaults_and_delivery_por_canal() {
         for k in Kind::ALL {
             assert!(default_enabled(k, Channel::InApp));
             assert!(!default_enabled(k, Channel::Sms));
         }
-        assert_eq!(delivery(Channel::InApp), Delivery::Available);
-        assert_eq!(delivery(Channel::Email).as_str(), "not_configured");
-        assert_eq!(delivery(Channel::Sms), Delivery::NotConfigured);
+        assert_eq!(delivery(Channel::InApp, false), Delivery::Available);
+        assert_eq!(delivery(Channel::Sms, true), Delivery::NotConfigured);
+        // O correio depende do relay, e é o ponto todo desta função.
+        assert_eq!(delivery(Channel::Email, false).as_str(), "not_configured");
+        assert_eq!(delivery(Channel::Email, true), Delivery::Available);
     }
 
     #[test]

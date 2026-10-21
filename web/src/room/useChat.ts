@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser, roomChatHistory } from '../api'
+import { roomChatHistory } from '../api'
+import { participanteLocal, souConvidado } from '../convidado'
 import { comConfirmada, comEnviada, comHistorico, comReaccoes, comRecebida, type ChatMsg, type HistoricoChat } from './chatState'
 import type { RoomCore } from './useRoomCore'
 
@@ -48,8 +49,11 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
       // Histórico ao entrar (as ÚLTIMAS 200, com fios e reacções): melhor
       // esforço, não bloqueia a sala.
       signal.on('joined', () => {
+        // Um convidado não lê o histórico guardado (a rota pede conta): vê o
+        // que passar ao vivo a partir do momento em que entrou.
+        if (souConvidado()) return
         void roomChatHistory(code)
-          .then((history) => setMessages((live) => comHistorico(live, history as HistoricoChat[], currentUser()?.id)))
+          .then((history) => setMessages((live) => comHistorico(live, history as HistoricoChat[], participanteLocal().id ?? undefined)))
           .catch(() => {})
       }),
       signal.on('room-settings', (m) => setChatOn(m.chat_on ?? true)),
@@ -94,7 +98,7 @@ export function useChat(core: RoomCore, chatOpen: boolean) {
     const para = target ?? (replyTo?.private ? parDaPrivada(replyTo) : null)
     signal.sendB1({ type: 'chat', text, reply_to: mae, client_id: clientId, to: para?.peerId ?? null })
     setMessages((c) =>
-      comEnviada(c, { clientId, username: currentUser()?.username ?? '', text, replyTo: mae, at: Date.now(), to: para?.peerId ?? null, toUsername: para?.username ?? null }),
+      comEnviada(c, { clientId, username: participanteLocal().username, text, replyTo: mae, at: Date.now(), to: para?.peerId ?? null, toUsername: para?.username ?? null }),
     )
     setInput('')
     setMentionQuery(null)

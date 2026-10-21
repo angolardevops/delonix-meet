@@ -165,6 +165,10 @@ export function useListSearch<T>(
         setState({ s: 'error', msg: apiErrorMessage(e, t('search.estado.erro')) })
       })
     return () => ctrl.abort()
+    // O `t` fica FORA de propósito: o efeito só o usa para a mensagem de erro,
+    // e incluí-lo refazia a pesquisa ao servidor a cada mudança de língua. Um
+    // erro já no ecrã fica na língua em que apareceu — é o preço, e é menor
+    // do que pedir a lista outra vez.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher, key, token, nonce])
 

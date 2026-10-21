@@ -72,3 +72,23 @@ BLOQUEIA (ficheiro:linha · cenário: que participante/rede o dispara · efeito 
 MEDIR ANTES DE MUDAR (suspeitas de performance sem perfil)
 PROVADO (testes corridos, com E2E_TIMEOUT_FACTOR se aplicável) / NÃO VALIDADO
 ```
+
+## Lacunas medidas na tua área (2026-10-18) — com id da fila
+
+- **`B-06` a mais barata da fila:** `reevaluate_room` percorre os pares **em série com
+  `.await`** (`sfu.rs:1689-1703`) — a entrada na sala sobe de 0,3 s com 8 pessoas para
+  1,7 s com 40. A armadilha da correcção é a tua especialidade: **não introduzir um lock
+  atravessado por um `.await`** ao paralelizar.
+- **`A-07`: o lockout é por processo.** `rate_limit.rs:22-37` — com N réplicas, 8
+  tentativas/5min tornam-se 8N. O padrão certo já está nesta árvore (o travão do PIN de
+  ramal vive em Postgres, `voice_pin_origins`).
+- **`B-05`: a composição ffmpeg partilha CPU com o media** no mesmo pod; 20 em paralelo
+  deram 64 % de perda nas chamadas vivas, e o travão por omissão é
+  `FFMPEG_MAX_CONCURRENT=1`.
+- **`A-01`: o `voice.rs` não lê `rooms.e2ee`** (grep = 0), enquanto o `dial_outs.rs:307` e
+  o `recorder.rs:1750` lêem. Duas verificações iguais em três caminhos.
+
+A catraca do clippy está em **11** (`scripts/clippy-baseline.txt`, medido 2026-10-18 — a
+skill dizia 13). E o Rust local desta máquina está meses atrás do CI: `cargo fmt --check`
+e a catraca do clippy **dão veredicto falso aqui**; confirma numa árvore limpa, e a
+autoridade é o CI.

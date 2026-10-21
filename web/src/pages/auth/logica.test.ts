@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
 const { ApiError } = await import('../../api')
 
-import { codigoCompleto, dominioDoEmail, estadoHttp, megabytes, motivoDaRecusa, normalizarCodigo, partesUptime, saudeGlobal } from './logica'
+import { chaveDoErroSso, codigoCompleto, dominioDoEmail, estadoHttp, megabytes, motivoDaRecusa, normalizarCodigo, partesUptime, saudeGlobal, ssoErroDoEndereco } from './logica'
 
 describe('domínio do email para o SSO', () => {
   it('só pergunta quando há um domínio com ponto', () => {
@@ -61,5 +61,23 @@ describe('página de estado', () => {
   })
   it('tamanho em MB com uma casa', () => {
     expect(megabytes(1_572_864)).toBe('1.5')
+  })
+})
+
+describe('o regresso do SSO ao login (#/login?sso_error=)', () => {
+  it('lê o código do endereço, e só um código bem formado', () => {
+    expect(ssoErroDoEndereco('#/login?sso_error=sso.domain_not_verified')).toBe('sso.domain_not_verified')
+    expect(ssoErroDoEndereco('#/login')).toBeNull()
+    expect(ssoErroDoEndereco('#/login?outra=1')).toBeNull()
+    // O endereço é de quem o escreve: nada que não pareça um código passa.
+    expect(ssoErroDoEndereco('#/login?sso_error=<script>')).toBeNull()
+  })
+
+  it('cada código do servidor tem a sua frase, e o desconhecido cai na genérica', () => {
+    expect(chaveDoErroSso('sso.domain_not_verified')).toBe('auth.ssoErro.dominioPorProvar')
+    expect(chaveDoErroSso('sso.provider_unavailable')).toBe('auth.ssoErro.fornecedorEmBaixo')
+    expect(chaveDoErroSso('sso.invalid_id_token')).toBe('auth.ssoErro.tokenRecusado')
+    expect(chaveDoErroSso('auth.unauthenticated')).toBe('auth.ssoErro.expirou')
+    expect(chaveDoErroSso('internal')).toBe('auth.ssoErro.generico')
   })
 })

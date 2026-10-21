@@ -5,6 +5,7 @@ import { Button, Field, IconButton, Select, TextInput, cx } from '../ui/kit'
 import { Countdown } from './Clocks'
 import { PollCard } from './PollCard'
 import type { MeetingTools } from './useMeetingTools'
+import { Bloco } from './Bloco'
 
 const TIMER_PRESETS = [5, 10, 15, 30, 60]
 const POLL_DURATIONS = [0, 30, 60, 120, 300]
@@ -108,11 +109,7 @@ export function PollsPanel({
   const { t } = useTranslation()
   return (
     <div className="rm-scroll">
-      <section className="rm-block" aria-labelledby="rm-timer-h">
-        <h3 id="rm-timer-h" className="rm-block__title">
-          <Icon name="hourglass" size={13} />
-          {t('room.temporizador.titulo')}
-        </h3>
+      <Bloco icon="hourglass" titulo={t('room.temporizador.titulo')}>
         {tools.timerEndsAt ? (
           <div className="rm-timer">
             <Countdown endsAt={tools.timerEndsAt} render={(txt) => <strong className="dx-num rm-timer__big">{txt}</strong>} />
@@ -133,23 +130,15 @@ export function PollsPanel({
         ) : (
           <p className="dx-muted">{t('room.temporizador.soAnfitriao')}</p>
         )}
-      </section>
+      </Bloco>
 
       {isHost && (
-        <section className="rm-block" aria-labelledby="rm-poll-new">
-          <h3 id="rm-poll-new" className="rm-block__title">
-            <Icon name="plus" size={13} />
-            {t('room.sondagens.nova')}
-          </h3>
+        <Bloco icon="plus" titulo={t('room.sondagens.nova')}>
           <PollComposer tools={tools} autoFocus={focusComposer} />
-        </section>
+        </Bloco>
       )}
 
-      <section className="rm-block" aria-labelledby="rm-poll-list">
-        <h3 id="rm-poll-list" className="rm-block__title">
-          <Icon name="poll" size={13} />
-          {t('room.painel.sondagens')}
-        </h3>
+      <Bloco icon="poll" titulo={t('room.painel.sondagens')}>
         {tools.polls.length === 0 && <p className="dx-muted">{t('room.sondagens.vazio')}</p>}
         {[...tools.polls].reverse().map((p) => (
           <PollCard
@@ -162,7 +151,7 @@ export function PollsPanel({
             present={present}
           />
         ))}
-      </section>
+      </Bloco>
     </div>
   )
 }

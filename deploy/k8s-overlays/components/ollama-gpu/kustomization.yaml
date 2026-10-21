@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+# ============================================================
+#  Caminho declarativo para o Ollama correr em GPU (ADR-0024) — PREPARADO,
+#  NÃO LIGADO. A GPU está autorizada por orçamento a 2026-10-09, mas ainda
+#  sem hardware físico no cluster de produção (ADR-0020, Proxmox 192.168.1.10).
+#
+#  Substitui o `kubectl patch` imperativo que antes vivia em
+#  deploy/ansible/roles/k8s_app/tasks/main.yml (variável ollama_gpu): aquele
+#  patch corria DEPOIS do `kubectl apply`, fora do manifesto declarado — não
+#  era GitOps, e divergia em silêncio de um `kubectl apply -k` seguinte.
+#
+#  Este componente NÃO entra em nenhum overlay por omissão (nem a base
+#  deploy/k8s/, nem saas, nem enterprise). Para ligar quando a GPU existir:
+#  acrescenta UMA linha a components: na kustomization.yaml do ambiente, ex.:
+#
+#    components:
+#      - ../components/edition-common
+#      - ../components/ollama-gpu
+#
+#  (ou, para quem aplica só a base: acrescenta a entrada equivalente em
+#  deploy/k8s/kustomization.yaml). Nada mais muda — o patch encontra o
+#  Deployment delonix-ollama de 07-ollama.yaml pelo nome.
+#
+#  Padrão de nodeSelector/toleration/runtimeClassName copiado de
+#  deploy/k8s/60-ai-gpu-worker.yaml (worker de Whisper em GPU) — único outro
+#  sítio do repo com este padrão.
+# ============================================================
+patches:
+  - path: ollama-gpu-patch.yaml

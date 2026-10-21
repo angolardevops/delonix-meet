@@ -92,6 +92,15 @@ skills = {os.path.basename(os.path.dirname(p)) for p in glob.glob('.claude/skill
 # Os crates `delonix-meet-*` partilham o prefixo: os planeados (árvore do ADR-0004,
 # `├── delonix-meet-x/`) e os que já existirem num Cargo.toml não são revisores.
 crates = set(re.findall(r'(delonix-meet-[a-z]+)/', open('docs/adr/0004-organizacao-alvo-do-backend.md', encoding='utf-8').read()))
+# Objectos Kubernetes declarados em deploy/ — `delonix-meet-quota`,
+# `delonix-meet-limits`, `delonix-meet-internal`… São outro espaço de nomes: um
+# documento que cite um deles não está a citar um revisor que não existe, e a
+# regra abaixo acusava-o como se estivesse (medido a 2026-10-09, com a quota do
+# namespace).
+objectos = set()
+for f in glob.glob('deploy/**/*.yaml', recursive=True):
+    with open(f, encoding='utf-8', errors='replace') as fh:
+        objectos |= set(re.findall(r'^\s*name: (delonix-meet-[a-z]+)\b', fh.read(), re.M))
 # O ADR-0006 refina a lista (tabela `| \`delonix-meet-x\` |`) — os crates dele também não são revisores.
 crates |= set(re.findall(r'\| `(delonix-meet-[a-z]+)` \|', open('docs/adr/0006-backend-enterprise-contextos-edicoes-e-entrega.md', encoding='utf-8').read()))
 for toml in glob.glob('server/**/Cargo.toml', recursive=True):
@@ -122,7 +131,8 @@ for p in docs:
     # `nk-delonix-meet-integration.md` é um ficheiro que existe no repo, e citá-lo
     # fazia o portão pedir um revisor `delonix-meet-integration` que nunca existiu.
     for nome in sorted(set(re.findall(r'(?<![\w-])delonix-meet-[a-z]+\b', texto))):
-        if nome not in agentes and nome not in skills and nome not in crates:
+        if nome not in agentes and nome not in skills and nome not in crates \
+                and nome not in objectos:
             print(f"✗ drift: {p} cita '{nome}', que não existe em .claude/agents/ nem em .claude/skills/")
             falha = True
     for n, linha in enumerate(texto.splitlines(), 1):
@@ -139,7 +149,62 @@ then
   fail=1
 fi
 
+# 6) Uma variável de ambiente que a doc manda definir tem de ser uma que o
+#    servidor LÊ. Foi drift a sério: a S4 (fc8593f9) passou `WEBHOOK_ALLOW_HOSTS`
+#    a `OUTBOUND_ALLOW_HOSTS` sem alias, um merge devolveu a linha antiga à
+#    tabela do `docs/deployment.md`, e os cabeçalhos de dois e2e nunca mudaram.
+#    Quem a seguia ficava com os webhooks recusados com 400 e nenhum aviso — o
+#    servidor ignora em silêncio uma variável que não conhece.
+#    Verifica: (a) a primeira coluna das tabelas do `docs/deployment.md`;
+#    (b) cada `NOME=valor` citado nos e2e e em `scripts/e2e-fora-do-ci.txt`,
+#    que também pode ser uma variável que um e2e lê de `process.env` ou que
+#    uma prova em shell lê (`$NOME`, `${NOME…}`) — a lista de excepções também
+#    regista provas que não são `.mjs`, como o `troncos-prova.sh`.
+#    Só num sentido: «o servidor lê» mede-se pelo literal no código, por isso
+#    apanha um nome que deixou de existir, não uma variável por documentar.
+if ! python3 - <<'PYEOF'
+import glob, re, sys
+NOME = r'[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+'
+# Variáveis que a tabela do deployment documente e que NÃO sejam do servidor
+# (coturn, nginx, vite): acrescentar aqui, com a razão ao lado.
+FORA_DO_SERVIDOR = set()
+
+def ler(p):
+    return open(p, encoding='utf-8').read()
+
+servidor = set()
+for p in glob.glob('server/src/**/*.rs', recursive=True) + glob.glob('server/crates/*/src/**/*.rs', recursive=True):
+    servidor |= set(re.findall(r'"(' + NOME + r')"', ler(p)))
+
+falha = False
+for n, linha in enumerate(ler('docs/deployment.md').splitlines(), 1):
+    if not linha.startswith('| `'):
+        continue
+    for nome in re.findall(r'`(' + NOME + r')(?:=[^`]*)?`', linha.split('|')[1]):
+        if nome not in servidor and nome not in FORA_DO_SERVIDOR:
+            print(f"✗ drift: docs/deployment.md:{n} documenta '{nome}', que o servidor não lê (nenhum literal em server/src nem em server/crates)")
+            falha = True
+
+e2e = sorted(glob.glob('web/e2e/**/*.mjs', recursive=True) + glob.glob('web/e2e/**/*.ts', recursive=True))
+do_teste = set()
+for p in e2e:
+    do_teste |= set(re.findall(r'process\.env\.([A-Z][A-Z0-9_]*)', ler(p)))
+    do_teste |= set(re.findall(r'process\.env\[\s*[\'"]([A-Z][A-Z0-9_]*)', ler(p)))
+for p in sorted(glob.glob('scripts/*.sh')):
+    do_teste |= set(re.findall(r'\$\{?(' + NOME + r')', ler(p)))
+for p in e2e + ['scripts/e2e-fora-do-ci.txt']:
+    for n, linha in enumerate(ler(p).splitlines(), 1):
+        for nome in re.findall(r'`(' + NOME + r')=[^`]*`', linha):
+            if nome not in servidor and nome not in do_teste:
+                print(f"✗ drift: {p}:{n} manda definir '{nome}', que nem o servidor, nem um e2e, nem um scripts/*.sh leem")
+                falha = True
+sys.exit(1 if falha else 0)
+PYEOF
+then
+  fail=1
+fi
+
 if [ "$fail" = 0 ]; then
-  echo "✓ docs em sincronia com o código (módulos + migrações + versões + SQL + revisores e skills)"
+  echo "✓ docs em sincronia com o código (módulos + migrações + versões + SQL + revisores e skills + variáveis de ambiente)"
 fi
 exit $fail

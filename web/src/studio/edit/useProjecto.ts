@@ -122,6 +122,9 @@ export function useProjecto() {
         if (!ok) escreverUltimo(null)
       })
       .catch(() => setACarregar(false))
+    // `[]` de propósito: reabrir o último projecto é um gesto de ARRANQUE. Com
+    // `abrir` nas dependências (recriada a cada render) isto reabria o projecto
+    // em ciclo, descartando o que estivesse por gravar.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { videoConstraints } from '../media'
+import { facingOf, videoConstraints } from '../media'
 import { SCREEN_CONSTRAINTS } from '../webrtc'
 import type { LocalMedia } from './useLocalMedia'
 import type { RoomCore } from './useRoomCore'
@@ -61,6 +61,9 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
       }),
     ]
     return () => offs.forEach((off) => off())
+    // Só `signal`, como no useLocalMedia: `t`, `setStatus` e `setPresentation`
+    // são lidos quando o evento chega, e pô-los nas dependências custava
+    // reregistar a partilha de ecrã inteira a cada mudança de língua.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal])
 
@@ -175,7 +178,13 @@ export function useScreenShare(core: RoomCore, media: LocalMedia) {
       pendingSourceRef.current = stream
       requestOrToggleShare()
     } catch {
-      setStatus(t('room.estado.naoMudouCamara'))
+      // No telemóvel isto falha quase sempre por uma razão que não é nossa: a
+      // maioria dos telefones só abre UMA câmara de cada vez, e pedir a
+      // segunda com a primeira aberta dá erro no sistema. Dizê-lo é melhor do
+      // que «não mudou a câmara», que faz parecer um defeito nosso e manda a
+      // pessoa tentar outra vez para o mesmo resultado.
+      const noTelemovel = !!facingOf(core.cameraTrackRef.current)
+      setStatus(t(noTelemovel ? 'room.estado.duasCamarasNaoCabem' : 'room.estado.naoMudouCamara'))
     }
   }
 

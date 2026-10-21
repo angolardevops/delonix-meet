@@ -14,6 +14,10 @@ tempo (ver «O que isto não prova»).
 > Enquanto não fundir, uma corrida nova mede a ferramenta E o defeito ao mesmo
 > tempo. Volta a correr antes de citar qualquer número daqui, e diz contra que
 > commit.
+>
+> **A reunião grande foi repetida a 2026-10-05** e os números dela estão em
+> [teste-de-carga-2026-10-05.md](teste-de-carga-2026-10-05.md). As restantes
+> tabelas desta página continuam sem repetição.
 
 ## Método
 
@@ -64,6 +68,12 @@ degrau é marcado INCONCLUSIVO em vez de FALHA.
 
 Estável até **30 pessoas** (870 fluxos, 1,5 Gbps, 5,6 núcleos, 0% perda).
 Com 40 pessoas colapsou (13–46% de perda).
+
+> **Repetido a 2026-10-05** contra a `develop` `803f4d46`, na mesma máquina:
+> 40 pessoas dão **1560 de 1560 fluxos** e 0,03% de perda média (2834 Mbps,
+> 11,2 núcleos). O colapso das 40 desapareceu. Ver
+> [teste-de-carga-2026-10-05.md](teste-de-carga-2026-10-05.md) — que também não
+> reavaliou a gravação a decorrer.
 
 ### Gravação no servidor com chamadas a decorrer (20 chamadas × 4)
 
@@ -167,3 +177,53 @@ servidor** e não foram repetidas sem o filtro. Não correr cargas com
 **Continua sem prova:** capacidade com browsers reais, com TURN e com rede real;
 capacidade com simulcast; o limite de 4 CPU do pod (`deploy/k8s/02-server.yaml`)
 sob carga; e clientes noutra máquina.
+
+## Fecho da Sprint 2 — 2026-10-05
+
+O critério de aceitação do plano era: fluxos de vídeo ≥98%, perda <2%, jitter
+p95 <30 ms, nenhuma PeerConnection falhada e nenhum socket UDP preso 30 minutos
+depois. Medido na `develop` (`70ccd9bf`), 5 execuções válidas (8 salas × 4 com
+entradas a 40 ms, e 16 × 4 a 10 ms), sem simulcast, com a carga do host entre
+3 e 19:
+
+| Critério | Medido | Passa |
+|---|---|---|
+| Fluxos de vídeo activos | 100% (96/96 e 192/192) | sim |
+| Perda de vídeo | máx. 0,16% | sim |
+| Jitter p95 | máx. 1,2 ms | sim |
+| PeerConnections falhadas | 0 clientes com erro | sim |
+| Gerador de carga saturado | máx. 0,2% de ticks atrasados | sim (não invalida) |
+| Sockets UDP presos 30 min depois | **não medido** (só 25 s: 0 sockets) | **por provar** |
+
+**Fechada com reservas.** O que continua em aberto, por inteiro:
+
+- **Defeito 2 do teste de carga (17/09): continua sem explicação.** O sintoma era
+  `delonix_sfu_subscriptions` a 165 de 192 *no servidor*, com ofertas SDP já sem
+  as m-lines. Não reproduz (18 execuções), e a condição original não foi
+  recriada. A causa abaixo **não o explica**: ela deixa a subscrição feita no
+  servidor.
+- **Os 30 minutos do defeito 3** não foram esperados.
+- **Simulcast** não foi medido (o defeito 1 foi corrigido no código, R156, e
+  está coberto por `sfu_e2e`, mas estas corridas foram sem simulcast).
+
+### Outra falha, de causa diferente: `entradas_concorrentes_todos_recebem_todos`
+
+Este teste do `sfu_e2e` falhava ao acaso (CI da `main` vermelho a 29/09; ~8% das
+execuções aqui). A assinatura é outra: as subscrições estão **todas feitas** e um
+subscritor não recebe media, com `renegotiation timed out` (3×) e
+`renegotiação falhou após 3 tentativas` no SFU.
+
+A causa, medida com o tracing ligado, é do **cliente de teste** (webrtc-rs), não
+do SFU: a oferta do servidor e a descrição remota anterior tinham o **mesmo**
+`ice-ufrag`, mas o cliente leu a oferta como reinício de ICE («ICE Agent can not
+be restarted when gathering») porque chegou antes de o transporte ICE registar as
+credenciais remotas, e o PC ficou preso em `have-remote-offer`. Correcção na
+PR #209 (o cliente responde com o ICE ligado). Controlo de 100 execuções cada:
+8 falhas sem a correcção, 0 com ela (p ≈ 0,003).
+
+O que isto **não** prova: que o SFU não sofra a mesma corrida do lado do
+servidor com um browser a enviar uma 2.ª oferta muito cedo (não apareceu nas
+falhas analisadas, não foi excluído); nem que o `loadgen` (também webrtc-rs) não
+a tenha. Os `renegotiation timed out` das corridas de carga acima têm a mesma
+assinatura de log e **não foram atribuídos**: na altura não se verificou se
+eram a corrida do cliente ou clientes a sair com uma renegociação pendente.

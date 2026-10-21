@@ -368,6 +368,27 @@ div.rm-only-narrow,
   letter-spacing: 0;
   text-transform: none;
 }
+/* Porque é que o retrato não tem imagem: por baixo das iniciais, discreto.
+   Antes o retrato ficava simplesmente preto e quem via não tinha como saber se
+   a câmara do outro estava desligada, se a imagem não chegava, ou se a avaria
+   era nossa. */
+.rm-tile__semimagem {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, 44px);
+  max-width: 90%;
+  padding: 2px 8px;
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--muted);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 .rm-tile__foot {
   position: absolute;
   left: 8px;
@@ -1725,6 +1746,34 @@ div.rm-only-narrow,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.rm-recs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* gravação sem acção: a compor, falhada, ou que quem vê não pode descarregar.
+   Não é o cartão do botão: sem fundo, e o ícone ao cimo de um texto que pode
+   ter várias linhas (a causa de uma falha). */
+.rm-rec--inert {
+  align-items: flex-start;
+  background: transparent;
+  cursor: default;
+}
+.rm-rec--inert > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.rm-rec--processing .rm-rec__state {
+  color: var(--warning);
+}
+.rm-rec--failed > svg,
+.rm-rec--failed .rm-rec__state {
+  color: var(--record-text);
+}
 /* salas paralelas (cartão partilhado pela sala e pela moderação) */
 .rm-bocard {
   display: flex;
@@ -2060,6 +2109,15 @@ div.rm-only-narrow,
   color: var(--text);
   text-align: left;
   cursor: pointer;
+}
+.rm-invite__title {
+  margin: 8px 0 4px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted, var(--text));
+}
+.rm-invite__item--static {
+  cursor: default;
 }
 .rm-invite__who {
   flex: 1;

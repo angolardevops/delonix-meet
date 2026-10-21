@@ -12,7 +12,7 @@
 //   3. upload de um webm 720p com `kind=broadcast`: metadados na resposta e
 //      `recording.ready` com `source = upload`.
 //
-// Precisa do servidor com ffmpeg/ffprobe e `WEBHOOK_ALLOW_HOSTS=127.0.0.1`
+// Precisa do servidor com ffmpeg/ffprobe e `OUTBOUND_ALLOW_HOSTS=127.0.0.1`
 // (o webhook entrega-se a um receptor local deste teste) e do vite a servir
 // o arnês. Uso:
 //   API=http://127.0.0.1:8180 APP=http://localhost:5174 node e2e/gravacao-servidor-meta.mjs

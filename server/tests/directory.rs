@@ -809,3 +809,103 @@ async fn odoo_groups_map_roles_on_provision(db: sqlx::PgPool) {
         "{r}"
     );
 }
+
+/// Com relay configurado, o convite SAI POR CORREIO: a resposta diz `email` e
+/// fica uma mensagem na caixa de saída com o `purpose` certo.
+///
+/// O relay é `127.0.0.1:2`, onde nada ouve — de propósito: o que se prova é que
+/// o convite entra na fila, não que um servidor de correio o aceita.
+#[sqlx::test(migrations = "./migrations")]
+async fn com_relay_o_convite_entra_na_fila_do_correio(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(
+        db,
+        &[
+            ("SMTP_HOST", "127.0.0.1"),
+            ("SMTP_PORT", "2"),
+            ("SMTP_STARTTLS", "0"),
+            ("SMTP_FROM", "Delonix Meet <nao-responda@exemplo.ao>"),
+            ("PUBLIC_URL", "https://meet.exemplo.ao"),
+        ],
+    )
+    .await;
+    let owner = app.new_org("convite-correio.ao").await;
+    let membro = role_id(&app, &owner, "member").await;
+
+    let (st, inv) = invite(&app, &owner, "novo@convite-correio.ao", &membro).await;
+    assert!(st < 300, "convidar: {st} {inv}");
+    assert_eq!(
+        inv["delivery_channel"], "email",
+        "com relay, o convite tinha de sair por correio: {inv}"
+    );
+    // O token continua a vir: a consola oferece «copiar link».
+    assert!(
+        inv["token"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("dlxi_"),
+        "o token tinha de continuar na resposta: {inv}"
+    );
+
+    let (purpose, to, subject, body): (String, String, String, String) = sqlx::query_as(
+        "SELECT purpose, to_address, subject, body_text FROM mail_messages
+          ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&app.state.db)
+    .await
+    .expect("tinha de haver uma mensagem na caixa de saída");
+    assert_eq!(purpose, "invitation");
+    assert_eq!(to, "novo@convite-correio.ao");
+    assert!(
+        subject.contains("Org convite-correio.ao"),
+        "o assunto tinha de nomear a organização: {subject}"
+    );
+    // O LINK sai do PUBLIC_URL, nunca do Host do pedido.
+    assert!(
+        body.contains("https://meet.exemplo.ao/#/invite/"),
+        "o corpo tinha de levar o link do PUBLIC_URL: {body}"
+    );
+}
+
+/// Um convite por `code` leva o código no email e NENHUM link: é para digitar
+/// ou ditar ao telefone.
+#[sqlx::test(migrations = "./migrations")]
+async fn convite_por_codigo_manda_o_codigo_e_nao_um_link(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(
+        db,
+        &[
+            ("SMTP_HOST", "127.0.0.1"),
+            ("SMTP_PORT", "2"),
+            ("SMTP_STARTTLS", "0"),
+            ("SMTP_FROM", "Delonix Meet <nao-responda@exemplo.ao>"),
+            ("PUBLIC_URL", "https://meet.exemplo.ao"),
+        ],
+    )
+    .await;
+    let owner = app.new_org("codigo-correio.ao").await;
+    let membro = role_id(&app, &owner, "member").await;
+
+    let (st, inv) = app
+        .post(
+            &format!("/api/orgs/{}/invitations", owner.org()),
+            Some(&owner.token),
+            json!({"email": "codigo@codigo-correio.ao", "role_id": membro, "delivery": "code"}),
+        )
+        .await;
+    assert!(st < 300, "convidar por código: {st} {inv}");
+    assert_eq!(inv["delivery_channel"], "email");
+    let codigo = inv["token"].as_str().unwrap().to_string();
+
+    let body: String =
+        sqlx::query_scalar("SELECT body_text FROM mail_messages ORDER BY created_at DESC LIMIT 1")
+            .fetch_one(&app.state.db)
+            .await
+            .unwrap();
+    assert!(
+        body.contains(&codigo),
+        "o código tinha de ir no email: {body}"
+    );
+    assert!(
+        !body.contains("#/invite/"),
+        "um convite por código não leva link: {body}"
+    );
+}

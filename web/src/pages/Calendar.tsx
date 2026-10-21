@@ -117,6 +117,19 @@ export default function Calendar() {
 
   function changeView(v: View) {
     setView(v)
+    // A vista escolhida fica no endereço: era LIDA dele à entrada (`?vista=`)
+    // e nunca lá escrita, por isso um F5 ou um link partilhado perdiam-na.
+    // `replaceState` — mudar de vista não é navegar.
+    {
+      const i = location.hash.indexOf('?')
+      const base = i < 0 ? location.hash : location.hash.slice(0, i)
+      const p = new URLSearchParams(i < 0 ? '' : location.hash.slice(i + 1))
+      if (v === 'list') p.set('vista', 'lista')
+      else p.delete('vista')
+      const q = p.toString()
+      const alvo = q ? `${base}?${q}` : base
+      if (location.hash !== alvo) history.replaceState(null, '', alvo)
+    }
     // A Lista abre, como antes, nas próximas — agora como filtro visível e removível.
     if (v === 'list' && isEmptySearch(rs.search)) rs.setSearch({ ...rs.search, filters: ['upcoming'] }, { replace: true })
   }

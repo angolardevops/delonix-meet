@@ -4,6 +4,8 @@ server/target/
 # Node
 web/node_modules
 web/dist/
+web-admin/node_modules
+web-admin/dist/
 
 # Flutter
 mobile/build/
@@ -73,6 +75,10 @@ deploy/ansible/vault/
 .claude/*
 !.claude/agents/
 !.claude/skills/
+# A fila de paridade é conhecimento PARTILHADO, como as skills e os agentes: um
+# prompt de lacuna que só existe numa máquina não serve de nada a quem o vai
+# correr noutra. O estado de SESSÃO (.claude/sessions/) continua local.
+!.claude/paridade/
 CLAUDE.md
 
 # CSS compilado pelo portão da barra (web/e2e/bar-responsivo.mjs)
@@ -100,3 +106,7 @@ deploy/compose/generated/
 
 # Prova do tronco FreePBX (scripts/pbx-tronco-prova.sh): segredos, CA e discos da réplica.
 .pbx-tronco-prova/
+
+# Prova dos troncos (scripts/troncos-prova.sh): segredos e a configuração da réplica.
+.troncos-prova/
+.kube/

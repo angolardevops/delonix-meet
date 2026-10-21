@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, currentUser, getRoom, isAbort, listMeetingsWithOptions, netProbe, roomWaiting, type RecordQuality, type WaitingPeer } from '../api'
+import { souConvidado } from '../convidado'
 import { SONDAGENS, type AmostraRede } from './qualidadePrevista'
-import { audioConstraints, listDevices, videoConstraints } from '../media'
+import { audioConstraints, listDevices, videoConstraints, withNativeNoiseSuppression } from '../media'
 import { MicMix } from './micMix'
 import { reuniaoMaisProxima } from './salaInfo'
 import type { LocalMedia } from './useLocalMedia'
@@ -32,6 +33,19 @@ export interface PrejoinInfo {
  * em `core.effectRef`), a segunda fonte de vídeo (`core.secondSourceRef`) e a
  * mistura de dois microfones (`core.micMixRef`).
  */
+/**
+ * Uma recusa que não vale a pena repetir, na sondagem da fila de espera.
+ *
+ * 403/404: esta pessoa não admite — era o que já estava. O **401** juntou-se
+ * depois de se MEDIR um convidado na pré-entrada: a rota pede conta, ele não
+ * tem nenhuma, e como a recusa não parava o intervalo saía um pedido a cada
+ * cinco segundos enquanto ele lá estivesse. Uma recusa de identidade é tão
+ * definitiva como uma de permissão.
+ */
+export function recusaDefinitiva(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 401 || e.status === 403 || e.status === 404)
+}
+
 export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { current: boolean }) {
   const { t } = useTranslation()
   const { setStatus, code } = core
@@ -49,7 +63,8 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   const [waiting, setWaiting] = useState<WaitingPeer[] | null>(null)
 
   useEffect(() => {
-    if (!active) return
+    // Um convidado não sonda: a rota pede conta, e o que ele levava era 401.
+    if (!active || souConvidado()) return
     const ctrl = new AbortController()
     let cancelado = false
     setRede({ amostras: [], estado: 'a-medir' })
@@ -76,7 +91,8 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   }, [active, medicao])
 
   useEffect(() => {
-    if (!active) return
+    // A fila é de quem ADMITE, e um convidado nunca admite.
+    if (!active || souConvidado()) return
     let parar = false
     let id = 0
     const espreitar = () => {
@@ -85,8 +101,7 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
           if (!parar) setWaiting(l)
         })
         .catch((e) => {
-          // 403/404: esta pessoa não admite — não se volta a perguntar.
-          if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+          if (recusaDefinitiva(e)) {
             parar = true
             window.clearInterval(id)
           }
@@ -104,7 +119,9 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
   // A sessão: nome, dono, topologia e hora marcada. Melhor esforço — sem isto
   // a pré-entrada continua a servir, só com menos contexto.
   useEffect(() => {
-    if (!active) return
+    // A sala, para um convidado, é a que o bilhete descreve; e a agenda da
+    // organização não é dele. Ambas as rotas pedem conta.
+    if (!active || souConvidado()) return
     const ctrl = new AbortController()
     let cancelled = false
     void getRoom(code)
@@ -146,8 +163,13 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
           else if (e?.name === 'NotFoundError' && !permErr) permErr = 'missing'
           throw e
         })
-      const stream = await getMedia({ audio: audioConstraints(), video: videoConstraints() })
-        .catch(() => getMedia({ audio: audioConstraints() }))
+      // O microfone abre-se já no estado em que vai para a sala: SEM a
+      // supressão nativa do browser se a cadeia de voz estiver escolhida (uma
+      // só supressão — ver `denoiseMic`). Se a caixa mudar depois, quem acerta
+      // é o `denoiseMic`, à entrada; aqui só há um medidor de nível a ouvir.
+      const audio = audioConstraints(undefined, !media.noiseSuppression)
+      const stream = await getMedia({ audio, video: videoConstraints() })
+        .catch(() => getMedia({ audio }))
         .catch(() => new MediaStream())
       if (cancelled) {
         stream.getTracks().forEach((tr) => tr.stop())
@@ -178,6 +200,10 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
       cancelled = true
       // Handoff: a ENTRAR, o efeito de entrada assume o stream — não se param
       // as tracks. Só se descartam se se sair da pré-entrada sem entrar.
+      // O ESLint avisa que o ref «já mudou» quando isto corre: é o mecanismo,
+      // não um descuido — ler a intenção da renderização antiga parava a
+      // câmara de quem acabou de entrar.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (!joinIntentRef.current) {
         core.previewStreamRef.current?.getTracks().forEach((tr) => tr.stop())
         core.previewStreamRef.current = null
@@ -188,6 +214,11 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
         core.effectRef.current?.stop()
       }
     }
+    // O ESLint avisa que `joinIntentRef.current` «já mudou» quando o cleanup
+    // corre. É PRECISAMENTE isso que queremos: o cleanup tem de ler a intenção
+    // NO MOMENTO do desmonte para decidir entre entregar o stream ao efeito de
+    // entrada ou parar as tracks. Ler o valor da renderização antiga parava a
+    // câmara de quem acabou de entrar na sala.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active])
 
@@ -253,7 +284,7 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
     if (kind === 'cam' && second?.deviceId === deviceId) stopSecond()
     try {
       const ns = await navigator.mediaDevices.getUserMedia(
-        kind === 'mic' ? { audio: audioConstraints(deviceId) } : { video: videoConstraints(deviceId) },
+        kind === 'mic' ? { audio: audioConstraints(deviceId, !media.noiseSuppression) } : { video: videoConstraints(deviceId) },
       )
       const nt = kind === 'mic' ? ns.getAudioTracks()[0] : ns.getVideoTracks()[0]
       const old = kind === 'mic' ? s.getAudioTracks()[0] : s.getVideoTracks()[0]
@@ -311,15 +342,21 @@ export function usePrejoin(core: RoomCore, media: LocalMedia, joinIntentRef: { c
     }
     if (core.micMixRef.current) unmix()
     const s = core.previewStreamRef.current
-    const primary = s?.getAudioTracks()[0]
-    if (!s || !primary || !deviceId || deviceId === media.micId) return
+    const original = s?.getAudioTracks()[0]
+    if (!s || !original || !deviceId || deviceId === media.micId) return
     try {
       const ns = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId) })
       const extra = ns.getAudioTracks()[0]
+      // A MISTURA leva sempre a supressão nativa nas duas entradas, haja ou
+      // não RNNoise por cima: a saída dela não é um dispositivo, e por isso
+      // não há o que reabrir se a opção mudar ou o RNNoise falhar — sem isto
+      // podia ficar um microfone sem supressão nenhuma. O primeiro microfone
+      // pode ter sido aberto sem ela (ver o efeito acima); aqui volta a tê-la.
+      const primary = await withNativeNoiseSuppression(original, true)
       const m = new MicMix([primary, extra])
       m.output.enabled = primary.enabled
       primary.enabled = true
-      s.removeTrack(primary)
+      s.removeTrack(original)
       s.addTrack(m.output)
       core.micMixRef.current = m
       setMix({ deviceId, mix: m })

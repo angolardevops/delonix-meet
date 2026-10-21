@@ -58,6 +58,39 @@ chrono = { version = "0.4", features = ["serde"] }
 dashmap = "6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Rastos por OTLP (ADR-0020, fase 5). A camada SÓ existe com
+# `OTEL_EXPORTER_OTLP_ENDPOINT` definida: sem ela o servidor arranca como
+# sempre arrancou, e isto não é peso no caminho de ninguém.
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "trace"] }
+opentelemetry-semantic-conventions = "0.31"
+tracing-opentelemetry = "0.32"
+# Objectos (MinIO/S3) — ADR-0020, D2. O SDK da AWS e não um cliente à mão: a
+# assinatura SigV4 é fácil de escrever quase bem, e «quase bem» numa assinatura
+# são pedidos recusados que ninguém sabe explicar.
+# O SDK precisa de um CLIENTE HTTP, por muito que o nome das features sugira o
+# contrário: sem um, TODO o pedido morre em «dispatch failure» antes de sair da
+# máquina — incluindo contra um MinIO em `http://`, que nem TLS usa. Entrou aqui
+# sem um, e os três testes de unidade do `objectos.rs` passavam na mesma porque
+# nenhum fala com um armazenamento. Quem apanhou foi o
+# `scripts/objectos-prova.sh`, contra um MinIO a sério (R308, ADR-0020).
+#
+# O cliente NÃO vem da feature `default-https-client` do SDK: essa arrasta o
+# `rustls-aws-lc`, e este binário está todo em `ring` (ver o comentário do
+# `rustls` mais abaixo — o `dtls` do `webrtc` e o `sqlx` trazem-no). Com as duas
+# crypto providers compiladas, o rustls recusa-se a escolher e QUALQUER ligação
+# TLS do processo entra em panic; medido no CI, a rebentar 17 testes do SFU e do
+# SMPP que não têm nada a ver com S3.
+#
+# Por isso o `aws-smithy-http-client` entra como dependência DIRECTA com
+# `rustls-ring`, e o `objectos.rs` passa o cliente ao SDK à mão. Fica explícito
+# no código qual é a crypto provider, que é onde a próxima pessoa o procura.
+# Fora ficam o `sigv4a` (access points multi-região, que não usamos).
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "behavior-version-latest", "http-1x"] }
+aws-smithy-http-client = { version = "1", default-features = false, features = ["rustls-ring", "rt-tokio"] }
+aws-config = { version = "1", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+aws-credential-types = "1"
 rand = "0.8"
 thiserror = "2"
 sha2 = "0.10"
@@ -137,7 +170,9 @@ rustix = { version = "1", features = ["fs"] }
 webauthn-rs = { version = "=0.5.5", features = ["danger-allow-state-serialisation"] }
 # Exportação «os meus dados»: um ZIP sem compressão (gravações vão como links;
 # o resto é texto pequeno). Sem `deflate`/`bzip2`/`aes`: menos código nativo.
-zip = { version = "2", default-features = false }
+zip = { version = "9", default-features = false }
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "rustls-native-certs"] }
+hickory-resolver = { version = "0.26.3", default-features = false, features = ["system-config", "tokio"] }
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

@@ -34,7 +34,12 @@ pub struct StorageConfig {
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(get_storage, save_storage, test_storage, pvc_manifest),
-    components(schemas(StorageConfigView, StorageConfigReq, StorageTestResult))
+    components(schemas(
+        StorageConfigView,
+        ObjectStoreView,
+        StorageConfigReq,
+        StorageTestResult
+    ))
 )]
 pub struct ApiDoc;
 
@@ -51,6 +56,23 @@ pub struct StorageConfigView {
     /// Há password WebDAV guardada? (a password nunca é devolvida).
     pub webdav_password_set: bool,
     pub webdav_path: String,
+    /// Armazenamento de objectos visto pelo AMBIENTE do servidor, quando existe.
+    /// Não é um `storage_type`: ver `ObjectStoreView`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_store: Option<ObjectStoreView>,
+}
+
+/// O armazenamento de objectos, como o operador o pode ver: endereço e bucket,
+/// **nunca** as chaves. Vem do ambiente (Secret do cluster), não da tabela.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct ObjectStoreView {
+    pub endpoint: String,
+    pub bucket: String,
+    pub region: String,
+    /// Hoje é sempre `false`: as gravações continuam a ser escritas em disco e
+    /// servidas de lá. O ADR-0020 diz porquê — ligar o gravador sem um MinIO
+    /// real onde medir deixaria o produto num estado que ninguém exercitou.
+    pub used_for_recordings: bool,
 }
 
 /// Resultado do teste de ligação ao armazenamento.
@@ -134,6 +156,12 @@ pub async fn get_storage(
         webdav_path: cfg
             .webdav_path
             .unwrap_or_else(|| "/remote.php/dav/files/{user}/Delonix".into()),
+        object_store: crate::objectos::Definicoes::do_ambiente().map(|d| ObjectStoreView {
+            endpoint: d.endpoint,
+            bucket: d.bucket,
+            region: d.regiao,
+            used_for_recordings: false,
+        }),
     }))
 }
 
@@ -145,7 +173,7 @@ pub async fn get_storage(
     request_body = StorageConfigReq,
     responses(
         (status = 200, body = StorageConfigView, description = "A configuração como ficou gravada (a mesma forma do `GET`, sem a password)."),
-        (status = 400, description = "`storage_type` fora de `local`/`nfs`/`webdav`.", body = crate::openapi::ErrorBody),
+        (status = 400, description = "`storage_type` fora de `local`/`nfs`/`webdav`. `s3` é recusado de propósito: os objectos configuram-se no ambiente (`OBJECT_STORE_*`) e ainda não são onde as gravações ficam (ADR-0020).", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
         (status = 422, description = "`webdav_password` não vazia sem DATA_ENCRYPTION_KEYS (`secrets.encryption_unconfigured`).", body = crate::openapi::ErrorBody),
@@ -160,6 +188,17 @@ pub async fn save_storage(
     require_platform_admin(&state, auth.user_id)?;
 
     let valid = ["local", "nfs", "webdav"];
+    if req.storage_type == "s3" {
+        // Aceitar isto em silêncio seria a pior resposta possível: o operador
+        // ficava a acreditar que as gravações iam para os objectos e elas
+        // continuavam em disco, para se descobrir quando se fosse buscar uma.
+        return Err(ApiError::BadRequest(
+            "o armazenamento de objectos configura-se no ambiente do servidor \
+             (OBJECT_STORE_*), não aqui; e as gravações ainda são escritas em \
+             disco — ver ADR-0020"
+                .into(),
+        ));
+    }
     if !valid.contains(&req.storage_type.as_str()) {
         return Err(ApiError::BadRequest("storage_type inválido".into()));
     }
@@ -218,7 +257,7 @@ pub async fn save_storage(
     security(("session" = [])),
     responses(
         (status = 200, body = StorageTestResult),
-        (status = 400, description = "Configuração incompleta, tipo desconhecido, ou o WebDAV falhou/respondeu não-2xx.", body = crate::openapi::ErrorBody),
+        (status = 400, description = "Configuração incompleta, tipo desconhecido, o WebDAV falhou/respondeu não-2xx, ou o armazenamento de objectos do ambiente recusou a escrita de prova.", body = crate::openapi::ErrorBody),
         (status = 401, description = "Sem sessão válida.", body = crate::openapi::ErrorBody),
         (status = 403, description = "Não é administrador da plataforma (`PLATFORM_ADMIN_USER_IDS`).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos da superfície v1 por IP.", body = crate::openapi::ErrorBody),
@@ -229,6 +268,37 @@ pub async fn test_storage(
     auth: AuthUser,
 ) -> Result<Json<StorageTestResult>, ApiError> {
     require_platform_admin(&state, auth.user_id)?;
+
+    // ADR-0020 (D2). Os objectos NÃO são um `storage_type` desta tabela: as
+    // credenciais são um Secret do cluster e guardá-las aqui punha-as na base da
+    // aplicação, que é o que a S5 mandou parar de fazer. Por isso o teste mede-os
+    // sempre que o AMBIENTE os tiver, ao lado do que estiver configurado — um
+    // MinIO que recusa escritas tem de aparecer a quem carrega em «testar», e não
+    // na primeira gravação que se perder.
+    let objectos = match crate::objectos::Definicoes::do_ambiente() {
+        None => None,
+        Some(d) => {
+            let bucket = d.bucket.clone();
+            crate::objectos::Objectos::novo(&d)
+                .testar()
+                .await
+                .map_err(|e| {
+                    ApiError::BadRequest(format!(
+                        "Armazenamento de objectos («{bucket}») recusou a escrita de prova: {e}"
+                    ))
+                })?;
+            Some(format!(
+                " Armazenamento de objectos: escrita e remoção no bucket «{bucket}» bem-sucedidas \
+                 (ainda NÃO é onde as gravações ficam — ver ADR-0020)."
+            ))
+        }
+    };
+    let juntar = |mut r: StorageTestResult| {
+        if let Some(extra) = &objectos {
+            r.message.push_str(extra);
+        }
+        Ok(Json(r))
+    };
 
     let row: Option<(
         String,
@@ -244,31 +314,31 @@ pub async fn test_storage(
     .await?;
 
     let Some((stype, wurl, wuser, wpwd, nfs_srv)) = row else {
-        return Ok(Json(StorageTestResult {
+        return juntar(StorageTestResult {
             ok: true,
             kind: "local".into(),
             message: "Armazenamento local activo (sem configuração remota).".into(),
-        }));
+        });
     };
 
     match stype.as_str() {
-        "local" => Ok(Json(StorageTestResult {
+        "local" => juntar(StorageTestResult {
             ok: true,
             kind: "local".into(),
             message: "Armazenamento local activo.".into(),
-        })),
+        }),
         "nfs" => {
             let srv = nfs_srv.unwrap_or_default();
             if srv.is_empty() {
                 return Err(ApiError::BadRequest("nfs_server não configurado".into()));
             }
-            Ok(Json(StorageTestResult {
+            juntar(StorageTestResult {
                 ok: true,
                 kind: "nfs".into(),
                 message: format!(
                     "NFS configurado para {srv}. O volume é montado pelo K8s — verificar o PVC."
                 ),
-            }))
+            })
         }
         "webdav" => {
             let url = wurl.unwrap_or_default();
@@ -297,11 +367,11 @@ pub async fn test_storage(
                 .await
                 .map_err(|e| ApiError::BadRequest(format!("Falha na ligação WebDAV: {e}")))?;
             if resp.status().is_success() || resp.status().as_u16() == 207 {
-                Ok(Json(StorageTestResult {
+                juntar(StorageTestResult {
                     ok: true,
                     kind: "webdav".into(),
                     message: "Ligação WebDAV bem-sucedida.".into(),
-                }))
+                })
             } else {
                 Err(ApiError::BadRequest(format!(
                     "WebDAV respondeu com HTTP {}",
@@ -418,7 +488,7 @@ pub(crate) fn require_platform_admin(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_platform_admin, StorageConfigView, StorageTestResult};
+    use super::{is_platform_admin, ObjectStoreView, StorageConfigView, StorageTestResult};
     use uuid::Uuid;
 
     /// Os tipos que substituíram os `json!` (OpenAPI) serializam igual.
@@ -432,6 +502,9 @@ mod tests {
             webdav_user: None,
             webdav_password_set: false,
             webdav_path: "/p".into(),
+            // Sem objectos no ambiente, o campo NÃO aparece: um painel antigo
+            // continua a ler a mesma resposta que lia.
+            object_store: None,
         })
         .unwrap();
         assert_eq!(
@@ -442,6 +515,32 @@ mod tests {
                 "webdav_password_set": false, "webdav_path": "/p",
             })
         );
+        // Com objectos, aparece — e sem uma única chave dentro.
+        let com = serde_json::to_value(StorageConfigView {
+            storage_type: "local".into(),
+            nfs_server: None,
+            nfs_path: None,
+            webdav_url: None,
+            webdav_user: None,
+            webdav_password_set: false,
+            webdav_path: "/p".into(),
+            object_store: Some(ObjectStoreView {
+                endpoint: "http://minio:9000".into(),
+                bucket: "meet-gravacoes".into(),
+                region: "us-east-1".into(),
+                used_for_recordings: false,
+            }),
+        })
+        .unwrap();
+        assert_eq!(com["object_store"]["bucket"], "meet-gravacoes");
+        // O que o operador NÃO pode deixar de ver: os objectos existem mas as
+        // gravações não estão lá (ADR-0020).
+        assert_eq!(
+            com["object_store"]["used_for_recordings"],
+            serde_json::Value::Bool(false)
+        );
+        assert_eq!(com["object_store"].as_object().unwrap().len(), 4);
+
         let t = serde_json::to_value(StorageTestResult {
             ok: true,
             kind: "nfs".into(),

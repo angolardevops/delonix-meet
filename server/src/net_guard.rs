@@ -72,6 +72,16 @@ impl Resolve for GuardedResolver {
     }
 }
 
+/// Um `host:porta` como URL, para a regra dos URLs o poder julgar. O IPv6
+/// literal leva parênteses rectos, senão a porta confunde-se com o endereço.
+fn as_url(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("https://[{host}]:{port}/")
+    } else {
+        format!("https://{host}:{port}/")
+    }
+}
+
 fn build_client(policy: EgressPolicy, allow_hosts: Arc<[String]>) -> Client {
     Client::builder()
         .dns_resolver(Arc::new(GuardedResolver {
@@ -141,6 +151,66 @@ impl Outbound {
             Resolution::Optional,
         )
         .await
+    }
+
+    /// Valida um `host:porta` escrito por um cliente **ao GRAVAR** a
+    /// configuração. Mesma política de um URL de inquilino: nada interno, salvo
+    /// os nomes de `OUTBOUND_ALLOW_HOSTS`. Um nome que ainda não resolve é
+    /// aceite — a configuração pode preceder o DNS.
+    ///
+    /// Existe aqui, e não em cada módulo, porque já havia duas coisas a precisar
+    /// dela (os troncos SIP e agora o SMTP por organização) e o truque de
+    /// embrulhar o host num URL para reaproveitar a regra não deve ser copiado.
+    pub async fn check_tenant_host_port(&self, host: &str, port: u16) -> Result<(), ApiError> {
+        self.check_tenant_config_url(&as_url(host, port))
+            .await
+            .map(|_| ())
+    }
+
+    /// **Ao LIGAR** a um `host:porta` de inquilino: resolve o nome, descarta os
+    /// endereços que a política recusa, e devolve UM endereço aprovado.
+    ///
+    /// **É o equivalente TCP do [`GuardedResolver`], e existe pela mesma razão:**
+    /// validar o nome e deixar depois a biblioteca resolvê-lo outra vez era a
+    /// janela do DNS rebinding — o nome respondia um IP público ao teste e
+    /// `169.254.169.254` à ligação. Quem chama isto liga-se ao **endereço
+    /// devolvido**, nunca ao nome.
+    ///
+    /// Ao contrário do `check_tenant_host_port`, aqui um nome que não resolve é
+    /// um ERRO: estamos a ligar, não a gravar.
+    pub async fn resolve_tenant_target(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<SocketAddr, ApiError> {
+        // A forma do URL valida o host (sintaxe, IP literal interno) com a
+        // MESMA regra do resto, antes de se gastar uma consulta de DNS.
+        self.check_tenant_config_url(&as_url(host, port)).await?;
+        let limpo = host.trim_start_matches('[').trim_end_matches(']');
+        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((limpo, port))
+            .await
+            .map_err(|e| {
+                ApiError::from(delonix_meet_core::DomainError::invalid(
+                    "egress.host_unresolved",
+                    format!("{host}: não resolve ({e})"),
+                ))
+            })?
+            .collect();
+        let permitido = if host_is_allowlisted(limpo, &self.allow_hosts) {
+            addrs.into_iter().next()
+        } else {
+            addrs
+                .into_iter()
+                .find(|a| EgressPolicy::Tenant.allows(a.ip()))
+        };
+        permitido.ok_or_else(|| {
+            // A mensagem não diz QUAL endereço foi recusado: isso era um
+            // mapeador da rede interna para quem escreve a configuração.
+            ApiError::from(delonix_meet_core::DomainError::invalid(
+                "egress.destination_refused",
+                format!("{host}: destino recusado pela guarda de saída"),
+            ))
+        })
     }
 
     /// Antes de o `ffmpeg` LIGAR a um destino de directo (`rtmp`/`rtmps`)

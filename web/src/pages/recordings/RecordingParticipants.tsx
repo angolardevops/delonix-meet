@@ -20,7 +20,9 @@ export default function RecordingParticipants({ recordingId }: { recordingId: st
       return await recordingParticipants(recordingId, { page_size: 100 })
     } catch (e) {
       if (isAbort(e)) throw e
-      throw new Error(recordingErrorMessage(e, t, 'player.participantes.erro'))
+      // `cause`: a mensagem é para a pessoa, mas o erro original é o que
+      // serve quem depura — descartá-lo perdia a causa técnica.
+      throw new Error(recordingErrorMessage(e, t, 'player.participantes.erro'), { cause: e })
     }
   }, [recordingId])
   return (

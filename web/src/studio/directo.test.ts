@@ -111,7 +111,11 @@ describe('o fluxo composto é partilhado, não duplicado', () => {
     // A gravação e o directo precisam do mesmo. Duas montagens divergiriam à
     // primeira correcção feita só numa — e o áudio é onde isso doeria.
     expect(c()).toContain('async montarFluxo(')
-    expect(c().match(/createMediaStreamDestination\(\)/g)?.length).toBe(1)
+    // DOIS destinos, e só dois: o do fluxo composto (gravação e directo) e o
+    // do barramento de música, que existe para a mesa de som o levar como
+    // canal. Um terceiro seria uma segunda montagem a nascer.
+    expect(c().match(/createMediaStreamDestination\(\)/g)?.length).toBe(2)
+    expect(c()).toContain('this.destinoMedia ??= this.audioCtx.createMediaStreamDestination()')
   })
 
   it('e só se desmonta quando o ÚLTIMO consumidor larga', () => {
@@ -291,8 +295,10 @@ describe('Directo · o ciclo de vida', () => {
     })
     await esperar()
     expect(criados[0].enviados).toHaveLength(0)
-    // Os bytes CONTAM (o pedaço existiu), mas não foram enviados.
-    expect(d.estado).toMatchObject({ bytes: 500 })
+    // Os bytes contam o que SAIU, não o que existiu: desde 2026-10-14 o painel
+    // põe «enviado X kbps» ao lado de «a emitir Y Mbps», e um contador que
+    // soma um pedaço que nunca saiu torna a primeira coluna numa estimativa.
+    expect(d.estado).toMatchObject({ bytes: 0 })
   })
 
   it('parar fecha o socket com 1000 e volta a «parado»', async () => {
@@ -347,7 +353,17 @@ describe('Directo · o ciclo de vida', () => {
 // (`server/src/broadcast.rs`); aqui guarda-se a leitura, que tem de ser
 // tolerante: um servidor mais novo não pode partir um cliente mais velho, nem
 // um destino malformado esconder os outros.
-import { lerMensagemDoDirecto, resumirDestinos } from './directo'
+import {
+  DEBITO_MAXIMO,
+  DEBITO_MINIMO,
+  debitoDoDirecto,
+  INTERVALO_DESCIDA_MS,
+  INTERVALO_SUBIDA_MS,
+  lerMensagemDoDirecto,
+  proximoDebito,
+  resumirDestinos,
+  saudeDaFila,
+} from './directo'
 
 const destinoDoServidor = {
   dest: 0,
@@ -535,5 +551,84 @@ describe('Directo · estado por destino', () => {
     expect(d.destinos).toEqual([])
     criados[1].onclose?.()
     expect(d.estado).toEqual({ fase: 'erro', motivo: 'a ligação ao servidor caiu' })
+  })
+})
+
+describe('o débito de emissão sai do perfil', () => {
+  it('cresce com o tamanho e com os fps, e tem tecto e chão', () => {
+    // Até 2026-10-14 eram 4,5 Mbps para tudo: o 2160p50 emitia com o débito
+    // do 1080p30 (imagem desfeita em movimento) e o 1080p30 gastava o mesmo
+    // que o 4K.
+    const p = (largura: number, altura: number, fps: number) => debitoDoDirecto({ largura, altura, fps })
+    expect(p(1920, 1080, 30)).toBe(4_976_640)
+    expect(p(1920, 1080, 50)).toBeGreaterThan(p(1920, 1080, 30))
+    expect(p(3840, 2160, 30)).toBeGreaterThan(p(1920, 1080, 50))
+    // O tecto é de EMISSÃO, não de gravação: o perfil 2160p50 grava a 35 Mbps
+    // e nenhum uplink destes emite isso.
+    expect(p(3840, 2160, 50)).toBe(DEBITO_MAXIMO)
+    expect(p(320, 240, 10)).toBe(DEBITO_MINIMO)
+  })
+})
+
+describe('a fila do socket diz a saúde da rede', () => {
+  const alvo = 5_000_000 // 625 000 bytes/s
+
+  it('vazia é saudável', () => {
+    expect(saudeDaFila(0, alvo)).toMatchObject({ saude: 'ok', segundos: 0 })
+  })
+
+  it('mais de um segundo de emissão à espera é apertado, mais de três é acumular', () => {
+    expect(saudeDaFila(625_000, alvo).saude).toBe('ok') // exactamente 1 s
+    expect(saudeDaFila(700_000, alvo).saude).toBe('apertada')
+    expect(saudeDaFila(1_875_000, alvo).saude).toBe('apertada') // exactamente 3 s
+    expect(saudeDaFila(2_500_000, alvo)).toMatchObject({ saude: 'a-acumular', segundos: 4 })
+  })
+
+  it('um alvo ausente ou absurdo não dá segundos infinitos', () => {
+    // Divisão por zero aqui dava `Infinity` no ecrã, em vez de um aviso.
+    expect(Number.isFinite(saudeDaFila(1000, 0).segundos)).toBe(true)
+    expect(saudeDaFila(-5, alvo).fila).toBe(0)
+  })
+})
+
+describe('o débito segue a rede', () => {
+  const alvo = 5_000_000
+
+  it('desce depressa quando a fila acumula, e menos quando só está apertada', () => {
+    expect(proximoDebito(alvo, alvo, 'a-acumular', 10_000, 0)).toBe(3_500_000)
+    expect(proximoDebito(alvo, alvo, 'apertada', 10_000, 0)).toBe(4_250_000)
+  })
+
+  it('mas não mais do que uma vez a cada três segundos', () => {
+    // Sem isto, meia dúzia de fatias seguidas numa rede má levavam o débito ao
+    // chão em dois segundos — e a imagem com ele.
+    const t = 10_000
+    expect(proximoDebito(alvo, alvo, 'a-acumular', t, t - INTERVALO_DESCIDA_MS + 1)).toBe(alvo)
+    expect(proximoDebito(alvo, alvo, 'a-acumular', t, t - INTERVALO_DESCIDA_MS)).toBeLessThan(alvo)
+  })
+
+  it('sobe devagar, e só depois de quinze segundos saudáveis', () => {
+    const t = 100_000
+    expect(proximoDebito(2_000_000, alvo, 'ok', t, t - INTERVALO_SUBIDA_MS + 1)).toBe(2_000_000)
+    expect(proximoDebito(2_000_000, alvo, 'ok', t, t - INTERVALO_SUBIDA_MS)).toBe(2_200_000)
+  })
+
+  it('nunca passa do pedido pelo perfil nem desce abaixo do chão', () => {
+    expect(proximoDebito(alvo, alvo, 'ok', 100_000, 0)).toBe(alvo)
+    expect(proximoDebito(4_900_000, alvo, 'ok', 100_000, 0)).toBe(alvo)
+    expect(proximoDebito(DEBITO_MINIMO, alvo, 'a-acumular', 100_000, 0)).toBe(DEBITO_MINIMO)
+  })
+
+  it('uma rede má não oscila: desce e fica, até a saúde mudar', () => {
+    // Três descidas seguidas, cada uma três segundos depois da anterior.
+    let d = alvo
+    let ultima = 0
+    for (const t of [3_000, 6_000, 9_000]) {
+      d = proximoDebito(d, alvo, 'a-acumular', t, ultima)
+      ultima = t
+    }
+    expect(d).toBe(1_715_000)
+    // E com a rede já saudável, a subida não acontece no mesmo instante.
+    expect(proximoDebito(d, alvo, 'ok', 10_000, ultima)).toBe(d)
   })
 })

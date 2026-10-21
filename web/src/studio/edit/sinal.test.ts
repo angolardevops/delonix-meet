@@ -101,8 +101,11 @@ describe('estimativas de exportação', () => {
   it('tamanho = débito × duração (+ contentor)', () => {
     // 8 Mbps + 128 kbps durante 60 s ≈ 62 MB.
     expect(tamanhoEstimado(predefinicao('web1080'), 60)).toBe(Math.round((8_128_000 * 60) / 8 * 1.02))
-    expect(tamanhoLegivel(62_172_000)).toBe('62,2 MB')
-    expect(tamanhoLegivel(2_500)).toBe('3 KB')
+    // Base 1024 e rótulo honesto, desde que há UM formatador (`ui/format`):
+    // isto dizia «62,2 MB» (base 1000) enquanto a biblioteca dizia «59,3 MiB»
+    // para o mesmo ficheiro.
+    expect(tamanhoLegivel(62_172_000)).toBe('59,3 MiB')
+    expect(tamanhoLegivel(2_500)).toBe('2 KiB')
   })
 
   it('o tempo usa o ritmo medido quando o há', () => {

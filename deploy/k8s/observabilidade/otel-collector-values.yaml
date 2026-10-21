@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+#  OpenTelemetry Collector — a porta por onde os RASTOS entram.
+#
+#  As métricas NÃO passam por aqui: o servidor já as expõe em `/metrics` e o
+#  Prometheus lê-as directamente. Pôr o colector no meio seria um salto a mais
+#  entre o número e quem o lê.
+#
+#  O que não existe de todo são rastos: `grep -i 'otlp|opentelemetry'` em
+#  `server/src` dava ZERO. Sem eles, um pedido que atravessa ingress, servidor,
+#  Postgres e Redis diagnostica-se a adivinhar.
+# ---------------------------------------------------------------------------
+mode: deployment
+replicaCount: 2
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc: { endpoint: 0.0.0.0:4317 }
+        http: { endpoint: 0.0.0.0:4318 }
+  processors:
+    # Agrupa por rasto antes de amostrar: amostrar spans soltos dá rastos com
+    # buracos, que são piores do que rasto nenhum — parecem um sistema partido.
+    batch:
+      timeout: 5s
+      send_batch_size: 1024
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: 80
+      spike_limit_percentage: 20
+    resource:
+      attributes:
+        - { key: service.namespace, value: delonix-meet, action: upsert }
+  exporters:
+    otlp/tempo:
+      endpoint: tempo.observabilidade.svc.cluster.local:4317
+      tls: { insecure: true }   # dentro do cluster
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, resource, batch]
+        exporters: [otlp/tempo]
+
+ports:
+  otlp:
+    enabled: true
+  otlp-http:
+    enabled: true
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { cpu: "1", memory: 1Gi }

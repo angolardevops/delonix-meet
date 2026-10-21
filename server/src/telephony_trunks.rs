@@ -492,16 +492,14 @@ async fn check_host(state: &AppState, host: &str, port: i32) -> Result<(), ApiEr
     // O FreeSWITCH vai ligar a este host em nome do inquilino: a mesma guarda
     // de um URL escrito pelo cliente (sem destinos internos, salvo
     // OUTBOUND_ALLOW_HOSTS). Um nome que ainda não resolve é aceite.
-    let url = if host.contains(':') && !host.starts_with('[') {
-        format!("https://[{host}]:{port}/")
-    } else {
-        format!("https://{host}:{port}/")
-    };
+    //
+    // O embrulho do host num URL vivia aqui e passou para o `net_guard`, que é
+    // o dono dos pedidos de saída: o SMTP por organização precisava do mesmo e
+    // duas cópias da mesma regra é o que a catraca persegue.
     state
         .outbound
-        .check_tenant_config_url(&url)
+        .check_tenant_host_port(host, port.clamp(1, u16::MAX as i32) as u16)
         .await
-        .map(|_| ())
         .map_err(|e| {
             DomainError::invalid("telephony.trunk_host_refused", e.to_string())
                 .with_field("host", "destino interno ou inválido")
@@ -547,7 +545,7 @@ fn unique_name(e: sqlx::Error) -> ApiError {
         (status = 403, body = crate::openapi::ErrorBody),
         (status = 404, body = crate::openapi::ErrorBody),
         (status = 409, body = crate::openapi::ErrorBody, description = "`telephony.trunk_name_taken`"),
-        (status = 422, body = crate::openapi::ErrorBody, description = "`secrets.encryption_unconfigured`: sem chaves não se guarda a password."),
+        (status = 422, body = crate::openapi::ErrorBody, description = "`secrets.encryption_unconfigured`: sem chaves não se guarda a password. `telephony.trunk_limit_reached`: a organização já tem o máximo de troncos."),
     )
 )]
 pub async fn create(
@@ -579,6 +577,24 @@ pub async fn create(
         .bind(org_id)
         .execute(&mut *tx)
         .await?;
+    // Os troncos de todas as organizações são servidos ao FreeSWITCH num só
+    // documento com limite de tamanho: sem tecto, uma organização deixava as
+    // outras sem troncos. Dentro do cadeado, para duas criações não passarem.
+    let existing: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM telephony_trunks WHERE org_id = $1")
+            .bind(org_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if existing >= rules::MAX_TRUNKS_PER_ORG {
+        return Err(DomainError::precondition(
+            "telephony.trunk_limit_reached",
+            format!(
+                "uma organização tem no máximo {} troncos",
+                rules::MAX_TRUNKS_PER_ORG
+            ),
+        )
+        .into());
+    }
     let next: i32 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(position) + 1, 0) FROM telephony_trunks WHERE org_id = $1",
     )
@@ -623,6 +639,7 @@ pub async fn create(
         &format!("{id} name={name} host={host}:{port} transport={transport} srtp={srtp} max_channels={max_channels}"),
     )
     .await;
+    refresh_gateway(&state, id);
     let trunk = fetch_one(&state, org_id, id, 24).await?;
     Ok((
         StatusCode::CREATED,
@@ -842,7 +859,63 @@ pub async fn update(
         &format!("{trunk_id} {}", diff.join("; ")),
     )
     .await;
+    // Só o que MUDOU, e só o que muda a LIGAÇÃO à operadora: mudar o nome ou os
+    // prefixos não deita abaixo um registo, e um PATCH que repete o valor que
+    // já lá estava também não. A password conta sempre que vem: não se compara.
+    const CONNECTION: [&str; 8] = [
+        "host: ",
+        "port: ",
+        "transport: ",
+        "srtp: ",
+        "register: ",
+        "username: ",
+        "enabled: ",
+        "password: ",
+    ];
+    if diff
+        .iter()
+        .any(|d| CONNECTION.iter().any(|f| d.starts_with(f)))
+    {
+        refresh_gateway(&state, trunk_id);
+    }
     Ok(Json(fetch_one(&state, org_id, trunk_id, 24).await?))
+}
+
+/// Diz ao FreeSWITCH que este tronco mudou: tira o gateway que ele tem e
+/// manda-o reler os troncos (`killgw` + `rescan`, pelo ESL). Sem isto um
+/// tronco alterado continuava a registar-se com os dados antigos, e um
+/// apagado continuava registado na operadora, até alguém reiniciar o
+/// FreeSWITCH (R300).
+///
+/// Não espera pela resposta nem falha o pedido: a base é a verdade, e o
+/// FreeSWITCH volta a ler os troncos sozinho de minuto a minuto. Sem ESL
+/// configurado não faz nada — fica só esse ciclo, que não tira gateways.
+///
+/// Os avisos vão para uma fila com UM trabalhador (`GatewayRefresh`): uma
+/// ligação ao ESL de cada vez e um `rescan` por intervalo, por muitos pedidos
+/// que cheguem.
+fn refresh_gateway(state: &AppState, trunk_id: Uuid) {
+    use crate::telephony_service::GatewayRefresh;
+    use delonix_meet_domain::telephony::ports::PortError;
+    let Some(sip) = state.telephony.sip.clone() else {
+        return;
+    };
+    let queue = state.telephony.gateway_refresh.clone();
+    if !queue.enqueue(gateway_name(trunk_id)) {
+        return; // já há um trabalhador: leva este no lote seguinte
+    }
+    tokio::spawn(async move {
+        while let Some(batch) = queue.next_batch() {
+            match sip.restart_registration(&batch).await {
+                Ok(()) | Err(PortError::NotConfigured(_)) => {}
+                Err(e) => tracing::warn!(
+                    gateways = batch.len(), error = %e,
+                    "o FreeSWITCH não foi avisado da alteração de troncos — ficam com os dados antigos até reler ou reiniciar"
+                ),
+            }
+            tokio::time::sleep(GatewayRefresh::MIN_INTERVAL).await;
+        }
+    });
 }
 
 /// Apaga uma operadora. `409 telephony.trunk_in_use` se o plano de marcação a usa.
@@ -889,6 +962,7 @@ pub async fn delete(
         &trunk_id.to_string(),
     )
     .await;
+    refresh_gateway(&state, trunk_id);
     Ok(StatusCode::NO_CONTENT)
 }
 

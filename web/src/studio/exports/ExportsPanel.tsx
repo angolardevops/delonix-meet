@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { apiErrorMessage, isAbort } from '../../api'
 import PageBar from '../../components/PageBar'
 import { Alert, Button, Checkbox, cx, Select } from '../../ui/kit'
+import { BotaoEd, LigacaoEd } from '../pecasDoEditor'
 import { relogio } from '../captions/legendas'
 import * as bd from '../edit/bd'
 import type { Projecto } from '../edit/projecto'
@@ -252,7 +253,6 @@ export default function ExportsPanel({
         recarregarHistorico()
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [projecto.id, lerBlob, marcaDeAgua, onGuardar, recarregarHistorico, registar, t],
   )
 
@@ -289,14 +289,15 @@ export default function ExportsPanel({
   const tabela = (historico: bd.RegistoDeExportacao[]) => (
     <div className="ed-exp__table ed-exp__table--hist dx-table-wrap" data-exp-hist>
       <table className="dx-table">
+        <caption className="dx-sr-only">{t('editor.topo.exportacoes')}</caption>
         <thead>
           <tr>
-            <th>{t('editor.exportar.colunas.exportacao')}</th>
-            <th>{t('editor.exportar.colunas.predefinicao')}</th>
-            <th>{t('editor.exportar.colunas.formato')}</th>
-            <th>{t('editor.exportar.colunas.tamanho')}</th>
-            <th>{t('editor.exportar.colunas.estado')}</th>
-            <th>{t('editor.exportar.colunas.destino')}</th>
+            <th scope="col">{t('editor.exportar.colunas.exportacao')}</th>
+            <th scope="col">{t('editor.exportar.colunas.predefinicao')}</th>
+            <th scope="col">{t('editor.exportar.colunas.formato')}</th>
+            <th scope="col">{t('editor.exportar.colunas.tamanho')}</th>
+            <th scope="col">{t('editor.exportar.colunas.estado')}</th>
+            <th scope="col">{t('editor.exportar.colunas.destino')}</th>
           </tr>
         </thead>
         <tbody>
@@ -406,9 +407,7 @@ export default function ExportsPanel({
                       </div>
                       <span className="dx-spacer" />
                       {j.estado === 'espera' && i > 0 && (
-                        <button
-                          type="button"
-                          className="ed-btn ed-btn--sm"
+                        <BotaoEd sm
                           onClick={() =>
                             setFila((f) => {
                               const n = f.filter((x) => x.id !== j.id)
@@ -419,22 +418,22 @@ export default function ExportsPanel({
                           }
                         >
                           {t('editor.exportar.prioridade')}
-                        </button>
+                        </BotaoEd>
                       )}
                       {j.estado === 'a-exportar' && (
-                        <button type="button" className="ed-btn ed-btn--sm ed-btn--danger" onClick={() => controlo.current?.abort()}>
+                        <BotaoEd sm variante="danger" onClick={() => controlo.current?.abort()}>
                           {t('editor.exportar.cancelar')}
-                        </button>
+                        </BotaoEd>
                       )}
                       {j.estado === 'espera' && (
-                        <button type="button" className="ed-btn ed-btn--sm ed-btn--danger" onClick={() => mudar(j.id, { estado: 'cancelada' })}>
+                        <BotaoEd sm variante="danger" onClick={() => mudar(j.id, { estado: 'cancelada' })}>
                           {t('editor.exportar.cancelar')}
-                        </button>
+                        </BotaoEd>
                       )}
                       {j.resultado && (
-                        <a className="ed-btn ed-btn--sm" href={j.resultado.url} download={j.resultado.nome}>
+                        <LigacaoEd sm href={j.resultado.url} download={j.resultado.nome}>
                           {t('editor.exportar.descarregarDeNovo')}
-                        </a>
+                        </LigacaoEd>
                       )}
                     </div>
                     {j.erro && <p className="ed-exp__sub ed-tone--erro">{j.erro}</p>}
@@ -478,9 +477,9 @@ export default function ExportsPanel({
               <table className="dx-table">
                 <thead>
                   <tr>
-                    <th>{t('editor.exportar.colunas.predefinicao')}</th>
-                    <th>{t('editor.exportar.colunas.formato')}</th>
-                    <th>{t('editor.exportar.colunas.saida')}</th>
+                    <th scope="col">{t('editor.exportar.colunas.predefinicao')}</th>
+                    <th scope="col">{t('editor.exportar.colunas.formato')}</th>
+                    <th scope="col">{t('editor.exportar.colunas.saida')}</th>
                   </tr>
                 </thead>
                 <tbody>

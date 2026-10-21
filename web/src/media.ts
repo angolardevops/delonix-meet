@@ -3,6 +3,9 @@
  * medidores de nível de voz e gravação composta da reunião.
  */
 import { accessTokenValue } from './api'
+import { asrDoServidorPreferido, motorDaTranscricao, webSpeechAceita, type MotorDeTranscricao } from './legendasPref'
+import { buildVoiceChain, loadVoiceChain, type VoiceChain } from './voiceChain'
+import { modeloInstalado, modeloInstaladoConhecido } from './whisperModelo'
 
 export interface DeviceSets {
   mics: MediaDeviceInfo[]
@@ -19,7 +22,14 @@ export async function listDevices(): Promise<DeviceSets> {
   }
 }
 
-/** Constraints de áudio com supressão de ruído opcional. */
+/**
+ * Restrições do microfone. `noiseSuppression` é a supressão de ruído NATIVA do
+ * browser — o cancelamento de eco e o ganho automático pedem-se sempre.
+ *
+ * UMA SÓ SUPRESSÃO: quando a cadeia de voz da app (RNNoise, ver `Denoiser`)
+ * vai tratar o microfone, pede-se aqui `false`. Duas supressões em série não
+ * limpam o dobro — a segunda trabalha sobre os artefactos da primeira.
+ */
 export function audioConstraints(deviceId?: string, noiseSuppression = true): MediaTrackConstraints {
   return {
     ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
@@ -30,35 +40,92 @@ export function audioConstraints(deviceId?: string, noiseSuppression = true): Me
 }
 
 /**
- * Cadeia de voz "estúdio": RNNoise → noise gate → nivelador → limitador.
+ * Devolve uma pista deste microfone com a supressão NATIVA no estado pedido —
+ * a mesma, se já estiver; outra, reaberta, se não houver maneira de a mudar.
  *
- * RNNoise (IA via AudioWorklet WASM) remove teclado, ventoinha, ruído de
- * fundo muito melhor que a supressão nativa do browser — mas não zera o
- * chão de ruído residual entre frases. O `noise-gate-processor`
- * (noiseGateWorklet.js) corta esse chão a silêncio a sério quando ninguém
- * fala. O nivelador (`DynamicsCompressorNode`, ratio moderado) aproxima o
- * volume de quem fala baixo e alto — o "som de podcast" nivelado. O
- * limitador (ratio muito alto, threshold perto de 0 dB) é a rede de
- * segurança final contra picos que saturariam o codificador Opus.
+ * Existe por causa do RECUO: o microfone abre-se sem supressão nativa quando
+ * o RNNoise vai tratar dele, e se o RNNoise não carregar a pista não pode
+ * ficar sem supressão NENHUMA.
  *
- * Ordem importa: o gate vem ANTES do nivelador — nivelar primeiro
- * amplificaria o ruído residual durante o silêncio, que é exactamente o
- * chão que o gate existe para cortar.
+ * Porque é que reabre: o Chromium não muda o processamento de uma pista viva.
+ * Medido no 151 (`e2e/voz-natural.mjs`, modo APM): `applyConstraints` com
+ * `noiseSuppression` trocado RESOLVE e o `getSettings()` fica como estava. O
+ * Firefox muda em vivo, e por isso tenta-se primeiro.
+ *
+ * Porque é que PÁRA A PISTA ANTES de reabrir: o Chromium tem UMA fonte por
+ * microfone, com o processamento com que foi aberta, e enquanto houver uma
+ * pista viva dela qualquer pedido novo recebe essa mesma fonte. Medido pelo
+ * arnês, que apanhou as duas primeiras versões disto: com a antiga viva, um
+ * pedido «ideal» devolve outra pista com a supressão exactamente como estava
+ * (reabria e ficava na mesma), e um pedido `exact` é recusado
+ * (`OverconstrainedError`). Só largando a fonte é que ela reabre diferente.
+ *
+ * Daí o único risco desta função: se a reabertura falhar, a pista antiga já
+ * está parada. Tenta-se então reabrir como estava; se nem isso der, devolve-se
+ * a pista parada e o aviso fica na consola — não rejeita, porque quem chama
+ * está a meio de montar uma chamada e um erro aqui deitava-a abaixo.
+ *
+ * O que NÃO resolve: outra pista do MESMO microfone viva noutro sítio da
+ * página (um clone, um medidor que abriu o seu) prende a fonte. Nesse caso a
+ * pista devolvida vem com a supressão antiga, e isso lê-se no `getSettings()`.
+ */
+export async function withNativeNoiseSuppression(track: MediaStreamTrack, wanted: boolean): Promise<MediaStreamTrack> {
+  const estado = () => track.getSettings().noiseSuppression
+  if (estado() === wanted) return track
+  // Um browser que não diz o estado não deixa saber se mudou: pede-se, e fica.
+  const desconhecido = estado() === undefined
+  try {
+    await track.applyConstraints(audioConstraints(undefined, wanted))
+  } catch {
+    /* este browser não muda uma pista viva */
+  }
+  if (desconhecido || estado() === wanted) return track
+  const deviceId = track.getSettings().deviceId
+  if (!deviceId) return track
+  const ligada = track.enabled
+  track.stop()
+  for (const pedido of [wanted, !wanted]) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId, pedido) })
+      const reaberta = s.getAudioTracks()[0]
+      if (!reaberta) continue
+      reaberta.enabled = ligada
+      if (reaberta.getSettings().noiseSuppression !== wanted) {
+        console.warn(`[mic] o microfone reabriu com noiseSuppression=${reaberta.getSettings().noiseSuppression} (pedido: ${wanted})`)
+      }
+      return reaberta
+    } catch (e) {
+      console.warn(`[mic] não foi possível reabrir o microfone com noiseSuppression=${pedido}`, e)
+    }
+  }
+  return track
+}
+
+/**
+ * A cadeia de voz da chamada sobre uma pista de microfone:
+ * `microfone → RNNoise → gate de voz` (o grafo está em `voiceChain.ts`).
+ *
+ * RNNoise (IA via AudioWorklet WASM) tira o ruído de fundo. O gate
+ * (`noiseGateWorklet.js`) baixa o que sobra entre frases para um chão — não
+ * para silêncio — e não abre para um estalo curto, como uma tecla.
+ *
+ * Já NÃO tem nivelador nem limitador: o ganho de compensação do
+ * `DynamicsCompressorNode` subia a cauda da sala e o eco residual (era o «eco»
+ * que se ouvia) e os agudos da fala. Quem nivela é o `autoGainControl` do
+ * browser. As medidas estão no cabeçalho do `e2e/voz-natural.mjs`.
  *
  * Recebe a track do microfone e devolve uma track "limpa" para enviar à
- * chamada.
+ * chamada. Quem abre o microfone para isto pede-o SEM a supressão nativa
+ * (`audioConstraints(id, false)`).
  */
 export class Denoiser {
   private ctx: AudioContext | null = null
-  private node: import('@sapphi-red/web-noise-suppressor').RnnoiseWorkletNode | null = null
-  private gate: AudioWorkletNode | null = null
-  private leveler: DynamicsCompressorNode | null = null
-  private limiter: DynamicsCompressorNode | null = null
+  private chain: VoiceChain | null = null
   private source: MediaStreamAudioSourceNode | null = null
   private dest: MediaStreamAudioDestinationNode | null = null
 
   get active(): boolean {
-    return !!this.node
+    return !!this.chain
   }
 
   // Se o AudioContext for suspenso (política de autoplay, tab em 2º plano), a
@@ -70,83 +137,97 @@ export class Denoiser {
 
   /** Encaminha a track do mic pela cadeia; devolve a track processada. */
   async process(track: MediaStreamTrack): Promise<MediaStreamTrack> {
-    const [{ loadRnnoise, RnnoiseWorkletNode }, wasmUrl, wasmSimdUrl, workletUrl, gateWorkletUrl] = await Promise.all([
-      import('@sapphi-red/web-noise-suppressor'),
-      import('@sapphi-red/web-noise-suppressor/rnnoise.wasm?url').then((m) => m.default),
-      import('@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url').then((m) => m.default),
-      import('@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url').then((m) => m.default),
-      import('./noiseGateWorklet.js?url').then((m) => m.default),
-    ])
     // RNNoise trabalha a 48 kHz — fixa a taxa para não reamostrar mal.
-    this.ctx = new AudioContext({ sampleRate: 48000 })
-    const wasmBinary = await loadRnnoise({ url: wasmUrl, simdUrl: wasmSimdUrl })
-    await Promise.all([
-      this.ctx.audioWorklet.addModule(workletUrl),
-      this.ctx.audioWorklet.addModule(gateWorkletUrl),
-    ])
-    this.source = this.ctx.createMediaStreamSource(new MediaStream([track]))
-    this.node = new RnnoiseWorkletNode(this.ctx, { maxChannels: 1, wasmBinary })
-    this.gate = new AudioWorkletNode(this.ctx, 'noise-gate-processor')
-
-    this.leveler = this.ctx.createDynamicsCompressor()
-    this.leveler.threshold.value = -24
-    this.leveler.knee.value = 12
-    this.leveler.ratio.value = 3
-    this.leveler.attack.value = 0.01
-    this.leveler.release.value = 0.25
-
-    this.limiter = this.ctx.createDynamicsCompressor()
-    this.limiter.threshold.value = -3
-    this.limiter.knee.value = 0
-    this.limiter.ratio.value = 20
-    this.limiter.attack.value = 0.003
-    this.limiter.release.value = 0.1
-
-    this.dest = this.ctx.createMediaStreamDestination()
-    this.source.connect(this.node).connect(this.gate).connect(this.leveler).connect(this.limiter).connect(this.dest)
+    const ctx = new AudioContext({ sampleRate: 48000 })
+    this.ctx = ctx
+    try {
+      const modules = await loadVoiceChain(ctx)
+      this.source = ctx.createMediaStreamSource(new MediaStream([track]))
+      this.chain = buildVoiceChain(ctx, modules)
+      this.dest = ctx.createMediaStreamDestination()
+      this.source.connect(this.chain.input)
+      this.chain.output.connect(this.dest)
+    } catch (e) {
+      // Sem isto, um RNNoise que não carregasse deixava um AudioContext aberto
+      // por cada tentativa — e o browser só dá meia dúzia.
+      this.stop()
+      throw e
+    }
     // Garante que arranca a processar (contextos criados sem gesto começam
     // 'suspended') e mantém-no vivo se o browser o suspender.
-    await this.ctx.resume().catch(() => {})
-    this.ctx.onstatechange = this.resume
+    await ctx.resume().catch(() => {})
+    ctx.onstatechange = this.resume
     document.addEventListener('visibilitychange', this.resume)
     return this.dest.stream.getAudioTracks()[0]
   }
 
   stop() {
     document.removeEventListener('visibilitychange', this.resume)
-    try {
-      this.node?.destroy()
-    } catch {
-      /* já destruído */
-    }
     this.source?.disconnect()
-    this.node?.disconnect()
-    this.gate?.disconnect()
-    this.leveler?.disconnect()
-    this.limiter?.disconnect()
+    this.chain?.destroy()
     if (this.ctx) this.ctx.onstatechange = null
-    void this.ctx?.close()
+    void this.ctx?.close().catch(() => {})
     this.ctx = null
-    this.node = null
-    this.gate = null
-    this.leveler = null
-    this.limiter = null
+    this.chain = null
     this.source = null
     this.dest = null
   }
 }
 
 /** Pede a resolução máxima da câmara (o browser dá o melhor que o hardware tiver). */
-export function videoConstraints(deviceId?: string): MediaTrackConstraints {
+/** Para que lado a câmara aponta. É o que o telemóvel entende. */
+export type Facing = 'user' | 'environment'
+
+/**
+ * A câmara ACTUAL aponta para que lado, se o browser o disser.
+ *
+ * No telemóvel, `facingMode` vem nas settings da pista; no computador, não vem
+ * (uma webcam não tem «frente» nem «trás») e isto devolve `undefined`. É assim
+ * que se sabe se vale a pena oferecer o botão de virar.
+ */
+export function facingOf(track?: MediaStreamTrack | null): Facing | undefined {
+  const f = track?.getSettings().facingMode
+  return f === 'user' || f === 'environment' ? f : undefined
+}
+
+/**
+ * Restrições de vídeo.
+ *
+ * **Porque é que o `facing` existe aqui.** Até agora a única forma de escolher
+ * câmara era por `deviceId: { exact }`, e no telemóvel isso não serve:
+ *
+ * - antes de a permissão ser dada, o `enumerateDevices` não dá etiquetas úteis
+ *   (no Safari do iOS vêm vazias), logo não há como saber qual é a frontal;
+ * - os `deviceId` rodam entre sessões em alguns browsers, e um `exact` com um
+ *   id antigo **falha** em vez de cair para outra câmara.
+ *
+ * O `facingMode` resolve as duas coisas, e vai como `ideal` e não `exact`: num
+ * computador com uma só webcam, um `exact` fazia o `getUserMedia` falhar e o
+ * vídeo ficava preto.
+ */
+export function videoConstraints(deviceId?: string, facing?: Facing): MediaTrackConstraints {
   return {
     ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-    width: { ideal: 3840 },
-    height: { ideal: 2160 },
-    // Só `ideal` (nunca `min`): pedir 60fps quando a câmara aguenta, mas SEM
-    // restrição obrigatória — um `min` fazia o getUserMedia falhar em câmaras
+    ...(!deviceId && facing ? { facingMode: { ideal: facing } } : {}),
+    // 1080p30 e NÃO 4K60. Pedia-se 3840×2160 a 60 fps, e o simulcast codifica
+    // TRÊS camadas a partir daí ao mesmo tempo — o retrato de uma reunião nunca
+    // é desenhado a 4K, mas a máquina pagava-o na mesma, em cada quadro.
+    //
+    // Medido numa chamada de produção a 2026-10-13 (sala axj-kxfd-tvj, três
+    // pessoas): a ligação de um participante caiu e voltou QUATRO vezes, com 37
+    // mudanças de camada à volta das quedas, e a imagem dos outros dois a
+    // travar. Com a câmara dele desligada as quedas pararam — ou seja, era o
+    // ENVIO dele a sufocar a ligação —, mas as mudanças de camada continuaram
+    // (8 em 10 minutos, a saltar `q`→`f`, de 0,3 para 6 Mbps).
+    //
+    // 60 fps também sai: numa reunião a diferença entre 30 e 60 não se vê, e
+    // dobra o trabalho do codificador nas três camadas.
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    // Só `ideal` (nunca `min`): um `min` fazia o getUserMedia falhar em câmaras
     // que não garantem o framerate (pouca luz/driver) → caía para áudio-só,
     // deixando o vídeo preto e o mic aparentemente "muted".
-    frameRate: { ideal: 60 },
+    frameRate: { ideal: 30 },
   }
 }
 
@@ -582,6 +663,18 @@ function cleanWhisper(raw: string): string {
 }
 
 class WhisperEngine {
+  /**
+   * O `stop()` já foi chamado.
+   *
+   * PORQUE EXISTE: o `start()` passou a ESPERAR pela medição do modelo antes
+   * de abrir o worker, e nessa janela não possui nada — um `stop()` que caia
+   * aqui não tem o que parar e perde-se. Sem esta marca, quem desligasse as
+   * legendas (ou saísse da sala) durante a sonda ficava com um worker, um
+   * `AudioContext` e possivelmente o MICROFONE abertos para o resto da
+   * página, e cada bloco transcrito continuava a ser difundido à sala depois
+   * de as legendas estarem desligadas.
+   */
+  private parado = false
   private worker: Worker | null = null
   private ctx: AudioContext | null = null
   private proc: ScriptProcessorNode | null = null
@@ -595,8 +688,28 @@ class WhisperEngine {
   onFinal: ((text: string) => void) | null = null
   onInterim: ((text: string) => void) | null = null
 
-  async start(lang: string, stream?: MediaStream | null): Promise<boolean> {
+  /**
+   * `'ok'`, ou a RAZÃO de não ter arrancado.
+   *
+   * Devolvia um `boolean`, e quem chamava tinha de adivinhar a razão para
+   * escolher a mensagem — a primeira versão disto perguntava à medição do
+   * modelo (`modeloInstaladoConhecido()`), o que deixou de funcionar no
+   * momento em que uma medição falhada passou a não ficar em cache: a pessoa
+   * com o modelo em falta recebia «sem acesso ao microfone». Quem sabe a razão
+   * é quem falhou.
+   */
+  async start(lang: string, stream?: MediaStream | null): Promise<'ok' | 'sem-modelo' | 'sem-microfone'> {
     this.lang = lang.split('-')[0] // 'pt-PT' -> 'pt'
+    // O MODELO PRIMEIRO, antes do worker e antes de pedir o microfone. Sem
+    // isto, uma instalação que não correu o `deploy/fetch-whisper.sh` abria o
+    // worker, o `pipeline()` não encontrava o modelo, o erro morria num
+    // `console.warn` LÁ DENTRO, e quem estava na reunião ficava com «(a
+    // carregar modelo de voz local…)» para sempre: sem legenda, sem erro e sem
+    // saber porquê. Devolver `false` aqui é o que permite ao `Transcriber`
+    // dizer que não há motor em vez de ficar a fingir que arranca.
+    if (!(await modeloInstalado())) return 'sem-modelo'
+    // Esperámos: quem desligou entretanto manda.
+    if (this.parado) return 'ok'
     this.worker = new Worker(new URL('./whisperWorker.ts', import.meta.url), { type: 'module' })
     this.worker.onmessage = (e) => {
       const m = e.data as { op: string; text?: string; message?: string }
@@ -615,7 +728,14 @@ class WhisperEngine {
       this.ownStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null)
       audio = this.ownStream ?? undefined
     }
-    if (!audio) return false
+    if (!audio) return 'sem-microfone'
+    // Segunda espera, mesma armadilha: um `stop()` durante a permissão do
+    // microfone deixava o grafo de áudio montado a seguir.
+    if (this.parado) {
+      this.ownStream?.getTracks().forEach((t) => t.stop())
+      this.ownStream = null
+      return 'ok'
+    }
 
     // 16 kHz mono para o Whisper; blocos fecham por silêncio (~0,7 s) ou 8 s.
     this.ctx = new AudioContext({ sampleRate: 16000 })
@@ -644,7 +764,7 @@ class WhisperEngine {
     }
     this.source.connect(this.proc)
     this.proc.connect(this.ctx.destination)
-    return true
+    return 'ok'
   }
 
   private flush() {
@@ -670,6 +790,7 @@ class WhisperEngine {
   }
 
   stop() {
+    this.parado = true
     this.flush()
     this.proc?.disconnect()
     this.source?.disconnect()
@@ -692,6 +813,8 @@ class WhisperEngine {
  */
 export class ServerWhisperEngine {
   private ws: WebSocket | null = null
+  /** Fomos nós que fechámos: um `onclose` nosso não é uma falha do serviço. */
+  private fechadoPorNos = false
   private ctx: AudioContext | null = null
   private proc: ScriptProcessorNode | null = null
   private source: MediaStreamAudioSourceNode | null = null
@@ -724,6 +847,23 @@ export class ServerWhisperEngine {
       }
     }
     this.ws.onerror = () => this.onError?.('Transcrição do servidor indisponível — a usar o motor local.')
+    // O `onerror` cobre o que falha no HANDSHAKE — e é por aí que vem a recusa
+    // de autorização: o `/asr` fecha com 1008 ANTES do `accept`, e o servidor
+    // ASGI entrega isso como um 403 à ligação (medido a 2026-10-13 contra o
+    // whisper-server real: três tokens inválidos, três 403 no handshake).
+    //
+    // O que o `onerror` NÃO cobre é a ligação que JÁ estava aberta e cai a
+    // meio da reunião — o pod do ASR a reiniciar, um drain, a rede. Isso chega
+    // como `onclose`, e sem isto a captura morria em silêncio: sem legenda,
+    // sem erro e sem recuo para o motor local.
+    this.ws.onclose = (e) => {
+      if (this.fechadoPorNos) return
+      this.onError?.(
+        e.code === 1008
+          ? 'Transcrição do servidor recusou a sessão — a usar o motor local.'
+          : 'Transcrição do servidor interrompida — a usar o motor local.',
+      )
+    }
 
     let audio = stream
     if (!audio || audio.getAudioTracks().length === 0) {
@@ -752,6 +892,7 @@ export class ServerWhisperEngine {
   }
 
   stop() {
+    this.fechadoPorNos = true
     this.proc?.disconnect()
     this.source?.disconnect()
     void this.ctx?.close()
@@ -768,9 +909,16 @@ export class ServerWhisperEngine {
 }
 
 /**
- * Transcrição contínua do áudio local. Usa a Web Speech API quando existe
- * (Chrome/Edge — melhor latência) e cai para Whisper WASM local nos outros
- * browsers (Firefox/Safari). `onFinal` recebe cada frase confirmada.
+ * Transcrição contínua do áudio local. A ordem dos motores é a do
+ * `legendasPref.motorDaTranscricao` — servidor soberano, depois o WASM local —
+ * e a Web Speech do Chrome só entra com os três sins (browser, organização,
+ * pessoa). `onFinal` recebe cada frase confirmada.
+ *
+ * MUDOU A 2026-10-18: até aqui, uma falha do ASR do servidor em Chrome recuava
+ * para a Web Speech, isto é, começava a mandar o áudio à Google a meio de uma
+ * reunião que começara soberana — e a mensagem que o utilizador via dizia «a
+ * usar o motor local». Agora o recuo de uma falha é sempre outro motor que não
+ * envia áudio para fora, e quando não há nenhum isso DIZ-SE.
  */
 export class Transcriber {
   private rec: SpeechRecognitionLike | null = null
@@ -780,47 +928,130 @@ export class Transcriber {
   private lang = 'pt-PT'
   private stream?: MediaStream | null
   private usedWhisper = false
+  /**
+   * O ASR do servidor já falhou nesta sessão — não se tenta outra vez.
+   *
+   * SEM ISTO ERA UM CICLO INFINITO, e passou a importar no dia em que o ASR
+   * do servidor se tornou a omissão: o `onError` do motor do servidor chamava
+   * `start()` outra vez, o `start()` voltava a ler a preferência (ainda
+   * «servidor»), abria outro WebSocket, falhava — sem recuo nenhum e com uma
+   * ligação nova por volta. O comentário prometia «degrada para Web Speech»;
+   * o código recursava.
+   */
+  private asrDoServidorEmBaixo = false
+  /**
+   * A organização permite a Web Speech (`organizations.allow_web_speech`, que
+   * chega por `caption-policy` no WebSocket da sala). `undefined` = o servidor
+   * ainda não falou.
+   *
+   * NÃO é a guarda principal — a aceitação da pessoa é. É a guarda que NÃO
+   * vive no `localStorage`: a preferência do cliente pode ser alterada por
+   * quem usa o browser ou por uma extensão, e esta não.
+   */
+  private webSpeechPermitida?: boolean
+  /**
+   * O motor que está REALMENTE a correr, não o que a preferência pediu. Vai
+   * com cada frase para o servidor (`engine`), que é como uma organização que
+   * proíbe a Web Speech pode recusar a frase em vez de confiar no cliente.
+   *
+   * Limite honesto, e está escrito no servidor também: um cliente hostil pode
+   * mentir aqui. Isto não impede a fuga — impede que o produto a faça sozinho,
+   * e dá à organização a recusa do caminho honesto.
+   */
+  private motor: MotorDeTranscricao | null = null
   onFinal: ((text: string) => void) | null = null
   onInterim: ((text: string) => void) | null = null
-  /** Erro legível (permissão negada, sem microfone, etc.). */
+  /** Erro legível (permissão negada, sem microfone, sem motor). */
   onError: ((message: string) => void) | null = null
 
   /**
+   * A política da organização, vinda do servidor. Chamável a qualquer momento:
+   * se já houver um reconhecedor da Google a correr e a política o proibir,
+   * pára-o AQUI e passa ao motor soberano — é o caminho que torna a recusa do
+   * servidor efectiva no meio de uma reunião, e não só à entrada.
+   */
+  politicaDaOrganizacao(permitida: boolean) {
+    this.webSpeechPermitida = permitida
+    if (permitida || !this.rec || !this.running) return
+    const rec = this.rec
+    this.rec = null
+    try {
+      rec.stop()
+    } catch {
+      /* já parado */
+    }
+    this.onInterim?.('(a tua organização não permite o motor do browser — a mudar para transcrição local…)')
+    this.startWhisper()
+  }
+
+  /**
    * Arranca o melhor motor disponível. `stream` alimenta o Whisper (mic).
-   * `preferLocal` força o Whisper WASM (100% no dispositivo, privado) em vez da
-   * Web Speech do Chrome — que ENVIA áudio para servidores da Google, o que
-   * quebra a soberania de dados. Sem `preferLocal`, usa Web Speech quando
-   * existe e cai automaticamente no Whisper se a Google estiver inacessível
-   * (erro `network`) — típico numa rede self-hosted/offline.
+   * `preferLocal` força o Whisper WASM (100% no dispositivo, privado) e não há
+   * nada acima dele.
+   *
+   * Sem `preferLocal` a ordem é a do `motorDaTranscricao`: o ASR do servidor,
+   * depois o WASM local. A Web Speech do Chrome ENVIA áudio para servidores da
+   * Google, e por isso exige os três sins; quando ela está a correr e a Google
+   * fica inacessível (erro `network`, típico numa rede self-hosted), cai para
+   * o Whisper local.
    */
   start(lang = 'pt-PT', stream?: MediaStream | null, preferLocal = false) {
     this.lang = lang
     this.stream = stream
     this.running = true
-    // Whisper SERVER-SIDE (opt-in, `dx_asr_server`): precisão muito superior ao
-    // WASM local, soberano (áudio só vai ao teu servidor). Cai para o motor
-    // seguinte em erro (serviço em baixo / não implantado).
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('dx_asr_server') === '1') {
+    const Ctor = ((window as unknown as { webkitSpeechRecognition?: SpeechRecognitionCtor; SpeechRecognition?: SpeechRecognitionCtor })
+      .webkitSpeechRecognition ??
+      (window as unknown as { SpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition) as SpeechRecognitionCtor | undefined
+    const motor = motorDaTranscricao({
+      asrDoServidor: asrDoServidorPreferido(),
+      asrDoServidorEmBaixo: this.asrDoServidorEmBaixo,
+      temWebSpeech: !!Ctor,
+      // O que a medição JÁ soube dizer (`null` → omisso → presume-se que sim).
+      // Se a presunção estiver errada, o `WhisperEngine.start` devolve `false`
+      // e o `startWhisper` reporta que não há motor — nunca se cai na Google
+      // por causa de um modelo em falta.
+      temWasm: modeloInstaladoConhecido() ?? undefined,
+      preferirLocal: preferLocal,
+      aceitaWebSpeech: webSpeechAceita(),
+      webSpeechPermitida: this.webSpeechPermitida,
+    })
+    this.motor = motor
+    if (motor === 'servidor') {
+      // Whisper SERVER-SIDE (`dx_asr_server`, a OMISSÃO desde 2026-10-13):
+      // precisão muito superior ao WASM local e soberano — o áudio vai ao
+      // nosso servidor e a mais nenhum. Cai para o motor seguinte em erro
+      // (serviço em baixo, ou um servidor que não instalou o Whisper).
       const sw = new ServerWhisperEngine()
       sw.onFinal = (t) => this.onFinal?.(t)
       sw.onInterim = (t) => this.onInterim?.(t)
-      sw.onError = () => {
-        // Serviço indisponível → degrada para Web Speech / WASM local.
+      sw.onError = (mensagem) => {
+        // Serviço indisponível → degrada para o WASM local, que é também
+        // soberano; a Web Speech só se a pessoa a tiver aceitado e a
+        // organização a permitir. A marca é o que impede o `start()` de
+        // voltar aqui em ciclo.
+        this.asrDoServidorEmBaixo = true
         this.serverWhisper?.stop()
         this.serverWhisper = null
-        if (this.running) this.start(lang, stream, preferLocal)
+        if (!this.running) return
+        this.onInterim?.(mensagem)
+        this.start(lang, stream, preferLocal)
       }
       void sw.start(this.lang, this.stream)
       this.serverWhisper = sw
       return true
     }
-    const Ctor = ((window as unknown as { webkitSpeechRecognition?: SpeechRecognitionCtor; SpeechRecognition?: SpeechRecognitionCtor })
-      .webkitSpeechRecognition ??
-      (window as unknown as { SpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition) as SpeechRecognitionCtor | undefined
-    if (!Ctor || preferLocal) {
-      // Sem Web Speech (Firefox) ou modo 100% local: Whisper WASM.
+    if (motor === 'wasm') {
+      // O recuo soberano: sem Web Speech (Firefox), sem aceitação dela, com o
+      // modo 100% local pedido, ou com o ASR do servidor em baixo.
       this.startWhisper()
       return true
+    }
+    if (motor === 'nenhum' || !Ctor) {
+      // `!Ctor` junto com `nenhum` porque o `motorDaTranscricao` só devolve
+      // `'webspeech'` com `temWebSpeech`, e o TypeScript não o sabe. Se um dia
+      // soubesse, este braço continuava a ser o certo para o `nenhum`.
+      this.semMotor()
+      return false
     }
     const rec = new Ctor()
     rec.continuous = true
@@ -875,17 +1106,44 @@ export class Transcriber {
     return true
   }
 
+  /** O motor que está a correr AGORA (`null` antes do primeiro `start`). */
+  motorActivo(): MotorDeTranscricao | null {
+    return this.motor
+  }
+
   /** Arranca o motor Whisper WASM local (uma só vez). */
   private startWhisper() {
     if (this.usedWhisper || !this.running) return
     this.usedWhisper = true
+    this.motor = 'wasm'
     this.whisper = new WhisperEngine()
     this.whisper.onFinal = (t) => this.onFinal?.(t)
     this.whisper.onInterim = (t) => this.onInterim?.(t)
-    void this.whisper.start(this.lang, this.stream).then((ok) => {
-      if (!ok && this.running)
-        this.onError?.('Sem acesso ao microfone para transcrição — verifica a permissão do browser.')
+    void this.whisper.start(this.lang, this.stream).then((r) => {
+      if (r === 'ok' || !this.running) return
+      // DUAS causas, e confundi-las manda a pessoa mexer no sítio errado: o
+      // microfone (dela) ou o modelo (da instalação). Quem sabe qual foi é
+      // quem falhou — não se adivinha aqui.
+      if (r === 'sem-modelo') this.semMotor()
+      else this.onError?.('Sem acesso ao microfone para transcrição — verifica a permissão do browser.')
     })
+  }
+
+  /**
+   * Não sobrou motor nenhum, e diz-se.
+   *
+   * É a alternativa ao que este ficheiro fazia antes de 2026-10-18: cair na
+   * Web Speech sem ninguém ter pedido. A mensagem nomeia a saída — e, quando a
+   * saída é o motor da Google, nomeia o custo dela, porque é isso que torna a
+   * escolha informada em vez de um botão.
+   */
+  private semMotor() {
+    this.motor = 'nenhum'
+    this.onError?.(
+      this.webSpeechPermitida === false
+        ? 'Sem motor de transcrição: a transcrição local não está instalada neste servidor e a tua organização não permite o motor do browser.'
+        : 'Sem motor de transcrição: a transcrição local não está instalada neste servidor. Nas definições de Inteligência podes aceitar o motor do browser — que envia o áudio aos servidores da Google.',
+    )
   }
 
   stop() {

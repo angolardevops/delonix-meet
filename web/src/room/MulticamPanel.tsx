@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser } from '../api'
-import type { Cena } from './compositor'
+import { participanteLocal } from '../convidado'
+import { LUGARES_DA_CENA, type Cena } from './compositor'
 import { Icon } from '../ui/icons'
 import { Alert, Button, Field, IconButton, Segmented, StatusBadge, TextInput, cx } from '../ui/kit'
 import { Since } from './Clocks'
 import { MAX_MULTICAM_DESTINOS, type Multicam } from './useMulticam'
 import type { RemotePeer } from './useRoomCore'
+import { Bloco } from './Bloco'
 
 /** Multicâmara: compõe a sala num quadro e emite-o para plataformas RTMP. */
 export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multicam; peers: RemotePeer[]; roomTitle: string }) {
@@ -14,7 +15,7 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
   const [verChave, setVerChave] = useState<Record<number, boolean>>({})
   const m = multicam
   const noAr = m.estado.fase === 'no-ar'
-  const pessoas = [{ id: 'eu', nome: currentUser()?.username ?? '' }, ...peers.map((p) => ({ id: p.peerId, nome: p.username }))]
+  const pessoas = [{ id: 'eu', nome: participanteLocal().username }, ...peers.map((p) => ({ id: p.peerId, nome: p.username }))]
 
   return (
     <div className="rm-scroll">
@@ -26,7 +27,7 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
             <span className="rm-multicam__onair dx-num" role="status">
               <Since desde={m.estado.desde} render={(txt) => t('room.multicam.noArDesde', { tempo: txt })} />
             </span>
-            <span className="rm-multicam__caption">{t('room.multicam.legendaPrograma', { nome: currentUser()?.username ?? '', titulo: roomTitle })}</span>
+            <span className="rm-multicam__caption">{t('room.multicam.legendaPrograma', { nome: participanteLocal().username, titulo: roomTitle })}</span>
           </>
         )}
       </div>
@@ -37,11 +38,7 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
         </p>
       )}
 
-      <section className="rm-block" aria-labelledby="rm-mc-cena">
-        <h3 id="rm-mc-cena" className="rm-block__title">
-          <Icon name="layers" size={13} />
-          {t('room.multicam.cena')}
-        </h3>
+      <Bloco icon="layers" titulo={t('room.multicam.cena')}>
         <Segmented<Cena>
           label={t('room.multicam.cena')}
           value={m.cena}
@@ -50,11 +47,22 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
             { value: 'grelha', label: t('room.multicam.cenaGrelha') },
             { value: 'solo', label: t('room.multicam.cenaSolo') },
             { value: 'lado-a-lado', label: t('room.multicam.cenaLadoALado') },
+            { value: 'moldura', label: t('room.multicam.cenaMoldura') },
           ]}
         />
+        {/* A moldura escolhe o HERÓI sozinha (o ecrã partilhado, se houver),
+            mas a COLUNA tem tecto: acima de três câmaras alguém fica de fora, e
+            quem fica é decisão do anfitrião. Esconder as fichas aqui era
+            escondê-la — e a cena anuncia no canto quantas sobraram. */}
         {m.cena !== 'grelha' && (
           <>
-            <span className="dx-muted">{m.cena === 'solo' ? t('room.multicam.escolherUm') : t('room.multicam.escolherDois')}</span>
+            <span className="dx-muted">
+              {m.cena === 'solo'
+                ? t('room.multicam.escolherUm')
+                : m.cena === 'moldura'
+                  ? t('room.multicam.escolherColuna', { n: LUGARES_DA_CENA.moldura })
+                  : t('room.multicam.escolherDois')}
+            </span>
             <div className="dx-chips">
               {pessoas.map((p) => (
                 <button key={p.id} type="button" className="dx-chip" aria-pressed={m.focoIds.includes(p.id)} onClick={() => m.toggleFoco(p.id)}>
@@ -64,17 +72,17 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
             </div>
           </>
         )}
-      </section>
+      </Bloco>
 
-      <section className="rm-block" aria-labelledby="rm-mc-dest">
-        <h3 id="rm-mc-dest" className="rm-block__title">
-          <Icon name="live" size={13} />
-          {t('room.multicam.destinos')}
-          <span className="dx-spacer" />
+      <Bloco
+        icon="live"
+        titulo={t('room.multicam.destinos')}
+        meta={
           <span className="dx-num dx-muted">
             {m.destinos.length}/{MAX_MULTICAM_DESTINOS}
           </span>
-        </h3>
+        }
+      >
         {m.destinos.map((d, i) => (
           <fieldset key={i} className="rm-dest" disabled={noAr || m.estado.fase === 'a-ligar'}>
             <legend className="dx-field__label">
@@ -125,7 +133,7 @@ export function MulticamPanel({ multicam, peers, roomTitle }: { multicam: Multic
         ) : (
           <p className="dx-muted">{t('room.multicam.limite', { n: MAX_MULTICAM_DESTINOS })}</p>
         )}
-      </section>
+      </Bloco>
 
       {m.estado.fase === 'erro' && <Alert tone="danger">{m.estado.motivo}</Alert>}
       {noAr ? (

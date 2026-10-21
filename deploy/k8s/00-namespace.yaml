@@ -1,4 +1,40 @@
+# ---------------------------------------------------------------------------
+#  O namespace do Meet, e as três coisas sem as quais «isolado» é uma palavra.
+#
+#  O ADR-0021 pôs a produção a PARTILHAR o cluster `ngola-lda` com o
+#  `ngolacloud-system`. Um namespace NÃO é uma fronteira dura: o control-plane,
+#  o Longhorn e os nós são os mesmos. O que se segue é o mínimo para o vizinho
+#  ruidoso não ser o Meet.
+# ---------------------------------------------------------------------------
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: delonix-meet
+  name: ngolacloud-meet
+  labels:
+    app.kubernetes.io/part-of: ngolacloud
+    # Pod Security Admission. O nível é MEDIDO, não aspiracional:
+    #
+    #  - `baseline` em enforce porque nada no caminho de produção usa a rede do
+    #    nó (`coturn.hostNetwork: false`, `voice.enabled: false`), e hostNetwork
+    #    é o que o baseline proíbe e nós não precisamos.
+    #  - `restricted` NÃO se impõe por causa de UM pod: o coturn corre com
+    #    `allowPrivilegeEscalation: true` e `NET_BIND_SERVICE`, e está escrito
+    #    porque não é descuido — o binário da imagem tem file-capabilities e com
+    #    no-new-privs o exec dá EPERM (ver `templates/coturn.yaml`). O
+    #    `restricted` proíbe as duas coisas e rejeitaria o pod.
+    #  - mas fica em `warn` e `audit`: vê-se o que falharia sem bloquear nada,
+    #    e no dia em que o coturn deixar de precisar disto sobe-se o enforce.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+# ---------------------------------------------------------------------------
+#  SEM ResourceQuota nem LimitRange aqui, de propósito (D1, 2026-10-10).
+#
+#  O tecto e o chão do namespace são do chart (`templates/quota.yaml`, ligado
+#  em produção), que conta o chart E a plataforma que vive aqui (Postgres e
+#  Redis). Duas quotas no mesmo namespace aplicam-se as duas, vale a mais
+#  restritiva, e o erro de admissão nomeia uma quota que não é a que se está a
+#  olhar: com esta e a do chart, o Postgres (12Gi de requests) era recusado.
+#  Um dono por recurso. Este ficheiro fica com o que o chart NÃO pode pôr: o
+#  Namespace e as etiquetas de Pod Security, que existem antes do release.
+# ---------------------------------------------------------------------------

@@ -128,6 +128,7 @@ openssl rand -hex 24   # → password do Postgres
 | `JWT_SECRET` | ≥ 32 bytes. **Trocá-la invalida todas as sessões.** |
 | `DATA_ENCRYPTION_KEYS` | Chaves que cifram os segredos guardados na base (segredos de integração, chaves de emissão, credenciais de tronco). `kid:base64` de 32 bytes: `echo "k1:$(openssl rand -base64 32)"`; várias separadas por vírgula para rodar (a primeira cifra, todas decifram). **Sem ela o servidor não arranca** (desde 2026-10-04, R285; antes arrancava e cada escrita de um segredo dava `422`). Perdê-la é perder todos os segredos que cifrou — guarda-se FORA da base e nunca se regenera. |
 | `TURN_HOST` | `turn.meet.example.com:3478` — host **alcançável pelos clientes** |
+| `TURN_HOST_BY_HOST` | Opcional. `site=turn:porta` separados por vírgulas (`meet.example.ao=turn.example.ao:3478`): quem entra por esse site recebe esse nome de TURN; os outros, o `TURN_HOST`. Um nome por pessoa — dois URLs para o mesmo relay são duas alocações por browser |
 | `TURN_SECRET` | ≥ 16 bytes, **idêntico** ao `--static-auth-secret` do coturn |
 
 ### Rede e serviço
@@ -149,16 +150,20 @@ openssl rand -hex 24   # → password do Postgres
 | `PROVISIONING_SECRET` | Autoriza `POST /api/operator/v1/organizations`. Vazio = endpoint desligado |
 | `PLATFORM_ADMIN_USER_IDS` | UUIDs (separados por vírgula) dos administradores da PLATAFORMA — os únicos que leem e alteram o armazenamento das gravações (`/api/operator/v1/storage*`). Vazio = ninguém (fail-closed). UUID e não email, porque o registo não verifica emails. Obter com `SELECT id FROM users WHERE email = '…'` depois de a conta existir. Um valor que não seja UUID impede o arranque |
 | `PLATFORM_ODOO_URL` / `PLATFORM_ODOO_DB` | Login com conta Odoo ([§7](#7-integração-odoo)). Vazias = desligado |
+| `TTS_URL` | O `tts-server` in-cluster (dobragem ao vivo, ADR-0030). Vazio = dobragem **desligada**, fail-closed: sem voz não se oferece a língua, em vez de a oferecer e calar. A imagem é **GPL-3.0** e vive à parte por isso (`tts-server/LICENCAS.md`); a voz é `pt_PT-tugão`, presa por revisão e SHA-256, e o produto diz que é de **Portugal** |
 | `OUTBOUND_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF para URLs escritos por clientes (webhooks, `odoo_url` da organização, emissor OIDC), por nome exacto — nunca redes. Necessário para um Odoo ou IdP on-prem em rede privada. O host de `PLATFORM_ODOO_URL` entra sozinho. Os destinos do operador (WebDAV, `OLLAMA_URL`) não precisam: alcançam a rede privada, só os metadados da cloud (link-local) ficam recusados |
 | `TRUSTED_PROXY_HOPS` | Quantos proxies de confiança há entre o cliente e o servidor (default `1`, de 1 a 8). Diz qual entrada do `X-Forwarded-For` é o endereço do cliente: a n-ésima a contar do fim, que é a que o proxy de fora escreveu — o que está à esquerda veio do cliente e pode ser forjado. `1` serve o compose, o chart e os manifestos deste repo (ingress ou Nginx directamente à frente do servidor). Só se sobe quando há um segundo proxy que ACRESCENTA ao cabeçalho (por exemplo um balanceador L7 à frente do ingress). Errar para menos faz todos os clientes partilharem o limite por IP; errar para mais devolve a escolha da chave ao cliente |
-| `WEBHOOK_ALLOW_HOSTS` | Hosts isentos da guarda anti-SSRF dos webhooks, por nome exacto. Necessário para um Odoo on-prem em rede privada |
 | `OLLAMA_URL` | LLM local para atas e legendas. Vazio = MoM por regras (fail-open) |
 | `OLLAMA_MODEL_SUMMARY` / `OLLAMA_MODEL_TRANSLATE` | modelos (ex. `qwen2.5:7b` / `qwen2.5:1.5b`) |
 | `VOICE_INTERNAL_SECRET` | Segredo da API interna de IVR (PSTN), cabeçalho `X-Voice-Secret`. Vazio, com menos de 32 caracteres, ou igual a um valor que já esteve no repositório (`BURNED_VOICE_SECRETS` em `server/src/config.rs`) = `/api/voice/ivr/*` responde **503** com a razão e o arranque avisa; o resto do servidor corre. Com `DELONIX_ALLOW_INSECURE=1` aceita-se qualquer valor não vazio. Gerar com `openssl rand -hex 32`. Em Kubernetes vem do Secret `delonix-voice` ([§6](#6-cenário-b--kubernetes)), nunca de `01-config.yaml` (R154) |
+| `PUSH_WAIT_SECS` | ADR-0023: quantos segundos uma chamada que o **servidor** origina (ligar a partir da sala) para um ramal sem registo espera que o aparelho acorde por push e se registe (0 a 60). **0 = desligado (por omissão):** liga já, como antes. É a contraparte, para as chamadas do servidor, do `DELONIX_PUSH_WAIT_SECS` do FreeSWITCH (`voice/README.md`), que só vê as chamadas que passam pelo seu dialplan. Sem aparelhos registados, ou com o ramal já registado, não espera |
+| `PUSH_LAB_URL` | **Só laboratório e testes** (ADR-0023): URL a que o servidor entrega o pedido de «acordar» de um aparelho registado com o fornecedor `lab`, atrás da guarda de saída (`OUTBOUND_ALLOW_HOSTS` para um host interno). **Ausente = o fornecedor `lab` não acorda ninguém.** FCM e APNs ainda não existem: um aparelho `fcm` ou `apns_voip` aceita-se no registo mas não é acordado |
+| `PUSH_DELONIX_URL` + `PUSH_DELONIX_KEY` | URL base do serviço **delonix-push** (open source) e a chave de servidor `dpk_…` do projecto (**segredo**), para os aparelhos registados com o fornecedor `delonix` (o token é o `device_id` do serviço). Atrás da guarda de saída (`OUTBOUND_ALLOW_HOSTS` para um host interno). **Qualquer um ausente = o fornecedor `delonix` não acorda ninguém** |
 | `PHONE_BRIDGE_SIP_BIND` | Ponte telefone↔sala ([ADR-0010](adr/0010-ponte-telefone-sala.md)): onde o UA SIP escuta, `host:porta` UDP (ex. `0.0.0.0:5080`). **Ausente = ponte desligada** e o dial-in cai na conferência local do FreeSWITCH, sem regressão. É a única variável que a liga |
-| `PHONE_BRIDGE_FREESWITCH_IPS` | IPs dos FreeSWITCH autorizados a mandar `INVITE` e RTP, separados por vírgulas. **Fail-closed: vazia, o UA nem arranca** — um UA que aceitasse qualquer origem é uma porta para dentro das salas. Aceita-se ainda o antigo `PSTN_BRIDGE_FREESWITCH_IP` (um só IP) |
+| `PHONE_BRIDGE_FREESWITCH_IPS` | IPs **ou nomes** (resolvidos a cada `PHONE_BRIDGE_RESOLVE_SECS`; só privados, nunca loopback) dos FreeSWITCH autorizados a mandar `INVITE` e RTP, separados por vírgulas. **Fail-closed: vazia, o UA nem arranca** — um UA que aceitasse qualquer origem é uma porta para dentro das salas. Aceita-se ainda o antigo `PSTN_BRIDGE_FREESWITCH_IP` (um só IP) |
 | `PHONE_BRIDGE_SIP_ADVERTISE` | O que o control plane devolve ao IVR no `sip_uri` (`host:porta`), quando o endereço alcançável de fora não é o do bind — NAT, `hostPort` em K8s. Por omissão, `PSTN_BRIDGE_HOST`/`SFU_EXTERNAL_IP` com a porta do bind |
 | `PHONE_BRIDGE_RTP_IP` / `PHONE_BRIDGE_RTP_MIN` / `PHONE_BRIDGE_RTP_MAX` | IP que vai no SDP e faixa de portas RTP das pernas. Sem a faixa, portas efémeras do SO — que uma firewall entre o FreeSWITCH e o servidor não consegue abrir |
+| `PHONE_BRIDGE_WIDEBAND` | `1` (por omissão) faz a perna da ponte negociar Opus: a voz de um softphone chega à sala sem passar por 8 kHz e a sala volta-lhe a 16 kHz (ADR-0018). `0` repõe G.711 nos dois sentidos. |
 
 ---
 
@@ -278,12 +283,19 @@ não existir (`make voice-secret-k8s`); o Ansible (`k8s_app`) cria-o a partir do
 ou por kustomize cria-o antes:
 
 ```bash
-kubectl -n delonix-meet create secret generic delonix-voice \
+kubectl -n ngolacloud-meet create secret generic delonix-voice \
   --from-literal=VOICE_INTERNAL_SECRET="$(openssl rand -hex 32)"
 ```
 
 Sem ele o servidor arranca e só as rotas de IVR dão `503`. O mesmo valor tem de ir
 para a camada de media (FreeSWITCH, `voice/README.md`).
+
+**TLS na sinalização dos ramais (ADR-0009).** Sem TLS, as chaves do SRTP (SDES) vão em claro no SDP.
+O perfil dos ramais do FreeSWITCH liga o TLS com variáveis **do FreeSWITCH** (não do servidor), descritas em
+`voice/README.md` (secção «TLS nos ramais»). O servidor tem de mandar o telefone para lá:
+`VOICE_RAMAIS_PUBLIC_TRANSPORT=tls` e `VOICE_RAMAIS_PUBLIC_PORT` igual à porta TLS, senão o QR do Linphone
+continua a apontar para o UDP. No compose do laboratório em modo LAN (`make compose-up LAN_IP=…`) está tudo
+ligado, com o certificado da borda; o helm e o cluster local **não** estão (continuam em UDP).
 
 **Um cluster que já tenha sido instalado com o `01-config.yaml` antigo tem o valor
 publicado `voice-internal-secret-for-pstn` dentro do `delonix-secrets`** — o
@@ -291,10 +303,10 @@ publicado `voice-internal-secret-for-pstn` dentro do `delonix-secrets`** — o
 valor (503), mas a chave deve sair e o segredo tem de ser rodado:
 
 ```bash
-kubectl -n delonix-meet patch secret delonix-secrets --type=json \
+kubectl -n ngolacloud-meet patch secret delonix-secrets --type=json \
   -p='[{"op":"remove","path":"/data/VOICE_INTERNAL_SECRET"}]'
 make voice-secret-k8s                                   # cria o delonix-voice novo
-kubectl -n delonix-meet rollout restart deploy/delonix-server
+kubectl -n ngolacloud-meet rollout restart deploy/delonix-server
 ```
 
 **Os segredos da aplicação (`delonix-secrets`) também saíram do repositório
@@ -321,7 +333,7 @@ bash scripts/k8s-app-secrets.sh <host-do-postgres-no-cluster>
    `bash scripts/k8s-app-secrets.sh <host>`: o `JWT_SECRET` novo **desliga todas as
    sessões**, que é o que se quer depois de uma chave publicada.
 2. O coturn lê o `TURN_SECRET` do mesmo Secret:
-   `kubectl -n delonix-meet rollout restart deploy/delonix-coturn deploy/delonix-server`.
+   `kubectl -n ngolacloud-meet rollout restart deploy/delonix-coturn deploy/delonix-server`.
 3. A password do Postgres **não muda sozinha**: o chart da Bitnami só a define quando
    cria o volume. Num cluster de ensaio, apaga-se o volume e reinstala-se; num
    cluster com dados, `ALTER USER delonix PASSWORD '…'` com a do `.env`, e só depois
@@ -339,7 +351,7 @@ Com edição (saas ou enterprise), aplicar o overlay em vez da base — ver
 ```bash
 bash scripts/check-k8s-render.sh               # render + fronteiras, sem cluster
 kubectl apply -k deploy/k8s-overlays/saas
-kubectl -n delonix-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
+kubectl -n ngolacloud-meet wait --for=condition=complete job/delonix-server-migrate --timeout=10m
 ```
 
 O overlay pressupõe o cert-manager instalado (emite o mTLS do gRPC) e um

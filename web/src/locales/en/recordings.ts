@@ -5,6 +5,7 @@ export default {
   meta_one: '{{count}} item · {{size}}',
   meta_other: '{{count}} items · {{size}}',
   abrir: 'Open {{name}}',
+  menuDe: 'Actions for {{name}}',
   salaCodigo: 'Room {{code}}',
   partilhadaComigo: 'Shared with me',
   semResultados: 'No recording matches the search',
@@ -47,6 +48,9 @@ export default {
     estado: 'Status',
   },
   estado: {
+    aProcessar: 'Processing',
+    aProcessarPct: 'Processing {{pct}}%',
+    aProcessarAviso: 'The server is still composing this recording. It will be available when it finishes.',
     aTranscrever: 'Transcribing',
     aTranscreverPct: 'Transcribing {{pct}}%',
     publicada: 'Published',

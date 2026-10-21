@@ -110,7 +110,7 @@ export function paraVtt(cues: Cue[], o: OpcoesVtt = {}): string {
 
 /** Lê SRT ou VTT. Linhas que não são cue são ignoradas, não rebentam. */
 export function lerLegendas(texto: string): Cue[] {
-  const blocos = texto.replace(/\r/g, '').replace(/^﻿/, '').split(/\n{2,}/)
+  const blocos = texto.replace(/\r/g, '').replace(/^\uFEFF/, '').split(/\n{2,}/)
   const out: Cue[] = []
   for (const b of blocos) {
     const linhas = b.split('\n').filter((l) => l.trim() !== '')

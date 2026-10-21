@@ -22,6 +22,14 @@ spec:
         app: delonix-postgres
         {{- include "dm.labels" . | nindent 8 }}
     spec:
+      # Prioridade de agendamento — OPCIONAL e nunca fixa no chart. Num
+      # cluster PARTILHADO (ADR-0021) é o que decide quem é desalojado
+      # quando um nó aperta; mas o nome da classe é do operador do cluster,
+      # e um `priorityClassName` que não exista faz o API server RECUSAR o
+      # pod. Por isso: vazio por omissão, e quem instala diz o nome.
+      {{- with $v.postgresql.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       # uid 70 = `postgres` na imagem alpine.
       securityContext:
@@ -107,6 +115,14 @@ spec:
         app: delonix-redis
         {{- include "dm.labels" . | nindent 8 }}
     spec:
+      # Prioridade de agendamento — OPCIONAL e nunca fixa no chart. Num
+      # cluster PARTILHADO (ADR-0021) é o que decide quem é desalojado
+      # quando um nó aperta; mas o nome da classe é do operador do cluster,
+      # e um `priorityClassName` que não exista faz o API server RECUSAR o
+      # pod. Por isso: vazio por omissão, e quem instala diz o nome.
+      {{- with $v.redis.priorityClassName | default $v.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- include "dm.imagePullSecrets" . | nindent 6 }}
       securityContext:
         runAsNonRoot: true

@@ -1042,6 +1042,43 @@ async fn recordings_publish_and_view_others(db: sqlx::PgPool) {
         .await;
     assert_eq!(st, 200, "{meta}");
     assert_eq!(meta["can_manage"], true, "{meta}");
+
+    // R306: PUBLICAR para a organização é mostrar a outrem, como partilhar e
+    // como o link público — pede `recordings.publish`, não «gerir metadados».
+    // Até 2026-10-06 este `POST /publish` respondia 200 a este papel, a quem a
+    // organização NEGA a capacidade.
+    let publish = format!("/api/recordings/{rec}/publish");
+    let unpublish = format!("/api/recordings/{rec}/unpublish");
+    let (st, b) = app
+        .post(&publish, Some(&member.token), json!({"visibility": "org"}))
+        .await;
+    assert_eq!(
+        (st, b["code"].as_str()),
+        (403, Some("authz.missing_capability")),
+        "publicar sem recordings.publish: {b}"
+    );
+    assert_eq!(b["details"][0]["description"], "recordings.publish");
+    // CONTROLO de que não se fechou a mais: com `view_others` continua a LER.
+    let (st, v) = app
+        .get(
+            &format!("/api/recordings/{rec}/transcript"),
+            Some(&member.token),
+        )
+        .await;
+    assert_eq!(st, 200, "view_others continua a ler a transcrição: {v}");
+    // E DESPUBLICAR fica em «gerir», de propósito: retirar exposição não pode
+    // ser mais difícil do que criá-la (mesma razão de desfazer uma partilha).
+    let (st, b) = app
+        .post(
+            &publish,
+            Some(&uploader.token),
+            json!({"visibility": "org"}),
+        )
+        .await;
+    assert_eq!(st, 200, "a dona publica: {b}");
+    let (st, b) = app.post(&unpublish, Some(&member.token), json!({})).await;
+    assert_eq!(st, 200, "quem gere despublica sem a capacidade: {b}");
+
     // Vê, mas não publica: 403 com a capacidade em falta.
     let (st, b) = app.put(&link, Some(&member.token), json!({})).await;
     assert_eq!(
@@ -1062,6 +1099,11 @@ async fn recordings_publish_and_view_others(db: sqlx::PgPool) {
     assert_eq!(st, 200, "{b}");
     let (st, _) = app.delete(&link, Some(&member.token)).await;
     assert_eq!(st, 204, "contrato do #90");
+    // E com a capacidade, publica também.
+    let (st, b) = app
+        .post(&publish, Some(&member.token), json!({"visibility": "org"}))
+        .await;
+    assert_eq!(st, 200, "com recordings.publish publica: {b}");
 }
 
 /// `sessions.create`: o convidado externo não cria salas.

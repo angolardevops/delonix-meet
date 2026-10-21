@@ -100,6 +100,17 @@
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr;
 }
+/* A moldura: a faixa a toda a largura em cima, e por baixo a coluna à
+   ESQUERDA com o herói à direita — a única miniatura em que a coluna fica
+   desse lado, porque é isso que a distingue do `destaque`. */
+.st-lay__mini--moldura {
+  grid-template-columns: 1fr 2fr;
+  grid-template-rows: auto 1fr;
+}
+.st-lay__mini--moldura .st-lay__faixa {
+  grid-column: 1 / -1;
+  min-height: 3px;
+}
 .st-lay__mini .st-lay__col {
   display: grid;
   grid-template-rows: 1fr 1fr;

@@ -1,11 +1,15 @@
-import { lazy, ReactNode, Suspense, useEffect, useState } from 'react'
+import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { completeSsoLogin, currentUser, logout, User } from './api'
 import Shell, { NavKey } from './components/Shell'
 import PaletteHost from './components/PaletteHost'
 import PresenceProvider from './components/PresenceProvider'
 import { Icon } from './ui/icons'
-import { Spinner } from './ui/kit'
+import { Empty, Spinner } from './ui/kit'
+import { getAppName } from './branding'
+import { chaveDoTitulo, destinoNoRail, parseHash, type Route } from './rota'
+import { fonteDe } from './fonteDoEstudio'
+import { useTrabalhoEmCurso } from './trabalhoEmCurso'
 
 // ---------------------------------------------------------------------------
 //  Corte por rota. EAGER ficam só os dois ecrãs de entrada — Entrar e Início
@@ -13,13 +17,17 @@ import { Spinner } from './ui/kit'
 //  ela webrtc/media/e2ee) nunca entra no chunk da consola.
 // ---------------------------------------------------------------------------
 import Login from './pages/Login'
+import PortaDeConvidado from './pages/PortaDeConvidado'
+import EsperaDaSala from './pages/EsperaDaSala'
 import Home from './pages/Home'
 
 const Room = lazy(() => import('./pages/Room'))
 const Lobby = lazy(() => import('./pages/Lobby'))
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'))
 const PhoneCamera = lazy(() => import('./pages/PhoneCamera'))
+const EmparelharTelefone = lazy(() => import('./pages/EmparelharTelefone'))
 const Calendar = lazy(() => import('./pages/Calendar'))
+const Rooms = lazy(() => import('./pages/Rooms'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const Recordings = lazy(() => import('./pages/Recordings'))
 const Directory = lazy(() => import('./pages/Directory'))
@@ -33,6 +41,9 @@ const Status = lazy(() => import('./pages/Status'))
 const ApiDocs = lazy(() => import('./pages/ApiDocs'))
 const Legal = lazy(() => import('./pages/Legal'))
 const SharePage = lazy(() => import('./pages/SharePage'))
+const VerificarEmail = lazy(() => import('./pages/VerificarEmail'))
+const OAuthConsent = lazy(() => import('./pages/OAuthConsent'))
+const ReporPassword = lazy(() => import('./pages/ReporPassword'))
 const Diagram = lazy(() => import('./pages/Diagram'))
 const RecordingPlayer = lazy(() => import('./pages/RecordingPlayer'))
 
@@ -44,43 +55,68 @@ function RouteFallback({ children }: { children: ReactNode }) {
   return <Suspense fallback={<div className="dx-route-wait" aria-hidden="true" />}>{children}</Suspense>
 }
 
-type Route =
-  | { kind: NavKey }
-  | { kind: 'room'; code: string; voice: boolean }
-  | { kind: 'lobby'; code: string }
-  | { kind: 'telemovel'; code: string }
-  | { kind: 'share'; token: string }
-  | { kind: 'invite'; token: string }
-  | { kind: 'diagram'; id: string | null }
-  | { kind: 'player'; id: string }
-
-const PAGES: NavKey[] = ['calendar', 'studio', 'recordings', 'whiteboards', 'directory', 'integrations', 'analytics', 'admin', 'telecom', 'ai']
-
-function parseHash(): Route {
-  const h = location.hash
-  const room = h.match(/^#\/r\/([a-z-]+)(\?voice)?$/)
-  if (room) return { kind: 'room', code: room[1], voice: !!room[2] }
-  const lobby = h.match(/^#\/lobby\/([a-z-]+)$/)
-  if (lobby) return { kind: 'lobby', code: lobby[1] }
-  const telemovel = h.match(/^#\/telemovel\/([a-z-]+)$/)
-  if (telemovel) return { kind: 'telemovel', code: telemovel[1] }
-  const share = h.match(/^#\/share\/([a-f0-9]+)$/)
-  if (share) return { kind: 'share', token: share[1] }
-  const invite = h.match(/^#\/invite\/([A-Za-z0-9_-]+)$/)
-  if (invite) return { kind: 'invite', token: invite[1] }
-  const diagram = h.match(/^#\/whiteboards\/diagram(?:\/([A-Za-z0-9_-]+))?(?:\?.*)?$/)
-  if (diagram) return { kind: 'diagram', id: diagram[1] ?? null }
-  const player = h.match(/^#\/recordings\/([0-9a-f-]{36})(?:\?.*)?$/)
-  if (player) return { kind: 'player', id: player[1] }
-  for (const p of PAGES) if (h.startsWith(`#/${p}`)) return { kind: p }
-  return { kind: 'home' }
+/**
+ * O endereço não é nenhuma rota. Mostra-o — era isto que faltava: até
+ * 2026-10-06 um endereço errado mostrava o Início com a barra a dizer outra
+ * coisa, e quem escrevia `#/estudio` (o nome português) nunca sabia que errou.
+ */
+function Desconhecida({ endereco }: { endereco: string }) {
+  const { t } = useTranslation()
+  return (
+    <Empty
+      icon="search"
+      title={t('ui.rotaDesconhecida.titulo')}
+      action={
+        <a className="dx-btn dx-btn--primary" href="#/">
+          {t('ui.rotaDesconhecida.inicio')}
+        </a>
+      }
+    >
+      <p>{t('ui.rotaDesconhecida.texto')}</p>
+      <code>{endereco}</code>
+    </Empty>
+  )
 }
+
+
 
 export default function App() {
   const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(currentUser())
   const [route, setRoute] = useState<Route>(parseHash())
+  // Desafio MFA devolvido pelo SSO (A4) — ver o `useEffect` de `#/sso-mfa`.
+  const [ssoMfaToken, setSsoMfaToken] = useState<string | null>(null)
+  const trabalhoEmCurso = useTrabalhoEmCurso()
 
+  /**
+   * O nome do ecrã no separador do browser. Até 2026-10-06 o `document.title`
+   * era o nome da aplicação em TODOS os ecrãs: quinze abas iguais, histórico
+   * indistinguível, marcadores inúteis.
+   */
+  useEffect(() => {
+    const chave = chaveDoTitulo(route)
+    document.title = chave ? `${t(chave)} · ${getAppName()}` : getAppName()
+  }, [route, t])
+  /**
+   * Mudar de ecrã move o foco para o conteúdo. O `<main id="conteudo">` já
+   * tinha `tabIndex={-1}` e ninguém lhe dava foco: quem navega por teclado
+   * clicava num item do rail e tinha de atravessar o rail inteiro outra vez
+   * para chegar ao que abriu. Não corre no primeiro render — aí o foco é de
+   * quem chega à página, não nosso.
+   */
+  const primeiroRender = useRef(true)
+  useEffect(() => {
+    if (primeiroRender.current) {
+      primeiroRender.current = false
+      return
+    }
+    document.getElementById('conteudo')?.focus()
+  }, [route.kind])
+  // Já com sessão, `#/login` não é um ecrã: volta-se ao Início em vez de
+  // mostrar «este endereço não existe».
+  useEffect(() => {
+    if (user && route.kind === 'login') location.hash = '/'
+  }, [user, route.kind])
   useEffect(() => {
     const onHash = () => setRoute(parseHash())
     // Sessão expirada (a renovação falhou): volta-se ao ecrã de entrada.
@@ -106,6 +142,17 @@ export default function App() {
     }
   }, [])
 
+  // Regresso do IdP com um segundo factor LOCAL activo (A4): `#/sso-mfa?mfa_token=…`
+  // -- sem cookie nem access token, só o desafio. O mesmo ecrã de MFA do login
+  // por password trata-o a partir daqui (ver `ssoMfaToken` abaixo).
+  useEffect(() => {
+    if (location.hash.startsWith('#/sso-mfa')) {
+      const m = location.hash.match(/mfa_token=([^&]+)/)
+      setSsoMfaToken(m ? m[1] : null)
+      location.hash = '/login'
+    }
+  }, [])
+
   function enterRoom(code: string, voice = false) {
     location.hash = `/r/${code}${voice ? '?voice' : ''}`
   }
@@ -113,7 +160,7 @@ export default function App() {
     location.hash = key === 'home' ? '/' : `/${key}`
   }
 
-  if (location.hash.startsWith('#/sso-complete')) {
+  if (location.hash.startsWith('#/sso-complete') || location.hash.startsWith('#/sso-mfa')) {
     return (
       <div className="wait-screen" role="status">
         <Spinner />
@@ -125,15 +172,57 @@ export default function App() {
   if (location.hash.startsWith('#/api-docs')) return <RouteFallback><ApiDocs /></RouteFallback>
   if (location.hash.startsWith('#/legal')) return <RouteFallback><Legal /></RouteFallback>
   if (route.kind === 'share') return <RouteFallback><SharePage token={route.token} /></RouteFallback>
+  // A prova do email abre-se sem sessão: o link chega muitas vezes a outro aparelho.
+  if (route.kind === 'verificar-email') return <RouteFallback><VerificarEmail token={route.token} /></RouteFallback>
+  // A reposição também: quem a usa está fora da conta.
+  if (route.kind === 'repor-password') return <RouteFallback><ReporPassword token={route.token} /></RouteFallback>
+  // O EMPARELHAMENTO do telefone é anónimo de propósito (ADR-0014 §2.1): quem
+  // lê o QR do Estúdio não tem conta nenhuma, e a credencial é o código. Tem
+  // de vir ANTES do portão — com ele à frente, quem lia o QR caía no ecrã de
+  // entrada sem uma palavra sobre emparelhamento, e o `pendingRoom` não cobre
+  // esta rota, por isso nem regressava.
+  if (route.kind === 'emparelhar')
+    return <RouteFallback><EmparelharTelefone code={route.code} /></RouteFallback>
+  // Resgatado, o telefone segue para a câmara — e continua sem conta. O que o
+  // autoriza é o bilhete de FONTE guardado para AQUELA sala (`fonteDe`), não
+  // uma sessão: sem esta linha, o salto do emparelhamento para a câmara batia
+  // no mesmo portão e o percurso morria no último passo.
+  if (route.kind === 'telemovel' && fonteDe(route.code))
+    return (
+      <RouteFallback>
+        <PhoneCamera key={route.code} code={route.code} onLeave={() => (location.hash = '/emparelhar')} />
+      </RouteFallback>
+    )
   if (!user) {
+    const aoEntrar = (u: User) => {
+      setUser(u)
+      if (location.hash.startsWith('#/login')) location.hash = '/'
+    }
+    // Um link de SALA sem sessão é a entrada de convidado: um nome, e o
+    // anfitrião admite. A moderação e o telemóvel-câmara continuam a pedir conta.
+    if (route.kind === 'room')
+      return (
+        <EsperaDaSala key={route.code} code={route.code}>
+          <PortaDeConvidado code={route.code} voice={route.voice} onLogin={aoEntrar} />
+        </EsperaDaSala>
+      )
     return (
       <Login
-        pendingRoom={route.kind === 'room' || route.kind === 'lobby' || route.kind === 'telemovel' ? route.code : null}
-        onLogin={(u) => {
-          setUser(u)
-          if (location.hash.startsWith('#/login')) location.hash = '/'
-        }}
+        pendingRoom={route.kind === 'lobby' || route.kind === 'telemovel' ? route.code : null}
+        onLogin={aoEntrar}
+        initialMfaToken={ssoMfaToken}
       />
+    )
+  }
+
+  // Consentimento de um agente: precisa de sessão, e é a pessoa que decide
+  // (ADR-0028 §5). Sem sessão o bloco acima manda ao login e o endereço fica —
+  // o fluxo retoma aqui com os parâmetros intactos.
+  if (route.kind === 'oauth-consent') {
+    return (
+      <RouteFallback>
+        <OAuthConsent />
+      </RouteFallback>
     )
   }
 
@@ -162,6 +251,9 @@ export default function App() {
         <PaletteHost
           user={user}
           inRoom={route.kind === 'room'}
+          // Navegar por cima de uma EMISSÃO mata-a como mataria uma chamada: a
+          // paleta abre em nova aba nos dois casos (antes só na sala).
+          protegido={route.kind === 'room' || trabalhoEmCurso}
           onEnterRoom={enterRoom}
           onLogout={() => {
             logout()
@@ -171,6 +263,10 @@ export default function App() {
         >
         {route.kind === 'room' ? (
           <RouteFallback>
+            {/* O ecrã de espera vale para quem tem sessão como para quem não
+                tem: a sala de uma reunião da tarde existe de manhã (migração
+                0114), e entrar nela de manhã é entrar numa sala vazia. */}
+            <EsperaDaSala key={route.code} code={route.code}>
             <Room
               key={route.code}
               code={route.code}
@@ -178,6 +274,7 @@ export default function App() {
               onLeave={() => (location.hash = '/')}
               onSwitch={(c) => enterRoom(c)}
             />
+            </EsperaDaSala>
           </RouteFallback>
         ) : route.kind === 'telemovel' ? (
           <RouteFallback>
@@ -187,7 +284,9 @@ export default function App() {
           <Shell
             user={user}
             // A moderação é de UMA sala e não tem destino no rail: nenhum item fica activo.
-            active={(route.kind === 'lobby' ? null : route.kind === 'diagram' ? 'whiteboards' : route.kind === 'player' ? 'recordings' : route.kind) as NavKey}
+            // O destino aceso no rail — a hierarquia que estava enterrada neste
+            // ternário vive agora no `rota.ts`, e é a mesma que dá o trilho.
+            active={destinoNoRail(route) as NavKey}
             onNavigate={navigate}
             onEnterRoom={enterRoom}
             onLogout={() => {
@@ -202,6 +301,7 @@ export default function App() {
               {route.kind === 'calendar' && <Calendar />}
               {route.kind === 'studio' && <Studio />}
               {route.kind === 'recordings' && <Recordings />}
+              {route.kind === 'rooms' && <Rooms />}
               {route.kind === 'whiteboards' && <Whiteboards />}
               {route.kind === 'diagram' && <Diagram id={route.id} />}
               {route.kind === 'player' && <RecordingPlayer key={route.id} id={route.id} />}
@@ -211,6 +311,7 @@ export default function App() {
               {route.kind === 'admin' && <Admin />}
               {route.kind === 'telecom' && <Telecom />}
               {route.kind === 'ai' && <Intelligence />}
+              {route.kind === 'desconhecida' && <Desconhecida endereco={route.endereco} />}
             </RouteFallback>
           </Shell>
         )}

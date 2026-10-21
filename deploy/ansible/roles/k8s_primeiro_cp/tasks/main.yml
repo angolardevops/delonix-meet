@@ -1,0 +1,84 @@
+---
+# O primeiro control-plane: é aqui que o cluster nasce.
+- name: Já há cluster neste nó?
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: admin_conf
+
+- name: A interface de rede que leva o VIP
+  # Descoberta, não escrita à mão: o nome muda entre `ens18`, `eth0` e `enp0s3`
+  # conforme o template do Proxmox, e um nome errado dá um VIP que não responde.
+  ansible.builtin.set_fact:
+    k8s_iface: "{{ ansible_default_ipv4.interface }}"
+
+- name: kube-vip como pod estático (antes do init, para o VIP existir já)
+  ansible.builtin.template:
+    src: kube-vip.yaml.j2
+    dest: /etc/kubernetes/manifests/kube-vip.yaml
+    mode: "0600"
+  when: not admin_conf.stat.exists
+
+- name: kubeadm init
+  ansible.builtin.command:
+    cmd: >-
+      kubeadm init
+      --control-plane-endpoint {{ k8s_vip }}:{{ k8s_api_porta }}
+      --upload-certs
+      --pod-network-cidr {{ k8s_pod_cidr }}
+      --service-cidr {{ k8s_service_cidr }}
+      --skip-phases=addon/kube-proxy
+  # `--skip-phases=addon/kube-proxy`: o Cilium substitui o kube-proxy (eBPF),
+  # e ter os dois é ter duas coisas a escrever regras para o mesmo tráfego.
+  when: not admin_conf.stat.exists
+  register: kubeadm_init
+
+- name: kubeconfig para o utilizador do Ansible
+  ansible.builtin.file: { path: "/home/{{ ansible_user }}/.kube", state: directory, owner: "{{ ansible_user }}", mode: "0700" }
+- ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    mode: "0600"
+
+- name: Helm
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args: { creates: /usr/local/bin/helm, executable: /bin/bash }
+
+- name: Cilium (CNI, com substituição do kube-proxy)
+  become_user: "{{ ansible_user }}"
+  ansible.builtin.shell: |
+    set -o pipefail
+    helm repo add cilium https://helm.cilium.io >/dev/null
+    helm upgrade --install cilium cilium/cilium --version {{ cilium_versao }} \
+      --namespace kube-system \
+      --set kubeProxyReplacement=true \
+      --set k8sServiceHost={{ k8s_vip }} \
+      --set k8sServicePort={{ k8s_api_porta }} \
+      --set ipam.operator.clusterPoolIPv4PodCIDRList={{ k8s_pod_cidr }} \
+      --set hubble.relay.enabled=true \
+      --set hubble.ui.enabled=true \
+      --set operator.replicas=2 \
+      --wait --timeout 10m
+  args: { executable: /bin/bash }
+  changed_when: true
+
+- name: O token e a chave para os outros entrarem
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "token=$(kubeadm token create --ttl 2h)"
+    echo "hash=sha256:$(openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //')"
+    echo "cert=$(kubeadm init phase upload-certs --upload-certs | tail -1)"
+  args: { executable: /bin/bash }
+  register: juncao
+  changed_when: false
+
+- name: Guardar o que os outros nós precisam
+  # Num facto e não num ficheiro: o token vale duas horas e não tem de sobrar
+  # no disco depois de o cluster estar feito.
+  ansible.builtin.set_fact:
+    k8s_token: "{{ juncao.stdout | regex_search('token=(\\S+)', '\\1') | first }}"
+    k8s_hash: "{{ juncao.stdout | regex_search('hash=(\\S+)', '\\1') | first }}"
+    k8s_cert: "{{ juncao.stdout | regex_search('cert=(\\S+)', '\\1') | first }}"

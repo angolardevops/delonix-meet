@@ -102,7 +102,7 @@ fi
 # MEET_ADMIN_PASSWORD: a conta de validação que o `make seed` cria.
 # VOICE_ADMIN_PASSWORD: as interfaces de administração do Kamailio e do PBX.
 # POSTGRES_REPLICATION_PASSWORD: só o `make prod` (Postgres com réplicas) o usa.
-for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET:24 VOICE_INTERNAL_SECRET:32 \
+for par in POSTGRES_PASSWORD:24 JWT_SECRET:32 TURN_SECRET:24 PROVISIONING_SECRET:24 VOICE_INTERNAL_SECRET:32 TELEPHONY_ESL_PASSWORD:32 \
   MEET_ADMIN_PASSWORD:12 VOICE_ADMIN_PASSWORD:12 VOICE_CENTRAL_PASSWORD:16 POSTGRES_REPLICATION_PASSWORD:24; do
   nome=${par%%:*}
   bytes=${par##*:}
@@ -188,7 +188,8 @@ CONF
 # Certificado self-signed do bordo SIP (Kamailio) no compose. O nome vai também
 # no SAN: é por ele que a central confere o certificado. Um certificado de um
 # bootstrap anterior, sem SAN, é substituído (é de laboratório e self-signed).
-if ! openssl x509 -in "$GEN/voice-tls/tls.crt" -noout -ext subjectAltName 2>/dev/null | grep -q "DNS:delonix-kamailio"; then
+san=$(openssl x509 -in "$GEN/voice-tls/tls.crt" -noout -ext subjectAltName 2>/dev/null) || san=
+if ! grep -q "DNS:delonix-kamailio" <<<"$san"; then
   openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=delonix-kamailio" \
     -addext "subjectAltName=DNS:delonix-kamailio" \
     -keyout "$GEN/voice-tls/tls.key" -out "$GEN/voice-tls/tls.crt" 2>/dev/null

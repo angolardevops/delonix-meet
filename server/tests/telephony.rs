@@ -784,6 +784,55 @@ async fn cdr_ingestion_idempotent_priced_at_time_of_call_listed_and_summed(db: s
         (st, e["code"].as_str()),
         (422, Some("telephony.cdr_org_unresolved"))
     );
+    // Sem organização E sem tronco não é uma chamada da telefonia (ramal para
+    // ramal, o IVR do dial-in): aceita-se, para o FreeSWITCH não a reenviar
+    // nem a guardar em disco, e não se regista nada.
+    let mut interna = orphan.clone();
+    interna["variables"]["uuid"] = json!("call-interna");
+    interna["variables"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sip_gateway_name");
+    let (st, _) = ingest(&app, Some(&auth), &interna).await;
+    assert_eq!(st, 204);
+    // Um gateway que não é nosso (sem `dlx-<id>`) não dá tronco, mas é uma
+    // saída para a rede pública: continua recusado, à vista.
+    let mut alheio = orphan.clone();
+    alheio["variables"]["uuid"] = json!("call-alheia");
+    alheio["variables"]["sip_gateway_name"] = json!("operadora-do-operador");
+    let (st, e) = ingest(&app, Some(&auth), &alheio).await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (422, Some("telephony.cdr_org_unresolved"))
+    );
+    // A marca de «ignorar» não vale para uma perna que saiu por um tronco: é
+    // uma variável de canal, e uma perna de tronco transferida fica com ela.
+    let mut transferida = cdr(
+        "call-transferida",
+        a.org(),
+        &uni,
+        sep15,
+        30,
+        "NORMAL_CLEARING",
+    );
+    transferida["variables"]["delonix_cdr_skip"] = json!("true");
+    let (st, _) = ingest(&app, Some(&auth), &transferida).await;
+    assert_eq!(
+        st, 201,
+        "uma perna de tronco marcada para ignorar ficou sem registo"
+    );
+    // Fora das somas que este teste confere mais abaixo.
+    sqlx::query("DELETE FROM telephony_call_records WHERE source_call_id = 'call-transferida'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let guardadas: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM telephony_call_records WHERE source_call_id IN ('call-x', 'call-interna')",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(guardadas, 0);
     // Um tronco de B num CDR de A não é atribuído a A.
     let (st, _) = ingest(
         &app,
@@ -970,6 +1019,15 @@ async fn usage_in_usd_needs_an_exchange_rate(db: sqlx::PgPool) {
 //  ESL falso: estado, reiniciar, teste rápido
 // ============================================================
 
+/// Espera (até 8 s) que um contador chegue a `n`; devolve o valor final.
+async fn wait_count(f: &dyn Fn() -> usize, n: usize) -> usize {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while f() < n && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    f()
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
     let esl = spawn_esl("ClueCon-teste", healthy_fs()).await;
@@ -1032,7 +1090,74 @@ async fn quick_test_call_and_sip_status_through_fake_esl(db: sqlx::PgPool) {
             "{log:?}"
         );
         assert!(log.iter().any(|c| c == "sofia profile external rescan"));
+        // Entre o `killgw` e o `rescan` espera-se que o gateway antigo saia do
+        // perfil, olhando às DUAS listas (`gwlist` só traz os que estão UP).
+        let pos = |needle: &str| log.iter().position(|c| c == needle);
+        let kill = pos(&format!("sofia profile external killgw dlx-{uni}")).unwrap();
+        let up = pos("sofia profile external gwlist").expect("não olhou à lista dos UP");
+        let down = pos("sofia profile external gwlist down").expect("não olhou à dos DOWN");
+        let rescan = pos("sofia profile external rescan").unwrap();
+        assert!(kill < up && up < down && down < rescan, "{log:?}");
     }
+
+    // Um tronco alterado ou apagado chega ao FreeSWITCH sem ninguém reiniciar
+    // nada (R300): o servidor manda tirar o gateway e reler. Mudar só o nome
+    // não deita o registo abaixo.
+    let kills = |gw: String| {
+        let log = esl.log.clone();
+        move || {
+            log.lock()
+                .unwrap()
+                .iter()
+                .filter(|c| **c == format!("sofia profile external killgw {gw}"))
+                .count()
+        }
+    };
+    let uni_kills = kills(format!("dlx-{uni}"));
+    let before = wait_count(&uni_kills, 0).await;
+    let (st, _) = app
+        .patch(
+            &t(a.org(), &format!("/trunks/{uni}")),
+            Some(&a.token),
+            json!({"name": "Unitel (principal)"}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert_eq!(uni_kills(), before, "mudar o nome mexeu no registo");
+    let (st, _) = app
+        .patch(
+            &t(a.org(), &format!("/trunks/{uni}")),
+            Some(&a.token),
+            json!({"password": "senha-nova-da-operadora"}),
+        )
+        .await;
+    assert_eq!(st, 200);
+    assert_eq!(
+        wait_count(&uni_kills, before + 1).await,
+        before + 1,
+        "mudar a password não chegou ao FreeSWITCH"
+    );
+    let mut extra = africell();
+    extra["name"] = json!("A apagar");
+    extra["short_code"] = json!("APG");
+    let apagar = create_trunk(&app, &a.token, a.org(), extra).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let apg_kills = kills(format!("dlx-{apagar}"));
+    // A criação já avisa (o gateway novo aparece sem esperar pelo ciclo).
+    let created = wait_count(&apg_kills, 1).await;
+    assert_eq!(created, 1, "criar o tronco não avisou o FreeSWITCH");
+    let (st, _) = app
+        .delete(&t(a.org(), &format!("/trunks/{apagar}")), Some(&a.token))
+        .await;
+    assert_eq!(st, 204);
+    assert_eq!(
+        wait_count(&apg_kills, 2).await,
+        2,
+        "apagar o tronco não chegou ao FreeSWITCH"
+    );
 
     // Teste rápido: resultado real (latência medida no ESL).
     let (st, call) = app
@@ -1266,7 +1391,7 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
     assert_eq!(st, 200);
     assert!(
         x.contains(&format!(
-            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni}]sofia/gateway/dlx-{uni}/244923447108"
+            "hash delonix_trunk {uni} 60 bridge [delonix_trunk_id={uni},force_process_cdr=true,execute_on_originate_1=set process_cdr=true,execute_on_originate_2=unset switch_m_sdp,execute_on_post_bridge=unset switch_m_sdp,outbound_redirect_fatal=true]sofia/gateway/dlx-{uni}/244923447108"
         )),
         "{x}"
     );
@@ -1286,6 +1411,32 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
         x.contains("404 Not Found"),
         "número inválido nunca cai no plano por omissão: {x}"
     );
+    // Sem a organização que NÓS pomos no canal não há rota: o domínio SIP que
+    // vem no pedido (o host do Request-URI) é escrito por quem liga, e não
+    // escolhe quem paga.
+    // A pré-condição do recuo antigo: a organização TEM um domínio SIP, e era
+    // por ele que o servidor a ia buscar.
+    let dominio = "sip.alfa-saida.ao";
+    let (st, sip) = app
+        .put(
+            &t(a.org(), "/sip-settings"),
+            Some(&a.token),
+            json!({"domain": dominio, "transport": "tls", "srtp": "mandatory",
+                   "codecs": ["opus"], "username": "alfa", "password": "sip-secreta-123"}),
+        )
+        .await;
+    assert_eq!((st, sip["domain"].as_str()), (200, Some(dominio)), "{sip}");
+    for campo in ["variable_sip_req_host", "variable_domain_name"] {
+        let (_, x) = post(
+            format!("section=dialplan&Caller-Context=delonix-outbound&Hunt-Destination-Number=923447108&{campo}={dominio}"),
+            Some(basic(SECRET)),
+        )
+        .await;
+        assert!(
+            x.contains(r#"status="not found""#) && !x.contains("sofia/gateway"),
+            "{campo} escolheu a organização que paga: {x}"
+        );
+    }
     // Outra secção ou contexto: «not found» (o FreeSWITCH usa o seu).
     let (_, x) = post(
         "section=dialplan&Caller-Context=public&Hunt-Destination-Number=1".into(),
@@ -1305,6 +1456,64 @@ async fn xml_curl_dialplan_matches_test_endpoint_and_serves_gateways(db: sqlx::P
         "o FreeSWITCH precisa da password decifrada"
     );
     assert!(g.contains(r#"value="sip.unitel.ao:5061;transport=tls""#));
+
+    // O utilizador de um tronco é texto do inquilino, e o FreeSWITCH
+    // pré-processa esta resposta: `$${nome}` lia uma variável global dele — o
+    // segredo de voz, por exemplo — e mandava-a para o servidor SIP do tronco.
+    let mut armadilha = africell();
+    armadilha["name"] = json!("Armadilha");
+    armadilha["short_code"] = json!("ARM");
+    armadilha["username"] = json!("$${delonix_voice_secret}");
+    armadilha["password"] = json!("$${delonix_voice_secret}");
+    create_trunk(&app, &a.token, a.org(), armadilha).await;
+    let (_, g) = post(
+        "section=directory&purpose=gateways".into(),
+        Some(basic(SECRET)),
+    )
+    .await;
+    assert!(
+        g.contains("&#36;&#36;{delonix_voice_secret}") && !g.contains('$'),
+        "{g}"
+    );
+
+    // Os troncos de todas as organizações vão ao FreeSWITCH num só documento
+    // com limite de tamanho: uma organização tem um tecto, ao criar e ao servir.
+    let max = delonix_meet_domain::telephony::trunk::MAX_TRUNKS_PER_ORG as usize;
+    for i in 3..max {
+        let mut mais = africell();
+        mais["name"] = json!(format!("Tronco {i}"));
+        mais["short_code"] = json!(format!("T{i}"));
+        create_trunk(&app, &a.token, a.org(), mais).await;
+    }
+    let mut a_mais = africell();
+    a_mais["name"] = json!("Um a mais");
+    a_mais["short_code"] = json!("MAIS");
+    let (st, e) = app
+        .post(&t(a.org(), "/trunks"), Some(&a.token), a_mais)
+        .await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (422, Some("telephony.trunk_limit_reached")),
+        "{e}"
+    );
+    // E uma linha a mais que já estivesse na base não é servida.
+    sqlx::query(
+        "INSERT INTO telephony_trunks (id, org_id, name, short_code, scope, host, port, transport, srtp,
+                register, username, password_sealed, prefixes, max_channels, position, enabled, created_by)
+         SELECT gen_random_uuid(), org_id, 'Herdado', 'HER', scope, host, port, transport, srtp,
+                register, username, password_sealed, prefixes, max_channels, 999, TRUE, created_by
+           FROM telephony_trunks WHERE id = $1",
+    )
+    .bind(uuid::Uuid::parse_str(&uni).unwrap())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (_, g) = post(
+        "section=directory&purpose=gateways".into(),
+        Some(basic(SECRET)),
+    )
+    .await;
+    assert_eq!(g.matches("<gateway name=").count(), max, "{g}");
 }
 
 // ============================================================
@@ -1493,4 +1702,194 @@ async fn sms_overview_reports_only_what_the_agent_reports(db: sqlx::PgPool) {
         )
         .await;
     assert!(st == 403 || st == 404);
+}
+
+// ============================================================
+//  Um ramal sai para a rede pública (R292)
+// ============================================================
+
+/// O que o `ramais_dial.lua` pergunta ao servidor quando um ramal marca.
+async fn resolve_ext(app: &TestApp, body: Value) -> (u16, Value) {
+    let r = app
+        .raw(
+            reqwest::Method::POST,
+            "/internal/v1/voice/ivr/resolve-extension",
+            &[("x-voice-secret", SECRET)],
+            Some(body),
+        )
+        .await;
+    (r.status, r.json())
+}
+
+async fn create_extension(app: &TestApp, token: &str, org: &str, body: Value) -> Value {
+    let (st, v) = app
+        .post(&format!("/api/orgs/{org}/extensions"), Some(token), body)
+        .await;
+    assert_eq!(st, 200, "criar ramal: {v}");
+    v
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn an_extension_reaches_the_pstn_only_through_its_own_orgs_dial_plan(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("VOICE_INTERNAL_SECRET", SECRET)]).await;
+    let a = app.new_org("alfa-sai.ao").await;
+    let b = app.new_org("beta-sai.ao").await;
+    let colega = app.add_member(&a, "colega", "member").await;
+    let uni = create_trunk(&app, &a.token, a.org(), unitel()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let afr = create_trunk(&app, &a.token, a.org(), africell()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    screen_plan(&app, &a.token, a.org(), &uni, &afr).await;
+
+    let ra = create_extension(
+        &app,
+        &a.token,
+        a.org(),
+        json!({"member_id": colega.user_id, "extension": "101"}),
+    )
+    .await;
+    let rb = create_extension(
+        &app,
+        &b.token,
+        b.org(),
+        json!({"member_id": b.user_id, "extension": "101"}),
+    )
+    .await;
+    let (ua, da) = (
+        ra["sip_username"].as_str().unwrap(),
+        ra["sip_domain"].as_str().unwrap(),
+    );
+    let (ub, dom_b) = (
+        rb["sip_username"].as_str().unwrap(),
+        rb["sip_domain"].as_str().unwrap(),
+    );
+    let ask = |ext: &str, user: &str, realm: &str, domain: &str| json!({"domain": domain, "extension": ext, "auth_user": user, "auth_realm": realm});
+
+    // Sai: o plano de A manda os 9XXXXXXXX por um tronco. A organização que a
+    // resposta leva é a do ramal AUTENTICADO, e apresenta-se o número curto.
+    let (st, v) = resolve_ext(&app, ask("923447108", ua, da, da)).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(
+        (
+            v["outbound"].as_bool(),
+            v["org_id"].as_str(),
+            v["caller_extension"].as_str()
+        ),
+        (Some(true), Some(a.org()), Some("101")),
+        "{v}"
+    );
+    assert!(v.get("sip_username").is_none(), "{v}");
+
+    // Sem identidade autenticada não sai nada — nem com o domínio certo.
+    let (st, _) = resolve_ext(&app, json!({"domain": da, "extension": "923447108"})).await;
+    assert_eq!(st, 404);
+    // O utilizador de A com o realm de B não é um INVITE autenticado.
+    let (st, _) = resolve_ext(&app, ask("923447108", ua, dom_b, da)).await;
+    assert_eq!(st, 404);
+    // O ramal de B não tem plano: não sai, e muito menos pelos troncos de A —
+    // nem dizendo que o domínio é o de A.
+    let (st, _) = resolve_ext(&app, ask("923447108", ub, dom_b, dom_b)).await;
+    assert_eq!(st, 404);
+    let (st, v) = resolve_ext(&app, ask("923447108", ub, dom_b, da)).await;
+    assert_eq!(st, 404, "{v}");
+
+    // O plano é uma lista do que se PODE marcar: sem regra, bloqueado, ou uma
+    // regra que não é de saída — tudo «não existe».
+    for n in ["0044123456", "08001234", "84209", "150"] {
+        let (st, v) = resolve_ext(&app, ask(n, ua, da, da)).await;
+        assert_eq!(st, 404, "{n}: {v}");
+    }
+    // Um ramal que existe continua a ser um ramal, com ou sem identidade.
+    let (st, v) = resolve_ext(&app, ask("101", ua, da, da)).await;
+    assert_eq!((st, v["sip_username"].as_str()), (200, Some(ua)), "{v}");
+    assert!(v.get("outbound").is_none(), "{v}");
+
+    // A emergência sai SEMPRE que o ramal está activo — antes de se procurar
+    // um ramal, e mesmo com a pessoa arquivada. Sem identidade, não.
+    let (st, v) = resolve_ext(&app, ask("112", ua, da, da)).await;
+    assert_eq!(
+        (st, v["outbound"].as_bool(), v["org_id"].as_str()),
+        (200, Some(true), Some(a.org())),
+        "{v}"
+    );
+    let (st, _) = resolve_ext(&app, json!({"domain": da, "extension": "112"})).await;
+    assert_eq!(st, 404);
+    app.archive_member(a.org(), &colega.user_id).await;
+    let (st, v) = resolve_ext(&app, ask("112", ua, da, da)).await;
+    assert_eq!((st, v["outbound"].as_bool()), (200, Some(true)), "{v}");
+    let (st, _) = resolve_ext(&app, ask("923447108", ua, da, da)).await;
+    assert_eq!(st, 404, "a pessoa arquivada continuou a ligar para fora");
+
+    // Um número de emergência nunca é de um ramal.
+    let (st, e) = app
+        .post(
+            &format!("/api/orgs/{}/extensions", a.org()),
+            Some(&a.token),
+            json!({"member_id": a.user_id, "extension": "112"}),
+        )
+        .await;
+    assert_eq!(
+        (st, e["code"].as_str()),
+        (409, Some("ramais.extension_reserved")),
+        "{e}"
+    );
+}
+
+/// O DID de um ramal só responde a uma chamada que ENTRA. O FreeSWITCH faz a
+/// pergunta em todos os contextos, e a resposta só tem o `public`: dada a uma
+/// chamada de saída, ela ficava sem contexto e sem rota.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_extension_did_only_answers_inbound_calls(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("VOICE_INTERNAL_SECRET", SECRET)]).await;
+    let a = app.new_org("alfa-did.ao").await;
+    let r = create_extension(
+        &app,
+        &a.token,
+        a.org(),
+        json!({"member_id": a.user_id, "extension": "101"}),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO voice_did (org_id, e164, extension_id)
+         VALUES ($1::uuid, '+244222000777', $2::uuid)",
+    )
+    .bind(a.org())
+    .bind(r["id"].as_str().unwrap())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let ask = |context: &'static str| {
+        let app = &app;
+        async move {
+            app.http
+                .post(app.url("/internal/v1/voice/ivr/dialplan-did"))
+                .header("authorization", basic(SECRET))
+                .form(&[
+                    ("Caller-Context", context),
+                    ("Caller-Destination-Number", "244222000777"),
+                ])
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    let entra = ask("public").await;
+    assert!(
+        entra.contains(&format!(
+            "ramais_dial.lua did {} ",
+            r["sip_username"].as_str().unwrap()
+        )),
+        "{entra}"
+    );
+    for context in ["delonix-outbound", "delonix_ramais"] {
+        let x = ask(context).await;
+        assert!(x.contains(r#"status="not found""#), "{context}: {x}");
+    }
 }

@@ -4,6 +4,7 @@
  * no browser pelo nome, sala, autor, descrição e etiquetas.
  */
 import { recordingsLibraryMeta, type RecordingLibraryItem } from '../../api'
+import { hasFile } from './format'
 import { displayName } from './recordingView'
 import { localSchema } from '../../ui/search/localSchema'
 import type { LocalFallback } from '../../ui/search/useResourceSearch'
@@ -18,7 +19,7 @@ export const recordingsFallbackFor = (scope: 'mine' | 'published'): LocalFallbac
         { name: 'title', type: 'text' },
         { name: 'room_code', type: 'text', groupable: true },
         { name: 'uploader', type: 'user' },
-        { name: 'status', type: 'enum', options: ['transcribing', 'ready', 'failed'] },
+        { name: 'status', type: 'enum', options: ['processing', 'transcribing', 'ready', 'failed'] },
         { name: 'kind', type: 'enum', options: ['meeting', 'training', 'broadcast', 'hybrid'] },
         { name: 'shared_with_me', type: 'bool', groupable: false },
         { name: 'size_bytes', type: 'number', aggregates: ['sum'] },
@@ -45,7 +46,7 @@ export const recordingsFallbackFor = (scope: 'mine' | 'published'): LocalFallbac
         case 'shared_with_me':
           return !r.owned
         case 'size_bytes':
-          return r.status === 'failed' ? null : r.size_bytes
+          return hasFile(r) ? r.size_bytes : null
         default:
           return (r as unknown as Record<string, unknown>)[f]
       }

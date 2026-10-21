@@ -20,12 +20,61 @@ const read = (p: string) => readFileSync(join(root, p), 'utf8')
  * foi comentada: o `toContain` encontrava a string dentro do comentário e dava
  * verde a código morto. Um teste que aceita a linha comentada não guarda nada.
  */
-const readCodigo = (p: string) =>
-  read(p)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((l) => !l.trimStart().startsWith('//'))
-    .join('\n')
+const readCodigo = (p: string) => semComentarios(read(p))
+
+/**
+ * Tira comentários SEM tocar no que está dentro de uma string.
+ *
+ * A primeira versão era um `replace(/\/\*[\s\S]*?\*\//g, '')`, e isso tem um
+ * furo medido: o `Fontes.tsx` tem `accept="video/*,audio/*"`. Esse `/*` abre um
+ * «comentário» que só fecha no `*\/` do JSDoc seguinte, e o regex **engolia
+ * 1 844 caracteres do ficheiro** — entre eles o `data-tv="escolher-ficheiro"`,
+ * que passava a não existir para quem o procurasse. Nove ficheiros do `web/src`
+ * têm `/*` dentro de uma string, por isso não era um caso isolado.
+ *
+ * Um ajudante destes a esconder código é pior do que não existir: é o gate a
+ * dar verde sobre o que não leu, que é exactamente o que ele foi escrito para
+ * evitar. Por isso agora percorre-se o texto a saber onde começa e acaba uma
+ * string, uma template literal e uma expressão regular.
+ */
+function semComentarios(src: string): string {
+  let fora = ''
+  let i = 0
+  while (i < src.length) {
+    const c = src[i]
+    const d = src[i + 1]
+    if (c === '/' && d === '/') {
+      while (i < src.length && src[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && d === '*') {
+      i += 2
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const fim = c
+      fora += c
+      i++
+      while (i < src.length && src[i] !== fim) {
+        if (src[i] === '\\') {
+          fora += src[i] + (src[i + 1] ?? '')
+          i += 2
+          continue
+        }
+        fora += src[i]
+        i++
+      }
+      fora += fim
+      i++
+      continue
+    }
+    fora += c
+    i++
+  }
+  return fora
+}
 
 describe('o ecrã é capturado para GRAVAR, não para partilhar', () => {
   it('pede 30 fps, não os 5 da partilha em chamada', () => {
@@ -182,13 +231,23 @@ describe('a mistura tem faders de verdade', () => {
     expect(c().match(/this\.audioCtx\.createGain\(\)/g)?.length).toBe(4)
     // Os três barramentos já não vão direitos ao destino: passam pelo
     // nivelador/limitador mestre primeiro (ver o teste da dinâmica, abaixo).
-    expect(c()).toContain('for (const g of [this.ganhoPalco, this.ganhoMusica, this.ganhoVideo]) g.connect(this.compressorMestre)')
+    // A MÚSICA é a excepção desde 2026-10-14: vai ao mestre OU à mesa de som,
+    // que a leva como canal — por isso quem a liga é o `ligarBarramentoDeMusica`
+    // e não este laço. Continuam a ser três barramentos e todos acabam no
+    // mestre; a música é que escolhe o caminho.
+    expect(c()).toContain('this.ganhoVideo.connect(this.compressorMestre)')
+    // E o PALCO escolhe: sem mesa de som vai ao nivelador, com mesa salta-o e
+    // entra no limitador — porque a mesa já tem a dinâmica dela e o nivelador
+    // daqui (−24 dBFS, 3:1) morde em material normal. O limitador fica sempre.
+    expect(c()).toContain('this.ganhoPalco.connect(this.somExterno ? this.limiterMestre : this.compressorMestre)')
+    expect(c()).toContain('this.ganhoMusica.connect(this.somExterno ? this.destinoMedia : this.compressorMestre)')
   })
 
   it('a dinâmica mestre fica entre os barramentos e o destino, com um medidor na saída', () => {
     // Um barramento sozinho não pode saturar o que se grava/emite — por
-    // isso a cadeia é OBRIGATÓRIA entre a soma dos três e o `destino`, não
-    // opcional nem contornável por um caminho directo.
+    // isso o LIMITADOR é obrigatório entre a soma dos três e o `destino`, não
+    // opcional nem contornável por um caminho directo. (O nivelador é que
+    // pode saltar, e só para quem tem mesa de som: ver o teste acima.)
     expect(c()).not.toMatch(/this\.(ganhoPalco|ganhoMusica|ganhoVideo)\.connect\(this\.destino\)/)
     expect(c()).toContain('this.compressorMestre.connect(this.limiterMestre)')
     expect(c()).toContain('this.limiterMestre.connect(this.destino)')
@@ -380,6 +439,81 @@ describe('o corte degrada em vez de arrastar', () => {
   })
 })
 
+describe('o codificador adaptativo não muda o contrato com o servidor', () => {
+  const cod = () => readCodigo('web/src/studio/codificadorDoDirecto.ts')
+
+  it('continua a sair Matroska com H.264 e Opus', () => {
+    // O servidor declara `-f matroska` e copia o vídeo sem reencodificar
+    // (`-c:v copy`, R76). Trocar o muxer do browser pelo nosso só é possível
+    // porque o que sai é o MESMO: mudar qualquer uma destas linhas sem mudar
+    // o `broadcast.rs` parte o directo.
+    expect(cod()).toContain("const CODEC_VIDEO_MATROSKA = 'V_MPEG4/ISO/AVC'")
+    expect(cod()).toContain("const CODEC_AUDIO_MATROSKA = 'A_OPUS'")
+    expect(cod()).toContain("type: 'matroska'")
+    // `streaming`: escreve só para a frente, que é o que um socket aceita.
+    expect(cod()).toContain('streaming: true')
+    // E o que se declara ao servidor no URL não muda.
+    expect(read('web/src/studio/directo.ts')).toContain("export const CODEC_DIRECTO = 'video/h264'")
+  })
+
+  it('descarta frames ANTES de codificar, nunca pedaços já muxados', () => {
+    // A diferença que torna isto seguro: um frame que nunca entrou no fluxo
+    // não deixa buraco; um pedaço de Matroska saltado parte o ficheiro, e o
+    // `ffmpeg` do servidor não o sabe remendar.
+    expect(cod()).toContain('if (enc.encodeQueueSize > FILA_MAXIMA_DO_CODIFICADOR)')
+    expect(cod()).toContain('this.framesDescartados++')
+    // O envio não tem caminho nenhum que salte um pedaço por causa da fila.
+    const d = readCodigo('web/src/studio/directo.ts')
+    expect(d).not.toMatch(/bufferedAmount[^)]*\)\s*(>|>=)[^{]*\{\s*return/)
+  })
+
+  it('e a imagem e o som partilham o MESMO zero', () => {
+    // Os tempos de um `MediaStreamTrackProcessor` contam a idade do
+    // documento. Pôr cada faixa a zero pela primeira amostra DELA (o
+    // `firstTimestampBehavior: 'offset'` do muxer) desalinha o som da imagem
+    // pela diferença entre os dois arranques, para sempre.
+    expect(cod()).toContain("firstTimestampBehavior: 'permissive'")
+    expect(cod()).toContain('private relativo(timestamp: number): number')
+    expect(cod()).toContain('this.relativo(chunk.timestamp)')
+  })
+
+  it('e mudar o débito pede um frame-chave', () => {
+    // Sem ele o descodificador do outro lado arrasta artefactos do débito
+    // antigo até ao próximo frame-chave, que pode estar a dois segundos.
+    expect(cod()).toMatch(/mudarDebito\([\s\S]*?this\.pedirChave = true/)
+  })
+
+  it('e o recuo para o MediaRecorder acontece ANTES do ar', () => {
+    // Uma emissão não é sítio para descobrir que o browser não tem WebCodecs.
+    const d = readCodigo('web/src/studio/directo.ts')
+    expect(d).toContain('codificadorAdaptativoSuportado()')
+    expect(d).toMatch(/if \(arrancou\) \{[\s\S]*?\} else \{[\s\S]*?new MediaRecorder\(/)
+  })
+})
+
+describe('as estatísticas da emissão dizem a verdade em quatro línguas', () => {
+  // As duas chaves de saúde são escolhidas por um literal de template
+  // (`studio.directo.stats.${rede.saude}`), e o i18next DEVOLVE A CHAVE quando
+  // ela não existe: «studio.directo.stats.a-acumular» no ecrã, sem nada ficar
+  // vermelho. A chave do meio é a que leva o hífen, que é a que se esquece.
+  for (const loc of ['pt', 'en', 'fr', 'zh']) {
+    it(loc, () => {
+      const s = read(`web/src/locales/${loc}/studio.ts`)
+      for (const k of ['stats: {', 'apertada:', "'a-acumular':", 'conselho:', 'fila:', 'pedido:']) {
+        expect(s, `${loc}: falta ${k}`).toContain(k)
+      }
+      // Os plurais contam-se como o i18next os resolve.
+      for (const k of ['tentativas_one:', 'tentativas_other:']) expect(s).toContain(k)
+    })
+  }
+
+  it('e o painel só aparece no ar', () => {
+    // Fora do ar não há nada verdadeiro para mostrar, e um painel com zeros
+    // parece avariado.
+    expect(readCodigo('web/src/studio/LivePanel.tsx')).toContain('{noAr && <Estatisticas')
+  })
+})
+
 describe('as três línguas têm as chaves do estúdio', () => {
   // Os dicionários passaram a um ficheiro por área: o bloco `studio` é
   // `locales/<língua>/studio.ts`, composto no `index.ts`, e a entrada do rail
@@ -393,4 +527,105 @@ describe('as três línguas têm as chaves do estúdio', () => {
       for (const k of ['gravar:', 'regiao:', 'posicao:', 'guardar:']) expect(s).toContain(k)
     })
   }
+})
+
+describe('as duas maneiras de acrescentar uma fonte coexistem no painel', () => {
+  // Esta é a resolução de uma COLISÃO, e é por isso que é um invariante.
+  //
+  // A #356 (telemóvel como câmara) e a cadeia onda-c (#362/#363, ficheiro como
+  // fonte) tocaram a MESMA zona do `Fontes.tsx`: a #356 substituiu o bloco
+  // estático «à espera do servidor» (`data-tv="ligacao-app"`) pelo componente
+  // `<Emparelhar />`, e a onda-c acrescentou ao lado um bloco novo
+  // (`data-tv="ligacao-ficheiro"`). São independentes — o certo é ter os dois.
+  //
+  // Nenhum teste tocava esta zona: a suite inteira passava com um dos lados
+  // apagado. Este fecha-o, e falha se um merge futuro escolher um lado.
+  const fontes = () => readCodigo('web/src/pages/studio/tv/Fontes.tsx')
+
+  it('o emparelhamento do telefone é um componente, não um aviso estático', () => {
+    const f = fontes()
+    expect(f).toContain('<Emparelhar />')
+    // O bloco antigo dizia «aguardar servidor» e não ligava nada. Se voltar,
+    // é porque a #356 foi desfeita.
+    expect(f).not.toContain('data-tv="ligacao-app"')
+  })
+
+  it('e o ficheiro como fonte continua lá, com o que o browser NÃO faz dito', () => {
+    const f = fontes()
+    expect(f).toContain('data-tv="ligacao-ficheiro"')
+    expect(f).toContain('data-tv="escolher-ficheiro"')
+    expect(f).toContain('data-tv="sem-fonte-de-browser"')
+  })
+
+  it('o telefone vem primeiro, que é a ordem que os dois lados implicavam', () => {
+    // A onda-c inseriu o bloco do ficheiro DEPOIS do que a #356 substitui. O
+    // `rerere` desta árvore trocava-os; a ordem aqui é a intenção, não o acaso.
+    const f = fontes()
+    expect(f.indexOf('<Emparelhar />')).toBeLessThan(f.indexOf('data-tv="ligacao-ficheiro"'))
+  })
+
+  it('e cada lado entra UMA vez — uma união não é uma duplicação', () => {
+    const f = fontes()
+    const vezes = (s: string) => f.split(s).length - 1
+    expect(vezes('<Emparelhar />')).toBe(1)
+    expect(vezes('data-tv="ligacao-ficheiro"')).toBe(1)
+  })
+})
+
+/**
+ * O PERCURSO do telefone, que a revisão do #356 apanhou partido em dois sítios.
+ *
+ * Os dois defeitos compunham-se de forma cruel: para um telefone SEM conta a
+ * funcionalidade era inalcançável (a rota caía no portão de sessão), e para
+ * quem TINHA conta o link punha-lhe câmara e microfone no ar de outra
+ * organização sem um único clique — o `useEffect` resgatava e o `PhoneCamera`
+ * entrava sozinho com `micOn`/`camOn` a `true`.
+ *
+ * Nada na bateria o via: o typecheck, 1342 testes e sete jobs do CI passavam
+ * todos, porque nenhum deles abre um browser nesta rota.
+ */
+describe('o telefone chega ao estúdio, e só publica quando quer', () => {
+  const app = () => readCodigo('web/src/App.tsx')
+  const ecra = () => readCodigo('web/src/pages/EmparelharTelefone.tsx')
+
+  it('a rota de emparelhamento é tratada ANTES do portão de sessão', () => {
+    const f = app()
+    const i = f.indexOf("route.kind === 'emparelhar'")
+    const portao = f.indexOf('if (!user)')
+    expect(i).toBeGreaterThan(0)
+    expect(portao).toBeGreaterThan(0)
+    expect(i).toBeLessThan(portao)
+  })
+
+  it('e o salto para a câmara também, quando há bilhete de FONTE para a sala', () => {
+    // Sem isto o percurso morria no último passo: resgatava-se o código e o
+    // `/telemovel/<sala>` batia no mesmo portão.
+    const f = app()
+    const i = f.indexOf("route.kind === 'telemovel' && fonteDe(")
+    expect(i).toBeGreaterThan(0)
+    expect(i).toBeLessThan(f.indexOf('if (!user)'))
+  })
+
+  it('abrir o link NÃO resgata: o código pré-preenche e o resgate exige um clique', () => {
+    const f = ecra()
+    // O campo já vem preenchido do URL — é isso que mantém a comodidade do QR.
+    expect(f).toMatch(/useState\(code \? normalizar\(code\) : ''\)/)
+    // E nenhum efeito o resgata por iniciativa própria.
+    expect(f).not.toMatch(/useEffect\([^)]*\)\s*=>\s*\{[^}]*resgatar\(/s)
+    expect(f).not.toMatch(/void resgatar\(code\)/)
+  })
+
+  it('e o resgate não entra na sala: diz primeiro o que vai ao ar', () => {
+    const f = ecra()
+    // O `location.hash` do percurso vive num onClick, não no corpo do resgate.
+    expect(f).toMatch(/onClick=\{\(\) => \(location\.hash = `\/telemovel\/\$\{pronto\.room_code\}`\)\}/)
+    expect(f).toMatch(/telemovel\.emparelhar\.vaiAoAr/)
+  })
+
+  it('o aviso do que vai ao ar existe nas QUATRO línguas', () => {
+    for (const loc of ['pt', 'en', 'fr', 'zh']) {
+      const s = read(`web/src/locales/${loc}/telemovel.ts`)
+      for (const k of ['vaiAoAr:', 'comecar:', 'aEntrar:']) expect(s).toContain(k)
+    }
+  })
 })

@@ -20,6 +20,16 @@ use crate::{auth::verify_jwt, error::ApiError, AppState};
 
 // ---------- Protocol ----------
 
+/// O que a pessoa escolheu ao ser avisada de que está também ao telefone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceKeep {
+    /// Continuar só no browser: o telefone desliga (ou, se não houver como, fica sem som).
+    Meet,
+    /// Continuar nos dois (a pessoa assume o eco).
+    Both,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ClientMsg {
@@ -63,6 +73,24 @@ pub enum ClientMsg {
     Hand {
         raised: bool,
     },
+    /// Que língua de DOBRAGEM este cliente quer ouvir (`None` = só o original).
+    ///
+    /// É por ouvinte, não por sala: na mesma sala uma pessoa ouve o inglês,
+    /// outra o francês e a maioria não ouve dobragem nenhuma. Quem escolhe uma
+    /// língua baixa o original no seu lado — por isso o servidor nunca
+    /// substitui uma frase por outra coisa quando a tradução falha (ADR-0030).
+    DubListen {
+        lang: Option<String>,
+    },
+    /// O ANFITRIÃO liga ou desliga uma língua na sala.
+    ///
+    /// Distinta da `DubListen` de propósito: ligar uma língua gasta inferência
+    /// da organização (uma cadeia ASR→LLM→TTS), e é por isso uma decisão da
+    /// sessão — como a gravação. Escolher ouvi-la não gasta nada.
+    DubLanguage {
+        lang: String,
+        on: bool,
+    },
     /// De que participantes este cliente quer receber VÍDEO (a página da
     /// grelha visível). O SFU deixa de enviar o resto — ver
     /// `SfuState::set_video_interest`. Áudio nunca depende disto.
@@ -91,11 +119,30 @@ pub enum ClientMsg {
     },
     Transcript {
         text: String,
+        /// O motor que produziu a frase (`web/src/legendasPref.ts`:
+        /// `servidor` | `wasm` | `webspeech`). Ausente num cliente antigo.
+        ///
+        /// Serve UMA coisa: uma organização que proíba o motor de voz do
+        /// browser (`organizations.allow_web_speech = false`) recusa a frase
+        /// aqui, em vez de confiar que o browser cumpriu a política.
+        ///
+        /// LIMITE HONESTO, e não o escondas: um cliente hostil pode mentir
+        /// neste campo, e nada no servidor o detecta — o áudio já foi à
+        /// Google antes de a frase chegar. O que isto fecha é o caminho
+        /// honesto (o nosso cliente, que não mente) e o que dá é a MEDIDA
+        /// (`caption_engine_refused_total`). Uma organização que precise de
+        /// garantia tem de impedir o acesso do browser à Google na rede; o
+        /// produto não pode prometer o que não controla.
+        #[serde(default)]
+        engine: Option<String>,
     },
     /// Legenda ao vivo (parcial) — enquanto a pessoa ainda fala. Difundida a
     /// todos e substituída pela `Transcript` final; NUNCA persiste na ata.
     TranscriptInterim {
         text: String,
+        /// Ver `Transcript::engine`.
+        #[serde(default)]
+        engine: Option<String>,
     },
     /// Anfitrião liga/desliga a transcrição PARTILHADA (Nota AI). Ao ligar,
     /// todos os clientes transcrevem o PRÓPRIO microfone e difundem as frases —
@@ -155,6 +202,13 @@ pub enum ClientMsg {
     },
     Kick {
         to: Uuid,
+    },
+    /// A resposta de quem está na sala pelo browser E por um telefone (a mesma
+    /// pessoa): ficar só aqui, ou nos dois. «Só no telefone» é o cliente a sair da
+    /// sala: não precisa do servidor.
+    DeviceChoice {
+        phone_id: Uuid,
+        keep: DeviceKeep,
     },
     // Controlos do anfitrião sobre a sala (em runtime):
     RoomLock {
@@ -440,6 +494,17 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ServerMsg {
+    /// As línguas de DOBRAGEM activas na sala, e o porquê de uma recusa.
+    ///
+    /// Vai a toda a gente: quem ouve precisa de saber o que pode escolher, e
+    /// quem pediu uma língua que não entrou precisa de saber que não entrou.
+    /// `error` é o código do domínio (`dubbing.too_many_languages`,
+    /// `dubbing.no_voice`), que o cliente traduz.
+    DubLanguages {
+        langs: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     Joined {
         peer_id: Uuid,
         peers: Vec<PeerInfo>,
@@ -638,6 +703,39 @@ pub enum ServerMsg {
         error: Option<String>,
     },
     Kicked, // para o alvo: foste removido
+    /// Para o browser de quem está também ao telefone nesta sala: pergunta em que
+    /// dispositivo continuar. `can_hangup`: o servidor consegue desligar a chamada
+    /// (uma que a sala fez tocar); senão só a pode deixar sem som.
+    DuplicateDevice {
+        phone_id: Uuid,
+        can_hangup: bool,
+    },
+    /// O que o servidor fez com a escolha: `hung_up` | `muted` | `both` | `gone`
+    /// (a perna já não está cá, ou não é desta pessoa).
+    DuplicateResolved {
+        phone_id: Uuid,
+        outcome: String,
+    },
+    /// A organização PERMITE o motor de voz do browser (a Web Speech do
+    /// Chrome/Edge, que envia o áudio aos servidores da Google)?
+    ///
+    /// Só se envia quando a resposta é NÃO — como as `RoomSettings`, o
+    /// silêncio é o caso normal e um cliente que nunca receba isto decide
+    /// como sempre decidiu (e a sua própria ordem já não alcança a Google sem
+    /// aceitação explícita).
+    ///
+    /// Vai à ENTRADA, antes de o microfone arrancar, e outra vez a quem tiver
+    /// uma frase recusada (para mudar de motor sem recarregar a página).
+    ///
+    /// LIMITE, e não o escondas: a política é lida da base a cada entrada, por
+    /// isso uma organização que a mude NO MEIO de uma reunião só alcança quem
+    /// entrar depois. Para os que já estão na sala, o `recusa_motor` baseia-se
+    /// na marca que a última entrada deixou — ela própria ainda `permitido`.
+    /// Fechar isto exige propagar a mudança do `PATCH /api/orgs` às salas
+    /// vivas de TODOS os nós (o `pubsub`), e é trabalho de outra sessão.
+    CaptionPolicy {
+        web_speech: bool,
+    },
     /// Definições runtime da sala (lock, só-anfitrião-partilha).
     RoomSettings {
         locked: bool,
@@ -1060,8 +1158,14 @@ pub struct Seat {
     pub on_stage: bool,
     /// A chamada da ponte (o `dial-out`/perna) — é por este id que o anfitrião
     /// age sobre a pessoa pela REST.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Nunca sai do servidor: é o alvo do `hupall`, e quem o sabe sabe qual chamada derrubar.
+    #[serde(skip)]
     pub call_id: Option<Uuid>,
+    /// A PESSOA de quem esta chamada é (o bilhete de identidade, ou o ramal que o
+    /// anfitrião chamou). Nunca sai do servidor: serve para saber que a mesma
+    /// pessoa está também no browser (`DuplicateDevice`), não para mostrar a ninguém.
+    #[serde(skip)]
+    pub member_id: Option<Uuid>,
 }
 
 impl Seat {
@@ -1506,11 +1610,23 @@ fn verdadeiro() -> bool {
 #[derive(Default)]
 pub(crate) struct Room {
     pub(crate) peers: HashMap<Uuid, Peer>,
+    /// O inquilino da sala (a organização do dono, ou o dono se for um utilizador
+    /// individual), marcado à criação. Só serve a admissão por capacidade
+    /// (`admit_new_room`): saber quanto do nó cada inquilino ocupa.
+    tenant: Option<Uuid>,
     waiting: HashMap<Uuid, WaitingPeer>,
     /// Reunião bloqueada: ninguém entra sem ser admitido (mesmo com link).
     locked: bool,
     /// Só o anfitrião pode partilhar ecrã.
     host_share_only: bool,
+    /// A organização PROÍBE o motor de voz do browser
+    /// (`organizations.allow_web_speech = false`).
+    ///
+    /// Guardado INVERTIDO, pela mesma razão do `chat_closed` abaixo: o `Room`
+    /// deriva `Default`, um `bool` nasce `false`, e com `web_speech_allowed` o
+    /// valor por omissão seria «proibido» — que é o oposto do que a migração
+    /// 0125 decidiu e transformaria uma falha de leitura numa política nova.
+    web_speech_forbidden: bool,
     /// Chat FECHADO a quem não é anfitrião (R92).
     ///
     /// Guardado invertido de propósito: o `Room` deriva `Default`, e um `bool`
@@ -1677,6 +1793,17 @@ pub trait StageControl: Send + Sync {
     fn set_pinned(&self, room_id: Uuid, publisher: Uuid, on: bool);
 }
 
+/// A dobragem ao vivo, vista de quem trata as mensagens da sala (ADR-0030).
+///
+/// Existe pela mesma razão que o [`StageControl`]: o `signaling` não conhece o
+/// SFU, e esta é a costura por onde uma frase difundida chega à voz. **Não
+/// bloqueia** — o caminho do WebSocket é quente e a síntese não é.
+pub trait DubControl: Send + Sync {
+    /// Uma frase final, já limpa pelo DLP, para as línguas activas da sala.
+    /// Sem línguas activas não faz nada (que é o caso normal).
+    fn say(&self, room_id: Uuid, text: &str);
+}
+
 #[derive(Default)]
 pub struct SignalingHub {
     pub(crate) rooms: DashMap<Uuid, Room>,
@@ -1686,16 +1813,46 @@ pub struct SignalingHub {
     /// O SFU, para o palco valer de facto (R225). `OnceLock` pela mesma razão:
     /// quando se registam, o `Hub` já está dentro do `AppState`.
     pub stage: std::sync::OnceLock<Arc<dyn StageControl>>,
+    /// A dobragem ao vivo. `None` enquanto ninguém a registar — e ficar `None`
+    /// é o estado normal de uma instalação sem `TTS_URL`.
+    pub dub: std::sync::OnceLock<Arc<dyn DubControl>>,
     pub bus: Option<Arc<crate::pubsub::PubSubBus>>,
     /// Escrita do chat na base de dados, FORA do caminho quente (fila
     /// limitada consumida por uma tarefa própria). `None` em testes.
     pub chat_store: Option<crate::room_chat::ChatStore>,
+    /// Os contadores do `/metrics`. `None` nos testes que não os observam —
+    /// quem os observa instala-os (ver `recusa_motor`).
+    pub metrics: Option<Arc<crate::metrics::Metrics>>,
 }
 
 impl SignalingHub {
     /// Quantos participantes há na sala (0 se não existir).
     fn peer_count(&self, room_id: Uuid) -> usize {
         self.rooms.get(&room_id).map(|r| r.peers.len()).unwrap_or(0)
+    }
+
+    /// A frase vem do motor de voz do browser numa organização que o PROÍBE?
+    ///
+    /// `true` = recusada: não se difunde, conta-se no `/metrics`, e a política
+    /// vai (outra vez) a quem a enviou, para o cliente mudar de motor. É o
+    /// segundo envio descrito na `ServerMsg::CaptionPolicy` — o que alcança
+    /// quem já estava na sala quando a organização mudou de política.
+    ///
+    /// Silenciosa para o resto da sala de propósito: a frase não aparece como
+    /// erro aos outros participantes, porque o problema não é deles.
+    fn recusa_motor(&self, room_id: Uuid, peer_id: Uuid, engine: Option<&str>) -> bool {
+        if engine != Some("webspeech") || !self.web_speech_forbidden(room_id) {
+            return false;
+        }
+        if let Some(m) = &self.metrics {
+            crate::metrics::Metrics::bump(&m.caption_engine_refused_total);
+        }
+        self.send_to_local(
+            room_id,
+            peer_id,
+            ServerMsg::CaptionPolicy { web_speech: false },
+        );
+        true
     }
 
     /// Consome um token do travão de legendas parciais deste peer.
@@ -1970,8 +2127,11 @@ impl SignalingHub {
     }
 
     /// Varre os lugares reservados que passaram da janela e transforma-os em
-    /// saídas a sério. Chamado periodicamente; devolve quantos expiraram.
-    pub fn expire_disconnected(&self, janela: std::time::Duration) -> usize {
+    /// saídas a sério. Chamado periodicamente; devolve quantos expiraram E,
+    /// à parte, as salas que ficaram vazias com isto — o chamador (o cron em
+    /// `lib.rs`) é quem tem o `AppState` para avisar `meetings::on_room_emptied`
+    /// (este módulo não conhece `meetings`, só `signaling`).
+    pub fn expire_disconnected(&self, janela: std::time::Duration) -> (usize, Vec<Uuid>) {
         let agora = std::time::Instant::now();
         let mut expirados: Vec<(Uuid, Uuid)> = Vec::new();
         for room in self.rooms.iter() {
@@ -1983,10 +2143,23 @@ impl SignalingHub {
                 }
             }
         }
+        // `leave` apaga também a cópia do lugar no Redis.
+        let mut esvaziadas = Vec::new();
         for (room_id, peer_id) in &expirados {
-            self.leave(*room_id, *peer_id);
+            if self.leave(*room_id, *peer_id) {
+                esvaziadas.push(*room_id);
+            }
         }
-        expirados.len()
+        (expirados.len(), esvaziadas)
+    }
+
+    /// Há neste nó um peer com este id na sala — vivo ou com o lugar reservado?
+    /// Serve para recusar a cópia do lugar guardada no Redis enquanto o dono
+    /// ainda aqui está: um segredo copiado não pode expulsá-lo.
+    pub fn peer_present(&self, room_id: Uuid, peer_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .is_some_and(|r| r.peers.contains_key(&peer_id))
     }
 
     /// Regista um convidado na fila de espera e avisa os anfitriões presentes.
@@ -2147,7 +2320,13 @@ impl SignalingHub {
         n
     }
 
-    pub fn leave(&self, room_id: Uuid, peer_id: Uuid) {
+    /// Devolve `true` quando ESTA saída deixou a sala vazia (peers E sala de
+    /// espera) — o sinal fiável de "a reunião acabou", independente de
+    /// topologia (`mesh` ou `sfu`) e de ter havido media WebRTC negociada. O
+    /// gatilho imediato em `handle_socket` (ligado a `state.sfu.remove_peer`)
+    /// só existe para a gravação (`recorder::finalize`) e só dispara quando
+    /// há mesmo uma sessão SFU — não serve para detectar sala vazia em geral.
+    pub fn leave(&self, room_id: Uuid, peer_id: Uuid) -> bool {
         // Quem fica sozinho com a sua própria conta deixa de ser companion
         // (R114). Sem isto, fechar o portátil deixava o telemóvel mudo e com um
         // aviso a falar de um dispositivo que já não está lá — e ninguém liga o
@@ -2158,6 +2337,7 @@ impl SignalingHub {
         let mut orfaos: Vec<Uuid> = Vec::new();
         let mut spotlight_cleared = false;
         let mut era_de_fora = false;
+        let mut segredo_do_lugar: Option<String> = None;
         let removed = self
             .rooms
             .get_mut(&room_id)
@@ -2173,6 +2353,7 @@ impl SignalingHub {
                 }
                 let saiu = r.peers.remove(&peer_id);
                 if let Some(p) = &saiu {
+                    segredo_do_lugar = Some(p.reconnect_secret.expose().to_string());
                     era_de_fora = p.seat.outside_app();
                     let conta = p.user_id;
                     let restantes: Vec<Uuid> = r
@@ -2193,6 +2374,18 @@ impl SignalingHub {
         for id in orfaos {
             self.send_to(room_id, id, ServerMsg::CompanionEnded);
         }
+        // Quem sai, é expulso ou vê o lugar expirar NÃO pode voltar a reclamá-lo:
+        // a cópia do lugar no Redis (`redis_state::seat_*`) apaga-se aqui, em
+        // TODOS os caminhos, porque todos passam por `leave`. Sem isto, um
+        // convidado expulso (`Kick`) voltava com o segredo que tinha, sem passar
+        // pela sala de espera e com o papel que tinha: o lugar ficava 12 h no
+        // Redis e `reclaim_from_redis` não olha à janela nem à identidade.
+        if let (Some(segredo), Some(bus)) = (segredo_do_lugar, &self.bus) {
+            let conn = bus.conn.clone();
+            tokio::spawn(async move {
+                crate::redis_state::seat_drop(conn, room_id, &segredo).await;
+            });
+        }
         let empty = self
             .rooms
             .get(&room_id)
@@ -2212,6 +2405,7 @@ impl SignalingHub {
                 room.peers.is_empty() && room.waiting.is_empty()
             });
         }
+        removed && empty
     }
 
     // ---------- Canais: participantes de fora da app (ADR-0010) ----------
@@ -2298,6 +2492,68 @@ impl SignalingHub {
         }
         self.broadcast_all(room_id, ServerMsg::PeerUpdated { peer: info.clone() });
         Some(info)
+    }
+
+    /// As pernas de telefone desta PESSOA na sala: `(id da perna, id da chamada)`.
+    pub fn phone_legs_of(&self, room_id: Uuid, member: Uuid) -> Vec<(Uuid, Option<Uuid>)> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| {
+                r.peers
+                    .iter()
+                    .filter(|(_, p)| p.seat.outside_app() && p.seat.member_id == Some(member))
+                    .map(|(id, p)| (*id, p.seat.call_id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Os lugares de browser desta pessoa na sala (um telefone nunca conta).
+    fn browser_seats_of(&self, room_id: Uuid, user_id: Uuid) -> Vec<Uuid> {
+        self.rooms
+            .get(&room_id)
+            .map(|r| {
+                r.peers
+                    .iter()
+                    .filter(|(_, p)| {
+                        !p.seat.outside_app()
+                            && !p.is_bot
+                            && p.user_id == user_id
+                            && p.disconnected_at.is_none()
+                    })
+                    .map(|(id, _)| *id)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A pessoa `member` está na sala pelo browser E por telefone: pergunta-lhe, no
+    /// browser, em que dispositivo continuar. Com `only`, só a esse lugar (quem acabou
+    /// de entrar); sem ele, a todos os seus browsers (chegou o telefone).
+    /// Devolve quantas perguntas saíram.
+    pub fn notify_duplicates(&self, room_id: Uuid, member: Uuid, only: Option<Uuid>) -> usize {
+        let legs = self.phone_legs_of(room_id, member);
+        if legs.is_empty() {
+            return 0;
+        }
+        let mut n = 0;
+        for seat in self.browser_seats_of(room_id, member) {
+            if only.is_some_and(|o| o != seat) {
+                continue;
+            }
+            for (leg, call) in &legs {
+                self.send_to(
+                    room_id,
+                    seat,
+                    ServerMsg::DuplicateDevice {
+                        phone_id: *leg,
+                        can_hangup: call.is_some(),
+                    },
+                );
+                n += 1;
+            }
+        }
+        n
     }
 
     /// O `Seat` de um participante na sala.
@@ -2446,6 +2702,111 @@ impl SignalingHub {
     /// Participantes ligados a este nó. É o que diz se o drain já pode fechar.
     pub fn peers_ligados(&self) -> usize {
         self.rooms.iter().map(|r| r.peers.len()).sum()
+    }
+
+    /// Marca a que inquilino pertence a sala. A primeira marca fica: uma sala
+    /// não muda de inquilino a meio.
+    pub fn set_room_tenant(&self, room_id: Uuid, tenant: Uuid) {
+        if let Some(mut r) = self.rooms.get_mut(&room_id) {
+            if r.tenant.is_none() {
+                r.tenant = Some(tenant);
+            }
+        }
+    }
+
+    /// Regista a política da organização sobre o motor de voz do browser.
+    ///
+    /// Ao contrário do inquilino, esta REESCREVE-SE a cada entrada: é lida da
+    /// base no `join` e uma organização que mude de política alcança a sala na
+    /// entrada seguinte, sem esperar que ela se esvazie.
+    pub fn set_web_speech_forbidden(&self, room_id: Uuid, forbidden: bool) {
+        if let Some(mut r) = self.rooms.get_mut(&room_id) {
+            r.web_speech_forbidden = forbidden;
+        }
+    }
+
+    /// A organização desta sala proíbe o motor de voz do browser?
+    pub fn web_speech_forbidden(&self, room_id: Uuid) -> bool {
+        self.rooms
+            .get(&room_id)
+            .is_some_and(|r| r.web_speech_forbidden)
+    }
+
+    /// A ocupação deste nó vista por inquilino: `(participantes do inquilino,
+    /// inquilinos com gente)`, contando o inquilino que pede mesmo sem gente.
+    /// Salas sem marca contam como UM inquilino à parte: nunca se somam ao de
+    /// ninguém.
+    /// O inquilino já marcado numa sala deste nó, se a sala existe e foi marcada.
+    pub fn room_tenant(&self, room_id: Uuid) -> Option<Uuid> {
+        self.rooms.get(&room_id).and_then(|r| r.tenant)
+    }
+
+    /// Sockets de pessoas que esta conta tem ligados a este nó, em todas as
+    /// salas, incluindo a sala de espera. Não conta lugares em graça (o socket já caiu), bots nem a ponte
+    /// telefónica: o tecto é contra uma conta que acumula ligações, e esses são
+    /// identidades de serviço emitidas pela organização.
+    pub fn user_sockets(&self, user_id: Uuid) -> usize {
+        self.rooms
+            .iter()
+            .map(|r| {
+                let na_sala = r
+                    .peers
+                    .values()
+                    .filter(|p| {
+                        p.user_id == user_id
+                            && p.disconnected_at.is_none()
+                            && !p.is_bot
+                            && !p.is_pstn
+                    })
+                    .count();
+                // À espera de ser admitido também é um socket aberto.
+                let a_espera = r
+                    .waiting
+                    .values()
+                    .filter(|w| w.subject == Some(user_id))
+                    .count();
+                na_sala + a_espera
+            })
+            .sum()
+    }
+
+    /// Há nesta sala um lugar em graça que `segredo` reclamaria? Não o consome:
+    /// só serve para não contar como ENTRADA NOVA, nas quotas, quem volta.
+    pub fn seat_reclaimable(
+        &self,
+        room_id: Uuid,
+        segredo: &str,
+        janela: std::time::Duration,
+    ) -> bool {
+        if segredo.is_empty() {
+            return false;
+        }
+        let Some(room) = self.rooms.get(&room_id) else {
+            return false;
+        };
+        let agora = std::time::Instant::now();
+        room.peers.values().any(|p| {
+            p.disconnected_at.is_some_and(|caiu| {
+                agora.duration_since(caiu) <= janela
+                    && delonix_meet_core::crypto::ct_eq(
+                        p.reconnect_secret.expose().as_bytes(),
+                        segredo.as_bytes(),
+                    )
+            })
+        })
+    }
+
+    pub fn tenant_load(&self, tenant: Uuid) -> (i64, i64) {
+        let mut por_inquilino: HashMap<Option<Uuid>, i64> = HashMap::new();
+        for r in self.rooms.iter() {
+            let n = r.peers.len() as i64;
+            if n > 0 {
+                *por_inquilino.entry(r.tenant).or_default() += n;
+            }
+        }
+        let meu = por_inquilino.get(&Some(tenant)).copied().unwrap_or(0);
+        let activos = por_inquilino.len() as i64 + i64::from(meu == 0);
+        (meu, activos)
     }
 
     pub fn broadcast_hosts(&self, room_id: Uuid, msg: ServerMsg) {
@@ -3342,14 +3703,24 @@ impl SignalingHub {
                     },
                 );
             }
-            ClientMsg::Transcript { text } => {
+            ClientMsg::Transcript { text, engine } => {
                 // Frase final da fala do próprio microfone — difunde aos outros
                 // para montarem a transcrição partilhada, legendada por orador.
                 if text.is_empty() || text.len() > 4000 {
                     return true;
                 }
+                if self.recusa_motor(room_id, peer_id, engine.as_deref()) {
+                    return true;
+                }
                 // Limpeza: PII (DLP) + máscara de palavrões antes de difundir.
                 let text = crate::dlp::clean_caption(&text);
+                // A DOBRAGEM diz esta frase nas línguas activas da sala
+                // (ADR-0030) — e di-la **já limpa**: o que o DLP mascarou na
+                // legenda fica mascarado na voz. É por isto que a dobragem
+                // entra aqui e não num ASR próprio.
+                if let Some(d) = self.dub.get() {
+                    d.say(room_id, &text);
+                }
                 let username = self
                     .username_of(room_id, peer_id)
                     .unwrap_or_else(|| "?".into());
@@ -3363,7 +3734,7 @@ impl SignalingHub {
                     },
                 );
             }
-            ClientMsg::TranscriptInterim { text } => {
+            ClientMsg::TranscriptInterim { text, engine } => {
                 // Legenda ao vivo (parcial): difunde já para a legenda dos outros
                 // acompanhar em tempo real, sem esperar pelo fim da frase. Não
                 // persiste na ata (efémera; é substituída pela final).
@@ -3381,6 +3752,9 @@ impl SignalingHub {
                     return true;
                 }
                 if !self.allow_interim(room_id, peer_id) {
+                    return true;
+                }
+                if self.recusa_motor(room_id, peer_id, engine.as_deref()) {
                     return true;
                 }
                 let text = crate::dlp::clean_caption(&text);
@@ -3674,11 +4048,16 @@ impl SignalingHub {
             | ClientMsg::ServerRecord { .. }
             | ClientMsg::ScreenShare { .. }
             | ClientMsg::VideoInterest { .. }
+            // A dobragem também: mexe no SFU e na rede (tradução e síntese),
+            // logo trata-se na camada assíncrona, não aqui.
+            | ClientMsg::DubListen { .. }
+            | ClientMsg::DubLanguage { .. }
             | ClientMsg::BreakoutsBroadcast { .. }
             | ClientMsg::StudioTally { .. }
             | ClientMsg::StudioCommand { .. }
             | ClientMsg::StudioSourceStatus { .. }
             | ClientMsg::StudioCommandResult { .. }
+            | ClientMsg::DeviceChoice { .. }
             | ClientMsg::BreakoutsClose => {}
         }
         true
@@ -3762,22 +4141,61 @@ pub fn seat_policy(claims: &crate::auth::Claims) -> SeatPolicy {
     }
 }
 
-pub async fn ws_handler(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<WsQuery>,
-    ws: WebSocketUpgrade,
-) -> Result<Response, ApiError> {
+/// O que a admissão apurou sobre quem está a entrar. Sai de [`admitir`], que é
+/// o ÚNICO sítio onde a decisão se toma — o socket e a sondagem de admissão
+/// chamam a mesma função, senão a sondagem explicava uma recusa diferente da
+/// que o socket aplica.
+struct Admitido {
+    claims: crate::auth::Claims,
+    source: Option<crate::studio_realtime::SourceSession>,
+    room_id: Uuid,
+    /// O inquilino da sala, já resolvido: o `handle_socket` recebe-o e não o
+    /// volta a derivar.
+    tenant: Option<Uuid>,
+}
+
+/// Verifica o token, resolve a sala e aplica a admissão (drain, tecto por
+/// conta, quota da organização, capacidade do nó). `Ok` = esta pessoa entra.
+///
+/// Não reserva lugar nenhum: o lugar toma-se ao abrir o socket. Por isso a
+/// sondagem que usa isto EXPLICA uma recusa, não promete uma entrada.
+/// A sondagem corre a MESMA decisão, mas não é uma entrada: não pode contar
+/// como recusa. Um contador que soma duas vezes por pessoa (uma no socket,
+/// outra na explicação) desmente a anotação do alerta — «uma recusa é um
+/// cliente que não entrou» — e qualquer cliente podia inflacioná-lo em ciclo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Efeito {
+    /// Uma entrada a sério: conta nas métricas.
+    Socket,
+    /// Só a explicar uma recusa que já aconteceu: não conta.
+    Sonda,
+}
+
+async fn admitir(
+    state: &Arc<AppState>,
+    query: &WsQuery,
+    efeito: Efeito,
+) -> Result<Admitido, ApiError> {
     // Only short-lived, room-scoped tokens open a signaling socket — a room
     // token (a person) or a SOURCE token (a studio camera, ADR-0014 §2.1).
     let (claims, source) = match verify_jwt(&state.config.jwt_secret, &query.token, "room") {
         Ok(c) => (c, None),
         Err(_) => {
             let c = verify_jwt(&state.config.jwt_secret, &query.token, "source")?;
-            let s = crate::studio::source_session_for_token(&state, &c).await?;
+            let s = crate::studio::source_session_for_token(state, &c).await?;
             (c, Some(s))
         }
     };
     let room_id = claims.room.ok_or(ApiError::Unauthorized)?;
+    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
+    // token de sala ainda válido volta a abrir o /ws. Vive AQUI, e não só no
+    // `ws_handler`, para que a sondagem recuse exactamente o que o socket
+    // recusa — senão a sondagem confirmava um token cuja sessão já morreu, e a
+    // declaração em `rotas-publicas.txt` («nem a mais nem a menos do que no
+    // socket») passava a ser falsa.
+    if let Some(sid) = claims.sid {
+        crate::sessions::ensure_active(state, claims.sub, sid).await?;
+    }
 
     // Nó a drenar: recusa ENTRADAS NOVAS, mas só as de salas que ainda não
     // existem aqui. Quem já está numa sala deste pod tem de conseguir voltar a
@@ -3788,10 +4206,178 @@ pub async fn ws_handler(
     // de «não tens autorização», e volta a pedir — o balanceador já o manda
     // para outro pod.
     if state.draining.load(std::sync::atomic::Ordering::Relaxed) && !state.hub.tem_sala(room_id) {
-        return Err(ApiError::ServiceUnavailable(
-            "Este nó está a encerrar. A tentar noutro…".into(),
-        ));
+        return Err(admissao_recusada(Admissao::ANoDrenar));
     }
+    // Admissão por capacidade (`NODE_PEER_CAPACITY`, ADR-0017): só decide SALAS
+    // NOVAS. Uma sala que já cá está tem de poder continuar a crescer e a
+    // reconectar-se — não pode mudar de nó (ADR-0001), e expulsá-la daria o
+    // mesmo colapso que isto evita.
+    //
+    // A decisão é por INQUILINO: na zona de margem só é recusado quem já usa a
+    // sua parte justa do nó; senão uma conta com muitas ligações fechava o nó às
+    // salas novas de todas as outras organizações. O inquilino deriva-se aqui,
+    // no servidor, de `rooms.owner_id` — nunca do pedido.
+    //
+    // A mensagem NÃO promete «tentar noutro nó»: com a afinidade por hash da sala
+    // um novo pedido cai neste mesmo nó. Realojar uma sala recusada noutro pod
+    // não está feito, e a mensagem também não diz quanto ocupam os outros.
+    // Tecto de ligações por conta: barato (memória do nó) e feito primeiro.
+    // Quem volta a um lugar em graça não conta como ligação nova.
+    let grace = std::time::Duration::from_secs(state.config.reconnect_grace_secs);
+    let regressa = query
+        .reconnect
+        .as_deref()
+        .is_some_and(|s| state.hub.seat_reclaimable(room_id, s, grace));
+    if let (Some(max), None, false, false) = (
+        state.config.max_ws_per_user,
+        source.as_ref(),
+        claims.is_bot,
+        regressa,
+    ) {
+        if state.hub.user_sockets(claims.sub) >= max as usize {
+            if efeito == Efeito::Socket {
+                state
+                    .metrics
+                    .ws_refused_user_cap_total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            return Err(ApiError::TooManyRequests);
+        }
+    }
+    // O inquilino sai da marca da sala (já resolvido na primeira entrada neste
+    // nó) ou deriva-se de `rooms.owner_id`. Fica `None` se a base falhar: as
+    // regras por inquilino falham ABERTAS, e o tecto do nó continua a valer.
+    let tenant: Option<Uuid> = match state.hub.room_tenant(room_id) {
+        Some(t) => Some(t),
+        None => resolve_tenant(state, room_id).await,
+    };
+    // Quota de participantes da organização, neste nó. Não conta entradas de
+    // quem reclama o seu lugar nem identidades de serviço.
+    if let (Some(t), None, false, false) = (tenant, source.as_ref(), claims.is_bot, regressa) {
+        if let Some(limit) = org_participant_limit(state, t).await {
+            if state.hub.tenant_load(t).0 >= limit {
+                if efeito == Efeito::Socket {
+                    state
+                        .metrics
+                        .ws_refused_org_quota_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Err(admissao_recusada(Admissao::OrgNoTecto));
+            }
+        }
+    }
+    if let Some(capacity) = state.config.node_peer_capacity.map(i64::from) {
+        if !state.hub.tem_sala(room_id) {
+            use delonix_meet_domain::operations::media_node::{
+                admit_new_room, NewRoomAdmission, NodeOccupancy,
+            };
+            let (tenant_peers, active_tenants) = match tenant {
+                Some(t) => state.hub.tenant_load(t),
+                None => (0, 1),
+            };
+            let verdict = admit_new_room(
+                NodeOccupancy {
+                    node_peers: state.hub.peers_ligados() as i64,
+                    tenant_peers,
+                    active_tenants,
+                },
+                Some(capacity),
+            );
+            let motivo = match verdict {
+                NewRoomAdmission::Admit => None,
+                NewRoomAdmission::NodeFull => Some(Admissao::NoNoTecto),
+                NewRoomAdmission::OverFairShare => {
+                    if efeito == Efeito::Socket {
+                        state
+                            .metrics
+                            .node_new_rooms_refused_fair_share_total
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    Some(Admissao::AcimaDaParteJusta)
+                }
+            };
+            if let Some(m) = motivo {
+                if efeito == Efeito::Socket {
+                    state
+                        .metrics
+                        .node_new_rooms_refused_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Err(admissao_recusada(m));
+            }
+        }
+    }
+    Ok(Admitido {
+        claims,
+        source,
+        room_id,
+        tenant,
+    })
+}
+
+/// `GET /ws/admission` — porque é que o socket seria recusado, em palavras que
+/// o cliente pode ler.
+///
+/// Existe porque um WebSocket recusado no HANDSHAKE não entrega ao browser nem
+/// o estado HTTP nem o corpo: chega um `onclose` opaco com `code: 1006`, igual
+/// ao de uma falha de rede. A pessoa recusada por capacidade via «Ligação
+/// instável. Verifica a rede» — a app mandava-a depurar a ligação dela quando
+/// o servidor a tinha recusado de propósito.
+///
+/// Vive no prefixo `/ws` de PROPÓSITO: o ingress encaminha `/ws` com
+/// `upstream-hash-by: $arg_room` (ADR-0001), logo esta sondagem cai no MESMO
+/// pod que recusou o socket. Em `/api` não cairia — esse caminho não tem
+/// afinidade nenhuma, e a resposta viria de um pod ao acaso, com a contagem de
+/// outro nó. Por isso o `room=` tem de ir no query, como vai no socket.
+///
+/// Não reserva lugar e não promete entrada: explica a recusa que JÁ aconteceu.
+/// O cliente só lhe chama depois de o socket falhar sem abrir.
+#[utoipa::path(
+    get,
+    path = "/ws/admission",
+    tag = "rooms",
+    params(
+        ("token" = String, Query, description = "O mesmo room token do /ws"),
+        ("room" = Option<String>, Query, description = "Código da sala — fixa o pod pela afinidade do ingress"),
+    ),
+    responses(
+        (status = 204, description = "Seria admitido agora"),
+        (status = 401, description = "Token inválido ou sessão terminada"),
+        (status = 429, description = "`admission.org_at_capacity`: a organização está no tecto neste nó"),
+        (status = 503, description = "`admission.node_at_capacity` ou `admission.over_fair_share`"),
+    ),
+)]
+pub async fn ws_admission_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<WsQuery>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    admitir(&state, &query, Efeito::Sonda).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// O spec deste módulo. O `#[utoipa::path]` do `ws_admission_handler` existia
+/// desde que a rota nasceu, mas sem um `ApiDoc` registado no
+/// `openapi::parts()` o gerador nunca o lia: a rota contava como MONTADA e NÃO
+/// documentada, e a catraca do contrato subia de 0 para 1.
+///
+/// Só o `/ws/admission` entra. O `/ws` e o `/rtc` ficam de fora de propósito —
+/// são upgrades de WebSocket, sem contrato REST, e o `check-openapi.sh`
+/// exclui-os pelo caminho. Este é um GET de HTTP normal, com 204/401/429/503.
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(ws_admission_handler))]
+pub struct ApiDoc;
+
+pub async fn ws_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<WsQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, ApiError> {
+    let Admitido {
+        claims,
+        source,
+        room_id,
+        tenant,
+    } = admitir(&state, &query, Efeito::Socket).await?;
     // O lugar (papel, origem, espera) decide-se num sítio só, testável sem
     // socket: ver `seat_policy`.
     let SeatPolicy {
@@ -3801,11 +4387,6 @@ pub async fn ws_handler(
         extras,
         wait,
     } = seat_policy(&claims);
-    // O room token herda a sessão de quem entrou: terminada a sessão, nem o
-    // token de sala ainda válido volta a abrir o /ws.
-    if let Some(sid) = claims.sid {
-        crate::sessions::ensure_active(&state, claims.sub, sid).await?;
-    }
     let session_id = claims.sid;
     let username = claims.name.clone().unwrap_or_else(|| "anonymous".into());
     let sfu_mode = claims.topo.as_deref() == Some("sfu");
@@ -3837,9 +4418,165 @@ pub async fn ws_handler(
                 wait,
                 source,
                 session_id,
+                tenant,
             },
         )
     }))
+}
+
+/// Porque é que a admissão recusou (ADR-0017). Cada uma tem `code` próprio: um
+/// `rate_limited` genérico não deixava o cliente distinguir «a tua organização
+/// está no tecto» de «estás a pedir depressa de mais», e era com esse que a
+/// pessoa recusada ficava.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admissao {
+    /// A organização já tem os participantes que o seu tecto permite NESTE nó.
+    OrgNoTecto,
+    /// O nó está na capacidade: não aceita salas novas de ninguém.
+    NoNoTecto,
+    /// O nó está na zona de margem e este inquilino já usa a sua parte justa.
+    AcimaDaParteJusta,
+    /// O nó está a encerrar. NÃO é um tecto: volta-se a tentar e o balanceador
+    /// manda para outro pod. Tem código próprio para o cliente saber que deve
+    /// repetir — sem ele, uma recusa de drain ficava sem explicação nem recuo.
+    ANoDrenar,
+}
+
+impl Admissao {
+    pub fn code(self) -> &'static str {
+        match self {
+            Admissao::OrgNoTecto => "admission.org_at_capacity",
+            Admissao::NoNoTecto => "admission.node_at_capacity",
+            Admissao::AcimaDaParteJusta => "admission.over_fair_share",
+            Admissao::ANoDrenar => "admission.node_draining",
+        }
+    }
+}
+
+/// A recusa como erro de domínio: estado HTTP IGUAL ao de antes (429 para a
+/// quota da organização — «tu já tens o teu» —, 503 para o nó), mas com um
+/// `code` estável que a interface mapeia para uma frase própria.
+///
+/// A mensagem continua a não dizer quanto ocupam os outros inquilinos
+/// (ADR-0017): a recusa explica-se a quem a sofre sem expor o vizinho.
+pub fn admissao_recusada(motivo: Admissao) -> ApiError {
+    use delonix_meet_core::error::{DomainError, ErrorKind};
+    let (kind, msg) = match motivo {
+        Admissao::OrgNoTecto => (
+            ErrorKind::ResourceExhausted,
+            "A tua organização já tem todos os participantes que este servidor lhe permite ao mesmo tempo. Quando alguém sair, podes entrar.",
+        ),
+        Admissao::NoNoTecto => (
+            ErrorKind::Unavailable,
+            "Este servidor está no limite da capacidade e não aceita salas novas agora.",
+        ),
+        Admissao::AcimaDaParteJusta => (
+            ErrorKind::Unavailable,
+            "Este servidor está ocupado e a tua organização já usa a parte dele que lhe cabe. Tenta daqui a pouco.",
+        ),
+        Admissao::ANoDrenar => (
+            ErrorKind::Unavailable,
+            "Este servidor está a encerrar. A tentar noutro…",
+        ),
+    };
+    ApiError::Domain(DomainError::new(kind, motivo.code(), msg))
+}
+
+/// O tecto de participantes concorrentes da organização `org_id` neste nó: o
+/// que o operador lhe fixou, ou o valor por omissão do nó. `None` = sem tecto.
+/// Falha ABERTA se a base não responder, como o resto das regras por inquilino.
+async fn org_participant_limit(state: &AppState, org_id: Uuid) -> Option<i64> {
+    let fixado: Option<i32> =
+        sqlx::query_scalar("SELECT max_concurrent_participants FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    fixado
+        .map(i64::from)
+        .or(state.config.org_max_participants.map(i64::from))
+}
+
+/// O inquilino de uma sala: a organização do DONO (a primeira, de forma estável,
+/// se pertencer a várias) ou o próprio dono se não tiver nenhuma (um utilizador
+/// individual). Deriva-se no servidor a partir de `rooms.owner_id`.
+///
+/// Falha ABERTA: se a base não responder devolve `None` e a sala entra como
+/// inquilino desconhecido — a admissão por capacidade total (`NodeFull`) continua
+/// a valer, só se perde a justiça por inquilino durante a falha.
+pub(crate) async fn resolve_tenant(state: &AppState, room_id: Uuid) -> Option<Uuid> {
+    let owner: Uuid = sqlx::query_scalar("SELECT owner_id FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()?;
+    let mut orgs = crate::org::orgs_of_user(state, owner).await;
+    orgs.sort();
+    Some(orgs.first().copied().unwrap_or(owner))
+}
+
+/// A leitura da política foi CONCLUSIVA? Um `false` aqui significa «o servidor
+/// não sabe», e distingue-se de «a organização permite»: a resposta segura vai
+/// a quem está a entrar, mas não se escreve na marca da SALA.
+type Fiavel = bool;
+
+/// A organização desta sala PROÍBE o motor de voz do browser, e com que
+/// confiança?
+///
+/// RECEBE O INQUILINO JÁ RESOLVIDO, e não o `room_id`, de propósito: quem
+/// chama (a entrada no `/ws`) já o tem em mão. A primeira versão disto chamava
+/// o `resolve_tenant` outra vez e acrescentava DUAS consultas a cada entrada
+/// na sala — exactamente a direcção contrária à da lacuna `B-06` («a entrada
+/// na sala é O(n) em série, e passa de 0,3 s a 1,7 s»). Assim é UMA consulta.
+///
+/// FALHA FECHADA, e é uma decisão: um erro da base devolve `true` (proibido).
+/// A alternativa — falhar aberta — era abrir o caminho do áudio para a Google
+/// precisamente no momento em que o servidor não sabe o que a organização
+/// decidiu, e isto é uma política de soberania do dado. O custo de errar para
+/// este lado é legendas menos precisas (o recuo é o Whisper WASM local, que é
+/// soberano); o custo de errar para o outro é áudio a sair da instalação.
+/// Numa falha da base, de resto, quase nada do produto está a funcionar: a
+/// própria entrada na sala passa por ela.
+///
+/// HERANÇA QUE ESTA POLÍTICA AGRAVA, e fica escrita: o `resolve_tenant` não
+/// sabe a organização da SALA — devolve a primeira organização do dono por
+/// ordem de UUID (`orgs.sort(); orgs.first()`). Para um dono que pertence a
+/// duas organizações, a política que governa a sala é a daquela cujo UUID for
+/// menor, que pode não ser a que paga pela soberania. Era uma aproximação
+/// aceitável quando só servia a justiça de capacidade por inquilino (ADR-0017);
+/// com uma decisão de soberania por cima dela, passa a merecer a organização
+/// verdadeira na linha da `rooms` — trabalho de outra sessão, anotado no
+/// contrato.
+///
+/// SEM ORGANIZAÇÃO NENHUMA não é falha: uma sala de um utilizador individual
+/// (o `resolve_tenant` devolve o próprio dono) não tem organização que decida,
+/// e o `fetch_optional` devolve `Ok(None)` — permitido. Distinguir isto do
+/// erro é o ponto desta função, e é por isso que não é um `unwrap_or(true)`
+/// sobre o `Result` inteiro.
+pub(crate) async fn web_speech_forbidden(state: &AppState, tenant: Option<Uuid>) -> (bool, Fiavel) {
+    // `None` = o `resolve_tenant` não chegou a dono nenhum (a base não
+    // respondeu). Mesmo lado seguro: proibir — mas não é uma leitura fiável.
+    let Some(tenant) = tenant else {
+        return (true, false);
+    };
+    match sqlx::query_scalar::<_, bool>("SELECT allow_web_speech FROM organizations WHERE id = $1")
+        .bind(tenant)
+        .fetch_optional(&state.db)
+        .await
+    {
+        // A organização decidiu.
+        Ok(Some(permitido)) => (!permitido, true),
+        // Não é uma organização (utilizador individual): ninguém proibiu. É
+        // uma resposta, não uma falha — ver o cabeçalho.
+        Ok(None) => (false, true),
+        Err(e) => {
+            tracing::warn!(%tenant, erro = %e, "allow_web_speech ilegível — a proibir o motor do browser a quem está a entrar");
+            (true, false)
+        }
+    }
 }
 
 fn parse_origin(s: &str) -> Option<Origin> {
@@ -3888,6 +4625,9 @@ struct SocketSession {
     source: Option<crate::studio_realtime::SourceSession>,
     /// A sessão da conta de onde se entrou: terminá-la fecha este /ws.
     session_id: Option<Uuid>,
+    /// O inquilino da sala, resolvido à entrada de uma sala NOVA (só com
+    /// capacidade declarada): marca-se na sala depois do `join`.
+    tenant: Option<Uuid>,
 }
 
 /// Cria uma sala-filha de grupo (herda topologia/E2EE da principal).
@@ -4213,6 +4953,63 @@ fn breakout_move_user(state: &Arc<AppState>, room_id: Uuid, name: &str, target_c
 }
 
 /// Fecha os grupos: devolve toda a gente à sala principal.
+/// O anfitrião liga ou desliga uma língua de dobragem na sala (ADR-0030).
+///
+/// Difunde o resultado a toda a gente — **incluindo a recusa**. Quem pediu a
+/// quarta língua tem de saber que não entrou e porquê; o silêncio aqui seria a
+/// avaria que o ADR nomeia como a pior desta frente (ligar e nunca se ouvir).
+async fn dub_language(state: &Arc<AppState>, room_id: Uuid, lang: &str, on: bool) {
+    if !on {
+        state.dub.desliga(room_id, lang);
+        state.sfu.end_dub(room_id, lang).await;
+        anuncia_dobragem(state, room_id, None);
+        return;
+    }
+    // AQUECER o modelo antes da primeira frase, e não por elegância: medido no
+    // laboratório a 2026-10-14, a primeira tradução com o modelo FRIO levou
+    // **19 segundos** (carregamento), contra 0,48 s de mediana depois dele
+    // quente. Sem isto, a primeira frase de cada sala chegava vinte segundos
+    // atrasada — que não é «dobragem com atraso», é uma avaria com outro nome.
+    //
+    // Despachado: ligar a língua não espera pelo modelo. A pista nasce já, e
+    // se a primeira frase ainda apanhar o modelo a carregar, é UMA frase.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _ = crate::ai::translate(&state, "ok", "en-US").await;
+        });
+    }
+
+    // A língua de ORIGEM da sala. Por ora é a da instalação — quando houver
+    // uma escolha por sala, é aqui que ela entra, e nada mais muda.
+    let origem = "pt-PT";
+    let sfu = state.sfu.clone();
+    let erro = state
+        .dub
+        .liga(
+            state.clone(),
+            room_id,
+            origem,
+            lang,
+            |id, lang| async move { sfu.publish_dub_audio(room_id, id, &lang).await },
+        )
+        .await
+        .err();
+    anuncia_dobragem(state, room_id, erro.as_ref().map(|e| e.code));
+}
+
+/// Diz à sala que línguas estão activas (e, se houve recusa, com que código).
+fn anuncia_dobragem(state: &Arc<AppState>, room_id: Uuid, erro: Option<&'static str>) {
+    let langs = state.dub.activas(room_id);
+    state.hub.broadcast_all(
+        room_id,
+        ServerMsg::DubLanguages {
+            langs,
+            error: erro.map(|c| c.to_string()),
+        },
+    );
+}
+
 fn breakouts_close(state: &Arc<AppState>, room_id: Uuid) {
     if let Some((_, set)) = state.breakouts.remove(&room_id) {
         for c in &set.children {
@@ -4238,6 +5035,15 @@ fn breakouts_close(state: &Arc<AppState>, room_id: Uuid) {
     }
 }
 
+/// Silêncio ABSOLUTO do cliente (nem Pong, nem mensagem) a partir do qual se
+/// dá a sessão por terminada, em milissegundos.
+///
+/// São dois Pings de 25 s falhados mais folga. Não é um valor de rede: um
+/// cliente saudável responde ao Ping sozinho — o browser fá-lo sem a página
+/// saber —, por isso 70 s calado é um cliente que já lá não está. O que isto
+/// substitui é esperar pelo TCP, que em sockets meio-abertos demora MINUTOS.
+const SILENCIO_MAXIMO_MS: u64 = 70_000;
+
 /// Consome o socket até fechar (ou o cliente desistir) enquanto espera admissão.
 async fn drain_while_waiting(stream: &mut SplitStream<WebSocket>) {
     while let Some(Ok(msg)) = stream.next().await {
@@ -4256,6 +5062,45 @@ async fn drain_while_waiting(stream: &mut SplitStream<WebSocket>) {
     }
 }
 
+/// O lugar não está neste pod: procura a cópia no Redis (`redis_state::seat_*`).
+///
+/// Recusa quando um peer com o mesmo id ainda está AQUI, vivo ou com o lugar
+/// reservado: é o segredo copiado a tentar entrar por cima do dono, a mesma
+/// recusa que `Hub::reclaim` faz com a memória local. Só depois de passar essa
+/// guarda o registo é consumido (`GETDEL`), por isso uma tentativa recusada não
+/// gasta o lugar do dono.
+///
+/// Como a reclamação local, não confere a identidade de quem volta: o segredo
+/// de 256 bits é a credencial, e fica no Redis só como SHA-256.
+async fn reclaim_from_redis(
+    state: &AppState,
+    room_id: Uuid,
+    segredo: &str,
+) -> Option<ReclaimedSeat> {
+    if segredo.is_empty() {
+        return None;
+    }
+    let bus = state.redis_bus.as_ref()?;
+    let peek = crate::redis_state::seat_peek(bus.conn.clone(), room_id, segredo).await?;
+    if state.hub.peer_present(room_id, peek.peer_id) {
+        return None;
+    }
+    let rec = crate::redis_state::seat_take(bus.conn.clone(), room_id, segredo).await?;
+    state
+        .metrics
+        .seats_reclaimed_redis_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Some(ReclaimedSeat {
+        peer_id: rec.peer_id,
+        username: rec.username,
+        user_id: rec.user_id,
+        is_host: rec.is_host,
+        can_admit: rec.can_admit,
+        role: rec.role,
+        is_guest: rec.is_guest,
+    })
+}
+
 async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketSession) {
     let SocketSession {
         room_id,
@@ -4270,6 +5115,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         wait,
         source,
         session_id,
+        tenant,
     } = session;
     // Só um participante que não é anfitrião pode ter de esperar; a sala de
     // espera de runtime (se o anfitrião a mudou) ganha à configurada. Uma fonte
@@ -4286,11 +5132,27 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // O que NÃO se herda: nada de media. O socket é novo, a `RTCPeerConnection`
     // é nova, e a negociação faz-se do zero. Tentar reaproveitar o estado de
     // media seria reabrir o glare que o R13 fechou.
-    let reclamado = reconnect.as_deref().and_then(|seg| {
-        state
+    //
+    // Primeiro o lugar DESTE pod; só se ele não o tiver se vai ao Redis (o pod
+    // que o guardava morreu, ou a sala passou para outro pod). A ordem importa:
+    // o lugar local conhece o estado vivo (um dono vivo recusa o segredo).
+    let reclamado = match reconnect.as_deref() {
+        None => None,
+        Some(seg) => match state
             .hub
             .reclaim(room_id, seg, state.config.reconnect_grace())
-    });
+        {
+            Some(lugar) => {
+                // Este pod tinha o lugar: a cópia do Redis ficou velha e,
+                // se ficasse, um segredo já gasto voltava a servir noutro pod.
+                if let Some(bus) = &state.redis_bus {
+                    crate::redis_state::seat_drop(bus.conn.clone(), room_id, seg).await;
+                }
+                Some(lugar)
+            }
+            None => reclaim_from_redis(&state, room_id, seg).await,
+        },
+    };
     let (peer_id, is_host, can_admit, must_wait, username) = match reclamado {
         Some(lugar) => {
             tracing::info!(%room_id, peer_id = %lugar.peer_id, "seat reclaimed");
@@ -4324,10 +5186,31 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // entrada sai pelo caminho ordenado de sempre.
     let _session_guard = session_id.map(|sid| state.session_kills.register(sid, shutdown.clone()));
 
+    // ÚLTIMO SINAL DE VIDA do cliente, partilhado entre o leitor e o escritor.
+    // Guarda-se em milissegundos desde `base` porque um `Instant` não é
+    // atómico, e isto é lido e escrito nos dois lados sem lock.
+    let base = std::time::Instant::now();
+    let visto_em = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let visto_escritor = visto_em.clone();
+    let shutdown_escritor = shutdown.clone();
+
     // Outbound: hub -> websocket. Um Ping periódico mantém a ligação viva
     // (proxies fecham WebSockets ociosos): sem tráfego, o socket cairia e —
     // como não há renegociação sem sinalização — a partilha de ecrã, o quadro
     // branco e o estado de media deixariam de chegar aos participantes.
+    //
+    // E o Ping passou a ter CONSEQUÊNCIA. Mandava-se um de 25 em 25 s e nunca
+    // se olhava para o Pong: a única forma de descobrir um cliente ido era o
+    // `send` falhar — e num socket meio-aberto (portátil a adormecer,
+    // telemóvel a bloquear, rede a engolir pacotes sem avisar) o TCP ainda
+    // retransmite MINUTOS antes de desistir. Só aí começavam os 45 s de
+    // `RECONNECT_GRACE_SECS`. Quem ficava na sala via o mosaico do ausente
+    // durante todo esse tempo (reportado de uma chamada a 2026-10-13).
+    //
+    // O limite é generoso de propósito: 70 s são dois Pings falhados mais
+    // folga. Um cliente saudável responde sozinho ao Ping — o browser fá-lo
+    // sem a página saber — por isso 70 s de silêncio ABSOLUTO (nem Pong, nem
+    // mensagem) é um cliente que já não está lá.
     let writer = tokio::spawn(async move {
         let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(25));
         keepalive.tick().await; // consome o tick imediato
@@ -4344,6 +5227,16 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                     }
                 }
                 _ = keepalive.tick() => {
+                    let calado_ms = base.elapsed().as_millis() as u64
+                        - visto_escritor.load(std::sync::atomic::Ordering::Relaxed);
+                    if calado_ms > SILENCIO_MAXIMO_MS {
+                        tracing::info!(
+                            calado_ms,
+                            "cliente sem dar sinal de vida — a terminar a sessão em vez de esperar pelo TCP"
+                        );
+                        shutdown_escritor.notify_waiters();
+                        break;
+                    }
                     if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
                         break;
                     }
@@ -4411,6 +5304,8 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             .apply_redis_state(room_id, polls, qa, wb, timer, locked, host_share);
     }
 
+    // `extras` é consumido por `join_with`; o que o lugar herda sai daqui antes.
+    let (seat_role, seat_guest) = (extras.role, extras.is_guest);
     let entrada = state.hub.join_with(
         room_id,
         peer_id,
@@ -4422,6 +5317,25 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         tx.clone(),
         extras,
     );
+    if let Some(t) = tenant {
+        state.hub.set_room_tenant(room_id, t);
+    }
+    // A POLÍTICA DO MOTOR DE LEGENDAS, antes de o cliente arrancar o
+    // microfone. Lê-se a cada entrada (uma organização que mude alcança a
+    // entrada seguinte) e só se ENVIA quando a resposta é «proibido» — como as
+    // `RoomSettings`, o silêncio é o caso normal.
+    let (web_speech_proibido, politica_fiavel) = web_speech_forbidden(&state, tenant).await;
+    // SÓ UMA LEITURA FIÁVEL ESCREVE NA SALA. A marca é da sala inteira, e uma
+    // leitura falhada aplicada a ela calava o motor do browser de TODOS os
+    // participantes — por causa do azar de UM que entrou durante um soluço da
+    // base, numa organização que nunca proibiu nada, e sem se desfazer quando
+    // a base voltasse. Quem falhou leva a resposta segura (abaixo); a sala
+    // mantém o que sabia.
+    if politica_fiavel {
+        state
+            .hub
+            .set_web_speech_forbidden(room_id, web_speech_proibido);
+    }
     // O token do DONO traz a sala de espera da BD: é o valor inicial do
     // runtime, até o anfitrião o mudar.
     if is_host {
@@ -4429,6 +5343,10 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             state.hub.init_waiting_room(room_id, wr);
         }
     }
+    if web_speech_proibido {
+        let _ = tx.send(ServerMsg::CaptionPolicy { web_speech: false });
+    }
+    let seat_secret = entrada.reconnect_secret.clone();
     let _ = tx.send(ServerMsg::Joined {
         peer_id,
         peers: entrada.roster,
@@ -4436,6 +5354,32 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         companion: entrada.companion,
         started_at: entrada.started_at,
     });
+    // Entrou pelo browser e já tem um telefone nesta sala (a mesma pessoa): pergunta-lhe.
+    state.hub.notify_duplicates(room_id, user_id, Some(peer_id));
+    // Copia o lugar para fora do pod: se este morrer, outro pode reconhecê-lo.
+    // Depois do `Joined`, para não atrasar quem entra; uma falha do Redis só
+    // deixa o lugar com a protecção que já tinha (a memória deste pod).
+    //
+    // Só o papel que o lugar tinha à ENTRADA: uma promoção feita durante a
+    // reunião (co-anfitrião) não é copiada, e depois de uma morte do pod
+    // volta o papel do token.
+    if let Some(bus) = &state.redis_bus {
+        crate::redis_state::seat_put(
+            bus.conn.clone(),
+            room_id,
+            &seat_secret,
+            &crate::redis_state::SeatRecord {
+                peer_id,
+                username: username.clone(),
+                user_id,
+                is_host,
+                can_admit,
+                role: seat_role,
+                is_guest: seat_guest,
+            },
+        )
+        .await;
+    }
     // Quem entra a meio recebe o estado ATUAL da sala. A condição é «alguma
     // coisa está diferente do normal», e por isso inclui os campos novos: sem
     // eles, quem entrasse depois de o chat ser fechado via-o aberto.
@@ -4518,7 +5462,14 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         // deixar um peer na sala com o caminho de saída morto.
         let msg = tokio::select! {
             incoming = stream.next() => match incoming {
-                Some(Ok(m)) => m,
+                Some(Ok(m)) => {
+                    // QUALQUER quadro conta como sinal de vida — incluindo o
+                    // Pong, que o browser envia sozinho em resposta ao Ping.
+                    // É isto que o escritor lê para decidir se vale a pena
+                    // continuar a falar para o vazio.
+                    visto_em.store(base.elapsed().as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
+                    m
+                }
                 _ => break,
             },
             _ = shutdown.notified() => {
@@ -4618,6 +5569,15 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                 Ok(ClientMsg::BreakoutsClose) if is_host => {
                     breakouts_close(&state, room_id);
                 }
+                Ok(ClientMsg::DubListen { lang }) if sfu_mode => {
+                    // Quem OUVE escolhe sozinho — não precisa de ser anfitrião.
+                    // Pedir uma língua que a sala não tem ligada não é erro:
+                    // simplesmente não há pista, e o cliente fica no original.
+                    state.sfu.set_dub_language(room_id, peer_id, lang).await;
+                }
+                Ok(ClientMsg::DubLanguage { lang, on }) if sfu_mode && is_host => {
+                    dub_language(&state, room_id, &lang, on).await;
+                }
                 Ok(ClientMsg::VideoInterest { peers, quality }) if sfu_mode => {
                     // Limite defensivo: o cliente não define quantas
                     // subscrições o servidor mantém abertas.
@@ -4652,6 +5612,51 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
                         peer_id,
                         ServerMsg::Presenting { from: peer_id, on },
                     );
+                }
+                Ok(ClientMsg::DeviceChoice { phone_id, keep }) => {
+                    // Só a perna DESTA pessoa: um id de outra chamada não faz nada.
+                    let Some((_, call_id)) = state
+                        .hub
+                        .phone_legs_of(room_id, user_id)
+                        .into_iter()
+                        .find(|(leg, _)| *leg == phone_id)
+                    else {
+                        // Já não está cá (desligou entretanto) ou não é desta pessoa: a
+                        // resposta é a mesma, sem dizer qual — e o diálogo não fica preso.
+                        let _ = tx.send(ServerMsg::DuplicateResolved {
+                            phone_id,
+                            outcome: "gone".into(),
+                        });
+                        continue;
+                    };
+                    let outcome = match keep {
+                        DeviceKeep::Both => "both",
+                        DeviceKeep::Meet => {
+                            // Cala-se SEMPRE primeiro: o `hupall` responde `+OK` mesmo quando não
+                            // apanha nenhum canal, e a perna não pode ficar na sala de microfone aberto.
+                            if let Some(p) = state.hub.phone.get() {
+                                p.set_muted(phone_id, true);
+                            }
+                            state
+                                .hub
+                                .update_external(room_id, phone_id, |_, _, mic| *mic = false);
+                            let desligou = match (call_id, state.telephony.originator.clone()) {
+                                (Some(c), Some(o)) => o.hangup(c).await.is_ok(),
+                                _ => false,
+                            };
+                            if desligou {
+                                "hung_up"
+                            } else {
+                                // Sem como desligar (uma chamada que entrou por ramal+PIN): fica
+                                // sem som e a pessoa desliga-a no aparelho.
+                                "muted"
+                            }
+                        }
+                    };
+                    let _ = tx.send(ServerMsg::DuplicateResolved {
+                        phone_id,
+                        outcome: outcome.into(),
+                    });
                 }
                 Ok(ClientMsg::ServerRecord {
                     active,
@@ -4819,7 +5824,12 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
         crate::studio_realtime::on_source_left(&state, room_id, s, peer_id);
     }
     if sfu_mode {
-        // Última pessoa a sair leva a gravação órfã para finalização.
+        // Última pessoa a sair leva a gravação órfã para finalização. Isto é
+        // SÓ sobre a sessão de media (SFU) — não é o sinal de "a reunião
+        // acabou" em geral (uma sala `mesh`, ou uma sessão SFU que nunca
+        // chegou a negociar media, nunca passaria por aqui). Esse sinal é o
+        // `leave()`/`expire_disconnected()` do `hub`, mais abaixo e no cron de
+        // `lib.rs` — ver `meetings::on_room_emptied`.
         if let Some(session) = state.sfu.remove_peer(room_id, peer_id).await {
             tracing::info!(%room_id, "room empty — finalizing server recording");
             crate::recorder::finalize(state.clone(), room_id, session);
@@ -4834,8 +5844,20 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
     // marca. Fazer o `leave` com um `sleep` neste ponto prenderia a tarefa do
     // socket durante a janela inteira, e uma sala com muita rotação acumularia
     // tarefas adormecidas sem tecto.
-    if !state.hub.disconnect(room_id, peer_id) {
-        state.hub.leave(room_id, peer_id);
+    //
+    // Mas se ESTE `leave` imediato (só acontece quando `disconnect` encontra
+    // o peer já ausente — raro, ex. kick concorrente) deixar a sala vazia,
+    // avisa logo: não há razão para esperar pela varredura se já se sabe.
+    let esvaziou = if state.hub.disconnect(room_id, peer_id) {
+        false
+    } else {
+        state.hub.leave(room_id, peer_id)
+    };
+    if esvaziou {
+        let st = state.clone();
+        tokio::spawn(async move {
+            crate::meetings::on_room_emptied(st, room_id).await;
+        });
     }
     if let Some(parent) = breakout_parent_of(&state, room_id) {
         broadcast_breakout_state(&state, parent);
@@ -6020,15 +7042,41 @@ mod tests {
             hub.reclaim(room, &segredo, nula).is_none(),
             "fora da janela não se reclama"
         );
-        assert_eq!(hub.expire_disconnected(nula), 1, "um lugar tem de expirar");
+        let (n, esvaziadas) = hub.expire_disconnected(nula);
+        assert_eq!(n, 1, "um lugar tem de expirar");
+        assert!(
+            esvaziadas.is_empty(),
+            "b continua na sala — não devia ficar vazia"
+        );
         match rx_b.recv().await.unwrap() {
             ServerMsg::PeerLeft { peer_id } => assert_eq!(peer_id, a),
             other => panic!("ao expirar, os outros veem uma SAÍDA: {other:?}"),
         }
+        let (n2, _) = hub.expire_disconnected(nula);
         assert_eq!(
-            hub.expire_disconnected(nula),
-            0,
+            n2, 0,
             "expirar duas vezes o mesmo lugar seria uma saída a dobrar"
+        );
+    }
+
+    /// Quando o ÚLTIMO lugar reservado expira, a sala fica vazia — é o sinal
+    /// que `meetings::on_room_emptied` usa (via o cron de `lib.rs`), e tem de
+    /// disparar mesmo sem nenhuma sessão SFU/WebRTC envolvida (ex. `mesh`).
+    #[tokio::test]
+    async fn expirar_o_ultimo_lugar_esvazia_a_sala() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let (a, tx_a, _rx_a) = peer();
+        hub.join(room, a, a, "a".into(), true, true, false, tx_a);
+        hub.disconnect(room, a);
+
+        let nula = std::time::Duration::from_secs(0);
+        let (n, esvaziadas) = hub.expire_disconnected(nula);
+        assert_eq!(n, 1);
+        assert_eq!(
+            esvaziadas,
+            vec![room],
+            "a sala ficou sem ninguém — tinha de aparecer"
         );
     }
 
@@ -6422,8 +7470,104 @@ mod tests {
             video_unavailable: true,
             weak_link: false,
             on_stage: false,
-            call_id: Some(Uuid::nil()),
+            call_id: None,
+            member_id: None,
         }
+    }
+
+    fn perna_de(member: Uuid, com_chamada: bool) -> Seat {
+        Seat {
+            member_id: Some(member),
+            call_id: com_chamada.then(Uuid::new_v4),
+            ..telefone_seat()
+        }
+    }
+
+    /// A mesma pessoa no browser e ao telefone: o browser é avisado, quem não é a pessoa não.
+    #[tokio::test]
+    async fn a_mesma_pessoa_ao_telefone_e_no_browser_e_avisada_no_browser() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let ana = Uuid::new_v4();
+        let (a_peer, tx_a, mut rx_a) = peer();
+        let (o_peer, tx_o, mut rx_o) = peer();
+        hub.join(room, a_peer, ana, "ana".into(), false, false, false, tx_a);
+        hub.join(
+            room,
+            o_peer,
+            Uuid::new_v4(),
+            "outro".into(),
+            false,
+            false,
+            false,
+            tx_o,
+        );
+        while rx_a.try_recv().is_ok() {}
+        while rx_o.try_recv().is_ok() {}
+
+        // Chega o telefone da Ana (uma chamada que a sala fez tocar): só o browser da Ana é avisado.
+        let (tel, tx_t, _rx_t) = peer();
+        hub.join_external(room, tel, "Ana".into(), perna_de(ana, true), tx_t);
+        assert_eq!(hub.notify_duplicates(room, ana, None), 1);
+        let mut visto = None;
+        while let Ok(m) = rx_a.try_recv() {
+            if let ServerMsg::DuplicateDevice {
+                phone_id,
+                can_hangup,
+            } = m
+            {
+                visto = Some((phone_id, can_hangup));
+            }
+        }
+        assert_eq!(visto, Some((tel, true)));
+        while let Ok(m) = rx_o.try_recv() {
+            assert!(
+                !matches!(m, ServerMsg::DuplicateDevice { .. }),
+                "o outro não é avisado"
+            );
+        }
+        // As pernas dela, e só as dela.
+        assert_eq!(hub.phone_legs_of(room, ana).len(), 1);
+        assert!(hub.phone_legs_of(room, Uuid::new_v4()).is_empty());
+    }
+
+    /// O telefone já cá estava: quem entra depois pelo browser é avisado, e só esse lugar.
+    #[tokio::test]
+    async fn quem_entra_no_browser_com_o_telefone_na_sala_e_avisado_so_nesse_lugar() {
+        let hub = SignalingHub::default();
+        let room = Uuid::new_v4();
+        let bia = Uuid::new_v4();
+        let (tel, tx_t, _rx_t) = peer();
+        hub.join_external(room, tel, "Bia".into(), perna_de(bia, false), tx_t);
+        let (b1, tx_1, mut rx_1) = peer();
+        hub.join(room, b1, bia, "bia".into(), false, false, false, tx_1);
+        assert_eq!(hub.notify_duplicates(room, bia, Some(b1)), 1);
+        let mut visto = None;
+        while let Ok(m) = rx_1.try_recv() {
+            if let ServerMsg::DuplicateDevice {
+                phone_id,
+                can_hangup,
+            } = m
+            {
+                visto = Some((phone_id, can_hangup));
+            }
+        }
+        // Sem `call_id` não há como desligar a chamada: só se consegue calá-la.
+        assert_eq!(visto, Some((tel, false)));
+        // Um segundo browser da Bia (outro separador) não é incomodado por quem entrou agora.
+        let (b2, tx_2, mut rx_2) = peer();
+        hub.join(room, b2, bia, "bia".into(), false, false, false, tx_2);
+        while rx_2.try_recv().is_ok() {}
+        assert_eq!(
+            hub.notify_duplicates(room, bia, Some(b1)),
+            1,
+            "só o lugar pedido"
+        );
+        assert!(rx_2.try_recv().is_err());
+        // Um telefone sem pessoa (anónimo) nunca avisa ninguém.
+        let (anon, tx_an, _rx_an) = peer();
+        hub.join_external(room, anon, "Telefone".into(), telefone_seat(), tx_an);
+        assert_eq!(hub.phone_legs_of(room, bia).len(), 1);
     }
 
     #[test]
@@ -6801,6 +7945,218 @@ mod b1_sala_tests {
         fn set_pinned(&self, _room_id: Uuid, publisher: Uuid, on: bool) {
             self.0.lock().unwrap().push((publisher, on));
         }
+    }
+
+    /// Grava as frases que a dobragem recebeu (ADR-0030).
+    #[derive(Default)]
+    struct DobragemFalsa(std::sync::Mutex<Vec<String>>);
+
+    impl DubControl for DobragemFalsa {
+        fn say(&self, _room_id: Uuid, text: &str) {
+            self.0.lock().unwrap().push(text.to_string());
+        }
+    }
+
+    /// A frase final chega à dobragem **já limpa pelo DLP** — e é essa a razão
+    /// de a dobragem entrar aqui e não num ASR próprio: o que a legenda
+    /// mascarou fica mascarado na voz.
+    #[tokio::test]
+    async fn a_dobragem_recebe_a_frase_ja_limpa_pelo_dlp() {
+        let s = sala();
+        let dob = Arc::new(DobragemFalsa::default());
+        let _ = s.hub.dub.set(dob.clone() as Arc<dyn DubControl>);
+
+        // Um número de cartão no meio da frase: o DLP mascara-o na legenda.
+        let crua = "paga no cartão 4111 1111 1111 1111 por favor";
+        s.hub.handle(
+            s.room,
+            s.b,
+            // `engine: None` = um cliente que não declara o motor (um cliente
+            // antigo). Nunca é recusado por política: ver `recusa_motor`.
+            ClientMsg::Transcript {
+                text: crua.into(),
+                engine: None,
+            },
+            None,
+        );
+
+        let ditas = dob.0.lock().unwrap().clone();
+        assert_eq!(ditas.len(), 1, "a frase final tem de chegar à dobragem");
+        assert_eq!(
+            ditas[0],
+            crate::dlp::clean_caption(crua),
+            "a dobragem recebe o MESMO texto que a legenda — limpo"
+        );
+        assert!(
+            !ditas[0].contains("4111 1111 1111 1111"),
+            "o número não pode sobreviver até à voz: {}",
+            ditas[0]
+        );
+    }
+
+    /// A ORGANIZAÇÃO PROÍBE o motor de voz do browser: a frase não chega a
+    /// ninguém, conta-se, e quem a enviou recebe a política de volta.
+    ///
+    /// A observação é o que os OUTROS peers receberam — não o que o `handle`
+    /// devolveu (devolve `true`, como para qualquer mensagem tratada) nem o
+    /// que o emissor viu. Uma legenda «recusada» que ainda fosse difundida
+    /// passava um teste sobre o valor de retorno e falhava o produto.
+    #[tokio::test]
+    async fn legenda_da_web_speech_recusada_quando_a_organizacao_a_proibe() {
+        let mut s = sala();
+        let m = Arc::new(crate::metrics::Metrics::default());
+        s.hub.metrics = Some(m.clone());
+        s.hub.set_web_speech_forbidden(s.room, true);
+
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::Transcript {
+                text: "isto foi à Google".into(),
+                engine: Some("webspeech".into()),
+            },
+            None,
+        );
+
+        for (quem, rx) in [("anfitriã", &mut s.rx_a), ("carlos", &mut s.rx_c)] {
+            let vistas = recolher(rx);
+            assert!(
+                !vistas
+                    .iter()
+                    .any(|msg| matches!(msg, ServerMsg::Transcript { .. })),
+                "{quem} não podia receber uma legenda do motor proibido: {vistas:?}"
+            );
+        }
+        assert_eq!(
+            m.caption_engine_refused_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "a recusa tem de ser MEDÍVEL de fora do cliente"
+        );
+        // E o cliente é informado, para mudar de motor sem recarregar a página
+        // — é por aqui que a política alcança quem já estava na sala.
+        let do_emissor = recolher(&mut s.rx_b);
+        assert!(
+            do_emissor
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::CaptionPolicy { web_speech: false })),
+            "quem enviou tem de receber a política: {do_emissor:?}"
+        );
+    }
+
+    /// CONTROLO POSITIVO da recusa: a MESMA frase, do MESMO motor, numa
+    /// organização que o permite — difunde-se como sempre.
+    ///
+    /// Sem este caso, uma recusa que travasse TODAS as legendas passaria o
+    /// teste de cima e ninguém notaria até alguém abrir uma reunião.
+    #[tokio::test]
+    async fn a_mesma_legenda_passa_quando_a_organizacao_permite() {
+        let mut s = sala();
+        let m = Arc::new(crate::metrics::Metrics::default());
+        s.hub.metrics = Some(m.clone());
+        // Por omissão não há proibição nenhuma (ver a migração 0125).
+        assert!(!s.hub.web_speech_forbidden(s.room));
+
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::Transcript {
+                text: "bom dia".into(),
+                engine: Some("webspeech".into()),
+            },
+            None,
+        );
+
+        let vistas = recolher(&mut s.rx_a);
+        assert!(
+            vistas
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::Transcript { text, .. } if text == "bom dia")),
+            "a legenda tem de chegar: {vistas:?}"
+        );
+        assert_eq!(
+            m.caption_engine_refused_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+    }
+
+    /// Os motores SOBERANOS não são tocados pela política, e um cliente que
+    /// não declare o motor também não: a política é sobre a Web Speech, e uma
+    /// recusa por omissão deixaria sem legendas quem não tem culpa nenhuma.
+    #[tokio::test]
+    async fn a_politica_nao_apanha_os_motores_soberanos_nem_o_cliente_antigo() {
+        for motor in [Some("wasm"), Some("servidor"), None] {
+            let mut s = sala();
+            s.hub.set_web_speech_forbidden(s.room, true);
+            s.hub.handle(
+                s.room,
+                s.b,
+                ClientMsg::Transcript {
+                    text: "bom dia".into(),
+                    engine: motor.map(String::from),
+                },
+                None,
+            );
+            let vistas = recolher(&mut s.rx_a);
+            assert!(
+                vistas.iter().any(
+                    |msg| matches!(msg, ServerMsg::Transcript { text, .. } if text == "bom dia")
+                ),
+                "o motor {motor:?} não é o proibido e tem de passar: {vistas:?}"
+            );
+        }
+    }
+
+    /// A parcial segue a mesma regra da final. Tinha de ser dito num teste
+    /// próprio: são dois braços diferentes do `handle`, e proteger só o da
+    /// frase final deixava a legenda ao vivo — a que aparece no ecrã enquanto
+    /// se fala — a sair do motor proibido.
+    #[tokio::test]
+    async fn a_parcial_da_web_speech_tambem_e_recusada() {
+        let mut s = sala();
+        s.hub.set_web_speech_forbidden(s.room, true);
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::TranscriptInterim {
+                text: "isto foi à Goo".into(),
+                engine: Some("webspeech".into()),
+            },
+            None,
+        );
+        let vistas = recolher(&mut s.rx_a);
+        assert!(
+            !vistas
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::TranscriptInterim { .. })),
+            "a parcial do motor proibido não pode ser difundida: {vistas:?}"
+        );
+    }
+
+    /// Sem dobragem registada (o caso normal: sem `TTS_URL`), o caminho da
+    /// legenda não muda nada — nem sequer tenta.
+    #[tokio::test]
+    async fn sem_dobragem_registada_a_legenda_segue_igual() {
+        let mut s = sala();
+        assert!(s.hub.dub.get().is_none());
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::Transcript {
+                text: "bom dia".into(),
+                engine: None,
+            },
+            None,
+        );
+        // A difusão continua a acontecer — é o que esta sala toda prova.
+        let vistas = recolher(&mut s.rx_a);
+        assert!(
+            vistas
+                .iter()
+                .any(|m| matches!(m, ServerMsg::Transcript { text, .. } if text == "bom dia")),
+            "a legenda tem de continuar a chegar aos outros"
+        );
     }
 
     fn chat(text: &str, reply_to: Option<Uuid>, client_id: Option<&str>) -> ClientMsg {

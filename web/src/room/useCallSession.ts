@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ApiError, currentUser, iceServers, isAbort, joinRoom, postTimings } from '../api'
-import { audioConstraints, LevelWatcher, listDevices, videoConstraints } from '../media'
+import { ApiError, isAbort, postTimings } from '../api'
+import { entrarNaSala, participanteLocal, souConvidado } from '../convidado'
+import { audioConstraints, facingOf, LevelWatcher, listDevices, videoConstraints } from '../media'
 import { deriveRoomKey, e2eeSupported, FrameCrypto } from '../e2ee'
 import { Signaling } from '../signaling'
 import { MeshCall, SfuCall } from '../webrtc'
@@ -10,6 +11,7 @@ import { LinhaDoTempo } from '../callTimings'
 import { makeCallHolderStart } from '../sfuLifecycle'
 import type { LocalMedia } from './useLocalMedia'
 import type { RoomCore } from './useRoomCore'
+import { perguntarPorqueRecusou, valeRepetir } from './admissao'
 
 /** A entrada salta a pré-entrada? Voz atendida, ou reentrada recente (< 60 s). */
 export function entradaDirecta(code: string, voiceOnly: boolean): boolean {
@@ -76,10 +78,13 @@ export function useCallSession(
         const handoff = retomado ?? core.previewStreamRef.current
         core.previewStreamRef.current = null
         if (handoff && !retomado) permErr = core.prejoinPermErrRef.current
+        // Com a cadeia de voz ligada, o microfone abre-se SEM a supressão
+        // nativa do browser — uma só supressão (ver `denoiseMic`).
+        const audio = audioConstraints(undefined, !media.noiseSuppression)
         const stream =
           handoff ??
-          (await getMedia(voiceOnly ? { audio: audioConstraints() } : { audio: audioConstraints(), video: videoConstraints() })
-            .catch(() => getMedia({ audio: audioConstraints() }))
+          (await getMedia(voiceOnly ? { audio } : { audio, video: videoConstraints() })
+            .catch(() => getMedia({ audio }))
             .catch(() => new MediaStream()))
         stream.getVideoTracks().forEach((tr) => (tr.contentHint = 'motion'))
         if (cancelled) {
@@ -99,11 +104,15 @@ export function useCallSession(
         core.localStreamRef.current = stream
         core.cameraTrackRef.current = stream.getVideoTracks()[0] ?? null
 
-        // RNNoise ANTES de a chamada começar. Fallback: mantém a crua.
+        // A cadeia de voz ANTES de a chamada começar. Passa-se SEMPRE por
+        // aqui, com a opção ligada ou não: é o `denoiseMic` que acerta a
+        // supressão nativa com a escolha (a caixa da pré-entrada pode ter
+        // mudado depois de o microfone estar aberto) e que a repõe se o
+        // RNNoise não carregar. A track que volta pode ser outra.
         const initRaw = stream.getAudioTracks()[0]
         const initMicId = initRaw?.getSettings().deviceId ?? ''
-        if (initRaw && media.noiseSuppression && !retomado) {
-          const clean = await media.denoiseMic(initRaw, true)
+        if (initRaw && !retomado) {
+          const clean = await media.denoiseMic(initRaw, media.noiseSuppression, core.micMixRef.current ? 'mix' : 'device')
           if (clean !== initRaw) {
             clean.enabled = initRaw.enabled // preserva o mute da pré-entrada
             stream.removeTrack(initRaw)
@@ -124,6 +133,9 @@ export function useCallSession(
             media.setDevices(d)
             media.setMicId(initMicId || stream.getAudioTracks()[0]?.getSettings().deviceId || '')
             media.setCamId(stream.getVideoTracks()[0]?.getSettings().deviceId ?? '')
+            // O lado para que a câmara aponta só se sabe DEPOIS da permissão —
+            // é por isso que o botão de virar não pode ser decidido antes.
+            media.setFacing(facingOf(stream.getVideoTracks()[0]))
           })
           .catch(() => {})
         navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange)
@@ -132,7 +144,7 @@ export function useCallSession(
         // interessa medir, não o do código.
         const tempos = new LinhaDoTempo()
         tempos.marcar('intencao')
-        const [{ room, room_token, scheduled }, rtcConfig] = await Promise.all([joinRoom(code), iceServers()])
+        const [{ room, room_token, scheduled }, rtcConfig] = await entrarNaSala(code)
         if (cancelled) return
         tempos.marcar('token')
         core.roomTokenRef.current = room_token
@@ -141,7 +153,7 @@ export function useCallSession(
         setIsTraining(room.format === 'training')
         setIsInstant(scheduled === false) // só se o servidor o confirmar
         setWaitingRoomOn(room.waiting_room)
-        const amHost = room.owner_id === currentUser()?.id
+        const amHost = room.owner_id === participanteLocal().id
         core.setIsHost(amHost)
         setCanAdmit(amHost)
 
@@ -190,22 +202,51 @@ export function useCallSession(
             if (!cancelled) location.reload()
           }, reconnect_in_ms + jitter)
         })
-        s.onclose = () => {
-          if (cancelled) return // saída intencional
-          // Sem sinalização não há renegociação: reentra-se recarregando, com
-          // guarda anti-ciclo — se cair outra vez em < 8 s, pede-se à pessoa.
+        // Recarregar com guarda anti-ciclo: sem sinalização não há
+        // renegociação, e reentra-se recarregando. Se cair outra vez em < 8 s,
+        // pede-se à pessoa em vez de insistir.
+        const reentrar = () => {
           const now = Date.now()
           const last = Number(sessionStorage.getItem('dx_reconnect_at') || 0)
           if (now - last > 8000) {
             sessionStorage.setItem('dx_reconnect_at', String(now))
             sessionStorage.setItem(`dx_rejoin_${code}`, String(now))
-            setStatus(t('room.estado.ligacaoPerdidaAReconectar'))
             setTimeout(() => {
               if (!cancelled) location.reload()
             }, 1500)
           } else {
             setStatus(t('room.estado.ligacaoInstavel'))
           }
+        }
+        s.onclose = (abriu) => {
+          if (cancelled) return // saída intencional
+          // O socket NUNCA abriu: foi recusado no handshake, e o browser não
+          // entrega o motivo (chega `code: 1006`, igual a uma falha de rede).
+          // Perguntar porquê — e NÃO recarregar: num nó no tecto, um reload
+          // por pessoa recusada a cada 8 s amplifica a própria sobrecarga que
+          // a admissão existe para conter. Antes dizia-se «verifica a rede»,
+          // com a rede da pessoa perfeita.
+          if (!abriu) {
+            void perguntarPorqueRecusou(core.roomTokenRef.current ?? '', code).then((motivo) => {
+              if (cancelled) return
+              // As chaves ficam LITERAIS de propósito: o extractor de i18n só
+              // vê `t('…')` escrito, e passá-las numa variável tirava-as da
+              // cobertura do portão das quatro línguas sem ninguém notar.
+              if (motivo === 'org_at_capacity') setStatus(t('room.admissao.organizacaoNoTecto'))
+              else if (motivo === 'node_at_capacity') setStatus(t('room.admissao.servidorCheio'))
+              else if (motivo === 'over_fair_share') setStatus(t('room.admissao.parteJusta'))
+              else if (motivo === 'node_draining') setStatus(t('room.estado.servidorVaiReiniciar'))
+              else setStatus(t('room.estado.ligacaoPerdidaAReconectar'))
+              // Um TECTO não passa por recarregar — e recarregar amplifica a
+              // sobrecarga. Um drain (ou um motivo que não saibamos) passa:
+              // era isto que recuperava de um rollout a meio, e desistir
+              // deixava a pessoa num ecrã morto.
+              if (valeRepetir(motivo)) reentrar()
+            })
+            return
+          }
+          setStatus(t('room.estado.ligacaoPerdidaAReconectar'))
+          reentrar()
         }
         s.on('waiting', () => setRoomState('waiting'))
         s.on('denied', () => setRoomState('denied'))
@@ -303,7 +344,8 @@ export function useCallSession(
             // o separador a meio é justamente a cauda que interessa medir.
             if (st === 'connected' && !temposEnviados.current && tempos.vale_reportar()) {
               temposEnviados.current = true
-              void postTimings(code, tempos.resumo()).catch(() => {})
+              // Um convidado não reporta tempos: a rota pede conta.
+              if (!souConvidado()) void postTimings(code, tempos.resumo()).catch(() => {})
             }
             if (st === 'degraded') setStatus(t('room.estado.mediaInstavel'))
             else if (st === 'reconnecting' || st === 'recovering') setStatus(t('room.estado.aRestabelecer'))
@@ -391,6 +433,10 @@ export function useCallSession(
       core.localStreamRef.current?.getTracks().forEach((tr) => tr.stop())
       core.localStreamRef.current = null
     }
+    // As três dependências identificam a TENTATIVA de chamada. Tudo o mais
+    // (`core`, `media`, os setters, o `bus`) muda durante a chamada, e pô-lo
+    // aqui corria este cleanup — que desliga a chamada e para todas as tracks —
+    // a meio de uma reunião a decorrer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, passTry, joinIntent])
 

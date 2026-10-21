@@ -7,7 +7,7 @@
 # publica em 127.0.0.1. `__NODE_IP__` é substituído por esse script.
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: coturn, namespace: delonix-meet, labels: { app: coturn } }
+metadata: { name: coturn, namespace: ngolacloud-meet, labels: { app: coturn } }
 spec:
   replicas: 1
   strategy: { type: Recreate } # hostNetwork: duas réplicas disputariam a porta

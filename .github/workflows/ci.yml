@@ -58,6 +58,14 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U delonix -d delonix_meet"
           --health-interval 5s --health-timeout 3s --health-retries 20
+      # Só para `server/tests/seat_redis.rs` (o lugar reservado partilhado entre
+      # pods). Os outros testes não usam Redis: `TEST_REDIS_URL` é lida só ali.
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -86,6 +94,7 @@ jobs:
           # migra a sua própria base neste servidor. Sem a variável falham —
           # não passam a verde por não terem corrido.
           DATABASE_URL: postgres://delonix:delonix_dev@localhost:5435/delonix_meet
+          TEST_REDIS_URL: redis://localhost:6379
         # --test-threads=4: cada binário de testes partilha uma pool de ligações;
         # sem tecto, os testes esperam ligações e falham por PoolTimedOut num
         # runner de 2 vCPU, não por o produto estar partido.
@@ -134,6 +143,50 @@ jobs:
         working-directory: .
         run: node web/e2e/bar-responsivo.mjs
 
+      # A cena de marca mede-se por PIXÉIS, e é a única forma de a medir: a
+      # geometria tem testes puros, mas o `drawImage` e o texto da faixa só se
+      # observam no canvas que saiu. Sem servidor nem conta, pelo mesmo
+      # argumento do e2e acima — o compositor REAL do Estúdio vai empacotado
+      # pelo esbuild, e as fontes são canvas de cor sólida.
+      - name: Cena de marca no canvas (faixa, coluna, herói e moldura)
+        working-directory: .
+        run: node web/e2e/cena-de-marca.mjs
+
+      # O mesmo, mas na SALA, onde o herói é a partilha de ecrã. Inclui o
+      # controlo positivo de que sem ecrã o herói cai para uma câmara em vez
+      # de ficar preto — quem pára de partilhar a meio de uma aula não pode
+      # derrubar a imagem.
+      - name: Cena de marca na sala (ecrã no herói, câmaras na coluna)
+        working-directory: .
+        run: node web/e2e/cena-na-sala.mjs
+
+      - name: Build de produção
+        run: npm run build
+
+  web_admin:
+    name: Backoffice (web-admin)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web-admin/package-lock.json
+
+      - run: npm ci
+
+      - name: Tipos (tsc --noEmit)
+        run: node_modules/.bin/tsc --noEmit
+
+      - name: Testes (vitest)
+        run: node_modules/.bin/vitest run
+
+      # Sem e2e ainda (R-nada registado): é a primeira versão do backoffice,
+      # só tsc + vitest + build, como o resto desta fase documenta no PR.
       - name: Build de produção
         run: npm run build
 
@@ -149,14 +202,51 @@ jobs:
       - name: Capacidades vendidas (nada se vende sem código por trás)
         run: bash scripts/check-capability-claims.sh
 
+      # O lint do frontend precisa das dependências; o job de fitness não as
+      # instalava porque até 2026-10-06 não havia lint nenhum para correr.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Dependências do frontend (para o lint)
+        run: npm ci --prefix web --no-audit --no-fund
+      - name: Lint do frontend (catraca — os problemas só descem)
+        run: bash scripts/check-frontend-lint.sh
+
       - name: Drift documental (módulos, migrações, versões, SQL)
         run: bash scripts/check-docs-drift.sh
 
       - name: Autorização de rotas (nenhuma rota aberta por esquecimento)
         run: bash scripts/check-route-auth.sh
 
+      - name: Tools MCP (declaradas, ligadas, exercitadas, e sem org do cliente)
+        run: bash scripts/check-mcp-tools.sh
+
       - name: Afinidade por sala (ADR-0001 / regressão R3)
         run: bash scripts/check-room-affinity.sh
+
+      # O `?token=` do /ws é a credencial: um access_log guarda-a em claro, e
+      # o token de FONTE de um estúdio vive 12 h. Dois dos quatro nginx do
+      # repo registavam-no — medido a 2026-10-16, na revisão do #356.
+      - name: O /ws não escreve o token no access log
+        run: bash scripts/check-ws-sem-access-log.sh
+
+      # O `CHECK` da 0124 nasceu de um comentário com três dos quatro `kind`:
+      # a pista `screen-audio` (som do sistema de quem partilha ecrã) era
+      # recusada pela base, o erro ia para o log, e o ficheiro ficava no disco
+      # sem linha que o servisse. Nada disto dava vermelho em sítio nenhum.
+      - name: O CHECK do recording_tracks.kind aceita o que o SFU produz
+        run: bash scripts/check-recording-track-kinds.sh
+
+      # Os ficheiros derivados de uma gravação não estavam registados em sítio
+      # nenhum e cada caminho que apaga tinha de se lembrar deles um a um: a
+      # retenção fazia três `remove_file` à mão e o quarto derivado (os
+      # `clip-*` da 0118) ficou esquecido no disco para sempre. O portão obriga
+      # a CLASSIFICAR cada nome de ficheiro novo, e a ligá-lo ao registo da
+      # 0126 se for de uma gravação.
+      - name: Todo o ficheiro derivado de uma gravação está no registo
+        run: bash scripts/check-recording-artifacts.sh
 
       # O Lua 5.2 é o que o mod_lua da imagem liga (liblua5.2).
       - name: Sintaxe dos scripts Lua do FreeSWITCH (R223 — o IVR está no caminho de quem liga)
@@ -170,11 +260,20 @@ jobs:
       - name: ffmpeg do servidor é LGPL, com versão e SHA-256 fixados (docs/tv/b3-ffmpeg-lgpl-2026-10-04.md)
         run: bash scripts/check-ffmpeg-licenca.sh
 
+      - name: a GPL do Piper fica confinada à imagem do tts-server, com a fonte acompanhada (ADR-0030)
+        run: bash scripts/check-tts-licenca.sh
+
       - name: O bordo SIP anuncia um endereço real (R277 — sem ele, todas as chamadas caem aos 32 s)
         run: bash scripts/check-bordo-anuncia.sh
 
       - name: Só o bordo diz de que organização é uma central (ADR-0016)
         run: bash scripts/check-bordo-central.sh
+
+      - name: Os compose das réplicas de prova lêem-se (uma chave repetida partiu uma sem ninguém ver)
+        run: bash scripts/check-replicas-compose.sh
+
+      - name: Nenhuma forma de implantar fica sem tecto de participantes (ADR-0017)
+        run: bash scripts/check-tectos-de-admissao.sh
 
       - name: Manifestos K8s renderizam; portas internas fora do ingress (ADR-0006 §4)
         run: bash scripts/check-k8s-render.sh
@@ -182,8 +281,20 @@ jobs:
       - name: Chart Helm renderiza, recusa o inseguro e respeita ADR-0001/ADR-0006
         run: bash scripts/check-helm.sh
 
+      - name: A observabilidade aponta para coisas reais (um ServiceMonitor sem alvos é indistinguível de um produto saudável)
+        run: bash scripts/check-observabilidade.sh
+
+      - name: O Ansible da produção lê-se e os plays casam com o inventário do tofu (ADR-0020)
+        run: bash scripts/check-ansible-producao.sh
+
+      - name: Uma só crypto provider do rustls (as duas fazem QUALQUER TLS do processo entrar em panic — R308)
+        run: bash scripts/check-crypto-provider.sh
+
       - name: Catraca da arquitectura (ADR-0004 — nenhuma cópia nova)
         run: bash scripts/check-arquitectura-catraca.sh
+
+      - name: Toda a reivindicação de trabalho passa pela peça comum
+        run: bash scripts/check-filas-reivindicacao.sh
 
       - name: Regra da dependência entre crates (ADR-0006 §1)
         run: bash scripts/check-crate-deps.sh
@@ -203,6 +314,21 @@ jobs:
       # O check-tenant-rls.sh exige um cluster vivo e faz skip sem ele. Não é
       # executado aqui de propósito: um teste que faz skip em silêncio no CI
       # dá luz verde sem ter provado nada. Corre onde há cluster (`make prod`).
+
+      # O worker de IA (ai-worker/, Python) tinha 24 testes e NENHUM corria:
+      # medido a 2026-10-08, `ai-worker` não aparecia no Makefile nem neste
+      # ficheiro. Uma bateria que ninguém corre não é uma bateria.
+      #
+      # Só o grpcio e o protobuf, nas versões do requirements.txt — o
+      # faster-whisper (e os ~3 GB de modelo) não entram: o `transcriber.py`
+      # importa-o TARDE, dentro do construtor, e nenhum teste o constrói.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Testes do worker de IA (batimento, ciclo, gRPC com dobras)
+        run: |
+          pip install --quiet grpcio==1.66.2 protobuf==5.27.5
+          cd ai-worker/tests && python -m unittest discover -s . -v
 
   seguranca:
     name: Segurança das dependências
@@ -380,6 +506,11 @@ jobs:
           # Uma gravação que falha tem de ser VISTA — e as três vistas da
           # biblioteca não podem oferecer acções sobre ela (R59).
           APP=http://localhost:5174 node web/e2e/gravacao-falhada.mjs
+          # E uma que o servidor ainda está a COMPOR não é uma falhada: lê-se
+          # «a processar», com o progresso, nas mesmas vistas e sem acções. A
+          # linha entra por SQL, como o gravador a insere, porque a janela real
+          # é curta demais para um teste a apanhar.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/gravacao-a-compor.mjs
           # A REENTRADA volta ao CI (R98). Esteve fora seis rondas por falhar só
           # no runner — e a causa era o PRODUTO: duas renovações de sessão
           # concorrentes revogavam-se uma à outra e punham o utilizador na
@@ -405,6 +536,18 @@ jobs:
           # admitir → retrato remoto. É a promessa central do produto e não
           # havia teste nenhum a cobri-la ponta a ponta.
           APP=http://localhost:5174 node web/e2e/reuniao.mjs
+          # O painel de gravações DENTRO da sala é mais uma vista da gravação
+          # (R59): nenhum botão sobre uma a compor, falhada, ou que quem vê não
+          # pode descarregar; e uma gravação do servidor parada na sala entra na
+          # lista sozinha. Sem ffmpeg, essa acaba falhada com a causa — é a
+          # falha de operação que o runner dá de graça. Depois do `reuniao.mjs`,
+          # que prova que se entra numa sala pela interface.
+          APP=http://localhost:5174 PG=$(docker ps --filter ancestor=postgres:17-alpine --format '{{.Names}}' | head -1) node web/e2e/gravacao-na-sala.mjs
+          # Um CONVIDADO SEM CONTA entra pela interface: o link, um nome, a
+          # sala de espera, o anfitrião admite. É o caminho que decide a
+          # adopção, e durante meses o servidor teve a rota e nenhum ecrã a
+          # chamava — o `convidado.mjs` prova o servidor, este prova o ecrã.
+          APP=http://localhost:5174 API=http://localhost:8180 node web/e2e/convidado-ecra.mjs
           # A MESMA pessoa entra duas vezes — portátil e telemóvel. A segunda
           # sessão tem de entrar SEM áudio: dois microfones e dois altifalantes
           # da mesma pessoa no mesmo espaço físico realimentam-se, e o ruído é

@@ -41,7 +41,14 @@ ingress:
 coturn:
   # Sem LoadBalancer: o relay usa a rede do nó e anuncia o IP dele.
   hostNetwork: true
-  relayPorts: { min: 49160, max: 49400 }
+  # 20000-20240 e não 49160-49400: a gama antiga caía dentro dos portos
+  # efémeros do kernel (32768-60999), e na rede do nó isso disputa portas com
+  # tudo o que o nó já abre. O sintoma seria uma alocação a falhar de vez em
+  # quando — nunca um erro no arranque. O portão recusa-o desde 2026-10-11.
+  relayPorts: { min: 20000, max: 20240 }
+  # Alinhado com as 241 portas: cada alocação UDP gasta uma. O `totalQuota: 5000`
+  # por omissão prometia 20× o que a gama dá.
+  totalQuota: 240
   relayThreads: 2
   service:
     type: ClusterIP

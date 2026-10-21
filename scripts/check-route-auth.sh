@@ -21,7 +21,20 @@ MAIN = 'server/src/lib.rs'  # o router vive na biblioteca (ADR-0004 §6 passo 1)
 PUBLICAS = 'scripts/rotas-publicas.txt'
 
 # Autenticação por EXTRACTOR na assinatura.
-EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth')
+# `McpAuth` (ADR-0027) é o da superfície dos agentes: verifica o `typ: "mcp"`,
+# o `aud` do recurso (RFC 8707) e o estado da sessão, e a sua recusa escreve o
+# `WWW-Authenticate` que a especificação MCP exige. É um extractor a sério
+# (`FromRequestParts`) exactamente para caber aqui — autenticar no corpo do
+# handler deixava esta superfície fora do portão.
+# `TvAgentAuth` (RFC-0002, ADR-0031) é o do agente de captura de TV: token
+# `dlxtv_` da caixa, verificado contra o `token_hash` e a revogação, como o
+# `SmsGatewayAuth` já fazia para o agente de SMS.
+#
+# `ScimAuth` chegou pela `develop` ao mesmo tempo. Os dois ficam, e não é
+# arrumação: esta lista é o que decide se uma rota CONTA como autenticada
+# (`:141`), logo tirar um deles punha o portão a acusar rotas reais de não
+# terem autenticação — falhas falsas, e do género que se aprende a ignorar.
+EXTRACTORES = ('AuthUser', 'ApiKey', 'OdooTokenAuth', 'SmsGatewayAuth', 'TvAgentAuth', 'McpAuth', 'ScimAuth')
 # Autenticação por GUARDA chamada no corpo. Nem tudo pode ser um extractor: a
 # API interna da voz autentica por segredo partilhado em header, e isso lê-se
 # do `HeaderMap`, não de um tipo.

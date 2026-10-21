@@ -5,6 +5,7 @@ export default {
   meta_one: '{{count}} item · {{size}}',
   meta_other: '{{count}} itens · {{size}}',
   abrir: 'Abrir {{name}}',
+  menuDe: 'Acções de {{name}}',
   salaCodigo: 'Sala {{code}}',
   partilhadaComigo: 'Partilhada comigo',
   semResultados: 'Nenhuma gravação corresponde à pesquisa',
@@ -47,6 +48,9 @@ export default {
     estado: 'Estado',
   },
   estado: {
+    aProcessar: 'A processar',
+    aProcessarPct: 'A processar {{pct}}%',
+    aProcessarAviso: 'O servidor ainda está a compor esta gravação. Fica disponível quando acabar.',
     aTranscrever: 'A transcrever',
     aTranscreverPct: 'A transcrever {{pct}}%',
     publicada: 'Publicada',

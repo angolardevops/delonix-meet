@@ -195,10 +195,12 @@ Recusas ao operador: `{"type":"error","message":"studio.not_operator"|"studio.un
 
 ## 5. Gravação por câmara (ISO) e faixas de áudio separadas — `PARCIAL`
 
-> `FEITO`: `GET …/recording-target` (espaço livre real por `statvfs`).
-> `CONTRATO`, por implementar: `recording_tracks`, `GET /api/recordings/{recording_id}/tracks`
-> e `…/tracks/{track_id}/content`, e a gravação ISO em ficheiro por fonte. A UI **não**
-> pode mostrar «REC · ISO n» com um número de faixas — ainda não há de onde o ler.
+> `FEITO`: `GET …/recording-target` (espaço livre real por `statvfs`); a tabela
+> `recording_tracks` (migrações 0124 e 0125), a gravação ISO em ficheiro por fonte, e as
+> duas rotas — `GET /api/recordings/{recording_id}/tracks` e `…/tracks/{track_id}/content`.
+> `CONTRATO`, por implementar: a composição multi-faixa por cópia (`-itsoffset`, ADR-0014
+> §2.3) e a UI. A UI **não** pode mostrar «REC · ISO n» enquanto não ler o número da
+> listagem — há de onde o ler, mas ninguém o lê ainda.
 
 **Decisão (ADR-0014 §3):** o SFU grava cada publicação (já o fazia, em IVF/OGG) e, no
 fim, cada fonte fica num ficheiro próprio por **cópia** (`-c copy`, sem recodificar).
@@ -216,13 +218,35 @@ faixas.
 | `GET /api/orgs/{org_id}/studios/{studio_id}/recording-target` | view | `200 RecordingTarget` |
 
 ```json
-RecordingTrack = {"id","recording_id","kind":"video|audio","label":"CAM 2 · telefone da Ana",
+RecordingTrack = {"id","recording_id","kind":"video|screen|audio|screen-audio","label":"CAM 2 · telefone da Ana",
   "source_id":null|"…","number":2|null,"codec":"vp8|opus","container":"webm|ogg",
   "size_bytes","duration_ms"|null,"offset_ms","width"|null,"height"|null,"created_at"}
 RecordingTarget = {"kind":"local","free_bytes","total_bytes","iso_recording",
   "object_storage":{"kind":"minio","state":"not_configured"}}
 ```
 
+- **Os quatro `kind`, e porque são quatro.** `video` (câmara), `screen` (partilha de
+  ecrã), `audio` (microfone) e `screen-audio` (som do SISTEMA de quem partilha ecrã).
+  O último existe porque quem partilha ecrã com som publica DUAS pistas de áudio, e o
+  propósito do ISO é tê-las à parte antes de qualquer mistura: duas linhas `audio` do
+  mesmo `publisher_id` seriam indistinguíveis, e a pós-produção ficaria sem saber qual
+  é a voz. O `CHECK` da 0124 enumerava três e recusava a quarta em silêncio — a 0125
+  corrige-o, e o `scripts/check-recording-track-kinds.sh` recusa que volte a divergir
+  do `recorder::REC_TRACK_KINDS`.
+- **Onde vivem os ficheiros, e quem os apaga.** `recordings_dir/iso-<gravação>/`
+  (`recorder::pasta_iso`) — deliberadamente FORA do `tmp-<sessão>`, que o
+  `sweep_orphan_segments` apaga. A pasta guardada contém *exactamente* os ficheiros com
+  linha em `recording_tracks`: o que não tenha linha é descartado e contado em
+  `delonix_recording_iso_tracks_discarded_total` (só o que é defeito — uma câmara
+  que se ligou e nunca publicou não conta). As pistas seguem a gravação: a retenção
+  apaga a pasta no mesmo passo em que apaga o `{id}.webm`, a miniatura e a linha.
+- **O que NÃO está fechado, e fica dito:** um processo morto entre a renomeação da
+  pasta e o `INSERT` das pistas deixa uma pasta que nenhuma linha serve, e **nada a
+  recolhe** — o varredor de órfãos só olha para `tmp-*`, e varrê-la pela ausência da
+  linha em `recordings` não funciona (a linha existe: nasce antes de compor) além de
+  ser perigoso num volume partilhado que sobreviva à base. Fecha-se com um registo
+  explícito do artefacto (uma coluna `recordings.iso_dir`, ou uma tabela de ficheiros
+  por gravação que a retenção percorra), não por inferência a partir do nome.
 - `free_bytes`/`total_bytes` são o `statvfs` real do volume de gravações.
 - **Ligação ao #93** (`backend/bw2-gravacoes`, por fundir): `recording_tracks.recording_id`
   referencia `recordings(id)`. O acesso usa `recordings::load_item` + `can_see`. Quando o

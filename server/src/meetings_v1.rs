@@ -126,6 +126,8 @@ pub struct MeetingResp {
     #[serde(flatten)]
     pub options: SessionOptions,
     pub room_code: String,
+    /// Link de entrada da sala. Vazio só numa reunião agendada antes da
+    /// migração 0114, que nasceu sem sala — nunca um link incompleto.
     pub join_url: String,
     pub host_email: String,
     /// Convidados efectivamente registados (email -> id do utilizador).
@@ -386,14 +388,32 @@ async fn resolve_org_user(
 
 // ---------- helpers ----------
 
-/// A reunião pertence à organização da chave? Mesma regra do
-/// `GET /api/v1/meetings` já existente: o dono é membro da org.
+/// A reunião pertence à organização da chave?
+///
+/// Fonte da verdade: `meetings.org_id` (migração 0104), gravado na criação —
+/// NUNCA inferência via pertença do dono. Antes desta correcção a regra era
+/// «o dono é membro da org», sem olhar a `archived_at` nem a se a reunião
+/// nasceu mesmo naquela organização: um utilizador que tivesse (ainda que só
+/// outrora, arquivado) uma linha em `org_members` para a organização da
+/// chave bastava para a chave ler/alterar/apagar a reunião, mesmo sendo ela
+/// assunto de outra organização qualquer (auditoria 2026-10-08, T1).
+///
+/// O `OR` com `org_id IS NULL` é defesa em profundidade, não o caminho
+/// principal: cobre só a reunião legada cujo backfill (migração 0104) não
+/// conseguiu atribuir organização nenhuma (dono sem pertença alguma na
+/// altura), e mesmo aí exige pertença ACTIVA — nunca arquivada — do dono.
+/// Uma reunião com `org_id` explícito nunca cai neste ramo.
 async fn meeting_in_org(state: &AppState, org_id: Uuid, id: Uuid) -> Result<Meeting, ApiError> {
     let meeting: Option<Meeting> = sqlx::query_as(&format!(
         "SELECT {MEETING_COLS} FROM meetings m
          WHERE m.id = $1
-           AND EXISTS (SELECT 1 FROM org_members om
-                       WHERE om.org_id = $2 AND om.user_id = m.owner_id)"
+           AND (
+             m.org_id = $2
+             OR (m.org_id IS NULL
+                 AND EXISTS (SELECT 1 FROM org_members om
+                             WHERE om.org_id = $2 AND om.user_id = m.owner_id
+                               AND om.archived_at IS NULL))
+           )"
     ))
     .bind(id)
     .bind(org_id)
@@ -477,7 +497,17 @@ async fn build_resp(
     skipped: Vec<SkippedInvitee>,
     existing: bool,
 ) -> Result<MeetingResp, ApiError> {
+    // Sem sala não há link. Até à migração 0114 uma reunião nascia sem
+    // `room_code` e isto construía `https://<org>/#/r/` — um link partido que
+    // saía na resposta como se fosse bom. Hoje a sala nasce com a reunião e o
+    // caso só sobra para as reuniões agendadas antes dessa migração: essas
+    // levam `join_url` vazia, que é verdade, em vez de um link que não abre.
     let room_code = meeting.room_code.clone().unwrap_or_default();
+    let join_url = if room_code.is_empty() {
+        String::new()
+    } else {
+        crate::apikeys::room_link(state, org_id, &room_code).await
+    };
     Ok(MeetingResp {
         id: meeting.id,
         external_ref: external_ref_of(state, meeting.id).await,
@@ -486,7 +516,7 @@ async fn build_resp(
         duration_min: meeting.duration_min,
         kind: meeting.kind.clone(),
         options: crate::meetings::load_session_options(&state.db, meeting.id).await?,
-        join_url: crate::apikeys::room_link(state, org_id, &room_code).await,
+        join_url,
         room_code,
         host_email,
         invitees: invitees_of(state, meeting.id).await?,
@@ -649,10 +679,14 @@ pub async fn create(
     .await?;
     crate::rooms::apply_session_options(&state.db, &room.code, &req.options).await?;
 
+    // `org_id` é a organização da CHAVE que está a criar — não uma inferência
+    // a partir de quem o anfitrião é membro de quê. É exactamente o que
+    // `meeting_in_org` (e as equivalentes em `apikeys.rs`) passam a exigir
+    // (migração 0104) em vez de pertença do dono.
     let meeting: Meeting = sqlx::query_as(&format!(
         "INSERT INTO meetings (owner_id, title, description, kind, starts_at, duration_min, room_code,
-                               format, waiting_room, auto_record, record_quality)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                               format, waiting_room, auto_record, record_quality, org_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING {MEETING_COLS}"
     ))
     .bind(host_id)
@@ -666,6 +700,7 @@ pub async fn create(
     .bind(req.options.waiting_room)
     .bind(req.options.auto_record)
     .bind(&req.options.record_quality)
+    .bind(key.org_id)
     .fetch_one(&state.db)
     .await?;
 
@@ -713,7 +748,41 @@ pub async fn create(
 
     let (_, skipped) = add_invitees(&state, key.org_id, meeting.id, host_id, &req.invitees).await?;
 
-    crate::meetings::fire_meeting_webhook(&state, &meeting, host_id, "meeting.created").await;
+    // NOTA DE ÂMBITO (trabalho nº3): aqui a transacção agrupa só o REGISTO das
+    // entregas, não a escrita de negócio. A `/api/v1` cria a reunião mais
+    // acima, passa por um caminho de IDEMPOTÊNCIA que pode sair antes
+    // (`meeting_external_refs` com conflito) e chama o `add_invitees`, que usa
+    // a pool — enfiar uma transacção por aí exigiria mudar essa função e tratar
+    // o rollback do caminho de saída, com risco para a idempotência, que é o
+    // contrato desta rota. Fica anotado: a janela entre o commit da reunião e
+    // este registo NÃO está fechada nesta superfície.
+    //
+    // O que ganha mesmo assim: as entregas das várias organizações nascem todas
+    // ou nenhuma, e uma vez nascidas o varredor e o `retry_due` recuperam-nas.
+    // O dono lê-se ANTES da transacção (as consultas usam a pool).
+    let dono = crate::meetings::dono_do_evento(&state, host_id).await;
+    let fila = match (dono, state.db.begin().await) {
+        (Some(d), Ok(mut tx)) => {
+            let ctx = crate::meetings::monta_meeting_webhook(d, &meeting, "meeting.created");
+            match crate::meetings::enqueue_meeting_webhook(&mut tx, ctx, "meeting.created").await {
+                Ok(f) if tx.commit().await.is_ok() => f,
+                Ok(_) => {
+                    tracing::warn!("v1: o registo das entregas não ficou");
+                    Vec::new()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "v1: o registo das entregas falhou");
+                    Vec::new()
+                }
+            }
+        }
+        (None, _) => Vec::new(),
+        (_, Err(e)) => {
+            tracing::warn!(error = %e, "v1: sem transacção para registar as entregas");
+            Vec::new()
+        }
+    };
+    crate::webhooks::envia(&state, "meeting.created", fila).await;
     crate::audit::log(
         &state.db,
         Some(key.org_id),
@@ -739,7 +808,7 @@ pub async fn create(
         (status = 400, body = crate::openapi::ErrorBody, description = "`title` vazio, `duration_min` fora de 1-1440 ou mais de 200 convidados; `meeting.invalid_format` / `meeting.invalid_record_quality`"),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
         (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"),
         (status = 422, body = crate::openapi::ErrorBody, description = "`meeting.auto_record_e2ee`: gravação automática numa sala E2EE"),
         (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
@@ -878,7 +947,7 @@ pub async fn patch(
         (status = 400, body = crate::openapi::ErrorBody, description = "a reunião ainda não tem sala"),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
         (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"),
         (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]
@@ -924,8 +993,37 @@ pub async fn ring(
     )
     .await;
 
-    crate::meetings::fire_meeting_webhook(&state, &meeting, meeting.owner_id, "meeting.started")
-        .await;
+    // NOTA DE ÂMBITO (trabalho nº3): aqui a transacção agrupa só o REGISTO das
+    // entregas, não a escrita de negócio. A `/api/v1` cria a sala e marca o arranque
+    // mais acima, por caminhos partilhados com a BFF. Fica anotado: a janela
+    // entre esse commit e este registo NÃO está fechada nesta superfície.
+    //
+    // O que ganha mesmo assim: as entregas das várias organizações nascem todas
+    // ou nenhuma, e uma vez nascidas o varredor e o `retry_due` recuperam-nas.
+    // O dono lê-se ANTES da transacção (as consultas usam a pool).
+    let dono = crate::meetings::dono_do_evento(&state, meeting.owner_id).await;
+    let fila = match (dono, state.db.begin().await) {
+        (Some(d), Ok(mut tx)) => {
+            let ctx = crate::meetings::monta_meeting_webhook(d, &meeting, "meeting.started");
+            match crate::meetings::enqueue_meeting_webhook(&mut tx, ctx, "meeting.started").await {
+                Ok(f) if tx.commit().await.is_ok() => f,
+                Ok(_) => {
+                    tracing::warn!("v1: o registo das entregas não ficou");
+                    Vec::new()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "v1: o registo das entregas falhou");
+                    Vec::new()
+                }
+            }
+        }
+        (None, _) => Vec::new(),
+        (_, Err(e)) => {
+            tracing::warn!(error = %e, "v1: sem transacção para registar as entregas");
+            Vec::new()
+        }
+    };
+    crate::webhooks::envia(&state, "meeting.started", fila).await;
     tracing::info!(%id, ringing = ringing.len(), offline = offline.len(), "ring por API");
 
     Ok(Json(serde_json::json!({
@@ -950,7 +1048,7 @@ pub async fn ring(
         (status = 200, body = DeleteMeetingResp),
         (status = 401, body = crate::openapi::ErrorBody, description = "chave de API ausente, inválida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`)"),
         (status = 403, body = crate::openapi::ErrorBody, description = "a chave não tem o escopo `meetings:write` (`api_key.scope_missing`, escopo em `details`)"),
-        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou o dono não é membro da organização da chave"),
+        (status = 404, body = crate::openapi::ErrorBody, description = "a reunião não existe ou não pertence à organização da chave (`meetings.org_id`)"),
         (status = 429, body = crate::openapi::ErrorBody, description = "rate-limit da v1, por chave (`Retry-After` com o que falta da janela)"),
     )
 )]

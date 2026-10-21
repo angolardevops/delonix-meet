@@ -25,13 +25,43 @@ data:
   TENANCY_MODE: {{ . | quote }}
   {{- end }}
   DELONIX_MIGRATE: {{ ternary "0" "1" (eq $v.server.migrations.mode "job") | quote }}
-  CORS_ORIGINS: {{ printf "https://%s" $v.host | quote }}
+  {{- /* O canónico primeiro: é a origem para onde o SSO devolve o browser. */}}
+  {{- $origens := list -}}
+  {{- range include "dm.hosts" . | fromJsonArray -}}
+  {{- $origens = append $origens (printf "https://%s" .) -}}
+  {{- end }}
+  CORS_ORIGINS: {{ join "," $origens | quote }}
+  PUBLIC_URL: {{ $v.publicUrl | default (printf "https://%s" $v.host) | trimSuffix "/" | quote }}
   RECORDINGS_DIR: /var/lib/delonix/recordings
   # Media relay-only pelo coturn: o IP do pod não é alcançável de fora.
   FORCE_TURN_RELAY: {{ ternary "1" "0" $v.server.forceTurnRelay | quote }}
   SFU_EXTERNAL_IP: ""
+  {{- /*
+    Admissão por capacidade (ADR-0017). Entram SEMPRE, `0` incluído.
+
+    Até 2026-10-18 omitia-se a variável quando o valor era `0`, porque o
+    servidor entrava em pânico com um inteiro não positivo. Essa razão
+    desapareceu: `0` passou a ser um estado declarado — «sem tecto, de
+    propósito» — e a AUSÊNCIA passou a valer a omissão do código (50, e 80 %
+    dela para a organização).
+
+    Com a regra antiga, `nodePeerCapacity: 0` deixava de renderizar e o nó
+    recebia 50 sem ninguém o ter pedido: o único caminho para «sem tecto» num
+    deploy por Helm desaparecia — justamente o que o `values.yaml` manda pôr
+    para medir a rampa («SE ESTÁS A MEDIR O TECTO, PÕE 0»), e a medição batia
+    num tecto que o operador julgava ter desligado.
+  */}}
+  NODE_PEER_CAPACITY: {{ $v.server.nodePeerCapacity | quote }}
+  ORG_MAX_PARTICIPANTS: {{ $v.server.orgMaxParticipants | quote }}
   {{- with include "dm.turnHost" . }}
   TURN_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with $v.server.turnHostBySite }}
+  {{- $pares := list -}}
+  {{- range $site := keys . | sortAlpha -}}
+  {{- $pares = append $pares (printf "%s=%s" $site (index $v.server.turnHostBySite $site)) -}}
+  {{- end }}
+  TURN_HOST_BY_HOST: {{ join "," $pares | quote }}
   {{- end }}
   {{- with include "dm.redisUrl" . }}
   REDIS_URL: {{ . | quote }}
@@ -56,6 +86,28 @@ data:
   {{- end }}
   {{- with $v.server.telephony.kamailioRpcUrl }}
   TELEPHONY_KAMAILIO_RPC_URL: {{ . | quote }}
+  {{- end }}
+  {{- /*
+    A IA local. O URL é DERIVADO do Service do chart e não um valor que o
+    operador escreve: era exactamente aí que a produção se perdia — o Ollama
+    existia no caminho kustomize, o `OLLAMA_URL` vivia noutro ficheiro, e o
+    ConfigMap que foi para o cluster partilhado não o levava. Sem a chave, o
+    servidor desliga a IA em silêncio (`Config.ollama_url = None`) e a ata de
+    IA nunca nasce.
+
+    Os nomes dos modelos saem da MESMA lista que o pod puxa (`ollama.models`),
+    por isso não podem divergir dela.
+  */}}
+  {{- if $v.ollama.enabled }}
+  OLLAMA_URL: {{ printf "http://delonix-ollama.%s.svc.cluster.local:11434" .Release.Namespace | quote }}
+  OLLAMA_MODEL_SUMMARY: {{ $v.ollama.modelSummary | quote }}
+  OLLAMA_MODEL_TRANSLATE: {{ $v.ollama.modelTranslate | quote }}
+  {{- with $v.ollama.modelStudio }}
+  OLLAMA_MODEL_STUDIO: {{ . | quote }}
+  {{- end }}
+  OLLAMA_TIMEOUT_SECS: {{ $v.ollama.timeoutSeconds | quote }}
+  MOM_WINDOW_CHARS: {{ $v.ollama.momWindowChars | quote }}
+  MOM_SUMMARY_TIMEOUT_SECS: {{ $v.ollama.momSummaryTimeoutSeconds | quote }}
   {{- end }}
   {{- range $k, $val := $v.server.config }}
   {{ $k }}: {{ $val | toString | quote }}

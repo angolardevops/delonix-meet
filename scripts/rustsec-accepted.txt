@@ -18,3 +18,25 @@ RUSTSEC-2026-0221  # `event-listener` 5.4.1 — unsound (`!Send` a atravessar
                    # `sqlx-core` 0.8.6; não temos como o evitar sem sair do
                    # sqlx. Unsoundness, não vulnerabilidade explorável a partir
                    # de input do utilizador. Sai quando o sqlx subir a dep.
+
+RUSTSEC-2026-0381  # `webpki-roots` 0.26.11 — o pacote de raízes confia em
+                   # intermediários emSign já não confiados. A correcção está em
+                   # >=1.0.10, OUTRA linha semver: o 1.0.10 já entrou (era 1.0.9),
+                   # mas o 0.26.11 vem preso ao `sqlx-core` 0.8.6, que pede
+                   # `^0.26`. Não se sobe sem sair do sqlx 0.8.
+                   #
+                   # Porque não é exercido AQUI: o pacote de raízes só decide
+                   # confiança quando o cliente VERIFICA o certificado do
+                   # servidor. O sqlx só verifica em `sslmode=verify-ca` ou
+                   # `verify-full` — medido em sqlx-postgres 0.8.6,
+                   # `src/connection/tls.rs`: `accept_invalid_certs =
+                   # !matches!(ssl_mode, VerifyCa | VerifyFull)`. O nosso default
+                   # é `Prefer` (`src/options/ssl_mode.rs`, `#[default] Prefer`),
+                   # e não há `sslmode=` em nenhuma DATABASE_URL nem `PGSSLMODE`
+                   # em nenhum deploy — a ligação é ao Postgres dentro do
+                   # cluster, por `*.svc.cluster.local`.
+                   #
+                   # ISTO DEIXA DE VALER no dia em que alguém puser
+                   # `sslmode=verify-ca` ou `verify-full` na DATABASE_URL: aí o
+                   # pacote passa a decidir confiança e esta linha tem de sair.
+                   # Sai também quando o sqlx subir a dep (0.9 já usa a linha 1.0).

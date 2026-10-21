@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { postQos } from '../api'
+import { souConvidado } from '../convidado'
 import type { PeerInfo, Role } from '../signaling'
 import type { QosReport } from '../webrtc'
 import type { LocalConditions } from '../layerPolicy'
@@ -82,6 +83,10 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
       }),
     ]
     return () => offs.forEach((off) => off())
+    // Só o que é estável: `core` inteiro nas dependências remontava estas
+    // subscrições a cada mudança de estado da sala (ver useLocalMedia para o
+    // custo disso). O `core.levelsRef` entra porque é um ref — estável — e é o
+    // único campo de `core` que estes handlers usam.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal, setPeers, core.levelsRef])
 
@@ -113,7 +118,10 @@ export function useParticipants(core: RoomCore, peoplePanelOpen: boolean) {
       const agora = Date.now()
       if (agora - ultimoRelatorio.current < INTERVALO_RELATORIO_MS) return
       ultimoRelatorio.current = agora
-      // A amostra COMPLETA: a média escondia o participante inaudível.
+      // A amostra COMPLETA: a média escondia o participante inaudível. Não se
+      // envia por um convidado: a rota pede conta (401) e a amostra dele não
+      // entrava em relatório nenhum.
+      if (souConvidado()) return
       void postQos(code, {
         rtt_ms: r.rttMs,
         loss_pct: r.lossPct,

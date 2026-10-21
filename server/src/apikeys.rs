@@ -704,13 +704,23 @@ pub async fn v1_meetings(
         auto_record: bool,
         record_quality: String,
     }
+    // `m.org_id` (migração 0104) é a fonte da verdade — não a pertença do
+    // dono, que nem olhava a `archived_at` (auditoria 2026-10-08, T1; mesma
+    // correcção de `meetings_v1::meeting_in_org`). O `OR` com `org_id IS
+    // NULL` é só defesa em profundidade para a reunião legada sem
+    // organização atribuída pelo backfill, e mesmo aí exige pertença ACTIVA.
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT m.id, m.title, m.description, m.kind, m.starts_at, m.duration_min,
                 m.room_code, m.created_at, m.minutes_ai_at,
                 m.format, m.waiting_room, m.auto_record, m.record_quality
          FROM meetings m
-         WHERE EXISTS (SELECT 1 FROM org_members om
-                       WHERE om.org_id = $1 AND om.user_id = m.owner_id)
+         WHERE (
+             m.org_id = $1
+             OR (m.org_id IS NULL
+                 AND EXISTS (SELECT 1 FROM org_members om
+                             WHERE om.org_id = $1 AND om.user_id = m.owner_id
+                               AND om.archived_at IS NULL))
+           )
            AND ($2::timestamptz IS NULL
                 OR m.created_at >= $2 OR m.starts_at >= $2 OR m.minutes_ai_at >= $2)
          ORDER BY m.starts_at LIMIT 500",
@@ -763,7 +773,7 @@ pub struct V1MeetingNotes {
         (status = 401, description = "Chave ausente, sem prefixo `dlx_`, desconhecida ou revogada (`auth.unauthenticated`), ou expirada (`api_key.expired`).", body = crate::openapi::ErrorBody),
         (status = 403, description = "A chave não tem o escopo `meetings:read` (`api_key.scope_missing`, escopo em `details`).", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos da v1 por chave (`Retry-After` com o que falta da janela).", body = crate::openapi::ErrorBody),
-        (status = 404, description = "A reunião não existe ou o dono não é membro da organização da chave.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A reunião não existe ou não pertence à organização da chave (`meetings.org_id`).", body = crate::openapi::ErrorBody),
     )
 )]
 pub async fn v1_meeting_notes(
@@ -778,11 +788,20 @@ pub async fn v1_meeting_notes(
         String,
         Option<chrono::DateTime<chrono::Utc>>,
     )> = sqlx::query_as(
+        // `m.org_id` (migração 0104) é a fonte da verdade — mesma correcção
+        // de `meetings_v1::meeting_in_org` e de `v1_meetings` acima; o `OR`
+        // com `org_id IS NULL` é só defesa em profundidade para a reunião
+        // legada sem organização atribuída, e exige pertença ACTIVA mesmo aí.
         "SELECT m.title, m.minutes, m.transcript, m.minutes_ai_at
              FROM meetings m
              WHERE m.id = $1
-               AND EXISTS (SELECT 1 FROM org_members om
-                           WHERE om.org_id = $2 AND om.user_id = m.owner_id)",
+               AND (
+                 m.org_id = $2
+                 OR (m.org_id IS NULL
+                     AND EXISTS (SELECT 1 FROM org_members om
+                                 WHERE om.org_id = $2 AND om.user_id = m.owner_id
+                                   AND om.archived_at IS NULL))
+               )",
     )
     .bind(id)
     .bind(key.org_id)
@@ -1058,6 +1077,41 @@ pub async fn v1_provision_org(
             _ => None,
         };
 
+    // C2 (revisão de segurança, 2026-10-09): PROVISIONING_SECRET é um segredo
+    // ÚNICO para toda a plataforma, mas é o que o módulo Odoo de CADA cliente
+    // usa para chegar aqui -- por desenho, está em todos os Odoo clientes ao
+    // mesmo tempo. Sem esta guarda, quem o tivesse (de instalar o módulo numa
+    // base de testes, por exemplo) conseguia REPROVISIONAR a organização de
+    // OUTRO cliente só por acertar `(odoo_db, odoo_company_id)` -- muitas
+    // vezes previsível -- e ficava com uma chave `dlx_` nova de escopo
+    // completo para ela, trocava-lhe a config SSO (login como qualquer
+    // membro) e reescrevia o `email_domain`. Criar uma org nova continua a
+    // bastar o segredo de plataforma (é o único credential que uma empresa
+    // nova pode ter); REPROVISIONAR uma que já existe passa a exigir a
+    // própria chave `dlx_` dessa organização -- só quem já a controla pode
+    // emitir uma chave nova ou tocar na config SSO dela. Perder essa chave É
+    // um motivo para falar com um administrador, não para o segredo global a
+    // substituir sozinho.
+    if let Some((org_id, _)) = &existing_org {
+        let caller_key = lookup_key(&state, &headers).await?.0;
+        let authorised = caller_key.is_some_and(|k| k.org_id == *org_id);
+        if !authorised {
+            tracing::warn!(
+                %org_id, odoo_db = ?req.odoo_db, odoo_company_id = ?req.odoo_company_id,
+                "reprovisionamento recusado: sem a chave de API da organização"
+            );
+            return Err(
+                delonix_meet_core::DomainError::forbidden("provisioning.reauth_required")
+                    .with_message(
+                        "Esta organização já existe. Reprovisionar exige a chave de API dela \
+                 (Authorization: Bearer dlx_...), não só o segredo de plataforma -- \
+                 fala com um administrador do Delonix Meet se a perdeste.",
+                    )
+                    .into(),
+            );
+        }
+    }
+
     // Org com slug único (sufixo em colisão). SEM a quota anti-abuso de
     // create_org: aqui a autorização é o segredo de plataforma, não um user.
     let base = crate::org::slugify(name);
@@ -1153,17 +1207,39 @@ pub async fn v1_provision_org(
 
     // Domínio de email (best-effort — o índice único pode colidir com outra
     // org; nesse caso fica por definir e o admin resolve).
+    //
+    // E fica PROVADO na mesma escrita (decisão do dono, 2026-10-10): quem
+    // provisiona é o operador da plataforma, com o segredo de provisionamento,
+    // e é ele que responde por este domínio — o mesmo papel que o registo DNS
+    // TXT tem para uma org criada pelo próprio cliente (A3, 0110). Sem isto, uma
+    // org provisionada pelo Odoo recusava o JIT de todas as contas novas até
+    // alguém publicar um TXT, e o laboratório da Frente C mediu-o. Fica na
+    // trilha quem respondeu pelo domínio.
     if let Some(domain) = req
         .email_domain
         .as_ref()
         .map(|d| d.trim().to_lowercase())
         .filter(|d| !d.is_empty())
     {
-        let _ = sqlx::query("UPDATE organizations SET email_domain = $1 WHERE id = $2")
-            .bind(&domain)
-            .bind(org_id)
-            .execute(&state.db)
+        let gravado = sqlx::query(
+            "UPDATE organizations SET email_domain = $1, email_domain_verified_at = now()
+              WHERE id = $2",
+        )
+        .bind(&domain)
+        .bind(org_id)
+        .execute(&state.db)
+        .await
+        .is_ok_and(|r| r.rows_affected() == 1);
+        if gravado {
+            crate::audit::log(
+                &state.db,
+                Some(org_id),
+                service_user_id,
+                "organization.email_domain_vouched_by_operator",
+                &domain,
+            )
             .await;
+        }
     }
 
     // Config OIDC (fecha o SSO no mesmo passo — sem SQL manual). O

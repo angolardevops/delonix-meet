@@ -1,0 +1,43 @@
+#cloud-config
+# O mínimo para o Ansible poder entrar e o OpenTofu saber o IP. Tudo o resto
+# — containerd, kubeadm, o cluster — é do Ansible: o cloud-init é para pôr a
+# máquina de pé, não para a configurar.
+hostname: ${hostname}
+manage_etc_hosts: true
+
+users:
+  - name: ${user}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+%{ for k in keys ~}
+      - ${k}
+%{ endfor ~}
+
+package_update: true
+packages:
+  # Sem o agent, o OpenTofu não descobre o IP e o `apply` fica à espera.
+  - qemu-guest-agent
+  - python3          # o Ansible precisa dele do lado de lá
+  - chrony           # relógio: o etcd e os certificados não perdoam deriva
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - systemctl enable --now chrony
+  # O kubelet recusa arrancar com swap ligada.
+  - swapoff -a
+  - sed -i '/ swap / s/^/#/' /etc/fstab
+
+write_files:
+  - path: /etc/sysctl.d/99-kubernetes.conf
+    content: |
+      # O que o kubeadm confere no pré-voo, posto aqui para a primeira
+      # corrida do Ansible não falhar por isto.
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+  - path: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter

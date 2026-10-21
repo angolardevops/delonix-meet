@@ -51,6 +51,11 @@ pub struct OrgSummary {
     pub owner_missing: bool,
     /// Quem pode enviar SMS a contactos da org: `admins` | `members`.
     pub sms_send_policy: String,
+    /// A organização permite o motor de voz do BROWSER (a Web Speech do
+    /// Chrome/Edge, que envia o áudio aos servidores da Google). `true` por
+    /// omissão — ver a migração 0127: proibir por omissão mudava o
+    /// comportamento de quem não o pediu.
+    pub allow_web_speech: bool,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -64,23 +69,30 @@ pub struct OrgSettingsReq {
     /// sempre o que vier aqui, não um `PATCH` parcial.
     #[serde(default)]
     pub chat_retention_days: Option<i32>,
-    #[serde(default)]
-    pub max_groups: Option<i32>,
-    #[serde(default)]
-    pub max_rooms: Option<i32>,
-    #[serde(default)]
-    pub max_meetings: Option<i32>,
-    /// Dial-in PSTN: backend de media ('freeswitch' | 'provider').
-    #[serde(default)]
-    pub voice_media_backend: Option<String>,
-    /// Dial-in PSTN: modelo de DID ('shared' | 'dedicated').
-    #[serde(default)]
-    pub voice_did_model: Option<String>,
+    // `max_groups`/`max_rooms`/`max_meetings`/`voice_media_backend`/
+    // `voice_did_model` SAÍRAM deste pedido de propósito (não as acrescentes
+    // de volta): são o plano que a PLATAFORMA vende, não política de
+    // tenant — a auditoria de 2026-10-08 encontrou que qualquer admin do
+    // próprio tenant as escrevia aqui. A leitura continua em `OrgSummary`
+    // (o admin vê o seu plano); a escrita fica para uma rota de operador,
+    // atrás de `require_platform_admin`, no PR2 — ainda não existe nesta
+    // árvore.
     /// A organização exige autenticação de dois factores. Hoje impede os
     /// membros de removerem o ÚLTIMO factor; não força a inscrição no login.
     /// Omisso => mantém o actual.
     #[serde(default)]
     pub require_mfa: Option<bool>,
+    /// A organização permite o motor de voz do browser (a Web Speech, que
+    /// envia o áudio aos servidores da Google). `false` PROÍBE-A: os clientes
+    /// recebem a política à entrada da sala e o servidor recusa uma frase que
+    /// venha marcada com esse motor (`signaling.rs`, `ClientMsg::Transcript`).
+    /// Omisso => mantém o actual.
+    ///
+    /// É política de TENANT e fica aqui de propósito, ao contrário das quotas:
+    /// quem decide onde o áudio da sua organização pode ser processado é a
+    /// organização, não o plano que a plataforma vende.
+    #[serde(default)]
+    pub allow_web_speech: Option<bool>,
 }
 
 /// Documentação OpenAPI das rotas deste módulo (`openapi.rs` junta-as).
@@ -89,6 +101,7 @@ pub struct OrgSettingsReq {
     paths(
         update_settings,
         create_org,
+        upgrade_org,
         my_orgs,
         get_org,
         create_branch,
@@ -105,8 +118,20 @@ pub struct OrgSettingsReq {
         get_sso_config,
         upsert_sso_config,
         delete_sso_config,
+        crate::org_mail::get_settings,
+        crate::org_mail::put_settings,
+        crate::org_mail::delete_settings,
+        crate::org_mail::check_settings,
+        crate::org_mail::list_messages,
+        get_domain_verification,
+        check_domain_verification,
     ),
     components(schemas(
+        crate::org_mail::OrgMailSettings,
+        crate::org_mail::PutOrgMailSettingsReq,
+        crate::org_mail::MailRelayCheck,
+        crate::org_mail::MailMessage,
+        crate::org_mail::MailMessagePage,
         Organization,
         OrgSummary,
         OrgSettingsReq,
@@ -121,7 +146,9 @@ pub struct OrgSettingsReq {
         Organizer,
         SsoConfigPublic,
         SsoConfigReq,
+        DomainVerificationStatus,
         CreateOrgReq,
+        UpgradeOrgReq,
         CreateBranchReq,
         AddEmployeeReq,
         UpdateEmployeeReq,
@@ -144,8 +171,10 @@ pub struct OrgSettingsUpdated {
 
 /// Definições da organização (só admin): domínio de produção + retenção.
 /// O domínio (ex.: `meet.acme.com`) é usado nos links partilháveis; a
-/// retenção (>0) apaga gravações mais antigas que N dias. Quotas negativas ou
-/// omissas ficam ilimitadas; valores de voz fora do enum são ignorados.
+/// retenção (>0) apaga gravações mais antigas que N dias. As quotas
+/// (`max_groups`/`max_rooms`/`max_meetings`) e os campos de voz
+/// (`voice_media_backend`/`voice_did_model`) não se escrevem aqui: são o
+/// plano da plataforma, não ficam no pedido de um admin de tenant.
 #[utoipa::path(
     patch, path = "/api/orgs/{org_id}", tag = "orgs",
     security(("session" = [])),
@@ -177,9 +206,6 @@ pub async fn update_settings(
             name: "org.update_settings",
             target: serde_json::json!({
                 "org_id": org_id, "domain": req.domain, "retention_days": req.retention_days,
-                "max_groups": req.max_groups, "max_rooms": req.max_rooms,
-                "max_meetings": req.max_meetings, "voice_media_backend": req.voice_media_backend,
-                "voice_did_model": req.voice_did_model,
             }),
         },
     )
@@ -200,36 +226,19 @@ pub async fn update_settings(
     // 0-3650 é tratado como se não tivesse vindo, em vez de rejeitar o
     // pedido inteiro por um único campo opcional.
     let chat_retention = req.chat_retention_days.filter(|n| (0..=3650).contains(n));
-    // Quotas: None/negativo => ilimitado (NULL).
-    let norm = |v: Option<i32>| v.filter(|n| *n >= 0);
-    // Dial-in PSTN: valida os enums (None => mantém o atual via COALESCE).
-    let backend = req
-        .voice_media_backend
-        .as_deref()
-        .and_then(|b| matches!(b, "freeswitch" | "provider").then(|| b.to_string()));
-    let did_model = req
-        .voice_did_model
-        .as_deref()
-        .and_then(|m| matches!(m, "shared" | "dedicated").then(|| m.to_string()));
     sqlx::query(
         "UPDATE organizations SET domain = $1, retention_days = $2,
-             max_groups = $3, max_rooms = $4, max_meetings = $5,
-             voice_media_backend = COALESCE($7, voice_media_backend),
-             voice_did_model = COALESCE($8, voice_did_model),
-             chat_retention_days = $9,
-             require_mfa = COALESCE($10, require_mfa)
-         WHERE id = $6",
+             chat_retention_days = $4,
+             require_mfa = COALESCE($5, require_mfa),
+             allow_web_speech = COALESCE($6, allow_web_speech)
+         WHERE id = $3",
     )
     .bind(&domain)
     .bind(retention)
-    .bind(norm(req.max_groups))
-    .bind(norm(req.max_rooms))
-    .bind(norm(req.max_meetings))
     .bind(org_id)
-    .bind(backend)
-    .bind(did_model)
     .bind(chat_retention)
     .bind(req.require_mfa)
+    .bind(req.allow_web_speech)
     .execute(&state.db)
     .await?;
     crate::audit::log(
@@ -240,6 +249,23 @@ pub async fn update_settings(
         &domain,
     )
     .await;
+    // Proibir (ou voltar a permitir) o motor que envia áudio para fora é uma
+    // decisão de soberania do dado: entra na auditoria com nome próprio, como
+    // o `require_mfa`, e não escondida num `org.settings_updated` genérico.
+    if let Some(on) = req.allow_web_speech {
+        crate::audit::log(
+            &state.db,
+            Some(org_id),
+            auth.user_id,
+            if on {
+                "org.web_speech_allowed"
+            } else {
+                "org.web_speech_forbidden"
+            },
+            &org_id.to_string(),
+        )
+        .await;
+    }
     if let Some(on) = req.require_mfa {
         crate::audit::log(
             &state.db,
@@ -363,6 +389,44 @@ pub async fn role_in_org(
     .fetch_optional(&state.db)
     .await?;
     Ok(row.map(|r| r.0))
+}
+
+/// `true` se a pertença é de PLENO DIREITO — exclui `external_guest`.
+///
+/// `role_in_org` lê a coluna legada `org_members.role` ('admin'/'member'),
+/// que é DERIVADA de `role_id` por gatilho e colapsa `member` e
+/// `external_guest` no mesmo texto ('member') -- ver migração 0053. Por
+/// isso `role_in_org(...).is_some()` nunca distingue um convidado externo
+/// de um colega: ambos "existem" em `org_members`. Isto é seguro para a
+/// maioria dos usos (um convidado pode legitimamente entrar numa sala),
+/// mas é a fonte directa de R130/C1 na porta SSO: um convidado externo de
+/// uma organização X não pode usar o IdP de X para abrir uma sessão
+/// COMPLETA da conta dele (que pode ser admin noutra organização Y onde X
+/// nunca devia ter entrado). Esta função junta `org_roles.system_key` para
+/// responder à pergunta certa: "é mesmo desta organização, ou só convidado
+/// para lá entrar numa reunião?".
+pub async fn is_full_member(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT r.system_key FROM org_members m
+         LEFT JOIN org_roles r ON r.id = m.role_id
+         WHERE m.org_id = $1 AND m.user_id = $2 AND m.archived_at IS NULL",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(match row {
+        // Sem role_id (contas antigas, pré-0053): a coluna `role` legada
+        // nunca guardou 'external_guest', por isso a ausência de role_id
+        // é um membro normal.
+        Some((None,)) => true,
+        Some((Some(key),)) => key != "external_guest",
+        None => false,
+    })
 }
 
 /// «É administrador da org» = a capacidade de sistema `org.administer` (ADR-0008
@@ -575,6 +639,7 @@ const MY_ORGS_SQL: &str = r#"
              WHERE mm.org_id = o.id AND mm.archived_at IS NULL) AS member_count,
            o.domain, o.retention_days, o.chat_retention_days,
            o.max_groups, o.max_rooms, o.max_meetings, o.sms_send_policy,
+           o.allow_web_speech,
            m.role_id, r.name AS role_name, r.system_key AS role_key,
            (EXISTS (SELECT 1 FROM org_members hm JOIN users hu ON hu.id = hm.user_id
                      WHERE hm.org_id = o.id AND hm.archived_at IS NULL
@@ -608,6 +673,120 @@ pub async fn my_orgs(
         .fetch_all(&state.db)
         .await?;
     Ok(Json(orgs))
+}
+
+/// Corpo de `POST /api/orgs/{org_id}/upgrade`.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpgradeOrgReq {
+    /// Nome da empresa (2-80 caracteres).
+    pub name: String,
+}
+
+/// `POST /api/orgs/{org_id}/upgrade` — a conta PARTICULAR passa a EMPRESARIAL
+/// (ADR-0019).
+///
+/// Não é um registo novo nem uma organização nova: a conta, as salas, as
+/// gravações e os convites ficam onde estão. A organização muda de `kind` para
+/// `company`, ganha um nome de empresa e passa a ter o domínio do email de quem
+/// converte — que é o que a torna encontrável pelos colegas e o que o registo
+/// empresarial usa para os juntar.
+///
+/// Exige o mesmo que o registo empresarial, e recusa pelos mesmos códigos
+/// (`registration.invalid_org_name`, `registration.corporate_email_required`,
+/// `registration.domain_taken`), mais `organization.already_company` quando já
+/// é empresa — um pedido repetido não muda nada em silêncio.
+///
+/// Quem pode: o administrador da organização (`org.administer`). Numa conta
+/// particular é a própria pessoa, que é a administradora do seu espaço.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/upgrade", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização a converter.")),
+    request_body = UpgradeOrgReq,
+    responses(
+        (status = 200, description = "Convertida. Devolve a organização como o `GET` a devolve.", body = OrgSummary),
+        (status = 400, description = "Nome inválido, ou o email não serve de domínio (`registration.invalid_org_name`, `registration.corporate_email_required`).", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Não é administrador (`authz.missing_capability`).", body = crate::openapi::ErrorBody),
+        (status = 404, description = "Não é membro activo da organização.", body = crate::openapi::ErrorBody),
+        (status = 409, description = "O domínio já tem organização (`registration.domain_taken`).", body = crate::openapi::ErrorBody),
+        (status = 422, description = "Já é empresarial (`organization.already_company`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn upgrade_org(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<UpgradeOrgReq>,
+) -> Result<Json<OrgSummary>, ApiError> {
+    use delonix_meet_domain::identity::registration::{
+        upgrade_to_company, OrgKind, UpgradeRequest,
+    };
+    require_admin(&state, org_id, auth.user_id).await?;
+
+    // O domínio sai do email de QUEM converte: é essa pessoa que afirma a
+    // empresa, e é com o domínio dela que os colegas se vão juntar.
+    let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&state.db)
+        .await?;
+    let kind: String = sqlx::query_scalar("SELECT kind FROM organizations WHERE id = $1")
+        .bind(org_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    // Tudo dentro de uma transacção com o mesmo trinco do registo: duas
+    // conversões para o mesmo domínio ao mesmo tempo não podem passar as duas.
+    let mut tx = state.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('delonix.registration'))")
+        .execute(&mut *tx)
+        .await?;
+    let domain_from_email = email.split('@').nth(1).unwrap_or("").to_string();
+    let domain_taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM organizations
+                         WHERE email_domain = $1 AND email_domain <> '' AND id <> $2)",
+    )
+    .bind(&domain_from_email)
+    .bind(org_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let plan = upgrade_to_company(&UpgradeRequest {
+        name: req.name.clone(),
+        email: email.clone(),
+        current_kind: if kind == "company" {
+            OrgKind::Company
+        } else {
+            OrgKind::Personal
+        },
+        domain_taken,
+    })?;
+
+    sqlx::query(
+        "UPDATE organizations SET name = $2, email_domain = $3, kind = 'company' WHERE id = $1",
+    )
+    .bind(org_id)
+    .bind(&plan.name)
+    .bind(&plan.email_domain)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    crate::audit::log(
+        &state.db,
+        Some(org_id),
+        auth.user_id,
+        "organization.upgraded_to_company",
+        &plan.email_domain,
+    )
+    .await;
+
+    let org: Option<OrgSummary> = sqlx::query_as(MY_ORGS_SQL)
+        .bind(auth.user_id)
+        .bind(Some(org_id))
+        .fetch_optional(&state.db)
+        .await?;
+    Ok(Json(org.ok_or(ApiError::NotFound)?))
 }
 
 /// Uma organização de que se é membro activo, com o papel.
@@ -1632,6 +1811,15 @@ pub(crate) fn recording_uploader_in_org_sql(org: &str, uploader: &str) -> String
     )
 }
 
+/// Fragmento SQL reutilizável: membros activos de uma organização, pela
+/// coluna `org_col` (ex.: `"o.id"`). A mesma subconsulta de `MY_ORGS_SQL`
+/// (regra 1 — pertença decide-se aqui, não copiada noutro módulo).
+pub(crate) fn active_member_count_sql(org_col: &str) -> String {
+    format!(
+        "(SELECT COUNT(*) FROM org_members mm WHERE mm.org_id = {org_col} AND mm.archived_at IS NULL)"
+    )
+}
+
 /// A organização do autor a mostrar a quem pede: de entre as organizações de
 /// `subject`, a que `viewer` também partilha como membro ACTIVO — e, se não
 /// partilhar nenhuma, a mais antiga. Sub-consulta de uma linha (`id`, `name`),
@@ -1680,15 +1868,6 @@ pub(crate) fn sql_active_member_with(viewer: &str, subject: &str) -> String {
     format!(
         "EXISTS(SELECT 1 FROM org_members me JOIN org_members o ON o.org_id = me.org_id \
          WHERE me.user_id = {viewer} AND me.archived_at IS NULL AND o.user_id = {subject})"
-    )
-}
-
-/// `viewer` é admin ACTIVO de uma organização a que `subject` pertence.
-pub(crate) fn sql_active_admin_of(viewer: &str, subject: &str) -> String {
-    format!(
-        "EXISTS(SELECT 1 FROM org_members me JOIN org_members o ON o.org_id = me.org_id \
-         WHERE me.user_id = {viewer} AND me.role = 'admin' AND me.archived_at IS NULL \
-           AND o.user_id = {subject})"
     )
 }
 
@@ -2150,6 +2329,151 @@ pub async fn delete_sso_config(
     }
     tracing::info!(%org_id, "SSO config deleted");
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+// ---------- Prova de posse do domínio (A3, revisão de segurança 2026-10-09) ----------
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DomainVerificationStatus {
+    pub domain: String,
+    /// Nome e valor do registo TXT que o admin tem de publicar.
+    pub record_name: String,
+    pub record_value: String,
+    pub verified: bool,
+    pub verified_at: Option<chrono::DateTime<Utc>>,
+}
+
+async fn domain_verification_row(
+    state: &AppState,
+    org_id: Uuid,
+) -> Result<(String, String, Option<DateTime<Utc>>), ApiError> {
+    let row: Option<(String, Option<String>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT email_domain, email_domain_verify_token, email_domain_verified_at
+         FROM organizations WHERE id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((domain, token, verified_at)) = row else {
+        return Err(ApiError::NotFound);
+    };
+    if domain.is_empty() {
+        return Err(DomainError::precondition(
+            "org.no_email_domain",
+            "esta organização ainda não tem domínio de email -- regista-te ou \
+             converte a conta com um email desse domínio primeiro",
+        )
+        .into());
+    }
+    // O token nasce aqui, lazy, na primeira vez que alguém pede o estado --
+    // não há motivo para o gerar antes de haver domínio para provar.
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            let t = crate::domain_verify::new_token();
+            sqlx::query("UPDATE organizations SET email_domain_verify_token = $1 WHERE id = $2")
+                .bind(&t)
+                .bind(org_id)
+                .execute(&state.db)
+                .await?;
+            t
+        }
+    };
+    Ok((domain, token, verified_at))
+}
+
+/// `GET /api/orgs/:org_id/domain-verification` — o registo TXT a publicar e
+/// se já está verificado. Só admin.
+#[utoipa::path(
+    get, path = "/api/orgs/{org_id}/domain-verification", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = DomainVerificationStatus),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "A organização ainda não tem domínio de email (`org.no_email_domain`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn get_domain_verification(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<DomainVerificationStatus>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let (domain, token, verified_at) = domain_verification_row(&state, org_id).await?;
+    Ok(Json(DomainVerificationStatus {
+        record_name: crate::domain_verify::record_name(&domain),
+        record_value: crate::domain_verify::expected_value(&token),
+        verified: verified_at.is_some(),
+        verified_at,
+        domain,
+    }))
+}
+
+/// `POST /api/orgs/:org_id/domain-verification/check` — consulta o DNS TXT
+/// agora e grava `email_domain_verified_at` se bater certo. Idempotente:
+/// repetir depois de já verificado só confirma. Só admin.
+#[utoipa::path(
+    post, path = "/api/orgs/{org_id}/domain-verification/check", tag = "orgs",
+    security(("session" = [])),
+    params(("org_id" = Uuid, Path, description = "Organização.")),
+    responses(
+        (status = 200, body = DomainVerificationStatus, description = "`verified` diz se o TXT já batia certo nesta consulta."),
+        (status = 401, description = "Sem sessão.", body = crate::openapi::ErrorBody),
+        (status = 403, description = "Membro sem papel de admin.", body = crate::openapi::ErrorBody),
+        (status = 404, description = "A organização não existe ou quem pede não é membro activo.", body = crate::openapi::ErrorBody),
+        (status = 422, description = "A organização ainda não tem domínio de email (`org.no_email_domain`).", body = crate::openapi::ErrorBody),
+    )
+)]
+pub async fn check_domain_verification(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(org_id): Path<Uuid>,
+) -> Result<Json<DomainVerificationStatus>, ApiError> {
+    require_admin(&state, org_id, auth.user_id).await?;
+    let (domain, token, mut verified_at) = domain_verification_row(&state, org_id).await?;
+    if verified_at.is_none() && crate::domain_verify::verify(&domain, &token).await? {
+        sqlx::query("UPDATE organizations SET email_domain_verified_at = now() WHERE id = $1")
+            .bind(org_id)
+            .execute(&state.db)
+            .await?;
+        verified_at = Some(Utc::now());
+        tracing::info!(%org_id, %domain, "domínio verificado por DNS TXT");
+        crate::audit::log(
+            &state.db,
+            Some(org_id),
+            auth.user_id,
+            "org.domain_verified",
+            &domain,
+        )
+        .await;
+    }
+    Ok(Json(DomainVerificationStatus {
+        record_name: crate::domain_verify::record_name(&domain),
+        record_value: crate::domain_verify::expected_value(&token),
+        verified: verified_at.is_some(),
+        verified_at,
+        domain,
+    }))
+}
+
+/// A org `org_id` tem o domínio de email provado por DNS TXT? É a pergunta
+/// que `enforce_sso` e o JIT do SSO fazem antes de confiar no domínio
+/// (`auth.rs`) -- sem isto, quem reivindica um domínio primeiro (o registo
+/// não verifica o email) ficava dono dele para sempre.
+pub(crate) async fn email_domain_is_verified(
+    state: &AppState,
+    org_id: Uuid,
+) -> Result<bool, ApiError> {
+    let verified: Option<bool> = sqlx::query_scalar(
+        "SELECT email_domain_verified_at IS NOT NULL FROM organizations WHERE id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(verified.unwrap_or(false))
 }
 
 pub async fn group_member_ids(state: &AppState, group_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
@@ -2748,6 +3072,126 @@ pub(crate) async fn reactivate_member_tx(
 
 /// Junta (ou devolve) alguém à org por convite, com papel, departamento e
 /// lugares. Uma pertença arquivada é reactivada com o papel do convite.
+/// Uma linha de membro na forma que o SCIM publica: a conta mais o estado da
+/// pertença NESTA organização.
+///
+/// **Porque vive aqui e não no `scim.rs`:** é `org_members`, e a pertença
+/// decide-se em `org.rs` (regra 1 do ADR-0004, que a catraca conta). O `scim.rs`
+/// transforma isto no recurso da norma; quem decide quem é membro é este módulo.
+#[derive(sqlx::FromRow)]
+pub(crate) struct ScimMemberRow {
+    pub id: Uuid,
+    pub email: String,
+    pub username: String,
+    pub scim_external_id: Option<String>,
+    /// `archived_at IS NULL` na pertença desta organização.
+    pub active: bool,
+}
+
+const SCIM_MEMBER_COLUMNS: &str = "u.id, u.email, u.username, u.scim_external_id,
+                                   (m.archived_at IS NULL) AS active";
+
+/// Um membro desta organização, por id. `None` quando não é desta organização —
+/// é o que faz o SCIM responder 404 em vez de revelar que a conta existe.
+pub(crate) async fn scim_member(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<ScimMemberRow>, ApiError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
+           JOIN org_members m ON m.user_id = u.id
+          WHERE u.id = $1 AND m.org_id = $2"
+    ))
+    .bind(user_id)
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
+/// Os membros desta organização, ou só o de um email (o filtro que os
+/// provedores de SCIM mandam para reconciliar).
+pub(crate) async fn scim_members(
+    state: &AppState,
+    org_id: Uuid,
+    email: Option<&str>,
+    limite: i64,
+) -> Result<Vec<ScimMemberRow>, ApiError> {
+    Ok(match email {
+        Some(email) => {
+            sqlx::query_as(&format!(
+                "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
+               JOIN org_members m ON m.user_id = u.id
+              WHERE m.org_id = $1 AND u.email = $2"
+            ))
+            .bind(org_id)
+            .bind(email)
+            .fetch_all(&state.db)
+            .await?
+        }
+        None => {
+            sqlx::query_as(&format!(
+                "SELECT {SCIM_MEMBER_COLUMNS} FROM users u
+               JOIN org_members m ON m.user_id = u.id
+              WHERE m.org_id = $1 ORDER BY u.email LIMIT $2"
+            ))
+            .bind(org_id)
+            .bind(limite)
+            .fetch_all(&state.db)
+            .await?
+        }
+    })
+}
+
+/// Readmite quem o PRÓPRIO directório tinha tirado.
+///
+/// **Porque não serve o `reactivate_member_tx`:** ele recusa de propósito uma
+/// saída de directório (`REACTIVATABLE` não tem `odoo_exit` nem `scim_exit`,
+/// ADR-0008 §7) — «uma saída dessas volta por convite ou pela sincronização,
+/// não por reactivar». O botão de um administrador não desfaz uma decisão do
+/// directório da empresa. **Isto é a sincronização**: a autoridade que arquivou
+/// é a que desarquiva.
+///
+/// Por isso só aceita o motivo DELA: um membro que um administrador suspendeu
+/// (`suspended`) não é revivido pelo directório às escondidas — devolve
+/// `member.not_reactivatable`, como devolveria ao contrário.
+///
+/// O tecto de lugares continua a valer: quem volta ocupa um lugar.
+pub(crate) async fn reactivate_from_directory_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    user_id: Uuid,
+    motivo_esperado: &str,
+) -> Result<bool, ApiError> {
+    let Some(cur) = member_state(&mut **tx, org_id, user_id).await? else {
+        return Err(DomainError::not_found("member.not_found").into());
+    };
+    if cur.archived_at.is_none() {
+        return Ok(false);
+    }
+    if cur.archived_reason.as_deref() != Some(motivo_esperado) {
+        return Err(DomainError::precondition(
+            "member.not_reactivatable",
+            "esta saída não foi feita pelo directório, por isso não é o directório que a desfaz",
+        )
+        .into());
+    }
+    let (used, limit) = seat_usage_tx(tx, org_id, true).await?;
+    let occupies = cur.system_key.as_deref() != Some("external_guest");
+    delonix_meet_domain::organization::seats::check_activation(used, i64::from(occupies), limit)?;
+    sqlx::query(
+        "UPDATE org_members SET archived_at = NULL, archived_by = NULL, archived_reason = NULL
+          WHERE org_id = $1 AND user_id = $2",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(map_member_write_error)?;
+    crate::approvals::invalidate_for(tx, org_id, user_id).await?;
+    Ok(true)
+}
+
 pub(crate) async fn activate_membership_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org_id: Uuid,
@@ -3467,6 +3911,103 @@ pub(crate) async fn apply_odoo_attributes(
 
 /// «Suspender ao sair do Odoo»: contas geridas por ESTA org, activas, que não
 /// estão na lista COMPLETA que o Odoo acabou de devolver. Nunca o último dono.
+/// Pode ESTA organização reclamar a conta deste email, e como?
+///
+/// **É a regra que a R142 ensinou, com uma diferença que importa.** O Odoo
+/// recusa qualquer conta que já exista — mesmo local — porque o
+/// `odoo_org_id` decide DEPOIS onde a password é validada: reclamar uma conta
+/// alheia era passar a autenticá-la num Odoo escolhido por quem reclamou
+/// (tomada de conta completa, ver `odoo_sso::upsert_member`).
+///
+/// O SCIM **não é autoridade de autenticação**: gere PERTENÇA. Por isso a
+/// regra aqui é outra, e mais útil sem deixar de ser segura:
+///
+/// - não existe conta → cria-se;
+/// - existe e **já é membro desta organização** (activo ou arquivado) → adopta-se;
+///   a organização já tinha autoridade sobre essa pertença, e marcar
+///   `scim_managed` não muda por onde a pessoa entra;
+/// - existe e **não é membro desta organização** → recusa-se. Saber o endereço
+///   de alguém não pode trazê-lo para dentro, seja ele de outra organização ou
+///   uma conta local que nunca pediu nada.
+pub(crate) enum EmailClaim {
+    /// Não existe conta com este email.
+    Nova,
+    /// Existe e já pertence a esta organização: adopta-se este id.
+    DestaOrg(Uuid),
+    /// Existe e não pertence a esta organização. Não se reclama.
+    DeFora,
+}
+
+pub(crate) async fn claim_for_org_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+    email: &str,
+) -> Result<EmailClaim, ApiError> {
+    let email = email.trim().to_lowercase();
+    let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+        "SELECT u.id, m.org_id FROM users u
+           LEFT JOIN org_members m ON m.user_id = u.id AND m.org_id = $2
+          WHERE u.email = $1",
+    )
+    .bind(&email)
+    .bind(org_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(match row {
+        None => EmailClaim::Nova,
+        Some((id, Some(_))) => EmailClaim::DestaOrg(id),
+        Some((_, None)) => EmailClaim::DeFora,
+    })
+}
+
+/// Garante que existe uma conta com este email, dentro de uma transacção.
+///
+/// **É O HELPER CANÓNICO de «criar utilizador por email»** — a auditoria de
+/// 2026-09-16 mediu SEIS cópias desta regra, das quais só duas recusavam a
+/// conta de outra organização. Não se refazem as antigas aqui (é o refactor
+/// cego que a Regra 0 proíbe), mas **código novo chama isto**.
+///
+/// A password é inutilizável de propósito: uma conta criada por um directório
+/// entra por SSO, não por password. É o mesmo que o caminho JIT do OIDC faz.
+///
+/// Devolve o id e se foi criada agora.
+pub(crate) async fn ensure_user_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    email: &str,
+    display_name: &str,
+) -> Result<(Uuid, bool), ApiError> {
+    let email = email.trim().to_lowercase();
+    if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>("SELECT id FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_optional(&mut **tx)
+        .await?
+    {
+        return Ok((id, false));
+    }
+    let nome = Some(display_name.trim())
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&email)
+        .chars()
+        .take(80)
+        .collect::<String>();
+    let inutilizavel = crate::auth::hash_password(&Uuid::new_v4().to_string())?;
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(&email)
+    .bind(&nome)
+    .bind(&inutilizavel)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| match &e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            ApiError::Conflict("email ou username já em uso".into())
+        }
+        _ => e.into(),
+    })?;
+    Ok((id, true))
+}
+
 pub(crate) async fn suspend_odoo_leavers(
     state: &AppState,
     org_id: Uuid,

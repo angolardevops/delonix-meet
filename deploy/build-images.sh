@@ -40,13 +40,18 @@ BUILDER="$(pick_builder)"
 echo "▶ builder: $BUILDER   registo: $REGISTRY   tag: $TAG   push: $PUSH"
 
 build_one() {
-  local dockerfile="$1" image="$2"
+  # 3.º argumento: o CONTEXTO, relativo à raiz. Por omissão a raiz, que é o que
+  # o server, a web e o ai-worker querem. O whisper-server quer a SUA pasta: o
+  # Dockerfile dele faz `COPY requirements.txt .`, e com a raiz por contexto
+  # isso falha com «No such file or directory» (medido a 2026-10-09 — é por isso
+  # que ele nunca esteve aqui).
+  local dockerfile="$1" image="$2" ctx="${3:-.}"
   local ref="$REGISTRY/$image:$TAG"
-  echo "▶ a construir $ref"
+  echo "▶ a construir $ref  (contexto: $ctx)"
   case "$BUILDER" in
-    docker)  docker buildx build --load -f "$ROOT/$dockerfile" -t "$ref" "$ROOT";;
-    podman|nerdctl) "$BUILDER" build -f "$ROOT/$dockerfile" -t "$ref" "$ROOT";;
-    buildah) buildah bud -f "$ROOT/$dockerfile" -t "$ref" "$ROOT";;
+    docker)  docker buildx build --load -f "$ROOT/$dockerfile" -t "$ref" "$ROOT/$ctx";;
+    podman|nerdctl) "$BUILDER" build -f "$ROOT/$dockerfile" -t "$ref" "$ROOT/$ctx";;
+    buildah) buildah bud -f "$ROOT/$dockerfile" -t "$ref" "$ROOT/$ctx";;
   esac
   if [ "$PUSH" = 1 ]; then
     echo "▶ a publicar $ref"
@@ -60,6 +65,13 @@ build_one Dockerfile.web       delonix-web
 # BUILD_AI_WORKER=1, para não obrigar toda a gente a puxar a base CUDA.
 if [ "${BUILD_AI_WORKER:-0}" = 1 ]; then
   build_one ai-worker/Dockerfile delonix-ai-worker
+fi
+# ASR soberano (opcional — embute o modelo, ~2 GB). O `deploy/k8s/09-whisper.yaml`
+# refere `delonix-whisper:latest` com `imagePullPolicy: IfNotPresent`, e até
+# 2026-10-09 NADA neste repo a construía: tinha de se fazer à mão. O contexto é
+# a pasta dele, não a raiz (ver build_one).
+if [ "${BUILD_WHISPER:-0}" = 1 ]; then
+  build_one whisper-server/Dockerfile delonix-whisper whisper-server
 fi
 echo "✔ imagens prontas: $REGISTRY/delonix-{server,web}:$TAG"
 echo "  Apontar a kustomization:  ( cd deploy/k8s && kustomize edit set image \\"

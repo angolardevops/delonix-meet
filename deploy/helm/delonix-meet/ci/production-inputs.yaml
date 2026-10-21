@@ -6,3 +6,11 @@ secrets:
   existingSecret: delonix-meet-secrets
 coturn:
   externalIP: 203.0.113.10
+# O portão LIGA o ASR, mesmo que o perfil de produção o deixe ao `--set`: é
+# aqui que a catraca mede a rota /asr, o JWT_SECRET pelo Secret e a quota com
+# ele dentro.
+whisper:
+  enabled: true
+  image:
+    repository: exemplo.invalid/delonix-whisper
+    tag: asr-v0.0.0-portao

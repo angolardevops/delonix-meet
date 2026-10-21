@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { currentUser } from '../api'
-import { Cena, Fonte, RoomCompositor } from './compositor'
+import { getAppName } from '../branding'
+import { COR_DA_MARCA } from '../cena/desenhoDaMoldura'
+import { participanteLocal } from '../convidado'
+import { aparadoAoTecto, Cena, Fonte, LUGARES_DA_CENA, RoomCompositor } from './compositor'
 import { Destino, Directo, directoSuportado, EstadoDoDirecto } from '../studio/directo'
+import { paraOAr } from '../studio/destinosGuardados'
 import type { RoomCore } from './useRoomCore'
 
 export const MAX_MULTICAM_DESTINOS = 4
+
+/** O id da fonte «partilha de ecrã» no compositor. Um só sítio, para o herói e a lista baterem certo. */
+export const ECRA = 'ecra'
 
 /**
  * Multicâmara (anfitrião): compõe os participantes num canvas e envia-o ao
@@ -39,15 +45,46 @@ export function useMulticam(core: RoomCore) {
     if (!open || !compositorRef.current) return
     const fontes: Fonte[] = [
       ...(boardStream ? [{ id: 'quadro', nome: t('room.quadro.titulo'), stream: boardStream }] : []),
-      { id: 'eu', nome: currentUser()?.username ?? '', stream: core.localStreamRef.current },
+      // A PARTILHA DE ECRÃ como fonte, que é o que faz da `moldura` uma cena
+      // de aula e não de painel. Entra pela mesma porta do quadro — o
+      // compositor nunca soube distinguir uma câmara de outra coisa, e é essa
+      // indiferença que torna isto barato.
+      ...(core.presentation ? [{ id: ECRA, nome: t('room.multicam.ecra'), stream: core.presentation.stream }] : []),
+      { id: 'eu', nome: participanteLocal().username, stream: core.localStreamRef.current },
       ...core.peers.filter((p) => p.stream).map((p): Fonte => ({ id: p.peerId, nome: p.username, stream: p.stream })),
     ]
     compositorRef.current.definirParticipantes(fontes)
+    // O herói da moldura é o ecrã quando há ecrã. Quando não há, fica `null` e
+    // o compositor cai para a primeira fonte — não para um rectângulo preto.
+    compositorRef.current.heroiId = core.presentation ? ECRA : null
+    compositorRef.current.marca = {
+      logo: null,
+      faixa: getAppName(),
+      assinatura: getAppName(),
+      cor: COR_DA_MARCA,
+    }
+    // `t` fora de propósito: este efeito não pode recriar o AudioContext (ver
+    // o comentário acima — emudeceria o directo), e com `t` nas dependências
+    // uma troca de língua fazia-o correr. CUSTO ASSUMIDO: o nome da fonte
+    // «quadro» fica na língua antiga até alguém entrar ou sair.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, core.peers, core.localStreamRef, boardStream])
+  }, [open, core.peers, core.localStreamRef, boardStream, core.presentation])
 
   useEffect(() => {
     if (compositorRef.current) compositorRef.current.cena = cena
+    // TROCAR DE CENA APARA O FOCO ao tecto da cena nova, e tem de ser aqui.
+    // A `moldura` deixa escolher três; as outras não. Sem este aparo, três
+    // escolhas feitas na moldura sobreviviam a uma ida para `lado-a-lado`, e
+    // então: três fichas acesas sob uma dica que diz «até duas», só duas no ar,
+    // e a ficha da terceira a REMOVER em vez de trazer ao ar (o `toggleFoco` vê
+    // o id na lista). O clique seguinte, com o `slice(-2)`, despejava de uma vez
+    // as duas pessoas que estavam na emissão.
+    //
+    // O aparo é uma função PURA (`aparadoAoTecto`), e não um `slice` escrito
+    // aqui: dentro de um efeito não se prova sem jsdom, que este repo não tem.
+    // Devolve a MESMA lista quando já cabe, senão isto re-renderizava a sala a
+    // cada troca de cena.
+    setFocoIds((ids) => aparadoAoTecto(ids, cena))
   }, [cena])
   useEffect(() => {
     if (compositorRef.current) compositorRef.current.focoIds = focoIds
@@ -91,7 +128,7 @@ export function useMulticam(core: RoomCore) {
     const c = compositorRef.current
     if (!c) return
     try {
-      const alvos = destinos.filter((d) => d.chave.trim())
+      const alvos = paraOAr(destinos)
       const token = core.roomTokenRef.current
       if (!token) throw new Error(t('room.multicam.semToken'))
       const fluxo = c.montarFluxo()
@@ -131,9 +168,12 @@ export function useMulticam(core: RoomCore) {
 
   function toggleFoco(id: string) {
     setFocoIds((ids) => {
-      const max = cena === 'solo' ? 1 : 2
+      // O tecto é o da CENA, lido da tabela `LUGARES_DA_CENA` e não escrito
+      // outra vez aqui: um lugar em `solo`, dois em `lado-a-lado`, e na
+      // `moldura` os que a coluna tem. Baixar o tecto da coluna não pode deixar
+      // o anfitrião a escolher um quarto que nunca aparece.
       if (ids.includes(id)) return ids.filter((x) => x !== id)
-      return [...ids, id].slice(-max)
+      return [...ids, id].slice(-LUGARES_DA_CENA[cena])
     })
   }
 

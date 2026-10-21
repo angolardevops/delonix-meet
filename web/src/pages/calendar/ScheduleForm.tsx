@@ -33,7 +33,7 @@ import { useShell } from '../../components/shellContext'
 import { Icon } from '../../ui/icons'
 import { Alert, Avatar, cx, Field, IconButton, Segmented, Select, Spinner, TextArea, TextInput, Toggle } from '../../ui/kit'
 import WeekView from './WeekView'
-import { addDays, fmtDayMonth, fmtTime, groupByDay, hhmm, localeOf, mondayOf, parseYmd, tzShort, weekdayNames, ymd } from './dates'
+import { addDays, fmtDayMonth, fmtTime, groupByDay, hhmm, jaAcabou, localeOf, mondayOf, parseYmd, tzShort, weekdayNames, ymd } from './dates'
 
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180]
 const BYDAY = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'] as const
@@ -84,6 +84,8 @@ export default function ScheduleForm({
   const [count, setCount] = useState(10)
   const [byday, setByday] = useState<Set<string>>(() => new Set(['MON', 'TUE', 'WED', 'THU', 'FRI']))
   const [invitees, setInvitees] = useState<User[]>([])
+  // Convidados SEM conta aqui: cada um recebe o seu convite com o `.ics`.
+  const [externals, setExternals] = useState<string[]>([])
   const [roomRef, setRoomRef] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -172,6 +174,7 @@ export default function ScheduleForm({
         starts_at: start.toISOString(),
         duration_min: duration,
         invitee_ids: invitees.map((i) => i.id),
+        external_emails: externals,
         room_ref: roomRef || null,
         recurrence_freq: freq || null,
         recurrence_interval: freq ? interval : undefined,
@@ -404,6 +407,8 @@ export default function ScheduleForm({
 
         <Guests invitees={invitees} onChange={setInvitees} />
 
+        <ExternalGuests emails={externals} onChange={setExternals} />
+
         <div className="sched__pair">
         {(rooms.length > 0 || roomsFailed.length > 0) && (
           <Field
@@ -450,15 +455,32 @@ export default function ScheduleForm({
             {t('schedule.form.outrasReunioes')}
           </span>
         </div>
-        <ConflictsCard check={check} room={room} people={invitees.length + 1} locale={locale} />
+        <ConflictsCard check={check} room={room} people={invitees.length + 1} locale={locale} start={start} duration={duration} />
       </aside>
     </div>
   )
 }
 
-function ConflictsCard({ check, room, people, locale }: { check: Check; room: MeetingRoom | null; people: number; locale: string }) {
+function ConflictsCard({
+  check,
+  room,
+  people,
+  locale,
+  start,
+  duration,
+}: {
+  check: Check
+  room: MeetingRoom | null
+  people: number
+  locale: string
+  start: Date | null
+  duration: number
+}) {
   const { t } = useTranslation()
   const lines: { tone: 'warning' | 'success' | 'danger'; text: string }[] = []
+  if (jaAcabou(start, duration)) {
+    lines.push({ tone: 'warning', text: t('schedule.conflitos.horaJaPassou') })
+  }
   if (check.s === 'ready') {
     for (const c of check.d.room) {
       lines.push({ tone: 'danger', text: t('schedule.conflitos.salaOcupada', { titulo: c.meeting_title, hora: fmtTime(new Date(c.starts_at), locale) }) })
@@ -508,6 +530,105 @@ function ConflictsCard({ check, room, people, locale }: { check: Check; room: Me
 }
 
 /** Convidados com autocompletar: setas, Enter para acrescentar, Esc para limpar. */
+/** Quantos o servidor aceita (`meetings::MAX_EXTERNAL_INVITEES`). O número está
+ *  nos dois lados de propósito: aqui evita-se o pedido, lá recusa-se o pedido —
+ *  quem tirar este daqui não abre o tecto, só torna o erro mais tarde. */
+const MAX_EXTERNOS = 50
+
+/**
+ * Convidados de FORA: endereços de email sem conta aqui.
+ *
+ * Porque é um campo à parte do `Guests`: aquele procura PESSOAS no directório
+ * da organização e devolve `User`; aqui não há ninguém para procurar — escreve-se
+ * o endereço. Juntá-los num só campo obrigava a adivinhar, a cada tecla, se o
+ * que a pessoa está a escrever é um nome ou um email de fora.
+ *
+ * A validação aqui é de FORMA e serve para dar resposta imediata; quem decide é
+ * o servidor (`meeting.invalid_external_email`), que normaliza o endereço.
+ */
+function ExternalGuests({ emails, onChange }: { emails: string[]; onChange: (e: string[]) => void }) {
+  const { t } = useTranslation()
+  const uid = useId()
+  const [value, setValue] = useState('')
+  const [err, setErr] = useState('')
+
+  function add() {
+    const email = value.trim().toLowerCase()
+    if (!email) return
+    // Mesma forma mínima que o servidor exige: algo@algo.algo, sem espaços.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setErr(t('schedule.externos.invalido'))
+      return
+    }
+    if (emails.includes(email)) {
+      setErr(t('schedule.externos.repetido'))
+      return
+    }
+    if (emails.length >= MAX_EXTERNOS) {
+      setErr(t('schedule.externos.demasiados', { max: MAX_EXTERNOS }))
+      return
+    }
+    onChange([...emails, email])
+    setValue('')
+    setErr('')
+  }
+
+  function onKey(e: KeyboardEvent<HTMLInputElement>) {
+    // Enter e vírgula acrescentam — colar «a@x.ao, b@y.ao» é o gesto natural.
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      add()
+    } else if (e.key === 'Backspace' && !value && emails.length) {
+      onChange(emails.slice(0, -1))
+    }
+  }
+
+  return (
+    <div className="dx-field">
+      <label className="dx-field__label" htmlFor={`${uid}-ext`}>
+        <span>
+          {t('schedule.externos.titulo')}
+          {emails.length > 0 && <span className="dx-muted dx-num"> · {emails.length}</span>}
+        </span>
+        <span className="dx-muted sched__aside">{t('schedule.externos.ajuda')}</span>
+      </label>
+      <div className="sched__guests">
+        {emails.map((email) => (
+          <span key={email} className="sched__guest">
+            {email}
+            <IconButton
+              icon="x"
+              bare
+              label={t('schedule.externos.remover', { email })}
+              onClick={() => onChange(emails.filter((e) => e !== email))}
+            />
+          </span>
+        ))}
+        <input
+          id={`${uid}-ext`}
+          className="sched__guest-input"
+          type="email"
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value)
+            setErr('')
+          }}
+          onKeyDown={onKey}
+          onBlur={() => value.trim() && add()}
+          placeholder={t('schedule.externos.placeholder')}
+          aria-describedby={err ? `${uid}-ext-err` : undefined}
+          aria-invalid={err ? true : undefined}
+        />
+      </div>
+      {err && (
+        <p id={`${uid}-ext-err`} className="dx-field__error" role="alert">
+          {err}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function Guests({ invitees, onChange }: { invitees: User[]; onChange: (u: User[]) => void }) {
   const { t } = useTranslation()
   const uid = useId()

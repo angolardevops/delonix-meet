@@ -11,7 +11,9 @@
  * `calcularRects` do compositor da sala. Só o `destaque` (um grande e uma
  * coluna) é novo, porque a sala não o tem.
  */
+import { MAXIMO_DE_CAMARAS, rectsDaMoldura } from '../cena/moldura'
 import { calcularRects, type Rect } from '../room/compositor'
+import { formatBytes } from '../ui/format'
 
 // ------------------------------------------------------------------ layouts
 
@@ -20,18 +22,29 @@ import { calcularRects, type Rect } from '../room/compositor'
  *   bolha por cima — o comportamento de sempre do Estúdio;
  * - `lado-a-lado`: as duas primeiras fontes, metade cada;
  * - `destaque`: a primeira grande, as seguintes numa coluna à direita;
- * - `grelha`: todas, em grelha.
+ * - `grelha`: todas, em grelha;
+ * - `moldura`: a cena de marca — faixa a rolar no topo, coluna com o logótipo,
+ *   as câmaras e a assinatura, e o conteúdo grande ao lado. A geometria e o
+ *   desenho da marca vêm de `cena/moldura.ts`, que é partilhada com a Sala.
  */
-export type LayoutDoPalco = 'solo' | 'lado-a-lado' | 'destaque' | 'grelha'
+export type LayoutDoPalco = 'solo' | 'lado-a-lado' | 'destaque' | 'grelha' | 'moldura'
 
-export const LAYOUTS: LayoutDoPalco[] = ['solo', 'lado-a-lado', 'destaque', 'grelha']
+export const LAYOUTS: LayoutDoPalco[] = ['solo', 'lado-a-lado', 'destaque', 'grelha', 'moldura']
 
-/** Quantas fontes um layout mostra no máximo (a coluna do destaque leva três). */
+/**
+ * Quantas fontes um layout mostra no máximo (a coluna do destaque leva três).
+ *
+ * A `moldura` leva o herói mais o que a coluna aguenta, e esse número vem de
+ * `MAXIMO_DE_CAMARAS` — não se escreve aqui outra vez. São a mesma decisão, e
+ * tê-la em dois sítios era garantir que um dia divergiam: alargar a coluna num
+ * lado deixaria o outro a cortar um convidado em silêncio.
+ */
 export const MAXIMO_POR_LAYOUT: Record<LayoutDoPalco, number> = {
   solo: 1,
   'lado-a-lado': 2,
   destaque: 4,
   grelha: 9,
+  moldura: 1 + MAXIMO_DE_CAMARAS,
 }
 
 /** Fracção da largura que a fonte principal ocupa no `destaque`. */
@@ -44,6 +57,14 @@ export const LARGURA_DO_DESTAQUE = 0.7
 export function rectsDoLayout(layout: LayoutDoPalco, n: number, largura: number, altura: number): Rect[] {
   const k = Math.min(n, MAXIMO_POR_LAYOUT[layout])
   if (k <= 0) return []
+  if (layout === 'moldura') {
+    // A moldura devolve um struct de peças nomeadas (faixa, logo, assinatura
+    // também), e aqui só se pedem os lugares das FONTES: o herói primeiro, as
+    // câmaras a seguir, na mesma ordem em que o mosaico as vai preencher. A
+    // marca desenha-se à parte, com o `desenharMarcaDaMoldura`.
+    const r = rectsDaMoldura(k - 1, largura, altura)
+    return [r.heroi, ...r.camaras]
+  }
   if (layout === 'destaque' && k > 1) {
     const wPrincipal = Math.round(largura * LARGURA_DO_DESTAQUE)
     const wColuna = largura - wPrincipal
@@ -302,15 +323,14 @@ export function hhmmss(segundos: number): string {
   return h > 0 ? `${dd(h)}:${dd(m)}:${dd(s)}` : `${dd(m)}:${dd(s)}`
 }
 
-/** Bytes legíveis (KB, MB, GB) com a vírgula da língua. */
+/**
+ * Tamanho legível. **Delega** no formatador único (`ui/format`).
+ *
+ * Tinha a sua própria implementação — base 1024 mas com casas variáveis e
+ * rótulo «KB» sobre uma divisão por 1024. Era o QUARTO formatador de bytes do
+ * frontend, e o que escapou à primeira medição porque tem o nome em português:
+ * um `grep` por `formatBytes` não o apanha. Fica a lição no sítio onde custou.
+ */
 export function formatarBytes(bytes: number, locale = 'pt-AO'): string {
-  const unidades = ['B', 'KB', 'MB', 'GB', 'TB']
-  let v = Math.max(0, bytes)
-  let i = 0
-  while (v >= 1024 && i < unidades.length - 1) {
-    v /= 1024
-    i++
-  }
-  const casas = i === 0 ? 0 : v < 10 ? 2 : 1
-  return `${v.toLocaleString(locale, { minimumFractionDigits: casas, maximumFractionDigits: casas })} ${unidades[i]}`
+  return formatBytes(bytes, locale)
 }

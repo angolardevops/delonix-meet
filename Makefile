@@ -214,9 +214,9 @@ kill: nginx-dev-stop ## Para TUDO (processos locais + docker + k8s) — estado z
 	@$(call KILL_PORT,$(WEB_PORT),TERM)
 	@printf "$(C)▶ a parar docker compose (infra dev + voice)...$(Z)\n"
 	@docker compose down 2>/dev/null || true
-	@printf "$(C)▶ a escalar workloads k8s para 0 (namespace delonix-meet)...$(Z)\n"
-	@kubectl scale deployment --all -n delonix-meet --replicas=0 2>/dev/null || true
-	@kubectl scale statefulset --all -n delonix-meet --replicas=0 2>/dev/null || true
+	@printf "$(C)▶ a escalar workloads k8s para 0 (namespace ngolacloud-meet)...$(Z)\n"
+	@kubectl scale deployment --all -n ngolacloud-meet --replicas=0 2>/dev/null || true
+	@kubectl scale statefulset --all -n ngolacloud-meet --replicas=0 2>/dev/null || true
 	@printf "$(G)  ✓ TUDO parado. Nada corre até fazer 'make dev' (local) ou 'make stage' (k8s).$(Z)\n"
 
 .PHONY: logs logs-api logs-web logs-nginx
@@ -246,10 +246,24 @@ build: image ## Constrói as imagens do backend e do frontend (delonix-server, d
 .PHONY: test
 test: fitness web-deps ## Corre os testes (fitness functions + cargo test + typecheck do frontend)
 	@printf "$(C)▶ testes$(Z)\n"
-	@cd server && DATABASE_URL=$${DATABASE_URL:-postgres://delonix:delonix_dev@localhost:5435/delonix_meet} cargo test --release --workspace -- --test-threads=4
+	@cd server && DATABASE_URL=$${DATABASE_URL:-postgres://delonix:delonix_dev@localhost:5435/delonix_meet} TEST_REDIS_URL=$${TEST_REDIS_URL:-redis://localhost:6379} cargo test --release --workspace -- --test-threads=4
 	@cd web && node_modules/.bin/tsc -p tsconfig.json --noEmit && printf "$(G)  ✓ tsc limpo$(Z)\n"
 	@cd web && node_modules/.bin/vitest run && printf "$(G)  ✓ vitest (R1/R2)$(Z)\n"
 	@cd web && npm run build >/dev/null && printf "$(G)  ✓ build do frontend (compila SCSS — R54)$(Z)\n"
+	@$(MAKE) --no-print-directory test-ai-worker
+
+.PHONY: test-ai-worker
+test-ai-worker: ## Testes do worker de IA (Python): batimento, ciclo, gRPC com dobras
+	@# Até 2026-10-08 estes 24 testes NÃO corriam em sítio nenhum — nem aqui nem
+	@# no CI. Precisam só do grpcio/protobuf (o faster-whisper é importado tarde,
+	@# dentro do construtor, e nenhum teste o constrói). Sem grpcio, três deles
+	@# dão ModuleNotFoundError — e é por isso que isto DIZ o que falta em vez de
+	@# passar por cima.
+	@if ! python3 -c 'import grpc' >/dev/null 2>&1; then \
+	  printf "$(Y)  · falta o grpcio: pip install grpcio==1.66.2 protobuf==5.27.5$(Z)\n"; \
+	  printf "$(Y)    (3 dos 24 testes vão falhar com ModuleNotFoundError)$(Z)\n"; \
+	fi
+	@cd ai-worker/tests && python3 -m unittest discover -s . && printf "$(G)  ✓ worker de IA$(Z)\n"
 
 .PHONY: web-deps
 web-deps: ## Garante web/node_modules (npm ci) — sem isto o `make test` morria com um 'Error 127' opaco
@@ -266,16 +280,29 @@ fitness: ## Fitness functions: formatação, higiene, CAPACIDADES VENDIDAS, auto
 	@cd server && cargo fmt --check && printf "$(G)  ✓ formatação Rust$(Z)\n"
 	@bash scripts/check-repo-hygiene.sh
 	@bash scripts/check-capability-claims.sh
+	@bash scripts/check-frontend-lint.sh
 	@bash scripts/check-route-auth.sh
+	@bash scripts/check-mcp-tools.sh
 	@bash scripts/check-docs-drift.sh
+	@bash scripts/check-filas-reivindicacao.sh
 	@bash scripts/check-room-affinity.sh
+	@bash scripts/check-ws-sem-access-log.sh
+	@bash scripts/check-recording-track-kinds.sh
+	@bash scripts/check-recording-artifacts.sh
 	@bash scripts/check-lua-sintaxe.sh
 	@bash scripts/check-fs-xml.sh
 	@bash scripts/check-ffmpeg-licenca.sh
+	@bash scripts/check-asr-soberania.sh
+	@bash scripts/check-tts-licenca.sh
 	@bash scripts/check-bordo-anuncia.sh
 	@bash scripts/check-bordo-central.sh
+	@bash scripts/check-replicas-compose.sh
+	@HELM=$(HELM) bash scripts/check-tectos-de-admissao.sh
 	@bash scripts/check-k8s-render.sh
 	@HELM=$(HELM) bash scripts/check-helm.sh
+	@HELM=$(HELM) bash scripts/check-observabilidade.sh
+	@bash scripts/check-ansible-producao.sh
+	@bash scripts/check-crypto-provider.sh
 	@bash scripts/check-arquitectura-catraca.sh
 	@bash scripts/check-crate-deps.sh
 	@bash scripts/check-proto.sh
@@ -371,6 +398,9 @@ image: ## Constrói delonix-server e delonix-web com a tag versionada ($(IMAGE_T
 	@# (um dist stale foi a causa de "estilos perdidos" em stage — nunca reusar).
 	@export PATH="$(NODE_BIN):$$PATH"; \
 	  cd web && { [ -d node_modules ] || npm ci; } && npm run build
+	@# O backoffice vai na MESMA imagem, em /admin/ (Dockerfile.web.stage).
+	@export PATH="$(NODE_BIN):$$PATH"; \
+	  cd web-admin && { [ -d node_modules ] || npm ci; } && npm run build
 	@$(IMG_BUILD) -f $(SERVER_DOCKERFILE) -t $(IMAGE_SERVER) .
 	@printf "$(C)▶ build $(IMAGE_WEB) (dist local → nginx, rápido)$(Z)\n"
 	@$(IMG_BUILD) -f Dockerfile.web.stage -t $(IMAGE_WEB) .
@@ -390,10 +420,10 @@ push: ## load das imagens no cluster + PIN da tag versionada nos Deployments
 .PHONY: pin
 pin: ## Fixa a tag $(IMAGE_TAG) nos Deployments e espera o rollout
 	@printf "$(C)▶ pin das imagens nos Deployments (tag $(IMAGE_TAG))$(Z)\n"
-	@kubectl -n delonix-meet set image deployment/delonix-server server=$(IMAGE_SERVER)
-	@kubectl -n delonix-meet set image deployment/delonix-web web=$(IMAGE_WEB)
-	@kubectl -n delonix-meet rollout status deployment/delonix-server --timeout=180s
-	@kubectl -n delonix-meet rollout status deployment/delonix-web --timeout=120s
+	@kubectl -n ngolacloud-meet set image deployment/delonix-server server=$(IMAGE_SERVER)
+	@kubectl -n ngolacloud-meet set image deployment/delonix-web web=$(IMAGE_WEB)
+	@kubectl -n ngolacloud-meet rollout status deployment/delonix-server --timeout=180s
+	@kubectl -n ngolacloud-meet rollout status deployment/delonix-web --timeout=120s
 	@printf "$(G)  ✓ cluster a correr $(IMAGE_SERVER) / $(IMAGE_WEB)$(Z)\n"
 
 .PHONY: image-push
@@ -422,10 +452,10 @@ freeswitch-image: ## Constrói a imagem FreeSWITCH do Meet ($(FS_IMAGE)) e corre
 infra-pull: ## Pré-carrega imagens Bitnami (Postgres single/Redis standalone) no cluster
 	@printf "$(C)▶ a extrair imagens da infra (charts de stage)...$(Z)\n"
 	@IMGS=$$(helm template delonix-postgres bitnami/postgresql \
-	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet 2>/dev/null \
+	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n ngolacloud-meet 2>/dev/null \
 	    | grep -E '^\s+image:' | awk '{gsub(/"/, "", $$2); print $$2}' | sort -u); \
 	 IMGS="$$IMGS $$(helm template delonix-redis bitnami/redis \
-	    -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet 2>/dev/null \
+	    -f deploy/k8s/helm-values/redis-stage-values.yaml -n ngolacloud-meet 2>/dev/null \
 	    | grep -E '^\s+image:' | awk '{gsub(/"/, "", $$2); print $$2}' | sort -u)"; \
 	 for img in $$IMGS; do \
 	   [ -z "$$img" ] && continue; \
@@ -476,7 +506,7 @@ metallb-kind: ## Instala MetalLB no kind e cria pool com IPs da rede docker kind
 .PHONY: stage
 # O Service do Postgres visto de dentro do cluster, para o DATABASE_URL do
 # Secret que scripts/k8s-app-secrets.sh monta a partir do .env.
-STAGE_DB_HOST ?= delonix-postgres-postgresql.delonix-meet.svc.cluster.local
+STAGE_DB_HOST ?= delonix-postgres-postgresql.ngolacloud-meet.svc.cluster.local
 # O `make prod` é LEGADO e não foi validado num cluster (plano de lacunas, O1):
 # este host é o que o 01-config.yaml antigo apontava, mantido tal e qual.
 PROD_DB_HOST  ?= $(STAGE_DB_HOST)
@@ -507,7 +537,7 @@ stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster
 	@kubectl create secret tls delonix-tls-secret \
 	  --cert=deploy/certs/wildcard.delonix.local.crt \
 	  --key=deploy/certs/wildcard.delonix.local.key \
-	  -n delonix-meet --dry-run=client -o yaml | kubectl apply -f -
+	  -n ngolacloud-meet --dry-run=client -o yaml | kubectl apply -f -
 	@printf "$(C)▶ Helm: Postgres (single-node) + Redis (standalone)...$(Z)\n"
 	@# Usa bitnami/postgresql em vez de postgresql-ha: o chart HA (pgpool +
 	@# postgresql-repmgr) removeu as imagens do Docker Hub em 2024; o chart
@@ -517,10 +547,10 @@ stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster
 	@# de valores versionado.
 	@set -a; . ./.env; set +a; \
 	  helm upgrade --install delonix-postgres bitnami/postgresql \
-	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n delonix-meet \
+	    -f deploy/k8s/helm-values/postgres-stage-values.yaml -n ngolacloud-meet \
 	    --set auth.password="$$POSTGRES_PASSWORD" --set auth.postgresPassword="$$POSTGRES_PASSWORD"
 	@helm upgrade --install delonix-redis bitnami/redis \
-	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n delonix-meet
+	  -f deploy/k8s/helm-values/redis-stage-values.yaml -n ngolacloud-meet
 	@printf "$(C)▶ Aplicação Delonix (config + server + web + ingress + coturn)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/01-config.yaml
 	@bash scripts/k8s-app-secrets.sh $(STAGE_DB_HOST)
@@ -546,49 +576,129 @@ stage: env-file image-push ## Build + kind load + deploy k8s completo no cluster
 	    printf "   $(Y)⚠ MetalLB ainda sem IP — adiciona manualmente ao /etc/hosts$(Z)\n"; \
 	  fi
 	@printf "   URL:  $(G)https://meet.delonix.local$(Z)\n"
-	@printf "   Pods: $(Y)kubectl get po -n delonix-meet$(Z)\n"
+	@printf "   Pods: $(Y)kubectl get po -n ngolacloud-meet$(Z)\n"
 
-DOMAIN ?= meet.delonix.local
+# O domínio do laboratório, o que está escrito no 04-ingress.yaml. Em produção
+# tem de ser substituído: aplicá-lo num cluster a sério punha o Ingress a
+# responder por um nome que ninguém resolve, e o cert-manager a pedir um
+# certificado para um domínio .local — que nunca é emitido.
+LAB_DOMAIN := meet.delonix.local
+# Omissão de laboratório DE PROPÓSITO (o `make stage` e o `make dev` vivem
+# nela). O `make prod` recusa-a — ver `prod-preflight`.
+DOMAIN ?= $(LAB_DOMAIN)
+
+# O email do ACME que está escrito no 05-cert-manager.yaml. É um contacto de
+# ninguém em particular: é a conta Let's Encrypt que fica registada e a caixa
+# onde caem os avisos de validade. Aplicá-lo em produção é mandar os avisos de
+# expiração do certificado para o sítio errado — e dá-se por isso no dia em que
+# o certificado expira. O Ansible do `site.yml` já faz isto bem, pelo
+# `tls.acme_email` do config.yml; este alvo passa a exigir o mesmo.
+PLACEHOLDER_ACME_EMAIL := admin@delonix.app
+ACME_EMAIL ?=
+
+# O VIP do relay TURN que vive nos manifestos: um endereço da rede docker do
+# kind, correcto no laboratório (`make stage`) e inexistente num cluster a
+# sério. O `make prod` NÃO o pode aplicar — ver `prod-preflight`.
+KIND_TURN_VIP := 172.30.0.201
+# O endereço público do relay em produção. DE PROPÓSITO sem omissão: uma
+# omissão aqui era o VIP do kind a entrar em produção outra vez, e o sintoma
+# seria ecrã preto em todas as chamadas, com a sinalização a funcionar.
+TURN_PUBLIC_IP ?=
 
 # R154 — o segredo da API interna de IVR nasce aleatório no cluster e nunca
 # num ficheiro do repositório. Idempotente: se o Secret já existe, não o toca
 # (rodar = apagar o Secret e voltar a correr, e actualizar o FreeSWITCH).
 .PHONY: voice-secret-k8s
 voice-secret-k8s: ## Cria o Secret delonix-voice (VOICE_INTERNAL_SECRET aleatório) se não existir
-	@if kubectl -n delonix-meet get secret delonix-voice >/dev/null 2>&1; then \
+	@if kubectl -n ngolacloud-meet get secret delonix-voice >/dev/null 2>&1; then \
 	  printf "   delonix-voice já existe — mantido\n"; \
 	else \
-	  kubectl -n delonix-meet create secret generic delonix-voice \
+	  kubectl -n ngolacloud-meet create secret generic delonix-voice \
 	    --from-literal=VOICE_INTERNAL_SECRET="$$(openssl rand -hex 32)" >/dev/null && \
 	  printf "   $(G)✓ delonix-voice criado (VOICE_INTERNAL_SECRET aleatório, 64 hex)$(Z)\n"; \
 	fi
 
 .PHONY: prod
-prod: env-file ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
+.PHONY: prod-preflight
+# RECUSA ANTES DE ESCREVER. Corre como dependência do `prod`, portanto antes do
+# Ansible, do Helm e do primeiro `kubectl apply`: um deploy que só se descobre
+# errado no passo 25 já mexeu no cluster.
+prod-preflight:
+	@if [ -z "$(TURN_PUBLIC_IP)" ]; then \
+	  printf "$(Y)✗ TURN_PUBLIC_IP não está definido.$(Z)\n"; \
+	  printf "  Os manifestos levam $(KIND_TURN_VIP), que é um VIP da rede docker do kind:\n"; \
+	  printf "  num cluster a sério esse endereço não existe, e o relay de media fica\n"; \
+	  printf "  sem caminho — ecrã preto com a sinalização toda a funcionar.\n\n"; \
+	  printf "  Dá-lhe o endereço público do relay:\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip-publico-do-LB> DOMAIN=<dominio> ACME_EMAIL=<quem-recebe>$(Z)\n\n"; \
+	  printf "  Produção hoje NÃO passa por aqui: o coturn do delonix-lda é do chart\n"; \
+	  printf "  Helm (release meet, hostNetwork + ClusterIP). Ver deploy/helm/delonix-meet/\n"; \
+	  printf "  e deploy/k8s/plataforma/README.md (ADR-0020/0021).\n"; \
+	  exit 1; \
+	fi
+	@if [ "$(TURN_PUBLIC_IP)" = "$(KIND_TURN_VIP)" ]; then \
+	  printf "$(Y)✗ TURN_PUBLIC_IP=$(KIND_TURN_VIP) é o VIP do kind — não serve em produção.$(Z)\n"; \
+	  exit 1; \
+	fi
+	@if [ -z "$(DOMAIN)" ] || [ "$(DOMAIN)" = "$(LAB_DOMAIN)" ]; then \
+	  printf "$(Y)✗ DOMAIN=$(DOMAIN) é o domínio do laboratório — não serve em produção.$(Z)\n"; \
+	  printf "  O Ingress responderia por um nome que ninguém resolve, e o cert-manager\n"; \
+	  printf "  pediria um certificado para um .local, que nunca é emitido.\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip-publico-do-LB> DOMAIN=<dominio-real>$(Z)\n"; \
+	  exit 1; \
+	fi
+	@if [ -z "$(ACME_EMAIL)" ]; then \
+	  printf "$(Y)✗ ACME_EMAIL não está definido.$(Z)\n"; \
+	  printf "  O manifesto leva $(PLACEHOLDER_ACME_EMAIL), que é o contacto de ninguém.\n"; \
+	  printf "  É a conta Let's Encrypt que fica registada e a caixa onde caem os avisos\n"; \
+	  printf "  de validade. Com o do manifesto, os avisos vão para o sítio errado e\n"; \
+	  printf "  dá-se por isso no dia em que o certificado expira.\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip> DOMAIN=<dominio> ACME_EMAIL=<quem-recebe>$(Z)\n"; \
+	  exit 1; \
+	fi
+	@if [ "$(ACME_EMAIL)" = "$(PLACEHOLDER_ACME_EMAIL)" ]; then \
+	  printf "$(Y)✗ ACME_EMAIL=$(PLACEHOLDER_ACME_EMAIL) é o contacto escrito no manifesto.$(Z)\n"; \
+	  printf "  É a conta Let's Encrypt que fica registada e a caixa onde caem os avisos\n"; \
+	  printf "  de validade. Com o do manifesto, os avisos vão para o sítio errado e\n"; \
+	  printf "  dá-se por isso no dia em que o certificado expira.\n"; \
+	  printf "    $(C)make prod TURN_PUBLIC_IP=<ip> DOMAIN=<dominio> ACME_EMAIL=<quem-recebe>$(Z)\n"; \
+	  exit 1; \
+	fi
+	@case "$(ACME_EMAIL)" in \
+	  *@*.*) ;; \
+	  *) printf "$(Y)✗ ACME_EMAIL=$(ACME_EMAIL) não parece um email.$(Z)\n"; \
+	     printf "  O Let's Encrypt recusa o registo da conta e nenhum certificado é emitido.\n"; \
+	     exit 1 ;; \
+	esac
+	@printf "$(G)  ✓ preflight: relay em $(TURN_PUBLIC_IP), domínio $(DOMAIN), avisos de TLS para $(ACME_EMAIL)$(Z)\n"
+
+prod: env-file prod-preflight ## Deploy de produção K8s (Ansible + Helm + Manifestos + Let's Encrypt)
 	@printf "$(C)▶ Provisionando Cluster K8s Bare-Metal via Ansible...$(Z)\n"
 	@ansible-playbook -i deploy/ansible/inventory.ini deploy/ansible/playbook.yml
 	@printf "$(C)▶ Instalando cert-manager (Let's Encrypt)...$(Z)\n"
 	@kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
 	@kubectl wait --namespace cert-manager --for=condition=ready pod --selector=app.kubernetes.io/instance=cert-manager --timeout=120s
-	@kubectl apply -f deploy/k8s/05-cert-manager.yaml
+	@sed "s/$(PLACEHOLDER_ACME_EMAIL)/$(ACME_EMAIL)/g" deploy/k8s/05-cert-manager.yaml | kubectl apply -f -
 	@printf "$(C)▶ Deploy da Infra (Namespace + Helm Postgres/Redis)...$(Z)\n"
 	@kubectl apply -f deploy/k8s/00-namespace.yaml
 	@helm repo add bitnami https://charts.bitnami.com/bitnami
 	@helm repo update
 	@set -a; . ./.env; set +a; \
-	  helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n delonix-meet \
+	  helm upgrade --install delonix-postgres bitnami/postgresql-ha -f deploy/k8s/helm-values/postgres-values.yaml -n ngolacloud-meet \
 	    --set auth.password="$$POSTGRES_PASSWORD" --set auth.replicationPassword="$$POSTGRES_REPLICATION_PASSWORD"
-	@helm upgrade --install delonix-redis bitnami/redis -f deploy/k8s/helm-values/redis-values.yaml -n delonix-meet
+	@helm upgrade --install delonix-redis bitnami/redis -f deploy/k8s/helm-values/redis-values.yaml -n ngolacloud-meet
 	@printf "$(C)▶ Compilando e gerando Docker Image (Distroless Security)...$(Z)\n"
 	@docker build -t delonix-meet-server:latest -f Dockerfile.server .
 	@printf "$(C)▶ Fazendo deploy da Aplicação com Domínio $(DOMAIN)...$(Z)\n"
-	@kubectl apply -f deploy/k8s/01-config.yaml
+	@sed "s/$(KIND_TURN_VIP)/$(TURN_PUBLIC_IP)/g" deploy/k8s/01-config.yaml | kubectl apply -f -
 	@bash scripts/k8s-app-secrets.sh $(PROD_DB_HOST)
 	@$(MAKE) --no-print-directory voice-secret-k8s
 	@kubectl apply -f deploy/k8s/02-server.yaml
 	@kubectl apply -f deploy/k8s/03-web.yaml
-	@sed "s/meet.delonix.local/$(DOMAIN)/g" deploy/k8s/04-ingress.yaml | kubectl apply -f -
-	@kubectl apply -f deploy/k8s/51-coturn.yaml   # media relay (R4). Prod: trocar VIP metallb por LB de cloud + IP público em 01-config/51-coturn
+	@sed "s/$(LAB_DOMAIN)/$(DOMAIN)/g" deploy/k8s/04-ingress.yaml | kubectl apply -f -
+	@# media relay (R4). O VIP do kind sai daqui: TURN_HOST (01-config) e
+	@# EXTERNAL_IP/loadBalancerIP (51-coturn) ficam todos em $(TURN_PUBLIC_IP).
+	@sed "s/$(KIND_TURN_VIP)/$(TURN_PUBLIC_IP)/g" deploy/k8s/51-coturn.yaml | kubectl apply -f -
 	@printf "$(G)  ✓ Deploy de Produção concluído! O Cert-Manager obterá os certificados para $(DOMAIN).$(Z)\n"
 
 .PHONY: destroy
@@ -596,14 +706,14 @@ destroy: ## Faz backup do etcd, postgres e redis e destrói o cluster
 	@printf "$(C)▶ Iniciando o processo de destruição e backup do cluster...$(Z)\n"
 	@mkdir -p backups
 	@printf "$(C)  - A efetuar backup do PostgreSQL...$(Z)\n"
-	@kubectl exec -n delonix-meet -it delonix-postgres-postgresql-ha-postgresql-0 -- pg_dump -U postgres delonix > backups/postgres_backup.sql || true
+	@kubectl exec -n ngolacloud-meet -it delonix-postgres-postgresql-ha-postgresql-0 -- pg_dump -U postgres delonix > backups/postgres_backup.sql || true
 	@printf "$(C)  - A efetuar backup do Redis...$(Z)\n"
-	@kubectl exec -n delonix-meet -it delonix-redis-master-0 -- redis-cli SAVE || true
+	@kubectl exec -n ngolacloud-meet -it delonix-redis-master-0 -- redis-cli SAVE || true
 	@kubectl cp delonix-meet/delonix-redis-master-0:/data/dump.rdb backups/redis_dump.rdb || true
 	@printf "$(C)  - Destruindo Helm charts e Manifestos...$(Z)\n"
-	@helm uninstall delonix-postgres -n delonix-meet || true
-	@helm uninstall delonix-redis -n delonix-meet || true
-	@kubectl delete namespace delonix-meet || true
+	@helm uninstall delonix-postgres -n ngolacloud-meet || true
+	@helm uninstall delonix-redis -n ngolacloud-meet || true
+	@kubectl delete namespace ngolacloud-meet || true
 	@kind delete cluster --name delonix-stage || true
 	@printf "$(G)  ✓ Cluster destruído com sucesso. Backups em ./backups/$(Z)\n"
 
@@ -613,7 +723,7 @@ restore: ## Reconstrói o cluster e faz o restore das bases de dados
 	@$(MAKE) stage
 	@printf "$(C)  - A restaurar PostgreSQL...$(Z)\n"
 	@kubectl cp backups/postgres_backup.sql delonix-meet/delonix-postgres-postgresql-ha-postgresql-0:/tmp/backup.sql || true
-	@kubectl exec -n delonix-meet -it delonix-postgres-postgresql-ha-postgresql-0 -- psql -U postgres -d delonix -f /tmp/backup.sql || true
+	@kubectl exec -n ngolacloud-meet -it delonix-postgres-postgresql-ha-postgresql-0 -- psql -U postgres -d delonix -f /tmp/backup.sql || true
 	@printf "$(C)  - A restaurar Redis...$(Z)\n"
 	@kubectl cp backups/redis_dump.rdb delonix-meet/delonix-redis-master-0:/data/dump.rdb || true
 	@printf "$(G)  ✓ Cluster restaurado com sucesso.$(Z)\n"
@@ -725,10 +835,12 @@ bootstrap: ## Prepara a máquina: ferramentas, dependências, .env com segredos 
 
 # O compose.yaml corre as imagens de `make build` atrás de uma borda com TLS.
 # Não constrói nada: sem imagens, falha a dizer isso — não as vai buscar a lado nenhum.
-.PHONY: compose-up compose-down compose-ps compose-logs compose-voice-check seed voice-secret-rotate
+.PHONY: compose-up compose-down compose-ps compose-logs compose-voice-check seed voice-secret-rotate esl-secret-rotate
 voice-secret-rotate: ## Troca o VOICE_INTERNAL_SECRET do .env (depois: make compose-up e/ou make cluster)
 	@bash scripts/rotate-voice-secret.sh
-seed: ## Cria a organização «ngolacloud» e o administrador de validação (BASE=https://…)
+esl-secret-rotate: ## Troca a TELEPHONY_ESL_PASSWORD (Event Socket do FreeSWITCH) do .env (depois: make compose-down/up e/ou make cluster)
+	@bash scripts/rotate-voice-secret.sh .env TELEPHONY_ESL_PASSWORD
+seed: ## Cria a organização «ngolacloud», o administrador e a conta demo@ngolacloud.ao (BASE=https://…)
 	@bash scripts/seed.sh $(or $(BASE),https://$(MEET_HOST):8443)
 compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do PBX e chamada de prova ao IVR
 	@bash scripts/compose-voice-check.sh
@@ -738,6 +850,7 @@ compose-voice-check: ## Mede a sinalização da voz no compose: bordo, tronco do
 compose-up: ## Simulação de produção (compose.yaml); LAN_IP=<ip> expõe os ramais à rede local
 	@[ -f .env ] && [ -f deploy/compose/generated/turnserver.conf ] || { printf "$(Y)  ✗ falta o .env ou deploy/compose/generated/ — corre «make bootstrap»$(Z)\n"; exit 1; }
 	@grep -qE '^DATA_ENCRYPTION_KEYS=.+' .env || { printf "$(Y)  ✗ o .env não tem DATA_ENCRYPTION_KEYS (o servidor já não arranca sem ela) — corre «make bootstrap»: acrescenta-a sem mexer no resto$(Z)\n"; exit 1; }
+	@grep -qE '^TELEPHONY_ESL_PASSWORD=.+' .env || { printf "$(Y)  ✗ o .env não tem TELEPHONY_ESL_PASSWORD (o servidor liga-se ao Event Socket com ela) — corre «make bootstrap»: acrescenta-a sem mexer no resto$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "delonix-server" || { printf "$(Y)  ✗ faltam as imagens — corre «make build»$(Z)\n"; exit 1; }
 	@$(IMG_LS) 2>/dev/null | grep -q "pbx-cliente" || { printf "$(Y)  ✗ faltam as imagens de voz — corre «make voice-images»$(Z)\n"; exit 1; }
 	@# A central da organização (ADR-0016) precisa de dois ficheiros que um
@@ -846,14 +959,41 @@ voice-images: ## Imagens de voz para o cluster local: FreeSWITCH (importado) + P
 	@printf "$(G)  ✓ imagens de voz prontas$(Z)\n"
 
 .PHONY: cluster cluster-status cluster-reset-db cluster-down
-cluster: ## Stack completo num cluster local (delonix cluster) — https://$(MEET_HOST)
-	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) IMAGE_TAG=$(IMAGE_TAG) bash scripts/cluster.sh up
+# LAN_IP=<ip desta máquina na rede local> expõe os RAMAIS do cluster a um
+# softphone da mesma rede (make cluster LAN_IP=192.168.1.120), como já fazia o
+# `compose-up`. Sem ele, tudo fica em loopback — que é o que se quer por omissão.
+cluster: ## Stack completo num cluster local + contas de validação (demo@ngolacloud.ao) — https://$(MEET_HOST); LAN_IP=<ip> expõe os ramais à rede local
+	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) IMAGE_TAG=$(IMAGE_TAG) LAN_IP=$(LAN_IP) bash scripts/cluster.sh up
 cluster-status: ## Estado do cluster local: nós, pods, ingress e a prova de fumo
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh status
 cluster-reset-db: ## Apaga a base de dados do cluster local (depois: make cluster para a recriar)
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh reset-db
 cluster-down: ## Destrói o cluster local (nós, rede e kubeconfig)
 	@CLUSTER_NAME=$(CLUSTER_NAME) MEET_HOST=$(MEET_HOST) bash scripts/cluster.sh down
+
+# ============================================================
+#  PRODUÇÃO — meet.ngolacloud.com (ADR-0020)
+#
+#  Infra PRÓPRIA do Meet, num cluster só dele. NÃO é o `make cluster`, que é
+#  o laboratório local: o que as separa é o cluster e o kubeconfig.
+# ============================================================
+.PHONY: prod-vms prod-vms-plano prod-inventario prod-k8s prod-k8s-ensaio prod-plataforma prod-observabilidade
+prod-vms-plano: ## Produção: o que o OpenTofu faria às VMs do Proxmox (LÊ ANTES de aplicar)
+	@cd deploy/tofu && tofu init -input=false >/dev/null && tofu plan
+prod-vms: ## Produção: cria/actualiza as VMs do cluster no Proxmox (pede confirmação)
+	@cd deploy/tofu && tofu init -input=false >/dev/null && tofu apply
+prod-k8s: ## Produção: instala o Kubernetes (3 control-planes) nas VMs do inventário
+	@[ -f deploy/ansible/inventory-producao.ini ] || { printf "$(Y)  ✗ falta deploy/ansible/inventory-producao.ini — corre «make prod-inventario»$(Z)\n"; exit 1; }
+	@cd deploy/ansible && ansible-playbook -i inventory-producao.ini producao.yml
+prod-k8s-ensaio: ## Produção: o que o Ansible MUDARIA no cluster, sem mudar nada
+	@cd deploy/ansible && ansible-playbook -i inventory-producao.ini producao.yml --check --diff
+prod-plataforma: ## Produção: instala a plataforma do cluster (ingress, TLS, Postgres, Redis, MinIO)
+	@bash deploy/k8s/plataforma/instalar.sh
+prod-observabilidade: ## Produção: instala Prometheus, Grafana, Loki, Tempo e o colector OTLP
+	@bash deploy/k8s/observabilidade/instalar.sh
+prod-inventario: ## Produção: escreve o inventário do Ansible a partir do estado do OpenTofu
+	@cd deploy/tofu && tofu output -raw inventario_ansible > ../ansible/inventory-producao.ini
+	@printf "$(G)  ✓ deploy/ansible/inventory-producao.ini escrito do estado do OpenTofu$(Z)\n"
 
 # ============================================================
 #  MANUTENÇÃO

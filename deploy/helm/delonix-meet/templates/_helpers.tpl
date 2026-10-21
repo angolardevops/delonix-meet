@@ -53,6 +53,38 @@ imagePullSecrets:
 {{- end -}}
 {{- end }}
 
+{{/*
+  O nome pelo qual o SFU chega ao relay POR DENTRO, quando o relay está atrás
+  de NAT (`coturn.privateIP`) e o TURN_HOST é um nome e não um IP. Vazio nos
+  outros casos — um IP não se pode apontar para outro sítio com `hostAliases`.
+*/}}
+{{- define "dm.turnAlias" -}}
+{{- $h := regexReplaceAll ":[0-9]+$" (include "dm.turnHost" .) "" -}}
+{{- if and .Values.coturn.enabled .Values.coturn.privateIP $h (not (regexMatch "^[0-9.]+$" $h)) (not (hasPrefix "[" $h)) -}}
+{{- $h -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+  O Service que serve o `/asr` (transcrição em tempo real): o Whisper deste
+  chart, ou um serviço de transcrição de fora.
+
+  PORQUE É DERIVADO: `whisper.enabled` sem rota é um pod a arder CPU que
+  browser nenhum alcança, e uma rota sem pod é um 503. Eram duas maçanetas
+  independentes para uma só decisão.
+*/}}
+{{- define "dm.asrService" -}}
+{{- if .Values.whisper.enabled -}}
+delonix-whisper
+{{- else -}}
+{{- .Values.ingress.asr.serviceName -}}
+{{- end -}}
+{{- end }}
+
+{{- define "dm.asrPort" -}}
+{{- if .Values.whisper.enabled -}}8000{{- else -}}{{ .Values.ingress.asr.servicePort }}{{- end -}}
+{{- end }}
+
 {{/* Contexto de segurança de um contentor sem privilégios. */}}
 {{- define "dm.restricted" -}}
 allowPrivilegeEscalation: false
@@ -79,6 +111,14 @@ capabilities:
 {{- end }}
 
 {{/*
+  Todos os nomes públicos, o canónico PRIMEIRO e sem repetidos. Devolve JSON
+  (`fromJsonArray` do lado de quem chama): um `include` só devolve texto.
+*/}}
+{{- define "dm.hosts" -}}
+{{- prepend (.Values.extraHosts | default list) .Values.host | uniq | toJson -}}
+{{- end -}}
+
+{{/*
   As recusas do chart. Juntam-se TODAS e falha-se uma vez, para o operador não
   descobrir os erros um por instalação.
 */}}
@@ -88,6 +128,19 @@ capabilities:
 {{- $prod := $v.production -}}
 {{- if not $v.host -}}
 {{- $e = append $e "host: falta o nome público (p.ex. --set host=meet.ngolacloud.com)" -}}
+{{- end -}}
+{{- with $v.publicUrl -}}
+{{- if not (or (hasPrefix "https://" .) (and (not $prod) (hasPrefix "http://" .))) -}}
+{{- $e = append $e (printf "publicUrl=%s: tem de começar por https:// (http:// só fora de produção). O servidor recusava arrancar com ele; aqui recusa-se antes do rollout" .) -}}
+{{- end -}}
+{{- end -}}
+{{- if $v.extraHosts -}}
+{{- if $v.ingress.enabled -}}
+{{- $e = append $e "extraHosts: com ingress.enabled o chart pede um certificado para UM nome (host) — o segundo nome seria servido com o certificado do primeiro. Usa gateway.mode=attach, onde o certificado é do Gateway" -}}
+{{- end -}}
+{{- if and $v.gateway.enabled (eq $v.gateway.mode "own") -}}
+{{- $e = append $e "extraHosts: em gateway.mode=own os listeners e o certificado são de UM nome (host). Usa gateway.mode=attach, e confirma que o certificado do Gateway cobre todos os nomes" -}}
+{{- end -}}
 {{- end -}}
 
 {{- /* segredos */ -}}
@@ -113,6 +166,8 @@ capabilities:
 {{- if $v.voice.labPbx.enabled -}}{{- $_ := set $imgs "voice.labPbx.image" $v.voice.labPbx.image.tag -}}{{- end -}}
 {{- end -}}
 {{- if $v.postgresql.enabled -}}{{- $_ := set $imgs "postgresql.image" $v.postgresql.image.tag -}}{{- end -}}
+{{- if $v.ollama.enabled -}}{{- $_ := set $imgs "ollama.image" $v.ollama.image.tag -}}{{- end -}}
+{{- if $v.whisper.enabled -}}{{- $_ := set $imgs "whisper.image" $v.whisper.image.tag -}}{{- end -}}
 {{- if $v.redis.enabled -}}{{- $_ := set $imgs "redis.image" $v.redis.image.tag -}}{{- end -}}
 {{- range $nome, $tag := $imgs -}}
 {{- if not $tag -}}
@@ -159,9 +214,70 @@ capabilities:
 {{- $e = append $e "ingress.tls.clusterIssuer e ingress.tls.existingSecret são exclusivos" -}}
 {{- end -}}
 
+{{- /* IA in-cluster */ -}}
+{{- if $v.ollama.enabled -}}
+{{- range $m := (list $v.ollama.modelSummary $v.ollama.modelTranslate) -}}
+{{- if and $m (not (has $m $v.ollama.models)) -}}
+{{- $e = append $e (printf "ollama.models: «%s» é pedido ao servidor mas não está na lista que o pod puxa. O ConfigMap apontaria para um modelo que não existe, e o Ollama responderia 404 a cada resumo (LlmError::ModelMissing) — acrescenta-o a ollama.models" $m) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $v.ollama.modelSummary -}}
+{{- $e = append $e "ollama.modelSummary: sem modelo de resumo a ata de IA nunca nasce" -}}
+{{- end -}}
+{{- end -}}
+{{- if and $v.whisper.enabled $v.ingress.asr.serviceName -}}
+{{- $e = append $e "whisper.enabled e ingress.asr.serviceName são exclusivos: o /asr tem um destino só. Usa o Whisper do chart, ou aponta o ingress.asr a um serviço de fora" -}}
+{{- end -}}
+{{- /* O /asr valida o access token com o JWT_SECRET do Secret (o app.py é
+   fail-closed sem ele): sem Secret, o Whisper recusa TODAS as ligações e o
+   browser cai em silêncio para o motor local — pior do que não o instalar. */ -}}
+{{- if and $v.whisper.enabled (not $v.secrets.existingSecret) (not $v.secrets.create) -}}
+{{- $e = append $e "whisper.enabled exige um Secret com a chave JWT_SECRET: o /asr valida o mesmo access token do /rtc e sem a chave recusa todas as ligações (fail-closed)" -}}
+{{- end -}}
+
 {{- /* media */ -}}
 {{- if and $v.coturn.enabled $prod (not $v.coturn.externalIP) -}}
 {{- $e = append $e "coturn.externalIP: falta o IP público do relay (o do LoadBalancer). É o que o coturn anuncia e o que o TURN_HOST do servidor leva" -}}
+{{- end -}}
+{{- range $site, $turn := $v.server.turnHostBySite -}}
+{{- if not (has $site (include "dm.hosts" $ | fromJsonArray)) -}}
+{{- $e = append $e (printf "server.turnHostBySite: «%s» não é um nome que esta instalação serve (host ou extraHosts) — o par nunca seria escolhido, e quem entra por esse site ficava com o turnHost sem ninguém o ter decidido" $site) -}}
+{{- end -}}
+{{- if not $turn -}}
+{{- $e = append $e (printf "server.turnHostBySite.%s: falta o host:porta do TURN desse site" $site) -}}
+{{- end -}}
+{{- end -}}
+{{- $privado := "^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)" -}}
+{{- if and $v.coturn.enabled $prod $v.coturn.externalIP (regexMatch $privado $v.coturn.externalIP) (not $v.coturn.lanOnly) -}}
+{{- $e = append $e (printf "coturn.externalIP=%s é um endereço PRIVADO: é o que o browser recebe como TURN, e quem está fora dessa rede entra na sala e fica sem áudio nem vídeo, sem um erro (medido em produção a 2026-10-13). Indica o IP público e, se o relay está atrás de NAT, o do nó em coturn.privateIP; ou coturn.lanOnly=true se a instalação é só para a rede local" $v.coturn.externalIP) -}}
+{{- end -}}
+{{- if and $v.coturn.enabled $v.coturn.privateIP (or (not $v.coturn.externalIP) (eq $v.coturn.privateIP $v.coturn.externalIP)) -}}
+{{- $e = append $e "coturn.privateIP: só faz sentido ao lado de um coturn.externalIP DIFERENTE (o público que o router encaminha). Sem NAT pelo meio, deixa-o vazio" -}}
+{{- end -}}
+{{- if and $v.coturn.enabled $prod $v.coturn.privateIP $v.coturn.externalIP (ne $v.coturn.privateIP $v.coturn.externalIP) (not (include "dm.turnAlias" .)) -}}
+{{- $e = append $e "server.turnHost: com coturn.privateIP indica um NOME (p.ex. turn.exemplo.ao:3478) e não um IP. O TURN_HOST é o mesmo para o browser e para o SFU; com um nome, o chart aponta-o por dentro para o IP privado (hostAliases) e o SFU não depende do hairpin do router para chegar ao relay" -}}
+{{- end -}}
+
+{{- /* O RELAY TEM DE TER CAMINHO, e um Service não lho dá.
+
+   O TURN tem duas pernas: o cliente fala com a porta de CONTROLO (3478) e
+   recebe um endereço de RELAY numa porta da gama min-max; a media vai para
+   essa porta. Um Service só programa regras para as portas que DECLARA, e o
+   chart declara apenas a de controlo. Sem `hostNetwork`, o Allocate chega, o
+   relay é anunciado, e os pacotes de media não têm por onde entrar.
+
+   O sintoma é o pior que há: sinalização a funcionar, sala a abrir,
+   participantes na lista — e ecrã preto. Medido no render de produção de
+   2026-10-11, quando `FORCE_TURN_RELAY=1` já punha TODA a media por aqui. */ -}}
+{{- if and $v.coturn.enabled $prod (not $v.coturn.hostNetwork) -}}
+{{- $e = append $e "coturn.hostNetwork: em produção o relay precisa da rede do nó. O Service só expõe a porta de controlo e a gama de relay (min-max) não tem regra nenhuma no LoadBalancer: o Allocate chega, a media morre, e o sintoma é ecrã preto com a sinalização toda a funcionar. Declarar centenas de portas num Service não é caminho" -}}
+{{- end -}}
+{{- $span := add (sub (int $v.coturn.relayPorts.max) (int $v.coturn.relayPorts.min)) 1 -}}
+{{- if and $v.coturn.enabled $v.coturn.hostNetwork (gt (int $v.coturn.relayPorts.max) 29999) -}}
+{{- $e = append $e (printf "coturn.relayPorts: a gama %d-%d entra na dos NodePort (30000-32767) e/ou nos portos efémeros do kernel (32768-60999, lidos nos workers a 2026-10-11). Na rede do nó isso disputa portas com o que o nó já abre, e a colisão aparece como uma alocação que falha de vez em quando — não como um erro no arranque" (int $v.coturn.relayPorts.min) (int $v.coturn.relayPorts.max)) -}}
+{{- end -}}
+{{- if and $v.coturn.enabled (gt (int $v.coturn.totalQuota) $span) -}}
+{{- $e = append $e (printf "coturn.totalQuota=%d com %d portas de relay: cada alocação UDP gasta uma porta, logo a quota promete mais do que a gama dá. O limite real apareceria como uma alocação recusada sem razão visível, não como quota esgotada — alinha os dois" (int $v.coturn.totalQuota) $span) -}}
 {{- end -}}
 {{- if and (not $v.coturn.enabled) (not $v.server.turnHost) -}}
 {{- $e = append $e "server.turnHost: sem o coturn do chart, indica o host:porta do TURN externo (media em Kubernetes é relay-only)" -}}
@@ -204,6 +320,91 @@ capabilities:
 {{- end -}}
 {{- if and $v.server.telephony.eslAddr (not $v.secrets.existingSecret) -}}
 {{- $e = append $e "server.telephony.eslAddr exige a chave TELEPHONY_ESL_PASSWORD num secrets.existingSecret" -}}
+{{- end -}}
+{{- /* o ESL do FreeSWITCH do chart: quem lá entra origina chamadas (R300) */ -}}
+{{- if and $v.voice.enabled $v.server.telephony.eslAddr (not $v.voice.freeswitch.eslCidrs) -}}
+{{- if $v.voice.freeswitch.hostNetwork -}}
+{{- $e = append $e "voice.freeswitch.eslCidrs: com server.telephony.eslAddr e o FreeSWITCH em hostNetwork, o ESL (8021) escuta nas interfaces do NÓ e a política de rede do chart não se lhe aplica — declara de onde o servidor fala" -}}
+{{- else if and $prod (not $v.networkPolicy.enabled) -}}
+{{- $e = append $e "server.telephony.eslAddr em produção: sem networkPolicy.enabled nem voice.freeswitch.eslCidrs, o ESL (8021) fica aberto a toda a rede de pods, só com a password" -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* gateway api — exclusivo do ingress, e com duas perdas que têm de ser reconhecidas */ -}}
+{{- if and $v.ingress.enabled $v.gateway.enabled -}}
+{{- $e = append $e "ingress.enabled e gateway.enabled são exclusivos: o cluster serve por Ingress OU por Gateway API, e dois caminhos de entrada para o mesmo host é tráfego a ir por onde ninguém escolheu" -}}
+{{- end -}}
+{{- if and $prod (not $v.ingress.enabled) (not $v.gateway.enabled) -}}
+{{- $e = append $e "entrada: em produção liga ingress.enabled ou gateway.enabled — sem um deles o host não é servido de fora" -}}
+{{- end -}}
+{{- if $v.gateway.enabled -}}
+{{- if not (has $v.gateway.mode (list "own" "attach")) -}}
+{{- $e = append $e (printf "gateway.mode=%s: é «own» (Gateway neste namespace) ou «attach» (colar-se a um existente)" $v.gateway.mode) -}}
+{{- end -}}
+{{- if and (eq $v.gateway.mode "own") (not $v.gateway.className) -}}
+{{- $e = append $e "gateway.className: em mode=own o Gateway precisa de uma GatewayClass (no ngola-lda chama-se «delonix»)" -}}
+{{- end -}}
+{{- if and (eq $v.gateway.mode "attach") (not $v.gateway.parentRef.name) -}}
+{{- $e = append $e "gateway.parentRef.name: em mode=attach indica o Gateway a que as rotas se colam — e confirma que ele aceita rotas deste namespace (allowedRoutes), senão as rotas ficam Accepted=False sem servir nada" -}}
+{{- end -}}
+{{- if and $prod (eq $v.gateway.mode "attach") (not $v.gateway.parentRef.sectionName) -}}
+{{- $e = append $e "gateway.parentRef.sectionName: em produção e mode=attach indica o listener HTTPS do Gateway (no ngola-lda chama-se «https») — sem ele as rotas colam-se a todos os listeners, o de :80 incluído, e a aplicação é servida em claro por cima do redireccionamento da plataforma" -}}
+{{- end -}}
+{{- /* TLS EM `attach` É DE QUEM TEM O LISTENER, e pedi-lo aqui não dá erro.
+
+   Em `attach` o `gateway.yaml` emite HTTPRoutes e MAIS NADA: o bloco do
+   Gateway, com os `certificateRefs`, está todo dentro de `if eq mode "own"`.
+   Logo um `tls.clusterIssuer` ou um `tls.certificateRefName` postos aqui são
+   lidos por ninguém — ficam no values a parecer que o TLS está tratado.
+
+   Foi exactamente este o defeito do perfil de produção até ao `0c6d6b1f`:
+   pedia `clusterIssuer: letsencrypt-prod`, um emissor que o cluster não tem
+   (re-medido a 2026-10-13: o `delonix-lda` só tem o `delonix-letsencrypt`, do
+   operador). Ninguém deu por isso porque o valor nunca chegou a template
+   nenhum. Quem termina o TLS é o listener do Gateway a que nos colamos, com os
+   certificados DELE. */ -}}
+{{- if and (eq $v.gateway.mode "attach") (or $v.gateway.tls.clusterIssuer $v.gateway.tls.certificateRefName) -}}
+{{- $e = append $e "gateway.tls em mode=attach: o certificado é do listener do Gateway a que te colas, e estes campos só são lidos em mode=own — ficariam no values a dar a impressão de que o TLS está tratado, sem chegar a template nenhum. Tira-os, e confirma que o listener (parentRef.sectionName) cobre os teus nomes" -}}
+{{- end -}}
+{{- if and $prod (eq $v.gateway.mode "own") (not $v.gateway.tls.certificateRefName) (not $v.gateway.tls.clusterIssuer) -}}
+{{- $e = append $e "gateway.tls: em produção indica gateway.tls.clusterIssuer (cert-manager com --enable-gateway-api) ou gateway.tls.certificateRefName — sem um deles o Gateway só tem listener HTTP" -}}
+{{- end -}}
+{{- if and $v.gateway.tls.certificateRefName $v.gateway.tls.clusterIssuer -}}
+{{- $e = append $e "gateway.tls.certificateRefName e gateway.tls.clusterIssuer são exclusivos" -}}
+{{- end -}}
+{{- if not (has $v.gateway.affinity.implementation (list "envoy" "none")) -}}
+{{- $e = append $e (printf "gateway.affinity.implementation=%s: é «envoy» ou «none»" $v.gateway.affinity.implementation) -}}
+{{- end -}}
+{{- if and $prod (eq $v.gateway.affinity.implementation "none") -}}
+{{- $e = append $e "gateway.affinity.implementation=none em produção: sem a BackendTrafficPolicy não há hash(room)→mesmo pod, os pares de uma sala caem em pods diferentes e o SFU em memória parte-se — é a regressão R3, «media num só sentido» (ADR-0001). Com outra implementação de Gateway API, arranja o equivalente ANTES de pôr isto a none" -}}
+{{- end -}}
+{{- if and $prod (not $v.gateway.acceptProvisioningInAccessLog) -}}
+{{- $e = append $e "gateway.acceptProvisioningInAccessLog: em Gateway API o registo de acessos é do GATEWAY e não da rota, logo o caminho /api/public/extension-provisioning — que leva um bilhete de uso único (R278) — vai para o log. O Ingress tinha uma rota dedicada só para o desligar e isso não tem equivalente. Põe true para reconhecer, ou usa ingress.enabled" -}}
+{{- end -}}
+{{- end -}}
+
+{{- /*
+  Admissão por capacidade (ADR-0017). FORA do bloco do Gateway: estas guardas
+  viveram dentro do `if $v.gateway.enabled` até 2026-10-18 e por isso NUNCA
+  corriam no caminho por omissão do chart (`values.yaml`: gateway desligado,
+  ingress ligado). O tecto não tem nada que ver com a forma como o tráfego
+  entra — uma guarda que só dispara em metade das implantações não é guarda.
+*/}}
+{{- if and $prod (le (int $v.server.nodePeerCapacity) 0) -}}
+{{- $e = append $e "server.nodePeerCapacity: 0 em produção. `0` é «sem tecto, de propósito» e o ConfigMap passa-o tal e qual ao servidor (ADR-0017): o nó aceita até degradar, e o alerta MeetSalasRecusadasPorCapacidade nunca dispara. Foi o que esteve em produção até 2026-10-13. É o valor de uma RAMPA DE CARGA, não de uma instalação a servir gente. Declara os participantes que o pod aguenta — para o limite de memória do pod, é (limite − base) ÷ 73 MB por participante (docs/ops/teste-de-carga-2026-10-05.md)" -}}
+{{- end -}}
+{{- /*
+  Com `nodePeerCapacity: 0` um tecto de organização explícito continua a valer
+  (o servidor respeita-o mesmo com o do nó desligado), mas comparar os dois não
+  diz nada — por isso a guarda de baixo só corre com capacidade declarada. O
+  que ela NÃO pode é desarmar-se em silêncio: `0` + `orgMaxParticipants: 60`
+  era aceite sem ninguém reparar que o nó ficava sem tecto nenhum.
+*/}}
+{{- if and (gt (int $v.server.orgMaxParticipants) 0) (gt (int $v.server.orgMaxParticipants) (int $v.server.nodePeerCapacity)) (gt (int $v.server.nodePeerCapacity) 0) -}}
+{{- $e = append $e (printf "server.orgMaxParticipants (%d) acima de server.nodePeerCapacity (%d): o tecto da organização nunca morde, porque o nó recusa primeiro" (int $v.server.orgMaxParticipants) (int $v.server.nodePeerCapacity)) -}}
+{{- end -}}
+{{- if and (le (int $v.server.nodePeerCapacity) 0) (gt (int $v.server.orgMaxParticipants) 0) -}}
+{{- $e = append $e (printf "server.nodePeerCapacity: 0 com server.orgMaxParticipants: %d. O tecto da ORGANIZAÇÃO morde mas o do NÓ não existe: uma segunda organização enche o nó na mesma. Ou declara a capacidade do nó, ou põe os dois a 0 (é o que uma rampa de carga faz)" (int $v.server.orgMaxParticipants)) -}}
 {{- end -}}
 
 {{- if $e -}}

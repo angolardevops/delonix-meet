@@ -46,10 +46,16 @@ class Transcriber(Protocol):
 
 class WhisperTranscriber:
     def __init__(self, model_name: str, device: str, compute: str,
-                 log: Callable[[str], None]):
+                 log: Callable[[str], None],
+                 pulso: Callable[[], None] = lambda: None):
+        # `pulso` é o batimento do worker (ai-worker/batimento.py), chamado a
+        # cada segmento produzido. É o que distingue uma transcrição LENTA de um
+        # worker PENDURADO: um batimento por relógio continuaria a tocar com o
+        # CUDA travado, e seria uma sonda que não prova nada.
         # Import tardio: os testes e o modo fake não precisam do faster-whisper.
         from faster_whisper import WhisperModel
 
+        self._pulso = pulso
         log(f"a carregar modelo {model_name} em {device}/{compute}…")
         try:
             self._model = WhisperModel(model_name, device=device, compute_type=compute)
@@ -61,16 +67,23 @@ class WhisperTranscriber:
     def transcribe(self, path: str) -> Transcription:
         # vad_filter corta silêncios; language=None deixa o modelo detetar (PT/EN/…).
         raw, info = self._model.transcribe(path, vad_filter=True, beam_size=5)
-        segments = tuple(
-            Segment(
+        # `raw` é um gerador: a transcrição corre AQUI, segmento a segmento. Era
+        # uma compreensão de tuplo; passa a ciclo só para poder pulsar o
+        # batimento em cada segmento — é o progresso real do trabalho.
+        # O pulso vem ANTES do filtro de texto vazio: um segmento só com
+        # silêncio também é trabalho feito.
+        acc = []
+        for seg in raw:
+            self._pulso()
+            if not seg.text.strip():
+                continue
+            acc.append(Segment(
                 start_ms=int(round(seg.start * 1000)),
                 end_ms=int(round(seg.end * 1000)),
                 text=seg.text.strip(),
                 confidence=confidence_from_logprob(getattr(seg, "avg_logprob", None)),
-            )
-            for seg in raw  # gerador: a transcrição corre aqui
-            if seg.text.strip()
-        )
+            ))
+        segments = tuple(acc)
         return Transcription(
             text=" ".join(s.text for s in segments).strip(),
             segments=segments,

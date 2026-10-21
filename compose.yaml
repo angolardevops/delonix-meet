@@ -85,6 +85,22 @@ services:
       INTERNAL_BIND_ADDR: 0.0.0.0:8181
       TURN_HOST: meet.ngolacloud.local:23478
       CORS_ORIGINS: https://meet.ngolacloud.local:8443
+      # Admissão por capacidade (ADR-0017). Declarados AQUI e não deixados à
+      # omissão do código, para que esta forma de implantar diga o seu tecto em
+      # voz alta como as outras duas dizem (`deploy/k8s/01-config.yaml` e os
+      # `values` do chart). Até 2026-10-18 o compose não declarava nenhum dos
+      # dois: aceitava a 41.ª pessoa e degradava a sala para todos, sem sinal.
+      #
+      # 50 é a capacidade do deploy de REFERÊNCIA e o máximo provado em bancada
+      # são 40 (`docs/ops/teste-de-carga-2026-10-05.md:29`: 11,2 de 16 núcleos).
+      # O compose não põe limites de recursos ao contentor — leva a máquina
+      # toda —, por isso o número honesto é o do host onde isto corre: se o teu
+      # aguenta menos, baixa-o; é uma decisão de quem opera, não uma constante.
+      NODE_PEER_CAPACITY: "50"
+      # 80 % da capacidade do nó, a mesma regra dos três `values` (25→20,
+      # 50→40). Trava o vizinho ruidoso: uma organização sozinha não fecha o nó
+      # às outras. Recusa com 429 — «tu já tens o teu» —, não com 503.
+      ORG_MAX_PARTICIPANTS: "40"
       RECORDINGS_DIR: /var/lib/delonix/recordings
       # Endereço público do servidor SIP dos ramais, que a consola mostra nas
       # credenciais de um ramal (perfil «internal» do FreeSWITCH). A porta só
@@ -93,6 +109,16 @@ services:
       VOICE_RAMAIS_PUBLIC_HOST: meet.ngolacloud.local
       VOICE_RAMAIS_PUBLIC_PORT: "5070"
       VOICE_RAMAIS_PUBLIC_TRANSPORT: udp
+      # A ponte telefone↔sala (ADR-0010). O FreeSWITCH vai por NOME: o motor do compose dá
+      # IPs novos a cada arranque, e o servidor resolve o nome (só endereços privados) e volta
+      # a resolvê-lo de tempos a tempos. O IP que vai no SDP é o local, detectado. Sem isto o
+      # dial-in cai numa conferência só de telefones e o ramal não aparece na sala.
+      PHONE_BRIDGE_SIP_BIND: 0.0.0.0:5090
+      PHONE_BRIDGE_FREESWITCH_IPS: delonix-freeswitch
+      PHONE_BRIDGE_RTP_MIN: "20200"
+      PHONE_BRIDGE_RTP_MAX: "20400"
+      # O Event Socket do FreeSWITCH (a password vem do .env, TELEPHONY_ESL_PASSWORD).
+      TELEPHONY_ESL_ADDR: delonix-freeswitch:8021
     volumes:
       - recordings:/var/lib/delonix/recordings
     networks: [meet]
@@ -170,6 +196,9 @@ services:
     environment:
       DELONIX_CONTROL_URL: http://delonix-server:8181
       DELONIX_RAMAIS_SIP_PORT: "5070"
+      # De quanto em quanto tempo o FreeSWITCH volta a ler os troncos do
+      # servidor (um tronco novo regista-se sozinho). "0" desliga.
+      DELONIX_TRUNKS_RESCAN_SECS: "60"
       # De onde fala o bordo: o IVR só acredita em «esta chamada é da central
       # de X» vindo daqui. As redes privadas, como na allowlist do bordo — a
       # sub-rede do compose muda de motor para motor. É um laboratório: em
@@ -181,6 +210,7 @@ services:
       - ./voice/freeswitch/dialplan/default/00_delonix_extensions.xml:/meet/00_delonix_extensions.xml:ro
       - ./voice/freeswitch/autoload_configs/conference.conf.xml:/meet/conference.conf.xml:ro
       - ./voice/freeswitch/autoload_configs/xml_curl.conf.xml:/meet/xml_curl.conf.xml:ro
+      - ./voice/freeswitch/autoload_configs/json_cdr.conf.xml:/meet/json_cdr.conf.xml:ro
       - ./voice/freeswitch/sip_profiles/internal.xml:/meet/internal.xml:ro
       - ./voice/freeswitch/scripts/dialin_ivr.lua:/meet/dialin_ivr.lua:ro
       - ./voice/freeswitch/scripts/ramais_dial.lua:/meet/ramais_dial.lua:ro

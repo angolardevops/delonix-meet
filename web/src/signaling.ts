@@ -70,7 +70,20 @@ export type ServerMsg =
   | { type: 'recording'; from: string; username: string; active: boolean }
   | { type: 'transcript'; from: string; username: string; text: string }
   | { type: 'transcript-interim'; from: string; username: string; text: string }
+  /** Línguas de dobragem activas na sala, e o código de uma recusa (ADR-0030). */
+  | { type: 'dub-languages'; langs: string[]; error?: string }
   | { type: 'transcription'; on: boolean; by: string }
+  /**
+   * A organização PERMITE o motor de voz do browser (a Web Speech, que envia o
+   * áudio aos servidores da Google)? `organizations.allow_web_speech`, no
+   * servidor. Só chega quando a resposta é NÃO — como as `room-settings`, o
+   * silêncio é o caso normal.
+   *
+   * Chega antes de o microfone arrancar (à entrada) e também como resposta a
+   * uma frase recusada, que é o que faz a política alcançar quem já estava na
+   * sala quando ela mudou.
+   */
+  | { type: 'caption-policy'; web_speech: boolean }
   | { type: 'waiting' }
   | { type: 'waiting-join'; peer: PeerInfo }
   | { type: 'waiting-left'; peer_id: string }
@@ -83,6 +96,9 @@ export type ServerMsg =
   | { type: 'muted-all'; by: string; allow_unmute: boolean }
   | { type: 'host-changed'; from: string; to: string }
   | { type: 'kicked' }
+  /** A mesma pessoa está também ao telefone nesta sala: pergunta onde continuar. */
+  | { type: 'duplicate-device'; phone_id: string; can_hangup: boolean }
+  | { type: 'duplicate-resolved'; phone_id: string; outcome: 'hung_up' | 'muted' | 'both' | 'gone' }
   | { type: 'room-settings'; locked: boolean; host_share_only: boolean; chat_on?: boolean; allow_unmute?: boolean }
   | { type: 'share-granted'; allowed: boolean }
   | { type: 'share-request'; from: string; username: string }
@@ -105,6 +121,8 @@ export type ServerMsg =
   | { type: 'remote-control'; from: string; action: string; payload: any }
 
 export type ClientMsg =
+  /** `meet`: continuar só aqui (o telefone desliga ou fica sem som); `both`: nos dois. Só actua nas pernas desta pessoa. */
+  | { type: 'device-choice'; phone_id: string; keep: 'meet' | 'both' }
   | { type: 'offer'; to: string; sdp: string }
   | { type: 'answer'; to: string; sdp: string }
   | { type: 'ice'; to: string; candidate: RTCIceCandidateInit }
@@ -113,8 +131,18 @@ export type ClientMsg =
   | { type: 'hand'; raised: boolean }
   | { type: 'media'; cam: boolean; mic: boolean }
   | { type: 'recording'; active: boolean }
-  | { type: 'transcript'; text: string }
-  | { type: 'transcript-interim'; text: string }
+  /**
+   * `engine` é o motor que produziu a frase (`legendasPref.MotorDeTranscricao`).
+   * O servidor usa-o para RECUSAR a frase quando a organização proíbe o motor
+   * da Google. Um cliente hostil pode mentir — ver o comentário no
+   * `signaling.rs`: isto fecha o caminho honesto, não substitui a política.
+   */
+  | { type: 'transcript'; text: string; engine?: string }
+  | { type: 'transcript-interim'; text: string; engine?: string }
+  /** Que língua de dobragem ESTE dispositivo quer ouvir (`null` = original). */
+  | { type: 'dub-listen'; lang: string | null }
+  /** Só o anfitrião: liga ou desliga uma língua NA SALA. */
+  | { type: 'dub-language'; lang: string; on: boolean }
   | { type: 'transcription-toggle'; on: boolean }
   | { type: 'admit'; to: string }
   | { type: 'deny'; to: string }
@@ -170,7 +198,8 @@ export type ClientMsg =
 export class Signaling {
   private ws: WebSocket
   private handlers = new Map<string, ((msg: never) => void)[]>()
-  onclose: (() => void) | null = null
+  /** `abriu`: o socket chegou a estar ligado. `false` = recusado no handshake. */
+  onclose: ((abriu: boolean) => void) | null = null
 
   /** Guarda o segredo de reclamação desta sala (R91). */
   static guardarSegredo(roomCode: string, segredo: string) {
@@ -222,8 +251,19 @@ export class Signaling {
       console.debug('[signal] <-', msg.type, this.handlers.has(msg.type) ? '' : '(no handler!)')
       this.handlers.get(msg.type)?.forEach((h) => h(msg as never))
     }
-    this.ws.onclose = () => this.onclose?.()
+    // Um handshake recusado NÃO abre: o browser entrega `onerror` e depois um
+    // `onclose` com `code: 1006`, sem o estado HTTP nem o corpo. Guardar se
+    // chegou a abrir é o que permite distinguir «o servidor recusou-me» de «a
+    // minha ligação caiu a meio» — sem isto, as duas davam a mesma frase, e a
+    // pessoa recusada por capacidade era mandada verificar a rede dela.
+    this.ws.onopen = () => {
+      this.abriu = true
+    }
+    this.ws.onclose = () => this.onclose?.(this.abriu)
   }
+
+  /** O socket chegou a estar aberto? `false` = foi recusado no handshake. */
+  private abriu = false
 
   on<T extends ServerMsg['type']>(type: T, handler: (msg: Extract<ServerMsg, { type: T }>) => void) {
     const list = this.handlers.get(type) ?? []

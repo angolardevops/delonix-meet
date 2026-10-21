@@ -4,18 +4,44 @@
 #  Este ficheiro fixa a TOPOLOGIA. O que é próprio de cada instalação entra
 #  por --set ou por um ficheiro privado, e o chart FALHA se faltar:
 #
-#    helm upgrade --install meet deploy/helm/delonix-meet -n delonix-meet \
+#    helm upgrade --install meet deploy/helm/delonix-meet -n ngolacloud-meet \
 #      -f deploy/helm/delonix-meet/values-production.yaml \
 #      --set image.tag=<git describe> \
 #      --set secrets.existingSecret=<nome do Secret> \
 #      --set coturn.externalIP=<IP público do relay> \
 #      --set server.image.repository=<registo>/delonix-server \
-#      --set web.image.repository=<registo>/delonix-web
+#      --set web.image.repository=<registo>/delonix-web \
+#      --set whisper.enabled=true \
+#      --set whisper.image.repository=<registo>/delonix-whisper \
+#      --set whisper.image.tag=<tag da imagem do ASR> \
+#      --set ollama.image.repository=<registo>/ollama/ollama
+#
+#  A ÚLTIMA é opcional mas MEDIDA: o `ollama/ollama:0.40.2` são 3,5GB, e a
+#  2026-10-13 o nó não os acabou de puxar do Docker Hub em 600 s — o prazo que
+#  o Kubernetes dá por omissão — e o `helm upgrade --wait` deu o release por
+#  falhado com tudo aplicado e o pod a progredir por trás. A mesma instalação
+#  puxou 1,18GB do registo da rede em 1m24s. Espelhar a imagem no registo onde
+#  já vivem o servidor e a web troca um puxão de dezenas de minutos por um de
+#  minuto:
+#
+#    podman pull ollama/ollama:0.40.2
+#    podman tag  ollama/ollama:0.40.2 <registo>/ollama/ollama:0.40.2
+#    podman push --tls-verify=false   <registo>/ollama/ollama:0.40.2
+#
+#  As três últimas ligam o ASR soberano (as legendas da sala sem passar pela
+#  Google). A sua imagem tem tag PRÓPRIA: embute o modelo (~2GB) e não se
+#  reconstrói a cada commit — `BUILD_WHISPER=1 deploy/build-images.sh`.
 #
 #  Não há aqui nenhum segredo, nenhum IP real e nenhuma tag.
 # ============================================================
 production: true
 host: meet.ngolacloud.com
+# O `.ao` responde ao lado do `.com` (decisão de 2026-10-13). O certificado é do
+# Gateway da plataforma — `delonix-wildcard-tls-dns01` cobre `*.ngolacloud.ao` e
+# o `delonix-wildcard-tls` traz `meet.ngolacloud.com` entre os SAN. O `.com`
+# fica canónico: ver `extraHosts` no values.yaml para o que isso quer dizer.
+extraHosts:
+  - meet.ngolacloud.ao
 edition: saas
 
 # OBRIGATÓRIO por --set: a tag `git describe` das imagens publicadas.
@@ -32,20 +58,109 @@ externalRedis:
   fromSecret: true
 
 server:
+  # O caminho da chamada: desalojar o SFU derruba reuniões a decorrer.
+  # O Job de migração herda esta classe (bloqueia o release).
+  priorityClassName: meet-critico
+  # O nome do TURN, igual para o browser e para o SFU. `turn.ngolacloud.com`
+  # resolve para o IP público (medido a 2026-10-13); cá dentro, o chart
+  # aponta-o para `coturn.privateIP` — ver `turnHost` no values.yaml.
+  turnHost: "turn.ngolacloud.com:3478"
+  # Por domínio (decisão de 2026-10-13): quem entra pelo `.ao` recebe o TURN do
+  # `.ao`. Os dois nomes resolvem para o mesmo IP público e o mesmo relay
+  # (medido nos autoritativos de `ngolacloud.ao` a 2026-10-13).
+  turnHostBySite:
+    meet.ngolacloud.ao: "turn.ngolacloud.ao:3478"
   replicas: 3
   migrations:
     mode: job
   autoscaling:
     enabled: true
     minReplicas: 3
-    maxReplicas: 8
+    # Desceu de 8 para 6 a 2026-10-13, e isto AUMENTA a capacidade em vez de a
+    # reduzir: cada pod passou de 2 para 4 CPU e de 2 para 4Gi, logo de ~25 para
+    # ~50 participantes declarados (ver `nodePeerCapacity`). 6 × 50 = 300 contra
+    # 8 × 25 = 200 — e com menos pressão na quota do namespace, que é partilhada
+    # com outras equipas (ADR-0021). O número de réplicas é o que multiplica a
+    # quota, não o que serve as salas: uma sala vive num pod só (ADR-0001).
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  # ALINHADO COM A MEDIÇÃO a 2026-10-13. O que estava aqui (`2 CPU / 2Gi`) ficava
+  # 5× abaixo do que a sala de 40 pessoas medida em metal consumiu — 11,17 núcleos
+  # e 2 929 MB (docs/ops/teste-de-carga-2026-10-05.md) — e metade do que o
+  # deploy/k8s/02-server.yaml já justificava por escrito para o CPU.
+  #
+  # 4Gi de limite ⇒ (4096 − ~200 de base) ÷ 73 MB por participante ≈ 53, e é a
+  # memória que manda: não depende da forma da sala. O CPU é O(N²) dentro de uma
+  # sala, por isso 4 núcleos NÃO fazem uma sala de 50 — fazem ~25 a 30 numa só
+  # sala (0,28 núcleos marginais aos 40) e bem mais em salas pequenas (160
+  # pessoas em salas de 4 deram 4,8 núcleos). A capacidade abaixo é em
+  # PARTICIPANTES do nó, que é o que a admissão conta.
+  #
+  # `requests.memory` sobe de 512Mi para 1Gi: é o que reserva lugar ao scheduler,
+  # e um pod com 512Mi reservado que cresce para 4Gi num nó cheio é despejado a
+  # meio das reuniões que serve. Não sobe mais do que isto porque os requests são
+  # a parte do cluster partilhado que fica tirada aos vizinhos (a conta da quota
+  # está no topo de templates/quota.yaml).
   resources:
-    requests: { cpu: 500m, memory: 512Mi }
-    limits: { cpu: "2", memory: 2Gi }
+    requests: { cpu: 750m, memory: 1Gi }
+    limits: { cpu: "4", memory: 4Gi }
+
+  # ADMISSÃO LIGADA (ADR-0017), 2026-10-13. Até aqui nenhum ficheiro de deploy
+  # declarava capacidade: o mecanismo existia no código (`signaling.rs`,
+  # `operations::media_node::admit_new_room`), estava testado
+  # (`server/tests/node_admission.rs`) e NUNCA corria — o nó aceitava salas novas
+  # até degradar, e o alerta `MeetSalasRecusadasPorCapacidade`
+  # (deploy/k8s/observabilidade/alertas.yaml) não podia disparar.
+  #
+  # 50 = o tecto de memória do pod acima, arredondado para baixo. A 85% (42
+  # participantes) o nó entra na zona de margem e passa a recusar salas NOVAS do
+  # inquilino que já usa a sua parte justa; aos 50 recusa a todos. Quem já está
+  # numa sala deste pod nunca é recusado.
+  #
+  # O QUE ISTO NÃO PROTEGE, dito de propósito: uma sala única que cresça até aos
+  # 50 neste pod degrada por CPU muito antes (O(N²) dentro da sala). O travão
+  # dessa é o tecto por sala, que ainda não está medido em Kubernetes — é a
+  # medição seguinte, e é a que se põe num contrato.
+  nodePeerCapacity: 50
+
+  # 80% da capacidade do nó: uma organização sozinha não fecha o pod às outras,
+  # e continua a poder ter 40 participantes AQUI (o tecto é por nó, logo 6 × 40
+  # no conjunto). É um limite de plano e o operador sobrepõe-no por organização
+  # em `PUT /api/operator/v1/organizations/{id}/concurrency` — este é só a
+  # omissão para quem não tem tecto próprio.
+  orgMaxParticipants: 40
+  # Armazenamento de OBJECTOS (ADR-0020, D2). Entra pelo ambiente e não pela
+  # tabela `platform_storage`: as chaves são um Secret do cluster, e guardá-las
+  # na base da aplicação é o que a S5 mandou parar de fazer.
+  #
+  # Com isto, o botão «testar» do painel do operador escreve e apaga um objecto
+  # de prova no MinIO. O que ele NÃO faz ainda é mudar onde as gravações ficam:
+  # elas continuam no volume abaixo, e o painel diz isso em letra grande. Ver o
+  # ADR-0020 e o `objectos.rs`.
+  extraEnv:
+    - name: OBJECT_STORE_ENDPOINT
+      value: "http://minio.minio.svc.cluster.local:9000"
+    - name: OBJECT_STORE_BUCKET
+      value: "meet-gravacoes"
+    - name: OBJECT_STORE_REGION
+      value: "us-east-1"
+    # O MESMO Secret que o chart do MinIO consome (`meet-minio-credenciais`),
+    # copiado para este namespace — um Secret não se lê de outro namespace.
+    - name: OBJECT_STORE_ACCESS_KEY
+      valueFrom:
+        secretKeyRef: { name: meet-minio-credenciais, key: ACCESS_KEY_ID }
+    - name: OBJECT_STORE_SECRET_KEY
+      valueFrom:
+        secretKeyRef: { name: meet-minio-credenciais, key: SECRET_ACCESS_KEY }
 
 # Várias réplicas em vários nós: o volume tem de ser ReadWriteMany.
 # A StorageClass é da infra-estrutura; vazia = a por omissão do cluster,
 # que tem de suportar RWX.
+#
+# ISTO AINDA É NECESSÁRIO, e o ADR-0020 diz porquê: o cliente de objectos já
+# existe (`objectos.rs`) mas o gravador continua a escrever aqui e o servidor a
+# servir daqui. O RWX só sai destes valores no dia em que o caminho da media
+# for ligado ao MinIO e medido contra ele — não no dia em que o cliente nasceu.
 recordings:
   accessMode: ReadWriteMany
   storageClassName: ""
@@ -54,22 +169,214 @@ recordings:
 web:
   replicas: 3
 
+# ------------------------------------------------------------
+#  A ENTRADA — Gateway API, e não Ingress.
+#
+#  O ADR-0021 pôs esta produção no `ngola-lda`, e esse cluster NÃO TEM
+#  IngressClass nenhuma: serve por Envoy Gateway, GatewayClass `delonix`
+#  (medido a 2026-10-11: `kubectl get ingressclass` devolve «No resources
+#  found»). Um Ingress aqui criava um objecto que nada programa — e o sintoma
+#  seria um host que não responde, sem erro em sítio nenhum.
+# ------------------------------------------------------------
 ingress:
-  className: nginx
-  tls:
-    clusterIssuer: letsencrypt-prod
-    secretName: meet-ngolacloud-com-tls
+  enabled: false
+  # Lido pelo `gateway.yaml` mesmo com o Ingress desligado: com nome, o /asr é
+  # encaminhado para o serviço de transcrição. Vazio = sem rota /asr.
+  asr:
+    serviceName: ""
+
+gateway:
+  enabled: true
+  # `attach` E NÃO `own`, e a razão é o router e não o Kubernetes.
+  #
+  # Com `own` o Gateway pede um IP à gama do MetalLB (`192.168.1.73-100`) e
+  # recebe o seguinte livre — o `.74`. O router da instalação encaminha 80/443
+  # para UM endereço, e esse endereço é o `.73` do Gateway da plataforma: o
+  # `.74` nunca vê tráfego de fora. Um Gateway próprio ficaria PROGRAMMED,
+  # verde, e invisível da internet.
+  #
+  # Colar-se ao `.73` exige que ESSE Gateway aceite rotas deste namespace: ele
+  # nasce em `allowedRoutes: from: Same` e o role `gateway_api` do
+  # `delonix-deploy` passou-o a um selector por rótulo. Sem isso as HTTPRoutes
+  # ficam `Accepted=False` com `NotAllowedByListeners` — visível em
+  # `kubectl -n ngolacloud-meet describe httproute delonix-meet`.
+  mode: attach
+  parentRef:
+    name: delonix
+    namespace: delonix-system
+    # SÓ o listener de :443. Sem `sectionName` as rotas colam-se a TODOS os
+    # listeners do Gateway, o de :80 incluído, e como o nosso nome é mais
+    # específico do que o redireccionamento genérico da plataforma
+    # (`delonix-http-para-https`, sem hostnames), ganha-lhe: medido a
+    # 2026-10-13, `http://meet.ngolacloud.com/` devolvia 200 com a aplicação,
+    # em claro, enquanto `http://console.ngolacloud.ao/` devolvia 301. Preso ao
+    # `https`, o :80 volta a ser do redireccionamento da plataforma.
+    sectionName: https
+  # Sem `tls` nenhum, de propósito: quem termina o TLS é o listener `https` do
+  # Gateway da plataforma, e ele leva DOIS certificateRefs — re-medido a
+  # 2026-10-13: `delonix-wildcard-tls` (8 nomes `.com`, entre eles
+  # `meet.ngolacloud.com`) e `delonix-wildcard-tls-dns01` (`*.ngolacloud.ao`,
+  # `ngolacloud.ao`). São dois certificados e não um de 18 nomes: o SNI escolhe.
+  # Os dois são do operador do cluster e saem do emissor dele,
+  # `delonix-letsencrypt`. Pedir aqui um certificado novo era um segundo desafio
+  # ACME para nomes que já estão emitidos — e por isso também NÃO se põe
+  # `clusterIssuer` nenhum neste perfil: o `letsencrypt-prod` que o chart pedia
+  # até ao 0c6d6b1f não existe neste cluster.
+  affinity:
+    # A `BackendTrafficPolicy` com ConsistentHash por `room` — é o que mantém
+    # a invariante do ADR-0001 e o portão recusa `none` em produção.
+    implementation: envoy
+  # R278 reconhecido: em Gateway API o registo de acessos é do GATEWAY e não da
+  # rota, logo o `/api/public/extension-provisioning` — que leva um bilhete de
+  # uso único — entra no log do Gateway da plataforma. O Ingress tinha uma rota
+  # dedicada só para o desligar e isso não tem equivalente aqui. Fica DITO em
+  # vez de perdido em silêncio.
+  acceptProvisioningInAccessLog: true
 
 networkPolicy:
   enabled: true
+  # O Prometheus desta produção vive em `observabilidade`, não em `monitoring`
+  # (deploy/k8s/observabilidade/instalar.sh). Sem isto a política fechava o
+  # :8181 ao scrape, o ServiceMonitor ficava com o alvo em baixo e TODOS os
+  # alertas sobre métricas do servidor ficavam sem dados — a falhar em silêncio,
+  # que é a pior maneira de uma observabilidade falhar.
+  metricsNamespace: observabilidade
+
+# ------------------------------------------------------------
+#  A IA in-cluster — LIGADA (decisão do dono, 2026-10-13).
+#
+#  O que isto resolve, e foi medido na produção viva nesse dia: o
+#  `delonix-config` não tinha `OLLAMA_URL`, logo o servidor corria com a IA
+#  desligada e a ata de IA nunca foi escrita; e as legendas da sala passavam
+#  pela Web Speech do Chrome, que envia o áudio dos clientes para a Google.
+#
+#  SEM GPU: nenhum dos 8 nós do `delonix-lda` anuncia `nvidia.com/gpu`
+#  (medido). O cabeçalho do `templates/ai.yaml` diz o que isso custa — a ata
+#  em lote leva minutos, a tradução da legenda fica no limite. Com hardware,
+#  o ADR-0024 diz o que se liga aqui.
+# ------------------------------------------------------------
+ollama:
+  enabled: true
+  # O par escolhido pelo dono: 7b escreve a ata, 1.5b traduz a legenda.
+  models: ["qwen2.5:1.5b", "qwen2.5:7b"]
+  modelSummary: "qwen2.5:7b"
+  modelTranslate: "qwen2.5:1.5b"
+
+# O ASR soberano NÃO se liga aqui, e a razão é a imagem: embute o modelo
+# (~2GB), constrói-se à parte (`BUILD_WHISPER=1 deploy/build-images.sh`) e tem
+# tag PRÓPRIA — este ficheiro não pode saber qual é, e inventar uma era pior do
+# que não a ter (em produção o chart recusa `latest`). Ligar com dois `--set`,
+# como o registo do servidor e da web:
+#
+#   --set whisper.enabled=true \
+#   --set whisper.image.repository=<registo>/delonix-whisper \
+#   --set whisper.image.tag=<tag>
+#
+# Com `whisper.enabled` a rota `/asr` sai sozinha — não há segunda maçaneta.
+
+# Rastos por OTLP (ADR-0020, fase 5). Vazio = o servidor arranca sem rastos,
+# exactamente como antes. Com endereço, exporta para o colector — e se ele
+# estiver em baixo o servidor arranca na mesma, com um aviso no log: perde-se
+# observabilidade, não o serviço.
+otel:
+  endpoint: "http://otel-collector-opentelemetry-collector.observabilidade.svc.cluster.local:4317"
 
 coturn:
-  # OBRIGATÓRIO por --set: coturn.externalIP.
-  externalIP: ""
+  # Sem relay não há media atrás de NAT: é caminho da chamada. E aqui é caminho
+  # de TODA a chamada, porque o ConfigMap leva `FORCE_TURN_RELAY=1`.
+  priorityClassName: meet-critico
+
+  # `hostNetwork`, e isto não é optimização — é o que faz a media chegar.
+  #
+  # O TURN tem dois caminhos: o cliente fala com a porta de CONTROLO (3478) e
+  # recebe de volta um endereço de RELAY numa porta da gama `min-max`; a media
+  # vai para essa porta. Um Service `LoadBalancer` só programa regras para as
+  # portas que declara, e declarar 300 portas num Service não é caminho. Sem
+  # `hostNetwork`, o `Allocate` chega, o relay é anunciado, e os pacotes de
+  # media não têm regra nenhuma por onde entrar.
+  #
+  # O sintoma é o pior que há: a sinalização toda a funcionar, a sala a abrir,
+  # os participantes a aparecer na lista — e ecrã preto. Medido no render de
+  # 2026-10-11: o Service expunha só `turn-udp 3478 UDP`, e o coturn corria com
+  # `--min-port=49152 --max-port=59152`.
+  hostNetwork: true
+
+  # Com `hostNetwork` o Service deixa de servir o caminho de media — o cliente
+  # chega ao NÓ. Um LoadBalancer gastaria um endereço da gama do MetalLB para
+  # nada. Fica `ClusterIP` para o scrape das métricas.
   service:
-    type: LoadBalancer
+    type: ClusterIP
+
+  # 20000-20300, e a razão é medida: a gama efémera do kernel nos nós é
+  # 32768-60999 (lida nos workers a 2026-10-11) e a de NodePort do Kubernetes é
+  # 30000-32767. A gama por omissão do chart, 49152-59152, cai INTEIRA dentro
+  # dos portos efémeros — em `hostNetwork` isso disputa portas com tudo o que o
+  # nó já abre, e a colisão aparece como uma alocação que falha de vez em
+  # quando, não como um erro no arranque.
+  #
+  # 301 portas e não 10 000 porque há um segundo consumidor desta decisão: o
+  # router. Para a internet, alguém tem de encaminhar `3478/UDP` e esta gama
+  # para o nó — e um encaminhamento de 10 000 portas UDP pode nem ser possível
+  # no equipamento que lá está.
+  relayPorts: { min: 20000, max: 20300 }
+
+  # Alinhado com as portas, de propósito. Em relay-only dos dois lados cada
+  # participante gasta ~2 alocações (a dele e a do SFU), e cada alocação UDP
+  # gasta uma porta: 301 portas são ~150 participantes em simultâneo. O
+  # `totalQuota: 5000` que vinha por omissão prometia 16× o que as portas
+  # dão — e o limite real apareceria como uma alocação recusada sem razão
+  # visível, não como quota esgotada.
+  totalQuota: 300
+
+  # OBRIGATÓRIOS por --set, e são DOIS endereços, não um:
+  #
+  #   coturn.externalIP — o IP PÚBLICO, o do router que encaminha a 3478 para
+  #                       o nó (UDP; e TCP, para redes que bloqueiam UDP);
+  #   coturn.privateIP  — o IP do NÓ onde o coturn escuta (hostNetwork).
+  #
+  # Com os dois, o coturn corre com `--external-ip=público/privado` e a media
+  # entre o relay do browser e o relay do SFU não sai do nó: num ensaio com um
+  # coturn 4.6 e um IP público inalcançável, dois relays trocaram 60 de 60
+  # mensagens (0 de 60 sem o mapa). Por isso o browser só precisa de chegar à
+  # 3478; a gama de relay acima NÃO foi precisa nesse ensaio. Encaminhá-la não
+  # faz mal — só não se confirmou em produção que se pode dispensar.
+  #
+  # A instalação de 2026-10-11 pôs o IP do nó (192.168.1.32) no `externalIP`.
+  # Medido a 2026-10-13: dentro da LAN a sala tem áudio e vídeo nos dois
+  # sentidos; fora dela o browser recebe `turn:192.168.1.32:3478` com
+  # `iceTransportPolicy: relay`, um endereço a que não chega, e a pessoa entra
+  # na sala e não ouve nem vê ninguém. O chart agora recusa esse valor.
+  #
+  # ORDEM: primeiro o router (sem o encaminhamento, o IP público não responde e
+  # nem a LAN fica com media), só depois o `helm upgrade` com os dois valores.
+  externalIP: ""
+  privateIP: ""
+
+  # Fixar o nó também vem por --set (`coturn.nodeSelector`), e é próprio da
+  # instalação. Em `hostNetwork` o endereço do relay É o do nó: sem fixar, um
+  # reagendamento muda o IP e o `TURN_HOST` que os clientes já têm fica a
+  # apontar para o nó errado — outra vez ecrã preto, agora intermitente.
 
 # A voz fica desligada até os achados do README §«Voz em produção» terem
 # dono: o chart sabe instalá-la, mas o caminho de um PBX externo não foi medido.
 voice:
   enabled: false
+
+# Cluster partilhado (ADR-0021): a quota do namespace é obrigatória aqui. Os
+# números por omissão estão dimensionados para ESTA escala — ver a conta no
+# topo de `templates/quota.yaml`.
+quota:
+  enabled: true
+
+# Prioridade de agendamento (ADR-0021: cluster PARTILHADO).
+#
+# PRÉ-REQUISITO: as duas classes têm de existir no cluster ANTES deste release —
+# um `priorityClassName` que não exista faz o API server RECUSAR o pod, e o
+# `helm upgrade` falha. Aplicam-se com
+# `deploy/k8s/plataforma/priorityclasses.yaml`, que é o PRIMEIRO passo do
+# `instalar.sh` dessa pasta.
+#
+# Este é o default; o `server` e o `coturn` sobrepõem-no com `meet-critico`
+# (ver lá acima). O Postgres e o Redis não aparecem aqui porque em produção são
+# EXTERNOS — o chart não os instala, e configurá-los aqui era config morta.
+priorityClassName: meet-normal

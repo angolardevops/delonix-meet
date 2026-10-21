@@ -35,6 +35,11 @@ pub const ALL_RETENTION_DAYS: i64 = 180;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     MeetingInvited,
+    /// A hora da reunião mudou. Nasce com o produtor que a dispara (a rota de
+    /// remarcar): num trabalho anterior escrevi este tipo e tive de o reverter
+    /// porque nada podia mudar o `starts_at` — era um valor num catálogo
+    /// público para um evento impossível.
+    MeetingRescheduled,
     MeetingStarting,
     MeetingCancelled,
     CallMissed,
@@ -43,8 +48,9 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [
+    pub const ALL: [Kind; 7] = [
         Kind::MeetingInvited,
+        Kind::MeetingRescheduled,
         Kind::MeetingStarting,
         Kind::MeetingCancelled,
         Kind::CallMissed,
@@ -55,6 +61,7 @@ impl Kind {
     pub fn as_str(self) -> &'static str {
         match self {
             Kind::MeetingInvited => "meeting.invited",
+            Kind::MeetingRescheduled => "meeting.rescheduled",
             Kind::MeetingStarting => "meeting.starting",
             Kind::MeetingCancelled => "meeting.cancelled",
             Kind::CallMissed => "call.missed",
@@ -78,12 +85,25 @@ pub struct Draft {
     /// Chave de coalescência: por destinatário, no máximo uma notificação
     /// com esta chave.
     pub dedupe_key: String,
+    /// A reunião de que esta notificação fala, quando fala de uma. Serve para
+    /// o correio lhe anexar o convite de calendário (`.ics`): sem ela, quem
+    /// envia tinha de adivinhar o id a partir da chave de dedupe, que é texto
+    /// e muda de forma entre tipos.
+    pub meeting_id: Option<Uuid>,
+    /// O `.ics` JÁ CONSTRUÍDO, para quando não se pode ir buscá-lo pelo id.
+    ///
+    /// É o caso do CANCELAMENTO: quando a notificação corre, a linha da reunião
+    /// já foi apagada (`meetings::delete` apaga primeiro e notifica depois), e
+    /// um `METHOD:CANCEL` sem o `SEQUENCE` actual é ignorado pelo Outlook. Quem
+    /// apaga constrói o `.ics` ANTES e entrega-o aqui.
+    pub calendar_ics: Option<String>,
 }
 
 impl Draft {
     fn new(kind: Kind, entity: &str, title: String, body: String, link: String) -> Self {
         Draft {
             kind,
+            calendar_ics: None,
             title: clip(&title, MAX_TITLE),
             body: clip(&body, MAX_BODY),
             link: if is_safe_link(&link) {
@@ -93,7 +113,22 @@ impl Draft {
                 "/".to_string()
             },
             dedupe_key: format!("{}:{entity}", kind.as_str()),
+            meeting_id: None,
         }
+    }
+}
+
+impl Draft {
+    /// Diz de que reunião esta notificação fala. Encadeia-se no construtor.
+    fn about_meeting(mut self, meeting_id: Uuid) -> Self {
+        self.meeting_id = Some(meeting_id);
+        self
+    }
+
+    /// Anexa um `.ics` já construído (ver `calendar_ics`).
+    pub fn with_calendar(mut self, ics: String) -> Self {
+        self.calendar_ics = Some(ics);
+        self
     }
 }
 
@@ -156,6 +191,7 @@ pub fn meeting_invited(
         ),
         "/#/calendar".to_string(),
     )
+    .about_meeting(meeting_id)
 }
 
 pub fn meeting_starting(meeting_id: Uuid, meeting_title: &str, room_code: &str) -> Draft {
@@ -166,6 +202,33 @@ pub fn meeting_starting(meeting_id: Uuid, meeting_title: &str, room_code: &str) 
         format!("A reunião «{meeting_title}» está a começar."),
         room_path(room_code),
     )
+    .about_meeting(meeting_id)
+}
+
+/// A hora mudou. Leva as DUAS horas — a antiga e a nova —, porque quem recebe
+/// precisa de saber o que SAI da agenda e não só o que entra.
+///
+/// A chave de dedupe inclui a hora nova: remarcar duas vezes avisa duas vezes,
+/// e é isso que se quer — cada mudança é uma notícia diferente.
+pub fn meeting_rescheduled(
+    meeting_id: Uuid,
+    meeting_title: &str,
+    host_name: &str,
+    was_at: DateTime<Utc>,
+    starts_at: DateTime<Utc>,
+) -> Draft {
+    Draft::new(
+        Kind::MeetingRescheduled,
+        &format!("{meeting_id}:{}", starts_at.timestamp()),
+        format!("Nova hora: {meeting_title}"),
+        format!(
+            "{host_name} mudou «{meeting_title}» de {} para {}.",
+            when(was_at),
+            when(starts_at)
+        ),
+        "/#/calendar".to_string(),
+    )
+    .about_meeting(meeting_id)
 }
 
 pub fn meeting_cancelled(
@@ -184,6 +247,7 @@ pub fn meeting_cancelled(
         ),
         "/#/calendar".to_string(),
     )
+    .about_meeting(meeting_id)
 }
 
 /// Uma chamada que tocou várias vezes na mesma sala é UMA chamada perdida.

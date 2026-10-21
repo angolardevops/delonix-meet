@@ -59,8 +59,6 @@ services:
       TURN_HOST: prova.invalid:3478
       CORS_ORIGINS: https://prova.invalid
       RECORDINGS_DIR: /tmp/recordings
-      # A conta SIP de uma organização guarda-se cifrada.
-      DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS:?}
       REGISTRATION_MODE: open
       # A ponte telefone↔sala (ADR-0010): o UA SIP do servidor, que só aceita o
       # FreeSWITCH desta réplica.
@@ -90,6 +88,7 @@ services:
       - ../freeswitch/dialplan/default/00_delonix_extensions.xml:/meet/00_delonix_extensions.xml:ro
       - ../freeswitch/autoload_configs/conference.conf.xml:/meet/conference.conf.xml:ro
       - ../freeswitch/autoload_configs/xml_curl.conf.xml:/meet/xml_curl.conf.xml:ro
+      - ../freeswitch/autoload_configs/json_cdr.conf.xml:/meet/json_cdr.conf.xml:ro
       - ../freeswitch/sip_profiles/internal.xml:/meet/internal.xml:ro
       - ../freeswitch/scripts/dialin_ivr.lua:/meet/dialin_ivr.lua:ro
       - ../freeswitch/scripts/ramais_dial.lua:/meet/ramais_dial.lua:ro

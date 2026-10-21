@@ -58,3 +58,32 @@ DEPENDÊNCIAS (técnicas: ADR, superfície de API, infraestrutura)
 O QUE JÁ SE DIZ PUBLICAMENTE SOBRE ISTO (e se é verdade hoje)
 NÃO VALIDADO (o que é hipótese de mercado e não dado)
 ```
+
+## A paridade está MEDIDA — não a redescubras nem a adivinhes
+
+A tabela: `docs/paridade-medida-2026-10-18.md` (44 capacidades: 11 onde superamos, 14 ao
+nível, 9 atrás, 10 ausentes). A fila executável: `.claude/paridade/` — uma lacuna, um
+ficheiro, um prompt. **Cita o id** (`A-03`, `B-10`) em vez de descrever a lacuna de novo.
+
+**Os documentos de comparação NÃO são fonte.** O `docs/plano-paridade-2026-10-13.md`
+estava errado em dois pontos **cinco dias** depois de escrito. Lê-se para intenção.
+
+O que decide uma recomendação de produto hoje, e já está medido:
+
+- **40 participantes por sala** (`A-04`), contra 500 do Meet e 1000 do Zoom — e o ADR-0001
+  fixa a sala a um pod. Não é funcionalidade em falta, é arquitectura. Qualquer promessa de
+  escala passa por ali primeiro, e o `A-04` **mede** antes de decidir.
+- **Sem push com a app fechada** (`A-03`). Anula o valor de tudo o que se construa a
+  seguir: uma reunião começa e ninguém é avisado.
+- **O estúdio de TV é outra categoria**, não paridade: 34 mil linhas, e o par de mercado é
+  o vMix, não o Zoom. É o único terreno onde as 40 pessoas não são o critério de compra —
+  e o comprador concreto é a estação de TV ou o canal institucional que não pode pôr o
+  sinal de um plenário fora do país.
+- **Soberania total** (IA local, zero provedores de nuvem) abre banca, seguros e Estado —
+  e é exactamente aí que a falta de **legal hold** (`A-08`) fecha a venda. A ironia é cara
+  e vale a pena dizê-la ao dono.
+
+**Três afirmações a um passo de ser falsas**, e nenhuma se anuncia: a gravação ISO está
+`DEFAULT TRUE` sem a tabela que a serve (`A-02`); os formatos `broadcast` e `hybrid`
+guardam-se e não fazem nada (`A-09`); e um telefone entra numa sala E2EE (`A-01`). O
+`scripts/check-capability-claims.sh` existe para recusar o anúncio — não o contornes.

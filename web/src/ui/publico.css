@@ -299,3 +299,25 @@
   background: var(--stage);
   border-radius: var(--r-2);
 }
+
+/* Ecrã de consentimento de um agente (ADR-0028 §5). Os escopos lêem-se em
+   lista, e o que MEXE vem primeiro e marcado — a ordem é a decisão, não a
+   estética. */
+.oauth-consent__escopos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.oauth-consent__escopos li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  line-height: 1.4;
+}
+.oauth-consent__escopos code {
+  font-size: 0.8em;
+}

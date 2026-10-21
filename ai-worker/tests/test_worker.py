@@ -12,6 +12,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 
@@ -21,7 +22,9 @@ import transcribe_worker  # noqa: E402
 import worker  # noqa: E402
 from job_source import ConfigError, GrpcJobSource, Job, LeaseLost, open_channel  # noqa: E402
 from minutes import build_mom  # noqa: E402
-from transcriber import FakeTranscriber, Segment, confidence_from_logprob  # noqa: E402
+from batimento import Batimento  # noqa: E402
+from transcriber import (FakeTranscriber, Segment, WhisperTranscriber,  # noqa: E402
+                         confidence_from_logprob)
 
 
 # ------------------------------------------------------------------ dobras
@@ -234,6 +237,139 @@ class WorkerLoopTest(unittest.TestCase):
         stop.set()
         t.join(timeout=2)
         self.assertFalse(t.is_alive(), "o SIGTERM tem de interromper a espera")
+
+
+class BatimentoTest(unittest.TestCase):
+    """O batimento é o ÚNICO sinal de vida do worker: ele não serve HTTP nem tem
+    Service. O que estes testes defendem é a decisão de ai-worker/batimento.py —
+    o pulso vem do PROGRESSO, não do relógio."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.caminho = os.path.join(self.tmp.name, "batimento")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_o_ficheiro_so_nasce_no_primeiro_pulso(self):
+        """É isto que deixa o startupProbe distinguir «a descarregar o modelo»
+        de «pendurado»: ele espera que o ficheiro APAREÇA."""
+        b = Batimento(self.caminho)
+        self.assertFalse(os.path.exists(self.caminho))
+        self.assertIsNone(b.idade(), "sem ficheiro não há idade")
+        b.pulso()
+        self.assertTrue(os.path.exists(self.caminho))
+        self.assertLess(b.idade(), 5)
+
+    def test_o_pulso_adianta_a_marca(self):
+        b = Batimento(self.caminho)
+        b.pulso()
+        os.utime(self.caminho, (time.time() - 600, time.time() - 600))
+        self.assertGreater(b.idade(), 500)
+        b.pulso()
+        self.assertLess(b.idade(), 5, "o pulso tem de reescrever a marca")
+
+    def test_caminho_vazio_desliga_o_batimento(self):
+        for valor in (None, ""):
+            b = Batimento(valor)
+            b.pulso()  # não levanta
+            self.assertIsNone(b.caminho)
+            self.assertIsNone(b.idade())
+
+    def test_falhar_a_escrever_nao_derruba_o_trabalho(self):
+        """Um batimento que falha não pode matar uma transcrição que estava a
+        correr bem — quem decide é o Kubernetes, ao não ver o ficheiro."""
+        queixas = []
+        b = Batimento(os.path.join(self.tmp.name, "nao", "existe", "b"), queixas.append)
+        b.pulso()
+        b.pulso()
+        self.assertEqual(len(queixas), 1, "queixa-se UMA vez, não a cada pulso")
+        self.assertIn("sondas", queixas[0])
+
+
+class PulsoVemDoProgressoTest(unittest.TestCase):
+    """A razão de ser do desenho: um worker PENDURADO deixa de pulsar."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_cada_volta_do_ciclo_pulsa(self):
+        # O ciclo é travado pela FONTE, não pelo pulso: sem isto, tirar o pulso
+        # fazia este teste PENDURAR em vez de falhar, e um teste que pendura é
+        # pior do que um que falha (medido, a sério, ao escrevê-lo).
+        stop = threading.Event()
+        pulsos = []
+        voltas = []
+
+        class FonteQueConta:
+            def claim(self_):
+                voltas.append(1)
+                if len(voltas) >= 3:
+                    stop.set()
+                return None
+
+            def close(self_):
+                pass
+
+        worker.run(FonteQueConta(), FakeTranscriber("x"), self.dir, 0, stop, _nolog,
+                   pulso=lambda: pulsos.append(1))
+        self.assertGreaterEqual(len(voltas), 3, "o ciclo tinha de dar três voltas")
+        self.assertEqual(len(pulsos), len(voltas),
+                         "um pulso por volta — nem a mais nem a menos")
+
+    def test_um_ciclo_pendurado_nao_pulsa(self):
+        """O teste que justifica tudo: se o trabalho bloqueia, o pulso PARA. Com
+        um batimento por relógio, este teste seria impossível de escrever."""
+        pulsos = []
+        comecou = threading.Event()
+        stop = threading.Event()
+
+        class FonteQueBloqueia:
+            def claim(self_):
+                comecou.set()
+                stop.wait(30)   # o «pendurado»: nunca devolve a tempo
+                return None
+
+            def close(self_):
+                pass
+
+        t = threading.Thread(
+            target=worker.run,
+            args=(FonteQueBloqueia(), FakeTranscriber("x"), self.dir, 0, stop, _nolog),
+            kwargs={"pulso": lambda: pulsos.append(1)},
+            daemon=True,
+        )
+        t.start()
+        self.assertTrue(comecou.wait(2), "o ciclo tinha de ter arrancado")
+        self.assertEqual(len(pulsos), 1,
+                         "um pulso ao entrar na volta, e NENHUM enquanto está pendurado")
+        stop.set()
+        t.join(timeout=3)
+
+    def test_o_transcritor_pulsa_por_segmento(self):
+        """Dentro de UMA transcrição longa o pulso não pode vir do ciclo — vem
+        do gerador de segmentos do faster-whisper."""
+        pulsos = []
+
+        class ModeloFalso:
+            def transcribe(self_, path, **_):
+                segs = [types.SimpleNamespace(start=i, end=i + 1, text=f"s{i}",
+                                              avg_logprob=-0.1) for i in range(5)]
+                segs.insert(2, types.SimpleNamespace(start=2, end=3, text="  ",
+                                                     avg_logprob=-0.1))
+                return iter(segs), types.SimpleNamespace(language="pt")
+
+        t = WhisperTranscriber.__new__(WhisperTranscriber)
+        t._model = ModeloFalso()
+        t._pulso = lambda: pulsos.append(1)
+        out = t.transcribe("/x.webm")
+        self.assertEqual(len(pulsos), 6, "um pulso por segmento do gerador, mesmo o vazio")
+        self.assertEqual(len(out.segments), 5, "o segmento vazio não entra na transcrição")
+        self.assertEqual(out.language, "pt")
 
 
 class ConfigTest(unittest.TestCase):

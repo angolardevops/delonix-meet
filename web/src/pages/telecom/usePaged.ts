@@ -47,6 +47,10 @@ export function usePaged<T>(load: (token: string | undefined, signal: AbortSigna
         setBusy(false)
         setErr(orgErrorMessage(e, t, 'ui.erroCarregar'))
       })
+    // As funções de página (`fetchPage`, `nextToken`) ficam fora: vêm de quem
+    // chama e costumam ser novas a cada render, e incluí-las punha o «carregar
+    // mais» em ciclo. O que deve disparar isto é o ESTADO da lista, que está
+    // nas dependências.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, busy, mutate, t])
 

@@ -2046,6 +2046,18 @@ fn webhook_destinations(reports: &[DestinationReport]) -> serde_json::Value {
 /// Dispara um evento de directo para as organizações de quem emite — a mesma
 /// regra do `recording.ready` no recorder (uma sala não tem organização; quem
 /// a usa, tem).
+///
+/// **PORQUE ESTE NÃO É UM CASO DE OUTBOX** (trabalho nº3): ao contrário do
+/// `recording.ready` e do `meeting.mom_ready`, o estado de negócio de uma
+/// emissão vive em MEMÓRIA (o `published: Mutex<Option<…>>` acima), não numa
+/// linha. Não há transacção a que juntar o registo da entrega: se o processo
+/// morrer, a emissão morre com ele e o evento fica sem objecto — avisar que uma
+/// sala foi para o ar quando ela já não está seria pior do que não avisar.
+///
+/// O que mudou com o nº3: a entrega passa a ser GRAVADA e enviada por
+/// `webhooks::{enqueue, envia}`, numa tarefa só em vez de duas encaixadas. A
+/// linha nasce mais cedo e, uma vez nascida, a rede de segurança (varredor +
+/// `retry_due`) vale como para as outras.
 fn fire_stream_event(
     state: &Arc<AppState>,
     user_id: Uuid,
@@ -2055,18 +2067,36 @@ fn fire_stream_event(
 ) {
     let state = state.clone();
     tokio::spawn(async move {
-        for org_id in crate::org::orgs_of_user(&state, user_id).await {
-            crate::webhooks::fire(
-                state.clone(),
+        let orgs = crate::org::orgs_of_user(&state, user_id).await;
+        let mut conn = match state.db.acquire().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, evento = name, "directo: sem ligação à base");
+                return;
+            }
+        };
+        let mut fila = Vec::new();
+        for org_id in orgs {
+            match crate::webhooks::enqueue(
+                &mut conn,
                 org_id,
-                crate::webhooks::Event {
+                &crate::webhooks::Event {
                     name,
                     title: "Delonix Meet".into(),
                     text: text.clone(),
                     payload: payload.clone(),
                 },
-            );
+            )
+            .await
+            {
+                Ok(f) => fila.extend(f),
+                Err(e) => {
+                    tracing::warn!(error = %e, evento = name, %org_id, "directo: registo da entrega falhou")
+                }
+            }
         }
+        drop(conn);
+        crate::webhooks::envia(&state, name, fila).await;
     });
 }
 

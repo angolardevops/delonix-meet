@@ -26,6 +26,11 @@ export function useAsync<T>(load: (signal: AbortSignal) => Promise<T>, deps: Dep
         setState({ s: 'error', msg: apiErrorMessage(e, t('ui.erroCarregar')) })
       })
     return () => ctrl.abort()
+    // O `[...deps, nonce]` é um *spread*, e o ESLint não consegue verificar as
+    // dependências de um array que não vê. O disable aqui é ESTRUTURAL, não
+    // esconde nada: quem chama passa as suas `deps` e esta peça acrescenta o
+    // `nonce` do `reload`. Tirá-lo exigiria mudar a API para dependências
+    // fixas, e perder-se-ia a razão de existir desta peça.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, nonce])
   const reload = useCallback(() => setNonce((n) => n + 1), [])

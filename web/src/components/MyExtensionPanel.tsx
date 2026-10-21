@@ -85,6 +85,10 @@ export default function MyExtensionPanel() {
         if (!ctrl.signal.aborted) setErro(apiErrorMessage(e, t('ui.erroCarregar')))
       })
     return () => ctrl.abort()
+    // `[]` de propósito: pede uma vez à montagem e aborta na desmontagem. As
+    // dependências que o efeito fecha (`t`, `orgId`) só mudariam o TEXTO do
+    // erro, não a lista — e refazer o pedido por isso era gastar uma viagem ao
+    // servidor para mostrar o mesmo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

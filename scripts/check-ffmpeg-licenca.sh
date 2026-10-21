@@ -30,24 +30,33 @@ fail=0
 bad() { echo "✗ ffmpeg-licença: $1"; fail=1; }
 # Só as linhas que NÃO são comentário: um comentário pode explicar porque não
 # se activa uma opção sem a activar.
-code() { grep -vE '^[[:space:]]*#' "$F"; }
+# Lidas UMA vez para uma variável e dadas ao `grep -q` por `<<<`, nunca por um
+# pipe (R298): com `pipefail`, um `grep -q` que sai à primeira
+# correspondência mata o produtor com SIGPIPE e o pipeline dá erro — no ciclo
+# dos proibidos isso lia-se como «não usa», que é o portão a dar verde.
+code=$(grep -vE '^[[:space:]]*#' "$F")
 
 for need in '--disable-gpl' '--disable-nonfree' 'FFMPEG_SHA256' 'FFMPEG_VERSION' 'FFMPEG_BIN'; do
-  code | grep -q -- "$need" || bad "$F não tem «$need»"
+  grep -q -- "$need" <<<"$code" || bad "$F não tem «$need»"
 done
 for forbid in '--enable-gpl' '--enable-nonfree' '--enable-version3' 'libx264' 'libx265' 'libfdk' 'enable-libx2'; do
-  code | grep -q -- "$forbid" && bad "$F usa «$forbid» — a imagem do servidor é LGPL (docs/tv/b3-ffmpeg-lgpl-2026-10-04.md)"
+  grep -q -- "$forbid" <<<"$code" && bad "$F usa «$forbid» — a imagem do servidor é LGPL (docs/tv/b3-ffmpeg-lgpl-2026-10-04.md)"
 done
 # O SHA-256 tem de estar preenchido (64 hex), não um marcador de zeros.
-code | grep -E 'ARG FFMPEG_SHA256=' | grep -qE '=[0-9a-f]{64}$' \
+sha=$(grep -E 'ARG FFMPEG_SHA256=' <<<"$code")
+grep -qE '=[0-9a-f]{64}$' <<<"$sha" \
   || bad "FFMPEG_SHA256 não está fixado a 64 dígitos hexadecimais"
-code | grep -E 'ARG FFMPEG_SHA256=' | grep -qE '=0{64}$' \
+grep -qE '=0{64}$' <<<"$sha" \
   && bad "FFMPEG_SHA256 é o marcador de zeros — falta fixar o SHA-256 depois de verificar a assinatura"
 
 if [ -n "${FFMPEG_BIN:-}" ] && [ -x "$FFMPEG_BIN" ]; then
-  "$FFMPEG_BIN" -L 2>/dev/null | head -3 | grep -q 'Lesser' \
+  # O estado do binário conta à parte do que ele escreve: um `ffmpeg -L` que
+  # falha não declara licença nenhuma, e um `-version` que falha depois de
+  # escrever `--enable-gpl` continua a ser GPL (com o pipe e `&&`, dava verde).
+  licenca=$("$FFMPEG_BIN" -L 2>/dev/null) && grep -q 'Lesser' <<<"$(head -3 <<<"$licenca")" \
     || bad "$FFMPEG_BIN não declara a licença LGPL (ffmpeg -L)"
-  "$FFMPEG_BIN" -version 2>/dev/null | grep -E 'enable-(gpl|nonfree|version3)' \
+  cfg=$("$FFMPEG_BIN" -version 2>/dev/null)
+  grep -E 'enable-(gpl|nonfree|version3)' <<<"$cfg" \
     && bad "$FFMPEG_BIN foi configurado com GPL, nonfree ou version3"
 fi
 
