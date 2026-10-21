@@ -113,6 +113,10 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 regex = "1.13.0"
 # Limpeza de material de chave em memória (ver signaling::Secret).
 zeroize = "1"
+# Web Push (RFC 8030/8291/8292) para tocar a quem tem a aplicação fechada (ver
+# web_push.rs, lacuna A-03). Só CONSTRÓI o pedido cifrado — o envio passa pelo
+# `net_guard`, como qualquer outra saída. RustCrypto puro, MIT/Apache.
+web-push-native = { version = "0.5", default-features = false, features = ["vapid"] }
 # Traits com métodos `async` usados como `dyn`: a política de admissão do UA SIP
 # da ponte (`phone_bridge::sip::BridgeAdmission`) e as portas da telefonia
 # (`domain::telephony::ports`, ADR-0009).

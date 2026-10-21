@@ -179,6 +179,14 @@ pub struct Config {
     /// (`PUSH_DELONIX_KEY`, segredo). Qualquer um ausente = o fornecedor `delonix` não está configurado.
     pub push_delonix_url: Option<String>,
     pub push_delonix_key: Option<String>,
+    /// Web Push para o browser (A-03, ADR-0032): a chave privada VAPID
+    /// (`WEB_PUSH_VAPID_PRIVATE_KEY`, segredo — o escalar P-256 de 32 bytes em
+    /// base64url) e o contacto que os serviços de push vêem (`WEB_PUSH_SUBJECT`,
+    /// `mailto:` ou `https:`). **Qualquer um ausente = Web Push desligado**: é o
+    /// operador que abre esta saída para os serviços de push da Google, da
+    /// Mozilla e da Apple, não a instalação por omissão.
+    pub web_push_vapid_private_key: Option<String>,
+    pub web_push_subject: Option<String>,
     /// Quantos segundos uma chamada que o SERVIDOR origina para um ramal sem registo espera que o aparelho acorde
     /// (push) e se registe (ADR-0023). 0 (por omissão) desliga. É a contraparte, para chamadas do servidor, do
     /// `DELONIX_PUSH_WAIT_SECS` do FreeSWITCH, que só vê as chamadas que passam pelo seu dialplan.
@@ -708,6 +716,8 @@ impl Config {
             push_lab_url: opt("PUSH_LAB_URL"),
             push_delonix_url: opt("PUSH_DELONIX_URL"),
             push_delonix_key: opt("PUSH_DELONIX_KEY"),
+            web_push_vapid_private_key: opt("WEB_PUSH_VAPID_PRIVATE_KEY"),
+            web_push_subject: opt("WEB_PUSH_SUBJECT"),
             push_wait_secs: opt("PUSH_WAIT_SECS")
                 .and_then(|v| v.parse().ok())
                 .filter(|n| *n <= 60)

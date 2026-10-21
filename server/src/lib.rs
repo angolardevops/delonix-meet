@@ -108,6 +108,7 @@ mod users;
 mod voice;
 mod voice_caller;
 mod voice_devices;
+mod web_push;
 mod webhooks;
 mod whiteboards;
 
@@ -786,6 +787,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/users/me/missed-calls/acknowledge",
             post(presence::ack_missed_calls),
+        )
+        // Web Push (A-03, ADR-0032): o toque chega com a aplicação fechada.
+        .route("/api/users/me/push", get(web_push::status))
+        .route(
+            "/api/users/me/push/subscriptions",
+            post(web_push::subscribe),
+        )
+        .route(
+            "/api/users/me/push/subscriptions/unsubscribe",
+            post(web_push::unsubscribe),
         )
         // ---- Salas ----
         .route(
@@ -1786,6 +1797,11 @@ pub(crate) async fn status(
 /// listeners nem tarefas de fundo — é o que os testes de integração usam
 /// para montar o router sobre uma base real.
 pub async fn build_state(config: Config, db: sqlx::PgPool) -> Arc<AppState> {
+    // Uma chave VAPID mal colada não pode desligar o Web Push em silêncio: o
+    // operador configurou-o e julgaria que está ligado.
+    if let Err(e) = web_push::validar_config(&config) {
+        panic!("{e}");
+    }
     // O host do Odoo da plataforma foi declarado pelo operador ao configurá-lo:
     // as orgs criadas a partir dele guardam-no como `odoo_url`, e o login delas
     // passa pelo cliente de inquilino.
