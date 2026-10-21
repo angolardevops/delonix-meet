@@ -2932,7 +2932,11 @@ pub async fn retention_sweep(state: &Arc<AppState>) -> usize {
          JOIN org_members m ON m.user_id = r.uploader_id
          JOIN organizations o ON o.id = m.org_id
          WHERE o.retention_days > 0
-           AND r.created_at < now() - make_interval(days => o.retention_days)",
+           AND r.created_at < now() - make_interval(days => o.retention_days)
+           -- Legal hold (A-08): o que está retido por ordem legal não se apaga.
+           -- Filtra-se AQUI, antes da purga dos ficheiros: o gatilho da 0129
+           -- recusaria o DELETE da linha, mas os ficheiros já teriam ido.
+           AND NOT recording_on_legal_hold(r.room_id, r.uploader_id)",
     )
     .fetch_all(&state.db)
     .await

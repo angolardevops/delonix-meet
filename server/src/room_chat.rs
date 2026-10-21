@@ -223,9 +223,16 @@ pub async fn retention_sweep(state: &crate::AppState) -> Result<u64, sqlx::Error
     if a_apagar.is_empty() {
         return Ok(0);
     }
-    let r = sqlx::query("DELETE FROM room_chat_messages WHERE room_id = ANY($1)")
-        .bind(&a_apagar)
-        .execute(&state.db)
-        .await?;
+    // Legal hold (A-08): as mensagens retidas ficam. Por mensagem e não por
+    // sala — um hold sobre UMA pessoa guarda o que ela escreveu, não a sala
+    // inteira. O gatilho da 0129 recusaria o DELETE de qualquer forma; filtrar
+    // aqui é o que deixa a varredura apagar o resto em vez de falhar inteira.
+    let r = sqlx::query(
+        "DELETE FROM room_chat_messages
+          WHERE room_id = ANY($1) AND NOT chat_on_legal_hold(room_id, user_id)",
+    )
+    .bind(&a_apagar)
+    .execute(&state.db)
+    .await?;
     Ok(r.rows_affected())
 }

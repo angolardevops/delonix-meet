@@ -48,6 +48,7 @@ mod password_recovery;
 // resposta a isso seria um `#[allow]` — que é esconder, não resolver.
 mod invitation_mail;
 mod jobs;
+mod legal_holds;
 mod oauth;
 pub mod objectos;
 mod odoo;
@@ -831,6 +832,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // (`?room={code}` é a chave de afinidade do balanceador).
         .route("/api/rooms/{room_code}/waiting", get(rooms::room_waiting))
         .route("/api/rooms/{room_code}/messages", get(rooms::room_chat))
+        // Legal hold (A-08): suspender a retenção por ordem legal.
+        .route(
+            "/api/orgs/{org_id}/legal-holds",
+            get(legal_holds::list).post(legal_holds::create),
+        )
+        .route(
+            "/api/orgs/{org_id}/legal-holds/{hold_id}/release",
+            post(legal_holds::release),
+        )
         // «Ligar a…» um ramal a partir da sala (`?room={code}` é a chave de
         // afinidade do balanceador: a sala e a ponte vivem no pod que a serve).
         .route(
