@@ -36,7 +36,7 @@ A tabela completa com veredictos e evidência: [`docs/paridade-medida-2026-10-18
 | `B-07` | API pública v1 é 3 % da BFF, e não há SDK | por escrever |
 | `B-08` | A sala de espera do convidado é obrigatória e sem interruptor | por escrever |
 | `B-09` | Acessibilidade sem prova automática (`grep axe` = 0) | por escrever |
-| `B-10` | [O SCIM trunca em silêncio acima de 200](B-10-scim-trunca-em-silencio.md) | escrito — **melhor relação esforço/valor** |
+| `B-10` | [O SCIM trunca em silêncio acima de 200](B-10-scim-trunca-em-silencio.md) | ✅ **FECHADO** 2026-10-21: paginação RFC 7644 e `totalResults` real, provados contra Postgres com controlo negativo. Falta um ciclo com um provedor real (sem tenant de Entra ID/Okta). `/Groups` fica de fora, por decisão escrita |
 | `B-11` | App de desktop | **defensável não ter** — ver o documento; não entra na fila sem decisão de produto |
 
 ## Grupo C — telefonia
