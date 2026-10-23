@@ -2811,6 +2811,42 @@ pub(crate) struct MemberState {
     pub odoo_managed_here: bool,
 }
 
+/// Esta pessoa é, ou JÁ FOI, membro desta organização? Para um legal hold
+/// (A-08): uma ordem sobre um ex-colaborador continua a valer — arquivar a
+/// pertença não lhe tira o que gravou e escreveu.
+pub(crate) async fn is_or_was_member(
+    state: &AppState,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await?)
+}
+
+/// A sala (pelo código) é desta organização — o dono é ou foi membro dela? As
+/// salas não têm `org_id`: a organização vem do dono, como nas outras rotas.
+/// `None` se a sala não existe ou não é da organização.
+pub(crate) async fn room_of_org(
+    state: &AppState,
+    org_id: Uuid,
+    room_code: &str,
+) -> Result<Option<Uuid>, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT r.id FROM rooms r
+          WHERE r.code = $2
+            AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = $1 AND m.user_id = r.owner_id)",
+    )
+    .bind(org_id)
+    .bind(room_code)
+    .fetch_optional(&state.db)
+    .await?)
+}
+
 pub(crate) async fn member_state<'e, E>(
     db: E,
     org_id: Uuid,

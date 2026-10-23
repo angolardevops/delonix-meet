@@ -163,6 +163,17 @@ impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
         match &e {
             sqlx::Error::RowNotFound => ApiError::NotFound,
+            // Legal hold (A-08): o gatilho da migração 0129 recusa o DELETE de
+            // uma gravação ou mensagem retida, venha da rota que vier — uma
+            // cascata de sala ou de conta incluída. Sai como 409 com razão, e
+            // não como um 500 que esconderia a ordem legal.
+            sqlx::Error::Database(db) if db.message().starts_with("legal_hold:") => {
+                DomainError::conflict(
+                    "legal_hold.active",
+                    "estes dados estão retidos por ordem legal (legal hold) e não podem ser apagados",
+                )
+                .into()
+            }
             _ => ApiError::internal(e),
         }
     }

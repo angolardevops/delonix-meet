@@ -289,7 +289,11 @@ impl Capability {
                 A,
                 "Mudar retenção e residência",
                 "afecta toda a organização",
-                &["PATCH /api/orgs/{org_id}"],
+                &[
+                    "PATCH /api/orgs/{org_id}",
+                    "GET|POST /api/orgs/{org_id}/legal-holds",
+                    "POST /api/orgs/{org_id}/legal-holds/{hold_id}/release",
+                ],
             ),
             OrgAdminister => CapabilityInfo {
                 system_only: true,

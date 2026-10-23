@@ -168,6 +168,15 @@ await recusado('A roda o token SCIM da org B', `/api/orgs/${B.orgId}/scim/rotate
 await recusado('A remove um empregado da org B', `/api/orgs/${B.orgId}/members/${B.userId}`, {
   token: A.token, method: 'DELETE',
 })
+// Legal hold (A-08): pôr dados de outra organização sob hold, ou levantar um
+// hold dela, é suspender ou devolver a retenção de quem não é nosso.
+await recusadoNaPorta('A lista os legal holds da org B', `/api/orgs/${B.orgId}/legal-holds`, { token: A.token })
+await recusadoNaPorta('A abre um legal hold na org B', `/api/orgs/${B.orgId}/legal-holds`, {
+  token: A.token, method: 'POST', body: { name: 'x', reason: 'y', scope: 'org' },
+})
+await recusadoNaPorta('A levanta um legal hold da org B', `/api/orgs/${B.orgId}/legal-holds/${crypto.randomUUID()}/release`, {
+  token: A.token, method: 'POST', body: {},
+})
 
 // As seis rotas com escopo de organização que este teste NÃO cobria (R95).
 // Encontradas a comparar o inventário do que EXISTE (`grep` às rotas do

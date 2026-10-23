@@ -2035,6 +2035,41 @@
         },
         "type": "object"
       },
+      "CreateLegalHoldReq": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "room_code": {
+            "description": "Obrigatório com `scope: room` — o código da sala.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "description": "`org` (tudo da organização), `user` (o que uma pessoa gravou ou\nescreveu) ou `room` (o que aconteceu numa sala).",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "Obrigatório com `scope: user`.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "reason",
+          "scope"
+        ],
+        "type": "object"
+      },
       "CreateMeetingReq": {
         "allOf": [
           {
@@ -5077,6 +5112,84 @@
           "ws_path",
           "scheduled",
           "join_preferences"
+        ],
+        "type": "object"
+      },
+      "LegalHold": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "description": "A ordem legal: o processo, o ofício, quem a emitiu.",
+            "type": "string"
+          },
+          "released_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "released_by": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "room_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "description": "`org` | `user` | `room`.",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "reason",
+          "scope",
+          "created_by",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "LegalHoldList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LegalHold"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -22553,6 +22666,248 @@
         "summary": "Reenvia: roda o token (o anterior deixa de servir) e renova a validade.",
         "tags": [
           "directory"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/legal-holds": {
+      "get": {
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHoldList"
+                }
+              }
+            },
+            "description": "Os holds da organização, activos e levantados, mais recentes primeiro."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem `admin.change_retention`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização não existe ou quem pede não é membro activo."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`GET /api/orgs/{org_id}/legal-holds`",
+        "tags": [
+          "organizations"
+        ]
+      },
+      "post": {
+        "operationId": "create",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLegalHoldReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHold"
+                }
+              }
+            },
+            "description": "Hold aberto. A partir daqui, a retenção não apaga o que ele cobre."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`legal_hold.invalid`: nome ou razão vazios ou longos, âmbito desconhecido, falta o `user_id`/`room_code` do âmbito."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem `admin.change_retention`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "A organização, a pessoa ou a sala não são desta organização."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/orgs/{org_id}/legal-holds`",
+        "tags": [
+          "organizations"
+        ]
+      }
+    },
+    "/api/orgs/{org_id}/legal-holds/{hold_id}/release": {
+      "post": {
+        "operationId": "release",
+        "parameters": [
+          {
+            "description": "Organização.",
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "O hold. De outra organização dá 404.",
+            "in": "path",
+            "name": "hold_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHold"
+                }
+              }
+            },
+            "description": "Hold levantado. A retenção volta a valer para o que ele cobria — na próxima volta da varredura."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Sem `admin.change_retention`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Não existe nesta organização."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "`legal_hold.already_released`."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "`POST /api/orgs/{org_id}/legal-holds/{hold_id}/release`",
+        "tags": [
+          "organizations"
         ]
       }
     },
