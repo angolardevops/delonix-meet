@@ -158,6 +158,9 @@ pub struct Metrics {
     /// Subscrições removidas porque o serviço de push respondeu 404/410: o
     /// browser revogou a permissão ou a subscrição expirou.
     pub web_push_expired_total: AtomicU64,
+    /// Publicações retidas por o publicador estar fora de palco num webinar
+    /// (A-09). Um número a subir é um assistente a tentar publicar.
+    pub sfu_publish_offstage_total: AtomicU64,
     /// Pacotes RTP perdidos por a fila de escrita da gravação estar cheia.
     /// `> 0` significa gravação DEGRADADA: o disco não acompanhou. Existe
     /// porque a alternativa — bloquear o executor até o disco alcançar — é
@@ -368,6 +371,9 @@ impl Metrics {
              # HELP delonix_web_push_expired_total Subscricoes Web Push removidas por 404/410.\n\
              # TYPE delonix_web_push_expired_total counter\n\
              delonix_web_push_expired_total {}\n\
+             # HELP delonix_sfu_publish_offstage_total Publicacoes retidas por o publicador estar fora de palco num webinar.\n\
+             # TYPE delonix_sfu_publish_offstage_total counter\n\
+             delonix_sfu_publish_offstage_total {}\n\
              # HELP delonix_uptime_seconds Uptime do processo em segundos.\n\
              # TYPE delonix_uptime_seconds gauge\n\
              delonix_uptime_seconds {}\n",
@@ -419,6 +425,7 @@ impl Metrics {
             self.web_push_sent_total.load(Relaxed),
             self.web_push_failed_total.load(Relaxed),
             self.web_push_expired_total.load(Relaxed),
+            self.sfu_publish_offstage_total.load(Relaxed),
             uptime_secs,
         )
     }

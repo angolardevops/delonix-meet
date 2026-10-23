@@ -30,12 +30,12 @@ De pé: `A-03` e `A-05`.
 | `A-01` | [Um telefone entra numa sala cifrada de ponta a ponta](A-01-telefone-entra-em-sala-e2ee.md) | ✅ **FECHADO** 2026-10-18 — nos dois pontos de resolução da sala, com controlo negativo medido. Na `develop` desde o #378 (remedido a 2026-10-21: `grep -c e2ee voice.rs` = 9). Falta a prova por chamada real (sem DID de teste nesta máquina) |
 | `A-02` | [Gravação ISO ligada por omissão e inexistente](A-02-gravacao-iso-ligada-e-inexistente.md) | ✅ **FECHADO** 2026-10-21: as pistas aparecem no leitor (visto no browser) e duas fontes dão dois ficheiros pela rota, com controlo negativo. Falta a prova ponta-a-ponta pelo SFU (não há e2e de estúdio a gravar) |
 | `A-03` | [Ninguém é avisado sem ter a aba aberta](A-03-push-com-a-app-fechada.md) | ✅ **IMPLEMENTADO** 2026-10-21: Web Push no `ring`, com `offline` a passar a `ringing` e o 410 a limpar a subscrição, provado com controlo negativo. **Falta ver a notificação num aparelho real**, e o ADR-0032 está à espera do dono |
-| `A-04` | [Quarenta pessoas por sala](A-04-quarenta-pessoas-por-sala.md) | escrito — **mede primeiro, decide depois** |
+| `A-04` | [Quarenta pessoas por sala](A-04-quarenta-pessoas-por-sala.md) | ✅ **MEDIDO** 2026-10-21, numa máquina partilhada e declarada: sem simulcast reprova aos 48 por CPU; **com simulcast reprova aos 40 por subscrições em falta** (`B-12`). Recomendação: vender 40 e corrigir o `B-12` antes de qualquer decisão de arquitectura |
 | `A-05` | [Calendário nos dois sentidos](A-05-calendario-nos-dois-sentidos.md) | escrito |
 | `A-06` | Canais persistentes de equipa | por escrever |
 | `A-07` | `require_mfa` não impõe MFA, e o lockout é por processo | por escrever |
 | `A-08` | [Legal hold e eDiscovery](A-08-legal-hold-e-ediscovery.md) | **HOLD FEITO** 2026-10-21: as varreduras e gatilhos na base recusam apagar o retido (409 `legal_hold.active`), com controlos negativos. **Por fazer:** a pesquisa de eDiscovery e a exportação com manifesto (capacidade própria de investigador) |
-| `A-09` | [Modo webinar — dois formatos inertes](A-09-modo-webinar.md) | escrito |
+| `A-09` | [Modo webinar — dois formatos inertes](A-09-modo-webinar.md) | ✅ **IMPLEMENTADO** 2026-10-21: o `broadcast` impõe o palco no SFU (fora de palco, 0 pacotes; promovido, chega; despromovido, corta), com controlo negativo. O ecrã do assistente foi visto; a promoção no ecrã ficou por ver. Sem HLS |
 | `A-10` | Certificações (SOC 2, ISO 27001, HIPAA) | **não é código** — é processo, e não entra nesta fila |
 | `A-11` | SAML 2.0 | por escrever |
 
@@ -53,6 +53,7 @@ De pé: `A-03` e `A-05`.
 | `B-08` | A sala de espera do convidado é obrigatória e sem interruptor | por escrever |
 | `B-09` | Acessibilidade sem prova automática (`grep axe` = 0) | por escrever |
 | `B-10` | [O SCIM trunca em silêncio acima de 200](B-10-scim-trunca-em-silencio.md) | ✅ **FECHADO** 2026-10-21: paginação RFC 7644 e `totalResults` real, provados contra Postgres com controlo negativo. Falta um ciclo com um provedor real (sem tenant de Entra ID/Okta). `/Groups` fica de fora, por decisão escrita |
+| `B-12` | [Com simulcast, uma sala de 40 perde 8–15 % das subscrições de vídeo](B-12-subscricoes-em-falta-com-simulcast.md) | escrito 2026-10-21 — **o primeiro limite real da sala**, medido no `A-04`; causa por provar (hipótese: o recurso do `switch_layer`) |
 | `B-11` | App de desktop | **defensável não ter** — ver o documento; não entra na fila sem decisão de produto |
 
 ## Grupo C — telefonia

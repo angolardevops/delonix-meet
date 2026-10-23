@@ -653,6 +653,12 @@ pub enum ServerMsg {
     Denied, // para o convidado: entrada recusada
     // Controlo do anfitrião:
     ForceMuted, // para o alvo: foste silenciado
+    /// Para quem publicou: o SFU reteve a publicação (A-09). Num webinar, quem
+    /// está fora de palco não chega a ninguém — e é dito, em vez de o deixar a
+    /// mandar media para o vazio. `reason`: `stage.not_on_stage`.
+    PublishRefused {
+        reason: String,
+    },
     /// Para o alvo: a câmara foi desligada por quem manda.
     ForceCamOff,
     /// Para o alvo: o Estúdio pôs/tirou-o do palco — a luz de tally.
@@ -1627,6 +1633,9 @@ pub(crate) struct Room {
     /// valor por omissão seria «proibido» — que é o oposto do que a migração
     /// 0125 decidiu e transformaria uma falha de leitura numa política nova.
     web_speech_forbidden: bool,
+    /// A sala é de formato `broadcast` (webinar, A-09): só quem está em palco
+    /// publica. Lido da base na entrada, como a política de legendas.
+    broadcast: bool,
     /// Chat FECHADO a quem não é anfitrião (R92).
     ///
     /// Guardado invertido de propósito: o `Room` deriva `Default`, e um `bool`
@@ -1791,6 +1800,19 @@ pub trait PhoneControl: Send + Sync {
 pub trait StageControl: Send + Sync {
     /// Não bloqueia: a implementação despacha e devolve.
     fn set_pinned(&self, room_id: Uuid, publisher: Uuid, on: bool);
+    /// Webinar (A-09): pôr um peer em palco ou tirá-lo. Fora de palco, nada do
+    /// que publica chega a ninguém. Não bloqueia, como o `set_pinned`.
+    fn set_on_stage(&self, room_id: Uuid, peer_id: Uuid, on: bool);
+}
+
+/// Num webinar (sala de formato `broadcast`, A-09), estes papéis estão em
+/// palco: publicam. Quem entra como `Attendee` assiste — até o anfitrião o
+/// promover. Fora de um webinar, o papel não decide quem publica.
+pub(crate) fn em_palco(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Host | Role::Cohost | Role::Speaker | Role::Broadcast
+    )
 }
 
 /// A dobragem ao vivo, vista de quem trata as mensagens da sala (ADR-0030).
@@ -2725,6 +2747,25 @@ impl SignalingHub {
         }
     }
 
+    /// Marca a sala como webinar (formato `broadcast`, A-09).
+    pub fn set_broadcast(&self, room_id: Uuid, broadcast: bool) {
+        if let Some(mut r) = self.rooms.get_mut(&room_id) {
+            r.broadcast = broadcast;
+        }
+    }
+
+    /// A sala é um webinar (formato `broadcast`)?
+    pub fn is_broadcast(&self, room_id: Uuid) -> bool {
+        self.rooms.get(&room_id).is_some_and(|r| r.broadcast)
+    }
+
+    /// O papel efectivo de um peer (o anfitrião é sempre `Host`).
+    pub fn effective_role_of(&self, room_id: Uuid, peer_id: Uuid) -> Option<Role> {
+        self.rooms
+            .get(&room_id)
+            .and_then(|r| r.peers.get(&peer_id).map(|p| p.effective_role()))
+    }
+
     /// A organização desta sala proíbe o motor de voz do browser?
     pub fn web_speech_forbidden(&self, room_id: Uuid) -> bool {
         self.rooms
@@ -3161,6 +3202,13 @@ impl SignalingHub {
             Some((can_admit, fila))
         });
         if let Some((can_admit, fila)) = resultado {
+            // Num webinar, o papel decide quem publica (A-09): promover a
+            // orador põe em palco, despromover tira — no SFU, não só no ecrã.
+            if self.is_broadcast(room_id) {
+                if let Some(palco) = self.stage.get() {
+                    palco.set_on_stage(room_id, to, em_palco(role));
+                }
+            }
             self.broadcast_all(
                 room_id,
                 ServerMsg::PeerRole {
@@ -5415,6 +5463,37 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, session: SocketS
             let _ = tx.send(ServerMsg::Error {
                 message: "sfu unavailable".into(),
             });
+        }
+        // Webinar (A-09): quem entra sem papel de orador fica fora de palco
+        // ANTES de poder publicar — a oferta dele só é lida depois disto.
+        // Uma falha a ler o formato deixa a sala como reunião normal: é o
+        // comportamento de sempre, e não tira a palavra a ninguém por engano.
+        let broadcast =
+            sqlx::query_scalar::<_, bool>("SELECT format = 'broadcast' FROM rooms WHERE id = $1")
+                .bind(room_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(false);
+        state.hub.set_broadcast(room_id, broadcast);
+        if broadcast {
+            let papel = state.hub.effective_role_of(room_id, peer_id);
+            state
+                .sfu
+                .set_on_stage(room_id, peer_id, papel.is_some_and(em_palco))
+                .await;
+            // O cliente só sabia o próprio papel quando ele MUDAVA. Num webinar
+            // é o papel que decide se a pessoa vê o microfone e a câmara: um
+            // orador por convite que começasse como «assistente» era silenciado
+            // pelo próprio ecrã até alguém lhe mexer no papel.
+            if let Some(role) = papel {
+                let _ = tx.send(ServerMsg::PeerRole {
+                    peer_id,
+                    role,
+                    can_admit,
+                });
+            }
         }
         // Reunião agendada com «gravar automaticamente»: o gravador do servidor
         // arranca quando o anfitrião entra — as tracks anexam-se à medida que
@@ -7939,11 +8018,18 @@ mod b1_sala_tests {
 
     /// Grava o que o `Spotlight` pediu ao SFU (R225).
     #[derive(Default)]
-    struct PalcoFalso(std::sync::Mutex<Vec<(Uuid, bool)>>);
+    struct PalcoFalso(
+        std::sync::Mutex<Vec<(Uuid, bool)>>,
+        /// O que o `SetRole` pediu ao palco do webinar (A-09).
+        std::sync::Mutex<Vec<(Uuid, bool)>>,
+    );
 
     impl StageControl for PalcoFalso {
         fn set_pinned(&self, _room_id: Uuid, publisher: Uuid, on: bool) {
             self.0.lock().unwrap().push((publisher, on));
+        }
+        fn set_on_stage(&self, _room_id: Uuid, peer_id: Uuid, on: bool) {
+            self.1.lock().unwrap().push((peer_id, on));
         }
     }
 
@@ -8561,6 +8647,85 @@ mod b1_sala_tests {
             .get(&p)
             .unwrap()
             .effective_role()
+    }
+
+    /// **A-09** — num webinar, dar ou tirar a palavra muda o que o SFU
+    /// encaminha, não só o crachá. O efeito na media está em
+    /// `sfu_e2e::webinar_quem_esta_fora_de_palco_nao_chega_a_ninguem`; aqui
+    /// mede-se o que o `Hub` PEDE ao SFU.
+    ///
+    /// Controlo: numa reunião normal, o mesmo `SetRole` não mexe no palco —
+    /// senão todas as salas passavam a calar quem não é orador.
+    #[tokio::test]
+    async fn num_webinar_o_papel_decide_quem_publica_no_sfu() {
+        let s = sala();
+        let palco = Arc::new(PalcoFalso::default());
+        let _ = s.hub.stage.set(palco.clone() as Arc<dyn StageControl>);
+
+        // Reunião normal: o papel não toca no palco.
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.b,
+                role: Role::Speaker,
+            },
+            None,
+        );
+        assert!(
+            palco.1.lock().unwrap().is_empty(),
+            "fora de um webinar, o SetRole não pode mexer no palco"
+        );
+
+        // Webinar: promover põe em palco, despromover tira.
+        s.hub.set_broadcast(s.room, true);
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.c,
+                role: Role::Speaker,
+            },
+            None,
+        );
+        s.hub.handle(
+            s.room,
+            s.a,
+            ClientMsg::SetRole {
+                to: s.c,
+                role: Role::Attendee,
+            },
+            None,
+        );
+        assert_eq!(
+            palco.1.lock().unwrap().as_slice(),
+            &[(s.c, true), (s.c, false)],
+            "promover e despromover o Carlos num webinar"
+        );
+
+        // Quem não é anfitrião não muda papéis — nem o palco.
+        palco.1.lock().unwrap().clear();
+        s.hub.handle(
+            s.room,
+            s.b,
+            ClientMsg::SetRole {
+                to: s.c,
+                role: Role::Speaker,
+            },
+            None,
+        );
+        assert!(
+            palco.1.lock().unwrap().is_empty(),
+            "só o anfitrião dá a palavra"
+        );
+    }
+
+    #[test]
+    fn em_palco_sao_os_papeis_que_publicam() {
+        for r in [Role::Host, Role::Cohost, Role::Speaker, Role::Broadcast] {
+            assert!(em_palco(r), "{r:?}");
+        }
+        assert!(!em_palco(Role::Attendee));
     }
 
     #[tokio::test]

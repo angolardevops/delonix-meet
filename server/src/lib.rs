@@ -2192,6 +2192,14 @@ pub async fn run() {
                     }
                 });
             }
+            fn set_on_stage(&self, room_id: uuid::Uuid, peer_id: uuid::Uuid, on: bool) {
+                let sfu = self.0.clone();
+                tokio::spawn(async move {
+                    if !sfu.set_on_stage(room_id, peer_id, on).await {
+                        tracing::debug!(%room_id, %peer_id, "palco do webinar: peer fora da sala");
+                    }
+                });
+            }
         }
         let _ = state
             .hub
